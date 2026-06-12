@@ -200,9 +200,14 @@
 (defenum CompilerIrFunction
   (IrFunction String CompilerIrParamList AstType i64 CompilerIrBlockList))
 
+(defstruct CompilerIrFunctionSeq
+  (slots (Array CompilerIrFunction))
+  (len i64))
+
 (defenum CompilerIrFunctionList
   (IrFunctionNil)
-  (IrFunctionCons CompilerIrFunction (Box CompilerIrFunctionList)))
+  (IrFunctionCons CompilerIrFunction (Box CompilerIrFunctionList))
+  (IrFunctionArray CompilerIrFunctionSeq))
 
 (defenum CompilerIrGlobal
   (IrGlobal String AstType CompilerIrValue))
@@ -391,6 +396,84 @@
   [func : CompilerIrFunction]
   [rest : CompilerIrFunctionList]) : CompilerIrFunctionList
   (IrFunctionCons func (box rest)))
+
+(define (compiler-ir-function-list-count-cons
+  [functions : CompilerIrFunctionList]) : i64
+  (match functions
+    [(IrFunctionNil) 0]
+    [(IrFunctionCons _ rest)
+      (+ 1 (compiler-ir-function-list-count-cons (box-get rest)))]
+    [(IrFunctionArray seq) (struct-get seq len)]))
+
+(define (compiler-ir-function-list-fill-array
+  [functions : CompilerIrFunctionList]
+  [slots : (Array CompilerIrFunction)]
+  [index : i64]) : unit
+  (match functions
+    [(IrFunctionNil) unit]
+    [(IrFunctionCons func rest)
+      (begin
+        (array-set! slots index func)
+        (compiler-ir-function-list-fill-array (box-get rest) slots (+ index 1)))]
+    [(IrFunctionArray seq)
+      (let
+        [i : i64 0]
+        [n : i64 (struct-get seq len)]
+        [src : (Array CompilerIrFunction) (struct-get seq slots)]
+        (while (< i n)
+          (begin
+            (array-set! slots (+ index i) (array-ref src i))
+            (set! i (+ i 1)))))]))
+
+(define (compiler-ir-function-seq-from-list
+  [functions : CompilerIrFunctionList]) : CompilerIrFunctionSeq
+  (let
+    [count : i64 (compiler-ir-function-list-count-cons functions)]
+    [slots : (Array CompilerIrFunction) (make-array CompilerIrFunction count)]
+    (begin
+      (compiler-ir-function-list-fill-array functions slots 0)
+      (CompilerIrFunctionSeq slots count))))
+
+(define (compiler-ir-function-seq-to-list-rev
+  [slots : (Array CompilerIrFunction)]
+  [index : i64]
+  [acc : CompilerIrFunctionList]) : CompilerIrFunctionList
+  (let
+    [cursor : i64 index]
+    [out : CompilerIrFunctionList acc]
+    (begin
+      (while (>= cursor 0)
+        (begin
+          (set! out (compiler-ir-function-cons (array-ref slots cursor) out))
+          (set! cursor (- cursor 1))))
+      out)))
+
+(define (compiler-ir-function-seq-to-list [functions : CompilerIrFunctionSeq]) : CompilerIrFunctionList
+  (compiler-ir-function-seq-to-list-rev
+    (struct-get functions slots)
+    (- (struct-get functions len) 1)
+    IrFunctionNil))
+
+(define (compiler-ir-function-seq-count [functions : CompilerIrFunctionSeq]) : i64
+  (struct-get functions len))
+
+;; Keep `array-ref`; aggregate enum array elements need the checked array path,
+;; as with instruction and block sequences.
+(define (compiler-ir-function-seq-ref
+  [functions : CompilerIrFunctionSeq]
+  [index : i64]) : CompilerIrFunction
+  (array-ref (struct-get functions slots) index))
+
+(define (compiler-ir-function-list-force-cons
+  [functions : CompilerIrFunctionList]) : CompilerIrFunctionList
+  (match functions
+    [(IrFunctionArray seq) (compiler-ir-function-seq-to-list seq)]
+    [_ functions]))
+
+(define (compiler-ir-function-list-compact [functions : CompilerIrFunctionList]) : CompilerIrFunctionList
+  (match functions
+    [(IrFunctionArray _) functions]
+    [_ (IrFunctionArray (compiler-ir-function-seq-from-list functions))]))
 
 (define (compiler-ir-global-cons
   [global : CompilerIrGlobal]
@@ -870,7 +953,11 @@
     [(IrFunctionCons func rest)
       (compiler-ir-clone-function-list-acc
         (box-get rest)
-        (compiler-ir-function-cons (compiler-ir-clone-function func) acc))]))
+        (compiler-ir-function-cons (compiler-ir-clone-function func) acc))]
+    [(IrFunctionArray seq)
+      (compiler-ir-clone-function-list-acc
+        (compiler-ir-function-seq-to-list seq)
+        acc)]))
 
 (define (compiler-ir-function-list-reverse-onto
   [functions : CompilerIrFunctionList]
@@ -880,12 +967,17 @@
     [(IrFunctionCons func rest)
       (compiler-ir-function-list-reverse-onto
         (box-get rest)
-        (compiler-ir-function-cons func acc))]))
+        (compiler-ir-function-cons func acc))]
+    [(IrFunctionArray seq)
+      (compiler-ir-function-list-reverse-onto
+        (compiler-ir-function-seq-to-list seq)
+        acc)]))
 
 (define (compiler-ir-clone-function-list [functions : CompilerIrFunctionList]) : CompilerIrFunctionList
-  (compiler-ir-function-list-reverse-onto
-    (compiler-ir-clone-function-list-acc functions IrFunctionNil)
-    IrFunctionNil))
+  (compiler-ir-function-list-compact
+    (compiler-ir-function-list-reverse-onto
+      (compiler-ir-clone-function-list-acc functions IrFunctionNil)
+      IrFunctionNil)))
 
 (define (compiler-ir-clone-global [global : CompilerIrGlobal]) : CompilerIrGlobal
   (match global
@@ -1993,98 +2085,271 @@
       (compiler-ir-block-list-instruction-count
         (compiler-ir-block-seq-to-list seq))]))
 
+(define (compiler-ir-function-block-count [func : CompilerIrFunction]) : i64
+  (match func
+    [(IrFunction _ _ _ _ blocks) (compiler-ir-block-list-count blocks)]))
+
+(define (compiler-ir-function-instruction-count [func : CompilerIrFunction]) : i64
+  (match func
+    [(IrFunction _ _ _ _ blocks)
+      (compiler-ir-block-list-instruction-count blocks)]))
+
+(define (compiler-ir-function-empty-block-count [func : CompilerIrFunction]) : i64
+  (match func
+    [(IrFunction _ _ _ _ blocks) (compiler-ir-block-list-empty-count blocks)]))
+
+(define (compiler-ir-function-max-instruction-count [func : CompilerIrFunction]) : i64
+  (match func
+    [(IrFunction _ _ _ _ blocks)
+      (compiler-ir-block-list-instruction-count blocks)]))
+
+(define (compiler-ir-function-max-block-instruction-count
+  [func : CompilerIrFunction]) : i64
+  (match func
+    [(IrFunction _ _ _ _ blocks)
+      (compiler-ir-block-list-max-instruction-count blocks)]))
+
+(define (compiler-ir-function-call-arg-count [func : CompilerIrFunction]) : i64
+  (match func
+    [(IrFunction _ _ _ _ blocks) (compiler-ir-block-list-call-arg-count blocks)]))
+
+(define (compiler-ir-function-phi-input-count [func : CompilerIrFunction]) : i64
+  (match func
+    [(IrFunction _ _ _ _ blocks)
+      (compiler-ir-block-list-phi-input-count blocks)]))
+
+(define (compiler-ir-function-var-count [func : CompilerIrFunction]) : i64
+  (match func
+    [(IrFunction _ _ _ vars _) vars]))
+
+(define (compiler-ir-function-seq-block-count
+  [functions : CompilerIrFunctionSeq]) : i64
+  (let
+    [slots : (Array CompilerIrFunction) (struct-get functions slots)]
+    [count : i64 (struct-get functions len)]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+ acc (compiler-ir-function-block-count (array-ref slots index))))
+          (set! index (+ index 1))))
+      acc)))
+
+(define (compiler-ir-function-seq-instruction-count
+  [functions : CompilerIrFunctionSeq]) : i64
+  (let
+    [slots : (Array CompilerIrFunction) (struct-get functions slots)]
+    [count : i64 (struct-get functions len)]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+
+              acc
+              (compiler-ir-function-instruction-count (array-ref slots index))))
+          (set! index (+ index 1))))
+      acc)))
+
+(define (compiler-ir-function-seq-empty-block-count
+  [functions : CompilerIrFunctionSeq]) : i64
+  (let
+    [slots : (Array CompilerIrFunction) (struct-get functions slots)]
+    [count : i64 (struct-get functions len)]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+
+              acc
+              (compiler-ir-function-empty-block-count (array-ref slots index))))
+          (set! index (+ index 1))))
+      acc)))
+
+(define (compiler-ir-function-seq-max-instruction-count
+  [functions : CompilerIrFunctionSeq]) : i64
+  (let
+    [slots : (Array CompilerIrFunction) (struct-get functions slots)]
+    [count : i64 (struct-get functions len)]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (compiler-ir-max-i64
+              acc
+              (compiler-ir-function-max-instruction-count
+                (array-ref slots index))))
+          (set! index (+ index 1))))
+      acc)))
+
+(define (compiler-ir-function-seq-max-block-instruction-count
+  [functions : CompilerIrFunctionSeq]) : i64
+  (let
+    [slots : (Array CompilerIrFunction) (struct-get functions slots)]
+    [count : i64 (struct-get functions len)]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (compiler-ir-max-i64
+              acc
+              (compiler-ir-function-max-block-instruction-count
+                (array-ref slots index))))
+          (set! index (+ index 1))))
+      acc)))
+
+(define (compiler-ir-function-seq-call-arg-count
+  [functions : CompilerIrFunctionSeq]) : i64
+  (let
+    [slots : (Array CompilerIrFunction) (struct-get functions slots)]
+    [count : i64 (struct-get functions len)]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+
+              acc
+              (compiler-ir-function-call-arg-count (array-ref slots index))))
+          (set! index (+ index 1))))
+      acc)))
+
+(define (compiler-ir-function-seq-phi-input-count
+  [functions : CompilerIrFunctionSeq]) : i64
+  (let
+    [slots : (Array CompilerIrFunction) (struct-get functions slots)]
+    [count : i64 (struct-get functions len)]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+
+              acc
+              (compiler-ir-function-phi-input-count (array-ref slots index))))
+          (set! index (+ index 1))))
+      acc)))
+
+(define (compiler-ir-function-seq-var-count [functions : CompilerIrFunctionSeq]) : i64
+  (let
+    [slots : (Array CompilerIrFunction) (struct-get functions slots)]
+    [count : i64 (struct-get functions len)]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+ acc (compiler-ir-function-var-count (array-ref slots index))))
+          (set! index (+ index 1))))
+      acc)))
+
 (define (compiler-ir-function-list-count [functions : CompilerIrFunctionList]) : i64
   (match functions
     [(IrFunctionNil) 0]
     [(IrFunctionCons _ rest)
-      (+ 1 (compiler-ir-function-list-count (box-get rest)))]))
+      (+ 1 (compiler-ir-function-list-count (box-get rest)))]
+    [(IrFunctionArray seq) (compiler-ir-function-seq-count seq)]))
 
 (define (compiler-ir-function-list-block-count
   [functions : CompilerIrFunctionList]) : i64
   (match functions
     [(IrFunctionNil) 0]
     [(IrFunctionCons func rest)
-      (match func
-        [(IrFunction _ _ _ _ blocks)
-          (+
-            (compiler-ir-block-list-count blocks)
-            (compiler-ir-function-list-block-count (box-get rest)))])]))
+      (+
+        (compiler-ir-function-block-count func)
+        (compiler-ir-function-list-block-count (box-get rest)))]
+    [(IrFunctionArray seq) (compiler-ir-function-seq-block-count seq)]))
 
 (define (compiler-ir-function-list-instruction-count
   [functions : CompilerIrFunctionList]) : i64
   (match functions
     [(IrFunctionNil) 0]
     [(IrFunctionCons func rest)
-      (match func
-        [(IrFunction _ _ _ _ blocks)
-          (+
-            (compiler-ir-block-list-instruction-count blocks)
-            (compiler-ir-function-list-instruction-count (box-get rest)))])]))
+      (+
+        (compiler-ir-function-instruction-count func)
+        (compiler-ir-function-list-instruction-count (box-get rest)))]
+    [(IrFunctionArray seq) (compiler-ir-function-seq-instruction-count seq)]))
 
 (define (compiler-ir-function-list-empty-block-count
   [functions : CompilerIrFunctionList]) : i64
   (match functions
     [(IrFunctionNil) 0]
     [(IrFunctionCons func rest)
-      (match func
-        [(IrFunction _ _ _ _ blocks)
-          (+
-            (compiler-ir-block-list-empty-count blocks)
-            (compiler-ir-function-list-empty-block-count (box-get rest)))])]))
+      (+
+        (compiler-ir-function-empty-block-count func)
+        (compiler-ir-function-list-empty-block-count (box-get rest)))]
+    [(IrFunctionArray seq) (compiler-ir-function-seq-empty-block-count seq)]))
 
 (define (compiler-ir-function-list-max-instruction-count
   [functions : CompilerIrFunctionList]) : i64
   (match functions
     [(IrFunctionNil) 0]
     [(IrFunctionCons func rest)
-      (match func
-        [(IrFunction _ _ _ _ blocks)
-          (compiler-ir-max-i64
-            (compiler-ir-block-list-instruction-count blocks)
-            (compiler-ir-function-list-max-instruction-count (box-get rest)))])]))
+      (compiler-ir-max-i64
+        (compiler-ir-function-max-instruction-count func)
+        (compiler-ir-function-list-max-instruction-count (box-get rest)))]
+    [(IrFunctionArray seq) (compiler-ir-function-seq-max-instruction-count seq)]))
 
 (define (compiler-ir-function-list-max-block-instruction-count
   [functions : CompilerIrFunctionList]) : i64
   (match functions
     [(IrFunctionNil) 0]
     [(IrFunctionCons func rest)
-      (match func
-        [(IrFunction _ _ _ _ blocks)
-          (compiler-ir-max-i64
-            (compiler-ir-block-list-max-instruction-count blocks)
-            (compiler-ir-function-list-max-block-instruction-count
-              (box-get rest)))])]))
+      (compiler-ir-max-i64
+        (compiler-ir-function-max-block-instruction-count func)
+        (compiler-ir-function-list-max-block-instruction-count (box-get rest)))]
+    [(IrFunctionArray seq)
+      (compiler-ir-function-seq-max-block-instruction-count seq)]))
 
 (define (compiler-ir-function-list-call-arg-count
   [functions : CompilerIrFunctionList]) : i64
   (match functions
     [(IrFunctionNil) 0]
     [(IrFunctionCons func rest)
-      (match func
-        [(IrFunction _ _ _ _ blocks)
-          (+
-            (compiler-ir-block-list-call-arg-count blocks)
-            (compiler-ir-function-list-call-arg-count (box-get rest)))])]))
+      (+
+        (compiler-ir-function-call-arg-count func)
+        (compiler-ir-function-list-call-arg-count (box-get rest)))]
+    [(IrFunctionArray seq) (compiler-ir-function-seq-call-arg-count seq)]))
 
 (define (compiler-ir-function-list-phi-input-count
   [functions : CompilerIrFunctionList]) : i64
   (match functions
     [(IrFunctionNil) 0]
     [(IrFunctionCons func rest)
-      (match func
-        [(IrFunction _ _ _ _ blocks)
-          (+
-            (compiler-ir-block-list-phi-input-count blocks)
-            (compiler-ir-function-list-phi-input-count (box-get rest)))])]))
+      (+
+        (compiler-ir-function-phi-input-count func)
+        (compiler-ir-function-list-phi-input-count (box-get rest)))]
+    [(IrFunctionArray seq) (compiler-ir-function-seq-phi-input-count seq)]))
 
 (define (compiler-ir-function-list-var-count
   [functions : CompilerIrFunctionList]) : i64
   (match functions
     [(IrFunctionNil) 0]
     [(IrFunctionCons func rest)
-      (match func
-        [(IrFunction _ _ _ vars _)
-          (+ vars (compiler-ir-function-list-var-count (box-get rest)))])]))
+      (+
+        (compiler-ir-function-var-count func)
+        (compiler-ir-function-list-var-count (box-get rest)))]
+    [(IrFunctionArray seq) (compiler-ir-function-seq-var-count seq)]))
 
 (define (compiler-ir-program-summary [program : CompilerIrProgram]) : CompilerIrSummary
   (match program

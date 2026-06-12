@@ -459,12 +459,16 @@
 (define (lower-function-list-reverse-onto
   [functions : CompilerIrFunctionList]
   [acc : CompilerIrFunctionList]) : CompilerIrFunctionList
-  (match functions
+  (match (compiler-ir-function-list-force-cons functions)
     [(IrFunctionNil) acc]
     [(IrFunctionCons head rest)
       (lower-function-list-reverse-onto
         (box-get rest)
-        (compiler-ir-function-cons head acc))]))
+        (compiler-ir-function-cons head acc))]
+    [(IrFunctionArray seq)
+      (lower-function-list-reverse-onto
+        (compiler-ir-function-seq-to-list seq)
+        acc)]))
 
 (define (lower-function-list-reverse [functions : CompilerIrFunctionList]) : CompilerIrFunctionList
   (lower-function-list-reverse-onto functions IrFunctionNil))
@@ -472,12 +476,14 @@
 (define (lower-function-list-append
   [left : CompilerIrFunctionList]
   [right : CompilerIrFunctionList]) : CompilerIrFunctionList
-  (match left
+  (match (compiler-ir-function-list-force-cons left)
     [(IrFunctionNil) right]
     [(IrFunctionCons head rest)
       (compiler-ir-function-cons
         head
-        (lower-function-list-append (box-get rest) right))]))
+        (lower-function-list-append (box-get rest) right))]
+    [(IrFunctionArray seq)
+      (lower-function-list-append (compiler-ir-function-seq-to-list seq) right)]))
 
 (define (lower-extern-list-reverse-onto
   [externs : CompilerIrExternList]
@@ -26828,7 +26834,12 @@
             names
             mode)
             [(OkLowerDecls globals functions externs spans)
-              (OkCompilerLower (IrProgram globals functions externs) spans)]
+              (OkCompilerLower
+                (IrProgram
+                  globals
+                  (compiler-ir-function-list-compact functions)
+                  externs)
+                spans)]
             [(ErrLowerDecls message) (ErrCompilerLower message)]))])))
 
 (define (lower-compiler-program-checked-with-names
@@ -30411,7 +30422,9 @@
         [(IrFunction fname _ _ _ _)
           (if (string-eq fname name)
             true
-            (lower-test-function-defined? (box-get rest) name))])]))
+            (lower-test-function-defined? (box-get rest) name))])]
+    [(IrFunctionArray seq)
+      (lower-test-function-defined? (compiler-ir-function-seq-to-list seq) name)]))
 
 (define (lower-test-function-phi-count
   [funcs : CompilerIrFunctionList]
@@ -30423,7 +30436,11 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-phi-count blocks)
-            (lower-test-function-phi-count (box-get rest) name))])]))
+            (lower-test-function-phi-count (box-get rest) name))])]
+    [(IrFunctionArray seq)
+      (lower-test-function-phi-count
+        (compiler-ir-function-seq-to-list seq)
+        name)]))
 
 (define (lower-test-function-load-count
   [funcs : CompilerIrFunctionList]
@@ -30435,7 +30452,11 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-load-count blocks)
-            (lower-test-function-load-count (box-get rest) name))])]))
+            (lower-test-function-load-count (box-get rest) name))])]
+    [(IrFunctionArray seq)
+      (lower-test-function-load-count
+        (compiler-ir-function-seq-to-list seq)
+        name)]))
 
 (define (lower-test-function-branch-count
   [funcs : CompilerIrFunctionList]
@@ -30447,7 +30468,11 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-branch-count blocks)
-            (lower-test-function-branch-count (box-get rest) name))])]))
+            (lower-test-function-branch-count (box-get rest) name))])]
+    [(IrFunctionArray seq)
+      (lower-test-function-branch-count
+        (compiler-ir-function-seq-to-list seq)
+        name)]))
 
 (define (lower-test-function-bounds-count
   [funcs : CompilerIrFunctionList]
@@ -30459,7 +30484,11 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-bounds-count blocks)
-            (lower-test-function-bounds-count (box-get rest) name))])]))
+            (lower-test-function-bounds-count (box-get rest) name))])]
+    [(IrFunctionArray seq)
+      (lower-test-function-bounds-count
+        (compiler-ir-function-seq-to-list seq)
+        name)]))
 
 (define (lower-test-function-return-count
   [funcs : CompilerIrFunctionList]
@@ -30471,7 +30500,11 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-return-count blocks)
-            (lower-test-function-return-count (box-get rest) name))])]))
+            (lower-test-function-return-count (box-get rest) name))])]
+    [(IrFunctionArray seq)
+      (lower-test-function-return-count
+        (compiler-ir-function-seq-to-list seq)
+        name)]))
 
 (define (lower-test-functions-call-count
   [funcs : CompilerIrFunctionList]
@@ -30483,7 +30516,11 @@
         [(IrFunction _ _ _ _ blocks)
           (+
             (lower-test-blocks-call-count blocks name)
-            (lower-test-functions-call-count (box-get rest) name))])]))
+            (lower-test-functions-call-count (box-get rest) name))])]
+    [(IrFunctionArray seq)
+      (lower-test-functions-call-count
+        (compiler-ir-function-seq-to-list seq)
+        name)]))
 
 (define (lower-test-functions-tail-call-count
   [funcs : CompilerIrFunctionList]
@@ -30495,7 +30532,11 @@
         [(IrFunction _ _ _ _ blocks)
           (+
             (lower-test-blocks-tail-call-count blocks name)
-            (lower-test-functions-tail-call-count (box-get rest) name))])]))
+            (lower-test-functions-tail-call-count (box-get rest) name))])]
+    [(IrFunctionArray seq)
+      (lower-test-functions-tail-call-count
+        (compiler-ir-function-seq-to-list seq)
+        name)]))
 
 (define (lower-test-functions-direct-call-count
   [funcs : CompilerIrFunctionList]
@@ -30512,7 +30553,9 @@
         [(IrFunction _ _ _ _ blocks)
           (+
             (lower-test-blocks-cpuid-count blocks)
-            (lower-test-functions-cpuid-count (box-get rest)))])]))
+            (lower-test-functions-cpuid-count (box-get rest)))])]
+    [(IrFunctionArray seq)
+      (lower-test-functions-cpuid-count (compiler-ir-function-seq-to-list seq))]))
 
 (define (lower-test-functions-xgetbv-count [funcs : CompilerIrFunctionList]) : i64
   (match funcs
@@ -30522,7 +30565,9 @@
         [(IrFunction _ _ _ _ blocks)
           (+
             (lower-test-blocks-xgetbv-count blocks)
-            (lower-test-functions-xgetbv-count (box-get rest)))])]))
+            (lower-test-functions-xgetbv-count (box-get rest)))])]
+    [(IrFunctionArray seq)
+      (lower-test-functions-xgetbv-count (compiler-ir-function-seq-to-list seq))]))
 
 (define (lower-test-function-call-count
   [funcs : CompilerIrFunctionList]
@@ -30535,7 +30580,12 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-call-count blocks call-name)
-            (lower-test-function-call-count (box-get rest) name call-name))])]))
+            (lower-test-function-call-count (box-get rest) name call-name))])]
+    [(IrFunctionArray seq)
+      (lower-test-function-call-count
+        (compiler-ir-function-seq-to-list seq)
+        name
+        call-name)]))
 
 (define (lower-test-function-call-before?
   [funcs : CompilerIrFunctionList]
@@ -30549,7 +30599,13 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-call-before? blocks first second)
-            (lower-test-function-call-before? (box-get rest) name first second))])]))
+            (lower-test-function-call-before? (box-get rest) name first second))])]
+    [(IrFunctionArray seq)
+      (lower-test-function-call-before?
+        (compiler-ir-function-seq-to-list seq)
+        name
+        first
+        second)]))
 
 (define (lower-test-function-indirect-call-count
   [funcs : CompilerIrFunctionList]
@@ -30561,7 +30617,11 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-indirect-call-count blocks)
-            (lower-test-function-indirect-call-count (box-get rest) name))])]))
+            (lower-test-function-indirect-call-count (box-get rest) name))])]
+    [(IrFunctionArray seq)
+      (lower-test-function-indirect-call-count
+        (compiler-ir-function-seq-to-list seq)
+        name)]))
 
 (define (lower-test-function-indirect-tail-call-count
   [funcs : CompilerIrFunctionList]
@@ -30573,7 +30633,11 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-indirect-tail-call-count blocks)
-            (lower-test-function-indirect-tail-call-count (box-get rest) name))])]))
+            (lower-test-function-indirect-tail-call-count (box-get rest) name))])]
+    [(IrFunctionArray seq)
+      (lower-test-function-indirect-tail-call-count
+        (compiler-ir-function-seq-to-list seq)
+        name)]))
 
 (define (lower-test-function-indirect-c-call-count
   [funcs : CompilerIrFunctionList]
@@ -30585,7 +30649,11 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-indirect-c-call-count blocks)
-            (lower-test-function-indirect-c-call-count (box-get rest) name))])]))
+            (lower-test-function-indirect-c-call-count (box-get rest) name))])]
+    [(IrFunctionArray seq)
+      (lower-test-function-indirect-c-call-count
+        (compiler-ir-function-seq-to-list seq)
+        name)]))
 
 (define (lower-test-function-indirect-unit-count
   [funcs : CompilerIrFunctionList]
@@ -30597,7 +30665,11 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-indirect-unit-count blocks)
-            (lower-test-function-indirect-unit-count (box-get rest) name))])]))
+            (lower-test-function-indirect-unit-count (box-get rest) name))])]
+    [(IrFunctionArray seq)
+      (lower-test-function-indirect-unit-count
+        (compiler-ir-function-seq-to-list seq)
+        name)]))
 
 (define (lower-test-function-return-function-count
   [funcs : CompilerIrFunctionList]
@@ -30613,7 +30685,12 @@
             (lower-test-function-return-function-count
               (box-get rest)
               name
-              function-name))])]))
+              function-name))])]
+    [(IrFunctionArray seq)
+      (lower-test-function-return-function-count
+        (compiler-ir-function-seq-to-list seq)
+        name
+        function-name)]))
 
 (define (lower-test-function-indirect-callee-function-count
   [funcs : CompilerIrFunctionList]
@@ -30631,7 +30708,12 @@
             (lower-test-function-indirect-callee-function-count
               (box-get rest)
               name
-              function-name))])]))
+              function-name))])]
+    [(IrFunctionArray seq)
+      (lower-test-function-indirect-callee-function-count
+        (compiler-ir-function-seq-to-list seq)
+        name
+        function-name)]))
 
 (define (lower-test-function-call-arg-function-count
   [funcs : CompilerIrFunctionList]
@@ -30652,7 +30734,13 @@
               (box-get rest)
               name
               call-name
-              function-name))])]))
+              function-name))])]
+    [(IrFunctionArray seq)
+      (lower-test-function-call-arg-function-count
+        (compiler-ir-function-seq-to-list seq)
+        name
+        call-name
+        function-name)]))
 
 (define (lower-test-function-tail-call-count
   [funcs : CompilerIrFunctionList]
@@ -30665,7 +30753,12 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-tail-call-count blocks call-name)
-            (lower-test-function-tail-call-count (box-get rest) name call-name))])]))
+            (lower-test-function-tail-call-count (box-get rest) name call-name))])]
+    [(IrFunctionArray seq)
+      (lower-test-function-tail-call-count
+        (compiler-ir-function-seq-to-list seq)
+        name
+        call-name)]))
 
 (define (lower-test-function-direct-call-count
   [funcs : CompilerIrFunctionList]
@@ -30685,7 +30778,11 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-store-ptr-count blocks)
-            (lower-test-function-store-ptr-count (box-get rest) name))])]))
+            (lower-test-function-store-ptr-count (box-get rest) name))])]
+    [(IrFunctionArray seq)
+      (lower-test-function-store-ptr-count
+        (compiler-ir-function-seq-to-list seq)
+        name)]))
 
 (define (lower-test-function-copy-bytes-count
   [funcs : CompilerIrFunctionList]
@@ -30697,7 +30794,11 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-copy-bytes-count blocks)
-            (lower-test-function-copy-bytes-count (box-get rest) name))])]))
+            (lower-test-function-copy-bytes-count (box-get rest) name))])]
+    [(IrFunctionArray seq)
+      (lower-test-function-copy-bytes-count
+        (compiler-ir-function-seq-to-list seq)
+        name)]))
 
 (define (lower-test-function-alloc-count
   [funcs : CompilerIrFunctionList]
@@ -30709,7 +30810,11 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-alloc-count blocks)
-            (lower-test-function-alloc-count (box-get rest) name))])]))
+            (lower-test-function-alloc-count (box-get rest) name))])]
+    [(IrFunctionArray seq)
+      (lower-test-function-alloc-count
+        (compiler-ir-function-seq-to-list seq)
+        name)]))
 
 (define (lower-test-function-addr-of-count
   [funcs : CompilerIrFunctionList]
@@ -30721,7 +30826,11 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-addr-of-count blocks)
-            (lower-test-function-addr-of-count (box-get rest) name))])]))
+            (lower-test-function-addr-of-count (box-get rest) name))])]
+    [(IrFunctionArray seq)
+      (lower-test-function-addr-of-count
+        (compiler-ir-function-seq-to-list seq)
+        name)]))
 
 (define (lower-test-function-vector-load-count
   [funcs : CompilerIrFunctionList]
@@ -30733,7 +30842,11 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-vector-load-count blocks)
-            (lower-test-function-vector-load-count (box-get rest) name))])]))
+            (lower-test-function-vector-load-count (box-get rest) name))])]
+    [(IrFunctionArray seq)
+      (lower-test-function-vector-load-count
+        (compiler-ir-function-seq-to-list seq)
+        name)]))
 
 (define (lower-test-function-vector-binop-count
   [funcs : CompilerIrFunctionList]
@@ -30745,7 +30858,11 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-vector-binop-count blocks)
-            (lower-test-function-vector-binop-count (box-get rest) name))])]))
+            (lower-test-function-vector-binop-count (box-get rest) name))])]
+    [(IrFunctionArray seq)
+      (lower-test-function-vector-binop-count
+        (compiler-ir-function-seq-to-list seq)
+        name)]))
 
 (define (lower-test-function-vector-reduce-count
   [funcs : CompilerIrFunctionList]
@@ -30757,7 +30874,11 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-vector-reduce-count blocks)
-            (lower-test-function-vector-reduce-count (box-get rest) name))])]))
+            (lower-test-function-vector-reduce-count (box-get rest) name))])]
+    [(IrFunctionArray seq)
+      (lower-test-function-vector-reduce-count
+        (compiler-ir-function-seq-to-list seq)
+        name)]))
 
 (define (lower-test-function-vector-store-count
   [funcs : CompilerIrFunctionList]
@@ -30769,7 +30890,11 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-vector-store-count blocks)
-            (lower-test-function-vector-store-count (box-get rest) name))])]))
+            (lower-test-function-vector-store-count (box-get rest) name))])]
+    [(IrFunctionArray seq)
+      (lower-test-function-vector-store-count
+        (compiler-ir-function-seq-to-list seq)
+        name)]))
 
 (define (lower-test-function-predicated-load-count
   [funcs : CompilerIrFunctionList]
@@ -30781,7 +30906,11 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-predicated-load-count blocks)
-            (lower-test-function-predicated-load-count (box-get rest) name))])]))
+            (lower-test-function-predicated-load-count (box-get rest) name))])]
+    [(IrFunctionArray seq)
+      (lower-test-function-predicated-load-count
+        (compiler-ir-function-seq-to-list seq)
+        name)]))
 
 (define (lower-test-function-predicated-store-count
   [funcs : CompilerIrFunctionList]
@@ -30793,7 +30922,11 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-predicated-store-count blocks)
-            (lower-test-function-predicated-store-count (box-get rest) name))])]))
+            (lower-test-function-predicated-store-count (box-get rest) name))])]
+    [(IrFunctionArray seq)
+      (lower-test-function-predicated-store-count
+        (compiler-ir-function-seq-to-list seq)
+        name)]))
 
 (define (lower-test-function-tail-mask-count
   [funcs : CompilerIrFunctionList]
@@ -30805,7 +30938,11 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-tail-mask-count blocks)
-            (lower-test-function-tail-mask-count (box-get rest) name))])]))
+            (lower-test-function-tail-mask-count (box-get rest) name))])]
+    [(IrFunctionArray seq)
+      (lower-test-function-tail-mask-count
+        (compiler-ir-function-seq-to-list seq)
+        name)]))
 
 (define (lower-test-function-vector-shape-count
   [funcs : CompilerIrFunctionList]
@@ -30823,7 +30960,13 @@
               (box-get rest)
               name
               lanes
-              elem-ty))])]))
+              elem-ty))])]
+    [(IrFunctionArray seq)
+      (lower-test-function-vector-shape-count
+        (compiler-ir-function-seq-to-list seq)
+        name
+        lanes
+        elem-ty)]))
 
 (define (lower-test-function-u64-mov-count
   [funcs : CompilerIrFunctionList]
@@ -30835,7 +30978,11 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-u64-mov-count blocks)
-            (lower-test-function-u64-mov-count (box-get rest) name))])]))
+            (lower-test-function-u64-mov-count (box-get rest) name))])]
+    [(IrFunctionArray seq)
+      (lower-test-function-u64-mov-count
+        (compiler-ir-function-seq-to-list seq)
+        name)]))
 
 (define (lower-test-function-binop-op-count
   [funcs : CompilerIrFunctionList]
@@ -30848,7 +30995,12 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-binop-op-count blocks op)
-            (lower-test-function-binop-op-count (box-get rest) name op))])]))
+            (lower-test-function-binop-op-count (box-get rest) name op))])]
+    [(IrFunctionArray seq)
+      (lower-test-function-binop-op-count
+        (compiler-ir-function-seq-to-list seq)
+        name
+        op)]))
 
 (define (lower-test-function-cast-count
   [funcs : CompilerIrFunctionList]
@@ -30860,7 +31012,11 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-cast-count blocks)
-            (lower-test-function-cast-count (box-get rest) name))])]))
+            (lower-test-function-cast-count (box-get rest) name))])]
+    [(IrFunctionArray seq)
+      (lower-test-function-cast-count
+        (compiler-ir-function-seq-to-list seq)
+        name)]))
 
 (define (lower-test-function-store-global-count
   [funcs : CompilerIrFunctionList]
@@ -30876,7 +31032,12 @@
             (lower-test-function-store-global-count
               (box-get rest)
               name
-              global-name))])]))
+              global-name))])]
+    [(IrFunctionArray seq)
+      (lower-test-function-store-global-count
+        (compiler-ir-function-seq-to-list seq)
+        name
+        global-name)]))
 
 (define (lower-test-global-list-has-name?
   [globals : CompilerIrGlobalList]
@@ -31959,7 +32120,12 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-i64-mov-count blocks want)
-            (lower-test-function-i64-mov-count (box-get rest) name want))])]))
+            (lower-test-function-i64-mov-count (box-get rest) name want))])]
+    [(IrFunctionArray seq)
+      (lower-test-function-i64-mov-count
+        (compiler-ir-function-seq-to-list seq)
+        name
+        want)]))
 
 (define (lower-test-function-f64-mov-count
   [funcs : CompilerIrFunctionList]
@@ -31972,7 +32138,12 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-f64-mov-count blocks want)
-            (lower-test-function-f64-mov-count (box-get rest) name want))])]))
+            (lower-test-function-f64-mov-count (box-get rest) name want))])]
+    [(IrFunctionArray seq)
+      (lower-test-function-f64-mov-count
+        (compiler-ir-function-seq-to-list seq)
+        name
+        want)]))
 
 (define (lower-test-function-binop-count
   [funcs : CompilerIrFunctionList]
@@ -31984,7 +32155,11 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-binop-count blocks)
-            (lower-test-function-binop-count (box-get rest) name))])]))
+            (lower-test-function-binop-count (box-get rest) name))])]
+    [(IrFunctionArray seq)
+      (lower-test-function-binop-count
+        (compiler-ir-function-seq-to-list seq)
+        name)]))
 
 (define (lower-test-function-gep-offset-count
   [funcs : CompilerIrFunctionList]
@@ -31997,7 +32172,12 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-gep-offset-count blocks want)
-            (lower-test-function-gep-offset-count (box-get rest) name want))])]))
+            (lower-test-function-gep-offset-count (box-get rest) name want))])]
+    [(IrFunctionArray seq)
+      (lower-test-function-gep-offset-count
+        (compiler-ir-function-seq-to-list seq)
+        name
+        want)]))
 
 (define (compiler-lower-comptime-fold-ok? [src : String] [want : i64]) : bool
   (match (lower-compiler-source src)

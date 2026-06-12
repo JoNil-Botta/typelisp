@@ -1,9 +1,11 @@
 ;; test_cli_core.tl - Selfhost test command logic.
 ;;
-;; Discovers `(test name body...)` declarations through the selfhost loader,
-;; lowers them into private unit-returning functions plus a generated `main`,
-;; then assembles, links, and runs that generated harness directly. Normal
-;; compile paths ignore `AstDeclTest`.
+;; Discovers source-owned `(test name body...)` declarations through the
+;; selfhost loader, lowers them into private unit-returning functions plus a
+;; generated `main`, then assembles, links, and runs that generated harness
+;; directly. Imported files provide runtime declarations but do not contribute
+;; their own tests to this source's harness. Normal compile paths ignore
+;; `AstDeclTest`.
 (import "../stdlib/core_macros.tl" module stdlib.core-macros as core)
 
 (import "../stdlib/io.tl")
@@ -454,7 +456,11 @@
 (define (tltest-private-name [idx : i64]) : String
   (string-append "__tl_inline_test_" (int->string idx)))
 
+(define (tltest-owned-test-path? [target-path : String] [decl-path : String]) : bool
+  (string-eq target-path (compiler-load-normalize-path decl-path)))
+
 (define (tltest-collect-in
+  [target-path : String]
   [decls : AstDeclList]
   [paths : AstDeclPathList]
   [runtime-decls : (Array AstDecl)]
@@ -478,29 +484,39 @@
             [(AstDeclPathNil) AstDeclPathNil])]
         (match decl
           [(AstDeclTest name body-box span)
-            (let
-              [body : i64 body-box]
-              [test-count : i64 (array-length tests)]
-              (begin
-                (array-push!
-                  tests
-                  (InlineTest
-                    (intern-str name)
-                    decl-path
-                    (tltest-source-line span)
-                    body
-                    (tltest-private-name test-count)))
-                (tltest-collect-in
-                  rest
-                  rest-paths
-                  runtime-decls
-                  runtime-paths
-                  tests)))]
+            (if (tltest-owned-test-path? target-path decl-path)
+              (let
+                [body : i64 body-box]
+                [test-count : i64 (array-length tests)]
+                (begin
+                  (array-push!
+                    tests
+                    (InlineTest
+                      (intern-str name)
+                      decl-path
+                      (tltest-source-line span)
+                      body
+                      (tltest-private-name test-count)))
+                  (tltest-collect-in
+                    target-path
+                    rest
+                    rest-paths
+                    runtime-decls
+                    runtime-paths
+                    tests)))
+              (tltest-collect-in
+                target-path
+                rest
+                rest-paths
+                runtime-decls
+                runtime-paths
+                tests))]
           [(AstDeclImport _)
             (begin
               (array-push! runtime-decls decl)
               (array-push! runtime-paths decl-path)
               (tltest-collect-in
+                target-path
                 rest
                 rest-paths
                 runtime-decls
@@ -508,6 +524,7 @@
                 tests))]
           [(AstDeclIncludeStr _ _)
             (tltest-collect-in
+              target-path
               rest
               rest-paths
               runtime-decls
@@ -516,6 +533,7 @@
           [_
             (if (tltest-main-decl? decl)
               (tltest-collect-in
+                target-path
                 rest
                 rest-paths
                 runtime-decls
@@ -525,14 +543,19 @@
                 (array-push! runtime-decls decl)
                 (array-push! runtime-paths decl-path)
                 (tltest-collect-in
+                  target-path
                   rest
                   rest-paths
                   runtime-decls
                   runtime-paths
                   tests)))]))]))
 
-(define (tltest-collect [decls : AstDeclList] [paths : AstDeclPathList]) : InlineCollect
+(define (tltest-collect
+  [source : String]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]) : InlineCollect
   (tltest-collect-in
+    (compiler-load-normalize-path source)
     decls
     paths
     (make-array AstDecl 0)
@@ -1320,7 +1343,7 @@
   [source : String]
   [decls : AstDeclList]
   [paths : AstDeclPathList]) : InlineHarness
-  (match (tltest-collect decls paths)
+  (match (tltest-collect source decls paths)
     [(InlineCollect runtime-decls runtime-paths tests)
       (match (tltest-prune-runtime-decls runtime-decls runtime-paths tests)
         [(InlineRuntimeDecls pruned-decls pruned-paths)
@@ -1399,8 +1422,8 @@
       (ast-decl-path-cons
         "runtime.tl"
         (ast-decl-path-cons
-          "one.tl"
-          (ast-decl-path-cons "two.tl" AstDeclPathNil)))]
+          "driver.tl"
+          (ast-decl-path-cons "driver.tl" AstDeclPathNil)))]
     (match (tltest-build-harness "driver.tl" decls paths)
       [(InlineHarness program harness-paths count)
         (match program
@@ -1418,8 +1441,8 @@
                   "__tl_inline_test_1")
                 (string-eq (tltest-decl-name-at harness-decls 3) "main")
                 (string-eq (tltest-path-at harness-paths 0) "runtime.tl")
-                (string-eq (tltest-path-at harness-paths 1) "one.tl")
-                (string-eq (tltest-path-at harness-paths 2) "two.tl")
+                (string-eq (tltest-path-at harness-paths 1) "driver.tl")
+                (string-eq (tltest-path-at harness-paths 2) "driver.tl")
                 (string-eq (tltest-path-at harness-paths 3) "driver.tl")))])])))
 
 (test
@@ -1427,6 +1450,57 @@
   (if (tltest-vector-builders-self-test?)
     unit
     (panic "test CLI vector builder order mismatch")))
+
+(define (tltest-imported-tests-skipped-self-test?) : bool
+  (let
+    [helper-name : String "__tl_imported_skip_helper"]
+    [helper-decl : AstDecl
+      (ast-decl-def-fn
+        helper-name
+        AstParamNil
+        (AstTyUnit)
+        (ast-node-push (AstExprLiteral (AstLitUnit))))]
+    [owned-span : AstSourceSpan (AstSourceSpan 5 1 5 1)]
+    [imported-span : AstSourceSpan (AstSourceSpan 9 1 9 1)]
+    [decls : AstDeclList
+      (ast-decl-cons
+        helper-decl
+        (ast-decl-cons
+          (ast-decl-test "owned" (tltest-call-expr helper-name) owned-span)
+          (ast-decl-cons
+            (ast-decl-test
+              "imported"
+              (tltest-call-expr helper-name)
+              imported-span)
+            AstDeclNil)))]
+    [paths : AstDeclPathList
+      (ast-decl-path-cons
+        "driver.tl"
+        (ast-decl-path-cons
+          "driver.tl"
+          (ast-decl-path-cons "imported.tl" AstDeclPathNil)))]
+    (match (tltest-build-harness "driver.tl" decls paths)
+      [(InlineHarness program harness-paths count)
+        (match program
+          [(AstProgram harness-decls-box)
+            (let
+              [harness-decls : AstDeclList (box-get harness-decls-box)]
+              (and
+                (= count 1)
+                (string-eq (tltest-decl-name-at harness-decls 0) helper-name)
+                (string-eq
+                  (tltest-decl-name-at harness-decls 1)
+                  "__tl_inline_test_0")
+                (string-eq (tltest-decl-name-at harness-decls 2) "main")
+                (string-eq (tltest-path-at harness-paths 0) "driver.tl")
+                (string-eq (tltest-path-at harness-paths 1) "driver.tl")
+                (string-eq (tltest-path-at harness-paths 2) "driver.tl")))])])))
+
+(test
+  test-cli-inline-harness-skips-imported-tests
+  (if (tltest-imported-tests-skipped-self-test?)
+    unit
+    (panic "test CLI inline harness kept imported test")))
 
 (define (tltest-import-alias-preserved? [decl : AstDecl]) : bool
   (match decl
@@ -1462,7 +1536,7 @@
       (ast-decl-path-cons
         "alias.tl"
         (ast-decl-path-cons "alias.tl" AstDeclPathNil))]
-    (match (tltest-build-harness "driver.tl" decls paths)
+    (match (tltest-build-harness "alias.tl" decls paths)
       [(InlineHarness program _ count)
         (match program
           [(AstProgram harness-decls-box)
@@ -1511,7 +1585,7 @@
         (ast-decl-path-cons
           "macro-deps.tl"
           (ast-decl-path-cons "macro-deps.tl" AstDeclPathNil)))]
-    (match (tltest-build-harness "driver.tl" decls paths)
+    (match (tltest-build-harness "macro-deps.tl" decls paths)
       [(InlineHarness program _ count)
         (match program
           [(AstProgram harness-decls-box)
@@ -2129,14 +2203,21 @@
       deps
       true)
       [(OkCompilerLoadWithPaths decls paths _ _)
-        (tltest-package-run-one
-          source
-          target
-          opt-level
-          test-mode
-          backend-target
-          decls
-          paths)]
+        (let
+          [owned-source : String
+            (compiler-load-package-owned-path
+              package-owner
+              manifest-dir
+              roots
+              source)]
+          (tltest-package-run-one
+            owned-source
+            target
+            opt-level
+            test-mode
+            backend-target
+            decls
+            paths))]
       [(ErrCompilerLoadWithPaths diag)
         (begin
           (print-error (string-append "test: package source failed: " source))

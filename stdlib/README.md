@@ -399,6 +399,12 @@ because the public `panic` API still takes owned text. Repository CI runs
 `scripts/verify-inline-tests.sh`, so inline tests placed under stdlib modules or
 fixtures are discovered without a manifest edit.
 
+For stdlib work, inline `(test ...)` items are the default for runnable API
+behavior that belongs to one module. Keep `stdlib/tests/` fixtures for
+expected-rejection checks, multi-file/import-shape coverage, resolution and
+embedded-stdlib behavior, host I/O cases with required stdin/stdout/stderr
+contracts, and intentional panic/exit-status checks.
+
 ## Adding a Module
 
 1. Add the module under `stdlib/`, using a stable explicit import path such as
@@ -412,12 +418,11 @@ fixtures are discovered without a manifest edit.
 5. Add new stdlib `.tl` files, including test fixtures, to
    `selfhost/compiler_embedded_stdlib.tl` so installed compiler binaries can use
    them through embedded stdlib fallback.
-6. Add focused fixtures under `stdlib/tests/` and list them in
-   `scripts/verify-stdlib.sh`'s runnable test manifest with expected
-   exit/stdout/stderr or check-only manifest with expected pass/fail behavior.
-7. Add inline `(test ...)` items next to declarations when the check belongs to
-   a specific stdlib API; `scripts/verify-inline-tests.sh` discovers them
-   automatically.
+6. Add inline `(test ...)` items next to declarations for source-local runnable
+   API behavior; `scripts/verify-inline-tests.sh` discovers them automatically.
+7. Add focused fixtures under `stdlib/tests/` only for rejection, multi-file,
+   resolution, host I/O stream, or intentional panic/exit-status coverage, and
+   list them in `scripts/verify-stdlib.sh`'s runnable or check-only manifest.
 8. Document the intended public API coverage in `stdlib/tests/README.md`.
 9. Add `;#` module docs, attached `;:` item docs for every public top-level
    declaration, allocation-behavior notes for allocating APIs, an update to the

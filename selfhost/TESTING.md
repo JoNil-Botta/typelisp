@@ -49,15 +49,18 @@ imports additional selfhost files, keep the compile manifest in sync (see below)
 
 Top-level `(test name body...)` items are source-owned executable checks. Normal
 `check`, `compile`, `build`, and `run` ignore them. `typelisp test <file.tl>`
-loads the import graph, turns tests into private unit-returning functions,
-skips any production `main`, generates a test-owned `main`, and runs the
-resulting executable. With no file, `typelisp test` discovers the nearest
-package and runs package sources that contain top-level inline tests, plus
-package-local `tests/**/*.tl` integration test files. Integration test files run
-as normal programs: a `main` exit status of `0` passes, while any non-zero
-status fails the package test command with exit `1`. `typelisp test --check`
-type-checks generated inline harnesses and integration test files without
-assembling or linking. Package integration discovery skips the reserved
+loads the import graph, turns tests owned by the requested source into private
+unit-returning functions, skips any production `main`, generates a test-owned
+`main`, and runs the resulting executable. Imported files provide runtime
+declarations but do not contribute their own inline tests to that harness. With
+no file, `typelisp test` discovers the nearest package and runs package sources
+that contain top-level inline tests, plus package-local `tests/**/*.tl`
+integration test files; stdlib and dependency imports provide runtime
+declarations only. Integration test files run as normal programs: a `main` exit
+status of `0` passes, while any non-zero status fails the package test command
+with exit `1`. `typelisp test --check` type-checks generated inline harnesses
+and integration test files without assembling or linking. Package integration
+discovery skips the reserved
 `tests/diagnostics/**`, `tests/format_golden/**`, `tests/golden/**`,
 `tests/inline/**`, `tests/no-libc/**`, `tests/public-tools/**`,
 `tests/safety/**`, and `tests/spmd/**` fixture corpora. When

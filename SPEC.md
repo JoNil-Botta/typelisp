@@ -2190,12 +2190,14 @@ contain one or more expressions; multiple expressions are sequenced like
 `begin`.
 
 Normal production commands (`check`, `compile`, `build`, and `run`) ignore
-`test` items. `typelisp test <file.tl>` loads the import graph, lowers every
-inline test into a private unit-returning function, skips any production
-`main`, generates a test-owned `main`, and runs the resulting executable.
-`typelisp test --check <file.tl>` type-checks that generated harness without
-assembling or linking. The current runner is intended for unit-returning test
-bodies; assertion helpers in `stdlib/test.tl` panic on failure.
+`test` items. `typelisp test <file.tl>` loads the import graph, lowers inline
+tests owned by the requested source into private unit-returning functions, skips
+any production `main`, generates a test-owned `main`, and runs the resulting
+executable. Imported files provide runtime declarations but do not contribute
+their own inline tests to that source's harness. `typelisp test --check
+<file.tl>` type-checks the generated harness without assembling or linking. The
+current runner is intended for unit-returning test bodies; assertion helpers in
+`stdlib/test.tl` panic on failure.
 
 Example:
 ```lisp test=check name=inline-test-declaration

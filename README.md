@@ -471,15 +471,18 @@ only public documentation comment syntaxes.
 
 Inline tests can live next to source declarations as `(test name body...)`
 items. Normal `check`, `compile`, `build`, and `run` ignore them. `typelisp
-test <file.tl>` loads the import graph, turns inline tests into private
-unit-returning functions, generates a test-owned `main`, and runs the resulting
-executable. With no file, `typelisp test` discovers the nearest package and runs
-package sources that contain top-level inline tests, plus package-local
-`tests/**/*.tl` integration test files. Integration test files run as normal
-programs: a `main` exit status of `0` passes, while any non-zero status fails
-the package test command with exit `1`. `typelisp test --check` type-checks
-generated inline harnesses and integration test files without assembling or
-linking. Package integration discovery skips reserved fixture corpora such as
+test <file.tl>` loads the import graph, turns inline tests owned by the
+requested source into private unit-returning functions, generates a test-owned
+`main`, and runs the resulting executable. Imported files provide runtime
+declarations but do not contribute their own inline tests to that harness. With
+no file, `typelisp test` discovers the nearest package and runs package sources
+that contain top-level inline tests, plus package-local `tests/**/*.tl`
+integration test files; stdlib and dependency imports provide runtime
+declarations only. Integration test files run as normal programs: a `main` exit
+status of `0` passes, while any non-zero status fails the package test command
+with exit `1`. `typelisp test --check` type-checks generated inline harnesses
+and integration test files without assembling or linking. Package integration
+discovery skips reserved fixture corpora such as
 `tests/diagnostics/**`, `tests/format_golden/**`, `tests/inline/**`,
 `tests/no-libc/**`, `tests/safety/**`, and `tests/spmd/**`; it also leaves
 `tests/integration/**` to explicit integration manifests when

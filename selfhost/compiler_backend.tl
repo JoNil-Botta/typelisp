@@ -6255,7 +6255,11 @@
         [(IrFunction fname params _ _ _)
           (if (string-eq fname name)
             (compiler-backend-param-type-list params)
-            (compiler-backend-function-param-types (box-get rest) name))])]))
+            (compiler-backend-function-param-types (box-get rest) name))])]
+    [(IrFunctionArray seq)
+      (compiler-backend-function-param-types
+        (compiler-ir-function-seq-to-list seq)
+        name)]))
 
 (define (compiler-backend-extern-param-types
   [externs : CompilerIrExternList]
@@ -6283,7 +6287,11 @@
             (CompilerBackendSomeSignature
               (compiler-backend-param-type-list params)
               ret-ty)
-            (compiler-backend-function-signature (box-get rest) name))])]))
+            (compiler-backend-function-signature (box-get rest) name))])]
+    [(IrFunctionArray seq)
+      (compiler-backend-function-signature
+        (compiler-ir-function-seq-to-list seq)
+        name)]))
 
 (define (compiler-backend-extern-signature
   [externs : CompilerIrExternList]
@@ -6305,7 +6313,8 @@
   (match functions
     [(IrFunctionNil) 0]
     [(IrFunctionCons _ rest)
-      (+ 1 (compiler-backend-function-list-count (box-get rest)))]))
+      (+ 1 (compiler-backend-function-list-count (box-get rest)))]
+    [(IrFunctionArray seq) (compiler-ir-function-seq-count seq)]))
 
 (define (compiler-backend-extern-list-count [externs : CompilerIrExternList]) : i64
   (match externs
@@ -6352,7 +6361,14 @@
               (compiler-backend-program-index-bind-name ids name index)
               names
               signatures
-              (+ index 1)))])]))
+              (+ index 1)))])]
+    [(IrFunctionArray seq)
+      (compiler-backend-program-index-functions-into
+        (compiler-ir-function-seq-to-list seq)
+        ids
+        names
+        signatures
+        index)]))
 
 (define (compiler-backend-program-index-extern-signature [ty : AstType]) : CompilerBackendMaybeSignature
   (match ty
@@ -6516,7 +6532,11 @@
         [(IrFunction _ _ _ _ blocks)
           (compiler-backend-collect-group-counts-functions
             (compiler-backend-collect-group-counts-blocks map blocks)
-            (box-get rest))])]))
+            (box-get rest))])]
+    [(IrFunctionArray seq)
+      (compiler-backend-collect-group-counts-functions
+        map
+        (compiler-ir-function-seq-to-list seq))]))
 
 (define (compiler-backend-program-index-build
   [functions : CompilerIrFunctionList]
@@ -6801,7 +6821,13 @@
                 (box-get rest)
                 _plan
                 index
-                (string-i64-map-put seen symbol 1))))])]))
+                (string-i64-map-put seen symbol 1))))])]
+    [(IrFunctionArray seq)
+      (compiler-backend-validate-function-symbols-into
+        (compiler-ir-function-seq-to-list seq)
+        _plan
+        index
+        seen)]))
 
 (define (compiler-backend-validate-extern-symbols-into
   [externs : CompilerIrExternList]
@@ -12686,7 +12712,22 @@
             span-index
             crt-entry
             (text-buf-append buf head))]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))
+        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+    [(IrFunctionArray seq)
+      (compiler-backend-emit-functions-into
+        target
+        mode
+        (compiler-ir-function-seq-to-list seq)
+        all-functions
+        globals
+        global-types
+        externs
+        plan
+        program-index
+        spans
+        span-index
+        crt-entry
+        buf)]))
 
 (define (compiler-backend-emit-functions
   [target : CompilerBackendTarget]
@@ -12811,7 +12852,22 @@
                 (compiler-backend-profile-detail-finish
                   "function"
                   (compiler-backend-profile-function-name func)))
-              (ErrCompilerBackendBuffer message))]))]))
+              (ErrCompilerBackendBuffer message))]))]
+    [(IrFunctionArray seq)
+      (compiler-backend-emit-functions-buffer-into
+        target
+        mode
+        (compiler-ir-function-seq-to-list seq)
+        all-functions
+        globals
+        global-types
+        externs
+        plan
+        program-index
+        spans
+        span-index
+        crt-entry
+        buf)]))
 
 (define (compiler-backend-emit-functions-buffer
   [target : CompilerBackendTarget]
@@ -13369,7 +13425,11 @@
         [(IrFunction _ _ _ _ blocks)
           (compiler-backend-collect-function-collections
             (compiler-backend-collect-block-collections collections blocks)
-            (box-get rest))])]))
+            (box-get rest))])]
+    [(IrFunctionArray seq)
+      (compiler-backend-collect-function-collections
+        collections
+        (compiler-ir-function-seq-to-list seq))]))
 
 (define (compiler-backend-collect-global-collections
   [collections : CompilerBackendProgramCollections]
@@ -13695,7 +13755,11 @@
         [(IrFunction func-name _ _ _ _)
           (if (string-eq func-name name)
             true
-            (compiler-backend-function-list-defines? (box-get rest) name))])]))
+            (compiler-backend-function-list-defines? (box-get rest) name))])]
+    [(IrFunctionArray seq)
+      (compiler-backend-function-list-defines?
+        (compiler-ir-function-seq-to-list seq)
+        name)]))
 
 (define (compiler-backend-extern-list-references?
   [externs : CompilerIrExternList]
@@ -13904,7 +13968,11 @@
             (compiler-backend-runtime-index-blocks
               (compiler-backend-runtime-index-add-define index name)
               blocks)
-            (box-get rest))])]))
+            (box-get rest))])]
+    [(IrFunctionArray seq)
+      (compiler-backend-runtime-index-functions
+        index
+        (compiler-ir-function-seq-to-list seq))]))
 
 (define (compiler-backend-runtime-index-externs
   [index : CompilerBackendRuntimeIndex]
@@ -18088,7 +18156,13 @@ tl_memcpy:
                 program-index)
               (box-get rest)
               plan
-              program-index))])]))
+              program-index))])]
+    [(IrFunctionArray seq)
+      (compiler-backend-object-functions
+        parts
+        (compiler-ir-function-seq-to-list seq)
+        plan
+        program-index)]))
 
 (define (compiler-backend-object-global-value
   [parts : CompilerBackendObjectParts]

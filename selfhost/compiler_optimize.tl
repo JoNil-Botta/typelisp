@@ -2173,7 +2173,10 @@
     [(IrFunctionCons func rest)
       (opt-aggregate-candidate-list-append
         (opt-aggregate-allocation-candidates-function func)
-        (opt-aggregate-allocation-candidates-functions (box-get rest)))]))
+        (opt-aggregate-allocation-candidates-functions (box-get rest)))]
+    [(IrFunctionArray seq)
+      (opt-aggregate-allocation-candidates-functions
+        (compiler-ir-function-seq-to-list seq))]))
 
 (define (opt-aggregate-allocation-candidates [program : CompilerIrProgram]) : OptAggregateAllocCandidateList
   (match program
@@ -3605,7 +3608,11 @@
           (and
             (opt-function-eq ah bh)
             (opt-function-list-eq (box-get at) (box-get bt)))]
-        [_ false])]))
+        [(IrFunctionArray bseq)
+          (opt-function-list-eq a (compiler-ir-function-seq-to-list bseq))]
+        [_ false])]
+    [(IrFunctionArray aseq)
+      (opt-function-list-eq (compiler-ir-function-seq-to-list aseq) b)]))
 
 (define (opt-global-eq [a : CompilerIrGlobal] [b : CompilerIrGlobal]) : bool
   (match a
@@ -6662,7 +6669,9 @@
       (match (opt-verify-function func)
         [(OkCompilerOptimizeVerify) (opt-verify-function-list (box-get rest))]
         [(ErrCompilerOptimizeVerify message)
-          (ErrCompilerOptimizeVerify message)])]))
+          (ErrCompilerOptimizeVerify message)])]
+    [(IrFunctionArray seq)
+      (opt-verify-function-list (compiler-ir-function-seq-to-list seq))]))
 
 (define (opt-verify-program [program : CompilerIrProgram]) : ResultCompilerOptimizeVerify
   (match program
@@ -13712,7 +13721,13 @@
                 (compiler-opt-profile-function-name func)))
             (compiler-ir-function-cons
               optimized
-              (optimize-function-list-escaping (box-get rest) level scratch)))))]))
+              (optimize-function-list-escaping (box-get rest) level scratch)))))]
+    [(IrFunctionArray seq)
+      (compiler-ir-function-list-compact
+        (optimize-function-list-escaping
+          (compiler-ir-function-seq-to-list seq)
+          level
+          scratch))]))
 
 ;; Optimize one function inside `scratch`, compact its blocks there, then escape
 ;; the result by deep-cloning it into the enclosing arena and rewinding `scratch`
@@ -13771,7 +13786,8 @@
 (define (opt-function-list-count [functions : CompilerIrFunctionList]) : i64
   (match functions
     [(IrFunctionNil) 0]
-    [(IrFunctionCons _ rest) (+ 1 (opt-function-list-count (box-get rest)))]))
+    [(IrFunctionCons _ rest) (+ 1 (opt-function-list-count (box-get rest)))]
+    [(IrFunctionArray seq) (compiler-ir-function-seq-count seq)]))
 
 (define (opt-function-index-fill
   [functions : CompilerIrFunctionList]
@@ -13789,7 +13805,13 @@
               (box-get rest)
               (string-i64-map-put ids name index)
               values
-              (+ index 1)))])]))
+              (+ index 1)))])]
+    [(IrFunctionArray seq)
+      (opt-function-index-fill
+        (compiler-ir-function-seq-to-list seq)
+        ids
+        values
+        index)]))
 
 (define (opt-function-index-build [functions : CompilerIrFunctionList]) : OptFunctionIndex
   (let
@@ -14239,7 +14261,12 @@
       (opt-inline-census-functions
         index
         (opt-inline-census-function index census func)
-        (box-get rest))]))
+        (box-get rest))]
+    [(IrFunctionArray seq)
+      (opt-inline-census-functions
+        index
+        census
+        (compiler-ir-function-seq-to-list seq))]))
 
 (define (opt-inline-census-build
   [index : OptFunctionIndex]
@@ -14555,7 +14582,10 @@
     [(IrFunctionCons func rest)
       (compiler-ir-function-cons
         (opt-devirt-known-function-function func)
-        (opt-devirt-known-function-list (box-get rest)))]))
+        (opt-devirt-known-function-list (box-get rest)))]
+    [(IrFunctionArray seq)
+      (compiler-ir-function-list-compact
+        (opt-devirt-known-function-list (compiler-ir-function-seq-to-list seq)))]))
 
 ;; ---------------------------------------------------------------------------
 ;; Function inlining (opt level 2 only). Splices the body of small single-block
@@ -15712,7 +15742,10 @@
       (opt-function-index-to-list-from index (+ slot 1) count))))
 
 (define (opt-function-index-to-list [index : OptFunctionIndex]) : CompilerIrFunctionList
-  (opt-function-index-to-list-from index 0 (opt-function-index-count index)))
+  (IrFunctionArray
+    (CompilerIrFunctionSeq
+      (struct-get index values)
+      (opt-function-index-count index))))
 
 (define (opt-inline-slot-order [scc-result : OptSccResult]) : (Array i64)
   (let
@@ -15810,7 +15843,14 @@
                 (begin
                   (match one
                     [(IrFunctionCons head _) (array-set! values slot head)]
-                    [(IrFunctionNil) unit])
+                    [(IrFunctionNil) unit]
+                    [(IrFunctionArray seq)
+                      (if (> (compiler-ir-function-seq-count seq) 0)
+                        (array-set!
+                          values
+                          slot
+                          (compiler-ir-function-seq-ref seq 0))
+                        unit)])
                   (set! current-spans next-spans))]))
           (set! index-pos (+ index-pos 1))))
       current-spans)))
@@ -15870,7 +15910,9 @@
         [(IrFunction func-name _ _ _ _)
           (if (string-eq func-name name)
             true
-            (opt-function-list-defines? (box-get rest) name))])]))
+            (opt-function-list-defines? (box-get rest) name))])]
+    [(IrFunctionArray seq)
+      (opt-function-list-defines? (compiler-ir-function-seq-to-list seq) name)]))
 
 (define (opt-function-list-find
   [functions : CompilerIrFunctionList]
@@ -15882,7 +15924,9 @@
         [(IrFunction func-name _ _ _ _)
           (if (string-eq func-name name)
             (OptSomeFunction func)
-            (opt-function-list-find (box-get rest) name))])]))
+            (opt-function-list-find (box-get rest) name))])]
+    [(IrFunctionArray seq)
+      (opt-function-list-find (compiler-ir-function-seq-to-list seq) name)]))
 
 (define (opt-reach-add-function
   [index : OptFunctionIndex]
@@ -16167,7 +16211,12 @@
             (compiler-ir-function-cons
               func
               (opt-filter-reachable-functions (box-get rest) reachable))
-            (opt-filter-reachable-functions (box-get rest) reachable))])]))
+            (opt-filter-reachable-functions (box-get rest) reachable))])]
+    [(IrFunctionArray seq)
+      (compiler-ir-function-list-compact
+        (opt-filter-reachable-functions
+          (compiler-ir-function-seq-to-list seq)
+          reachable))]))
 
 ;; Functions exported via #2143 are lowered to a `provided` IrExtern whose name
 ;; is the function's logical name. Such functions may be called only from outside
@@ -16253,7 +16302,10 @@
                       (cfg
                         compile-profile
                         (compiler-opt-profile-finish "post_prune"))
-                      (IrProgram globals final-functions externs)))))))))]))
+                      (IrProgram
+                        globals
+                        (compiler-ir-function-list-compact final-functions)
+                        externs)))))))))]))
 
 (define (opt-remap-spans-prepend-entry
   [spans : CompilerSourceSpans]
@@ -16455,7 +16507,12 @@
       (opt-remap-spans-functions
         instr-entries
         (opt-remap-spans-function instr-entries out func)
-        (box-get rest))]))
+        (box-get rest))]
+    [(IrFunctionArray seq)
+      (opt-remap-spans-functions
+        instr-entries
+        out
+        (compiler-ir-function-seq-to-list seq))]))
 
 (define (opt-remap-spans-fast-path? [source-spans : CompilerSourceSpans]) : bool
   (compiler-source-spans-instr-count-at-least? source-spans 2049))
@@ -16508,7 +16565,10 @@
                           optimized-functions
                           externs)]
                       [optimized : CompilerIrProgram
-                        (IrProgram globals final-functions externs)]
+                        (IrProgram
+                          globals
+                          (compiler-ir-function-list-compact final-functions)
+                          externs)]
                       (begin
                         (cfg
                           compile-profile
@@ -18846,7 +18906,11 @@
     [(IrProgram _ funcs _)
       (match funcs
         [(IrFunctionCons func _) (opt-function-first-instrs func)]
-        [(IrFunctionNil) (IrInstrNil)])]))
+        [(IrFunctionNil) (IrInstrNil)]
+        [(IrFunctionArray seq)
+          (if (> (compiler-ir-function-seq-count seq) 0)
+            (opt-function-first-instrs (compiler-ir-function-seq-ref seq 0))
+            (IrInstrNil))])]))
 
 (define (opt-program-functions [program : CompilerIrProgram]) : CompilerIrFunctionList
   (match program

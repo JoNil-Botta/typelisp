@@ -17,7 +17,6 @@ CLANG_OPT=${TYPELISP_BENCH_CLANG_OPT:--O3}
 USE_SELFHOST=${TYPELISP_BENCH_SELFHOST:-1}
 FILTER=
 CORRECTNESS=0
-FORCE_WINDOWS_CORRECTNESS=${TYPELISP_OPT_BENCH_WINDOWS_FORCE:-0}
 
 usage() {
     cat <<'EOF'
@@ -193,6 +192,7 @@ fi
 
 MANIFEST="$ROOT/benchmarks/optimization/cases.tsv"
 WORKDIR="$ROOT/target/optimization-bench"
+CR=$(printf '\r')
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 
@@ -283,17 +283,6 @@ normalize_stdout_for_compare() {
     _out=$2
     # Windows C stdio writes CRLF in text mode; TypeLisp writes LF.
     tr -d '\r' < "$_src" > "$_out"
-}
-
-correctness_skip_reason() {
-    _host=$1
-    _name=$2
-    case "$_host:$FORCE_WINDOWS_CORRECTNESS" in
-        windows:0)
-            printf '%s\n' "Windows optimization corpus output mismatches are tracked by #2526; set TYPELISP_OPT_BENCH_WINDOWS_FORCE=1 to force-run"
-            ;;
-        *) return 1 ;;
-    esac
 }
 
 best_runtime_ms() {
@@ -466,6 +455,9 @@ fi
 matched=0
 while IFS= read -r _line || [ -n "$_line" ]; do
     case "$_line" in
+        *"$CR") _line=${_line%"$CR"} ;;
+    esac
+    case "$_line" in
         "" | \#*) continue ;;
     esac
 
@@ -506,10 +498,6 @@ EOF
     _c_bin="$WORKDIR/$_name.c$EXE"
 
     if [ "$CORRECTNESS" -eq 1 ]; then
-        if _skip_reason=$(correctness_skip_reason "$HOST_OS" "$_name"); then
-            printf 'correctness SKIP: %s (%s)\n' "$_name" "$_skip_reason"
-            continue
-        fi
         compile_tl_correctness "$_tl_src" "$_tl_asm" "$_tl_obj" "$_tl_bin" "$WORKDIR/$_name.tl.build.stdout" "$WORKDIR/$_name.tl.build.stderr"
         build_c_correctness "$_c_src" "$_c_bin" "$WORKDIR/$_name.c.build.stdout" "$WORKDIR/$_name.c.build.stderr"
 
@@ -524,6 +512,46 @@ EOF
             echo "FAIL: output mismatch for $_name" >&2
             if command -v diff >/dev/null 2>&1; then
                 diff -u "$WORKDIR/$_name.c.once.norm.stdout" "$WORKDIR/$_name.tl.once.norm.stdout" >&2 || true
+            fi
+            if command -v sha256sum >/dev/null 2>&1; then
+                sha256sum "$_tl_asm" "$_c_bin" "$_tl_bin" >&2 || true
+            fi
+            if command -v awk >/dev/null 2>&1; then
+                echo "TypeLisp generated assembly for $_name:" >&2
+                awk -v label="_tl_${_name}_" '
+                    index($0, label) == 1 { show = 1; count = 0 }
+                    show && count < 220 { print; count++ }
+                    show && /^[[:space:]]*\.seh_endproc/ { show = 0 }
+                    show && /^[[:space:]]*\.size/ { show = 0 }
+                ' "$_tl_asm" >&2 || true
+            fi
+            _objdump=
+            if command -v llvm-objdump >/dev/null 2>&1; then
+                _objdump=llvm-objdump
+            elif command -v objdump >/dev/null 2>&1; then
+                _objdump=objdump
+            fi
+            if [ -n "$_objdump" ] && command -v awk >/dev/null 2>&1; then
+                echo "TypeLisp linked disassembly near remainder for $_name:" >&2
+                "$_objdump" -d "$_tl_bin" | awk '
+                    {
+                        ring[NR % 32] = $0
+                        lower = tolower($0)
+                        if (index(lower, "3b9aca07") || index($0, "1000000007")) {
+                            start = NR - 24
+                            for (i = start; i < NR; i++) {
+                                if (i > 0 && ((i % 32) in ring)) print ring[i % 32]
+                            }
+                            print
+                            after = 48
+                            next
+                        }
+                        if (after > 0) {
+                            print
+                            after--
+                        }
+                    }
+                ' >&2 || true
             fi
             exit 1
         fi

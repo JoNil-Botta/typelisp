@@ -20,12 +20,9 @@ Correctness mode builds every `cases.tsv` TypeLisp/C pair once, runs each pair
 with the manifest arguments, rejects unexpected stderr or nonzero exits, and
 compares stdout after normalizing CRLF to LF. It does not run timing repetitions
 and does not compute runtime ratios, artifact sizes, or instruction counts.
-Linux runs the full corpus through the host GNU toolchain. Windows required CI
-currently prints an explicit per-case skip reason pending #2526, because GitHub
-Actions Windows miscompiles this corpus while local Windows runs do not
-reproduce it. Set `TYPELISP_OPT_BENCH_WINDOWS_FORCE=1` to force-run Windows
-correctness mode through `typelisp compile --target windows-x86_64`, `clang`,
-and `lld-link` for TypeLisp binaries plus `clang` for the C baselines.
+Linux runs the full corpus through the host GNU toolchain. Windows correctness
+mode runs the same corpus through `typelisp compile --target windows-x86_64`,
+`clang`, and `lld-link` for TypeLisp binaries plus `clang` for the C baselines.
 
 The runner defaults to compiling TypeLisp benchmark sources through the
 selfhost `selfhost/compiler_driver.tl` path, then assembling and linking the

@@ -135,7 +135,10 @@
   (begin
     (compiler-load-session-reset-pools!)
     (compiler-load-session-reset-interns!)
-    (compiler-builtin-reset!)))
+    (compiler-builtin-reset!)
+    ;; #2596: drop the previous entry's lowered IR (kept alive through the
+    ;; backend for opt level 0 compiles).
+    (lower-ir-arena-release!)))
 
 (cfg
   compile-profile
@@ -355,6 +358,16 @@
     opt-level
     emit-entry))
 
+;; #2596: the lowered IR functions live in a dedicated arena
+;; (lower-ir-arena); at opt levels >= 1 the optimizer deep-clones every
+;; surviving function out of it, so the arena is dead weight (~172MB on a
+;; cli.tl self-compile) once optimization returns. At level 0 the lowered
+;; program flows to the backend unchanged and the arena must stay alive.
+(define (compiler-driver-release-lowered-ir! [opt-level : i64]) : unit
+  (if (>= opt-level 1)
+    (lower-ir-arena-release!)
+    unit))
+
 (define (compiler-driver-emit-lowered-with-level-mode-and-entry
   [input-path : String]
   [program : CompilerIrProgram]
@@ -396,6 +409,7 @@
             (cfg
               compile-profile
               (compiler-driver-profile-finish-phase "optimize"))
+            (compiler-driver-release-lowered-ir! opt-level)
             (if (ty-node-pool-exhausted?)
               (ErrCompilerDriver
                 (compiler-driver-ty-node-pool-exhausted-diagnostic input-path))
@@ -451,6 +465,7 @@
             (cfg
               compile-profile
               (compiler-driver-profile-finish-phase "optimize"))
+            (compiler-driver-release-lowered-ir! opt-level)
             (if (ty-node-pool-exhausted?)
               (ErrCompilerDriverBuffer
                 (compiler-driver-ty-node-pool-exhausted-diagnostic input-path))
@@ -508,6 +523,7 @@
             (cfg
               compile-profile
               (compiler-driver-profile-finish-phase "optimize"))
+            (compiler-driver-release-lowered-ir! opt-level)
             (if (ty-node-pool-exhausted?)
               (ErrCompilerDriverObject
                 (compiler-driver-ty-node-pool-exhausted-diagnostic input-path))
@@ -564,6 +580,7 @@
             (cfg
               compile-profile
               (compiler-driver-profile-finish-phase "optimize"))
+            (compiler-driver-release-lowered-ir! opt-level)
             (if (ty-node-pool-exhausted?)
               (ErrCompilerDriverPic
                 (compiler-driver-ty-node-pool-exhausted-diagnostic input-path))
@@ -1329,12 +1346,14 @@
     (ErrCompilerDriver (compiler-driver-ty-node-pool-exhausted-diagnostic ""))
     (match (optimize-program-with-spans-and-level program spans opt-level)
       [(CompilerOptimizedProgram optimized _)
-        (if (ty-node-pool-exhausted?)
-          (ErrCompilerDriver
-            (compiler-driver-ty-node-pool-exhausted-diagnostic ""))
-          (OkCompilerDriver
-            (compiler-driver-ir-summary-render
-              (compiler-ir-program-summary optimized))))])))
+        (begin
+          (compiler-driver-release-lowered-ir! opt-level)
+          (if (ty-node-pool-exhausted?)
+            (ErrCompilerDriver
+              (compiler-driver-ty-node-pool-exhausted-diagnostic ""))
+            (OkCompilerDriver
+              (compiler-driver-ir-summary-render
+                (compiler-ir-program-summary optimized)))))])))
 
 (define (compiler-driver-emit-ir-summary-file-with-roots-and-level
   [input-path : String]

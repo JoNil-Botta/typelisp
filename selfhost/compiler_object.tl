@@ -3,7 +3,9 @@
   (ObjectSectionText)
   (ObjectSectionData)
   (ObjectSectionRodata)
-  (ObjectSectionBss))
+  (ObjectSectionBss)
+  (ObjectSectionPdata)
+  (ObjectSectionXdata))
 
 (defenum CompilerObjectMaybeSection
   (ObjectNoSection)
@@ -24,6 +26,7 @@
   (ObjectRelocCall)
   (ObjectRelocTailCall)
   (ObjectRelocAbs64)
+  (ObjectRelocAddr32Nb)
   (ObjectRelocRipValue)
   (ObjectRelocRipAddress)
   (ObjectRelocBranch))
@@ -36,7 +39,8 @@
   (ObjectDataF64 String)
   (ObjectDataI64 i64)
   (ObjectDataZero i64)
-  (ObjectDataSymbolAddress String))
+  (ObjectDataSymbolAddress String)
+  (ObjectDataSymbolRva32 String))
 
 (defenum CompilerObjectDataRecordList
   (ObjectDataNil)
@@ -51,6 +55,10 @@
   (ObjectX64LoadRip String)
   (ObjectX64LoadRipAddress String)
   (ObjectX64StoreRip String)
+  (ObjectX64SubRspImm8 i64)
+  (ObjectX64MovRcxRip String)
+  (ObjectX64MovRdxRip String)
+  (ObjectX64MovRcxRax)
   (ObjectX64Raw String))
 
 (defenum CompilerObjectX64InstrList
@@ -196,6 +204,14 @@
     [(ObjectSectionBss)
       (match b
         [(ObjectSectionBss) true]
+        [_ false])]
+    [(ObjectSectionPdata)
+      (match b
+        [(ObjectSectionPdata) true]
+        [_ false])]
+    [(ObjectSectionXdata)
+      (match b
+        [(ObjectSectionXdata) true]
         [_ false])]))
 
 (define (compiler-object-symbol-binding-eq?
@@ -251,6 +267,10 @@
     [(ObjectRelocAbs64)
       (match b
         [(ObjectRelocAbs64) true]
+        [_ false])]
+    [(ObjectRelocAddr32Nb)
+      (match b
+        [(ObjectRelocAddr32Nb) true]
         [_ false])]
     [(ObjectRelocRipValue)
       (match b

@@ -738,10 +738,16 @@
       "_tl_start"
       (ObjectSymbolExport)
       (ObjectSymbolFunction))
+    ;; The entry/unwind records can now be serialized, but the no-assembler
+    ;; source-tool path must still wait for executable Windows runtime text.
+    (compiler-object-section-contains-label?
+      (struct-get image sections)
+      (ObjectSectionText)
+      "tl_setup_argv")
     (> (compiler-object-coff-section-raw-size image (ObjectSectionText)) 0)))
 
 (define (source-tool-windows-direct-object-unavailable-message) : String
-  "windows direct object unavailable: object image lacks encoded .text or _tl_start")
+  "windows direct object unavailable: object image lacks encoded .text, _tl_start, or Windows runtime entry body")
 
 (define (source-tool-render-linkable-windows-coff-object
   [image : CompilerObjectImage]) : ResultSourceToolString

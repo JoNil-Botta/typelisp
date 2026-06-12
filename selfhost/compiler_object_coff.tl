@@ -9,7 +9,7 @@
   0x8664)
 
 (define compiler-object-coff-section-count : i64
-  4)
+  6)
 
 (define compiler-object-coff-file-header-size : i64
   20)
@@ -28,6 +28,9 @@
 
 (define compiler-object-coff-reloc-amd64-rel32 : i64
   0x0004)
+
+(define compiler-object-coff-reloc-amd64-addr32nb : i64
+  0x0003)
 
 (define compiler-object-coff-section-cnt-code : i64
   0x00000020)
@@ -58,14 +61,18 @@
     [(ObjectSectionText) ".text"]
     [(ObjectSectionData) ".data"]
     [(ObjectSectionRodata) ".rdata"]
-    [(ObjectSectionBss) ".bss"]))
+    [(ObjectSectionBss) ".bss"]
+    [(ObjectSectionPdata) ".pdata"]
+    [(ObjectSectionXdata) ".xdata"]))
 
 (define (compiler-object-coff-section-number [kind : CompilerObjectSectionKind]) : i64
   (match kind
     [(ObjectSectionText) 1]
     [(ObjectSectionData) 2]
     [(ObjectSectionRodata) 3]
-    [(ObjectSectionBss) 4]))
+    [(ObjectSectionBss) 4]
+    [(ObjectSectionPdata) 5]
+    [(ObjectSectionXdata) 6]))
 
 (define (compiler-object-coff-section-flags [kind : CompilerObjectSectionKind]) : i64
   (match kind
@@ -98,7 +105,19 @@
           compiler-object-coff-section-align-8
           (bit-or
             compiler-object-coff-section-mem-read
-            compiler-object-coff-section-mem-write)))]))
+            compiler-object-coff-section-mem-write)))]
+    [(ObjectSectionPdata)
+      (bit-or
+        compiler-object-coff-section-cnt-initialized-data
+        (bit-or
+          compiler-object-coff-section-align-8
+          compiler-object-coff-section-mem-read))]
+    [(ObjectSectionXdata)
+      (bit-or
+        compiler-object-coff-section-cnt-initialized-data
+        (bit-or
+          compiler-object-coff-section-align-8
+          compiler-object-coff-section-mem-read))]))
 
 (define (compiler-object-coff-byte [value : i64]) : u8
   (cast (bit-and value 0xff) : u8))
@@ -179,7 +198,8 @@
     [(ObjectDataF64 _) (+ offset 8)]
     [(ObjectDataI64 _) (+ offset 8)]
     [(ObjectDataZero count) (+ offset count)]
-    [(ObjectDataSymbolAddress _) (+ offset 8)]))
+    [(ObjectDataSymbolAddress _) (+ offset 8)]
+    [(ObjectDataSymbolRva32 _) (+ offset 4)]))
 
 (define (compiler-object-coff-data-records-size-from
   [records : CompilerObjectDataRecordList]
@@ -205,6 +225,10 @@
     [(ObjectX64LoadRip _) 7]
     [(ObjectX64LoadRipAddress _) 7]
     [(ObjectX64StoreRip _) 7]
+    [(ObjectX64SubRspImm8 _) 4]
+    [(ObjectX64MovRcxRip _) 7]
+    [(ObjectX64MovRdxRip _) 7]
+    [(ObjectX64MovRcxRax) 3]
     [(ObjectX64Raw _) 0]
     [_ 0]))
 
@@ -219,6 +243,10 @@
     [(ObjectX64LoadRip _) 1]
     [(ObjectX64LoadRipAddress _) 1]
     [(ObjectX64StoreRip _) 1]
+    [(ObjectX64SubRspImm8 _) 0]
+    [(ObjectX64MovRcxRip _) 1]
+    [(ObjectX64MovRdxRip _) 1]
+    [(ObjectX64MovRcxRax) 0]
     [(ObjectX64Raw _) 0]))
 
 (define (compiler-object-coff-instrs-relocation-count
@@ -273,6 +301,7 @@
   [kind : CompilerObjectRelocationKind]) : bool
   (match kind
     [(ObjectRelocAbs64) true]
+    [(ObjectRelocAddr32Nb) true]
     [_ false]))
 
 (define (compiler-object-coff-relocation-supported?
@@ -323,6 +352,14 @@
         [(ObjectX64LoadRipAddress _)
           (compiler-object-coff-instrs-supported? (box-get rest))]
         [(ObjectX64StoreRip _)
+          (compiler-object-coff-instrs-supported? (box-get rest))]
+        [(ObjectX64SubRspImm8 _)
+          (compiler-object-coff-instrs-supported? (box-get rest))]
+        [(ObjectX64MovRcxRip _)
+          (compiler-object-coff-instrs-supported? (box-get rest))]
+        [(ObjectX64MovRdxRip _)
+          (compiler-object-coff-instrs-supported? (box-get rest))]
+        [(ObjectX64MovRcxRax)
           (compiler-object-coff-instrs-supported? (box-get rest))]
         [_ false])]))
 
@@ -473,6 +510,16 @@
             (and
               (>= (compiler-object-coff-symbol-index image target) 0)
               tail-ok)]
+          [(ObjectX64SubRspImm8 _) tail-ok]
+          [(ObjectX64MovRcxRip target)
+            (and
+              (>= (compiler-object-coff-symbol-index image target) 0)
+              tail-ok)]
+          [(ObjectX64MovRdxRip target)
+            (and
+              (>= (compiler-object-coff-symbol-index image target) 0)
+              tail-ok)]
+          [(ObjectX64MovRcxRax) tail-ok]
           [(ObjectX64Raw _) false]))]))
 
 (define (compiler-object-coff-text-targets-known? [image : CompilerObjectImage]) : bool
@@ -551,7 +598,17 @@
         (compiler-object-coff-section-relocation-count
           image
           (ObjectSectionRodata))
-        (compiler-object-coff-section-relocation-count image (ObjectSectionBss))))))
+        (+
+          (compiler-object-coff-section-relocation-count
+            image
+            (ObjectSectionBss))
+          (+
+            (compiler-object-coff-section-relocation-count
+              image
+              (ObjectSectionPdata))
+            (compiler-object-coff-section-relocation-count
+              image
+              (ObjectSectionXdata))))))))
 
 (define (compiler-object-coff-raw-base-after-section
   [image : CompilerObjectImage]
@@ -568,7 +625,27 @@
         (+
           (compiler-object-coff-section-raw-size image (ObjectSectionText))
           (compiler-object-coff-section-raw-size image (ObjectSectionData))))]
-    [(ObjectSectionBss) 0]))
+    [(ObjectSectionBss) 0]
+    [(ObjectSectionPdata)
+      (+
+        (compiler-object-coff-header-size)
+        (+
+          (compiler-object-coff-section-raw-size image (ObjectSectionText))
+          (+
+            (compiler-object-coff-section-raw-size image (ObjectSectionData))
+            (compiler-object-coff-section-raw-size image (ObjectSectionRodata)))))]
+    [(ObjectSectionXdata)
+      (+
+        (compiler-object-coff-header-size)
+        (+
+          (compiler-object-coff-section-raw-size image (ObjectSectionText))
+          (+
+            (compiler-object-coff-section-raw-size image (ObjectSectionData))
+            (+
+              (compiler-object-coff-section-raw-size
+                image
+                (ObjectSectionRodata))
+              (compiler-object-coff-section-raw-size image (ObjectSectionPdata))))))]))
 
 (define (compiler-object-coff-section-raw-pointer
   [image : CompilerObjectImage]
@@ -584,7 +661,11 @@
       (compiler-object-coff-section-raw-size image (ObjectSectionText))
       (+
         (compiler-object-coff-section-raw-size image (ObjectSectionData))
-        (compiler-object-coff-section-raw-size image (ObjectSectionRodata))))))
+        (+
+          (compiler-object-coff-section-raw-size image (ObjectSectionRodata))
+          (+
+            (compiler-object-coff-section-raw-size image (ObjectSectionPdata))
+            (compiler-object-coff-section-raw-size image (ObjectSectionXdata))))))))
 
 (define (compiler-object-coff-relocation-pointer
   [image : CompilerObjectImage]
@@ -606,6 +687,14 @@
           (compiler-object-coff-section-relocation-count
             image
             (ObjectSectionRodata))]
+        [bss-count : i64
+          (compiler-object-coff-section-relocation-count
+            image
+            (ObjectSectionBss))]
+        [pdata-count : i64
+          (compiler-object-coff-section-relocation-count
+            image
+            (ObjectSectionPdata))]
         [base : i64 (compiler-object-coff-relocation-base image)]
         (match kind
           [(ObjectSectionText) base]
@@ -620,7 +709,21 @@
               base
               (*
                 compiler-object-coff-relocation-size
-                (+ text-count (+ data-count rodata-count))))])))))
+                (+ text-count (+ data-count rodata-count))))]
+          [(ObjectSectionPdata)
+            (+
+              base
+              (*
+                compiler-object-coff-relocation-size
+                (+ text-count (+ data-count (+ rodata-count bss-count)))))]
+          [(ObjectSectionXdata)
+            (+
+              base
+              (*
+                compiler-object-coff-relocation-size
+                (+
+                  text-count
+                  (+ data-count (+ rodata-count (+ bss-count pdata-count))))))])))))
 
 (define (compiler-object-coff-symbol-table-pointer
   [image : CompilerObjectImage]) : i64
@@ -683,7 +786,9 @@
     (compiler-object-coff-push-section-header! out image (ObjectSectionText))
     (compiler-object-coff-push-section-header! out image (ObjectSectionData))
     (compiler-object-coff-push-section-header! out image (ObjectSectionRodata))
-    (compiler-object-coff-push-section-header! out image (ObjectSectionBss))))
+    (compiler-object-coff-push-section-header! out image (ObjectSectionBss))
+    (compiler-object-coff-push-section-header! out image (ObjectSectionPdata))
+    (compiler-object-coff-push-section-header! out image (ObjectSectionXdata))))
 
 (define (compiler-object-coff-render-data-record!
   [out : (Array u8)]
@@ -720,7 +825,11 @@
     [(ObjectDataSymbolAddress _)
       (begin
         (compiler-object-coff-push-u64! out 0)
-        (+ offset 8))]))
+        (+ offset 8))]
+    [(ObjectDataSymbolRva32 _)
+      (begin
+        (compiler-object-coff-push-u32! out 0)
+        (+ offset 4))]))
 
 (define (compiler-object-coff-render-data-records!
   [out : (Array u8)]
@@ -782,6 +891,29 @@
         (compiler-object-coff-push-u8! out 0x89)
         (compiler-object-coff-push-u8! out 0x05)
         (compiler-object-coff-push-rel32-placeholder! out))]
+    [(ObjectX64SubRspImm8 imm)
+      (begin
+        (compiler-object-coff-push-u8! out 0x48)
+        (compiler-object-coff-push-u8! out 0x83)
+        (compiler-object-coff-push-u8! out 0xec)
+        (compiler-object-coff-push-u8! out imm))]
+    [(ObjectX64MovRcxRip _)
+      (begin
+        (compiler-object-coff-push-u8! out 0x48)
+        (compiler-object-coff-push-u8! out 0x8b)
+        (compiler-object-coff-push-u8! out 0x0d)
+        (compiler-object-coff-push-rel32-placeholder! out))]
+    [(ObjectX64MovRdxRip _)
+      (begin
+        (compiler-object-coff-push-u8! out 0x48)
+        (compiler-object-coff-push-u8! out 0x8b)
+        (compiler-object-coff-push-u8! out 0x15)
+        (compiler-object-coff-push-rel32-placeholder! out))]
+    [(ObjectX64MovRcxRax)
+      (begin
+        (compiler-object-coff-push-u8! out 0x48)
+        (compiler-object-coff-push-u8! out 0x89)
+        (compiler-object-coff-push-u8! out 0xc1))]
     [(ObjectX64Raw _) unit]))
 
 (define (compiler-object-coff-render-instrs!
@@ -813,7 +945,9 @@
   (begin
     (compiler-object-coff-render-section-data! out image (ObjectSectionText))
     (compiler-object-coff-render-section-data! out image (ObjectSectionData))
-    (compiler-object-coff-render-section-data! out image (ObjectSectionRodata))))
+    (compiler-object-coff-render-section-data! out image (ObjectSectionRodata))
+    (compiler-object-coff-render-section-data! out image (ObjectSectionPdata))
+    (compiler-object-coff-render-section-data! out image (ObjectSectionXdata))))
 
 (define (compiler-object-coff-relocation-type
   [kind : CompilerObjectRelocationKind]) : i64
@@ -821,6 +955,7 @@
     [(ObjectRelocCall) compiler-object-coff-reloc-amd64-rel32]
     [(ObjectRelocTailCall) compiler-object-coff-reloc-amd64-rel32]
     [(ObjectRelocAbs64) compiler-object-coff-reloc-amd64-addr64]
+    [(ObjectRelocAddr32Nb) compiler-object-coff-reloc-amd64-addr32nb]
     [(ObjectRelocRipValue) compiler-object-coff-reloc-amd64-rel32]
     [(ObjectRelocRipAddress) compiler-object-coff-reloc-amd64-rel32]
     [(ObjectRelocBranch) compiler-object-coff-reloc-amd64-rel32]
@@ -922,6 +1057,22 @@
               (+ offset 3)
               (ObjectRelocRipAddress)
               target)]
+          [(ObjectX64SubRspImm8 _) unit]
+          [(ObjectX64MovRcxRip target)
+            (compiler-object-coff-render-relocation-record!
+              out
+              image
+              (+ offset 3)
+              (ObjectRelocRipValue)
+              target)]
+          [(ObjectX64MovRdxRip target)
+            (compiler-object-coff-render-relocation-record!
+              out
+              image
+              (+ offset 3)
+              (ObjectRelocRipValue)
+              target)]
+          [(ObjectX64MovRcxRax) unit]
           [(ObjectX64Raw _) unit])
         (compiler-object-coff-render-text-instr-relocations!
           out
@@ -977,7 +1128,17 @@
       out
       image
       (struct-get image relocations)
-      (ObjectSectionBss))))
+      (ObjectSectionBss))
+    (compiler-object-coff-render-relocations-for-section!
+      out
+      image
+      (struct-get image relocations)
+      (ObjectSectionPdata))
+    (compiler-object-coff-render-relocations-for-section!
+      out
+      image
+      (struct-get image relocations)
+      (ObjectSectionXdata))))
 
 (define (compiler-object-coff-symbol-name-long? [name : String]) : bool
   (> (string-length name) 8))
@@ -1295,7 +1456,9 @@
         (=
           (compiler-object-coff-u16-at obj 0)
           compiler-object-coff-machine-amd64)
-        (= (compiler-object-coff-u16-at obj 2) 4)
+        (=
+          (compiler-object-coff-u16-at obj 2)
+          compiler-object-coff-section-count)
         (> (compiler-object-coff-u32-at obj 8) 0)
         (= (compiler-object-coff-u32-at obj 12) 5)
         (= (compiler-object-coff-u32-at obj (+ 60 16)) 16)

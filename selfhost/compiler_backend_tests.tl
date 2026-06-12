@@ -686,6 +686,115 @@
         [(ErrCompilerObjectCoff _) false])]
     [(ErrCompilerBackendObject _) false]))
 
+(define (compiler-backend-windows-object-entry-unwind-ok?) : bool
+  (match (compiler-backend-emit-source-object-image-for-target
+    "(define (main) : i64 0)"
+    (BackendTargetWindows))
+    [(OkCompilerBackendObject image)
+      (let
+        [sections : CompilerObjectSectionList (struct-get image sections)]
+        [symbols : CompilerObjectSymbolList (struct-get image symbols)]
+        [relocs : CompilerObjectRelocationList (struct-get image relocations)]
+        [shape-ok : bool
+          (and
+            (backend-and8
+              (= (compiler-object-section-list-count sections) 6)
+              (compiler-object-symbol-list-contains?
+                symbols
+                "_tl_start"
+                (ObjectSymbolExport)
+                (ObjectSymbolFunction))
+              (compiler-object-symbol-list-contains?
+                symbols
+                ".L_tl_start_end"
+                (ObjectSymbolLocal)
+                (ObjectSymbolFunction))
+              (compiler-object-symbol-list-contains?
+                symbols
+                "ExitProcess"
+                (ObjectSymbolExtern)
+                (ObjectSymbolFunction))
+              (compiler-object-symbol-list-contains?
+                symbols
+                ".L_tl_start_xdata"
+                (ObjectSymbolLocal)
+                (ObjectSymbolData))
+              (compiler-object-section-contains-label?
+                sections
+                (ObjectSectionData)
+                ".L_tl_argc")
+              (compiler-object-section-contains-label?
+                sections
+                (ObjectSectionPdata)
+                ".L_tl_start_pdata_begin")
+              (compiler-object-section-contains-label?
+                sections
+                (ObjectSectionXdata)
+                ".L_tl_start_xdata"))
+            (backend-and8
+              (compiler-object-relocation-list-contains?
+                relocs
+                (ObjectRelocCall)
+                "tl_setup_argv")
+              (compiler-object-relocation-list-contains?
+                relocs
+                (ObjectRelocCall)
+                "main")
+              (compiler-object-relocation-list-contains?
+                relocs
+                (ObjectRelocCall)
+                "ExitProcess")
+              (compiler-object-relocation-list-contains?
+                relocs
+                (ObjectRelocRipValue)
+                ".L_tl_argc")
+              (compiler-object-relocation-list-contains?
+                relocs
+                (ObjectRelocRipValue)
+                ".L_tl_argv")
+              (compiler-object-relocation-list-contains?
+                relocs
+                (ObjectRelocAddr32Nb)
+                "_tl_start")
+              (compiler-object-relocation-list-contains?
+                relocs
+                (ObjectRelocAddr32Nb)
+                ".L_tl_start_end")
+              (compiler-object-relocation-list-contains?
+                relocs
+                (ObjectRelocAddr32Nb)
+                ".L_tl_start_xdata")))]
+        (if shape-ok
+          (match (compiler-object-coff-render image)
+            [(OkCompilerObjectCoff obj)
+              (let
+                [pdata-header : i64
+                  (compiler-object-coff-section-header-offset
+                    (ObjectSectionPdata))]
+                [xdata-header : i64
+                  (compiler-object-coff-section-header-offset
+                    (ObjectSectionXdata))]
+                [pdata-size : i64
+                  (compiler-object-coff-u32-at obj (+ pdata-header 16))]
+                [pdata-relocs : i64
+                  (compiler-object-coff-u16-at obj (+ pdata-header 32))]
+                [xdata-size : i64
+                  (compiler-object-coff-u32-at obj (+ xdata-header 16))]
+                [xdata-ptr : i64
+                  (compiler-object-coff-u32-at obj (+ xdata-header 20))]
+                (and
+                  (= pdata-size 12)
+                  (= pdata-relocs 3)
+                  (= xdata-size 8)
+                  (= (compiler-object-coff-u8-at obj xdata-ptr) 0x01)
+                  (= (compiler-object-coff-u8-at obj (+ xdata-ptr 1)) 0x04)
+                  (= (compiler-object-coff-u8-at obj (+ xdata-ptr 2)) 0x01)
+                  (= (compiler-object-coff-u8-at obj (+ xdata-ptr 4)) 0x04)
+                  (= (compiler-object-coff-u8-at obj (+ xdata-ptr 5)) 0x42)))]
+            [(ErrCompilerObjectCoff _) false])
+          false))]
+    [(ErrCompilerBackendObject _) false]))
+
 (define (compiler-backend-implicit-main-source) : String
   "(define token-value : i64 7)")
 
@@ -6017,6 +6126,7 @@
         (compiler-object-coff-smoke-ok?)
         (compiler-object-coff-text-smoke-ok?)
         (compiler-backend-coff-renders-real-text-ok?)
+        (compiler-backend-windows-object-entry-unwind-ok?)
         (compiler-object-elf-smoke-ok?)
         (compiler-backend-pic-ok?)
         (compiler-backend-deterministic-ok? (compiler-backend-smoke-source)))

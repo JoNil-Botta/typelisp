@@ -192,6 +192,7 @@ fi
 
 MANIFEST="$ROOT/benchmarks/optimization/cases.tsv"
 WORKDIR="$ROOT/target/optimization-bench"
+CR=$(printf '\r')
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 
@@ -453,6 +454,9 @@ fi
 
 matched=0
 while IFS= read -r _line || [ -n "$_line" ]; do
+    case "$_line" in
+        *"$CR") _line=${_line%"$CR"} ;;
+    esac
     case "$_line" in
         "" | \#*) continue ;;
     esac

@@ -900,6 +900,17 @@
   (OkGenHashmapSource String)
   (ErrGenHashmapSource CompilerDiagnostic))
 
+(defenum GenSetArgs
+  (GenSetArgs String String))
+
+(defenum ResultGenSetArgs
+  (OkGenSetArgs GenSetArgs)
+  (ErrGenSetArgs CompilerDiagnostic))
+
+(defenum ResultGenSetSource
+  (OkGenSetSource String)
+  (ErrGenSetSource CompilerDiagnostic))
+
 (define (gen-tb2 [buf : TextBuf] [a : String] [b : String]) : TextBuf
   (text-buf-append (text-buf-append buf a) b))
 
@@ -1003,6 +1014,51 @@
       (ErrGenHashmapArgs
         (gen-hashmap-diag
           "hashmap-family: expected key type, value type, and key descriptor arguments"))]))
+
+(define (gen-set-diag [message : String]) : CompilerDiagnostic
+  (compiler-diagnostic-at-start "" message))
+
+(define (gen-set-eval-string [expr : AstExpr] [env : CtfeEnv]) : ResultGenKey
+  (match (compiler-ctfe-eval expr env (ctfe-fuel-limit))
+    [(OkCtfe value fuel)
+      (match value
+        [(CtfeString text) (OkGenKey text fuel)]
+        [_
+          (ErrGenKey
+            (spec-diagnostic-at-expr
+              expr
+              "set-family: argument must evaluate to String"))])]
+    [(ErrCtfe diag) (ErrGenKey diag)]))
+
+(define (gen-set-args [args : AstExprList] [env : CtfeEnv]) : ResultGenSetArgs
+  (match args
+    [(AstExprCons key-expr-box rest1-box)
+      (match (box-get rest1-box)
+        [(AstExprCons descriptor-expr-box rest2-box)
+          (match (box-get rest2-box)
+            [(AstExprNil)
+              (let
+                [key-expr : AstExpr (ast-node-get key-expr-box)]
+                [descriptor-expr : AstExpr (ast-node-get descriptor-expr-box)]
+                (match (gen-set-eval-string key-expr env)
+                  [(OkGenKey key-type _)
+                    (match (gen-set-eval-string descriptor-expr env)
+                      [(OkGenKey descriptor _)
+                        (OkGenSetArgs (GenSetArgs key-type descriptor))]
+                      [(ErrGenKey diag) (ErrGenSetArgs diag)])]
+                  [(ErrGenKey diag) (ErrGenSetArgs diag)]))]
+            [_
+              (ErrGenSetArgs
+                (gen-set-diag
+                  "set-family: expected key type and key descriptor arguments"))])]
+        [_
+          (ErrGenSetArgs
+            (gen-set-diag
+              "set-family: expected key type and key descriptor arguments"))])]
+    [_
+      (ErrGenSetArgs
+        (gen-set-diag
+          "set-family: expected key type and key descriptor arguments"))]))
 
 (define (gen-hashmap-one-byte-string [code : i64]) : String
   (let
@@ -1108,6 +1164,36 @@
           (match cleanup
             [(AstStructNoCleanup)
               (if (gen-hashmap-family-marker-fields? fields)
+                (SpecSomeString (intern-str name))
+                (SpecNoString))]
+            [_ (SpecNoString)])]
+        [_ (SpecNoString)])]
+    [_ (SpecNoString)]))
+
+(define (gen-set-family-marker-fields? [fields : AstFieldDefList]) : bool
+  (match fields
+    [(AstFieldDefCons field rest-box)
+      (match field
+        [(AstFieldDef name ty cleanup)
+          (and
+            (string-eq (intern-str name) "__set_family_request")
+            (ctfe-type-eq ty (AstTyI64))
+            (match cleanup
+              [(AstFieldNoCleanup) true]
+              [_ false])
+            (match (box-get rest-box)
+              [(AstFieldDefNil) true]
+              [_ false]))])]
+    [_ false]))
+
+(define (gen-set-family-marker-name [decl : AstDecl]) : SpecMaybeString
+  (match decl
+    [(AstDeclDefStruct name repr cleanup fields)
+      (match repr
+        [(AstStructReprDefault)
+          (match cleanup
+            [(AstStructNoCleanup)
+              (if (gen-set-family-marker-fields? fields)
                 (SpecSomeString (intern-str name))
                 (SpecNoString))]
             [_ (SpecNoString)])]
@@ -3845,6 +3931,276 @@
               descriptor
               (string-append " for key type " key-type-key)))))]))
 
+(define (gen-set-descriptor-mismatch
+  [descriptor : String]
+  [key-type-key : String]) : ResultGenSetSource
+  (ErrGenSetSource
+    (gen-set-diag
+      (string-append
+        "set-family: descriptor "
+        (string-append
+          descriptor
+          (string-append " does not support key type " key-type-key))))))
+
+(define (gen-set-key-type-info [type-key : String]) : ResultGenHashmapTypeInfo
+  (if (string-eq type-key "String")
+    (OkGenHashmapTypeInfo (GenHashmapTypeInfo "String" "String" "string"))
+    (if (string-eq type-key "i64")
+      (OkGenHashmapTypeInfo (GenHashmapTypeInfo "i64" "I64" "i64"))
+      (ErrGenHashmapTypeInfo
+        (gen-set-diag
+          (string-append "set-family: unsupported key type " type-key))))))
+
+(define (gen-set-source
+  [set-name : String]
+  [prefix : String]
+  [key-type : String]
+  [map-name : String]
+  [map-prefix : String]
+  [dummy-value : String]
+  [borrowed-key? : bool]) : String
+  (let
+    [entry : String (string-append set-name "Entry")]
+    [entry-none : String (string-append set-name "EntryNone")]
+    [entry-some : String (string-append set-name "EntrySome")]
+    [map-entry-none : String (string-append map-name "EntryNone")]
+    [map-entry-some : String (string-append map-name "EntrySome")]
+    [map-remove-ok : String (string-append map-name "RemoveOk")]
+    [map-remove-missing : String (string-append map-name "RemoveMissing")]
+    [buf : TextBuf (text-buf-empty)]
+    (begin
+      (set! buf (text-buf-append buf "(defstruct "))
+      (set! buf (text-buf-append buf set-name))
+      (set! buf (text-buf-append buf "\n  (map "))
+      (set! buf (text-buf-append buf map-name))
+      (set! buf (text-buf-append buf "))\n(defenum "))
+      (set! buf (text-buf-append buf entry))
+      (set! buf (text-buf-append buf "\n  ("))
+      (set! buf (text-buf-append buf entry-none))
+      (set! buf (text-buf-append buf ")\n  ("))
+      (set! buf (text-buf-append buf entry-some))
+      (set! buf (text-buf-append buf " "))
+      (set! buf (text-buf-append buf key-type))
+      (set! buf (text-buf-append buf "))\n(define ("))
+      (set! buf (text-buf-append buf prefix))
+      (set! buf (text-buf-append buf "-with-capacity [capacity : i64]) : "))
+      (set! buf (text-buf-append buf set-name))
+      (set! buf (text-buf-append buf "\n  ("))
+      (set! buf (text-buf-append buf set-name))
+      (set! buf (text-buf-append buf " ("))
+      (set! buf (text-buf-append buf map-prefix))
+      (set! buf (text-buf-append buf "-with-capacity capacity)))\n(define ("))
+      (set! buf (text-buf-append buf prefix))
+      (set! buf (text-buf-append buf "-new) : "))
+      (set! buf (text-buf-append buf set-name))
+      (set! buf (text-buf-append buf "\n  ("))
+      (set! buf (text-buf-append buf prefix))
+      (set! buf (text-buf-append buf "-with-capacity 8))\n(define ("))
+      (set! buf (text-buf-append buf prefix))
+      (set! buf (text-buf-append buf "-len [set : "))
+      (set! buf (text-buf-append buf set-name))
+      (set! buf (text-buf-append buf "]) : i64\n  ("))
+      (set! buf (text-buf-append buf map-prefix))
+      (set! buf (text-buf-append buf "-len (struct-get set map)))\n(define ("))
+      (set! buf (text-buf-append buf prefix))
+      (set! buf (text-buf-append buf "-capacity [set : "))
+      (set! buf (text-buf-append buf set-name))
+      (set! buf (text-buf-append buf "]) : i64\n  ("))
+      (set! buf (text-buf-append buf map-prefix))
+      (set! buf (text-buf-append buf "-capacity (struct-get set map)))\n"))
+      (if borrowed-key?
+        (begin
+          (set! buf (text-buf-append buf "(define ("))
+          (set! buf (text-buf-append buf prefix))
+          (set! buf (text-buf-append buf "-contains-borrowed?\n  [set : "))
+          (set! buf (text-buf-append buf set-name))
+          (set!
+            buf
+            (text-buf-append buf "]\n  [key : (& key str)]) : bool\n  ("))
+          (set! buf (text-buf-append buf map-prefix))
+          (set!
+            buf
+            (text-buf-append
+              buf
+              "-contains-borrowed? (struct-get set map) key))\n(define ("))
+          (set! buf (text-buf-append buf prefix))
+          (set! buf (text-buf-append buf "-contains? [set : "))
+          (set! buf (text-buf-append buf set-name))
+          (set! buf (text-buf-append buf "] [key : "))
+          (set! buf (text-buf-append buf key-type))
+          (set! buf (text-buf-append buf "]) : bool\n  ("))
+          (set! buf (text-buf-append buf prefix))
+          (set! buf (text-buf-append buf "-contains-borrowed? set (& key)))\n")))
+        (begin
+          (set! buf (text-buf-append buf "(define ("))
+          (set! buf (text-buf-append buf prefix))
+          (set! buf (text-buf-append buf "-contains? [set : "))
+          (set! buf (text-buf-append buf set-name))
+          (set! buf (text-buf-append buf "] [key : "))
+          (set! buf (text-buf-append buf key-type))
+          (set! buf (text-buf-append buf "]) : bool\n  ("))
+          (set! buf (text-buf-append buf map-prefix))
+          (set!
+            buf
+            (text-buf-append buf "-contains? (struct-get set map) key))\n"))))
+      (set! buf (text-buf-append buf "(define ("))
+      (set! buf (text-buf-append buf prefix))
+      (set! buf (text-buf-append buf "-insert [set : "))
+      (set! buf (text-buf-append buf set-name))
+      (set! buf (text-buf-append buf "] [key : "))
+      (set! buf (text-buf-append buf key-type))
+      (set! buf (text-buf-append buf "]) : "))
+      (set! buf (text-buf-append buf set-name))
+      (set! buf (text-buf-append buf "\n  ("))
+      (set! buf (text-buf-append buf set-name))
+      (set! buf (text-buf-append buf " ("))
+      (set! buf (text-buf-append buf map-prefix))
+      (set! buf (text-buf-append buf "-put (struct-get set map) key "))
+      (set! buf (text-buf-append buf dummy-value))
+      (set! buf (text-buf-append buf ")))\n"))
+      (if borrowed-key?
+        (begin
+          (set! buf (text-buf-append buf "(define ("))
+          (set! buf (text-buf-append buf prefix))
+          (set! buf (text-buf-append buf "-remove-borrowed\n  [set : "))
+          (set! buf (text-buf-append buf set-name))
+          (set! buf (text-buf-append buf "]\n  [key : (& key str)]) : "))
+          (set! buf (text-buf-append buf set-name))
+          (set! buf (text-buf-append buf "\n  (match ("))
+          (set! buf (text-buf-append buf map-prefix))
+          (set!
+            buf
+            (text-buf-append
+              buf
+              "-remove-borrowed (struct-get set map) key)\n    [("))
+          (set! buf (text-buf-append buf map-remove-ok))
+          (set! buf (text-buf-append buf " map)\n      ("))
+          (set! buf (text-buf-append buf set-name))
+          (set! buf (text-buf-append buf " map)]\n    [("))
+          (set! buf (text-buf-append buf map-remove-missing))
+          (set! buf (text-buf-append buf " map)\n      ("))
+          (set! buf (text-buf-append buf set-name))
+          (set! buf (text-buf-append buf " map)]))\n(define ("))
+          (set! buf (text-buf-append buf prefix))
+          (set! buf (text-buf-append buf "-remove [set : "))
+          (set! buf (text-buf-append buf set-name))
+          (set! buf (text-buf-append buf "] [key : "))
+          (set! buf (text-buf-append buf key-type))
+          (set! buf (text-buf-append buf "]) : "))
+          (set! buf (text-buf-append buf set-name))
+          (set! buf (text-buf-append buf "\n  ("))
+          (set! buf (text-buf-append buf prefix))
+          (set! buf (text-buf-append buf "-remove-borrowed set (& key)))\n")))
+        (begin
+          (set! buf (text-buf-append buf "(define ("))
+          (set! buf (text-buf-append buf prefix))
+          (set! buf (text-buf-append buf "-remove [set : "))
+          (set! buf (text-buf-append buf set-name))
+          (set! buf (text-buf-append buf "] [key : "))
+          (set! buf (text-buf-append buf key-type))
+          (set! buf (text-buf-append buf "]) : "))
+          (set! buf (text-buf-append buf set-name))
+          (set! buf (text-buf-append buf "\n  (match ("))
+          (set! buf (text-buf-append buf map-prefix))
+          (set!
+            buf
+            (text-buf-append buf "-remove (struct-get set map) key)\n    [("))
+          (set! buf (text-buf-append buf map-remove-ok))
+          (set! buf (text-buf-append buf " map)\n      ("))
+          (set! buf (text-buf-append buf set-name))
+          (set! buf (text-buf-append buf " map)]\n    [("))
+          (set! buf (text-buf-append buf map-remove-missing))
+          (set! buf (text-buf-append buf " map)\n      ("))
+          (set! buf (text-buf-append buf set-name))
+          (set! buf (text-buf-append buf " map)]))\n"))))
+      (set! buf (text-buf-append buf "(define ("))
+      (set! buf (text-buf-append buf prefix))
+      (set! buf (text-buf-append buf "-next-occupied [set : "))
+      (set! buf (text-buf-append buf set-name))
+      (set! buf (text-buf-append buf "] [from : i64]) : i64\n  ("))
+      (set! buf (text-buf-append buf map-prefix))
+      (set!
+        buf
+        (text-buf-append
+          buf
+          "-next-occupied (struct-get set map) from))\n(define ("))
+      (set! buf (text-buf-append buf prefix))
+      (set! buf (text-buf-append buf "-entry-at [set : "))
+      (set! buf (text-buf-append buf set-name))
+      (set! buf (text-buf-append buf "] [index : i64]) : "))
+      (set! buf (text-buf-append buf entry))
+      (set! buf (text-buf-append buf "\n  (match ("))
+      (set! buf (text-buf-append buf map-prefix))
+      (set!
+        buf
+        (text-buf-append buf "-entry-at (struct-get set map) index)\n    [("))
+      (set! buf (text-buf-append buf map-entry-some))
+      (set! buf (text-buf-append buf " key _) ("))
+      (set! buf (text-buf-append buf entry-some))
+      (set! buf (text-buf-append buf " key)]\n    [("))
+      (set! buf (text-buf-append buf map-entry-none))
+      (set! buf (text-buf-append buf ") ("))
+      (set! buf (text-buf-append buf entry-none))
+      (set! buf (text-buf-append buf ")]))\n"))
+      (text-buf-render buf))))
+
+(define (gen-set-source-for-info
+  [set-name : String]
+  [key-type-key : String]
+  [descriptor : String]
+  [key-info : GenHashmapTypeInfo]) : ResultGenSetSource
+  (let
+    [key-source : String (gen-hashmap-type-info-source key-info)]
+    [key-name : String (gen-hashmap-type-info-name key-info)]
+    [key-prefix : String (gen-hashmap-type-info-prefix key-info)]
+    [expected-set : String (string-append key-name "Set")]
+    [prefix : String (string-append key-prefix "-set")]
+    (core/cond
+      (not (string-eq set-name expected-set))
+      (ErrGenSetSource
+        (gen-set-diag
+          (string-append
+            "set-family: marker item "
+            (string-append
+              set-name
+              (string-append " does not match generated set " expected-set)))))
+      (string-eq descriptor "stdlib/hashmap/string-key-v1")
+      (if (string-eq key-type-key "String")
+        (OkGenSetSource
+          (gen-set-source
+            set-name
+            prefix
+            key-source
+            "StringStringMap"
+            "string-string-map"
+            "(init : String)"
+            true))
+        (gen-set-descriptor-mismatch descriptor key-type-key))
+      (string-eq descriptor "stdlib/hashmap/i64-key-v1")
+      (if (string-eq key-type-key "i64")
+        (OkGenSetSource
+          (gen-set-source
+            set-name
+            prefix
+            key-source
+            "I64I64Map"
+            "i64-i64-map"
+            "1"
+            false))
+        (gen-set-descriptor-mismatch descriptor key-type-key))
+      (ErrGenSetSource
+        (gen-set-diag
+          (string-append "set-family: unsupported key descriptor " descriptor))))))
+
+(define (gen-set-source-for
+  [set-name : String]
+  [key-type-key : String]
+  [descriptor : String]) : ResultGenSetSource
+  (match (gen-set-key-type-info key-type-key)
+    [(OkGenHashmapTypeInfo key-info)
+      (gen-set-source-for-info set-name key-type-key descriptor key-info)]
+    [(ErrGenHashmapTypeInfo diag) (ErrGenSetSource diag)]))
+
 (define (gen-register-generated-decl
   [template : AstDecl]
   [module : String]
@@ -3945,6 +4301,38 @@
             [(ErrGenHashmapSource diag) (ErrGenDecl diag)])])]
     [(ErrGenHashmapArgs diag) (ErrGenDecl diag)]))
 
+(define (gen-set-expand-family
+  [set-name : String]
+  [module : String]
+  [generator : String]
+  [args : AstExprList]
+  [arg-key : String]
+  [registry : GenRegistry]
+  [env : CtfeEnv]) : ResultGenDecl
+  (match (gen-set-args args env)
+    [(OkGenSetArgs parsed-args)
+      (match parsed-args
+        [(GenSetArgs key-type descriptor)
+          (match (gen-set-source-for set-name key-type descriptor)
+            [(OkGenSetSource source)
+              (match (parse-ast-source source)
+                [(OkAstProgram (AstProgram decls-box))
+                  (gen-register-generated-decls
+                    (box-get decls-box)
+                    module
+                    generator
+                    args
+                    arg-key
+                    registry)]
+                [(ErrAstProgram message)
+                  (ErrGenDecl
+                    (gen-set-diag
+                      (string-append
+                        "set-family: generated source did not parse: "
+                        message)))])]
+            [(ErrGenSetSource diag) (ErrGenDecl diag)])])]
+    [(ErrGenSetArgs diag) (ErrGenDecl diag)]))
+
 (define (gen-rewrite-decl
   [decl : AstDecl]
   [module : String]
@@ -3991,14 +4379,34 @@
                               args
                               arg-key
                               registry)])
-                        (gen-register-generated-decl
-                          template
-                          module
-                          generator
-                          item
-                          args
-                          arg-key
-                          registry))]
+                        (if (string-eq generator "stdlib/set-family")
+                          (match (gen-set-family-marker-name template)
+                            [(SpecSomeString set-name)
+                              (gen-set-expand-family
+                                set-name
+                                module
+                                generator
+                                args
+                                arg-key
+                                registry
+                                env)]
+                            [(SpecNoString)
+                              (gen-register-generated-decl
+                                template
+                                module
+                                generator
+                                item
+                                args
+                                arg-key
+                                registry)])
+                          (gen-register-generated-decl
+                            template
+                            module
+                            generator
+                            item
+                            args
+                            arg-key
+                            registry)))]
                     [(ErrGenKey diag) (ErrGenDecl diag)]))])]))]
     [_ (OkGenDecl (gen-single-decl-list decl) registry module)]))
 
@@ -7301,6 +7709,18 @@
   "(comptime-decl (:generated stdlib/hashmap-family StringBoolMap (type-key (type String)) (type-key (type bool)) \"stdlib/hashmap/string-key-v1\")
   (defstruct StringBoolMap (__hashmap_family_request i64)))")
 
+(define (compiler-generated-set-family-bundle-source) : String
+  "(comptime-decl (:generated stdlib/set-family StringSet (type-key (type String)) \"stdlib/hashmap/string-key-v1\")
+  (defstruct StringSet (__set_family_request i64)))
+(comptime-decl (:generated stdlib/set-family I64Set (type-key (type i64)) \"stdlib/hashmap/i64-key-v1\")
+  (defstruct I64Set (__set_family_request i64)))
+(comptime-decl (:generated stdlib/set-family I64Set (type-key (type i64)) \"stdlib/hashmap/i64-key-v1\")
+  (defstruct I64Set (__set_family_request i64)))")
+
+(define (compiler-generated-set-family-unsupported-key-source) : String
+  "(comptime-decl (:generated stdlib/set-family BoolSet (type-key (type bool)) \"stdlib/hashmap/i64-key-v1\")
+  (defstruct BoolSet (__set_family_request i64)))")
+
 (define (compiler-generated-decl-visible-count
   [source : String]
   [name : String]) : i64
@@ -7826,6 +8246,71 @@
             "hashmap-family: unsupported value type bool")])]
     [(ErrAstProgram _) false]))
 
+(define (compiler-generated-set-family-bundle-ok?) : bool
+  (match (parse-ast-source (compiler-generated-set-family-bundle-source))
+    [(OkAstProgram program)
+      (and
+        (compiler-specialize-needed? program)
+        (match (compiler-specialize-program program)
+          [(OkSpecProgram normalized)
+            (match normalized
+              [(AstProgram decls-box)
+                (let
+                  [decls : AstDeclList (box-get decls-box)]
+                  [string-set-count : i64
+                    (compiler-specialize-decl-list-count-visible
+                      decls
+                      "StringSet")]
+                  [string-entry-count : i64
+                    (compiler-specialize-decl-list-count-visible
+                      decls
+                      "StringSetEntry")]
+                  [string-insert-count : i64
+                    (compiler-specialize-decl-list-count-defs
+                      decls
+                      "string-set-insert")]
+                  [string-borrowed-remove-count : i64
+                    (compiler-specialize-decl-list-count-defs
+                      decls
+                      "string-set-remove-borrowed")]
+                  [i64-set-count : i64
+                    (compiler-specialize-decl-list-count-visible decls "I64Set")]
+                  [i64-entry-count : i64
+                    (compiler-specialize-decl-list-count-visible
+                      decls
+                      "I64SetEntry")]
+                  [i64-insert-count : i64
+                    (compiler-specialize-decl-list-count-defs
+                      decls
+                      "i64-set-insert")]
+                  [i64-remove-count : i64
+                    (compiler-specialize-decl-list-count-defs
+                      decls
+                      "i64-set-remove")]
+                  (and
+                    (= string-set-count 1)
+                    (= string-entry-count 1)
+                    (= string-insert-count 1)
+                    (= string-borrowed-remove-count 1)
+                    (= i64-set-count 1)
+                    (= i64-entry-count 1)
+                    (= i64-insert-count 1)
+                    (= i64-remove-count 1)))])]
+          [(ErrSpecProgram _) false]))]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-generated-set-family-unsupported-key-rejected?) : bool
+  (match (parse-ast-source
+    (compiler-generated-set-family-unsupported-key-source))
+    [(OkAstProgram program)
+      (match (compiler-specialize-program program)
+        [(OkSpecProgram _) false]
+        [(ErrSpecProgram diag)
+          (string-eq
+            (compiler-diagnostic-message diag)
+            "set-family: unsupported key type bool")])]
+    [(ErrAstProgram _) false]))
+
 (define (compiler-generated-decl-origin-preserved-ok?) : bool
   (match (parse-ast-source (compiler-generated-decl-reuse-source))
     [(OkAstProgram program)
@@ -7895,6 +8380,10 @@
       (return 0))
     (unless
       (compiler-generated-hashmap-family-unsupported-value-rejected?)
+      (return 0))
+    (unless (compiler-generated-set-family-bundle-ok?) (return 0))
+    (unless
+      (compiler-generated-set-family-unsupported-key-rejected?)
       (return 0))
     (unless (compiler-generated-decl-origin-preserved-ok?) (return 0))
     1))

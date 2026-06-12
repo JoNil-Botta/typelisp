@@ -192,6 +192,7 @@ profile.tl
 queue.tl
 random.tl
 runtime.tl
+set.tl
 string.tl
 string_caller_result.tl
 str_cat.tl
@@ -244,6 +245,7 @@ stdlib/tests/process_runtime.tl|42|-|-
 stdlib/tests/profile_api.tl|42|-|-
 stdlib/tests/queue_api.tl|42|-|-
 stdlib/tests/random_api.tl|42|-|-
+stdlib/tests/set_api.tl|42|-|-
 stdlib/tests/thread_api.tl|42|-|-
 stdlib/tests/time_api.tl|42|-|-
 stdlib/tests/text_buf_api.tl|42|-|-

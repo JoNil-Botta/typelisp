@@ -17,7 +17,6 @@ CLANG_OPT=${TYPELISP_BENCH_CLANG_OPT:--O3}
 USE_SELFHOST=${TYPELISP_BENCH_SELFHOST:-1}
 FILTER=
 CORRECTNESS=0
-FORCE_WINDOWS_CORRECTNESS=${TYPELISP_OPT_BENCH_WINDOWS_FORCE:-0}
 
 usage() {
     cat <<'EOF'
@@ -285,17 +284,6 @@ normalize_stdout_for_compare() {
     tr -d '\r' < "$_src" > "$_out"
 }
 
-correctness_skip_reason() {
-    _host=$1
-    _name=$2
-    case "$_host:$FORCE_WINDOWS_CORRECTNESS" in
-        windows:0)
-            printf '%s\n' "Windows optimization corpus output mismatches are tracked by #2526; set TYPELISP_OPT_BENCH_WINDOWS_FORCE=1 to force-run"
-            ;;
-        *) return 1 ;;
-    esac
-}
-
 best_runtime_ms() {
     _bin=$1
     _label=$2
@@ -506,10 +494,6 @@ EOF
     _c_bin="$WORKDIR/$_name.c$EXE"
 
     if [ "$CORRECTNESS" -eq 1 ]; then
-        if _skip_reason=$(correctness_skip_reason "$HOST_OS" "$_name"); then
-            printf 'correctness SKIP: %s (%s)\n' "$_name" "$_skip_reason"
-            continue
-        fi
         compile_tl_correctness "$_tl_src" "$_tl_asm" "$_tl_obj" "$_tl_bin" "$WORKDIR/$_name.tl.build.stdout" "$WORKDIR/$_name.tl.build.stderr"
         build_c_correctness "$_c_src" "$_c_bin" "$WORKDIR/$_name.c.build.stdout" "$WORKDIR/$_name.c.build.stderr"
 

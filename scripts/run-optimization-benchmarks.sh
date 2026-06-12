@@ -509,6 +509,18 @@ EOF
             if command -v diff >/dev/null 2>&1; then
                 diff -u "$WORKDIR/$_name.c.once.norm.stdout" "$WORKDIR/$_name.tl.once.norm.stdout" >&2 || true
             fi
+            if command -v sha256sum >/dev/null 2>&1; then
+                sha256sum "$_tl_asm" "$_c_bin" "$_tl_bin" >&2 || true
+            fi
+            if command -v awk >/dev/null 2>&1; then
+                echo "TypeLisp generated assembly for $_name:" >&2
+                awk -v label="_tl_${_name}_" '
+                    index($0, label) == 1 { show = 1; count = 0 }
+                    show && count < 220 { print; count++ }
+                    show && /^[[:space:]]*\.seh_endproc/ { show = 0 }
+                    show && /^[[:space:]]*\.size/ { show = 0 }
+                ' "$_tl_asm" >&2 || true
+            fi
             exit 1
         fi
         printf 'correctness OK: %s\n' "$_name"

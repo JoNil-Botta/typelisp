@@ -41,7 +41,7 @@
   16)
 
 (define compiler-driver-runtime-prelude-cache : (Array
-  CompilerLoadPreludeCacheSlot)
+    CompilerLoadPreludeCacheSlot)
   (make-array CompilerLoadPreludeCacheSlot 16))
 
 (define compiler-driver-runtime-prelude-cache-ready : bool
@@ -707,9 +707,7 @@
 (define (compiler-driver-load-file-with-runtime
   [input-path : String]
   [stdlib-roots : StringVec]
-  [cfgs : SymI64Env])
-  :
-  ResultCompilerLoadWithPaths
+  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
   ;; Prepend the implicit prelude (runtime + core macros), then load the entry.
   (match (compiler-driver-load-runtime-prelude stdlib-roots cfgs)
     [(OkCompilerLoadWithPaths

@@ -5984,9 +5984,7 @@
       (ctfe-test-expr-eq (ctfe-expr-list-head (ctfe-expr-list-tail lst1)) b)
       (ctfe-test-expr-eq (ctfe-expr-list-nth lst1 1) b))))
 
-(define (compiler-ctfe-expr-list-fold-sketch-ok?)
-  :
-  bool
+(define (compiler-ctfe-expr-list-fold-sketch-ok?) : bool
   ;; Simulate the core list-recursion a macro transformer does: build a
   ;; right-leaning `if` chain from a list of conditions and a final else.
   (let

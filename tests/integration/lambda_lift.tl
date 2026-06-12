@@ -2,21 +2,33 @@
   (f x))
 
 (define (case-immediate) : bool
-  (= ((lambda ([x : i64]) : i64 (+ x 1)) 41) 42))
+  (=
+    ((lambda ([x : i64]) : i64
+        (+ x 1))
+      41)
+    42))
 
 (define (case-let-bound) : bool
   (=
     (let
-      [f : (-> i64 i64) (lambda ([x : i64]) : i64 (* x 2))]
+      [f : (-> i64 i64)
+        (lambda ([x : i64]) : i64
+          (* x 2))]
       (f 21))
     42))
 
 (define (case-lambda-arg) : bool
-  (= (apply1 (lambda ([x : i64]) : i64 (+ x 10)) 32) 42))
+  (=
+    (apply1
+      (lambda ([x : i64]) : i64
+        (+ x 10))
+      32)
+    42))
 
 (define (case-unit-returning) : bool
   (begin
-    ((lambda () : unit unit))
+    ((lambda () : unit
+        unit))
     true))
 
 (define (all-cases) : bool

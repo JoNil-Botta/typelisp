@@ -11,9 +11,7 @@
 
 (define (typecheck-compiler-program-with-paths
   [program : AstProgram]
-  [paths : AstDeclPathList])
-  :
-  ResultCompilerTypecheck
+  [paths : AstDeclPathList]) : ResultCompilerTypecheck
   ;; Generate declaration families (e.g. hashmap) before macro expansion. Macro
   ;; expansion type-directs some sub-expressions (let-init / match-scrutinee
   ;; typing), which must be able to see generated functions; the later template

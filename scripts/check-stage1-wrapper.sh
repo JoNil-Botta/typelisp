@@ -116,6 +116,7 @@ flow
 let_bindings
 negative_int
 quote
+signature_colon
 tail_comment
 EOF
 }

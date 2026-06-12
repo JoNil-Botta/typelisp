@@ -6,12 +6,21 @@
 (define (case-immediate) : bool
   (let
     [n : i64 10]
-    (= ((lambda ([x : i64]) : i64 (+ x n)) 32) 42)))
+    (=
+      ((lambda ([x : i64]) : i64
+          (+ x n))
+        32)
+      42)))
 
 (define (case-passed-as-arg) : bool
   (let
     [n : i64 10]
-    (= (apply1 (lambda ([x : i64]) : i64 (+ x n)) 32) 42)))
+    (=
+      (apply1
+        (lambda ([x : i64]) : i64
+          (+ x n))
+        32)
+      42)))
 
 (define (case-mixed-scalars) : bool
   (let
@@ -20,10 +29,7 @@
     [ch : char #A']
     [scale : f64 2.5]
     (=
-      ((lambda
-          ([x : i64])
-          :
-          i64
+      ((lambda ([x : i64]) : i64
           (if ok
             (if (= ch #A')
               (if (= scale 2.5)
@@ -36,14 +42,22 @@
 
 (define (case-function-capture) : bool
   (let
-    [inc : (-> i64 i64) (lambda ([x : i64]) : i64 (+ x 1))]
+    [inc : (-> i64 i64)
+      (lambda ([x : i64]) : i64
+        (+ x 1))]
     [n : i64 9]
-    (= ((lambda ([x : i64]) : i64 (inc (+ x n))) 32) 42)))
+    (=
+      ((lambda ([x : i64]) : i64
+          (inc (+ x n)))
+        32)
+      42)))
 
 (define (case-snapshot) : bool
   (let
     [n : i64 10]
-    [f : (-> i64 i64) (lambda ([x : i64]) : i64 (+ x n))]
+    [f : (-> i64 i64)
+      (lambda ([x : i64]) : i64
+        (+ x n))]
     (begin
       (set! n 100)
       (= (f 32) 42))))
@@ -52,21 +66,16 @@
   (let
     [outer : i64 7]
     [make : (-> i64 (-> i64 i64))
-      (lambda
-        ([add : i64])
-        :
-        (-> i64 i64)
-        (lambda ([x : i64]) : i64 (+ x (+ outer add))))]
+      (lambda ([add : i64]) : (-> i64 i64)
+        (lambda ([x : i64]) : i64
+          (+ x (+ outer add))))]
     (= ((make 3) 32) 42)))
 
 (define (case-shadowed-capture) : bool
   (let
     [n : i64 10]
     (=
-      ((lambda
-          ([x : i64])
-          :
-          i64
+      ((lambda ([x : i64]) : i64
           (+
             n
             (let

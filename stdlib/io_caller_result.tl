@@ -28,7 +28,7 @@
 
 ;: Construct a borrowed fallback result.
 (define (read-file-or-borrowed-result [fallback : (& fallback str)]) : (ReadFileOrResult
-  fallback)
+    fallback)
   (let
     [empty : String ""]
     (ReadFileOrResult fallback empty false)))

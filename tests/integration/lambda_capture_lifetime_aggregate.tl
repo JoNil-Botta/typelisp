@@ -33,21 +33,27 @@
 (define (capture-enum-borrowed [text : (& text str)]) : i64
   (let
     [c : (RefChoice text) (RefChoiceBorrowed text)]
-    [f : (-> i64) (lambda () : i64 (choice-length c))]
+    [f : (-> i64)
+      (lambda () : i64
+        (choice-length c))]
     (f)))
 
 ; A parameterized enum holding an owned String, captured and read.
 (define (capture-enum-owned [text : (& text str)] [owned : String]) : i64
   (let
     [c : (RefChoice text) (RefChoiceOwned owned)]
-    [f : (-> i64) (lambda () : i64 (choice-length c))]
+    [f : (-> i64)
+      (lambda () : i64
+        (choice-length c))]
     (f)))
 
 ; A parameterized struct with a borrowed field, captured and read.
 (define (capture-struct-borrowed [text : (& text str)] [owned : String]) : i64
   (let
     [b : (RefBox text) (RefBox text owned false)]
-    [f : (-> i64) (lambda () : i64 (box-length b))]
+    [f : (-> i64)
+      (lambda () : i64
+        (box-length b))]
     (f)))
 
 (define (main) : i64

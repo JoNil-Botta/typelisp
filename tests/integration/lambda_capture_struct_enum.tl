@@ -13,12 +13,15 @@
 (define (case-struct-immediate) : bool
   (let
     [p : Point (Point 40 2)]
-    [f : (-> i64) (lambda () : i64 (+ (struct-get p x) (struct-get p y)))]
+    [f : (-> i64)
+      (lambda () : i64
+        (+ (struct-get p x) (struct-get p y)))]
     (= (f) 42)))
 
 ; Struct captured by a closure that OUTLIVES the frame that built it.
 (define (make-x-reader [p : Point]) : (-> i64)
-  (lambda () : i64 (struct-get p x)))
+  (lambda () : i64
+    (struct-get p x)))
 
 (define (case-struct-returned) : bool
   (= ((make-x-reader (Point 42 7))) 42))
@@ -31,10 +34,7 @@
 ; Enum (scalar payloads) captured by a returned closure, then matched after the
 ; maker returns.
 (define (make-area [s : Shape]) : (-> i64)
-  (lambda
-    ()
-    :
-    i64
+  (lambda () : i64
     (match s
       [(Circle r) r]
       [(Rect w h) (* w h)]

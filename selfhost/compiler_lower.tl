@@ -1905,9 +1905,7 @@
   [all-functions : StringI64Map]
   [names : LowerNameCache]
   [state : LowerReachState]
-  [source-name : String])
-  :
-  LowerReachState
+  [source-name : String]) : LowerReachState
   ;; References introduced by macro expansion carry the hygiene-global prefix
   ;; (e.g. `__tl_macro_global$string-append`); strip it before resolving so the
   ;; underlying function counts as reachable. Otherwise a function called only
@@ -4060,9 +4058,7 @@
 (define (lower-state-emit-at-expr
   [state : LowerState]
   [instr : CompilerIrInstr]
-  [expr : AstExpr])
-  :
-  LowerState
+  [expr : AstExpr]) : LowerState
   ;; Per-instruction spans are allocated inside per-function scratch arenas and
   ;; are not escaped by `lower-function-escaping`; function-level spans are
   ;; recorded separately after escape.
@@ -4219,9 +4215,7 @@
 (define (lower-inline-layout-size-or
   [ctx : TcContext]
   [ty : AstType]
-  [fallback : i64])
-  :
-  i64
+  [fallback : i64]) : i64
   ;; #2386/#2624 (compile-time): a bare struct/enum size is memoized by stable
   ;; interned type-name id
   ;; (its size is stable; this is the hot type-size query in lowering). Generic
@@ -5182,9 +5176,7 @@
   [offset : i64]
   [value : CompilerIrValue]
   [ty : AstType]
-  [size : i64])
-  :
-  LowerState
+  [size : i64]) : LowerState
   ;; #2386: a register-resident aggregate is carried as a word, so embedding it
   ;; in a memory aggregate is a scalar store of that word, not a byte-copy from a
   ;; pointer. A 2-word register-group stores BOTH words (word0 at offset, word1 at
@@ -5213,9 +5205,7 @@
   [base : CompilerIrValue]
   [offset : i64]
   [ty : AstType]
-  [mode : CompilerLowerMode])
-  :
-  LowerExpr
+  [mode : CompilerLowerMode]) : LowerExpr
   ;; #2386: a register-resident aggregate field is loaded as a word (a scalar
   ;; load), not returned as a pointer into the containing slot. A 2-word
   ;; register-group loads BOTH words and reassembles them with IrInstrPack. Only a
@@ -5959,9 +5949,7 @@
   [struct-name : String]
   [field : String]
   [origin : AstExpr]
-  [result-ty : AstType])
-  :
-  ResultLowerExpr
+  [result-ty : AstType]) : ResultLowerExpr
   ;; #2386: a register-resident receiver has no address; materialize the packed
   ;; word to a fresh slot, then take the field address through the same memory
   ;; helper used for borrowed struct references.
@@ -9809,9 +9797,7 @@
   [type-env : TcTypeEnv]
   [value : CompilerIrValue]
   [inner-ty : AstType]
-  [result-ty : AstType])
-  :
-  ResultLowerExpr
+  [result-ty : AstType]) : ResultLowerExpr
   ;; #1867: a (Box T) with inline struct/enum T addresses the T storage at the
   ;; box pointer; load it as a value (pointer) rather than scalar-loading the
   ;; leading word, mirroring lower-box-get.
@@ -10818,9 +10804,7 @@
   [env : SymI64Env]
   [type-env : TcTypeEnv]
   [name-id : i64]
-  [expr-ty : AstType])
-  :
-  ResultLowerExpr
+  [expr-ty : AstType]) : ResultLowerExpr
   ;; #2357: mirror lower-var-or-nullary-variant -- a register-group GLOBAL read
   ;; yields IrValueGlobal and must be materialized into a group VALUE (load both
   ;; words) before any IrInstrWord/struct-get/match extraction; main's interned
@@ -17152,9 +17136,7 @@
   [ctx : TcContext]
   [addr-state : LowerState]
   [elem-ptr : CompilerIrValue]
-  [elem-ir-ty : AstType])
-  :
-  ResultLowerExpr
+  [elem-ir-ty : AstType]) : ResultLowerExpr
   ;; #2386: a register-resident element is loaded as a word, not returned as the
   ;; element address.
   (if (and
@@ -17267,9 +17249,7 @@
   [addr-state : LowerState]
   [elem-ptr : CompilerIrValue]
   [value-ir : CompilerIrValue]
-  [elem-ir-ty : AstType])
-  :
-  LowerState
+  [elem-ir-ty : AstType]) : LowerState
   ;; #2386: a register-resident element value is a word; store it scalar instead
   ;; of byte-copying from a pointer.
   (if (and
@@ -23099,9 +23079,7 @@
   [merge-label : String]
   [expr-ty : AstType]
   [borrow-lifetime : TcMaybeString]
-  [force-memory : bool])
-  :
-  ResultLowerExpr
+  [force-memory : bool]) : ResultLowerExpr
   ;; #2386: a 1-word register-resident enum value IS the tag word (nullary, no
   ;; payload); match on `scrut-var` directly. A 2-word register-group enum holds
   ;; the tag in word0; extract it with IrInstrWord. Neither touches memory. One
@@ -27043,10 +27021,7 @@
     [p : Point (Point 7 1)]
     [a : (Array i64 2) (array 3 10)]
     [s : Shape (Rect 4 5)]
-    ((lambda
-       ()
-       :
-       i64
+    ((lambda () : i64
        (+
          (tuple-ref t 0)
          (+
@@ -27061,10 +27036,7 @@
   "(define (main) : i64
   (let
     [n : i64 10]
-    ((lambda
-       ([x : i64])
-       :
-       i64
+    ((lambda ([x : i64]) : i64
        (+
          n
          (let

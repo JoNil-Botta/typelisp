@@ -494,8 +494,7 @@
           (cast
             (unsafe
               (ptr-read (ptr-offset ptr n)))
-            :
-            i64)
+            : i64)
           0)
           (set! done true)
           (set! n (+ n 1))))

@@ -39,8 +39,7 @@
   (unsafe
     (cast
       (ptr->int (ptr-cast (array-data profile-now-scratch) : (Ptr u8)))
-      :
-      i64)))
+      : i64)))
 
 ;: Linux `clock_gettime(CLOCK_MONOTONIC)` via raw syscall 228.
 (define (profile-linux-now-ms) : i64

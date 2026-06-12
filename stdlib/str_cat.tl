@@ -25,10 +25,7 @@
 ;: compiled once while preserving a single allocation for two to five operands.
 ;: Longer arities are chunked through `string-concat5`. With no operands it
 ;: expands to `""`.
-(defmacro
-  (str-cat [args : String ...])
-  :
-  String
+(defmacro (str-cat [args : String ...]) : String
   (if (expr-list-empty? args)
     `""
     (let

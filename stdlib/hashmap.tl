@@ -385,12 +385,12 @@
 
 ;: Construct a missing borrowed-value lookup result tied to `map`.
 (define (string-i64-map-borrowed-value-missing [map : (& map StringI64Map)]) : (StringI64MapBorrowedValueLookup
-  map)
+    map)
   (StringI64MapBorrowedValueMissing))
 
 ;: Construct a found borrowed-value lookup result tied to `map`.
 (define (string-i64-map-borrowed-value-found [value : (& map i64)]) : (StringI64MapBorrowedValueLookup
-  map)
+    map)
   (StringI64MapBorrowedValueFound value))
 
 ;: Look up borrowed `key`, returning its copied `i64` value or `Missing`.
@@ -935,10 +935,7 @@
 ;: Borrow `map` mutably and return a live mutable entry for borrowed `key`.
 ;: The handle can update an existing entry in place; missing entries are
 ;: reported as absent and are not inserted by the handle API.
-(defmacro
-  (string-i64-map-get-mut-entry-borrowed [map : Expr] [key : Expr])
-  :
-  Expr
+(defmacro (string-i64-map-get-mut-entry-borrowed [map : Expr] [key : Expr]) : Expr
   `(string-i64-map-mut-entry-from-info
     (struct-get ,map slots)
     (&mut (struct-get ,map slots))

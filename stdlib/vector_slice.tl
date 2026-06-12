@@ -57,7 +57,7 @@
 (comptime-decl
   (:generated vector-family i64-slice-all-vec "i64")
   (define (i64-slice-all-vec [v : I64Vec] [owner : (& source I64Vec)]) : (I64Slice
-    source)
+      source)
     (I64Slice (I64SliceSourceVec owner) (i64-vec-slots v) 0 (i64-vec-len v))))
 
 ;: Build a lifetime-scoped view over `v[start, start + len)`. Invalid ranges

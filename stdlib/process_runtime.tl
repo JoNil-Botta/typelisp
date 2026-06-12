@@ -122,8 +122,7 @@
   (cast
     (unsafe
       (ptr-read (ptr-offset ptr index)))
-    :
-    i64))
+    : i64))
 
 ;: Convert an integer address into a read-only byte pointer.
 (define (process-addr->ptr [addr : i64]) : (Ptr u8)
@@ -209,8 +208,7 @@
                   (cast
                     (ptr->int
                       (io-array-const-ptr (process-env-cstring name value)))
-                    :
-                    u64)))
+                    : u64)))
               (set! cur (box-get rest)))]))
       ov)))
 
@@ -291,8 +289,7 @@
                 (unsafe
                   (cast
                     (ptr->int (io-array-const-ptr (io-c-string text)))
-                    :
-                    u64)))
+                    : u64)))
               (set! w (+ w 1))
               (set! cur (box-get rest)))]))
       (array-set! arr w (cast 0 : u64))

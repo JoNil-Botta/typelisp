@@ -23407,9 +23407,7 @@
   [body : AstExpr]
   [args : AstExprList]
   [depth : i64]
-  [call-expr : AstExpr])
-  :
-  ResultMacroExpr
+  [call-expr : AstExpr]) : ResultMacroExpr
   ;; Expand the operands first so a macro call passed as an argument (e.g. a
   ;; nested `str-cat`) is reduced to a plain expression before it is typechecked
   ;; and bound; otherwise the operand typecheck sees the inner macro name as an

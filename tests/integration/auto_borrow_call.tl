@@ -48,7 +48,9 @@
     [items : (Array i64) (make-array i64 3)]
     [text : String "borrow"]
     [nums : Numbers (Numbers 3 4)]
-    [f : (-> (& p Pair) i64) (lambda ([arg : (& p Pair)]) : i64 (sum-pair arg))]
+    [f : (-> (& p Pair) i64)
+      (lambda ([arg : (& p Pair)]) : i64
+        (sum-pair arg))]
     (begin
       (array-set! items 0 17)
       (array-set! items 1 19)
@@ -58,7 +60,9 @@
         [explicit : i64 (sum-pair (& p))]
         [via-f : i64 (f p)]
         [via-lambda : i64
-          ((lambda ([arg : (& arg Pair)]) : i64 (sum-pair arg)) p)]
+          ((lambda ([arg : (& arg Pair)]) : i64
+              (sum-pair arg))
+            p)]
         [via-wrapper : i64 (call-pair-f f p)]
         [via-box : i64 (box-sum (box-pair p))]
         [tuple-value : i64 (accept-tuple t)]

@@ -29,7 +29,10 @@
   (+
     (struct-get (pick (CondA) (Pair 1 2) (Pair 3 4)) y)
     (+
-      (apply-fn (lambda ([p : Pair]) : i64 (struct-get p y)) (Pair 5 9))
+      (apply-fn
+        (lambda ([p : Pair]) : i64
+          (struct-get p y))
+        (Pair 5 9))
       (if (= (EA 1) (EA 2))
         100
         31))))

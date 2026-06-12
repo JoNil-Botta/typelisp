@@ -280,7 +280,7 @@
     [(CompilerSymbols _ _ _ decls _) decls]))
 
 (define (compiler-symbols-owner-names [symbols : CompilerSymbols]) : (Array
-  String)
+    String)
   (match symbols
     [(CompilerSymbols _ _ _ _ owner-names) owner-names]))
 
@@ -299,9 +299,7 @@
 (define (compiler-registries-duplicate-variant-message [name : String]) : String
   (string-append "symbols: duplicate enum variant " name))
 
-(define (compiler-struct-field-key [struct-name : String] [field-name : String])
-  :
-  String
+(define (compiler-struct-field-key [struct-name : String] [field-name : String]) : String
   ;; Flat field registry key. Field names may repeat across structs because the
   ;; struct name is part of the key.
   (string-append (string-append struct-name ".") field-name))

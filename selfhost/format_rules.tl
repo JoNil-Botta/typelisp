@@ -45,6 +45,14 @@
     [(FmtCstComment _) true]
     [_ false]))
 
+(define (format-rules-node-colon-list? [node : FormatCst]) : bool
+  (match node
+    [(FmtCstList items)
+      (match (box-get items)
+        [(FmtCstCons head _) (format-rules-node-colon? head)]
+        [_ false])]
+    [_ false]))
+
 (define (format-rules-gap) : Doc
   (doc-append (doc-hard-line) (doc-hard-line)))
 
@@ -57,6 +65,22 @@
 
 (define (format-rules-space [doc : Doc]) : Doc
   (doc-append (doc-text " ") doc))
+
+(define (format-rules-colon-pair-doc [colon : FormatCst] [next : FormatCst]) : Doc
+  (doc-append
+    (format-rules-cst-doc colon)
+    (format-rules-space (format-rules-cst-doc next))))
+
+(define (format-rules-return-type-tail-doc
+  [colon : FormatCst]
+  [typ : FormatCst]) : Doc
+  (format-rules-space (format-rules-colon-pair-doc colon typ)))
+
+(define (format-rules-return-type-breakable-tail-doc
+  [colon : FormatCst]
+  [typ : FormatCst]) : Doc
+  (doc-group
+    (doc-append (doc-soft-line) (format-rules-colon-pair-doc colon typ))))
 
 (define (format-rules-inline-tail-doc [items : FormatCstList]) : Doc
   (match items
@@ -72,16 +96,35 @@
     [(FmtCstCons node rest)
       (let
         [tail : FormatCstList (box-get rest)]
-        (doc-append
-          (doc-hard-line)
-          (doc-append
-            (format-rules-cst-doc node)
-            (match tail
-              [(FmtCstNil)
-                (if (format-rules-node-comment? node)
+        (if (format-rules-node-colon? node)
+          (match tail
+            [(FmtCstCons next after-next-box)
+              (if (format-rules-node-comment? next)
+                (doc-append
                   (doc-hard-line)
-                  (doc-empty))]
-              [_ (format-rules-hard-tail-doc tail)]))))]))
+                  (doc-append
+                    (format-rules-cst-doc node)
+                    (format-rules-hard-tail-doc tail)))
+                (let
+                  [after-next : FormatCstList (box-get after-next-box)]
+                  (doc-append
+                    (doc-hard-line)
+                    (doc-append
+                      (format-rules-colon-pair-doc node next)
+                      (match after-next
+                        [(FmtCstNil) (doc-empty)]
+                        [_ (format-rules-hard-tail-doc after-next)])))))]
+            [_ (doc-append (doc-hard-line) (format-rules-cst-doc node))])
+          (doc-append
+            (doc-hard-line)
+            (doc-append
+              (format-rules-cst-doc node)
+              (match tail
+                [(FmtCstNil)
+                  (if (format-rules-node-comment? node)
+                    (doc-hard-line)
+                    (doc-empty))]
+                [_ (format-rules-hard-tail-doc tail)])))))]))
 
 (define (format-rules-tail-separator
   [previous-comment : bool]
@@ -98,19 +141,44 @@
     [(FmtCstCons node rest)
       (let
         [tail : FormatCstList (box-get rest)]
-        (doc-append
-          (format-rules-tail-separator previous-comment node)
+        (if (format-rules-node-colon? node)
+          (match tail
+            [(FmtCstCons next after-next-box)
+              (if (format-rules-node-comment? next)
+                (doc-append
+                  (format-rules-tail-separator previous-comment node)
+                  (doc-append
+                    (format-rules-cst-doc node)
+                    (format-rules-list-tail-doc false tail)))
+                (let
+                  [after-next : FormatCstList (box-get after-next-box)]
+                  (doc-append
+                    (format-rules-tail-separator previous-comment node)
+                    (doc-append
+                      (format-rules-colon-pair-doc node next)
+                      (match after-next
+                        [(FmtCstNil) (doc-empty)]
+                        [_
+                          (format-rules-list-tail-doc
+                            (format-rules-node-comment? next)
+                            after-next)])))))]
+            [_
+              (doc-append
+                (format-rules-tail-separator previous-comment node)
+                (format-rules-cst-doc node))])
           (doc-append
-            (format-rules-cst-doc node)
-            (match tail
-              [(FmtCstNil)
-                (if (format-rules-node-comment? node)
-                  (doc-hard-line)
-                  (doc-empty))]
-              [_
-                (format-rules-list-tail-doc
-                  (format-rules-node-comment? node)
-                  tail)]))))]))
+            (format-rules-tail-separator previous-comment node)
+            (doc-append
+              (format-rules-cst-doc node)
+              (match tail
+                [(FmtCstNil)
+                  (if (format-rules-node-comment? node)
+                    (doc-hard-line)
+                    (doc-empty))]
+                [_
+                  (format-rules-list-tail-doc
+                    (format-rules-node-comment? node)
+                    tail)])))))]))
 
 (define (format-rules-list-items-doc [items : FormatCstList]) : Doc
   (match items
@@ -308,28 +376,30 @@
         (doc-nest 2 (format-rules-let-tail-doc (format-rules-let-rest rest)))
         (doc-text ")")))))
 
-(define (format-rules-define-annotated-doc
+(define (format-rules-signature-annotated-doc
+  [head : String]
   [target : FormatCst]
   [colon : FormatCst]
   [typ : FormatCst]
-  [body : FormatCst]) : Doc
+  [body-items : FormatCstList]) : Doc
   (doc-append
     (doc-text "(")
     (doc-append
-      (doc-text "define")
+      (doc-text head)
       (doc-append
         (format-rules-space (format-rules-cst-doc target))
         (doc-append
-          (format-rules-space (format-rules-cst-doc colon))
+          (doc-nest 2 (format-rules-return-type-tail-doc colon typ))
           (doc-append
-            (format-rules-space (format-rules-cst-doc typ))
-            (doc-append
-              (doc-nest
-                2
-                (doc-append (doc-hard-line) (format-rules-cst-doc body)))
-              (doc-text ")"))))))))
+            (doc-nest 2 (format-rules-hard-tail-doc body-items))
+            (doc-text ")")))))))
 
-(define (format-rules-define-body-doc [target : FormatCst] [body : FormatCst]) : Doc
+(define (format-rules-define-metadata-annotated-doc
+  [target : FormatCst]
+  [metadata : FormatCst]
+  [colon : FormatCst]
+  [typ : FormatCst]
+  [body-items : FormatCstList]) : Doc
   (doc-append
     (doc-text "(")
     (doc-append
@@ -337,7 +407,28 @@
       (doc-append
         (format-rules-space (format-rules-cst-doc target))
         (doc-append
-          (doc-nest 2 (doc-append (doc-hard-line) (format-rules-cst-doc body)))
+          (doc-nest
+            2
+            (doc-append
+              (doc-hard-line)
+              (doc-append
+                (format-rules-cst-doc metadata)
+                (format-rules-return-type-breakable-tail-doc colon typ))))
+          (doc-append
+            (doc-nest 2 (format-rules-hard-tail-doc body-items))
+            (doc-text ")")))))))
+
+(define (format-rules-define-body-doc
+  [target : FormatCst]
+  [body-items : FormatCstList]) : Doc
+  (doc-append
+    (doc-text "(")
+    (doc-append
+      (doc-text "define")
+      (doc-append
+        (format-rules-space (format-rules-cst-doc target))
+        (doc-append
+          (doc-nest 2 (format-rules-hard-tail-doc body-items))
           (doc-text ")"))))))
 
 (define (format-rules-define-doc [rest : FormatCstList]) : Doc
@@ -349,26 +440,91 @@
           [(FmtCstCons second after-second-box)
             (let
               [after-second : FormatCstList (box-get after-second-box)]
-              (match after-second
-                [(FmtCstNil) (format-rules-define-body-doc target second)]
-                [(FmtCstCons typ after-typ-box)
-                  (let
-                    [after-typ : FormatCstList (box-get after-typ-box)]
-                    (match after-typ
-                      [(FmtCstCons body after-body-box)
-                        (match (box-get after-body-box)
-                          [(FmtCstNil)
-                            (format-rules-define-annotated-doc
-                              target
-                              second
-                              typ
-                              body)]
+              (if (format-rules-node-colon? second)
+                (match after-second
+                  [(FmtCstCons typ body-box)
+                    (match (box-get body-box)
+                      [(FmtCstNil)
+                        (format-rules-first-or-line-form-doc "define" rest)]
+                      [_
+                        (format-rules-signature-annotated-doc
+                          "define"
+                          target
+                          second
+                          typ
+                          (box-get body-box))])]
+                  [_ (format-rules-first-or-line-form-doc "define" rest)])
+                (if (format-rules-node-colon-list? second)
+                  (match after-second
+                    [(FmtCstCons colon after-colon-box)
+                      (if (format-rules-node-colon? colon)
+                        (match (box-get after-colon-box)
+                          [(FmtCstCons typ body-box)
+                            (match (box-get body-box)
+                              [(FmtCstNil)
+                                (format-rules-first-or-line-form-doc
+                                  "define"
+                                  rest)]
+                              [_
+                                (format-rules-define-metadata-annotated-doc
+                                  target
+                                  second
+                                  colon
+                                  typ
+                                  (box-get body-box))])]
                           [_
-                            (format-rules-first-or-line-form-doc "define" rest)])]
-                      [_ (format-rules-first-or-line-form-doc "define" rest)]))]
-                [_ (format-rules-first-or-line-form-doc "define" rest)]))]
+                            (format-rules-first-or-line-form-doc "define" rest)])
+                        (format-rules-first-or-line-form-doc "define" rest))]
+                    [_ (format-rules-first-or-line-form-doc "define" rest)])
+                  (format-rules-define-body-doc target after-target))))]
           [_ (format-rules-first-or-line-form-doc "define" rest)]))]
     [_ (format-rules-first-or-line-form-doc "define" rest)]))
+
+(define (format-rules-defmacro-doc [rest : FormatCstList]) : Doc
+  (match rest
+    [(FmtCstCons target after-target-box)
+      (match (box-get after-target-box)
+        [(FmtCstCons colon after-colon-box)
+          (if (format-rules-node-colon? colon)
+            (match (box-get after-colon-box)
+              [(FmtCstCons typ body-box)
+                (match (box-get body-box)
+                  [(FmtCstNil)
+                    (format-rules-first-or-line-form-doc "defmacro" rest)]
+                  [_
+                    (format-rules-signature-annotated-doc
+                      "defmacro"
+                      target
+                      colon
+                      typ
+                      (box-get body-box))])]
+              [_ (format-rules-first-or-line-form-doc "defmacro" rest)])
+            (format-rules-first-or-line-form-doc "defmacro" rest))]
+        [_ (format-rules-first-or-line-form-doc "defmacro" rest)])]
+    [_ (format-rules-first-or-line-form-doc "defmacro" rest)]))
+
+(define (format-rules-lambda-doc [rest : FormatCstList]) : Doc
+  (match rest
+    [(FmtCstCons target after-target-box)
+      (match (box-get after-target-box)
+        [(FmtCstCons colon after-colon-box)
+          (if (format-rules-node-colon? colon)
+            (match (box-get after-colon-box)
+              [(FmtCstCons typ body-box)
+                (match (box-get body-box)
+                  [(FmtCstNil)
+                    (format-rules-first-or-line-form-doc "lambda" rest)]
+                  [_
+                    (format-rules-signature-annotated-doc
+                      "lambda"
+                      target
+                      colon
+                      typ
+                      (box-get body-box))])]
+              [_ (format-rules-first-or-line-form-doc "lambda" rest)])
+            (format-rules-first-or-line-form-doc "lambda" rest))]
+        [_ (format-rules-first-or-line-form-doc "lambda" rest)])]
+    [_ (format-rules-first-or-line-form-doc "lambda" rest)]))
 
 (define (format-rules-special-list-doc
   [head : FormatCst]
@@ -382,10 +538,14 @@
     (format-rules-inline-form-doc "extern" rest)
     (format-rules-node-symbol? head "define")
     (format-rules-define-doc rest)
+    (format-rules-node-symbol? head "defmacro")
+    (format-rules-defmacro-doc rest)
     (format-rules-node-symbol? head "defenum")
     (format-rules-first-or-line-form-doc "defenum" rest)
     (format-rules-node-symbol? head "defstruct")
     (format-rules-first-or-line-form-doc "defstruct" rest)
+    (format-rules-node-symbol? head "lambda")
+    (format-rules-lambda-doc rest)
     (format-rules-node-symbol? head "let")
     (format-rules-let-doc rest)
     (format-rules-node-symbol? head "if")
@@ -549,11 +709,29 @@
   (define (danger [x : i64]) : i64
     x))")
 
+(define (format-rules-define-metadata-source) : String
+  "(define (probe-fn [x : i64]) (:export-symbol \"probe_sym\") : unit unit)")
+
+(define (format-rules-define-metadata-expected) : String
+  "(define (probe-fn [x : i64])
+  (:export-symbol \"probe_sym\") : unit
+  unit)")
+
+(define (format-rules-define-metadata-long-source) : String
+  "(define (probe-long [x : i64]) (:export-symbol \"probe_long\") : (Tuple i64 i64 i64 i64 i64 i64 i64 i64) unit)")
+
+(define (format-rules-define-metadata-long-expected) : String
+  "(define (probe-long [x : i64])
+  (:export-symbol \"probe_long\")
+  : (Tuple i64 i64 i64 i64 i64 i64 i64 i64)
+  unit)")
+
 (define (format-rules-variadic-macro-source) : String
   "(defmacro (all [first : bool] [rest : bool ...]) : bool first)")
 
 (define (format-rules-variadic-macro-expected) : String
-  "(defmacro (all [first : bool] [rest : bool ...]) : bool first)")
+  "(defmacro (all [first : bool] [rest : bool ...]) : bool
+  first)")
 
 (define (format-rules-self-test) : i64
   (let
@@ -567,6 +745,14 @@
       (format-rules-render-source-width (format-rules-quote-source) 80)]
     [unsafe : String
       (format-rules-render-source-width (format-rules-unsafe-source) 80)]
+    [metadata : String
+      (format-rules-render-source-width
+        (format-rules-define-metadata-source)
+        80)]
+    [metadata-long : String
+      (format-rules-render-source-width
+        (format-rules-define-metadata-long-source)
+        48)]
     [variadic : String
       (format-rules-render-source-width (format-rules-variadic-macro-source) 80)]
     (begin
@@ -576,6 +762,12 @@
       (unless (string-eq quote (format-rules-quote-expected)) (return 4))
       (unless (string-eq unsafe (format-rules-unsafe-expected)) (return 5))
       (unless
-        (string-eq variadic (format-rules-variadic-macro-expected))
+        (string-eq metadata (format-rules-define-metadata-expected))
         (return 6))
+      (unless
+        (string-eq metadata-long (format-rules-define-metadata-long-expected))
+        (return 7))
+      (unless
+        (string-eq variadic (format-rules-variadic-macro-expected))
+        (return 8))
       42)))

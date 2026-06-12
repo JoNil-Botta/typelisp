@@ -159,8 +159,7 @@
                   (cast
                     (unsafe
                       (ptr-read (ptr-offset src (+ start i))))
-                    :
-                    i64)))
+                    : i64)))
               (set! i (+ i 1))))
           (set! h (* (bit-xor h tail) -7046029254386353131))
           (bit-xor h (cast (shr (cast h : u64) 29) : i64)))))))

@@ -250,7 +250,7 @@
   (str-cat "build: unknown backend mode " value ""))
 
 (define (build-unknown-opt-level [value : String]) : String
-  (str-cat "build: unknown opt level '" value "'; expected 0, 1, 2, or 3"))
+  (str-cat "build: unknown opt level '" value "'; expected 0, 1, or 2"))
 
 (define (build-unknown-profile [value : String]) : String
   (str-cat "build: unknown profile '" value "'; expected dev or release"))
@@ -328,8 +328,6 @@
     1
     (string-eq value "2")
     2
-    (string-eq value "3")
-    3
     -1))
 
 (define (build-parse-options
@@ -3303,7 +3301,7 @@
   (str-cat "build: unknown target " value ""))
 
 (define (build-cli-unknown-opt-level [value : String]) : String
-  (str-cat "build: unknown opt level " value ""))
+  (str-cat "build: unknown opt level " value "; expected 0, 1, or 2"))
 
 (defenum BuildCliOption
   (BuildCliOptionOutput)

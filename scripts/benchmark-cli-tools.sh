@@ -82,9 +82,9 @@ esac
 
 OPT_LEVEL=${TYPELISP_TOOL_BENCH_OPT_LEVEL:-1}
 case "$OPT_LEVEL" in
-    0 | 1 | 2 | 3) ;;
+    0 | 1 | 2) ;;
     *)
-        echo "TYPELISP_TOOL_BENCH_OPT_LEVEL must be 0, 1, 2, or 3" >&2
+        echo "TYPELISP_TOOL_BENCH_OPT_LEVEL must be 0, 1, or 2" >&2
         exit 2
         ;;
 esac

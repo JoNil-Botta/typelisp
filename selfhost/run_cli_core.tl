@@ -44,7 +44,7 @@
   (str-cat "run: unknown backend mode " value ""))
 
 (define (run-plan-unknown-opt-level [value : String]) : String
-  (str-cat "run: unknown opt level " value ""))
+  (str-cat "run: unknown opt level " value "; expected 0, 1, or 2"))
 
 (define (run-plan-append-stdlib [stdlib-lines : String] [root : String]) : String
   (string-append stdlib-lines (host-plan-netline "stdlib-root" root)))
@@ -212,7 +212,7 @@
   (str-cat "run: unknown target " value ""))
 
 (define (run-cli-unknown-opt-level [value : String]) : String
-  (str-cat "run: unknown opt level " value ""))
+  (str-cat "run: unknown opt level " value "; expected 0, 1, or 2"))
 
 (define (run-cli-parse-options
   [idx : i64]

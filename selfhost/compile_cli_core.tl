@@ -160,7 +160,7 @@
       (ErrCompileCliTarget (compile-cli-unknown-target value)))))
 
 (define (compile-cli-invalid-opt-level [value : String]) : String
-  (str-cat "compile: invalid --opt-level " value "; expected 0, 1, 2, or 3"))
+  (str-cat "compile: invalid --opt-level " value "; expected 0, 1, or 2"))
 
 ;; `--backend-mode` parity with Rust (which accepts scalar/avx2/avx512).
 (defenum ResultCompileCliBackendMode

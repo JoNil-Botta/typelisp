@@ -25084,6 +25084,37 @@
         scratch))
     lower-scratch-arena))
 
+;; #2596: dedicated arena for the escaped (lowered) IR function bodies. The
+;; lowered IR is consumed exactly once: at opt levels >= 1 the optimizer
+;; deep-clones every surviving function into the enclosing arena
+;; (optimize-function-escaping), after which the entire input IR is dead --
+;; ~172MB on a cli.tl self-compile that the program-lifetime arena would
+;; never reclaim. Cloning the lowered functions into this arena instead lets
+;; the driver destroy it right after optimization. At opt level 0 the
+;; program flows to the backend unchanged, so the arena must stay alive for
+;; the whole compile (the driver only releases it for levels >= 1; batch
+;; compiles release it between entries). Globals, externs, and the spans
+;; side-table are NOT allocated here -- they outlive optimization.
+(define lower-ir-arena : i64
+  0)
+
+(define (lower-ir-arena-get) : i64
+  (if (= lower-ir-arena 0)
+    (let
+      [arena : i64 (arena-make)]
+      (begin
+        (set! lower-ir-arena arena)
+        arena))
+    lower-ir-arena))
+
+(define (lower-ir-arena-release!) : unit
+  (if (= lower-ir-arena 0)
+    unit
+    (begin
+      (unsafe
+        (arena-destroy lower-ir-arena))
+      (set! lower-ir-arena 0))))
+
 (define (lower-function-escaping
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -25122,20 +25153,31 @@
             (let
               [scratch-head : i64 (arena-current)]
               (begin
+                ;; The IR function clones go to the dedicated lowered-IR
+                ;; arena (released by the driver after optimization); the
+                ;; spans side-table is rebuilt in the enclosing arena since
+                ;; it outlives the lowered IR. The stored handle must follow
+                ;; the arena's grown head, or every later allocation re-walks
+                ;; the overflow path from the full first segment.
                 (unsafe
-                  (arena-set! enclosing))
+                  (arena-set! (lower-ir-arena-get)))
                 (let
                   [escaped-fns : CompilerIrFunctionList
                     (compiler-ir-clone-function-list fns)]
-                  [escaped-spans : CompilerSourceSpans
-                    (lower-record-function-span spans logical-name body)]
-                  [new-enclosing : i64 (arena-current)]
                   (begin
+                    (set! lower-ir-arena (arena-current))
                     (unsafe
-                      (arena-set! scratch-head)
-                      (arena-rewind mark)
-                      (arena-set! new-enclosing))
-                    (OkLowerFunction escaped-fns escaped-spans)))))]
+                      (arena-set! enclosing))
+                    (let
+                      [escaped-spans : CompilerSourceSpans
+                        (lower-record-function-span spans logical-name body)]
+                      [new-enclosing : i64 (arena-current)]
+                      (begin
+                        (unsafe
+                          (arena-set! scratch-head)
+                          (arena-rewind mark)
+                          (arena-set! new-enclosing))
+                        (OkLowerFunction escaped-fns escaped-spans)))))))]
           [(ErrLowerFunction message)
             (let
               [scratch-head : i64 (arena-current)]

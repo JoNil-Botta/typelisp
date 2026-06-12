@@ -73,6 +73,9 @@ transitional surface:
   `(set! (struct-get place field) value)` (#1521). Mutable box access remains
   tracked by #2553; the move/borrow rules in sections 3.10 and 4.6.2 are the
   contract mutation must satisfy.
+- **Text and bytes.** `String`/`str` remain immutable text/byte views. Mutable
+  binary storage uses the specified `ByteBuf` owner plus borrowed `bytes` views
+  from section 3.11 (#2782), not mutable `str` and not `TextBuf`.
 - **Memory and threads.** Each thread gets its own default arena; a shared
   atomic arena supports concurrent allocation (#2591/#2593). Thread safety
   extends the section 1.1 no-UB contract through structural checker
@@ -318,8 +321,27 @@ narrower or unsigned integer is required. Floating-point literals are always
   globals, fields, enum payloads, tuple elements, and array element types.
 - The only accepted source form for borrowed text in v1 is an immutable
   reference `(& lifetime str)`. Mutable string references `(&mut lifetime str)`
-  are reserved and rejected until mutable byte-buffer policy exists.
+  are rejected; mutable bytes use `ByteBuf` and `bytes`.
 - `str` is not NUL-terminated. Its length is carried with the borrowed view.
+
+**Owned mutable byte buffer:** `ByteBuf` (specified, pending implementation)
+- `ByteBuf` is an owned, move-only mutable byte buffer allocated in the active
+  arena. It stores a data pointer, live length, and capacity.
+- The live range `[0, len)` is initialized byte storage. The spare capacity
+  range `[len, capacity)` is reserved implementation storage and cannot be read
+  by safe code.
+- `ByteBuf` has no text, encoding, or NUL-termination invariant.
+- Growing a `ByteBuf` may allocate a new active-arena backing store and copy the
+  live bytes. The old backing store is not reclaimed until its arena is reset or
+  the process exits.
+
+**Borrowed byte-slice referent:** `bytes` (specified, pending implementation)
+- `bytes` is a borrowed byte-slice referent, not a by-value type in v1.
+- `(& lifetime bytes)` is an immutable borrowed byte view.
+- `(&mut lifetime bytes)` is an exclusive mutable byte view over a fixed-length
+  range. It may update existing bytes but cannot grow the owner.
+- Bare `bytes` is rejected in value positions: parameters, returns, locals,
+  globals, fields, enum payloads, tuple elements, and array element types.
 
 ### 3.3 Function types
 
@@ -1072,6 +1094,7 @@ and lowers to `tl_region_mark` / `tl_region_reset` around the body.
 **Region-taggable types** are the heap-allocated aggregate kinds whose storage
 can be created inside a region scope:
 - `String`
+- `ByteBuf` - owned mutable byte buffers
 - `(Box T)` - arena-owned boxed storage
 - `(Array T)` — dynamic array
 - Enum and struct values returned from functions inside the region
@@ -1590,7 +1613,7 @@ remaining outer-scope uses are still proven non-escaping. A closure that capture
         (lambda () (string-length view))))))
 ```
 
-### 3.11 Owned `String` and borrowed `str` (v1 design)
+### 3.11 Owned `String`, borrowed `str`, and byte buffers (v1 design)
 
 This section defines the source contract for the owned `String` / borrowed
 `str` split. The `str` frontend and stdlib API migration are implemented
@@ -1598,6 +1621,9 @@ This section defines the source contract for the owned `String` / borrowed
 and stdlib string helpers expose borrowed-`str` signatures (for example
 `string-eq-borrowed` and `substring-borrowed` in `stdlib/string.tl`). Several
 compiler builtins keep the compatibility `String` forms listed in section 6.1.
+It also reserves the v1 mutable byte-buffer family from #2782 so binary IO,
+FFI, and builder code do not invent incompatible names while implementation
+lands.
 
 #### Source model
 
@@ -1608,9 +1634,8 @@ compiler builtins keep the compatibility `String` forms listed in section 6.1.
   `(& lifetime str)`.
 - Bare `str` in a parameter, return, local binding, global, field, enum
   payload, tuple element, or array element position is rejected.
-- `(&mut lifetime str)` is reserved and rejected in v1 because strings are
-  immutable. Mutable byte buffers should use a future buffer/slice type rather
-  than mutable `str`.
+- `(&mut lifetime str)` is rejected because strings are immutable. Mutable byte
+  buffers use the `ByteBuf` / `bytes` family below rather than mutable `str`.
 - String literals keep type `String`. There is no static-borrowed string
   literal type and no implicit static lifetime in v1.
 
@@ -1679,6 +1704,104 @@ live is rejected by the move/borrow checker:
       (string-length view))))
 ```
 
+#### Mutable byte buffers and byte slices
+
+The final names are reserved now, before stdlib and FFI code depend on ad hoc
+binary storage names:
+
+| Concept | Source spelling | Contract |
+|---------|-----------------|----------|
+| Owned mutable byte buffer | `ByteBuf` | Move-only aggregate handle owning active-arena byte storage with `len <= capacity`. |
+| Immutable byte slice | `(& r bytes)` | Copyable immutable borrowed view over initialized bytes owned by `r`. |
+| Mutable byte slice | `(&mut r bytes)` | Exclusive borrowed view over a fixed initialized byte range owned by `r`. |
+
+`ByteBuf` is binary storage, not text. It has no encoding invariant and carries
+no NUL terminator guarantee. It owns the initialized live range `[0, len)` and
+may reserve additional capacity. Safe code cannot read spare capacity; helpers
+that expose spare capacity for host reads or in-place initialization must either
+initialize the newly exposed range before increasing `len`, or remain `unsafe`.
+
+Construction, copy-in, growth, reserve, and conversion-to-owned-result helpers
+allocate in the active arena. A `ByteBuf` created inside `(with-arena r ...)`
+has type `(in r ByteBuf)` and cannot escape the scoped arena. Growing a buffer
+may allocate a larger backing store in the same active arena and copy live bytes;
+the old store stays allocated until its arena is reset or the process exits.
+`ByteBuf` follows the move-only aggregate rules in section 4.6.2.
+
+`bytes` is a borrowed referent like `str`, not a first-class value type. It
+appears only behind `&` or `&mut`. An immutable `bytes` view permits reads only.
+A mutable `bytes` view is exclusive and fixed-length: it may write existing
+indices but cannot append, reserve, or change the owner's length. Direct
+indexing, slicing, and mutation helpers for `ByteBuf`/`bytes` use the same
+runtime bounds discipline as arrays and strings: negative or out-of-range
+indices and invalid `[start, start + len)` slices trap through the ordinary
+out-of-bounds path unless an API is explicitly named as checked/try-style.
+
+The first stdlib implementation should use `stdlib/byte_buf.tl`, with
+`byte-buf-*` helper names for owned-buffer operations and `bytes-*` helper names
+for borrowed-slice operations. The required semantic operations are:
+
+- create an empty buffer or a buffer with capacity;
+- inspect length/capacity and read initialized bytes;
+- push, set, clear, and reserve through an owned `ByteBuf` place or a mutable
+  reference to that owner;
+- borrow the live range as `(& r bytes)` or `(&mut r bytes)`;
+- copy from a `String`, `(& r str)`, `(Array u8)`, or `(& r bytes)` into a fresh
+  `ByteBuf`;
+- copy a `ByteBuf` or `(& r bytes)` into a fresh active-arena `String` or
+  `(Array u8)`.
+
+Conversions are explicit:
+
+- `String` and `(& r str)` may be viewed as immutable `(& r bytes)` without
+  copying because TypeLisp strings are byte strings. They never produce
+  `(&mut r bytes)`.
+- `String` / `str` to `ByteBuf` copies into new mutable active-arena storage.
+- `ByteBuf` to `String` copies the live bytes into a new immutable active-arena
+  `String`. There is no borrowed `str` view of mutable buffer storage in v1.
+- `ByteBuf` to `(& r bytes)` or `(&mut r bytes)` is a borrow of the live range
+  with no copy. While an immutable view is live, mutation/growth through the
+  owner is rejected. While a mutable view is live, any aliasing read, write,
+  move, or growth of the owner is rejected by the borrow checker.
+- `(Array u8)` remains a compatibility storage shape. New public binary APIs
+  should use `ByteBuf`/`bytes` once implemented; array conversion is an explicit
+  copy or explicit borrowed view over a declared live prefix.
+
+```lisp test=ignore name=bytebuf-borrow-surface reason="ByteBuf and bytes are specified before stdlib implementation"
+(define (first-byte [view : (& input bytes)]) : u8
+  (bytes-ref view 0))
+
+(define (overwrite-first [view : (&mut input bytes)] [value : u8]) : unit
+  (bytes-set! view 0 value))
+
+(define (render-owned [buf : ByteBuf]) : String
+  (byte-buf-to-string buf))
+```
+
+FFI and IO boundaries are explicit. Borrowed byte views are pointer/length
+values in safe code, not raw pointers. Helpers that expose `(Ptr u8)` or
+`(MutPtr u8)` from `bytes`/`ByteBuf` are raw-pointer escape hatches and must be
+usable only in `unsafe` contexts or through APIs whose safety preconditions are
+spelled out. The pointer is valid only for the lifetime of the borrow and only
+while the owner is not grown, moved into an invalidating context, or invalidated
+by arena reset/destroy.
+
+C APIs that require NUL-terminated strings still require an explicit
+NUL-terminated copy such as the `ffi-c-string-*`/`ffi-cstr` family; neither
+`ByteBuf` nor `bytes` implies trailing NUL, forbids interior NUL, or coerces to a
+C string pointer. Future binary IO helpers should accept `(& r bytes)` for
+non-consuming writes, return owned `ByteBuf` for allocated reads, and fill
+caller-provided `ByteBuf`/`(&mut r bytes)` storage only under the exclusive
+mutable-borrow rules. Existing `String`-returning IO remains compatibility
+surface until those helpers land.
+
+`TextBuf` is intentionally separate. It is an append-oriented text builder over
+owned or borrowed string chunks whose render operation materializes an immutable
+`String`; it is not a random-access mutable byte buffer and must not become the
+binary slice contract by accident. Generated slices such as `I64Slice` in
+`stdlib/vector_slice.tl` remain typed collection views. `bytes` is the
+language-wide raw byte-slice referent for binary data and FFI/IO boundaries.
+
 #### API classification
 
 The #1453/#1454 migration gave the stdlib surface borrowed-`str` signatures for
@@ -1692,7 +1815,7 @@ inputs while preserving owned `String` results for allocation sites.
 | Text output and diagnostics | `print-string`/`print-str`, `print-error`, `panic`/`error`, `stdout-write`, `stderr-write`, `write-file`, append/write status helpers, process stdin strings | Accept borrowed `(& r str)` text/path/message inputs. Host I/O may copy bytes outside the language heap but does not take TypeLisp ownership. |
 | Active-arena owned string results | `arg`, `read-file`, `file-read-chunk-bytes`, `read-stdin-line`, `read-stdin-bytes`, `int->string`, `str-cat`/low-level concat primitives, `substring`/`string-slice`, stdlib trim/replacement helpers when they build text, env/path split/join helpers | Return owned `String` storage allocated in the active arena. Results created inside a scoped arena cannot escape that arena. |
 | Caller-provided fallback/result values | `stdlib/string.tl` `string-replace` when no match is found, `stdlib/io.tl` `read-file-or` fallback paths; check-only companion modules `stdlib/string_caller_result.tl` and `stdlib/io_caller_result.tl` | Preserve the caller-owned value instead of allocating. The companion modules expose source/typecheck-only lifetime-preserving aggregate shapes: branch-composed `StringReplaceResult` for replacement helpers and `ReadFileOrResult` for fallback reads. Ordinary runnable wrappers remain conservatively owned-compatible until reference-typed aggregate lowering and fuller branch lifetime unification land (#1722/#804). |
-| Mutable or binary byte storage | dynamic arrays today; future byte-buffer/slice work | Not modeled as `str`. `str` is immutable borrowed text/bytes and should not become the mutable buffer type. |
+| Mutable or binary byte storage | `ByteBuf`, `(& r bytes)`, `(&mut r bytes)`; dynamic `(Array u8)` compatibility code today | Not modeled as `str`. New binary APIs should use the explicit byte-buffer family once implemented; mutable byte views are exclusive borrowed `bytes`, not mutable strings. |
 
 #### ABI and lowering representation
 
@@ -1713,6 +1836,14 @@ pointer-sized reference slot shape as other immutable references. Runtime
 helpers that read text must consume the view's pointer and length and must not
 retain the view beyond the call unless a later API explicitly models that
 stored lifetime.
+
+`ByteBuf` uses an aggregate-handle representation analogous to other owned
+runtime aggregates. Its inline storage is a pointer/length/capacity record. The
+capacity is a source-level invariant, not permission for safe code to read
+uninitialized bytes. `(& lifetime bytes)` and `(&mut lifetime bytes)` lower as
+pointer-sized reference/provenance values to immutable or mutable slice records
+containing `(data_ptr, length)`. Mutable byte views carry exclusivity in the
+source checker; the runtime representation does not retain aliasing state.
 
 ---
 
@@ -2548,6 +2679,7 @@ checker slices (#1033-#1035 and #806), not by this section.
 and marks the source place moved. Move-only types are:
 
 - `String`.
+- `ByteBuf`.
 - Dynamic arrays `(Array T)`.
 - Boxes `(Box T)`.
 - Fixed arrays `(Array T N)`.
@@ -2969,6 +3101,13 @@ which makes these forms suitable for side effects and early-return guards.
 - Mutates an existing local or global variable.
 - Type of `expr` must match `var`'s type.
 - Returns `unit`.
+- Aggregate mutation through specific place forms follows the receiver's
+  ownership mode. `array-set!` and struct field assignment require an owned
+  place or mutable reference receiver; immutable references are rejected.
+- Future `ByteBuf`/`bytes` mutation follows the same rule: byte writes require
+  an owned `ByteBuf` place, a mutable reference to a `ByteBuf`, or an exclusive
+  `(&mut r bytes)` view. Immutable `(& r bytes)`, `(& r str)`, and `String`
+  views are read-only.
 
 ### 5.11 `(ann expr : type)` — type annotation
 
@@ -4055,6 +4194,10 @@ until the remaining in-tree migrations are complete.
   The v1 owned `String` / borrowed `str` contract in section 3.11 changes
   non-consuming text inputs to `(& lifetime str)` while preserving owned
   `String` results for allocating operations.
+- `ByteBuf` and `bytes` are specified in section 3.11 as stdlib/language
+  surface, not as implicit compiler builtins. There is no implicit conversion
+  from text, arrays, or raw pointers to byte buffers; binary APIs must use
+  explicit borrow/copy helpers.
 
 ### 6.2 Runtime functions (emitted by the backend)
 
@@ -4217,11 +4360,13 @@ payload plus a sticky `eof` flag):
 
 **Text vs. binary (v1).** Like `StdinRead`, `FileRead` carries chunk data as a
 `String`: a chunk is the raw bytes read, stored in a `String`, with no
-text/binary distinction in v1. This remains source-compatible; future binary
-buffer work should use a dedicated byte-slice/buffer type rather than mutable
-`str`, because section 3.11 defines `str` as immutable borrowed text/bytes.
-Returned chunk strings allocate in the active arena, the same as `read-file`
-and `StdinRead`.
+text/binary distinction in the implemented compatibility surface. This remains
+source-compatible. New binary IO helpers should use the `ByteBuf` / `bytes`
+family specified in section 3.11 rather than mutable `str`: non-consuming writes
+take `(& r bytes)`, allocated reads return active-arena `ByteBuf`, and
+caller-provided reads fill `ByteBuf` or `(&mut r bytes)` under the exclusive
+borrow rules. Returned compatibility chunk strings allocate in the active arena,
+the same as `read-file` and `StdinRead`.
 
 **Streaming writes / append (#1058).** Streaming writes reuse `ResultIoUnit`:
 
@@ -4469,8 +4614,9 @@ guarantees and are not implemented yet (#809/#896).
 
 ### 7.2 Heap
 
-- Dynamic array element buffers and escaping returned aggregates (enums,
-  structs, strings, dynamic-array fat values) are heap-allocated.
+- Dynamic array element buffers, future `ByteBuf` backing stores, and escaping
+  returned aggregates (enums, structs, strings, dynamic-array fat values) are
+  heap-allocated.
 - Non-escaping aggregate fat/inline storage is usually kept in the current stack frame.
 - Allocation goes through `tl_alloc`, a backend-emitted bump allocator.
 - There is **no garbage collector** or general `free`.
@@ -4486,8 +4632,9 @@ and correct for one-shot compiled programs. It covers all current heap
 allocation kinds: fresh string storage from `substring`, `str-cat`/the
 low-level concat primitives, `read-file`, `arg`, and `int->string`; dynamic
 array element buffers and fat values; returned enum and struct storage; and
-self-hosted data structures built from those primitives. Future closures are
-expected to allocate in the same heap until a more precise model exists.
+self-hosted data structures built from those primitives. Future `ByteBuf`
+backing storage and closures are expected to allocate in the same heap until a
+more precise model exists.
 
 General per-object `free`, implicit destructors, and borrowed references are not
 part of this v1 policy. Aggregate handles are represented as pointer-shaped
@@ -4540,7 +4687,8 @@ reclamation between phases.
 Allocation sites inside a `with-arena` scope target the active region:
 - String operations that create fresh storage (`substring`, `str-cat`,
   low-level concat primitives, `read-file`, `int->string`, `arg`), `make-array`,
-  `box`, and returned aggregate storage from calls inside the region.
+  `box`, future `ByteBuf` construction/growth/copy-result helpers, and returned
+  aggregate storage from calls inside the region.
 - The body result must be region-free (scalars, or aggregates allocated *before*
   the `with-arena`).
 
@@ -4612,16 +4760,17 @@ stdlib surface.
 | Category | Members | Arena behavior |
 |----------|---------|----------------|
 | Non-allocating inspection | `length`/`array-length` on arrays, `length`/`string-length`, `string-ref`/`char-at`, `string-eq`/`string=?`, `string->int`, stdlib string predicates such as `string-contains` | Reads caller-provided handles and returns scalars. |
-| Returns active-arena owned data | `make-array`, `box`, `arg`, `read-file`, `file-read-chunk`, `read-stdin-line`, `read-stdin-bytes`, `str-cat`/low-level concat primitives, `substring`/`string-slice`, `int->string`, stdlib trimming/replacement helpers when they build a new string | Fresh storage is allocated in the active arena and cannot escape a scoped arena. |
+| Returns active-arena owned data | `make-array`, `box`, `arg`, `read-file`, `file-read-chunk`, `read-stdin-line`, `read-stdin-bytes`, `str-cat`/low-level concat primitives, `substring`/`string-slice`, `int->string`, future `ByteBuf` construction/growth/copy-result helpers, stdlib trimming/replacement helpers when they build a new string | Fresh storage is allocated in the active arena and cannot escape a scoped arena. |
 | Returns caller-provided data | `stdlib/string.tl` `string-replace` when no match is found; `stdlib/io.tl` `read-file-or` when the path is missing; check-only `stdlib/string_caller_result.tl` and `stdlib/io_caller_result.tl` companion surfaces | Compatibility wrapper calls inside a scoped arena are still treated conservatively as arena-tagged aggregate results. The companion modules express the borrowed/caller-owned distinction in source/typecheck-only reference-typed aggregates; ordinary lowering of those aggregate values still waits for reference/borrow lowering. |
-| Mutates caller-provided storage | `array-set!` | Mutates the array buffer named by the caller; it does not allocate. Region checks reject storing shorter-lived aggregate handles into longer-lived containers. |
+| Mutates caller-provided storage | `array-set!`, future `byte-buf-set!`/`bytes-set!` style helpers | Mutates storage named by the caller; it does not allocate unless an owned-buffer growth operation is explicitly requested. Region checks reject storing shorter-lived aggregate handles into longer-lived containers, and borrowed `bytes` mutation requires an exclusive mutable view. |
 | Host/runtime IO | `print*`, `panic`/`error`, `flush-stdout`, `write-file`, `file-exists?`, stdlib IO helpers | Performs target IO; any temporary strings used by the helper allocate in the active arena. |
 
 The owned `String` / borrowed `str` source contract is specified in section
-3.11. Check-only companion stdlib modules now expose borrow-typed caller-result
-aggregate surfaces, while runnable compatibility wrappers still use lowerable
-owned `String`/aggregate signatures. Except for the explicit `stdlib/arena.tl`
-manual-control surface, no
+3.11, alongside the reserved `ByteBuf` / borrowed `bytes` binary-storage
+contract. Check-only companion stdlib modules now expose borrow-typed
+caller-result aggregate surfaces, while runnable compatibility wrappers still
+use lowerable owned `String`/aggregate signatures. Except for the explicit
+`stdlib/arena.tl` manual-control surface, no
 current stdlib function manually resets arenas; safe scoped cleanup is owned by
 `with-arena`. Source code that needs manual arena control imports
 `stdlib/arena.tl` and uses the first-class arena helpers, with `arena-set!`,

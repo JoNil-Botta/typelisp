@@ -8,6 +8,8 @@
 
 (import "stdlib/test.tl")
 
+(import "stdlib/vector.tl")
+
 (define (assert-owned-string-eq
   [actual : String]
   [expected : String]
@@ -44,6 +46,12 @@
   (match result
     [(OkIoStringList value) value]
     [(ErrIoStringList error)
+      (panic (string-append message (io-error-message error)))]))
+
+(define (expect-ok-string-vec [result : ResultIoStringVec] [message : String]) : StringVec
+  (match result
+    [(OkIoStringVec value) value]
+    [(ErrIoStringVec error)
       (panic (string-append message (io-error-message error)))]))
 
 (define (assert-unsupported-string-list
@@ -145,6 +153,9 @@
 
 (define (test-try-read-dir [path : String]) : ResultIoStringList
   (try-read-dir (& path)))
+
+(define (test-try-read-dir-vec [path : String]) : ResultIoStringVec
+  (try-read-dir-vec (& path)))
 
 (define (test-try-file-kind [path : String]) : ResultFsFileKind
   (try-file-kind (& path)))
@@ -272,6 +283,18 @@
     (assert-i64-eq (test-fs-file-kind-status path) io-status-not-found message)
     (assert-i64-eq (test-fs-file-size-status path) io-status-not-found message)
     (assert-i64-eq (test-fs-file-size path) 0 message)))
+
+(define (assert-string-vec3
+  [items : StringVec]
+  [first : String]
+  [second : String]
+  [third : String]
+  [message : String]) : unit
+  (begin
+    (assert-i64-eq (string-vec-len items) 3 message)
+    (assert-owned-string-eq (string-vec-get items 0 "missing") first message)
+    (assert-owned-string-eq (string-vec-get items 1 "missing") second message)
+    (assert-owned-string-eq (string-vec-get items 2 "missing") third message)))
 
 (define (assert-file-contents
   [path : String]
@@ -417,6 +440,8 @@
       (let
         [entries : StringList
           (expect-ok-string-list (test-try-read-dir root) "read dir: ")]
+        [entries-vec : StringVec
+          (expect-ok-string-vec (test-try-read-dir-vec root) "read dir vec: ")]
         (begin
           (assert-true
             (string-list-contains? entries "alpha.txt")
@@ -433,6 +458,21 @@
           (assert-false
             (string-list-contains? entries "..")
             "read-dir filters dotdot")
+          (assert-true
+            (string-vec-contains? entries-vec "alpha.txt")
+            "read-dir vec includes first file name")
+          (assert-true
+            (string-vec-contains? entries-vec "beta data.txt")
+            "read-dir vec includes second file name")
+          (assert-true
+            (string-vec-contains? entries-vec "child-dir")
+            "read-dir vec includes subdirectory name")
+          (assert-false
+            (string-vec-contains? entries-vec ".")
+            "read-dir vec filters dot")
+          (assert-false
+            (string-vec-contains? entries-vec "..")
+            "read-dir vec filters dotdot")
           (assert-not-found-string-list
             (test-try-read-dir missing)
             "read-dir missing path reports not found")
@@ -530,6 +570,12 @@
         (test-fs-path-join-many3 "left/" "/right" "leaf")
         (string-append "left/right" (string-append (fs-path-separator) "leaf"))
         "path join many avoids duplicate separator")
+      (assert-string-vec3
+        (fs-read-dir-split-vec "first\nsecond\nthird\n")
+        "first"
+        "second"
+        "third"
+        "read-dir split vec preserves payload order")
       ;; #822: pure path-string helpers (separator-agnostic; `/` cases are
       ;; stable on both Linux and Windows).
       (assert-owned-string-eq

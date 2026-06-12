@@ -31,10 +31,17 @@
 
 (import "string.tl")
 
+(import "vector.tl")
+
 ;: Result type for directory-listing APIs.
 (defenum ResultIoStringList
   (OkIoStringList StringList)
   (ErrIoStringList IoError))
+
+;: Result type for vector-backed directory-listing APIs.
+(defenum ResultIoStringVec
+  (OkIoStringVec StringVec)
+  (ErrIoStringVec IoError))
 
 ;: Linux `mkdir` via the `mkdir` syscall (number 83).
 (define (fs-linux-syscall-mkdir [path : (Ptr u8)] [mode : i64]) : i64
@@ -859,11 +866,6 @@
 (define fs-temp-attempt-limit : i64
   100)
 
-;: Reversed path segment stack used by lexical path normalization.
-(defenum FsPathSegmentList
-  (FsPathSegmentNil)
-  (FsPathSegmentCons String (Box FsPathSegmentList)))
-
 ;: Portable coarse filesystem node kind.
 (defenum FsFileKind
   (FsFileRegular)
@@ -939,35 +941,46 @@
           (fs-path-drive-qualified? path)
           (fs-path-separator? (string-ref path 2)))))))
 
-;: Render a reversed normalized path segment stack using `/` separators.
-(define (fs-path-segment-list-render [segments : FsPathSegmentList]) : String
-  (match segments
-    [(FsPathSegmentNil) ""]
-    [(FsPathSegmentCons head rest)
-      (let
-        [prefix : String (fs-path-segment-list-render (box-get rest))]
+;: Render normalized path segments using `/` separators.
+(define (fs-path-segment-vec-render-from
+  [segments : StringVec]
+  [index : i64]
+  [prefix : String]) : String
+  (if (>= index (string-vec-len segments))
+    prefix
+    (let
+      [segment : String (string-vec-get segments index "")]
+      [next-prefix : String
         (if (= (string-length prefix) 0)
-          head
-          (string-append prefix (string-append "/" head))))]))
+          segment
+          (string-append prefix (string-append "/" segment)))]
+      (fs-path-segment-vec-render-from segments (+ index 1) next-prefix))))
+
+;: Render normalized path segments using `/` separators.
+(define (fs-path-segment-vec-render [segments : StringVec]) : String
+  (fs-path-segment-vec-render-from segments 0 ""))
 
 ;: Fold one lexical path segment into the normalized segment stack.
 (define (fs-path-normalize-segment
   [segment : String]
-  [segments : FsPathSegmentList]
-  [rooted : bool]) : FsPathSegmentList
-  (if (or (string-eq segment "") (string-eq segment "."))
-    segments
-    (if (string-eq segment "..")
-      (match segments
-        [(FsPathSegmentNil)
-          (if rooted
-            FsPathSegmentNil
-            (FsPathSegmentCons segment (box segments)))]
-        [(FsPathSegmentCons top rest)
-          (if (string-eq top "..")
-            (FsPathSegmentCons segment (box segments))
-            (box-get rest))])
-      (FsPathSegmentCons segment (box segments)))))
+  [segments : StringVec]
+  [rooted : bool]) : StringVec
+  (begin
+    (when (or (string-eq segment "") (string-eq segment ".")) (return segments))
+    (when
+      (not (string-eq segment ".."))
+      (return (string-vec-push segments segment)))
+    (if (<= (string-vec-len segments) 0)
+      (if rooted
+        segments
+        (string-vec-push segments segment))
+      (let
+        [top : String (string-vec-last segments "")]
+        (if (string-eq top "..")
+          (string-vec-push segments segment)
+          (match (string-vec-pop segments)
+            [(StringVecPopOk _ rest) rest]
+            [(StringVecPopEmpty) segments]))))))
 
 ;: Lexically normalize `path` without resolving symlinks or touching the host FS.
 ;:
@@ -995,7 +1008,7 @@
           1
           0))]
     [segment-start : i64 i]
-    [segments : FsPathSegmentList FsPathSegmentNil]
+    [segments : StringVec (string-vec-new)]
     (begin
       (while (< i n)
         (begin
@@ -1017,7 +1030,7 @@
           segments
           rooted))
       (let
-        [body : String (fs-path-segment-list-render segments)]
+        [body : String (fs-path-segment-vec-render segments)]
         (core/cond
           (and drive-root (= (string-length body) 0))
           (string-append (substring-borrowed path 0 2) "/")
@@ -1308,10 +1321,10 @@
             (OkFsMetadata (FsMetadata kind 0)))]))))
 
 ;: Split the runtime's newline-delimited directory payload into entry names.
-(define (fs-read-dir-split [entries : String]) : StringList
+(define (fs-read-dir-split-vec [entries : String]) : StringVec
   (let
     [n : i64 (string-length entries)]
-    [items : StringList (StringNil)]
+    [items : StringVec (string-vec-new)]
     [start : i64 0]
     [i : i64 0]
     (begin
@@ -1321,15 +1334,35 @@
             (if (> i start)
               (set!
                 items
-                (string-list-cons (substring entries start (- i start)) items))
+                (string-vec-push items (substring entries start (- i start))))
               unit)
             (set! start (+ i 1))
             (set! i (+ i 1)))
           (set! i (+ i 1))))
       (if (< start n)
-        (string-list-reverse
-          (string-list-cons (substring entries start (- n start)) items))
-        (string-list-reverse items)))))
+        (string-vec-push items (substring entries start (- n start)))
+        items))))
+
+;: Split the runtime's newline-delimited directory payload into entry names.
+(define (fs-read-dir-split [entries : String]) : StringList
+  (string-list-from-vec (fs-read-dir-split-vec entries)))
+
+;: Read one directory and return entry names as a `StringVec`.
+;:
+;: Entries are names only, not joined paths. The runtime filters `.` and `..`.
+;: Host directory order is preserved and not guaranteed to be stable; callers
+;: that need stable ordering should sort the returned vector. The returned
+;: vector storage and entry strings allocate in the active arena.
+(define (try-read-dir-vec [path : (& path str)]) : ResultIoStringVec
+  (let
+    [path-text : String (string-copy-borrowed path)]
+    (if (io-empty-path? path)
+      (ErrIoStringVec (io-invalid-path-error path))
+      (let
+        [status : i64 (fs-read-dir-status path-text)]
+        (if (= status io-status-ok)
+          (OkIoStringVec (fs-read-dir-split-vec (fs-read-dir path-text)))
+          (ErrIoStringVec (io-error-from-status path status)))))))
 
 ;: Read one directory and return entry names as a `StringList`.
 ;:
@@ -1338,15 +1371,9 @@
 ;: that need stable ordering should sort the returned list. The returned list
 ;: spine and entry strings allocate in the active arena.
 (define (try-read-dir [path : (& path str)]) : ResultIoStringList
-  (let
-    [path-text : String (string-copy-borrowed path)]
-    (if (io-empty-path? path)
-      (ErrIoStringList (io-invalid-path-error path))
-      (let
-        [status : i64 (fs-read-dir-status path-text)]
-        (if (= status io-status-ok)
-          (OkIoStringList (fs-read-dir-split (fs-read-dir path-text)))
-          (ErrIoStringList (io-error-from-status path status)))))))
+  (match (try-read-dir-vec path)
+    [(OkIoStringVec entries) (OkIoStringList (string-list-from-vec entries))]
+    [(ErrIoStringVec error) (ErrIoStringList error)]))
 
 ;: Remove a file if present. Missing paths are considered already cleaned.
 (define (try-remove-file-if-exists [path : (& path str)]) : ResultIoUnit

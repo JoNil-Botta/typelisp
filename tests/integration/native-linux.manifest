@@ -74,7 +74,7 @@ nested_eval|tests/integration/nested_eval.tl|7|-|-|-
 nullary_variant_call|tests/integration/nullary_variant_call.tl|42|-|-|-
 overflow_casts|tests/integration/overflow_casts.tl|0|-|-|-
 parser|tests/integration/parser.tl|14|-|-|-
-process_runtime|tests/integration/process_runtime.tl|42|-|-|stdlib/process_borrowed.tl stdlib/process.tl stdlib/process_runtime.tl stdlib/test.tl stdlib/io.tl stdlib/env.tl stdlib/string.tl
+process_runtime|tests/integration/process_runtime.tl|42|-|-|stdlib/process_borrowed.tl stdlib/process.tl stdlib/process_runtime.tl stdlib/test.tl stdlib/io.tl stdlib/env.tl stdlib/vector.tl stdlib/string.tl
 read_file_missing_trap|tests/integration/read_file_missing_trap.tl|134|-|-|-|expected-stderr:tl: read-file failed\n
 write_file_invalid_trap|tests/integration/write_file_invalid_trap.tl|134|-|-|-|expected-stderr:tl: write-file failed: io: not found: tests/integration/missing-parent-zzz/output.txt\n
 selfhost_argv_oob|tests/integration/selfhost_argv_oob.tl|134|-|-|-|expected-stderr:tl: argv index out of bounds\n
@@ -146,10 +146,10 @@ doc_test_smoke|selfhost/doc_test_smoke.tl|42|-|-|doc_test.tl build_run_core.tl c
 doc_render_smoke|selfhost/doc_render_smoke.tl|42|-|-|doc_render.tl doc_extract.tl format_tokens.tl
 doc_html_smoke|selfhost/doc_html_smoke.tl|42|-|-|doc_html.tl doc_render.tl doc_extract.tl format_tokens.tl
 doc_md_smoke|selfhost/doc_md_smoke.tl|42|-|-|doc_extract.tl doc_html.tl doc_md.tl doc_render.tl format_tokens.tl
-doc_site_smoke|selfhost/doc_site_smoke.tl|42|-|-|doc_site_core.tl doc_html.tl doc_md.tl doc_render.tl doc_extract.tl format_tokens.tl stdlib/fs.tl stdlib/env.tl stdlib/io.tl stdlib/list.tl stdlib/string.tl stdlib/arena.tl
+doc_site_smoke|selfhost/doc_site_smoke.tl|42|-|-|doc_site_core.tl doc_html.tl doc_md.tl doc_render.tl doc_extract.tl format_tokens.tl stdlib/fs.tl stdlib/env.tl stdlib/vector.tl stdlib/io.tl stdlib/list.tl stdlib/string.tl stdlib/arena.tl
 lint_smoke|selfhost/lint_smoke.tl|42|-|-|lint_core.tl lex.tl token.tl compiler_ast_types.tl compiler_intern.tl stdlib/arena.tl stdlib/hash.tl stdlib/string.tl
 lint_driver_smoke|selfhost/lint_driver_smoke.tl|42|-|-|compiler_ast_types.tl compiler_intern.tl compiler_diagnostic.tl compiler_load.tl compiler_embedded_stdlib.tl compiler_parse_core.tl lex.tl lint_core.tl lint_driver_core.tl package_source_core.tl read.tl sym_i64_env.tl token.tl stdlib/vector.tl stdlib/fs.tl stdlib/env.tl stdlib/io.tl stdlib/list.tl stdlib/string.tl stdlib/str_cat.tl stdlib/arena.tl stdlib/hash.tl
-package_cache_smoke|selfhost/package_cache_smoke.tl|42|-|-|package_cache_core.tl stdlib/fs.tl stdlib/env.tl stdlib/io.tl stdlib/list.tl stdlib/string.tl
+package_cache_smoke|selfhost/package_cache_smoke.tl|42|-|-|package_cache_core.tl stdlib/fs.tl stdlib/env.tl stdlib/vector.tl stdlib/io.tl stdlib/list.tl stdlib/string.tl
 array_push_aggregate|tests/integration/array_push_aggregate.tl|42|-|-|-
 nested_repr_c_aggregate|tests/integration/nested_repr_c_aggregate.tl|42|-|-|-
 lambda_capture_lifetime_aggregate|tests/integration/lambda_capture_lifetime_aggregate.tl|42|-|-|-

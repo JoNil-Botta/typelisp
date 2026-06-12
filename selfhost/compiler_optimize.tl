@@ -9870,6 +9870,325 @@
               [(ErrCompilerOptimizeVerify _) func]))])]
     [(ErrCompilerOptimizeVerify _) func]))
 
+;; --- simple top-test loop rotation (#2458) ----------------------------------
+;;
+;; This runs before scalar SSA construction. It only rotates non-SSA loops whose
+;; header is a side-effect-free scalar guard ending in a conditional branch, with
+;; one safe preheader and one latch. Duplicating the guard into the preheader and
+;; latch preserves the zero-trip check while making the steady-state backedge
+;; jump directly to the loop body. SSA construction then inserts the phis needed
+;; for loop-carried values and rejects unsupported shapes through its existing
+;; verifier gate.
+(defenum OptLoopRotationHeader
+  (OptNoLoopRotationHeader)
+  (OptLoopRotationHeader CompilerIrInstrList))
+
+(defenum OptLoopRotationResult
+  (OptLoopRotationResult CompilerIrBlockList bool))
+
+(define (opt-loop-rotation-header-count
+  [loops : OptNaturalLoopList]
+  [header : String]) : i64
+  (match loops
+    [(OptNaturalLoopNil) 0]
+    [(OptNaturalLoopCons loop rest)
+      (+
+        (if (string-eq (opt-natural-loop-header loop) header)
+          1
+          0)
+        (opt-loop-rotation-header-count (box-get rest) header))]))
+
+(define (opt-loop-rotation-guard-instr? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(IrInstrMov _ _ _) true]
+    [(IrInstrCast _ _ _ _) true]
+    [(IrInstrBinOp _ op _ _ _) (not (opt-binop-traps? op))]
+    [(IrInstrUnOp _ _ _ _) true]
+    [_ false]))
+
+(define (opt-loop-rotation-header-prefix-ok?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [last : i64]) : bool
+  (if (>= index last)
+    true
+    (and
+      (opt-loop-rotation-guard-instr? (compiler-ir-instr-seq-ref instrs index))
+      (opt-loop-rotation-header-prefix-ok? instrs (+ index 1) last))))
+
+(define (opt-loop-rotation-header-list-from
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : CompilerIrInstrList
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    (IrInstrNil)
+    (compiler-ir-instr-cons
+      (compiler-ir-instr-seq-ref instrs index)
+      (opt-loop-rotation-header-list-from instrs (+ index 1)))))
+
+(define (opt-loop-rotation-body-target?
+  [body : OptLabelSet]
+  [header : String]
+  [label : String]) : bool
+  (and (not (string-eq label header)) (opt-label-contains body label)))
+
+(define (opt-loop-rotation-exit-target? [body : OptLabelSet] [label : String]) : bool
+  (not (opt-label-contains body label)))
+
+(define (opt-loop-rotation-header-shape
+  [blocks : CompilerIrBlockList]
+  [header : String]
+  [body : OptLabelSet]) : OptLoopRotationHeader
+  (match (opt-cfg-find-block blocks header)
+    [(OptNoBlock) (OptNoLoopRotationHeader)]
+    [(OptSomeBlock block)
+      (match block
+        [(IrBlock _ instrs)
+          (let
+            [count : i64 (compiler-ir-instr-seq-count instrs)]
+            (if (<= count 0)
+              (OptNoLoopRotationHeader)
+              (let
+                [last : i64 (- count 1)]
+                (match (compiler-ir-instr-seq-ref instrs last)
+                  [(IrInstrBranch _ true-label false-label)
+                    (if (and
+                      (opt-loop-rotation-header-prefix-ok? instrs 0 last)
+                      (or
+                        (and
+                          (opt-loop-rotation-body-target?
+                            body
+                            header
+                            true-label)
+                          (opt-loop-rotation-exit-target? body false-label))
+                        (and
+                          (opt-loop-rotation-body-target?
+                            body
+                            header
+                            false-label)
+                          (opt-loop-rotation-exit-target? body true-label))))
+                      (OptLoopRotationHeader
+                        (opt-loop-rotation-header-list-from instrs 0))
+                      (OptNoLoopRotationHeader))]
+                  [_ (OptNoLoopRotationHeader)]))))])]))
+
+(define (opt-loop-rotation-final-jump-to?
+  [instrs : CompilerIrInstrSeq]
+  [target : String]) : bool
+  (let
+    [count : i64 (compiler-ir-instr-seq-count instrs)]
+    (if (<= count 0)
+      false
+      (match (compiler-ir-instr-seq-ref instrs (- count 1))
+        [(IrInstrJump label) (string-eq label target)]
+        [_ false]))))
+
+(define (opt-loop-rotation-edge-compatible?
+  [blocks : CompilerIrBlockList]
+  [label : String]
+  [target : String]) : bool
+  (match (opt-cfg-find-block blocks label)
+    [(OptNoBlock) false]
+    [(OptSomeBlock block)
+      (match block
+        [(IrBlock _ instrs) (opt-loop-rotation-final-jump-to? instrs target)])]))
+
+(define (opt-loop-rotation-prefix-before-final-from
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [last : i64]) : CompilerIrInstrList
+  (if (>= index last)
+    (IrInstrNil)
+    (compiler-ir-instr-cons
+      (compiler-ir-instr-seq-ref instrs index)
+      (opt-loop-rotation-prefix-before-final-from instrs (+ index 1) last))))
+
+(define (opt-loop-rotation-replace-final-jump
+  [instrs : CompilerIrInstrSeq]
+  [guard : CompilerIrInstrList]) : CompilerIrInstrList
+  (opt-aggregate-instr-list-append
+    (opt-loop-rotation-prefix-before-final-from
+      instrs
+      0
+      (- (compiler-ir-instr-seq-count instrs) 1))
+    (compiler-ir-clone-instr-list guard)))
+
+(define (opt-loop-rotation-rewrite-block
+  [block : CompilerIrBlock]
+  [preheader : String]
+  [latch : String]
+  [guard : CompilerIrInstrList]) : CompilerIrBlock
+  (match block
+    [(IrBlock label instrs)
+      (if (or (string-eq label preheader) (string-eq label latch))
+        (compiler-ir-block
+          label
+          (opt-loop-rotation-replace-final-jump instrs guard))
+        block)]))
+
+(define (opt-loop-rotation-rewrite-blocks
+  [blocks : CompilerIrBlockList]
+  [header : String]
+  [preheader : String]
+  [latch : String]
+  [guard : CompilerIrInstrList]) : CompilerIrBlockList
+  (match blocks
+    [(IrBlockNil) (IrBlockNil)]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label _)
+          (if (string-eq label header)
+            (opt-loop-rotation-rewrite-blocks
+              (box-get rest)
+              header
+              preheader
+              latch
+              guard)
+            (compiler-ir-block-cons
+              (opt-loop-rotation-rewrite-block block preheader latch guard)
+              (opt-loop-rotation-rewrite-blocks
+                (box-get rest)
+                header
+                preheader
+                latch
+                guard)))])]
+    [(IrBlockArray seq)
+      (opt-loop-rotation-rewrite-blocks
+        (compiler-ir-block-seq-to-list seq)
+        header
+        preheader
+        latch
+        guard)]))
+
+(define (opt-loop-rotation-apply-guard
+  [blocks : CompilerIrBlockList]
+  [header : String]
+  [preheader : String]
+  [latch : String]
+  [guard : CompilerIrInstrList]) : OptLoopRotationResult
+  (let
+    [next : CompilerIrBlockList
+      (opt-loop-rotation-rewrite-blocks blocks header preheader latch guard)]
+    (if (and
+      (opt-cfg-block-labels-unique? next)
+      (opt-cfg-successor-targets-known? next))
+      (OptLoopRotationResult next true)
+      (OptLoopRotationResult blocks false))))
+
+(define (opt-loop-rotation-loop
+  [blocks : CompilerIrBlockList]
+  [context : OptCfgContext]
+  [loops : OptNaturalLoopList]
+  [loop : OptNaturalLoop]) : OptLoopRotationResult
+  (let
+    [header : String (opt-natural-loop-header loop)]
+    [latch : String (opt-natural-loop-latch loop)]
+    [body : OptLabelSet (opt-natural-loop-body loop)]
+    [preds : OptLabelSet
+      (opt-pred-map-lookup (struct-get context pred-map) header)]
+    (match (opt-natural-loop-preheader loop)
+      [(OptNoLoopPreheader) (OptLoopRotationResult blocks false)]
+      [(OptSomeLoopPreheader preheader)
+        (if (and
+          (= (opt-loop-rotation-header-count loops header) 1)
+          (= (opt-label-count preds) 2)
+          (opt-label-contains preds preheader)
+          (opt-label-contains preds latch)
+          (opt-loop-rotation-edge-compatible? blocks preheader header)
+          (opt-loop-rotation-edge-compatible? blocks latch header))
+          (match (opt-loop-rotation-header-shape blocks header body)
+            [(OptNoLoopRotationHeader) (OptLoopRotationResult blocks false)]
+            [(OptLoopRotationHeader guard)
+              (opt-loop-rotation-apply-guard
+                blocks
+                header
+                preheader
+                latch
+                guard)])
+          (OptLoopRotationResult blocks false))])))
+
+(define (opt-loop-rotation-loops
+  [blocks : CompilerIrBlockList]
+  [context : OptCfgContext]
+  [loops : OptNaturalLoopList]
+  [remaining : OptNaturalLoopList]) : OptLoopRotationResult
+  (match remaining
+    [(OptNaturalLoopNil) (OptLoopRotationResult blocks false)]
+    [(OptNaturalLoopCons loop rest)
+      (match (opt-loop-rotation-loop blocks context loops loop)
+        [(OptLoopRotationResult next changed)
+          (if changed
+            (OptLoopRotationResult next true)
+            (opt-loop-rotation-loops blocks context loops (box-get rest)))])]))
+
+(define (opt-loop-rotation-blocks-once [blocks : CompilerIrBlockList]) : OptLoopRotationResult
+  (let
+    [context : OptCfgContext (opt-cfg-context-build blocks)]
+    [loops : OptNaturalLoopList
+      (opt-cfg-natural-loops-with-context blocks context)]
+    (opt-loop-rotation-loops blocks context loops loops)))
+
+(define (opt-loop-rotation-blocks-fixed
+  [blocks : CompilerIrBlockList]
+  [remaining : i64]) : CompilerIrBlockList
+  (if (<= remaining 0)
+    blocks
+    (match (opt-loop-rotation-blocks-once blocks)
+      [(OptLoopRotationResult next changed)
+        (if changed
+          (opt-loop-rotation-blocks-fixed next (- remaining 1))
+          next)])))
+
+(define (opt-loop-rotation-successor-seen?
+  [successors : OptLabelSet]
+  [seen : OptLabelSet]) : bool
+  (match successors
+    [(OptLabelNil) false]
+    [(OptLabelCons label rest)
+      (if (opt-label-contains seen label)
+        true
+        (opt-loop-rotation-successor-seen? (box-get rest) seen))]))
+
+(define (opt-loop-rotation-has-backedge-candidate-from?
+  [blocks : CompilerIrBlockList]
+  [seen : OptLabelSet]) : bool
+  (match blocks
+    [(IrBlockNil) false]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label _)
+          (let
+            [next-label : String (opt-cfg-entry-label (box-get rest))]
+            [next-seen : OptLabelSet (opt-label-add seen label)]
+            (if (opt-loop-rotation-successor-seen?
+              (opt-cfg-block-successors-with-next block next-label)
+              next-seen)
+              true
+              (opt-loop-rotation-has-backedge-candidate-from?
+                (box-get rest)
+                next-seen)))])]
+    [(IrBlockArray seq)
+      (opt-loop-rotation-has-backedge-candidate-from?
+        (compiler-ir-block-seq-to-list seq)
+        seen)]))
+
+(define (opt-loop-rotation-has-backedge-candidate?
+  [blocks : CompilerIrBlockList]) : bool
+  (opt-loop-rotation-has-backedge-candidate-from? blocks (OptLabelNil)))
+
+(define (opt-loop-rotation-blocks [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (if (or
+    (opt-ssa-blocks-have-phi? blocks)
+    (not (opt-loop-rotation-has-backedge-candidate? blocks)))
+    blocks
+    (opt-loop-rotation-blocks-fixed
+      blocks
+      (+ 1 (compiler-ir-block-list-count blocks)))))
+
+(define (opt-loop-rotation-function [func : CompilerIrFunction]) : CompilerIrFunction
+  (match func
+    [(IrFunction name params ret-ty frame blocks)
+      (IrFunction name params ret-ty frame (opt-loop-rotation-blocks blocks))]))
+
 ;; --- conservative loop-invariant code motion (#1801) ------------------------
 ;;
 ;; LICM is verifier-gated. It moves non-trapping scalar `BinOp`/`UnOp`
@@ -13061,12 +13380,9 @@
                     (<=
                       (compiler-ir-block-list-count sroa-blocks)
                       (opt-heavy-pass-block-limit))]
-                  ;; Scalar SSA construction feeds the verifier-gated
-                  ;; dominator passes below. Unsupported cases fall back to the
-                  ;; original function, so the optimization path remains safe.
-                  [ssa : CompilerIrFunction
+                  [rotated : CompilerIrFunction
                     (if run-heavy?
-                      (opt-ssa-construct-function
+                      (opt-loop-rotation-function
                         (IrFunction
                           name
                           params
@@ -13074,6 +13390,13 @@
                           promoted-frame
                           sroa-blocks))
                       (IrFunction name params ret-ty promoted-frame sroa-blocks))]
+                  ;; Scalar SSA construction feeds the verifier-gated
+                  ;; dominator passes below. Unsupported cases fall back to the
+                  ;; original function, so the optimization path remains safe.
+                  [ssa : CompilerIrFunction
+                    (if run-heavy?
+                      (opt-ssa-construct-function rotated)
+                      rotated)]
                   [ssa-frame : i64 (opt-function-frame ssa)]
                   [ssa-blocks : CompilerIrBlockList (opt-function-blocks ssa)]
                   [gvn : CompilerIrBlockList
@@ -21683,6 +22006,77 @@
         [(OptNoLoopPreheader) true]
         [(OptSomeLoopPreheader _) false])]))
 
+(define (opt-loop-rotation-top-test-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (IrInstrMov 1 (IrValueI64 0) (AstTyI64))
+        (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil))))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "loop"
+        (compiler-ir-instr-cons
+          (IrInstrBinOp 2 (IrBinLt) (IrValueVar 1) (IrValueI64 10) (AstTyBool))
+          (compiler-ir-instr-cons
+            (IrInstrBranch (IrValueVar 2) "body" "exit")
+            (IrInstrNil))))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "body"
+          (compiler-ir-instr-cons
+            (IrInstrBinOp 1 (IrBinAdd) (IrValueVar 1) (IrValueI64 1) (AstTyI64))
+            (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil))))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "exit"
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueVar 1)))
+              (IrInstrNil)))
+          (IrBlockNil))))))
+
+(define (opt-loop-rotation-false-body-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (IrInstrMov 1 (IrValueI64 0) (AstTyI64))
+        (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil))))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "loop"
+        (compiler-ir-instr-cons
+          (IrInstrBinOp 2 (IrBinLt) (IrValueVar 1) (IrValueI64 10) (AstTyBool))
+          (compiler-ir-instr-cons
+            (IrInstrBranch (IrValueVar 2) "exit" "body")
+            (IrInstrNil))))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "body"
+          (compiler-ir-instr-cons
+            (IrInstrBinOp 1 (IrBinAdd) (IrValueVar 1) (IrValueI64 1) (AstTyI64))
+            (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil))))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "exit"
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueVar 1)))
+              (IrInstrNil)))
+          (IrBlockNil))))))
+
+(define (opt-loop-rotation-successors?
+  [blocks : CompilerIrBlockList]
+  [label : String]
+  [left : String]
+  [right : String]) : bool
+  (let
+    [successors : OptLabelSet
+      (opt-cfg-index-successors (opt-cfg-index-build blocks) label)]
+    (and
+      (= (opt-label-count successors) 2)
+      (opt-label-contains successors left)
+      (opt-label-contains successors right))))
+
 (define (opt-licm-params) : CompilerIrParamList
   (compiler-ir-param-cons
     (IrParam "cond" (AstTyBool) 0)
@@ -22924,6 +23318,60 @@
           (opt-count-mul-label-blocks induction-after-preheader-blocks "body")
           0))
       61
+      42)))
+
+(define (compiler-optimize-loop-rotation-self-test) : i64
+  (let
+    [raw : CompilerIrBlockList (opt-loop-rotation-top-test-blocks)]
+    [rotated : CompilerIrBlockList (opt-loop-rotation-blocks raw)]
+    [false-body-rotated : CompilerIrBlockList
+      (opt-loop-rotation-blocks (opt-loop-rotation-false-body-blocks))]
+    [ssa : CompilerIrFunction
+      (opt-ssa-construct-function (opt-cfg-test-function rotated))]
+    [ssa-blocks : CompilerIrBlockList (opt-function-blocks ssa)]
+    [optimized : CompilerIrFunction
+      (optimize-function (opt-cfg-test-function raw))]
+    [optimized-blocks : CompilerIrBlockList (opt-function-blocks optimized)]
+    [no-preheader : CompilerIrBlockList (opt-natural-loop-no-preheader-blocks)]
+    [multi-backedge : CompilerIrBlockList
+      (opt-natural-loop-multi-backedge-blocks)]
+    [with-phi : CompilerIrBlockList (opt-ssa-loop-blocks)]
+    (core/cond
+      (not (= (compiler-ir-block-list-count rotated) 3))
+      1
+      (opt-block-list-has-label? rotated "loop")
+      2
+      (not (opt-loop-rotation-successors? rotated "entry" "body" "exit"))
+      3
+      (not (opt-loop-rotation-successors? rotated "body" "body" "exit"))
+      4
+      (not (= (opt-count-jump-to-blocks rotated "loop") 0))
+      5
+      (not (= (opt-count-branches-blocks rotated) 2))
+      6
+      (opt-block-list-has-label? false-body-rotated "loop")
+      7
+      (not
+        (opt-loop-rotation-successors? false-body-rotated "entry" "body" "exit"))
+      8
+      (not (opt-verify-ok? (opt-verify-function ssa)))
+      9
+      (not (> (opt-count-phi-blocks ssa-blocks) 0))
+      10
+      (opt-block-list-has-label? optimized-blocks "loop")
+      11
+      (not (opt-cfg-successor-targets-known? optimized-blocks))
+      12
+      (not
+        (opt-block-list-eq (opt-loop-rotation-blocks no-preheader) no-preheader))
+      13
+      (not
+        (opt-block-list-eq
+          (opt-loop-rotation-blocks multi-backedge)
+          multi-backedge))
+      14
+      (not (opt-block-list-eq (opt-loop-rotation-blocks with-phi) with-phi))
+      15
       42)))
 
 (define (compiler-optimize-ssa-self-test) : i64

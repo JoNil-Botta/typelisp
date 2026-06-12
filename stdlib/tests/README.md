@@ -92,6 +92,10 @@ Coverage notes:
   map-level mutable borrow rejects insert-or-update. The
   `hashmap_mut_entry_*_live.tl` fixtures verify that live mutable entries reject
   aliasing entries, value borrows, puts, and resizes.
+- `set_api.tl` covers generated `StringSet` and `I64Set` families, descriptor
+  identities, borrowed string-key contains/remove wrappers, duplicate insert,
+  collision chains, tombstone reuse, growth/rehash, missing remove, and
+  deterministic bucket-order iteration.
 - `process_api.tl` covers command construction, argv append helpers,
   cwd/stdin/env accessors, invalid-command diagnostics, result/error predicates,
   and async start/wait API validation.

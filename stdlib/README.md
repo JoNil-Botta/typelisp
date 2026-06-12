@@ -93,6 +93,17 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   compiler-specialized symbol tables where their value domain or lifecycle is
   deliberately narrower. Import it with
   `(import "stdlib/hashmap.tl")`.
+- `set.tl`: generated concrete hash set family over the same explicit key
+  descriptor policy and open-addressing storage model as `hashmap.tl`.
+  Generated `StringSet` and `I64Set` expose `*-set-with-capacity`,
+  `*-set-new`, `*-set-insert`, `*-set-contains?`, `*-set-remove`,
+  `*-set-len`, `*-set-capacity`, and deterministic bucket-order iteration
+  through `*-set-next-occupied` / `*-set-entry-at`. String-key sets also expose
+  borrowed-key containment and removal wrappers:
+  `string-set-contains-borrowed?` and `string-set-remove-borrowed`. Use a set
+  when only key membership matters; use a map when each key carries a meaningful
+  value rather than modeling membership with dummy map values. Import it with
+  `(import "stdlib/set.tl")`.
 - `json.tl`: JSON value parser and serializer for tool protocols and data
   exchange. Import it with `(import "stdlib/json.tl")`.
 - `list.tl`: monomorphic `StringList` and `StringListBuilder` helpers for
@@ -298,6 +309,7 @@ owned stdlib imports keep the compatibility wrappers.
 | `hash-*` helpers | Deterministic, non-cryptographic hash and key equality helpers are non-allocating; string hash/equality helpers borrow text inputs. Hashes are stable bucket hints only; collection users must still compare colliding candidate keys with the matching equality predicate. |
 | `math-*` helpers | Pure scalar arithmetic/comparison helpers are non-allocating and import no runtime or platform externs. V1 intentionally excludes `sqrt`, trigonometry, `log`, `pow`, and other libm-style functions until a freestanding or explicit platform-extern policy is chosen. |
 | `string-i64-map-*`, `string-string-map-*`, `i64-i64-map-*` helpers in `hashmap.tl` | Map constructors, growth, resize, and rehash allocate backing slot arrays in the active arena. `insert`, `put`, and `remove` mutate the backing array in place and return the threaded map value; `put` may allocate a larger array before inserting. Lookup, containment, len/capacity/deleted accessors, and bucket-order cursor helpers are non-allocating aside from caller-provided owned keys or fallback values. String-key borrowed lookup/removal variants inspect borrowed key text without copying it. `*-get-value-borrowed` returns a lifetime-parameterized lookup whose found branch borrows the map-owned value; mutating/removing/resizing the map while that result is live is rejected by the checker. Mutable-entry helpers such as `string-i64-map-get-mut-entry-borrowed`, `*-mut-entry-present?`, `*-mut-entry-value-or`, and `*-mut-entry-set!` borrow the backing table uniquely and update existing entries in place; another mutable entry, a value borrow, resize, put, or remove is rejected while the entry is live. Missing mutable entries are explicit no-ops, and insertion/growth remains the threaded `*-entry-or-insert`/`*-put` path. |
+| `string-set-*`, `i64-set-*` helpers in `set.tl` | Set constructors, insert, remove, growth, resize, and rehash allocate/mutate the backing open-addressed table through the same active-arena policy as `hashmap.tl`. Duplicate inserts keep `len` unchanged. Lookup, containment, len/capacity accessors, and bucket-order cursor helpers are non-allocating aside from caller-provided owned keys. String-key borrowed contains/remove variants inspect borrowed key text without copying it. |
 | `i64-vec-*`, `string-vec-*` helpers in `vector.tl` | Vector constructors, growth, push, `from-array`, `extend`, `to-array`, and `i64-vec-map*` allocate backing arrays in the active arena. `i64-vec-map*` traverses owned `I64Vec` handles and returns fresh owned vectors; borrowed slice traversal remains separate in `vector_slice.tl`. `set!` and `reverse!` mutate the existing backing array and return the threaded vector value; `get`, `last`, `len`, `capacity`, `is-empty?`, `contains?`, `sum`, and `i64-vec-fold*` are non-allocating aside from caller-provided fallback/value/function storage. |
 | `i64-slice-*` helpers in `vector_slice.tl` | `I64Slice` constructors, `get`, `len`, `is-empty?`, and sub-slicing are non-allocating views tied to a source owner borrow; invalid ranges/counts produce an empty view. `i64-slice-to-array` and `i64-slice-to-vec` are explicit owned-copy boundaries that allocate active-arena storage. |
 | Future `byte-buf-*` / `bytes-*` helpers in `byte_buf.tl` | `ByteBuf` construction, copy-in, reserve, growth, and copy-out allocate in the active arena. Borrowing a buffer's live range as `(& r bytes)` or `(&mut r bytes)` is non-allocating; mutable views are exclusive and fixed-length. String/`str`/`(Array u8)` conversion boundaries are explicit copies unless a helper explicitly returns an immutable borrowed byte view. |
@@ -371,6 +383,7 @@ Stdlib modules are imported explicitly:
 (import "stdlib/msvc.tl")
 (import "stdlib/process.tl")
 (import "stdlib/random.tl")
+(import "stdlib/set.tl")
 (import "stdlib/string.tl")
 (import "stdlib/test.tl")
 (import "stdlib/time.tl")

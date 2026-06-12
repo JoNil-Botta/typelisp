@@ -12491,8 +12491,13 @@
                 [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]))
 
+;; 0: every function escapes through a per-function scratch arena. The old
+;; limit of 24 sent small-function transients to the program arena to skip
+;; the scratch/clone overhead, but their summed assembly-text churn stays
+;; resident for the whole compile (#2596 RSS calibration); the per-function
+;; arena reclaims it.
 (define (compiler-backend-direct-emit-instr-limit) : i64
-  24)
+  0)
 
 (define (compiler-backend-emit-function-direct? [func : CompilerIrFunction]) : bool
   (match func

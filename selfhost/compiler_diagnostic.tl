@@ -187,6 +187,35 @@
 (define (compiler-diagnostic-at-start [path : String] [message : String]) : CompilerDiagnostic
   (compiler-diagnostic-simple path 1 1 message))
 
+(define (compiler-diagnostic-span-with-fallback-path
+  [span : CompilerDiagnosticSpan]
+  [path : String]) : CompilerDiagnosticSpan
+  (if (string-eq (compiler-diagnostic-span-path span) "")
+    (CompilerDiagnosticSpan
+      path
+      (compiler-diagnostic-span-start-line span)
+      (compiler-diagnostic-span-start-col span)
+      (compiler-diagnostic-span-end-line span)
+      (compiler-diagnostic-span-end-col span))
+    span))
+
+(define (compiler-diagnostic-label-list-with-fallback-path
+  [labels : CompilerDiagnosticLabelList]
+  [path : String]) : CompilerDiagnosticLabelList
+  (match labels
+    [(CompilerDiagnosticLabelNil) CompilerDiagnosticLabelNil]
+    [(CompilerDiagnosticLabelCons label rest-box)
+      (CompilerDiagnosticLabelCons
+        (CompilerDiagnosticLabel
+          (compiler-diagnostic-span-with-fallback-path
+            (struct-get label span)
+            path)
+          (struct-get label label))
+        (box
+          (compiler-diagnostic-label-list-with-fallback-path
+            (box-get rest-box)
+            path)))]))
+
 (define (compiler-diagnostic-with-path
   [diag : CompilerDiagnostic]
   [path : String]) : CompilerDiagnostic
@@ -202,7 +231,9 @@
       (compiler-diagnostic-end-line diag)
       (compiler-diagnostic-end-col diag))
     (compiler-diagnostic-help diag)
-    (compiler-diagnostic-secondary-spans diag)
+    (compiler-diagnostic-label-list-with-fallback-path
+      (compiler-diagnostic-secondary-spans diag)
+      path)
     (compiler-diagnostic-notes diag)))
 
 (define (compiler-diagnostic-with-level

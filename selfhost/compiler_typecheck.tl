@@ -202,6 +202,35 @@
       (string-eq (compiler-diagnostic-message diag) want)]
     [(OkCompilerTypecheck _) false]))
 
+(define (compiler-typecheck-secondary-count
+  [labels : CompilerDiagnosticLabelList]) : i64
+  (match labels
+    [(CompilerDiagnosticLabelNil) 0]
+    [(CompilerDiagnosticLabelCons _ rest-box)
+      (+ 1 (compiler-typecheck-secondary-count (box-get rest-box)))]))
+
+(define (compiler-typecheck-help-present? [diag : CompilerDiagnostic]) : bool
+  (match (compiler-diagnostic-help diag)
+    [(CompilerDiagnosticSomeString _) true]
+    [CompilerDiagnosticNoString false]))
+
+(define (compiler-typecheck-rich-error-ok?
+  [src : String]
+  [want : String]
+  [want-primary-line : i64]
+  [want-secondary-count : i64]) : bool
+  (match (typecheck-compiler-source src)
+    [(ErrCompilerTypecheck diag)
+      (and
+        (string-eq (compiler-diagnostic-message diag) want)
+        (= (compiler-diagnostic-line diag) want-primary-line)
+        (=
+          (compiler-typecheck-secondary-count
+            (compiler-diagnostic-secondary-spans diag))
+          want-secondary-count)
+        (compiler-typecheck-help-present? diag))]
+    [(OkCompilerTypecheck _) false]))
+
 (define (compiler-typecheck-error-code-ok?
   [src : String]
   [want-code : String]
@@ -7251,9 +7280,11 @@
       (if (compiler-typecheck-moved-set-metrics-ok?)
         unit
         (set! ok false))
-      (if (compiler-typecheck-error-ok?
+      (if (compiler-typecheck-rich-error-ok?
         (compiler-typecheck-move-use-after-move-source)
-        "typecheck: use of moved value `s`")
+        "typecheck: use of moved value `s`"
+        2
+        1)
         unit
         (set! ok false))
       (if (compiler-typecheck-ok? (compiler-typecheck-move-single-move-source))
@@ -7356,12 +7387,12 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-move-owner-projection-nested-root-reuse-source)
-        "typecheck: use of moved value `p`")
+        "typecheck: use of moved value `p.inner.handle`")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-move-owner-projection-nested-parent-after-child-source)
-        "typecheck: use of moved value `p.inner`")
+        "typecheck: use of moved value `p.inner.handle`")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -7377,14 +7408,16 @@
         (compiler-typecheck-move-owner-projection-nested-shadow-reset-source))
         unit
         (set! ok false))
-      (if (compiler-typecheck-error-ok?
+      (if (compiler-typecheck-rich-error-ok?
         (compiler-typecheck-move-owner-projection-repeat-source)
-        "typecheck: use of moved value `p.handle`")
+        "typecheck: use of moved value `p.handle`"
+        13
+        1)
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-move-owner-projection-root-reuse-source)
-        "typecheck: use of moved value `p`")
+        "typecheck: use of moved value `p.handle`")
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?

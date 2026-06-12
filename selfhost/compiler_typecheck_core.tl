@@ -117,6 +117,10 @@
   (TcNoString)
   (TcSomeString String))
 
+(defenum TcMaybeSourceSpan
+  (TcNoSourceSpan)
+  (TcSomeSourceSpan AstSourceSpan))
+
 (defenum TcMaybeExternAbi
   (TcNoExternAbi)
   (TcSomeExternAbi AstExternAbi))
@@ -328,6 +332,9 @@
 (define (tc-located-error-prefix) : String
   "__tl_tc_loc|")
 
+(define (tc-rich-error-prefix) : String
+  "__tl_tc_rich|")
+
 (define (tc-diag-string-prefix? [text : String] [prefix : String]) : bool
   (let
     [text-len : i64 (string-length text)]
@@ -338,6 +345,12 @@
 
 (define (tc-located-error? [message : String]) : bool
   (tc-diag-string-prefix? message (tc-located-error-prefix)))
+
+(define (tc-rich-error? [message : String]) : bool
+  (tc-diag-string-prefix? message (tc-rich-error-prefix)))
+
+(define (tc-located-or-rich-error? [message : String]) : bool
+  (or (tc-located-error? message) (tc-rich-error? message)))
 
 (define (tc-located-error-field-end [text : String] [start : i64]) : i64
   (let
@@ -372,6 +385,127 @@
                 (string-append
                   (int->string (struct-get span end-col))
                   (string-append "|" message))))))))))
+
+(define (tc-rich-error-format
+  [primary : AstSourceSpan]
+  [has-secondary : i64]
+  [secondary : AstSourceSpan]
+  [secondary-label : String]
+  [help : String]
+  [message : String]) : String
+  (str-cat
+    (tc-rich-error-prefix)
+    (int->string (struct-get primary start-line))
+    "|"
+    (int->string (struct-get primary start-col))
+    "|"
+    (int->string (struct-get primary end-line))
+    "|"
+    (int->string (struct-get primary end-col))
+    "|"
+    (int->string has-secondary)
+    "|"
+    (int->string (struct-get secondary start-line))
+    "|"
+    (int->string (struct-get secondary start-col))
+    "|"
+    (int->string (struct-get secondary end-line))
+    "|"
+    (int->string (struct-get secondary end-col))
+    "|"
+    secondary-label
+    "|"
+    help
+    "|"
+    message))
+
+(define (tc-rich-error
+  [primary : AstSourceSpan]
+  [message : String]
+  [help : String]) : String
+  (tc-rich-error-format primary 0 primary "" help message))
+
+(define (tc-rich-error-with-secondary
+  [primary : AstSourceSpan]
+  [message : String]
+  [help : String]
+  [secondary : AstSourceSpan]
+  [secondary-label : String]) : String
+  (tc-rich-error-format primary 1 secondary secondary-label help message))
+
+(define (tc-rich-error-label [label : String]) : CompilerDiagnosticMaybeString
+  (if (= (string-length label) 0)
+    CompilerDiagnosticNoString
+    (CompilerDiagnosticSomeString label)))
+
+(define (tc-rich-error-help [diag : CompilerDiagnostic] [help : String]) : CompilerDiagnostic
+  (if (= (string-length help) 0)
+    diag
+    (compiler-diagnostic-with-help diag help)))
+
+(define (tc-rich-error-diag [message : String]) : CompilerDiagnostic
+  (let
+    [prefix-len : i64 (string-length (tc-rich-error-prefix))]
+    [line-end : i64 (tc-located-error-field-end message prefix-len)]
+    [col-start : i64 (+ line-end 1)]
+    [col-end : i64 (tc-located-error-field-end message col-start)]
+    [end-line-start : i64 (+ col-end 1)]
+    [end-line-end : i64 (tc-located-error-field-end message end-line-start)]
+    [end-col-start : i64 (+ end-line-end 1)]
+    [end-col-end : i64 (tc-located-error-field-end message end-col-start)]
+    [has-start : i64 (+ end-col-end 1)]
+    [has-end : i64 (tc-located-error-field-end message has-start)]
+    [sec-line-start : i64 (+ has-end 1)]
+    [sec-line-end : i64 (tc-located-error-field-end message sec-line-start)]
+    [sec-col-start : i64 (+ sec-line-end 1)]
+    [sec-col-end : i64 (tc-located-error-field-end message sec-col-start)]
+    [sec-end-line-start : i64 (+ sec-col-end 1)]
+    [sec-end-line-end : i64
+      (tc-located-error-field-end message sec-end-line-start)]
+    [sec-end-col-start : i64 (+ sec-end-line-end 1)]
+    [sec-end-col-end : i64
+      (tc-located-error-field-end message sec-end-col-start)]
+    [label-start : i64 (+ sec-end-col-end 1)]
+    [label-end : i64 (tc-located-error-field-end message label-start)]
+    [help-start : i64 (+ label-end 1)]
+    [help-end : i64 (tc-located-error-field-end message help-start)]
+    [clean-start : i64 (+ help-end 1)]
+    [clean-message : String
+      (substring message clean-start (- (string-length message) clean-start))]
+    [primary : AstSourceSpan
+      (AstSourceSpan
+        (string->int (tc-located-error-field message prefix-len line-end))
+        (string->int (tc-located-error-field message col-start col-end))
+        (string->int
+          (tc-located-error-field message end-line-start end-line-end))
+        (string->int (tc-located-error-field message end-col-start end-col-end)))]
+    [secondary : AstSourceSpan
+      (AstSourceSpan
+        (string->int
+          (tc-located-error-field message sec-line-start sec-line-end))
+        (string->int (tc-located-error-field message sec-col-start sec-col-end))
+        (string->int
+          (tc-located-error-field message sec-end-line-start sec-end-line-end))
+        (string->int
+          (tc-located-error-field message sec-end-col-start sec-end-col-end)))]
+    [label : String (tc-located-error-field message label-start label-end)]
+    [help : String (tc-located-error-field message help-start help-end)]
+    [diag : CompilerDiagnostic
+      (tc-rich-error-help
+        (tc-canonical-diagnostic
+          (compiler-diagnostic-from-ast-span "" primary clean-message))
+        help)]
+    (if (= (string->int (tc-located-error-field message has-start has-end)) 1)
+      (compiler-diagnostic-with-secondary
+        diag
+        (CompilerDiagnosticSpan
+          ""
+          (struct-get secondary start-line)
+          (struct-get secondary start-col)
+          (struct-get secondary end-line)
+          (struct-get secondary end-col))
+        (tc-rich-error-label label))
+      diag)))
 
 (define (tc-located-error-diag [message : String]) : CompilerDiagnostic
   (let
@@ -771,13 +905,15 @@
         compiler-tc-decl-profile-other-count))))
 
 (define (tc-expr-diag [expr : AstExpr] [message : String]) : CompilerDiagnostic
-  (if (tc-located-error? message)
-    (tc-located-error-diag message)
-    (match expr
-      [(AstExprSpanned _ span)
-        (tc-canonical-diagnostic
-          (compiler-diagnostic-from-ast-span "" span message))]
-      [_ (tc-diag-at-start message)])))
+  (if (tc-rich-error? message)
+    (tc-rich-error-diag message)
+    (if (tc-located-error? message)
+      (tc-located-error-diag message)
+      (match expr
+        [(AstExprSpanned _ span)
+          (tc-canonical-diagnostic
+            (compiler-diagnostic-from-ast-span "" span message))]
+        [_ (tc-diag-at-start message)]))))
 
 ;; Locate an error at the nearest available declaration body span. A top-level
 ;; `define` body is wrapped in `AstExprSpanned`, so its span points the
@@ -802,36 +938,38 @@
     [(AstNoGeneratedDeclMeta) diag]))
 
 (define (tc-decl-diag [decl : AstDecl] [message : String]) : CompilerDiagnostic
-  (if (tc-located-error? message)
-    (tc-located-error-diag message)
-    (match decl
-      [(AstDeclDef _ _ expr-box)
-        (let
-          [expr : AstExpr (ast-node-get expr-box)]
-          (tc-expr-diag expr message))]
-      [(AstDeclDefFn _ _ _ body-box _)
-        (let
-          [body : AstExpr (ast-node-get body-box)]
-          (tc-expr-diag body message))]
-      [(AstDeclDefMacro _ _ _ body-box)
-        (let
-          [body : AstExpr (ast-node-get body-box)]
-          (tc-expr-diag body message))]
-      [(AstDeclTest _ _ span)
-        (tc-canonical-diagnostic
-          (compiler-diagnostic-from-ast-span "" span message))]
-      [(AstDeclUnsafe inner-box)
-        (let
-          [inner : AstDecl (box-get inner-box)]
-          (tc-decl-diag inner message))]
-      [(AstDeclComptimeDecl meta template-box)
-        (let
-          [template : AstDecl (box-get template-box)]
-          (tc-generated-decl-diag meta (tc-decl-diag template message)))]
-      [_ (tc-diag-at-start message)])))
+  (if (tc-rich-error? message)
+    (tc-rich-error-diag message)
+    (if (tc-located-error? message)
+      (tc-located-error-diag message)
+      (match decl
+        [(AstDeclDef _ _ expr-box)
+          (let
+            [expr : AstExpr (ast-node-get expr-box)]
+            (tc-expr-diag expr message))]
+        [(AstDeclDefFn _ _ _ body-box _)
+          (let
+            [body : AstExpr (ast-node-get body-box)]
+            (tc-expr-diag body message))]
+        [(AstDeclDefMacro _ _ _ body-box)
+          (let
+            [body : AstExpr (ast-node-get body-box)]
+            (tc-expr-diag body message))]
+        [(AstDeclTest _ _ span)
+          (tc-canonical-diagnostic
+            (compiler-diagnostic-from-ast-span "" span message))]
+        [(AstDeclUnsafe inner-box)
+          (let
+            [inner : AstDecl (box-get inner-box)]
+            (tc-decl-diag inner message))]
+        [(AstDeclComptimeDecl meta template-box)
+          (let
+            [template : AstDecl (box-get template-box)]
+            (tc-generated-decl-diag meta (tc-decl-diag template message)))]
+        [_ (tc-diag-at-start message)]))))
 
 (define (tc-locate-error-at-expr [expr : AstExpr] [message : String]) : String
-  (if (tc-located-error? message)
+  (if (tc-located-or-rich-error? message)
     message
     (match expr
       [(AstExprSpanned _ span) (tc-located-error span message)]
@@ -18146,16 +18284,64 @@
 (define (tc-moved-contains? [set : TcMovedSet] [name : String]) : bool
   (string-i64-map-contains? (tc-moved-map set) name))
 
-(define (tc-moved-add [set : TcMovedSet] [name : String]) : TcMovedSet
-  (TcMovedSet (string-i64-map-put (tc-moved-map set) name 1)))
+(define (tc-moved-put [set : TcMovedSet] [name : String] [value : i64]) : TcMovedSet
+  (TcMovedSet (string-i64-map-put (tc-moved-map set) name value)))
 
-(define (tc-moved-remove [set : TcMovedSet] [name : String]) : TcMovedSet
+(define (tc-moved-add [set : TcMovedSet] [name : String]) : TcMovedSet
+  (tc-moved-put set name 1))
+
+(define (tc-moved-span-col-base) : i64
+  100000)
+
+(define (tc-moved-pack-span [span : AstSourceSpan]) : i64
+  (+
+    (* (struct-get span start-line) (tc-moved-span-col-base))
+    (struct-get span start-col)))
+
+(define (tc-moved-remove-key [set : TcMovedSet] [name : String]) : TcMovedSet
   (match (string-i64-map-remove (tc-moved-map set) name)
     [(StringI64MapRemoveOk map) (TcMovedSet map)]
     [(StringI64MapRemoveMissing map) (TcMovedSet map)]))
 
+(define (tc-moved-remove [set : TcMovedSet] [name : String]) : TcMovedSet
+  (tc-moved-remove-key set name))
+
+(define (tc-moved-add-with-span
+  [set : TcMovedSet]
+  [name : String]
+  [span : AstSourceSpan]) : TcMovedSet
+  (tc-moved-put set name (tc-moved-pack-span span)))
+
+(define (tc-moved-add-with-maybe-span
+  [set : TcMovedSet]
+  [name : String]
+  [span : TcMaybeSourceSpan]) : TcMovedSet
+  (match span
+    [(TcSomeSourceSpan source-span)
+      (tc-moved-add-with-span set name source-span)]
+    [(TcNoSourceSpan) (tc-moved-add set name)]))
+
+(define (tc-moved-get-i64 [set : TcMovedSet] [name : String]) : i64
+  (match (string-i64-map-get (tc-moved-map set) name)
+    [(StringI64MapFound value) value]
+    [(StringI64MapMissing) 0]))
+
+(define (tc-moved-span [set : TcMovedSet] [name : String]) : TcMaybeSourceSpan
+  (match (string-i64-map-get (tc-moved-map set) name)
+    [(StringI64MapFound packed)
+      (if (> packed 1)
+        (let
+          [line : i64 (/ packed (tc-moved-span-col-base))]
+          [col : i64 (% packed (tc-moved-span-col-base))]
+          (TcSomeSourceSpan (AstSourceSpan line col line col)))
+        (TcNoSourceSpan))]
+    [(StringI64MapMissing) (TcNoSourceSpan)]))
+
+(define (tc-move-use-message-prefix) : String
+  "typecheck: use of moved value `")
+
 (define (tc-move-use-message [name : String]) : String
-  (string-append (string-append "typecheck: use of moved value `" name) "`"))
+  (string-append (string-append (tc-move-use-message-prefix) name) "`"))
 
 (define (tc-move-loop-carried-message [name : String]) : String
   (string-append
@@ -18167,8 +18353,22 @@
     (string-append "typecheck: cleanup owner `" name)
     "` moved before with scope exit"))
 
+(define (tc-move-use-help) : String
+  "clone the value before the consuming move if it must be used again, or borrow it if ownership transfer was not intended")
+
+(define (tc-move-loop-carried-help) : String
+  "move from a fresh per-iteration owner, clone before the loop, or borrow when ownership transfer is not intended")
+
+(define (tc-move-cleanup-owner-help) : String
+  "keep cleanup owners alive until scope exit; clone or borrow fields before consuming them inside the with scope")
+
 (define (tc-moved-path-key [path : String]) : String
   (string-append "\npath:" path))
+
+(define (tc-moved-path-key-display [key : String]) : String
+  (let
+    [prefix-len : i64 (string-length (tc-moved-path-key ""))]
+    (substring key prefix-len (- (string-length key) prefix-len))))
 
 (define (tc-moved-partial-key [name : String]) : String
   (string-append "\npartial:" name))
@@ -18217,6 +18417,32 @@
     path
     (string-i64-map-next-occupied (tc-moved-map set) 0)))
 
+(define (tc-moved-path-conflict-key-loop
+  [map : StringI64Map]
+  [path : String]
+  [index : i64]) : TcMaybeString
+  (if (>= index (string-i64-map-capacity map))
+    (TcNoString)
+    (match (string-i64-map-entry-at map index)
+      [(StringI64MapEntrySome key _)
+        (if (tc-moved-path-key-conflicts? key path)
+          (TcSomeString key)
+          (tc-moved-path-conflict-key-loop
+            map
+            path
+            (string-i64-map-next-occupied map (+ index 1))))]
+      [(StringI64MapEntryNone)
+        (tc-moved-path-conflict-key-loop
+          map
+          path
+          (string-i64-map-next-occupied map (+ index 1)))])))
+
+(define (tc-moved-path-conflict-key [set : TcMovedSet] [path : String]) : TcMaybeString
+  (tc-moved-path-conflict-key-loop
+    (tc-moved-map set)
+    path
+    (string-i64-map-next-occupied (tc-moved-map set) 0)))
+
 (define (tc-move-string-prefix-at-loop
   [text : String]
   [prefix : String]
@@ -18239,6 +18465,213 @@
     (if (or (< start 0) (> (+ start prefix-len) text-len))
       false
       (tc-move-string-prefix-at-loop text prefix start 0 prefix-len))))
+
+(define (tc-move-string-suffix? [text : String] [suffix : String]) : bool
+  (let
+    [text-len : i64 (string-length text)]
+    [suffix-len : i64 (string-length suffix)]
+    (if (< text-len suffix-len)
+      false
+      (tc-move-string-prefix-at? text suffix (- text-len suffix-len)))))
+
+(define (tc-moved-first-root-path-key-loop
+  [map : StringI64Map]
+  [prefix : String]
+  [index : i64]) : TcMaybeString
+  (if (>= index (string-i64-map-capacity map))
+    (TcNoString)
+    (match (string-i64-map-entry-at map index)
+      [(StringI64MapEntrySome key _)
+        (if (and
+          (tc-moved-path-key? key)
+          (tc-move-string-prefix-at? key prefix 0))
+          (TcSomeString key)
+          (tc-moved-first-root-path-key-loop
+            map
+            prefix
+            (string-i64-map-next-occupied map (+ index 1))))]
+      [(StringI64MapEntryNone)
+        (tc-moved-first-root-path-key-loop
+          map
+          prefix
+          (string-i64-map-next-occupied map (+ index 1)))])))
+
+(define (tc-moved-first-root-path-key [set : TcMovedSet] [root : String]) : TcMaybeString
+  (tc-moved-first-root-path-key-loop
+    (tc-moved-map set)
+    (tc-moved-path-key (string-append root "."))
+    (string-i64-map-next-occupied (tc-moved-map set) 0)))
+
+(define (tc-move-diagnostic-key-for-name [moved : TcMovedSet] [name : String]) : String
+  (if (tc-moved-contains? moved name)
+    name
+    (let
+      [path-key : String (tc-moved-path-key name)]
+      (if (tc-moved-contains? moved path-key)
+        path-key
+        (if (tc-moved-partial? moved name)
+          (match (tc-moved-first-root-path-key moved name)
+            [(TcSomeString first-key) first-key]
+            [(TcNoString) (tc-moved-partial-key name)])
+          name)))))
+
+(define (tc-move-diagnostic-name-for-key [key : String] [fallback : String]) : String
+  (if (tc-moved-path-key? key)
+    (tc-moved-path-key-display key)
+    fallback))
+
+(define (tc-move-rich-at-span
+  [primary : AstSourceSpan]
+  [message : String]
+  [help : String]
+  [secondary : TcMaybeSourceSpan]
+  [secondary-label : String]) : String
+  (match secondary
+    [(TcSomeSourceSpan secondary-span)
+      (tc-rich-error-with-secondary
+        primary
+        message
+        help
+        secondary-span
+        secondary-label)]
+    [(TcNoSourceSpan) (tc-rich-error primary message help)]))
+
+(define (tc-move-error-at-maybe-span
+  [primary : TcMaybeSourceSpan]
+  [message : String]
+  [help : String]
+  [secondary : TcMaybeSourceSpan]
+  [secondary-label : String]) : String
+  (match primary
+    [(TcSomeSourceSpan primary-span)
+      (tc-move-rich-at-span primary-span message help secondary secondary-label)]
+    [(TcNoSourceSpan) message]))
+
+(define (tc-move-use-error-for-key-at-maybe-span
+  [moved : TcMovedSet]
+  [key : String]
+  [fallback : String]
+  [primary : TcMaybeSourceSpan]) : String
+  (let
+    [name : String (tc-move-diagnostic-name-for-key key fallback)]
+    (tc-move-error-at-maybe-span
+      primary
+      (tc-move-use-message name)
+      (tc-move-use-help)
+      (tc-moved-span moved key)
+      "moved here")))
+
+(define (tc-move-use-error-at-maybe-span
+  [moved : TcMovedSet]
+  [name : String]
+  [primary : TcMaybeSourceSpan]) : String
+  (tc-move-use-error-for-key-at-maybe-span
+    moved
+    (tc-move-diagnostic-key-for-name moved name)
+    name
+    primary))
+
+(define (tc-move-loop-carried-error-at-maybe-span
+  [name : String]
+  [primary : TcMaybeSourceSpan]) : String
+  (tc-move-error-at-maybe-span
+    primary
+    (tc-move-loop-carried-message name)
+    (tc-move-loop-carried-help)
+    (TcNoSourceSpan)
+    ""))
+
+(define (tc-move-cleanup-owner-error-at-maybe-span
+  [moved : TcMovedSet]
+  [name : String]
+  [primary : TcMaybeSourceSpan]) : String
+  (let
+    [key : String (tc-move-diagnostic-key-for-name moved name)]
+    (tc-move-error-at-maybe-span
+      primary
+      (tc-move-cleanup-owner-exit-message name)
+      (tc-move-cleanup-owner-help)
+      (tc-moved-span moved key)
+      "moved here")))
+
+(define (tc-move-use-message? [message : String]) : bool
+  (let
+    [prefix : String (tc-move-use-message-prefix)]
+    [prefix-len : i64 (string-length prefix)]
+    [message-len : i64 (string-length message)]
+    (and
+      (> message-len prefix-len)
+      (tc-move-string-prefix-at? message prefix 0))))
+
+(define (tc-move-use-message-name [message : String]) : String
+  (let
+    [prefix-len : i64 (string-length (tc-move-use-message-prefix))]
+    [message-len : i64 (string-length message)]
+    (substring message prefix-len (- message-len (+ prefix-len 1)))))
+
+(define (tc-move-loop-carried-message-prefix) : String
+  "typecheck: cannot move loop-carried owner value `")
+
+(define (tc-move-loop-carried-message? [message : String]) : bool
+  (let
+    [prefix : String (tc-move-loop-carried-message-prefix)]
+    [prefix-len : i64 (string-length prefix)]
+    [message-len : i64 (string-length message)]
+    (and
+      (> message-len prefix-len)
+      (tc-move-string-prefix-at? message prefix 0))))
+
+(define (tc-move-loop-carried-message-name [message : String]) : String
+  (let
+    [prefix-len : i64 (string-length (tc-move-loop-carried-message-prefix))]
+    [message-len : i64 (string-length message)]
+    (substring message prefix-len (- message-len (+ prefix-len 1)))))
+
+(define (tc-move-cleanup-owner-message-prefix) : String
+  "typecheck: cleanup owner `")
+
+(define (tc-move-cleanup-owner-message-suffix) : String
+  "` moved before with scope exit")
+
+(define (tc-move-cleanup-owner-message? [message : String]) : bool
+  (let
+    [prefix : String (tc-move-cleanup-owner-message-prefix)]
+    [prefix-len : i64 (string-length prefix)]
+    [message-len : i64 (string-length message)]
+    (and
+      (> message-len prefix-len)
+      (tc-move-string-prefix-at? message prefix 0)
+      (tc-move-string-suffix? message (tc-move-cleanup-owner-message-suffix)))))
+
+(define (tc-move-cleanup-owner-message-name [message : String]) : String
+  (let
+    [prefix-len : i64 (string-length (tc-move-cleanup-owner-message-prefix))]
+    [suffix-len : i64 (string-length (tc-move-cleanup-owner-message-suffix))]
+    [message-len : i64 (string-length message)]
+    (substring message prefix-len (- message-len (+ prefix-len suffix-len)))))
+
+(define (tc-move-enrich-error-at-span
+  [moved : TcMovedSet]
+  [span : AstSourceSpan]
+  [message : String]) : String
+  (core/cond
+    (tc-located-or-rich-error? message)
+    message
+    (tc-move-use-message? message)
+    (tc-move-use-error-at-maybe-span
+      moved
+      (tc-move-use-message-name message)
+      (TcSomeSourceSpan span))
+    (tc-move-loop-carried-message? message)
+    (tc-move-loop-carried-error-at-maybe-span
+      (tc-move-loop-carried-message-name message)
+      (TcSomeSourceSpan span))
+    (tc-move-cleanup-owner-message? message)
+    (tc-move-cleanup-owner-error-at-maybe-span
+      moved
+      (tc-move-cleanup-owner-message-name message)
+      (TcSomeSourceSpan span))
+    (tc-located-error span message)))
 
 (define (tc-moved-remove-prefix-loop
   [map : StringI64Map]
@@ -18322,11 +18755,11 @@
   (if (>= index (string-i64-map-capacity a))
     out
     (match (string-i64-map-entry-at a index)
-      [(StringI64MapEntrySome key _)
+      [(StringI64MapEntrySome key value)
         (tc-moved-union-loop
           a
           (string-i64-map-next-occupied a (+ index 1))
-          (tc-moved-add out key))]
+          (tc-moved-put out key value))]
       [(StringI64MapEntryNone)
         (tc-moved-union-loop a (string-i64-map-next-occupied a (+ index 1)) out)])))
 
@@ -18371,6 +18804,19 @@
         (tc-move-bare-var inner))]
     [(AstExprVar name) (TcSomeString (intern-str name))]
     [_ (TcNoString)]))
+
+(define (tc-expr-maybe-span [expr : AstExpr]) : TcMaybeSourceSpan
+  (match expr
+    [(AstExprSpanned _ span) (TcSomeSourceSpan span)]
+    [(AstExprAnn inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (tc-expr-maybe-span inner))]
+    [(AstExprCast inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (tc-expr-maybe-span inner))]
+    [_ (TcNoSourceSpan)]))
 
 ;; The root local named by a projection chain. This intentionally returns bare
 ;; variables too so consuming sites can share one helper for whole values and
@@ -18635,6 +19081,16 @@
     (tc-moved-add moved (tc-moved-path-key path))
     (tc-moved-partial-key root)))
 
+(define (tc-moved-add-projection-path-with-maybe-span
+  [moved : TcMovedSet]
+  [root : String]
+  [path : String]
+  [span : TcMaybeSourceSpan]) : TcMovedSet
+  (tc-moved-add-with-maybe-span
+    (tc-moved-add-with-maybe-span moved (tc-moved-path-key path) span)
+    (tc-moved-partial-key root)
+    span))
+
 (define (tc-move-box-projection? [expr : AstExpr]) : bool
   (match expr
     [(AstExprSpanned inner-box _)
@@ -18743,10 +19199,15 @@
     [(TcSomeString v)
       (if (and (tc-moved-contains? locals v) (tc-move-var-move-only? env v))
         (if (tc-moved-partial? moved v)
-          (ErrTcMove (tc-move-use-message v))
+          (ErrTcMove
+            (tc-move-use-error-at-maybe-span moved v (tc-expr-maybe-span init)))
           (if (tc-moved-contains? loop-carried v)
-            (ErrTcMove (tc-move-loop-carried-message v))
-            (OkTcMove (tc-moved-add moved v))))
+            (ErrTcMove
+              (tc-move-loop-carried-error-at-maybe-span
+                v
+                (tc-expr-maybe-span init)))
+            (OkTcMove
+              (tc-moved-add-with-maybe-span moved v (tc-expr-maybe-span init)))))
         (OkTcMove moved))]
     [(TcNoString)
       (match (tc-expr ctx env init)
@@ -18761,10 +19222,21 @@
                     (match (tc-move-root-projection-var init)
                       [(TcSomeString root)
                         (if (tc-moved-contains? locals root)
-                          (if (tc-moved-path-conflict? moved path)
-                            (ErrTcMove (tc-move-use-message path))
-                            (OkTcMove
-                              (tc-moved-add-projection-path moved root path)))
+                          (match (tc-moved-path-conflict-key moved path)
+                            [(TcSomeString conflict-key)
+                              (ErrTcMove
+                                (tc-move-use-error-for-key-at-maybe-span
+                                  moved
+                                  conflict-key
+                                  path
+                                  (tc-expr-maybe-span init)))]
+                            [(TcNoString)
+                              (OkTcMove
+                                (tc-moved-add-projection-path-with-maybe-span
+                                  moved
+                                  root
+                                  path
+                                  (tc-expr-maybe-span init)))])
                           (OkTcMove moved))]
                       [(TcNoString) (OkTcMove moved)])]
                   [(TcNoString)
@@ -18774,10 +19246,21 @@
                         [(TcSomeString root)
                           (if (tc-moved-contains? locals root)
                             (if (tc-moved-partial? moved root)
-                              (ErrTcMove (tc-move-use-message root))
+                              (ErrTcMove
+                                (tc-move-use-error-at-maybe-span
+                                  moved
+                                  root
+                                  (tc-expr-maybe-span init)))
                               (if (tc-moved-contains? loop-carried root)
-                                (ErrTcMove (tc-move-loop-carried-message root))
-                                (OkTcMove (tc-moved-add moved root))))
+                                (ErrTcMove
+                                  (tc-move-loop-carried-error-at-maybe-span
+                                    root
+                                    (tc-expr-maybe-span init)))
+                                (OkTcMove
+                                  (tc-moved-add-with-maybe-span
+                                    moved
+                                    root
+                                    (tc-expr-maybe-span init)))))
                             (OkTcMove moved))]
                         [(TcNoString) (OkTcMove moved)]))])))
             (OkTcMove moved))]
@@ -18801,9 +19284,21 @@
             (match (tc-move-root-projection-var expr)
               [(TcSomeString root)
                 (if (tc-moved-contains? locals root)
-                  (if (tc-moved-path-conflict? moved path)
-                    (ErrTcMove (tc-move-use-message path))
-                    (OkTcMove (tc-moved-add-projection-path moved root path)))
+                  (match (tc-moved-path-conflict-key moved path)
+                    [(TcSomeString conflict-key)
+                      (ErrTcMove
+                        (tc-move-use-error-for-key-at-maybe-span
+                          moved
+                          conflict-key
+                          path
+                          (tc-expr-maybe-span expr)))]
+                    [(TcNoString)
+                      (OkTcMove
+                        (tc-moved-add-projection-path-with-maybe-span
+                          moved
+                          root
+                          path
+                          (tc-expr-maybe-span expr)))])
                   (OkTcMove moved))]
               [(TcNoString) (OkTcMove moved)])]
           [(TcNoString)
@@ -18813,10 +19308,21 @@
                 [(TcSomeString root)
                   (if (tc-moved-contains? locals root)
                     (if (tc-moved-partial? moved root)
-                      (ErrTcMove (tc-move-use-message root))
+                      (ErrTcMove
+                        (tc-move-use-error-at-maybe-span
+                          moved
+                          root
+                          (tc-expr-maybe-span expr)))
                       (if (tc-moved-contains? loop-carried root)
-                        (ErrTcMove (tc-move-loop-carried-message root))
-                        (OkTcMove (tc-moved-add moved root))))
+                        (ErrTcMove
+                          (tc-move-loop-carried-error-at-maybe-span
+                            root
+                            (tc-expr-maybe-span expr)))
+                        (OkTcMove
+                          (tc-moved-add-with-maybe-span
+                            moved
+                            root
+                            (tc-expr-maybe-span expr)))))
                     (OkTcMove moved))]
                 [(TcNoString) (OkTcMove moved)]))])))
     (OkTcMove moved)))
@@ -18832,7 +19338,7 @@
       (if (and
         (tc-moved-contains? locals v)
         (tc-type-consuming-match-scrutinee-now? ctx scrut-ty))
-        (tc-moved-add moved v)
+        (tc-moved-add-with-maybe-span moved v (tc-expr-maybe-span expr))
         moved)]
     [(TcNoString) moved]))
 
@@ -18917,16 +19423,26 @@
                 (if (or
                   (tc-moved-contains? moved name)
                   (tc-moved-partial? moved name))
-                  (ErrTcMove (tc-move-use-message name))
+                  (ErrTcMove
+                    (tc-move-use-error-at-maybe-span
+                      moved
+                      name
+                      (tc-expr-maybe-span body)))
                   (if (tc-moved-contains? loop-carried name)
-                    (ErrTcMove (tc-move-loop-carried-message name))
+                    (ErrTcMove
+                      (tc-move-loop-carried-error-at-maybe-span
+                        name
+                        (tc-expr-maybe-span body)))
                     (tc-move-check-lambda-owner-captures-scan
                       ctx
                       root
                       rest-env
                       locals
                       loop-carried
-                      (tc-moved-add moved name)
+                      (tc-moved-add-with-maybe-span
+                        moved
+                        name
+                        (tc-expr-maybe-span body))
                       bound
                       (tc-string-list-add seen name)
                       body)))
@@ -19238,13 +19754,15 @@
 
 (define (tc-move-check-cleanup-owner-exit
   [moved : TcMovedSet]
-  [roots : TcStringList]) : TcMoveResult
+  [roots : TcStringList]
+  [primary : TcMaybeSourceSpan]) : TcMoveResult
   (match roots
     [(TcStringNil) (OkTcMove moved)]
     [(TcStringCons name rest)
       (if (or (tc-moved-contains? moved name) (tc-moved-partial? moved name))
-        (ErrTcMove (tc-move-cleanup-owner-exit-message name))
-        (tc-move-check-cleanup-owner-exit moved (box-get rest)))]))
+        (ErrTcMove
+          (tc-move-cleanup-owner-error-at-maybe-span moved name primary))
+        (tc-move-check-cleanup-owner-exit moved (box-get rest) primary))]))
 
 (define (tc-move-add-bound-names [locals : TcMovedSet] [names : TcStringList]) : TcMovedSet
   (match names
@@ -19347,10 +19865,46 @@
   [moved : TcMovedSet]
   [expr : AstExpr]) : TcMoveResult
   (match expr
-    [(AstExprSpanned inner-box _)
+    [(AstExprSpanned inner-box span)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
-        (tc-move-check-expr ctx env locals loop-carried moved inner))]
+        (match inner
+          [(AstExprWithResource bindings exprs)
+            (match (tc-move-check-resource-bindings
+              ctx
+              env
+              locals
+              loop-carried
+              moved
+              bindings)
+              [(OkTcMoveResourceBindings
+                  body-env
+                  moved1
+                  body-locals
+                  body-loop
+                  roots)
+                (match (tc-move-check-exprs
+                  ctx
+                  body-env
+                  body-locals
+                  body-loop
+                  moved1
+                  exprs)
+                  [(OkTcMove moved2)
+                    (tc-move-check-cleanup-owner-exit
+                      moved2
+                      roots
+                      (TcSomeSourceSpan span))]
+                  [(ErrTcMove message)
+                    (ErrTcMove
+                      (tc-move-enrich-error-at-span moved span message))])]
+              [(ErrTcMoveResourceBindings message)
+                (ErrTcMove (tc-move-enrich-error-at-span moved span message))])]
+          [_
+            (match (tc-move-check-expr ctx env locals loop-carried moved inner)
+              [(OkTcMove moved1) (OkTcMove moved1)]
+              [(ErrTcMove message)
+                (ErrTcMove (tc-move-enrich-error-at-span moved span message))])]))]
     [(AstExprLiteral _) (OkTcMove moved)]
     [(AstExprVar name)
       (if (tc-moved-contains? moved (intern-str name))
@@ -19747,7 +20301,8 @@
             body-loop
             moved1
             exprs)
-            [(OkTcMove moved2) (tc-move-check-cleanup-owner-exit moved2 roots)]
+            [(OkTcMove moved2)
+              (tc-move-check-cleanup-owner-exit moved2 roots (TcNoSourceSpan))]
             [(ErrTcMove message) (ErrTcMove message)])]
         [(ErrTcMoveResourceBindings message) (ErrTcMove message)])]
     [(AstExprBox inner-box)

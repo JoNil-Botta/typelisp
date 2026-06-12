@@ -11,6 +11,8 @@
 
 (import "compiler_check_core.tl")
 
+(import "doc_test.tl")
+
 (import "package_source_core.tl")
 
 (import "../stdlib/string.tl")
@@ -104,12 +106,42 @@
 (define (selfhost-check-config-from [start : i64] [count : i64]) : ResultSelfhostCheckConfig
   (selfhost-check-parse-args start count "" false "" false (string-vec-new)))
 
+(define (selfhost-check-doctest-report [report : DocTestRunReport]) : i64
+  (if (doc-test-run-report-ok? report)
+    0
+    (begin
+      (print-error (doc-test-run-report-render report))
+      1)))
+
+(define (selfhost-check-file-doctests
+  [input-path : String]
+  [stdlib-roots : StringVec]) : i64
+  (selfhost-check-doctest-report
+    (doc-test-typecheck-file-with-roots input-path stdlib-roots)))
+
+(define (selfhost-check-package-source-doctests
+  [input-path : String]
+  [stdlib-roots : StringVec]
+  [manifest-dir : String]
+  [deps : CompilerPkgDeps]) : i64
+  (selfhost-check-doctest-report
+    (doc-test-typecheck-package-file-with-roots
+      input-path
+      stdlib-roots
+      manifest-dir
+      deps)))
+
 (define (selfhost-check-file [input-path : String] [stdlib-roots : StringVec]) : i64
   (match (compiler-check-file-with-roots input-path stdlib-roots)
     [(OkCompilerCheck _)
-      (begin
-        (print-string "Type checking passed!\n")
-        0)]
+      (let
+        [doctest-status : i64
+          (selfhost-check-file-doctests input-path stdlib-roots)]
+        (if (= doctest-status 0)
+          (begin
+            (print-string "Type checking passed!\n")
+            0)
+          doctest-status))]
     [(ErrCompilerCheck diag)
       (begin
         (print-error (compiler-diagnostic-render diag))
@@ -144,11 +176,20 @@
         [status : i64
           (selfhost-check-package-source source stdlib-roots manifest-dir deps)]
         (if (= status 0)
-          (selfhost-check-package-sources
-            (box-get rest)
-            stdlib-roots
-            manifest-dir
-            deps)
+          (let
+            [doctest-status : i64
+              (selfhost-check-package-source-doctests
+                source
+                stdlib-roots
+                manifest-dir
+                deps)]
+            (if (= doctest-status 0)
+              (selfhost-check-package-sources
+                (box-get rest)
+                stdlib-roots
+                manifest-dir
+                deps)
+              doctest-status))
           status))]))
 
 (define (selfhost-check-package

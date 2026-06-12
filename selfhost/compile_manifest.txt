@@ -140,6 +140,10 @@ contains|_tl_build_config_from:
 contains|_tl_build_source_plan_render:
 contains|_tl_build_package:
 contains|_tl_build_package_emit:
+contains|_tl_build_doctest_build_source:
+contains|_tl_build_doctest_typecheck_package:
+contains|_tl_doc_test_typecheck_source_with_roots:
+contains|_tl_doc_test_typecheck_package_file_with_roots:
 contains|_tl_host_plan_netline:
 contains|could not find typelisp.pkg
 contains|Built
@@ -213,6 +217,8 @@ contains|_tl_selfhost_check_file:
 contains|selfhost_check_package:
 contains|_tl_compiler_check_file_with_roots:
 contains|compiler_check_package_file_with_roots
+contains|_tl_doc_test_typecheck_file_with_roots:
+contains|_tl_doc_test_typecheck_package_file_with_roots:
 contains|package_source_discover
 contains|_tl_compiler_load_file_with_paths_and_roots
 contains|selfhost-check: cannot combine input path with --manifest-path
@@ -224,6 +230,8 @@ contains|_tl_compile_cli_config_from:
 contains|_tl_compile_cli_target:
 contains|_tl_compile_cli_invalid_opt_level:
 contains|_tl_compile_cli_backend_mode:
+contains|_tl_compile_cli_typecheck_doctests:
+contains|_tl_doc_test_typecheck_source_with_roots:
 contains|call _tl_string_vec_push
 not-contains|root_list_append
 contains|_tl_compiler_cfg_enable:
@@ -336,6 +344,7 @@ case|selfhost_compiler_check_core|selfhost/compiler_check_core.tl|assembly|skip|
 contains|_tl_compiler_check_file:
 contains|_tl_compiler_check_file_with_roots:
 contains|_tl_compiler_check_source_with_roots:
+contains|_tl_compiler_check_package_source_with_roots:
 end
 
 case|selfhost_compiler_check_smoke|selfhost/compiler_check_smoke.tl|assembly|exactly-one|direct
@@ -718,6 +727,8 @@ contains|_tl_doc_test_supported_item_declaration_question:
 contains|_tl_doc_test_run_source:
 contains|_tl_doc_test_run_source_with_roots:
 contains|_tl_doc_test_check_example:
+contains|_tl_doc_test_typecheck_source_with_roots:
+contains|_tl_doc_test_typecheck_package_file_with_roots:
 contains|_tl_doc_test_run_examples:
 contains|_tl_doc_test_errors_to_failures:
 contains|_tl_doc_test_run_failure_render:
@@ -960,6 +971,8 @@ case|selfhost_run|selfhost/run.tl|assembly|skip|direct
 contains|_tl_run_direct_from:
 contains|_tl_run_run_from:
 contains|_tl_run_cli_config_from:
+contains|_tl_run_cli_run_source_with_doctests:
+contains|_tl_doc_test_typecheck_source_with_roots:
 contains|_tl_source_tool_run_source:
 contains|run: expected source path
 end

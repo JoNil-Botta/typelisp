@@ -12,6 +12,8 @@
 
 (import "../stdlib/io.tl")
 
+(import "../stdlib/list.tl")
+
 (import "../stdlib/string.tl")
 
 (import "../stdlib/str_cat.tl")
@@ -19,6 +21,10 @@
 (import "host_plan.tl")
 
 (import "build_run_core.tl")
+
+(import "doc_test.tl")
+
+(import "package_source_core.tl")
 
 (import "package_cache_core.tl")
 
@@ -3043,6 +3049,98 @@
       lock-policy
       stdlib-roots)))
 
+(define (build-doctest-report [report : DocTestRunReport]) : i64
+  (if (doc-test-run-report-ok? report)
+    0
+    (begin
+      (print-error (doc-test-run-report-render report))
+      1)))
+
+(define (build-doctest-typecheck-file
+  [source : String]
+  [stdlib-roots : StringVec]) : i64
+  (match (try-read-file (& source))
+    [(ErrIoString _) 0]
+    [(OkIoString text)
+      (build-doctest-report
+        (doc-test-typecheck-source-with-roots source text stdlib-roots))]))
+
+(define (build-doctest-typecheck-package-source
+  [source : String]
+  [stdlib-roots : StringVec]
+  [manifest-dir : String]
+  [deps : CompilerPkgDeps]) : i64
+  (build-doctest-report
+    (doc-test-typecheck-package-file-with-roots
+      source
+      stdlib-roots
+      manifest-dir
+      deps)))
+
+(define (build-doctest-typecheck-package-sources
+  [sources : StringList]
+  [stdlib-roots : StringVec]
+  [manifest-dir : String]
+  [deps : CompilerPkgDeps]) : i64
+  (match sources
+    [(StringNil) 0]
+    [(StringCons source rest)
+      (let
+        [status : i64
+          (build-doctest-typecheck-package-source
+            source
+            stdlib-roots
+            manifest-dir
+            deps)]
+        (if (= status 0)
+          (build-doctest-typecheck-package-sources
+            (box-get rest)
+            stdlib-roots
+            manifest-dir
+            deps)
+          status))]))
+
+(define (build-doctest-typecheck-package
+  [manifest-path : String]
+  [manifest : CompilerPkgManifest]
+  [stdlib-roots : StringVec]) : i64
+  (match (package-source-discover-for "build" manifest-path true)
+    [(ErrPackageSourceSet message)
+      (begin
+        (print-error message)
+        1)]
+    [(OkPackageSourceSet source-set)
+      (build-doctest-typecheck-package-sources
+        (struct-get source-set sources)
+        stdlib-roots
+        (struct-get source-set manifest-dir)
+        (struct-get manifest deps))]))
+
+(define (build-doctest-build-source
+  [source : String]
+  [output : String]
+  [has-output : bool]
+  [target : CompilerBackendTarget]
+  [stdlib-roots : StringVec]
+  [opt-level : i64]
+  [mode : CompilerBackendMode]
+  [link-inputs : SourceToolLinkInputs]) : i64
+  (let
+    [doctest-status : i64 (build-doctest-typecheck-file source stdlib-roots)]
+    (if (= doctest-status 0)
+      (begin
+        (compiler-driver-reset-file-state!)
+        (source-tool-build-source
+          source
+          output
+          has-output
+          target
+          stdlib-roots
+          opt-level
+          mode
+          link-inputs))
+      doctest-status)))
+
 (define (build-package-emit
   [manifest-path : String]
   [manifest : CompilerPkgManifest]
@@ -3071,37 +3169,46 @@
               (print-error message)
               1)]
           [(OkBuildManifest resolved-manifest)
-            (match (build-package-dependency-graph
-              normalized-path
-              resolved-manifest
-              lock-policy)
-              [(ErrBuildPackageGraph message)
-                (begin
-                  (print-error message)
-                  1)]
-              [(OkBuildPackageGraph graph)
-                (let
-                  [nodes : BuildPackageGraphNodeVec (struct-get graph order)]
-                  [dep-status : i64
-                    (build-package-emit-graph-nodes
-                      nodes
-                      target
-                      opt-level
-                      profile
-                      mode
-                      lock-policy
-                      stdlib-roots)]
-                  (if (= dep-status 0)
-                    (build-package-emit-one
-                      normalized-path
-                      resolved-manifest
-                      target
-                      opt-level
-                      profile
-                      mode
-                      stdlib-roots
-                      (build-package-graph-link-libs nodes profile target))
-                    dep-status))])]))]))
+            (let
+              [doctest-status : i64
+                (build-doctest-typecheck-package
+                  normalized-path
+                  resolved-manifest
+                  stdlib-roots)]
+              (if (= doctest-status 0)
+                (match (build-package-dependency-graph
+                  normalized-path
+                  resolved-manifest
+                  lock-policy)
+                  [(ErrBuildPackageGraph message)
+                    (begin
+                      (print-error message)
+                      1)]
+                  [(OkBuildPackageGraph graph)
+                    (let
+                      [nodes : BuildPackageGraphNodeVec
+                        (struct-get graph order)]
+                      [dep-status : i64
+                        (build-package-emit-graph-nodes
+                          nodes
+                          target
+                          opt-level
+                          profile
+                          mode
+                          lock-policy
+                          stdlib-roots)]
+                      (if (= dep-status 0)
+                        (build-package-emit-one
+                          normalized-path
+                          resolved-manifest
+                          target
+                          opt-level
+                          profile
+                          mode
+                          stdlib-roots
+                          (build-package-graph-link-libs nodes profile target))
+                        dep-status))])
+                doctest-status))]))]))
 
 (define (build-package-from-path
   [manifest-path : String]
@@ -3521,7 +3628,7 @@
             stdlib-roots
             opt-level
             link-inputs)
-          (source-tool-build-source
+          (build-doctest-build-source
             source
             output
             has-output
@@ -3551,7 +3658,7 @@
             stdlib-roots
             opt-level
             link-inputs)
-          (source-tool-build-source
+          (build-doctest-build-source
             source
             output
             has-output

@@ -25120,30 +25120,34 @@
           [(ErrTcUnit message) (ErrTcUnit message)])]
       [(ErrTcType message) (ErrTcUnit message)])))
 
+;; Reusable scratch arena for per-function-body typechecks. Mirrors
+;; lower-scratch-arena: created lazily, shared by every check (the body walk
+;; is never re-entrant into another function-decl check), reclaimed by
+;; mark/rewind per check.
+(define tc-fn-scratch-arena : i64
+  0)
+
+(define (tc-fn-scratch-arena-get) : i64
+  (if (= tc-fn-scratch-arena 0)
+    (let
+      [scratch : i64 (arena-make)]
+      (begin
+        (set! tc-fn-scratch-arena scratch)
+        scratch))
+    tc-fn-scratch-arena))
+
 ;; Function bodies dominate typecheck allocation (~96% of the phase's live
 ;; delta; #2596) and the check returns only unit -- everything it allocates
 ;; is garbage once the body is checked, but the program-lifetime arena never
-;; frees it. Scope each body check in its own arena. New intern entries made
-;; while the arena is active (e.g. first-use marker names) must outlive it,
-;; so persistent intern storage is forced on for the scope (the intern pool
+;; frees it. Run each body check in the shared scratch arena and rewind it
+;; afterwards, cloning the error diagnostic out first (the mark/rewind/
+;; clone-out shape of lower-function-escaping; do NOT re-run the check to
+;; regenerate the message -- the body check is not idempotent and a second
+;; run can surface a different diagnostic). New intern entries made while
+;; the scratch is active (e.g. first-use marker names) must outlive it, so
+;; persistent intern storage is forced on for the scope (the intern pool
 ;; copies new strings into its global-init base arena; see compiler_intern).
-;; Node pools already grow in the persistent base arena (#2357). The rare
-;; error path re-runs the check outside the arena so the diagnostic string
-;; survives; compilation stops at the first failing declaration, so the
-;; rerun cost is paid at most once.
-;: Arena-scoped body check reduced to a region-free status: 0 ok, 1 error.
-(define (tc-check-fn-decl-status
-  [ctx : TcContext]
-  [global-env : TcTypeEnv]
-  [params : AstParamList]
-  [ret : AstType]
-  [body-box : i64]) : i64
-  (with-arena
-    tc-fn-scratch
-    (match (tc-check-fn-decl-body ctx global-env params ret body-box)
-      [(OkTcUnit) 0]
-      [(ErrTcUnit _) 1])))
-
+;; Node pools already grow in the persistent base arena (#2357).
 (define (tc-check-fn-decl-scoped
   [ctx : TcContext]
   [global-env : TcTypeEnv]
@@ -25152,21 +25156,39 @@
   [body-box : i64]) : ResultTcUnit
   (let
     [prev-persist : bool (intern-persistent-storage-on?)]
-    [status : i64
-      (begin
-        (intern-persistent-storage-enable!)
-        (tc-check-fn-decl-status ctx global-env params ret body-box))]
+    [enclosing : i64 (arena-current)]
+    [scratch : i64 (tc-fn-scratch-arena-get)]
     (begin
-      (if prev-persist
-        unit
-        (intern-persistent-storage-disable!))
-      ;; Single-entry name caches may hold strings allocated in the arena
-      ;; that just closed; invalidate them before anything can compare
-      ;; against freed memory.
-      (tc-nominal-owner-cache-reset!)
-      (if (= status 0)
-        OkTcUnit
-        (tc-check-fn-decl-body ctx global-env params ret body-box)))))
+      (intern-persistent-storage-enable!)
+      (unsafe
+        (arena-set! scratch))
+      (let
+        [mark : i64 (arena-mark)]
+        [raw : ResultTcUnit
+          (tc-check-fn-decl-body ctx global-env params ret body-box)]
+        [scratch-head : i64 (arena-current)]
+        (begin
+          (unsafe
+            (arena-set! enclosing))
+          (let
+            [escaped : ResultTcUnit
+              (match raw
+                [(OkTcUnit) OkTcUnit]
+                [(ErrTcUnit message) (ErrTcUnit (clone message))])]
+            [new-enclosing : i64 (arena-current)]
+            (begin
+              (unsafe
+                (arena-set! scratch-head)
+                (arena-rewind mark)
+                (arena-set! new-enclosing))
+              (if prev-persist
+                unit
+                (intern-persistent-storage-disable!))
+              ;; Single-entry name caches may hold strings allocated in the
+              ;; scratch that was just rewound; invalidate them before
+              ;; anything can compare against freed memory.
+              (tc-nominal-owner-cache-reset!)
+              escaped)))))))
 
 (define (tc-check-decl-with-global-env
   [ctx : TcContext]

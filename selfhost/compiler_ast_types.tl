@@ -512,6 +512,46 @@
           (set! i (+ i 1))))
       (set! ty-node-pool-slots new-slots))))
 
+;; #2596: payload copies for stored nodes. The pool array is persistent
+;; (#2357) and `ty-node-push` dedup compares later candidates against stored
+;; nodes, so a stored node must never embed a String, lifetime spine, or
+;; type-list spine allocated in a transient scratch arena (per-function
+;; typecheck arenas): after the scratch rewinds, the next dedup probe would
+;; compare against freed memory. These helpers run with the node-pool base
+;; arena active, so every copy is program-lifetime. Node-id references need
+;; no copy: they point at pool nodes made persistent by the same rule.
+(define (ty-node-persist-string [s : String]) : String
+  (substring s 0 (string-length s)))
+
+(define (ty-node-persist-lifetimes [items : AstLifetimeList]) : AstLifetimeList
+  (match items
+    [(AstLifetimeNil) AstLifetimeNil]
+    [(AstLifetimeCons name rest)
+      (AstLifetimeCons
+        (ty-node-persist-string name)
+        (box (ty-node-persist-lifetimes (box-get rest))))]))
+
+(define (ty-node-persist-type-list [items : AstTypeList]) : AstTypeList
+  (match items
+    [(AstTypeNil) AstTypeNil]
+    [(AstTypeCons id rest)
+      (AstTypeCons id (box (ty-node-persist-type-list (box-get rest))))]))
+
+(define (ty-node-persist [node : AstType]) : AstType
+  (match node
+    [(AstTyFunc args ret) (AstTyFunc (ty-node-persist-type-list args) ret)]
+    [(AstTyTuple args) (AstTyTuple (ty-node-persist-type-list args))]
+    [(AstTyRegion name inner) (AstTyRegion (ty-node-persist-string name) inner)]
+    [(AstTyRef name inner) (AstTyRef (ty-node-persist-string name) inner)]
+    [(AstTyMutRef name inner) (AstTyMutRef (ty-node-persist-string name) inner)]
+    [(AstTyEnumArgs name lifetimes)
+      (AstTyEnumArgs name (ty-node-persist-lifetimes lifetimes))]
+    [(AstTyStructArgs name lifetimes)
+      (AstTyStructArgs name (ty-node-persist-lifetimes lifetimes))]
+    [(AstTyVarArgs name lifetimes)
+      (AstTyVarArgs name (ty-node-persist-lifetimes lifetimes))]
+    [_ node]))
+
 ;: Append `node` to the pool unconditionally and return its ty id.
 (define (ty-node-push-raw [node : AstType]) : i64
   (begin
@@ -520,8 +560,19 @@
       unit)
     (let
       [id : i64 ty-node-pool-count]
+      [prev-arena : i64 (arena-current)]
+      [persistent : AstType
+        (begin
+          (unsafe
+            (arena-set! node-pool-base-arena))
+          (let
+            [out : AstType (ty-node-persist node)]
+            (begin
+              (unsafe
+                (arena-set! prev-arena))
+              out)))]
       (begin
-        (array-set! ty-node-pool-slots id node)
+        (array-set! ty-node-pool-slots id persistent)
         (set! ty-node-pool-count (+ id 1))
         id))))
 

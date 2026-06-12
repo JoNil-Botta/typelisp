@@ -12491,8 +12491,13 @@
                 [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]))
 
+;; 0: every function escapes through a per-function scratch arena. The old
+;; limit of 24 sent small-function transients to the program arena to skip
+;; the scratch/clone overhead, but their summed assembly-text churn stays
+;; resident for the whole compile (#2596 RSS calibration); the per-function
+;; arena reclaims it.
 (define (compiler-backend-direct-emit-instr-limit) : i64
-  24)
+  0)
 
 (define (compiler-backend-emit-function-direct? [func : CompilerIrFunction]) : bool
   (match func
@@ -12558,9 +12563,10 @@
                     (arena-destroy scratch-head))
                   (ErrCompilerBackend escaped)))))]))))
 
-;; Emit small functions directly to avoid scratch/clone overhead. Larger functions
-;; still use a scratch arena so transient assembly strings stay within the
-;; self-build memory budget.
+;; Keep the direct path available for A/B experiments by raising
+;; `compiler-backend-direct-emit-instr-limit`; normal builds route emitted
+;; functions through a scratch arena so transient assembly strings stay within
+;; the self-build memory budget.
 (define (compiler-backend-emit-function-escaping
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]
@@ -17253,6 +17259,10 @@ tl_memcpy:
             emit-entry
             crt-entry)]
         (begin
+          ;; This window previously started at the "collect" finish and was
+          ;; overwritten by the next start without ever being reported,
+          ;; hiding the prefix composition from the phase breakdown.
+          (cfg compile-profile (compiler-backend-profile-finish "prefix"))
           (cfg compile-profile (compiler-backend-profile-start))
           (match (compiler-backend-emit-functions-buffer-into
             target

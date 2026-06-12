@@ -153,6 +153,49 @@
           (cfg compile-profile (compiler-check-profile-finish "load"))
           (ErrCompilerCheck diag))])))
 
+(define (compiler-check-package-source-with-roots
+  [path : String]
+  [source : String]
+  [stdlib-roots : StringVec]
+  [manifest-dir : String]
+  [deps : CompilerPkgDeps]) : ResultCompilerCheck
+  (begin
+    (compiler-check-reset-pools!)
+    (cfg compile-profile (compiler-check-profile-start))
+    (match (compiler-load-package-core-macro-prelude-with-roots-cfg
+      (sym-i64-empty)
+      stdlib-roots
+      manifest-dir
+      deps
+      (compiler-cfg-empty))
+      [(OkCompilerLoadWithPaths prelude-decls prelude-paths _ prelude-seen)
+        (match (compiler-load-parse-source-diagnostic-escaping
+          path
+          source
+          (compiler-cfg-empty))
+          [(OkAstProgramDiagnostic program)
+            (compiler-check-loaded-with-prelude
+              path
+              prelude-decls
+              prelude-paths
+              (compiler-load-package-program-with-paths-and-roots-expect
+                path
+                program
+                prelude-seen
+                stdlib-roots
+                AstNoModuleName
+                manifest-dir
+                deps
+                (compiler-cfg-empty)))]
+          [(ErrAstProgramDiagnostic diag)
+            (begin
+              (cfg compile-profile (compiler-check-profile-finish "load"))
+              (ErrCompilerCheck diag))])]
+      [(ErrCompilerLoadWithPaths diag)
+        (begin
+          (cfg compile-profile (compiler-check-profile-finish "load"))
+          (ErrCompilerCheck diag))])))
+
 (define (compiler-check-source [path : String] [source : String]) : ResultCompilerCheck
   (begin
     (compiler-check-reset-pools!)

@@ -1558,7 +1558,7 @@
 (define (doc-test-check-example [path : String] [example : DocTestExample]) : DocTestMaybeFailure
   (doc-test-check-example-with-roots path example (string-vec-new)))
 
-(define (doc-test-check-example-with-roots
+(define (doc-test-typecheck-example-with-roots
   [path : String]
   [example : DocTestExample]
   [stdlib-roots : StringVec]) : DocTestMaybeFailure
@@ -1568,30 +1568,76 @@
     [expectation : DocTestExpectation (doc-test-example-expectation example)]
     [expect-error : bool (doc-test-expectation-error? expectation)]
     [code : String (doc-test-example-code example)]
-    (if (doc-test-expectation-run? expectation)
-      (doc-test-run-runnable-example-with-roots path example stdlib-roots)
-      (match (compiler-check-source-with-roots
-        (doc-test-example-virtual-path path index)
-        code
-        stdlib-roots)
-        [(OkCompilerCheck _)
-          (if expect-error
-            (DocTestSomeFailure
-              (DocTestRunFailure
-                path
-                source-line
-                index
-                (doc-test-unexpected-pass-message index)))
-            (DocTestNoFailure))]
-        [(ErrCompilerCheck diag)
-          (if expect-error
-            (DocTestNoFailure)
-            (DocTestSomeFailure
-              (DocTestRunFailure
-                path
-                source-line
-                index
-                (doc-test-unexpected-error-message index diag))))]))))
+    (match (compiler-check-source-with-roots
+      (doc-test-example-virtual-path path index)
+      code
+      stdlib-roots)
+      [(OkCompilerCheck _)
+        (if expect-error
+          (DocTestSomeFailure
+            (DocTestRunFailure
+              path
+              source-line
+              index
+              (doc-test-unexpected-pass-message index)))
+          (DocTestNoFailure))]
+      [(ErrCompilerCheck diag)
+        (if expect-error
+          (DocTestNoFailure)
+          (DocTestSomeFailure
+            (DocTestRunFailure
+              path
+              source-line
+              index
+              (doc-test-unexpected-error-message index diag))))])))
+
+(define (doc-test-typecheck-package-example-with-roots
+  [path : String]
+  [example : DocTestExample]
+  [stdlib-roots : StringVec]
+  [manifest-dir : String]
+  [deps : CompilerPkgDeps]) : DocTestMaybeFailure
+  (let
+    [index : i64 (doc-test-example-index example)]
+    [source-line : i64 (doc-test-example-source-line example)]
+    [expectation : DocTestExpectation (doc-test-example-expectation example)]
+    [expect-error : bool (doc-test-expectation-error? expectation)]
+    [code : String (doc-test-example-code example)]
+    (match (compiler-check-package-source-with-roots
+      (doc-test-example-virtual-path path index)
+      code
+      stdlib-roots
+      manifest-dir
+      deps)
+      [(OkCompilerCheck _)
+        (if expect-error
+          (DocTestSomeFailure
+            (DocTestRunFailure
+              path
+              source-line
+              index
+              (doc-test-unexpected-pass-message index)))
+          (DocTestNoFailure))]
+      [(ErrCompilerCheck diag)
+        (if expect-error
+          (DocTestNoFailure)
+          (DocTestSomeFailure
+            (DocTestRunFailure
+              path
+              source-line
+              index
+              (doc-test-unexpected-error-message index diag))))])))
+
+(define (doc-test-typecheck-example [path : String] [example : DocTestExample]) : DocTestMaybeFailure
+  (doc-test-typecheck-example-with-roots path example (string-vec-new)))
+
+(define (doc-test-check-example-with-roots
+  [path : String]
+  [example : DocTestExample]
+  [stdlib-roots : StringVec]) : DocTestMaybeFailure
+  (if (doc-test-expectation-run? (doc-test-example-expectation example))
+    (doc-test-run-runnable-example-with-roots path example stdlib-roots)
+    (doc-test-typecheck-example-with-roots path example stdlib-roots)))
 
 (define (doc-test-run-examples
   [path : String]
@@ -1620,6 +1666,61 @@
             (box-get rest)
             (doc-test-run-failure-list-append failures failure)
             stdlib-roots)])]))
+
+(define (doc-test-typecheck-examples-with-roots
+  [path : String]
+  [examples : DocTestExampleList]
+  [failures : DocTestRunFailureList]
+  [stdlib-roots : StringVec]) : DocTestRunFailureList
+  (match examples
+    [(DocTestExampleNil) failures]
+    [(DocTestExampleCons example rest)
+      (match (doc-test-typecheck-example-with-roots path example stdlib-roots)
+        [(DocTestNoFailure)
+          (doc-test-typecheck-examples-with-roots
+            path
+            (box-get rest)
+            failures
+            stdlib-roots)]
+        [(DocTestSomeFailure failure)
+          (doc-test-typecheck-examples-with-roots
+            path
+            (box-get rest)
+            (doc-test-run-failure-list-append failures failure)
+            stdlib-roots)])]))
+
+(define (doc-test-typecheck-package-examples-with-roots
+  [path : String]
+  [examples : DocTestExampleList]
+  [failures : DocTestRunFailureList]
+  [stdlib-roots : StringVec]
+  [manifest-dir : String]
+  [deps : CompilerPkgDeps]) : DocTestRunFailureList
+  (match examples
+    [(DocTestExampleNil) failures]
+    [(DocTestExampleCons example rest)
+      (match (doc-test-typecheck-package-example-with-roots
+        path
+        example
+        stdlib-roots
+        manifest-dir
+        deps)
+        [(DocTestNoFailure)
+          (doc-test-typecheck-package-examples-with-roots
+            path
+            (box-get rest)
+            failures
+            stdlib-roots
+            manifest-dir
+            deps)]
+        [(DocTestSomeFailure failure)
+          (doc-test-typecheck-package-examples-with-roots
+            path
+            (box-get rest)
+            (doc-test-run-failure-list-append failures failure)
+            stdlib-roots
+            manifest-dir
+            deps)])]))
 
 ;; A malformed/empty/unterminated fence is a runner failure too; it has no
 ;; example index, so it is recorded with index `-1`.
@@ -1668,6 +1769,61 @@
   [path : String]
   [stdlib-roots : StringVec]) : DocTestRunReport
   (doc-test-run-source-with-roots path (read-file path) stdlib-roots))
+
+(define (doc-test-typecheck-source [path : String] [source : String]) : DocTestRunReport
+  (doc-test-typecheck-source-with-roots path source (string-vec-new)))
+
+(define (doc-test-typecheck-source-with-roots
+  [path : String]
+  [source : String]
+  [stdlib-roots : StringVec]) : DocTestRunReport
+  (match (doc-test-extract-source source)
+    [(DocTestExtraction examples errors)
+      (DocTestRunReport
+        (doc-test-example-list-count examples)
+        (doc-test-typecheck-examples-with-roots
+          path
+          examples
+          (doc-test-errors-to-failures path errors DocTestRunFailureNil)
+          stdlib-roots))]))
+
+(define (doc-test-typecheck-package-source-with-roots
+  [path : String]
+  [source : String]
+  [stdlib-roots : StringVec]
+  [manifest-dir : String]
+  [deps : CompilerPkgDeps]) : DocTestRunReport
+  (match (doc-test-extract-source source)
+    [(DocTestExtraction examples errors)
+      (DocTestRunReport
+        (doc-test-example-list-count examples)
+        (doc-test-typecheck-package-examples-with-roots
+          path
+          examples
+          (doc-test-errors-to-failures path errors DocTestRunFailureNil)
+          stdlib-roots
+          manifest-dir
+          deps))]))
+
+(define (doc-test-typecheck-file [path : String]) : DocTestRunReport
+  (doc-test-typecheck-source path (read-file path)))
+
+(define (doc-test-typecheck-file-with-roots
+  [path : String]
+  [stdlib-roots : StringVec]) : DocTestRunReport
+  (doc-test-typecheck-source-with-roots path (read-file path) stdlib-roots))
+
+(define (doc-test-typecheck-package-file-with-roots
+  [path : String]
+  [stdlib-roots : StringVec]
+  [manifest-dir : String]
+  [deps : CompilerPkgDeps]) : DocTestRunReport
+  (doc-test-typecheck-package-source-with-roots
+    path
+    (read-file path)
+    stdlib-roots
+    manifest-dir
+    deps))
 
 ;; Exit status for a report: 0 when every example passed (or there were none),
 ;; 1 otherwise. Callers turn this directly into a process exit code.
@@ -2295,6 +2451,45 @@
       (return false))
     true))
 
+(define (doc-test-typecheck-smoke-runnable-only-ok?) : bool
+  (let
+    [report : DocTestRunReport
+      (doc-test-typecheck-source-with-roots
+        "docs/run.tl"
+        (doc-test-run-runnable-wrong-exit-source)
+        (doc-test-run-smoke-stdlib-roots))]
+    (if (= (doc-test-run-report-count report) 1)
+      (doc-test-run-report-ok? report)
+      false)))
+
+(define (doc-test-typecheck-smoke-unexpected-pass-ok?) : bool
+  (let
+    [report : DocTestRunReport
+      (doc-test-typecheck-source
+        "docs/bad.tl"
+        (doc-test-run-unexpected-pass-source))]
+    (match (doc-test-run-report-failures report)
+      [(DocTestRunFailureCons failure rest)
+        (match (box-get rest)
+          [(DocTestRunFailureNil)
+            (doc-test-string-contains?
+              (doc-test-run-failure-message failure)
+              "was expected to fail")]
+          [_ false])]
+      [_ false])))
+
+(define (doc-test-typecheck-smoke-malformed-ok?) : bool
+  (let
+    [report : DocTestRunReport
+      (doc-test-typecheck-source
+        "docs/malformed.tl"
+        (doc-test-malformed-source))]
+    (if (= (doc-test-run-report-count report) 0)
+      (=
+        (doc-test-run-failure-list-count (doc-test-run-report-failures report))
+        3)
+      false)))
+
 (define (doc-test-run-smoke-runnable-ok?) : bool
   (if (doc-test-runnable-supported?)
     (begin
@@ -2383,6 +2578,24 @@ typecheck: return type mismatch"))]
       (return
         (begin
           (panic "doc-test-run: runnable execution mismatch")
+          0)))
+    (unless
+      (doc-test-typecheck-smoke-runnable-only-ok?)
+      (return
+        (begin
+          (panic "doc-test-typecheck: runnable typecheck mismatch")
+          0)))
+    (unless
+      (doc-test-typecheck-smoke-unexpected-pass-ok?)
+      (return
+        (begin
+          (panic "doc-test-typecheck: unexpected-pass mismatch")
+          0)))
+    (unless
+      (doc-test-typecheck-smoke-malformed-ok?)
+      (return
+        (begin
+          (panic "doc-test-typecheck: malformed mismatch")
           0)))
     (unless
       (doc-test-public-diagnostic-render-smoke-ok?)

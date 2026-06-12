@@ -518,6 +518,103 @@ assert_success
 assert_stderr_empty
 assert_contains "$out" "Type checking passed!"
 
+echo "[public-tools] normal command doctest typechecking"
+DOCTEST_NORMAL="$WORKDIR/normal-doctests"
+mkdir -p "$DOCTEST_NORMAL"
+DOCTEST_BAD="$DOCTEST_NORMAL/bad.tl"
+cat > "$DOCTEST_BAD" <<'EOF'
+;# ```typelisp
+;# (define (bad) : i64 true)
+;# ```
+(define (main) : i64 0)
+EOF
+DOCTEST_EXPECT_PASS="$DOCTEST_NORMAL/unexpected-pass.tl"
+cat > "$DOCTEST_EXPECT_PASS" <<'EOF'
+;# ```tl expect-error
+;# (define (bad) : i64 1)
+;# ```
+(define (main) : i64 0)
+EOF
+DOCTEST_RUN_ONLY="$DOCTEST_NORMAL/run-only.tl"
+cat > "$DOCTEST_RUN_ONLY" <<'EOF'
+;# ```tl run
+;# ;; doctest-exit: 0
+;# (define (main) : i64 7)
+;# ```
+(define (main) : i64 0)
+EOF
+
+run_cmd normal-doctest-check-bad "$COMPILER" check "$DOCTEST_BAD"
+assert_failure
+assert_stdout_empty
+assert_contains "$err" "doc tests failed"
+assert_contains "$err" "$(native_arg_path "$DOCTEST_BAD"):1:"
+assert_contains "$err" "return type mismatch"
+
+DOCTEST_BAD_ASM="$DOCTEST_NORMAL/bad.s"
+run_cmd normal-doctest-compile-bad "$COMPILER" compile "$DOCTEST_BAD" -o "$DOCTEST_BAD_ASM"
+assert_failure
+assert_stdout_empty
+assert_contains "$err" "doc tests failed"
+[ ! -e "$DOCTEST_BAD_ASM" ] || fail "compile wrote assembly despite failing doctest"
+
+DOCTEST_BAD_EXE="$DOCTEST_NORMAL/bad$HOST_EXE_SUFFIX"
+run_cmd normal-doctest-build-bad "$COMPILER" build "$DOCTEST_BAD" -o "$DOCTEST_BAD_EXE" --target "$HOST_TARGET"
+assert_failure
+assert_stdout_empty
+assert_contains "$err" "doc tests failed"
+[ ! -e "$DOCTEST_BAD_EXE" ] || fail "build wrote executable despite failing doctest"
+
+run_cmd normal-doctest-run-bad "$COMPILER" run "$DOCTEST_BAD" --target "$HOST_TARGET"
+assert_failure
+assert_stdout_empty
+assert_contains "$err" "doc tests failed"
+
+run_cmd normal-doctest-build-unexpected-pass "$COMPILER" build "$DOCTEST_EXPECT_PASS" -o "$DOCTEST_NORMAL/unexpected-pass$HOST_EXE_SUFFIX" --target "$HOST_TARGET"
+assert_failure
+assert_stdout_empty
+assert_contains "$err" "was expected to fail"
+
+run_cmd normal-doctest-runnable-check "$COMPILER" check "$DOCTEST_RUN_ONLY"
+assert_success
+assert_stderr_empty
+assert_contains "$out" "Type checking passed!"
+
+DOCTEST_RUN_ONLY_ASM="$DOCTEST_NORMAL/run-only.s"
+run_cmd normal-doctest-runnable-compile "$COMPILER" compile "$DOCTEST_RUN_ONLY" -o "$DOCTEST_RUN_ONLY_ASM"
+assert_success
+assert_stderr_empty
+assert_contains "$DOCTEST_RUN_ONLY_ASM" "main:"
+
+DOCTEST_PKG="$DOCTEST_NORMAL/pkg"
+mkdir -p "$DOCTEST_PKG/src"
+cat > "$DOCTEST_PKG/typelisp.pkg" <<'EOF'
+(package
+  (name "doctest_normal_pkg")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "src/main.tl"))
+EOF
+maybe_strip_manifest_kind "$DOCTEST_PKG/typelisp.pkg"
+cat > "$DOCTEST_PKG/src/main.tl" <<'EOF'
+(define (main) : i64 0)
+EOF
+cat > "$DOCTEST_PKG/src/lib.tl" <<'EOF'
+;# ```typelisp
+;# (define (bad) : i64 true)
+;# ```
+(define (helper) : i64 1)
+EOF
+DOCTEST_PKG_LIB_DIAG=$(native_arg_path "$DOCTEST_PKG/src/lib.tl")
+run_cmd normal-doctest-package-check "$COMPILER" check --manifest-path "$DOCTEST_PKG/typelisp.pkg"
+assert_failure
+assert_stdout_empty
+assert_contains "$err" "$DOCTEST_PKG_LIB_DIAG:1:"
+run_cmd normal-doctest-package-build "$COMPILER" build --manifest-path "$DOCTEST_PKG/typelisp.pkg" --target "$HOST_TARGET"
+assert_failure
+assert_stdout_empty
+assert_contains "$err" "$DOCTEST_PKG_LIB_DIAG:1:"
+
 UNSAFE_REACH="$WORKDIR/unsafe-import-reach"
 mkdir -p "$UNSAFE_REACH"
 cat > "$UNSAFE_REACH/lib.tl" <<'EOF'

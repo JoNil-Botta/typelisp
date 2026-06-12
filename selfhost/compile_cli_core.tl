@@ -24,6 +24,8 @@
 
 (import "compiler_driver_core.tl")
 
+(import "doc_test.tl")
+
 (import "../stdlib/string.tl")
 
 (import "../stdlib/str_cat.tl")
@@ -632,6 +634,21 @@
     [(CompileCliCfgNameCons name rest)
       (compiler-cfg-enable (compile-cli-cfg-names-to-env (box-get rest)) name)]))
 
+(define (compile-cli-typecheck-doctests
+  [input-path : String]
+  [stdlib-roots : StringVec]) : i64
+  (match (try-read-file (& input-path))
+    [(ErrIoString _) 0]
+    [(OkIoString source)
+      (let
+        [report : DocTestRunReport
+          (doc-test-typecheck-source-with-roots input-path source stdlib-roots)]
+        (if (doc-test-run-report-ok? report)
+          0
+          (begin
+            (print-error (doc-test-run-report-render report))
+            1)))]))
+
 (define (compile-cli-run-compile-file
   [input-path : String]
   [output-path : String]
@@ -643,47 +660,52 @@
   [cfg-names : CompileCliCfgNameList]
   [backend-mode : CompilerBackendMode]
   [opt-level : i64]) : i64
-  (begin
-    (compiler-driver-reset-file-state!)
-    (let
-      [cfgs : SymI64Env (compile-cli-cfg-names-to-env cfg-names)]
-      (core/cond
-        emit-ir
-        (compiler-driver-write-result
-          (compiler-driver-emit-ir-summary-file-with-target-roots-level-mode-and-cfg
-            input-path
-            target
-            stdlib-roots
-            opt-level
-            backend-mode
-            cfgs)
-          output-path)
-        pic
-        (compiler-driver-compile-file-pic-with-target-roots-level-mode-cfg
-          input-path
-          output-path
-          target
-          has-target
-          stdlib-roots
-          opt-level
-          backend-mode
-          cfgs)
-        has-target
-        (compiler-driver-compile-file-for-target-with-roots-level-mode-and-cfg
-          input-path
-          output-path
-          target
-          stdlib-roots
-          opt-level
-          backend-mode
-          cfgs)
-        (compiler-driver-compile-file-with-roots-level-mode-and-cfg
-          input-path
-          output-path
-          stdlib-roots
-          opt-level
-          backend-mode
-          cfgs)))))
+  (let
+    [doctest-status : i64
+      (compile-cli-typecheck-doctests input-path stdlib-roots)]
+    (if (= doctest-status 0)
+      (begin
+        (compiler-driver-reset-file-state!)
+        (let
+          [cfgs : SymI64Env (compile-cli-cfg-names-to-env cfg-names)]
+          (core/cond
+            emit-ir
+            (compiler-driver-write-result
+              (compiler-driver-emit-ir-summary-file-with-target-roots-level-mode-and-cfg
+                input-path
+                target
+                stdlib-roots
+                opt-level
+                backend-mode
+                cfgs)
+              output-path)
+            pic
+            (compiler-driver-compile-file-pic-with-target-roots-level-mode-cfg
+              input-path
+              output-path
+              target
+              has-target
+              stdlib-roots
+              opt-level
+              backend-mode
+              cfgs)
+            has-target
+            (compiler-driver-compile-file-for-target-with-roots-level-mode-and-cfg
+              input-path
+              output-path
+              target
+              stdlib-roots
+              opt-level
+              backend-mode
+              cfgs)
+            (compiler-driver-compile-file-with-roots-level-mode-and-cfg
+              input-path
+              output-path
+              stdlib-roots
+              opt-level
+              backend-mode
+              cfgs))))
+      doctest-status)))
 
 (define (compile-cli-batch-line-end [text : String] [start : i64] [n : i64]) : i64
   (let
@@ -905,9 +927,14 @@
     [(CompileCliCheck input-path stdlib-roots)
       (match (compiler-check-file-with-roots input-path stdlib-roots)
         [(OkCompilerCheck _)
-          (begin
-            (print-string "Type checking passed!\n")
-            0)]
+          (let
+            [doctest-status : i64
+              (compile-cli-typecheck-doctests input-path stdlib-roots)]
+            (if (= doctest-status 0)
+              (begin
+                (print-string "Type checking passed!\n")
+                0)
+              doctest-status))]
         [(ErrCompilerCheck diag)
           (begin
             (print-error (compiler-diagnostic-render diag))

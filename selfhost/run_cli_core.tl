@@ -10,6 +10,8 @@
 
 (import "build_run_core.tl")
 
+(import "doc_test.tl")
+
 (import "../stdlib/string.tl")
 
 (import "../stdlib/str_cat.tl")
@@ -382,6 +384,44 @@
           (compiler-optimize-default-level)
           (source-tool-link-inputs-empty))))))
 
+(define (run-cli-typecheck-doctests
+  [source : String]
+  [stdlib-roots : StringVec]) : i64
+  (match (try-read-file (& source))
+    [(ErrIoString _) 0]
+    [(OkIoString text)
+      (let
+        [report : DocTestRunReport
+          (doc-test-typecheck-source-with-roots source text stdlib-roots)]
+        (if (doc-test-run-report-ok? report)
+          0
+          (begin
+            (print-error (doc-test-run-report-render report))
+            1)))]))
+
+(define (run-cli-run-source-with-doctests
+  [source : String]
+  [target : CompilerBackendTarget]
+  [stdlib-roots : StringVec]
+  [runtime-args : ProcessStringList]
+  [opt-level : i64]
+  [mode : CompilerBackendMode]
+  [link-inputs : SourceToolLinkInputs]) : i64
+  (let
+    [doctest-status : i64 (run-cli-typecheck-doctests source stdlib-roots)]
+    (if (= doctest-status 0)
+      (begin
+        (compiler-driver-reset-file-state!)
+        (source-tool-run-source
+          source
+          target
+          stdlib-roots
+          runtime-args
+          opt-level
+          mode
+          link-inputs))
+      doctest-status)))
+
 (define (run-cli-main) : i64
   (match (run-cli-config (arg-count))
     [(OkRunCliConfig config)
@@ -394,7 +434,7 @@
             runtime-args
             opt-level
             link-inputs)
-          (source-tool-run-source
+          (run-cli-run-source-with-doctests
             source
             target
             stdlib-roots
@@ -419,7 +459,7 @@
             runtime-args
             opt-level
             link-inputs)
-          (source-tool-run-source
+          (run-cli-run-source-with-doctests
             source
             target
             stdlib-roots

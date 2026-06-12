@@ -71,6 +71,10 @@ of imitating transitional patterns still present in the tree:
 - **Strings**: `str-cat` (single-allocation variadic concat, #2576) and
   `text_buf` are the blessed forms; user-facing `string-append`/
   `string-concat` chains are deprecated (#2573).
+- **Binary bytes**: mutable binary storage uses the specified `ByteBuf` owner
+  and borrowed `bytes` views, not mutable `str` or `TextBuf` (#2782). Current
+  `(Array u8)` and `String` byte plumbing is compatibility surface until the
+  stdlib byte-buffer module lands.
 - **Mutation**: in-place mutation is the direction: struct field-place
   assignment uses `(set! (struct-get place field) value)` (#1521), and mutable
   box access is tracked by #2553. Copy-on-update is transitional and hot paths
@@ -200,11 +204,14 @@ initializes every live element under the same ZII rules.
 
 ```
 i64 i32 i16 i8   u64 u32 u16 u8   f64 f32   bool   char   unit   String
+ByteBuf           ; specified owned mutable byte buffer
 (Array t)         ; dynamic, runtime-sized array
 (Array t n)       ; fixed-size array (by-value returns supported)
 (Tuple t1 t2 ...) ; tuple (by-value params/returns supported)
 (Box t)           ; specified arena-owned indirection for recursive aggregates
 (& r t)           ; specified immutable reference tied to lifetime/arena r
+(& r bytes)       ; specified immutable borrowed byte slice
+(&mut r bytes)    ; specified exclusive mutable borrowed byte slice
 (-> arg... ret)   ; function type
 Name              ; a defenum / defstruct nominal type
 (Name r...)       ; specified lifetime-parameterized nominal type use
@@ -602,7 +609,9 @@ used as `(& lifetime str)`, and borrowing a `String` place produces a borrowed
 parameters, including `String` places passed to `(& lifetime str)`. The `str`
 frontend and stdlib API migration are implemented
 (#1453, #1454); several compiler builtins keep compatibility `String`
-signatures.
+signatures. Mutable binary storage is specified separately as owned `ByteBuf`
+plus `(& lifetime bytes)` / `(&mut lifetime bytes)` borrowed views; conversions
+between text, arrays, and byte buffers are explicit copy or borrow boundaries.
 
 Lifetime-parameterized named aggregates are specified with declaration metadata
 such as `(:lifetimes r)` on `defstruct`/`defenum` and type uses such as

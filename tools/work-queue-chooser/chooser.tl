@@ -1,10 +1,11 @@
 ;# work-queue-chooser/chooser.tl - TypeLisp work-queue chooser (#794).
 ;#
 ;# Reads the combined `{"prs":[...],"issues":[...]}` JSON from stdin, classifies
-;# each entry, skips PRs whose checks are still pending/running, weights the
-;# rest (PR review = 45, ready-for-implementation = 10, research/triage = 1,
-;# +50 for a p0 label, +3 for a p1 label), uses system entropy to make a
-;# weighted pick, and prints one action line:
+;# each entry, skips PRs whose checks are still pending/running and issues
+;# labeled `blocked`, weights the rest (PR review = 45,
+;# ready-for-implementation = 10, research/triage = 1, +50 for a p0 label,
+;# +3 for a p1 label), uses system entropy to make a weighted pick, and prints
+;# one action line:
 ;#
 ;#   review pr #N: Title
 ;#   implement issue #N: Title
@@ -247,6 +248,10 @@
         (json-field-string item "title")
         (+ research-weight bonus)))))
 
+;: Return true when an issue should not enter the active work queue.
+(define (issue-blocked? [item : Json]) : bool
+  (label-list-has? (issue-label-list item) "blocked"))
+
 ;: Map a JSON array of PR objects to candidates, preserving source order.
 (define (pr-candidates [items : JsonList]) : CandList
   (match items
@@ -263,7 +268,11 @@
   (match items
     [(JsonListNil) (CandNil)]
     [(JsonListCons head rest)
-      (CandCons (issue-candidate head) (box (issue-candidates (box-get rest))))]))
+      (let
+        [tail : CandList (issue-candidates (box-get rest))]
+        (if (issue-blocked? head)
+          tail
+          (CandCons (issue-candidate head) (box tail))))]))
 
 ;: Concatenate two candidate lists, preserving order.
 (define (cand-append [front : CandList] [back : CandList]) : CandList
@@ -368,6 +377,27 @@
               (+ implement-weight p1-priority-bonus))
               unit
               (panic "issue with only p1 should use p1 priority"))))]
+      [(ErrJson _) (panic "test JSON should parse")])))
+
+(test
+  chooser-skips-blocked-issues
+  (let
+    [text : String
+      "{\"prs\":[],\"issues\":[{\"number\":30,\"title\":\"Blocked triage\",\"labels\":[{\"name\":\"blocked\"}]},{\"number\":31,\"title\":\"Blocked ready\",\"labels\":[{\"name\":\"blocked\"},{\"name\":\"ready-for-implementation\"}]},{\"number\":32,\"title\":\"Ready issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]},{\"number\":33,\"title\":\"Triage issue\",\"labels\":[]}]}"]
+    (match (json-parse (& text))
+      [(OkJson root)
+        (let
+          [cands : CandList (build-candidates root)]
+          (begin
+            (if (= (cand-count cands) 2)
+              unit
+              (panic "expected blocked issues to be skipped"))
+            (if (= (struct-get (cand-nth cands 0) number) 32)
+              unit
+              (panic "first non-blocked issue should remain eligible"))
+            (if (= (struct-get (cand-nth cands 1) number) 33)
+              unit
+              (panic "second non-blocked issue should remain eligible"))))]
       [(ErrJson _) (panic "test JSON should parse")])))
 
 (test

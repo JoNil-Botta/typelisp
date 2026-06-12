@@ -5179,7 +5179,7 @@ not the future safe reference/borrow model (#182), not a replacement for
 | `(with ...)` scoped non-memory resource cleanup | Implemented (#907): parser/typechecker/lowering with LIFO cleanup order |
 | Cleanup-owning aggregate declarations | Implemented for structs (#907); cleanup-owning enums remain reserved |
 | SPMD / SIMD `foreach` and `spmd-reduce` | Scalar reference lowering implemented; AVX2/AVX-512 support a first contiguous `foreach` map/zip subset over `i32`, `i64`, `f32`, and `f64`, plus eligible `spmd-reduce` folds; masked varying `if` is in flight (#2131/#2205/#2207) |
-| Public cross-lane ops beyond `spmd-reduce` | Scans/prefix reductions, shuffles, broadcasts, public lane indices/counts, gathers/scatters, atomics, and public vector/mask values remain deferred; tracked by #2548 |
+| Public cross-lane ops beyond `spmd-reduce` | Scans/prefix reductions, shuffles, broadcasts, public lane indices/counts, gathers/scatters, atomics, and public vector/mask values remain deferred; split across #2761, #2762, #2764, #2765, and #2766 |
 | Runtime SIMD dispatch (`defdispatch`) | Implemented for scalar/AVX2/AVX-512 variants with cached runtime selection and end-to-end selection verification |
 | Windows region helpers | Implemented for `tl_region_mark`/`tl_region_reset` and `with-arena` scoped reclamation |
 | Complete source locations for all semantic errors | Partial |

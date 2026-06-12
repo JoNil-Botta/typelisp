@@ -265,6 +265,7 @@ run_with_compiler "$STAGE2_BIN" "TypeLisp source lint" scripts/check-tl-lint.sh
 run_with_compiler "$STAGE2_BIN" "no-libc dependency guard" scripts/verify-no-libc.sh
 run_with_compiler "$STAGE2_BIN" "stage2 cli build/run and chooser smoke" scripts/verify-selfhost-cli-build-run.sh
 run_with_compiler "$STAGE2_BIN" "stage2 public tool surface" scripts/verify-public-tools.sh
+run_with_compiler "$STAGE2_BIN" "stage2 opt2-built CLI opt2 compile regression" scripts/check-opt2-cli-regression.sh
 run_with_compiler "$STAGE2_BIN" "stage2 SPMD runtime dispatch" scripts/verify-spmd-runtime-dispatch.sh
 run_with_compiler "$STAGE2_BIN" "stage2 repository doctests" scripts/verify-doc-tests.sh
 run_with_compiler "$STAGE2_BIN" "stage2 inline TypeLisp tests" scripts/verify-inline-tests.sh

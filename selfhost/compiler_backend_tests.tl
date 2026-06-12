@@ -2342,6 +2342,63 @@
           IrInstrNil)))
     IrBlockNil))
 
+(define (compiler-backend-branch-phi-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "body"
+      (compiler-ir-instr-cons
+        (IrInstrPhi
+          0
+          (compiler-ir-phi-input-cons
+            (IrValueI64 1)
+            "entry"
+            (compiler-ir-phi-input-cons (IrValueVar 1) "body" IrPhiInputNil))
+          (AstTyI64))
+        IrInstrNil))
+    (compiler-ir-block-cons (compiler-ir-block "exit" IrInstrNil) IrBlockNil)))
+
+(define (compiler-backend-branch-phi-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment 0 (CompilerRegRegister "%r12"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment 1 (CompilerRegRegister "%r13"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 2 (CompilerRegRegister "%r14"))
+        CompilerRegAssignmentNil))))
+
+(define (compiler-backend-branch-phi-edge-copy-ok?) : bool
+  (begin
+    (set!
+      compiler-backend-current-phi-targets
+      (compiler-backend-phi-target-labels-for-blocks
+        (compiler-backend-branch-phi-blocks)))
+    (match (compiler-backend-emit-compare-branch-with-phi-copies
+      (compiler-backend-branch-phi-assignments)
+      "phi_edge"
+      (compiler-backend-branch-phi-blocks)
+      "entry"
+      (IrBinLt)
+      (IrValueI64 1)
+      (IrValueVar 2)
+      (AstTyI64)
+      "body"
+      "exit"
+      (CompilerBackendNoLabel)
+      (compiler-backend-program-index-build IrFunctionNil IrExternNil)
+      4)
+      [(OkCompilerBackend asm)
+        (and
+          (compiler-backend-string-contains?
+            asm
+            "    jl .Lphi_edge_entry_branch_true\n")
+          (compiler-backend-string-contains?
+            asm
+            ".Lphi_edge_entry_branch_true:\n")
+          (compiler-backend-string-contains? asm "    movq $1, %rax\n")
+          (compiler-backend-string-contains? asm "    movq %rax, %r12\n")
+          (compiler-backend-string-contains? asm "    jmp .Lphi_edge_body\n"))]
+      [(ErrCompilerBackend _) false])))
+
 (define (compiler-backend-phi-parallel-copy-ok?) : bool
   (match (compiler-backend-emit-phi-edge-copies
     (compiler-backend-phi-same-home-assignments)
@@ -6144,7 +6201,9 @@
       (compiler-backend-enum-match-ok?)
       (compiler-backend-regalloc-ok?)
       (compiler-backend-peephole-ok?)
-      (compiler-backend-phi-parallel-copy-ok?)
+      (and
+        (compiler-backend-phi-parallel-copy-ok?)
+        (compiler-backend-branch-phi-edge-copy-ok?))
       (and (compiler-backend-f64-ok?) (compiler-backend-f32-literal-binop-ok?))
       (compiler-backend-bool-control-flow-ok?)
       (and

@@ -12563,9 +12563,10 @@
                     (arena-destroy scratch-head))
                   (ErrCompilerBackend escaped)))))]))))
 
-;; Emit small functions directly to avoid scratch/clone overhead. Larger functions
-;; still use a scratch arena so transient assembly strings stay within the
-;; self-build memory budget.
+;; Keep the direct path available for A/B experiments by raising
+;; `compiler-backend-direct-emit-instr-limit`; normal builds route emitted
+;; functions through a scratch arena so transient assembly strings stay within
+;; the self-build memory budget.
 (define (compiler-backend-emit-function-escaping
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]

@@ -6464,15 +6464,33 @@
               [(StringI64MapInsertFull next) next]))))]
     [_ map]))
 
-(define (compiler-backend-collect-group-counts-instrs
+;; #2386 memory: walk the instruction seq by index instead of materializing a
+;; boxed cons list per block (each cons copies a multi-word inline IrInstr).
+(define (compiler-backend-collect-group-counts-instr-seq
   [map : StringI64Map]
-  [instrs : CompilerIrInstrList]) : StringI64Map
-  (match instrs
-    [(IrInstrNil) map]
-    [(IrInstrCons instr rest)
-      (compiler-backend-collect-group-counts-instrs
-        (compiler-backend-collect-group-counts-instr map instr)
-        (box-get rest))]))
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : StringI64Map
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    map
+    (compiler-backend-collect-group-counts-instr-seq
+      (compiler-backend-collect-group-counts-instr
+        map
+        (compiler-ir-instr-seq-ref instrs index))
+      instrs
+      (+ index 1))))
+
+(define (compiler-backend-collect-group-counts-block-seq
+  [map : StringI64Map]
+  [seq : CompilerIrBlockSeq]
+  [index : i64]) : StringI64Map
+  (if (>= index (compiler-ir-block-seq-count seq))
+    map
+    (compiler-backend-collect-group-counts-block-seq
+      (match (compiler-ir-block-seq-ref seq index)
+        [(IrBlock _ instrs)
+          (compiler-backend-collect-group-counts-instr-seq map instrs 0)])
+      seq
+      (+ index 1))))
 
 (define (compiler-backend-collect-group-counts-blocks
   [map : StringI64Map]
@@ -6483,14 +6501,10 @@
       (match block
         [(IrBlock _ instrs)
           (compiler-backend-collect-group-counts-blocks
-            (compiler-backend-collect-group-counts-instrs
-              map
-              (compiler-ir-instr-seq-to-list instrs))
+            (compiler-backend-collect-group-counts-instr-seq map instrs 0)
             (box-get rest))])]
     [(IrBlockArray seq)
-      (compiler-backend-collect-group-counts-blocks
-        map
-        (compiler-ir-block-seq-to-list seq))]))
+      (compiler-backend-collect-group-counts-block-seq map seq 0)]))
 
 (define (compiler-backend-collect-group-counts-functions
   [map : StringI64Map]
@@ -17333,30 +17347,38 @@ tl_memcpy:
               (cfg compile-profile (compiler-backend-profile-start))
               (match program
                 [(IrProgram globals functions externs)
-                  (match (compiler-backend-emit-globals-buffer-into
-                    target
-                    globals
-                    (text-buf-append (text-buf-empty) ".data\n")
-                    (compiler-backend-program-index-build functions externs))
-                    [(OkCompilerBackendBuffer globals-buf)
-                      (begin
-                        (cfg
-                          compile-profile
-                          (compiler-backend-profile-finish "globals"))
-                        (cfg compile-profile (compiler-backend-profile-start))
-                        (let
-                          [entry-functions : CompilerIrFunctionList
-                            (compiler-backend-functions-with-implicit-main
-                              functions
-                              emit-entry)]
-                          [program-index : CompilerBackendProgramIndex
-                            (compiler-backend-program-index-build
-                              entry-functions
-                              externs)]
+                  ;; Build the program index ONCE over the entry function list
+                  ;; and share it with the globals emission: each build walks
+                  ;; every function body for the register-group counts, so the
+                  ;; former second build doubled both that walk and its ~120MB
+                  ;; of transient allocation. The entry list is a superset of
+                  ;; `functions` (at most the synthesized implicit main, which
+                  ;; no global initializer can reference), so globals resolve
+                  ;; identically against the shared index.
+                  (let
+                    [entry-functions : CompilerIrFunctionList
+                      (compiler-backend-functions-with-implicit-main
+                        functions
+                        emit-entry)]
+                    [program-index : CompilerBackendProgramIndex
+                      (compiler-backend-program-index-build
+                        entry-functions
+                        externs)]
+                    (begin
+                      (cfg
+                        compile-profile
+                        (compiler-backend-profile-finish "index"))
+                      (cfg compile-profile (compiler-backend-profile-start))
+                      (match (compiler-backend-emit-globals-buffer-into
+                        target
+                        globals
+                        (text-buf-append (text-buf-empty) ".data\n")
+                        program-index)
+                        [(OkCompilerBackendBuffer globals-buf)
                           (begin
                             (cfg
                               compile-profile
-                              (compiler-backend-profile-finish "index"))
+                              (compiler-backend-profile-finish "globals"))
                             (cfg
                               compile-profile
                               (compiler-backend-profile-start))
@@ -17381,13 +17403,13 @@ tl_memcpy:
                                   emit-entry
                                   crt-entry)]
                               [(ErrCompilerBackendSymbolValidation message)
-                                (ErrCompilerBackendBuffer message)]))))]
-                    [(ErrCompilerBackendBuffer message)
-                      (begin
-                        (cfg
-                          compile-profile
-                          (compiler-backend-profile-finish "globals"))
-                        (ErrCompilerBackendBuffer message))])]))
+                                (ErrCompilerBackendBuffer message)]))]
+                        [(ErrCompilerBackendBuffer message)
+                          (begin
+                            (cfg
+                              compile-profile
+                              (compiler-backend-profile-finish "globals"))
+                            (ErrCompilerBackendBuffer message))])))]))
             (begin
               (cfg
                 compile-profile

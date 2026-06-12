@@ -356,6 +356,13 @@
     (- (struct-get blocks len) 1)
     IrBlockNil))
 
+(define (compiler-ir-block-seq-count [blocks : CompilerIrBlockSeq]) : i64
+  (struct-get blocks len))
+
+;; #2357: MUST stay `array-ref` (see compiler-ir-instr-seq-ref above).
+(define (compiler-ir-block-seq-ref [blocks : CompilerIrBlockSeq] [index : i64]) : CompilerIrBlock
+  (array-ref (struct-get blocks slots) index))
+
 (define (compiler-ir-block-list-force-cons [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (match blocks
     [(IrBlockArray seq) (compiler-ir-block-seq-to-list seq)]

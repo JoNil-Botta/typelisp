@@ -10047,6 +10047,27 @@
     [(ErrTcInlineAggregateLayout message)
       (ErrLowerExpr (lower-diagnostic message))]))
 
+(define (lower-construct-struct-inline-into-from-values
+  [ctx : TcContext]
+  [state : LowerState]
+  [dst : CompilerIrValue]
+  [struct-name : String]
+  [values : CompilerIrValueList]
+  [fields : AstFieldDefList]) : ResultLowerState
+  (match (tc-inline-aggregate-layout-for ctx struct-name)
+    [(OkTcInlineAggregateLayout layout)
+      (match layout
+        [(TcInlineStructLayout _ _ _)
+          (lower-store-inline-struct-values ctx state dst values fields layout)]
+        [(TcInlineEnumLayout _ _ _)
+          (ErrLowerState
+            (lower-diagnostic
+              (string-append
+                "lower: inline layout for struct is enum "
+                struct-name)))])]
+    [(ErrTcInlineAggregateLayout message)
+      (ErrLowerState (lower-diagnostic message))]))
+
 (define (lower-construct-enum-inline-from-values
   [ctx : TcContext]
   [state : LowerState]
@@ -10118,6 +10139,46 @@
                 enum-name)))])]
     [(ErrTcInlineAggregateLayout message)
       (ErrLowerExpr (lower-diagnostic message))]))
+
+(define (lower-construct-enum-inline-into-from-values
+  [ctx : TcContext]
+  [state : LowerState]
+  [dst : CompilerIrValue]
+  [variant-name : String]
+  [handle : i64]
+  [values : CompilerIrValueList]
+  [fields : AstTypeList]
+  [enum-name : String]) : ResultLowerState
+  (match (tc-inline-aggregate-layout-for ctx enum-name)
+    [(OkTcInlineAggregateLayout layout)
+      (match layout
+        [(TcInlineEnumLayout _ _ _)
+          (let
+            [layout-variant-name : String (lower-member-name-base variant-name)]
+            [tag-state : LowerState
+              (lower-store-at-offset
+                state
+                dst
+                0
+                (IrValueI64 (compiler-registry-handle-child-index handle))
+                (AstTyI64))]
+            (lower-store-inline-payload-values
+              ctx
+              tag-state
+              dst
+              values
+              fields
+              layout
+              layout-variant-name
+              0))]
+        [(TcInlineStructLayout _ _ _)
+          (ErrLowerState
+            (lower-diagnostic
+              (string-append
+                "lower: inline layout for enum is struct "
+                enum-name)))])]
+    [(ErrTcInlineAggregateLayout message)
+      (ErrLowerState (lower-diagnostic message))]))
 
 (define (lower-enum-constructor-fields-for-result
   [ctx : TcContext]
@@ -10258,6 +10319,94 @@
               "lower: enum constructor result is not enum: "
               variant-name)))])))
 
+(define (lower-construct-enum-with-name-into
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [dst : CompilerIrValue]
+  [variant-name : String]
+  [handle : i64]
+  [args : AstExprList]
+  [enum-name : String]
+  [enum-ty : AstType]) : ResultLowerState
+  (match ctx
+    [(TcContext _ symbols _ _)
+      (match (compiler-registries-variant-fields-indexed symbols handle)
+        [(OkAstTypeList fields)
+          (let
+            [resolved-fields : AstTypeList
+              (tc-resolve-type-list
+                ctx
+                (lower-enum-constructor-fields-for-result
+                  ctx
+                  enum-name
+                  enum-ty
+                  fields))]
+            (match (lower-args-as ctx state env type-env args resolved-fields)
+              [(OkLowerArgs args-state values)
+                (if (lower-mode-inline-aggregates?
+                  (lower-state-mode args-state))
+                  (lower-construct-enum-inline-into-from-values
+                    ctx
+                    args-state
+                    dst
+                    variant-name
+                    handle
+                    values
+                    resolved-fields
+                    enum-name)
+                  (ErrLowerState
+                    (lower-diagnostic
+                      "lower: enum destination construction requires inline aggregates")))]
+              [(ErrLowerArgs message) (ErrLowerState message)]))]
+        [(ErrAstTypeList message) (ErrLowerState (lower-diagnostic message))])]))
+
+(define (lower-construct-enum-with-handle-into
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [dst : CompilerIrValue]
+  [variant-name : String]
+  [handle : i64]
+  [args : AstExprList]
+  [result-ty : AstType]) : ResultLowerState
+  (let
+    [enum-ty : AstType
+      (tc-type-without-regions (tc-resolve-type ctx result-ty))]
+    (match enum-ty
+      [(AstTyEnum enum-name)
+        (lower-construct-enum-with-name-into
+          ctx
+          state
+          env
+          type-env
+          dst
+          variant-name
+          handle
+          args
+          (intern-str enum-name)
+          enum-ty)]
+      [(AstTyEnumArgs enum-name _)
+        (lower-construct-enum-with-name-into
+          ctx
+          state
+          env
+          type-env
+          dst
+          variant-name
+          handle
+          args
+          (intern-str enum-name)
+          enum-ty)]
+      [_
+        (ErrLowerState
+          (lower-diagnostic
+            (string-append
+              "lower: enum constructor result is not enum: "
+              variant-name)))])))
+
 (define (lower-struct-constructor-field-types-for-result
   [ctx : TcContext]
   [struct-name : String]
@@ -10342,6 +10491,42 @@
                         [(ErrLowerState message) (ErrLowerExpr message)])]))))]
           [(ErrLowerArgs message) (ErrLowerExpr message)]))]
     [(ErrAstFieldDefList message) (ErrLowerExpr (lower-diagnostic message))]))
+
+(define (lower-construct-struct-into
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [dst : CompilerIrValue]
+  [struct-name : String]
+  [args : AstExprList]
+  [result-ty : AstType]) : ResultLowerState
+  (match (lower-struct-fields ctx struct-name)
+    [(OkAstFieldDefList fields)
+      (let
+        [struct-ty : AstType
+          (tc-type-without-regions (tc-resolve-type ctx result-ty))]
+        [field-types : AstTypeList
+          (lower-struct-constructor-field-types-for-result
+            ctx
+            struct-name
+            struct-ty
+            fields)]
+        (match (lower-args-as ctx state env type-env args field-types)
+          [(OkLowerArgs args-state values)
+            (if (lower-mode-inline-aggregates? (lower-state-mode args-state))
+              (lower-construct-struct-inline-into-from-values
+                ctx
+                args-state
+                dst
+                struct-name
+                values
+                fields)
+              (ErrLowerState
+                (lower-diagnostic
+                  "lower: struct destination construction requires inline aggregates")))]
+          [(ErrLowerArgs message) (ErrLowerState message)]))]
+    [(ErrAstFieldDefList message) (ErrLowerState (lower-diagnostic message))]))
 
 (define (lower-init-expr-list-from-types [types : AstTypeList]) : AstExprList
   (match types
@@ -23861,7 +24046,7 @@
           (IrInstrReturn (lower-return-maybe (IrValueVar sret-var) ret-ty))))]
     [(ErrLowerSize message) (ErrLowerState (lower-diagnostic message))]))
 
-(define (lower-return-expr
+(define (lower-return-expr-generic
   [ctx : TcContext]
   [state : LowerState]
   [env : SymI64Env]
@@ -23888,6 +24073,185 @@
                             (lower-return-maybe return-value ret-ty))))])]
                 [(ErrLowerExpr message) (ErrLowerState message)])))])]
     [(ErrLowerExpr message) (ErrLowerState message)]))
+
+(define (lower-return-sret
+  [state : LowerState]
+  [ret-ty : AstType]
+  [sret-var : i64]) : ResultLowerState
+  (OkLowerState
+    (lower-state-emit
+      state
+      (IrInstrReturn (lower-return-maybe (IrValueVar sret-var) ret-ty)))))
+
+(define (lower-return-call-name-to-sret
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [name : String]
+  [args : AstExprList]
+  [ret-ty : AstType]
+  [sret-var : i64]
+  [origin : AstExpr]) : ResultLowerState
+  (let
+    [source-name : String (lower-hygiene-source-name name)]
+    [symbols : CompilerSymbols (tc-context-symbols ctx)]
+    [registries : CompilerRegistries (tc-context-registries ctx)]
+    [variant-name : String
+      (lower-variant-constructor-lookup-name ctx source-name ret-ty)]
+    [struct-name : String
+      (match (tc-type-strip-region ret-ty)
+        [(AstTyStruct resolved-struct)
+          (if (lower-call-name-matches-nominal?
+            ctx
+            source-name
+            (intern-str resolved-struct))
+            (intern-str resolved-struct)
+            (lower-module-lookup-name ctx source-name))]
+        [(AstTyStructArgs resolved-struct _)
+          (if (lower-call-name-matches-nominal?
+            ctx
+            source-name
+            (intern-str resolved-struct))
+            (intern-str resolved-struct)
+            (lower-module-lookup-name ctx source-name))]
+        [_ (lower-module-lookup-name ctx source-name)])]
+    (match (compiler-registries-lookup-variant registries variant-name)
+      [(SomeI64 handle)
+        (match (lower-construct-enum-with-handle-into
+          ctx
+          state
+          env
+          type-env
+          (IrValueVar sret-var)
+          variant-name
+          handle
+          args
+          ret-ty)
+          [(OkLowerState done-state)
+            (lower-return-sret done-state ret-ty sret-var)]
+          [(ErrLowerState message) (ErrLowerState message)])]
+      [(NoneI64)
+        (match (compiler-symbols-lookup-type symbols struct-name)
+          [(SomeI64 handle)
+            (if (=
+              (compiler-symbol-handle-kind handle)
+              (compiler-symbol-kind-defstruct))
+              (match (lower-construct-struct-into
+                ctx
+                state
+                env
+                type-env
+                (IrValueVar sret-var)
+                struct-name
+                args
+                ret-ty)
+                [(OkLowerState done-state)
+                  (lower-return-sret done-state ret-ty sret-var)]
+                [(ErrLowerState message) (ErrLowerState message)])
+              (lower-return-expr-generic
+                ctx
+                state
+                env
+                type-env
+                origin
+                ret-ty
+                sret-var))]
+          [(NoneI64)
+            (lower-return-expr-generic
+              ctx
+              state
+              env
+              type-env
+              origin
+              ret-ty
+              sret-var)])])))
+
+(define (lower-return-call-to-sret
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [func : AstExpr]
+  [args : AstExprList]
+  [ret-ty : AstType]
+  [sret-var : i64]
+  [origin : AstExpr]) : ResultLowerState
+  (match (ast-expr-unspan func)
+    [(AstExprVar raw-name)
+      (let
+        [raw-text : String (intern-str raw-name)]
+        (match (sym-i64-lookup env raw-text)
+          [(SomeI64 _)
+            (lower-return-expr-generic
+              ctx
+              state
+              env
+              type-env
+              origin
+              ret-ty
+              sret-var)]
+          [(NoneI64)
+            (match (if (tc-hygiene-global-name? raw-text)
+              (OkTcString (tc-hygiene-global-call-name raw-text))
+              (if (tc-name-qualified? raw-text)
+                (OkTcString raw-text)
+                (tc-source-name-lookup-key ctx type-env raw-text)))
+              [(OkTcString name)
+                (lower-return-call-name-to-sret
+                  ctx
+                  state
+                  env
+                  type-env
+                  name
+                  args
+                  ret-ty
+                  sret-var
+                  origin)]
+              [(ErrTcString _)
+                (lower-return-expr-generic
+                  ctx
+                  state
+                  env
+                  type-env
+                  origin
+                  ret-ty
+                  sret-var)])]))]
+    [_
+      (lower-return-expr-generic ctx state env type-env origin ret-ty sret-var)]))
+
+(define (lower-return-expr
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [expr : AstExpr]
+  [ret-ty : AstType]
+  [sret-var : i64]) : ResultLowerState
+  (if (and
+    (>= sret-var 0)
+    (lower-inline-aggregate-abi-copy-needed? ctx state ret-ty))
+    (match expr
+      [(AstExprSpanned inner-box _)
+        (let
+          [inner : AstExpr (ast-node-get inner-box)]
+          (lower-return-expr ctx state env type-env inner ret-ty sret-var))]
+      [(AstExprCall func-box args)
+        (let
+          [func : AstExpr (ast-node-get func-box)]
+          (lower-return-call-to-sret
+            ctx
+            state
+            env
+            type-env
+            func
+            args
+            ret-ty
+            sret-var
+            expr))]
+      [_
+        (lower-return-expr-generic ctx state env type-env expr ret-ty sret-var)])
+    (lower-return-expr-generic ctx state env type-env expr ret-ty sret-var)))
 
 (define (lower-expr-list-contains-inline-aggregate?
   [ctx : TcContext]
@@ -27401,6 +27765,22 @@
 (define (main) : i64
   (struct-get (id-pair (Pair 20 22)) b))")
 
+(define (compiler-lower-inline-sret-struct-constructor-source) : String
+  "(defstruct Wide (a i64) (b i64) (c i64))
+(define (make-wide [x : i64]) : Wide
+  (Wide x (+ x 1) (+ x 2)))
+(define (main) : i64
+  (struct-get (make-wide 40) c))")
+
+(define (compiler-lower-inline-sret-enum-constructor-source) : String
+  "(defenum WideChoice (WideSome i64 i64 i64) (WideNone))
+(define (make-wide-choice [x : i64]) : WideChoice
+  (WideSome x (+ x 1) (+ x 2)))
+(define (main) : i64
+  (match (make-wide-choice 40)
+    [(WideSome _ _ c) c]
+    [WideNone 0]))")
+
 (define (compiler-lower-inline-hot-loop-struct-source) : String
   "(defstruct Pair (x i64) (y i64))
 (define (main [n : i64]) : i64
@@ -27522,6 +27902,33 @@
             (= (lower-test-function-store-ptr-count functions "id-pair") 0))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-inline-sret-constructor-copy-shape-ok?) : bool
+  (match (lower-compiler-source-with-mode
+    (compiler-lower-inline-sret-struct-constructor-source)
+    (CompilerLowerInlineAggregates))
+    [(OkCompilerLower struct-program _)
+      (match struct-program
+        [(IrProgram _ struct-functions _)
+          (match (lower-compiler-source-with-mode
+            (compiler-lower-inline-sret-enum-constructor-source)
+            (CompilerLowerInlineAggregates))
+            [(OkCompilerLower enum-program _)
+              (match enum-program
+                [(IrProgram _ enum-functions _)
+                  (and
+                    (=
+                      (lower-test-function-copy-bytes-count
+                        struct-functions
+                        "make-wide")
+                      0)
+                    (=
+                      (lower-test-function-copy-bytes-count
+                        enum-functions
+                        "make-wide-choice")
+                      0))])]
+            [(ErrCompilerLower _) false])])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-inline-hot-loop-struct-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-inline-hot-loop-struct-source))
     [(OkCompilerLower program _)
@@ -27538,6 +27945,7 @@
     (compiler-lower-inline-enum-shape-ok?)
     (compiler-lower-inline-boxed-recursive-shape-ok?)
     (compiler-lower-inline-aggregate-copy-shape-ok?)
+    (compiler-lower-inline-sret-constructor-copy-shape-ok?)
     (compiler-lower-inline-hot-loop-struct-shape-ok?)
     (compiler-lower-inline-error-ok?
       (compiler-lower-inline-recursive-error-source)

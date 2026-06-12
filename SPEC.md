@@ -864,15 +864,17 @@ macro body or generated template:
   layout/reflection queries, and the `Expr`/`ExprList`/`ExprClause` constructor
   and inspector surface remain available.
 
-Scalar CTFE supports finite `f64` literals and the ordinary `f64` `+`, `-`,
-`*`, `/`, unary negation, and comparison operators. Float literal text is parsed
-deterministically from the source grammar, folded results are serialized through
-the compiler-owned shortest round-tripping formatter, and optimizer folding uses
-the same parse/format helpers. CTFE rejects division by zero and non-finite
-`f64` literals/results until TypeLisp specifies portable infinity and NaN
-payload behavior. Distinct `f32` CTFE values are not part of this slice;
-`f32` runtime lowering and optimizer folds round through binary32 when the IR
-type is `f32`.
+Scalar CTFE supports finite `f64` literals and finite `f32` values produced by
+context or explicit precision casts. The ordinary float `+`, `-`, `*`, `/`,
+unary negation, and comparison operators are supported when both operands have
+the same CTFE float kind; `f32` arithmetic rounds results through binary32.
+Float literal text is parsed deterministically from the source grammar, folded
+results are serialized through the compiler-owned shortest round-tripping
+formatter, and optimizer folding uses the same parse/format helpers. CTFE
+rejects division by zero and non-finite float literals/results until TypeLisp
+specifies portable infinity and NaN payload behavior. IR/backend float constants
+still carry canonical decimal text; moving them to explicit bit payloads is the
+remaining bit-stability slice.
 
 The rule applies to the comptime path, not to every runtime call of the same
 function. A helper that is safe along the macro/comptime call graph may remain

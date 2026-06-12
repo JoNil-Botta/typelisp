@@ -12396,7 +12396,8 @@
               [_
                 (lower-materialize
                   state
-                  (lower-literal-value (ctfe-value-to-literal value))
+                  (lower-literal-value
+                    (ctfe-value-to-literal-for-type value expr-ty))
                   expr-ty)])]
           [(ErrCtfe diag) (ErrLowerExpr diag)]))]
     [(AstExprQuote _)
@@ -27468,6 +27469,9 @@
 (define (compiler-lower-comptime-f64-source) : String
   "(define (main) : f64 (comptime 1.5))")
 
+(define (compiler-lower-comptime-f32-source) : String
+  "(define (main) : f32 (comptime (cast 1.00000001 : f32)))")
+
 (define (compiler-lower-duplicate-function-source) : String
   "(define (dup) : i64 1)
 (define (dup) : i64 2)
@@ -34915,6 +34919,11 @@
       (if (compiler-lower-comptime-f64-fold-ok?
         (compiler-lower-comptime-f64-source)
         "1.5")
+        unit
+        (set! ok false))
+      (if (compiler-lower-comptime-f64-fold-ok?
+        (compiler-lower-comptime-f32-source)
+        "1")
         unit
         (set! ok false))
       (if (compiler-lower-comptime-op-fold-tests-ok?)

@@ -457,6 +457,11 @@
     [(CtfeI64 n) (string-append "i64_" (spec-int-key n))]
     [(CtfeF64 n)
       (string-append "f64_" (spec-string-key (compiler-float-format-f64 n)))]
+    [(CtfeF32 n)
+      (string-append
+        "f32_"
+        (spec-string-key
+          (compiler-float-format-f64 (compiler-float-round-f32-as-f64 n))))]
     [(CtfeBool b)
       (if b
         "bool_1"
@@ -4553,6 +4558,7 @@
   (match value
     [(CtfeI64 _) (ctfe-type-eq ty (AstTyI64))]
     [(CtfeF64 _) (ctfe-type-eq ty (AstTyF64))]
+    [(CtfeF32 _) (ctfe-type-eq ty (AstTyF32))]
     [(CtfeBool _) (ctfe-type-eq ty (AstTyBool))]
     [(CtfeChar _) (ctfe-type-eq ty (AstTyChar))]
     [(CtfeString _) (ctfe-type-eq ty (AstTyString))]
@@ -4568,6 +4574,7 @@
   (match value
     [(CtfeI64 _) "i64"]
     [(CtfeF64 _) "f64"]
+    [(CtfeF32 _) "f32"]
     [(CtfeBool _) "bool"]
     [(CtfeChar _) "char"]
     [(CtfeString _) "String"]
@@ -4816,6 +4823,14 @@
       (OkSpecSubExpr
         (ast-node-push
           (AstExprLiteral (AstLitFloat (compiler-float-format-f64 n)))))]
+    [(CtfeF32 n)
+      (OkSpecSubExpr
+        (ast-expr-ann
+          (ast-node-push
+            (AstExprLiteral
+              (AstLitFloat
+                (compiler-float-format-f64 (compiler-float-round-f32-as-f64 n)))))
+          (AstTyF32)))]
     [(CtfeBool b)
       (OkSpecSubExpr (ast-node-push (AstExprLiteral (AstLitBool b))))]
     [(CtfeChar c)

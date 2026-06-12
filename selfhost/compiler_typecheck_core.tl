@@ -7615,6 +7615,48 @@
               [(OkTcType _) (tc-begin-list-with-expected ctx env rest expected)]
               [(ErrTcType message) (ErrTcType message)])]))]))
 
+(define (tc-ctfe-value-type [ctx : TcContext] [value : CompilerCtfeValue]) : ResultTcType
+  (match value
+    [(CtfeI64 _) (OkTcType (AstTyI64))]
+    [(CtfeF64 _) (OkTcType (AstTyF64))]
+    [(CtfeF32 _) (OkTcType (AstTyF32))]
+    [(CtfeBool _) (OkTcType (AstTyBool))]
+    [(CtfeChar _) (OkTcType (AstTyChar))]
+    [(CtfeString _) (ErrTcType "String value is compile-time only")]
+    [(CtfeUnit) (OkTcType (AstTyUnit))]
+    [(CtfeExpr _ _) (OkTcType (AstTyExpr))]
+    [(CtfeType ty)
+      (ErrTcType
+        (string-append
+          "type value "
+          (string-append
+            (tc-type-render (tc-resolve-type ctx ty))
+            " is compile-time only")))]
+    [(CtfeExprList _) (OkTcType (AstTyExprList))]
+    [(CtfeExprClause _) (OkTcType (tc-macro-expr-clause-type))]
+    [(CtfeExprClauseList _) (OkTcType (tc-macro-expr-clause-list-type))]))
+
+(define (tc-ctfe-float-value? [value : CompilerCtfeValue]) : bool
+  (match value
+    [(CtfeF64 _) true]
+    [(CtfeF32 _) true]
+    [_ false]))
+
+(define (tc-ctfe-value-type-with-expected
+  [ctx : TcContext]
+  [value : CompilerCtfeValue]
+  [expected : AstType]) : ResultTcType
+  (match (tc-ctfe-value-type ctx value)
+    [(OkTcType actual)
+      (if (and
+        (tc-ctfe-float-value? value)
+        (tc-type-eq (tc-type-strip-region expected) (AstTyF32)))
+        (OkTcType expected)
+        (if (tc-type-compatible? expected actual)
+          (OkTcType (tc-contextual-result-type expected actual))
+          (OkTcType actual)))]
+    [(ErrTcType message) (ErrTcType message)]))
+
 (define (tc-expr-with-expected-or-actual
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -7676,6 +7718,13 @@
                   [(ErrTcUnit message) (ErrTcType message)])]
               [(ErrTcType message) (ErrTcType message)])]
           [(ErrTcEnv message) (ErrTcType message)]))]
+    [(AstExprComptime inner-box)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (match (compiler-ctfe-eval inner (tc-ctfe-env ctx) (ctfe-fuel-limit))
+          [(OkCtfe value _)
+            (tc-ctfe-value-type-with-expected ctx value expected)]
+          [(ErrCtfe diag) (ErrTcType (compiler-diagnostic-message diag))]))]
     [(AstExprInit maybe-ty)
       (match maybe-ty
         [(AstNoType) (tc-init-expr ctx env expected)]
@@ -17287,26 +17336,7 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (compiler-ctfe-eval inner (tc-ctfe-env ctx) (ctfe-fuel-limit))
-          [(OkCtfe value _)
-            (match value
-              [(CtfeI64 _) (OkTcType (AstTyI64))]
-              [(CtfeF64 _) (OkTcType (AstTyF64))]
-              [(CtfeBool _) (OkTcType (AstTyBool))]
-              [(CtfeChar _) (OkTcType (AstTyChar))]
-              [(CtfeString _) (ErrTcType "String value is compile-time only")]
-              [(CtfeUnit) (OkTcType (AstTyUnit))]
-              [(CtfeExpr _ _) (OkTcType (AstTyExpr))]
-              [(CtfeType ty)
-                (ErrTcType
-                  (string-append
-                    "type value "
-                    (string-append
-                      (tc-type-render (tc-resolve-type ctx ty))
-                      " is compile-time only")))]
-              [(CtfeExprList _) (OkTcType (AstTyExprList))]
-              [(CtfeExprClause _) (OkTcType (tc-macro-expr-clause-type))]
-              [(CtfeExprClauseList _)
-                (OkTcType (tc-macro-expr-clause-list-type))])]
+          [(OkCtfe value _) (tc-ctfe-value-type ctx value)]
           [(ErrCtfe diag) (ErrTcType (compiler-diagnostic-message diag))]))]
     [(AstExprQuote _) (OkTcType (AstTyExpr))]
     [(AstExprQuasiquote template-box)

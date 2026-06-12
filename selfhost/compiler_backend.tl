@@ -7079,6 +7079,32 @@
     0
     0))
 
+(define (compiler-backend-type-list-has-aggregate? [types : AstTypeList]) : bool
+  (match types
+    [(AstTypeNil) false]
+    [(AstTypeCons ty rest)
+      (or
+        (not
+          (string-eq (compiler-backend-aggregate-type-name (ty-node-get ty)) ""))
+        (compiler-backend-type-list-has-aggregate? (box-get rest)))]))
+
+(define (compiler-backend-c-aggregate-extern-call?
+  [externs : CompilerIrExternList]
+  [name : String]) : bool
+  (match externs
+    [(IrExternNil) false]
+    [(IrExternCons item rest)
+      (match item
+        [(IrExtern extern-name ty abi link-symbol _ _)
+          (if (or (string-eq name extern-name) (string-eq name link-symbol))
+            (if (ast-extern-abi-c? abi)
+              (match ty
+                [(AstTyFunc args _)
+                  (compiler-backend-type-list-has-aggregate? args)]
+                [_ false])
+              false)
+            (compiler-backend-c-aggregate-extern-call? (box-get rest) name))])]))
+
 (define (compiler-backend-call-param-types-for-call
   [name : String]
   [args : CompilerIrCallArgs]
@@ -7091,19 +7117,21 @@
       (compiler-backend-call-param-types-index name index)]
     [fixed-count : i64
       (compiler-backend-extern-varargs-fixed-param-count externs name)]
-    (if (< fixed-count 0)
-      (if (=
-        (compiler-backend-call-args-count args)
-        (compiler-backend-type-list-count param-types))
-        param-types
-        (compiler-backend-call-actual-param-types types global-types args))
-      (compiler-backend-call-actual-param-types-from
-        types
-        global-types
-        args
-        param-types
-        fixed-count
-        0))))
+    (if (compiler-backend-c-aggregate-extern-call? externs name)
+      (compiler-backend-call-actual-param-types types global-types args)
+      (if (< fixed-count 0)
+        (if (=
+          (compiler-backend-call-args-count args)
+          (compiler-backend-type-list-count param-types))
+          param-types
+          (compiler-backend-call-actual-param-types types global-types args))
+        (compiler-backend-call-actual-param-types-from
+          types
+          global-types
+          args
+          param-types
+          fixed-count
+          0)))))
 
 ;; Byte offset from %rsp where the `stack-idx`-th stack-passed OUTGOING argument
 ;; is stored (#750). Stack args are numbered sequentially in argument order (0,
@@ -10654,14 +10682,19 @@
         externs
         program-index)]
     [param-types : AstTypeList
-      (if (=
-        (compiler-backend-call-args-count args)
-        (compiler-backend-type-list-count declared-param-types))
-        declared-param-types
+      (if (compiler-backend-type-list-has-aggregate? declared-param-types)
         (compiler-backend-call-actual-param-types
           types
           (CompilerBackendGlobalTypeNil)
-          args))]
+          args)
+        (if (=
+          (compiler-backend-call-args-count args)
+          (compiler-backend-type-list-count declared-param-types))
+          declared-param-types
+          (compiler-backend-call-actual-param-types
+            types
+            (CompilerBackendGlobalTypeNil)
+            args)))]
     [call-space : i64
       (compiler-backend-call-arg-space target args param-types program-index)]
     (match (compiler-backend-emit-call-args

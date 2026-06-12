@@ -80,10 +80,6 @@ Coverage notes:
 - `hash_api.tl` covers stable deterministic hashes, equal-values-same-hash
   checks, primitive key equality predicates, known collision behavior, hash
   range normalization, and string edge cases.
-- `math_api.tl` covers the pure scalar `math.tl` helpers for `i64` and `f64`:
-  negative/zero/positive absolute values and sign predicates, min/max order,
-  clamp low/high/inside cases, reversed bounds, and explicit signed-min
-  fallback behavior for integer abs.
 - `hashmap_api.tl` covers the compatibility `StringI64Map`, generated
   `StringStringMap` and `I64I64Map` APIs, key descriptor identities, borrowed
   string-key wrappers, update-only, entry-or-insert, live mutable-entry helpers,
@@ -128,7 +124,14 @@ Coverage notes:
   `read-file-or-result` surface for fallback-borrow and owned-result paths. The
   escape fixture verifies the checker rejects returning a fallback result whose
   fallback owner is shorter-lived than the declared result lifetime.
-- `test_assert_success.tl` covers successful assertion helpers, including the
-  borrowed `assert-string-eq` path through a fixture-local owned-string wrapper
-  with explicit borrows. The `test_assert_failure.tl` fixture covers the
-  panic-on-failure path and exact caller diagnostic on stderr.
+- `test_assert_failure.tl` covers the panic-on-failure path and exact caller
+  diagnostic on stderr.
+
+Inline stdlib coverage:
+
+- `math.tl` owns inline tests for the pure scalar helpers for `i64` and `f64`:
+  negative/zero/positive absolute values and sign predicates, min/max order,
+  clamp low/high/inside cases, reversed bounds, and explicit signed-min
+  fallback behavior for integer abs.
+- `test.tl` owns inline tests for successful assertion helpers, including the
+  borrowed `assert-string-eq` path with explicit borrows.

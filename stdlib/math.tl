@@ -116,3 +116,118 @@
 ;: True when `value` is greater than zero.
 (define (math-f64-positive? [value : f64]) : bool
   (> value 0.0))
+
+(test
+  math-i64-api
+  (let
+    [fail : (-> unit)
+      (lambda
+        ()
+        :
+        unit
+        (begin
+          (/ 1 0)
+          unit))]
+    (begin
+      (if (= (math-i64-abs -7) 7)
+        unit
+        (fail))
+      (if (= (math-i64-abs 0) 0)
+        unit
+        (fail))
+      (if (= (math-i64-abs 7) 7)
+        unit
+        (fail))
+      (if (= (math-i64-abs -9223372036854775808) -9223372036854775808)
+        unit
+        (fail))
+      (if (=
+        (math-i64-abs-or -9223372036854775808 9223372036854775807)
+        9223372036854775807)
+        unit
+        (fail))
+      (if (= (math-i64-min -3 9) -3)
+        unit
+        (fail))
+      (if (= (math-i64-max -3 9) 9)
+        unit
+        (fail))
+      (if (= (math-i64-clamp 5 0 10) 5)
+        unit
+        (fail))
+      (if (= (math-i64-clamp -1 0 10) 0)
+        unit
+        (fail))
+      (if (= (math-i64-clamp 11 0 10) 10)
+        unit
+        (fail))
+      (if (= (math-i64-clamp -1 10 0) 0)
+        unit
+        (fail))
+      (if (= (math-i64-clamp 11 10 0) 10)
+        unit
+        (fail))
+      (if (math-i64-negative? -1)
+        unit
+        (fail))
+      (if (math-i64-zero? 0)
+        unit
+        (fail))
+      (if (math-i64-positive? 1)
+        unit
+        (fail))
+      (if (not (math-i64-positive? 0))
+        unit
+        (fail)))))
+
+(test
+  math-f64-api
+  (let
+    [fail : (-> unit)
+      (lambda
+        ()
+        :
+        unit
+        (begin
+          (/ 1 0)
+          unit))]
+    (begin
+      (if (= (math-f64-abs -2.5) 2.5)
+        unit
+        (fail))
+      (if (= (math-f64-abs 0.0) 0.0)
+        unit
+        (fail))
+      (if (= (math-f64-abs 2.5) 2.5)
+        unit
+        (fail))
+      (if (= (math-f64-min -3.5 9.25) -3.5)
+        unit
+        (fail))
+      (if (= (math-f64-max -3.5 9.25) 9.25)
+        unit
+        (fail))
+      (if (= (math-f64-clamp 5.5 0.0 10.0) 5.5)
+        unit
+        (fail))
+      (if (= (math-f64-clamp -1.0 0.0 10.0) 0.0)
+        unit
+        (fail))
+      (if (= (math-f64-clamp 11.0 0.0 10.0) 10.0)
+        unit
+        (fail))
+      (if (= (math-f64-clamp 11.0 10.0 0.0) 10.0)
+        unit
+        (fail))
+      (if (math-f64-negative? -0.5)
+        unit
+        (fail))
+      (if (math-f64-zero? 0.0)
+        unit
+        (fail))
+      (if (math-f64-positive? 0.5)
+        unit
+        (fail))
+      (if (not (math-f64-negative? 0.0))
+        unit
+        (fail)))))

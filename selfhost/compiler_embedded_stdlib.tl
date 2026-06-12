@@ -97,8 +97,6 @@
 
 (include-str compiler-embedded-stdlib-tests-list-api "stdlib/tests/list_api.tl")
 
-(include-str compiler-embedded-stdlib-tests-math-api "stdlib/tests/math_api.tl")
-
 (include-str compiler-embedded-stdlib-tests-process-api "stdlib/tests/process_api.tl")
 
 (include-str compiler-embedded-stdlib-tests-process-borrowed-check "stdlib/tests/process_borrowed_check.tl")
@@ -116,8 +114,6 @@
 (include-str compiler-embedded-stdlib-tests-string-edges "stdlib/tests/string_edges.tl")
 
 (include-str compiler-embedded-stdlib-tests-test-assert-failure "stdlib/tests/test_assert_failure.tl")
-
-(include-str compiler-embedded-stdlib-tests-test-assert-success "stdlib/tests/test_assert_success.tl")
 
 (include-str compiler-embedded-stdlib-tests-text-buf-api "stdlib/tests/text_buf_api.tl")
 
@@ -241,8 +237,6 @@
       compiler-embedded-stdlib-tests-json-parse-stringify)
     (string-eq suffix "tests/list_api.tl")
     (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-tests-list-api)
-    (string-eq suffix "tests/math_api.tl")
-    (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-tests-math-api)
     (string-eq suffix "tests/process_api.tl")
     (CompilerEmbeddedStdlibSomeSource
       compiler-embedded-stdlib-tests-process-api)
@@ -268,9 +262,6 @@
     (string-eq suffix "tests/test_assert_failure.tl")
     (CompilerEmbeddedStdlibSomeSource
       compiler-embedded-stdlib-tests-test-assert-failure)
-    (string-eq suffix "tests/test_assert_success.tl")
-    (CompilerEmbeddedStdlibSomeSource
-      compiler-embedded-stdlib-tests-test-assert-success)
     (string-eq suffix "tests/text_buf_api.tl")
     (CompilerEmbeddedStdlibSomeSource
       compiler-embedded-stdlib-tests-text-buf-api)

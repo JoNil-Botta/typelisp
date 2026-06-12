@@ -120,6 +120,9 @@
 (define (intern-persistent-storage-disable!) : unit
   (set! intern-persistent-storage-enabled false))
 
+(define (intern-persistent-storage-on?) : bool
+  intern-persistent-storage-enabled)
+
 ;: Word-at-a-time multiply-mix hash over the raw bytes. The hash only affects
 ;: bucket placement, never the id a string gets (ids are insertion-ordered),
 ;: so the function is free to change: byte-at-a-time djb2 was 18.6% of a

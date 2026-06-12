@@ -4207,17 +4207,30 @@
 (define tc-resolve-type-name-cache-handle : i64
   0)
 
+;; The cached name strings are caller-provided and may live in a transient
+;; scratch arena (per-function typecheck arenas; #2596): clear them to the
+;; static empty string as well, so no slot can compare against freed memory
+;; after the owning arena is destroyed.
 (define (tc-nominal-owner-cache-reset!) : unit
   (begin
     (set! tc-nominal-owner-cache-handle 0)
+    (set! tc-nominal-owner-cache-name "")
     (set! tc-nominal-owner-cache-handle1 0)
+    (set! tc-nominal-owner-cache-name1 "")
     (set! tc-nominal-owner-cache-handle2 0)
+    (set! tc-nominal-owner-cache-name2 "")
     (set! tc-nominal-owner-cache-handle3 0)
+    (set! tc-nominal-owner-cache-name3 "")
     (set! tc-nominal-owner-cache-handle4 0)
+    (set! tc-nominal-owner-cache-name4 "")
     (set! tc-nominal-owner-cache-handle5 0)
+    (set! tc-nominal-owner-cache-name5 "")
     (set! tc-nominal-owner-cache-handle6 0)
+    (set! tc-nominal-owner-cache-name6 "")
     (set! tc-nominal-owner-cache-handle7 0)
-    (set! tc-resolve-type-name-cache-valid false)))
+    (set! tc-nominal-owner-cache-name7 "")
+    (set! tc-resolve-type-name-cache-valid false)
+    (set! tc-resolve-type-name-cache-key "")))
 
 (define (tc-resolve-type-name-cache-lookup [lookup-name : String]) : TcTypeNameLookupCache
   (if (and
@@ -7359,9 +7372,17 @@
       [(TcNoTypeEnv)
         (match (tc-module-local-env ctx top-env module)
           [(OkTcEnv env)
-            (OkTcModuleLocalEnv
-              env
-              (TcModuleLocalEnvCons module env (box cache)))]
+            (let
+              ;; The cache outlives transient scratch arenas (per-function
+              ;; typecheck arenas; #2596), but `module` may have been
+              ;; allocated in one: hygiene markers decode it by substring.
+              ;; Copy the key into the current arena -- the hygiene caller
+              ;; switches to the dedicated cache arena before inserting
+              ;; (#2357) -- so the stored key cannot dangle.
+              [key : String (substring module 0 (string-length module))]
+              (OkTcModuleLocalEnv
+                env
+                (TcModuleLocalEnvCons key env (box cache))))]
           [(ErrTcEnv message) (ErrTcModuleLocalEnv message)])])))
 
 (define (tc-expect [actual : AstType] [expected : AstType] [message : String]) : ResultTcUnit
@@ -25057,6 +25078,96 @@
         (tc-check-cleanup-enum-variants ctx env enum-name cleanup variants)]
       [(ErrTcUnit message) (ErrTcUnit message)])))
 
+;: Check one function declaration's body against its signature.
+(define (tc-check-fn-decl-body
+  [ctx : TcContext]
+  [global-env : TcTypeEnv]
+  [params : AstParamList]
+  [ret : AstType]
+  [body-box : i64]) : ResultTcUnit
+  (let
+    [body : AstExpr (ast-node-get body-box)]
+    [env : TcTypeEnv
+      (tc-bind-return-type
+        (tc-bind-params ctx global-env params)
+        (tc-resolve-type ctx ret))]
+    (match (tc-expr-with-expected-or-actual
+      ctx
+      env
+      body
+      (tc-resolve-type ctx ret))
+      [(OkTcType got)
+        (match (tc-expect
+          got
+          (tc-resolve-type ctx ret)
+          "typecheck: return type mismatch")
+          [(OkTcUnit)
+            (match (tc-ensure-region-value-can-flow-into
+              env
+              (tc-resolve-type ctx ret)
+              got
+              "return value")
+              [(OkTcUnit)
+                (match (tc-move-check-body ctx env params body)
+                  [(OkTcUnit) (tc-borrow-check-body ctx env params body)]
+                  [(ErrTcUnit message) (ErrTcUnit message)])]
+              [(ErrTcUnit message)
+                (ErrTcUnit
+                  (tc-rich-escape-at-expr
+                    body
+                    message
+                    "function return type rejects this escaping value"))])]
+          [(ErrTcUnit message) (ErrTcUnit message)])]
+      [(ErrTcType message) (ErrTcUnit message)])))
+
+;; Function bodies dominate typecheck allocation (~96% of the phase's live
+;; delta; #2596) and the check returns only unit -- everything it allocates
+;; is garbage once the body is checked, but the program-lifetime arena never
+;; frees it. Scope each body check in its own arena. New intern entries made
+;; while the arena is active (e.g. first-use marker names) must outlive it,
+;; so persistent intern storage is forced on for the scope (the intern pool
+;; copies new strings into its global-init base arena; see compiler_intern).
+;; Node pools already grow in the persistent base arena (#2357). The rare
+;; error path re-runs the check outside the arena so the diagnostic string
+;; survives; compilation stops at the first failing declaration, so the
+;; rerun cost is paid at most once.
+;: Arena-scoped body check reduced to a region-free status: 0 ok, 1 error.
+(define (tc-check-fn-decl-status
+  [ctx : TcContext]
+  [global-env : TcTypeEnv]
+  [params : AstParamList]
+  [ret : AstType]
+  [body-box : i64]) : i64
+  (with-arena
+    tc-fn-scratch
+    (match (tc-check-fn-decl-body ctx global-env params ret body-box)
+      [(OkTcUnit) 0]
+      [(ErrTcUnit _) 1])))
+
+(define (tc-check-fn-decl-scoped
+  [ctx : TcContext]
+  [global-env : TcTypeEnv]
+  [params : AstParamList]
+  [ret : AstType]
+  [body-box : i64]) : ResultTcUnit
+  (let
+    [prev-persist : bool (intern-persistent-storage-on?)]
+    [status : i64
+      (begin
+        (intern-persistent-storage-enable!)
+        (tc-check-fn-decl-status ctx global-env params ret body-box))]
+    (begin
+      (if prev-persist
+        unit
+        (intern-persistent-storage-disable!))
+      ;; Single-entry name caches may hold strings allocated in the arena
+      ;; that just closed; invalidate them before anything can compare
+      ;; against freed memory.
+      (tc-nominal-owner-cache-reset!)
+      (if (= status 0)
+        OkTcUnit
+        (tc-check-fn-decl-body ctx global-env params ret body-box)))))
+
 (define (tc-check-decl-with-global-env
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -25091,40 +25202,7 @@
               [(OkTcType _) OkTcUnit]
               [(ErrTcType message) (ErrTcUnit message)])]))]
     [(AstDeclDefFn _ params ret body-box _)
-      (let
-        [body : AstExpr (ast-node-get body-box)]
-        [env : TcTypeEnv
-          (tc-bind-return-type
-            (tc-bind-params ctx global-env params)
-            (tc-resolve-type ctx ret))]
-        (match (tc-expr-with-expected-or-actual
-          ctx
-          env
-          body
-          (tc-resolve-type ctx ret))
-          [(OkTcType got)
-            (match (tc-expect
-              got
-              (tc-resolve-type ctx ret)
-              "typecheck: return type mismatch")
-              [(OkTcUnit)
-                (match (tc-ensure-region-value-can-flow-into
-                  env
-                  (tc-resolve-type ctx ret)
-                  got
-                  "return value")
-                  [(OkTcUnit)
-                    (match (tc-move-check-body ctx env params body)
-                      [(OkTcUnit) (tc-borrow-check-body ctx env params body)]
-                      [(ErrTcUnit message) (ErrTcUnit message)])]
-                  [(ErrTcUnit message)
-                    (ErrTcUnit
-                      (tc-rich-escape-at-expr
-                        body
-                        message
-                        "function return type rejects this escaping value"))])]
-              [(ErrTcUnit message) (ErrTcUnit message)])]
-          [(ErrTcType message) (ErrTcUnit message)]))]
+      (tc-check-fn-decl-scoped ctx global-env params ret body-box)]
     [(AstDeclDefMacro name params ret body-box)
       (let
         [body : AstExpr (ast-node-get body-box)]

@@ -25,6 +25,10 @@
   (OkCompilerDriverBuffer TextBuf)
   (ErrCompilerDriverBuffer CompilerDiagnostic))
 
+(defenum ResultCompilerDriverPic
+  (OkCompilerDriverPic CompilerBackendPicOutput)
+  (ErrCompilerDriverPic CompilerDiagnostic))
+
 (defenum ResultCompilerDriverObject
   (OkCompilerDriverObject CompilerObjectImage)
   (ErrCompilerDriverObject CompilerDiagnostic))
@@ -539,6 +543,62 @@
                       (ErrCompilerDriverObject
                         (compiler-diagnostic-with-path diag input-path)))]))))]))))
 
+(define (compiler-driver-emit-lowered-pic-with-level-mode-entry-and-crt
+  [input-path : String]
+  [program : CompilerIrProgram]
+  [spans : CompilerSourceSpans]
+  [target : CompilerBackendTarget]
+  [has-target : bool]
+  [mode : CompilerBackendMode]
+  [opt-level : i64]
+  [emit-entry : bool]
+  [crt-entry : bool]) : ResultCompilerDriverPic
+  (if (ty-node-pool-exhausted?)
+    (ErrCompilerDriverPic
+      (compiler-driver-ty-node-pool-exhausted-diagnostic input-path))
+    (begin
+      (cfg compile-profile (compiler-driver-profile-start-phase))
+      (match (optimize-program-with-spans-and-level program spans opt-level)
+        [(CompilerOptimizedProgram optimized optimized-spans)
+          (begin
+            (cfg
+              compile-profile
+              (compiler-driver-profile-finish-phase "optimize"))
+            (if (ty-node-pool-exhausted?)
+              (ErrCompilerDriverPic
+                (compiler-driver-ty-node-pool-exhausted-diagnostic input-path))
+              (begin
+                (compiler-backend-set-scalar-registers! (>= opt-level 2))
+                (cfg compile-profile (compiler-driver-profile-start-phase))
+                (match (if has-target
+                  (compiler-backend-emit-program-pic-target-with-mode-and-crt
+                    optimized
+                    target
+                    mode
+                    optimized-spans
+                    emit-entry
+                    crt-entry)
+                  (compiler-backend-emit-program-pic-target-with-mode-and-crt
+                    optimized
+                    (BackendTargetLinux)
+                    mode
+                    optimized-spans
+                    emit-entry
+                    crt-entry))
+                  [(OkCompilerBackendPic output)
+                    (begin
+                      (cfg
+                        compile-profile
+                        (compiler-driver-profile-finish-phase "backend"))
+                      (OkCompilerDriverPic output))]
+                  [(ErrCompilerBackendPic diag)
+                    (begin
+                      (cfg
+                        compile-profile
+                        (compiler-driver-profile-finish-phase "backend"))
+                      (ErrCompilerDriverPic
+                        (compiler-diagnostic-with-path diag input-path)))]))))]))))
+
 ;; The implicit prelude prepended before every entry program. It is two
 ;; always-linked stdlib modules loaded as files:
 ;;   - stdlib/runtime.tl  - fault/abort handlers + OS primitives (#2142 / #2150),
@@ -899,6 +959,35 @@
           true
           crt-entry)]
       [(ErrCompilerDriverLowered diag) (ErrCompilerDriverObject diag)])))
+
+(define (compiler-driver-emit-file-pic-with-target-roots-level-mode-and-cfg
+  [input-path : String]
+  [target : CompilerBackendTarget]
+  [has-target : bool]
+  [stdlib-roots : StringVec]
+  [opt-level : i64]
+  [mode : CompilerBackendMode]
+  [cfgs : SymI64Env]) : ResultCompilerDriverPic
+  (begin
+    (cfg compile-profile (compiler-driver-profile-start-total))
+    (match (compiler-driver-load-and-lower-escaping
+      input-path
+      target
+      stdlib-roots
+      mode
+      (compiler-driver-target-cfgs target cfgs))
+      [(OkCompilerDriverLowered program spans)
+        (compiler-driver-emit-lowered-pic-with-level-mode-entry-and-crt
+          input-path
+          program
+          spans
+          target
+          has-target
+          mode
+          opt-level
+          true
+          false)]
+      [(ErrCompilerDriverLowered diag) (ErrCompilerDriverPic diag)])))
 
 (define (compiler-driver-emit-package-file-with-target-roots-and-level
   [input-path : String]
@@ -1392,6 +1481,33 @@
         (print-error (compiler-diagnostic-render diag))
         1)]))
 
+(define (compiler-driver-pic-fixups-path [output-path : String]) : String
+  (string-append output-path ".fixups"))
+
+(define (compiler-driver-write-pic-result
+  [result : ResultCompilerDriverPic]
+  [output-path : String]) : i64
+  (match result
+    [(OkCompilerDriverPic output)
+      (let
+        [fixups-path : String (compiler-driver-pic-fixups-path output-path)]
+        (begin
+          (cfg compile-profile (compiler-driver-profile-start-phase))
+          (write-file output-path (struct-get output asm))
+          (write-file fixups-path (struct-get output fixups))
+          (cfg compile-profile (compiler-driver-profile-finish-phase "write"))
+          (cfg compile-profile (compiler-driver-profile-finish-total))
+          (print-string
+            (string-append "Wrote " (string-append output-path "\n")))
+          (print-string
+            (string-append "Wrote " (string-append fixups-path "\n")))
+          0))]
+    [(ErrCompilerDriverPic diag)
+      (begin
+        (cfg compile-profile (compiler-driver-profile-finish-total))
+        (print-error (compiler-diagnostic-render diag))
+        1)]))
+
 (define (compiler-driver-compile-file-with-target-roots-level-mode-cfg
   [input-path : String]
   [output-path : String]
@@ -1403,6 +1519,26 @@
   [cfgs : SymI64Env]) : i64
   (compiler-driver-write-buffer-result
     (compiler-driver-emit-file-buffer-with-target-roots-level-mode-and-cfg
+      input-path
+      target
+      has-target
+      stdlib-roots
+      opt-level
+      mode
+      cfgs)
+    output-path))
+
+(define (compiler-driver-compile-file-pic-with-target-roots-level-mode-cfg
+  [input-path : String]
+  [output-path : String]
+  [target : CompilerBackendTarget]
+  [has-target : bool]
+  [stdlib-roots : StringVec]
+  [opt-level : i64]
+  [mode : CompilerBackendMode]
+  [cfgs : SymI64Env]) : i64
+  (compiler-driver-write-pic-result
+    (compiler-driver-emit-file-pic-with-target-roots-level-mode-and-cfg
       input-path
       target
       has-target

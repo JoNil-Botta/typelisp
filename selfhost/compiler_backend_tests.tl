@@ -605,6 +605,66 @@
           (> (compiler-object-relocation-list-count relocs) 5)))]
     [(ErrCompilerBackendObject _) false]))
 
+(define (compiler-backend-pic-source) : String
+  "(define greeting : String \"hi\")
+(define (main) : i64
+  (string-length greeting))")
+
+(define (compiler-backend-pic-extern-source) : String
+  "(extern (foreign-call [arg0 : i64]) : i64 (:abi c) (:symbol \"foreign_exact\"))
+(define (main) : i64
+  (foreign-call 1))")
+
+(define (compiler-backend-pic-output-ok?) : bool
+  (match (compiler-backend-emit-source-pic (compiler-backend-pic-source))
+    [(OkCompilerBackendPic output)
+      (let
+        [asm : String (struct-get output asm)]
+        [fixups : String (struct-get output fixups)]
+        [data-label : String (compiler-backend-string-data-label "hi")]
+        [fat-label : String (compiler-backend-string-fat-label "hi")]
+        [base-label : String compiler-backend-pic-image-base-label]
+        (and
+          (backend-and8
+            (compiler-backend-string-contains?
+              asm
+              (backend-cat3 base-label ":\n" ""))
+            (compiler-backend-string-contains?
+              asm
+              (backend-cat5 "    .quad " data-label " - " base-label "\n"))
+            (compiler-backend-string-contains?
+              asm
+              (backend-cat5 "    .quad " fat-label " - " base-label "\n"))
+            (not
+              (compiler-backend-string-contains?
+                asm
+                (compiler-backend-pic-quad-pattern data-label)))
+            (not
+              (compiler-backend-string-contains?
+                asm
+                (compiler-backend-pic-quad-pattern fat-label)))
+            (compiler-backend-string-contains?
+              fixups
+              "typelisp-pic-fixups v1\n")
+            (compiler-backend-string-contains? fixups "data ")
+            (compiler-backend-string-contains? fixups "rodata "))
+          (compiler-backend-string-contains? fixups data-label)
+          (compiler-backend-string-contains? fixups fat-label)))]
+    [(ErrCompilerBackendPic _) false]))
+
+(define (compiler-backend-pic-extern-reject-ok?) : bool
+  (match (compiler-backend-emit-source-pic (compiler-backend-pic-extern-source))
+    [(OkCompilerBackendPic _) false]
+    [(ErrCompilerBackendPic diag)
+      (compiler-backend-string-contains?
+        (compiler-diagnostic-render diag)
+        "backend: --pic supports only internal references")]))
+
+(define (compiler-backend-pic-ok?) : bool
+  (and
+    (compiler-backend-pic-output-ok?)
+    (compiler-backend-pic-extern-reject-ok?)))
+
 (define (compiler-backend-coff-renders-real-text-ok?) : bool
   (match (compiler-backend-emit-source-object-image-for-target
     (compiler-backend-coff-real-text-source)
@@ -5958,6 +6018,7 @@
         (compiler-object-coff-text-smoke-ok?)
         (compiler-backend-coff-renders-real-text-ok?)
         (compiler-object-elf-smoke-ok?)
+        (compiler-backend-pic-ok?)
         (compiler-backend-deterministic-ok? (compiler-backend-smoke-source)))
       (compiler-backend-string-ok?)
       (and

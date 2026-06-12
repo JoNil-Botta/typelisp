@@ -160,6 +160,28 @@
   (OkLowerArgs LowerState CompilerIrValueList)
   (ErrLowerArgs CompilerDiagnostic))
 
+(defenum LowerArgWriteback
+  (LowerArgWriteback i64 CompilerIrValue AstType AstExpr))
+
+(defenum LowerArgWritebackList
+  (LowerArgWritebackNil)
+  (LowerArgWritebackCons LowerArgWriteback (Box LowerArgWritebackList)))
+
+(defenum LowerMaybeArgWriteback
+  (LowerNoArgWriteback)
+  (LowerSomeArgWriteback LowerArgWriteback))
+
+(defenum LowerCallArg
+  (LowerCallArg LowerState CompilerIrValue LowerMaybeArgWriteback))
+
+(defenum ResultLowerCallArg
+  (OkLowerCallArg LowerCallArg)
+  (ErrLowerCallArg CompilerDiagnostic))
+
+(defenum ResultLowerCallArgs
+  (OkLowerCallArgs LowerState CompilerIrValueList LowerArgWritebackList)
+  (ErrLowerCallArgs CompilerDiagnostic))
+
 (defenum LowerCAbiEightbyteClass
   (LowerCAbiEightbyteEmpty)
   (LowerCAbiEightbyteInteger)
@@ -5811,6 +5833,37 @@
           base
           result-ty)])))
 
+(define (lower-borrow-copy-to-inline-storage
+  [ctx : TcContext]
+  [state : LowerState]
+  [value : CompilerIrValue]
+  [referent-ty : AstType]
+  [result-ty : AstType]) : LowerExpr
+  (let
+    [resolved : AstType
+      (tc-type-without-regions (tc-resolve-type ctx referent-ty))]
+    [size : i64 (lower-type-size ctx resolved)]
+    (match (lower-reserve-inline-storage
+      state
+      (if (= size 0)
+        1
+        size)
+      resolved)
+      [(LowerExpr base-state base _)
+        (LowerExpr
+          (if (> size 0)
+            (lower-store-inline-value-at-offset
+              ctx
+              base-state
+              base
+              0
+              value
+              resolved
+              size)
+            base-state)
+          base
+          result-ty)])))
+
 (define (lower-borrow-place-slot-reference
   [ctx : TcContext]
   [state : LowerState]
@@ -9914,6 +9967,224 @@
           (lower-clone-dispatch ctx arg-state env type-env arg-value arg-ty)])]
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
 
+(define (lower-call-explicit-mut-borrow-var-name [arg : AstExpr]) : TcMaybeString
+  (match (ast-expr-unspan arg)
+    [(AstExprBorrow mutable _ place-box)
+      (if mutable
+        (match (ast-expr-unspan (ast-node-get place-box))
+          [(AstExprVar name) (TcSomeString (intern-str name))]
+          [_ TcNoString])
+        TcNoString)]
+    [_ TcNoString]))
+
+(define (lower-call-arg-normal-as
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [arg : AstExpr]
+  [effective-arg : AstExpr]
+  [arg-ty : AstType]) : ResultLowerCallArg
+  (match (lower-expr-expected ctx state env type-env effective-arg arg-ty arg)
+    [(OkLowerExpr lowered)
+      (match lowered
+        [(LowerExpr arg-state value _)
+          (OkLowerCallArg (LowerCallArg arg-state value LowerNoArgWriteback))])]
+    [(ErrLowerExpr message) (ErrLowerCallArg message)]))
+
+(define (lower-call-arg-mut-borrow-var-as
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [arg : AstExpr]
+  [effective-arg : AstExpr]
+  [arg-ty : AstType]
+  [name : String]) : ResultLowerCallArg
+  (match (tc-lookup type-env name)
+    [(OkTcType place-ty)
+      (let
+        [referent-ty : AstType (tc-borrow-referent-type place-ty)]
+        [referent-ir-ty : AstType
+          (tc-type-without-regions (tc-resolve-type ctx referent-ty))]
+        (if (or
+          (tc-type-contains-reference? place-ty)
+          (lower-borrow-place-value-reference? ctx referent-ty))
+          (lower-call-arg-normal-as
+            ctx
+            state
+            env
+            type-env
+            arg
+            effective-arg
+            arg-ty)
+          (match (sym-i64-lookup env name)
+            [(SomeI64 local-id)
+              (match (lower-borrow-copy-to-inline-storage
+                ctx
+                state
+                (IrValueVar local-id)
+                referent-ir-ty
+                arg-ty)
+                [(LowerExpr arg-state storage _)
+                  (OkLowerCallArg
+                    (LowerCallArg
+                      arg-state
+                      storage
+                      (LowerSomeArgWriteback
+                        (LowerArgWriteback local-id storage referent-ir-ty arg))))])]
+            [(NoneI64)
+              (lower-call-arg-normal-as
+                ctx
+                state
+                env
+                type-env
+                arg
+                effective-arg
+                arg-ty)])))]
+    [(ErrTcType _)
+      (lower-call-arg-normal-as ctx state env type-env arg effective-arg arg-ty)]))
+
+(define (lower-call-arg-as
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [arg : AstExpr]
+  [expected : AstType]
+  [arg-ty : AstType]) : ResultLowerCallArg
+  (match (tc-call-effective-arg-expr ctx type-env arg expected)
+    [(OkTcExpr effective-arg)
+      (match (tc-type-strip-region (tc-resolve-type ctx arg-ty))
+        [(AstTyMutRef _ _)
+          (match (lower-call-explicit-mut-borrow-var-name effective-arg)
+            [(TcSomeString name)
+              (lower-call-arg-mut-borrow-var-as
+                ctx
+                state
+                env
+                type-env
+                arg
+                effective-arg
+                arg-ty
+                name)]
+            [(TcNoString)
+              (lower-call-arg-normal-as
+                ctx
+                state
+                env
+                type-env
+                arg
+                effective-arg
+                arg-ty)])]
+        [_
+          (lower-call-arg-normal-as
+            ctx
+            state
+            env
+            type-env
+            arg
+            effective-arg
+            arg-ty)])]
+    [(ErrTcExpr message)
+      (ErrLowerCallArg (lower-diagnostic-at-expr arg message))]))
+
+(define (lower-call-arg-writebacks-cons-maybe
+  [maybe-writeback : LowerMaybeArgWriteback]
+  [rest : LowerArgWritebackList]) : LowerArgWritebackList
+  (match maybe-writeback
+    [(LowerNoArgWriteback) rest]
+    [(LowerSomeArgWriteback writeback)
+      (LowerArgWritebackCons writeback (box rest))]))
+
+(define (lower-call-args-as
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]
+  [types : AstTypeList]) : ResultLowerCallArgs
+  (match args
+    [(AstExprNil)
+      (match types
+        [(AstTypeNil) (OkLowerCallArgs state IrValueNil LowerArgWritebackNil)]
+        [_
+          (ErrLowerCallArgs
+            (lower-diagnostic "lower: constructor arity mismatch"))])]
+    [(AstExprCons arg rest-args)
+      (let
+        [arg : AstExpr (ast-node-get arg)]
+        [rest-args : AstExprList (box-get rest-args)]
+        (match types
+          [(AstTypeCons expected rest-types)
+            (let
+              [expected : AstType (ty-node-get expected)]
+              [rest-types : AstTypeList (box-get rest-types)]
+              [arg-ty : AstType
+                (tc-type-without-regions (tc-resolve-type ctx expected))]
+              (match (lower-call-arg-as
+                ctx
+                state
+                env
+                type-env
+                arg
+                expected
+                arg-ty)
+                [(OkLowerCallArg lowered-arg)
+                  (match lowered-arg
+                    [(LowerCallArg arg-state value maybe-writeback)
+                      (match (lower-call-args-as
+                        ctx
+                        arg-state
+                        env
+                        type-env
+                        rest-args
+                        rest-types)
+                        [(OkLowerCallArgs
+                            rest-state
+                            rest-values
+                            rest-writebacks)
+                          (OkLowerCallArgs
+                            rest-state
+                            (compiler-ir-value-cons value rest-values)
+                            (lower-call-arg-writebacks-cons-maybe
+                              maybe-writeback
+                              rest-writebacks))]
+                        [(ErrLowerCallArgs message) (ErrLowerCallArgs message)])])]
+                [(ErrLowerCallArg message) (ErrLowerCallArgs message)]))]
+          [(AstTypeNil)
+            (ErrLowerCallArgs
+              (lower-diagnostic "lower: constructor arity mismatch"))]))]))
+
+(define (lower-apply-arg-writeback
+  [ctx : TcContext]
+  [state : LowerState]
+  [writeback : LowerArgWriteback]) : LowerState
+  (match writeback
+    [(LowerArgWriteback local-id storage referent-ty origin)
+      (match (lower-load-register-resident-from-ptr
+        ctx
+        state
+        storage
+        referent-ty)
+        [(LowerExpr load-state loaded _)
+          (lower-state-emit-at-expr
+            load-state
+            (IrInstrMov local-id loaded referent-ty)
+            origin)])]))
+
+(define (lower-apply-arg-writebacks
+  [ctx : TcContext]
+  [state : LowerState]
+  [writebacks : LowerArgWritebackList]) : LowerState
+  (match writebacks
+    [(LowerArgWritebackNil) state]
+    [(LowerArgWritebackCons head rest)
+      (lower-apply-arg-writebacks
+        ctx
+        (lower-apply-arg-writeback ctx state head)
+        (box-get rest))]))
+
 (define (lower-bootstrap-runtime-builtin-id? [name-id : i64]) : bool
   (compiler-builtin-lower-bootstrap-runtime-id? name-id))
 
@@ -9975,6 +10246,33 @@
           [(AstTypeNil)
             (ErrLowerArgs
               (lower-diagnostic "lower: constructor arity mismatch"))]))]))
+
+(define (lower-call-type-list-has-mut-ref-formal?
+  [ctx : TcContext]
+  [types : AstTypeList]) : bool
+  (match types
+    [(AstTypeNil) false]
+    [(AstTypeCons head rest)
+      (let
+        [head : AstType (ty-node-get head)]
+        [rest : AstTypeList (box-get rest)]
+        (match (tc-type-strip-region head)
+          [(AstTyMutRef _ _) true]
+          [_ (lower-call-type-list-has-mut-ref-formal? ctx rest)]))]))
+
+(define (lower-call-args-as-needed
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]
+  [types : AstTypeList]) : ResultLowerCallArgs
+  (if (lower-call-type-list-has-mut-ref-formal? ctx types)
+    (lower-call-args-as ctx state env type-env args types)
+    (match (lower-args-as ctx state env type-env args types)
+      [(OkLowerArgs args-state values)
+        (OkLowerCallArgs args-state values LowerArgWritebackNil)]
+      [(ErrLowerArgs message) (ErrLowerCallArgs message)])))
 
 (define (lower-construct-struct-inline-from-values
   [ctx : TcContext]
@@ -14399,6 +14697,34 @@
       (lower-direct-call-values ctx args-state env name values result-ty origin)]
     [(ErrLowerArgs message) (ErrLowerExpr message)]))
 
+(define (lower-direct-call-from-call-args
+  [ctx : TcContext]
+  [args-result : ResultLowerCallArgs]
+  [env : SymI64Env]
+  [name : String]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match args-result
+    [(OkLowerCallArgs args-state values writebacks)
+      (match (lower-direct-call-values
+        ctx
+        args-state
+        env
+        name
+        values
+        result-ty
+        origin)
+        [(OkLowerExpr lowered)
+          (match lowered
+            [(LowerExpr call-state call-value call-ty)
+              (OkLowerExpr
+                (LowerExpr
+                  (lower-apply-arg-writebacks ctx call-state writebacks)
+                  call-value
+                  call-ty))])]
+        [(ErrLowerExpr message) (ErrLowerExpr message)])]
+    [(ErrLowerCallArgs message) (ErrLowerExpr message)]))
+
 (define (lower-direct-call-param-types
   [ctx : TcContext]
   [type-env : TcTypeEnv]
@@ -14460,9 +14786,15 @@
                     (tc-type-strip-region (tc-resolve-type ctx fn-ty))
                     result-ty
                     origin)
-                  (lower-direct-call-from-args
+                  (lower-direct-call-from-call-args
                     ctx
-                    (lower-args-as ctx state env type-env args call-param-types)
+                    (lower-call-args-as-needed
+                      ctx
+                      state
+                      env
+                      type-env
+                      args
+                      call-param-types)
                     env
                     name
                     result-ty
@@ -14529,6 +14861,28 @@
         (tc-resolve-type-list ctx param-types))]
     [_ (lower-args ctx state env type-env args)]))
 
+(define (lower-indirect-call-args-with-writebacks
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]
+  [func-ty : AstType]) : ResultLowerCallArgs
+  (match (tc-type-strip-region (tc-resolve-type ctx func-ty))
+    [(AstTyFunc param-types _)
+      (lower-call-args-as-needed
+        ctx
+        state
+        env
+        type-env
+        args
+        (tc-resolve-type-list ctx param-types))]
+    [_
+      (match (lower-args ctx state env type-env args)
+        [(OkLowerArgs args-state values)
+          (OkLowerCallArgs args-state values LowerArgWritebackNil)]
+        [(ErrLowerArgs message) (ErrLowerCallArgs message)])]))
+
 (define (lower-indirect-call
   [ctx : TcContext]
   [state : LowerState]
@@ -14539,16 +14893,31 @@
   [args : AstExprList]
   [result-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
-  (match (lower-indirect-call-args ctx state env type-env args func-ty)
-    [(OkLowerArgs args-state values)
-      (lower-indirect-call-values
+  (match (lower-indirect-call-args-with-writebacks
+    ctx
+    state
+    env
+    type-env
+    args
+    func-ty)
+    [(OkLowerCallArgs args-state values writebacks)
+      (match (lower-indirect-call-values
         ctx
         args-state
         func-value
         values
         result-ty
-        origin)]
-    [(ErrLowerArgs message) (ErrLowerExpr message)]))
+        origin)
+        [(OkLowerExpr lowered)
+          (match lowered
+            [(LowerExpr call-state call-value call-ty)
+              (OkLowerExpr
+                (LowerExpr
+                  (lower-apply-arg-writebacks ctx call-state writebacks)
+                  call-value
+                  call-ty))])]
+        [(ErrLowerExpr message) (ErrLowerExpr message)])]
+    [(ErrLowerCallArgs message) (ErrLowerExpr message)]))
 
 (define (lower-indirect-c-abi-call
   [ctx : TcContext]
@@ -27182,6 +27551,33 @@
   (array-push! a v))
 (define (main) : i64 0)")
 
+(define (compiler-lower-mut-ref-by-value-writeback-source) : String
+  "(defstruct Pair (x i64) (y i64))
+(define (set-pair-x! [p : (&mut p Pair)] [value : i64]) : unit
+  (set! (struct-get p x) value))
+(define (touch-scalar! [n : (&mut n i64)]) : unit unit)
+(define (main) : i64
+  (let
+    [p : Pair (Pair 7 35)]
+    [n : i64 41]
+    (begin
+      (set-pair-x! (&mut p) 40)
+      (touch-scalar! (&mut n))
+      42)))")
+
+(define (compiler-lower-mut-ref-by-value-writeback-shape-ok?) : bool
+  (match (lower-compiler-source
+    (compiler-lower-mut-ref-by-value-writeback-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (= (lower-test-function-call-count functions "main" "tl_alloc") 0)
+            (>= (lower-test-function-alloc-count functions "main") 2)
+            (>= (lower-test-function-addr-of-count functions "main") 2)
+            (>= (lower-test-function-load-count functions "main") 2))])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-mut-ref-array-field-access-source) : String
   "(defstruct ArrayBag (items (Array i64)))
 (defstruct ArrayBagHandle
@@ -33986,6 +34382,9 @@
         (set! ok false))
       (if (compiler-lower-array-access-shape-ok?
         (compiler-lower-mut-ref-array-access-source))
+        unit
+        (set! ok false))
+      (if (compiler-lower-mut-ref-by-value-writeback-shape-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-mut-ref-array-field-access-shape-ok?)

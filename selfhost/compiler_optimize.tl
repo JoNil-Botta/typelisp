@@ -13266,6 +13266,11 @@
           (begin
             (cfg
               compile-profile
+              (compiler-opt-scratch-region-report-function-escaping
+                optimized
+                scratch))
+            (cfg
+              compile-profile
               (compiler-opt-profile-detail-finish
                 "function"
                 (compiler-opt-profile-function-name func)))
@@ -23409,6 +23414,685 @@
     [(IrInstrNil) facts]
     [(IrInstrCons instr rest)
       (opt-alias-run (opt-alias-update-facts facts instr) (box-get rest))]))
+
+;; --- implicit scratch-region candidate report (#2742) -----------------------
+;;
+;; Report-only analysis for future automatic scratch regions. It recognizes
+;; direct `tl_alloc` roots, tracks simple candidate-derived pointers with the
+;; optimizer alias fact model, and records the first conservative blocker for a
+;; function/block/loop scope. The result never rewrites IR; compile-profile
+;; builds only emit deterministic detail rows to stderr.
+(defenum OptScratchRootList
+  (OptScratchRootNil)
+  (OptScratchRootCons i64 (Box OptScratchRootList)))
+
+(defenum OptScratchBlockerReason
+  (OptScratchNoBlocker)
+  (OptScratchBlocked String))
+
+(defenum OptScratchAlloc
+  (OptScratchNoAlloc)
+  (OptScratchAlloc i64 i64))
+
+(defenum OptScratchScopeState
+  (OptScratchScopeState
+    i64
+    i64
+    OptScratchRootList
+    OptAliasFacts
+    OptScratchBlockerReason))
+
+(defenum OptScratchScopeReport
+  (OptScratchScopeReport i64 i64 OptScratchBlockerReason))
+
+(define (opt-scratch-root-list-contains?
+  [roots : OptScratchRootList]
+  [root : i64]) : bool
+  (match roots
+    [(OptScratchRootNil) false]
+    [(OptScratchRootCons found rest)
+      (or (= found root) (opt-scratch-root-list-contains? (box-get rest) root))]))
+
+(define (opt-scratch-root-list-add [roots : OptScratchRootList] [root : i64]) : OptScratchRootList
+  (if (opt-scratch-root-list-contains? roots root)
+    roots
+    (OptScratchRootCons root (box roots))))
+
+(define (opt-scratch-direct-alloc [instr : CompilerIrInstr]) : OptScratchAlloc
+  (match instr
+    [(IrInstrCall dst name args _)
+      (if (string-eq name "tl_alloc")
+        (match (opt-aggregate-tl-alloc-size args)
+          [(OptSomeI64 size)
+            (OptScratchAlloc
+              dst
+              (if (> size 0)
+                size
+                0))]
+          [(OptNoI64) (OptScratchAlloc dst 0)])
+        (OptScratchNoAlloc))]
+    [_ (OptScratchNoAlloc)]))
+
+(define (opt-scratch-arena-helper-call? [name : String]) : bool
+  (or
+    (string-eq name "arena-current")
+    (string-eq name "arena-mark")
+    (string-eq name "arena-set!")
+    (string-eq name "arena-rewind")
+    (string-eq name "arena-destroy")
+    (string-eq name "tl_region_mark")
+    (string-eq name "tl_region_reset")
+    (string-eq name "tl_arena_make")
+    (string-eq name "tl_arena_current")
+    (string-eq name "tl_arena_set")
+    (string-eq name "tl_arena_destroy")
+    (string-eq name "tl_arena_poison_enable")))
+
+(define (opt-scratch-var-derived?
+  [roots : OptScratchRootList]
+  [facts : OptAliasFacts]
+  [var : i64]) : bool
+  (match (opt-alias-lookup facts var)
+    [(OptSomeAliasKind kind)
+      (match kind
+        [(OptAliasUnique) (opt-scratch-root-list-contains? roots var)]
+        [(OptAliasDerived root) (opt-scratch-root-list-contains? roots root)]
+        [(OptAliasMayAlias) false]
+        [(OptAliasInvalidated) false])]
+    [(OptNoAliasKind) false]))
+
+(define (opt-scratch-value-derived?
+  [roots : OptScratchRootList]
+  [facts : OptAliasFacts]
+  [value : CompilerIrValue]) : bool
+  (match value
+    [(IrValueVar var) (opt-scratch-var-derived? roots facts var)]
+    [_ false]))
+
+(define (opt-scratch-maybe-value-derived?
+  [roots : OptScratchRootList]
+  [facts : OptAliasFacts]
+  [maybe : CompilerIrMaybeValue]) : bool
+  (match maybe
+    [(IrNoValue) false]
+    [(IrSomeValue value) (opt-scratch-value-derived? roots facts value)]))
+
+(define (opt-scratch-value-list-derived?
+  [roots : OptScratchRootList]
+  [facts : OptAliasFacts]
+  [values : CompilerIrValueList]) : bool
+  (match values
+    [(IrValueNil) false]
+    [(IrValueCons value rest)
+      (or
+        (opt-scratch-value-derived? roots facts value)
+        (opt-scratch-value-list-derived? roots facts (box-get rest)))]))
+
+(define (opt-scratch-call-args-array-derived?
+  [roots : OptScratchRootList]
+  [facts : OptAliasFacts]
+  [values : (Array CompilerIrValue)]
+  [index : i64]) : bool
+  (if (>= index (array-length values))
+    false
+    (or
+      (opt-scratch-value-derived? roots facts (array-ref values index))
+      (opt-scratch-call-args-array-derived? roots facts values (+ index 1)))))
+
+(define (opt-scratch-call-args-derived?
+  [roots : OptScratchRootList]
+  [facts : OptAliasFacts]
+  [args : CompilerIrCallArgs]) : bool
+  (match args
+    [(IrCallArgsNil) false]
+    [(IrCallArgsOne value) (opt-scratch-value-derived? roots facts value)]
+    [(IrCallArgsTwo a b)
+      (or
+        (opt-scratch-value-derived? roots facts a)
+        (opt-scratch-value-derived? roots facts b))]
+    [(IrCallArgsArray values)
+      (opt-scratch-call-args-array-derived? roots facts values 0)]))
+
+(define (opt-scratch-blocker-none? [blocker : OptScratchBlockerReason]) : bool
+  (match blocker
+    [(OptScratchNoBlocker) true]
+    [(OptScratchBlocked _) false]))
+
+(define (opt-scratch-blocker-reason
+  [roots : OptScratchRootList]
+  [facts : OptAliasFacts]
+  [instr : CompilerIrInstr]) : OptScratchBlockerReason
+  (match (opt-scratch-direct-alloc instr)
+    [(OptScratchAlloc _ _) (OptScratchNoBlocker)]
+    [(OptScratchNoAlloc)
+      (match instr
+        [(IrInstrCall _ name _ _)
+          (if (opt-scratch-arena-helper-call? name)
+            (OptScratchBlocked "arena_helper")
+            (OptScratchBlocked "call"))]
+        [(IrInstrCallIndirect _ _ _ _) (OptScratchBlocked "call")]
+        [(IrInstrCallIndirectC _ _ _ _) (OptScratchBlocked "extern_call")]
+        [(IrInstrSyscall _ _) (OptScratchBlocked "extern_call")]
+        [(IrInstrTailCall _ _ _) (OptScratchBlocked "tail_call")]
+        [(IrInstrTailCallIndirect _ _ _) (OptScratchBlocked "tail_call")]
+        [(IrInstrAddrOf _ _) (OptScratchBlocked "raw_pointer")]
+        [(IrInstrGep _ base offset _)
+          (if (opt-scratch-value-derived? roots facts offset)
+            (OptScratchBlocked "raw_pointer")
+            (if (opt-scratch-value-derived? roots facts base)
+              (match offset
+                [(IrValueI64 _) (OptScratchNoBlocker)]
+                [_ (OptScratchBlocked "raw_pointer")])
+              (OptScratchNoBlocker)))]
+        [(IrInstrCast _ src _ _)
+          (if (opt-scratch-value-derived? roots facts src)
+            (OptScratchBlocked "raw_pointer")
+            (OptScratchNoBlocker))]
+        [(IrInstrStorePtr ptr value _)
+          (if (and
+            (opt-scratch-value-derived? roots facts value)
+            (not (opt-scratch-value-derived? roots facts ptr)))
+            (OptScratchBlocked "store_outer")
+            (OptScratchNoBlocker))]
+        [(IrInstrStore _ value _)
+          (if (opt-scratch-value-derived? roots facts value)
+            (OptScratchBlocked "store_outer")
+            (OptScratchNoBlocker))]
+        [(IrInstrCopyBytes dst src _)
+          (if (and
+            (opt-scratch-value-derived? roots facts src)
+            (not (opt-scratch-value-derived? roots facts dst)))
+            (OptScratchBlocked "store_outer")
+            (if (or
+              (opt-scratch-value-derived? roots facts dst)
+              (opt-scratch-value-derived? roots facts src))
+              (OptScratchBlocked "raw_pointer")
+              (OptScratchNoBlocker)))]
+        [(IrInstrVectorStore base index value _ _)
+          (if (and
+            (opt-scratch-value-derived? roots facts value)
+            (not (opt-scratch-value-derived? roots facts base)))
+            (OptScratchBlocked "store_outer")
+            (if (or
+              (opt-scratch-value-derived? roots facts base)
+              (opt-scratch-value-derived? roots facts index)
+              (opt-scratch-value-derived? roots facts value))
+              (OptScratchBlocked "raw_pointer")
+              (OptScratchNoBlocker)))]
+        [(IrInstrPredicatedStore base index value mask _ _)
+          (if (and
+            (opt-scratch-value-derived? roots facts value)
+            (not (opt-scratch-value-derived? roots facts base)))
+            (OptScratchBlocked "store_outer")
+            (if (or
+              (opt-scratch-value-derived? roots facts base)
+              (opt-scratch-value-derived? roots facts index)
+              (opt-scratch-value-derived? roots facts value)
+              (opt-scratch-value-derived? roots facts mask))
+              (OptScratchBlocked "raw_pointer")
+              (OptScratchNoBlocker)))]
+        [(IrInstrVectorLoad _ base index _ _)
+          (if (or
+            (opt-scratch-value-derived? roots facts base)
+            (opt-scratch-value-derived? roots facts index))
+            (OptScratchBlocked "raw_pointer")
+            (OptScratchNoBlocker))]
+        [(IrInstrPredicatedLoad _ base index mask _ _)
+          (if (or
+            (opt-scratch-value-derived? roots facts base)
+            (opt-scratch-value-derived? roots facts index)
+            (opt-scratch-value-derived? roots facts mask))
+            (OptScratchBlocked "raw_pointer")
+            (OptScratchNoBlocker))]
+        [(IrInstrReturn maybe)
+          (if (opt-scratch-maybe-value-derived? roots facts maybe)
+            (OptScratchBlocked "return_escape")
+            (OptScratchNoBlocker))]
+        [(IrInstrPack _ values _)
+          (if (opt-scratch-value-list-derived? roots facts values)
+            (OptScratchBlocked "return_escape")
+            (OptScratchNoBlocker))]
+        [(IrInstrBranch cond _ _)
+          (if (opt-scratch-value-derived? roots facts cond)
+            (OptScratchBlocked "raw_pointer")
+            (OptScratchNoBlocker))]
+        [(IrInstrBoundsCheck index length _)
+          (if (or
+            (opt-scratch-value-derived? roots facts index)
+            (opt-scratch-value-derived? roots facts length))
+            (OptScratchBlocked "raw_pointer")
+            (OptScratchNoBlocker))]
+        [_ (OptScratchNoBlocker)])]))
+
+(define (opt-scratch-state-with-blocker
+  [state : OptScratchScopeState]
+  [candidate : OptScratchBlockerReason]) : OptScratchScopeState
+  (match state
+    [(OptScratchScopeState allocs bytes roots facts blocker)
+      (if (opt-scratch-blocker-none? blocker)
+        (match candidate
+          [(OptScratchNoBlocker) state]
+          [(OptScratchBlocked _)
+            (OptScratchScopeState allocs bytes roots facts candidate)])
+        state)]))
+
+(define (opt-scratch-state-record-alloc
+  [state : OptScratchScopeState]
+  [dst : i64]
+  [bytes : i64]) : OptScratchScopeState
+  (match state
+    [(OptScratchScopeState alloc-count known-bytes roots facts blocker)
+      (OptScratchScopeState
+        (+ alloc-count 1)
+        (+ known-bytes bytes)
+        (opt-scratch-root-list-add roots dst)
+        (opt-alias-mark-unique facts dst)
+        blocker)]))
+
+(define (opt-scratch-state-facts
+  [state : OptScratchScopeState]
+  [facts : OptAliasFacts]) : OptScratchScopeState
+  (match state
+    [(OptScratchScopeState allocs bytes roots _ blocker)
+      (OptScratchScopeState allocs bytes roots facts blocker)]))
+
+(define (opt-scratch-storeptr-keeps-facts?
+  [roots : OptScratchRootList]
+  [facts : OptAliasFacts]
+  [ptr : CompilerIrValue]
+  [value : CompilerIrValue]) : bool
+  (and
+    (opt-scratch-value-derived? roots facts ptr)
+    (not (opt-scratch-value-derived? roots facts value))))
+
+(define (opt-scratch-update-nonalloc-facts
+  [state : OptScratchScopeState]
+  [instr : CompilerIrInstr]) : OptScratchScopeState
+  (match state
+    [(OptScratchScopeState _ _ roots facts _)
+      (opt-scratch-state-facts
+        state
+        (match instr
+          [(IrInstrStorePtr ptr value _)
+            (if (opt-scratch-storeptr-keeps-facts? roots facts ptr value)
+              facts
+              (opt-alias-update-facts facts instr))]
+          [(IrInstrStore _ value _)
+            (if (opt-scratch-value-derived? roots facts value)
+              (opt-alias-update-facts facts instr)
+              facts)]
+          [_ (opt-alias-update-facts facts instr)]))]))
+
+(define (opt-scratch-state-step
+  [state : OptScratchScopeState]
+  [instr : CompilerIrInstr]) : OptScratchScopeState
+  (match state
+    [(OptScratchScopeState _ _ roots facts _)
+      (let
+        [blocked : OptScratchScopeState
+          (opt-scratch-state-with-blocker
+            state
+            (opt-scratch-blocker-reason roots facts instr))]
+        (match (opt-scratch-direct-alloc instr)
+          [(OptScratchAlloc dst bytes)
+            (opt-scratch-state-record-alloc blocked dst bytes)]
+          [(OptScratchNoAlloc)
+            (opt-scratch-update-nonalloc-facts blocked instr)]))]))
+
+(define (opt-scratch-state-initial) : OptScratchScopeState
+  (OptScratchScopeState
+    0
+    0
+    (OptScratchRootNil)
+    (OptAliasNil)
+    (OptScratchNoBlocker)))
+
+(define (opt-scratch-scope-report-from-state [state : OptScratchScopeState]) : OptScratchScopeReport
+  (match state
+    [(OptScratchScopeState allocs bytes _ _ blocker)
+      (OptScratchScopeReport allocs bytes blocker)]))
+
+(define (opt-scratch-scope-scan-instrs
+  [state : OptScratchScopeState]
+  [instrs : CompilerIrInstrList]) : OptScratchScopeState
+  (match instrs
+    [(IrInstrNil) state]
+    [(IrInstrCons instr rest)
+      (opt-scratch-scope-scan-instrs
+        (opt-scratch-state-step state instr)
+        (box-get rest))]))
+
+(define (opt-scratch-scope-scan-instr-seq-from
+  [state : OptScratchScopeState]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : OptScratchScopeState
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    state
+    (opt-scratch-scope-scan-instr-seq-from
+      (opt-scratch-state-step state (compiler-ir-instr-seq-ref instrs index))
+      instrs
+      (+ index 1))))
+
+(define (opt-scratch-scope-scan-blocks
+  [state : OptScratchScopeState]
+  [blocks : CompilerIrBlockList]) : OptScratchScopeState
+  (match blocks
+    [(IrBlockNil) state]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (opt-scratch-scope-scan-blocks
+            (opt-scratch-scope-scan-instr-seq-from state instrs 0)
+            (box-get rest))])]
+    [(IrBlockArray seq)
+      (opt-scratch-scope-scan-blocks state (compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-scratch-scope-report-instrs [instrs : CompilerIrInstrList]) : OptScratchScopeReport
+  (opt-scratch-scope-report-from-state
+    (opt-scratch-scope-scan-instrs (opt-scratch-state-initial) instrs)))
+
+(define (opt-scratch-scope-report-block [block : CompilerIrBlock]) : OptScratchScopeReport
+  (match block
+    [(IrBlock _ instrs)
+      (opt-scratch-scope-report-from-state
+        (opt-scratch-scope-scan-instr-seq-from
+          (opt-scratch-state-initial)
+          instrs
+          0))]))
+
+(define (opt-scratch-scope-report-blocks [blocks : CompilerIrBlockList]) : OptScratchScopeReport
+  (opt-scratch-scope-report-from-state
+    (opt-scratch-scope-scan-blocks (opt-scratch-state-initial) blocks)))
+
+(define (opt-scratch-report-candidate?
+  [report : OptScratchScopeReport]
+  [expected-allocs : i64]
+  [expected-bytes : i64]) : bool
+  (match report
+    [(OptScratchScopeReport allocs bytes blocker)
+      (and
+        (= allocs expected-allocs)
+        (= bytes expected-bytes)
+        (opt-scratch-blocker-none? blocker))]))
+
+(define (opt-scratch-report-blocked?
+  [report : OptScratchScopeReport]
+  [expected-allocs : i64]
+  [expected-bytes : i64]
+  [reason : String]) : bool
+  (match report
+    [(OptScratchScopeReport allocs bytes blocker)
+      (and
+        (= allocs expected-allocs)
+        (= bytes expected-bytes)
+        (match blocker
+          [(OptScratchBlocked found) (string-eq found reason)]
+          [(OptScratchNoBlocker) false]))]))
+
+(cfg
+  compile-profile
+  (define (compiler-opt-scratch-region-report-status
+    [blocker : OptScratchBlockerReason]) : String
+    (match blocker
+      [(OptScratchNoBlocker) "candidate"]
+      [(OptScratchBlocked _) "blocked"])))
+
+(cfg
+  compile-profile
+  (define (compiler-opt-scratch-region-report-reason
+    [blocker : OptScratchBlockerReason]) : String
+    (match blocker
+      [(OptScratchNoBlocker) "none"]
+      [(OptScratchBlocked reason) reason])))
+
+(cfg
+  compile-profile
+  (define (compiler-opt-scratch-region-report-line
+    [status : String]
+    [scope : String]
+    [function : String]
+    [label : String]
+    [latch : String]
+    [allocs : i64]
+    [bytes : i64]
+    [reason : String]) : String
+    (string-concat5
+      "compile-profile-detail|scratch_region|"
+      status
+      "|scope="
+      scope
+      (string-concat5
+        "|function="
+        function
+        "|label="
+        label
+        (string-concat5
+          "|latch="
+          latch
+          "|allocs="
+          (int->string allocs)
+          (string-concat5
+            "|known_bytes="
+            (int->string bytes)
+            "|blocker="
+            reason
+            "\n"))))))
+
+(cfg
+  compile-profile
+  (define (compiler-opt-scratch-region-report-one
+    [scope : String]
+    [function : String]
+    [label : String]
+    [latch : String]
+    [report : OptScratchScopeReport]) : unit
+    (match report
+      [(OptScratchScopeReport allocs bytes blocker)
+        (if (> allocs 0)
+          (print-error
+            (compiler-opt-scratch-region-report-line
+              (compiler-opt-scratch-region-report-status blocker)
+              scope
+              function
+              label
+              latch
+              allocs
+              bytes
+              (compiler-opt-scratch-region-report-reason blocker)))
+          unit)])))
+
+(cfg
+  compile-profile
+  (define (compiler-opt-scratch-region-report-blocks
+    [function : String]
+    [blocks : CompilerIrBlockList]) : unit
+    (match blocks
+      [(IrBlockNil) unit]
+      [(IrBlockCons block rest)
+        (begin
+          (match block
+            [(IrBlock label _)
+              (compiler-opt-scratch-region-report-one
+                "block"
+                function
+                label
+                "-"
+                (opt-scratch-scope-report-block block))])
+          (compiler-opt-scratch-region-report-blocks function (box-get rest)))]
+      [(IrBlockArray seq)
+        (compiler-opt-scratch-region-report-blocks
+          function
+          (compiler-ir-block-seq-to-list seq))])))
+
+(cfg
+  compile-profile
+  (define (compiler-opt-scratch-region-report-loops
+    [function : String]
+    [loops : OptNaturalLoopList]) : unit
+    (match loops
+      [(OptNaturalLoopNil) unit]
+      [(OptNaturalLoopCons loop rest)
+        (begin
+          (compiler-opt-scratch-region-report-one
+            "loop"
+            function
+            (opt-natural-loop-header loop)
+            (opt-natural-loop-latch loop)
+            (opt-scratch-scope-report-blocks
+              (opt-natural-loop-body-blocks loop)))
+          (compiler-opt-scratch-region-report-loops function (box-get rest)))])))
+
+(cfg
+  compile-profile
+  (define (compiler-opt-scratch-region-report-function
+    [func : CompilerIrFunction]) : unit
+    (match func
+      [(IrFunction name _ _ _ blocks)
+        (begin
+          (compiler-opt-scratch-region-report-one
+            "function"
+            name
+            "-"
+            "-"
+            (opt-scratch-scope-report-blocks blocks))
+          (compiler-opt-scratch-region-report-blocks name blocks)
+          (compiler-opt-scratch-region-report-loops
+            name
+            (opt-cfg-natural-loops blocks)))])))
+
+(cfg
+  compile-profile
+  (define (compiler-opt-scratch-region-report-function-escaping
+    [func : CompilerIrFunction]
+    [scratch : i64]) : unit
+    (let
+      [enclosing : i64 (arena-current)]
+      (begin
+        (unsafe
+          (arena-set! scratch))
+        (let
+          [mark : i64 (arena-mark)]
+          (begin
+            (compiler-opt-scratch-region-report-function func)
+            (unsafe
+              (arena-rewind mark)
+              (arena-set! enclosing))))))))
+
+(define (opt-scratch-test-alloc) : CompilerIrInstr
+  (IrInstrCall 1 "tl_alloc" (IrCallArgsOne (IrValueI64 32)) (AstTyU64)))
+
+(define (opt-scratch-test-return-zero) : CompilerIrInstr
+  (IrInstrReturn (IrSomeValue (IrValueI64 0))))
+
+(define (opt-scratch-test-one-block [middle : CompilerIrInstr]) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (opt-scratch-test-alloc)
+    (compiler-ir-instr-cons
+      middle
+      (compiler-ir-instr-cons (opt-scratch-test-return-zero) IrInstrNil))))
+
+(define (opt-scratch-positive-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (opt-scratch-test-alloc)
+    (compiler-ir-instr-cons
+      (IrInstrGep 2 (IrValueVar 1) (IrValueI64 0) (AstTyU64))
+      (compiler-ir-instr-cons
+        (IrInstrStorePtr (IrValueVar 2) (IrValueI64 7) (AstTyU64))
+        (compiler-ir-instr-cons
+          (IrInstrLoad 3 (IrValueVar 2) (AstTyU64))
+          (compiler-ir-instr-cons (opt-scratch-test-return-zero) IrInstrNil))))))
+
+(define (opt-scratch-returned-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (opt-scratch-test-alloc)
+    (compiler-ir-instr-cons
+      (IrInstrReturn (IrSomeValue (IrValueVar 1)))
+      IrInstrNil)))
+
+(define (opt-scratch-loop-candidate-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons (IrInstrJump "loop") IrInstrNil))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "loop"
+        (compiler-ir-instr-cons
+          (opt-scratch-test-alloc)
+          (compiler-ir-instr-cons
+            (IrInstrBranch (IrValueBool true) "body" "exit")
+            IrInstrNil)))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "body"
+          (compiler-ir-instr-cons (IrInstrJump "loop") IrInstrNil))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "exit"
+            (compiler-ir-instr-cons (opt-scratch-test-return-zero) IrInstrNil))
+          IrBlockNil)))))
+
+(define (opt-scratch-loop-list-has-candidate? [loops : OptNaturalLoopList]) : bool
+  (match loops
+    [(OptNaturalLoopNil) false]
+    [(OptNaturalLoopCons loop rest)
+      (or
+        (opt-scratch-report-candidate?
+          (opt-scratch-scope-report-blocks (opt-natural-loop-body-blocks loop))
+          1
+          32)
+        (opt-scratch-loop-list-has-candidate? (box-get rest)))]))
+
+(define (compiler-optimize-scratch-region-self-test) : i64
+  (let
+    [positive : OptScratchScopeReport
+      (opt-scratch-scope-report-instrs (opt-scratch-positive-instrs))]
+    [loop-positive : bool
+      (opt-scratch-loop-list-has-candidate?
+        (opt-cfg-natural-loops (opt-scratch-loop-candidate-blocks)))]
+    [call-blocked : OptScratchScopeReport
+      (opt-scratch-scope-report-instrs
+        (opt-scratch-test-one-block
+          (IrInstrCall 9 "touch" (IrCallArgsNil) (AstTyUnit))))]
+    [extern-blocked : OptScratchScopeReport
+      (opt-scratch-scope-report-instrs
+        (opt-scratch-test-one-block
+          (IrInstrCallIndirectC
+            9
+            (IrValueFunction "ffi_touch")
+            (IrCallArgsNil)
+            (AstTyI64))))]
+    [raw-blocked : OptScratchScopeReport
+      (opt-scratch-scope-report-instrs
+        (opt-scratch-test-one-block (IrInstrAddrOf 2 1)))]
+    [store-blocked : OptScratchScopeReport
+      (opt-scratch-scope-report-instrs
+        (opt-scratch-test-one-block
+          (IrInstrStorePtr (IrValueVar 99) (IrValueVar 1) (AstTyU64))))]
+    [arena-blocked : OptScratchScopeReport
+      (opt-scratch-scope-report-instrs
+        (opt-scratch-test-one-block
+          (IrInstrCall 9 "tl_region_mark" (IrCallArgsNil) (AstTyI64))))]
+    [return-blocked : OptScratchScopeReport
+      (opt-scratch-scope-report-instrs (opt-scratch-returned-instrs))]
+    (core/cond
+      (not (opt-scratch-report-candidate? positive 1 32))
+      1
+      (not loop-positive)
+      2
+      (not (opt-scratch-report-blocked? call-blocked 1 32 "call"))
+      3
+      (not (opt-scratch-report-blocked? extern-blocked 1 32 "extern_call"))
+      4
+      (not (opt-scratch-report-blocked? raw-blocked 1 32 "raw_pointer"))
+      5
+      (not (opt-scratch-report-blocked? store-blocked 1 32 "store_outer"))
+      6
+      (not (opt-scratch-report-blocked? arena-blocked 1 32 "arena_helper"))
+      7
+      (not (opt-scratch-report-blocked? return-blocked 1 32 "return_escape"))
+      8
+      42)))
 
 ;; --- block-local redundant-load CSE (#2342) ---------------------------------
 (defenum OptLoadKey

@@ -17,7 +17,8 @@
 ;; pipeline to a fixed point, and removes dominated repeated scalar expressions
 ;; across blocks, hoists safe scalar loop invariants into preheaders, and
 ;; reduces simple induction-derived loop offsets/addresses, eliminates local
-;; redundant loads when alias facts prove no barrier intervened, and validates
+;; redundant loads when alias facts prove no barrier intervened, reports
+;; implicit scratch-region candidates/blockers, and validates
 ;; unused call-graph/SCC infrastructure for the next inliner phases; returns 42
 ;; only when every self-test passes.
 (import "compiler_optimize.tl")
@@ -173,4 +174,5 @@
     (unless (= (compiler-optimize-spans-self-test) 42) (return 1))
     (unless (= (compiler-optimize-gvn-self-test) 42) (return 1))
     (unless (= (compiler-optimize-load-cse-self-test) 42) (return 1))
+    (unless (= (compiler-optimize-scratch-region-self-test) 42) (return 1))
     (compiler-optimize-alias-self-test)))

@@ -659,6 +659,14 @@ unsupported key descriptor instead of using source-level traits or implicit
 identity even when the key/value types and public item names are otherwise the
 same.
 
+The built-in `String` and `i64` key descriptors support nominal struct and enum
+value types. Aggregate values are stored as ordinary map-owned values, may be
+looked up through owned results, and may be borrowed through
+`*-get-value-borrowed` for field/payload inspection while the map is not
+mutated. This does not add aggregate key hashing or equality: aggregate keys
+remain unsupported until a future descriptor defines their hash/equality
+contract.
+
 Generated hashmap families may also expose borrowed-value lookup helpers such
 as `*-get-value-borrowed`. These helpers are independent from borrowed-key
 lookup: the key path controls whether lookup can inspect a borrowed key without

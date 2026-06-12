@@ -197,6 +197,7 @@ string_caller_result.tl
 str_cat.tl
 test.tl
 thread.tl
+time.tl
 text_buf.tl
 text_buf_borrowed.tl
 vector.tl
@@ -244,6 +245,7 @@ stdlib/tests/profile_api.tl|42|-|-
 stdlib/tests/queue_api.tl|42|-|-
 stdlib/tests/random_api.tl|42|-|-
 stdlib/tests/thread_api.tl|42|-|-
+stdlib/tests/time_api.tl|42|-|-
 stdlib/tests/text_buf_api.tl|42|-|-
 stdlib/tests/vector_api.tl|42|-|-
 stdlib/tests/test_assert_failure.tl|134|-|literal:stdlib test failure message

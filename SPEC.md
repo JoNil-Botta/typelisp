@@ -3983,7 +3983,7 @@ code offsets.
 
 The metadata section is UTF-8/ASCII S-expression text with stable field order:
 
-```lisp
+```lisp test=ignore name=tlci-metadata-schema reason="tlci metadata S-expression, not TypeLisp source"
 (typelisp-tlci-metadata
   (version "v1")
   (package (name "pkg-name") (version "0.1.0"))

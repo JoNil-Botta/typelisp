@@ -17258,6 +17258,10 @@ tl_memcpy:
             emit-entry
             crt-entry)]
         (begin
+          ;; This window previously started at the "collect" finish and was
+          ;; overwritten by the next start without ever being reported,
+          ;; hiding the prefix composition from the phase breakdown.
+          (cfg compile-profile (compiler-backend-profile-finish "prefix"))
           (cfg compile-profile (compiler-backend-profile-start))
           (match (compiler-backend-emit-functions-buffer-into
             target

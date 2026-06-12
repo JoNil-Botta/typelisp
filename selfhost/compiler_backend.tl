@@ -368,6 +368,25 @@
   [rest : BackendStringList]) : BackendStringList
   (BackendStringCons head (box rest)))
 
+(define (compiler-backend-empty-string-list) : BackendStringList
+  BackendStringNil)
+
+(define compiler-backend-current-phi-targets : BackendStringList
+  (compiler-backend-empty-string-list))
+
+(define compiler-backend-current-phi-target-count : i64
+  0)
+
+(define (compiler-backend-string-list-contains?
+  [items : BackendStringList]
+  [needle : String]) : bool
+  (match items
+    [(BackendStringNil) false]
+    [(BackendStringCons head rest)
+      (if (string-eq head needle)
+        true
+        (compiler-backend-string-list-contains? (box-get rest) needle))]))
+
 (defstruct BackendStringSet
   (seen StringI64Map)
   (items BackendStringList))
@@ -8366,6 +8385,378 @@
         program-index
         vars)]))
 
+(define (compiler-backend-instr-seq-starts-with-phi?
+  [instrs : CompilerIrInstrSeq]) : bool
+  (if (= (compiler-ir-instr-seq-count instrs) 0)
+    false
+    (match (compiler-ir-instr-seq-ref instrs 0)
+      [(IrInstrPhi _ _ _) true]
+      [_ false])))
+
+(define (compiler-backend-phi-target-labels
+  [blocks : CompilerIrBlockList]
+  [out : BackendStringList]) : BackendStringList
+  (match blocks
+    [(IrBlockNil) out]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label instrs)
+          (compiler-backend-phi-target-labels
+            (box-get rest)
+            (if (compiler-backend-instr-seq-starts-with-phi? instrs)
+              (begin
+                (set!
+                  compiler-backend-current-phi-target-count
+                  (+ compiler-backend-current-phi-target-count 1))
+                (compiler-backend-string-cons label out))
+              out))])]
+    [(IrBlockArray seq)
+      (compiler-backend-phi-target-labels
+        (compiler-ir-block-seq-to-list seq)
+        out)]))
+
+(define (compiler-backend-phi-target-labels-for-blocks
+  [blocks : CompilerIrBlockList]) : BackendStringList
+  (begin
+    (set! compiler-backend-current-phi-target-count 0)
+    (compiler-backend-phi-target-labels
+      blocks
+      (compiler-backend-empty-string-list))))
+
+(define (compiler-backend-branch-needs-phi-copies?
+  [true-label : String]
+  [false-label : String]) : bool
+  (if (= compiler-backend-current-phi-target-count 0)
+    false
+    (or
+      (compiler-backend-string-list-contains?
+        compiler-backend-current-phi-targets
+        true-label)
+      (compiler-backend-string-list-contains?
+        compiler-backend-current-phi-targets
+        false-label))))
+
+(define (compiler-backend-branch-edge-label
+  [current-label : String]
+  [suffix : String]) : String
+  (string-append (string-append current-label "_branch_") suffix))
+
+(define (compiler-backend-emit-branch-edge-block
+  [function : String]
+  [edge-label : String]
+  [target-label : String]
+  [copies : String]) : String
+  (backend-cat5
+    (compiler-backend-asm-label function edge-label)
+    ":\n"
+    copies
+    (compiler-backend-jump-label function target-label)
+    ""))
+
+(define (compiler-backend-emit-branch-edges
+  [function : String]
+  [current-label : String]
+  [true-label : String]
+  [false-label : String]
+  [true-copies : String]
+  [false-copies : String]
+  [branch-asm : String]) : String
+  (let
+    [true-edge : String
+      (compiler-backend-branch-edge-label current-label "true")]
+    [false-edge : String
+      (compiler-backend-branch-edge-label current-label "false")]
+    (string-append
+      branch-asm
+      (string-append
+        (compiler-backend-emit-branch-edge-block
+          function
+          true-edge
+          true-label
+          true-copies)
+        (compiler-backend-emit-branch-edge-block
+          function
+          false-edge
+          false-label
+          false-copies)))))
+
+(define (compiler-backend-emit-branch-with-phi-copies
+  [assignments : CompilerRegAssignmentList]
+  [function : String]
+  [blocks : CompilerIrBlockList]
+  [current-label : String]
+  [cond : CompilerIrValue]
+  [true-label : String]
+  [false-label : String]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [program-index : CompilerBackendProgramIndex]
+  [vars : i64]) : ResultCompilerBackend
+  (if (not (compiler-backend-branch-needs-phi-copies? true-label false-label))
+    (compiler-backend-emit-branch
+      assignments
+      function
+      cond
+      true-label
+      false-label
+      fallthrough)
+    (match (compiler-backend-emit-phi-edge-copies
+      assignments
+      blocks
+      true-label
+      current-label
+      program-index
+      vars)
+      [(OkCompilerBackend true-copies)
+        (match (compiler-backend-emit-phi-edge-copies
+          assignments
+          blocks
+          false-label
+          current-label
+          program-index
+          vars)
+          [(OkCompilerBackend false-copies)
+            (let
+              [true-edge : String
+                (compiler-backend-branch-edge-label current-label "true")]
+              [false-edge : String
+                (compiler-backend-branch-edge-label current-label "false")]
+              (match (compiler-backend-emit-branch
+                assignments
+                function
+                cond
+                true-edge
+                false-edge
+                CompilerBackendNoLabel)
+                [(OkCompilerBackend branch-asm)
+                  (OkCompilerBackend
+                    (compiler-backend-emit-branch-edges
+                      function
+                      current-label
+                      true-label
+                      false-label
+                      true-copies
+                      false-copies
+                      branch-asm))]
+                [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+      [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
+
+(define (compiler-backend-emit-compare-branch-with-phi-copies
+  [assignments : CompilerRegAssignmentList]
+  [function : String]
+  [blocks : CompilerIrBlockList]
+  [current-label : String]
+  [op : CompilerIrBinOp]
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]
+  [ty : AstType]
+  [true-label : String]
+  [false-label : String]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [program-index : CompilerBackendProgramIndex]
+  [vars : i64]) : ResultCompilerBackend
+  (if (not (compiler-backend-branch-needs-phi-copies? true-label false-label))
+    (compiler-backend-emit-compare-branch
+      assignments
+      function
+      op
+      lhs
+      rhs
+      ty
+      true-label
+      false-label
+      fallthrough)
+    (match (compiler-backend-emit-phi-edge-copies
+      assignments
+      blocks
+      true-label
+      current-label
+      program-index
+      vars)
+      [(OkCompilerBackend true-copies)
+        (match (compiler-backend-emit-phi-edge-copies
+          assignments
+          blocks
+          false-label
+          current-label
+          program-index
+          vars)
+          [(OkCompilerBackend false-copies)
+            (let
+              [true-edge : String
+                (compiler-backend-branch-edge-label current-label "true")]
+              [false-edge : String
+                (compiler-backend-branch-edge-label current-label "false")]
+              (match (compiler-backend-emit-compare-branch
+                assignments
+                function
+                op
+                lhs
+                rhs
+                ty
+                true-edge
+                false-edge
+                CompilerBackendNoLabel)
+                [(OkCompilerBackend branch-asm)
+                  (OkCompilerBackend
+                    (compiler-backend-emit-branch-edges
+                      function
+                      current-label
+                      true-label
+                      false-label
+                      true-copies
+                      false-copies
+                      branch-asm))]
+                [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+      [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
+
+(define (compiler-backend-emit-load-compare-branch-with-phi-copies
+  [assignments : CompilerRegAssignmentList]
+  [function : String]
+  [blocks : CompilerIrBlockList]
+  [current-label : String]
+  [ptr : CompilerIrValue]
+  [op : CompilerIrBinOp]
+  [rhs : CompilerIrValue]
+  [ty : AstType]
+  [true-label : String]
+  [false-label : String]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [program-index : CompilerBackendProgramIndex]
+  [vars : i64]) : ResultCompilerBackend
+  (if (not (compiler-backend-branch-needs-phi-copies? true-label false-label))
+    (compiler-backend-emit-load-compare-branch
+      assignments
+      function
+      ptr
+      op
+      rhs
+      ty
+      true-label
+      false-label
+      fallthrough)
+    (match (compiler-backend-emit-phi-edge-copies
+      assignments
+      blocks
+      true-label
+      current-label
+      program-index
+      vars)
+      [(OkCompilerBackend true-copies)
+        (match (compiler-backend-emit-phi-edge-copies
+          assignments
+          blocks
+          false-label
+          current-label
+          program-index
+          vars)
+          [(OkCompilerBackend false-copies)
+            (let
+              [true-edge : String
+                (compiler-backend-branch-edge-label current-label "true")]
+              [false-edge : String
+                (compiler-backend-branch-edge-label current-label "false")]
+              (match (compiler-backend-emit-load-compare-branch
+                assignments
+                function
+                ptr
+                op
+                rhs
+                ty
+                true-edge
+                false-edge
+                CompilerBackendNoLabel)
+                [(OkCompilerBackend branch-asm)
+                  (OkCompilerBackend
+                    (compiler-backend-emit-branch-edges
+                      function
+                      current-label
+                      true-label
+                      false-label
+                      true-copies
+                      false-copies
+                      branch-asm))]
+                [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+      [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
+
+(define (compiler-backend-emit-gep-load-compare-branch-with-phi-copies
+  [assignments : CompilerRegAssignmentList]
+  [function : String]
+  [blocks : CompilerIrBlockList]
+  [current-label : String]
+  [base : CompilerIrValue]
+  [offset : CompilerIrValue]
+  [elem-ty : AstType]
+  [op : CompilerIrBinOp]
+  [rhs : CompilerIrValue]
+  [ty : AstType]
+  [true-label : String]
+  [false-label : String]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [program-index : CompilerBackendProgramIndex]
+  [vars : i64]) : ResultCompilerBackend
+  (if (not (compiler-backend-branch-needs-phi-copies? true-label false-label))
+    (compiler-backend-emit-gep-load-compare-branch
+      assignments
+      function
+      base
+      offset
+      elem-ty
+      op
+      rhs
+      ty
+      true-label
+      false-label
+      fallthrough)
+    (match (compiler-backend-emit-phi-edge-copies
+      assignments
+      blocks
+      true-label
+      current-label
+      program-index
+      vars)
+      [(OkCompilerBackend true-copies)
+        (match (compiler-backend-emit-phi-edge-copies
+          assignments
+          blocks
+          false-label
+          current-label
+          program-index
+          vars)
+          [(OkCompilerBackend false-copies)
+            (let
+              [true-edge : String
+                (compiler-backend-branch-edge-label current-label "true")]
+              [false-edge : String
+                (compiler-backend-branch-edge-label current-label "false")]
+              (match (compiler-backend-emit-gep-load-compare-branch
+                assignments
+                function
+                base
+                offset
+                elem-ty
+                op
+                rhs
+                ty
+                true-edge
+                false-edge
+                CompilerBackendNoLabel)
+                [(OkCompilerBackend branch-asm)
+                  (OkCompilerBackend
+                    (compiler-backend-emit-branch-edges
+                      function
+                      current-label
+                      true-label
+                      false-label
+                      true-copies
+                      false-copies
+                      branch-asm))]
+                [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+      [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
+
 (define (compiler-backend-tail-call-return-normalize [ty : AstType]) : String
   (if (= (compiler-backend-type-size ty) 0)
     "    movq $0, %rax\n"
@@ -9556,13 +9947,17 @@
             (ErrCompilerBackend
               (compiler-backend-apply-instr-diagnostic message instr-diag))])]
       [(IrInstrBranch cond true-label false-label)
-        (match (compiler-backend-emit-branch
+        (match (compiler-backend-emit-branch-with-phi-copies
           assignments
           function
+          blocks
+          current-label
           cond
           true-label
           false-label
-          fallthrough)
+          fallthrough
+          program-index
+          vars)
           [(OkCompilerBackend asm) (OkCompilerBackend asm)]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
@@ -9941,16 +10336,20 @@
   [func-diag : CompilerDiagnostic]
   [use-counts : (Array i64)]
   [buf : TextBuf]) : ResultCompilerBackend
-  (match (compiler-backend-emit-compare-branch
+  (match (compiler-backend-emit-compare-branch-with-phi-copies
     assignments
     function
+    blocks
+    current-label
     op
     lhs
     rhs
     (compiler-backend-binop-operand-ty types global-types op lhs rhs ty)
     true-label
     false-label
-    (compiler-backend-fused-compare-fallthrough rest fallthrough))
+    (compiler-backend-fused-compare-fallthrough rest fallthrough)
+    program-index
+    vars)
     [(OkCompilerBackend head)
       (compiler-backend-emit-instrs
         target
@@ -10014,16 +10413,20 @@
   [func-diag : CompilerDiagnostic]
   [use-counts : (Array i64)]
   [buf : TextBuf]) : ResultCompilerBackend
-  (match (compiler-backend-emit-load-compare-branch
+  (match (compiler-backend-emit-load-compare-branch-with-phi-copies
     assignments
     function
+    blocks
+    current-label
     ptr
     op
     rhs
     cmp-ty
     true-label
     false-label
-    (compiler-backend-fused-compare-fallthrough rest fallthrough))
+    (compiler-backend-fused-compare-fallthrough rest fallthrough)
+    program-index
+    vars)
     [(OkCompilerBackend head)
       (compiler-backend-emit-instrs
         target
@@ -10090,9 +10493,11 @@
   [func-diag : CompilerDiagnostic]
   [use-counts : (Array i64)]
   [buf : TextBuf]) : ResultCompilerBackend
-  (match (compiler-backend-emit-gep-load-compare-branch
+  (match (compiler-backend-emit-gep-load-compare-branch-with-phi-copies
     assignments
     function
+    blocks
+    current-label
     base
     offset
     elem-ty
@@ -10101,7 +10506,9 @@
     cmp-ty
     true-label
     false-label
-    (compiler-backend-fused-compare-fallthrough rest fallthrough))
+    (compiler-backend-fused-compare-fallthrough rest fallthrough)
+    program-index
+    vars)
     [(OkCompilerBackend head)
       (compiler-backend-emit-instrs
         target
@@ -12415,6 +12822,10 @@
         [types : CompilerRegVarTypeList (compiler-reg-plan-types reg-plan)]
         [use-counts : (Array i64)
           (compiler-backend-function-use-counts vars blocks)]
+        [_phi-targets : unit
+          (set!
+            compiler-backend-current-phi-targets
+            (compiler-backend-phi-target-labels-for-blocks blocks))]
         (match (compiler-backend-emit-param-spills
           target
           assignments

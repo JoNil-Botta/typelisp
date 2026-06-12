@@ -3879,25 +3879,26 @@
   [assignments : CompilerRegAssignmentList]
   [var : i64]
   [index : i64]
-  [vars : i64]) : String
+  [vars : i64]) : ResultBackendReg
   (match (compiler-reg-assignment-lookup assignments var)
     [(CompilerRegSomeLocation location)
       (match location
         [(CompilerRegRegisterPair reg-a reg-b)
-          (if (= index 0)
-            reg-a
-            reg-b)]
-        [(CompilerRegSpill offset)
-          (compiler-backend-frame-offset
+          (OkBackendReg
             (if (= index 0)
-              offset
-              (- offset 8)))]
-        [(CompilerRegRegister home) home])]
+              reg-a
+              reg-b))]
+        [(CompilerRegSpill _)
+          (ErrBackendReg
+            "backend: register-group var cannot use an 8-byte spill slot")]
+        [(CompilerRegRegister _)
+          (ErrBackendReg "backend: register-group var has scalar register home")])]
     [(CompilerRegNoLocation)
-      (compiler-backend-frame-offset
-        (if (= index 0)
-          (compiler-backend-group-word0-slot var)
-          (compiler-backend-group-word1-slot var vars assignments)))]))
+      (OkBackendReg
+        (compiler-backend-frame-offset
+          (if (= index 0)
+            (compiler-backend-group-word0-slot var)
+            (compiler-backend-group-word1-slot var vars assignments))))]))
 
 ;; #2386: load a group value's two words into `reg0`/`reg1` (for return -> rax:rdx
 ;; or an argument register pair). The value must be a group var.
@@ -3906,23 +3907,29 @@
   [value : CompilerIrValue]
   [reg0 : String]
   [reg1 : String]
-  [vars : i64]) : String
+  [vars : i64]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (match value
     [(IrValueVar v)
-      (string-append
-        (backend-cat5
-          "    movq "
-          (compiler-backend-group-word-operand assignments v 0 vars)
-          ", "
-          reg0
-          "\n")
-        (backend-cat5
-          "    movq "
-          (compiler-backend-group-word-operand assignments v 1 vars)
-          ", "
-          reg1
-          "\n"))]
-    [_ ""]))
+      (match (compiler-backend-group-word-operand assignments v 0 vars)
+        [(OkBackendReg word0)
+          (match (compiler-backend-group-word-operand assignments v 1 vars)
+            [(OkBackendReg word1)
+              (OkCompilerBackend
+                (string-append
+                  (backend-cat5 "    movq " word0 ", " reg0 "\n")
+                  (backend-cat5 "    movq " word1 ", " reg1 "\n")))]
+            [(ErrBackendReg message)
+              (ErrCompilerBackend
+                (compiler-diagnostic-with-message instr-diag message))])]
+        [(ErrBackendReg message)
+          (ErrCompilerBackend
+            (compiler-diagnostic-with-message instr-diag message))])]
+    [_
+      (ErrCompilerBackend
+        (compiler-diagnostic-with-message
+          instr-diag
+          "backend: register-group value must be a var"))]))
 
 ;; #2386: store a group's two words FROM `reg0`/`reg1` into the group var's home
 ;; (for a call result captured in rax:rdx, or an incoming group parameter).
@@ -3931,20 +3938,21 @@
   [var : i64]
   [reg0 : String]
   [reg1 : String]
-  [vars : i64]) : String
-  (string-append
-    (backend-cat5
-      "    movq "
-      reg0
-      ", "
-      (compiler-backend-group-word-operand assignments var 0 vars)
-      "\n")
-    (backend-cat5
-      "    movq "
-      reg1
-      ", "
-      (compiler-backend-group-word-operand assignments var 1 vars)
-      "\n")))
+  [vars : i64]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (match (compiler-backend-group-word-operand assignments var 0 vars)
+    [(OkBackendReg word0)
+      (match (compiler-backend-group-word-operand assignments var 1 vars)
+        [(OkBackendReg word1)
+          (OkCompilerBackend
+            (string-append
+              (backend-cat5 "    movq " reg0 ", " word0 "\n")
+              (backend-cat5 "    movq " reg1 ", " word1 "\n")))]
+        [(ErrBackendReg message)
+          (ErrCompilerBackend
+            (compiler-diagnostic-with-message instr-diag message))])]
+    [(ErrBackendReg message)
+      (ErrCompilerBackend (compiler-diagnostic-with-message instr-diag message))]))
 
 ;; #2386: a register-group argument needs TWO consecutive integer arg registers.
 ;; If fewer than two remain it is passed entirely on the stack (both eightbytes),
@@ -3963,37 +3971,47 @@
   [assignments : CompilerRegAssignmentList]
   [value : CompilerIrValue]
   [stack-idx : i64]
-  [vars : i64]) : String
+  [vars : i64]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (match value
     [(IrValueVar v)
-      (string-append
-        (backend-cat4
-          "    movq "
-          (compiler-backend-group-word-operand assignments v 0 vars)
-          ", %r11\n"
-          "")
-        (string-append
-          (backend-cat4
-            "    movq %r11, "
-            (int->string
-              (compiler-backend-outgoing-stack-arg-offset target stack-idx))
-            "(%rsp)\n"
-            "")
-          (string-append
-            (backend-cat4
-              "    movq "
-              (compiler-backend-group-word-operand assignments v 1 vars)
-              ", %r11\n"
-              "")
-            (backend-cat4
-              "    movq %r11, "
-              (int->string
-                (compiler-backend-outgoing-stack-arg-offset
-                  target
-                  (+ stack-idx 1)))
-              "(%rsp)\n"
-              ""))))]
-    [_ ""]))
+      (match (compiler-backend-group-word-operand assignments v 0 vars)
+        [(OkBackendReg word0)
+          (match (compiler-backend-group-word-operand assignments v 1 vars)
+            [(OkBackendReg word1)
+              (OkCompilerBackend
+                (string-append
+                  (backend-cat4 "    movq " word0 ", %r11\n" "")
+                  (string-append
+                    (backend-cat4
+                      "    movq %r11, "
+                      (int->string
+                        (compiler-backend-outgoing-stack-arg-offset
+                          target
+                          stack-idx))
+                      "(%rsp)\n"
+                      "")
+                    (string-append
+                      (backend-cat4 "    movq " word1 ", %r11\n" "")
+                      (backend-cat4
+                        "    movq %r11, "
+                        (int->string
+                          (compiler-backend-outgoing-stack-arg-offset
+                            target
+                            (+ stack-idx 1)))
+                        "(%rsp)\n"
+                        "")))))]
+            [(ErrBackendReg message)
+              (ErrCompilerBackend
+                (compiler-diagnostic-with-message instr-diag message))])]
+        [(ErrBackendReg message)
+          (ErrCompilerBackend
+            (compiler-diagnostic-with-message instr-diag message))])]
+    [_
+      (ErrCompilerBackend
+        (compiler-diagnostic-with-message
+          instr-diag
+          "backend: register-group stack argument must be a var"))]))
 
 ;; #2386: read a stack-passed group parameter's two words from the caller's frame
 ;; (word0 at stack-idx, word1 at stack-idx+1) into the group var's home.
@@ -4002,22 +4020,35 @@
   [assignments : CompilerRegAssignmentList]
   [var : i64]
   [stack-idx : i64]
-  [vars : i64]) : String
-  (string-append
-    (backend-cat4
-      "    movq "
-      (int->string
-        (compiler-backend-incoming-stack-arg-offset target stack-idx))
-      "(%rbp), %rax\n"
-      "")
-    (string-append
-      (backend-cat4
-        "    movq "
-        (int->string
-          (compiler-backend-incoming-stack-arg-offset target (+ stack-idx 1)))
-        "(%rbp), %rdx\n"
-        "")
-      (compiler-backend-emit-group-store assignments var "%rax" "%rdx" vars))))
+  [vars : i64]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (match (compiler-backend-emit-group-store
+    assignments
+    var
+    "%rax"
+    "%rdx"
+    vars
+    instr-diag)
+    [(OkCompilerBackend store)
+      (OkCompilerBackend
+        (string-append
+          (backend-cat4
+            "    movq "
+            (int->string
+              (compiler-backend-incoming-stack-arg-offset target stack-idx))
+            "(%rbp), %rax\n"
+            "")
+          (string-append
+            (backend-cat4
+              "    movq "
+              (int->string
+                (compiler-backend-incoming-stack-arg-offset
+                  target
+                  (+ stack-idx 1)))
+              "(%rbp), %rdx\n"
+              "")
+            store)))]
+    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
 
 (define (compiler-backend-emit-load-typed-value-with-plan
   [assignments : CompilerRegAssignmentList]
@@ -7578,15 +7609,17 @@
                       program-index
                       vars)
                       [(OkCompilerBackend tail)
-                        (OkCompilerBackend
-                          (string-append
-                            (compiler-backend-emit-group-load
-                              assignments
-                              value
-                              reg0
-                              reg1
-                              vars)
-                            tail))]
+                        (match (compiler-backend-emit-group-load
+                          assignments
+                          value
+                          reg0
+                          reg1
+                          vars
+                          func-diag)
+                          [(OkCompilerBackend load)
+                            (OkCompilerBackend (string-append load tail))]
+                          [(ErrCompilerBackend message)
+                            (ErrCompilerBackend message)])]
                       [(ErrCompilerBackend message)
                         (ErrCompilerBackend message)])]
                   [(ErrBackendReg message)
@@ -7610,15 +7643,16 @@
               program-index
               vars)
               [(OkCompilerBackend tail)
-                (OkCompilerBackend
-                  (string-append
-                    (compiler-backend-emit-group-stack-arg
-                      target
-                      assignments
-                      value
-                      stack-idx
-                      vars)
-                    tail))]
+                (match (compiler-backend-emit-group-stack-arg
+                  target
+                  assignments
+                  value
+                  stack-idx
+                  vars
+                  func-diag)
+                  [(OkCompilerBackend stack-arg)
+                    (OkCompilerBackend (string-append stack-arg tail))]
+                  [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
               [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
         (if (compiler-backend-stack-call-arg-for-banks?
           target
@@ -8091,28 +8125,41 @@
   [vars : i64]) : ResultCompilerBackend
   (match source
     [(BackendPhiSourceTemp)
-      (OkCompilerBackend
-        (compiler-backend-emit-store-var-with-plan assignments dst "%r11"))]
+      (if (compiler-backend-group-type? program-index ty)
+        (compiler-backend-emit-group-store
+          assignments
+          dst
+          "%r10"
+          "%r11"
+          vars
+          (compiler-diagnostic-at-start "" ""))
+        (OkCompilerBackend
+          (compiler-backend-emit-store-var-with-plan assignments dst "%r11")))]
     [(BackendPhiSourceValue value)
       (if (compiler-backend-phi-same-home? assignments dst value)
         (OkCompilerBackend "")
         ;; #2386: a register-group phi value carries two words -- copy both halves
         ;; (rax:rdx) through the group ABI, not just word0 via the scalar path.
         (if (compiler-backend-group-type? program-index ty)
-          (OkCompilerBackend
-            (string-append
-              (compiler-backend-emit-group-load
-                assignments
-                value
-                "%rax"
-                "%rdx"
-                vars)
-              (compiler-backend-emit-group-store
+          (match (compiler-backend-emit-group-load
+            assignments
+            value
+            "%rax"
+            "%rdx"
+            vars
+            (compiler-diagnostic-at-start "" ""))
+            [(OkCompilerBackend load)
+              (match (compiler-backend-emit-group-store
                 assignments
                 dst
                 "%rax"
                 "%rdx"
-                vars)))
+                vars
+                (compiler-diagnostic-at-start "" ""))
+                [(OkCompilerBackend store)
+                  (OkCompilerBackend (string-append load store))]
+                [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+            [(ErrCompilerBackend message) (ErrCompilerBackend message)])
           (match (compiler-backend-emit-load-typed-value-with-plan
             assignments
             value
@@ -8179,34 +8226,43 @@
         [(BackendNoPhiCopy)
           (match first
             [(BackendPhiCopy dst source ty)
-              (let
-                [save : String
+              (match (if (compiler-backend-group-type? program-index ty)
+                (compiler-backend-emit-group-load
+                  assignments
+                  (IrValueVar dst)
+                  "%r10"
+                  "%r11"
+                  vars
+                  (compiler-diagnostic-at-start "" ""))
+                (OkCompilerBackend
                   (compiler-backend-emit-load-var-with-plan
                     assignments
                     dst
-                    "%r11")]
-                (match (compiler-backend-emit-phi-source-to-var
-                  assignments
-                  dst
-                  source
-                  ty
-                  program-index
-                  vars)
-                  [(OkCompilerBackend head)
-                    (match (compiler-backend-emit-phi-copy-list
-                      assignments
-                      (compiler-backend-phi-copy-list-replace-source-home
+                    "%r11")))
+                [(OkCompilerBackend save)
+                  (match (compiler-backend-emit-phi-source-to-var
+                    assignments
+                    dst
+                    source
+                    ty
+                    program-index
+                    vars)
+                    [(OkCompilerBackend head)
+                      (match (compiler-backend-emit-phi-copy-list
                         assignments
-                        (compiler-backend-phi-copy-list-remove-dst copies dst)
-                        dst)
-                      program-index
-                      vars)
-                      [(OkCompilerBackend tail)
-                        (OkCompilerBackend
-                          (string-append save (string-append head tail)))]
-                      [(ErrCompilerBackend message)
-                        (ErrCompilerBackend message)])]
-                  [(ErrCompilerBackend message) (ErrCompilerBackend message)]))])])]))
+                        (compiler-backend-phi-copy-list-replace-source-home
+                          assignments
+                          (compiler-backend-phi-copy-list-remove-dst copies dst)
+                          dst)
+                        program-index
+                        vars)
+                        [(OkCompilerBackend tail)
+                          (OkCompilerBackend
+                            (string-append save (string-append head tail)))]
+                        [(ErrCompilerBackend message)
+                          (ErrCompilerBackend message)])]
+                    [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+                [(ErrCompilerBackend message) (ErrCompilerBackend message)])])])]))
 
 (define (compiler-backend-leading-phi-copies
   [assignments : CompilerRegAssignmentList]
@@ -8415,14 +8471,23 @@
     [(IrSomeValue v)
       ;; #2386: a register-group return goes in %rax:%rdx (word0:word1).
       (if (compiler-backend-group-type? program-index ret-ty)
-        (OkCompilerBackend
-          (string-append
-            (compiler-backend-emit-group-load assignments v "%rax" "%rdx" vars)
-            (compiler-backend-return-tail
-              source-function
-              assignments
-              vars
-              blocks)))
+        (match (compiler-backend-emit-group-load
+          assignments
+          v
+          "%rax"
+          "%rdx"
+          vars
+          (compiler-diagnostic-at-start "" ""))
+          [(OkCompilerBackend load)
+            (OkCompilerBackend
+              (string-append
+                load
+                (compiler-backend-return-tail
+                  source-function
+                  assignments
+                  vars
+                  blocks)))]
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)])
         (match (compiler-backend-emit-load-typed-value-with-plan
           assignments
           v
@@ -8765,10 +8830,25 @@
     (compiler-backend-group-type? program-index ty)
     ;; #2386: moving a register-group value copies BOTH words (via %rax:%rdx so
     ;; memory<->memory slot moves are legal).
-    (OkCompilerBackend
-      (string-append
-        (compiler-backend-emit-group-load assignments src "%rax" "%rdx" vars)
-        (compiler-backend-emit-group-store assignments dst "%rax" "%rdx" vars)))
+    (match (compiler-backend-emit-group-load
+      assignments
+      src
+      "%rax"
+      "%rdx"
+      vars
+      (compiler-diagnostic-at-start "" ""))
+      [(OkCompilerBackend load)
+        (match (compiler-backend-emit-group-store
+          assignments
+          dst
+          "%rax"
+          "%rdx"
+          vars
+          (compiler-diagnostic-at-start "" ""))
+          [(OkCompilerBackend store)
+            (OkCompilerBackend (string-append load store))]
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+      [(ErrCompilerBackend message) (ErrCompilerBackend message)])
     (compiler-backend-value-same-home? assignments dst src)
     (OkCompilerBackend "")
     (compiler-backend-float-type? ty)
@@ -9329,41 +9409,45 @@
                 program-index
                 vars)
                 [(OkCompilerBackend args-asm)
-                  (OkCompilerBackend
-                    (string-append
-                      (compiler-backend-emit-call-space-sub call-space)
-                      (string-append
-                        args-asm
+                  (match (if (compiler-backend-group-type? program-index ty)
+                    ;; #2386: a register-group result lands in %rax:%rdx.
+                    (compiler-backend-emit-group-store
+                      assignments
+                      dst
+                      "%rax"
+                      "%rdx"
+                      vars
+                      instr-diag)
+                    (OkCompilerBackend
+                      (compiler-backend-emit-store-typed-var-with-plan
+                        assignments
+                        dst
+                        (if (compiler-backend-float-type? ty)
+                          "%xmm0"
+                          "%rax")
+                        ty)))
+                    [(OkCompilerBackend result-store)
+                      (OkCompilerBackend
                         (string-append
-                          (compiler-backend-varargs-pre-call
-                            target
-                            name
-                            externs
-                            param-types)
-                          (backend-cat5
-                            "    call "
-                            call-symbol
-                            "\n"
+                          (compiler-backend-emit-call-space-sub call-space)
+                          (string-append
+                            args-asm
                             (string-append
-                              (compiler-backend-emit-call-space-add call-space)
-                              ;; #2386: a register-group result lands in %rax:%rdx.
-                              (if (compiler-backend-group-type?
-                                program-index
-                                ty)
-                                (compiler-backend-emit-group-store
-                                  assignments
-                                  dst
-                                  "%rax"
-                                  "%rdx"
-                                  vars)
-                                (compiler-backend-emit-store-typed-var-with-plan
-                                  assignments
-                                  dst
-                                  (if (compiler-backend-float-type? ty)
-                                    "%xmm0"
-                                    "%rax")
-                                  ty)))
-                            "")))))]
+                              (compiler-backend-varargs-pre-call
+                                target
+                                name
+                                externs
+                                param-types)
+                              (backend-cat5
+                                "    call "
+                                call-symbol
+                                "\n"
+                                (string-append
+                                  (compiler-backend-emit-call-space-add
+                                    call-space)
+                                  result-store)
+                                "")))))]
+                    [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
                 [(ErrCompilerBackend message)
                   (ErrCompilerBackend
                     (compiler-backend-apply-instr-diagnostic message instr-diag))]))))]
@@ -9423,23 +9507,27 @@
           (if (compiler-backend-group-type? program-index ty)
             ;; #2386: storing a register-group into a global writes both words
             ;; inline (word0 at sym, word1 at sym+8).
-            (OkCompilerBackend
-              (string-append
-                (compiler-backend-emit-group-load
-                  assignments
-                  value
-                  "%rax"
-                  "%rdx"
-                  vars)
-                (backend-cat5
-                  "    movq %rax, "
-                  (compiler-backend-user-symbol name)
-                  "(%rip)\n    movq %rdx, "
-                  (backend-cat3
-                    (compiler-backend-user-symbol name)
-                    "+8(%rip)\n"
-                    "")
-                  "")))
+            (match (compiler-backend-emit-group-load
+              assignments
+              value
+              "%rax"
+              "%rdx"
+              vars
+              instr-diag)
+              [(OkCompilerBackend load)
+                (OkCompilerBackend
+                  (string-append
+                    load
+                    (backend-cat5
+                      "    movq %rax, "
+                      (compiler-backend-user-symbol name)
+                      "(%rip)\n    movq %rdx, "
+                      (backend-cat3
+                        (compiler-backend-user-symbol name)
+                        "+8(%rip)\n"
+                        "")
+                      "")))]
+              [(ErrCompilerBackend message) (ErrCompilerBackend message)])
             (match (compiler-backend-emit-store-immediate-to-memory
               value
               addr
@@ -9715,7 +9803,18 @@
       (compiler-backend-count-call-args-uses counts args)]
     [(IrInstrCall _ _ args _)
       (compiler-backend-count-call-args-uses counts args)]
+    [(IrInstrCallIndirect _ func args _)
+      (begin
+        (compiler-backend-count-value-use counts func)
+        (compiler-backend-count-call-args-uses counts args))]
+    [(IrInstrCallIndirectC _ func args _)
+      (begin
+        (compiler-backend-count-value-use counts func)
+        (compiler-backend-count-call-args-uses counts args))]
+    [(IrInstrTailCall _ args _)
+      (compiler-backend-count-call-args-uses counts args)]
     [(IrInstrStore _ value _) (compiler-backend-count-value-use counts value)]
+    [(IrInstrJump _) unit]
     [(IrInstrBranch cond _ _) (compiler-backend-count-value-use counts cond)]
     [(IrInstrReturn maybe)
       (match maybe
@@ -9730,7 +9829,12 @@
     [(IrInstrPack _ words _)
       (compiler-backend-count-value-list-uses counts words)]
     [(IrInstrWord _ src _ _) (compiler-backend-count-value-use counts src)]
-    [_ unit]))
+    [(IrInstrTailCallIndirect func args _)
+      (begin
+        (compiler-backend-count-value-use counts func)
+        (compiler-backend-count-call-args-uses counts args))]
+    [(IrInstrAlloc _ _) unit]
+    [(IrInstrLaneId _ _ _) unit]))
 
 (define (compiler-backend-count-instr-seq-uses
   [counts : (Array i64)]
@@ -10476,34 +10580,40 @@
           [(OkCompilerBackend func-asm)
             (match (compiler-backend-target-arg-reg target 0)
               [(OkBackendReg env-reg)
-                (OkCompilerBackend
-                  (string-append
-                    (compiler-backend-emit-call-space-sub call-space)
-                    (string-append
-                      args-asm
+                (match (if (compiler-backend-group-type? program-index ty)
+                  (compiler-backend-emit-group-store
+                    assignments
+                    dst
+                    "%rax"
+                    "%rdx"
+                    vars
+                    instr-diag)
+                  (OkCompilerBackend
+                    (compiler-backend-emit-store-typed-var-with-plan
+                      assignments
+                      dst
+                      (if (compiler-backend-float-type? ty)
+                        "%xmm0"
+                        "%rax")
+                      ty)))
+                  [(OkCompilerBackend result-store)
+                    (OkCompilerBackend
                       (string-append
-                        func-asm
-                        (backend-cat5
-                          "    movq 8(%r11), "
-                          env-reg
-                          "\n    movq (%r11), %rax\n    call *%rax\n"
+                        (compiler-backend-emit-call-space-sub call-space)
+                        (string-append
+                          args-asm
                           (string-append
-                            (compiler-backend-emit-call-space-add call-space)
-                            (if (compiler-backend-group-type? program-index ty)
-                              (compiler-backend-emit-group-store
-                                assignments
-                                dst
-                                "%rax"
-                                "%rdx"
-                                vars)
-                              (compiler-backend-emit-store-typed-var-with-plan
-                                assignments
-                                dst
-                                (if (compiler-backend-float-type? ty)
-                                  "%xmm0"
-                                  "%rax")
-                                ty)))
-                          "")))))]
+                            func-asm
+                            (backend-cat5
+                              "    movq 8(%r11), "
+                              env-reg
+                              "\n    movq (%r11), %rax\n    call *%rax\n"
+                              (string-append
+                                (compiler-backend-emit-call-space-add
+                                  call-space)
+                                result-store)
+                              "")))))]
+                  [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
               [(ErrBackendReg message)
                 (ErrCompilerBackend
                   (compiler-diagnostic-with-message instr-diag message))])]
@@ -12164,15 +12274,17 @@
                             program-index
                             vars)
                             [(OkCompilerBackend tail)
-                              (OkCompilerBackend
-                                (string-append
-                                  (compiler-backend-emit-group-store
-                                    assignments
-                                    var-id
-                                    reg0
-                                    reg1
-                                    vars)
-                                  tail))]
+                              (match (compiler-backend-emit-group-store
+                                assignments
+                                var-id
+                                reg0
+                                reg1
+                                vars
+                                (compiler-diagnostic-at-start "" ""))
+                                [(OkCompilerBackend store)
+                                  (OkCompilerBackend (string-append store tail))]
+                                [(ErrCompilerBackend message)
+                                  (ErrCompilerBackend message)])]
                             [(ErrCompilerBackend message)
                               (ErrCompilerBackend message)])]
                         [(ErrBackendReg _)
@@ -12198,15 +12310,17 @@
                     program-index
                     vars)
                     [(OkCompilerBackend tail)
-                      (OkCompilerBackend
-                        (string-append
-                          (compiler-backend-emit-group-stack-param
-                            target
-                            assignments
-                            var-id
-                            stack-idx
-                            vars)
-                          tail))]
+                      (match (compiler-backend-emit-group-stack-param
+                        target
+                        assignments
+                        var-id
+                        stack-idx
+                        vars
+                        (compiler-diagnostic-at-start "" ""))
+                        [(OkCompilerBackend stack-param)
+                          (OkCompilerBackend (string-append stack-param tail))]
+                        [(ErrCompilerBackend message)
+                          (ErrCompilerBackend message)])]
                     [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
               (if (compiler-backend-stack-call-arg-for-banks?
                 target
@@ -19041,7 +19155,8 @@ tl_memcpy:
     [(ObjectDataF64 _) (+ offset 8)]
     [(ObjectDataI64 _) (+ offset 8)]
     [(ObjectDataZero count) (+ offset count)]
-    [(ObjectDataSymbolAddress _) (+ offset 8)]))
+    [(ObjectDataSymbolAddress _) (+ offset 8)]
+    [(ObjectDataSymbolRva32 _) (+ offset 4)]))
 
 (define (compiler-backend-pic-data-label-offset-from
   [records : CompilerObjectDataRecordList]
@@ -19079,7 +19194,9 @@ tl_memcpy:
     [(ObjectSectionText) "text"]
     [(ObjectSectionData) "data"]
     [(ObjectSectionRodata) "rodata"]
-    [(ObjectSectionBss) "bss"]))
+    [(ObjectSectionBss) "bss"]
+    [(ObjectSectionPdata) "pdata"]
+    [(ObjectSectionXdata) "xdata"]))
 
 (define (compiler-backend-pic-fixup-line
   [section : CompilerObjectSectionKind]

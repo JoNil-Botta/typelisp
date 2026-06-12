@@ -19,9 +19,9 @@
 (defenum CompilerRegLocation
   (CompilerRegRegister String)
   ;; #2386: a 2-word register-group value lives in two GP registers (word0,
-  ;; word1). A group that cannot get two registers spills to a 16-byte slot,
-  ;; represented as the ordinary CompilerRegSpill (the backend reads the second
-  ;; word at offset-8 using the program word-count map).
+  ;; word1). A group that cannot get two registers stays unassigned; the backend
+  ;; homes word0 in the ordinary stack slot and word1 in the reserved group
+  ;; word1 region. CompilerRegSpill remains scalar-only.
   (CompilerRegRegisterPair String String)
   (CompilerRegSpill i64))
 

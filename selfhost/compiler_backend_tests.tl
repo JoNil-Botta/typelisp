@@ -2347,6 +2347,49 @@
           IrInstrNil)))
     IrBlockNil))
 
+(define (compiler-backend-phi-group-ty) : AstType
+  (AstTyStruct (intern "Pair")))
+
+(define (compiler-backend-phi-group-cycle-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "join"
+      (compiler-ir-instr-cons
+        (IrInstrPhi
+          0
+          (compiler-ir-phi-input-cons (IrValueVar 1) "back" IrPhiInputNil)
+          (compiler-backend-phi-group-ty))
+        (compiler-ir-instr-cons
+          (IrInstrPhi
+            1
+            (compiler-ir-phi-input-cons (IrValueVar 0) "back" IrPhiInputNil)
+            (compiler-backend-phi-group-ty))
+          IrInstrNil)))
+    IrBlockNil))
+
+(define (compiler-backend-phi-group-index) : CompilerBackendProgramIndex
+  (compiler-backend-program-index-build
+    (compiler-ir-function-cons
+      (IrFunction
+        "seed_group"
+        IrParamNil
+        (AstTyI64)
+        3
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "entry"
+            (compiler-ir-instr-cons
+              (IrInstrPack
+                2
+                (compiler-ir-value-cons
+                  (IrValueI64 1)
+                  (compiler-ir-value-cons (IrValueI64 2) IrValueNil))
+                (compiler-backend-phi-group-ty))
+              IrInstrNil))
+          IrBlockNil))
+      IrFunctionNil)
+    IrExternNil))
+
 (define (compiler-backend-phi-parallel-copy-ok?) : bool
   (match (compiler-backend-emit-phi-edge-copies
     (compiler-backend-phi-same-home-assignments)
@@ -2380,6 +2423,60 @@
               "    movq %r11, -16(%rbp)\n"))]
         [(ErrCompilerBackend _) false])]
     [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-phi-group-parallel-copy-ok?) : bool
+  (match (compiler-backend-emit-phi-edge-copies
+    CompilerRegAssignmentNil
+    (compiler-backend-phi-group-cycle-blocks)
+    "join"
+    "back"
+    (compiler-backend-phi-group-index)
+    2)
+    [(OkCompilerBackend cycle)
+      (and
+        (compiler-backend-string-contains? cycle "    movq -8(%rbp), %r10\n")
+        (compiler-backend-string-contains? cycle "    movq -24(%rbp), %r11\n")
+        (compiler-backend-string-contains? cycle "    movq -16(%rbp), %rax\n")
+        (compiler-backend-string-contains? cycle "    movq -32(%rbp), %rdx\n")
+        (compiler-backend-string-contains? cycle "    movq %r10, -16(%rbp)\n")
+        (compiler-backend-string-contains? cycle "    movq %r11, -32(%rbp)\n"))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-use-count-call-walkers-ok?) : bool
+  (let
+    [counts : (Array i64) (make-array i64 8)]
+    (begin
+      (compiler-backend-count-instr-uses
+        counts
+        (IrInstrCallIndirect
+          0
+          (IrValueVar 1)
+          (IrCallArgsTwo (IrValueVar 2) (IrValueVar 3))
+          (AstTyI64)))
+      (compiler-backend-count-instr-uses
+        counts
+        (IrInstrCallIndirectC
+          0
+          (IrValueVar 4)
+          (IrCallArgsOne (IrValueVar 5))
+          (AstTyI64)))
+      (compiler-backend-count-instr-uses
+        counts
+        (IrInstrTailCall "f" (IrCallArgsOne (IrValueVar 6)) (AstTyI64)))
+      (compiler-backend-count-instr-uses
+        counts
+        (IrInstrTailCallIndirect
+          (IrValueVar 1)
+          (IrCallArgsOne (IrValueVar 7))
+          (AstTyI64)))
+      (and
+        (= (array-ref counts 1) 2)
+        (= (array-ref counts 2) 1)
+        (= (array-ref counts 3) 1)
+        (= (array-ref counts 4) 1)
+        (= (array-ref counts 5) 1)
+        (= (array-ref counts 6) 1)
+        (= (array-ref counts 7) 1)))))
 
 (define (compiler-backend-reg-is? [r : ResultBackendReg] [name : String]) : bool
   (match r
@@ -6145,7 +6242,10 @@
         (compiler-backend-regalloc-ok?)
         (compiler-backend-param-register-home-ok?))
       (compiler-backend-peephole-ok?)
-      (compiler-backend-phi-parallel-copy-ok?)
+      (and
+        (compiler-backend-phi-parallel-copy-ok?)
+        (compiler-backend-phi-group-parallel-copy-ok?)
+        (compiler-backend-use-count-call-walkers-ok?))
       (and (compiler-backend-f64-ok?) (compiler-backend-f32-literal-binop-ok?))
       (compiler-backend-bool-control-flow-ok?)
       (and

@@ -1587,7 +1587,26 @@
         spans
         (compiler-source-spans-value-key function dst)
         span)]
-    [_ spans]))
+    [(IrInstrPack dst _ _)
+      (compiler-source-spans-insert-instr-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
+    [(IrInstrWord dst _ _ _)
+      (compiler-source-spans-insert-instr-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
+    [(IrInstrStorePtr _ _ _) spans]
+    [(IrInstrCopyBytes _ _ _) spans]
+    [(IrInstrBoundsCheck _ _ _) spans]
+    [(IrInstrVectorStore _ _ _ _ _) spans]
+    [(IrInstrPredicatedStore _ _ _ _ _ _) spans]
+    [(IrInstrTailCall _ _ _) spans]
+    [(IrInstrJump _) spans]
+    [(IrInstrBranch _ _ _) spans]
+    [(IrInstrReturn _) spans]
+    [(IrInstrTailCallIndirect _ _ _) spans]))
 
 (define (compiler-source-spans-lookup-instr
   [spans : CompilerSourceSpans]
@@ -1720,7 +1739,24 @@
           (compiler-source-spans-entry-list-lookup
             instr-entries
             (compiler-source-spans-value-key function dst))]
-        [_ (CompilerNoSourceSpan)])]))
+        [(IrInstrPack dst _ _)
+          (compiler-source-spans-entry-list-lookup
+            instr-entries
+            (compiler-source-spans-value-key function dst))]
+        [(IrInstrWord dst _ _ _)
+          (compiler-source-spans-entry-list-lookup
+            instr-entries
+            (compiler-source-spans-value-key function dst))]
+        [(IrInstrStorePtr _ _ _) (CompilerNoSourceSpan)]
+        [(IrInstrCopyBytes _ _ _) (CompilerNoSourceSpan)]
+        [(IrInstrBoundsCheck _ _ _) (CompilerNoSourceSpan)]
+        [(IrInstrVectorStore _ _ _ _ _) (CompilerNoSourceSpan)]
+        [(IrInstrPredicatedStore _ _ _ _ _ _) (CompilerNoSourceSpan)]
+        [(IrInstrTailCall _ _ _) (CompilerNoSourceSpan)]
+        [(IrInstrJump _) (CompilerNoSourceSpan)]
+        [(IrInstrBranch _ _ _) (CompilerNoSourceSpan)]
+        [(IrInstrReturn _) (CompilerNoSourceSpan)]
+        [(IrInstrTailCallIndirect _ _ _) (CompilerNoSourceSpan)])]))
 
 ;; Number of recorded entries; supports provenance smoke assertions (#605).
 (define (compiler-source-spans-entry-list-count
@@ -2786,6 +2822,43 @@
             (= (struct-get found end-col) 8))]
         [(CompilerNoSourceSpan) false]))))
 
+(define (compiler-ir-source-spans-register-group-ok?) : bool
+  (let
+    [pack-span : AstSourceSpan (AstSourceSpan 7 3 7 12)]
+    [word-span : AstSourceSpan (AstSourceSpan 8 5 8 14)]
+    [pack : CompilerIrInstr
+      (IrInstrPack
+        4
+        (compiler-ir-value-cons
+          (IrValueI64 1)
+          (compiler-ir-value-cons (IrValueI64 2) IrValueNil))
+        (AstTyStruct (intern "Pair")))]
+    [word : CompilerIrInstr (IrInstrWord 5 (IrValueVar 4) 1 (AstTyI64))]
+    [spans : CompilerSourceSpans
+      (compiler-source-spans-insert-instr
+        (compiler-source-spans-insert-instr
+          (compiler-source-spans-empty)
+          "f"
+          pack
+          pack-span)
+        "f"
+        word
+        word-span)]
+    (and
+      (= (compiler-source-spans-instr-count spans) 2)
+      (match (compiler-source-spans-lookup-instr spans "f" pack)
+        [(CompilerSomeSourceSpan found)
+          (and
+            (= (struct-get found start-line) 7)
+            (= (struct-get found end-col) 12))]
+        [(CompilerNoSourceSpan) false])
+      (match (compiler-source-spans-lookup-instr spans "f" word)
+        [(CompilerSomeSourceSpan found)
+          (and
+            (= (struct-get found start-line) 8)
+            (= (struct-get found end-col) 14))]
+        [(CompilerNoSourceSpan) false]))))
+
 (define (compiler-ir-instr-list-first-mov-dst?
   [instrs : CompilerIrInstrList]
   [want : i64]) : bool
@@ -2843,5 +2916,6 @@
     (unless (compiler-ir-display-self-test-ok?) (return 1))
     (unless (compiler-ir-tail-call-render-ok?) (return 1))
     (unless (compiler-ir-source-spans-boxed-list-ok?) (return 1))
+    (unless (compiler-ir-source-spans-register-group-ok?) (return 1))
     (unless (compiler-ir-instr-seq-roundtrip-ok?) (return 1))
     42))

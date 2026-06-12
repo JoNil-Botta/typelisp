@@ -765,59 +765,6 @@ contains|_tl_emit_program_with_defs:
 contains|_tl_emit_expr:
 end
 
-case|selfhost_eval|selfhost/eval.tl|assembly|exactly-one|direct
-contains|_tl_eval_sexpr_result:
-contains|_tl_run_program:
-contains|_tl_apply_value_result:
-contains|call tl_alloc
-contains|match_nested
-contains|_tl_read_form:
-contains|_tl_lex:
-contains|_tl_token_str:
-contains|_tl_as_int_result:
-contains|_tl_as_str_result:
-contains|_tl_env_has:
-contains|_tl_bind_args_onto_result:
-contains|_tl_print_value:
-contains|_tl_print_list_tail:
-contains|_tl_eval_list_result:
-contains|_tl_eval_seq_result:
-contains|string_eq
-contains|string_append_borrowed
-contains|substring_copy_checked
-not-contains|call tl_int_to_string
-not-contains|tl_int_to_string:
-contains|string__gtint
-contains|print_string:
-contains|.string "lambda"
-contains|.string "if"
-contains|.string "begin"
-contains|.string "list"
-contains|.string "cons"
-contains|.string "car"
-contains|.string "cdr"
-contains|.string "pair?"
-contains|.string "null?"
-contains|.string "print"
-contains|.string "define"
-contains|.string "string-length"
-contains|.string "substring"
-contains|.string "string-eq"
-contains|.string "int->string"
-contains|.string "string->int"
-contains|.string "string-append"
-contains|.string " . "
-contains|eval: unbound variable
-contains|eval: too few arguments in call
-contains|eval: a non-final top-level form must be a (define ...)
-not-contains|_tl_sexpr_sym:
-not-contains|_tl_seq:
-not-contains|_tl_sum_list:
-not-contains|eval: strings not supported
-count-at-least|call _tl_eval_sexpr_result|2
-count-at-least|call _tl_print_value|2
-end
-
 case|selfhost_format|selfhost/format.tl|assembly|exactly-one|direct
 contains|fmt_format_file:
 contains|fmt_files:

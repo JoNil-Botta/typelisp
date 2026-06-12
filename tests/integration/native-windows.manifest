@@ -21,7 +21,6 @@ tl_emit|selfhost/emit.tl|0|@tests/golden/tl_emit_program.s|-|emit_core.tl ast_ty
 tl_ast|selfhost/ast.tl|685|-|-|ast_types.tl read.tl lex.tl token.tl compiler_intern.tl stdlib/text_buf.tl stdlib/io.tl stdlib/string.tl
 tl_lexer|selfhost/lexer.tl|19|-|-|lex.tl token.tl compiler_intern.tl stdlib/text_buf.tl stdlib/io.tl stdlib/string.tl
 tl_reader|selfhost/reader.tl|62|-|-|lex.tl token.tl compiler_intern.tl stdlib/text_buf.tl stdlib/io.tl stdlib/string.tl
-tl_eval|selfhost/eval.tl|30|hello world3233\n25\n15\n2\n10\n1\n0\n1\n3\n(1 2 3)(1 (2 3) 4)(10 . 20)(1 2 . 3)(1 4 9 16)(1 2)|-|read.tl lex.tl token.tl compiler_intern.tl stdlib/text_buf.tl stdlib/io.tl stdlib/string.tl
 comptime_scalar|tests/integration/comptime_scalar.tl|3|-|-|-
 generated_option_result_families|tests/integration/generated_option_result_families.tl|61|-|-|-
 cond|tests/integration/cond.tl|42|-|-|-

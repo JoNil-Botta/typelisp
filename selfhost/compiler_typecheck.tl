@@ -5128,6 +5128,9 @@
   (and
     (compiler-typecheck-ok? "(define (main) : i64 (comptime (+ 1 2)))")
     (compiler-typecheck-ok? "(define (main) : bool (comptime (< 1 2)))")
+    (compiler-typecheck-ok? "(define (main) : f32 (comptime 1.5))")
+    (compiler-typecheck-ok?
+      "(define (main) : f32 (comptime (cast 1.00000001 : f32)))")
     (compiler-typecheck-ok?
       "(define (main) : i64 (comptime (let [a : i64 1] (if (< a 2) a 0))))")
     (compiler-typecheck-ok? "(define (main) : i64 (+ (comptime (* 6 7)) 0))")

@@ -2,7 +2,7 @@
 ;; expression-position `(comptime expr)` (#719, scalar subset).
 ;;
 ;; Ports the scalar slice of the Rust reference `src/ctfe.rs`. Supported
-;; compile-time value types are i64, f64, bool, char, unit, type values, and
+;; compile-time value types are i64, f64/f32, bool, char, unit, type values, and
 ;; Expr / list aggregates (#1137).
 ;;
 ;; Evaluation is purely functional: the environment is an immutable cons list
@@ -27,6 +27,7 @@
 (defenum CompilerCtfeValue
   (CtfeI64 i64)
   (CtfeF64 f64)
+  (CtfeF32 f64)
   (CtfeBool bool)
   (CtfeChar char)
   (CtfeString String)
@@ -605,6 +606,7 @@
   (match value
     [(CtfeI64 _) "i64"]
     [(CtfeF64 _) "f64"]
+    [(CtfeF32 _) "f32"]
     [(CtfeBool _) "bool"]
     [(CtfeChar _) "char"]
     [(CtfeString _) "String"]
@@ -689,6 +691,16 @@
         expr
         "comptime: non-finite f64 result is not supported"))))
 
+(define (ctfe-f32-result [value : f64] [expr : AstExpr] [fuel : i64]) : ResultCtfe
+  (let
+    [rounded : f64 (compiler-float-round-f32-as-f64 value)]
+    (if (compiler-float-f64-finite? rounded)
+      (OkCtfe (CtfeF32 rounded) fuel)
+      (ErrCtfe
+        (ctfe-diagnostic-at-expr
+          expr
+          "comptime: non-finite f32 result is not supported")))))
+
 ;; Finite f64 arithmetic and comparisons. Non-finite results are rejected until
 ;; TypeLisp specifies NaN payload and infinity serialization across backends.
 (define (ctfe-eval-bin-f64
@@ -717,6 +729,33 @@
         (ctfe-diagnostic-at-expr
           expr
           "this operation is not supported on f64 in compile-time evaluation"))]))
+
+(define (ctfe-eval-bin-f32
+  [op : AstBinOp]
+  [a : f64]
+  [b : f64]
+  [expr : AstExpr]
+  [fuel : i64]) : ResultCtfe
+  (match op
+    [(AstBinAdd) (ctfe-f32-result (+ a b) expr fuel)]
+    [(AstBinSub) (ctfe-f32-result (- a b) expr fuel)]
+    [(AstBinMul) (ctfe-f32-result (* a b) expr fuel)]
+    [(AstBinDiv)
+      (if (= b 0.0)
+        (ErrCtfe
+          (ctfe-diagnostic-at-expr expr "float division by zero in comptime"))
+        (ctfe-f32-result (/ a b) expr fuel))]
+    [(AstBinEq) (OkCtfe (CtfeBool (= a b)) fuel)]
+    [(AstBinNe) (OkCtfe (CtfeBool (!= a b)) fuel)]
+    [(AstBinLt) (OkCtfe (CtfeBool (< a b)) fuel)]
+    [(AstBinLe) (OkCtfe (CtfeBool (<= a b)) fuel)]
+    [(AstBinGt) (OkCtfe (CtfeBool (> a b)) fuel)]
+    [(AstBinGe) (OkCtfe (CtfeBool (>= a b)) fuel)]
+    [_
+      (ErrCtfe
+        (ctfe-diagnostic-at-expr
+          expr
+          "this operation is not supported on f32 in compile-time evaluation"))]))
 
 ;; bool comparisons and boolean connectives.
 (define (ctfe-eval-bin-bool
@@ -806,6 +845,14 @@
     [(CtfeF64 a)
       (match rv
         [(CtfeF64 b) (ctfe-eval-bin-f64 op a b expr fuel)]
+        [_
+          (ErrCtfe
+            (ctfe-diagnostic-at-expr
+              expr
+              "binary operation in comptime requires matching operand types"))])]
+    [(CtfeF32 a)
+      (match rv
+        [(CtfeF32 b) (ctfe-eval-bin-f32 op a b expr fuel)]
         [_
           (ErrCtfe
             (ctfe-diagnostic-at-expr
@@ -950,6 +997,7 @@
       (match v
         [(CtfeI64 n) (OkCtfe (CtfeI64 (- 0 n)) fuel)]
         [(CtfeF64 n) (ctfe-f64-result (- 0.0 n) expr fuel)]
+        [(CtfeF32 n) (ctfe-f32-result (- 0.0 n) expr fuel)]
         [_
           (ErrCtfe
             (ctfe-diagnostic-at-expr
@@ -969,6 +1017,43 @@
             (ctfe-diagnostic-at-expr
               expr
               "bitwise not in comptime requires i64"))])]))
+
+(define (ctfe-apply-cast
+  [value : CompilerCtfeValue]
+  [ty : AstType]
+  [expr : AstExpr]
+  [fuel : i64]) : ResultCtfe
+  (match ty
+    [(AstTyF64)
+      (match value
+        [(CtfeF64 _) (OkCtfe value fuel)]
+        [(CtfeF32 n) (ctfe-f64-result n expr fuel)]
+        [(CtfeI64 n) (ctfe-f64-result (cast n : f64) expr fuel)]
+        [_
+          (ErrCtfe (ctfe-diagnostic-at-expr expr "comptime: unsupported cast"))])]
+    [(AstTyF32)
+      (match value
+        [(CtfeF64 n) (ctfe-f32-result n expr fuel)]
+        [(CtfeF32 _) (OkCtfe value fuel)]
+        [(CtfeI64 n) (ctfe-f32-result (cast n : f64) expr fuel)]
+        [_
+          (ErrCtfe (ctfe-diagnostic-at-expr expr "comptime: unsupported cast"))])]
+    [(AstTyI64)
+      (match value
+        [(CtfeI64 _) (OkCtfe value fuel)]
+        [_
+          (ErrCtfe (ctfe-diagnostic-at-expr expr "comptime: unsupported cast"))])]
+    [_ (ErrCtfe (ctfe-diagnostic-at-expr expr "comptime: unsupported cast"))]))
+
+(define (ctfe-eval-cast
+  [inner : AstExpr]
+  [ty : AstType]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match (compiler-ctfe-eval inner env fuel)
+    [(OkCtfe value next-fuel) (ctfe-apply-cast value ty expr next-fuel)]
+    [(ErrCtfe diag) (ErrCtfe diag)]))
 
 (defenum ResultCtfeStringLookup
   (OkCtfeStringLookup String)
@@ -1406,6 +1491,10 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (compiler-ctfe-eval inner env fuel))]
+    [(AstExprCast inner-box ty)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (ctfe-eval-cast inner ty expr env fuel))]
     [(AstExprTypeLiteral ty)
       (OkCtfe
         (CtfeType (ctfe-reflect-resolve-type (ctfe-env-reflections env) ty))
@@ -5392,6 +5481,9 @@
   (match value
     [(CtfeI64 n) (AstLitInt n)]
     [(CtfeF64 n) (AstLitFloat (compiler-float-format-f64 n))]
+    [(CtfeF32 n)
+      (AstLitFloat
+        (compiler-float-format-f64 (compiler-float-round-f32-as-f64 n)))]
     [(CtfeBool b) (AstLitBool b)]
     [(CtfeChar c) (AstLitChar c)]
     [(CtfeString text) (AstLitString text)]
@@ -5401,6 +5493,20 @@
     [(CtfeExprList _) (AstLitUnit)]
     [(CtfeExprClause _) (AstLitUnit)]
     [(CtfeExprClauseList _) (AstLitUnit)]))
+
+(define (ctfe-value-to-literal-for-type
+  [value : CompilerCtfeValue]
+  [ty : AstType]) : AstLiteral
+  (match ty
+    [(AstTyF32)
+      (match value
+        [(CtfeF64 n)
+          (AstLitFloat
+            (compiler-float-format-f64 (compiler-float-round-f32-as-f64 n)))]
+        [_ (ctfe-value-to-literal value)])]
+    [(AstTyRegion _ inner)
+      (ctfe-value-to-literal-for-type value (ty-node-get inner))]
+    [_ (ctfe-value-to-literal value)]))
 
 (define (ctfe-type-list-eq [a : AstTypeList] [b : AstTypeList]) : bool
   (match a
@@ -5686,6 +5792,14 @@
         [_ false])]
     [(ErrCtfe _) false]))
 
+(define (compiler-ctfe-eval-f32-ok? [expr : i64] [env : CtfeEnv] [want : f64]) : bool
+  (match (compiler-ctfe-eval (ast-node-get expr) env (ctfe-fuel-limit))
+    [(OkCtfe value _)
+      (match value
+        [(CtfeF32 actual) (= actual want)]
+        [_ false])]
+    [(ErrCtfe _) false]))
+
 (define (compiler-ctfe-eval-bool-ok? [expr : i64] [env : CtfeEnv] [want : bool]) : bool
   (match (compiler-ctfe-eval (ast-node-get expr) env (ctfe-fuel-limit))
     [(OkCtfe value _)
@@ -5732,6 +5846,11 @@
     [one-five : i64 (ast-node-push (AstExprLiteral (AstLitFloat "1.5")))]
     [two-quarter : i64 (ast-node-push (AstExprLiteral (AstLitFloat "2.25")))]
     [zero : i64 (ast-node-push (AstExprLiteral (AstLitFloat "0.0")))]
+    [one-f32 : i64 (ast-expr-cast one-five (AstTyF32))]
+    [zero-f32 : i64 (ast-expr-cast zero (AstTyF32))]
+    [sum-f32 : i64 (ast-node-push (AstExprBinary (AstBinAdd) one-f32 zero-f32))]
+    [neg-f32 : i64 (ast-node-push (AstExprUnary (AstUnNeg) sum-f32))]
+    [wide-f32 : i64 (ast-expr-cast one-f32 (AstTyF64))]
     [sum : i64 (ast-node-push (AstExprBinary (AstBinAdd) one-five two-quarter))]
     [neg : i64 (ast-node-push (AstExprUnary (AstUnNeg) sum))]
     [lt : i64
@@ -5746,6 +5865,10 @@
       (compiler-ctfe-eval-f64-ok? one-five env 1.5)
       (compiler-ctfe-eval-f64-ok? sum env 3.75)
       (compiler-ctfe-eval-f64-ok? neg env -3.75)
+      (compiler-ctfe-eval-f32-ok? one-f32 env 1.5)
+      (compiler-ctfe-eval-f32-ok? sum-f32 env 1.5)
+      (compiler-ctfe-eval-f32-ok? neg-f32 env -1.5)
+      (compiler-ctfe-eval-f64-ok? wide-f32 env 1.5)
       (compiler-ctfe-eval-bool-ok? lt env true)
       (compiler-ctfe-eval-error-ok?
         div-zero

@@ -24,6 +24,19 @@
   (SpecTemplateNil)
   (SpecTemplateCons SpecTemplate (Box SpecTemplateList)))
 
+(defenum SpecTemplateShadowList
+  (SpecTemplateShadowNil)
+  (SpecTemplateShadowCons String (Box SpecTemplateShadowList)))
+
+(defenum SpecMaybeTemplate
+  (SpecNoTemplate)
+  (SpecSomeTemplate SpecTemplate))
+
+(defstruct SpecTemplateEnv
+  (index StringI64Map)
+  (values (Array SpecMaybeTemplate))
+  (shadowed SpecTemplateShadowList))
+
 ;; #2613: the specialization cache (key -> generated function name) is a
 ;; generated StringStringMap; the former SpecCache linked list made every
 ;; lookup a linear scan.
@@ -63,10 +76,6 @@
 (defenum SpecMaybeString
   (SpecNoString)
   (SpecSomeString String))
-
-(defenum SpecMaybeTemplate
-  (SpecNoTemplate)
-  (SpecSomeTemplate SpecTemplate))
 
 (defenum SpecMaybeDecl
   (SpecNoDecl)
@@ -197,45 +206,96 @@
           true
           (spec-param-list-has-comptime? rest)))]))
 
-(define (spec-template-lookup [templates : SpecTemplateList] [name : String]) : SpecMaybeTemplate
+(define (spec-template-shadow-contains?
+  [shadowed : SpecTemplateShadowList]
+  [name : String]) : bool
+  (match shadowed
+    [(SpecTemplateShadowNil) false]
+    [(SpecTemplateShadowCons shadow-name rest)
+      (if (string-eq shadow-name name)
+        true
+        (spec-template-shadow-contains? (box-get rest) name))]))
+
+(define (spec-template-list-count [templates : SpecTemplateList]) : i64
   (match templates
-    [(SpecTemplateNil) (SpecNoTemplate)]
+    [(SpecTemplateNil) 0]
+    [(SpecTemplateCons _ rest) (+ 1 (spec-template-list-count (box-get rest)))]))
+
+(define (spec-template-values-fill-empty
+  [values : (Array SpecMaybeTemplate)]
+  [index : i64]
+  [count : i64]) : unit
+  (if (>= index count)
+    unit
+    (begin
+      (array-set! values index (SpecNoTemplate))
+      (spec-template-values-fill-empty values (+ index 1) count))))
+
+(define (spec-template-index-build
+  [templates : SpecTemplateList]
+  [index : StringI64Map]
+  [values : (Array SpecMaybeTemplate)]
+  [slot : i64]) : StringI64Map
+  (match templates
+    [(SpecTemplateNil) index]
     [(SpecTemplateCons template rest)
       (match template
-        [(SpecTemplate template-name _ _ _)
-          (if (string-eq template-name name)
-            (SpecSomeTemplate template)
-            (spec-template-lookup (box-get rest) name))])]))
+        [(SpecTemplate name _ _ _)
+          (if (string-i64-map-contains? index name)
+            (spec-template-index-build (box-get rest) index values slot)
+            (begin
+              (array-set! values slot (SpecSomeTemplate template))
+              (spec-template-index-build
+                (box-get rest)
+                (string-i64-map-put index name slot)
+                values
+                (+ slot 1))))])]))
 
-(define (spec-template-list-remove-name
-  [templates : SpecTemplateList]
-  [name : String]) : SpecTemplateList
-  (match templates
-    [(SpecTemplateNil) (SpecTemplateNil)]
-    [(SpecTemplateCons template rest)
-      (match template
-        [(SpecTemplate template-name _ _ _)
-          (if (string-eq template-name name)
-            (spec-template-list-remove-name (box-get rest) name)
-            (spec-template-cons
-              template
-              (spec-template-list-remove-name (box-get rest) name)))])]))
+(define (spec-template-env-from-list [templates : SpecTemplateList]) : SpecTemplateEnv
+  (let
+    [count : i64 (spec-template-list-count templates)]
+    [values : (Array SpecMaybeTemplate) (make-array SpecMaybeTemplate count)]
+    (begin
+      (spec-template-values-fill-empty values 0 count)
+      (SpecTemplateEnv
+        (spec-template-index-build
+          templates
+          (string-i64-map-with-capacity (+ (* count 2) 16))
+          values
+          0)
+        values
+        SpecTemplateShadowNil))))
 
-(define (spec-template-list-remove-params
-  [templates : SpecTemplateList]
-  [params : AstParamList]) : SpecTemplateList
+(define (spec-template-lookup [templates : SpecTemplateEnv] [name : String]) : SpecMaybeTemplate
+  (if (spec-template-shadow-contains? (struct-get templates shadowed) name)
+    (SpecNoTemplate)
+    (match (string-i64-map-get (struct-get templates index) name)
+      [(StringI64MapFound slot) (array-ref (struct-get templates values) slot)]
+      [(StringI64MapMissing) (SpecNoTemplate)])))
+
+(define (spec-template-env-shadow-name
+  [templates : SpecTemplateEnv]
+  [name : String]) : SpecTemplateEnv
+  (SpecTemplateEnv
+    (struct-get templates index)
+    (struct-get templates values)
+    (SpecTemplateShadowCons name (box (struct-get templates shadowed)))))
+
+(define (spec-template-env-shadow-params
+  [templates : SpecTemplateEnv]
+  [params : AstParamList]) : SpecTemplateEnv
   (match params
     [(AstParamNil) templates]
     [(AstParamCons param rest)
       (let
         [rest : AstParamList (box-get rest)]
-        (spec-template-list-remove-params
-          (spec-template-list-remove-name templates (spec-param-name param))
+        (spec-template-env-shadow-params
+          (spec-template-env-shadow-name templates (spec-param-name param))
           rest))]))
 
-(define (spec-template-list-remove-let-binding-names
-  [templates : SpecTemplateList]
-  [bindings : AstLetBindingList]) : SpecTemplateList
+(define (spec-template-env-shadow-let-binding-names
+  [templates : SpecTemplateEnv]
+  [bindings : AstLetBindingList]) : SpecTemplateEnv
   (match bindings
     [(AstLetBindingNil) templates]
     [(AstLetBindingCons binding rest)
@@ -243,40 +303,40 @@
         [rest : AstLetBindingList (box-get rest)]
         (match binding
           [(AstLetBinding name _ _)
-            (spec-template-list-remove-let-binding-names
-              (spec-template-list-remove-name templates (intern-str name))
+            (spec-template-env-shadow-let-binding-names
+              (spec-template-env-shadow-name templates (intern-str name))
               rest)]))]))
 
-(define (spec-template-list-remove-pattern
-  [templates : SpecTemplateList]
-  [pattern : AstPattern]) : SpecTemplateList
+(define (spec-template-env-shadow-pattern
+  [templates : SpecTemplateEnv]
+  [pattern : AstPattern]) : SpecTemplateEnv
   (match pattern
     [(AstPatVar name _)
-      (spec-template-list-remove-name templates (intern-str name))]
+      (spec-template-env-shadow-name templates (intern-str name))]
     [(AstPatTuple patterns-box)
       (let
         [patterns : AstPatternList (box-get patterns-box)]
-        (spec-template-list-remove-pattern-list templates patterns))]
+        (spec-template-env-shadow-pattern-list templates patterns))]
     [(AstPatWildcard) templates]
     [(AstPatBinding name)
-      (spec-template-list-remove-name templates (intern-str name))]
+      (spec-template-env-shadow-name templates (intern-str name))]
     [(AstPatVariant _ patterns-box)
       (let
         [patterns : AstPatternList (box-get patterns-box)]
-        (spec-template-list-remove-pattern-list templates patterns))]
+        (spec-template-env-shadow-pattern-list templates patterns))]
     [(AstPatLiteral _) templates]))
 
-(define (spec-template-list-remove-pattern-list
-  [templates : SpecTemplateList]
-  [patterns : AstPatternList]) : SpecTemplateList
+(define (spec-template-env-shadow-pattern-list
+  [templates : SpecTemplateEnv]
+  [patterns : AstPatternList]) : SpecTemplateEnv
   (match patterns
     [(AstPatternNil) templates]
     [(AstPatternCons pattern rest)
       (let
         [pattern : AstPattern (box-get pattern)]
         [rest : AstPatternList (box-get rest)]
-        (spec-template-list-remove-pattern-list
-          (spec-template-list-remove-pattern templates pattern)
+        (spec-template-env-shadow-pattern-list
+          (spec-template-env-shadow-pattern templates pattern)
           rest))]))
 
 (define (spec-collect-templates [decls : AstDeclList]) : SpecTemplateList
@@ -4876,7 +4936,7 @@
 
 (define (spec-rewrite-expr-list
   [exprs : AstExprList]
-  [templates : SpecTemplateList]
+  [templates : SpecTemplateEnv]
   [state : SpecState]) : ResultSpecExprList
   (match exprs
     [(AstExprNil) (OkSpecExprList AstExprNil state)]
@@ -4896,7 +4956,7 @@
 
 (define (spec-rewrite-let-bindings
   [bindings : AstLetBindingList]
-  [templates : SpecTemplateList]
+  [templates : SpecTemplateEnv]
   [state : SpecState]) : ResultSpecLetBindingList
   (match bindings
     [(AstLetBindingNil) (OkSpecLetBindingList AstLetBindingNil state)]
@@ -4911,7 +4971,7 @@
                 [(OkSpecExpr rewritten-value value-state)
                   (match (spec-rewrite-let-bindings
                     rest
-                    (spec-template-list-remove-name templates (intern-str name))
+                    (spec-template-env-shadow-name templates (intern-str name))
                     value-state)
                     [(OkSpecLetBindingList rewritten-rest rest-state)
                       (OkSpecLetBindingList
@@ -4924,7 +4984,7 @@
 
 (define (spec-rewrite-match-arms
   [arms : AstMatchArmList]
-  [templates : SpecTemplateList]
+  [templates : SpecTemplateEnv]
   [state : SpecState]) : ResultSpecMatchArmList
   (match arms
     [(AstMatchArmNil) (OkSpecMatchArmList AstMatchArmNil state)]
@@ -4937,7 +4997,7 @@
               [body : AstExpr (ast-node-get body-box)]
               (match (spec-rewrite-expr
                 body
-                (spec-template-list-remove-pattern templates pattern)
+                (spec-template-env-shadow-pattern templates pattern)
                 state)
                 [(OkSpecExpr rewritten-body body-state)
                   (match (spec-rewrite-match-arms rest templates body-state)
@@ -4953,7 +5013,7 @@
 (define (spec-rewrite-specialized-call
   [template : SpecTemplate]
   [args : AstExprList]
-  [templates : SpecTemplateList]
+  [templates : SpecTemplateEnv]
   [state : SpecState]
   [origin : AstExpr]) : ResultSpecExpr
   (match template
@@ -4978,7 +5038,7 @@
 (define (spec-rewrite-specialized-args
   [params : AstParamList]
   [args : AstExprList]
-  [templates : SpecTemplateList]
+  [templates : SpecTemplateEnv]
   [state : SpecState]
   [fn-name : String]) : ResultSpecArgs
   (match params
@@ -5148,7 +5208,7 @@
 (define (spec-ensure-specialization
   [template : SpecTemplate]
   [values : SpecValueList]
-  [templates : SpecTemplateList]
+  [templates : SpecTemplateEnv]
   [state : SpecState]
   [origin : AstExpr]) : ResultSpecEnsure
   (match template
@@ -5181,7 +5241,7 @@
                                     ctfe-env)]
                                 (match (spec-rewrite-expr
                                   (ast-node-get valued-body)
-                                  (spec-template-list-remove-params
+                                  (spec-template-env-shadow-params
                                     templates
                                     runtime-params)
                                   cached-state)
@@ -5214,7 +5274,7 @@
 
 (define (spec-rewrite-expr
   [expr : AstExpr]
-  [templates : SpecTemplateList]
+  [templates : SpecTemplateEnv]
   [state : SpecState]) : ResultSpecExpr
   (match expr
     [(AstExprSpanned inner-box span)
@@ -5305,7 +5365,7 @@
           [(OkSpecLetBindingList rewritten-bindings binding-state)
             (match (spec-rewrite-expr
               body
-              (spec-template-list-remove-let-binding-names templates bindings)
+              (spec-template-env-shadow-let-binding-names templates bindings)
               binding-state)
               [(OkSpecExpr rewritten-body body-state)
                 (OkSpecExpr
@@ -5318,7 +5378,7 @@
         [body : AstExpr (ast-node-get body-box)]
         (match (spec-rewrite-expr
           body
-          (spec-template-list-remove-params templates params)
+          (spec-template-env-shadow-params templates params)
           state)
           [(OkSpecExpr rewritten-body body-state)
             (OkSpecExpr (ast-expr-lambda params ret rewritten-body) body-state)]
@@ -5473,7 +5533,7 @@
               [(OkSpecExpr rewritten-end end-state)
                 (match (spec-rewrite-expr
                   body
-                  (spec-template-list-remove-name templates (intern-str index))
+                  (spec-template-env-shadow-name templates (intern-str index))
                   end-state)
                   [(OkSpecExpr rewritten-body body-state)
                     (OkSpecExpr
@@ -5501,7 +5561,7 @@
                   [(OkSpecExpr rewritten-init init-state)
                     (match (spec-rewrite-expr
                       value
-                      (spec-template-list-remove-name
+                      (spec-template-env-shadow-name
                         templates
                         (intern-str index))
                       init-state)
@@ -7051,7 +7111,7 @@
 
 (define (spec-rewrite-decl
   [decl : AstDecl]
-  [templates : SpecTemplateList]
+  [templates : SpecTemplateEnv]
   [state : SpecState]) : ResultSpecDecl
   (match decl
     [(AstDeclDef name ty value-box)
@@ -7070,7 +7130,7 @@
           (OkSpecDecl (SpecNoDecl) state)
           (match (spec-rewrite-expr
             body
-            (spec-template-list-remove-params templates params)
+            (spec-template-env-shadow-params templates params)
             state)
             [(OkSpecExpr rewritten state2)
               (OkSpecDecl
@@ -7101,7 +7161,7 @@
 
 (define (spec-rewrite-decls
   [decls : AstDeclList]
-  [templates : SpecTemplateList]
+  [templates : SpecTemplateEnv]
   [state : SpecState]) : ResultSpecDecls
   (match decls
     [(AstDeclNil) (OkSpecDecls AstDeclNil state)]
@@ -7134,7 +7194,7 @@
               [_
                 (match (spec-rewrite-decls
                   decls
-                  templates
+                  (spec-template-env-from-list templates)
                   (SpecState
                     AstDeclNil
                     (string-string-map-with-capacity 64)
@@ -7216,6 +7276,11 @@
   "(define (scale [comptime n : i64] [x : i64]) : i64 (* n x))
 (define (use-shadow [scale : (-> i64 i64)]) : i64 (scale 7))")
 
+(define (compiler-specialize-template-shadow-sibling-source) : String
+  "(define (scale [comptime n : i64] [x : i64]) : i64 (* n x))
+(define (main) : i64
+  (+ (let ([scale : i64 3]) scale) (scale 2 7)))")
+
 (define (compiler-specialize-type-shadow-source) : String
   "(define (pick [comptime T : type] [x : i64]) : i64
   (let ([T : i64 x]) T))
@@ -7251,6 +7316,25 @@
     [(OkAstProgram program)
       (match (compiler-specialize-program program)
         [(OkSpecProgram _) true]
+        [(ErrSpecProgram _) false])]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-specialize-template-shadow-sibling-ok?) : bool
+  (match (parse-ast-source (compiler-specialize-template-shadow-sibling-source))
+    [(OkAstProgram program)
+      (match (compiler-specialize-program program)
+        [(OkSpecProgram specialized)
+          (match specialized
+            [(AstProgram decls-box)
+              (let
+                [decls : AstDeclList (box-get decls-box)]
+                [original : bool
+                  (compiler-specialize-decl-list-defines? decls "scale")]
+                [generated : bool
+                  (compiler-specialize-decl-list-defines?
+                    decls
+                    "__tl_specialized_scale_i64_2_none")]
+                (and (not original) generated))])]
         [(ErrSpecProgram _) false])]
     [(ErrAstProgram _) false]))
 
@@ -7517,6 +7601,7 @@
             (AstTyBool)
             (AstExprLiteral (AstLitBool true)))
           SpecTemplateNil))]
+    [template-env : SpecTemplateEnv (spec-template-env-from-list templates)]
     [cache : StringStringMap
       (string-string-map-put
         (string-string-map-put
@@ -7540,7 +7625,7 @@
         (AstTyI64)
         (spec-type-subst-cons "U" (AstTyBool) SpecTypeSubstNil))]
     (and
-      (match (spec-template-lookup templates "second")
+      (match (spec-template-lookup template-env "second")
         [(SpecSomeTemplate template)
           (match template
             [(SpecTemplate name _ _ _) (string-eq name "second")])]
@@ -8371,6 +8456,7 @@
     (unless (compiler-specialize-type-param-ok?) (return 0))
     (unless (compiler-specialize-runtime-type-use-rejected?) (return 0))
     (unless (compiler-specialize-template-shadow-ok?) (return 0))
+    (unless (compiler-specialize-template-shadow-sibling-ok?) (return 0))
     (unless (compiler-specialize-type-shadow-ok?) (return 0))
     (unless (compiler-specialize-raw-pointer-type-ok?) (return 0))
     (unless (compiler-specialize-name-key-ok?) (return 0))

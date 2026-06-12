@@ -16,6 +16,12 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   control. `arena-make`, `arena-current`, and `arena-mark` are safe; switching,
   destroying, and rewinding arenas require `(unsafe ...)`. Import it with
   `(import "stdlib/arena.tl")`.
+- `args.tl`: reusable argv option parser over explicit specs. It supports
+  short/long boolean flags, short/long value flags, repeated options,
+  positional preservation, and `--` end-of-options handling, with structured
+  missing-value and unknown-option diagnostics. The intended CLI migration path
+  is for selfhost command modules to define local specs and replace hand-rolled
+  flag loops incrementally. Import it with `(import "stdlib/args.tl")`.
 - `io.tl`: file I/O helpers, explicit file-handle open/close wrappers, stdio
   wrappers, argv access, panic/error, and monomorphic Result-style I/O error
   APIs built as stdlib extern wrappers over backend runtime symbols. Import it with
@@ -281,6 +287,7 @@ owned stdlib imports keep the compatibility wrappers.
 | `i64-vec-*`, `string-vec-*` helpers in `vector.tl` | Vector constructors, growth, push, `from-array`, `extend`, `to-array`, and `i64-vec-map*` allocate backing arrays in the active arena. `i64-vec-map*` traverses owned `I64Vec` handles and returns fresh owned vectors; borrowed slice traversal remains separate in `vector_slice.tl`. `set!` and `reverse!` mutate the existing backing array and return the threaded vector value; `get`, `last`, `len`, `capacity`, `is-empty?`, `contains?`, `sum`, and `i64-vec-fold*` are non-allocating aside from caller-provided fallback/value/function storage. |
 | `i64-slice-*` helpers in `vector_slice.tl` | `I64Slice` constructors, `get`, `len`, `is-empty?`, and sub-slicing are non-allocating views tied to a source owner borrow; invalid ranges/counts produce an empty view. `i64-slice-to-array` and `i64-slice-to-vec` are explicit owned-copy boundaries that allocate active-arena storage. |
 | `arena-*` helpers in `arena.tl` | First-class arena control does not allocate returned aggregate storage. `arena-make` creates an independent arena handle, `arena-current` observes the active arena, and `arena-mark` observes the current bump mark. `arena-set!`, `arena-destroy`, and `arena-rewind` can invalidate live heap handles and require `(unsafe ...)`. |
+| `args-*` helpers in `args.tl` | Option specs, parse results, occurrence lists, positional list spines, diagnostic payloads, and helper substrings allocate in the active arena. Token classification, option lookup, count/presence checks, and value accessors are non-allocating aside from caller-provided owned strings and existing result storage. |
 | `json-*` helpers | Parser, lookup, and escaping helpers borrow source text or keys. Object lookup compares borrowed keys without allocating. Parsed JSON aggregates, decoded strings, escaped strings, stringified output, and list/member spines allocate owned results in the active arena. |
 | `string-eq`, `string=?`, `string-eq-borrowed`, `string->int`, `string->int-borrowed` | Equality and integer parsing helpers inspect string bytes without allocating. The owned wrappers borrow their inputs internally; the borrowed variants are available to stdlib code that already has `(& r str)` values. `string->int` keeps the legacy runtime parser rules, including `""`/`"-"` as zero and byte-minus-`'0'` arithmetic for non-digits. |
 | `string-list-*` helpers | Construct immutable `StringList` cons nodes and `StringListBuilder` values in the active arena. `string-list-reverse`, `-reverse-onto`, `-append`, `-from-array`, and builder build helpers allocate fresh list spines; `string-list-to-array` allocates a fresh active-arena `(Array String)` and copies the string handles into it. |
@@ -336,6 +343,7 @@ Stdlib modules are imported explicitly:
 
 ```lisp
 (import "stdlib/arena.tl")
+(import "stdlib/args.tl")
 (import "stdlib/env.tl")
 (import "stdlib/ffi.tl")
 (import "stdlib/fs.tl")

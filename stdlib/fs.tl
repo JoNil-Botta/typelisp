@@ -21,7 +21,7 @@
 ;# (define nested : String
 ;#   (fs-path-join-many "target" "typelisp" "cache"))
 ;# ```
-(import "core_macros.tl" module stdlib.core-macros as core)
+(import "core_macros.tl" module stdlib.core_macros as core)
 
 (import "env.tl")
 

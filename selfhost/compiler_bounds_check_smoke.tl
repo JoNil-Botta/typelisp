@@ -4,7 +4,7 @@
 ;; optimizer, emits assembly, and requires exactly one OOB trap reference. The
 ;; backend no longer owns the `tl_oob_abort` body; executable driver paths link
 ;; it from the runtime prelude.
-(import "../stdlib/core_macros.tl" module stdlib.core-macros as core)
+(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
 
 (import "compiler_backend.tl")
 

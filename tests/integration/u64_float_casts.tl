@@ -1,7 +1,7 @@
 ;; Locks down unsigned u64 -> float casts for values with the high bit set.
 ;; The signed cvtsi2s{s,d}q path turns these into negative floats; a correct
 ;; unsigned lowering keeps them at or above 2^63.
-(import "stdlib/core_macros.tl" module stdlib.core-macros as core)
+(import "stdlib/core_macros.tl" module stdlib.core_macros as core)
 
 (define (u64-high) : u64
   (+ (cast 9223372036854775807 : u64) (cast 1 : u64)))

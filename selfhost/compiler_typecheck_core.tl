@@ -23078,15 +23078,17 @@
   (match (macro-prelude-resolve-module-with-exports
     exports
     decls
-    "stdlib.core-macros"
+    "stdlib.core_macros"
     lookup-name)
     [(OkMacroCallDecl maybe-decl)
       (match maybe-decl
         [(MacroNoDecl)
+          ;; Compatibility fallback for sources loaded with the old module
+          ;; identity before the core_macros spelling migration.
           (macro-prelude-resolve-module-with-exports
             exports
             decls
-            "stdlib.core_macros"
+            "stdlib.core-macros"
             lookup-name)]
         [_ (OkMacroCallDecl maybe-decl)])]
     [(ErrMacroCallDecl diag) (ErrMacroCallDecl diag)]))

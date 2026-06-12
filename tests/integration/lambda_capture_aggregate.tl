@@ -1,4 +1,4 @@
-(import "stdlib/core_macros.tl" module stdlib.core-macros as core)
+(import "stdlib/core_macros.tl" module stdlib.core_macros as core)
 
 ; Capturing String and dynamic-array values in closure environments (#435).
 ; Each case reads a scalar out of a captured aggregate so the test exercises

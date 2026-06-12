@@ -1,6 +1,6 @@
 ;: SPEC safe-code contract: in-bounds collection access, checked aggregate
 ;: construction, race-free SPMD, and valid comptime values have defined results.
-(import "stdlib/core_macros.tl" module stdlib.core-macros as core)
+(import "stdlib/core_macros.tl" module stdlib.core_macros as core)
 
 (import "stdlib/string.tl")
 

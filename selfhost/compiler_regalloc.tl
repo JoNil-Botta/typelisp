@@ -6,7 +6,7 @@
 ;; %rsp/%rbp and the emitter's hard scratch registers reserved, and only admit
 ;; caller-saved integer/XMM registers for values that cannot be clobbered by
 ;; call emission.
-(import "../stdlib/core_macros.tl" module stdlib.core-macros as core)
+(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
 
 (import "../stdlib/io.tl")
 

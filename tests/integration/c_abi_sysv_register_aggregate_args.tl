@@ -2,7 +2,7 @@
 ;; proves two INTEGER eightbytes, Outer proves recursive nested flattening,
 ;; Mixed proves independent INTEGER/SSE banks for a two-eightbyte struct, and
 ;; Vec2 proves a packed {f32, f32} SSE eightbyte for args and returns.
-(import "stdlib/core_macros.tl" module stdlib.core-macros as core)
+(import "stdlib/core_macros.tl" module stdlib.core_macros as core)
 
 (defstruct Pair
   (lo i64)

@@ -1,4 +1,4 @@
-(import "core_macros.tl" module stdlib.core-macros as core)
+(import "core_macros.tl" module stdlib.core_macros as core)
 
 ;# stdlib/runtime.tl - Always-linked runtime prelude (#2142 / #2150).
 ;#

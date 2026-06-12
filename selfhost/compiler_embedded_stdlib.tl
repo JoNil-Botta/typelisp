@@ -1,5 +1,5 @@
 ;; compiler_embedded_stdlib.tl - Checked-in stdlib source payloads (#1509).
-(import "../stdlib/core_macros.tl" module stdlib.core-macros as core)
+(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
 
 (defenum CompilerEmbeddedStdlibSource
   (CompilerEmbeddedStdlibNoSource)

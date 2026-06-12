@@ -1,5 +1,5 @@
 ;; Repr-c f32 fields use 4-byte scalar storage and can be constructed and read.
-(import "stdlib/core_macros.tl" module stdlib.core-macros as core)
+(import "stdlib/core_macros.tl" module stdlib.core_macros as core)
 
 (defstruct ReprCF32
   (:repr c)

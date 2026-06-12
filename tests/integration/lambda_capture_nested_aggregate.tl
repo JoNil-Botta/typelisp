@@ -1,4 +1,4 @@
-(import "stdlib/core_macros.tl" module stdlib.core-macros as core)
+(import "stdlib/core_macros.tl" module stdlib.core_macros as core)
 
 ; Capturing nested aggregate fields in closure environments (#584).
 ; Returned closures read through copied nested handles after the creator frame

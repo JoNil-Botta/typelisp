@@ -2,7 +2,7 @@
 ;;
 ;; Source-file runs build and execute in-process through stdlib fs/process
 ;; helpers. `--direct` remains accepted as a compatibility no-op.
-(import "../stdlib/core_macros.tl" module stdlib.core-macros as core)
+(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
 
 (import "../stdlib/io.tl")
 

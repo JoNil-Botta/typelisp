@@ -4,7 +4,7 @@
 ;; synthetic byte buffers into it, flips code pages from RW to RX, keeps data
 ;; pages non-executable, and releases the mapping. Container parsing, fixups,
 ;; callback ABI entry, and real comptime images belong to later tlci slices.
-(import "../stdlib/core_macros.tl" module stdlib.core-macros as core)
+(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
 
 (import "../stdlib/io.tl")
 

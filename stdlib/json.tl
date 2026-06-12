@@ -17,7 +17,7 @@
 ;# (import "stdlib/json.tl")
 ;# (define sample : String (json-stringify (JsonBool true)))
 ;# ```
-(import "core_macros.tl" module stdlib.core-macros as core)
+(import "core_macros.tl" module stdlib.core_macros as core)
 
 (import "string.tl")
 

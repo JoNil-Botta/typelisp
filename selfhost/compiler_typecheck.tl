@@ -5928,7 +5928,7 @@
   (when true
     (unsafe
       (let [ptr : (Ptr u8) (string-data text)] unit))))
-(module stdlib.core-macros)
+(module stdlib.core_macros)
 (defmacro (and [args : bool ...]) : bool
   (if (expr-list-empty? args)
     (expr-bool true)
@@ -5950,7 +5950,7 @@
 (export (macro when))
 (export (macro unless))
 (module main)
-(import \"stdlib/core_macros.tl\" module stdlib.core-macros :as core)
+(import \"stdlib/core_macros.tl\" module stdlib.core_macros :as core)
 (define (main) : i64
       (let [value : i64 0]
     (begin
@@ -5959,7 +5959,7 @@
       (if (core.and (= value 42) (core.or false true)) value 0))))")
 
 (define (compiler-typecheck-macro-prelude-module-source) : String
-  "(module stdlib.core-macros)
+  "(module stdlib.core_macros)
 (defmacro (and [args : bool ...]) : bool
   (if (expr-list-empty? args)
     (expr-bool true)

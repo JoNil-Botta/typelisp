@@ -20,7 +20,7 @@
 ;; self-contained. `main` evaluates `(+ 1 (* 2 3))` and returns 7: the inner
 ;; `(* 2 3)` is the nested argument, so it is evaluated first (to 6), then the
 ;; outer `(+ 1 6)` to 7 - the result depends on the whole nested shape.
-(import "stdlib/core_macros.tl" module stdlib.core-macros as core)
+(import "stdlib/core_macros.tl" module stdlib.core_macros as core)
 
 (import "stdlib/io.tl")
 

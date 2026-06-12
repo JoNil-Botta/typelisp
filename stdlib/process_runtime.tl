@@ -16,7 +16,7 @@
 ;# matching the previous backend behavior.
 ;#
 ;# Usage: imported by `process.tl` (which provides the public wrappers).
-(import "core_macros.tl" module stdlib.core-macros as core)
+(import "core_macros.tl" module stdlib.core_macros as core)
 
 (import "process.tl")
 

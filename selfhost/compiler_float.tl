@@ -2,7 +2,7 @@
 ;; compiler. The parser accepts the current source grammar
 ;; `[-]?[0-9]+\.[0-9]+` plus canonical integer spellings emitted by the
 ;; compiler float formatter.
-(import "../stdlib/core_macros.tl" module stdlib.core-macros as core)
+(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
 
 (import "../stdlib/io.tl")
 

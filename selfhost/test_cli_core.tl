@@ -6,7 +6,7 @@
 ;; directly. Imported files provide runtime declarations but do not contribute
 ;; their own tests to this source's harness. Normal compile paths ignore
 ;; `AstDeclTest`.
-(import "../stdlib/core_macros.tl" module stdlib.core-macros as core)
+(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
 
 (import "../stdlib/io.tl")
 
@@ -1510,7 +1510,7 @@
           _
           (AstSomeModuleName module)
           (AstSomeImportAlias alias)))
-      (and (string-eq module "stdlib.core-macros") (string-eq alias "core"))]
+      (and (string-eq module "stdlib.core_macros") (string-eq alias "core"))]
     [_ false]))
 
 (define (tltest-import-alias-preserved-self-test?) : bool
@@ -1520,7 +1520,7 @@
         (AstImportSpec
           (AstImportPath)
           "stdlib/core_macros.tl"
-          (AstSomeModuleName "stdlib.core-macros")
+          (AstSomeModuleName "stdlib.core_macros")
           (AstSomeImportAlias "core")))]
     [span : AstSourceSpan (AstSourceSpan 9 1 9 1)]
     [decls : AstDeclList

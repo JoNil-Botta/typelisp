@@ -28,7 +28,7 @@
 ;#       (if (args-option-present? parsed "verbose") 1 0)]
 ;#     [(ErrArgsParsed _) 2]))
 ;# ```
-(import "core_macros.tl" module stdlib.core-macros as core)
+(import "core_macros.tl" module stdlib.core_macros as core)
 
 (import "io.tl")
 

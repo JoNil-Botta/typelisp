@@ -1,4 +1,4 @@
-(import "stdlib/core_macros.tl" module stdlib.core-macros as core)
+(import "stdlib/core_macros.tl" module stdlib.core_macros as core)
 
 ; Capturing top-level scalar-element fixed `(Array T N)` values in closure
 ; environments (#571). `main` yields 42 only if every case holds. The

@@ -29,7 +29,7 @@
 ;; `main` and there is no duplicate-symbol clash. The selfhost namespace model
 ;; specified in SPEC.md replaces this flat import behavior with qualified module
 ;; identities.
-(import "../stdlib/core_macros.tl" module stdlib.core-macros as core)
+(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
 
 (import "../stdlib/io.tl")
 

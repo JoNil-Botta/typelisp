@@ -3,7 +3,7 @@
 ;; The #387 extractor exposes module docs and documented top-level items. It
 ;; does not expose undocumented declarations as separate records yet, so this
 ;; renderer emits exactly the declarations present in the extracted model.
-(import "../stdlib/core_macros.tl" module stdlib.core-macros as core)
+(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
 
 (import "../stdlib/io.tl")
 

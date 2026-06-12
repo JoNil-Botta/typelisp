@@ -411,8 +411,8 @@ malformed box types such as `(Box)`, `(Box A B)`, and `(Box T extra)` with a
 source-located type diagnostic.
 
 `(box expr)` allocates storage for the value produced by `expr` in the active
-arena and returns `(Box T)`, where `T` is the type of `expr`. In the
-program-lifetime default arena the result type is `(Box T)`. Inside
+arena and returns `(Box T)`, where `T` is the type of `expr`. In the calling
+thread's default arena the result type is `(Box T)`. Inside
 `(with-arena r ...)`, allocation targets `r` and the result type is
 `(in r (Box T))`; it follows the same region escape rules as other
 arena-owned handles.
@@ -1088,8 +1088,8 @@ annotation; they do not change ABI representation, runtime size, or data
 layout. The tag exists solely to enable static escape checking.
 
 `(with-arena r ...)` creates the scoped arena, produces `(in r T)` region tags
-for allocations inside the body, shadows the program-lifetime default arena,
-and lowers to `tl_region_mark` / `tl_region_reset` around the body.
+for allocations inside the body, shadows the calling thread's default arena, and
+lowers to `tl_region_mark` / `tl_region_reset` around the body.
 
 **Region-taggable types** are the heap-allocated aggregate kinds whose storage
 can be created inside a region scope:
@@ -4240,9 +4240,14 @@ runtime (#2314): Linux emits `mmap`/`munmap` in `tl_alloc`, `tl_arena_make`,
 current `tl_arena_make` fatal-exit syscall), while Windows emits kernel32
 `VirtualAlloc`/`VirtualFree` for the corresponding page paths. `tl_region_mark`,
 `tl_arena_current`, `tl_arena_set`, and `tl_arena_poison_enable` only read or
-update backend runtime state. The string and trap symbols in the table are
-stdlib/runtime-prelude exports or migration targets, not backend-owned core
-helpers.
+update backend runtime state. The current-arena state is thread-local: Linux
+uses local-exec TLS and the freestanding entry installs an FS base before global
+initializers run; Windows x64 stores the current arena in the TEB
+arbitrary-user slot (`GS:0x28`). Raw thread spawn initializes a fresh zero
+current-arena slot before calling user code, so the worker's first allocation
+creates an independent default arena chain. The string and trap symbols in the
+table are stdlib/runtime-prelude exports or migration targets, not backend-owned
+core helpers.
 
 `tl_arena_make` creates an ordinary first-class arena whose bump cursor is
 single-threaded. `tl_arena_make_atomic` creates an arena handle with the same
@@ -4620,21 +4625,21 @@ guarantees and are not implemented yet (#809/#896).
 - Non-escaping aggregate fat/inline storage is usually kept in the current stack frame.
 - Allocation goes through `tl_alloc`, a backend-emitted bump allocator.
 - There is **no garbage collector** or general `free`.
-- Heap allocations are process-lifetime allocations by default: once allocated,
-  they remain live until the compiled program exits unless an explicit
-  tool-owned region reset discards them.
+- Each thread has its own default arena. Default-arena allocations remain live
+  until the compiled program exits unless an explicit same-thread region reset
+  discards them; thread exit does not reclaim that thread's default arena in v1.
 
 ### 7.3 V1 reclamation direction
 
-Issue #320 chose the near-term reclamation policy. The current
-process-lifetime arena remains the default because it is simple, deterministic,
-and correct for one-shot compiled programs. It covers all current heap
-allocation kinds: fresh string storage from `substring`, `str-cat`/the
-low-level concat primitives, `read-file`, `arg`, and `int->string`; dynamic
-array element buffers and fat values; returned enum and struct storage; and
-self-hosted data structures built from those primitives. Future `ByteBuf`
-backing storage and closures are expected to allocate in the same heap until a
-more precise model exists.
+Issue #320 chose the near-term reclamation policy. The current per-thread
+default arena remains process-lifetime by default because it is simple,
+deterministic, and correct for one-shot compiled programs. It covers all current
+heap allocation kinds within the allocating thread: fresh string storage from
+`substring`, `str-cat`/the low-level concat primitives, `read-file`, `arg`, and
+`int->string`; dynamic array element buffers and fat values; returned enum and
+struct storage; and self-hosted data structures built from those primitives.
+Future `ByteBuf` backing storage and closures are expected to allocate in the
+same active arena until a more precise model exists.
 
 General per-object `free`, implicit destructors, and borrowed references are not
 part of this v1 policy. Aggregate handles are represented as pointer-shaped
@@ -4833,9 +4838,10 @@ allocation target for a dynamic extent. The safe spelling is the planned
 saves the calling thread's current arena, installs the target for `body`, then
 restores the saved arena without marking, rewinding, destroying, or cloning.
 With #2591, "current arena" is thread-local, so selecting an atomic arena in one
-thread does not change another thread's default arena. Before #2591 and
-`in-arena` land, threaded allocation through `arena-set!` remains unsafe because
-the implementation's current arena is still process-global.
+thread does not change another thread's default arena. Before `in-arena` and the
+atomic-arena runtime land, threaded allocation through `arena-set!` remains an
+unsafe manual operation because ordinary first-class arenas are still
+single-threaded allocation targets.
 
 Values allocated while an atomic arena is current are owned by that atomic arena
 for thread-safety reasoning, even where the transitional lowerable type remains

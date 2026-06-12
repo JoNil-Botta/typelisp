@@ -691,6 +691,8 @@ run_linux_backend_fixtures() {
         "tl_string_concat:" \
         "rep movsb" \
         "tl_current_arena:" \
+        "tl_thread_init:" \
+        "tl_current_arena@tpoff" \
         ".L_tl_alloc_new_arena:" \
         "call tl_alloc"
     do
@@ -943,7 +945,7 @@ run_windows_backend_fixtures() {
         ".globl main" \
         ".globl tl_alloc" \
         "tl_alloc:" \
-        "tl_current_arena:" \
+        "%gs:0x28" \
         ".globl tl_substring" \
         "tl_substring:" \
         ".globl tl_string_concat" \

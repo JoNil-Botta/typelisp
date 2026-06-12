@@ -628,10 +628,10 @@ aggregate layout contract for recursive structs/enums; complete enforcement is
 staged separately (#2554). Destructive `box-take` and mutable access through
 boxes remain future work (#2553).
 
-The v1 reclamation direction keeps the program-lifetime arena as the default
-allocation target and does not add general per-object `free` or GC yet.
-`String` buffers, dynamic array storage, returned enum/struct storage, and
-self-hosted data structures all remain heap allocations in the active arena.
+The v1 reclamation direction keeps a process-lifetime default arena per thread
+and does not add general per-object `free` or GC yet. `String` buffers, dynamic
+array storage, returned enum/struct storage, and self-hosted data structures all
+remain heap allocations in the active arena.
 General `free` is deferred until ownership, borrowing, and reference semantics
 are enforced, because arbitrary object reclamation before move/borrow checking
 would make double-free and use-after-free errors expressible. A tracing GC is

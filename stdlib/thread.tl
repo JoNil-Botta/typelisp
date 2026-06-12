@@ -5,9 +5,9 @@
 ;# default worker count. Linux uses raw `clone`/`futex`/`eventfd2` syscalls.
 ;# Windows uses kernel32 `CreateThread`, `WaitForSingleObject`, and semaphores.
 ;#
-;# The current arena allocator is process-global and not synchronized. Thread
-;# entry functions should use preallocated raw storage or OS synchronization
-;# until the compiler driver grows isolated worker state.
+;# Each thread has its own default arena. The raw `i64` context/result surface
+;# does not transfer ownership; callers that smuggle addresses through those
+;# integers remain responsible for synchronization in unsafe code.
 ;#
 ;# Usage: `(import "stdlib/thread.tl")`
 ;#
@@ -46,6 +46,11 @@
 (cfg
   windows
   (extern thread-windows-entry (:symbol "tl_thread_entry_ptr") : (-> i64 i64)))
+
+;: Linux runtime hook that installs this thread's default arena TLS slot.
+(cfg
+  linux
+  (extern (thread-linux-runtime-init) : unit (:symbol "tl_thread_init")))
 
 ;: Windows kernel32 `CreateThread`.
 (cfg
@@ -178,6 +183,7 @@
   [result-addr : i64]
   [started-addr : i64]) : never
   (begin
+    (cfg linux (thread-linux-runtime-init) unit)
     (thread-write-i32! started-addr (cast 1 : i32))
     (thread-linux-futex-wake started-addr)
     (let

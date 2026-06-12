@@ -420,7 +420,7 @@
     (and
       (compiler-backend-string-contains?
         asm
-        "    movq tl_current_arena(%rip), %r8\n")
+        "    movq %fs:tl_current_arena@tpoff, %r8\n")
       (compiler-backend-string-contains? asm "    addq $16, "))
     false))
 
@@ -3577,7 +3577,10 @@
         "tl_arena_destroy")
       (compiler-backend-runtime-helper-inventory-core-symbol-ok?
         plan
-        "tl_arena_poison_enable"))))
+        "tl_arena_poison_enable"))
+    (compiler-backend-runtime-helper-inventory-core-symbol-ok?
+      plan
+      "tl_thread_init")))
 
 (define (compiler-backend-runtime-helper-inventory-stdlib-ffi-ok?
   [plan : CompilerBackendRuntimePlan]) : bool
@@ -3880,18 +3883,21 @@
       (backend-and4
         (=
           (compiler-backend-string-count asm "    movq $9, %rax\n    syscall\n")
-          2)
+          3)
         (=
           (compiler-backend-string-count
             asm
             "    movq $11, %rax\n    syscall\n")
           3)
-        (= (compiler-backend-string-count asm "    syscall\n") 6)
+        (= (compiler-backend-string-count asm "    syscall\n") 9)
         (=
           (compiler-backend-string-count
             asm
             "    movq $60, %rax\n    movq $134, %rdi\n    syscall\n")
-          1))
+          2))
+      (compiler-backend-string-contains?
+        asm
+        "    movq $158, %rax\n    syscall\n")
       (not (compiler-backend-string-contains? asm "VirtualAlloc"))
       (not (compiler-backend-string-contains? asm "VirtualFree")))))
 
@@ -3916,6 +3922,7 @@
         (= (compiler-backend-string-count asm "    call VirtualFree\n") 3)
         (not (compiler-backend-string-contains? asm "    syscall\n"))
         (not (compiler-backend-string-contains? asm "    call WriteFile\n")))
+      (compiler-backend-string-contains? asm "    movq %gs:0x28, %r8\n")
       (not (compiler-backend-string-contains? asm "    call _write\n"))
       (not (compiler-backend-string-contains? asm "SystemFunction036")))))
 

@@ -1,6 +1,8 @@
 ;; compiler_object_elf.tl - ELF64 object-file serialization for object images.
 (import "compiler_object.tl")
 
+(import "compiler_float.tl")
+
 (defenum ResultCompilerObjectElf
   (OkCompilerObjectElf String)
   (ErrCompilerObjectElf String))
@@ -154,52 +156,10 @@
   [offset : i64]) : unit
   (compiler-object-elf-push-zeroes! out (- offset (array-length out))))
 
-(define (compiler-object-elf-decimal-digit? [c : char]) : bool
-  (and (>= (cast c : i64) 48) (<= (cast c : i64) 57)))
-
-(define (compiler-object-elf-decimal-digit-value [c : char]) : i64
-  (- (cast c : i64) 48))
-
-(define (compiler-object-elf-f64-value [text : String]) : f64
-  (let
-    [n : i64 (string-length text)]
-    [i : i64 0]
-    [negative : bool false]
-    [fraction : bool false]
-    [value : f64 0.0]
-    [scale : f64 1.0]
-    (begin
-      (while (< i n)
-        (let
-          [c : char (string-ref text i)]
-          (begin
-            (cond
-              (= c #-')
-              (set! negative true)
-              (= c #.')
-              (set! fraction true)
-              (compiler-object-elf-decimal-digit? c)
-              (let
-                [digit : f64
-                  (cast (compiler-object-elf-decimal-digit-value c) : f64)]
-                (if fraction
-                  (begin
-                    (set! scale (* scale 0.1))
-                    (set! value (+ value (* digit scale))))
-                  (set! value (+ (* value 10.0) digit))))
-              unit)
-            (set! i (+ i 1)))))
-      (if negative
-        (- 0.0 value)
-        value))))
-
 (define (compiler-object-elf-f64-bits [text : String]) : u64
-  (let
-    [buf : (Array f64) (make-array f64 1)]
-    (begin
-      (array-set! buf 0 (compiler-object-elf-f64-value text))
-      (unsafe
-        (ptr-read (ptr-cast (array-data buf) : (Ptr u64)))))))
+  (match (compiler-float-parse-f64 text)
+    [(CompilerFloatSomeF64 value) (compiler-float-f64-bits value)]
+    [(CompilerFloatNoF64) (panic "elf: unsupported f64 literal")]))
 
 (define (compiler-object-elf-data-record-end-offset
   [record : CompilerObjectDataRecord]

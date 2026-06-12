@@ -2,10 +2,8 @@
 ;; expression-position `(comptime expr)` (#719, scalar subset).
 ;;
 ;; Ports the scalar slice of the Rust reference `src/ctfe.rs`. Supported
-;; compile-time value types are i64, bool, char, unit, type values, and
-;; Expr / list aggregates (#1137). f64 compile-time evaluation is intentionally
-;; out of scope here (the selfhost compiler stores floats as opaque text with
-;; no arithmetic primitives) and is rejected with a diagnostic citing #735.
+;; compile-time value types are i64, f64, bool, char, unit, type values, and
+;; Expr / list aggregates (#1137).
 ;;
 ;; Evaluation is purely functional: the environment is an immutable cons list
 ;; threaded through recursion, and the step budget ("fuel") is threaded through
@@ -20,12 +18,15 @@
 
 (import "compiler_diagnostic.tl")
 
+(import "compiler_float.tl")
+
 (import "../stdlib/string.tl")
 
 ;; A compile-time value. Scalar subset from #719; Expr / ExprList aggregates
 ;; from #1137 for macro transformers.
 (defenum CompilerCtfeValue
   (CtfeI64 i64)
+  (CtfeF64 f64)
   (CtfeBool bool)
   (CtfeChar char)
   (CtfeString String)
@@ -603,6 +604,7 @@
 (define (ctfe-value-type-name [value : CompilerCtfeValue]) : String
   (match value
     [(CtfeI64 _) "i64"]
+    [(CtfeF64 _) "f64"]
     [(CtfeBool _) "bool"]
     [(CtfeChar _) "char"]
     [(CtfeString _) "String"]
@@ -625,11 +627,18 @@
     [(AstLitBool b) (OkCtfe (CtfeBool b) fuel)]
     [(AstLitChar c) (OkCtfe (CtfeChar c) fuel)]
     [(AstLitUnit) (OkCtfe (CtfeUnit) fuel)]
-    [(AstLitFloat _)
-      (ErrCtfe
-        (ctfe-diagnostic-at-expr
-          expr
-          "comptime: f64 compile-time evaluation not yet supported (#735)"))]
+    [(AstLitFloat text)
+      (match (compiler-float-parse-f64 text)
+        [(CompilerFloatSomeF64 value)
+          (if (compiler-float-f64-finite? value)
+            (OkCtfe (CtfeF64 value) fuel)
+            (ErrCtfe
+              (ctfe-diagnostic-at-expr
+                expr
+                "comptime: non-finite f64 literal is not supported")))]
+        [(CompilerFloatNoF64)
+          (ErrCtfe
+            (ctfe-diagnostic-at-expr expr "comptime: invalid f64 literal"))])]
     [(AstLitString text) (OkCtfe (CtfeString text) fuel)]))
 
 ;; --- binary operators -------------------------------------------------------
@@ -671,6 +680,43 @@
     [(AstBinOr)
       (ErrCtfe
         (ctfe-diagnostic-at-expr expr "'or' in comptime requires bool operands"))]))
+
+(define (ctfe-f64-result [value : f64] [expr : AstExpr] [fuel : i64]) : ResultCtfe
+  (if (compiler-float-f64-finite? value)
+    (OkCtfe (CtfeF64 value) fuel)
+    (ErrCtfe
+      (ctfe-diagnostic-at-expr
+        expr
+        "comptime: non-finite f64 result is not supported"))))
+
+;; Finite f64 arithmetic and comparisons. Non-finite results are rejected until
+;; TypeLisp specifies NaN payload and infinity serialization across backends.
+(define (ctfe-eval-bin-f64
+  [op : AstBinOp]
+  [a : f64]
+  [b : f64]
+  [expr : AstExpr]
+  [fuel : i64]) : ResultCtfe
+  (match op
+    [(AstBinAdd) (ctfe-f64-result (+ a b) expr fuel)]
+    [(AstBinSub) (ctfe-f64-result (- a b) expr fuel)]
+    [(AstBinMul) (ctfe-f64-result (* a b) expr fuel)]
+    [(AstBinDiv)
+      (if (= b 0.0)
+        (ErrCtfe
+          (ctfe-diagnostic-at-expr expr "float division by zero in comptime"))
+        (ctfe-f64-result (/ a b) expr fuel))]
+    [(AstBinEq) (OkCtfe (CtfeBool (= a b)) fuel)]
+    [(AstBinNe) (OkCtfe (CtfeBool (!= a b)) fuel)]
+    [(AstBinLt) (OkCtfe (CtfeBool (< a b)) fuel)]
+    [(AstBinLe) (OkCtfe (CtfeBool (<= a b)) fuel)]
+    [(AstBinGt) (OkCtfe (CtfeBool (> a b)) fuel)]
+    [(AstBinGe) (OkCtfe (CtfeBool (>= a b)) fuel)]
+    [_
+      (ErrCtfe
+        (ctfe-diagnostic-at-expr
+          expr
+          "this operation is not supported on f64 in compile-time evaluation"))]))
 
 ;; bool comparisons and boolean connectives.
 (define (ctfe-eval-bin-bool
@@ -752,6 +798,14 @@
     [(CtfeI64 a)
       (match rv
         [(CtfeI64 b) (ctfe-eval-bin-i64 op a b expr fuel)]
+        [_
+          (ErrCtfe
+            (ctfe-diagnostic-at-expr
+              expr
+              "binary operation in comptime requires matching operand types"))])]
+    [(CtfeF64 a)
+      (match rv
+        [(CtfeF64 b) (ctfe-eval-bin-f64 op a b expr fuel)]
         [_
           (ErrCtfe
             (ctfe-diagnostic-at-expr
@@ -895,6 +949,7 @@
     [(AstUnNeg)
       (match v
         [(CtfeI64 n) (OkCtfe (CtfeI64 (- 0 n)) fuel)]
+        [(CtfeF64 n) (ctfe-f64-result (- 0.0 n) expr fuel)]
         [_
           (ErrCtfe
             (ctfe-diagnostic-at-expr
@@ -5336,6 +5391,7 @@
 (define (ctfe-value-to-literal [value : CompilerCtfeValue]) : AstLiteral
   (match value
     [(CtfeI64 n) (AstLitInt n)]
+    [(CtfeF64 n) (AstLitFloat (compiler-float-format-f64 n))]
     [(CtfeBool b) (AstLitBool b)]
     [(CtfeChar c) (AstLitChar c)]
     [(CtfeString text) (AstLitString text)]
@@ -5622,6 +5678,14 @@
         [_ false])]
     [(ErrCtfe _) false]))
 
+(define (compiler-ctfe-eval-f64-ok? [expr : i64] [env : CtfeEnv] [want : f64]) : bool
+  (match (compiler-ctfe-eval (ast-node-get expr) env (ctfe-fuel-limit))
+    [(OkCtfe value _)
+      (match value
+        [(CtfeF64 actual) (= actual want)]
+        [_ false])]
+    [(ErrCtfe _) false]))
+
 (define (compiler-ctfe-eval-bool-ok? [expr : i64] [env : CtfeEnv] [want : bool]) : bool
   (match (compiler-ctfe-eval (ast-node-get expr) env (ctfe-fuel-limit))
     [(OkCtfe value _)
@@ -5662,6 +5726,31 @@
   (match (compiler-ctfe-eval (ast-node-get expr) env (ctfe-fuel-limit))
     [(ErrCtfe diag) (string-eq (compiler-diagnostic-message diag) want)]
     [(OkCtfe _ _) false]))
+
+(define (compiler-ctfe-f64-ok?) : bool
+  (let
+    [one-five : i64 (ast-node-push (AstExprLiteral (AstLitFloat "1.5")))]
+    [two-quarter : i64 (ast-node-push (AstExprLiteral (AstLitFloat "2.25")))]
+    [zero : i64 (ast-node-push (AstExprLiteral (AstLitFloat "0.0")))]
+    [sum : i64 (ast-node-push (AstExprBinary (AstBinAdd) one-five two-quarter))]
+    [neg : i64 (ast-node-push (AstExprUnary (AstUnNeg) sum))]
+    [lt : i64
+      (ast-node-push
+        (AstExprBinary
+          (AstBinLt)
+          sum
+          (ast-node-push (AstExprLiteral (AstLitFloat "4.0")))))]
+    [div-zero : i64 (ast-node-push (AstExprBinary (AstBinDiv) one-five zero))]
+    [env : CtfeEnv (ctfe-env-empty)]
+    (and
+      (compiler-ctfe-eval-f64-ok? one-five env 1.5)
+      (compiler-ctfe-eval-f64-ok? sum env 3.75)
+      (compiler-ctfe-eval-f64-ok? neg env -3.75)
+      (compiler-ctfe-eval-bool-ok? lt env true)
+      (compiler-ctfe-eval-error-ok?
+        div-zero
+        env
+        "float division by zero in comptime"))))
 
 (define (compiler-ctfe-layout-query-ok?) : bool
   (let
@@ -6160,6 +6249,7 @@
     (unless (compiler-ctfe-type-literal-ok?) (return 1))
     (unless (compiler-ctfe-type-comparison-ok?) (return 1))
     (unless (compiler-ctfe-raw-pointer-type-comparison-ok?) (return 1))
+    (unless (compiler-ctfe-f64-ok?) (return 1))
     (unless (compiler-ctfe-layout-query-ok?) (return 1))
     (unless (compiler-ctfe-reflection-query-ok?) (return 1))
     (unless (compiler-ctfe-expr-eq-ok?) (return 1))

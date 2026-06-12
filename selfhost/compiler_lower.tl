@@ -12362,7 +12362,7 @@
         (lower-return-form ctx state env type-env value origin))]
     ;; `(comptime expr)` folds to a literal via the scalar CTFE evaluator (#719).
     ;; Successful folds reuse the ordinary literal path; CTFE rejections (free
-    ;; runtime vars, unsupported forms, f64 -> #735) surface as lower errors.
+    ;; runtime vars and unsupported CTFE forms surface as lower errors.
     [(AstExprComptime inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
@@ -27451,8 +27451,8 @@
     ((lambda () : i64 (let [copy : (& n i64) r] 42)))))")
 
 ;; `(comptime expr)` folds to a literal via the scalar CTFE evaluator (#719).
-;; These fixtures exercise arithmetic, `if`, and `let` folds, plus the
-;; runtime-variable and deferred-f64 (#735) rejection paths.
+;; These fixtures exercise arithmetic, f64, `if`, and `let` folds, plus the
+;; runtime-variable rejection path.
 (define (compiler-lower-comptime-arith-source) : String
   "(define (main) : i64 (comptime (+ 1 2)))")
 
@@ -31737,7 +31737,7 @@
     (compiler-lower-tail-cleanup-shape-ok?)))
 
 ;; CTFE fold verification (#719): a folded `(comptime ...)` lowers to a literal,
-;; so the function body must contain a `Mov` of the expected i64 literal and no
+;; so the function body must contain a `Mov` of the expected literal and no
 ;; `BinOp`/`UnOp` instructions (the arithmetic was evaluated at compile time).
 (define (lower-test-instr-i64-mov-count [instr : CompilerIrInstr] [want : i64]) : i64
   (match instr
@@ -31745,6 +31745,19 @@
       (match value
         [(IrValueI64 n)
           (if (= n want)
+            1
+            0)]
+        [_ 0])]
+    [_ 0]))
+
+(define (lower-test-instr-f64-mov-count
+  [instr : CompilerIrInstr]
+  [want : String]) : i64
+  (match instr
+    [(IrInstrMov _ value _)
+      (match value
+        [(IrValueF64 text)
+          (if (string-eq text want)
             1
             0)]
         [_ 0])]
@@ -31778,6 +31791,16 @@
       (+
         (lower-test-instr-i64-mov-count instr want)
         (lower-test-instrs-i64-mov-count (box-get rest) want))]))
+
+(define (lower-test-instrs-f64-mov-count
+  [instrs : CompilerIrInstrList]
+  [want : String]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (lower-test-instr-f64-mov-count instr want)
+        (lower-test-instrs-f64-mov-count (box-get rest) want))]))
 
 (define (lower-test-instrs-binop-count [instrs : CompilerIrInstrList]) : i64
   (match instrs
@@ -31813,6 +31836,25 @@
             (+
               acc
               (lower-test-instr-i64-mov-count (array-ref slots index) want)))
+          (set! index (+ index 1))))
+      acc)))
+
+(define (lower-test-instr-seq-f64-mov-count
+  [instrs : CompilerIrInstrSeq]
+  [want : String]) : i64
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+
+              acc
+              (lower-test-instr-f64-mov-count (array-ref slots index) want)))
           (set! index (+ index 1))))
       acc)))
 
@@ -31864,6 +31906,20 @@
     [(IrBlockArray seq)
       (lower-test-blocks-i64-mov-count (compiler-ir-block-seq-to-list seq) want)]))
 
+(define (lower-test-blocks-f64-mov-count
+  [blocks : CompilerIrBlockList]
+  [want : String]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (+
+            (lower-test-instr-seq-f64-mov-count instrs want)
+            (lower-test-blocks-f64-mov-count (box-get rest) want))])]
+    [(IrBlockArray seq)
+      (lower-test-blocks-f64-mov-count (compiler-ir-block-seq-to-list seq) want)]))
+
 (define (lower-test-blocks-binop-count [blocks : CompilerIrBlockList]) : i64
   (match blocks
     [(IrBlockNil) 0]
@@ -31905,6 +31961,19 @@
             (lower-test-blocks-i64-mov-count blocks want)
             (lower-test-function-i64-mov-count (box-get rest) name want))])]))
 
+(define (lower-test-function-f64-mov-count
+  [funcs : CompilerIrFunctionList]
+  [name : String]
+  [want : String]) : i64
+  (match funcs
+    [(IrFunctionNil) 0]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction fname _ _ _ blocks)
+          (if (string-eq fname name)
+            (lower-test-blocks-f64-mov-count blocks want)
+            (lower-test-function-f64-mov-count (box-get rest) name want))])]))
+
 (define (lower-test-function-binop-count
   [funcs : CompilerIrFunctionList]
   [name : String]) : i64
@@ -31937,6 +32006,16 @@
         [(IrProgram _ functions _)
           (and
             (> (lower-test-function-i64-mov-count functions "main" want) 0)
+            (= (lower-test-function-binop-count functions "main") 0))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-comptime-f64-fold-ok? [src : String] [want : String]) : bool
+  (match (lower-compiler-source src)
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (> (lower-test-function-f64-mov-count functions "main" want) 0)
             (= (lower-test-function-binop-count functions "main") 0))])]
     [(ErrCompilerLower _) false]))
 
@@ -34833,9 +34912,9 @@
         "compile-time evaluation cannot reference runtime variable 'x'")
         unit
         (set! ok false))
-      (if (compiler-lower-error-ok?
+      (if (compiler-lower-comptime-f64-fold-ok?
         (compiler-lower-comptime-f64-source)
-        "comptime: f64 compile-time evaluation not yet supported (#735)")
+        "1.5")
         unit
         (set! ok false))
       (if (compiler-lower-comptime-op-fold-tests-ok?)

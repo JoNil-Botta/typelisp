@@ -876,6 +876,17 @@ EOF
     assert_contains "$WORKDIR/test-missing-opt.stderr" "test: --opt-level requires a value"
 
     set +e
+    TYPELISP_STAGE1_HEARTBEAT_FD=3 "$COMPILER" test "$TEST_SRC" --opt-level 3 3>&2 > "$WORKDIR/test-invalid-opt.stdout" 2> "$WORKDIR/test-invalid-opt.stderr"
+    invalid_opt_status=$?
+    set -e
+    if [ "$invalid_opt_status" -eq 0 ]; then
+        echo "host-action CLI test invalid-opt-level case unexpectedly succeeded" >&2
+        exit 1
+    fi
+    assert_empty "$WORKDIR/test-invalid-opt.stdout"
+    assert_contains "$WORKDIR/test-invalid-opt.stderr" "test: invalid --opt-level 3; expected 0, 1, or 2"
+
+    set +e
     TYPELISP_STAGE1_HEARTBEAT_FD=3 "$COMPILER" test --check "$TEST_SRC" --target nope 3>&2 > "$WORKDIR/test-bad-target.stdout" 2> "$WORKDIR/test-bad-target.stderr"
     bad_target_status=$?
     set -e

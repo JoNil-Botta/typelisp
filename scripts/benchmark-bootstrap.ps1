@@ -232,8 +232,8 @@ $script:SourcePath = (Resolve-Path (Resolve-RepoPath $Source)).Path
 $script:StdlibPath = (Resolve-Path (Resolve-RepoPath $StdlibRoot)).Path
 
 if (-not [string]::IsNullOrWhiteSpace($script:OptLevel)) {
-    if ($script:OptLevel -notin @("0", "1", "2", "3")) {
-        throw "unsupported opt level '$script:OptLevel'; expected 0, 1, 2, or 3"
+    if ($script:OptLevel -notin @("0", "1", "2")) {
+        throw "unsupported opt level '$script:OptLevel'; expected 0, 1, or 2"
     }
 }
 

@@ -43,8 +43,4 @@
     (string-eq value "avx512")))
 
 (define (host-plan-opt-level-valid? [value : String]) : bool
-  (or
-    (string-eq value "0")
-    (string-eq value "1")
-    (string-eq value "2")
-    (string-eq value "3")))
+  (or (string-eq value "0") (string-eq value "1") (string-eq value "2")))

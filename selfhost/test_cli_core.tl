@@ -91,7 +91,7 @@
   (str-cat "test: backend mode " value " is not implemented"))
 
 (define (tltest-invalid-opt-level [value : String]) : String
-  (str-cat "test: invalid --opt-level " value "; expected 0, 1, 2, or 3"))
+  (str-cat "test: invalid --opt-level " value "; expected 0, 1, or 2"))
 
 (define (tltest-batch-line-end [text : String] [start : i64] [n : i64]) : i64
   (let

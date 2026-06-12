@@ -113,7 +113,7 @@ Useful knobs:
 | `TYPELISP_BIN` | (built) | Stage0 `typelisp` binary used as the seed compiler. |
 | `TYPELISP_BOOTSTRAP_BENCH_RUNS` | `3` | Timed repetitions per compiler. |
 | `TYPELISP_BOOTSTRAP_BENCH_TARGET` | host target | `windows-x86_64` or `linux-x86_64`. |
-| `TYPELISP_BOOTSTRAP_BENCH_OPT_LEVEL` | compiler default | Optional `--opt-level 0|1|2|3` passed to both compilers. |
+| `TYPELISP_BOOTSTRAP_BENCH_OPT_LEVEL` | compiler default | Optional `--opt-level 0|1|2` passed to both compilers. |
 
 ## CLI tool corpus benchmark
 

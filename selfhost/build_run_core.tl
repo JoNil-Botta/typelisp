@@ -93,11 +93,7 @@
     (ErrSourceToolBackendMode (str-cat command ": unknown backend mode " value))))
 
 (define (source-tool-opt-level-valid? [value : String]) : bool
-  (or
-    (string-eq value "0")
-    (string-eq value "1")
-    (string-eq value "2")
-    (string-eq value "3")))
+  (or (string-eq value "0") (string-eq value "1") (string-eq value "2")))
 
 (define (source-tool-flag? [value : String]) : bool
   (and (> (string-length value) 0) (= (string-ref value 0) #-')))

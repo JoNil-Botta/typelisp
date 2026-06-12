@@ -1461,10 +1461,10 @@ EOF
     assert_stdout_empty
     assert_contains "$err" "build: --opt-level was provided more than once"
 
-    run_cmd selfhost-build-package-opt-invalid "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_PKG/typelisp.pkg" --opt-level 9
+    run_cmd selfhost-build-package-opt-invalid "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_PKG/typelisp.pkg" --opt-level 3
     assert_failure
     assert_stdout_empty
-    assert_contains "$err" "build: unknown opt level '9'; expected 0, 1, 2, or 3"
+    assert_contains "$err" "build: unknown opt level '3'; expected 0, 1, or 2"
 
     # Profile and opt-level forwarding are observable in the emitted package
     # assembly: release defaults to optimized code, dev defaults to opt level 0,

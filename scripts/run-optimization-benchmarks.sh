@@ -521,6 +521,34 @@ EOF
                     show && /^[[:space:]]*\.size/ { show = 0 }
                 ' "$_tl_asm" >&2 || true
             fi
+            _objdump=
+            if command -v llvm-objdump >/dev/null 2>&1; then
+                _objdump=llvm-objdump
+            elif command -v objdump >/dev/null 2>&1; then
+                _objdump=objdump
+            fi
+            if [ -n "$_objdump" ] && command -v awk >/dev/null 2>&1; then
+                echo "TypeLisp linked disassembly near remainder for $_name:" >&2
+                "$_objdump" -d "$_tl_bin" | awk '
+                    {
+                        ring[NR % 32] = $0
+                        lower = tolower($0)
+                        if (index(lower, "3b9aca07") || index($0, "1000000007")) {
+                            start = NR - 24
+                            for (i = start; i < NR; i++) {
+                                if (i > 0 && ((i % 32) in ring)) print ring[i % 32]
+                            }
+                            print
+                            after = 48
+                            next
+                        }
+                        if (after > 0) {
+                            print
+                            after--
+                        }
+                    }
+                ' >&2 || true
+            fi
             exit 1
         fi
         printf 'correctness OK: %s\n' "$_name"

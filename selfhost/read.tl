@@ -2,14 +2,13 @@
 ;; as a `main`-less, importable module (refs #27/#44).
 ;;
 ;; --------------------------------------------------------------------------
-;; Why this module exists (the module signal for the evaluator, refs #44/#81).
+;; Why this module exists (the module signal for reusable reader code, refs
+;; #44/#81).
 ;; --------------------------------------------------------------------------
 ;; `reader.tl` is the *demo* program for the s-expression reader: it carries a
-;; `main` that reads a sample and folds the resulting tree with `sum-ints`. But
-;; the next front-end component - the s-expression *evaluator* in `eval.tl` -
-;; wants to REUSE the reader's `read : (-> (Array Token) Sexpr)` and the `Sexpr`
-;; AST it builds, rather than re-derive them, and it carries its own `main`
-;; (interpret the read tree to an i64).
+;; `main` that reads a sample and folds the resulting tree with `sum-ints`.
+;; Reusable frontend modules need the reader's `read : (-> (Array Token) Sexpr)`
+;; and the `Sexpr` AST it builds without inheriting that demo `main`.
 ;;
 ;; The legacy stage0 module loader (#44) is whole-program: it concatenates every
 ;; imported module's declarations into a single program, then runs the unchanged
@@ -17,17 +16,16 @@
 ;; `main` and are loaded together produce a duplicate `main` symbol - the known
 ;; legacy limitation. The selfhost namespace model specified in SPEC.md replaces
 ;; this flat import behavior with qualified module identities. Importing
-;; `reader.tl` (which HAS a `main`) into the evaluator (which also needs a
-;; `main`) would clash today.
+;; `reader.tl` (which HAS a `main`) into another command driver that also needs
+;; a `main` would clash today.
 ;;
 ;; The fix is this `main`-less module: it holds the reader's cursor helpers, the
 ;; mutually recursive `read-form` / `read-list`, the public `read` entry, AND the
 ;; `Sexpr` AST definition, `(import)`s the shared `main`-less `lex.tl` (which
 ;; transitively imports the `main`-less `token.tl`), and declares NO `main`.
-;; The evaluator `(import "read.tl")`s it and gets `read` + `lex` + the
-;; `Sexpr` enum across the import boundary, and the concatenated program has
-;; exactly one `main` (the evaluator's). `reader.tl` stays as the reader's
-;; standalone demo. This mirrors how `lex.tl` was factored from the
+;; Command drivers and compiler modules can import it and still produce a
+;; concatenated program with exactly one `main`. `reader.tl` stays as the
+;; reader's standalone demo. This mirrors how `lex.tl` was factored from the
 ;; `main`-bearing `lexer.tl`: a `main`-less module is the unit of reuse, a
 ;; `main`-bearing file is a runnable demo.
 ;; The shared lexer: the public `lex : (-> String (Array Token))`, factored into
@@ -50,8 +48,7 @@
 ;; terminated by `SNil` - exactly the cons-cell encoding of a list in any Lisp.
 ;; `SCons` carries two boxed `Sexpr` children, so the recursive layout is finite
 ;; and every constructed node that escapes via a return is heap-promoted. The
-;; reader builds this tree; the evaluator that imports this module walks it with
-;; a `match`-based recursion.
+;; reader builds this tree; importers can walk it with `match`-based recursion.
 ;; `SStr` carries the inner text of a `"..."` string-literal datum: the reader
 ;; consumes the lexer's `TStr` token (#128) into it, so a quoted string reads as a
 ;; distinct atom rather than being conflated with a `SSym` of the same characters.

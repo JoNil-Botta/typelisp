@@ -674,9 +674,9 @@ TypeLisp*:
 
 - `lexer.tl` — a tokenizer for TypeLisp's own s-expression syntax.
 - `read.tl` — an s-expression reader producing a recursive `Sexpr` cons-cell tree (an importable module).
-- `eval.tl` — a historical tree-walking evaluator retained only as a large
-  compile fixture; the REPL and all tooling evaluate through the real compiler
-  (retirement tracked by #2551).
+- The REPL and all tooling evaluate through the real compiler path only:
+  source is parsed, typechecked, compiled, linked, and run by the same pipeline
+  used for non-interactive commands.
 
 Compiler self-test and smoke-driver conventions are documented in
 [`selfhost/TESTING.md`](selfhost/TESTING.md).

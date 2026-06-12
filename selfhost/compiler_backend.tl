@@ -13916,9 +13916,7 @@
       (compiler-builtin-refresh!)
       (compiler-backend-runtime-name-id name))))
 
-(define (compiler-backend-runtime-helper-core-id? [name-id : i64])
-  :
-  bool
+(define (compiler-backend-runtime-helper-core-id? [name-id : i64]) : bool
   ;; The allocator/arena substrate is irreducible backend core runtime (#2314).
   ;; It bootstraps ordinary TypeLisp allocation, owns the single
   ;; `tl_current_arena` slot, and must remain import-free/allocation-free while

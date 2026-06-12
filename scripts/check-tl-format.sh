@@ -99,28 +99,12 @@ build_current_cli_for_format() {
 #     the test assertions.
 git ls-files '*.tl' | grep -v '^tests/format_golden/' | sort > "$ALL_FILES"
 
-xargs grep -lE '\(:(symbol|abi|link-lib|link-search|link-arg)([[:space:]]|\)|$)|\(unsafe([[:space:]]|\)|$)' < "$ALL_FILES" > "$METADATA_FILES" || true
-
-# The published seed formatter tokenizes real variadic macro ellipses as three
-# dot atoms. Keep these files under the current-source formatter until the
-# published seed is refreshed with the ellipsis lexer fix.
-if grep -F -x 'stdlib/core_macros.tl' "$ALL_FILES" >/dev/null 2>&1; then
-    printf '%s\n' 'stdlib/core_macros.tl' >> "$METADATA_FILES"
-fi
-
-# The #806 safety fixture uses mutable-borrow expression syntax before the
-# published seed formatter can parse it.
-if grep -F -x 'tests/safety/mutable_reference_reject.tl' "$ALL_FILES" >/dev/null 2>&1; then
-    printf '%s\n' 'tests/safety/mutable_reference_reject.tl' >> "$METADATA_FILES"
-fi
-sort -u "$METADATA_FILES" > "$WORKDIR/current-syntax-files.sorted"
-mv "$WORKDIR/current-syntax-files.sorted" "$METADATA_FILES"
-
-if [ -s "$METADATA_FILES" ]; then
-    grep -F -x -v -f "$METADATA_FILES" "$ALL_FILES" > "$CHECK_FILES"
-else
-    cp "$ALL_FILES" "$CHECK_FILES"
-fi
+# Formatter behavior is self-hosted and source-owned: when format_rules.tl
+# changes, the published stage0 formatter can disagree with the checked-in
+# source formatting even though the current formatter is stable. Build the
+# current formatter once and validate the whole tracked TypeLisp corpus with it.
+cp "$ALL_FILES" "$METADATA_FILES"
+: > "$CHECK_FILES"
 
 if [ ! -s "$CHECK_FILES" ] && [ ! -s "$METADATA_FILES" ]; then
     echo "no TypeLisp source files selected for formatting check" >&2

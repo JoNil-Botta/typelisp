@@ -87,8 +87,7 @@
           (cast
             (unsafe
               (ptr-read (ptr-cast written : (Ptr i32))))
-            :
-            i64)))
+            : i64)))
       (let
         [handle : i64 (runtime-windows-fd-handle fd)]
         [written : (MutPtr i32)
@@ -101,8 +100,7 @@
           (cast
             (unsafe
               (ptr-read (ptr-cast written : (Ptr i32))))
-            :
-            i64))))
+            : i64))))
     (syscall 1 fd (runtime-ptr-arg buf) count)))
 
 ;: Terminate the process with `code`; never returns. Linux uses the
@@ -129,27 +127,21 @@
 ;: Fault handler for an out-of-bounds index. Exported as the fixed `tl_oob_abort`
 ;: symbol (#2143) so the backend's emitted bounds checks call it unchanged.
 (define (tl-runtime-oob-abort)
-  (:export-symbol "tl_oob_abort")
-  :
-  never
+  (:export-symbol "tl_oob_abort") : never
   (begin
     (runtime-abort-write "tl: array index out of bounds\n")
     (runtime-os-exit 134)))
 
 ;: Fault handler for division (or remainder) by zero, exported as `tl_div_abort`.
 (define (tl-runtime-div-abort)
-  (:export-symbol "tl_div_abort")
-  :
-  never
+  (:export-symbol "tl_div_abort") : never
   (begin
     (runtime-abort-write "tl: integer division or remainder error\n")
     (runtime-os-exit 135)))
 
 ;: Fault handler for an out-of-range shift amount, exported as `tl_shift_abort`.
 (define (tl-runtime-shift-abort)
-  (:export-symbol "tl_shift_abort")
-  :
-  never
+  (:export-symbol "tl_shift_abort") : never
   (begin
     (runtime-abort-write "tl: shift count out of range\n")
     (runtime-os-exit 129)))
@@ -159,18 +151,14 @@
 ;: the runtime's own error paths reach it unchanged (replaces the former
 ;: hand-written Linux/Windows `tl_abort_string` asm).
 (define (tl-runtime-abort-string [message : String])
-  (:export-symbol "tl_abort_string")
-  :
-  never
+  (:export-symbol "tl_abort_string") : never
   (begin
     (runtime-abort-write message)
     (runtime-os-exit 134)))
 
 ;: Fill `len` pointer-sized array slots with `value`.
 (define (tl-runtime-array-fill8 [buf : (MutPtr u8)] [len : i64] [value : u64])
-  (:export-symbol "tl_array_fill8")
-  :
-  unit
+  (:export-symbol "tl_array_fill8") : unit
   (let
     [slots : (MutPtr u64)
       (unsafe
@@ -186,9 +174,7 @@
 
 ;: Zero `byte-count` bytes starting at `buf`.
 (define (tl-runtime-array-zero [buf : (MutPtr u8)] [byte-count : i64])
-  (:export-symbol "tl_array_zero")
-  :
-  unit
+  (:export-symbol "tl_array_zero") : unit
   (let
     [i : i64 0]
     (begin
@@ -203,9 +189,7 @@
 ;: Reached from the allocator's region-reset validation (not the out-of-memory
 ;: path), so the allocating write is safe here.
 (define (tl-runtime-region-abort)
-  (:export-symbol "tl_region_abort")
-  :
-  never
+  (:export-symbol "tl_region_abort") : never
   (begin
     (runtime-abort-write "tl: invalid region mark\n")
     (runtime-os-exit 134)))
@@ -218,9 +202,7 @@
 ;: Replaces the former hand-written `.L_tl_alloc_abort` asm (and its Windows
 ;: `.L_tl_win_write_abort` helper) on both targets.
 (define (tl-runtime-oom-abort)
-  (:export-symbol "tl_oom_abort")
-  :
-  never
+  (:export-symbol "tl_oom_abort") : never
   (begin
     (runtime-abort-write "tl: allocation failed\n")
     (runtime-os-exit 134)))

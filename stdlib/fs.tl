@@ -259,8 +259,7 @@
           (fs-windows-rename
             (io-array-const-ptr source-bytes)
             (io-array-const-ptr destination-bytes))
-          :
-          i64)
+          : i64)
         (fs-linux-syscall-rename
           (io-array-const-ptr source-bytes)
           (io-array-const-ptr destination-bytes))))))
@@ -306,8 +305,7 @@
   (cast
     (unsafe
       (ptr-read (ptr-offset ptr offset)))
-    :
-    i64))
+    : i64))
 
 ;: Return true when a directory entry name is `.` or `..`.
 (define (fs-read-dir-dot-entry? [name : (Ptr u8)]) : bool
@@ -351,8 +349,7 @@
     (cast
       (unsafe
         (ptr-read (ptr-cast (ptr-offset base (+ offset 16)) : (Ptr u16))))
-      :
-      i64)))
+      : i64)))
 
 ;: Return the Linux `d_name` pointer from a `linux_dirent64` record.
 (cfg
@@ -487,8 +484,7 @@
     (unsafe
       (ptr-cast
         (ptr-offset (io-array-ptr data) fs-windows-find-data-name-offset)
-        :
-        (Ptr u8)))))
+        : (Ptr u8)))))
 
 ;: Return the Windows host status code for opening and closing a directory scan.
 (cfg
@@ -668,8 +664,7 @@
             (fs-linux-file-kind-from-mode
               (cast
                 (fs-metadata-read-u32-at statptr fs-linux-stat-mode-offset)
-                :
-                i64))]
+                : i64))]
           (FsFileMetadataProbe
             status
             kind
@@ -702,13 +697,11 @@
       [high : u64
         (cast
           (fs-metadata-read-u32-at data fs-windows-file-size-high-offset)
-          :
-          u64)]
+          : u64)]
       [low : u64
         (cast
           (fs-metadata-read-u32-at data fs-windows-file-size-low-offset)
-          :
-          u64)]
+          : u64)]
       (cast (bit-or low (shl high 32)) : i64))))
 
 (cfg
@@ -729,8 +722,7 @@
                 (fs-metadata-read-u32-at
                   dataptr
                   fs-windows-file-attributes-offset)
-                :
-                i64))]
+                : i64))]
           (FsFileMetadataProbe
             io-status-ok
             kind
@@ -791,8 +783,7 @@
             (fs-windows-get-current-directory
               (cast capacity : u32)
               (io-array-ptr buf))
-            :
-            i64)]
+            : i64)]
         (core/cond
           (= written 0)
           io-status-io-error
@@ -829,8 +820,7 @@
             (fs-windows-get-current-directory
               (cast capacity : u32)
               (io-array-ptr buf))
-            :
-            i64)]
+            : i64)]
         (core/cond
           (= written 0)
           ""
@@ -1104,10 +1094,7 @@
 ;: This macro is the variadic public spelling because `fs-path-join` remains the
 ;: two-argument borrowed function. With no segments it expands to `""`; with one
 ;: segment it expands to that segment unchanged.
-(defmacro
-  (fs-path-join-many [segments : String ...])
-  :
-  String
+(defmacro (fs-path-join-many [segments : String ...]) : String
   (if (expr-list-empty? segments)
     `""
     (let

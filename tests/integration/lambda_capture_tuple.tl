@@ -8,7 +8,9 @@
 (define (case-tuple-immediate) : bool
   (let
     [t : (Tuple i64 i64) (tuple 17 25)]
-    [f : (-> i64) (lambda () : i64 (+ (tuple-ref t 0) (tuple-ref t 1)))]
+    [f : (-> i64)
+      (lambda () : i64
+        (+ (tuple-ref t 0) (tuple-ref t 1)))]
     (= (f) 42)))
 
 ; A scalar tuple created inside a frame, captured by the returned closure, and
@@ -17,7 +19,8 @@
 (define (make-tuple-reader) : (-> i64)
   (let
     [t : (Tuple i64 i64) (tuple 40 2)]
-    (lambda () : i64 (+ (tuple-ref t 0) (tuple-ref t 1)))))
+    (lambda () : i64
+      (+ (tuple-ref t 0) (tuple-ref t 1)))))
 
 (define (case-tuple-returned) : bool
   (= ((make-tuple-reader)) 42))
@@ -27,7 +30,10 @@
   (let
     [n : i64 30]
     [t : (Tuple i64 i64) (tuple 8 4)]
-    (= ((lambda () : i64 (+ n (+ (tuple-ref t 0) (tuple-ref t 1))))) 42)))
+    (=
+      ((lambda () : i64
+          (+ n (+ (tuple-ref t 0) (tuple-ref t 1)))))
+      42)))
 
 (define (main) : i64
   (begin

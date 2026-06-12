@@ -374,7 +374,10 @@
             (let
               [bias : i64 7]
               [biased : I64Vec
-                (i64-vec-map hv (lambda ([x : i64]) : i64 (+ x bias)))]
+                (i64-vec-map
+                  hv
+                  (lambda ([x : i64]) : i64
+                    (+ x bias)))]
               (begin
                 (assert-i64-eq
                   (i64-vec-get biased 0 -1)

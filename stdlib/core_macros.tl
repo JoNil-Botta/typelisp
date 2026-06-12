@@ -30,10 +30,7 @@
 ;:
 ;: All operands must be bool-valued. With no operands, this macro expands to
 ;: `true`.
-(defmacro
-  (and [args : bool ...])
-  :
-  bool
+(defmacro (and [args : bool ...]) : bool
   (if (expr-list-empty? args)
     (expr-bool true)
     `(if ,(expr-list-head args)
@@ -44,10 +41,7 @@
 ;:
 ;: All operands must be bool-valued. With no operands, this macro expands to
 ;: `false`.
-(defmacro
-  (or [args : bool ...])
-  :
-  bool
+(defmacro (or [args : bool ...]) : bool
   (if (expr-list-empty? args)
     (expr-bool false)
     `(if ,(expr-list-head args)
@@ -58,10 +52,7 @@
 ;:
 ;: `body` must be a unit-valued expression. Use an explicit `begin` when more
 ;: than one expression should run in the guarded branch.
-(defmacro
-  (when [condition : bool] [body : unit])
-  :
-  unit
+(defmacro (when [condition : bool] [body : unit]) : unit
   `(if ,condition
     ,body
     unit))
@@ -70,10 +61,7 @@
 ;:
 ;: `body` must be a unit-valued expression. Use an explicit `begin` when more
 ;: than one expression should run in the guarded branch.
-(defmacro
-  (unless [condition : bool] [body : unit])
-  :
-  unit
+(defmacro (unless [condition : bool] [body : unit]) : unit
   `(if ,condition
     unit
     ,body))
@@ -84,10 +72,7 @@
 ;: for example `(core/cond test1 value1 test2 value2 fallback)`. Conditions and
 ;: results are captured as `Expr` operands; the expanded `if` chain performs the
 ;: ordinary post-expansion bool/result typechecking.
-(defmacro
-  (cond [args : Expr ...])
-  :
-  Expr
+(defmacro (cond [args : Expr ...]) : Expr
   (let
     [arity : i64 (expr-list-length args)]
     [invalid-arity? : bool

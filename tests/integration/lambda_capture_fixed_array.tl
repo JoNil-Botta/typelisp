@@ -8,7 +8,8 @@
 (define (make-reader) : (-> i64)
   (let
     [a : (Array i64 3) (array 40 1 1)]
-    (lambda () : i64 (+ (array-ref a 0) (+ (array-ref a 1) (array-ref a 2))))))
+    (lambda () : i64
+      (+ (array-ref a 0) (+ (array-ref a 1) (array-ref a 2))))))
 
 (define (case-returned) : bool
   (= ((make-reader)) 42))
@@ -16,7 +17,9 @@
 (define (case-immediate) : bool
   (let
     [a : (Array i64 4) (array 10 20 30 42)]
-    [f : (-> i64) (lambda () : i64 (array-ref a 3))]
+    [f : (-> i64)
+      (lambda () : i64
+        (array-ref a 3))]
     (= (f) 42)))
 
 ; Captures snapshot fixed-array storage at lambda creation time, so later
@@ -24,7 +27,9 @@
 (define (case-mutated-after-capture) : bool
   (let
     [a : (Array i64 2) (array 42 7)]
-    [f : (-> i64) (lambda () : i64 (array-ref a 0))]
+    [f : (-> i64)
+      (lambda () : i64
+        (array-ref a 0))]
     (begin
       (array-set! a 0 5)
       (= (f) 42))))

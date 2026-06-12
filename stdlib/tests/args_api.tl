@@ -38,7 +38,7 @@
       items)))
 
 (define (args-api-array3 [a : String] [b : String] [c : String]) : (Array
-  String)
+    String)
   (let
     [items : (Array String) (make-array String 3)]
     (begin

@@ -72,7 +72,7 @@
 ;: the `=`); otherwise null. `fold` enables case-insensitive comparison (Windows).
 (unsafe
   (define (env-match-entry [name : String] [entry : (Ptr u8)] [fold : bool]) : (Ptr
-    u8)
+      u8)
     (let
       [n : i64 (string-length name)]
       [i : i64 0]

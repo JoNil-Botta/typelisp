@@ -32,12 +32,12 @@
 
 ;: Return an empty borrowed buffer tied to `text` without storing `text`.
 (define (text-buf-borrowed-empty-like [text : (& text str)]) : (TextBufBorrowed
-  text)
+    text)
   (TextBufBorrowed TextBufBorrowedChunkNil 0))
 
 ;: Return a borrowed buffer containing one borrowed chunk.
 (define (text-buf-borrowed-single [text : (& text str)]) : (TextBufBorrowed
-  text)
+    text)
   (let
     [chunk-len : i64 (string-length text)]
     (TextBufBorrowed

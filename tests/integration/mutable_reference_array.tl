@@ -16,7 +16,7 @@
   (index i64))
 
 (define (array-bag-handle [bag : (&mut bag ArrayBag)] [index : i64]) : (ArrayBagHandle
-  bag)
+    bag)
   (ArrayBagHandle (&mut (struct-get bag items)) index))
 
 (define (array-bag-handle-write [handle : (ArrayBagHandle bag)] [value : i64]) : unit

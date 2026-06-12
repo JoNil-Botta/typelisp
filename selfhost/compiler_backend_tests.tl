@@ -1852,9 +1852,7 @@
     (compiler-backend-closure-inferred-shape-ok?)
     (compiler-backend-closure-aggregate-return-shape-ok?)))
 
-(define (compiler-backend-enum-match-ok?)
-  :
-  bool
+(define (compiler-backend-enum-match-ok?) : bool
   ;; #2386: `Maybe (None) (Some i64)` is a 16-byte register-resident enum, so the
   ;; tag is matched on a register-held word (no `cmpq $0, (%r10)` heap deref) and
   ;; the payload is read from word1 rather than `8(%r10)`. Those memory-shape
@@ -2527,8 +2525,7 @@
     [(OkCompilerBackend asm)
       (let
         [kernel-io
-          :
-          bool
+          : bool
           ;; tl_alloc obtains memory via VirtualAlloc and, on exhaustion,
           ;; tail-jumps to the `tl_oom_abort` runtime-prelude handler (#2221) —
           ;; it no longer inlines a kernel32 WriteFile for the OOM message.

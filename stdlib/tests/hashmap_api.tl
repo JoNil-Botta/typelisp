@@ -43,7 +43,7 @@
 
 ;; Fill every slot of an `n`-length array with `StringI64MapEmpty`.
 (define (fill-empty [slots : (Array StringI64MapSlot)] [n : i64]) : (Array
-  StringI64MapSlot)
+    StringI64MapSlot)
   (let
     [i : i64 0]
     (begin

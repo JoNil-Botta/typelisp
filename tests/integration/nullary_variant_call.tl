@@ -25,9 +25,7 @@
 (define (bias) : i64
   30)
 
-(define (main)
-  :
-  i64
+(define (main) : i64
   ;; (Red)   -> nullary variant via call form           -> code = 1
   ;; (Green) -> nullary variant via call form           -> code = 2
   ;; (RGB 9) -> payload variant                          -> code = 9

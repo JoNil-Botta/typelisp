@@ -49,7 +49,7 @@
 
 ;: Return an empty borrowed argument list tied to `text` without storing it.
 (define (process-borrowed-args-empty-like [text : (& text str)]) : (ProcessBorrowedStringList
-  text)
+    text)
   (ProcessBorrowedStringNil))
 
 ;: Return the number of borrowed argv entries in `args`.
@@ -67,7 +67,7 @@
 
 ;: Return a one-element borrowed argument list.
 (define (process-borrowed-args-single [value : (& text str)]) : (ProcessBorrowedStringList
-  text)
+    text)
   (ProcessBorrowedStringCons value (box (ProcessBorrowedStringNil))))
 
 ;: Copy a borrowed string into active-arena owned storage.
@@ -85,7 +85,7 @@
 
 ;: Return an empty borrowed environment override list tied to `text`.
 (define (process-borrowed-env-empty-like [text : (& text str)]) : (ProcessBorrowedEnvList
-  text)
+    text)
   (ProcessBorrowedEnvNil))
 
 ;: Return the number of borrowed env overrides in `env`.
@@ -115,12 +115,12 @@
 ;: Return a borrowed stdin/cwd value that stores no string but keeps the target
 ;: type lifetime anchored to `text`.
 (define (process-borrowed-no-string-like [text : (& text str)]) : (ProcessBorrowedMaybeString
-  text)
+    text)
   (ProcessBorrowedNoString))
 
 ;: Return a borrowed stdin/cwd value without copying bytes.
 (define (process-borrowed-some-string [value : (& text str)]) : (ProcessBorrowedMaybeString
-  text)
+    text)
   (ProcessBorrowedSomeString value))
 
 ;: Copy a borrowed optional string to the owned process representation.
@@ -135,11 +135,11 @@
 (define (process-borrowed-command
   [executable : (& executable str)]
   [argv : (ProcessBorrowedStringList argv)]) : (ProcessBorrowedCommand
-  executable
-  argv
-  executable
-  executable
-  executable)
+    executable
+    argv
+    executable
+    executable
+    executable)
   (ProcessBorrowedCommand
     executable
     argv
@@ -149,11 +149,11 @@
 
 ;: Construct a borrowed command with no argv entries.
 (define (process-borrowed-command-empty [executable : (& executable str)]) : (ProcessBorrowedCommand
-  executable
-  executable
-  executable
-  executable
-  executable)
+    executable
+    executable
+    executable
+    executable
+    executable)
   (process-borrowed-command
     executable
     (process-borrowed-args-empty-like executable)))
@@ -162,11 +162,11 @@
 (define (process-borrowed-command-with-argv
   [command : (ProcessBorrowedCommand executable argv cwd env stdin)]
   [args : (ProcessBorrowedStringList next-argv)]) : (ProcessBorrowedCommand
-  executable
-  next-argv
-  cwd
-  env
-  stdin)
+    executable
+    next-argv
+    cwd
+    env
+    stdin)
   (ProcessBorrowedCommand
     (process-borrowed-command-executable command)
     args
@@ -181,22 +181,22 @@
   [cwd : (ProcessBorrowedMaybeString cwd)]
   [env : (ProcessBorrowedEnvList env)]
   [stdin : (ProcessBorrowedMaybeString stdin)]) : (ProcessBorrowedCommand
-  executable
-  argv
-  cwd
-  env
-  stdin)
+    executable
+    argv
+    cwd
+    env
+    stdin)
   (ProcessBorrowedCommand executable argv cwd env stdin))
 
 ;: Return a borrowed command copy with cwd set to `cwd`.
 (define (process-borrowed-command-with-cwd
   [command : (ProcessBorrowedCommand executable argv cwd env stdin)]
   [cwd : (& next-cwd str)]) : (ProcessBorrowedCommand
-  executable
-  argv
-  next-cwd
-  env
-  stdin)
+    executable
+    argv
+    next-cwd
+    env
+    stdin)
   (ProcessBorrowedCommand
     (process-borrowed-command-executable command)
     (process-borrowed-command-argv command)
@@ -210,11 +210,11 @@
   [command : (ProcessBorrowedCommand executable argv cwd env stdin)]
   [name : (& env str)]
   [value : (& env str)]) : (ProcessBorrowedCommand
-  executable
-  argv
-  cwd
-  env
-  stdin)
+    executable
+    argv
+    cwd
+    env
+    stdin)
   (ProcessBorrowedCommand
     (process-borrowed-command-executable command)
     (process-borrowed-command-argv command)
@@ -229,11 +229,11 @@
 (define (process-borrowed-command-with-env-list
   [command : (ProcessBorrowedCommand executable argv cwd env stdin)]
   [env : (ProcessBorrowedEnvList next-env)]) : (ProcessBorrowedCommand
-  executable
-  argv
-  cwd
-  next-env
-  stdin)
+    executable
+    argv
+    cwd
+    next-env
+    stdin)
   (ProcessBorrowedCommand
     (process-borrowed-command-executable command)
     (process-borrowed-command-argv command)
@@ -245,11 +245,11 @@
 (define (process-borrowed-command-with-stdin
   [command : (ProcessBorrowedCommand executable argv cwd env stdin)]
   [stdin-value : (& next-stdin str)]) : (ProcessBorrowedCommand
-  executable
-  argv
-  cwd
-  env
-  next-stdin)
+    executable
+    argv
+    cwd
+    env
+    next-stdin)
   (ProcessBorrowedCommand
     (process-borrowed-command-executable command)
     (process-borrowed-command-argv command)
@@ -260,32 +260,32 @@
 ;: Return the borrowed executable path from `command`.
 (define (process-borrowed-command-executable
   [command : (ProcessBorrowedCommand executable argv cwd env stdin)]) : (&
-  executable
-  str)
+    executable
+    str)
   (struct-get command executable))
 
 ;: Return the borrowed argv list from `command`.
 (define (process-borrowed-command-argv
   [command : (ProcessBorrowedCommand executable argv cwd env stdin)]) : (ProcessBorrowedStringList
-  argv)
+    argv)
   (struct-get command argv))
 
 ;: Return the borrowed cwd setting from `command`.
 (define (process-borrowed-command-cwd
   [command : (ProcessBorrowedCommand executable argv cwd env stdin)]) : (ProcessBorrowedMaybeString
-  cwd)
+    cwd)
   (struct-get command cwd))
 
 ;: Return the borrowed env override list from `command`.
 (define (process-borrowed-command-env
   [command : (ProcessBorrowedCommand executable argv cwd env stdin)]) : (ProcessBorrowedEnvList
-  env)
+    env)
   (struct-get command env))
 
 ;: Return the borrowed stdin setting from `command`.
 (define (process-borrowed-command-stdin
   [command : (ProcessBorrowedCommand executable argv cwd env stdin)]) : (ProcessBorrowedMaybeString
-  stdin)
+    stdin)
   (struct-get command stdin))
 
 ;: Copy borrowed command storage to the owned runtime command representation.

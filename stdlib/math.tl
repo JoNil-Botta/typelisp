@@ -121,10 +121,7 @@
   math-i64-api
   (let
     [fail : (-> unit)
-      (lambda
-        ()
-        :
-        unit
+      (lambda () : unit
         (begin
           (/ 1 0)
           unit))]
@@ -184,10 +181,7 @@
   math-f64-api
   (let
     [fail : (-> unit)
-      (lambda
-        ()
-        :
-        unit
+      (lambda () : unit
         (begin
           (/ 1 0)
           unit))]

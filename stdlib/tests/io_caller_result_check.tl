@@ -1,11 +1,11 @@
 (import "stdlib/io_caller_result.tl")
 
 (define (read-or-result [path : (& path str)] [fallback : (& fallback str)]) : (ReadFileOrResult
-  fallback)
+    fallback)
   (read-file-or-result path fallback))
 
 (define (read-or-result-with-local-path [fallback : (& fallback str)]) : (ReadFileOrResult
-  fallback)
+    fallback)
   (let
     [path : String "target/stdlib-verify/io_caller_result_missing.txt"]
     (read-file-or-result (& path) fallback)))

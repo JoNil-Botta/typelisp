@@ -2,10 +2,31 @@
 
 (import "stdlib/hashmap.tl")
 
+(defstruct HashPayload
+  (score i64)
+  (weight i64))
+
+(defenum HashState
+  (HashReady i64)
+  (HashFailed)
+  (HashPaused i64))
+
 (comptime-decl
   (:generated stdlib/hashmap-family I64StringMap (type-key (type i64)) (type-key
     (type String)) "stdlib/hashmap/i64-key-v1")
   (defstruct I64StringMap
+    (__hashmap_family_request i64)))
+
+(comptime-decl
+  (:generated stdlib/hashmap-family StringHashPayloadMap (type-key
+    (type String)) (type-key (type HashPayload)) "stdlib/hashmap/string-key-v1")
+  (defstruct StringHashPayloadMap
+    (__hashmap_family_request i64)))
+
+(comptime-decl
+  (:generated stdlib/hashmap-family I64HashStateMap (type-key (type i64)) (type-key
+    (type HashState)) "stdlib/hashmap/i64-key-v1")
+  (defstruct I64HashStateMap
     (__hashmap_family_request i64)))
 
 (define (assert-owned-string-eq
@@ -257,6 +278,113 @@
     [(I64I64MapEntrySome _ v) v]
     [(I64I64MapEntryNone) fallback]))
 
+;; Generated `String -> HashPayload` aggregate-value map helpers.
+(define (hash-payload-score [value : HashPayload]) : i64
+  (+ (struct-get value score) (struct-get value weight)))
+
+(define (string-hash-payload-lookup-score-or
+  [l : StringHashPayloadMapLookup]
+  [fallback : i64]) : i64
+  (match l
+    [(StringHashPayloadMapFound v) (hash-payload-score v)]
+    [(StringHashPayloadMapMissing) fallback]))
+
+(define (string-hash-payload-borrowed-score-or
+  [l : (StringHashPayloadMapBorrowedValueLookup map)]
+  [fallback : i64]) : i64
+  (match l
+    [(StringHashPayloadMapBorrowedValueFound v)
+      (+ (struct-get v score) (struct-get v weight))]
+    [(StringHashPayloadMapBorrowedValueMissing) fallback]))
+
+(define (string-hash-payload-remove-ok? [r : StringHashPayloadMapRemoveResult]) : bool
+  (match r
+    [(StringHashPayloadMapRemoveOk _) true]
+    [(StringHashPayloadMapRemoveMissing _) false]))
+
+(define (string-hash-payload-remove-result-map
+  [r : StringHashPayloadMapRemoveResult]) : StringHashPayloadMap
+  (match r
+    [(StringHashPayloadMapRemoveOk m) m]
+    [(StringHashPayloadMapRemoveMissing m) m]))
+
+(define (string-hash-payload-update-ok? [r : StringHashPayloadMapUpdateResult]) : bool
+  (match r
+    [(StringHashPayloadMapUpdateOk _) true]
+    [(StringHashPayloadMapUpdateMissing _) false]))
+
+(define (string-hash-payload-update-result-map
+  [r : StringHashPayloadMapUpdateResult]) : StringHashPayloadMap
+  (match r
+    [(StringHashPayloadMapUpdateOk m) m]
+    [(StringHashPayloadMapUpdateMissing m) m]))
+
+(define (string-hash-payload-entry-score-or
+  [e : StringHashPayloadMapEntry]
+  [fallback : i64]) : i64
+  (match e
+    [(StringHashPayloadMapEntrySome _ v) (hash-payload-score v)]
+    [(StringHashPayloadMapEntryNone) fallback]))
+
+;; Generated `i64 -> HashState` aggregate-value map helpers.
+(define (hash-state-score [value : HashState]) : i64
+  (match value
+    [(HashReady n) n]
+    [(HashFailed) -100]
+    [(HashPaused n) (- 0 n)]))
+
+(define (i64-hash-state-lookup-score-or
+  [l : I64HashStateMapLookup]
+  [fallback : i64]) : i64
+  (match l
+    [(I64HashStateMapFound v) (hash-state-score v)]
+    [(I64HashStateMapMissing) fallback]))
+
+(define (i64-hash-state-remove-ok? [r : I64HashStateMapRemoveResult]) : bool
+  (match r
+    [(I64HashStateMapRemoveOk _) true]
+    [(I64HashStateMapRemoveMissing _) false]))
+
+(define (i64-hash-state-remove-result-map [r : I64HashStateMapRemoveResult]) : I64HashStateMap
+  (match r
+    [(I64HashStateMapRemoveOk m) m]
+    [(I64HashStateMapRemoveMissing m) m]))
+
+(define (i64-hash-state-update-ok? [r : I64HashStateMapUpdateResult]) : bool
+  (match r
+    [(I64HashStateMapUpdateOk _) true]
+    [(I64HashStateMapUpdateMissing _) false]))
+
+(define (i64-hash-state-update-result-map [r : I64HashStateMapUpdateResult]) : I64HashStateMap
+  (match r
+    [(I64HashStateMapUpdateOk m) m]
+    [(I64HashStateMapUpdateMissing m) m]))
+
+(define (i64-hash-state-entry-or-insert-inserted?
+  [r : I64HashStateMapEntryOrInsertResult]) : bool
+  (match r
+    [(I64HashStateMapEntryOrInsertInserted _ _) true]
+    [(I64HashStateMapEntryOrInsertFound _ _) false]))
+
+(define (i64-hash-state-entry-or-insert-result-map
+  [r : I64HashStateMapEntryOrInsertResult]) : I64HashStateMap
+  (match r
+    [(I64HashStateMapEntryOrInsertFound m _) m]
+    [(I64HashStateMapEntryOrInsertInserted m _) m]))
+
+(define (i64-hash-state-entry-or-insert-score-or
+  [r : I64HashStateMapEntryOrInsertResult]) : i64
+  (match r
+    [(I64HashStateMapEntryOrInsertFound _ v) (hash-state-score v)]
+    [(I64HashStateMapEntryOrInsertInserted _ v) (hash-state-score v)]))
+
+(define (i64-hash-state-entry-score-or
+  [e : I64HashStateMapEntry]
+  [fallback : i64]) : i64
+  (match e
+    [(I64HashStateMapEntrySome _ v) (hash-state-score v)]
+    [(I64HashStateMapEntryNone) fallback]))
+
 ;; Iteration walkers (deterministic bucket order, #829). No first-class
 ;; functions yet, so each walk is its own tail-recursive helper started at
 ;; `(string-i64-map-next-occupied m 0)` and advanced with the cursor.
@@ -322,6 +450,53 @@
       (i64-i64-map-next-occupied m (+ i 1))
       (+ acc (i64-i64-entry-value-or (i64-i64-map-entry-at m i) 0)))))
 
+(define (string-hash-payload-iter-count
+  [m : StringHashPayloadMap]
+  [i : i64]
+  [acc : i64]) : i64
+  (if (>= i (string-hash-payload-map-capacity m))
+    acc
+    (string-hash-payload-iter-count
+      m
+      (string-hash-payload-map-next-occupied m (+ i 1))
+      (+ acc 1))))
+
+(define (string-hash-payload-iter-score-sum
+  [m : StringHashPayloadMap]
+  [i : i64]
+  [acc : i64]) : i64
+  (if (>= i (string-hash-payload-map-capacity m))
+    acc
+    (string-hash-payload-iter-score-sum
+      m
+      (string-hash-payload-map-next-occupied m (+ i 1))
+      (+
+        acc
+        (string-hash-payload-entry-score-or
+          (string-hash-payload-map-entry-at m i)
+          0)))))
+
+(define (i64-hash-state-iter-count [m : I64HashStateMap] [i : i64] [acc : i64]) : i64
+  (if (>= i (i64-hash-state-map-capacity m))
+    acc
+    (i64-hash-state-iter-count
+      m
+      (i64-hash-state-map-next-occupied m (+ i 1))
+      (+ acc 1))))
+
+(define (i64-hash-state-iter-score-sum
+  [m : I64HashStateMap]
+  [i : i64]
+  [acc : i64]) : i64
+  (if (>= i (i64-hash-state-map-capacity m))
+    acc
+    (i64-hash-state-iter-score-sum
+      m
+      (i64-hash-state-map-next-occupied m (+ i 1))
+      (+
+        acc
+        (i64-hash-state-entry-score-or (i64-hash-state-map-entry-at m i) 0)))))
+
 (define (main) : i64
   (begin
     ;; --- hashmap-family key descriptor contract (#2056) ---
@@ -357,6 +532,142 @@
         (assert-false
           (i64-string-map-contains? fixture1 9)
           "i64->String fixture generated contains helper")))
+    ;; --- hashmap-family aggregate value fixtures (#2728) ---
+    (let
+      [alpha : String "alpha"]
+      [payload0 : StringHashPayloadMap
+        (string-hash-payload-map-with-capacity 2)]
+      [payload1 : StringHashPayloadMap
+        (string-hash-payload-map-put payload0 "alpha" (HashPayload 3 4))]
+      [payload2 : StringHashPayloadMap
+        (string-hash-payload-map-put payload1 "beta" (HashPayload 5 6))]
+      [payload3 : StringHashPayloadMap
+        (string-hash-payload-map-put payload2 "gamma" (HashPayload 7 8))]
+      [payload-hit : StringHashPayloadMapUpdateResult
+        (string-hash-payload-map-update-borrowed-if-present
+          payload3
+          (& alpha)
+          (HashPayload 20 1))]
+      [payload4 : StringHashPayloadMap
+        (string-hash-payload-update-result-map payload-hit)]
+      (begin
+        (assert-true
+          (> (string-hash-payload-map-capacity payload4) 2)
+          "StringHashPayload grows aggregate values")
+        (assert-true
+          (string-hash-payload-update-ok? payload-hit)
+          "StringHashPayload borrowed update hit")
+        (assert-i64-eq
+          (string-hash-payload-lookup-score-or
+            (string-hash-payload-map-get payload4 "alpha")
+            -1)
+          21
+          "StringHashPayload owned get updated aggregate")
+        (assert-i64-eq
+          (string-hash-payload-borrowed-score-or
+            (string-hash-payload-map-get-value-borrowed (& payload4) (& alpha))
+            -1)
+          21
+          "StringHashPayload borrowed value exposes fields")
+        (let
+          [payload-remove : StringHashPayloadMapRemoveResult
+            (string-hash-payload-map-remove payload4 "beta")]
+          [payload5 : StringHashPayloadMap
+            (string-hash-payload-remove-result-map payload-remove)]
+          (begin
+            (assert-true
+              (string-hash-payload-remove-ok? payload-remove)
+              "StringHashPayload remove aggregate")
+            (assert-false
+              (string-hash-payload-map-contains? payload5 "beta")
+              "StringHashPayload removed key absent")
+            (assert-i64-eq
+              (string-hash-payload-iter-count
+                payload5
+                (string-hash-payload-map-next-occupied payload5 0)
+                0)
+              2
+              "StringHashPayload iteration count")
+            (assert-i64-eq
+              (string-hash-payload-iter-score-sum
+                payload5
+                (string-hash-payload-map-next-occupied payload5 0)
+                0)
+              36
+              "StringHashPayload iteration score sum")))))
+    (let
+      [states0 : I64HashStateMap (i64-hash-state-map-with-capacity 2)]
+      [states1 : I64HashStateMap
+        (i64-hash-state-map-put states0 1 (HashReady 10))]
+      [states2 : I64HashStateMap
+        (i64-hash-state-map-put states1 2 (HashFailed))]
+      [states3 : I64HashStateMap
+        (i64-hash-state-map-put states2 3 (HashPaused 7))]
+      [state-hit : I64HashStateMapUpdateResult
+        (i64-hash-state-map-update-if-present states3 2 (HashReady 22))]
+      [states4 : I64HashStateMap (i64-hash-state-update-result-map state-hit)]
+      (begin
+        (assert-true
+          (> (i64-hash-state-map-capacity states4) 2)
+          "I64HashState grows enum values")
+        (assert-true
+          (i64-hash-state-update-ok? state-hit)
+          "I64HashState update hit")
+        (assert-i64-eq
+          (i64-hash-state-lookup-score-or (i64-hash-state-map-get states4 2) -1)
+          22
+          "I64HashState get updated enum")
+        (assert-i64-eq
+          (i64-hash-state-lookup-score-or
+            (i64-hash-state-map-get states4 99)
+            -1)
+          -1
+          "I64HashState missing enum")
+        (let
+          [state-remove : I64HashStateMapRemoveResult
+            (i64-hash-state-map-remove states4 1)]
+          [states5 : I64HashStateMap
+            (i64-hash-state-remove-result-map state-remove)]
+          [state-inserted : I64HashStateMapEntryOrInsertResult
+            (i64-hash-state-map-entry-or-insert states5 4 (HashReady 40))]
+          [states6 : I64HashStateMap
+            (i64-hash-state-entry-or-insert-result-map state-inserted)]
+          [state-found : I64HashStateMapEntryOrInsertResult
+            (i64-hash-state-map-entry-or-insert states6 2 (HashFailed))]
+          [states7 : I64HashStateMap
+            (i64-hash-state-entry-or-insert-result-map state-found)]
+          (begin
+            (assert-true
+              (i64-hash-state-remove-ok? state-remove)
+              "I64HashState remove enum")
+            (assert-true
+              (i64-hash-state-entry-or-insert-inserted? state-inserted)
+              "I64HashState entry-or-insert inserted")
+            (assert-i64-eq
+              (i64-hash-state-entry-or-insert-score-or state-inserted)
+              40
+              "I64HashState entry-or-insert default enum")
+            (assert-false
+              (i64-hash-state-entry-or-insert-inserted? state-found)
+              "I64HashState entry-or-insert found")
+            (assert-i64-eq
+              (i64-hash-state-entry-or-insert-score-or state-found)
+              22
+              "I64HashState entry-or-insert existing enum")
+            (assert-i64-eq
+              (i64-hash-state-iter-count
+                states7
+                (i64-hash-state-map-next-occupied states7 0)
+                0)
+              3
+              "I64HashState iteration count")
+            (assert-i64-eq
+              (i64-hash-state-iter-score-sum
+                states7
+                (i64-hash-state-map-next-occupied states7 0)
+                0)
+              55
+              "I64HashState iteration score sum")))))
     ;; --- bucket-index math + wraparound ---
     (assert-i64-eq (string-i64-map-bucket-index 5 4) 1 "bucket 5 mask 4")
     (assert-i64-eq (string-i64-map-bucket-index 8 4) 0 "bucket 8 mask 4")

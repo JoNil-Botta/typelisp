@@ -1004,7 +1004,51 @@
         (gen-hashmap-diag
           "hashmap-family: expected key type, value type, and key descriptor arguments"))]))
 
-(define (gen-hashmap-type-info [type-key : String] [role : String]) : ResultGenHashmapTypeInfo
+(define (gen-hashmap-one-byte-string [code : i64]) : String
+  (let
+    [buf : (Array u8) (make-array u8 1)]
+    (begin
+      (array-set! buf 0 (cast code : u8))
+      (unsafe
+        (string-from-bytes (ptr-cast (array-data buf) : (Ptr u8)) 1)))))
+
+(define (gen-hashmap-name-prefix-char [name : String] [index : i64]) : String
+  (let
+    [c : char (string-ref name index)]
+    [code : i64 (cast c : i64)]
+    (core/cond
+      (and (>= code 65) (<= code 90))
+      (string-append
+        (if (> index 0)
+          "-"
+          "")
+        (gen-hashmap-one-byte-string (+ code 32)))
+      (= code 95)
+      "-"
+      (substring name index 1))))
+
+(define (gen-hashmap-name-prefix-from [name : String] [index : i64] [n : i64]) : String
+  (if (>= index n)
+    ""
+    (string-append
+      (gen-hashmap-name-prefix-char name index)
+      (gen-hashmap-name-prefix-from name (+ index 1) n))))
+
+(define (gen-hashmap-name-prefix [name : String]) : String
+  (gen-hashmap-name-prefix-from name 0 (string-length name)))
+
+(define (gen-hashmap-nominal-name [type-key : String] [prefix : String]) : SpecMaybeString
+  (let
+    [prefix-len : i64 (string-length prefix)]
+    [type-key-len : i64 (string-length type-key)]
+    (if (and
+      (> type-key-len prefix-len)
+      (is-string-prefix-at (& type-key) (& prefix) 0))
+      (SpecSomeString
+        (substring type-key prefix-len (- type-key-len prefix-len)))
+      (SpecNoString))))
+
+(define (gen-hashmap-scalar-type-info [type-key : String] [role : String]) : ResultGenHashmapTypeInfo
   (if (string-eq type-key "String")
     (OkGenHashmapTypeInfo (GenHashmapTypeInfo "String" "String" "string"))
     (if (string-eq type-key "i64")
@@ -1014,6 +1058,26 @@
           (string-append
             "hashmap-family: unsupported "
             (string-append role (string-append " type " type-key))))))))
+
+(define (gen-hashmap-value-type-info [type-key : String]) : ResultGenHashmapTypeInfo
+  (match (gen-hashmap-scalar-type-info type-key "value")
+    [(OkGenHashmapTypeInfo info) (OkGenHashmapTypeInfo info)]
+    [(ErrGenHashmapTypeInfo _)
+      (match (gen-hashmap-nominal-name type-key "struct_")
+        [(SpecSomeString name)
+          (OkGenHashmapTypeInfo
+            (GenHashmapTypeInfo name name (gen-hashmap-name-prefix name)))]
+        [(SpecNoString)
+          (match (gen-hashmap-nominal-name type-key "enum_")
+            [(SpecSomeString name)
+              (OkGenHashmapTypeInfo
+                (GenHashmapTypeInfo name name (gen-hashmap-name-prefix name)))]
+            [(SpecNoString)
+              (ErrGenHashmapTypeInfo
+                (gen-hashmap-diag
+                  (string-append
+                    "hashmap-family: unsupported value type "
+                    type-key)))])])]))
 
 (define (gen-hashmap-borrowed-value-type [value-type : String]) : String
   (if (string-eq value-type "String")
@@ -3760,9 +3824,9 @@
   [key-type-key : String]
   [value-type-key : String]
   [descriptor : String]) : ResultGenHashmapSource
-  (match (gen-hashmap-type-info key-type-key "key")
+  (match (gen-hashmap-scalar-type-info key-type-key "key")
     [(OkGenHashmapTypeInfo key-info)
-      (match (gen-hashmap-type-info value-type-key "value")
+      (match (gen-hashmap-value-type-info value-type-key)
         [(OkGenHashmapTypeInfo value-info)
           (gen-hashmap-source-for-info
             map-name
@@ -7212,18 +7276,30 @@
   (defenum HashMapSlot (HashMapEmpty)))")
 
 (define (compiler-generated-hashmap-family-bundle-source) : String
-  "(comptime-decl (:generated stdlib/hashmap-family StringStringMap (type-key (type String)) (type-key (type String)) \"stdlib/hashmap/string-key-v1\")
+  "(defstruct Payload (score i64))
+(defenum Status (Ready i64) (Failed))
+(comptime-decl (:generated stdlib/hashmap-family StringStringMap (type-key (type String)) (type-key (type String)) \"stdlib/hashmap/string-key-v1\")
   (defstruct StringStringMap (__hashmap_family_request i64)))
 (comptime-decl (:generated stdlib/hashmap-family I64I64Map (type-key (type i64)) (type-key (type i64)) \"stdlib/hashmap/i64-key-v1\")
   (defstruct I64I64Map (__hashmap_family_request i64)))
 (comptime-decl (:generated stdlib/hashmap-family I64StringMap (type-key (type i64)) (type-key (type String)) \"stdlib/hashmap/i64-key-v1\")
   (defstruct I64StringMap (__hashmap_family_request i64)))
 (comptime-decl (:generated stdlib/hashmap-family I64StringMap (type-key (type i64)) (type-key (type String)) \"stdlib/hashmap/i64-key-v1\")
-  (defstruct I64StringMap (__hashmap_family_request i64)))")
+  (defstruct I64StringMap (__hashmap_family_request i64)))
+(comptime-decl (:generated stdlib/hashmap-family StringPayloadMap (type-key (type String)) (type-key (type Payload)) \"stdlib/hashmap/string-key-v1\")
+  (defstruct StringPayloadMap (__hashmap_family_request i64)))
+(comptime-decl (:generated stdlib/hashmap-family I64StatusMap (type-key (type i64)) (type-key (type Status)) \"stdlib/hashmap/i64-key-v1\")
+  (defstruct I64StatusMap (__hashmap_family_request i64)))
+(comptime-decl (:generated stdlib/hashmap-family StringPayloadMap (type-key (type String)) (type-key (type Payload)) \"stdlib/hashmap/string-key-v1\")
+  (defstruct StringPayloadMap (__hashmap_family_request i64)))")
 
 (define (compiler-generated-hashmap-family-unsupported-key-source) : String
   "(comptime-decl (:generated stdlib/hashmap-family BoolStringMap (type-key (type bool)) (type-key (type String)) \"stdlib/hashmap/i64-key-v1\")
   (defstruct BoolStringMap (__hashmap_family_request i64)))")
+
+(define (compiler-generated-hashmap-family-unsupported-value-source) : String
+  "(comptime-decl (:generated stdlib/hashmap-family StringBoolMap (type-key (type String)) (type-key (type bool)) \"stdlib/hashmap/string-key-v1\")
+  (defstruct StringBoolMap (__hashmap_family_request i64)))")
 
 (define (compiler-generated-decl-visible-count
   [source : String]
@@ -7554,6 +7630,22 @@
                     (compiler-specialize-decl-list-count-defs
                       decls
                       "i64-string-map-round-capacity")]
+                  [string-payload-map-count : i64
+                    (compiler-specialize-decl-list-count-visible
+                      decls
+                      "StringPayloadMap")]
+                  [string-payload-borrowed-value-count : i64
+                    (compiler-specialize-decl-list-count-defs
+                      decls
+                      "string-payload-map-get-value-borrowed")]
+                  [i64-status-map-count : i64
+                    (compiler-specialize-decl-list-count-visible
+                      decls
+                      "I64StatusMap")]
+                  [i64-status-put-count : i64
+                    (compiler-specialize-decl-list-count-defs
+                      decls
+                      "i64-status-map-put")]
                   [ok : bool true]
                   (begin
                     (if (= slot-count 1)
@@ -7694,6 +7786,18 @@
                     (if (= i64-string-round-count 1)
                       unit
                       (set! ok false))
+                    (if (= string-payload-map-count 1)
+                      unit
+                      (set! ok false))
+                    (if (= string-payload-borrowed-value-count 1)
+                      unit
+                      (set! ok false))
+                    (if (= i64-status-map-count 1)
+                      unit
+                      (set! ok false))
+                    (if (= i64-status-put-count 1)
+                      unit
+                      (set! ok false))
                     ok))])]
           [(ErrSpecProgram _) false]))]
     [(ErrAstProgram _) false]))
@@ -7708,6 +7812,18 @@
           (string-eq
             (compiler-diagnostic-message diag)
             "hashmap-family: unsupported key descriptor stdlib/hashmap/i64-key-v1 for key type bool")])]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-generated-hashmap-family-unsupported-value-rejected?) : bool
+  (match (parse-ast-source
+    (compiler-generated-hashmap-family-unsupported-value-source))
+    [(OkAstProgram program)
+      (match (compiler-specialize-program program)
+        [(OkSpecProgram _) false]
+        [(ErrSpecProgram diag)
+          (string-eq
+            (compiler-diagnostic-message diag)
+            "hashmap-family: unsupported value type bool")])]
     [(ErrAstProgram _) false]))
 
 (define (compiler-generated-decl-origin-preserved-ok?) : bool
@@ -7776,6 +7892,9 @@
     (unless (compiler-generated-hashmap-family-bundle-ok?) (return 0))
     (unless
       (compiler-generated-hashmap-family-unsupported-key-rejected?)
+      (return 0))
+    (unless
+      (compiler-generated-hashmap-family-unsupported-value-rejected?)
       (return 0))
     (unless (compiler-generated-decl-origin-preserved-ok?) (return 0))
     1))

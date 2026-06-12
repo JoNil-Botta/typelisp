@@ -2222,6 +2222,9 @@
 (define (tc-hygiene-global-name? [name : String]) : bool
   (tc-hygiene-string-prefix? name (tc-hygiene-global-prefix)))
 
+(define (tc-hygiene-local-name? [name : String]) : bool
+  (tc-hygiene-string-prefix? name (tc-hygiene-local-prefix)))
+
 (define (tc-hygiene-global-base [name : String]) : String
   (tc-hygiene-name-base name (tc-hygiene-global-prefix)))
 
@@ -3773,7 +3776,7 @@
     [_ false]))
 
 (define (tc-name-qualified? [name : String]) : bool
-  (intern-name-qualified? name))
+  (and (not (tc-hygiene-local-name? name)) (intern-name-qualified? name)))
 
 (define (tc-name-first-char [name : String] [needle : char]) : i64
   (let
@@ -3793,7 +3796,11 @@
   (let
     [slash : i64 (tc-name-first-char name #/')]
     [n : i64 (string-length name)]
-    (and (> slash 0) (< slash (- n 1)))))
+    (and
+      (not (tc-hygiene-local-name? name))
+      (not (tc-hygiene-global-name? name))
+      (> slash 0)
+      (< slash (- n 1)))))
 
 (define (tc-name-slashes-to-dots [name : String]) : String
   (let

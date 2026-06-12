@@ -21,21 +21,42 @@
     [a : String "foo"]
     [b : String "bar"]
     [empty : String ""]
-    (+
-      (str-cat-api-eq (str-cat) "")
-      (+
-        (str-cat-api-eq (str-cat a) "foo")
+    [score : i64 0]
+    (begin
+      (set! score (+ score (str-cat-api-eq (str-cat) "")))
+      (set! score (+ score (str-cat-api-eq (str-cat a) "foo")))
+      (set! score (+ score (str-cat-api-eq (str-cat a b) "foobar")))
+      (set! score (+ score (str-cat-api-eq (str-cat b "!" b) "bar!bar")))
+      (set! score (+ score (str-cat-api-eq (str-cat empty a empty) "foo")))
+      (set!
+        score
         (+
-          (str-cat-api-eq (str-cat a b) "foobar")
+          score
+          (str-cat-api-eq (str-cat "1" "2" "3" "4" "5" "6" "7") "1234567")))
+      ;; A str-cat operand that is itself a str-cat call: the inner macro must be
+      ;; expanded before the outer operand is typechecked.
+      (set!
+        score
+        (+
+          score
+          (str-cat-api-eq (str-cat a (str-cat "-" b "-") a) "foo-bar-foo")))
+      (let
+        [__tl_str_cat_parts : String "baz"]
+        (set!
+          score
           (+
-            (str-cat-api-eq (str-cat b "!" b) "bar!bar")
-            (+
-              (str-cat-api-eq (str-cat empty a empty) "foo")
-              (+
-                (str-cat-api-eq (str-cat "1" "2" "3" "4" "5" "6" "7") "1234567")
-                ;; A str-cat operand that is itself a str-cat call: the inner
-                ;; macro must be expanded before the outer operand is typechecked.
-                (str-cat-api-eq (str-cat a (str-cat "-" b "-") a) "foo-bar-foo")))))))))
+            score
+            (str-cat-api-eq
+              (str-cat
+                __tl_str_cat_parts
+                "!"
+                __tl_str_cat_parts
+                "!"
+                "q"
+                "!"
+                "r")
+              "baz!baz!q!r"))))
+      score)))
 
 ;: Uses generated I64I64Map functions in a program that also defines macros.
 (define (str-cat-api-generated-ok) : bool
@@ -44,6 +65,6 @@
     8))
 
 (define (main) : i64
-  (if (core/and (= (str-cat-api-checks) 7) (str-cat-api-generated-ok))
+  (if (core/and (= (str-cat-api-checks) 8) (str-cat-api-generated-ok))
     42
     1))

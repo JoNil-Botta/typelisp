@@ -6058,6 +6058,18 @@
   (let ([tmp : bool true])
     (wrap-temp tmp)))")
 
+(define (compiler-typecheck-macro-hygiene-exported-helper-local-source) : String
+  "(module m)
+(defmacro (id-expr [body : Expr]) : i64 body)
+(defmacro (with-temp [value : i64]) : i64
+  `(let ([tmp : i64 ,value])
+     (id-expr tmp)))
+(export (macro id-expr))
+(export (macro with-temp))
+(module main)
+(import m)
+(define (main) : i64 (m.with-temp 42))")
+
 (define (compiler-typecheck-macro-hygiene-splice-source) : String
   "(defmacro (with-temp-do [steps : unit ...]) : unit
   `(let ([tmp : i64 1])
@@ -6185,6 +6197,8 @@
     (compiler-typecheck-ok?
       (compiler-typecheck-macro-hygiene-imported-builtin-source))
     (compiler-typecheck-ok? (compiler-typecheck-macro-hygiene-nested-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-macro-hygiene-exported-helper-local-source))
     (compiler-typecheck-ok? (compiler-typecheck-macro-hygiene-splice-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-macro-hygiene-unsafe-global-source)

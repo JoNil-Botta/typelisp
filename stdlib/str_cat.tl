@@ -6,7 +6,7 @@
 ;# files that use them.
 ;#
 ;# Usage: `(import "stdlib/str_cat.tl")` then `(str-cat a b c)`. The macro owns
-;# its fixed-arity concat helper dependency, so callers do not need to import
+;# its concat helper dependency, so callers do not need to import
 ;# `stdlib/string.tl` unless they use string helpers directly.
 ;#
 ;# ```typelisp
@@ -19,12 +19,25 @@
 
 (module stdlib.str-cat)
 
+;: Internal recursive pack step used by `str-cat` expansion.
+;:
+;: `parts` is a dynamic array expression and `index` is the next runtime index
+;: expression. Each step returns an expression that threads the filled array to
+;: the next step.
+(defmacro (str-cat-pack [parts : Expr] [index : Expr] [args : String ...]) : Expr
+  (if (expr-list-empty? args)
+    parts
+    `(str-cat-pack
+      (string-concat-all-pack-part ,parts ,index ,(expr-list-head args))
+      (+ ,index 1)
+      ,@(expr-list-tail args))))
+
 ;: Concatenate any number of `String` operands into a fresh active-arena String.
 ;:
-;: The macro expands common fixed arities to helper calls, so each helper is
-;: compiled once while preserving a single allocation for two to five operands.
-;: Longer arities are chunked through `string-concat5`. With no operands it
-;: expands to `""`.
+;: With no operands it expands to `""`; with one operand it expands to that
+;: operand unchanged. Two to five operands use direct one-allocation helpers.
+;: Longer arities are packed into one dynamic parts array and copied by
+;: `string-concat-all`, so they no longer allocate chunk intermediates.
 (defmacro (str-cat [args : String ...]) : String
   (if (expr-list-empty? args)
     `""
@@ -53,6 +66,16 @@
                       [rest5 : ExprList (expr-list-tail rest4)]
                       (if (expr-list-empty? rest5)
                         `(string-concat5 ,a ,b ,c ,d ,e)
-                        `(string-concat5 ,a ,b ,c ,d (str-cat ,e ,@rest5))))))))))))))
+                        `(string-concat-all
+                          (str-cat-pack
+                            (make-array
+                              String
+                              ,(expr-int (expr-list-length args)))
+                            0
+                            ,@args))))))))))))))
+
+;: Exported only so imported `str-cat` expansions can finish their internal
+;: recursive pack step.
+(export (macro str-cat-pack))
 
 (export (macro str-cat))

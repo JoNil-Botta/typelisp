@@ -615,6 +615,86 @@
 
 (cfg
   compile-profile
+  (define compiler-tc-decl-profile-section-start-alloc : i64
+    0))
+
+(cfg
+  compile-profile
+  (define compiler-tc-decl-profile-section-start-live : i64
+    0))
+
+(cfg
+  compile-profile
+  (define compiler-tc-decl-profile-local-env-alloc : i64
+    0))
+
+(cfg
+  compile-profile
+  (define compiler-tc-decl-profile-local-env-live : i64
+    0))
+
+(cfg
+  compile-profile
+  (define compiler-tc-decl-profile-arena-alloc : i64
+    0))
+
+(cfg
+  compile-profile
+  (define compiler-tc-decl-profile-arena-live : i64
+    0))
+
+(cfg
+  compile-profile
+  (define compiler-tc-decl-profile-def-expr-alloc : i64
+    0))
+
+(cfg
+  compile-profile
+  (define compiler-tc-decl-profile-def-expr-live : i64
+    0))
+
+(cfg
+  compile-profile
+  (define compiler-tc-decl-profile-fn-expr-alloc : i64
+    0))
+
+(cfg
+  compile-profile
+  (define compiler-tc-decl-profile-fn-expr-live : i64
+    0))
+
+(cfg
+  compile-profile
+  (define compiler-tc-decl-profile-fn-move-alloc : i64
+    0))
+
+(cfg
+  compile-profile
+  (define compiler-tc-decl-profile-fn-move-live : i64
+    0))
+
+(cfg
+  compile-profile
+  (define compiler-tc-decl-profile-macro-alloc : i64
+    0))
+
+(cfg
+  compile-profile
+  (define compiler-tc-decl-profile-macro-live : i64
+    0))
+
+(cfg
+  compile-profile
+  (define compiler-tc-decl-profile-extern-alloc : i64
+    0))
+
+(cfg
+  compile-profile
+  (define compiler-tc-decl-profile-extern-live : i64
+    0))
+
+(cfg
+  compile-profile
   (define compiler-tc-decl-profile-local-env-ms : i64
     0))
 
@@ -683,13 +763,29 @@
   (define (compiler-tc-decl-profile-reset) : unit
     (begin
       (set! compiler-tc-decl-profile-start-ms 0)
+      (set! compiler-tc-decl-profile-section-start-alloc 0)
+      (set! compiler-tc-decl-profile-section-start-live 0)
       (set! compiler-tc-decl-profile-local-env-ms 0)
+      (set! compiler-tc-decl-profile-local-env-alloc 0)
+      (set! compiler-tc-decl-profile-local-env-live 0)
       (set! compiler-tc-decl-profile-arena-ms 0)
+      (set! compiler-tc-decl-profile-arena-alloc 0)
+      (set! compiler-tc-decl-profile-arena-live 0)
       (set! compiler-tc-decl-profile-def-expr-ms 0)
+      (set! compiler-tc-decl-profile-def-expr-alloc 0)
+      (set! compiler-tc-decl-profile-def-expr-live 0)
       (set! compiler-tc-decl-profile-fn-expr-ms 0)
+      (set! compiler-tc-decl-profile-fn-expr-alloc 0)
+      (set! compiler-tc-decl-profile-fn-expr-live 0)
       (set! compiler-tc-decl-profile-fn-move-ms 0)
+      (set! compiler-tc-decl-profile-fn-move-alloc 0)
+      (set! compiler-tc-decl-profile-fn-move-live 0)
       (set! compiler-tc-decl-profile-macro-ms 0)
+      (set! compiler-tc-decl-profile-macro-alloc 0)
+      (set! compiler-tc-decl-profile-macro-live 0)
       (set! compiler-tc-decl-profile-extern-ms 0)
+      (set! compiler-tc-decl-profile-extern-alloc 0)
+      (set! compiler-tc-decl-profile-extern-live 0)
       (set! compiler-tc-decl-profile-decl-count 0)
       (set! compiler-tc-decl-profile-def-count 0)
       (set! compiler-tc-decl-profile-fn-count 0)
@@ -700,53 +796,110 @@
 (cfg
   compile-profile
   (define (compiler-tc-decl-profile-start-section) : unit
-    (set! compiler-tc-decl-profile-start-ms (profile-now-ms))))
+    (begin
+      (set! compiler-tc-decl-profile-start-ms (profile-now-ms))
+      (set! compiler-tc-decl-profile-section-start-alloc (profile-alloc-total))
+      (set! compiler-tc-decl-profile-section-start-live (profile-alloc-live)))))
 
 (cfg
   compile-profile
   (define (compiler-tc-decl-profile-add-local-env) : unit
-    (set!
-      compiler-tc-decl-profile-local-env-ms
-      (+
+    (begin
+      (set!
         compiler-tc-decl-profile-local-env-ms
-        (- (profile-now-ms) compiler-tc-decl-profile-start-ms)))))
+        (+
+          compiler-tc-decl-profile-local-env-ms
+          (- (profile-now-ms) compiler-tc-decl-profile-start-ms)))
+      (set!
+        compiler-tc-decl-profile-local-env-alloc
+        (+
+          compiler-tc-decl-profile-local-env-alloc
+          (- (profile-alloc-total) compiler-tc-decl-profile-section-start-alloc)))
+      (set!
+        compiler-tc-decl-profile-local-env-live
+        (+
+          compiler-tc-decl-profile-local-env-live
+          (- (profile-alloc-live) compiler-tc-decl-profile-section-start-live))))))
 
 (cfg
   compile-profile
   (define (compiler-tc-decl-profile-add-arena) : unit
-    (set!
-      compiler-tc-decl-profile-arena-ms
-      (+
+    (begin
+      (set!
         compiler-tc-decl-profile-arena-ms
-        (- (profile-now-ms) compiler-tc-decl-profile-start-ms)))))
+        (+
+          compiler-tc-decl-profile-arena-ms
+          (- (profile-now-ms) compiler-tc-decl-profile-start-ms)))
+      (set!
+        compiler-tc-decl-profile-arena-alloc
+        (+
+          compiler-tc-decl-profile-arena-alloc
+          (- (profile-alloc-total) compiler-tc-decl-profile-section-start-alloc)))
+      (set!
+        compiler-tc-decl-profile-arena-live
+        (+
+          compiler-tc-decl-profile-arena-live
+          (- (profile-alloc-live) compiler-tc-decl-profile-section-start-live))))))
 
 (cfg
   compile-profile
   (define (compiler-tc-decl-profile-add-def-expr) : unit
-    (set!
-      compiler-tc-decl-profile-def-expr-ms
-      (+
+    (begin
+      (set!
         compiler-tc-decl-profile-def-expr-ms
-        (- (profile-now-ms) compiler-tc-decl-profile-start-ms)))))
+        (+
+          compiler-tc-decl-profile-def-expr-ms
+          (- (profile-now-ms) compiler-tc-decl-profile-start-ms)))
+      (set!
+        compiler-tc-decl-profile-def-expr-alloc
+        (+
+          compiler-tc-decl-profile-def-expr-alloc
+          (- (profile-alloc-total) compiler-tc-decl-profile-section-start-alloc)))
+      (set!
+        compiler-tc-decl-profile-def-expr-live
+        (+
+          compiler-tc-decl-profile-def-expr-live
+          (- (profile-alloc-live) compiler-tc-decl-profile-section-start-live))))))
 
 (cfg
   compile-profile
   (define (compiler-tc-decl-profile-add-fn-expr) : unit
-    (set!
-      compiler-tc-decl-profile-fn-expr-ms
-      (+
+    (begin
+      (set!
         compiler-tc-decl-profile-fn-expr-ms
-        (- (profile-now-ms) compiler-tc-decl-profile-start-ms)))))
+        (+
+          compiler-tc-decl-profile-fn-expr-ms
+          (- (profile-now-ms) compiler-tc-decl-profile-start-ms)))
+      (set!
+        compiler-tc-decl-profile-fn-expr-alloc
+        (+
+          compiler-tc-decl-profile-fn-expr-alloc
+          (- (profile-alloc-total) compiler-tc-decl-profile-section-start-alloc)))
+      (set!
+        compiler-tc-decl-profile-fn-expr-live
+        (+
+          compiler-tc-decl-profile-fn-expr-live
+          (- (profile-alloc-live) compiler-tc-decl-profile-section-start-live))))))
 
 (cfg
   compile-profile
   (define (compiler-tc-decl-profile-add-fn-expr-named [name : String]) : unit
     (let
       [elapsed : i64 (- (profile-now-ms) compiler-tc-decl-profile-start-ms)]
+      [alloc-delta : i64
+        (- (profile-alloc-total) compiler-tc-decl-profile-section-start-alloc)]
+      [live-delta : i64
+        (- (profile-alloc-live) compiler-tc-decl-profile-section-start-live)]
       (begin
         (set!
           compiler-tc-decl-profile-fn-expr-ms
           (+ compiler-tc-decl-profile-fn-expr-ms elapsed))
+        (set!
+          compiler-tc-decl-profile-fn-expr-alloc
+          (+ compiler-tc-decl-profile-fn-expr-alloc alloc-delta))
+        (set!
+          compiler-tc-decl-profile-fn-expr-live
+          (+ compiler-tc-decl-profile-fn-expr-live live-delta))
         (if (>= elapsed 1)
           (print-error
             (string-append
@@ -754,34 +907,75 @@
               (string-append
                 (int->string elapsed)
                 (string-append "|" (string-append name "\n")))))
+          unit)
+        (if (>= live-delta 131072)
+          (print-error
+            (string-append
+              "compile-profile-detail|typecheck.fn_live_kb|"
+              (string-append
+                (int->string (/ live-delta 1024))
+                (string-append "|" (string-append name "\n")))))
           unit)))))
 
 (cfg
   compile-profile
   (define (compiler-tc-decl-profile-add-fn-move) : unit
-    (set!
-      compiler-tc-decl-profile-fn-move-ms
-      (+
+    (begin
+      (set!
         compiler-tc-decl-profile-fn-move-ms
-        (- (profile-now-ms) compiler-tc-decl-profile-start-ms)))))
+        (+
+          compiler-tc-decl-profile-fn-move-ms
+          (- (profile-now-ms) compiler-tc-decl-profile-start-ms)))
+      (set!
+        compiler-tc-decl-profile-fn-move-alloc
+        (+
+          compiler-tc-decl-profile-fn-move-alloc
+          (- (profile-alloc-total) compiler-tc-decl-profile-section-start-alloc)))
+      (set!
+        compiler-tc-decl-profile-fn-move-live
+        (+
+          compiler-tc-decl-profile-fn-move-live
+          (- (profile-alloc-live) compiler-tc-decl-profile-section-start-live))))))
 
 (cfg
   compile-profile
   (define (compiler-tc-decl-profile-add-macro) : unit
-    (set!
-      compiler-tc-decl-profile-macro-ms
-      (+
+    (begin
+      (set!
         compiler-tc-decl-profile-macro-ms
-        (- (profile-now-ms) compiler-tc-decl-profile-start-ms)))))
+        (+
+          compiler-tc-decl-profile-macro-ms
+          (- (profile-now-ms) compiler-tc-decl-profile-start-ms)))
+      (set!
+        compiler-tc-decl-profile-macro-alloc
+        (+
+          compiler-tc-decl-profile-macro-alloc
+          (- (profile-alloc-total) compiler-tc-decl-profile-section-start-alloc)))
+      (set!
+        compiler-tc-decl-profile-macro-live
+        (+
+          compiler-tc-decl-profile-macro-live
+          (- (profile-alloc-live) compiler-tc-decl-profile-section-start-live))))))
 
 (cfg
   compile-profile
   (define (compiler-tc-decl-profile-add-extern) : unit
-    (set!
-      compiler-tc-decl-profile-extern-ms
-      (+
+    (begin
+      (set!
         compiler-tc-decl-profile-extern-ms
-        (- (profile-now-ms) compiler-tc-decl-profile-start-ms)))))
+        (+
+          compiler-tc-decl-profile-extern-ms
+          (- (profile-now-ms) compiler-tc-decl-profile-start-ms)))
+      (set!
+        compiler-tc-decl-profile-extern-alloc
+        (+
+          compiler-tc-decl-profile-extern-alloc
+          (- (profile-alloc-total) compiler-tc-decl-profile-section-start-alloc)))
+      (set!
+        compiler-tc-decl-profile-extern-live
+        (+
+          compiler-tc-decl-profile-extern-live
+          (- (profile-alloc-live) compiler-tc-decl-profile-section-start-live))))))
 
 (cfg
   compile-profile
@@ -875,25 +1069,61 @@
 
 (cfg
   compile-profile
+  (define (compiler-tc-decl-profile-line-mem
+    [phase : String]
+    [value : i64]
+    [alloc : i64]
+    [live : i64]) : unit
+    (print-error
+      (string-append
+        "compile-profile|typecheck.decl."
+        (string-append
+          phase
+          (string-append
+            (compiler-tc-profile-field value)
+            (string-append
+              (compiler-tc-profile-field alloc)
+              (string-append (compiler-tc-profile-field live) "|0\n"))))))))
+
+(cfg
+  compile-profile
   (define (compiler-tc-decl-profile-finish) : unit
     (begin
-      (compiler-tc-decl-profile-line
+      (compiler-tc-decl-profile-line-mem
         "local_env"
-        compiler-tc-decl-profile-local-env-ms)
-      (compiler-tc-decl-profile-line "arena" compiler-tc-decl-profile-arena-ms)
-      (compiler-tc-decl-profile-line
+        compiler-tc-decl-profile-local-env-ms
+        compiler-tc-decl-profile-local-env-alloc
+        compiler-tc-decl-profile-local-env-live)
+      (compiler-tc-decl-profile-line-mem
+        "arena"
+        compiler-tc-decl-profile-arena-ms
+        compiler-tc-decl-profile-arena-alloc
+        compiler-tc-decl-profile-arena-live)
+      (compiler-tc-decl-profile-line-mem
         "def_expr"
-        compiler-tc-decl-profile-def-expr-ms)
-      (compiler-tc-decl-profile-line
+        compiler-tc-decl-profile-def-expr-ms
+        compiler-tc-decl-profile-def-expr-alloc
+        compiler-tc-decl-profile-def-expr-live)
+      (compiler-tc-decl-profile-line-mem
         "fn_expr"
-        compiler-tc-decl-profile-fn-expr-ms)
-      (compiler-tc-decl-profile-line
+        compiler-tc-decl-profile-fn-expr-ms
+        compiler-tc-decl-profile-fn-expr-alloc
+        compiler-tc-decl-profile-fn-expr-live)
+      (compiler-tc-decl-profile-line-mem
         "fn_move"
-        compiler-tc-decl-profile-fn-move-ms)
-      (compiler-tc-decl-profile-line "macro" compiler-tc-decl-profile-macro-ms)
-      (compiler-tc-decl-profile-line
+        compiler-tc-decl-profile-fn-move-ms
+        compiler-tc-decl-profile-fn-move-alloc
+        compiler-tc-decl-profile-fn-move-live)
+      (compiler-tc-decl-profile-line-mem
+        "macro"
+        compiler-tc-decl-profile-macro-ms
+        compiler-tc-decl-profile-macro-alloc
+        compiler-tc-decl-profile-macro-live)
+      (compiler-tc-decl-profile-line-mem
         "extern"
-        compiler-tc-decl-profile-extern-ms)
+        compiler-tc-decl-profile-extern-ms
+        compiler-tc-decl-profile-extern-alloc
+        compiler-tc-decl-profile-extern-live)
       (compiler-tc-decl-profile-line
         "decl_count"
         compiler-tc-decl-profile-decl-count)
@@ -3977,17 +4207,30 @@
 (define tc-resolve-type-name-cache-handle : i64
   0)
 
+;; The cached name strings are caller-provided and may live in a transient
+;; scratch arena (per-function typecheck arenas; #2596): clear them to the
+;; static empty string as well, so no slot can compare against freed memory
+;; after the owning arena is destroyed.
 (define (tc-nominal-owner-cache-reset!) : unit
   (begin
     (set! tc-nominal-owner-cache-handle 0)
+    (set! tc-nominal-owner-cache-name "")
     (set! tc-nominal-owner-cache-handle1 0)
+    (set! tc-nominal-owner-cache-name1 "")
     (set! tc-nominal-owner-cache-handle2 0)
+    (set! tc-nominal-owner-cache-name2 "")
     (set! tc-nominal-owner-cache-handle3 0)
+    (set! tc-nominal-owner-cache-name3 "")
     (set! tc-nominal-owner-cache-handle4 0)
+    (set! tc-nominal-owner-cache-name4 "")
     (set! tc-nominal-owner-cache-handle5 0)
+    (set! tc-nominal-owner-cache-name5 "")
     (set! tc-nominal-owner-cache-handle6 0)
+    (set! tc-nominal-owner-cache-name6 "")
     (set! tc-nominal-owner-cache-handle7 0)
-    (set! tc-resolve-type-name-cache-valid false)))
+    (set! tc-nominal-owner-cache-name7 "")
+    (set! tc-resolve-type-name-cache-valid false)
+    (set! tc-resolve-type-name-cache-key "")))
 
 (define (tc-resolve-type-name-cache-lookup [lookup-name : String]) : TcTypeNameLookupCache
   (if (and
@@ -7129,9 +7372,17 @@
       [(TcNoTypeEnv)
         (match (tc-module-local-env ctx top-env module)
           [(OkTcEnv env)
-            (OkTcModuleLocalEnv
-              env
-              (TcModuleLocalEnvCons module env (box cache)))]
+            (let
+              ;; The cache outlives transient scratch arenas (per-function
+              ;; typecheck arenas; #2596), but `module` may have been
+              ;; allocated in one: hygiene markers decode it by substring.
+              ;; Copy the key into the current arena -- the hygiene caller
+              ;; switches to the dedicated cache arena before inserting
+              ;; (#2357) -- so the stored key cannot dangle.
+              [key : String (substring module 0 (string-length module))]
+              (OkTcModuleLocalEnv
+                env
+                (TcModuleLocalEnvCons key env (box cache))))]
           [(ErrTcEnv message) (ErrTcModuleLocalEnv message)])])))
 
 (define (tc-expect [actual : AstType] [expected : AstType] [message : String]) : ResultTcUnit
@@ -24827,6 +25078,118 @@
         (tc-check-cleanup-enum-variants ctx env enum-name cleanup variants)]
       [(ErrTcUnit message) (ErrTcUnit message)])))
 
+;: Check one function declaration's body against its signature.
+(define (tc-check-fn-decl-body
+  [ctx : TcContext]
+  [global-env : TcTypeEnv]
+  [params : AstParamList]
+  [ret : AstType]
+  [body-box : i64]) : ResultTcUnit
+  (let
+    [body : AstExpr (ast-node-get body-box)]
+    [env : TcTypeEnv
+      (tc-bind-return-type
+        (tc-bind-params ctx global-env params)
+        (tc-resolve-type ctx ret))]
+    (match (tc-expr-with-expected-or-actual
+      ctx
+      env
+      body
+      (tc-resolve-type ctx ret))
+      [(OkTcType got)
+        (match (tc-expect
+          got
+          (tc-resolve-type ctx ret)
+          "typecheck: return type mismatch")
+          [(OkTcUnit)
+            (match (tc-ensure-region-value-can-flow-into
+              env
+              (tc-resolve-type ctx ret)
+              got
+              "return value")
+              [(OkTcUnit)
+                (match (tc-move-check-body ctx env params body)
+                  [(OkTcUnit) (tc-borrow-check-body ctx env params body)]
+                  [(ErrTcUnit message) (ErrTcUnit message)])]
+              [(ErrTcUnit message)
+                (ErrTcUnit
+                  (tc-rich-escape-at-expr
+                    body
+                    message
+                    "function return type rejects this escaping value"))])]
+          [(ErrTcUnit message) (ErrTcUnit message)])]
+      [(ErrTcType message) (ErrTcUnit message)])))
+
+;; Reusable scratch arena for per-function-body typechecks. Mirrors
+;; lower-scratch-arena: created lazily, shared by every check (the body walk
+;; is never re-entrant into another function-decl check), reclaimed by
+;; mark/rewind per check.
+(define tc-fn-scratch-arena : i64
+  0)
+
+(define (tc-fn-scratch-arena-get) : i64
+  (if (= tc-fn-scratch-arena 0)
+    (let
+      [scratch : i64 (arena-make)]
+      (begin
+        (set! tc-fn-scratch-arena scratch)
+        scratch))
+    tc-fn-scratch-arena))
+
+;; Function bodies dominate typecheck allocation (~96% of the phase's live
+;; delta; #2596) and the check returns only unit -- everything it allocates
+;; is garbage once the body is checked, but the program-lifetime arena never
+;; frees it. Run each body check in the shared scratch arena and rewind it
+;; afterwards, cloning the error diagnostic out first (the mark/rewind/
+;; clone-out shape of lower-function-escaping; do NOT re-run the check to
+;; regenerate the message -- the body check is not idempotent and a second
+;; run can surface a different diagnostic). New intern entries made while
+;; the scratch is active (e.g. first-use marker names) must outlive it, so
+;; persistent intern storage is forced on for the scope (the intern pool
+;; copies new strings into its global-init base arena; see compiler_intern).
+;; Node pools already grow in the persistent base arena (#2357).
+(define (tc-check-fn-decl-scoped
+  [ctx : TcContext]
+  [global-env : TcTypeEnv]
+  [params : AstParamList]
+  [ret : AstType]
+  [body-box : i64]) : ResultTcUnit
+  (let
+    [prev-persist : bool (intern-persistent-storage-on?)]
+    [enclosing : i64 (arena-current)]
+    [scratch : i64 (tc-fn-scratch-arena-get)]
+    (begin
+      (intern-persistent-storage-enable!)
+      (unsafe
+        (arena-set! scratch))
+      (let
+        [mark : i64 (arena-mark)]
+        [raw : ResultTcUnit
+          (tc-check-fn-decl-body ctx global-env params ret body-box)]
+        [scratch-head : i64 (arena-current)]
+        (begin
+          (unsafe
+            (arena-set! enclosing))
+          (let
+            [escaped : ResultTcUnit
+              (match raw
+                [(OkTcUnit) OkTcUnit]
+                [(ErrTcUnit message) (ErrTcUnit (clone message))])]
+            [new-enclosing : i64 (arena-current)]
+            (begin
+              (unsafe
+                (arena-set! scratch-head)
+                (arena-rewind mark)
+                (arena-set! new-enclosing))
+              (if prev-persist
+                unit
+                (intern-persistent-storage-disable!))
+              ;; Single-entry name caches may hold strings allocated in the
+              ;; scratch that was just rewound; invalidate them before
+              ;; anything can compare against freed memory.
+              (tc-nominal-owner-cache-reset!)
+              escaped)))))))
+
 (define (tc-check-decl-with-global-env
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -24861,40 +25224,7 @@
               [(OkTcType _) OkTcUnit]
               [(ErrTcType message) (ErrTcUnit message)])]))]
     [(AstDeclDefFn _ params ret body-box _)
-      (let
-        [body : AstExpr (ast-node-get body-box)]
-        [env : TcTypeEnv
-          (tc-bind-return-type
-            (tc-bind-params ctx global-env params)
-            (tc-resolve-type ctx ret))]
-        (match (tc-expr-with-expected-or-actual
-          ctx
-          env
-          body
-          (tc-resolve-type ctx ret))
-          [(OkTcType got)
-            (match (tc-expect
-              got
-              (tc-resolve-type ctx ret)
-              "typecheck: return type mismatch")
-              [(OkTcUnit)
-                (match (tc-ensure-region-value-can-flow-into
-                  env
-                  (tc-resolve-type ctx ret)
-                  got
-                  "return value")
-                  [(OkTcUnit)
-                    (match (tc-move-check-body ctx env params body)
-                      [(OkTcUnit) (tc-borrow-check-body ctx env params body)]
-                      [(ErrTcUnit message) (ErrTcUnit message)])]
-                  [(ErrTcUnit message)
-                    (ErrTcUnit
-                      (tc-rich-escape-at-expr
-                        body
-                        message
-                        "function return type rejects this escaping value"))])]
-              [(ErrTcUnit message) (ErrTcUnit message)])]
-          [(ErrTcType message) (ErrTcUnit message)]))]
+      (tc-check-fn-decl-scoped ctx global-env params ret body-box)]
     [(AstDeclDefMacro name params ret body-box)
       (let
         [body : AstExpr (ast-node-get body-box)]

@@ -19041,7 +19041,8 @@ tl_memcpy:
     [(ObjectDataF64 _) (+ offset 8)]
     [(ObjectDataI64 _) (+ offset 8)]
     [(ObjectDataZero count) (+ offset count)]
-    [(ObjectDataSymbolAddress _) (+ offset 8)]))
+    [(ObjectDataSymbolAddress _) (+ offset 8)]
+    [(ObjectDataSymbolRva32 _) (+ offset 4)]))
 
 (define (compiler-backend-pic-data-label-offset-from
   [records : CompilerObjectDataRecordList]
@@ -19079,7 +19080,9 @@ tl_memcpy:
     [(ObjectSectionText) "text"]
     [(ObjectSectionData) "data"]
     [(ObjectSectionRodata) "rodata"]
-    [(ObjectSectionBss) "bss"]))
+    [(ObjectSectionBss) "bss"]
+    [(ObjectSectionPdata) "pdata"]
+    [(ObjectSectionXdata) "xdata"]))
 
 (define (compiler-backend-pic-fixup-line
   [section : CompilerObjectSectionKind]

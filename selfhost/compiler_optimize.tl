@@ -13141,7 +13141,7 @@
           (opt-copy-instrs
             (OptCopyNil)
             (opt-load-cse-instrs
-              (OptLoadCseState (OptAliasNil) (OptLoadNil))
+              (OptLoadCseState (opt-alias-empty) (OptLoadNil))
               (opt-cse-instrs
                 (OptExprNil)
                 (opt-strength-instrs
@@ -23869,12 +23869,34 @@
   (OptAliasMayAlias)
   (OptAliasInvalidated))
 
-(defenum OptAliasFact
-  (OptAliasFact i64 OptAliasKind))
-
+;; Alias facts live in a mutable i64->i64 hashmap keyed by var id (#2614).
+;; Kinds pack into the value: a Derived root is its non-negative root var id,
+;; the kind-only variants take negative codes. State is threaded linearly
+;; through a block (helpers mutate and return the same table); control-flow
+;; joins and clears build a fresh table, so retained per-block exit states
+;; are never aliased by a successor's mutations.
 (defenum OptAliasFacts
-  (OptAliasNil)
-  (OptAliasCons OptAliasFact (Box OptAliasFacts)))
+  (OptAliasFacts I64I64Map))
+
+(define (opt-alias-empty) : OptAliasFacts
+  (OptAliasFacts (i64-i64-map-with-capacity 17)))
+
+(define (opt-alias-kind-encode [kind : OptAliasKind]) : i64
+  (match kind
+    [(OptAliasUnique) -1]
+    [(OptAliasMayAlias) -2]
+    [(OptAliasInvalidated) -3]
+    [(OptAliasDerived root) root]))
+
+(define (opt-alias-kind-decode [value : i64]) : OptAliasKind
+  (core/cond
+    (>= value 0)
+    (OptAliasDerived value)
+    (= value -1)
+    (OptAliasUnique)
+    (= value -2)
+    (OptAliasMayAlias)
+    (OptAliasInvalidated)))
 
 (defenum OptMaybeAliasKind
   (OptNoAliasKind)
@@ -23899,57 +23921,32 @@
         [(OptAliasInvalidated) true]
         [_ false])]))
 
-(define (opt-alias-fact-var [fact : OptAliasFact]) : i64
-  (match fact
-    [(OptAliasFact var _) var]))
-
-(define (opt-alias-fact-kind [fact : OptAliasFact]) : OptAliasKind
-  (match fact
-    [(OptAliasFact _ kind) kind]))
-
 (define (opt-alias-lookup [facts : OptAliasFacts] [var : i64]) : OptMaybeAliasKind
   (match facts
-    [(OptAliasNil) (OptNoAliasKind)]
-    [(OptAliasCons fact rest)
-      (let
-        [rest : OptAliasFacts (box-get rest)]
-        (if (= (opt-alias-fact-var fact) var)
-          (OptSomeAliasKind (opt-alias-fact-kind fact))
-          (opt-alias-lookup rest var)))]))
+    [(OptAliasFacts map)
+      (match (i64-i64-map-get map var)
+        [(I64I64MapFound value)
+          (OptSomeAliasKind (opt-alias-kind-decode value))]
+        [(I64I64MapMissing) (OptNoAliasKind)])]))
 
 (define (opt-alias-bound? [facts : OptAliasFacts] [var : i64]) : bool
   (match facts
-    [(OptAliasNil) false]
-    [(OptAliasCons fact rest)
-      (if (= (opt-alias-fact-var fact) var)
-        true
-        (opt-alias-bound? (box-get rest) var))]))
+    [(OptAliasFacts map) (i64-i64-map-contains? map var)]))
 
-(define (opt-alias-remove-var-scan [facts : OptAliasFacts] [var : i64]) : OptAliasFacts
-  (match facts
-    [(OptAliasNil) (OptAliasNil)]
-    [(OptAliasCons fact rest)
-      (let
-        [rest : OptAliasFacts (box-get rest)]
-        (if (= (opt-alias-fact-var fact) var)
-          (opt-alias-remove-var-scan rest var)
-          (OptAliasCons fact (box (opt-alias-remove-var-scan rest var)))))]))
-
-;; Drop any binding for `var` (a redefined/escaped temporary). Every bind goes
-;; through a remove first, but fresh destinations are the overwhelmingly common
-;; case (~4% of a stage2 self-compile was spent re-boxing the whole spine per
-;; bound instruction), so removal of an absent var returns the list unchanged.
 (define (opt-alias-remove-var [facts : OptAliasFacts] [var : i64]) : OptAliasFacts
-  (if (opt-alias-bound? facts var)
-    (opt-alias-remove-var-scan facts var)
-    facts))
+  (match facts
+    [(OptAliasFacts map)
+      (match (i64-i64-map-remove map var)
+        [(I64I64MapRemoveOk updated) (OptAliasFacts updated)]
+        [(I64I64MapRemoveMissing updated) (OptAliasFacts updated)])]))
 
-;; Bind `var` to `kind`, replacing any prior binding for that var.
 (define (opt-alias-bind
   [facts : OptAliasFacts]
   [var : i64]
   [kind : OptAliasKind]) : OptAliasFacts
-  (OptAliasCons (OptAliasFact var kind) (box (opt-alias-remove-var facts var))))
+  (match facts
+    [(OptAliasFacts map)
+      (OptAliasFacts (i64-i64-map-put map var (opt-alias-kind-encode kind)))]))
 
 (define (opt-alias-mark-unique [facts : OptAliasFacts] [var : i64]) : OptAliasFacts
   (opt-alias-bind facts var (OptAliasUnique)))
@@ -23998,21 +23995,57 @@
 ;; identical kind on both incoming edges.
 (define (opt-alias-intersect [a : OptAliasFacts] [b : OptAliasFacts]) : OptAliasFacts
   (match a
-    [(OptAliasNil) (OptAliasNil)]
-    [(OptAliasCons fact rest)
-      (let
-        [rest2 : OptAliasFacts (opt-alias-intersect (box-get rest) b)]
-        (if (opt-alias-contains?
-          b
-          (opt-alias-fact-var fact)
-          (opt-alias-fact-kind fact))
-          (OptAliasCons fact (box rest2))
-          rest2))]))
+    [(OptAliasFacts amap)
+      (match b
+        [(OptAliasFacts bmap)
+          (let
+            [out : OptAliasFacts (opt-alias-empty)]
+            [capacity : i64 (i64-i64-map-capacity amap)]
+            [i : i64 (i64-i64-map-next-occupied amap 0)]
+            (begin
+              (while (< i capacity)
+                (begin
+                  (match (i64-i64-map-entry-at amap i)
+                    [(I64I64MapEntrySome var value)
+                      (match (i64-i64-map-get bmap var)
+                        [(I64I64MapFound bvalue)
+                          (if (= value bvalue)
+                            (set!
+                              out
+                              (opt-alias-bind
+                                out
+                                var
+                                (opt-alias-kind-decode value)))
+                            unit)]
+                        [(I64I64MapMissing) unit])]
+                    [(I64I64MapEntryNone) unit])
+                  (set! i (i64-i64-map-next-occupied amap (+ i 1)))))
+              out))])]))
 
 (define (opt-alias-facts-len [facts : OptAliasFacts]) : i64
   (match facts
-    [(OptAliasNil) 0]
-    [(OptAliasCons _ rest) (+ 1 (opt-alias-facts-len (box-get rest)))]))
+    [(OptAliasFacts map) (i64-i64-map-len map)]))
+
+;; Deep-copy the fact table. Per-block exit states are retained for every
+;; successor's entry intersection, so a single-predecessor entry must not
+;; alias (and then mutate) its predecessor's stored exit state.
+(define (opt-alias-clone [facts : OptAliasFacts]) : OptAliasFacts
+  (match facts
+    [(OptAliasFacts map)
+      (let
+        [out : I64I64Map
+          (i64-i64-map-with-capacity (+ (* (i64-i64-map-len map) 2) 17))]
+        [capacity : i64 (i64-i64-map-capacity map)]
+        [i : i64 (i64-i64-map-next-occupied map 0)]
+        (begin
+          (while (< i capacity)
+            (begin
+              (match (i64-i64-map-entry-at map i)
+                [(I64I64MapEntrySome var value)
+                  (set! out (i64-i64-map-put out var value))]
+                [(I64I64MapEntryNone) unit])
+              (set! i (i64-i64-map-next-occupied map (+ i 1)))))
+          (OptAliasFacts out)))]))
 
 ;; A memory effect that can mutate or unknown-observe memory clears all facts.
 ;; `Alloc` is the one MemoryWrite that instead binds a fresh unique root, so it
@@ -24062,7 +24095,7 @@
   [facts : OptAliasFacts]
   [instr : CompilerIrInstr]) : OptAliasFacts
   (if (opt-alias-instr-clears-all? instr)
-    (OptAliasNil)
+    (opt-alias-empty)
     (match instr
       [(IrInstrAlloc dst _) (opt-alias-mark-unique facts dst)]
       [(IrInstrGep dst base _ _) (opt-alias-update-gep facts dst base)]
@@ -24413,7 +24446,7 @@
     0
     0
     (OptScratchRootNil)
-    (OptAliasNil)
+    (opt-alias-empty)
     (OptScratchNoBlocker)))
 
 (define (opt-scratch-scope-report-from-state [state : OptScratchScopeState]) : OptScratchScopeReport
@@ -24961,7 +24994,14 @@
   (OptLoadGvnBlockRewrite OptLoadCseState CompilerIrInstrList))
 
 (define (opt-load-cse-empty-state) : OptLoadCseState
-  (OptLoadCseState (OptAliasNil) (OptLoadNil)))
+  (OptLoadCseState (opt-alias-empty) (OptLoadNil)))
+
+;; The load table is a persistent list, but the alias facts are a mutable
+;; table; entering a block through a single predecessor must process a copy.
+(define (opt-load-cse-state-clone-facts [state : OptLoadCseState]) : OptLoadCseState
+  (match state
+    [(OptLoadCseState facts table)
+      (OptLoadCseState (opt-alias-clone facts) table)]))
 
 (define (opt-load-table-contains-entry?
   [table : OptLoadTable]
@@ -25039,7 +25079,7 @@
                 true
                 (if has-state
                   (opt-load-cse-state-intersect acc pred-state)
-                  pred-state))]
+                  (opt-load-cse-state-clone-facts pred-state)))]
             [(OptNoLoadCseState) (opt-load-cse-empty-state)]))))))
 
 (define (opt-load-gvn-entry-state
@@ -25286,7 +25326,7 @@
 (define (opt-alias-join-facts-a) : OptAliasFacts
   (opt-alias-bind
     (opt-alias-bind
-      (opt-alias-bind (OptAliasNil) 0 (OptAliasUnique))
+      (opt-alias-bind (opt-alias-empty) 0 (OptAliasUnique))
       1
       (OptAliasDerived 0))
     2
@@ -25295,7 +25335,7 @@
 (define (opt-alias-join-facts-b) : OptAliasFacts
   (opt-alias-bind
     (opt-alias-bind
-      (opt-alias-bind (OptAliasNil) 0 (OptAliasUnique))
+      (opt-alias-bind (opt-alias-empty) 0 (OptAliasUnique))
       1
       (OptAliasMayAlias))
     3
@@ -25313,21 +25353,21 @@
 (define (compiler-optimize-alias-self-test) : i64
   (let
     [unique : OptAliasFacts
-      (opt-alias-run (OptAliasNil) (opt-alias-test-unique-instrs))]
+      (opt-alias-run (opt-alias-empty) (opt-alias-test-unique-instrs))]
     [transitive : OptAliasFacts
-      (opt-alias-run (OptAliasNil) (opt-alias-test-transitive-instrs))]
+      (opt-alias-run (opt-alias-empty) (opt-alias-test-transitive-instrs))]
     [loaded : OptAliasFacts
-      (opt-alias-run (OptAliasNil) (opt-alias-test-load-instrs))]
+      (opt-alias-run (opt-alias-empty) (opt-alias-test-load-instrs))]
     [stored : OptAliasFacts
-      (opt-alias-run (OptAliasNil) (opt-alias-test-store-instrs))]
+      (opt-alias-run (opt-alias-empty) (opt-alias-test-store-instrs))]
     [called : OptAliasFacts
-      (opt-alias-run (OptAliasNil) (opt-alias-test-call-instrs))]
+      (opt-alias-run (opt-alias-empty) (opt-alias-test-call-instrs))]
     [copied : OptAliasFacts
-      (opt-alias-run (OptAliasNil) (opt-alias-test-copy-instrs))]
+      (opt-alias-run (opt-alias-empty) (opt-alias-test-copy-instrs))]
     [joined : OptAliasFacts
       (opt-alias-intersect (opt-alias-join-facts-a) (opt-alias-join-facts-b))]
     [invalidated : OptAliasFacts
-      (opt-alias-mark-invalidated (opt-alias-mark-unique (OptAliasNil) 0) 0)]
+      (opt-alias-mark-invalidated (opt-alias-mark-unique (opt-alias-empty) 0) 0)]
     (core/cond
       ;; unique root + derived pointer + survival across a pure scalar instr
       (not (opt-alias-contains? unique 0 (OptAliasUnique)))
@@ -25377,7 +25417,7 @@
       42)))
 
 (define (opt-load-cse-run [instrs : CompilerIrInstrList]) : CompilerIrInstrList
-  (opt-load-cse-instrs (OptLoadCseState (OptAliasNil) (OptLoadNil)) instrs))
+  (opt-load-cse-instrs (OptLoadCseState (opt-alias-empty) (OptLoadNil)) instrs))
 
 (define (opt-load-cse-positive-instrs) : CompilerIrInstrList
   (compiler-ir-instr-cons

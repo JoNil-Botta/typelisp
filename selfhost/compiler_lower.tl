@@ -95,9 +95,21 @@
   (LowerNoArrayVar)
   (LowerSomeArrayVar i64 AstType))
 
+(defenum LowerVectorMapValue
+  (LowerVectorMapArray i64)
+  (LowerVectorMapUniform CompilerIrValue)
+  (LowerVectorMapBinOp
+    CompilerIrBinOp
+    (Box LowerVectorMapValue)
+    (Box LowerVectorMapValue)))
+
+(defenum LowerMaybeVectorMapValue
+  (LowerNoVectorMapValue)
+  (LowerSomeVectorMapValue LowerVectorMapValue))
+
 (defenum LowerMaybeVectorMap
   (LowerNoVectorMap)
-  (LowerSomeVectorMap i64 i64 i64 CompilerIrBinOp AstType i64))
+  (LowerSomeVectorMap i64 LowerVectorMapValue AstType i64))
 
 (defenum LowerMaybeMaskedVectorMap
   (LowerNoMaskedVectorMap)
@@ -19015,6 +19027,9 @@
 (define (lower-avx2-masked-if-diagnostic) : String
   "lower: SPMD masked if is not supported in AVX2 backend mode; use scalar or avx512")
 
+(define (lower-simd-foreach-fallback-diagnostic) : String
+  "lower: SPMD foreach does not match a SIMD lowering pattern for this backend mode; use scalar or a contiguous map/zip body with supported array and uniform operands")
+
 (define (lower-mode-inline-aggregates? [mode : CompilerLowerMode]) : bool
   (match mode
     [(CompilerLowerScalar) true]
@@ -19753,54 +19768,202 @@
               rest
               (lower-string-set-insert lane-locals (intern-str name)))]))]))
 
+(define (lower-vector-body-has-array-read? [expr : AstExpr]) : bool
+  (match expr
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lower-vector-body-has-array-read? inner))]
+    [(AstExprAnn inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lower-vector-body-has-array-read? inner))]
+    [(AstExprCast inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lower-vector-body-has-array-read? inner))]
+    [(AstExprArrayRef _ _) true]
+    [(AstExprUnary _ inner-box)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lower-vector-body-has-array-read? inner))]
+    [(AstExprBinary _ left-box right-box)
+      (let
+        [left : AstExpr (ast-node-get left-box)]
+        [right : AstExpr (ast-node-get right-box)]
+        (or
+          (lower-vector-body-has-array-read? left)
+          (lower-vector-body-has-array-read? right)))]
+    [(AstExprIf cond-box then-box else-box)
+      (let
+        [cond : AstExpr (ast-node-get cond-box)]
+        [then-branch : AstExpr (ast-node-get then-box)]
+        [else-branch : AstExpr (ast-node-get else-box)]
+        (or
+          (lower-vector-body-has-array-read? cond)
+          (lower-vector-body-has-array-read? then-branch)
+          (lower-vector-body-has-array-read? else-branch)))]
+    [(AstExprLet bindings body-box)
+      (let
+        [body : AstExpr (ast-node-get body-box)]
+        (or
+          (lower-vector-let-bindings-have-array-read? bindings)
+          (lower-vector-body-has-array-read? body)))]
+    [(AstExprBegin exprs) (lower-vector-expr-list-has-array-read? exprs)]
+    [(AstExprCall func-box args)
+      (let
+        [func : AstExpr (ast-node-get func-box)]
+        (or
+          (lower-vector-body-has-array-read? func)
+          (lower-vector-expr-list-has-array-read? args)))]
+    [(AstExprArraySet arr-box idx-box value-box)
+      (let
+        [arr : AstExpr (ast-node-get arr-box)]
+        [idx : AstExpr (ast-node-get idx-box)]
+        [value : AstExpr (ast-node-get value-box)]
+        (or
+          (lower-vector-body-has-array-read? arr)
+          (lower-vector-body-has-array-read? idx)
+          (lower-vector-body-has-array-read? value)))]
+    [(AstExprStructSet receiver-box _ value-box)
+      (let
+        [receiver : AstExpr (ast-node-get receiver-box)]
+        [value : AstExpr (ast-node-get value-box)]
+        (or
+          (lower-vector-body-has-array-read? receiver)
+          (lower-vector-body-has-array-read? value)))]
+    [_ false]))
+
+(define (lower-vector-expr-list-has-array-read? [exprs : AstExprList]) : bool
+  (match exprs
+    [(AstExprNil) false]
+    [(AstExprCons expr rest)
+      (let
+        [inner : AstExpr (ast-node-get expr)]
+        [next : AstExprList (box-get rest)]
+        (or
+          (lower-vector-body-has-array-read? inner)
+          (lower-vector-expr-list-has-array-read? next)))]))
+
+(define (lower-vector-let-bindings-have-array-read?
+  [bindings : AstLetBindingList]) : bool
+  (match bindings
+    [(AstLetBindingNil) false]
+    [(AstLetBindingCons binding rest)
+      (let
+        [next : AstLetBindingList (box-get rest)]
+        (match binding
+          [(AstLetBinding _ _ init-box)
+            (let
+              [init : AstExpr (ast-node-get init-box)]
+              (or
+                (lower-vector-body-has-array-read? init)
+                (lower-vector-let-bindings-have-array-read? next)))]))]))
+
+(define (lower-simple-vector-map-binop-supported?
+  [mode : CompilerLowerMode]
+  [elem-ty : AstType]
+  [op : AstBinOp]) : bool
+  (match op
+    [(AstBinAdd) true]
+    [(AstBinMul) (> (lower-simd-lanes-for-elem mode elem-ty) 0)]
+    [_ false]))
+
 (define (lower-simple-vector-map-value
   [mode : CompilerLowerMode]
   [env : SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [dst-var : i64]
   [dst-elem : AstType]
-  [value : AstExpr]) : LowerMaybeVectorMap
+  [value : AstExpr]) : LowerMaybeVectorMapValue
   (match value
     [(AstExprSpanned inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
-        (lower-simple-vector-map-value
-          mode
-          env
-          type-env
-          index
-          dst-var
-          dst-elem
-          inner))]
-    [(AstExprBinary op lhs-box rhs-box)
+        (lower-simple-vector-map-value mode env type-env index dst-elem inner))]
+    [(AstExprAnn inner-box _)
       (let
-        [lhs : AstExpr (ast-node-get lhs-box)]
-        [rhs : AstExpr (ast-node-get rhs-box)]
-        (match op
-          [(AstBinAdd)
-            (match (lower-array-ref-var-for-index env type-env lhs index)
-              [(LowerSomeArrayVar lhs-var lhs-elem)
-                (match (lower-array-ref-var-for-index env type-env rhs index)
-                  [(LowerSomeArrayVar rhs-var rhs-elem)
-                    (let
-                      [lanes : i64 (lower-simd-lanes-for-elem mode lhs-elem)]
-                      (if (and
-                        (> lanes 0)
-                        (tc-type-eq lhs-elem rhs-elem)
-                        (tc-type-eq lhs-elem dst-elem))
-                        (LowerSomeVectorMap
-                          dst-var
-                          lhs-var
-                          rhs-var
-                          (IrBinAdd)
-                          lhs-elem
-                          lanes)
-                        LowerNoVectorMap))]
-                  [LowerNoArrayVar LowerNoVectorMap])]
-              [LowerNoArrayVar LowerNoVectorMap])]
-          [_ LowerNoVectorMap]))]
-    [_ LowerNoVectorMap]))
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lower-simple-vector-map-value mode env type-env index dst-elem inner))]
+    [(AstExprCast inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lower-simple-vector-map-value mode env type-env index dst-elem inner))]
+    [(AstExprArrayRef _ _)
+      (match (lower-array-ref-var-for-index env type-env value index)
+        [(LowerSomeArrayVar array-var array-elem)
+          (if (tc-type-eq array-elem dst-elem)
+            (LowerSomeVectorMapValue (LowerVectorMapArray array-var))
+            LowerNoVectorMapValue)]
+        [LowerNoArrayVar LowerNoVectorMapValue])]
+    [(AstExprVar name)
+      (let
+        [lookup-name : String (intern-str name)]
+        (if (string-eq lookup-name index)
+          LowerNoVectorMapValue
+          (match (sym-i64-lookup-id env name)
+            [(SomeI64 var-id)
+              (match (tc-lookup type-env lookup-name)
+                [(OkTcType ty)
+                  (let
+                    [scalar-ty : AstType (tc-type-without-regions ty)]
+                    (if (and
+                      (> (lower-simd-lanes-for-elem mode scalar-ty) 0)
+                      (tc-type-eq scalar-ty dst-elem))
+                      (LowerSomeVectorMapValue
+                        (LowerVectorMapUniform (IrValueVar var-id)))
+                      LowerNoVectorMapValue))]
+                [(ErrTcType _) LowerNoVectorMapValue])]
+            [NoneI64 LowerNoVectorMapValue])))]
+    [(AstExprLiteral lit)
+      (let
+        [lit-ty : AstType (tc-literal-type lit)]
+        (if (and
+          (> (lower-simd-lanes-for-elem mode lit-ty) 0)
+          (tc-type-eq lit-ty dst-elem))
+          (LowerSomeVectorMapValue
+            (LowerVectorMapUniform (lower-literal-value lit)))
+          LowerNoVectorMapValue))]
+    [(AstExprBinary op lhs-box rhs-box)
+      (if (lower-simple-vector-map-binop-supported? mode dst-elem op)
+        (let
+          [lhs : AstExpr (ast-node-get lhs-box)]
+          [rhs : AstExpr (ast-node-get rhs-box)]
+          (match (lower-simple-vector-map-value
+            mode
+            env
+            type-env
+            index
+            dst-elem
+            lhs)
+            [(LowerSomeVectorMapValue lhs-plan)
+              (match (lower-simple-vector-map-value
+                mode
+                env
+                type-env
+                index
+                dst-elem
+                rhs)
+                [(LowerSomeVectorMapValue rhs-plan)
+                  (LowerSomeVectorMapValue
+                    (LowerVectorMapBinOp
+                      (lower-binop op)
+                      (box lhs-plan)
+                      (box rhs-plan)))]
+                [LowerNoVectorMapValue LowerNoVectorMapValue])]
+            [LowerNoVectorMapValue LowerNoVectorMapValue]))
+        LowerNoVectorMapValue)]
+    [_ LowerNoVectorMapValue]))
+
+(define (lower-vector-map-value-array-vars [plan : LowerVectorMapValue]) : LowerArrayVarList
+  (match plan
+    [(LowerVectorMapArray array-var)
+      (lower-array-var-list-add LowerArrayVarNil array-var 0)]
+    [(LowerVectorMapUniform _) LowerArrayVarNil]
+    [(LowerVectorMapBinOp _ lhs rhs)
+      (lower-array-var-list-merge
+        (lower-vector-map-value-array-vars (box-get lhs))
+        (lower-vector-map-value-array-vars (box-get rhs)))]))
 
 (define (lower-simple-vector-map
   [mode : CompilerLowerMode]
@@ -19821,14 +19984,20 @@
         (if (lower-expr-is-var? set-index index)
           (match (lower-dynamic-array-var env type-env arr)
             [(LowerSomeArrayVar dst-var dst-elem)
-              (lower-simple-vector-map-value
-                mode
-                env
-                type-env
-                index
-                dst-var
-                dst-elem
-                value)]
+              (let
+                [lanes : i64 (lower-simd-lanes-for-elem mode dst-elem)]
+                (if (> lanes 0)
+                  (match (lower-simple-vector-map-value
+                    mode
+                    env
+                    type-env
+                    index
+                    dst-elem
+                    value)
+                    [(LowerSomeVectorMapValue plan)
+                      (LowerSomeVectorMap dst-var plan dst-elem lanes)]
+                    [LowerNoVectorMapValue LowerNoVectorMap])
+                  LowerNoVectorMap))]
             [LowerNoArrayVar LowerNoVectorMap])
           LowerNoVectorMap))]
     [_ LowerNoVectorMap]))
@@ -20458,40 +20627,103 @@
     state
     (IrInstrPredicatedStore base index value mask lanes elem-ty)))
 
+(define (lower-emit-vector-map-value
+  [state : LowerState]
+  [index-var : i64]
+  [lanes : i64]
+  [elem-ty : AstType]
+  [plan : LowerVectorMapValue]) : LowerExpr
+  (match plan
+    [(LowerVectorMapArray array-var)
+      (lower-emit-vector-load
+        state
+        (IrValueVar array-var)
+        (IrValueVar index-var)
+        lanes
+        elem-ty)]
+    [(LowerVectorMapUniform value) (lower-emit-splat state value lanes elem-ty)]
+    [(LowerVectorMapBinOp op lhs rhs)
+      (match (lower-emit-vector-map-value
+        state
+        index-var
+        lanes
+        elem-ty
+        (box-get lhs))
+        [(LowerExpr lhs-state lhs-value _)
+          (match (lower-emit-vector-map-value
+            lhs-state
+            index-var
+            lanes
+            elem-ty
+            (box-get rhs))
+            [(LowerExpr rhs-state rhs-value _)
+              (lower-emit-vector-binop
+                rhs-state
+                op
+                lhs-value
+                rhs-value
+                lanes
+                elem-ty)])])]))
+
+(define (lower-emit-predicated-vector-map-value
+  [state : LowerState]
+  [index-var : i64]
+  [mask : CompilerIrValue]
+  [lanes : i64]
+  [elem-ty : AstType]
+  [plan : LowerVectorMapValue]) : LowerExpr
+  (match plan
+    [(LowerVectorMapArray array-var)
+      (lower-emit-predicated-load
+        state
+        (IrValueVar array-var)
+        (IrValueVar index-var)
+        mask
+        lanes
+        elem-ty)]
+    [(LowerVectorMapUniform value) (lower-emit-splat state value lanes elem-ty)]
+    [(LowerVectorMapBinOp op lhs rhs)
+      (match (lower-emit-predicated-vector-map-value
+        state
+        index-var
+        mask
+        lanes
+        elem-ty
+        (box-get lhs))
+        [(LowerExpr lhs-state lhs-value _)
+          (match (lower-emit-predicated-vector-map-value
+            lhs-state
+            index-var
+            mask
+            lanes
+            elem-ty
+            (box-get rhs))
+            [(LowerExpr rhs-state rhs-value _)
+              (lower-emit-vector-binop
+                rhs-state
+                op
+                lhs-value
+                rhs-value
+                lanes
+                elem-ty)])])]))
+
 (define (lower-avx2-vector-map-body
   [state : LowerState]
   [index-var : i64]
   [next-index : CompilerIrValue]
   [plan : LowerMaybeVectorMap]) : LowerState
   (match plan
-    [(LowerSomeVectorMap dst-array lhs-array rhs-array op elem-ty lanes)
+    [(LowerSomeVectorMap dst-array value-plan elem-ty lanes)
       (let
         [s : LowerState state]
-        [lhs-vec : CompilerIrValue IrValueUnit]
-        [rhs-vec : CompilerIrValue IrValueUnit]
         [result-vec : CompilerIrValue IrValueUnit]
         (begin
-          (match (lower-emit-vector-load
+          (match (lower-emit-vector-map-value
             s
-            (IrValueVar lhs-array)
-            (IrValueVar index-var)
+            index-var
             lanes
-            elem-ty)
-            [(LowerExpr next-s value _)
-              (begin
-                (set! s next-s)
-                (set! lhs-vec value))])
-          (match (lower-emit-vector-load
-            s
-            (IrValueVar rhs-array)
-            (IrValueVar index-var)
-            lanes
-            elem-ty)
-            [(LowerExpr next-s value _)
-              (begin
-                (set! s next-s)
-                (set! rhs-vec value))])
-          (match (lower-emit-vector-binop s op lhs-vec rhs-vec lanes elem-ty)
+            elem-ty
+            value-plan)
             [(LowerExpr next-s value _)
               (begin
                 (set! s next-s)
@@ -21696,12 +21928,10 @@
   [end-value : CompilerIrValue]
   [plan : LowerMaybeVectorMap]) : LowerState
   (match plan
-    [(LowerSomeVectorMap dst-array lhs-array rhs-array op elem-ty lanes)
+    [(LowerSomeVectorMap dst-array value-plan elem-ty lanes)
       (let
         [s : LowerState state]
         [mask : CompilerIrValue IrValueUnit]
-        [lhs-vec : CompilerIrValue IrValueUnit]
-        [rhs-vec : CompilerIrValue IrValueUnit]
         [result-vec : CompilerIrValue IrValueUnit]
         (begin
           (match (lower-emit-tail-mask s (IrValueVar index-var) end-value lanes)
@@ -21709,29 +21939,13 @@
               (begin
                 (set! s next-s)
                 (set! mask value))])
-          (match (lower-emit-predicated-load
+          (match (lower-emit-predicated-vector-map-value
             s
-            (IrValueVar lhs-array)
-            (IrValueVar index-var)
+            index-var
             mask
             lanes
-            elem-ty)
-            [(LowerExpr next-s value _)
-              (begin
-                (set! s next-s)
-                (set! lhs-vec value))])
-          (match (lower-emit-predicated-load
-            s
-            (IrValueVar rhs-array)
-            (IrValueVar index-var)
-            mask
-            lanes
-            elem-ty)
-            [(LowerExpr next-s value _)
-              (begin
-                (set! s next-s)
-                (set! rhs-vec value))])
-          (match (lower-emit-vector-binop s op lhs-vec rhs-vec lanes elem-ty)
+            elem-ty
+            value-plan)
             [(LowerExpr next-s value _)
               (begin
                 (set! s next-s)
@@ -22098,7 +22312,7 @@
   [body : AstExpr]
   [plan : LowerMaybeVectorMap]) : ResultLowerExpr
   (match plan
-    [(LowerSomeVectorMap dst-array lhs-array rhs-array _ _ lanes)
+    [(LowerSomeVectorMap dst-array value-plan _ lanes)
       (match (lower-state-alloc-var state)
         [(LowerAlloc index-alloc index-var)
           (let
@@ -22106,6 +22320,11 @@
               (lower-state-emit
                 index-alloc
                 (IrInstrMov index-var start-value index-ty))]
+            [arrays : LowerArrayVarList
+              (lower-array-var-list-add
+                (lower-vector-map-value-array-vars value-plan)
+                dst-array
+                0)]
             [header-label : String ""]
             [body-label : String ""]
             [tail-header-label : String ""]
@@ -22113,9 +22332,6 @@
             [tail-mask-label : String ""]
             [tail-body-label : String ""]
             [exit-label : String ""]
-            [out-len : CompilerIrValue IrValueUnit]
-            [lhs-len : CompilerIrValue IrValueUnit]
-            [rhs-len : CompilerIrValue IrValueUnit]
             [next-index : CompilerIrValue IrValueUnit]
             [vector-ok : CompilerIrValue IrValueUnit]
             [tail-cond : CompilerIrValue IrValueUnit]
@@ -22156,21 +22372,6 @@
                   (begin
                     (set! s next-s)
                     (set! exit-label label))])
-              (match (lower-array-len-value s (IrValueVar dst-array))
-                [(LowerExpr next-s value _)
-                  (begin
-                    (set! s next-s)
-                    (set! out-len value))])
-              (match (lower-array-len-value s (IrValueVar lhs-array))
-                [(LowerExpr next-s value _)
-                  (begin
-                    (set! s next-s)
-                    (set! lhs-len value))])
-              (match (lower-array-len-value s (IrValueVar rhs-array))
-                [(LowerExpr next-s value _)
-                  (begin
-                    (set! s next-s)
-                    (set! rhs-len value))])
               (set!
                 s
                 (lower-state-finish-block
@@ -22186,14 +22387,12 @@
                   (begin
                     (set! s next-s)
                     (set! next-index value))])
-              (match (lower-avx2-vector-ok
+              (match (lower-avx512-masked-vector-ok
                 s
                 index-var
                 next-index
                 end-value
-                out-len
-                lhs-len
-                rhs-len
+                arrays
                 lanes)
                 [(LowerExpr next-s value _)
                   (begin
@@ -22237,13 +22436,11 @@
                     tail-body-label)))
               (if (lower-mode-avx512? (lower-state-mode s))
                 (begin
-                  (match (lower-avx512-tail-ok
+                  (match (lower-avx512-masked-tail-ok
                     s
                     index-var
                     end-value
-                    out-len
-                    lhs-len
-                    rhs-len)
+                    arrays)
                     [(LowerExpr next-s value _)
                       (begin
                         (set! s next-s)
@@ -22331,7 +22528,7 @@
       type-env
       index
       body)
-      [(LowerSomeVectorMap _ _ _ _ _ _)
+      [(LowerSomeVectorMap _ _ _ _)
         (lower-avx2-foreach-lowered
           ctx
           state
@@ -22385,16 +22582,21 @@
                   (if (lower-mode-avx2? (lower-state-mode state))
                     (lower-avx2-masked-if-diagnostic)
                     "lower: SPMD masked if AVX-512 lowering is not available for this backend mode or branch shape")))
-              (lower-scalar-foreach-lowered
-                ctx
-                state
-                env
-                type-env
-                index
-                index-ty
-                start-value
-                end-value
-                body))])])
+              (if (lower-vector-body-has-array-read? body)
+                (ErrLowerExpr
+                  (lower-diagnostic-at-expr
+                    body
+                    (lower-simd-foreach-fallback-diagnostic)))
+                (lower-scalar-foreach-lowered
+                  ctx
+                  state
+                  env
+                  type-env
+                  index
+                  index-ty
+                  start-value
+                  end-value
+                  body)))])])
     (lower-scalar-foreach-lowered
       ctx
       state
@@ -27905,6 +28107,10 @@
       (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
         1
         0)]
+    [(IrInstrSplat _ _ actual-lanes actual-ty)
+      (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
+        1
+        0)]
     [_ 0]))
 
 (define (lower-test-instr-u64-mov-count [instr : CompilerIrInstr]) : i64
@@ -32223,11 +32429,41 @@
     ([i : i64 0 n])
     (array-set! out i (+ (array-ref a i) (array-ref b i)))))")
 
+(define (compiler-lower-avx2-foreach-map-uniform-source) : String
+  "(define (fill [a : (Array i64)] [b : (Array i64)] [out : (Array i64)] [n : i64] [r : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (array-set! out i (+ (+ (array-ref a i) (array-ref b i)) r))))")
+
+(define (compiler-lower-avx2-foreach-map-uniform-i32-source) : String
+  "(define (fill [a : (Array i32)] [b : (Array i32)] [out : (Array i32)] [n : i64] [r : i32]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (array-set! out i (+ (+ (array-ref a i) (array-ref b i)) r))))")
+
+(define (compiler-lower-avx2-foreach-map-uniform-f64-source) : String
+  "(define (fill [a : (Array f64)] [b : (Array f64)] [out : (Array f64)] [n : i64] [r : f64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (array-set! out i (+ (+ (array-ref a i) (array-ref b i)) r))))")
+
+(define (compiler-lower-avx2-foreach-map-uniform-f32-source) : String
+  "(define (fill [a : (Array f32)] [b : (Array f32)] [out : (Array f32)] [n : i64] [r : f32]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (array-set! out i (+ (+ (array-ref a i) (array-ref b i)) r))))")
+
+(define (compiler-lower-avx2-foreach-zip-uniform-source) : String
+  "(define (fill [a : (Array i64)] [b : (Array i64)] [c : (Array i64)] [out : (Array i64)] [n : i64] [r : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (array-set! out i (+ (+ (* (array-ref a i) (array-ref b i)) (array-ref c i)) r))))")
+
 (define (compiler-lower-avx2-foreach-scalar-fallback-source) : String
   "(define (fill [a : (Array i64)] [out : (Array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (+ (array-ref a i) 1))))")
+    (array-set! out i (+ (array-ref a (+ i 1)) 1))))")
 
 (define (compiler-lower-avx2-foreach-map-source-shape-ok?
   [src : String]
@@ -32277,6 +32513,78 @@
     (compiler-lower-avx2-foreach-map-source-shape-ok?
       (compiler-lower-avx2-foreach-map-f32-source)
       (AstTyF32)
+      8)))
+
+(define (compiler-lower-avx2-foreach-uniform-source-shape-ok?
+  [src : String]
+  [elem-ty : AstType]
+  [lanes : i64]
+  [want-loads : i64]
+  [want-binops : i64]
+  [want-shapes : i64]) : bool
+  (match (lower-compiler-source-with-mode src (CompilerLowerAvx2))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (let
+            [load-count : i64
+              (lower-test-function-vector-load-count functions "fill")]
+            [binop-count : i64
+              (lower-test-function-vector-binop-count functions "fill")]
+            [store-count : i64
+              (lower-test-function-vector-store-count functions "fill")]
+            [shape-count : i64
+              (lower-test-function-vector-shape-count
+                functions
+                "fill"
+                lanes
+                elem-ty)]
+            [tail-store-count : i64
+              (lower-test-function-store-ptr-count functions "fill")]
+            (and
+              (= load-count want-loads)
+              (= binop-count want-binops)
+              (= store-count 1)
+              (= shape-count want-shapes)
+              (> tail-store-count 0)))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-avx2-foreach-uniform-shape-ok?) : bool
+  (and
+    (compiler-lower-avx2-foreach-uniform-source-shape-ok?
+      (compiler-lower-avx2-foreach-map-uniform-source)
+      (AstTyI64)
+      4
+      2
+      2
+      6)
+    (compiler-lower-avx2-foreach-uniform-source-shape-ok?
+      (compiler-lower-avx2-foreach-map-uniform-i32-source)
+      (AstTyI32)
+      8
+      2
+      2
+      6)
+    (compiler-lower-avx2-foreach-uniform-source-shape-ok?
+      (compiler-lower-avx2-foreach-map-uniform-f64-source)
+      (AstTyF64)
+      4
+      2
+      2
+      6)
+    (compiler-lower-avx2-foreach-uniform-source-shape-ok?
+      (compiler-lower-avx2-foreach-map-uniform-f32-source)
+      (AstTyF32)
+      8
+      2
+      2
+      6)
+    (compiler-lower-avx2-foreach-uniform-source-shape-ok?
+      (compiler-lower-avx2-foreach-zip-uniform-source)
+      (AstTyI64)
+      4
+      3
+      3
       8)))
 
 (define (compiler-lower-and8
@@ -32347,6 +32655,93 @@
     (compiler-lower-avx512-foreach-map-source-shape-ok?
       (compiler-lower-avx2-foreach-map-f32-source)
       (AstTyF32)
+      16)))
+
+(define (compiler-lower-avx512-foreach-uniform-source-shape-ok?
+  [src : String]
+  [elem-ty : AstType]
+  [lanes : i64]
+  [want-loads : i64]
+  [want-pred-loads : i64]
+  [want-binops : i64]
+  [want-shapes : i64]) : bool
+  (match (lower-compiler-source-with-mode src (CompilerLowerAvx512))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (let
+            [load-count : i64
+              (lower-test-function-vector-load-count functions "fill")]
+            [binop-count : i64
+              (lower-test-function-vector-binop-count functions "fill")]
+            [store-count : i64
+              (lower-test-function-vector-store-count functions "fill")]
+            [pred-load-count : i64
+              (lower-test-function-predicated-load-count functions "fill")]
+            [pred-store-count : i64
+              (lower-test-function-predicated-store-count functions "fill")]
+            [tail-mask-count : i64
+              (lower-test-function-tail-mask-count functions "fill")]
+            [shape-count : i64
+              (lower-test-function-vector-shape-count
+                functions
+                "fill"
+                lanes
+                elem-ty)]
+            [tail-store-count : i64
+              (lower-test-function-store-ptr-count functions "fill")]
+            (compiler-lower-and8
+              (= load-count want-loads)
+              (= binop-count want-binops)
+              (= store-count 1)
+              (= pred-load-count want-pred-loads)
+              (= pred-store-count 1)
+              (= tail-mask-count 1)
+              (= shape-count want-shapes)
+              (> tail-store-count 0)))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-avx512-foreach-uniform-shape-ok?) : bool
+  (and
+    (compiler-lower-avx512-foreach-uniform-source-shape-ok?
+      (compiler-lower-avx2-foreach-map-uniform-source)
+      (AstTyI64)
+      8
+      2
+      2
+      4
+      12)
+    (compiler-lower-avx512-foreach-uniform-source-shape-ok?
+      (compiler-lower-avx2-foreach-map-uniform-i32-source)
+      (AstTyI32)
+      16
+      2
+      2
+      4
+      12)
+    (compiler-lower-avx512-foreach-uniform-source-shape-ok?
+      (compiler-lower-avx2-foreach-map-uniform-f64-source)
+      (AstTyF64)
+      8
+      2
+      2
+      4
+      12)
+    (compiler-lower-avx512-foreach-uniform-source-shape-ok?
+      (compiler-lower-avx2-foreach-map-uniform-f32-source)
+      (AstTyF32)
+      16
+      2
+      2
+      4
+      12)
+    (compiler-lower-avx512-foreach-uniform-source-shape-ok?
+      (compiler-lower-avx2-foreach-zip-uniform-source)
+      (AstTyI64)
+      8
+      3
+      3
+      6
       16)))
 
 (define (compiler-lower-avx512-masked-if-source) : String
@@ -32423,18 +32818,16 @@
           (= (lower-test-function-vector-load-count functions "fill") 0)])]
     [(ErrCompilerLower _) false]))
 
-(define (compiler-lower-avx2-foreach-fallback-stays-scalar-ok?) : bool
-  (match (lower-compiler-source-with-mode
-    (compiler-lower-avx2-foreach-scalar-fallback-source)
-    (CompilerLowerAvx2))
-    [(OkCompilerLower program _)
-      (match program
-        [(IrProgram _ functions _)
-          (and
-            (= (lower-test-function-vector-load-count functions "fill") 0)
-            (= (lower-test-function-vector-binop-count functions "fill") 0)
-            (= (lower-test-function-vector-store-count functions "fill") 0))])]
-    [(ErrCompilerLower _) false]))
+(define (compiler-lower-simd-foreach-fallback-diagnostic-ok?) : bool
+  (and
+    (compiler-lower-mode-error-ok?
+      (compiler-lower-avx2-foreach-scalar-fallback-source)
+      (CompilerLowerAvx2)
+      (lower-simd-foreach-fallback-diagnostic))
+    (compiler-lower-mode-error-ok?
+      (compiler-lower-avx2-foreach-scalar-fallback-source)
+      (CompilerLowerAvx512)
+      (lower-simd-foreach-fallback-diagnostic))))
 
 (define (compiler-lower-foreach-tests-ok?) : bool
   (and
@@ -32451,8 +32844,10 @@
         "(define (main) : i64 (begin (foreach ([i : i64 0 3]) unit) 0))")
       (compiler-lower-avx2-foreach-map-shape-ok?)
       (compiler-lower-avx512-foreach-map-shape-ok?)
-      (compiler-lower-scalar-foreach-stays-scalar-ok?))
-    (compiler-lower-avx2-foreach-fallback-stays-scalar-ok?)
+      (compiler-lower-avx2-foreach-uniform-shape-ok?))
+    (compiler-lower-avx512-foreach-uniform-shape-ok?)
+    (compiler-lower-scalar-foreach-stays-scalar-ok?)
+    (compiler-lower-simd-foreach-fallback-diagnostic-ok?)
     (compiler-lower-avx512-masked-if-shape-ok?)
     (compiler-lower-avx512-masked-if-offset-shape-ok?)
     (compiler-lower-avx2-masked-if-diagnostic-ok?)))

@@ -83,6 +83,7 @@ spmd_corpus() {
     cat <<'EOF'
 tests/spmd/tail_i64_add.tl
 tests/spmd/tail_i32_add.tl
+tests/spmd/uniform_zip_i64.tl
 tests/spmd/masked_if_i64.tl
 tests/spmd/masked_if_offset_i64.tl
 tests/integration/spmd_foreach.tl

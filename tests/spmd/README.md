@@ -23,6 +23,9 @@ falling back to scalar code.
   vector width 4/8): forces a masked/scalar tail. Exit 247.
 - `tail_i32_add.tl` — `foreach` add over `n = 7` `i32` lanes (below the i32
   width 8/16): all-tail, a different element width. Exit 91.
+- `uniform_zip_i64.tl` - `foreach` zip over `n = 13` i64 lanes with
+  `a[i] * b[i] + c[i] + r`: exercises vector multiply, a third array operand,
+  uniform scalar broadcast, and tail handling.
 - `masked_if_i64.tl` — AVX-512-only masked varying `if` over `n = 13` i64
   lanes, with direct-index predicated reads/writes and a masked tail. Exit 42.
 - `masked_if_offset_i64.tl` - AVX-512-only masked varying `if` over `n = 12`
@@ -46,7 +49,8 @@ width. They should instead assert the scalar contract (`program-index = 0`,
 Coverage map:
 
 - `foreach` scalar and SIMD map/zip coverage for `i64`, `i32`, `f64`, and
-  `f32` lives in `../integration/spmd_foreach.tl` and the two tail fixtures.
+  `f32` lives in `../integration/spmd_foreach.tl`, the two tail fixtures, and
+  `uniform_zip_i64.tl`.
 - AVX-512 masked varying `if` direct-index and shifted-contiguous-index
   coverage lives in `masked_if_i64.tl` and `masked_if_offset_i64.tl`.
 - `spmd-reduce` scalar coverage for the documented operator/type surface lives

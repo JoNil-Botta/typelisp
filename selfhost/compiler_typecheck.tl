@@ -1260,87 +1260,91 @@
     (struct-get v x)))")
 
 (define (compiler-typecheck-repr-c-layout-ok?) : bool
-  (match (parse-ast-source (compiler-typecheck-repr-c-layout-source))
-    [(OkAstProgram program)
-      (match (build-compiler-symbols program)
-        [(OkCompilerSymbols symbols)
-          (match (build-compiler-registries program)
-            [(OkCompilerRegistries registries)
-              (let
-                [ctx : TcContext (TcContext program symbols registries "")]
-                (match (tc-repr-c-struct-layout ctx "Packet")
-                  [(OkTcReprCLayout packet)
-                    (match (tc-repr-c-struct-layout ctx "Outer")
-                      [(OkTcReprCLayout outer)
-                        (and
-                          (= (tc-repr-c-layout-size packet) 24)
-                          (= (tc-repr-c-layout-align packet) 8)
-                          (=
-                            (tc-repr-c-layout-field-offset
-                              (tc-repr-c-layout-fields packet)
-                              "tag")
-                            0)
-                          (=
-                            (tc-repr-c-layout-field-offset
-                              (tc-repr-c-layout-fields packet)
-                              "count")
-                            8)
-                          (=
-                            (tc-repr-c-layout-field-offset
-                              (tc-repr-c-layout-fields packet)
-                              "flag")
-                            16)
-                          (= (tc-repr-c-layout-size outer) 16)
-                          (= (tc-repr-c-layout-align outer) 4)
-                          (=
-                            (tc-repr-c-layout-field-offset
-                              (tc-repr-c-layout-fields outer)
-                              "inner")
-                            4)
-                          (=
-                            (tc-repr-c-layout-field-offset
-                              (tc-repr-c-layout-fields outer)
-                              "tail")
-                            12))]
-                      [(ErrTcReprCLayout _) false])]
-                  [(ErrTcReprCLayout _) false]))]
-            [(ErrCompilerRegistries _) false])]
-        [(ErrCompilerSymbols _) false])]
-    [(ErrAstProgram _) false]))
+  (begin
+    (tc-agg-caches-reset!)
+    (match (parse-ast-source (compiler-typecheck-repr-c-layout-source))
+      [(OkAstProgram program)
+        (match (build-compiler-symbols program)
+          [(OkCompilerSymbols symbols)
+            (match (build-compiler-registries program)
+              [(OkCompilerRegistries registries)
+                (let
+                  [ctx : TcContext (TcContext program symbols registries "")]
+                  (match (tc-repr-c-struct-layout ctx "Packet")
+                    [(OkTcReprCLayout packet)
+                      (match (tc-repr-c-struct-layout ctx "Outer")
+                        [(OkTcReprCLayout outer)
+                          (and
+                            (= (tc-repr-c-layout-size packet) 24)
+                            (= (tc-repr-c-layout-align packet) 8)
+                            (=
+                              (tc-repr-c-layout-field-offset
+                                (tc-repr-c-layout-fields packet)
+                                "tag")
+                              0)
+                            (=
+                              (tc-repr-c-layout-field-offset
+                                (tc-repr-c-layout-fields packet)
+                                "count")
+                              8)
+                            (=
+                              (tc-repr-c-layout-field-offset
+                                (tc-repr-c-layout-fields packet)
+                                "flag")
+                              16)
+                            (= (tc-repr-c-layout-size outer) 16)
+                            (= (tc-repr-c-layout-align outer) 4)
+                            (=
+                              (tc-repr-c-layout-field-offset
+                                (tc-repr-c-layout-fields outer)
+                                "inner")
+                              4)
+                            (=
+                              (tc-repr-c-layout-field-offset
+                                (tc-repr-c-layout-fields outer)
+                                "tail")
+                              12))]
+                        [(ErrTcReprCLayout _) false])]
+                    [(ErrTcReprCLayout _) false]))]
+              [(ErrCompilerRegistries _) false])]
+          [(ErrCompilerSymbols _) false])]
+      [(ErrAstProgram _) false])))
 
 (define (compiler-typecheck-repr-c-f32-layout-ok?) : bool
-  (match (parse-ast-source (compiler-typecheck-repr-c-f32-source))
-    [(OkAstProgram program)
-      (match (build-compiler-symbols program)
-        [(OkCompilerSymbols symbols)
-          (match (build-compiler-registries program)
-            [(OkCompilerRegistries registries)
-              (let
-                [ctx : TcContext (TcContext program symbols registries "")]
-                (match (tc-repr-c-struct-layout ctx "Vec2")
-                  [(OkTcReprCLayout layout)
-                    (and
-                      (= (tc-repr-c-layout-size layout) 16)
-                      (= (tc-repr-c-layout-align layout) 8)
-                      (=
-                        (tc-repr-c-layout-field-offset
-                          (tc-repr-c-layout-fields layout)
-                          "x")
-                        0)
-                      (=
-                        (tc-repr-c-layout-field-offset
-                          (tc-repr-c-layout-fields layout)
-                          "y")
-                        4)
-                      (=
-                        (tc-repr-c-layout-field-offset
-                          (tc-repr-c-layout-fields layout)
-                          "tag")
-                        8))]
-                  [(ErrTcReprCLayout _) false]))]
-            [(ErrCompilerRegistries _) false])]
-        [(ErrCompilerSymbols _) false])]
-    [(ErrAstProgram _) false]))
+  (begin
+    (tc-agg-caches-reset!)
+    (match (parse-ast-source (compiler-typecheck-repr-c-f32-source))
+      [(OkAstProgram program)
+        (match (build-compiler-symbols program)
+          [(OkCompilerSymbols symbols)
+            (match (build-compiler-registries program)
+              [(OkCompilerRegistries registries)
+                (let
+                  [ctx : TcContext (TcContext program symbols registries "")]
+                  (match (tc-repr-c-struct-layout ctx "Vec2")
+                    [(OkTcReprCLayout layout)
+                      (and
+                        (= (tc-repr-c-layout-size layout) 16)
+                        (= (tc-repr-c-layout-align layout) 8)
+                        (=
+                          (tc-repr-c-layout-field-offset
+                            (tc-repr-c-layout-fields layout)
+                            "x")
+                          0)
+                        (=
+                          (tc-repr-c-layout-field-offset
+                            (tc-repr-c-layout-fields layout)
+                            "y")
+                          4)
+                        (=
+                          (tc-repr-c-layout-field-offset
+                            (tc-repr-c-layout-fields layout)
+                            "tag")
+                          8))]
+                    [(ErrTcReprCLayout _) false]))]
+              [(ErrCompilerRegistries _) false])]
+          [(ErrCompilerSymbols _) false])]
+      [(ErrAstProgram _) false])))
 
 (define (compiler-typecheck-repr-c-string-source) : String
   "(defstruct Bad
@@ -1358,6 +1362,98 @@
   (:repr c)
   (next Node))")
 
+(define (compiler-typecheck-repr-c-mutual-recursive-source) : String
+  "(defstruct A
+  (:repr c)
+  (b B))
+(defstruct B
+  (:repr c)
+  (a A))")
+
+(define (compiler-typecheck-repr-c-default-cycle-source) : String
+  "(defstruct Middle
+  (back CRoot))
+(defstruct CRoot
+  (:repr c)
+  (tag u8)
+  (middle Middle))")
+
+(define (compiler-typecheck-repr-c-mixed-layout-source) : String
+  "(defstruct Point
+  (x i64)
+  (y i64))
+(defenum Tag
+  (TagNone)
+  (TagVal i64))
+(defstruct Mixed
+  (:repr c)
+  (lead u8)
+  (point Point)
+  (tag Tag)
+  (tail u16))")
+
+(define (compiler-typecheck-repr-c-layout-error-ok?
+  [src : String]
+  [name : String]
+  [want : String]) : bool
+  (begin
+    (tc-agg-caches-reset!)
+    (match (parse-ast-source src)
+      [(OkAstProgram program)
+        (match (build-compiler-symbols program)
+          [(OkCompilerSymbols symbols)
+            (match (build-compiler-registries program)
+              [(OkCompilerRegistries registries)
+                (let
+                  [ctx : TcContext (TcContext program symbols registries "")]
+                  (match (tc-repr-c-struct-layout ctx name)
+                    [(OkTcReprCLayout _) false]
+                    [(ErrTcReprCLayout message) (string-eq message want)]))]
+              [(ErrCompilerRegistries _) false])]
+          [(ErrCompilerSymbols _) false])]
+      [(ErrAstProgram _) false])))
+
+(define (compiler-typecheck-repr-c-mixed-layout-ok?) : bool
+  (begin
+    (tc-agg-caches-reset!)
+    (match (parse-ast-source (compiler-typecheck-repr-c-mixed-layout-source))
+      [(OkAstProgram program)
+        (match (build-compiler-symbols program)
+          [(OkCompilerSymbols symbols)
+            (match (build-compiler-registries program)
+              [(OkCompilerRegistries registries)
+                (let
+                  [ctx : TcContext (TcContext program symbols registries "")]
+                  (match (tc-repr-c-struct-layout ctx "Mixed")
+                    [(OkTcReprCLayout layout)
+                      (and
+                        (= (tc-repr-c-layout-size layout) 48)
+                        (= (tc-repr-c-layout-align layout) 8)
+                        (=
+                          (tc-repr-c-layout-field-offset
+                            (tc-repr-c-layout-fields layout)
+                            "lead")
+                          0)
+                        (=
+                          (tc-repr-c-layout-field-offset
+                            (tc-repr-c-layout-fields layout)
+                            "point")
+                          8)
+                        (=
+                          (tc-repr-c-layout-field-offset
+                            (tc-repr-c-layout-fields layout)
+                            "tag")
+                          24)
+                        (=
+                          (tc-repr-c-layout-field-offset
+                            (tc-repr-c-layout-fields layout)
+                            "tail")
+                          40))]
+                    [(ErrTcReprCLayout _) false]))]
+              [(ErrCompilerRegistries _) false])]
+          [(ErrCompilerSymbols _) false])]
+      [(ErrAstProgram _) false])))
+
 (define (compiler-typecheck-repr-c-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-repr-c-layout-source))
@@ -1366,7 +1462,16 @@
     (compiler-typecheck-repr-c-f32-layout-ok?)
     (compiler-typecheck-ok? (compiler-typecheck-repr-c-string-source))
     (compiler-typecheck-ok? (compiler-typecheck-repr-c-default-nested-source))
-    (compiler-typecheck-ok? (compiler-typecheck-repr-c-recursive-source))))
+    (compiler-typecheck-ok? (compiler-typecheck-repr-c-recursive-source))
+    (compiler-typecheck-repr-c-layout-error-ok?
+      (compiler-typecheck-repr-c-mutual-recursive-source)
+      "A"
+      "typecheck: recursive repr c struct layout cycle involving A")
+    (compiler-typecheck-repr-c-layout-error-ok?
+      (compiler-typecheck-repr-c-default-cycle-source)
+      "CRoot"
+      "typecheck: inline aggregate layout cycle CRoot -> Middle -> CRoot; insert (Box CRoot) at the recursive edge")
+    (compiler-typecheck-repr-c-mixed-layout-ok?)))
 
 (define (compiler-typecheck-inline-layout-result [src : String] [name : String]) : ResultTcUnit
   (match (parse-ast-source src)

@@ -4,6 +4,7 @@
 # extra may be requires-stage0-symbol:<name>[,<name>...] for staged backend
 # primitives or expected-stderr:<printf escapes> for native trap diagnostics.
 aggregate_globals|tests/integration/aggregate_globals.tl|42|-|-|-
+array_stride_24byte|tests/integration/array_stride_24byte.tl|42|-|-|-
 auto_borrow_call|tests/integration/auto_borrow_call.tl|42|-|-|-
 implicit_core_prelude|tests/integration/implicit_core_prelude.tl|42|-|-|-
 c_abi_aggregate_color|tests/integration/c_abi_aggregate_color.tl|42|-|-|benchmarks/c_abi_aggregate_color/baseline.c
@@ -65,6 +66,7 @@ lambda_capture_tuple|tests/integration/lambda_capture_tuple.tl|42|-|-|-
 lambda_lift|tests/integration/lambda_lift.tl|42|-|-|-
 lexer|tests/integration/lexer.tl|12|-|-|stdlib/io.tl stdlib/string.tl
 lifetime_nullary_variant|tests/integration/lifetime_nullary_variant.tl|42|-|-|-
+lifetime_enum_borrow_return|tests/integration/lifetime_enum_borrow_return.tl|42|-|-|-
 many_args|tests/integration/many_args.tl|36|-|-|-
 maybe_result|tests/integration/maybe_result.tl|65|-|-|stdlib/string.tl
 min_div_neg1_trap|tests/integration/min_div_neg1_trap.tl|135|-|-|-|expected-stderr:tl: integer division or remainder error\n

@@ -219,6 +219,37 @@
         [CompilerDiagnosticNoString false])]
     [(OkCompilerTypecheck _) false]))
 
+(define (compiler-typecheck-secondary-count
+  [labels : CompilerDiagnosticLabelList]) : i64
+  (match labels
+    [(CompilerDiagnosticLabelNil) 0]
+    [(CompilerDiagnosticLabelCons _ rest)
+      (+ 1 (compiler-typecheck-secondary-count (box-get rest)))]))
+
+(define (compiler-typecheck-help-present? [diag : CompilerDiagnostic]) : bool
+  (match (compiler-diagnostic-help diag)
+    [(CompilerDiagnosticSomeString _) true]
+    [CompilerDiagnosticNoString false]))
+
+(define (compiler-typecheck-error-shape-ok?
+  [src : String]
+  [want : String]
+  [want-line : i64]
+  [want-col : i64]
+  [want-secondary-count : i64]) : bool
+  (match (typecheck-compiler-source src)
+    [(ErrCompilerTypecheck diag)
+      (and
+        (string-eq (compiler-diagnostic-message diag) want)
+        (= (compiler-diagnostic-line diag) want-line)
+        (= (compiler-diagnostic-col diag) want-col)
+        (=
+          (compiler-typecheck-secondary-count
+            (compiler-diagnostic-secondary-spans diag))
+          want-secondary-count)
+        (compiler-typecheck-help-present? diag))]
+    [(OkCompilerTypecheck _) false]))
+
 (define (compiler-typecheck-program-error-ok?
   [program : AstProgram]
   [want : String]) : bool
@@ -270,6 +301,55 @@
 (define (compiler-typecheck-branch-mismatch-source) : String
   "(define (main [flag : bool]) : i64
   (if flag 1 false))")
+
+(define (compiler-typecheck-escape-return-diagnostic-source) : String
+  "(define (main [n : i64]) : (& n i64)
+  (let [x : i64 1] (& x)))")
+
+(define (compiler-typecheck-escape-assignment-diagnostic-source) : String
+  "(define (main [n : i64]) : i64
+  (let
+    [slot : (& n i64) (& n)]
+    (let [n : i64 1] (set! slot (& n)))))")
+
+(define (compiler-typecheck-escape-with-arena-diagnostic-source) : String
+  "(define (int->string [value : i64]) : String
+  (if (= value 0) \"0\" \"1\"))
+(define (main) : String
+  (with-arena phase (int->string 42)))")
+
+(define (compiler-typecheck-escape-lambda-capture-diagnostic-source) : String
+  "(define (take [r : (& n i64)]) : i64 1)
+(define (main [n : i64]) : (-> i64)
+  (let [r : (& n i64) (& n)]
+    (lambda () : i64 (take r))))")
+
+(define (compiler-typecheck-escape-diagnostic-tests-ok?) : bool
+  (and
+    (compiler-typecheck-error-shape-ok?
+      (compiler-typecheck-escape-return-diagnostic-source)
+      "typecheck: reference value would escape lexical scope"
+      2
+      3
+      1)
+    (compiler-typecheck-error-shape-ok?
+      (compiler-typecheck-escape-assignment-diagnostic-source)
+      "typecheck: cannot store reference into longer-lived binding; reference value would escape lexical scope"
+      4
+      22
+      2)
+    (compiler-typecheck-error-shape-ok?
+      (compiler-typecheck-escape-with-arena-diagnostic-source)
+      "typecheck: region-tagged value cannot escape with-arena 'phase'"
+      4
+      21
+      1)
+    (compiler-typecheck-error-shape-ok?
+      (compiler-typecheck-escape-lambda-capture-diagnostic-source)
+      "typecheck: lambda cannot capture immutable reference; reference value would escape lexical scope"
+      4
+      5
+      1)))
 
 (define (compiler-typecheck-diagnostic-code-tests-ok?) : bool
   (and
@@ -7757,6 +7837,9 @@
     (if (compiler-typecheck-diagnostic-code-tests-ok?)
       unit
       (panic "typecheck: diagnostic code tests failed"))
+    (if (compiler-typecheck-escape-diagnostic-tests-ok?)
+      unit
+      (panic "typecheck: escape diagnostic tests failed"))
     (if (compiler-typecheck-pool-exhaustion-diagnostic-ok?)
       unit
       (panic "typecheck: pool exhaustion diagnostic test failed"))

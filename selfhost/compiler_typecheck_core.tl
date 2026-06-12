@@ -117,6 +117,10 @@
   (TcNoString)
   (TcSomeString String))
 
+(defenum TcMaybeAstSourceSpan
+  (TcNoAstSourceSpan)
+  (TcSomeAstSourceSpan AstSourceSpan))
+
 (defenum TcMaybeExternAbi
   (TcNoExternAbi)
   (TcSomeExternAbi AstExternAbi))
@@ -328,6 +332,9 @@
 (define (tc-located-error-prefix) : String
   "__tl_tc_loc|")
 
+(define (tc-rich-error-prefix) : String
+  "__tl_tc_diag|")
+
 (define (tc-diag-string-prefix? [text : String] [prefix : String]) : bool
   (let
     [text-len : i64 (string-length text)]
@@ -338,6 +345,62 @@
 
 (define (tc-located-error? [message : String]) : bool
   (tc-diag-string-prefix? message (tc-located-error-prefix)))
+
+(define (tc-rich-error? [message : String]) : bool
+  (tc-diag-string-prefix? message (tc-rich-error-prefix)))
+
+(define (tc-rich-error-span-fields [span : AstSourceSpan]) : String
+  (str-cat
+    (int->string (struct-get span start-line))
+    "|"
+    (str-cat
+      (int->string (struct-get span start-col))
+      "|"
+      (str-cat
+        (int->string (struct-get span end-line))
+        "|"
+        (str-cat (int->string (struct-get span end-col)) "|")))))
+
+(define (tc-rich-error-one-secondary
+  [primary : AstSourceSpan]
+  [message : String]
+  [help : String]
+  [secondary : AstSourceSpan]
+  [secondary-label : String]) : String
+  (str-cat
+    (tc-rich-error-prefix)
+    (tc-rich-error-span-fields primary)
+    (str-cat
+      message
+      "|"
+      (str-cat
+        help
+        "|1|"
+        (str-cat (tc-rich-error-span-fields secondary) secondary-label)))))
+
+(define (tc-rich-error-two-secondaries
+  [primary : AstSourceSpan]
+  [message : String]
+  [help : String]
+  [first : AstSourceSpan]
+  [first-label : String]
+  [second : AstSourceSpan]
+  [second-label : String]) : String
+  (str-cat
+    (tc-rich-error-prefix)
+    (tc-rich-error-span-fields primary)
+    (str-cat
+      message
+      "|"
+      (str-cat
+        help
+        "|2|"
+        (str-cat
+          (tc-rich-error-span-fields first)
+          (str-cat
+            first-label
+            "|"
+            (str-cat (tc-rich-error-span-fields second) second-label)))))))
 
 (define (tc-located-error-field-end [text : String] [start : i64]) : i64
   (let
@@ -353,6 +416,86 @@
 
 (define (tc-located-error-field [text : String] [start : i64] [end : i64]) : String
   (substring text start (- end start)))
+
+(define (tc-rich-error-diag [message : String]) : CompilerDiagnostic
+  (let
+    [prefix-len : i64 (string-length (tc-rich-error-prefix))]
+    [line-end : i64 (tc-located-error-field-end message prefix-len)]
+    [col-start : i64 (+ line-end 1)]
+    [col-end : i64 (tc-located-error-field-end message col-start)]
+    [end-line-start : i64 (+ col-end 1)]
+    [end-line-end : i64 (tc-located-error-field-end message end-line-start)]
+    [end-col-start : i64 (+ end-line-end 1)]
+    [end-col-end : i64 (tc-located-error-field-end message end-col-start)]
+    [msg-start : i64 (+ end-col-end 1)]
+    [msg-end : i64 (tc-located-error-field-end message msg-start)]
+    [help-start : i64 (+ msg-end 1)]
+    [help-end : i64 (tc-located-error-field-end message help-start)]
+    [count-start : i64 (+ help-end 1)]
+    [count-end : i64 (tc-located-error-field-end message count-start)]
+    [clean-message : String (tc-located-error-field message msg-start msg-end)]
+    [help : String (tc-located-error-field message help-start help-end)]
+    [remaining : i64
+      (string->int (tc-located-error-field message count-start count-end))]
+    [idx : i64 (+ count-end 1)]
+    [diag : CompilerDiagnostic
+      (compiler-diagnostic-from-ast-span
+        ""
+        (AstSourceSpan
+          (string->int (tc-located-error-field message prefix-len line-end))
+          (string->int (tc-located-error-field message col-start col-end))
+          (string->int
+            (tc-located-error-field message end-line-start end-line-end))
+          (string->int
+            (tc-located-error-field message end-col-start end-col-end)))
+        clean-message)]
+    (begin
+      (if (> (string-length help) 0)
+        (set! diag (compiler-diagnostic-with-help diag help))
+        unit)
+      (while (> remaining 0)
+        (let
+          [sec-line-end : i64 (tc-located-error-field-end message idx)]
+          [sec-col-start : i64 (+ sec-line-end 1)]
+          [sec-col-end : i64 (tc-located-error-field-end message sec-col-start)]
+          [sec-end-line-start : i64 (+ sec-col-end 1)]
+          [sec-end-line-end : i64
+            (tc-located-error-field-end message sec-end-line-start)]
+          [sec-end-col-start : i64 (+ sec-end-line-end 1)]
+          [sec-end-col-end : i64
+            (tc-located-error-field-end message sec-end-col-start)]
+          [label-start : i64 (+ sec-end-col-end 1)]
+          [label-end : i64
+            (if (= remaining 1)
+              (string-length message)
+              (tc-located-error-field-end message label-start))]
+          [label : String
+            (tc-located-error-field message label-start label-end)]
+          (begin
+            (set!
+              diag
+              (compiler-diagnostic-with-secondary
+                diag
+                (CompilerDiagnosticSpan
+                  ""
+                  (string->int
+                    (tc-located-error-field message idx sec-line-end))
+                  (string->int
+                    (tc-located-error-field message sec-col-start sec-col-end))
+                  (string->int
+                    (tc-located-error-field
+                      message
+                      sec-end-line-start
+                      sec-end-line-end))
+                  (string->int
+                    (tc-located-error-field
+                      message
+                      sec-end-col-start
+                      sec-end-col-end)))
+                (CompilerDiagnosticSomeString label)))
+            (set! idx (+ label-end 1))
+            (set! remaining (- remaining 1)))))
+      (tc-canonical-diagnostic diag))))
 
 (define (tc-located-error [span : AstSourceSpan] [message : String]) : String
   (string-append
@@ -771,13 +914,15 @@
         compiler-tc-decl-profile-other-count))))
 
 (define (tc-expr-diag [expr : AstExpr] [message : String]) : CompilerDiagnostic
-  (if (tc-located-error? message)
-    (tc-located-error-diag message)
-    (match expr
-      [(AstExprSpanned _ span)
-        (tc-canonical-diagnostic
-          (compiler-diagnostic-from-ast-span "" span message))]
-      [_ (tc-diag-at-start message)])))
+  (if (tc-rich-error? message)
+    (tc-rich-error-diag message)
+    (if (tc-located-error? message)
+      (tc-located-error-diag message)
+      (match expr
+        [(AstExprSpanned _ span)
+          (tc-canonical-diagnostic
+            (compiler-diagnostic-from-ast-span "" span message))]
+        [_ (tc-diag-at-start message)]))))
 
 ;; Locate an error at the nearest available declaration body span. A top-level
 ;; `define` body is wrapped in `AstExprSpanned`, so its span points the
@@ -802,40 +947,270 @@
     [(AstNoGeneratedDeclMeta) diag]))
 
 (define (tc-decl-diag [decl : AstDecl] [message : String]) : CompilerDiagnostic
-  (if (tc-located-error? message)
-    (tc-located-error-diag message)
-    (match decl
-      [(AstDeclDef _ _ expr-box)
-        (let
-          [expr : AstExpr (ast-node-get expr-box)]
-          (tc-expr-diag expr message))]
-      [(AstDeclDefFn _ _ _ body-box _)
-        (let
-          [body : AstExpr (ast-node-get body-box)]
-          (tc-expr-diag body message))]
-      [(AstDeclDefMacro _ _ _ body-box)
-        (let
-          [body : AstExpr (ast-node-get body-box)]
-          (tc-expr-diag body message))]
-      [(AstDeclTest _ _ span)
-        (tc-canonical-diagnostic
-          (compiler-diagnostic-from-ast-span "" span message))]
-      [(AstDeclUnsafe inner-box)
-        (let
-          [inner : AstDecl (box-get inner-box)]
-          (tc-decl-diag inner message))]
-      [(AstDeclComptimeDecl meta template-box)
-        (let
-          [template : AstDecl (box-get template-box)]
-          (tc-generated-decl-diag meta (tc-decl-diag template message)))]
-      [_ (tc-diag-at-start message)])))
+  (if (tc-rich-error? message)
+    (tc-rich-error-diag message)
+    (if (tc-located-error? message)
+      (tc-located-error-diag message)
+      (match decl
+        [(AstDeclDef _ _ expr-box)
+          (let
+            [expr : AstExpr (ast-node-get expr-box)]
+            (tc-expr-diag expr message))]
+        [(AstDeclDefFn _ _ _ body-box _)
+          (let
+            [body : AstExpr (ast-node-get body-box)]
+            (tc-expr-diag body message))]
+        [(AstDeclDefMacro _ _ _ body-box)
+          (let
+            [body : AstExpr (ast-node-get body-box)]
+            (tc-expr-diag body message))]
+        [(AstDeclTest _ _ span)
+          (tc-canonical-diagnostic
+            (compiler-diagnostic-from-ast-span "" span message))]
+        [(AstDeclUnsafe inner-box)
+          (let
+            [inner : AstDecl (box-get inner-box)]
+            (tc-decl-diag inner message))]
+        [(AstDeclComptimeDecl meta template-box)
+          (let
+            [template : AstDecl (box-get template-box)]
+            (tc-generated-decl-diag meta (tc-decl-diag template message)))]
+        [_ (tc-diag-at-start message)]))))
 
 (define (tc-locate-error-at-expr [expr : AstExpr] [message : String]) : String
-  (if (tc-located-error? message)
+  (if (or (tc-rich-error? message) (tc-located-error? message))
     message
     (match expr
       [(AstExprSpanned _ span) (tc-located-error span message)]
       [_ message])))
+
+(define (tc-expr-maybe-span [expr : AstExpr]) : TcMaybeAstSourceSpan
+  (match expr
+    [(AstExprSpanned _ span) (TcSomeAstSourceSpan span)]
+    [_ (TcNoAstSourceSpan)]))
+
+(define (tc-expr-list-last-maybe-span [exprs : AstExprList]) : TcMaybeAstSourceSpan
+  (match exprs
+    [(AstExprNil) (TcNoAstSourceSpan)]
+    [(AstExprCons head rest-box)
+      (let
+        [head-expr : AstExpr (ast-node-get head)]
+        [rest : AstExprList (box-get rest-box)]
+        (match rest
+          [(AstExprNil) (tc-expr-maybe-span head-expr)]
+          [_ (tc-expr-list-last-maybe-span rest)]))]))
+
+(define (tc-reference-escape-help) : String
+  "return an owned clone, keep the reference inside its scope, or tie the returned reference lifetime to a parameter")
+
+(define (tc-assignment-escape-help [target : String]) : String
+  (str-cat
+    "store an owned value instead, or keep `"
+    target
+    "` inside the borrowed value's lifetime"))
+
+(define (tc-arena-escape-help [region : String]) : String
+  (str-cat
+    "use with-escape to clone one supported result out of `"
+    region
+    "`, or keep the value inside the with-arena scope"))
+
+(define (tc-closure-escape-help) : String
+  "move owned data into the closure or keep the closure inside the borrowed/arena scope")
+
+(define (tc-reference-escape-message? [message : String]) : bool
+  (or
+    (string-eq message "typecheck: reference value would escape lexical scope")
+    (tc-diag-string-prefix?
+      message
+      "typecheck: cannot store reference into longer-lived")
+    (tc-diag-string-prefix?
+      message
+      "typecheck: cannot store reference into non-place")
+    (string-eq
+      message
+      "typecheck: lambda cannot capture mutable reference; reference value would escape lexical scope")
+    (string-eq
+      message
+      "typecheck: lambda cannot capture immutable reference; reference value would escape lexical scope")
+    (string-eq
+      message
+      "typecheck: reference-capturing closure value would escape lexical scope")))
+
+(define (tc-region-escape-message? [message : String]) : bool
+  (or
+    (tc-diag-string-prefix?
+      message
+      "typecheck: region-tagged value cannot escape with-arena '")
+    (tc-diag-string-prefix?
+      message
+      "typecheck: cannot store region-tagged value into ")
+    (string-eq
+      message
+      "typecheck: lambda cannot capture region-tagged value; region value would escape")
+    (string-eq
+      message
+      "typecheck: lambda return value has region-tagged type; region value would escape")
+    (string-eq
+      message
+      "typecheck: cannot pass region-tagged value to function parameter; region value would escape")))
+
+(define (tc-cleanup-escape-message? [message : String]) : bool
+  (or
+    (string-eq
+      message
+      "typecheck: cleanup-required resource would escape with scope")
+    (string-eq
+      message
+      "typecheck: lambda cannot capture cleanup-required resource; resource value would escape")
+    (string-eq
+      message
+      "typecheck: cannot store cleanup-required resource in longer-lived binding")))
+
+(define (tc-escape-message? [message : String]) : bool
+  (or
+    (tc-reference-escape-message? message)
+    (tc-region-escape-message? message)
+    (tc-cleanup-escape-message? message)))
+
+(define (tc-escape-help [message : String]) : String
+  (if (tc-region-escape-message? message)
+    "return an owned clone, keep the value inside the arena/scope, or use with-escape for supported clone-out"
+    (if (tc-cleanup-escape-message? message)
+      "keep the cleanup-required value inside its resource scope or return a non-resource result"
+      (tc-reference-escape-help))))
+
+(define (tc-rich-error-with-maybe-secondary
+  [primary : AstSourceSpan]
+  [message : String]
+  [help : String]
+  [maybe-secondary : TcMaybeAstSourceSpan]
+  [secondary-label : String]) : String
+  (match maybe-secondary
+    [(TcSomeAstSourceSpan secondary)
+      (tc-rich-error-one-secondary
+        primary
+        message
+        help
+        secondary
+        secondary-label)]
+    [(TcNoAstSourceSpan)
+      (tc-rich-error-one-secondary primary message help primary secondary-label)]))
+
+(define (tc-rich-escape-at-expr
+  [expr : AstExpr]
+  [message : String]
+  [secondary-label : String]) : String
+  (match (tc-expr-maybe-span expr)
+    [(TcSomeAstSourceSpan span)
+      (tc-rich-error-one-secondary
+        span
+        message
+        (tc-escape-help message)
+        span
+        secondary-label)]
+    [(TcNoAstSourceSpan) message]))
+
+(define (tc-spanned-escape-error
+  [inner : AstExpr]
+  [span : AstSourceSpan]
+  [message : String]) : TcMaybeString
+  (if (or (tc-rich-error? message) (tc-located-error? message))
+    (TcNoString)
+    (match inner
+      [(AstExprWithRegion region body)
+        (if (tc-diag-string-prefix?
+          message
+          "typecheck: region-tagged value cannot escape with-arena '")
+          (match (tc-expr-list-last-maybe-span body)
+            [(TcSomeAstSourceSpan value-span)
+              (TcSomeString
+                (tc-rich-error-one-secondary
+                  value-span
+                  message
+                  (tc-arena-escape-help region)
+                  span
+                  (str-cat
+                    "with-arena `"
+                    region
+                    "` scope resets before this value can escape")))]
+            [(TcNoAstSourceSpan)
+              (TcSomeString
+                (tc-rich-error-one-secondary
+                  span
+                  message
+                  (tc-arena-escape-help region)
+                  span
+                  "with-arena scope boundary"))])
+          (TcNoString))]
+      [(AstExprReturn value-box)
+        (if (tc-escape-message? message)
+          (let
+            [value : AstExpr (ast-node-get value-box)]
+            (TcSomeString
+              (tc-rich-error-with-maybe-secondary
+                span
+                message
+                (tc-escape-help message)
+                (tc-expr-maybe-span value)
+                "returned value carries a lifetime or arena that cannot cross this boundary")))
+          (TcNoString))]
+      [(AstExprSet name value-box)
+        (if (tc-escape-message? message)
+          (let
+            [value : AstExpr (ast-node-get value-box)]
+            [target : String (intern-str name)]
+            (match (tc-expr-maybe-span value)
+              [(TcSomeAstSourceSpan value-span)
+                (TcSomeString
+                  (tc-rich-error-two-secondaries
+                    span
+                    message
+                    (tc-assignment-escape-help target)
+                    value-span
+                    "assigned value carries a shorter lifetime"
+                    span
+                    (str-cat
+                      "target binding `"
+                      target
+                      "` lives longer than the assigned value")))]
+              [(TcNoAstSourceSpan)
+                (TcSomeString
+                  (tc-rich-error-one-secondary
+                    span
+                    message
+                    (tc-assignment-escape-help target)
+                    span
+                    (str-cat
+                      "target binding `"
+                      target
+                      "` lives longer than the assigned value")))]))
+          (TcNoString))]
+      [(AstExprLet _ body-box)
+        (if (tc-escape-message? message)
+          (let
+            [body : AstExpr (ast-node-get body-box)]
+            (TcSomeString
+              (tc-rich-error-with-maybe-secondary
+                span
+                message
+                (tc-escape-help message)
+                (tc-expr-maybe-span body)
+                "let result carries a lifetime that cannot outlive this binding scope")))
+          (TcNoString))]
+      [(AstExprLambda _ _ body-box)
+        (if (tc-escape-message? message)
+          (let
+            [body : AstExpr (ast-node-get body-box)]
+            (TcSomeString
+              (tc-rich-error-with-maybe-secondary
+                span
+                message
+                (tc-closure-escape-help)
+                (tc-expr-maybe-span body)
+                "closure body captures a value whose lifetime cannot escape")))
+          (TcNoString))]
+      [_ (TcNoString)])))
 
 (define (tc-expect-at-expr
   [expr : AstExpr]
@@ -6993,7 +7368,7 @@
         [inner : AstExpr (ast-node-get inner-box)]
         (match (tc-expr-with-expected-or-actual ctx env inner expected)
           [(OkTcType ty) (OkTcType ty)]
-          [(ErrTcType message) (tc-locate-call-arity-error inner span message)]))]
+          [(ErrTcType message) (tc-locate-spanned-error inner span message)]))]
     [(AstExprIf cond-box then-branch-box else-branch-box)
       (let
         [cond : AstExpr (ast-node-get cond-box)]
@@ -7220,6 +7595,14 @@
     (not (tc-located-error? message)))
     (ErrTcType (tc-located-error span message))
     (ErrTcType message)))
+
+(define (tc-locate-spanned-error
+  [inner : AstExpr]
+  [span : AstSourceSpan]
+  [message : String]) : ResultTcType
+  (match (tc-spanned-escape-error inner span message)
+    [(TcSomeString rich) (ErrTcType rich)]
+    [(TcNoString) (tc-locate-call-arity-error inner span message)]))
 
 (define (tc-call-arity-callee-name [func : AstExpr]) : String
   (match (tc-expr-var-name func)
@@ -16114,7 +16497,7 @@
         [inner : AstExpr (ast-node-get inner-box)]
         (match (tc-expr ctx env inner)
           [(OkTcType ty) (OkTcType ty)]
-          [(ErrTcType message) (tc-locate-call-arity-error inner span message)]))]
+          [(ErrTcType message) (tc-locate-spanned-error inner span message)]))]
     [(AstExprLiteral lit) (OkTcType (tc-literal-type lit))]
     [(AstExprVar name)
       (if (tc-hygiene-global-name? (intern-str name))
@@ -24504,7 +24887,12 @@
                     (match (tc-move-check-body ctx env params body)
                       [(OkTcUnit) (tc-borrow-check-body ctx env params body)]
                       [(ErrTcUnit message) (ErrTcUnit message)])]
-                  [(ErrTcUnit message) (ErrTcUnit message)])]
+                  [(ErrTcUnit message)
+                    (ErrTcUnit
+                      (tc-rich-escape-at-expr
+                        body
+                        message
+                        "function return type rejects this escaping value"))])]
               [(ErrTcUnit message) (ErrTcUnit message)])]
           [(ErrTcType message) (ErrTcUnit message)]))]
     [(AstDeclDefMacro name params ret body-box)

@@ -660,10 +660,21 @@
         (compiler-diagnostic-render diag)
         "backend: --pic supports only internal references")]))
 
+(define (compiler-backend-pic-object-helper-ok?) : bool
+  (and
+    (=
+      (compiler-backend-pic-data-record-end-offset
+        (ObjectDataSymbolRva32 ".L_target")
+        8)
+      12)
+    (string-eq (compiler-backend-pic-section-name (ObjectSectionPdata)) "pdata")
+    (string-eq (compiler-backend-pic-section-name (ObjectSectionXdata)) "xdata")))
+
 (define (compiler-backend-pic-ok?) : bool
   (and
     (compiler-backend-pic-output-ok?)
-    (compiler-backend-pic-extern-reject-ok?)))
+    (compiler-backend-pic-extern-reject-ok?)
+    (compiler-backend-pic-object-helper-ok?)))
 
 (define (compiler-backend-coff-renders-real-text-ok?) : bool
   (match (compiler-backend-emit-source-object-image-for-target

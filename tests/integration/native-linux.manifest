@@ -9,6 +9,7 @@ implicit_core_prelude|tests/integration/implicit_core_prelude.tl|42|-|-|-
 c_abi_aggregate_color|tests/integration/c_abi_aggregate_color.tl|42|-|-|benchmarks/c_abi_aggregate_color/baseline.c
 c_abi_int8_struct|tests/integration/c_abi_int8_struct.tl|42|-|-|benchmarks/c_abi_int8_struct/baseline.c
 c_abi_sysv_register_aggregate_args|tests/integration/c_abi_sysv_register_aggregate_args.tl|42|-|-|benchmarks/c_abi_sysv_register_aggregate_args/baseline.c
+c_abi_sysv_tag_only_enum|tests/integration/c_abi_sysv_tag_only_enum.tl|42|-|-|benchmarks/c_abi_sysv_tag_only_enum/baseline.c
 arena_escape_stress|tests/integration/arena_escape_stress.tl|42|-|-|stdlib/arena.tl stdlib/string.tl
 argv|tests/integration/argv.tl|7|alpha\n|alpha beta|-
 arithmetic|tests/integration/arithmetic.tl|47|-|-|-

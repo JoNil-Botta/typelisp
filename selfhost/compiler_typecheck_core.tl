@@ -8624,7 +8624,7 @@
           [(OkTcType ty)
             (let
               [resolved : AstType (tc-resolve-type ctx ty)]
-              (if (tc-extern-abi-value-type-ok? resolved)
+              (if (tc-extern-abi-value-type-ok? ctx resolved)
                 (match (tc-call-open-varargs-tail-types ctx env rest)
                   [(OkTcTypeList tail-types)
                     (OkTcTypeList (ast-type-cons ty tail-types))]
@@ -12855,6 +12855,35 @@
           (if (tc-inline-payloads-all-word-class? payloads)
             (tc-inline-enum-payloads-all-word-class? (box-get rest))
             false)])]))
+
+(define (tc-inline-payload-layout-list-empty?
+  [payloads : TcInlinePayloadLayoutList]) : bool
+  (match payloads
+    [(TcInlinePayloadLayoutNil) true]
+    [_ false]))
+
+(define (tc-inline-enum-variants-tag-only?
+  [variants : TcInlineVariantLayoutList]) : bool
+  (match variants
+    [(TcInlineVariantLayoutNil) true]
+    [(TcInlineVariantLayoutCons variant rest)
+      (match variant
+        [(TcInlineVariantLayout _ size _ payloads)
+          (if (and (= size 8) (tc-inline-payload-layout-list-empty? payloads))
+            (tc-inline-enum-variants-tag-only? (box-get rest))
+            false)])]))
+
+(define (tc-inline-enum-layout-tag-only?
+  [size : i64]
+  [variants : TcInlineVariantLayoutList]) : bool
+  (and (= size 8) (tc-inline-enum-variants-tag-only? variants)))
+
+(define (tc-inline-aggregate-layout-tag-only-enum?
+  [layout : TcInlineAggregateLayout]) : bool
+  (match layout
+    [(TcInlineEnumLayout size _ variants)
+      (tc-inline-enum-layout-tag-only? size variants)]
+    [(TcInlineStructLayout _ _ _) false]))
 
 (define (tc-inline-payload-layout-index [payload : TcInlinePayloadLayout]) : i64
   (match payload
@@ -17387,7 +17416,21 @@
     [(AstTyEnumArgs _ _) true]
     [_ false]))
 
-(define (tc-extern-abi-value-type-ok? [ty : AstType]) : bool
+(define (tc-extern-abi-tag-only-enum-type-ok? [ctx : TcContext] [ty : AstType]) : bool
+  (match (tc-type-without-regions ty)
+    [(AstTyEnum name)
+      (match (tc-inline-aggregate-layout-for ctx (intern-str name))
+        [(OkTcInlineAggregateLayout layout)
+          (tc-inline-aggregate-layout-tag-only-enum? layout)]
+        [(ErrTcInlineAggregateLayout _) false])]
+    [(AstTyEnumArgs name _)
+      (match (tc-inline-aggregate-layout-for ctx (intern-str name))
+        [(OkTcInlineAggregateLayout layout)
+          (tc-inline-aggregate-layout-tag-only-enum? layout)]
+        [(ErrTcInlineAggregateLayout _) false])]
+    [_ false]))
+
+(define (tc-extern-abi-value-type-ok? [ctx : TcContext] [ty : AstType]) : bool
   (match (tc-type-without-regions ty)
     [(AstTyI64) true]
     [(AstTyI32) true]
@@ -17407,8 +17450,8 @@
     [(AstTyMutPtr _) true]
     [(AstTyString) true]
     [(AstTyDynArray _) true]
-    [(AstTyEnum _) false]
-    [(AstTyEnumArgs _ _) false]
+    [(AstTyEnum _) (tc-extern-abi-tag-only-enum-type-ok? ctx ty)]
+    [(AstTyEnumArgs _ _) (tc-extern-abi-tag-only-enum-type-ok? ctx ty)]
     [(AstTyStruct _) true]
     [(AstTyStructArgs _ _) true]
     [_ false]))
@@ -17422,34 +17465,34 @@
       "typecheck: extern ABI c does not support "
       (string-append position (string-append " type " (tc-type-render ty))))))
 
-(define (tc-check-extern-arg-abi [args : AstTypeList]) : ResultTcUnit
+(define (tc-check-extern-arg-abi [ctx : TcContext] [args : AstTypeList]) : ResultTcUnit
   (match args
     [(AstTypeNil) OkTcUnit]
     [(AstTypeCons head rest)
       (let
         [head : AstType (ty-node-get head)]
         [rest : AstTypeList (box-get rest)]
-        (if (tc-extern-abi-value-type-ok? head)
-          (tc-check-extern-arg-abi rest)
+        (if (tc-extern-abi-value-type-ok? ctx head)
+          (tc-check-extern-arg-abi ctx rest)
           (ErrTcUnit (tc-extern-abi-unsupported-message "parameter" head))))]))
 
-(define (tc-check-extern-c-abi [ty : AstType]) : ResultTcUnit
+(define (tc-check-extern-c-abi [ctx : TcContext] [ty : AstType]) : ResultTcUnit
   (match ty
     [(AstTyFunc args ret)
-      (match (tc-check-extern-arg-abi args)
+      (match (tc-check-extern-arg-abi ctx args)
         [(OkTcUnit)
-          (if (tc-extern-abi-value-type-ok? (ty-node-get ret))
+          (if (tc-extern-abi-value-type-ok? ctx (ty-node-get ret))
             OkTcUnit
             (ErrTcUnit
               (tc-extern-abi-unsupported-message "return" (ty-node-get ret))))]
         [(ErrTcUnit message) (ErrTcUnit message)])]
     [_ (ErrTcUnit "typecheck: extern must have function type")]))
 
-(define (tc-check-extern-value-c-abi [ty : AstType]) : ResultTcUnit
+(define (tc-check-extern-value-c-abi [ctx : TcContext] [ty : AstType]) : ResultTcUnit
   (match ty
-    [(AstTyFunc _ _) (tc-check-extern-c-abi ty)]
+    [(AstTyFunc _ _) (tc-check-extern-c-abi ctx ty)]
     [_
-      (if (tc-extern-abi-value-type-ok? ty)
+      (if (tc-extern-abi-value-type-ok? ctx ty)
         OkTcUnit
         (ErrTcUnit (tc-extern-abi-unsupported-message "value" ty)))]))
 
@@ -17460,7 +17503,7 @@
     (let
       [tail-ty : AstType
         (tc-resolve-type ctx (ast-extern-abi-varargs-tail-type abi))]
-      (if (tc-extern-abi-value-type-ok? tail-ty)
+      (if (tc-extern-abi-value-type-ok? ctx tail-ty)
         OkTcUnit
         (ErrTcUnit
           (tc-extern-abi-unsupported-message "variadic argument" tail-ty))))
@@ -17480,7 +17523,7 @@
             (if (and
               (ast-extern-abi-c? abi)
               (or explicit-abi (ast-extern-abi-c-varargs? abi)))
-              (match (tc-check-extern-c-abi resolved)
+              (match (tc-check-extern-c-abi ctx resolved)
                 [(OkTcUnit)
                   (if (ast-extern-abi-c-varargs? abi)
                     (tc-check-extern-varargs-tail-type ctx abi)
@@ -17490,7 +17533,7 @@
           [(AstExternValue)
             (if (ast-extern-abi-c-varargs? abi)
               (ErrTcUnit "typecheck: extern value cannot use c-varargs ABI")
-              (tc-check-extern-value-c-abi resolved))]))]))
+              (tc-check-extern-value-c-abi ctx resolved))]))]))
 
 (define (tc-summary-add-decl
   [summary : CompilerTypecheckSummary]

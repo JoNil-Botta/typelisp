@@ -323,6 +323,7 @@ windows_integration_non_applicable_cases() {
 arena_poison_clone_survives
 arena_poison_stale_array_trap
 c_abi_sysv_register_aggregate_args
+c_abi_sysv_tag_only_enum
 EOF
 }
 

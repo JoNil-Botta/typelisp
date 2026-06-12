@@ -13484,7 +13484,7 @@
 (define (lower-c-abi-aggregate-size-message [mode : CompilerLowerMode]) : String
   (if (lower-mode-windows-c-abi? mode)
     "scalar structs of size 1, 2, 4, or 8 bytes, including nested scalar struct fields"
-    "System V register-class structs up to 16 bytes"))
+    "System V register-class structs up to 16 bytes, plus tag-only enums"))
 
 (define (lower-c-abi-unsupported-message
   [mode : CompilerLowerMode]
@@ -13732,11 +13732,15 @@
           size
           fields
           allow-sret?))]
-    [(TcInlineEnumLayout _ _ _)
-      (LowerCAbiUnsupportedAggregate
-        (lower-c-abi-unsupported-message mode resolved))]))
+    [(TcInlineEnumLayout size _ variants)
+      (if (and
+        (lower-mode-linux-c-abi? mode)
+        (tc-inline-enum-layout-tag-only? size variants))
+        (LowerCAbiIntegerAggregate (lower-c-abi-integer-scalar-type size) size)
+        (LowerCAbiUnsupportedAggregate
+          (lower-c-abi-unsupported-message mode resolved)))]))
 
-(define (lower-c-abi-aggregate-class-for-struct
+(define (lower-c-abi-aggregate-class-for-nominal
   [ctx : TcContext]
   [mode : CompilerLowerMode]
   [name : String]
@@ -13765,7 +13769,7 @@
     [resolved : AstType (tc-type-without-regions (tc-resolve-type ctx ty))]
     (match resolved
       [(AstTyStruct name)
-        (lower-c-abi-aggregate-class-for-struct
+        (lower-c-abi-aggregate-class-for-nominal
           ctx
           mode
           (intern-str name)
@@ -13773,16 +13777,29 @@
           allow-sret?
           allow-byref?)]
       [(AstTyStructArgs name _)
-        (lower-c-abi-aggregate-class-for-struct
+        (lower-c-abi-aggregate-class-for-nominal
           ctx
           mode
           (intern-str name)
           resolved
           allow-sret?
           allow-byref?)]
-      [(AstTyEnum _)
-        (LowerCAbiUnsupportedAggregate
-          (lower-c-abi-unsupported-message mode resolved))]
+      [(AstTyEnum name)
+        (lower-c-abi-aggregate-class-for-nominal
+          ctx
+          mode
+          (intern-str name)
+          resolved
+          allow-sret?
+          allow-byref?)]
+      [(AstTyEnumArgs name _)
+        (lower-c-abi-aggregate-class-for-nominal
+          ctx
+          mode
+          (intern-str name)
+          resolved
+          allow-sret?
+          allow-byref?)]
       [_ (LowerCAbiNoAggregate)])))
 
 (define (lower-c-abi-aggregate-class
@@ -30995,6 +31012,42 @@
             (= (lower-test-function-indirect-c-call-count functions "main") 2))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-c-abi-linux-tag-only-enum-source) : String
+  "(defenum Status (Ready) (Done) (Failed))
+(extern (status-next [arg0 : Status]) : Status (:symbol \"tl_cabi_status_next\"))
+(extern status-score-ptr (:symbol \"tl_cabi_status_score_ptr\") : (->
+  Status
+  i64
+  i64))
+(define (status-rank [s : Status]) : i64
+  (match s
+    [Ready 1]
+    [Done 2]
+    [Failed 3]))
+(define (main) : i64
+  (let
+    [score-copy : (-> Status i64 i64) status-score-ptr]
+    [ready : Status (Ready)]
+    [done : Status (status-next ready)]
+    [failed : Status (status-next done)]
+    [score : i64 (score-copy failed 7)]
+    (+ score (status-rank done))))")
+
+(define (compiler-lower-c-abi-linux-tag-only-enum-shape-ok?) : bool
+  (match (lower-compiler-source-with-mode
+    (compiler-lower-c-abi-linux-tag-only-enum-source)
+    (CompilerLowerLinuxScalar))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (=
+              (lower-test-function-call-count functions "main" "status-next")
+              2)
+            (= (lower-test-function-indirect-c-call-count functions "main") 1)
+            (= (lower-test-function-call-count functions "main" "tl_alloc") 0))])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-global-source) : String
   "(extern (print-i64 [arg0 : i64]) : unit)
 (define answer : i64 40)
@@ -34020,6 +34073,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-extern-value-fnptr-shape-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-c-abi-linux-tag-only-enum-shape-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-c-abi-windows-byref-aggregate-shape-ok?)

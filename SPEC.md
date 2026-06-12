@@ -3907,6 +3907,108 @@ V1 exclusions:
   and type-erased dispatch are not part of this surface.
 - Reflection metadata strings are not runtime `String` allocation hooks.
 
+#### 5.17.1 TypeLisp comptime image (`.tlci`) v1
+
+A TypeLisp comptime image (`tlci`) is the package compile-time interface. Every
+package eventually emits one: metadata-only images carry signature/layout
+metadata, and packages with macros additionally carry compiled comptime code.
+The runtime archive (`lib<name>.a` / `<name>.lib`) remains separate. This
+section specifies the dormant v1 container and metadata schema implemented by
+`selfhost/tlci_core.tl`; build emission and loading are staged separately.
+
+The container is a custom little-endian binary format shared by Linux and
+Windows. It is not ELF or COFF. The first 160 bytes are a fixed header:
+
+| Offset | Size | Field |
+| ---: | ---: | --- |
+| 0 | 8 | Magic bytes `54 4c 43 49 0d 0a 1a 0a` (`TLCI\r\n\x1a\n`) |
+| 8 | 8 | Format version, currently `1` |
+| 16 | 8 | Host architecture enum, `1 = x86_64` |
+| 24 | 8 | Callback ABI version, currently `1` |
+| 32 | 8 | Compiler build hash byte offset |
+| 40 | 8 | Compiler build hash byte length |
+| 48 | 8 | Content hash |
+| 56 | 8 | Metadata section byte offset |
+| 64 | 8 | Metadata section byte length |
+| 72 | 8 | Rodata section byte offset, or `0` when empty |
+| 80 | 8 | Rodata section byte length |
+| 88 | 8 | Code section byte offset, or `0` when empty |
+| 96 | 8 | Code section byte length |
+| 104 | 8 | Load-base fixup table byte offset, or `0` when empty |
+| 112 | 8 | Load-base fixup record count |
+| 120 | 8 | Entry table byte offset, or `0` when empty |
+| 128 | 8 | Entry table record count |
+| 136 | 8 | Symbol-name table byte offset, or `0` when empty |
+| 144 | 8 | Symbol-name table record count |
+| 152 | 8 | Total file size in bytes |
+
+All integer fields are unsigned logical values encoded in little-endian 64-bit
+slots; v1 helpers reject values that do not fit the implemented `i64` range.
+The metadata section starts on an 8-byte boundary. Rodata and code sections are
+page-aligned at 4096-byte offsets so a future loader can map them directly.
+Fixup, entry, and symbol tables are 8-byte aligned. Empty sections must use
+offset `0` and count/length `0`.
+
+The content hash is a deterministic integrity check over the full file with the
+8-byte hash field treated as zero. V1 uses the std-only rolling hash implemented
+in `tlci_core.tl` (`hash = (hash * 131 + byte) mod 2147483647`, seed `1`).
+This is an integrity/versioning guard, not a cryptographic authenticity
+mechanism. A loader must reject hash mismatches before trusting offsets or
+metadata.
+
+The load-base fixup table contains `count` records of one little-endian u64
+offset each. The table is valid but empty when generated comptime code is fully
+RIP-relative. The entry table contains 24-byte records:
+
+| Offset | Size | Field |
+| ---: | ---: | --- |
+| 0 | 8 | Name byte offset in the symbol-name table payload |
+| 8 | 8 | Name byte length |
+| 16 | 8 | Code section byte offset for the entry point |
+
+The symbol-name table contains 40-byte records used only for diagnostics and
+symbolization, never for linking:
+
+| Offset | Size | Field |
+| ---: | ---: | --- |
+| 0 | 8 | Name byte offset in the symbol-name table payload |
+| 8 | 8 | Name byte length |
+| 16 | 8 | Section kind (`1 = rodata`, `2 = code`) |
+| 24 | 8 | Section byte offset |
+| 32 | 8 | Byte length |
+
+The v1 helper module treats table bytes as opaque after count/size validation;
+the loader slice that consumes entries will validate referenced name ranges and
+code offsets.
+
+The metadata section is UTF-8/ASCII S-expression text with stable field order:
+
+```lisp
+(typelisp-tlci-metadata
+  (version "v1")
+  (package (name "pkg-name") (version "0.1.0"))
+  (exports
+    (value (name "answer") (signature "(-> i64)"))
+    (type (name "Point") (layout "size=16 align=8"))
+    (macro (name "with-temp") (signature "(Expr)->Expr"))))
+```
+
+`version` gates the schema. `package` gives the package identity as it appears
+in `typelisp.pkg`. `exports` is sorted deterministically by kind
+(`value`, `type`, `macro`) and then by name. Value and macro exports require a
+`signature` string; type exports require a `layout` string. The strings are
+compiler-owned schema payloads: consumers compare them for equality and use
+future schema versions to understand richer structure, but v1 helpers do not
+interpret the signature/layout languages. Duplicate `(kind, name)` exports,
+unknown fields, unsupported versions, malformed S-expressions, empty required
+sections, bad magic/version/arch/ABI/hash, and truncated section ranges are
+diagnostics.
+
+Metadata-only tlci files are valid: rodata, code, fixups, entries, and symbols
+are all empty. Code-bearing tlci files are valid with synthetic payload bytes
+before real PIC code generation lands; the emitted layout and content hash must
+round-trip byte-identically.
+
 ### 5.18 Layout queries (specified, selfhost metadata implemented)
 
 The selfhost FFI layout surface reserves three comptime-only query forms:

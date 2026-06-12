@@ -948,6 +948,15 @@ contains|typelisp test: test executable exited with exit status:
 contains|test: failed to write assembly artifact
 end
 
+decision|selfhost/tlci_core.tl|tlci v1 container and metadata parse/emit helpers (#2651): main-less dormant helper module with inline tests and executable smoke coverage; build emission/loading remain later slices
+
+case|selfhost_tlci_core_smoke|selfhost/tlci_core_smoke.tl|assembly|exactly-one|direct
+contains|_tl_tlci_core_tlci_core_self_test:
+contains|_tl_tlci_core_tlci_emit_image:
+contains|_tl_tlci_core_tlci_parse_image:
+contains|tlci-core: self-test mismatch
+end
+
 decision|selfhost/tlci_pages.tl|tlci loader host page mapping/protection shim (#2671): main-less OS-boundary helper module exercised through inline tests and intended for the future tlci loader
 
 case|selfhost_sym_i64_env|selfhost/sym_i64_env.tl|assembly|skip|direct

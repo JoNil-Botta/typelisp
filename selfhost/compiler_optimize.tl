@@ -13714,37 +13714,17 @@
               optimized
               (optimize-function-list-escaping (box-get rest) level scratch)))))]))
 
-;; Optimize one function inside `scratch`, then escape the result by deep-cloning
-;; it into the enclosing arena and rewinding `scratch` for reuse. The enclosing
-;; arena is captured fresh on entry, so the grown head is never stale across the
-;; recursion and no overflow arenas leak.
-;; TODO(#1688): once the published stage0 parser carries `with-escape`, rewrite
-;; this hand-rolled switch/clone/rewind sequence as `(with-escape scratch ...)`.
+;; Optimize one function inside `scratch`, compact its blocks there, then escape
+;; the result by deep-cloning it into the enclosing arena and rewinding `scratch`
+;; for reuse.
 (define (optimize-function-escaping
   [func : CompilerIrFunction]
   [level : i64]
   [scratch : i64]) : CompilerIrFunction
-  (let
-    [enclosing : i64 (arena-current)]
-    (begin
-      (unsafe
-        (arena-set! scratch))
-      (let
-        [mark : i64 (arena-mark)]
-        [raw : CompilerIrFunction (optimize-function-with-level func level)]
-        [scratch-head : i64 (arena-current)]
-        (begin
-          (unsafe
-            (arena-set! enclosing))
-          (let
-            [escaped : CompilerIrFunction (compiler-ir-clone-function raw)]
-            [new-enclosing : i64 (arena-current)]
-            (begin
-              (unsafe
-                (arena-set! scratch-head)
-                (arena-rewind mark)
-                (arena-set! new-enclosing))
-              escaped)))))))
+  (with-escape
+    scratch
+    (compiler-ir-function-compact-blocks
+      (optimize-function-with-level func level))))
 
 (defenum OptStringSet
   (OptStringNil)

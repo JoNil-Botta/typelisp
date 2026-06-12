@@ -1359,13 +1359,20 @@
   "(defstruct Inner (lo i64))
 (defstruct Outer (inner Inner) (hi i64))
 (defstruct Mixed (tag u64) (value f64))
+(defstruct Vec2 (x f32) (y f32))
 (extern (outer-use [arg0 : Outer]) : i64 (:symbol \"tl_cabi_outer_use\"))
 (extern (mixed-use [arg0 : Mixed]) : i64 (:symbol \"tl_cabi_mixed_use\"))
+(extern (vec2-use [arg0 : Vec2]) : i64 (:symbol \"tl_cabi_vec2_use\"))
+(extern (vec2-make [seed : i64]) : Vec2 (:symbol \"tl_cabi_vec2_make\"))
 (define (main) : i64
   (let
     [outer : Outer (Outer (Inner 10) 20)]
     [mixed : Mixed (Mixed (cast 7 : u64) 2.5)]
-    (+ (outer-use outer) (mixed-use mixed))))")
+    [vec : Vec2 (Vec2 1.5 2.25)]
+    [made : Vec2 (vec2-make 5)]
+    (+ (outer-use outer)
+       (+ (mixed-use mixed)
+          (+ (vec2-use vec) (cast (struct-get made x) : i64))))))")
 
 (define (compiler-backend-c-abi-sysv-register-aggregate-arg-linux-ok?) : bool
   (match (compiler-backend-emit-source-for-target
@@ -1375,19 +1382,27 @@
       (backend-and8
         (compiler-backend-string-contains? asm ".extern tl_cabi_outer_use\n")
         (compiler-backend-string-contains? asm ".extern tl_cabi_mixed_use\n")
+        (compiler-backend-string-contains? asm ".extern tl_cabi_vec2_use\n")
+        (compiler-backend-string-contains? asm ".extern tl_cabi_vec2_make\n")
         (compiler-backend-string-contains? asm "    call tl_cabi_outer_use\n")
         (compiler-backend-string-contains? asm "    call tl_cabi_mixed_use\n")
-        (compiler-backend-string-contains? asm "%xmm")
-        (not
-          (compiler-backend-string-contains?
-            asm
-            "unsupported linux-x86_64 C aggregate ABI"))
-        (not
-          (compiler-backend-string-contains?
-            asm
-            "two-register aggregate return ABI"))
-        (not
-          (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
+        (compiler-backend-string-contains? asm "    call tl_cabi_vec2_use\n")
+        (backend-and4
+          (compiler-backend-string-contains? asm "    call tl_cabi_vec2_make\n")
+          (compiler-backend-string-contains? asm "%xmm")
+          (not
+            (compiler-backend-string-contains?
+              asm
+              "unsupported linux-x86_64 C aggregate ABI"))
+          (and
+            (not
+              (compiler-backend-string-contains?
+                asm
+                "two-register aggregate return ABI"))
+            (not
+              (compiler-backend-string-contains?
+                asm
+                (compiler-backend-todo-marker))))))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-c-abi-sysv-two-register-return-source) : String

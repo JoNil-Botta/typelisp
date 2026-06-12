@@ -19,6 +19,11 @@ typedef struct {
   double value;
 } Mixed;
 
+typedef struct {
+  float x;
+  float y;
+} Vec2;
+
 int64_t tl_cabi_pair_score(Pair pair, int64_t salt) {
   return (pair.lo * 3) + (pair.hi * 5) + salt;
 }
@@ -35,4 +40,15 @@ int64_t tl_cabi_outer_score(Outer outer) {
 
 int64_t tl_cabi_mixed_score(Mixed mixed, int64_t scale) {
   return ((int64_t)(mixed.value * (double)scale)) + (int64_t)mixed.tag;
+}
+
+int64_t tl_cabi_vec2_score(Vec2 vec, int64_t salt) {
+  return ((int64_t)(vec.x * 10.0f)) + ((int64_t)(vec.y * 10.0f)) + salt;
+}
+
+Vec2 tl_cabi_vec2_make(int64_t seed) {
+  Vec2 result;
+  result.x = (float)(seed + 2);
+  result.y = (float)(seed + 3);
+  return result;
 }

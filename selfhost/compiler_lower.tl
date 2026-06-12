@@ -13798,6 +13798,27 @@
     [(LowerCAbiEightbyteUnsupported) (LowerCAbiEightbyteUnsupported)]
     [_ (LowerCAbiEightbyteInteger)]))
 
+(define (lower-c-abi-sysv-slot-base [offset : i64]) : i64
+  (* (/ offset 8) 8))
+
+(define (lower-c-abi-sysv-pack-f32-sse?
+  [current-ty : AstType]
+  [current-offset : i64]
+  [next-ty : AstType]
+  [next-offset : i64]) : bool
+  (match current-ty
+    [(AstTyF32)
+      (match next-ty
+        [(AstTyF32)
+          (let
+            [base : i64 (lower-c-abi-sysv-slot-base current-offset)]
+            (and
+              (= (lower-c-abi-sysv-slot-base next-offset) base)
+              (= current-offset base)
+              (= next-offset (+ base 4))))]
+        [_ false])]
+    [_ false]))
+
 (define (lower-c-abi-sysv-merge-sse
   [current : LowerCAbiEightbyteClass]
   [ty : AstType]
@@ -13805,7 +13826,12 @@
   (match current
     [(LowerCAbiEightbyteEmpty) (LowerCAbiEightbyteSse ty offset)]
     [(LowerCAbiEightbyteInteger) (LowerCAbiEightbyteInteger)]
-    [(LowerCAbiEightbyteSse _ _) (LowerCAbiEightbyteUnsupported)]
+    [(LowerCAbiEightbyteSse current-ty current-offset)
+      (if (lower-c-abi-sysv-pack-f32-sse? current-ty current-offset ty offset)
+        ;; A `{ f32, f32 }` eightbyte is still an SSE-class argument. Carry it
+        ;; as an opaque 8-byte XMM payload, not as an INTEGER slot.
+        (LowerCAbiEightbyteSse (AstTyF64) (lower-c-abi-sysv-slot-base offset))
+        (LowerCAbiEightbyteUnsupported))]
     [(LowerCAbiEightbyteUnsupported) (LowerCAbiEightbyteUnsupported)]))
 
 (define (lower-c-abi-sysv-mark-integer-slot

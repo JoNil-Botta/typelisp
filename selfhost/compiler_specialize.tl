@@ -9,6 +9,8 @@
 
 (import "compiler_diagnostic.tl")
 
+(import "compiler_float.tl")
+
 (import "compiler_parse_core.tl")
 
 (import "../stdlib/string.tl")
@@ -453,6 +455,8 @@
 (define (spec-value-key [value : CompilerCtfeValue]) : String
   (match value
     [(CtfeI64 n) (string-append "i64_" (spec-int-key n))]
+    [(CtfeF64 n)
+      (string-append "f64_" (spec-string-key (compiler-float-format-f64 n)))]
     [(CtfeBool b)
       (if b
         "bool_1"
@@ -4548,6 +4552,7 @@
   [ty : AstType]) : bool
   (match value
     [(CtfeI64 _) (ctfe-type-eq ty (AstTyI64))]
+    [(CtfeF64 _) (ctfe-type-eq ty (AstTyF64))]
     [(CtfeBool _) (ctfe-type-eq ty (AstTyBool))]
     [(CtfeChar _) (ctfe-type-eq ty (AstTyChar))]
     [(CtfeString _) (ctfe-type-eq ty (AstTyString))]
@@ -4562,6 +4567,7 @@
 (define (spec-value-type-label [value : CompilerCtfeValue]) : String
   (match value
     [(CtfeI64 _) "i64"]
+    [(CtfeF64 _) "f64"]
     [(CtfeBool _) "bool"]
     [(CtfeChar _) "char"]
     [(CtfeString _) "String"]
@@ -4806,6 +4812,10 @@
 (define (spec-ctfe-value-to-expr [value : CompilerCtfeValue] [origin : AstExpr]) : ResultSpecSubExpr
   (match value
     [(CtfeI64 n) (OkSpecSubExpr (ast-node-push (AstExprLiteral (AstLitInt n))))]
+    [(CtfeF64 n)
+      (OkSpecSubExpr
+        (ast-node-push
+          (AstExprLiteral (AstLitFloat (compiler-float-format-f64 n)))))]
     [(CtfeBool b)
       (OkSpecSubExpr (ast-node-push (AstExprLiteral (AstLitBool b))))]
     [(CtfeChar c)

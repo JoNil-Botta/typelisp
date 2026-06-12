@@ -27,6 +27,8 @@
 
 (import "compiler_ir_types.tl")
 
+(import "compiler_float.tl")
+
 (import "../stdlib/hash.tl")
 
 (import "../stdlib/hashmap.tl")
@@ -302,6 +304,12 @@
     [(AstTyBool) true]
     [_ false]))
 
+(define (opt-float-type? [ty : AstType]) : bool
+  (match ty
+    [(AstTyF64) true]
+    [(AstTyF32) true]
+    [_ false]))
+
 (define (opt-int-width [ty : AstType]) : i64
   (match ty
     [(AstTyI64) 64]
@@ -325,6 +333,31 @@
   (match value
     [(IrValueBool b) (OptSomeBool b)]
     [_ (OptNoBool)]))
+
+(define (opt-float-round-for-type [value : f64] [ty : AstType]) : f64
+  (match ty
+    [(AstTyF32) (compiler-float-round-f32-as-f64 value)]
+    [_ value]))
+
+(define (opt-value-to-f64 [value : CompilerIrValue] [ty : AstType]) : CompilerFloatMaybeF64
+  (match value
+    [(IrValueF64 text)
+      (match (compiler-float-parse-f64 text)
+        [(CompilerFloatSomeF64 parsed)
+          (let
+            [rounded : f64 (opt-float-round-for-type parsed ty)]
+            (if (compiler-float-f64-finite? rounded)
+              (CompilerFloatSomeF64 rounded)
+              (CompilerFloatNoF64)))]
+        [(CompilerFloatNoF64) (CompilerFloatNoF64)])]
+    [_ (CompilerFloatNoF64)]))
+
+(define (opt-f64-to-ir-value [value : f64] [ty : AstType]) : CompilerIrMaybeValue
+  (let
+    [rounded : f64 (opt-float-round-for-type value ty)]
+    (if (compiler-float-f64-finite? rounded)
+      (IrSomeValue (IrValueF64 (compiler-float-format-f64 rounded)))
+      (IrNoValue))))
 
 (define (opt-normalize-int-to-i64 [value : i64] [ty : AstType]) : i64
   (match ty
@@ -355,6 +388,14 @@
         (match (opt-value-to-bool value)
           [(OptSomeBool b) (OptSomeConst (IrValueBool b) (AstTyBool))]
           [(OptNoBool) (OptNoConst)])]
+      [(AstTyF64)
+        (match value
+          [(IrValueF64 _) (OptSomeConst value (AstTyF64))]
+          [_ (OptNoConst)])]
+      [(AstTyF32)
+        (match value
+          [(IrValueF64 _) (OptSomeConst value (AstTyF32))]
+          [_ (OptNoConst)])]
       [_ (OptNoConst)])))
 
 (define (opt-const-value? [value : CompilerIrValue] [ty : AstType]) : bool
@@ -372,7 +413,10 @@
         (AstTyI64))]
     [(IrValueChar _) (AstTyChar)]
     [(IrValueBool _) (AstTyBool)]
-    [(IrValueF64 _) (AstTyF64)]
+    [(IrValueF64 _)
+      (if (opt-float-type? fallback)
+        fallback
+        (AstTyF64))]
     [(IrValueUnit) (AstTyUnit)]
     [_ fallback]))
 
@@ -413,27 +457,51 @@
     [(IrBinEq)
       (if (opt-type-eq lhs-ty (AstTyI64))
         rhs-ty
-        lhs-ty)]
+        (if (and
+          (opt-type-eq lhs-ty (AstTyF64))
+          (opt-type-eq rhs-ty (AstTyF32)))
+          rhs-ty
+          lhs-ty))]
     [(IrBinNe)
       (if (opt-type-eq lhs-ty (AstTyI64))
         rhs-ty
-        lhs-ty)]
+        (if (and
+          (opt-type-eq lhs-ty (AstTyF64))
+          (opt-type-eq rhs-ty (AstTyF32)))
+          rhs-ty
+          lhs-ty))]
     [(IrBinLt)
       (if (opt-type-eq lhs-ty (AstTyI64))
         rhs-ty
-        lhs-ty)]
+        (if (and
+          (opt-type-eq lhs-ty (AstTyF64))
+          (opt-type-eq rhs-ty (AstTyF32)))
+          rhs-ty
+          lhs-ty))]
     [(IrBinLe)
       (if (opt-type-eq lhs-ty (AstTyI64))
         rhs-ty
-        lhs-ty)]
+        (if (and
+          (opt-type-eq lhs-ty (AstTyF64))
+          (opt-type-eq rhs-ty (AstTyF32)))
+          rhs-ty
+          lhs-ty))]
     [(IrBinGt)
       (if (opt-type-eq lhs-ty (AstTyI64))
         rhs-ty
-        lhs-ty)]
+        (if (and
+          (opt-type-eq lhs-ty (AstTyF64))
+          (opt-type-eq rhs-ty (AstTyF32)))
+          rhs-ty
+          lhs-ty))]
     [(IrBinGe)
       (if (opt-type-eq lhs-ty (AstTyI64))
         rhs-ty
-        lhs-ty)]
+        (if (and
+          (opt-type-eq lhs-ty (AstTyF64))
+          (opt-type-eq rhs-ty (AstTyF32)))
+          rhs-ty
+          lhs-ty))]
     [(IrBinBitAnd) lhs-ty]
     [(IrBinBitOr) lhs-ty]
     [(IrBinBitXor) lhs-ty]
@@ -660,6 +728,44 @@
         [(OptNoBool) (IrNoValue)])]
     [(OptNoBool) (IrNoValue)]))
 
+(define (opt-fold-float-binop
+  [op : CompilerIrBinOp]
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]
+  [operand-ty : AstType]) : CompilerIrMaybeValue
+  (match (opt-value-to-f64 lhs operand-ty)
+    [(CompilerFloatSomeF64 a)
+      (match (opt-value-to-f64 rhs operand-ty)
+        [(CompilerFloatSomeF64 b)
+          (match op
+            [(IrBinAdd) (opt-f64-to-ir-value (+ a b) operand-ty)]
+            [(IrBinSub) (opt-f64-to-ir-value (- a b) operand-ty)]
+            [(IrBinMul) (opt-f64-to-ir-value (* a b) operand-ty)]
+            [(IrBinDiv)
+              (if (= b 0.0)
+                (IrNoValue)
+                (opt-f64-to-ir-value (/ a b) operand-ty))]
+            [(IrBinEq) (IrSomeValue (IrValueBool (= a b)))]
+            [(IrBinNe) (IrSomeValue (IrValueBool (!= a b)))]
+            [(IrBinLt) (IrSomeValue (IrValueBool (< a b)))]
+            [(IrBinLe) (IrSomeValue (IrValueBool (<= a b)))]
+            [(IrBinGt) (IrSomeValue (IrValueBool (> a b)))]
+            [(IrBinGe) (IrSomeValue (IrValueBool (>= a b)))]
+            [_ (IrNoValue)])]
+        [(CompilerFloatNoF64) (IrNoValue)])]
+    [(CompilerFloatNoF64) (IrNoValue)]))
+
+(define (opt-fold-float-cast
+  [src : OptKnownConst]
+  [from-ty : AstType]
+  [to-ty : AstType]) : CompilerIrMaybeValue
+  (match src
+    [(OptSomeConst value _)
+      (match (opt-value-to-f64 value from-ty)
+        [(CompilerFloatSomeF64 n) (opt-f64-to-ir-value n to-ty)]
+        [(CompilerFloatNoF64) (IrNoValue)])]
+    [(OptNoConst) (IrNoValue)]))
+
 (define (opt-fold-cast
   [src : OptKnownConst]
   [from-ty : AstType]
@@ -674,7 +780,9 @@
               [(OptNoConst) (IrNoValue)])]
           [(OptNoI64) (IrNoValue)])]
       [(OptNoConst) (IrNoValue)])
-    (IrNoValue)))
+    (if (and (opt-float-type? from-ty) (opt-float-type? to-ty))
+      (opt-fold-float-cast src from-ty to-ty)
+      (IrNoValue))))
 
 (define (opt-fold-binop
   [op : CompilerIrBinOp]
@@ -688,16 +796,14 @@
           (let
             [operand-ty : AstType
               (opt-binop-operand-type op lhs-ty rhs-ty result-ty)]
-            (if (opt-bool-type? operand-ty)
+            (core/cond
+              (opt-bool-type? operand-ty)
               (opt-fold-bool op lhs-value rhs-value)
-              (if (opt-int-or-char-type? operand-ty)
-                (opt-fold-int-char-binop
-                  op
-                  lhs-value
-                  rhs-value
-                  operand-ty
-                  rhs-ty)
-                (IrNoValue))))]
+              (opt-int-or-char-type? operand-ty)
+              (opt-fold-int-char-binop op lhs-value rhs-value operand-ty rhs-ty)
+              (opt-float-type? operand-ty)
+              (opt-fold-float-binop op lhs-value rhs-value operand-ty)
+              (IrNoValue)))]
         [(OptNoConst) (IrNoValue)])]
     [(OptNoConst) (IrNoValue)]))
 
@@ -715,7 +821,12 @@
                 (IrSomeValue
                   (IrValueI64 (opt-normalize-int-to-i64 (- 0 a) result-ty)))]
               [(OptNoI64) (IrNoValue)])
-            (IrNoValue))]
+            (if (opt-float-type? result-ty)
+              (match (opt-value-to-f64 value result-ty)
+                [(CompilerFloatSomeF64 a)
+                  (opt-f64-to-ir-value (- 0.0 a) result-ty)]
+                [(CompilerFloatNoF64) (IrNoValue)])
+              (IrNoValue)))]
         [(IrUnNot)
           (if (opt-bool-type? result-ty)
             (match (opt-value-to-bool value)
@@ -16644,6 +16755,20 @@
             (opt-mov-dst-char-code (box-get rest) dst fallback))]
         [_ (opt-mov-dst-char-code (box-get rest) dst fallback)])]))
 
+(define (opt-mov-dst-f64-text?
+  [instrs : CompilerIrInstrList]
+  [dst : i64]
+  [want : String]) : bool
+  (match instrs
+    [(IrInstrNil) false]
+    [(IrInstrCons instr rest)
+      (match instr
+        [(IrInstrMov d (IrValueF64 text) _)
+          (if (= d dst)
+            (string-eq text want)
+            (opt-mov-dst-f64-text? (box-get rest) dst want))]
+        [_ (opt-mov-dst-f64-text? (box-get rest) dst want)])]))
+
 (define (opt-test-span [line : i64] [col : i64]) : AstSourceSpan
   (AstSourceSpan line col line col))
 
@@ -17833,6 +17958,54 @@
           (IrInstrBinOp 33 (IrBinShl) (IrValueI64 1) (IrValueI64 8) (AstTyU8))
           (IrInstrNil))))))
 
+(define (opt-float-fold-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (IrInstrMov 40 (IrValueF64 "1.5") (AstTyF64))
+    (compiler-ir-instr-cons
+      (IrInstrBinOp
+        41
+        (IrBinAdd)
+        (IrValueVar 40)
+        (IrValueF64 "2.25")
+        (AstTyF64))
+      (compiler-ir-instr-cons
+        (IrInstrBinOp
+          42
+          (IrBinLt)
+          (IrValueVar 41)
+          (IrValueF64 "4.0")
+          (AstTyBool))
+        (compiler-ir-instr-cons
+          (IrInstrUnOp 43 (IrUnNeg) (IrValueVar 41) (AstTyF64))
+          (compiler-ir-instr-cons
+            (IrInstrCast 44 (IrValueF64 "1.00000001") (AstTyF64) (AstTyF32))
+            (IrInstrNil)))))))
+
+(define (opt-float-fold-invalid-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (IrInstrBinOp
+      45
+      (IrBinDiv)
+      (IrValueF64 "1.0")
+      (IrValueF64 "0.0")
+      (AstTyF64))
+    (IrInstrNil)))
+
+(define (compiler-optimize-float-fold-ok?) : bool
+  (let
+    [pos : CompilerIrInstrList
+      (opt-fold-instrs (OptConstNil) (opt-float-fold-instrs))]
+    [neg : CompilerIrInstrList
+      (opt-fold-instrs (OptConstNil) (opt-float-fold-invalid-instrs))]
+    (and
+      (= (opt-count-arith-instrs pos) 0)
+      (= (opt-count-cast-instrs pos) 0)
+      (opt-mov-dst-f64-text? pos 41 "3.75")
+      (opt-mov-dst-bool-value? pos 42 true)
+      (opt-mov-dst-f64-text? pos 43 "-3.75")
+      (opt-mov-dst-f64-text? pos 44 "1")
+      (= (opt-count-arith-instrs neg) 1))))
+
 (define (compiler-optimize-typed-fold-self-test) : i64
   (let
     [pos : CompilerIrInstrList
@@ -17855,6 +18028,8 @@
       (unless (= (opt-mov-dst-i64-value pos 19 0) (- 0 4)) (return 14))
       (unless (= (opt-mov-dst-i64-value pos 22 0) 1) (return 15))
       (unless (= (opt-count-arith-instrs neg) 4) (return 16))
+      (unless (compiler-float-self-test) (return 17))
+      (unless (compiler-optimize-float-fold-ok?) (return 18))
       42)))
 
 ;; Positive strength-reduction cases: integer neutral/absorbing identities and

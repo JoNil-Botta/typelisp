@@ -17290,6 +17290,7 @@
           [(OkCtfe value _)
             (match value
               [(CtfeI64 _) (OkTcType (AstTyI64))]
+              [(CtfeF64 _) (OkTcType (AstTyF64))]
               [(CtfeBool _) (OkTcType (AstTyBool))]
               [(CtfeChar _) (OkTcType (AstTyChar))]
               [(CtfeString _) (ErrTcType "String value is compile-time only")]

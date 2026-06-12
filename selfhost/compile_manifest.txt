@@ -434,6 +434,13 @@ case|selfhost_compiler_embedded_stdlib|selfhost/compiler_embedded_stdlib.tl|asse
 contains|compiler_embedded_stdlib_lookup:
 end
 
+case|selfhost_compiler_float|selfhost/compiler_float.tl|assembly|skip|direct
+contains|_tl_compiler_float_parse_f64:
+contains|_tl_compiler_float_format_f64:
+contains|_tl_compiler_float_f64_finite_question:
+contains|_tl_compiler_float_self_test:
+end
+
 case|selfhost_compiler_intern|selfhost/compiler_intern.tl|assembly|skip|direct
 contains|_tl_compiler_intern_intern_str:
 contains|_tl_compiler_intern_intern_slice:

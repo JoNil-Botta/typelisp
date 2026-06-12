@@ -212,7 +212,8 @@
     [(ObjectDataF64 _) (+ offset 8)]
     [(ObjectDataI64 _) (+ offset 8)]
     [(ObjectDataZero count) (+ offset count)]
-    [(ObjectDataSymbolAddress _) (+ offset 8)]))
+    [(ObjectDataSymbolAddress _) (+ offset 8)]
+    [(ObjectDataSymbolRva32 _) (+ offset 4)]))
 
 (define (compiler-object-elf-data-records-size-from
   [records : CompilerObjectDataRecordList]
@@ -298,8 +299,13 @@
     [(ObjectSectionNil) true]
     [(ObjectSectionCons section rest)
       (match section
-        [(ObjectSection _ _ instrs)
-          (if (compiler-object-elf-instrs-supported? instrs)
+        [(ObjectSection kind _ instrs)
+          (if (and
+            (match kind
+              [(ObjectSectionPdata) false]
+              [(ObjectSectionXdata) false]
+              [_ true])
+            (compiler-object-elf-instrs-supported? instrs))
             (compiler-object-elf-sections-supported? (box-get rest))
             false)])]))
 
@@ -595,7 +601,9 @@
     [(ObjectSectionText) compiler-object-elf-section-text-index]
     [(ObjectSectionData) compiler-object-elf-section-data-index]
     [(ObjectSectionRodata) compiler-object-elf-section-rodata-index]
-    [(ObjectSectionBss) compiler-object-elf-section-bss-index]))
+    [(ObjectSectionBss) compiler-object-elf-section-bss-index]
+    [(ObjectSectionPdata) compiler-object-elf-section-null-index]
+    [(ObjectSectionXdata) compiler-object-elf-section-null-index]))
 
 (define (compiler-object-elf-section-file-offset
   [image : CompilerObjectImage]
@@ -604,7 +612,9 @@
     [(ObjectSectionText) (compiler-object-elf-text-offset image)]
     [(ObjectSectionData) (compiler-object-elf-data-offset image)]
     [(ObjectSectionRodata) (compiler-object-elf-rodata-offset image)]
-    [(ObjectSectionBss) (compiler-object-elf-bss-offset image)]))
+    [(ObjectSectionBss) (compiler-object-elf-bss-offset image)]
+    [(ObjectSectionPdata) 0]
+    [(ObjectSectionXdata) 0]))
 
 (define (compiler-object-elf-relocation-section-offset
   [image : CompilerObjectImage]
@@ -613,7 +623,9 @@
     [(ObjectSectionText) (compiler-object-elf-rela-text-offset image)]
     [(ObjectSectionData) (compiler-object-elf-rela-data-offset image)]
     [(ObjectSectionRodata) (compiler-object-elf-rela-rodata-offset image)]
-    [(ObjectSectionBss) (compiler-object-elf-rela-bss-offset image)]))
+    [(ObjectSectionBss) (compiler-object-elf-rela-bss-offset image)]
+    [(ObjectSectionPdata) 0]
+    [(ObjectSectionXdata) 0]))
 
 (define (compiler-object-elf-section-name-offset [index : i64]) : i64
   (cond
@@ -709,7 +721,11 @@
     [(ObjectDataSymbolAddress _)
       (begin
         (compiler-object-elf-push-i64! out 0)
-        (+ offset 8))]))
+        (+ offset 8))]
+    [(ObjectDataSymbolRva32 _)
+      (begin
+        (compiler-object-elf-push-u32! out 0)
+        (+ offset 4))]))
 
 (define (compiler-object-elf-render-data-records!
   [out : (Array u8)]
@@ -996,7 +1012,9 @@
       (bit-or compiler-object-elf-shf-alloc compiler-object-elf-shf-write)]
     [(ObjectSectionRodata) compiler-object-elf-shf-alloc]
     [(ObjectSectionBss)
-      (bit-or compiler-object-elf-shf-alloc compiler-object-elf-shf-write)]))
+      (bit-or compiler-object-elf-shf-alloc compiler-object-elf-shf-write)]
+    [(ObjectSectionPdata) 0]
+    [(ObjectSectionXdata) 0]))
 
 (define (compiler-object-elf-push-section-header!
   [out : (Array u8)]
@@ -1051,7 +1069,9 @@
     [(ObjectSectionText) compiler-object-elf-section-rela-text-index]
     [(ObjectSectionData) compiler-object-elf-section-rela-data-index]
     [(ObjectSectionRodata) compiler-object-elf-section-rela-rodata-index]
-    [(ObjectSectionBss) compiler-object-elf-section-rela-bss-index]))
+    [(ObjectSectionBss) compiler-object-elf-section-rela-bss-index]
+    [(ObjectSectionPdata) compiler-object-elf-section-null-index]
+    [(ObjectSectionXdata) compiler-object-elf-section-null-index]))
 
 (define (compiler-object-elf-push-rela-section-header!
   [out : (Array u8)]

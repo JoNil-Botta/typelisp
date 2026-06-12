@@ -17301,12 +17301,16 @@ tl_memcpy:
   (data CompilerObjectDataRecordList)
   (rodata CompilerObjectDataRecordList)
   (bss CompilerObjectDataRecordList)
+  (pdata CompilerObjectDataRecordList)
+  (xdata CompilerObjectDataRecordList)
   (symbols CompilerObjectSymbolList)
   (relocations CompilerObjectRelocationList))
 
 (define (compiler-backend-object-parts-empty) : CompilerBackendObjectParts
   (CompilerBackendObjectParts
     ObjectInstrNil
+    ObjectDataNil
+    ObjectDataNil
     ObjectDataNil
     ObjectDataNil
     ObjectDataNil
@@ -17321,6 +17325,8 @@ tl_memcpy:
     (struct-get parts data)
     (struct-get parts rodata)
     (struct-get parts bss)
+    (struct-get parts pdata)
+    (struct-get parts xdata)
     (struct-get parts symbols)
     (struct-get parts relocations)))
 
@@ -17332,6 +17338,8 @@ tl_memcpy:
     (compiler-object-data-cons record (struct-get parts data))
     (struct-get parts rodata)
     (struct-get parts bss)
+    (struct-get parts pdata)
+    (struct-get parts xdata)
     (struct-get parts symbols)
     (struct-get parts relocations)))
 
@@ -17343,6 +17351,8 @@ tl_memcpy:
     (struct-get parts data)
     (compiler-object-data-cons record (struct-get parts rodata))
     (struct-get parts bss)
+    (struct-get parts pdata)
+    (struct-get parts xdata)
     (struct-get parts symbols)
     (struct-get parts relocations)))
 
@@ -17354,6 +17364,34 @@ tl_memcpy:
     (struct-get parts data)
     (struct-get parts rodata)
     (compiler-object-data-cons record (struct-get parts bss))
+    (struct-get parts pdata)
+    (struct-get parts xdata)
+    (struct-get parts symbols)
+    (struct-get parts relocations)))
+
+(define (compiler-backend-object-add-pdata
+  [parts : CompilerBackendObjectParts]
+  [record : CompilerObjectDataRecord]) : CompilerBackendObjectParts
+  (CompilerBackendObjectParts
+    (struct-get parts text)
+    (struct-get parts data)
+    (struct-get parts rodata)
+    (struct-get parts bss)
+    (compiler-object-data-cons record (struct-get parts pdata))
+    (struct-get parts xdata)
+    (struct-get parts symbols)
+    (struct-get parts relocations)))
+
+(define (compiler-backend-object-add-xdata
+  [parts : CompilerBackendObjectParts]
+  [record : CompilerObjectDataRecord]) : CompilerBackendObjectParts
+  (CompilerBackendObjectParts
+    (struct-get parts text)
+    (struct-get parts data)
+    (struct-get parts rodata)
+    (struct-get parts bss)
+    (struct-get parts pdata)
+    (compiler-object-data-cons record (struct-get parts xdata))
     (struct-get parts symbols)
     (struct-get parts relocations)))
 
@@ -17368,6 +17406,8 @@ tl_memcpy:
     (struct-get parts data)
     (struct-get parts rodata)
     (struct-get parts bss)
+    (struct-get parts pdata)
+    (struct-get parts xdata)
     (compiler-object-symbol-cons
       (ObjectSymbol name binding kind section)
       (struct-get parts symbols))
@@ -17384,6 +17424,8 @@ tl_memcpy:
     (struct-get parts data)
     (struct-get parts rodata)
     (struct-get parts bss)
+    (struct-get parts pdata)
+    (struct-get parts xdata)
     (struct-get parts symbols)
     (compiler-object-relocation-cons
       (ObjectRelocation section site kind target)
@@ -17424,6 +17466,18 @@ tl_memcpy:
     kind
     (ObjectNoSection)))
 
+(define (compiler-backend-object-symbol-extern-once
+  [parts : CompilerBackendObjectParts]
+  [name : String]
+  [kind : CompilerObjectSymbolKind]) : CompilerBackendObjectParts
+  (if (compiler-object-symbol-list-contains?
+    (struct-get parts symbols)
+    name
+    (ObjectSymbolExtern)
+    kind)
+    parts
+    (compiler-backend-object-symbol-extern parts name kind)))
+
 (define (compiler-backend-object-add-text-relocation
   [parts : CompilerBackendObjectParts]
   [site : String]
@@ -17456,6 +17510,18 @@ tl_memcpy:
   (compiler-backend-object-add-relocation
     parts
     (ObjectSectionRodata)
+    site
+    kind
+    target))
+
+(define (compiler-backend-object-add-pdata-relocation
+  [parts : CompilerBackendObjectParts]
+  [site : String]
+  [kind : CompilerObjectRelocationKind]
+  [target : String]) : CompilerBackendObjectParts
+  (compiler-backend-object-add-relocation
+    parts
+    (ObjectSectionPdata)
     site
     kind
     target))
@@ -18096,6 +18162,169 @@ tl_memcpy:
         plan
         (box-get rest))]))
 
+(define (compiler-backend-object-windows-entry-xdata-bytes) : String
+  (let
+    [out : (Array u8) (make-array u8 0)]
+    (begin
+      ;; UNWIND_INFO: version 1, 4-byte prolog, one UWOP_ALLOC_SMALL(40).
+      (array-push! out (cast 0x01 : u8))
+      (array-push! out (cast 0x04 : u8))
+      (array-push! out (cast 0x01 : u8))
+      (array-push! out (cast 0x00 : u8))
+      (array-push! out (cast 0x04 : u8))
+      (array-push! out (cast 0x42 : u8))
+      (array-push! out (cast 0x00 : u8))
+      (array-push! out (cast 0x00 : u8))
+      (unsafe
+        (string-from-bytes (ptr-cast (array-data out) : (Ptr u8)) 8)))))
+
+(define (compiler-backend-object-add-windows-entry-data
+  [parts : CompilerBackendObjectParts]) : CompilerBackendObjectParts
+  (compiler-backend-object-add-data
+    (compiler-backend-object-add-data
+      (compiler-backend-object-symbol-local-section
+        (compiler-backend-object-add-data
+          (compiler-backend-object-add-data
+            (compiler-backend-object-symbol-local-section
+              parts
+              ".L_tl_argc"
+              (ObjectSectionData)
+              (ObjectSymbolData))
+            (ObjectDataLabel ".L_tl_argc"))
+          (ObjectDataI64 0))
+        ".L_tl_argv"
+        (ObjectSectionData)
+        (ObjectSymbolData))
+      (ObjectDataLabel ".L_tl_argv"))
+    (ObjectDataI64 0)))
+
+(define (compiler-backend-object-add-windows-entry-text
+  [parts : CompilerBackendObjectParts]) : CompilerBackendObjectParts
+  (let
+    [entry : String "_tl_start"]
+    [entry-end : String ".L_tl_start_end"]
+    [with-symbols : CompilerBackendObjectParts
+      (compiler-backend-object-symbol-extern-once
+        (compiler-backend-object-symbol-local-section
+          (compiler-backend-object-symbol-export-section
+            parts
+            entry
+            (ObjectSectionText)
+            (ObjectSymbolFunction))
+          entry-end
+          (ObjectSectionText)
+          (ObjectSymbolFunction))
+        "ExitProcess"
+        (ObjectSymbolFunction))]
+    [with-setup : CompilerBackendObjectParts
+      (compiler-backend-object-symbol-local-section
+        with-symbols
+        "tl_setup_argv"
+        (ObjectSectionText)
+        (ObjectSymbolRuntime))]
+    [with-label : CompilerBackendObjectParts
+      (compiler-backend-object-add-text with-setup (ObjectX64Label entry))]
+    [with-sub : CompilerBackendObjectParts
+      (compiler-backend-object-add-text with-label (ObjectX64SubRspImm8 40))]
+    [with-setup-call : CompilerBackendObjectParts
+      (compiler-backend-object-add-text
+        (compiler-backend-object-add-text-relocation
+          with-sub
+          entry
+          (ObjectRelocCall)
+          "tl_setup_argv")
+        (ObjectX64Call "tl_setup_argv"))]
+    [with-argc : CompilerBackendObjectParts
+      (compiler-backend-object-add-text
+        (compiler-backend-object-add-text-relocation
+          with-setup-call
+          entry
+          (ObjectRelocRipValue)
+          ".L_tl_argc")
+        (ObjectX64MovRcxRip ".L_tl_argc"))]
+    [with-argv : CompilerBackendObjectParts
+      (compiler-backend-object-add-text
+        (compiler-backend-object-add-text-relocation
+          with-argc
+          entry
+          (ObjectRelocRipValue)
+          ".L_tl_argv")
+        (ObjectX64MovRdxRip ".L_tl_argv"))]
+    [with-main-call : CompilerBackendObjectParts
+      (compiler-backend-object-add-text
+        (compiler-backend-object-add-text-relocation
+          with-argv
+          entry
+          (ObjectRelocCall)
+          "main")
+        (ObjectX64Call "main"))]
+    [with-move-exit-code : CompilerBackendObjectParts
+      (compiler-backend-object-add-text with-main-call (ObjectX64MovRcxRax))]
+    [with-exit-call : CompilerBackendObjectParts
+      (compiler-backend-object-add-text
+        (compiler-backend-object-add-text-relocation
+          with-move-exit-code
+          entry
+          (ObjectRelocCall)
+          "ExitProcess")
+        (ObjectX64Call "ExitProcess"))]
+    (compiler-backend-object-add-text with-exit-call (ObjectX64Label entry-end))))
+
+(define (compiler-backend-object-add-windows-entry-unwind
+  [parts : CompilerBackendObjectParts]) : CompilerBackendObjectParts
+  (let
+    [xdata-label : String ".L_tl_start_xdata"]
+    [pdata-begin : String ".L_tl_start_pdata_begin"]
+    [pdata-end : String ".L_tl_start_pdata_end"]
+    [pdata-unwind : String ".L_tl_start_pdata_unwind"]
+    [with-xdata-symbol : CompilerBackendObjectParts
+      (compiler-backend-object-symbol-local-section
+        parts
+        xdata-label
+        (ObjectSectionXdata)
+        (ObjectSymbolData))]
+    [with-xdata : CompilerBackendObjectParts
+      (compiler-backend-object-add-xdata
+        (compiler-backend-object-add-xdata
+          with-xdata-symbol
+          (ObjectDataLabel xdata-label))
+        (ObjectDataBytes (compiler-backend-object-windows-entry-xdata-bytes)))]
+    [with-pdata-begin : CompilerBackendObjectParts
+      (compiler-backend-object-add-pdata
+        (compiler-backend-object-add-pdata-relocation
+          (compiler-backend-object-add-pdata
+            with-xdata
+            (ObjectDataLabel pdata-begin))
+          pdata-begin
+          (ObjectRelocAddr32Nb)
+          "_tl_start")
+        (ObjectDataSymbolRva32 "_tl_start"))]
+    [with-pdata-end : CompilerBackendObjectParts
+      (compiler-backend-object-add-pdata
+        (compiler-backend-object-add-pdata-relocation
+          (compiler-backend-object-add-pdata
+            with-pdata-begin
+            (ObjectDataLabel pdata-end))
+          pdata-end
+          (ObjectRelocAddr32Nb)
+          ".L_tl_start_end")
+        (ObjectDataSymbolRva32 ".L_tl_start_end"))]
+    (compiler-backend-object-add-pdata
+      (compiler-backend-object-add-pdata-relocation
+        (compiler-backend-object-add-pdata
+          with-pdata-end
+          (ObjectDataLabel pdata-unwind))
+        pdata-unwind
+        (ObjectRelocAddr32Nb)
+        xdata-label)
+      (ObjectDataSymbolRva32 xdata-label))))
+
+(define (compiler-backend-object-add-windows-entry
+  [parts : CompilerBackendObjectParts]) : CompilerBackendObjectParts
+  (compiler-backend-object-add-windows-entry-unwind
+    (compiler-backend-object-add-windows-entry-text
+      (compiler-backend-object-add-windows-entry-data parts))))
+
 (define (compiler-backend-object-entry-symbols
   [parts : CompilerBackendObjectParts]
   [target : CompilerBackendTarget]
@@ -18111,33 +18340,79 @@ tl_memcpy:
             "_tl_start"
             (ObjectSectionText)
             (ObjectSymbolFunction)))]
-      [(BackendTargetWindows) parts])
+      [(BackendTargetWindows)
+        (if crt-entry
+          parts
+          (compiler-backend-object-add-windows-entry parts))])
     parts))
 
-(define (compiler-backend-object-image-from-parts
-  [parts : CompilerBackendObjectParts]) : CompilerObjectImage
-  (CompilerObjectImage
-    (compiler-object-section-cons
-      (ObjectSection
-        (ObjectSectionText)
-        ObjectDataNil
-        (compiler-object-instr-list-reverse (struct-get parts text)))
+(define (compiler-backend-object-image-sections
+  [parts : CompilerBackendObjectParts]
+  [target : CompilerBackendTarget]) : CompilerObjectSectionList
+  (let
+    [base : CompilerObjectSectionList
       (compiler-object-section-cons
         (ObjectSection
-          (ObjectSectionData)
-          (compiler-object-data-list-reverse (struct-get parts data))
-          ObjectInstrNil)
+          (ObjectSectionText)
+          ObjectDataNil
+          (compiler-object-instr-list-reverse (struct-get parts text)))
         (compiler-object-section-cons
           (ObjectSection
-            (ObjectSectionRodata)
-            (compiler-object-data-list-reverse (struct-get parts rodata))
+            (ObjectSectionData)
+            (compiler-object-data-list-reverse (struct-get parts data))
             ObjectInstrNil)
           (compiler-object-section-cons
             (ObjectSection
-              (ObjectSectionBss)
-              (compiler-object-data-list-reverse (struct-get parts bss))
+              (ObjectSectionRodata)
+              (compiler-object-data-list-reverse (struct-get parts rodata))
               ObjectInstrNil)
-            ObjectSectionNil))))
+            (compiler-object-section-cons
+              (ObjectSection
+                (ObjectSectionBss)
+                (compiler-object-data-list-reverse (struct-get parts bss))
+                ObjectInstrNil)
+              ObjectSectionNil))))]
+    (match target
+      [(BackendTargetLinux) base]
+      [(BackendTargetWindows)
+        (compiler-object-section-cons
+          (ObjectSection
+            (ObjectSectionText)
+            ObjectDataNil
+            (compiler-object-instr-list-reverse (struct-get parts text)))
+          (compiler-object-section-cons
+            (ObjectSection
+              (ObjectSectionData)
+              (compiler-object-data-list-reverse (struct-get parts data))
+              ObjectInstrNil)
+            (compiler-object-section-cons
+              (ObjectSection
+                (ObjectSectionRodata)
+                (compiler-object-data-list-reverse (struct-get parts rodata))
+                ObjectInstrNil)
+              (compiler-object-section-cons
+                (ObjectSection
+                  (ObjectSectionBss)
+                  (compiler-object-data-list-reverse (struct-get parts bss))
+                  ObjectInstrNil)
+                (compiler-object-section-cons
+                  (ObjectSection
+                    (ObjectSectionPdata)
+                    (compiler-object-data-list-reverse (struct-get parts pdata))
+                    ObjectInstrNil)
+                  (compiler-object-section-cons
+                    (ObjectSection
+                      (ObjectSectionXdata)
+                      (compiler-object-data-list-reverse
+                        (struct-get parts xdata))
+                      ObjectInstrNil)
+                    ObjectSectionNil))))))])))
+
+(define (compiler-backend-object-image-from-parts
+  [parts : CompilerBackendObjectParts]
+  [target : CompilerBackendTarget]) : CompilerObjectImage
+  (CompilerObjectImage
+    (compiler-backend-object-image-sections parts target)
     (compiler-object-symbol-list-reverse (struct-get parts symbols))
     (compiler-object-relocation-list-reverse (struct-get parts relocations))))
 
@@ -18188,7 +18463,8 @@ tl_memcpy:
         emit-entry
         crt-entry)]
     (compiler-backend-object-image-from-parts
-      (compiler-backend-object-add-bss seed (ObjectDataZero 0)))))
+      (compiler-backend-object-add-bss seed (ObjectDataZero 0))
+      target)))
 
 (define (compiler-backend-emit-program-object-image-target-with-mode-and-crt
   [program : CompilerIrProgram]

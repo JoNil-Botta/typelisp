@@ -13220,12 +13220,51 @@
               (compiler-reg-plan-function-scalar walk-func)
               (compiler-reg-plan-function-stack-only walk-func))
             (compiler-reg-plan-function walk-func))]
-        [raw-assignments : CompilerRegAssignmentList
-          (compiler-reg-plan-assignments reg-plan)]
-        [assignments : CompilerRegAssignmentList raw-assignments]
-        [types : CompilerRegVarTypeList (compiler-reg-plan-types reg-plan)]
+        [plan-types : CompilerRegVarTypeList (compiler-reg-plan-types reg-plan)]
+        ;; Computed once per function: the gate below, the coloring pass, and
+        ;; the frame layout all consume it (the per-block fixpoint scan is too
+        ;; costly to repeat).
+        [fn-group-vars : CompilerLiveI64Set
+          (compiler-reg-function-group-vars walk-func plan-types)]
+        [has-group-vars : bool (> (compiler-live-set-count fn-group-vars) 0)]
+        ;; #2598: compact the frame after regalloc by renumbering stack-resident
+        ;; scalars into a dense slot prefix. Plans without intervals (the
+        ;; stack-only opt0/opt1 path) pass through unchanged; `slot-vars`
+        ;; replaces the raw var count everywhere the frame layout is derived,
+        ;; while `vars` keeps indexing per-variable side tables.
+        [coloring
+          : CompilerRegColoring
+          ;; Group word1 slots index a second var-region by RAW variable id
+          ;; (compiler-backend-group-word1-slot), so a function containing
+          ;; group vars keeps the uncolored layout: shrinking the threaded
+          ;; var count would place high-id word1 slots outside the frame.
+          (if has-group-vars
+            CompilerRegColoringNone
+            (compiler-reg-color-stack-slots reg-plan fn-group-vars params vars))]
+        [assignments : CompilerRegAssignmentList
+          (match coloring
+            [(CompilerRegColoringNone) (compiler-reg-plan-assignments reg-plan)]
+            [(CompilerRegColoringRemap remap _)
+              (compiler-reg-color-rebuild-assignments
+                remap
+                vars
+                (compiler-reg-plan-assignments reg-plan))])]
+        [emit-blocks-list : CompilerIrBlockList
+          (match coloring
+            [(CompilerRegColoringNone) blocks]
+            [(CompilerRegColoringRemap remap _)
+              (compiler-reg-remap-blocks remap blocks)])]
+        [slot-vars : i64
+          (match coloring
+            [(CompilerRegColoringNone) vars]
+            [(CompilerRegColoringRemap _ slots) slots])]
+        [types : CompilerRegVarTypeList
+          (match coloring
+            [(CompilerRegColoringNone) plan-types]
+            [(CompilerRegColoringRemap remap _)
+              (compiler-reg-color-rebuild-types remap vars plan-types)])]
         [use-counts : (Array i64)
-          (compiler-backend-function-use-counts vars blocks)]
+          (compiler-backend-function-use-counts vars emit-blocks-list)]
         [_phi-targets : unit
           (set!
             compiler-backend-current-phi-targets
@@ -13239,7 +13278,7 @@
           0
           0
           program-index
-          vars)
+          slot-vars)
           [(OkCompilerBackend spills)
             (let
               [symbol : String
@@ -13250,10 +13289,10 @@
                 target
                 label-scope
                 name
-                blocks
-                blocks
+                emit-blocks-list
+                emit-blocks-list
                 assignments
-                vars
+                slot-vars
                 types
                 global-types
                 ret-ty
@@ -13270,9 +13309,9 @@
                       (+
                         (compiler-backend-frame-size
                           (compiler-backend-frame-slots-with-groups
-                            vars
+                            slot-vars
                             assignments
-                            (compiler-reg-function-has-group-vars? func types)))
+                            has-group-vars))
                         (compiler-backend-outgoing-frame-space
                           target
                           blocks
@@ -13297,7 +13336,7 @@
                             (string-append
                               (compiler-backend-emit-save-callee-regs
                                 assignments
-                                vars)
+                                slot-vars)
                               (string-append
                                 (compiler-backend-emit-windows-main-argv-capture
                                   target
@@ -13331,8 +13370,8 @@
                                           (compiler-backend-return-epilogue
                                             name
                                             assignments
-                                            vars
-                                            blocks)
+                                            slot-vars
+                                            emit-blocks-list)
                                           (compiler-backend-emit-windows-seh-endproc
                                             target)))))))))
                           "\n"))))]

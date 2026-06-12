@@ -34,11 +34,13 @@ _tl_shared_shared:
     .quad .L_tl_str_data_l22_1063972566_1775948496
     .quad 22
 
-    .globl tl_current_arena
-    .section .bss
+    .section .tbss,"awT",@nobits
     .balign 8
+    .globl tl_current_arena
 tl_current_arena:
     .zero 8
+
+    .section .bss
     .balign 8
 .L_tl_arena_poison_enabled:
     .zero 8
@@ -336,14 +338,40 @@ tl_memcpy:
 .Ltl_memcpy_fwd:
     rep movsb
     ret
+    .globl tl_thread_init
+tl_thread_init:
+    movq $4096, %rsi
+    xorq %rdi, %rdi
+    movq $3, %rdx
+    movq $0x22, %r10
+    movq $-1, %r8
+    xorq %r9, %r9
+    movq $9, %rax
+    syscall
+    testq %rax, %rax
+    js .L_tl_thread_init_abort
+    movq $tl_current_arena@tpoff, %rdi
+    subq %rdi, %rax
+    movq %rax, %rsi
+    movq $0x1002, %rdi
+    movq $158, %rax
+    syscall
+    testq %rax, %rax
+    js .L_tl_thread_init_abort
+    ret
+.L_tl_thread_init_abort:
+    movq $60, %rax
+    movq $134, %rdi
+    syscall
+
     .globl tl_arena_current
 tl_arena_current:
-    movq tl_current_arena(%rip), %rax
+    movq %fs:tl_current_arena@tpoff, %rax
     ret
 
     .globl tl_arena_set
 tl_arena_set:
-    movq %rdi, tl_current_arena(%rip)
+    movq %rdi, %fs:tl_current_arena@tpoff
     ret
 
     .globl tl_arena_poison_enable
@@ -414,6 +442,7 @@ _tl_start:
     movq (%rsp), %rax
     leaq 16(%rsp,%rax,8), %rax
     movq %rax, .L_tl_envp(%rip)
+    call tl_thread_init
     movq $0x40000000, %rsi
     xorq %rdi, %rdi
     movq $3, %rdx

@@ -31,6 +31,9 @@
 (define compiler-builtin-id-tl-thread-entry-ptr : i64
   -1)
 
+(define compiler-builtin-id-tl-thread-init : i64
+  -1)
+
 (define compiler-builtin-id-tl-profile-alloc-total : i64
   -1)
 
@@ -174,6 +177,7 @@
       (set!
         compiler-builtin-id-tl-thread-entry-ptr
         (intern "tl_thread_entry_ptr"))
+      (set! compiler-builtin-id-tl-thread-init (intern "tl_thread_init"))
       (set!
         compiler-builtin-id-tl-profile-alloc-total
         (intern "tl_profile_alloc_total"))
@@ -261,7 +265,10 @@
         compiler-builtin-id-tl-arena-set
         compiler-builtin-id-tl-arena-destroy
         compiler-builtin-id-tl-arena-poison-enable)
-      (= name-id compiler-builtin-id-tl-thread-entry-ptr))))
+      (compiler-builtin-id-any2?
+        name-id
+        compiler-builtin-id-tl-thread-entry-ptr
+        compiler-builtin-id-tl-thread-init))))
 
 (define (compiler-builtin-backend-runtime-stdlib-ffi-id? [name-id : i64]) : bool
   (begin
@@ -330,7 +337,10 @@
         compiler-builtin-id-tl-arena-make
         compiler-builtin-id-tl-arena-current
         compiler-builtin-id-tl-arena-set)
-      (= name-id compiler-builtin-id-tl-thread-entry-ptr))))
+      (compiler-builtin-id-any2?
+        name-id
+        compiler-builtin-id-tl-thread-entry-ptr
+        compiler-builtin-id-tl-thread-init))))
 
 (define (compiler-builtin-backend-runtime-always-provided-tail-id?
   [name-id : i64]) : bool

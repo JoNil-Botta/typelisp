@@ -3,7 +3,9 @@
 ;# Provides recoverable environment lookup and PATH-style list helpers on top of
 ;# direct platform C library bindings:
 ;#
-;# `env-var-exists?`, `env-var-value`, and `env-path-separator`.
+;# `env-var-exists?`, `env-var-value`, and `env-path-separator`. Public
+;# list-returning PATH helpers remain for compatibility; vector-returning
+;# variants avoid cons/reverse work for new internal callers.
 ;#
 ;# Usage: `(import "stdlib/env.tl")`
 ;#
@@ -13,6 +15,8 @@
 ;#   (let [name : String "TYPELISP_DOC_TEST_MISSING_ENV"] (env-get (& name))))
 ;# ```
 (import "string.tl")
+
+(import "vector.tl")
 
 ;: Windows kernel32 `GetEnvironmentStringsA` binding (#2142 follow-up). Returns
 ;: the process environment block: NUL-separated `NAME=VALUE` entries terminated
@@ -223,6 +227,12 @@
   (EnvNoStringList)
   (EnvSomeStringList EnvStringList))
 
+;: Optional PATH-style vector result. Missing variables use `EnvNoStringVec`;
+;: present empty variables use `EnvSomeStringVec` with an empty `StringVec`.
+(defenum EnvMaybeStringVec
+  (EnvNoStringVec)
+  (EnvSomeStringVec StringVec))
+
 ;: Return an empty environment string list.
 (define (env-string-list-empty) : EnvStringList
   (EnvStringNil))
@@ -246,6 +256,36 @@
 (define (env-string-list-reverse [items : EnvStringList]) : EnvStringList
   (env-string-list-reverse-onto items (EnvStringNil)))
 
+;: Build an environment string list from `items`, preserving vector order.
+(define (env-string-list-from-vec-from
+  [items : StringVec]
+  [index : i64]
+  [acc : EnvStringList]) : EnvStringList
+  (if (< index 0)
+    acc
+    (env-string-list-from-vec-from
+      items
+      (- index 1)
+      (EnvStringCons (string-vec-get items index "") (box acc)))))
+
+;: Build an environment string list from `items`, preserving vector order.
+(define (env-string-list-from-vec [items : StringVec]) : EnvStringList
+  (env-string-list-from-vec-from
+    items
+    (- (string-vec-len items) 1)
+    (EnvStringNil)))
+
+;: Copy `items` into `out`, preserving list order.
+(define (env-string-list-to-vec-into [items : EnvStringList] [out : StringVec]) : StringVec
+  (match items
+    [(EnvStringNil) out]
+    [(EnvStringCons head rest)
+      (env-string-list-to-vec-into (box-get rest) (string-vec-push out head))]))
+
+;: Copy `items` into a fresh `StringVec`, preserving list order.
+(define (env-string-list-to-vec [items : EnvStringList]) : StringVec
+  (env-string-list-to-vec-into items (string-vec-new)))
+
 ;: Return the current platform PATH-list separator as a one-byte String.
 (define (env-path-list-separator) : String
   (env-path-separator))
@@ -259,16 +299,16 @@
       (EnvNoString))))
 
 ;: Split a PATH-style string using the supplied one-byte separator string.
-(define (env-path-split-with-separator
+(define (env-path-split-with-separator-vec
   [value : (& value str)]
-  [separator : (& separator str)]) : EnvStringList
+  [separator : (& separator str)]) : StringVec
   (let
     [n : i64 (string-length value)]
     (if (= n 0)
-      (EnvStringNil)
+      (string-vec-new)
       (let
         [sep : char (string-ref separator 0)]
-        [items : EnvStringList (EnvStringNil)]
+        [items : StringVec (string-vec-new)]
         [start : i64 0]
         [i : i64 0]
         (begin
@@ -277,28 +317,42 @@
               (begin
                 (set!
                   items
-                  (EnvStringCons
-                    (substring-borrowed value start (- i start))
-                    (box items)))
+                  (string-vec-push
+                    items
+                    (substring-borrowed value start (- i start))))
                 (set! start (+ i 1))
                 (set! i (+ i 1)))
               (set! i (+ i 1))))
-          (env-string-list-reverse
-            (EnvStringCons
-              (substring-borrowed value start (- n start))
-              (box items))))))))
+          (string-vec-push items (substring-borrowed value start (- n start))))))))
+
+;: Split a PATH-style string using the supplied one-byte separator string.
+(define (env-path-split-with-separator
+  [value : (& value str)]
+  [separator : (& separator str)]) : EnvStringList
+  (env-string-list-from-vec (env-path-split-with-separator-vec value separator)))
+
+;: Split a PATH-style string using the current platform separator.
+(define (env-path-split-vec [value : (& value str)]) : StringVec
+  (let
+    [separator : String (env-path-list-separator)]
+    (env-path-split-with-separator-vec value (& separator))))
 
 ;: Split a PATH-style string using the current platform separator.
 (define (env-path-split [value : (& value str)]) : EnvStringList
-  (let
-    [separator : String (env-path-list-separator)]
-    (env-path-split-with-separator value (& separator))))
+  (env-string-list-from-vec (env-path-split-vec value)))
+
+;: Read `name` and split it as a PATH-style list when present.
+(define (env-path-list-vec [name : (& name str)]) : EnvMaybeStringVec
+  (match (env-get name)
+    [(EnvSomeString value) (EnvSomeStringVec (env-path-split-vec (& value)))]
+    [(EnvNoString) (EnvNoStringVec)]))
 
 ;: Read `name` and split it as a PATH-style list when present.
 (define (env-path-list [name : (& name str)]) : EnvMaybeStringList
-  (match (env-get name)
-    [(EnvSomeString value) (EnvSomeStringList (env-path-split (& value)))]
-    [(EnvNoString) (EnvNoStringList)]))
+  (match (env-path-list-vec name)
+    [(EnvSomeStringVec value)
+      (EnvSomeStringList (env-string-list-from-vec value))]
+    [(EnvNoStringVec) (EnvNoStringList)]))
 
 ;: Append PATH-style `items` to `acc`, allocating joined string segments.
 (define (env-path-join-tail
@@ -317,16 +371,41 @@
         separator)]))
 
 ;: Join PATH-style items using the supplied separator.
+(define (env-path-join-vec-tail
+  [acc : String]
+  [items : StringVec]
+  [index : i64]
+  [separator : (& separator str)]) : String
+  (if (>= index (string-vec-len items))
+    acc
+    (env-path-join-vec-tail
+      (let
+        [acc-with-separator : String (string-append-borrowed (& acc) separator)]
+        (string-append acc-with-separator (string-vec-get items index "")))
+      items
+      (+ index 1)
+      separator)))
+
+;: Join PATH-style items using the supplied separator.
+(define (env-path-join-vec-with-separator
+  [items : StringVec]
+  [separator : (& separator str)]) : String
+  (if (<= (string-vec-len items) 0)
+    ""
+    (env-path-join-vec-tail (string-vec-get items 0 "") items 1 separator)))
+
+;: Join PATH-style items using the current platform separator.
+(define (env-path-join-vec [items : StringVec]) : String
+  (let
+    [separator : String (env-path-list-separator)]
+    (env-path-join-vec-with-separator items (& separator))))
+
+;: Join PATH-style items using the supplied separator.
 (define (env-path-join-with-separator
   [items : EnvStringList]
   [separator : (& separator str)]) : String
-  (match items
-    [(EnvStringNil) ""]
-    [(EnvStringCons head rest)
-      (env-path-join-tail head (box-get rest) separator)]))
+  (env-path-join-vec-with-separator (env-string-list-to-vec items) separator))
 
 ;: Join PATH-style items using the current platform separator.
 (define (env-path-join [items : EnvStringList]) : String
-  (let
-    [separator : String (env-path-list-separator)]
-    (env-path-join-with-separator items (& separator))))
+  (env-path-join-vec (env-string-list-to-vec items)))

@@ -33,8 +33,8 @@ Coverage notes:
 - `json_parse_stringify.tl` covers end-to-end parsing and stringifying for
   invalid input, escapes, nesting, arrays, objects, lookup, and number forms.
 - `list_api.tl` covers the monomorphic `StringList` and `StringListBuilder`
-  helpers: empty/single lists, count, reverse, append, build-onto order, and
-  array conversion with count clamping.
+  helpers: empty/single lists, count, reverse, append, build-onto order, array
+  conversion with count clamping, and `StringVec` bridge round trips.
 - `vector_api.tl` covers the generated concrete vector family: `I64Vec`
   compatibility, higher-order `I64Vec` fold/map helpers with named functions
   and scalar-capturing lambdas, `StringVec` growth/mutation/pop/snapshot/reverse
@@ -69,8 +69,8 @@ Coverage notes:
   also run by `scripts/verify-stdlib.sh` through a native pipe to ensure
   positive short pipe reads do not report EOF before all bytes arrive.
 - `env_api.tl` covers missing, empty, and present environment variables,
-  host-separator PATH splitting/joining, and explicit Windows `;` path-list
-  behavior.
+  host-separator PATH splitting/joining, vector-backed PATH split/list/join
+  helpers, and explicit Windows `;` path-list behavior.
 - `ffi_api.tl` covers C string buffers: required byte counts, exact-capacity
   caller-owned copies, trailing NUL writes, too-small buffers, interior NUL
   rejection using an explicitly unsafe test-only string fixture, and
@@ -79,8 +79,9 @@ Coverage notes:
   single, two, three, four, and duplicate-separator joins.
 - `fs_api.tl` covers path joins, dirname/basename/extension helpers, temp-dir
   creation, recoverable cleanup helpers, Linux file/directory rename behavior,
-  directory iteration, missing and empty rename paths, and Windows unsupported
-  rename/read-dir results.
+  directory iteration through list and vector wrappers, read-dir split order,
+  missing and empty rename paths, and Windows unsupported rename/read-dir
+  results.
 - `hash_api.tl` covers stable deterministic hashes, equal-values-same-hash
   checks, primitive key equality predicates, known collision behavior, hash
   range normalization, and string edge cases.
@@ -96,6 +97,9 @@ Coverage notes:
   identities, borrowed string-key contains/remove wrappers, duplicate insert,
   collision chains, tombstone reuse, growth/rehash, missing remove, and
   deterministic bucket-order iteration.
+- `msvc_api.tl` covers pure MSVC discovery helpers with fake temp-directory
+  toolset and SDK trees, including newest-usable candidate selection through
+  the vector-backed scanners.
 - `process_api.tl` covers command construction, argv append helpers,
   cwd/stdin/env accessors, invalid-command diagnostics, result/error predicates,
   and async start/wait API validation.

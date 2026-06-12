@@ -1,10 +1,12 @@
 ;# stdlib/list.tl - Monomorphic string cons-list helpers (#1550).
 ;#
-;# Provides the first small stdlib list-builder surface while TypeLisp still
-;# lacks comptime-generated generic collections. `StringList` is an immutable
-;# cons list in insertion order; `StringListBuilder` stores pushed values in
-;# reverse order and reverses once when built. List nodes, builder values, and
-;# arrays created by conversion helpers allocate in the active arena.
+;# Provides the compatibility stdlib string cons-list surface. `StringList` is
+;# an immutable cons list in insertion order; `StringListBuilder` stores pushed
+;# values in reverse order and reverses once when built. New append-heavy private
+;# code should prefer `StringVec` from `stdlib/vector.tl`; bridge helpers here
+;# copy across the list/vector boundary for public compatibility wrappers.
+;# List nodes, builder values, vectors, and arrays created by conversion helpers
+;# allocate in the active arena.
 ;#
 ;# Usage: `(import "stdlib/list.tl")`
 ;#
@@ -17,6 +19,8 @@
 ;#         (string-list-builder-push (string-list-builder-empty) "first")
 ;#         "second"))))
 ;# ```
+(import "vector.tl")
+
 ;: Immutable list of strings.
 (defenum StringList
   (StringNil)
@@ -125,6 +129,35 @@
     (begin
       (string-list-to-array-fill items out 0)
       out)))
+
+;: Build a list from `v`, preserving vector order.
+(define (string-list-from-vec-from
+  [v : StringVec]
+  [index : i64]
+  [acc : StringList]) : StringList
+  (if (< index 0)
+    acc
+    (string-list-from-vec-from
+      v
+      (- index 1)
+      (StringCons (string-vec-get v index "") (box acc)))))
+
+;: Build a list from `v`, preserving vector order.
+(define (string-list-from-vec [v : StringVec]) : StringList
+  (string-list-from-vec-from v (- (string-vec-len v) 1) (StringNil)))
+
+;: Append `items` into `out` in order.
+(define (string-list-to-vec-into [items : StringList] [out : StringVec]) : StringVec
+  (match items
+    [(StringNil) out]
+    [(StringCons head rest)
+      (string-list-to-vec-into (box-get rest) (string-vec-push out head))]))
+
+;: Copy `items` into a fresh `StringVec`, preserving list order.
+(define (string-list-to-vec [items : StringList]) : StringVec
+  (string-list-to-vec-into
+    items
+    (string-vec-with-capacity (string-list-count items))))
 
 ;: Return an empty builder.
 (define (string-list-builder-empty) : StringListBuilder

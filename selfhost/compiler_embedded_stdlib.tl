@@ -103,6 +103,8 @@
 
 (include-str compiler-embedded-stdlib-tests-list-api "stdlib/tests/list_api.tl")
 
+(include-str compiler-embedded-stdlib-tests-msvc-api "stdlib/tests/msvc_api.tl")
+
 (include-str compiler-embedded-stdlib-tests-process-api "stdlib/tests/process_api.tl")
 
 (include-str compiler-embedded-stdlib-tests-process-borrowed-check "stdlib/tests/process_borrowed_check.tl")
@@ -262,6 +264,8 @@
       compiler-embedded-stdlib-tests-json-parse-stringify)
     (string-eq suffix "tests/list_api.tl")
     (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-tests-list-api)
+    (string-eq suffix "tests/msvc_api.tl")
+    (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-tests-msvc-api)
     (string-eq suffix "tests/process_api.tl")
     (CompilerEmbeddedStdlibSomeSource
       compiler-embedded-stdlib-tests-process-api)

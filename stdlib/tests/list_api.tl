@@ -2,6 +2,8 @@
 
 (import "stdlib/test.tl")
 
+(import "stdlib/vector.tl")
+
 (define (assert-owned-string-eq
   [actual : String]
   [expected : String]
@@ -86,6 +88,18 @@
     (assert-owned-string-eq (array-ref items 0) first message)
     (assert-owned-string-eq (array-ref items 1) second message)
     (assert-owned-string-eq (array-ref items 2) third message)))
+
+(define (assert-string-vec3
+  [items : StringVec]
+  [first : String]
+  [second : String]
+  [third : String]
+  [message : String]) : unit
+  (begin
+    (assert-i64-eq (string-vec-len items) 3 message)
+    (assert-owned-string-eq (string-vec-get items 0 "missing") first message)
+    (assert-owned-string-eq (string-vec-get items 1 "missing") second message)
+    (assert-owned-string-eq (string-vec-get items 2 "missing") third message)))
 
 (define (make-source-array) : (Array String)
   (let
@@ -177,4 +191,16 @@
         "beta"
         "gamma"
         "to array")
+      (assert-string-vec3
+        (string-list-to-vec built)
+        "alpha"
+        "beta"
+        "gamma"
+        "to vec")
+      (assert-string-list3
+        (string-list-from-vec (string-list-to-vec built))
+        "alpha"
+        "beta"
+        "gamma"
+        "from vec")
       42)))

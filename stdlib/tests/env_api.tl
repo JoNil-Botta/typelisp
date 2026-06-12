@@ -2,6 +2,8 @@
 
 (import "stdlib/test.tl")
 
+(import "stdlib/vector.tl")
+
 (define (assert-owned-string-eq
   [actual : String]
   [expected : String]
@@ -26,6 +28,13 @@
     [(EnvNoStringList) unit]
     [(EnvSomeStringList _) (panic message)]))
 
+(define (assert-env-path-vec-none
+  [value : EnvMaybeStringVec]
+  [message : String]) : unit
+  (match value
+    [(EnvNoStringVec) unit]
+    [(EnvSomeStringVec _) (panic message)]))
+
 (define (assert-env-path-empty [value : EnvMaybeStringList] [message : String]) : unit
   (match value
     [(EnvSomeStringList items)
@@ -33,6 +42,13 @@
         [(EnvStringNil) unit]
         [_ (panic message)])]
     [(EnvNoStringList) (panic message)]))
+
+(define (assert-env-path-vec-empty
+  [value : EnvMaybeStringVec]
+  [message : String]) : unit
+  (match value
+    [(EnvSomeStringVec items) (assert-i64-eq (string-vec-len items) 0 message)]
+    [(EnvNoStringVec) (panic message)]))
 
 (define (assert-env-list3
   [items : EnvStringList]
@@ -90,6 +106,34 @@
         [_ (panic message)])]
     [_ (panic message)]))
 
+(define (assert-env-vec3
+  [items : StringVec]
+  [first : String]
+  [second : String]
+  [third : String]
+  [message : String]) : unit
+  (begin
+    (assert-i64-eq (string-vec-len items) 3 message)
+    (assert-owned-string-eq (string-vec-get items 0 "missing") first message)
+    (assert-owned-string-eq (string-vec-get items 1 "missing") second message)
+    (assert-owned-string-eq (string-vec-get items 2 "missing") third message)))
+
+(define (assert-env-vec5
+  [items : StringVec]
+  [first : String]
+  [second : String]
+  [third : String]
+  [fourth : String]
+  [fifth : String]
+  [message : String]) : unit
+  (begin
+    (assert-i64-eq (string-vec-len items) 5 message)
+    (assert-owned-string-eq (string-vec-get items 0 "missing") first message)
+    (assert-owned-string-eq (string-vec-get items 1 "missing") second message)
+    (assert-owned-string-eq (string-vec-get items 2 "missing") third message)
+    (assert-owned-string-eq (string-vec-get items 3 "missing") fourth message)
+    (assert-owned-string-eq (string-vec-get items 4 "missing") fifth message)))
+
 (define (assert-env-path3
   [value : EnvMaybeStringList]
   [first : String]
@@ -100,6 +144,17 @@
     [(EnvSomeStringList items)
       (assert-env-list3 items first second third message)]
     [(EnvNoStringList) (panic message)]))
+
+(define (assert-env-path-vec3
+  [value : EnvMaybeStringVec]
+  [first : String]
+  [second : String]
+  [third : String]
+  [message : String]) : unit
+  (match value
+    [(EnvSomeStringVec items)
+      (assert-env-vec3 items first second third message)]
+    [(EnvNoStringVec) (panic message)]))
 
 (define (main) : i64
   (begin
@@ -116,8 +171,18 @@
       [name : String "TYPELISP_STDLIB_TEST_MISSING_854"]
       (assert-env-path-none (env-path-list (& name)) "env path missing"))
     (let
+      [name : String "TYPELISP_STDLIB_TEST_MISSING_854"]
+      (assert-env-path-vec-none
+        (env-path-list-vec (& name))
+        "env path vec missing"))
+    (let
       [name : String "TYPELISP_STDLIB_TEST_EMPTY"]
       (assert-env-path-empty (env-path-list (& name)) "env path empty"))
+    (let
+      [name : String "TYPELISP_STDLIB_TEST_EMPTY"]
+      (assert-env-path-vec-empty
+        (env-path-list-vec (& name))
+        "env path vec empty"))
     (let
       [name : String "TYPELISP_STDLIB_TEST_PATH"]
       (assert-env-path3
@@ -127,11 +192,25 @@
         "three"
         "env path list"))
     (let
+      [name : String "TYPELISP_STDLIB_TEST_PATH"]
+      (assert-env-path-vec3
+        (env-path-list-vec (& name))
+        "one"
+        "two"
+        "three"
+        "env path vec"))
+    (let
       [value : String (env-var-value "TYPELISP_STDLIB_TEST_PATH")]
       (assert-owned-string-eq
         (env-path-join (env-path-split (& value)))
         value
         "env path join"))
+    (let
+      [value : String (env-var-value "TYPELISP_STDLIB_TEST_PATH")]
+      (assert-owned-string-eq
+        (env-path-join-vec (env-path-split-vec (& value)))
+        value
+        "env path vec join"))
     (let
       [value : String "a;b;;c;"]
       [separator : String ";"]
@@ -146,10 +225,30 @@
     (let
       [value : String "a;b;;c;"]
       [separator : String ";"]
+      (assert-env-vec5
+        (env-path-split-with-separator-vec (& value) (& separator))
+        "a"
+        "b"
+        ""
+        "c"
+        ""
+        "env semicolon split vec"))
+    (let
+      [value : String "a;b;;c;"]
+      [separator : String ";"]
       (assert-owned-string-eq
         (env-path-join-with-separator
           (env-path-split-with-separator (& value) (& separator))
           (& separator))
         value
         "env semicolon join"))
+    (let
+      [value : String "a;b;;c;"]
+      [separator : String ";"]
+      (assert-owned-string-eq
+        (env-path-join-vec-with-separator
+          (env-path-split-with-separator-vec (& value) (& separator))
+          (& separator))
+        value
+        "env semicolon join vec"))
     42))

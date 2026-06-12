@@ -4177,12 +4177,15 @@ stdlib extern wrappers.
 
 User-facing fixed-arity string concatenation is the stdlib macro
 `stdlib/str_cat.tl`'s `(str-cat ...)`; incremental builders should use
-`stdlib/text_buf.tl`. `string-append`, `string-concat`, and the fixed-arity
-`string-concat3`/`string-concat4`/`string-concat5` primitives remain accepted as
-deprecated low-level compatibility plumbing for `str-cat` expansion and legacy
-code, but they are not the documented public concatenation surface. The staged
-lint rule is enabled explicitly with `typelisp lint --deprecated-string-concat`
-until the remaining in-tree migrations are complete.
+`stdlib/text_buf.tl`. `str-cat` uses direct one-allocation helpers for two to
+five operands and expands longer calls to an internal `string-concat-all` call
+over a packed `(Array String)`, so long calls no longer allocate chunk
+intermediates. `string-append`, `string-concat`, and the fixed-arity
+`string-concat3`/`string-concat4`/`string-concat5` helpers remain accepted as
+deprecated low-level compatibility plumbing for legacy code, but they are not
+the documented public concatenation surface. The staged lint rule is enabled
+explicitly with `typelisp lint --deprecated-string-concat` until the remaining
+in-tree migrations are complete.
 
 - `make-array` checks the runtime length before allocation. Negative lengths and
   `length * sizeof(type)` overflow call the same `tl_oob_abort` runtime trap

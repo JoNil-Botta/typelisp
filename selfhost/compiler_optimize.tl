@@ -33,6 +33,8 @@
 
 (import "../stdlib/string.tl")
 
+(cfg compile-profile (import "../stdlib/str_cat.tl"))
+
 (defenum ResultCompilerOptimizeLevel
   (OkCompilerOptimizeLevel i64)
   (ErrCompilerOptimizeLevel))
@@ -24304,27 +24306,24 @@
     [allocs : i64]
     [bytes : i64]
     [reason : String]) : String
-    (string-concat5
+    (str-cat
       "compile-profile-detail|scratch_region|"
       status
       "|scope="
       scope
-      (string-concat5
-        "|function="
-        function
-        "|label="
-        label
-        (string-concat5
-          "|latch="
-          latch
-          "|allocs="
-          (int->string allocs)
-          (string-concat5
-            "|known_bytes="
-            (int->string bytes)
-            "|blocker="
-            reason
-            "\n"))))))
+      "|function="
+      function
+      "|label="
+      label
+      "|latch="
+      latch
+      "|allocs="
+      (int->string allocs)
+      "|known_bytes="
+      (int->string bytes)
+      "|blocker="
+      reason
+      "\n")))
 
 (cfg
   compile-profile

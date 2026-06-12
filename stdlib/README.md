@@ -133,8 +133,8 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   fixed symbols via `(:export-symbol …)` (#2143/#2142). Imported implicitly into
   every executable; programs do not import it by hand.
 - `string.tl`: string utility functions built on compiler/runtime primitives,
-  including append/concat, substring, equality, integer rendering, and integer parsing
-  helpers. Import it with `(import "stdlib/string.tl")`.
+  including append/concat-all, substring, equality, integer rendering, and
+  integer parsing helpers. Import it with `(import "stdlib/string.tl")`.
 - `str_cat.tl`: the variadic `str-cat` concatenation macro, which expands to a
   single-allocation copy regardless of arity. Kept separate from
   `core_macros.tl` so importing it does not shadow core guard/boolean macro
@@ -275,7 +275,7 @@ owned stdlib imports keep the compatibility wrappers.
 | Functions | Allocation behavior |
 |-----------|---------------------|
 | `is-char-whitespace`, `char-eq`, `string-contains`, `string-contains-char`, `is-string-prefix-at` | Non-allocating string/char inspection; text parameters are borrowed `str` inputs. |
-| `string-append`, `string-concat`, `string-copy-borrowed`, `string-append-borrowed`, `string-concat-borrowed` | Append/concat helpers allocate fresh active-arena `String` storage and copy bytes from their inputs. The public append/concat wrappers take owned `String` values; stdlib borrowed call sites use the borrowed variants or `string-copy-borrowed` explicitly. |
+| `string-append`, `string-concat`, `string-concat-all`, `string-copy-borrowed`, `string-append-borrowed`, `string-concat-borrowed` | Append/concat helpers allocate fresh active-arena `String` storage and copy bytes from their inputs. `string-concat-all` is the packed-array target for long `str-cat` expansions; the public append/concat wrappers take owned `String` values; stdlib borrowed call sites use the borrowed variants or `string-copy-borrowed` explicitly. |
 | `int->string` | Allocates fresh active-arena `String` storage, writes decimal bytes directly, and returns the zero, positive, negative, and signed edge-case spelling without calling the legacy runtime helper. Project callers should import the stdlib helper instead of relying on an unimported compiler default. |
 | `string-trim-left`, `string-trim-right`, `string-trim` | Borrow the input text and return fresh `String` storage from `substring`, allocated in the active arena. |
 | `string-replace` | Compatibility wrapper: returns fresh `String` storage from `substring`/`string-append` when a replacement is made; returns the caller-provided `s` when `old` is not present. `string_caller_result.tl` exposes the `string-replace-result` caller-result shape that preserves the no-match borrow until explicit materialization. |

@@ -38,6 +38,21 @@
 (define (string-test-concat-borrowed [left : String] [right : String]) : String
   (string-concat-borrowed (& left) (& right)))
 
+(define (string-test-concat-all-empty) : String
+  (string-concat-all (make-array String 0)))
+
+(define (string-test-concat-all-many) : String
+  (let
+    [parts : (Array String) (make-array String 6)]
+    (begin
+      (array-set! parts 0 "ab")
+      (array-set! parts 1 "")
+      (array-set! parts 2 "cd")
+      (array-set! parts 3 "ef")
+      (array-set! parts 4 "")
+      (array-set! parts 5 "gh")
+      (string-concat-all parts))))
+
 (define (string-test-substring-borrowed
   [text : String]
   [start : i64]
@@ -93,6 +108,14 @@
       (string-concat "con" "cat")
       "concat"
       "string-concat aliases string-append")
+    (assert-owned-string-eq
+      (string-test-concat-all-empty)
+      ""
+      "string-concat-all handles an empty parts array")
+    (assert-owned-string-eq
+      (string-test-concat-all-many)
+      "abcdefgh"
+      "string-concat-all concatenates many parts")
     (assert-owned-string-eq
       (string-concat3 "a" "b" "c")
       "abc"

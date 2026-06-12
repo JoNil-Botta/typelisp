@@ -196,6 +196,60 @@
 (define (string-concat [left : String] [right : String]) : String
   (string-append left right))
 
+;: Return a fresh active-arena String by concatenating all owned strings in order.
+(define (string-concat-all [parts : (Array String)]) : String
+  (let
+    [count : i64 (array-length parts)]
+    [len-index : i64 0]
+    [total-len : i64 0]
+    (begin
+      (while (< len-index count)
+        (let
+          [part : String (array-ref parts len-index)]
+          (begin
+            (set! total-len (+ total-len (string-length part)))
+            (set! len-index (+ len-index 1)))))
+      (let
+        [buf : (Array u8) (make-array u8 total-len)]
+        [dst : (MutPtr u8)
+          (unsafe
+            (array-data buf))]
+        [copy-index : i64 0]
+        [off : i64 0]
+        (begin
+          (while (< copy-index count)
+            (let
+              [part : String (array-ref parts copy-index)]
+              [len : i64 (string-length part)]
+              (begin
+                (str-copy-bytes-into
+                  (unsafe
+                    (string-data (& part)))
+                  dst
+                  off
+                  len)
+                (set! off (+ off len))
+                (set! copy-index (+ copy-index 1)))))
+          (unsafe
+            (string-from-bytes (ptr-cast dst : (Ptr u8)) total-len)))))))
+
+;: Store `value` in `parts` and return `parts` for macro-generated pack chains.
+(define (string-concat-all-pack-part
+  [parts : (Array String)]
+  [index : i64]
+  [value : String]) : (Array String)
+  (begin
+    (array-set! parts index value)
+    parts))
+
+;: Return a fresh active-arena String by concatenating three owned strings.
+(define (string-concat3 [a : String] [b : String] [c : String]) : String
+  (string-concat5 a b c "" ""))
+
+;: Return a fresh active-arena String by concatenating four owned strings.
+(define (string-concat4 [a : String] [b : String] [c : String] [d : String]) : String
+  (string-concat5 a b c d ""))
+
 ;: Return a fresh active-arena String by concatenating five owned strings.
 (define (string-concat5
   [a : String]
@@ -252,14 +306,6 @@
         e-len)
       (unsafe
         (string-from-bytes (ptr-cast dst : (Ptr u8)) total-len)))))
-
-;: Return a fresh active-arena String by concatenating three owned strings.
-(define (string-concat3 [a : String] [b : String] [c : String]) : String
-  (string-concat5 a b c "" ""))
-
-;: Return a fresh active-arena String by concatenating four owned strings.
-(define (string-concat4 [a : String] [b : String] [c : String] [d : String]) : String
-  (string-concat5 a b c d ""))
 
 ;: Return a fresh active-arena owned substring copied from borrowed text.
 (define (substring-borrowed [text : (& text str)] [start : i64] [len : i64]) : String

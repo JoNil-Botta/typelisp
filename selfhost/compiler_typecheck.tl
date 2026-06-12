@@ -2965,6 +2965,18 @@
 (define (compiler-typecheck-extern-abi-f32-source) : String
   "(extern (bad [arg0 : f32]) : i64 (:abi c) (:symbol \"bad_f32\"))")
 
+(define (compiler-typecheck-extern-abi-tag-only-enum-source) : String
+  "(defenum Status (Ready) (Done) (Failed))
+(extern (status-echo [arg0 : Status]) : Status (:abi c) (:symbol \"status_echo\"))
+(extern (status-varargs [arg0 : Status] [arg1 : ...Status]) : i64 (:abi c) (:symbol \"status_varargs\"))
+(extern status-echo-ptr (:symbol \"status_echo_ptr\") : (-> Status Status))
+(define (main) : i64
+  (let
+    [copied : (-> Status Status) status-echo-ptr]
+    [echoed : Status (status-echo (Ready))]
+    [copied-echoed : Status (copied echoed)]
+    (status-varargs copied-echoed (Done) (Failed))))")
+
 (define (compiler-typecheck-extern-abi-enum-param-source) : String
   "(defenum ResultI64 (OkI64 i64))
 (extern (bad [arg0 : ResultI64]) : i64 (:abi c) (:symbol \"bad_enum_param\"))")
@@ -3042,6 +3054,8 @@
     (compiler-typecheck-error-ok?
       (compiler-typecheck-extern-abi-f32-source)
       "typecheck: extern ABI c does not support parameter type f32")
+    (compiler-typecheck-ok?
+      (compiler-typecheck-extern-abi-tag-only-enum-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-extern-abi-enum-param-source)
       "typecheck: extern ABI c does not support enum aggregate parameter type ResultI64")

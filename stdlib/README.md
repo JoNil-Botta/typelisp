@@ -146,6 +146,11 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   spawn/join for `(-> i64 i64)` entries, counting semaphores, and default worker
   count. Linux uses raw clone/futex/eventfd syscalls; Windows uses kernel32
   threads and semaphores. Import it with `(import "stdlib/thread.tl")`.
+- `time.tl`: portable millisecond timestamp helpers separate from profiling
+  counters. `time-unix-ms` returns wall-clock Unix epoch milliseconds and
+  `time-monotonic-ms` returns monotonic elapsed milliseconds, both as
+  `ResultTimeMs`. Calendar conversion, formatting, time zones, locale,
+  sleeping, and timers are deferred. Import it with `(import "stdlib/time.tl")`.
 - `text_buf.tl`: arena-aware text buffer helpers for incremental String
   construction with owned `TextBuf` chunks. Import it with
   `(import "stdlib/text_buf.tl")`.
@@ -364,6 +369,7 @@ Stdlib modules are imported explicitly:
 (import "stdlib/random.tl")
 (import "stdlib/string.tl")
 (import "stdlib/test.tl")
+(import "stdlib/time.tl")
 (import "stdlib/text_buf.tl")
 ```
 

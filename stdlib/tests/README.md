@@ -111,6 +111,9 @@ Coverage notes:
 - `thread_api.tl` covers worker count fallback shape, invalid semaphore
   creation, two native worker threads, semaphore signaling, and join return
   values.
+- `time_api.tl` covers `time-unix-ms` positive wall-clock range checks,
+  `time-monotonic-ms` non-negative and non-decreasing checks, and structured
+  `ResultTimeMs` error/fallback helpers without depending on exact timestamps.
 - `text_buf_api.tl` covers empty buffers, repeated appends, char/int append
   helpers, buffer concatenation, clear/reset behavior, and rendering.
 - `text_buf_borrowed_check.tl` verifies the lifetime-parameterized

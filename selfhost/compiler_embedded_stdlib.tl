@@ -51,6 +51,8 @@
 
 (include-str compiler-embedded-stdlib-thread "stdlib/thread.tl")
 
+(include-str compiler-embedded-stdlib-time "stdlib/time.tl")
+
 (include-str compiler-embedded-stdlib-tests-arena-api "stdlib/tests/arena_api.tl")
 
 (include-str compiler-embedded-stdlib-tests-arena-patterns "stdlib/tests/arena_patterns.tl")
@@ -119,6 +121,8 @@
 
 (include-str compiler-embedded-stdlib-tests-test-assert-failure "stdlib/tests/test_assert_failure.tl")
 
+(include-str compiler-embedded-stdlib-tests-time-api "stdlib/tests/time_api.tl")
+
 (include-str compiler-embedded-stdlib-tests-text-buf-api "stdlib/tests/text_buf_api.tl")
 
 (include-str compiler-embedded-stdlib-tests-text-buf-borrowed-check "stdlib/tests/text_buf_borrowed_check.tl")
@@ -179,6 +183,8 @@
     (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-test)
     (string-eq suffix "thread.tl")
     (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-thread)
+    (string-eq suffix "time.tl")
+    (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-time)
     (string-eq suffix "text_buf.tl")
     (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-text-buf)
     (string-eq suffix "text_buf_borrowed.tl")
@@ -281,6 +287,8 @@
     (string-eq suffix "tests/test_assert_failure.tl")
     (CompilerEmbeddedStdlibSomeSource
       compiler-embedded-stdlib-tests-test-assert-failure)
+    (string-eq suffix "tests/time_api.tl")
+    (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-tests-time-api)
     (string-eq suffix "tests/text_buf_api.tl")
     (CompilerEmbeddedStdlibSomeSource
       compiler-embedded-stdlib-tests-text-buf-api)

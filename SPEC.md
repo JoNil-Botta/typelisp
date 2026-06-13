@@ -2517,7 +2517,8 @@ Example:
   - Effective link inputs for a `bin` build are assembled in first-seen order
     with exact duplicates removed within each class (libraries, search paths,
     raw args): all-target manifest inputs, then the selected target's inputs,
-    then the static archives of package dependencies (kept positional after the
+    then source `extern` link metadata from the package entry/import graph, then
+    the static archives of package dependencies (kept positional after the
     requested libraries and arguments). On Linux, any non-empty link input
     switches the package link from the freestanding `ld` path to the `cc` path
     so the program links against the C runtime and the requested libraries.

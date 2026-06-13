@@ -356,8 +356,9 @@ non-empty strings; unknown fields, a repeated `link` section or field, empty
 strings, and non-string values are rejected. Relative `search-paths` resolve
 against the manifest directory; libraries, raw args, and absolute search paths
 pass through verbatim. Effective inputs merge in first-seen order with exact
-duplicates removed per class: all-target, then target-specific, then dependency
-archives. On Linux a non-empty `link` section makes the package link through
+duplicates removed per class: all-target manifest inputs, then target-specific
+manifest inputs, then source `extern` link metadata, then dependency archives.
+On Linux any non-empty effective link input makes the package link through
 `cc` (the C runtime) instead of the freestanding `ld` path. See
 [SPEC.md §4.6](SPEC.md) for the full contract.
 

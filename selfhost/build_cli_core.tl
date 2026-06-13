@@ -2573,58 +2573,80 @@
             target)]
         [dep-link-inputs : SourceToolLinkInputs
           (source-tool-link-inputs-from-archives dep-libs)]
-        ;; Merge order: manifest all-target/target link inputs first, then the
-        ;; dependency static archives (positional after requested libs/args).
-        [effective-link-inputs : SourceToolLinkInputs
-          (source-tool-link-inputs-merge manifest-link-inputs dep-link-inputs)]
         [emit-entry : bool (build-package-kind-entry? kind)]
-        [crt-entry : bool
-          (and
-            emit-entry
-            (source-tool-linux-crt-entry? target effective-link-inputs))]
-        (match (source-tool-emit-package-assembly
+        (match (compiler-driver-load-package-file-with-runtime-owned
           entry-path
           target
           stdlib-roots
-          opt-level
-          mode
           manifest-dir
           name
           (struct-get manifest deps)
-          emit-entry
-          crt-entry)
-          [(ErrSourceToolString message)
+          emit-entry)
+          [(ErrCompilerLoadWithPaths diag)
             (begin
-              (print-error message)
+              (print-error (compiler-diagnostic-render diag))
               1)]
-          [(OkSourceToolString asm)
-            (match (source-tool-write-file
-              asm-path
-              asm
-              "build: failed to write package assembly")
-              [(SourceToolCommandErr message)
-                (begin
-                  (print-error message)
-                  1)]
-              [(SourceToolCommandOk)
-                (match (build-package-artifact-status
-                  kind
-                  target
-                  asm-path
-                  obj-path
-                  artifact-path
-                  effective-link-inputs)
-                  [(SourceToolCommandErr message)
-                    (begin
-                      (print-error message)
-                      1)]
-                  [(SourceToolCommandOk)
-                    (begin
-                      (print-string
-                        (string-append
-                          "Built "
-                          (string-append artifact-path "\n")))
-                      0)])])])))))
+          [(OkCompilerLoadWithPaths decls paths _ _)
+            (let
+              [metadata-link-inputs : SourceToolLinkInputs
+                (source-tool-link-inputs-from-decls
+                  decls
+                  (source-tool-link-inputs-empty))]
+              ;; Merge order: manifest all-target/target inputs, source extern
+              ;; metadata, then dependency archives (kept positional after the
+              ;; requested libraries/args).
+              [effective-link-inputs : SourceToolLinkInputs
+                (source-tool-link-inputs-merge
+                  (source-tool-link-inputs-merge
+                    manifest-link-inputs
+                    metadata-link-inputs)
+                  dep-link-inputs)]
+              [crt-entry : bool
+                (and
+                  emit-entry
+                  (source-tool-linux-crt-entry? target effective-link-inputs))]
+              (match (compiler-driver-emit-package-loaded
+                ""
+                target
+                true
+                opt-level
+                mode
+                emit-entry
+                crt-entry
+                decls
+                paths)
+                [(ErrCompilerDriver diag)
+                  (begin
+                    (print-error (compiler-diagnostic-render diag))
+                    1)]
+                [(OkCompilerDriver asm)
+                  (match (source-tool-write-file
+                    asm-path
+                    (source-tool-augment-assembly-for-target asm target)
+                    "build: failed to write package assembly")
+                    [(SourceToolCommandErr message)
+                      (begin
+                        (print-error message)
+                        1)]
+                    [(SourceToolCommandOk)
+                      (match (build-package-artifact-status
+                        kind
+                        target
+                        asm-path
+                        obj-path
+                        artifact-path
+                        effective-link-inputs)
+                        [(SourceToolCommandErr message)
+                          (begin
+                            (print-error message)
+                            1)]
+                        [(SourceToolCommandOk)
+                          (begin
+                            (print-string
+                              (string-append
+                                "Built "
+                                (string-append artifact-path "\n")))
+                            0)])])]))])))))
 
 (define (build-package-worker-unified-cli?) : bool
   (and (> (arg-count) 1) (string-eq (arg 1) "build")))

@@ -1280,6 +1280,37 @@ EOF
     assert_code 42
     assert_stdout_empty
     assert_stderr_empty
+
+    # Package manifest link inputs also merge with source extern metadata. This
+    # case leaves the library name on the extern and supplies only the relative
+    # search path through the manifest; without the metadata merge, link fails
+    # with an unresolved ffi_add7 symbol.
+    PKG_LINK_META_DIR="$SELFHOST_PLANNER_DIR/pkg-link-metadata"
+    mkdir -p "$PKG_LINK_META_DIR/src" "$PKG_LINK_META_DIR/vendor"
+    cp "$LINK_LIB_DIR/libffi_add7.a" "$PKG_LINK_META_DIR/vendor/libffi_add7.a"
+    cat > "$PKG_LINK_META_DIR/typelisp.pkg" <<'EOF'
+(package
+  (name "pkg_link_metadata_app")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "src/main.tl")
+  (link
+    (search-paths "vendor")))
+EOF
+    cat > "$PKG_LINK_META_DIR/src/main.tl" <<'EOF'
+(extern (ffi_add7 [x : i64]) : i64 (:link-lib "ffi_add7"))
+(define (main) : i64 (ffi_add7 35))
+EOF
+    run_cmd pkg-link-metadata-build "$COMPILER" build --manifest-path "$PKG_LINK_META_DIR/typelisp.pkg" --target linux-x86_64
+    assert_success
+    assert_stderr_empty
+    assert_contains "$out" "Built "
+    PKG_LINK_META_BIN="$PKG_LINK_META_DIR/target/release/pkg_link_metadata_app"
+    [ -x "$PKG_LINK_META_BIN" ] || fail "package link metadata build did not write executable $PKG_LINK_META_BIN"
+    run_cmd pkg-link-metadata-output "$PKG_LINK_META_BIN"
+    assert_code 42
+    assert_stdout_empty
+    assert_stderr_empty
     fi
 
     PLANNER_AVX2_OUTPUT="$SELFHOST_PLANNER_DIR/with space/avx2 program$HOST_EXE_SUFFIX"

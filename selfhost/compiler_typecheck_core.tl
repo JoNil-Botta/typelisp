@@ -2535,6 +2535,9 @@
 (define (tc-stdlib-comptime-type-key [name : String]) : String
   (compiler-symbol-module-key (tc-stdlib-comptime-module-name) name))
 
+(define (tc-stdlib-comptime-type-display-name [name : String]) : String
+  (str-cat (tc-stdlib-comptime-module-name) "." name))
+
 (define (tc-stdlib-comptime-syntax-type [canonical-name : String]) : AstMaybeType
   (cond
     (string-eq canonical-name (tc-stdlib-comptime-type-key "Expr"))
@@ -2580,7 +2583,7 @@
   (ErrTcUnit
     (str-cat
       "typecheck: stdlib well-known type mismatch for "
-      (tc-stdlib-comptime-type-key type-name)
+      (tc-stdlib-comptime-type-display-name type-name)
       ": "
       detail)))
 

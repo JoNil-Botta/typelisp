@@ -1381,6 +1381,11 @@
             init
             threshold
             (lint-walk-expr end threshold (lint-walk-expr start threshold acc)))))]
+    [(AstExprSpmdBroadcast value-box lane-box)
+      (let
+        [value : AstExpr (ast-node-get value-box)]
+        [lane : AstExpr (ast-node-get lane-box)]
+        (lint-walk-expr lane threshold (lint-walk-expr value threshold acc)))]
     [(AstExprStructGet receiver-box _)
       (let
         [receiver : AstExpr (ast-node-get receiver-box)]

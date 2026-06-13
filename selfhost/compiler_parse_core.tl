@@ -595,6 +595,9 @@
 (define (compiler-parse-tag-expr-spmd-reduce) : i64
   250)
 
+(define (compiler-parse-tag-expr-spmd-broadcast) : i64
+  290)
+
 (define (compiler-parse-tag-expr-try) : i64
   251)
 
@@ -830,6 +833,12 @@
       (set!
         out
         (sym-i64-bind out "spmd-reduce" (compiler-parse-tag-expr-spmd-reduce)))
+      (set!
+        out
+        (sym-i64-bind
+          out
+          "spmd-broadcast"
+          (compiler-parse-tag-expr-spmd-broadcast)))
       (set!
         out
         (sym-i64-bind out "struct-get" (compiler-parse-tag-expr-struct-get)))
@@ -1238,6 +1247,8 @@
         (compiler-parse-tag-unknown))
       (= n 14)
       (cond
+        (string-eq name "spmd-broadcast")
+        (compiler-parse-tag-expr-spmd-broadcast)
         (string-eq name "comptime-decls")
         (compiler-parse-tag-decl-comptime-decls)
         (compiler-parse-tag-unknown))
@@ -3246,6 +3257,24 @@
     [(SpSCons _ _ _) (ErrAstExpr "parse: malformed spmd-reduce")]
     [_ (ErrAstExpr "parse: malformed spmd-reduce")]))
 
+(define (parse-ast-spmd-broadcast [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
+  (match rest
+    [(SpSCons value-node lane-tail _)
+      (match (sp-node-get lane-tail)
+        [(SpSCons lane-node end _)
+          (match (sp-node-get end)
+            [(SpSNil _)
+              (match (parse-ast-expr dispatch (sp-node-get value-node))
+                [(OkAstExpr value)
+                  (match (parse-ast-expr dispatch (sp-node-get lane-node))
+                    [(OkAstExpr lane)
+                      (OkAstExpr (ast-expr-spmd-broadcast value lane))]
+                    [(ErrAstExpr message) (ErrAstExpr message)])]
+                [(ErrAstExpr message) (ErrAstExpr message)])]
+            [_ (ErrAstExpr "parse: malformed spmd-broadcast")])]
+        [_ (ErrAstExpr "parse: malformed spmd-broadcast")])]
+    [_ (ErrAstExpr "parse: malformed spmd-broadcast")]))
+
 (define (parse-ast-try [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
     [(SpSCons expr end _)
@@ -3965,6 +3994,8 @@
     (parse-ast-foreach dispatch rest)
     (= tag (compiler-parse-tag-expr-spmd-reduce))
     (parse-ast-spmd-reduce dispatch rest)
+    (= tag (compiler-parse-tag-expr-spmd-broadcast))
+    (parse-ast-spmd-broadcast dispatch rest)
     (= tag (compiler-parse-tag-expr-struct-get))
     (parse-ast-struct-get dispatch rest)
     (= tag (compiler-parse-tag-expr-comptime))
@@ -8445,6 +8476,8 @@
       "(define (main) : i64 (begin (foreach ([i : i64 0 3]) unit) 0))")
     (compiler-parse-ok?
       "(define (main [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))")
+    (compiler-parse-ok?
+      "(define (main [xs : (Array i64)] [out : (Array i64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (array-set! out i (spmd-broadcast (array-ref xs i) 0))) 0))")
     ;; #1073: an empty range, a non-i64 index type, and expression
     ;; start/end bounds all parse (range semantics are checked later).
     (compiler-parse-ok?
@@ -8468,7 +8501,10 @@
       "parse: malformed foreach")
     (compiler-parse-error-ok?
       "(define (main) : i64 (spmd-reduce sum))"
-      "parse: malformed spmd-reduce")))
+      "parse: malformed spmd-reduce")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (spmd-broadcast 1))"
+      "parse: malformed spmd-broadcast")))
 
 (define (compiler-parse-pattern-tests-ok?) : bool
   (and

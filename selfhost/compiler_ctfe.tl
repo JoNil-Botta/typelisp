@@ -562,6 +562,7 @@
     [(AstExprMatch _ _) "match"]
     [(AstExprForeach _ _ _ _ _) "foreach"]
     [(AstExprSpmdReduce _ _ _ _ _ _ _) "spmd-reduce"]
+    [(AstExprSpmdBroadcast _ _) "spmd-broadcast"]
     [(AstExprStructGet _ _) "struct-get"]
     [(AstExprStructSet _ _ _) "set!"]
     [(AstExprWithRegion _ _) "with-arena"]
@@ -3858,6 +3859,20 @@
                   [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
               [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
           [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+    [(AstExprSpmdBroadcast value-box lane-box)
+      (let
+        [value : AstExpr (ast-node-get value-box)]
+        [lane : AstExpr (ast-node-get lane-box)]
+        (match (ctfe-quote-expr value env fuel quasiquote)
+          [(OkCtfeQuoteExpr quoted-value _ value-fuel)
+            (match (ctfe-quote-expr lane env value-fuel quasiquote)
+              [(OkCtfeQuoteExpr quoted-lane _ lane-fuel)
+                (OkCtfeQuoteExpr
+                  (ast-expr-spmd-broadcast quoted-value quoted-lane)
+                  (AstTyExpr)
+                  lane-fuel)]
+              [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+          [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
     [(AstExprStructGet inner-box field)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
@@ -4809,6 +4824,17 @@
                 (ctfe-expr-eq a-end b-end)
                 (ctfe-expr-eq a-init b-init)
                 (ctfe-expr-eq a-value b-value)))]
+          [_ false]))]
+    [(AstExprSpmdBroadcast a-value-box a-lane-box)
+      (let
+        [a-value : AstExpr (ast-node-get a-value-box)]
+        [a-lane : AstExpr (ast-node-get a-lane-box)]
+        (match b
+          [(AstExprSpmdBroadcast b-value-box b-lane-box)
+            (let
+              [b-value : AstExpr (ast-node-get b-value-box)]
+              [b-lane : AstExpr (ast-node-get b-lane-box)]
+              (and (ctfe-expr-eq a-value b-value) (ctfe-expr-eq a-lane b-lane)))]
           [_ false]))]
     [(AstExprStructGet a-inner-box a-field)
       (let

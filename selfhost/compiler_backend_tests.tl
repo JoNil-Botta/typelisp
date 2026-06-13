@@ -2131,6 +2131,134 @@
       "backend: register-group load requires var operand (#2386)")
     (compiler-backend-register-group-call-arg-error-ok?)))
 
+(define (compiler-backend-ir-walker-call-use-counts-ok?) : bool
+  (let
+    [counts : (Array i64) (make-array i64 12)]
+    (begin
+      (compiler-backend-count-instr-uses
+        counts
+        (IrInstrCallIndirect
+          0
+          (IrValueVar 1)
+          (IrCallArgsTwo (IrValueVar 2) (IrValueVar 3))
+          (AstTyI64)))
+      (compiler-backend-count-instr-uses
+        counts
+        (IrInstrCallIndirectC
+          4
+          (IrValueVar 4)
+          (IrCallArgsOne (IrValueVar 5))
+          (AstTyI64)))
+      (compiler-backend-count-instr-uses
+        counts
+        (IrInstrTailCall
+          "tail"
+          (IrCallArgsTwo (IrValueVar 6) (IrValueVar 7))
+          (AstTyI64)))
+      (compiler-backend-count-instr-uses
+        counts
+        (IrInstrTailCallIndirect
+          (IrValueVar 8)
+          (IrCallArgsTwo (IrValueVar 9) (IrValueVar 10))
+          (AstTyI64)))
+      (and
+        (backend-and8
+          (= (array-ref counts 1) 1)
+          (= (array-ref counts 2) 1)
+          (= (array-ref counts 3) 1)
+          (= (array-ref counts 4) 1)
+          (= (array-ref counts 5) 1)
+          (= (array-ref counts 6) 1)
+          (= (array-ref counts 7) 1)
+          (= (array-ref counts 8) 1))
+        (= (array-ref counts 9) 1)
+        (= (array-ref counts 10) 1)))))
+
+(define (compiler-backend-ir-walker-collections-ok?) : bool
+  (let
+    [ty : AstType (compiler-backend-register-group-test-type)]
+    [values : CompilerIrValueList
+      (compiler-ir-value-cons
+        (IrValueFunction "walked_fn")
+        (compiler-ir-value-cons
+          (IrValueString "walked-string")
+          (compiler-ir-value-cons (IrValueF64 "2.5") IrValueNil)))]
+    [packed : CompilerBackendProgramCollections
+      (compiler-backend-collect-instr-collections
+        (compiler-backend-program-collections-new)
+        (IrInstrPack 0 values ty))]
+    [worded : CompilerBackendProgramCollections
+      (compiler-backend-collect-instr-collections
+        packed
+        (IrInstrWord 1 (IrValueString "word-string") 0 ty))]
+    (and
+      (compiler-backend-string-list-contains?
+        (compiler-backend-program-collections-functions worded)
+        "walked_fn")
+      (compiler-backend-string-list-contains?
+        (compiler-backend-program-collections-strings worded)
+        "walked-string")
+      (compiler-backend-string-list-contains?
+        (compiler-backend-program-collections-strings worded)
+        "word-string")
+      (compiler-backend-string-list-contains?
+        (compiler-backend-program-collections-floats worded)
+        "2.5"))))
+
+(define (compiler-backend-ir-walker-object-refs-with-plan
+  [plan : CompilerBackendRuntimePlan]) : bool
+  (let
+    [ty : AstType (compiler-backend-register-group-test-type)]
+    [index : CompilerBackendProgramIndex
+      (compiler-backend-program-index-build IrFunctionNil IrExternNil)]
+    [values : CompilerIrValueList
+      (compiler-ir-value-cons
+        (IrValueString "object-walked")
+        (compiler-ir-value-cons (IrValueF64 "6.25") IrValueNil))]
+    [packed : CompilerBackendObjectParts
+      (compiler-backend-object-instr
+        (compiler-backend-object-parts-empty)
+        "main"
+        "main"
+        (IrInstrPack 0 values ty)
+        plan
+        index)]
+    [worded : CompilerBackendObjectParts
+      (compiler-backend-object-instr
+        packed
+        "main"
+        "main"
+        (IrInstrWord 1 (IrValueFunction "word_target") 0 ty)
+        plan
+        index)]
+    [relocs : CompilerObjectRelocationList (struct-get worded relocations)]
+    (and
+      (compiler-object-relocation-list-contains?
+        relocs
+        (ObjectRelocRipAddress)
+        (compiler-backend-string-fat-label "object-walked"))
+      (compiler-object-relocation-list-contains?
+        relocs
+        (ObjectRelocRipValue)
+        (compiler-backend-f64-label "6.25"))
+      (compiler-object-relocation-list-contains?
+        relocs
+        (ObjectRelocRipAddress)
+        (compiler-backend-closure-descriptor-label "word_target")))))
+
+(define (compiler-backend-ir-walker-object-refs-ok?) : bool
+  (match (compiler-backend-runtime-plan
+    (IrProgram IrGlobalNil IrFunctionNil IrExternNil))
+    [(OkBackendRuntimePlan plan)
+      (compiler-backend-ir-walker-object-refs-with-plan plan)]
+    [(ErrBackendRuntimePlan _) false]))
+
+(define (compiler-backend-ir-walkers-fail-closed-ok?) : bool
+  (and
+    (compiler-backend-ir-walker-call-use-counts-ok?)
+    (compiler-backend-ir-walker-collections-ok?)
+    (compiler-backend-ir-walker-object-refs-ok?)))
+
 (define (compiler-backend-peephole-asm-ok?) : bool
   (let
     [assignments : CompilerRegAssignmentList
@@ -6370,7 +6498,8 @@
     (backend-and8
       (and
         (compiler-backend-instr-diagnostics-ok?)
-        (compiler-backend-register-group-fail-closed-ok?))
+        (compiler-backend-register-group-fail-closed-ok?)
+        (compiler-backend-ir-walkers-fail-closed-ok?))
       (compiler-backend-optimizer-rewrite-diagnostic-ok?)
       (and
         (compiler-backend-runtime-helper-asm-ok?)

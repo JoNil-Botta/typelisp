@@ -10958,6 +10958,20 @@
       (compiler-backend-count-call-args-uses counts args)]
     [(IrInstrCall _ _ args _)
       (compiler-backend-count-call-args-uses counts args)]
+    [(IrInstrCallIndirect _ callee args _)
+      (begin
+        (compiler-backend-count-value-use counts callee)
+        (compiler-backend-count-call-args-uses counts args))]
+    [(IrInstrCallIndirectC _ callee args _)
+      (begin
+        (compiler-backend-count-value-use counts callee)
+        (compiler-backend-count-call-args-uses counts args))]
+    [(IrInstrTailCall _ args _)
+      (compiler-backend-count-call-args-uses counts args)]
+    [(IrInstrTailCallIndirect callee args _)
+      (begin
+        (compiler-backend-count-value-use counts callee)
+        (compiler-backend-count-call-args-uses counts args))]
     [(IrInstrStore _ value _) (compiler-backend-count-value-use counts value)]
     [(IrInstrBranch cond _ _) (compiler-backend-count-value-use counts cond)]
     [(IrInstrReturn maybe)
@@ -10973,7 +10987,13 @@
     [(IrInstrPack _ words _)
       (compiler-backend-count-value-list-uses counts words)]
     [(IrInstrWord _ src _ _) (compiler-backend-count-value-use counts src)]
-    [_ unit]))
+    ;; Operand-free IR instructions intentionally add no value uses.
+    [(IrInstrAlloc _ _) unit]
+    [(IrInstrLaneId _ _ _) unit]
+    [(IrInstrEntryArgc _) unit]
+    [(IrInstrEntryArgv _) unit]
+    [(IrInstrEntryEnvp _) unit]
+    [(IrInstrJump _) unit]))
 
 (define (compiler-backend-count-instr-seq-uses
   [counts : (Array i64)]
@@ -14883,11 +14903,22 @@
       (compiler-backend-collect-value-collections collections index)]
     [(IrInstrSyscall _ args)
       (compiler-backend-collect-call-args-collections collections args)]
+    [(IrInstrPack _ words _)
+      (compiler-backend-collect-value-list-collections collections words)]
+    [(IrInstrWord _ src _ _)
+      (compiler-backend-collect-value-collections collections src)]
     [(IrInstrTailCallIndirect func args _)
       (compiler-backend-collect-call-args-collections
         (compiler-backend-collect-value-collections collections func)
         args)]
-    [_ collections]))
+    ;; Operand-free instructions and raw address-of have no constant payloads.
+    [(IrInstrAlloc _ _) collections]
+    [(IrInstrAddrOf _ _) collections]
+    [(IrInstrLaneId _ _ _) collections]
+    [(IrInstrEntryArgc _) collections]
+    [(IrInstrEntryArgv _) collections]
+    [(IrInstrEntryEnvp _) collections]
+    [(IrInstrJump _) collections]))
 
 (define (compiler-backend-collect-instr-seq-collections
   [collections : CompilerBackendProgramCollections]
@@ -19352,6 +19383,18 @@ tl_memcpy:
     [(IrNoValue) parts]
     [(IrSomeValue inner) (compiler-backend-object-value-ref parts site inner)]))
 
+(define (compiler-backend-object-value-list-ref
+  [parts : CompilerBackendObjectParts]
+  [site : String]
+  [values : CompilerIrValueList]) : CompilerBackendObjectParts
+  (match values
+    [(IrValueNil) parts]
+    [(IrValueCons value rest)
+      (compiler-backend-object-value-list-ref
+        (compiler-backend-object-value-ref parts site value)
+        site
+        (box-get rest))]))
+
 (define (compiler-backend-object-phi-inputs
   [parts : CompilerBackendObjectParts]
   [site : String]
@@ -19557,13 +19600,23 @@ tl_memcpy:
       (compiler-backend-object-value-ref parts function index)]
     [(IrInstrSyscall _ args)
       (compiler-backend-object-call-args parts function args 0)]
+    [(IrInstrPack _ words _)
+      (compiler-backend-object-value-list-ref parts function words)]
+    [(IrInstrWord _ src _ _)
+      (compiler-backend-object-value-ref parts function src)]
     [(IrInstrTailCallIndirect callee args _)
       (compiler-backend-object-call-args
         (compiler-backend-object-value-ref parts function callee)
         function
         args
         0)]
-    [_ parts]))
+    ;; Operand-free instructions and raw address-of emit no object references.
+    [(IrInstrAlloc _ _) parts]
+    [(IrInstrAddrOf _ _) parts]
+    [(IrInstrLaneId _ _ _) parts]
+    [(IrInstrEntryArgc _) parts]
+    [(IrInstrEntryArgv _) parts]
+    [(IrInstrEntryEnvp _) parts]))
 
 (define (compiler-backend-object-instr-seq
   [parts : CompilerBackendObjectParts]

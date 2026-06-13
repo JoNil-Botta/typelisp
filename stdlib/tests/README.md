@@ -97,6 +97,10 @@ Coverage notes:
   identities, borrowed string-key contains/remove wrappers, duplicate insert,
   collision chains, tombstone reuse, growth/rehash, missing remove, and
   deterministic bucket-order iteration.
+- `sort_api.tl` covers `stdlib/sort.tl` stable in-place insertion sort helpers
+  for `I64Vec` and `StringVec`, including empty, single, already sorted,
+  reverse sorted, duplicate, negative-number, prefix, and lexicographic string
+  cases.
 - `msvc_api.tl` covers pure MSVC discovery helpers with fake temp-directory
   toolset and SDK trees, including newest-usable candidate selection through
   the vector-backed scanners.

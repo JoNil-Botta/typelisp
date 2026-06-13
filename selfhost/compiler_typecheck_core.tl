@@ -2612,56 +2612,91 @@
         (tc-stdlib-comptime-version-arg? args))]
     [(AstNoGeneratedDeclMeta) false]))
 
-(define (tc-program-raw-decl-at-index-list
+(define (tc-stdlib-comptime-well-known-type? [type-name : String]) : bool
+  (or
+    (string-eq type-name "Expr")
+    (or
+      (string-eq type-name "ExprList")
+      (or
+        (string-eq type-name "ExprClause")
+        (or
+          (string-eq type-name "ExprClauseList")
+          (or
+            (string-eq type-name "TypeInfo")
+            (or
+              (string-eq type-name "TypeInfoList")
+              (or
+                (string-eq type-name "TypeField")
+                (or
+                  (string-eq type-name "TypeFieldList")
+                  (or
+                    (string-eq type-name "TypeVariantPayload")
+                    (or
+                      (string-eq type-name "TypeVariantPayloadList")
+                      (or
+                        (string-eq type-name "TypeVariant")
+                        (or
+                          (string-eq type-name "TypeVariantList")
+                          (or
+                            (string-eq type-name "TypeParam")
+                            (string-eq type-name "TypeParamList")))))))))))))))
+
+(define (tc-stdlib-comptime-raw-type-name [decl : AstDecl]) : TcMaybeString
+  (match decl
+    [(AstDeclComptimeDecl _ template-box)
+      (tc-stdlib-comptime-raw-type-name (box-get template-box))]
+    [(AstDeclUnsafe inner-box)
+      (tc-stdlib-comptime-raw-type-name (box-get inner-box))]
+    [(AstDeclDefEnum name _ _) (TcSomeString (intern-str name))]
+    [(AstDeclDefEnumLifetimes name _ _ _) (TcSomeString (intern-str name))]
+    [(AstDeclDefStruct name _ _ _) (TcSomeString (intern-str name))]
+    [(AstDeclDefStructLifetimes name _ _ _ _) (TcSomeString (intern-str name))]
+    [_ (TcNoString)]))
+
+(define (tc-stdlib-comptime-raw-meta-ok? [type-name : String] [decl : AstDecl]) : bool
+  (match decl
+    [(AstDeclComptimeDecl meta _)
+      (tc-stdlib-comptime-generated-meta-ok? type-name meta)]
+    [(AstDeclUnsafe inner-box)
+      (tc-stdlib-comptime-raw-meta-ok? type-name (box-get inner-box))]
+    [_ false]))
+
+(define (tc-stdlib-check-comptime-metadata-decl
+  [module : String]
+  [decl : AstDecl]) : ResultTcUnit
+  (if (not (string-eq module (tc-stdlib-comptime-module-name)))
+    OkTcUnit
+    (match (tc-stdlib-comptime-raw-type-name decl)
+      [(TcNoString) OkTcUnit]
+      [(TcSomeString type-name)
+        (if (not (tc-stdlib-comptime-well-known-type? type-name))
+          OkTcUnit
+          (if (tc-stdlib-comptime-raw-meta-ok? type-name decl)
+            OkTcUnit
+            (tc-stdlib-well-known-mismatch
+              type-name
+              (tc-stdlib-comptime-generated-metadata-message))))])))
+
+(define (tc-stdlib-check-comptime-metadata-list
   [decls : AstDeclList]
-  [target : i64]
-  [index : i64]) : ResultAstDecl
+  [module : String]) : ResultTcUnit
   (match decls
-    [(AstDeclNil) (ErrAstDecl "symbols: declaration index not found")]
+    [(AstDeclNil) OkTcUnit]
     [(AstDeclCons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
-          [(AstDeclImport _)
-            (tc-program-raw-decl-at-index-list rest target index)]
-          [(AstDeclIncludeStr _ _)
-            (tc-program-raw-decl-at-index-list rest target index)]
-          [(AstDeclExport _)
-            (tc-program-raw-decl-at-index-list rest target index)]
-          [(AstDeclModule _)
-            (tc-program-raw-decl-at-index-list rest target index)]
-          [(AstDeclTest _ _ _)
-            (tc-program-raw-decl-at-index-list rest target index)]
+          [(AstDeclModule module-id)
+            (tc-stdlib-check-comptime-metadata-list rest (intern-str module-id))]
           [_
-            (if (= target index)
-              (OkAstDecl decl)
-              (tc-program-raw-decl-at-index-list rest target (+ index 1)))]))]))
+            (match (tc-stdlib-check-comptime-metadata-decl module decl)
+              [(OkTcUnit) (tc-stdlib-check-comptime-metadata-list rest module)]
+              [(ErrTcUnit message) (ErrTcUnit message)])]))]))
 
-(define (tc-program-raw-decl-at-index [program : AstProgram] [target : i64]) : ResultAstDecl
-  (match program
+(define (tc-stdlib-check-comptime-metadata [ctx : TcContext]) : ResultTcUnit
+  (match (tc-context-program ctx)
     [(AstProgram decls-box)
-      (tc-program-raw-decl-at-index-list (box-get decls-box) target 0)]))
-
-(define (tc-stdlib-check-comptime-metadata
-  [ctx : TcContext]
-  [type-name : String]
-  [handle : i64]) : ResultTcUnit
-  (match (tc-program-raw-decl-at-index
-    (tc-context-program ctx)
-    (compiler-symbol-handle-index handle))
-    [(OkAstDecl decl)
-      (match decl
-        [(AstDeclComptimeDecl meta _)
-          (if (tc-stdlib-comptime-generated-meta-ok? type-name meta)
-            OkTcUnit
-            (tc-stdlib-well-known-mismatch
-              type-name
-              (tc-stdlib-comptime-generated-metadata-message)))]
-        [_
-          (tc-stdlib-well-known-mismatch
-            type-name
-            (tc-stdlib-comptime-generated-metadata-message))])]
-    [(ErrAstDecl message) (tc-stdlib-well-known-mismatch type-name message)]))
+      (tc-stdlib-check-comptime-metadata-list (box-get decls-box) "")]))
 
 (define (tc-stdlib-type-match?
   [ctx : TcContext]
@@ -2807,27 +2842,20 @@
     (tc-stdlib-comptime-module-name)
     type-name)
     [(SomeI64 handle)
-      (match (tc-stdlib-check-comptime-metadata ctx type-name handle)
-        [(OkTcUnit)
-          (match (compiler-symbols-decl-at-index
-            (tc-context-symbols ctx)
-            (compiler-symbol-handle-index handle))
-            [(OkAstDecl decl)
-              (match decl
-                [(AstDeclDefStruct _ _ _ fields)
-                  (tc-stdlib-check-field-specs
-                    (tc-context-with-module
-                      ctx
-                      (tc-stdlib-comptime-module-name))
-                    type-name
-                    fields
-                    specs
-                    0)]
-                [_
-                  (tc-stdlib-well-known-mismatch type-name "expected defstruct")])]
-            [(ErrAstDecl message)
-              (tc-stdlib-well-known-mismatch type-name message)])]
-        [(ErrTcUnit message) (ErrTcUnit message)])]
+      (match (compiler-symbols-decl-at-index
+        (tc-context-symbols ctx)
+        (compiler-symbol-handle-index handle))
+        [(OkAstDecl decl)
+          (match decl
+            [(AstDeclDefStruct _ _ _ fields)
+              (tc-stdlib-check-field-specs
+                (tc-context-with-module ctx (tc-stdlib-comptime-module-name))
+                type-name
+                fields
+                specs
+                0)]
+            [_ (tc-stdlib-well-known-mismatch type-name "expected defstruct")])]
+        [(ErrAstDecl message) (tc-stdlib-well-known-mismatch type-name message)])]
     [(NoneI64) (tc-stdlib-well-known-mismatch type-name "missing declaration")]))
 
 (define (tc-stdlib-check-enum
@@ -2839,26 +2867,20 @@
     (tc-stdlib-comptime-module-name)
     type-name)
     [(SomeI64 handle)
-      (match (tc-stdlib-check-comptime-metadata ctx type-name handle)
-        [(OkTcUnit)
-          (match (compiler-symbols-decl-at-index
-            (tc-context-symbols ctx)
-            (compiler-symbol-handle-index handle))
-            [(OkAstDecl decl)
-              (match decl
-                [(AstDeclDefEnum _ _ variants)
-                  (tc-stdlib-check-variant-specs
-                    (tc-context-with-module
-                      ctx
-                      (tc-stdlib-comptime-module-name))
-                    type-name
-                    variants
-                    specs
-                    0)]
-                [_ (tc-stdlib-well-known-mismatch type-name "expected defenum")])]
-            [(ErrAstDecl message)
-              (tc-stdlib-well-known-mismatch type-name message)])]
-        [(ErrTcUnit message) (ErrTcUnit message)])]
+      (match (compiler-symbols-decl-at-index
+        (tc-context-symbols ctx)
+        (compiler-symbol-handle-index handle))
+        [(OkAstDecl decl)
+          (match decl
+            [(AstDeclDefEnum _ _ variants)
+              (tc-stdlib-check-variant-specs
+                (tc-context-with-module ctx (tc-stdlib-comptime-module-name))
+                type-name
+                variants
+                specs
+                0)]
+            [_ (tc-stdlib-well-known-mismatch type-name "expected defenum")])]
+        [(ErrAstDecl message) (tc-stdlib-well-known-mismatch type-name message)])]
     [(NoneI64) (tc-stdlib-well-known-mismatch type-name "missing declaration")]))
 
 (define (tc-stdlib-comptime-present? [ctx : TcContext]) : bool
@@ -2959,104 +2981,108 @@
 (define (tc-stdlib-comptime-surface-ok [ctx : TcContext]) : ResultTcUnit
   (if (not (tc-stdlib-comptime-present? ctx))
     OkTcUnit
-    (match (tc-stdlib-check-enum ctx "Expr" (tc-stdlib-expr-specs))
+    (match (tc-stdlib-check-comptime-metadata ctx)
       [(OkTcUnit)
-        (match (tc-stdlib-check-struct
-          ctx
-          "ExprList"
-          (tc-stdlib-sequence-fields "Expr"))
+        (match (tc-stdlib-check-enum ctx "Expr" (tc-stdlib-expr-specs))
           [(OkTcUnit)
             (match (tc-stdlib-check-struct
               ctx
-              "ExprClause"
-              (tc-stdlib-field-spec-cons
-                "first"
-                (tc-stdlib-name-type "Expr")
-                (tc-stdlib-field-spec-cons
-                  "second"
-                  (tc-stdlib-name-type "Expr")
-                  (TcStdlibFieldSpecNil))))
+              "ExprList"
+              (tc-stdlib-sequence-fields "Expr"))
               [(OkTcUnit)
                 (match (tc-stdlib-check-struct
                   ctx
-                  "ExprClauseList"
-                  (tc-stdlib-sequence-fields "ExprClause"))
+                  "ExprClause"
+                  (tc-stdlib-field-spec-cons
+                    "first"
+                    (tc-stdlib-name-type "Expr")
+                    (tc-stdlib-field-spec-cons
+                      "second"
+                      (tc-stdlib-name-type "Expr")
+                      (TcStdlibFieldSpecNil))))
                   [(OkTcUnit)
                     (match (tc-stdlib-check-struct
                       ctx
-                      "TypeInfoList"
-                      (tc-stdlib-sequence-fields "TypeInfo"))
+                      "ExprClauseList"
+                      (tc-stdlib-sequence-fields "ExprClause"))
                       [(OkTcUnit)
                         (match (tc-stdlib-check-struct
                           ctx
-                          "TypeField"
-                          (tc-stdlib-field-spec-cons
-                            "name"
-                            (AstTyString)
-                            (tc-stdlib-field-spec-cons
-                              "ty"
-                              (tc-stdlib-name-type "TypeInfo")
-                              (TcStdlibFieldSpecNil))))
+                          "TypeInfoList"
+                          (tc-stdlib-sequence-fields "TypeInfo"))
                           [(OkTcUnit)
                             (match (tc-stdlib-check-struct
                               ctx
-                              "TypeFieldList"
-                              (tc-stdlib-sequence-fields "TypeField"))
+                              "TypeField"
+                              (tc-stdlib-field-spec-cons
+                                "name"
+                                (AstTyString)
+                                (tc-stdlib-field-spec-cons
+                                  "ty"
+                                  (tc-stdlib-name-type "TypeInfo")
+                                  (TcStdlibFieldSpecNil))))
                               [(OkTcUnit)
                                 (match (tc-stdlib-check-struct
                                   ctx
-                                  "TypeVariantPayload"
-                                  (tc-stdlib-field-spec-cons
-                                    "ty"
-                                    (tc-stdlib-name-type "TypeInfo")
-                                    (TcStdlibFieldSpecNil)))
+                                  "TypeFieldList"
+                                  (tc-stdlib-sequence-fields "TypeField"))
                                   [(OkTcUnit)
                                     (match (tc-stdlib-check-struct
                                       ctx
-                                      "TypeVariantPayloadList"
-                                      (tc-stdlib-sequence-fields
-                                        "TypeVariantPayload"))
+                                      "TypeVariantPayload"
+                                      (tc-stdlib-field-spec-cons
+                                        "ty"
+                                        (tc-stdlib-name-type "TypeInfo")
+                                        (TcStdlibFieldSpecNil)))
                                       [(OkTcUnit)
                                         (match (tc-stdlib-check-struct
                                           ctx
-                                          "TypeVariant"
-                                          (tc-stdlib-field-spec-cons
-                                            "name"
-                                            (AstTyString)
-                                            (tc-stdlib-field-spec-cons
-                                              "payloads"
-                                              (tc-stdlib-name-type
-                                                "TypeVariantPayloadList")
-                                              (TcStdlibFieldSpecNil))))
+                                          "TypeVariantPayloadList"
+                                          (tc-stdlib-sequence-fields
+                                            "TypeVariantPayload"))
                                           [(OkTcUnit)
                                             (match (tc-stdlib-check-struct
                                               ctx
-                                              "TypeVariantList"
-                                              (tc-stdlib-sequence-fields
-                                                "TypeVariant"))
+                                              "TypeVariant"
+                                              (tc-stdlib-field-spec-cons
+                                                "name"
+                                                (AstTyString)
+                                                (tc-stdlib-field-spec-cons
+                                                  "payloads"
+                                                  (tc-stdlib-name-type
+                                                    "TypeVariantPayloadList")
+                                                  (TcStdlibFieldSpecNil))))
                                               [(OkTcUnit)
                                                 (match (tc-stdlib-check-struct
                                                   ctx
-                                                  "TypeParam"
-                                                  (tc-stdlib-field-spec-cons
-                                                    "name"
-                                                    (AstTyString)
-                                                    (tc-stdlib-field-spec-cons
-                                                      "ty"
-                                                      (tc-stdlib-name-type
-                                                        "TypeInfo")
-                                                      (TcStdlibFieldSpecNil))))
+                                                  "TypeVariantList"
+                                                  (tc-stdlib-sequence-fields
+                                                    "TypeVariant"))
                                                   [(OkTcUnit)
                                                     (match (tc-stdlib-check-struct
                                                       ctx
-                                                      "TypeParamList"
-                                                      (tc-stdlib-sequence-fields
-                                                        "TypeParam"))
+                                                      "TypeParam"
+                                                      (tc-stdlib-field-spec-cons
+                                                        "name"
+                                                        (AstTyString)
+                                                        (tc-stdlib-field-spec-cons
+                                                          "ty"
+                                                          (tc-stdlib-name-type
+                                                            "TypeInfo")
+                                                          (TcStdlibFieldSpecNil))))
                                                       [(OkTcUnit)
-                                                        (tc-stdlib-check-enum
+                                                        (match (tc-stdlib-check-struct
                                                           ctx
-                                                          "TypeInfo"
-                                                          (tc-stdlib-type-info-specs))]
+                                                          "TypeParamList"
+                                                          (tc-stdlib-sequence-fields
+                                                            "TypeParam"))
+                                                          [(OkTcUnit)
+                                                            (tc-stdlib-check-enum
+                                                              ctx
+                                                              "TypeInfo"
+                                                              (tc-stdlib-type-info-specs))]
+                                                          [(ErrTcUnit message)
+                                                            (ErrTcUnit message)])]
                                                       [(ErrTcUnit message)
                                                         (ErrTcUnit message)])]
                                                   [(ErrTcUnit message)

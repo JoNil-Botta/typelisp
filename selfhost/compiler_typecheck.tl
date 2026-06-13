@@ -6131,6 +6131,16 @@
 (define (main) : i64
   (if (b.and2 true true) 42 0))")
 
+(define (compiler-typecheck-macro-forward-qualified-export-source) : String
+  "(module main)
+(import \"bool.tl\" module bool :as b)
+(define (main) : i64
+  (if (b.and-later true true) 42 0))
+(module bool)
+(export (macro and-later))
+(defmacro (and-later [lhs : bool] [rhs : bool]) : bool
+  `(if ,lhs ,rhs false))")
+
 (define (compiler-typecheck-macro-private-source) : String
   "(module hidden)
 (defmacro (private-and [lhs : bool] [rhs : bool]) : bool
@@ -6413,6 +6423,8 @@
 (define (compiler-typecheck-macro-export-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-macro-export-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-macro-forward-qualified-export-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-macro-private-source)
       "typecheck: private macro hidden/private-and")

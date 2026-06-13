@@ -1151,7 +1151,7 @@
                 macro-paths
                 macro-modules
                 prelude-seen)
-              (match (compiler-load-package-file-with-paths-and-roots-cfg
+              (match (compiler-load-package-entry-file-with-paths-and-roots-cfg
                 input-path
                 prelude-seen
                 stdlib-roots
@@ -1193,7 +1193,7 @@
             prelude-paths
             prelude-modules
             prelude-seen)
-          (match (compiler-load-package-file-with-paths-and-roots-cfg
+          (match (compiler-load-package-entry-file-with-paths-and-roots-cfg
             input-path
             prelude-seen
             stdlib-roots

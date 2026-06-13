@@ -12480,16 +12480,7 @@
           [(OkLowerExpr lowered)
             (match lowered
               [(LowerExpr ptr-state ptr-value _)
-                (match (lower-state-alloc-var ptr-state)
-                  [(LowerAlloc allocated var-id)
-                    (OkLowerExpr
-                      (LowerExpr
-                        (lower-state-emit-at-expr
-                          allocated
-                          (IrInstrLoad var-id ptr-value expr-ty)
-                          origin)
-                        (IrValueVar var-id)
-                        expr-ty))])])]
+                (lower-array-elem-ref-result ctx ptr-state ptr-value expr-ty)])]
           [(ErrLowerExpr diag) (ErrLowerExpr diag)]))]
     [(AstExprPtrWrite ptr-box value-box)
       (let
@@ -12544,35 +12535,25 @@
                         (match (tc-type-strip-region
                           (tc-resolve-type ctx ptr-ty))
                           [(AstTyPtr elem-ty)
-                            (match (lower-state-alloc-var offset-state)
-                              [(LowerAlloc allocated var-id)
+                            (match (lower-emit-elem-addr-gep
+                              ctx
+                              offset-state
+                              ptr-value
+                              offset-value
+                              (ty-node-get elem-ty))
+                              [(LowerExpr gep-state gep-value _)
                                 (OkLowerExpr
-                                  (LowerExpr
-                                    (lower-state-emit-at-expr
-                                      allocated
-                                      (IrInstrGep
-                                        var-id
-                                        ptr-value
-                                        offset-value
-                                        (ty-node-get elem-ty))
-                                      origin)
-                                    (IrValueVar var-id)
-                                    expr-ty))])]
+                                  (LowerExpr gep-state gep-value expr-ty))])]
                           [(AstTyMutPtr elem-ty)
-                            (match (lower-state-alloc-var offset-state)
-                              [(LowerAlloc allocated var-id)
+                            (match (lower-emit-elem-addr-gep
+                              ctx
+                              offset-state
+                              ptr-value
+                              offset-value
+                              (ty-node-get elem-ty))
+                              [(LowerExpr gep-state gep-value _)
                                 (OkLowerExpr
-                                  (LowerExpr
-                                    (lower-state-emit-at-expr
-                                      allocated
-                                      (IrInstrGep
-                                        var-id
-                                        ptr-value
-                                        offset-value
-                                        (ty-node-get elem-ty))
-                                      origin)
-                                    (IrValueVar var-id)
-                                    expr-ty))])]
+                                  (LowerExpr gep-state gep-value expr-ty))])]
                           [_
                             (ErrLowerExpr
                               (lower-diagnostic-at-expr

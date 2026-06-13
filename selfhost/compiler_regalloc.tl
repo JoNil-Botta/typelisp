@@ -2860,6 +2860,815 @@
       CompilerRegIntervalNil
       (compiler-reg-var-types-list type-info))))
 
+;; --- stack-slot compaction (#2598 slice 1) ---------------------------------
+;; One frame slot per raw IR variable wastes most of the frame once register
+;; allocation has moved many values into registers. This slice does not share
+;; live ranges yet; it renumbers stack-resident scalar variables into a dense
+;; frame-slot prefix after regalloc, preserving parameter ids for the prologue
+;; spill contract. Variables that already have a register home, group variables
+;; (their two-word formula slots stay untouched), and plans with no intervals
+;; (the stack-only opt0/opt1 path skips liveness) pass through unchanged. The
+;; result's slot count replaces the raw var count in the backend's frame layout.
+(defenum CompilerRegColoring
+  (CompilerRegColoringNone)
+  (CompilerRegColoringRemap (Array i64) i64))
+
+;; Per-var slot-colorability flags: only values the register allocator could
+;; legally home in one 64-bit register (scalars and 8-byte handles) are known
+;; to occupy exactly one frame slot. Anything else (vectors, masks, inline
+;; groups, unknown) keeps its formula slot and is pinned conservatively.
+(define (compiler-reg-color-flags
+  [types : CompilerRegVarTypeList]
+  [flags : (Array bool)]) : unit
+  (match types
+    [(CompilerRegVarTypeNil) unit]
+    [(CompilerRegVarTypeCons item rest)
+      (match item
+        [(CompilerRegVarType var ty)
+          (begin
+            (if (< var (array-length flags))
+              (array-set!
+                flags
+                var
+                (or
+                  (compiler-reg-scalar-type? ty)
+                  (compiler-reg-handle-type? ty)))
+              unit)
+            (compiler-reg-color-flags (box-get rest) flags))])]))
+
+;; Sorted insert by (start, var): deterministic processing order.
+;; In-place heapsort of an interval array by (start, var) -- deterministic
+;; total order, O(n log n), no allocation beyond the array itself (the
+;; insertion-sort cons spine it replaces allocated O(n^2) cells, which blew
+;; the scratch arena on ~7000-var functions).
+(define (compiler-reg-color-interval-before?
+  [a : CompilerRegInterval]
+  [b : CompilerRegInterval]) : bool
+  (match a
+    [(CompilerRegInterval a-var a-start _)
+      (match b
+        [(CompilerRegInterval b-var b-start _)
+          (or (< a-start b-start) (and (= a-start b-start) (< a-var b-var)))])]))
+
+(define (compiler-reg-color-sift-down
+  [items : (Array CompilerRegInterval)]
+  [root : i64]
+  [count : i64]) : unit
+  (let
+    [node : i64 root]
+    [done : bool false]
+    (while (not done)
+      (let
+        [left : i64 (+ (* node 2) 1)]
+        [right : i64 (+ (* node 2) 2)]
+        [largest : i64
+          (let
+            [pick : i64 node]
+            (begin
+              (if (and
+                (< left count)
+                (compiler-reg-color-interval-before?
+                  (array-ref items pick)
+                  (array-ref items left)))
+                (set! pick left)
+                unit)
+              (if (and
+                (< right count)
+                (compiler-reg-color-interval-before?
+                  (array-ref items pick)
+                  (array-ref items right)))
+                (set! pick right)
+                unit)
+              pick))]
+        (if (= largest node)
+          (set! done true)
+          (let
+            [tmp : CompilerRegInterval (array-ref items node)]
+            (begin
+              (array-set! items node (array-ref items largest))
+              (array-set! items largest tmp)
+              (set! node largest))))))))
+
+(define (compiler-reg-color-heapsort
+  [items : (Array CompilerRegInterval)]
+  [count : i64]) : unit
+  (begin
+    (let
+      [i : i64 (- (/ count 2) 1)]
+      (while (>= i 0)
+        (begin
+          (compiler-reg-color-sift-down items i count)
+          (set! i (- i 1)))))
+    (let
+      [last : i64 (- count 1)]
+      (while (> last 0)
+        (let
+          [tmp : CompilerRegInterval (array-ref items 0)]
+          (begin
+            (array-set! items 0 (array-ref items last))
+            (array-set! items last tmp)
+            (compiler-reg-color-sift-down items 0 last)
+            (set! last (- last 1))))))))
+
+(define (compiler-reg-color-interval-count
+  [intervals : CompilerRegIntervalList]) : i64
+  (match intervals
+    [(CompilerRegIntervalNil) 0]
+    [(CompilerRegIntervalCons _ rest)
+      (+ 1 (compiler-reg-color-interval-count (box-get rest)))]))
+
+(define (compiler-reg-color-interval-fill
+  [intervals : CompilerRegIntervalList]
+  [items : (Array CompilerRegInterval)]
+  [index : i64]) : unit
+  (match intervals
+    [(CompilerRegIntervalNil) unit]
+    [(CompilerRegIntervalCons head rest)
+      (begin
+        (array-set! items index head)
+        (compiler-reg-color-interval-fill (box-get rest) items (+ index 1)))]))
+
+(define (compiler-reg-color-sorted-array [intervals : CompilerRegIntervalList]) : (Array
+    CompilerRegInterval)
+  (let
+    [count : i64 (compiler-reg-color-interval-count intervals)]
+    [items : (Array CompilerRegInterval) (make-array CompilerRegInterval count)]
+    (begin
+      (compiler-reg-color-interval-fill intervals items 0)
+      (compiler-reg-color-heapsort items count)
+      items)))
+
+;; Lowest free slot whose previous occupant's interval ended strictly before
+;; `start`. slot-ends[i] holds the end position of slot i's current occupant;
+;; reserved slots carry a sentinel end that never expires. STRICT `<`: phi
+;; parallel copies at a block edge read inputs and write destinations at the
+;; same interval position, so same-position reuse would let one phi's
+;; destination clobber another phi's not-yet-read input through the slot.
+;; First slot id at or after `from` that is not identity-pinned to a
+;; parameter (pins mark slot-ends with i64-max). Fresh slots fill the gaps a
+;; sparse parameter id leaves behind, so slot ids never run past the pinned
+;; band and the overall renumbering stays inside [0, vars).
+(define (compiler-reg-color-next-free-slot
+  [slot-ends : (Array i64)]
+  [from : i64]) : i64
+  (if (>= from (array-length slot-ends))
+    from
+    (if (= (array-ref slot-ends from) 9223372036854775807)
+      (compiler-reg-color-next-free-slot slot-ends (+ from 1))
+      from)))
+
+(define (compiler-reg-color-walk
+  [items : (Array CompilerRegInterval)]
+  [count : i64]
+  [index : i64]
+  [assignments : CompilerRegAssignmentList]
+  [pinned : CompilerLiveI64Set]
+  [ineligible : CompilerLiveI64Set]
+  [colorable : (Array bool)]
+  [slot-ends : (Array i64)]
+  [used : i64]
+  [remap : (Array i64)]) : i64
+  (if (>= index count)
+    used
+    (match (array-ref items index)
+      [(CompilerRegInterval var start end)
+        (if (or
+          ;; Already renumbered: parameter identity pins (the prologue's
+          ;; param spill targets the ORIGINAL id's formula slot, so a pinned
+          ;; id must never be reassigned mid-walk) and split intervals (the
+          ;; first interval wins; revisiting would leak the first slot).
+          (>= (array-ref remap var) 0)
+          (not (array-ref colorable var))
+          (compiler-live-set-contains? pinned var)
+          (compiler-live-set-contains? ineligible var)
+          ;; Spilled scalars are re-homed by the id remap (the stale
+          ;; assignment entry keyed by the old id is never queried);
+          ;; register-homed values keep their ids and homes.
+          (match (compiler-reg-assignment-lookup assignments var)
+            [(CompilerRegSomeLocation location)
+              (match location
+                [(CompilerRegSpill _) false]
+                [_ true])]
+            [(CompilerRegNoLocation) false]))
+          (compiler-reg-color-walk
+            items
+            count
+            (+ index 1)
+            assignments
+            pinned
+            ineligible
+            colorable
+            slot-ends
+            used
+            remap)
+          (let
+            ;; Slice 1 ships compaction only: every variable gets a fresh
+            ;; dense slot. Fresh slots skip param-pinned ids so sparse
+            ;; parameter ids leave no hole.
+            [slot : i64 (compiler-reg-color-next-free-slot slot-ends used)]
+            [next-used : i64 (+ slot 1)]
+            (begin
+              (array-set! slot-ends slot end)
+              (array-set! remap var slot)
+              (compiler-reg-color-walk
+                items
+                count
+                (+ index 1)
+                assignments
+                pinned
+                ineligible
+                colorable
+                slot-ends
+                next-used
+                remap))))])))
+
+;; Rebuild the var-type table on remapped keys. Type and assignment lookups
+;; early-exit on the ascending-id list invariant, so remapping keys in place
+;; would silently break every lookup past the first out-of-order entry
+;; (observed: register homes lost to formula-slot fallbacks and i64 compares
+;; emitted as cmpb once the width lookup missed). Scatter the entries into
+;; new-id-indexed arrays and rebuild the list in id order instead; the remap
+;; is a bijection into [0, vars), so every key lands in range.
+(define (compiler-reg-color-scatter-types
+  [remap : (Array i64)]
+  [present : (Array i64)]
+  [items : (Array AstType)]
+  [types : CompilerRegVarTypeList]) : unit
+  (match types
+    [(CompilerRegVarTypeNil) unit]
+    [(CompilerRegVarTypeCons item rest)
+      (begin
+        (match item
+          [(CompilerRegVarType var ty)
+            (compiler-reg-var-type-array-set!
+              present
+              items
+              (compiler-reg-remap-id remap var)
+              ty)])
+        (compiler-reg-color-scatter-types remap present items (box-get rest)))]))
+
+(define (compiler-reg-color-rebuild-types
+  [remap : (Array i64)]
+  [vars : i64]
+  [types : CompilerRegVarTypeList]) : CompilerRegVarTypeList
+  (let
+    [present : (Array i64) (make-array i64 vars)]
+    [items : (Array AstType) (make-array AstType vars)]
+    (begin
+      (compiler-reg-fill-i64-array present 0)
+      (compiler-reg-color-scatter-types remap present items types)
+      (compiler-reg-var-type-arrays-to-list
+        present
+        items
+        (- vars 1)
+        CompilerRegVarTypeNil))))
+
+;; Spilled scalars are dropped: the id remap re-homes them, so emission's
+;; formula-slot fallback covers the new id and a stale Spill offset keyed by
+;; the old id must never shadow it.
+(define (compiler-reg-color-scatter-assignments
+  [remap : (Array i64)]
+  [present : (Array i64)]
+  [items : (Array CompilerRegLocation)]
+  [assignments : CompilerRegAssignmentList]) : unit
+  (match assignments
+    [(CompilerRegAssignmentNil) unit]
+    [(CompilerRegAssignmentCons item rest)
+      (begin
+        (match item
+          [(CompilerRegAssignment var location)
+            (match location
+              [(CompilerRegSpill _) unit]
+              [_
+                (let
+                  [new-id : i64 (compiler-reg-remap-id remap var)]
+                  (if (and (>= new-id 0) (< new-id (array-length present)))
+                    (begin
+                      (array-set! present new-id 1)
+                      (array-set! items new-id location))
+                    unit))])])
+        (compiler-reg-color-scatter-assignments
+          remap
+          present
+          items
+          (box-get rest)))]))
+
+(define (compiler-reg-assignment-arrays-to-list
+  [present : (Array i64)]
+  [items : (Array CompilerRegLocation)]
+  [index : i64]
+  [acc : CompilerRegAssignmentList]) : CompilerRegAssignmentList
+  (if (< index 0)
+    acc
+    (compiler-reg-assignment-arrays-to-list
+      present
+      items
+      (- index 1)
+      (if (= (array-ref present index) 0)
+        acc
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment index (array-ref items index))
+          acc)))))
+
+(define (compiler-reg-color-rebuild-assignments
+  [remap : (Array i64)]
+  [vars : i64]
+  [assignments : CompilerRegAssignmentList]) : CompilerRegAssignmentList
+  (let
+    [present : (Array i64) (make-array i64 vars)]
+    [items : (Array CompilerRegLocation) (make-array CompilerRegLocation vars)]
+    (begin
+      (compiler-reg-fill-i64-array present 0)
+      (compiler-reg-color-scatter-assignments remap present items assignments)
+      (compiler-reg-assignment-arrays-to-list
+        present
+        items
+        (- vars 1)
+        CompilerRegAssignmentNil))))
+
+;; Identity-pin parameter variables: the prologue's param spill writes each
+;; parameter to the formula slot of its ORIGINAL id (the ABI hand-off
+;; contract), so params keep their ids and their slots are never shared.
+(define (compiler-reg-color-param-pins
+  [params : CompilerIrParamList]
+  [remap : (Array i64)]
+  [slot-ends : (Array i64)]
+  [highest : i64]) : i64
+  (match params
+    [(IrParamNil) highest]
+    [(IrParamCons param rest)
+      (match param
+        [(IrParam _ _ var-id)
+          (begin
+            (if (< var-id (array-length remap))
+              (begin
+                (array-set! remap var-id var-id)
+                (array-set! slot-ends var-id 9223372036854775807))
+              unit)
+            (compiler-reg-color-param-pins
+              (box-get rest)
+              remap
+              slot-ends
+              (compiler-reg-max highest (+ var-id 1))))])]))
+
+;; Total dense renumbering: colorable stack scalars are assigned fresh dense
+;; slots first, every other slot-resident variable gets a private dense slot
+;; above them, and register-homed variables move to ids that are not used by a
+;; stack slot. The assignment table is rebuilt on the new keys.
+(define (compiler-reg-color-stack-slots
+  [plan : CompilerRegPlan]
+  [group-vars : CompilerLiveI64Set]
+  [params : CompilerIrParamList]
+  [vars : i64]) : CompilerRegColoring
+  (let
+    [intervals : CompilerRegIntervalList (compiler-reg-plan-intervals plan)]
+    (match intervals
+      [(CompilerRegIntervalNil) CompilerRegColoringNone]
+      [(CompilerRegIntervalCons _ _)
+        (let
+          [slots : i64 (+ vars 4)]
+          [slot-ends : (Array i64) (make-array i64 slots)]
+          [assignments : CompilerRegAssignmentList
+            (compiler-reg-plan-assignments plan)]
+          [ineligible : CompilerLiveI64Set (compiler-reg-plan-ineligible plan)]
+          [colorable : (Array bool) (make-array bool vars)]
+          [remap : (Array i64) (make-array i64 vars)]
+          [cleared : unit
+            (let
+              [i : i64 0]
+              (begin
+                (while (< i slots)
+                  (begin
+                    (array-set! slot-ends i (- 0 1))
+                    (set! i (+ i 1))))
+                (set! i 0)
+                (while (< i vars)
+                  (begin
+                    (array-set! colorable i false)
+                    (array-set! remap i (- 0 1))
+                    (set! i (+ i 1))))))]
+          [flagged : unit
+            (compiler-reg-color-flags (compiler-reg-plan-types plan) colorable)]
+          [param-floor : i64
+            (compiler-reg-color-param-pins params remap slot-ends 0)]
+          [sorted : (Array CompilerRegInterval)
+            (compiler-reg-color-sorted-array intervals)]
+          [stack-prefix : i64
+            (compiler-reg-color-walk
+              sorted
+              (array-length sorted)
+              0
+              assignments
+              group-vars
+              ineligible
+              colorable
+              slot-ends
+              0
+              remap)]
+          [slot-count
+            : i64
+            ;; Private dense slots for everything slot-resident that the
+            ;; walk skipped, one slot each (stack-resident vectors are
+            ;; rejected at emission, so nothing slot-resident exceeds
+            ;; 8 bytes). Fresh ids skip param pins, so the slot region is
+            ;; the dense prefix [0, watermark) with params in place.
+            (let
+              [next : i64 stack-prefix]
+              [i : i64 0]
+              (begin
+                (while (< i vars)
+                  (begin
+                    (if (>= (array-ref remap i) 0)
+                      unit
+                      (match (compiler-reg-assignment-lookup assignments i)
+                        [(CompilerRegSomeLocation location)
+                          (match location
+                            [(CompilerRegSpill _)
+                              (let
+                                [slot : i64
+                                  (compiler-reg-color-next-free-slot
+                                    slot-ends
+                                    next)]
+                                (begin
+                                  (array-set! remap i slot)
+                                  (set! next (+ slot 1))))]
+                            [_ unit])]
+                        [(CompilerRegNoLocation)
+                          (let
+                            [slot : i64
+                              (compiler-reg-color-next-free-slot slot-ends next)]
+                            (begin
+                              (array-set! remap i slot)
+                              (set! next (+ slot 1))))]))
+                    (set! i (+ i 1))))
+                next))]
+          [renumbered
+            : unit
+            ;; Register-homed and unmentioned variables take the remaining FREE
+            ;; ids of [0, vars), in var order (deterministic). Filling gaps
+            ;; keeps the renumbering a bijection into [0, vars): an id at or
+            ;; past vars would be silently dropped by the raw-var-sized rebuild
+            ;; arrays and side tables. A register-homed variable never touches
+            ;; its formula slot, so a free id below the watermark is safe.
+            (let
+              [taken : (Array bool) (make-array bool vars)]
+              [i : i64 0]
+              [free : i64 0]
+              (begin
+                (while (< i vars)
+                  (begin
+                    (array-set! taken i false)
+                    (set! i (+ i 1))))
+                (set! i 0)
+                (while (< i vars)
+                  (begin
+                    (if (and
+                      (>= (array-ref remap i) 0)
+                      (< (array-ref remap i) vars))
+                      (array-set! taken (array-ref remap i) true)
+                      unit)
+                    (set! i (+ i 1))))
+                (set! i 0)
+                (while (< i vars)
+                  (begin
+                    (if (< (array-ref remap i) 0)
+                      (begin
+                        (while (if (< free vars)
+                          (array-ref taken free)
+                          false)
+                          (set! free (+ free 1)))
+                        (array-set! remap i free)
+                        (set! free (+ free 1)))
+                      unit)
+                    (set! i (+ i 1))))))]
+          (CompilerRegColoringRemap
+            remap
+            (compiler-reg-max slot-count param-floor)))])))
+
+;; --- var-id remap application (#2598) --------------------------------------
+;; The backend computes stack slots from variable ids at many emission sites,
+;; so compaction is applied by rewriting var ids in the IR: each stack-resident
+;; variable id becomes its dense slot id and the formula slot follows. Pinned
+;; params and register-homed variables keep or receive non-slot ids, so the
+;; rebuilt assignment table and formula slots stay valid.
+(define (compiler-reg-remap-id [remap : (Array i64)] [id : i64]) : i64
+  (if (and (>= id 0) (< id (array-length remap)))
+    (array-ref remap id)
+    id))
+
+(define (compiler-reg-remap-value
+  [remap : (Array i64)]
+  [value : CompilerIrValue]) : CompilerIrValue
+  (match value
+    [(IrValueVar id) (IrValueVar (compiler-reg-remap-id remap id))]
+    [_ value]))
+
+(define (compiler-reg-remap-value-list
+  [remap : (Array i64)]
+  [values : CompilerIrValueList]) : CompilerIrValueList
+  (match values
+    [(IrValueNil) IrValueNil]
+    [(IrValueCons head rest)
+      (IrValueCons
+        (compiler-reg-remap-value remap head)
+        (box (compiler-reg-remap-value-list remap (box-get rest))))]))
+
+(define (compiler-reg-remap-call-args
+  [remap : (Array i64)]
+  [args : CompilerIrCallArgs]) : CompilerIrCallArgs
+  (match args
+    [(IrCallArgsNil) IrCallArgsNil]
+    [(IrCallArgsOne a) (IrCallArgsOne (compiler-reg-remap-value remap a))]
+    [(IrCallArgsTwo a b)
+      (IrCallArgsTwo
+        (compiler-reg-remap-value remap a)
+        (compiler-reg-remap-value remap b))]
+    [(IrCallArgsArray items)
+      (let
+        [count : i64 (array-length items)]
+        [out : (Array CompilerIrValue) (make-array CompilerIrValue count)]
+        [i : i64 0]
+        (begin
+          (while (< i count)
+            (begin
+              (array-set!
+                out
+                i
+                (compiler-reg-remap-value remap (array-ref items i)))
+              (set! i (+ i 1))))
+          (IrCallArgsArray out)))]))
+
+(define (compiler-reg-remap-phi-inputs
+  [remap : (Array i64)]
+  [inputs : CompilerIrPhiInputList]) : CompilerIrPhiInputList
+  (match inputs
+    [(IrPhiInputNil) IrPhiInputNil]
+    [(IrPhiInputCons value label rest)
+      (IrPhiInputCons
+        (compiler-reg-remap-value remap value)
+        label
+        (box (compiler-reg-remap-phi-inputs remap (box-get rest))))]))
+
+(define (compiler-reg-remap-maybe-value
+  [remap : (Array i64)]
+  [value : CompilerIrMaybeValue]) : CompilerIrMaybeValue
+  (match value
+    [(IrNoValue) IrNoValue]
+    [(IrSomeValue inner) (IrSomeValue (compiler-reg-remap-value remap inner))]))
+
+(define (compiler-reg-remap-instr
+  [remap : (Array i64)]
+  [instr : CompilerIrInstr]) : CompilerIrInstr
+  (match instr
+    [(IrInstrMov dst value ty)
+      (IrInstrMov
+        (compiler-reg-remap-id remap dst)
+        (compiler-reg-remap-value remap value)
+        ty)]
+    [(IrInstrAlloc dst ty) (IrInstrAlloc (compiler-reg-remap-id remap dst) ty)]
+    [(IrInstrAddrOf dst src)
+      (IrInstrAddrOf
+        (compiler-reg-remap-id remap dst)
+        (compiler-reg-remap-id remap src))]
+    [(IrInstrGep dst base offset ty)
+      (IrInstrGep
+        (compiler-reg-remap-id remap dst)
+        (compiler-reg-remap-value remap base)
+        (compiler-reg-remap-value remap offset)
+        ty)]
+    [(IrInstrLoad dst src ty)
+      (IrInstrLoad
+        (compiler-reg-remap-id remap dst)
+        (compiler-reg-remap-value remap src)
+        ty)]
+    [(IrInstrStorePtr ptr value ty)
+      (IrInstrStorePtr
+        (compiler-reg-remap-value remap ptr)
+        (compiler-reg-remap-value remap value)
+        ty)]
+    [(IrInstrCopyBytes dst src size)
+      (IrInstrCopyBytes
+        (compiler-reg-remap-value remap dst)
+        (compiler-reg-remap-value remap src)
+        size)]
+    [(IrInstrBoundsCheck index length ok-label)
+      (IrInstrBoundsCheck
+        (compiler-reg-remap-value remap index)
+        (compiler-reg-remap-value remap length)
+        ok-label)]
+    [(IrInstrCast dst src from-ty to-ty)
+      (IrInstrCast
+        (compiler-reg-remap-id remap dst)
+        (compiler-reg-remap-value remap src)
+        from-ty
+        to-ty)]
+    [(IrInstrBinOp dst op lhs rhs ty)
+      (IrInstrBinOp
+        (compiler-reg-remap-id remap dst)
+        op
+        (compiler-reg-remap-value remap lhs)
+        (compiler-reg-remap-value remap rhs)
+        ty)]
+    [(IrInstrUnOp dst op value ty)
+      (IrInstrUnOp
+        (compiler-reg-remap-id remap dst)
+        op
+        (compiler-reg-remap-value remap value)
+        ty)]
+    [(IrInstrLaneId dst lanes ty)
+      (IrInstrLaneId (compiler-reg-remap-id remap dst) lanes ty)]
+    [(IrInstrSplat dst value lanes ty)
+      (IrInstrSplat
+        (compiler-reg-remap-id remap dst)
+        (compiler-reg-remap-value remap value)
+        lanes
+        ty)]
+    [(IrInstrVectorBinOp dst op lhs rhs lanes ty)
+      (IrInstrVectorBinOp
+        (compiler-reg-remap-id remap dst)
+        op
+        (compiler-reg-remap-value remap lhs)
+        (compiler-reg-remap-value remap rhs)
+        lanes
+        ty)]
+    [(IrInstrVectorReduce dst op src lanes ty)
+      (IrInstrVectorReduce
+        (compiler-reg-remap-id remap dst)
+        op
+        (compiler-reg-remap-value remap src)
+        lanes
+        ty)]
+    [(IrInstrVectorCompare dst op lhs rhs lanes ty)
+      (IrInstrVectorCompare
+        (compiler-reg-remap-id remap dst)
+        op
+        (compiler-reg-remap-value remap lhs)
+        (compiler-reg-remap-value remap rhs)
+        lanes
+        ty)]
+    [(IrInstrMaskBinOp dst op lhs rhs lanes)
+      (IrInstrMaskBinOp
+        (compiler-reg-remap-id remap dst)
+        op
+        (compiler-reg-remap-value remap lhs)
+        (compiler-reg-remap-value remap rhs)
+        lanes)]
+    [(IrInstrMaskNot dst src lanes)
+      (IrInstrMaskNot
+        (compiler-reg-remap-id remap dst)
+        (compiler-reg-remap-value remap src)
+        lanes)]
+    [(IrInstrMaskReduce dst op src lanes)
+      (IrInstrMaskReduce
+        (compiler-reg-remap-id remap dst)
+        op
+        (compiler-reg-remap-value remap src)
+        lanes)]
+    [(IrInstrSelect dst mask true-value false-value lanes ty)
+      (IrInstrSelect
+        (compiler-reg-remap-id remap dst)
+        (compiler-reg-remap-value remap mask)
+        (compiler-reg-remap-value remap true-value)
+        (compiler-reg-remap-value remap false-value)
+        lanes
+        ty)]
+    [(IrInstrVectorLoad dst base index lanes ty)
+      (IrInstrVectorLoad
+        (compiler-reg-remap-id remap dst)
+        (compiler-reg-remap-value remap base)
+        (compiler-reg-remap-value remap index)
+        lanes
+        ty)]
+    [(IrInstrVectorStore base index value lanes ty)
+      (IrInstrVectorStore
+        (compiler-reg-remap-value remap base)
+        (compiler-reg-remap-value remap index)
+        (compiler-reg-remap-value remap value)
+        lanes
+        ty)]
+    [(IrInstrPredicatedStore base index value mask lanes ty)
+      (IrInstrPredicatedStore
+        (compiler-reg-remap-value remap base)
+        (compiler-reg-remap-value remap index)
+        (compiler-reg-remap-value remap value)
+        (compiler-reg-remap-value remap mask)
+        lanes
+        ty)]
+    [(IrInstrPredicatedLoad dst base index mask lanes ty)
+      (IrInstrPredicatedLoad
+        (compiler-reg-remap-id remap dst)
+        (compiler-reg-remap-value remap base)
+        (compiler-reg-remap-value remap index)
+        (compiler-reg-remap-value remap mask)
+        lanes
+        ty)]
+    [(IrInstrTailMask dst index length lanes)
+      (IrInstrTailMask
+        (compiler-reg-remap-id remap dst)
+        (compiler-reg-remap-value remap index)
+        (compiler-reg-remap-value remap length)
+        lanes)]
+    [(IrInstrEntryArgc dst)
+      (IrInstrEntryArgc (compiler-reg-remap-id remap dst))]
+    [(IrInstrEntryArgv dst)
+      (IrInstrEntryArgv (compiler-reg-remap-id remap dst))]
+    [(IrInstrEntryEnvp dst)
+      (IrInstrEntryEnvp (compiler-reg-remap-id remap dst))]
+    [(IrInstrCpuId dst leaf subleaf reg-index)
+      (IrInstrCpuId
+        (compiler-reg-remap-id remap dst)
+        (compiler-reg-remap-value remap leaf)
+        (compiler-reg-remap-value remap subleaf)
+        reg-index)]
+    [(IrInstrXgetbv dst index)
+      (IrInstrXgetbv
+        (compiler-reg-remap-id remap dst)
+        (compiler-reg-remap-value remap index))]
+    [(IrInstrSyscall dst args)
+      (IrInstrSyscall
+        (compiler-reg-remap-id remap dst)
+        (compiler-reg-remap-call-args remap args))]
+    [(IrInstrCall dst name args ty)
+      (IrInstrCall
+        (compiler-reg-remap-id remap dst)
+        name
+        (compiler-reg-remap-call-args remap args)
+        ty)]
+    [(IrInstrCallIndirect dst callee args ty)
+      (IrInstrCallIndirect
+        (compiler-reg-remap-id remap dst)
+        (compiler-reg-remap-value remap callee)
+        (compiler-reg-remap-call-args remap args)
+        ty)]
+    [(IrInstrCallIndirectC dst callee args ty)
+      (IrInstrCallIndirectC
+        (compiler-reg-remap-id remap dst)
+        (compiler-reg-remap-value remap callee)
+        (compiler-reg-remap-call-args remap args)
+        ty)]
+    [(IrInstrTailCall name args ty)
+      (IrInstrTailCall name (compiler-reg-remap-call-args remap args) ty)]
+    [(IrInstrTailCallIndirect callee args ty)
+      (IrInstrTailCallIndirect
+        (compiler-reg-remap-value remap callee)
+        (compiler-reg-remap-call-args remap args)
+        ty)]
+    [(IrInstrStore name value ty)
+      (IrInstrStore name (compiler-reg-remap-value remap value) ty)]
+    [(IrInstrJump _) instr]
+    [(IrInstrBranch cond true-label false-label)
+      (IrInstrBranch
+        (compiler-reg-remap-value remap cond)
+        true-label
+        false-label)]
+    [(IrInstrReturn value)
+      (IrInstrReturn (compiler-reg-remap-maybe-value remap value))]
+    [(IrInstrPhi dst inputs ty)
+      (IrInstrPhi
+        (compiler-reg-remap-id remap dst)
+        (compiler-reg-remap-phi-inputs remap inputs)
+        ty)]
+    [(IrInstrPack dst words ty)
+      (IrInstrPack
+        (compiler-reg-remap-id remap dst)
+        (compiler-reg-remap-value-list remap words)
+        ty)]
+    [(IrInstrWord dst src index ty)
+      (IrInstrWord
+        (compiler-reg-remap-id remap dst)
+        (compiler-reg-remap-value remap src)
+        index
+        ty)]))
+
+(define (compiler-reg-remap-instr-list
+  [remap : (Array i64)]
+  [instrs : CompilerIrInstrList]) : CompilerIrInstrList
+  (match instrs
+    [(IrInstrNil) IrInstrNil]
+    [(IrInstrCons head rest)
+      (IrInstrCons
+        (compiler-reg-remap-instr remap head)
+        (box (compiler-reg-remap-instr-list remap (box-get rest))))]))
+
+(define (compiler-reg-remap-blocks
+  [remap : (Array i64)]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (match blocks
+    [(IrBlockNil) IrBlockNil]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label instrs)
+          (IrBlockCons
+            (IrBlock
+              label
+              (compiler-ir-instr-seq-from-list
+                (compiler-reg-remap-instr-list
+                  remap
+                  (compiler-ir-instr-seq-to-list instrs))))
+            (box (compiler-reg-remap-blocks remap (box-get rest))))])]
+    [(IrBlockArray seq)
+      (compiler-reg-remap-blocks remap (compiler-ir-block-seq-to-list seq))]))
+
 (define (compiler-reg-plan-assignments [plan : CompilerRegPlan]) : CompilerRegAssignmentList
   (match plan
     [(CompilerRegPlan assignments _ _ _) assignments]))

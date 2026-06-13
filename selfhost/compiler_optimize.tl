@@ -5925,6 +5925,12 @@
     [doms : OptDomInfo (opt-cfg-dominators-with index entry-label)]
     (OptCfgContext index pred-map reachable entry-label doms)))
 
+;; (#2874) A cheap placeholder context built from an empty CFG. Used only as the
+;; sentinel paired with a function on the non-heavy pass path, where the threaded
+;; context is never consumed (all heavy passes are skipped together).
+(define (opt-cfg-context-empty) : OptCfgContext
+  (opt-cfg-context-build (IrBlockNil)))
+
 (define (opt-cfg-dominators [blocks : CompilerIrBlockList]) : OptDomInfo
   (struct-get (opt-cfg-context-build blocks) doms))
 
@@ -10125,8 +10131,20 @@
     blocks
     (+ 1 (compiler-ir-block-list-count blocks))))
 
-(define (opt-loop-preheaders-function [func : CompilerIrFunction]) : CompilerIrFunction
-  (match (opt-verify-function func)
+;; (#2874) Carries a heavy-pass result together with an OptCfgContext that is
+;; valid for the returned function's *current* blocks, so the next pass in
+;; optimize-function-once can reuse it for its entry verify and dominance
+;; queries instead of rebuilding from scratch. The context is only ever paired
+;; with the exact block list it was built from; passes that rewrite the CFG
+;; build a fresh context for their output before handing it back.
+(defenum OptFunctionCtxResult
+  (OptFunctionCtxResult CompilerIrFunction OptCfgContext))
+
+(define (opt-loop-preheaders-function-with-context-result
+  [context : OptCfgContext]
+  [func : CompilerIrFunction]) : OptFunctionCtxResult
+  ;; `context` must be valid for `func`'s blocks (its entry verify reuses it).
+  (match (opt-verify-function-with-context func context)
     [(OkCompilerOptimizeVerify)
       (match func
         [(IrFunction name params ret-ty frame blocks)
@@ -10135,10 +10153,24 @@
               (opt-loop-preheaders-blocks blocks)]
             [next : CompilerIrFunction
               (IrFunction name params ret-ty frame next-blocks)]
-            (match (opt-verify-function next)
-              [(OkCompilerOptimizeVerify) next]
-              [(ErrCompilerOptimizeVerify _) func]))])]
-    [(ErrCompilerOptimizeVerify _) func]))
+            ;; Preheader synthesis may have inserted blocks, so build one fresh
+            ;; context for the rewritten CFG, reuse it for the post-pass verify,
+            ;; and hand it back for the next pass.
+            [next-context : OptCfgContext (opt-cfg-context-build next-blocks)]
+            (match (opt-verify-function-with-context next next-context)
+              [(OkCompilerOptimizeVerify)
+                (OptFunctionCtxResult next next-context)]
+              [(ErrCompilerOptimizeVerify _)
+                (OptFunctionCtxResult func context)]))])]
+    [(ErrCompilerOptimizeVerify _) (OptFunctionCtxResult func context)]))
+
+(define (opt-loop-preheaders-function [func : CompilerIrFunction]) : CompilerIrFunction
+  (match func
+    [(IrFunction _ _ _ _ blocks)
+      (match (opt-loop-preheaders-function-with-context-result
+        (opt-cfg-context-build blocks)
+        func)
+        [(OptFunctionCtxResult next _) next])]))
 
 ;; --- simple top-test loop rotation (#2458) ----------------------------------
 ;;
@@ -10893,9 +10925,10 @@
     (opt-gvn-sources-blocks blocks (i64-i64-map-with-capacity 64))
     blocks))
 
-(define (opt-licm-function-with-context
+(define (opt-licm-function-with-context-result
   [context : OptCfgContext]
-  [func : CompilerIrFunction]) : CompilerIrFunction
+  [func : CompilerIrFunction]) : OptFunctionCtxResult
+  ;; `context` must be valid for `func`'s blocks (its entry verify reuses it).
   (match (opt-verify-function-with-context func context)
     [(OkCompilerOptimizeVerify)
       (match func
@@ -10909,10 +10942,23 @@
               (opt-licm-blocks-with-context context sources blocks)]
             [hoisted : CompilerIrFunction
               (IrFunction name params ret-ty frame hoisted-blocks)]
-            (match (opt-verify-function hoisted)
-              [(OkCompilerOptimizeVerify) hoisted]
-              [(ErrCompilerOptimizeVerify _) func]))])]
-    [(ErrCompilerOptimizeVerify _) func]))
+            ;; LICM may hoist into a synthesized preheader edge, so build one
+            ;; fresh context for the rewritten CFG, reuse it for the post-pass
+            ;; verify, and hand it back for the next pass.
+            [hoisted-context : OptCfgContext
+              (opt-cfg-context-build hoisted-blocks)]
+            (match (opt-verify-function-with-context hoisted hoisted-context)
+              [(OkCompilerOptimizeVerify)
+                (OptFunctionCtxResult hoisted hoisted-context)]
+              [(ErrCompilerOptimizeVerify _)
+                (OptFunctionCtxResult func context)]))])]
+    [(ErrCompilerOptimizeVerify _) (OptFunctionCtxResult func context)]))
+
+(define (opt-licm-function-with-context
+  [context : OptCfgContext]
+  [func : CompilerIrFunction]) : CompilerIrFunction
+  (match (opt-licm-function-with-context-result context func)
+    [(OptFunctionCtxResult next _) next]))
 
 (define (opt-licm-function [func : CompilerIrFunction]) : CompilerIrFunction
   (match func
@@ -11734,9 +11780,10 @@
             next-frame
             (or changed loop-changed))])]))
 
-(define (opt-induction-function-with-context
+(define (opt-induction-function-with-context-result
   [context : OptCfgContext]
-  [func : CompilerIrFunction]) : CompilerIrFunction
+  [func : CompilerIrFunction]) : OptFunctionCtxResult
+  ;; `context` must be valid for `func`'s blocks (its entry verify reuses it).
   (match (opt-verify-function-with-context func context)
     [(OkCompilerOptimizeVerify)
       (match func
@@ -11752,11 +11799,24 @@
                 (let
                   [next : CompilerIrFunction
                     (IrFunction name params ret-ty next-frame next-blocks)]
-                  (match (opt-verify-function next)
-                    [(OkCompilerOptimizeVerify) next]
-                    [(ErrCompilerOptimizeVerify _) func]))
-                func)])])]
-    [(ErrCompilerOptimizeVerify _) func]))
+                  ;; Induction cleanup can rewrite latch/exit edges, so build one
+                  ;; fresh context for the rewritten CFG, reuse it for the
+                  ;; post-pass verify, and hand it back for the next pass.
+                  [next-context : OptCfgContext
+                    (opt-cfg-context-build next-blocks)]
+                  (match (opt-verify-function-with-context next next-context)
+                    [(OkCompilerOptimizeVerify)
+                      (OptFunctionCtxResult next next-context)]
+                    [(ErrCompilerOptimizeVerify _)
+                      (OptFunctionCtxResult func context)]))
+                (OptFunctionCtxResult func context))])])]
+    [(ErrCompilerOptimizeVerify _) (OptFunctionCtxResult func context)]))
+
+(define (opt-induction-function-with-context
+  [context : OptCfgContext]
+  [func : CompilerIrFunction]) : CompilerIrFunction
+  (match (opt-induction-function-with-context-result context func)
+    [(OptFunctionCtxResult next _) next]))
 
 (define (opt-induction-function [func : CompilerIrFunction]) : CompilerIrFunction
   (match func
@@ -15055,11 +15115,31 @@
                           unit)]
                       [t-preheaders : i64
                         (cfg compile-profile (profile-now-ms) 0)]
-                      [preheaders : CompilerIrFunction
+                      ;; (#2874) Thread one OptCfgContext per block-state through
+                      ;; the preheaders -> licm -> induction -> global_gvn chain.
+                      ;; Each pass's output blocks are fed verbatim to the next,
+                      ;; so the context the pass builds for its post-pass verify
+                      ;; is exactly what the next pass needs for its entry verify
+                      ;; and dominance queries -- no rebuild between passes. Each
+                      ;; pass that rewrites the CFG builds one fresh context for
+                      ;; its output; the no-op majority reuses its input context.
+                      [preheaders-result : OptFunctionCtxResult
                         (if run-heavy?
-                          (opt-loop-preheaders-function
-                            (IrFunction name params ret-ty ssa-frame cfg))
-                          (IrFunction name params ret-ty ssa-frame cfg))]
+                          (let
+                            [preheaders-input : CompilerIrFunction
+                              (IrFunction name params ret-ty ssa-frame cfg)]
+                            (opt-loop-preheaders-function-with-context-result
+                              (opt-cfg-context-build cfg)
+                              preheaders-input))
+                          (OptFunctionCtxResult
+                            (IrFunction name params ret-ty ssa-frame cfg)
+                            (opt-cfg-context-empty)))]
+                      [preheaders : CompilerIrFunction
+                        (match preheaders-result
+                          [(OptFunctionCtxResult f _) f])]
+                      [preheaders-context : OptCfgContext
+                        (match preheaders-result
+                          [(OptFunctionCtxResult _ ctx) ctx])]
                       [_p-preheaders : unit
                         (cfg
                           compile-profile
@@ -15068,42 +15148,38 @@
                             name
                             t-preheaders)
                           unit)]
-                      [preheader-frame : i64 (opt-function-frame preheaders)]
-                      [preheader-blocks : CompilerIrBlockList
-                        (opt-function-blocks preheaders)]
                       [t-licm : i64 (cfg compile-profile (profile-now-ms) 0)]
-                      [licm : CompilerIrFunction
+                      [licm-result : OptFunctionCtxResult
                         (if run-heavy?
-                          (let
-                            [licm-context : OptCfgContext
-                              (opt-cfg-context-build preheader-blocks)]
-                            (opt-licm-function-with-context
-                              licm-context
-                              (IrFunction
-                                name
-                                params
-                                ret-ty
-                                preheader-frame
-                                preheader-blocks)))
-                          preheaders)]
+                          (opt-licm-function-with-context-result
+                            preheaders-context
+                            preheaders)
+                          preheaders-result)]
+                      [licm : CompilerIrFunction
+                        (match licm-result
+                          [(OptFunctionCtxResult f _) f])]
+                      [licm-context : OptCfgContext
+                        (match licm-result
+                          [(OptFunctionCtxResult _ ctx) ctx])]
                       [_p-licm : unit
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish "licm" name t-licm)
                           unit)]
-                      [licm-blocks : CompilerIrBlockList
-                        (opt-function-blocks licm)]
                       [t-induction : i64
                         (cfg compile-profile (profile-now-ms) 0)]
-                      [induction : CompilerIrFunction
+                      [induction-result : OptFunctionCtxResult
                         (if run-heavy?
-                          (let
-                            [induction-context : OptCfgContext
-                              (opt-cfg-context-build licm-blocks)]
-                            (opt-induction-function-with-context
-                              induction-context
-                              licm))
-                          licm)]
+                          (opt-induction-function-with-context-result
+                            licm-context
+                            licm)
+                          licm-result)]
+                      [induction : CompilerIrFunction
+                        (match induction-result
+                          [(OptFunctionCtxResult f _) f])]
+                      [induction-context : OptCfgContext
+                        (match induction-result
+                          [(OptFunctionCtxResult _ ctx) ctx])]
                       [_p-induction : unit
                         (cfg
                           compile-profile
@@ -15118,21 +15194,20 @@
                       ;; Cross-block global value numbering + copy propagation
                       ;; (#1530) runs after local GVN/SCCP/CFG/LICM cleanup, on
                       ;; the post-stack-promotion frame so its slots stay
-                      ;; consistent with the promoted blocks.
+                      ;; consistent with the promoted blocks. It reuses the
+                      ;; context induction handed back (#2874): induction's output
+                      ;; blocks are global_gvn's input blocks unchanged.
                       [t-global : i64 (cfg compile-profile (profile-now-ms) 0)]
                       [global : CompilerIrFunction
                         (if run-heavy?
-                          (let
-                            [global-context : OptCfgContext
-                              (opt-cfg-context-build induction-blocks)]
-                            (opt-global-value-number-function-with-context
-                              global-context
-                              (IrFunction
-                                name
-                                params
-                                ret-ty
-                                induction-frame
-                                induction-blocks)))
+                          (opt-global-value-number-function-with-context
+                            induction-context
+                            (IrFunction
+                              name
+                              params
+                              ret-ty
+                              induction-frame
+                              induction-blocks))
                           (IrFunction
                             name
                             params

@@ -330,6 +330,20 @@
 (define (main) : i64
   (score (Some 42)))")
 
+(define (compiler-backend-never-branch-register-group-source) : String
+  "(extern (fail) : never)
+(defenum Token (TInt i64) (TPlus) (TEnd))
+(define (single [c : char]) : Token
+  (if (= c #+')
+    TPlus
+    (begin
+      (fail)
+      TEnd)))
+(define (main) : i64
+  (match (single #+')
+    [TPlus 42]
+    [_ 0]))")
+
 (define (compiler-backend-regalloc-source) : String
   "(define (calc [a : i64] [b : i64]) : i64
   (let
@@ -1885,6 +1899,15 @@
         (not (compiler-backend-string-contains? asm "    call _tl_Some\n")))]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-never-branch-register-group-ok?) : bool
+  (match (compiler-backend-emit-source
+    (compiler-backend-never-branch-register-group-source))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "main:\n")
+        (not (compiler-backend-string-contains? asm "register-group")))]
+    [(ErrCompilerBackend _) false]))
+
 ;; Scalar backend emission intentionally uses the stack-only plan by default for
 ;; cold compile speed; allocator behavior is still covered in compiler_regalloc.tl
 ;; and by AVX/vector backend smoke paths.
@@ -2022,6 +2045,91 @@
         8)
         [(OkCompilerBackend asm) (string-eq asm "    movq $7, -16(%rbp)\n")]
         [(ErrCompilerBackend _) false]))))
+
+(define (compiler-backend-register-group-test-type) : AstType
+  (AstTyStruct (intern "BackendGroupTest")))
+
+(define (compiler-backend-register-group-test-index) : CompilerBackendProgramIndex
+  (let
+    [ty : AstType (compiler-backend-register-group-test-type)]
+    (compiler-backend-program-index-build
+      (compiler-ir-function-cons
+        (IrFunction
+          "main"
+          IrParamNil
+          (AstTyI64)
+          3
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              "entry"
+              (compiler-ir-instr-cons
+                (IrInstrPack
+                  2
+                  (compiler-ir-value-cons
+                    (IrValueI64 1)
+                    (compiler-ir-value-cons (IrValueI64 2) IrValueNil))
+                  ty)
+                IrInstrNil))
+            IrBlockNil))
+        IrFunctionNil)
+      IrExternNil)))
+
+(define (compiler-backend-register-group-mov-error-ok?
+  [assignments : CompilerRegAssignmentList]
+  [src : CompilerIrValue]
+  [want : String]) : bool
+  (let
+    [ty : AstType (compiler-backend-register-group-test-type)]
+    [index : CompilerBackendProgramIndex
+      (compiler-backend-register-group-test-index)]
+    (match (compiler-backend-emit-mov assignments 1 src ty index 4)
+      [(ErrCompilerBackend diag)
+        (string-eq (compiler-diagnostic-message diag) want)]
+      [(OkCompilerBackend _) false])))
+
+(define (compiler-backend-register-group-call-arg-error-ok?) : bool
+  (let
+    [ty : AstType (compiler-backend-register-group-test-type)]
+    [index : CompilerBackendProgramIndex
+      (compiler-backend-register-group-test-index)]
+    (match (compiler-backend-emit-call-args
+      (BackendTargetLinux)
+      CompilerRegAssignmentNil
+      (IrCallArgsOne (IrValueI64 7))
+      (ast-type-cons ty AstTypeNil)
+      0
+      0
+      0
+      0
+      0
+      (compiler-diagnostic-at-start "" "")
+      index
+      4)
+      [(ErrCompilerBackend diag)
+        (string-eq
+          (compiler-diagnostic-message diag)
+          "backend: register-group call argument requires var operand (#2386)")]
+      [(OkCompilerBackend _) false])))
+
+(define (compiler-backend-register-group-fail-closed-ok?) : bool
+  (and
+    (compiler-backend-register-group-mov-error-ok?
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 0 (CompilerRegRegister "%r12"))
+        CompilerRegAssignmentNil)
+      (IrValueVar 0)
+      "backend: register-group var assigned scalar register home (#2386)")
+    (compiler-backend-register-group-mov-error-ok?
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 0 (CompilerRegSpill 16))
+        CompilerRegAssignmentNil)
+      (IrValueVar 0)
+      "backend: register-group var assigned spill slot (#2386)")
+    (compiler-backend-register-group-mov-error-ok?
+      CompilerRegAssignmentNil
+      (IrValueI64 7)
+      "backend: register-group load requires var operand (#2386)")
+    (compiler-backend-register-group-call-arg-error-ok?)))
 
 (define (compiler-backend-peephole-asm-ok?) : bool
   (let
@@ -6245,7 +6353,9 @@
       (compiler-backend-aggregate-ok?))
     (backend-and8
       (compiler-backend-literal-payload-ok?)
-      (compiler-backend-enum-match-ok?)
+      (and
+        (compiler-backend-enum-match-ok?)
+        (compiler-backend-never-branch-register-group-ok?))
       (compiler-backend-regalloc-ok?)
       (compiler-backend-peephole-ok?)
       (and
@@ -6258,7 +6368,9 @@
         (compiler-backend-direct-tail-call-ok?)
         (compiler-backend-indirect-tail-call-ok?)))
     (backend-and8
-      (compiler-backend-instr-diagnostics-ok?)
+      (and
+        (compiler-backend-instr-diagnostics-ok?)
+        (compiler-backend-register-group-fail-closed-ok?))
       (compiler-backend-optimizer-rewrite-diagnostic-ok?)
       (and
         (compiler-backend-runtime-helper-asm-ok?)

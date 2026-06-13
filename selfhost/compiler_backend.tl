@@ -16715,7 +16715,7 @@ tl_alloc:
 .L_tl_alloc_new_arena:
     movq $0x4000000, %rdx
     movq %rsi, %rcx
-    addq $32, %rcx
+    addq $48, %rcx
     jc .L_tl_alloc_abort
     cmpq %rdx, %rcx
     jbe .L_tl_alloc_len_ready
@@ -16740,7 +16740,16 @@ tl_alloc:
     jc .L_tl_alloc_abort
     movq %fs:tl_current_arena@tpoff, %r8
     movq %r8, 0(%rax)
-    leaq 32(%rax), %r8
+    movq $0, 32(%rax)
+    testq %r8, %r8
+    jz .L_tl_alloc_root_self
+    movq 40(%r8), %r10
+    jmp .L_tl_alloc_root_ready
+.L_tl_alloc_root_self:
+    movq %rax, %r10
+.L_tl_alloc_root_ready:
+    movq %r10, 40(%rax)
+    leaq 48(%rax), %r8
     movq %r8, 8(%rax)
     movq %rcx, 24(%rax)
     movq %r8, %rcx
@@ -17007,9 +17016,10 @@ tl_boot_pool:
 ;; First-class arena runtime (#1633). `tl_arena_make` maps a fresh INDEPENDENT
 ;; 64 MiB arena chain (prev-link 0) and returns its header WITHOUT changing the
 ;; active arena. `tl_arena_current`/`tl_arena_set` read/write the active arena.
-;; `tl_arena_destroy` releases an arena's whole chain (prev-links to 0). Arena
-;; header is the same 32-byte record as tl_alloc {0:prev, 8:base, 16:bump,
-;; 24:end}. System V (mmap=9 / munmap=11) flavor.
+;; `tl_arena_destroy` releases an arena's whole active chain plus any retired
+;; overflow chunks held by the chain root. Arena header is the same 48-byte
+;; record as tl_alloc {0:prev, 8:base, 16:bump, 24:end, 32:retired, 40:root}.
+;; System V (mmap=9 / munmap=11) flavor.
 ;; These mmap/munmap calls are part of the checked backend-core page boundary
 ;; (#2314), not stdlib-owned OS helpers.
 ;;
@@ -17082,7 +17092,9 @@ tl_arena_make:
     testq %rax, %rax
     js .L_tl_arena_make_abort
     movq $0, 0(%rax)
-    leaq 32(%rax), %rcx
+    movq $0, 32(%rax)
+    movq %rax, 40(%rax)
+    leaq 48(%rax), %rcx
     movq %rcx, 8(%rax)
     movq %rcx, 16(%rax)
     movq %rax, %rcx
@@ -17097,10 +17109,18 @@ tl_arena_make:
     .globl tl_arena_destroy
 tl_arena_destroy:
     push %rbx
+    push %r12
     movq %rdi, %rbx
+    xorq %r12, %r12
+    testq %rbx, %rbx
+    jz .L_tl_arena_destroy_active_done
+    movq 40(%rbx), %r12
+    testq %r12, %r12
+    jz .L_tl_arena_destroy_loop
+    movq 32(%r12), %r12
 .L_tl_arena_destroy_loop:
     testq %rbx, %rbx
-    jz .L_tl_arena_destroy_done
+    jz .L_tl_arena_destroy_active_done
     movq 0(%rbx), %r8
 "
             (string-append
@@ -17123,7 +17143,32 @@ tl_arena_destroy:
     pop %r8
     movq %r8, %rbx
     jmp .L_tl_arena_destroy_loop
+.L_tl_arena_destroy_active_done:
+    movq %r12, %rbx
+.L_tl_arena_destroy_retired_loop:
+    testq %rbx, %rbx
+    jz .L_tl_arena_destroy_done
+    movq 32(%rbx), %r8
+    push %r8
+    cmpq $0, .L_tl_arena_poison_enabled(%rip)
+    je .L_tl_arena_destroy_retired_unmap
+    movq 8(%rbx), %rdi
+    movq 24(%rbx), %rcx
+    subq %rdi, %rcx
+    jbe .L_tl_arena_destroy_retired_unmap
+    movb $0xA5, %al
+    rep stosb
+.L_tl_arena_destroy_retired_unmap:
+    movq 24(%rbx), %rsi
+    subq %rbx, %rsi
+    movq %rbx, %rdi
+    movq $11, %rax
+    syscall
+    pop %r8
+    movq %r8, %rbx
+    jmp .L_tl_arena_destroy_retired_loop
 .L_tl_arena_destroy_done:
+    pop %r12
     pop %rbx
     ret
 
@@ -17170,7 +17215,9 @@ tl_arena_make:
     testq %rax, %rax
     jz .L_tl_arena_make_win_abort
     movq $0, 0(%rax)
-    leaq 32(%rax), %rcx
+    movq $0, 32(%rax)
+    movq %rax, 40(%rax)
+    leaq 48(%rax), %rcx
     movq %rcx, 8(%rax)
     movq %rcx, 16(%rax)
     movq %rax, %rcx
@@ -17190,11 +17237,19 @@ tl_arena_destroy:
     mov %rsp, %rbp
     push %rbx
     push %rsi
-    sub $32, %rsp
+    push %r12
+    sub $40, %rsp
     movq %rcx, %rsi
+    xorq %r12, %r12
+    testq %rsi, %rsi
+    jz .L_tl_arena_destroy_win_active_done
+    movq 40(%rsi), %r12
+    testq %r12, %r12
+    jz .L_tl_arena_destroy_win_loop
+    movq 32(%r12), %r12
 .L_tl_arena_destroy_win_loop:
     testq %rsi, %rsi
-    jz .L_tl_arena_destroy_win_done
+    jz .L_tl_arena_destroy_win_active_done
     movq 0(%rsi), %rbx
 "
             (string-append
@@ -17205,8 +17260,21 @@ tl_arena_destroy:
     call VirtualFree
     movq %rbx, %rsi
     jmp .L_tl_arena_destroy_win_loop
+.L_tl_arena_destroy_win_active_done:
+    movq %r12, %rsi
+.L_tl_arena_destroy_win_retired_loop:
+    testq %rsi, %rsi
+    jz .L_tl_arena_destroy_win_done
+    movq 32(%rsi), %rbx
+    movq %rsi, %rcx
+    xorq %rdx, %rdx
+    movq $0x8000, %r8
+    call VirtualFree
+    movq %rbx, %rsi
+    jmp .L_tl_arena_destroy_win_retired_loop
 .L_tl_arena_destroy_win_done:
-    add $32, %rsp
+    add $40, %rsp
+    popq %r12
     popq %rsi
     popq %rbx
     popq %rbp
@@ -17219,6 +17287,7 @@ tl_arena_destroy:
     "    .globl tl_region_reset
 tl_region_reset:
     push %rbx
+    push %r12
     movq %rdi, %rbx
     testq %rbx, %rbx
     jz .L_tl_region_reset_all
@@ -17238,6 +17307,7 @@ tl_region_reset:
     jnz .L_tl_region_reset_find
     jmp .L_tl_region_reset_invalid
 .L_tl_region_reset_found:
+    movq 40(%r8), %r12
     movq %fs:tl_current_arena@tpoff, %r9
 .L_tl_region_reset_drop_newer:
     cmpq %r8, %r9
@@ -17248,23 +17318,18 @@ tl_region_reset:
       (compiler-backend-runtime-profile-live-sub "%r9" "%r11" profile)
       (string-append
         "    cmpq $0, .L_tl_arena_poison_enabled(%rip)
-    je .L_tl_region_reset_drop_newer_unmap
+    je .L_tl_region_reset_drop_newer_retire
     movq 8(%r9), %rdi
     movq 24(%r9), %rcx
     subq %rdi, %rcx
-    jbe .L_tl_region_reset_drop_newer_unmap
+    jbe .L_tl_region_reset_drop_newer_retire
     movb $0xA5, %al
     rep stosb
-.L_tl_region_reset_drop_newer_unmap:
-    movq 24(%r9), %rsi
-    subq %r9, %rsi
-    movq %r9, %rdi
-    push %r8
-    push %r10
-    movq $11, %rax
-    syscall
-    pop %r10
-    pop %r8
+.L_tl_region_reset_drop_newer_retire:
+    movq 32(%r12), %r11
+    movq %r11, 32(%r9)
+    movq $0, 0(%r9)
+    movq %r9, 32(%r12)
     movq %r10, %r9
     jmp .L_tl_region_reset_drop_newer
 .L_tl_region_reset_restore:
@@ -17287,14 +17352,22 @@ tl_region_reset:
 .L_tl_region_reset_restore_set:
     movq %rbx, 16(%r8)
     movq %r8, %fs:tl_current_arena@tpoff
+    pop %r12
     pop %rbx
     ret
 .L_tl_region_reset_all:
     movq %fs:tl_current_arena@tpoff, %r8
     movq $0, %fs:tl_current_arena@tpoff
-.L_tl_region_reset_all_loop:
+    xorq %rbx, %rbx
     testq %r8, %r8
     jz .L_tl_region_reset_done
+    movq 40(%r8), %r10
+    testq %r10, %r10
+    jz .L_tl_region_reset_all_loop
+    movq 32(%r10), %rbx
+.L_tl_region_reset_all_loop:
+    testq %r8, %r8
+    jz .L_tl_region_reset_all_retired
     movq 0(%r8), %r9
 "
             (string-append
@@ -17316,7 +17389,31 @@ tl_region_reset:
     syscall
     pop %r8
     jmp .L_tl_region_reset_all_loop
+.L_tl_region_reset_all_retired:
+    movq %rbx, %r8
+.L_tl_region_reset_all_retired_loop:
+    testq %r8, %r8
+    jz .L_tl_region_reset_done
+    movq 32(%r8), %r9
+    cmpq $0, .L_tl_arena_poison_enabled(%rip)
+    je .L_tl_region_reset_all_retired_unmap
+    movq 8(%r8), %rdi
+    movq 24(%r8), %rcx
+    subq %rdi, %rcx
+    jbe .L_tl_region_reset_all_retired_unmap
+    movb $0xA5, %al
+    rep stosb
+.L_tl_region_reset_all_retired_unmap:
+    movq 24(%r8), %rsi
+    subq %r8, %rsi
+    movq %r8, %rdi
+    push %r9
+    movq $11, %rax
+    syscall
+    pop %r8
+    jmp .L_tl_region_reset_all_retired_loop
 .L_tl_region_reset_done:
+    pop %r12
     pop %rbx
     ret
 .L_tl_region_reset_invalid:
@@ -17374,7 +17471,7 @@ tl_alloc:
     movq %r11, -8(%rbp)
     movq $0x4000000, %rdx
     movq %r11, %rax
-    addq $32, %rax
+    addq $48, %rax
     jc .L_tl_alloc_abort
     cmpq %rdx, %rax
     jbe .L_tl_alloc_len_ready
@@ -17394,7 +17491,16 @@ tl_alloc:
     jc .L_tl_alloc_abort
     movq %gs:0x28, %r8
     movq %r8, 0(%rax)
-    leaq 32(%rax), %r8
+    movq $0, 32(%rax)
+    testq %r8, %r8
+    jz .L_tl_alloc_win_root_self
+    movq 40(%r8), %r10
+    jmp .L_tl_alloc_win_root_ready
+.L_tl_alloc_win_root_self:
+    movq %rax, %r10
+.L_tl_alloc_win_root_ready:
+    movq %r10, 40(%rax)
+    leaq 48(%rax), %r8
     movq %r8, 8(%rax)
     movq %rcx, 24(%rax)
     movq %r8, %r10
@@ -17456,9 +17562,9 @@ tl_alloc:
   "")
 
 ;; Windows variant of `tl_region_reset`. Identical arena-walk structure to the
-;; Linux helper (offsets: 0=prev arena, 8=usable base, 16=bump pointer, 24=end;
-;; the arena header sits at the VirtualAlloc base). The only difference is how
-;; newer arenas are released: Linux uses `munmap`, Windows uses
+;; Linux helper (offsets: 0=prev arena, 8=usable base, 16=bump pointer, 24=end,
+;; 32=retired list link/head, 40=root; the arena header sits at the VirtualAlloc
+;; base). Nonzero reset retires newer chunks; reset-all releases chunks with
 ;; `VirtualFree(lpAddress=arena, dwSize=0, dwFreeType=MEM_RELEASE=0x8000)` Ã¢â‚¬â€ the
 ;; arena node address is exactly the VirtualAlloc base, so MEM_RELEASE frees the
 ;; whole chunk. Arg (the mark) arrives in %rcx.
@@ -17495,6 +17601,7 @@ tl_region_reset:
     sub $32, %rsp
     call tl_region_abort
 .L_tl_region_reset_win_found:
+    movq 40(%r13), %r11
     movq %gs:0x28, %r14
 .L_tl_region_reset_win_drop:
     cmpq %r13, %r14
@@ -17504,12 +17611,10 @@ tl_region_reset:
     (string-append
       (compiler-backend-runtime-profile-live-sub "%r14" "%rax" profile)
       (string-append
-        "    movq %r14, %rcx
-    xorq %rdx, %rdx
-    movq $0x8000, %r8
-    sub $32, %rsp
-    call VirtualFree
-    add $32, %rsp
+        "    movq 32(%r11), %rax
+    movq %rax, 32(%r14)
+    movq $0, 0(%r14)
+    movq %r14, 32(%r11)
     movq %rbx, %r14
     jmp .L_tl_region_reset_win_drop
 .L_tl_region_reset_win_restore:
@@ -17527,9 +17632,16 @@ tl_region_reset:
 .L_tl_region_reset_win_all:
     movq %gs:0x28, %r14
     movq $0, %gs:0x28
-.L_tl_region_reset_win_all_drop:
+    xorq %r12, %r12
     testq %r14, %r14
     jz .L_tl_region_reset_win_done
+    movq 40(%r14), %r12
+    testq %r12, %r12
+    jz .L_tl_region_reset_win_all_drop
+    movq 32(%r12), %r12
+.L_tl_region_reset_win_all_drop:
+    testq %r14, %r14
+    jz .L_tl_region_reset_win_all_retired
     movq 0(%r14), %rbx
 "
             (string-append
@@ -17542,6 +17654,20 @@ tl_region_reset:
     add $32, %rsp
     movq %rbx, %r14
     jmp .L_tl_region_reset_win_all_drop
+.L_tl_region_reset_win_all_retired:
+    movq %r12, %r14
+.L_tl_region_reset_win_all_retired_drop:
+    testq %r14, %r14
+    jz .L_tl_region_reset_win_done
+    movq 32(%r14), %rbx
+    movq %r14, %rcx
+    xorq %rdx, %rdx
+    movq $0x8000, %r8
+    sub $32, %rsp
+    call VirtualFree
+    add $32, %rsp
+    movq %rbx, %r14
+    jmp .L_tl_region_reset_win_all_retired_drop
 .L_tl_region_reset_win_done:
     pop %r14
     pop %r13
@@ -21318,6 +21444,12 @@ tl_memcpy:
           "    movq %fs:tl_current_arena@tpoff, %r8\n")
         (compiler-backend-string-contains? asm ".L_tl_alloc_new_arena:\n")
         (compiler-backend-string-contains? asm "    movq $0x4000000, %rdx\n")
+        (compiler-backend-string-contains? asm "    addq $48, %rcx\n")
+        (compiler-backend-string-contains? asm "    movq $0, 32(%rax)\n")
+        (compiler-backend-string-contains? asm "    movq %r10, 40(%rax)\n")
+        (compiler-backend-string-contains? asm "    leaq 48(%rax), %r8\n")
+        (compiler-backend-string-contains? asm "    movq %rax, 40(%rax)\n")
+        (compiler-backend-string-contains? asm "    leaq 48(%rax), %rcx\n")
         (compiler-backend-string-contains?
           asm
           "    movq %rax, %fs:tl_current_arena@tpoff\n")

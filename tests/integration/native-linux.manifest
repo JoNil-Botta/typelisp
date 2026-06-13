@@ -87,6 +87,7 @@ region_mark_zero|tests/integration/region_mark_zero.tl|42|-|-|-
 region_reset_zero|tests/integration/region_reset_zero.tl|44|-|-|stdlib/string.tl
 region_reset_discard|tests/integration/region_reset_discard.tl|3|-|-|stdlib/string.tl
 region_reset_preserve|tests/integration/region_reset_preserve.tl|62|-|-|stdlib/string.tl
+region_reset_overflow_retains|tests/integration/region_reset_overflow_retains.tl|42|-|-|-|requires-stage0-symbol:tl_arena_poison_enable
 region_reset_invalid_trap|tests/integration/region_reset_invalid_trap.tl|134|-|-|-|expected-stderr:tl: invalid region mark\n
 print|tests/integration/print.tl|0|42\nfalse\n|-|-
 print_char|tests/integration/print_char.tl|0|A\n|-|-

@@ -386,7 +386,9 @@ tl_arena_make:
     testq %rax, %rax
     js .L_tl_arena_make_abort
     movq $0, 0(%rax)
-    leaq 32(%rax), %rcx
+    movq $0, 32(%rax)
+    movq %rax, 40(%rax)
+    leaq 48(%rax), %rcx
     movq %rcx, 8(%rax)
     movq %rcx, 16(%rax)
     movq %rax, %rcx
@@ -401,10 +403,18 @@ tl_arena_make:
     .globl tl_arena_destroy
 tl_arena_destroy:
     push %rbx
+    push %r12
     movq %rdi, %rbx
+    xorq %r12, %r12
+    testq %rbx, %rbx
+    jz .L_tl_arena_destroy_active_done
+    movq 40(%rbx), %r12
+    testq %r12, %r12
+    jz .L_tl_arena_destroy_loop
+    movq 32(%r12), %r12
 .L_tl_arena_destroy_loop:
     testq %rbx, %rbx
-    jz .L_tl_arena_destroy_done
+    jz .L_tl_arena_destroy_active_done
     movq 0(%rbx), %r8
     push %r8
     cmpq $0, .L_tl_arena_poison_enabled(%rip)
@@ -424,7 +434,32 @@ tl_arena_destroy:
     pop %r8
     movq %r8, %rbx
     jmp .L_tl_arena_destroy_loop
+.L_tl_arena_destroy_active_done:
+    movq %r12, %rbx
+.L_tl_arena_destroy_retired_loop:
+    testq %rbx, %rbx
+    jz .L_tl_arena_destroy_done
+    movq 32(%rbx), %r8
+    push %r8
+    cmpq $0, .L_tl_arena_poison_enabled(%rip)
+    je .L_tl_arena_destroy_retired_unmap
+    movq 8(%rbx), %rdi
+    movq 24(%rbx), %rcx
+    subq %rdi, %rcx
+    jbe .L_tl_arena_destroy_retired_unmap
+    movb $0xA5, %al
+    rep stosb
+.L_tl_arena_destroy_retired_unmap:
+    movq 24(%rbx), %rsi
+    subq %rbx, %rsi
+    movq %rbx, %rdi
+    movq $11, %rax
+    syscall
+    pop %r8
+    movq %r8, %rbx
+    jmp .L_tl_arena_destroy_retired_loop
 .L_tl_arena_destroy_done:
+    pop %r12
     pop %rbx
     ret
 

@@ -18,6 +18,8 @@
 ;; compiler (#1638).
 (import "../stdlib/io.tl")
 
+(import "../stdlib/arena.tl")
+
 (import "compiler_check_core.tl")
 
 (import "compiler_driver_core.tl")
@@ -796,6 +798,42 @@
                       [(ErrCompileCliBatchEntryList status)
                         (ErrCompileCliBatchEntryList status)])))))))))))
 
+(define (compile-cli-run-batch-entry
+  [input-path : String]
+  [output-path : String]
+  [has-target : bool]
+  [target : CompilerBackendTarget]
+  [stdlib-roots : StringVec]
+  [cfg-names : CompileCliCfgNameList]
+  [backend-mode : CompilerBackendMode]
+  [opt-level : i64]) : i64
+  (let
+    [home : i64 (arena-current)]
+    [scratch : i64 (arena-make)]
+    (begin
+      (unsafe
+        (arena-set! scratch))
+      (let
+        [status : i64
+          (compile-cli-run-compile-file
+            input-path
+            output-path
+            false
+            false
+            has-target
+            target
+            stdlib-roots
+            cfg-names
+            backend-mode
+            opt-level)]
+        [scratch-head : i64 (arena-current)]
+        (begin
+          (unsafe
+            (arena-set! home))
+          (unsafe
+            (arena-destroy scratch-head))
+          status)))))
+
 (define (compile-cli-run-batch-entries
   [entries : CompileCliBatchEntryList]
   [has-target : bool]
@@ -808,30 +846,20 @@
     [(CompileCliBatchEntryNil) 0]
     [(CompileCliBatchEntryCons input-path output-path rest)
       (let
-        ;; Scope each batch entry's compile in its own arena region: the
-        ;; pipeline otherwise allocates everything in the program-lifetime
-        ;; arena, so a batch accumulates every entry's full working set
-        ;; (~14MB even for a trivial repeated file; gigabytes across the
-        ;; selfhost manifest -- the Windows CI OOM). The result is a
-        ;; region-free i64 status, node pools grow in the persistent base
-        ;; arena (#2357), and compiler-driver-reset-file-state! clears
-        ;; transient pool/intern state at the next entry before anything could
-        ;; read reclaimed region memory. Session-cached prelude nodes and their
-        ;; intern ids stay live across entries (#2596).
+        ;; Each batch entry gets a destroyable scratch arena, not just a
+        ;; lexical rewind region. Rewinds intentionally retain overflow chunks
+        ;; until the owning arena is destroyed (#2441), so long batches must
+        ;; destroy the entry arena to avoid inter-entry growth.
         [status : i64
-          (with-arena
-            batch-entry
-            (compile-cli-run-compile-file
-              input-path
-              output-path
-              false
-              false
-              has-target
-              target
-              stdlib-roots
-              cfg-names
-              backend-mode
-              opt-level))]
+          (compile-cli-run-batch-entry
+            input-path
+            output-path
+            has-target
+            target
+            stdlib-roots
+            cfg-names
+            backend-mode
+            opt-level)]
         (if (= status 0)
           (compile-cli-run-batch-entries
             (box-get rest)

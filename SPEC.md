@@ -4372,11 +4372,15 @@ arena control symbols: `tl_alloc`, `tl_region_mark`, `tl_region_reset`,
 
 Allocator/arena page acquisition and release are explicitly backend-owned core
 runtime (#2314): Linux emits `mmap`/`munmap` in `tl_alloc`, `tl_arena_make`,
-`tl_arena_make_atomic`, `tl_arena_destroy`, and `tl_region_reset` (plus the
+`tl_arena_make_atomic`, `tl_arena_destroy`, and `tl_region_reset(0)` (plus the
 current `tl_arena_make` fatal-exit syscall), while Windows emits kernel32
-`VirtualAlloc`/`VirtualFree` for the corresponding page paths. `tl_region_mark`,
-`tl_arena_current`, `tl_arena_set`, and `tl_arena_poison_enable` only read or
-update backend runtime state. The current-arena state is thread-local: Linux
+`VirtualAlloc`/`VirtualFree` for the corresponding page paths. Nonzero
+`tl_region_reset(mark)` restores the bump cursor and retires overflow chunks on
+the arena root so stale scratch pointers cannot observe later unrelated
+allocations at reused virtual addresses; the retained chunks are released by
+full reset or arena destroy. `tl_region_mark`, `tl_arena_current`,
+`tl_arena_set`, and `tl_arena_poison_enable` only read or update backend runtime
+state. The current-arena state is thread-local: Linux
 uses local-exec TLS and the freestanding entry installs an FS base before global
 initializers run; Windows x64 stores the current arena in the TEB
 arbitrary-user slot (`GS:0x28`). Raw thread spawn initializes a fresh zero
@@ -5044,11 +5048,11 @@ Linux runtime tests may opt into poison-on-reclaim mode with:
 ```
 
 After `tl_arena_poison_enable` is called, Linux `tl_region_reset` and
-`tl_arena_destroy` fill reclaimed arena bytes with `0xA5` immediately before a
-rewind or unmap. This mode is off for normal compiler output unless explicitly
-enabled by the program, and it is a debugging aid rather than a safety boundary.
-Windows poison-on-reclaim behavior is currently unsupported; the poison fixtures
-are covered on Linux and skipped on Windows.
+`tl_arena_destroy` fill reclaimed or retired arena bytes with `0xA5` immediately
+before a rewind, retirement, or unmap. This mode is off for normal compiler
+output unless explicitly enabled by the program, and it is a debugging aid
+rather than a safety boundary. Windows poison-on-reclaim behavior is currently
+unsupported; the poison fixtures are covered on Linux and skipped on Windows.
 
 A region reset mark invalidates every heap handle allocated after that mark, so
 it is only valid when the caller can prove those values are dead, such as after a

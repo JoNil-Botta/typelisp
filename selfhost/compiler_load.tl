@@ -5452,9 +5452,8 @@
   [b : String]) : bool
   (and
     (= (string-vec-len vec) 2)
-    (and
-      (string-eq (string-vec-get vec 0 "") a)
-      (string-eq (string-vec-get vec 1 "") b))))
+    (string-eq (string-vec-get vec 0 "") a)
+    (string-eq (string-vec-get vec 1 "") b)))
 
 ;: Self-test: a `(link ...)` section parses into all-target and per-target sets
 ;: with manifest order preserved.
@@ -5469,24 +5468,15 @@
         [win : CompilerPkgLinkSet (struct-get link windows)]
         (and
           (compiler-load-link-vec-single? (struct-get all libraries) "raylib")
-          (and
-            (compiler-load-link-vec-single?
-              (struct-get all search-paths)
-              "vendor/lib")
-            (and
-              (compiler-load-link-vec-empty? (struct-get all args))
-              (and
-                (compiler-load-link-vec-pair?
-                  (struct-get lin libraries)
-                  "GL"
-                  "m")
-                (and
-                  (compiler-load-link-vec-single?
-                    (struct-get lin args)
-                    "-Wl,--as-needed")
-                  (compiler-load-link-vec-single?
-                    (struct-get win libraries)
-                    "opengl32")))))))]
+          (compiler-load-link-vec-single?
+            (struct-get all search-paths)
+            "vendor/lib")
+          (compiler-load-link-vec-empty? (struct-get all args))
+          (compiler-load-link-vec-pair? (struct-get lin libraries) "GL" "m")
+          (compiler-load-link-vec-single?
+            (struct-get lin args)
+            "-Wl,--as-needed")
+          (compiler-load-link-vec-single? (struct-get win libraries) "opengl32")))]
     [(ErrCompilerPkgManifest _) false]))
 
 ;: Self-test: a manifest with no `link` section parses with empty link sets.
@@ -5499,11 +5489,10 @@
         (and
           (compiler-load-link-vec-empty?
             (struct-get (struct-get link all) libraries))
-          (and
-            (compiler-load-link-vec-empty?
-              (struct-get (struct-get link linux) libraries))
-            (compiler-load-link-vec-empty?
-              (struct-get (struct-get link windows) libraries)))))]
+          (compiler-load-link-vec-empty?
+            (struct-get (struct-get link linux) libraries))
+          (compiler-load-link-vec-empty?
+            (struct-get (struct-get link windows) libraries))))]
     [(ErrCompilerPkgManifest _) false]))
 
 ;: Self-test: invalid `(link ...)` sections produce the expected diagnostics.
@@ -5512,33 +5501,28 @@
     (compiler-load-manifest-rejects?
       "(package (name \"x\") (version \"1\") (kind \"bin\") (entry \"e.tl\") (link (libraries \"a\")) (link (args \"b\")))"
       "duplicate manifest field `link`")
-    (and
-      (compiler-load-manifest-rejects?
-        "(package (name \"x\") (version \"1\") (kind \"bin\") (entry \"e.tl\") (link (libraries \"a\") (libraries \"b\")))"
-        "duplicate `link` field `libraries`")
-      (and
-        (compiler-load-manifest-rejects?
-          "(package (name \"x\") (version \"1\") (kind \"bin\") (entry \"e.tl\") (link (frobs \"a\")))"
-          "unknown `link` field `frobs`")
-        (and
-          (compiler-load-manifest-rejects?
-            "(package (name \"x\") (version \"1\") (kind \"bin\") (entry \"e.tl\") (link (libraries \"\")))"
-            "`link` field `libraries` values must not be empty")
-          (and
-            (compiler-load-manifest-rejects?
-              "(package (name \"x\") (version \"1\") (kind \"bin\") (entry \"e.tl\") (link (libraries)))"
-              "`link` field `libraries` requires at least one value")
-            (compiler-load-manifest-rejects?
-              "(package (name \"x\") (version \"1\") (kind \"bin\") (entry \"e.tl\") (link (libraries 5)))"
-              "`link` field `libraries` values must be strings")))))))
+    (compiler-load-manifest-rejects?
+      "(package (name \"x\") (version \"1\") (kind \"bin\") (entry \"e.tl\") (link (libraries \"a\") (libraries \"b\")))"
+      "duplicate `link` field `libraries`")
+    (compiler-load-manifest-rejects?
+      "(package (name \"x\") (version \"1\") (kind \"bin\") (entry \"e.tl\") (link (frobs \"a\")))"
+      "unknown `link` field `frobs`")
+    (compiler-load-manifest-rejects?
+      "(package (name \"x\") (version \"1\") (kind \"bin\") (entry \"e.tl\") (link (libraries \"\")))"
+      "`link` field `libraries` values must not be empty")
+    (compiler-load-manifest-rejects?
+      "(package (name \"x\") (version \"1\") (kind \"bin\") (entry \"e.tl\") (link (libraries)))"
+      "`link` field `libraries` requires at least one value")
+    (compiler-load-manifest-rejects?
+      "(package (name \"x\") (version \"1\") (kind \"bin\") (entry \"e.tl\") (link (libraries 5)))"
+      "`link` field `libraries` values must be strings")))
 
 ;: Aggregate link-section self-test.
 (define (compiler-load-manifest-link-ok?) : bool
   (and
     (compiler-load-manifest-link-valid-ok?)
-    (and
-      (compiler-load-manifest-link-default-ok?)
-      (compiler-load-manifest-link-rejections-ok?))))
+    (compiler-load-manifest-link-default-ok?)
+    (compiler-load-manifest-link-rejections-ok?)))
 
 ;: Aggregate manifest-parser self-test (#834).
 (define (compiler-load-pkg-manifest-ok?) : bool

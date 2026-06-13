@@ -1479,6 +1479,7 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-walk-expr inner threshold acc))]
+    [(AstExprBinaryData _) acc]
     [(AstExprProgramArgc) acc]
     [(AstExprProgramArgv) acc]
     [(AstExprProgramEnvp) acc]
@@ -1544,6 +1545,7 @@
     [(AstDeclDefDispatch _ _) acc]
     [(AstDeclExport _) acc]
     [(AstDeclIncludeStr _ _) acc]
+    [(AstDeclIncludeBin _ _) acc]
     [(AstDeclImport _) acc]))
 
 ;: Walk every declaration body in `decls`.

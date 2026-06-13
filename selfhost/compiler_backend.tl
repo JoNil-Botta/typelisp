@@ -395,7 +395,8 @@
 (defstruct CompilerBackendProgramCollections
   (functions BackendStringSet)
   (strings BackendStringSet)
-  (floats BackendStringSet))
+  (floats BackendStringSet)
+  (bytes BackendStringSet))
 
 (define (compiler-backend-string-set-new [capacity : i64]) : BackendStringSet
   (BackendStringSet (string-i64-map-with-capacity capacity) BackendStringNil))
@@ -413,7 +414,8 @@
   (CompilerBackendProgramCollections
     (compiler-backend-string-set-new 256)
     (compiler-backend-string-set-new 256)
-    (compiler-backend-string-set-new 256)))
+    (compiler-backend-string-set-new 256)
+    (compiler-backend-string-set-new 64)))
 
 (define (compiler-backend-program-collections-add-function
   [collections : CompilerBackendProgramCollections]
@@ -421,7 +423,8 @@
   (CompilerBackendProgramCollections
     (compiler-backend-string-set-add (struct-get collections functions) name)
     (struct-get collections strings)
-    (struct-get collections floats)))
+    (struct-get collections floats)
+    (struct-get collections bytes)))
 
 (define (compiler-backend-program-collections-add-string
   [collections : CompilerBackendProgramCollections]
@@ -429,7 +432,8 @@
   (CompilerBackendProgramCollections
     (struct-get collections functions)
     (compiler-backend-string-set-add (struct-get collections strings) text)
-    (struct-get collections floats)))
+    (struct-get collections floats)
+    (struct-get collections bytes)))
 
 (define (compiler-backend-program-collections-add-float
   [collections : CompilerBackendProgramCollections]
@@ -437,7 +441,17 @@
   (CompilerBackendProgramCollections
     (struct-get collections functions)
     (struct-get collections strings)
-    (compiler-backend-string-set-add (struct-get collections floats) text)))
+    (compiler-backend-string-set-add (struct-get collections floats) text)
+    (struct-get collections bytes)))
+
+(define (compiler-backend-program-collections-add-bytes
+  [collections : CompilerBackendProgramCollections]
+  [text : String]) : CompilerBackendProgramCollections
+  (CompilerBackendProgramCollections
+    (struct-get collections functions)
+    (struct-get collections strings)
+    (struct-get collections floats)
+    (compiler-backend-string-set-add (struct-get collections bytes) text)))
 
 ;; Concatenate fixed string groups with one allocation and one linear copy per
 ;; piece, instead of the right-nested `string-append` chain that reallocates and
@@ -3056,6 +3070,12 @@
 (define (compiler-backend-string-fat-label [text : String]) : String
   (string-append ".L_tl_str_" (compiler-backend-string-label-suffix text)))
 
+(define (compiler-backend-bytes-data-label [text : String]) : String
+  (string-append ".L_tl_bin_data_" (compiler-backend-string-label-suffix text)))
+
+(define (compiler-backend-bytes-fat-label [text : String]) : String
+  (string-append ".L_tl_bin_" (compiler-backend-string-label-suffix text)))
+
 (define (compiler-backend-f64-label [text : String]) : String
   (string-append ".L_tl_f64_" (compiler-backend-string-label-suffix text)))
 
@@ -3174,6 +3194,14 @@
         (backend-cat5
           "    leaq "
           (compiler-backend-string-fat-label text)
+          "(%rip), "
+          reg
+          "\n"))]
+    [(IrValueBytes text)
+      (OkCompilerBackend
+        (backend-cat5
+          "    leaq "
+          (compiler-backend-bytes-fat-label text)
           "(%rip), "
           reg
           "\n"))]))
@@ -4545,6 +4573,7 @@
     [(IrValueChar _) (CompilerRegSomeType (AstTyChar))]
     [(IrValueF64 _) (CompilerRegSomeType (AstTyF64))]
     [(IrValueString _) (CompilerRegSomeType (AstTyString))]
+    [(IrValueBytes _) (CompilerRegSomeType (ast-ty-dyn-array (AstTyU8)))]
     [(IrValueFunction _) (CompilerRegSomeType (AstTyU64))]
     [_ (CompilerRegNoType)]))
 
@@ -14720,6 +14749,10 @@
   [collections : CompilerBackendProgramCollections]) : BackendStringList
   (compiler-backend-string-set-list (struct-get collections floats)))
 
+(define (compiler-backend-program-collections-bytes
+  [collections : CompilerBackendProgramCollections]) : BackendStringList
+  (compiler-backend-string-set-list (struct-get collections bytes)))
+
 (define (compiler-backend-collect-value-collections
   [collections : CompilerBackendProgramCollections]
   [value : CompilerIrValue]) : CompilerBackendProgramCollections
@@ -14730,6 +14763,8 @@
       (compiler-backend-program-collections-add-string collections text)]
     [(IrValueF64 text)
       (compiler-backend-program-collections-add-float collections text)]
+    [(IrValueBytes text)
+      (compiler-backend-program-collections-add-bytes collections text)]
     [_ collections]))
 
 (define (compiler-backend-collect-maybe-value-collections
@@ -15059,6 +15094,83 @@
   (text-buf-render
     (compiler-backend-emit-string-rodata-into strings (text-buf-empty))))
 
+(define (compiler-backend-emit-byte-directives-into
+  [bytes : String]
+  [buf : TextBuf]) : TextBuf
+  (let
+    [i : i64 0]
+    [n : i64 (string-length bytes)]
+    [col : i64 0]
+    [out : TextBuf buf]
+    (begin
+      (if (= n 0)
+        (set! out (text-buf-append out "    .byte 0\n"))
+        (while (< i n)
+          (begin
+            (if (= col 0)
+              (set! out (text-buf-append out "    .byte "))
+              (set! out (text-buf-append out ",")))
+            (set!
+              out
+              (text-buf-append
+                out
+                (int->string (compiler-backend-char-code (string-ref bytes i)))))
+            (set! i (+ i 1))
+            (set! col (+ col 1))
+            (if (or (= col 16) (= i n))
+              (begin
+                (set! out (text-buf-append out "\n"))
+                (set! col 0))
+              unit))))
+      out)))
+
+(define (compiler-backend-emit-bytes-entry-into
+  [bytes : String]
+  [buf : TextBuf]) : TextBuf
+  (let
+    [data-label : String (compiler-backend-bytes-data-label bytes)]
+    [fat-label : String (compiler-backend-bytes-fat-label bytes)]
+    [len-text : String (int->string (string-length bytes))]
+    [data-buf : TextBuf
+      (compiler-backend-emit-byte-directives-into
+        bytes
+        (text-buf-append
+          (text-buf-append buf "    .balign 8\n")
+          (backend-cat3 data-label ":\n" "")))]
+    (text-buf-append
+      (text-buf-append
+        (text-buf-append
+          (text-buf-append
+            (text-buf-append
+              (text-buf-append data-buf "    .balign 8\n")
+              fat-label)
+            ":\n    .quad ")
+          data-label)
+        "\n    .quad ")
+      (string-append len-text "\n"))))
+
+(define (compiler-backend-emit-bytes-entries-into
+  [items : BackendStringList]
+  [buf : TextBuf]) : TextBuf
+  (match items
+    [(BackendStringNil) buf]
+    [(BackendStringCons bytes rest)
+      (compiler-backend-emit-bytes-entries-into
+        (box-get rest)
+        (compiler-backend-emit-bytes-entry-into bytes buf))]))
+
+(define (compiler-backend-emit-bytes-data-into
+  [items : BackendStringList]
+  [buf : TextBuf]) : TextBuf
+  (match items
+    [(BackendStringNil) buf]
+    [_
+      (text-buf-append
+        (compiler-backend-emit-bytes-entries-into
+          items
+          (text-buf-append buf "    .data\n"))
+        "\n")]))
+
 (define (compiler-backend-emit-f64-entry [text : String]) : String
   (backend-cat5
     (compiler-backend-f64-label text)
@@ -15140,6 +15252,9 @@
           "    .quad "
           (compiler-backend-string-fat-label text)
           "\n"))]
+    [(IrValueBytes text)
+      (OkCompilerBackend
+        (backend-cat3 "    .quad " (compiler-backend-bytes-fat-label text) "\n"))]
     [_
       (ErrCompilerBackend
         (compiler-diagnostic-at-start
@@ -18897,6 +19012,7 @@ tl_memcpy:
   [program-index : CompilerBackendProgramIndex]
   [closure-names : BackendStringList]
   [strings : BackendStringList]
+  [bytes : BackendStringList]
   [floats : BackendStringList]
   [globals-buf : TextBuf]
   [emit-entry : bool]
@@ -18910,76 +19026,87 @@ tl_memcpy:
         (compiler-backend-profile-finish "compose.string_rodata"))
       (cfg compile-profile (compiler-backend-profile-start))
       (let
-        [f64-buf : TextBuf
-          (compiler-backend-emit-f64-rodata-into floats string-buf)]
+        [bytes-buf : TextBuf
+          (compiler-backend-emit-bytes-data-into bytes string-buf)]
         (begin
           (cfg
             compile-profile
-            (compiler-backend-profile-finish "compose.f64_rodata"))
+            (compiler-backend-profile-finish "compose.bytes_data"))
           (cfg compile-profile (compiler-backend-profile-start))
           (let
-            [descriptor-buf : TextBuf
-              (compiler-backend-emit-closure-descriptors-into
-                closure-names
-                entry-functions
-                externs
-                program-index
-                f64-buf)]
+            [f64-buf : TextBuf
+              (compiler-backend-emit-f64-rodata-into floats bytes-buf)]
             (begin
               (cfg
                 compile-profile
-                (compiler-backend-profile-finish "compose.closure_descriptors"))
+                (compiler-backend-profile-finish "compose.f64_rodata"))
               (cfg compile-profile (compiler-backend-profile-start))
               (let
-                [runtime-data-buf : TextBuf
-                  (text-buf-append
-                    descriptor-buf
-                    (if emit-entry
-                      (compiler-backend-runtime-data-for-target target plan)
-                      ""))]
+                [descriptor-buf : TextBuf
+                  (compiler-backend-emit-closure-descriptors-into
+                    closure-names
+                    entry-functions
+                    externs
+                    program-index
+                    f64-buf)]
                 (begin
                   (cfg
                     compile-profile
-                    (compiler-backend-profile-finish "compose.runtime_data"))
+                    (compiler-backend-profile-finish
+                      "compose.closure_descriptors"))
                   (cfg compile-profile (compiler-backend-profile-start))
                   (let
-                    [externs-buf : TextBuf
-                      (compiler-backend-emit-externs-into
-                        externs
-                        plan
-                        runtime-data-buf)]
+                    [runtime-data-buf : TextBuf
+                      (text-buf-append
+                        descriptor-buf
+                        (if emit-entry
+                          (compiler-backend-runtime-data-for-target target plan)
+                          ""))]
                     (begin
                       (cfg
                         compile-profile
-                        (compiler-backend-profile-finish "compose.externs"))
+                        (compiler-backend-profile-finish "compose.runtime_data"))
                       (cfg compile-profile (compiler-backend-profile-start))
                       (let
-                        [runtime-externs-buf : TextBuf
-                          (text-buf-append
-                            externs-buf
-                            (compiler-backend-runtime-externs-for-target
-                              target
-                              plan))]
+                        [externs-buf : TextBuf
+                          (compiler-backend-emit-externs-into
+                            externs
+                            plan
+                            runtime-data-buf)]
                         (begin
                           (cfg
                             compile-profile
-                            (compiler-backend-profile-finish
-                              "compose.runtime_externs"))
+                            (compiler-backend-profile-finish "compose.externs"))
                           (cfg compile-profile (compiler-backend-profile-start))
                           (let
-                            [prefix-buf : TextBuf
+                            [runtime-externs-buf : TextBuf
                               (text-buf-append
-                                runtime-externs-buf
-                                (compiler-backend-target-entry-text-with-crt
+                                externs-buf
+                                (compiler-backend-runtime-externs-for-target
                                   target
-                                  emit-entry
-                                  crt-entry))]
+                                  plan))]
                             (begin
                               (cfg
                                 compile-profile
                                 (compiler-backend-profile-finish
-                                  "compose.entry_text"))
-                              prefix-buf)))))))))))))))
+                                  "compose.runtime_externs"))
+                              (cfg
+                                compile-profile
+                                (compiler-backend-profile-start))
+                              (let
+                                [prefix-buf : TextBuf
+                                  (text-buf-append
+                                    runtime-externs-buf
+                                    (compiler-backend-target-entry-text-with-crt
+                                      target
+                                      emit-entry
+                                      crt-entry))]
+                                (begin
+                                  (cfg
+                                    compile-profile
+                                    (compiler-backend-profile-finish
+                                      "compose.entry_text"))
+                                  prefix-buf)))))))))))))))))
 
 (define (compiler-backend-emit-program-buffer-after-index
   [program : CompilerIrProgram]
@@ -19001,6 +19128,8 @@ tl_memcpy:
       (compiler-backend-program-collections-functions collections)]
     [strings : BackendStringList
       (compiler-backend-program-collections-strings collections)]
+    [bytes : BackendStringList
+      (compiler-backend-program-collections-bytes collections)]
     [floats : BackendStringList
       (compiler-backend-program-collections-floats collections)]
     [span-index : CompilerBackendSourceSpanIndex
@@ -19020,6 +19149,7 @@ tl_memcpy:
             program-index
             closure-names
             strings
+            bytes
             floats
             globals-buf
             emit-entry
@@ -19464,6 +19594,16 @@ tl_memcpy:
             (ObjectRelocRipAddress)
             symbol)
           (ObjectX64LoadRipAddress symbol)))]
+    [(IrValueBytes text)
+      (let
+        [symbol : String (compiler-backend-bytes-fat-label text)]
+        (compiler-backend-object-add-text
+          (compiler-backend-object-add-text-relocation
+            parts
+            site
+            (ObjectRelocRipAddress)
+            symbol)
+          (ObjectX64LoadRipAddress symbol)))]
     [(IrValueF64 text)
       (let
         [symbol : String (compiler-backend-f64-label text)]
@@ -19883,6 +20023,16 @@ tl_memcpy:
             (ObjectRelocAbs64)
             symbol)
           (ObjectDataSymbolAddress symbol)))]
+    [(IrValueBytes text)
+      (let
+        [symbol : String (compiler-backend-bytes-fat-label text)]
+        (compiler-backend-object-add-data
+          (compiler-backend-object-add-data-relocation
+            parts
+            site
+            (ObjectRelocAbs64)
+            symbol)
+          (ObjectDataSymbolAddress symbol)))]
     [(IrValueGlobal name)
       (let
         [symbol : String (compiler-backend-user-symbol name)]
@@ -19985,6 +20135,47 @@ tl_memcpy:
                 (ObjectDataLabel fat-symbol))
               (ObjectDataSymbolAddress data-symbol))
             (ObjectDataI64 (string-length text)))
+          (box-get rest)))]))
+
+(define (compiler-backend-object-bytes
+  [parts : CompilerBackendObjectParts]
+  [items : BackendStringList]) : CompilerBackendObjectParts
+  (match items
+    [(BackendStringNil) parts]
+    [(BackendStringCons bytes rest)
+      (let
+        [data-symbol : String (compiler-backend-bytes-data-label bytes)]
+        [fat-symbol : String (compiler-backend-bytes-fat-label bytes)]
+        (compiler-backend-object-bytes
+          (compiler-backend-object-add-data
+            (compiler-backend-object-add-data
+              (compiler-backend-object-add-data
+                (compiler-backend-object-add-data
+                  (compiler-backend-object-add-data-relocation
+                    (compiler-backend-object-add-data
+                      (compiler-backend-object-add-data
+                        (compiler-backend-object-add-data
+                          (compiler-backend-object-symbol-local-section
+                            (compiler-backend-object-symbol-local-section
+                              parts
+                              data-symbol
+                              (ObjectSectionData)
+                              (ObjectSymbolData))
+                            fat-symbol
+                            (ObjectSectionData)
+                            (ObjectSymbolData))
+                          (ObjectDataAlign 8))
+                        (ObjectDataLabel data-symbol))
+                      (if (= (string-length bytes) 0)
+                        (ObjectDataZero 1)
+                        (ObjectDataBytes bytes)))
+                    fat-symbol
+                    (ObjectRelocAbs64)
+                    data-symbol)
+                  (ObjectDataAlign 8))
+                (ObjectDataLabel fat-symbol))
+              (ObjectDataSymbolAddress data-symbol))
+            (ObjectDataI64 (string-length bytes)))
           (box-get rest)))]))
 
 (define (compiler-backend-object-floats
@@ -20365,6 +20556,8 @@ tl_memcpy:
       (compiler-backend-program-collections-functions collections)]
     [strings : BackendStringList
       (compiler-backend-program-collections-strings collections)]
+    [bytes : BackendStringList
+      (compiler-backend-program-collections-bytes collections)]
     [floats : BackendStringList
       (compiler-backend-program-collections-floats collections)]
     [seed : CompilerBackendObjectParts
@@ -20372,19 +20565,21 @@ tl_memcpy:
         (compiler-backend-object-runtime-symbols
           (compiler-backend-object-externs
             (compiler-backend-object-floats
-              (compiler-backend-object-strings
-                (compiler-backend-object-closure-descriptors
-                  (compiler-backend-object-globals
-                    (compiler-backend-object-functions
-                      (compiler-backend-object-parts-empty)
-                      entry-functions
-                      plan
-                      program-index)
-                    target
-                    globals)
-                  closure-names
-                  program-index)
-                strings)
+              (compiler-backend-object-bytes
+                (compiler-backend-object-strings
+                  (compiler-backend-object-closure-descriptors
+                    (compiler-backend-object-globals
+                      (compiler-backend-object-functions
+                        (compiler-backend-object-parts-empty)
+                        entry-functions
+                        plan
+                        program-index)
+                      target
+                      globals)
+                    closure-names
+                    program-index)
+                  strings)
+                bytes)
               floats)
             externs
             plan)

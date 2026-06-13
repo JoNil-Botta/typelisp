@@ -323,6 +323,9 @@
   (AstExprStringData i64)
   (AstExprStringFromBytes i64 i64)
   (AstExprArrayData i64)
+  ;; Loader-generated payload for `(include-bin name "path")`. This is not a
+  ;; source expression; it typechecks as `(Array u8)` and lowers to static data.
+  (AstExprBinaryData String)
   (AstExprProgramArgc)
   (AstExprProgramArgv)
   (AstExprProgramEnvp)
@@ -974,6 +977,7 @@
     AstFieldDefList)
   (AstDeclImport AstImportSpec)
   (AstDeclIncludeStr String String)
+  (AstDeclIncludeBin String String)
   (AstDeclExport AstExportItemList)
   (AstDeclDefDispatch i64 AstDispatchVariantList)
   (AstDeclTest i64 i64 AstSourceSpan)
@@ -1654,6 +1658,7 @@
     [(AstExprStringData _) 49]
     [(AstExprStringFromBytes _ _) 50]
     [(AstExprArrayData _) 51]
+    [(AstExprBinaryData _) 64]
     [(AstExprProgramArgc) 52]
     [(AstExprProgramArgv) 53]
     [(AstExprProgramEnvp) 54]
@@ -1686,7 +1691,8 @@
     [(AstDeclUnsafe _) 13]
     [(AstDeclDefEnumLifetimes _ _ _ _) 14]
     [(AstDeclDefStructLifetimes _ _ _ _ _) 15]
-    [(AstDeclDefDispatch _ _) 16]))
+    [(AstDeclDefDispatch _ _) 16]
+    [(AstDeclIncludeBin _ _) 17]))
 
 (define (ast-struct-repr-c? [repr : AstStructRepr]) : bool
   (match repr

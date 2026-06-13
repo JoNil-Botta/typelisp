@@ -1262,6 +1262,7 @@
             [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])]
         [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])]
     [(AstDeclIncludeStr _ _) (OkCompilerSymbols symbols)]
+    [(AstDeclIncludeBin _ _) (OkCompilerSymbols symbols)]
     [(AstDeclImport _) (OkCompilerSymbols symbols)]
     [(AstDeclExport _) (OkCompilerSymbols symbols)]
     [(AstDeclModule _) (OkCompilerSymbols symbols)]
@@ -1508,6 +1509,7 @@
             [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])]
         [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])]
     [(AstDeclIncludeStr _ _) (OkCompilerSymbols symbols)]
+    [(AstDeclIncludeBin _ _) (OkCompilerSymbols symbols)]
     [(AstDeclImport _) (OkCompilerSymbols symbols)]
     [(AstDeclExport _) (OkCompilerSymbols symbols)]
     [(AstDeclModule _) (OkCompilerSymbols symbols)]
@@ -1724,6 +1726,13 @@
               target-module
               index
               module)]
+          [(AstDeclIncludeBin _ _)
+            (compiler-symbols-remove-module-macro-aliases-list
+              symbols
+              rest
+              target-module
+              index
+              module)]
           [(AstDeclExport _)
             (compiler-symbols-remove-module-macro-aliases-list
               symbols
@@ -1791,6 +1800,14 @@
               index
               module)]
           [(AstDeclIncludeStr _ _)
+            (compiler-symbols-add-module-aliases-list
+              symbols
+              rest
+              target-module
+              alias
+              index
+              module)]
+          [(AstDeclIncludeBin _ _)
             (compiler-symbols-add-module-aliases-list
               symbols
               rest
@@ -1953,6 +1970,8 @@
             (build-compiler-symbol-list-in-module rest symbols index module)]
           [(AstDeclIncludeStr _ _)
             (build-compiler-symbol-list-in-module rest symbols index module)]
+          [(AstDeclIncludeBin _ _)
+            (build-compiler-symbol-list-in-module rest symbols index module)]
           [(AstDeclExport _)
             (build-compiler-symbol-list-in-module rest symbols index module)]
           [(AstDeclModule next-module)
@@ -2017,6 +2036,12 @@
               index
               module)]
           [(AstDeclIncludeStr _ _)
+            (build-compiler-local-symbol-list-in-module
+              rest
+              symbols
+              index
+              module)]
+          [(AstDeclIncludeBin _ _)
             (build-compiler-local-symbol-list-in-module
               rest
               symbols
@@ -2329,6 +2354,14 @@
               alias
               index
               module)]
+          [(AstDeclIncludeBin _ _)
+            (compiler-registries-add-module-aliases-list
+              registries
+              rest
+              target-module
+              alias
+              index
+              module)]
           [(AstDeclExport _)
             (compiler-registries-add-module-aliases-list
               registries
@@ -2509,6 +2542,12 @@
               index
               module)]
           [(AstDeclIncludeStr _ _)
+            (build-compiler-registry-list-in-module
+              rest
+              registries
+              index
+              module)]
+          [(AstDeclIncludeBin _ _)
             (build-compiler-registry-list-in-module
               rest
               registries
@@ -2885,6 +2924,8 @@
         (match decl
           [(AstDeclImport _) (compiler-decl-list-at-index rest target index)]
           [(AstDeclIncludeStr _ _)
+            (compiler-decl-list-at-index rest target index)]
+          [(AstDeclIncludeBin _ _)
             (compiler-decl-list-at-index rest target index)]
           [(AstDeclExport _) (compiler-decl-list-at-index rest target index)]
           [(AstDeclModule _) (compiler-decl-list-at-index rest target index)]

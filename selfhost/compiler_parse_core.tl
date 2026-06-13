@@ -733,6 +733,9 @@
 (define (compiler-parse-tag-decl-include-str) : i64
   410)
 
+(define (compiler-parse-tag-decl-include-bin) : i64
+  413)
+
 (define (compiler-parse-tag-decl-defdispatch) : i64
   411)
 
@@ -959,7 +962,9 @@
       (sym-i64-bind e10 "export" (compiler-parse-tag-decl-export))]
     [e12 : SymI64Env
       (sym-i64-bind e11 "include-str" (compiler-parse-tag-decl-include-str))]
-    (sym-i64-bind e12 "defdispatch" (compiler-parse-tag-decl-defdispatch))))
+    [e13 : SymI64Env
+      (sym-i64-bind e12 "include-bin" (compiler-parse-tag-decl-include-bin))]
+    (sym-i64-bind e13 "defdispatch" (compiler-parse-tag-decl-defdispatch))))
 
 (define (compiler-parse-dispatch-env) : SymI64Env
   (compiler-parse-dispatch-decls
@@ -1219,6 +1224,8 @@
         (compiler-parse-tag-expr-ptr-addr-of)
         (string-eq name "include-str")
         (compiler-parse-tag-decl-include-str)
+        (string-eq name "include-bin")
+        (compiler-parse-tag-decl-include-bin)
         (string-eq name "defdispatch")
         (compiler-parse-tag-decl-defdispatch)
         (compiler-parse-tag-unknown))
@@ -5298,6 +5305,28 @@
         [_ (ErrAstDecl "parse: include-str name must be a symbol")])]
     [_ (ErrAstDecl "parse: malformed include-str")]))
 
+(define (parse-ast-include-bin [rest : SpannedSexpr]) : ResultAstDecl
+  (match rest
+    [(SpSNil _) (ErrAstDecl "parse: include-bin expects name and string path")]
+    [(SpSCons name-node tail _)
+      (match (sp-node-get name-node)
+        [(SpSSym name _)
+          (match (sp-node-get tail)
+            [(SpSCons path-node after-path _)
+              (match (sp-node-get path-node)
+                [(SpSStr path _)
+                  (match (sp-node-get after-path)
+                    [(SpSNil _) (OkAstDecl (AstDeclIncludeBin name path))]
+                    [_
+                      (ErrAstDecl
+                        "parse: include-bin expects exactly two operands")])]
+                [_ (ErrAstDecl "parse: include-bin path must be a string")])]
+            [(SpSNil _)
+              (ErrAstDecl "parse: include-bin expects name and string path")]
+            [_ (ErrAstDecl "parse: include-bin expects exactly two operands")])]
+        [_ (ErrAstDecl "parse: include-bin name must be a symbol")])]
+    [_ (ErrAstDecl "parse: malformed include-bin")]))
+
 (define (parse-ast-export-item [item : SpannedSexpr]) : ResultAstExportItem
   (match item
     [(SpSCons kind-node rest _)
@@ -5694,6 +5723,8 @@
               (parse-ast-import (sp-node-get rest))
               (= tag (compiler-parse-tag-decl-include-str))
               (parse-ast-include-str (sp-node-get rest))
+              (= tag (compiler-parse-tag-decl-include-bin))
+              (parse-ast-include-bin (sp-node-get rest))
               (= tag (compiler-parse-tag-decl-module))
               (parse-ast-module (sp-node-get rest))
               (= tag (compiler-parse-tag-decl-export))
@@ -5995,6 +6026,12 @@
       (and (string-eq name "payload") (string-eq path "data.txt"))]
     [_ false]))
 
+(define (ast-first-include-bin-ok? [decls : AstDeclList]) : bool
+  (match decls
+    [(AstDeclCons (AstDeclIncludeBin name path) _)
+      (and (string-eq name "payload") (string-eq path "data.bin"))]
+    [_ false]))
+
 (define (compiler-parse-module-decl-ok?) : bool
   (match (parse-ast-source "(module std.io)")
     [(OkAstProgram (AstProgram decls-box))
@@ -6133,6 +6170,32 @@
     (compiler-parse-error-ok?
       "(include-str payload)"
       "parse: include-str expects name and string path")))
+
+(define (compiler-parse-include-bin-ok?) : bool
+  (match (parse-ast-source "(include-bin payload \"data.bin\")")
+    [(OkAstProgram (AstProgram decls-box))
+      (let
+        [decls : AstDeclList (box-get decls-box)]
+        (ast-first-include-bin-ok? decls))]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-parse-include-bin-errors-ok?) : bool
+  (and
+    (compiler-parse-error-ok?
+      "(include-bin)"
+      "parse: include-bin expects name and string path")
+    (compiler-parse-error-ok?
+      "(include-bin \"name\" \"data.bin\")"
+      "parse: include-bin name must be a symbol")
+    (compiler-parse-error-ok?
+      "(include-bin payload data.bin)"
+      "parse: include-bin path must be a string")
+    (compiler-parse-error-ok?
+      "(include-bin payload \"data.bin\" extra)"
+      "parse: include-bin expects exactly two operands")
+    (compiler-parse-error-ok?
+      "(include-bin payload)"
+      "parse: include-bin expects name and string path")))
 
 (define (compiler-parse-export-items-shape-ok? [items : AstExportItemList]) : bool
   (match items
@@ -8393,6 +8456,8 @@
     (compiler-parse-ok? "(import \"stdlib/io.tl\")")
     (compiler-parse-include-str-ok?)
     (compiler-parse-include-str-errors-ok?)
+    (compiler-parse-include-bin-ok?)
+    (compiler-parse-include-bin-errors-ok?)
     (compiler-parse-error-ok?
       "(define answer : i64)"
       "parse: malformed value definition")

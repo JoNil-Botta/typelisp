@@ -528,6 +528,14 @@
               runtime-decls
               runtime-paths
               tests)]
+          [(AstDeclIncludeBin _ _)
+            (tltest-collect-in
+              target-path
+              rest
+              rest-paths
+              runtime-decls
+              runtime-paths
+              tests)]
           [_
             (if (tltest-main-decl? decl)
               (tltest-collect-in
@@ -1170,6 +1178,7 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (tltest-reach-mark-expr inner names))]
+    [(AstExprBinaryData _) names]
     [(AstExprProgramArgc) names]
     [(AstExprProgramArgv) names]
     [(AstExprProgramEnvp) names]

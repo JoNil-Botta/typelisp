@@ -2281,40 +2281,11 @@
                   ;; (a register pair). If two are not free it stays UNASSIGNED and
                   ;; the backend homes both words in the var's dedicated 16-byte
                   ;; stack region (group-word0-slot / group-word1-slot).
-                  (if (>=
-                    (-
-                      (compiler-reg-string-list-count regs)
-                      (compiler-reg-active-count expired))
-                    2)
-                    (let
-                      [reg-a : String
-                        (compiler-reg-first-free-register regs expired)]
-                      [active-a : CompilerRegActiveList
-                        (compiler-reg-active-insert
-                          expired
-                          (CompilerRegActive var end reg-a))]
-                      [reg-b : String
-                        (compiler-reg-first-free-register regs active-a)]
-                      (compiler-reg-assign-candidates
-                        (box-get rest)
-                        regs
-                        (compiler-reg-active-insert
-                          active-a
-                          (CompilerRegActive var end reg-b))
-                        (compiler-reg-assignment-insert
-                          assignments
-                          var
-                          (CompilerRegRegisterPair reg-a reg-b))
-                        moves
-                        intervals
-                        types
-                        group-vars))
-                    ;; Fewer than two GP registers free: a group var cannot live in
-                    ;; one register or an 8-byte spill slot, so leave it UNASSIGNED
-                    ;; (NoLocation). The backend then homes both words in the var's
-                    ;; reserved 16-byte stack region -- the same path stack-only mode
-                    ;; uses. (compiler-reg-spill-at-interval would hand it a single
-                    ;; register / 8-byte slot and crash emit-pack.)
+                  (if (compiler-reg-var-register-group-has-sse? types var)
+                    ;; #2601: mixed/SSE register groups need per-word register
+                    ;; banks. Until the allocator has a true mixed pair home,
+                    ;; leave them in the existing two-slot stack fallback instead
+                    ;; of assigning an SSE word to a GP register.
                     (compiler-reg-assign-candidates
                       (box-get rest)
                       regs
@@ -2323,7 +2294,50 @@
                       moves
                       intervals
                       types
-                      group-vars))
+                      group-vars)
+                    (if (>=
+                      (-
+                        (compiler-reg-string-list-count regs)
+                        (compiler-reg-active-count expired))
+                      2)
+                      (let
+                        [reg-a : String
+                          (compiler-reg-first-free-register regs expired)]
+                        [active-a : CompilerRegActiveList
+                          (compiler-reg-active-insert
+                            expired
+                            (CompilerRegActive var end reg-a))]
+                        [reg-b : String
+                          (compiler-reg-first-free-register regs active-a)]
+                        (compiler-reg-assign-candidates
+                          (box-get rest)
+                          regs
+                          (compiler-reg-active-insert
+                            active-a
+                            (CompilerRegActive var end reg-b))
+                          (compiler-reg-assignment-insert
+                            assignments
+                            var
+                            (CompilerRegRegisterPair reg-a reg-b))
+                          moves
+                          intervals
+                          types
+                          group-vars))
+                      ;; Fewer than two GP registers free: a group var cannot live in
+                      ;; one register or an 8-byte spill slot, so leave it UNASSIGNED
+                      ;; (NoLocation). The backend then homes both words in the var's
+                      ;; reserved 16-byte stack region -- the same path stack-only mode
+                      ;; uses. (compiler-reg-spill-at-interval would hand it a single
+                      ;; register / 8-byte slot and crash emit-pack.)
+                      (compiler-reg-assign-candidates
+                        (box-get rest)
+                        regs
+                        expired
+                        assignments
+                        moves
+                        intervals
+                        types
+                        group-vars)))
                   (if (=
                     (compiler-reg-active-count expired)
                     (compiler-reg-string-list-count regs))
@@ -2678,8 +2692,14 @@
 (define compiler-reg-group-counts : StringI64Map
   (string-i64-map-with-capacity 8))
 
+(define compiler-reg-group-class-masks : StringI64Map
+  (string-i64-map-with-capacity 8))
+
 (define (compiler-reg-set-group-counts! [counts : StringI64Map]) : unit
   (set! compiler-reg-group-counts counts))
+
+(define (compiler-reg-set-group-class-masks! [masks : StringI64Map]) : unit
+  (set! compiler-reg-group-class-masks masks))
 
 ;; The aggregate type name a value carries (mirror of
 ;; compiler-backend-aggregate-type-name); empty for non-aggregate types.
@@ -2702,6 +2722,22 @@
       (match (string-i64-map-get compiler-reg-group-counts name)
         [(StringI64MapFound count) (> count 1)]
         [(StringI64MapMissing) false]))))
+
+(define (compiler-reg-type-register-group-has-sse? [ty : AstType]) : bool
+  (let
+    [name : String (compiler-reg-aggregate-type-name ty)]
+    (if (string-eq name "")
+      false
+      (match (string-i64-map-get compiler-reg-group-class-masks name)
+        [(StringI64MapFound mask) (> mask 0)]
+        [(StringI64MapMissing) false]))))
+
+(define (compiler-reg-var-register-group-has-sse?
+  [types : CompilerRegVarTypes]
+  [var : i64]) : bool
+  (match (compiler-reg-var-types-lookup types var)
+    [(CompilerRegSomeType ty) (compiler-reg-type-register-group-has-sse? ty)]
+    [(CompilerRegNoType) false]))
 
 ;; Seed every var whose TYPE is a 2-word register-group (the type-based group
 ;; vars the structural Pack/Word scan misses).

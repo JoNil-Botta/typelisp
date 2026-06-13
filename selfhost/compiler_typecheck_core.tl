@@ -12877,6 +12877,22 @@
         (tc-inline-field-layout-offset field)
         (tc-inline-field-layout-list-offset (box-get rest) name))]))
 
+;; #2601 slice: register-resident aggregate eightbytes may be INTEGER (the
+;; existing word-class data) or SSE when a field is exactly one aligned f64.
+;; Packed f32/f32 and mixed sub-word float eightbytes need bit-preserving pack/
+;; extract IR and intentionally stay memory-backed in this first safe slice.
+(define (tc-sse-eightbyte-field? [ty : AstType] [offset : i64]) : bool
+  (match (tc-type-strip-region ty)
+    [(AstTyF64) (= (% offset 8) 0)]
+    [_ false]))
+
+(define (tc-register-field-class [ty : AstType] [offset : i64]) : i64
+  (if (tc-word-class-type? ty)
+    0
+    (if (tc-sse-eightbyte-field? ty offset)
+      1
+      2)))
+
 ;; #2386: true when every struct field is word-class, so the aggregate can be
 ;; packed into general-purpose register words instead of a memory slot.
 (define (tc-inline-fields-all-word-class? [fields : TcInlineFieldLayoutList]) : bool
@@ -12885,6 +12901,22 @@
     [(TcInlineFieldLayoutCons field rest)
       (if (tc-word-class-type? (tc-inline-field-layout-type field))
         (tc-inline-fields-all-word-class? (box-get rest))
+        false)]))
+
+;; #2601: true when every struct field can be assigned to a supported register
+;; eightbyte class. This preserves every existing INTEGER case and adds exact f64
+;; SSE eightbytes; unsupported packed f32/mixed-float words keep the memory path.
+(define (tc-inline-fields-all-register-class?
+  [fields : TcInlineFieldLayoutList]) : bool
+  (match fields
+    [(TcInlineFieldLayoutNil) true]
+    [(TcInlineFieldLayoutCons field rest)
+      (if (<
+        (tc-register-field-class
+          (tc-inline-field-layout-type field)
+          (tc-inline-field-layout-offset field))
+        2)
+        (tc-inline-fields-all-register-class? (box-get rest))
         false)]))
 
 ;; #2386: true when every payload field of a variant is word-class -- so a 16-byte
@@ -12900,6 +12932,54 @@
           (if (tc-word-class-type? ty)
             (tc-inline-payloads-all-word-class? (box-get rest))
             false)])]))
+
+(define (tc-register-payload-class [payload : TcInlinePayloadLayout]) : i64
+  (match payload
+    [(TcInlinePayloadLayout _ ty offset) (tc-register-field-class ty offset)]))
+
+;; Return -1 for an empty payload list, 0 for INTEGER, 1 for SSE, and 2 when the
+;; payload fields cannot share one supported register eightbyte class.
+(define (tc-inline-payloads-register-class
+  [payloads : TcInlinePayloadLayoutList]
+  [found : i64]) : i64
+  (match payloads
+    [(TcInlinePayloadLayoutNil) found]
+    [(TcInlinePayloadLayoutCons payload rest)
+      (let
+        [class : i64 (tc-register-payload-class payload)]
+        (core/cond
+          (= class 2)
+          2
+          (= found -1)
+          (tc-inline-payloads-register-class (box-get rest) class)
+          (= found class)
+          (tc-inline-payloads-register-class (box-get rest) found)
+          2))]))
+
+(define (tc-inline-enum-register-payload-class
+  [variants : TcInlineVariantLayoutList]
+  [found : i64]) : i64
+  (match variants
+    [(TcInlineVariantLayoutNil) found]
+    [(TcInlineVariantLayoutCons variant rest)
+      (match variant
+        [(TcInlineVariantLayout _ _ _ payloads)
+          (let
+            [class : i64 (tc-inline-payloads-register-class payloads -1)]
+            (core/cond
+              (= class 2)
+              2
+              (= class -1)
+              (tc-inline-enum-register-payload-class (box-get rest) found)
+              (= found -1)
+              (tc-inline-enum-register-payload-class (box-get rest) class)
+              (= found class)
+              (tc-inline-enum-register-payload-class (box-get rest) found)
+              2))])]))
+
+(define (tc-inline-enum-payloads-all-register-class?
+  [variants : TcInlineVariantLayoutList]) : bool
+  (< (tc-inline-enum-register-payload-class variants -1) 2))
 
 (define (tc-inline-enum-payloads-all-word-class?
   [variants : TcInlineVariantLayoutList]) : bool
@@ -13915,20 +13995,20 @@
   (match layout
     [(TcInlineStructLayout size _ fields)
       ;; #2386: an integer-class struct of 1 word (8 B) or 2 words (16 B) whose
-      ;; fields are all word-class is register-resident -- carried in one or two
-      ;; GP registers end-to-end (construction/extract/ABI/regalloc-pair/stack
-      ;; slot + array/box/closure/global/(:repr c) embedding), never round-tripping
-      ;; through memory. Larger or float-containing structs keep the memory path.
+      ;; fields are all supported register classes is register-resident --
+      ;; carried in one or two register-class words end-to-end. #2601 extends the
+      ;; original INTEGER-only gate to exact f64 SSE eightbytes; packed f32/mixed
+      ;; float words stay memory-backed until bit-preserving pack/extract lands.
       (if (or (= size 8) (= size 16))
-        (tc-inline-fields-all-word-class? fields)
+        (tc-inline-fields-all-register-class? fields)
         false)]
     ;; #2386: an enum is register-resident at 1 word (size 8 -- necessarily
     ;; nullary, the tag word) or 2 words (size 16 -- tag in word0, a single
-    ;; word-class payload in word1). Larger or float/aggregate-payload enums keep
-    ;; the memory path.
+    ;; supported register-class payload in word1). Larger or unsupported
+    ;; aggregate-payload enums keep the memory path.
     [(TcInlineEnumLayout size _ variants)
       (if (or (= size 8) (= size 16))
-        (tc-inline-enum-payloads-all-word-class? variants)
+        (tc-inline-enum-payloads-all-register-class? variants)
         false)]))
 
 (define (tc-name-register-resident? [ctx : TcContext] [name : String]) : bool

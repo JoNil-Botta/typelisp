@@ -14,14 +14,12 @@
 
 (import "../stdlib/string.tl")
 
+(import "../stdlib/vector.tl")
+
 (import "../stdlib/str_cat.tl")
 
-(defenum MdStringList
-  (MdStringNil)
-  (MdStringCons String (Box MdStringList)))
-
 (defenum MdTableRow
-  (MdTableRow MdStringList))
+  (MdTableRow StringVec))
 
 (defenum MdTableRowList
   (MdTableRowNil)
@@ -30,11 +28,11 @@
 (defenum MdBlock
   (MdHeading i64 String)
   (MdParagraph String)
-  (MdBlockquote MdStringList)
-  (MdBulletList MdStringList)
-  (MdNumberedList MdStringList)
+  (MdBlockquote StringVec)
+  (MdBulletList StringVec)
+  (MdNumberedList StringVec)
   (MdCodeFence String String String)
-  (MdTable MdStringList MdTableRowList)
+  (MdTable StringVec MdTableRowList)
   (MdBlank))
 
 (defenum MdBlockList
@@ -54,17 +52,6 @@
 (defenum MdMaybeString
   (MdNoString)
   (MdSomeString String))
-
-(define (md-string-list-reverse-into
-  [items : MdStringList]
-  [acc : MdStringList]) : MdStringList
-  (match items
-    [(MdStringNil) acc]
-    [(MdStringCons head rest)
-      (md-string-list-reverse-into (box-get rest) (MdStringCons head (box acc)))]))
-
-(define (md-string-list-reverse [items : MdStringList]) : MdStringList
-  (md-string-list-reverse-into items MdStringNil))
 
 (define (md-table-row-list-reverse-into
   [items : MdTableRowList]
@@ -88,23 +75,18 @@
 (define (md-block-list-reverse [items : MdBlockList]) : MdBlockList
   (md-block-list-reverse-into items MdBlockNil))
 
-(define (md-string-list-count [items : MdStringList]) : i64
-  (match items
-    [(MdStringNil) 0]
-    [(MdStringCons _ rest) (+ 1 (md-string-list-count (box-get rest)))]))
+(define (md-string-list-count [items : StringVec]) : i64
+  (string-vec-len items))
 
-(define (md-string-list-ref [items : MdStringList] [index : i64]) : MdMaybeString
-  (if (< index 0)
-    MdNoString
-    (match items
-      [(MdStringNil) MdNoString]
-      [(MdStringCons head rest)
-        (if (= index 0)
-          (MdSomeString head)
-          (md-string-list-ref (box-get rest) (- index 1)))])))
+(define (md-string-list-ref [items : StringVec] [index : i64]) : MdMaybeString
+  (if (if (>= index 0)
+    (< index (string-vec-len items))
+    false)
+    (MdSomeString (string-vec-get items index ""))
+    MdNoString))
 
 (define (md-string-list-ref-eq?
-  [items : MdStringList]
+  [items : StringVec]
   [index : i64]
   [expected : String]) : bool
   (match (md-string-list-ref items index)
@@ -112,7 +94,7 @@
     [(MdNoString) false]))
 
 (define (md-string-list-eq2?
-  [items : MdStringList]
+  [items : StringVec]
   [first : String]
   [second : String]) : bool
   (and
@@ -527,29 +509,28 @@
         (set! end end))
       (substring trimmed start (- end start)))))
 
-(define (md-split-pipe-row [line : String]) : MdStringList
+(define (md-split-pipe-row [line : String]) : StringVec
   (let
     [body : String (md-strip-pipe-edges line)]
     [n : i64 (string-length (md-strip-pipe-edges line))]
     [i : i64 0]
     [segment-start : i64 0]
-    [items : MdStringList MdStringNil]
+    [items : StringVec (string-vec-new)]
     (begin
       (while (< i n)
         (if (= (string-ref body i) #|')
           (begin
             (set!
               items
-              (MdStringCons
-                (md-trim (substring body segment-start (- i segment-start)))
-                (box items)))
+              (string-vec-push
+                items
+                (md-trim (substring body segment-start (- i segment-start)))))
             (set! segment-start (+ i 1))
             (set! i (+ i 1)))
           (set! i (+ i 1))))
-      (md-string-list-reverse
-        (MdStringCons
-          (md-trim (substring body segment-start (- n segment-start)))
-          (box items))))))
+      (string-vec-push
+        items
+        (md-trim (substring body segment-start (- n segment-start)))))))
 
 (define (md-block-start-at? [src : String] [pos : i64] [n : i64]) : bool
   (let
@@ -591,7 +572,7 @@
 (define (md-scan-blockquote [src : String] [pos : i64] [n : i64]) : MdScanBlock
   (let
     [scan-pos : i64 pos]
-    [items : MdStringList MdStringNil]
+    [items : StringVec (string-vec-new)]
     [done : bool false]
     (begin
       (while (and (not done) (< scan-pos n))
@@ -601,15 +582,15 @@
           [next : i64 (md-next-line-start src line-end n)]
           (if (md-blockquote-start? line)
             (begin
-              (set! items (MdStringCons (md-blockquote-text line) (box items)))
+              (set! items (string-vec-push items (md-blockquote-text line)))
               (set! scan-pos next))
             (set! done true))))
-      (MdScanBlock scan-pos (MdBlockquote (md-string-list-reverse items))))))
+      (MdScanBlock scan-pos (MdBlockquote items)))))
 
 (define (md-scan-bullet-list [src : String] [pos : i64] [n : i64]) : MdScanBlock
   (let
     [scan-pos : i64 pos]
-    [items : MdStringList MdStringNil]
+    [items : StringVec (string-vec-new)]
     [done : bool false]
     (begin
       (while (and (not done) (< scan-pos n))
@@ -619,15 +600,15 @@
           [next : i64 (md-next-line-start src line-end n)]
           (if (md-bullet-start? line)
             (begin
-              (set! items (MdStringCons (md-bullet-text line) (box items)))
+              (set! items (string-vec-push items (md-bullet-text line)))
               (set! scan-pos next))
             (set! done true))))
-      (MdScanBlock scan-pos (MdBulletList (md-string-list-reverse items))))))
+      (MdScanBlock scan-pos (MdBulletList items)))))
 
 (define (md-scan-numbered-list [src : String] [pos : i64] [n : i64]) : MdScanBlock
   (let
     [scan-pos : i64 pos]
-    [items : MdStringList MdStringNil]
+    [items : StringVec (string-vec-new)]
     [done : bool false]
     (begin
       (while (and (not done) (< scan-pos n))
@@ -637,10 +618,10 @@
           [next : i64 (md-next-line-start src line-end n)]
           (if (md-numbered-start? line)
             (begin
-              (set! items (MdStringCons (md-numbered-text line) (box items)))
+              (set! items (string-vec-push items (md-numbered-text line)))
               (set! scan-pos next))
             (set! done true))))
-      (MdScanBlock scan-pos (MdNumberedList (md-string-list-reverse items))))))
+      (MdScanBlock scan-pos (MdNumberedList items)))))
 
 (define (md-scan-table-rows [src : String] [pos : i64] [n : i64]) : MdScanRows
   (let
@@ -861,19 +842,22 @@
 (define (md-render-paragraph [text : String]) : String
   (str-cat "<p>" (md-render-inline text) "</p>\n"))
 
-(define (md-render-inline-lines [lines : MdStringList]) : String
-  (match lines
-    [(MdStringNil) ""]
-    [(MdStringCons head rest)
-      (match (box-get rest)
-        [(MdStringNil) (md-render-inline head)]
-        [_
-          (str-cat
-            (md-render-inline head)
-            "<br>\n"
-            (md-render-inline-lines (box-get rest)))])]))
+(define (md-render-inline-lines-from [lines : StringVec] [index : i64]) : String
+  (if (>= index (string-vec-len lines))
+    ""
+    (let
+      [head : String (string-vec-get lines index "")]
+      (if (= (+ index 1) (string-vec-len lines))
+        (md-render-inline head)
+        (str-cat
+          (md-render-inline head)
+          "<br>\n"
+          (md-render-inline-lines-from lines (+ index 1)))))))
 
-(define (md-render-blockquote [lines : MdStringList]) : String
+(define (md-render-inline-lines [lines : StringVec]) : String
+  (md-render-inline-lines-from lines 0))
+
+(define (md-render-blockquote [lines : StringVec]) : String
   (str-cat
     "<blockquote>\n<p>"
     (md-render-inline-lines lines)
@@ -881,44 +865,50 @@
     "</blockquote>\n"
     ""))
 
-(define (md-render-list-items [items : MdStringList]) : String
-  (match items
-    [(MdStringNil) ""]
-    [(MdStringCons head rest)
-      (str-cat
-        "<li>"
-        (md-render-inline head)
-        "</li>\n"
-        (md-render-list-items (box-get rest)))]))
+(define (md-render-list-items-from [items : StringVec] [index : i64]) : String
+  (if (>= index (string-vec-len items))
+    ""
+    (str-cat
+      "<li>"
+      (md-render-inline (string-vec-get items index ""))
+      "</li>\n"
+      (md-render-list-items-from items (+ index 1)))))
 
-(define (md-render-bullet-list [items : MdStringList]) : String
+(define (md-render-list-items [items : StringVec]) : String
+  (md-render-list-items-from items 0))
+
+(define (md-render-bullet-list [items : StringVec]) : String
   (str-cat "<ul>\n" (md-render-list-items items) "</ul>\n"))
 
-(define (md-render-numbered-list [items : MdStringList]) : String
+(define (md-render-numbered-list [items : StringVec]) : String
   (str-cat "<ol>\n" (md-render-list-items items) "</ol>\n"))
 
 (define (md-render-code-fence [lang : String] [meta : String] [body : String]) : String
   (doc-html-code-block-with-info lang meta body))
 
-(define (md-render-table-header-cells [cells : MdStringList]) : String
-  (match cells
-    [(MdStringNil) ""]
-    [(MdStringCons head rest)
-      (str-cat
-        "<th>"
-        (md-render-inline head)
-        "</th>"
-        (md-render-table-header-cells (box-get rest)))]))
+(define (md-render-table-header-cells-from [cells : StringVec] [index : i64]) : String
+  (if (>= index (string-vec-len cells))
+    ""
+    (str-cat
+      "<th>"
+      (md-render-inline (string-vec-get cells index ""))
+      "</th>"
+      (md-render-table-header-cells-from cells (+ index 1)))))
 
-(define (md-render-table-data-cells [cells : MdStringList]) : String
-  (match cells
-    [(MdStringNil) ""]
-    [(MdStringCons head rest)
-      (str-cat
-        "<td>"
-        (md-render-inline head)
-        "</td>"
-        (md-render-table-data-cells (box-get rest)))]))
+(define (md-render-table-header-cells [cells : StringVec]) : String
+  (md-render-table-header-cells-from cells 0))
+
+(define (md-render-table-data-cells-from [cells : StringVec] [index : i64]) : String
+  (if (>= index (string-vec-len cells))
+    ""
+    (str-cat
+      "<td>"
+      (md-render-inline (string-vec-get cells index ""))
+      "</td>"
+      (md-render-table-data-cells-from cells (+ index 1)))))
+
+(define (md-render-table-data-cells [cells : StringVec]) : String
+  (md-render-table-data-cells-from cells 0))
 
 (define (md-render-table-row [row : MdTableRow]) : String
   (match row
@@ -933,7 +923,7 @@
         (md-render-table-row row)
         (md-render-table-rows (box-get rest)))]))
 
-(define (md-render-table [header : MdStringList] [rows : MdTableRowList]) : String
+(define (md-render-table [header : StringVec] [rows : MdTableRowList]) : String
   (str-cat
     "<table>\n<thead>\n<tr>"
     (md-render-table-header-cells header)

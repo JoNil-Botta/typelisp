@@ -13923,19 +13923,17 @@
           (compiler-reg-function-group-vars walk-func plan-types)]
         [has-group-vars : bool (> (compiler-live-set-count fn-group-vars) 0)]
         ;; #2598: compact the frame after regalloc by renumbering stack-resident
-        ;; scalars into a dense slot prefix. Plans without intervals (the
+        ;; values into a dense slot prefix. Plans without intervals (the
         ;; stack-only opt0/opt1 path) pass through unchanged; `slot-vars`
         ;; replaces the raw var count everywhere the frame layout is derived,
         ;; while `vars` keeps indexing per-variable side tables.
         [coloring
           : CompilerRegColoring
-          ;; Group word1 slots index a second var-region by RAW variable id
-          ;; (compiler-backend-group-word1-slot), so a function containing
-          ;; group vars keeps the uncolored layout: shrinking the threaded
-          ;; var count would place high-id word1 slots outside the frame.
-          (if has-group-vars
-            CompilerRegColoringNone
-            (compiler-reg-color-stack-slots reg-plan fn-group-vars params vars))]
+          ;; Stack-homed register groups keep word0 in their remapped formula
+          ;; slot; word1 indexes the second var-region by the same remapped id.
+          ;; That keeps both words inside the `slot-vars`-sized frame instead of
+          ;; preserving the old high raw ids that drove #2598 frame growth.
+          (compiler-reg-color-stack-slots reg-plan fn-group-vars params vars)]
         [assignments : CompilerRegAssignmentList
           (match coloring
             [(CompilerRegColoringNone) (compiler-reg-plan-assignments reg-plan)]

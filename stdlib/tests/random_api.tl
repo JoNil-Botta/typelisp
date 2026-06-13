@@ -1,5 +1,7 @@
 (import "stdlib/random.tl")
 
+(import "stdlib/vector.tl")
+
 (import "stdlib/test.tl")
 
 (define (assert-owned-string-eq
@@ -101,6 +103,38 @@
         0
         (random-weight-list-cons 5 (random-weight-list-empty))))))
 
+(define (weighted-array-fixture) : (Array i64)
+  (let
+    [weights : (Array i64) (make-array i64 4)]
+    (begin
+      (array-set! weights 0 0)
+      (array-set! weights 1 10)
+      (array-set! weights 2 0)
+      (array-set! weights 3 5)
+      weights)))
+
+(define (weighted-zero-array) : (Array i64)
+  (make-array i64 2))
+
+(define (weighted-negative-array) : (Array i64)
+  (let
+    [weights : (Array i64) (make-array i64 2)]
+    (begin
+      (array-set! weights 0 1)
+      (array-set! weights 1 -1)
+      weights)))
+
+(define (weighted-vector-fixture) : I64Vec
+  (i64-vec-push
+    (i64-vec-push (i64-vec-push (i64-vec-push (i64-vec-new) 0) 10) 0)
+    5))
+
+(define (weighted-zero-vector) : I64Vec
+  (i64-vec-push (i64-vec-push (i64-vec-new) 0) 0))
+
+(define (weighted-negative-vector) : I64Vec
+  (i64-vec-push (i64-vec-push (i64-vec-new) 1) -1))
+
 (define (main) : i64
   (begin
     (assert-i64-eq (random-state-seed (random-seed 0)) 1 "zero seed normalizes")
@@ -140,16 +174,54 @@
           1
           (random-weight-list-cons -1 (random-weight-list-empty))))
       "random: weight must not be negative")
+    (assert-weighted-error
+      (random-weighted-index-array (random-seed 1) (make-array i64 0))
+      "random: weight array must not be empty")
+    (assert-weighted-error
+      (random-weighted-index-array (random-seed 1) (weighted-zero-array))
+      "random: weight total must be positive")
+    (assert-weighted-error
+      (random-weighted-index-array (random-seed 1) (weighted-negative-array))
+      "random: weight must not be negative")
+    (assert-weighted-error
+      (random-weighted-index-vec (random-seed 1) (i64-vec-new))
+      "random: weight vector must not be empty")
+    (assert-weighted-error
+      (random-weighted-index-vec (random-seed 1) (weighted-zero-vector))
+      "random: weight total must be positive")
+    (assert-weighted-error
+      (random-weighted-index-vec (random-seed 1) (weighted-negative-vector))
+      "random: weight must not be negative")
     (assert-weighted-ok
       (random-weighted-index (random-seed 1) (weighted-fixture))
       16807
       1
       "weighted index skips leading zero and picks first positive bucket")
     (assert-weighted-ok
+      (random-weighted-index-array (random-seed 1) (weighted-array-fixture))
+      16807
+      1
+      "array weighted index matches list first positive bucket")
+    (assert-weighted-ok
+      (random-weighted-index-vec (random-seed 1) (weighted-vector-fixture))
+      16807
+      1
+      "vector weighted index matches list first positive bucket")
+    (assert-weighted-ok
       (random-weighted-index (random-seed 2) (weighted-fixture))
       33614
       3
       "weighted index reaches later positive bucket")
+    (assert-weighted-ok
+      (random-weighted-index-array (random-seed 2) (weighted-array-fixture))
+      33614
+      3
+      "array weighted index reaches later positive bucket")
+    (assert-weighted-ok
+      (random-weighted-index-vec (random-seed 2) (weighted-vector-fixture))
+      33614
+      3
+      "vector weighted index reaches later positive bucket")
     (assert-system-seed-ok (random-system-seed))
     (assert-system-seed-ok (random-system-seed))
     (assert-system-seed-error

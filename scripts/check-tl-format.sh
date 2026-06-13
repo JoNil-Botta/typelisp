@@ -71,7 +71,7 @@ build_current_cli_for_format() {
         "compile current formatter for format" \
         "$CURRENT_CLI_COMPILE_STDOUT" \
         "$CURRENT_CLI_COMPILE_STDERR" \
-        "$COMPILER" compile src/cli.tl -o "$CURRENT_CLI_ASM" \
+        "$COMPILER" compile src/main.tl -o "$CURRENT_CLI_ASM" \
         --target "$NL_BOOTSTRAP_TARGET" \
         $(native_target_cfg_args) \
         --stdlib-root stdlib \

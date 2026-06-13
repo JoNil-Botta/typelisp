@@ -95,15 +95,10 @@ tl_alloc tests/integration/tl_alloc.tl
 tl_format_doc src/format_doc.tl
 tl_lex src/lex.tl
 tl_compiler_parse_core src/compiler_parse_core.tl
-tl_compiler_parse_smoke src/compiler_parse_smoke.tl
 tl_compiler_symbols src/compiler_symbols.tl
-tl_compiler_symbols_smoke src/compiler_symbols_smoke.tl
 tl_doc_extract src/doc_extract.tl
-tl_doc_extract_smoke src/doc_extract_smoke.tl
 tl_doc_render src/doc_render.tl
-tl_doc_render_smoke src/doc_render_smoke.tl
 tl_doc_html src/doc_html.tl
-tl_doc_html_smoke src/doc_html_smoke.tl
 tl_read src/read.tl
 tl_token src/token.tl
 token tests/integration/token.tl

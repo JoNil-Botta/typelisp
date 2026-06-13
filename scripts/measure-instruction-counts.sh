@@ -369,7 +369,7 @@ measure_benchmarks() {
 measure_self_compile() {
     asm="$WORKDIR/bin/self-compile.opt$OPT_LEVEL.s"
     measure_repeated self_compile "compile_cli_opt$OPT_LEVEL" 1 \
-        "$COMPILER" compile src/cli.tl -o "$asm" \
+        "$COMPILER" compile src/main.tl -o "$asm" \
         --target "$NL_BOOTSTRAP_TARGET" \
         $(native_target_cfg_args) \
         --stdlib-root stdlib \

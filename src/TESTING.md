@@ -41,9 +41,25 @@ self-test, and return `42` only when the checks pass. Examples include
 `compiler_parse_smoke.tl`, `compiler_lower_smoke.tl`,
 `compiler_optimize_smoke.tl`, and `compiler_backend_smoke.tl`.
 
+Smoke drivers and their fixtures live under `src/tests/` (a reserved package
+test directory, excluded from the source/closure scan). They are built and run
+as exit-42 integration cases by `tests/integration/native-*.manifest`. Place a
+new smoke beside the others in `src/tests/`; import the module under test by
+bare name (resolved from `src/` by the native-manifest staging).
+
 Use a smoke driver when the module is main-less or when CI needs to compile and
-run the module through the TypeLisp executable boundary. If a new smoke driver
-imports additional selfhost files, keep the compile manifest in sync (see below).
+run the module through the TypeLisp executable boundary.
+
+### src/ reachability
+
+The package follows the standard layout: `typelisp build` resolves the default
+`src/main.tl` entry (no explicit `entry` in `typelisp.pkg`), and every top-level
+`src/*.tl` is reachable from `main.tl` except three deliberate exceptions:
+`tlci_core.tl` and `tlci_pages.tl` (documented dormant future-feature modules,
+#2651/#2671) and `compiler_backend_tests.tl` (the backend smoke helper, kept in
+`src/` so it stages for the native `compiler_backend_smoke` case and the
+`verify-integration.sh` fixture drivers). These three carry `decision` rows in
+the compile manifest.
 
 ### Inline tests
 
@@ -133,7 +149,7 @@ symbols, and runtime shims.
 
 Use [`../scripts/analyze-selfhost-build-asm-size.sh`](../scripts/analyze-selfhost-build-asm-size.sh)
 for local code-size comparisons of the selfhost compiler. It compiles
-`src/cli.tl` with `TYPELISP_BIN` when set, otherwise with the published
+`src/main.tl` with `TYPELISP_BIN` when set, otherwise with the published
 stage0 selected by `scripts/lib-stage0.sh`, then prints total assembly
 bytes/lines, section totals, top `.text` symbols, module/file buckets inferred
 from TypeLisp symbol names, and generated clone-helper totals:
@@ -184,31 +200,31 @@ scripts/fetch-stage0.sh
 TYPELISP_BIN=./target/stage0/typelisp ./scripts/verify-selfhost-compile-manifest.sh
 ```
 
-Each published asset is a single self-hosted `src/cli.tl` binary
+Each published asset is a single self-hosted `src/main.tl` binary
 (`typelisp-stage0-linux`, `typelisp-stage0-windows.exe`) that handles every
 toolchain command (compile/build/run/check/fmt/lint/test/doc/repl/lsp/new/init)
 in-process. The `Bootstrap Stage0` workflow is
 self-perpetuating: it fetches the previously published stage0 and uses it to
 build the next stage0 via [`../scripts/build-stage0.sh`](../scripts/build-stage0.sh)
-(`compile src/cli.tl` + native link).
+(`compile src/main.tl` + native link).
 
 The checkout root also has a `typelisp.pkg` whose binary entry is
-`src/cli.tl`, so `typelisp build` from the repository root builds the
+`src/main.tl`, so `typelisp build` from the repository root builds the
 selfhost CLI package into `target/release/`. The CI smoke keeps a
 root package-build check in `scripts/verify-selfhost-cli-build-run.sh`; the
 published stage0 workflow intentionally keeps using the direct
-`compile src/cli.tl` path plus native linking so a seed compiler can build
+`compile src/main.tl` path plus native linking so a seed compiler can build
 its successor without depending on its own `build` command.
 
 ### Single command surface
 
-The published toolchain is the single `src/cli.tl` binary, and every command
+The published toolchain is the single `src/main.tl` binary, and every command
 (`build`, `run`, `check`, `fmt`, `lint`, `test`, `doc`, `compile`, `clean`,
 `repl`, `lsp`, `new`, `init`) is reached only through its dispatcher. There are no
 separate per-command driver binaries: each command's logic lives in a main-free
-`*_cli_core.tl` module compiled as part of `cli.tl`, and the `selfhost_cli`
+`*_cli_core.tl` module compiled as part of `cli.tl`, and the `selfhost_main`
 compile-manifest case asserts every command's dispatch entry, internal symbols,
-and diagnostic strings. Gates that need a command binary build `src/cli.tl`
+and diagnostic strings. Gates that need a command binary build `src/main.tl`
 and invoke the subcommand directly (e.g. `cli build --direct …`,
 `cli check <file>`, `cli fmt --check …`, `cli doc --html …`).
 
@@ -227,7 +243,7 @@ scripts/ci-verify.sh
 That script fetches `stage0-latest` when `TYPELISP_BIN` is unset and treats it
 as the seed compiler. The seed performs the single compiler build of the flow:
 the stage1->stage2->stage3 bootstrap fixpoint in `check-bootstrap-fixpoint.sh`
-over `src/cli.tl`.
+over `src/main.tl`.
 Every remaining gate then runs on the captured stage2 compiler — the
 branch-built full CLI — after a fail-closed probe confirms it can compile,
 assemble, link, and run a native program on the host (`as`/`ld` on Linux,
@@ -264,7 +280,7 @@ bash scripts/check-bootstrap-fixpoint.sh target/stage0/typelisp.exe
 ```
 
 The bootstrapped stage2 compiler captured by the CI gate is the full
-`src/cli.tl` toolchain binary, so a single artifact serves every gate:
+`src/main.tl` toolchain binary, so a single artifact serves every gate:
 the compile-path corpora (deterministic assembly, selfhost compile manifest,
 safety corpus, native integration corpus, examples, stdlib module/fixture
 verifier) assemble and link with the host toolchain after stage2 emits
@@ -363,7 +379,7 @@ tools\stage0\typelisp.exe run src\compiler_backend_tests.tl --stdlib-root stdlib
 
 `scripts/verify-native-link-linux.sh` covers Linux-only cases where the selfhost
 compiler emits assembly that must then assemble, link, and run as a native
-executable. It builds `src/cli.tl` and drives its `compile` subcommand to
+executable. It builds `src/main.tl` and drives its `compile` subcommand to
 verify generated file-to-file assembly for multi-file imports, stdlib imports,
 runtime helpers, dynamic arrays, traps, and stack-argument call shape, plus the
 direct-object (no-assembler) ELF link path via `cli build --direct`.
@@ -447,7 +463,7 @@ the artifact.
 Pull requests get Linux and Windows coverage from the single self-hosted
 verification gate `scripts/ci-verify.sh` (wired in
 [`../.github/workflows/ci.yml`](../.github/workflows/ci.yml)). Both jobs first
-build a fresh `src/cli.tl` binary from the published stage0 compiler and
+build a fresh `src/main.tl` binary from the published stage0 compiler and
 smoke-test public `compile`, `build`, `run`, package build, staticlib build, and
 the work-queue chooser through `typelisp run`. The Linux job then bootstraps a
 compile-only stage1 compiler and runs deterministic assembly, the selfhost

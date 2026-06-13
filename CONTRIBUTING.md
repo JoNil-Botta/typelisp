@@ -107,7 +107,7 @@ The compiler is written in TypeLisp under [`src/`](selfhost). Key modules:
 - `src/compiler_lower.tl` — lowering to the 3-address IR
 - `src/compiler_optimize.tl` — IR optimization passes
 - `src/compiler_backend.tl` — x86_64 code generation
-- `src/cli.tl` — the unified toolchain CLI (the published stage0 binary)
+- `src/main.tl` — the unified toolchain CLI (the published stage0 binary)
 - `src/compile.tl` — the minimal compile entry point used by the bootstrap
 
 See [`src/TESTING.md`](src/TESTING.md) for the testing conventions.

@@ -160,7 +160,7 @@ build_selfhost_checker() {
         asm="$WORKDIR/selfhost-check.s"
         obj="$WORKDIR/selfhost-check.obj"
         run_case "$out" "$err" 0 \
-            "$COMPILER" compile src/cli.tl \
+            "$COMPILER" compile src/main.tl \
             --target "$BUILD_TARGET" \
             $TARGET_CFG_ARGS \
             --stdlib-root stdlib \
@@ -170,9 +170,9 @@ build_selfhost_checker() {
             sed 's/^/  /' "$out" >&2 || true
             echo "stderr:" >&2
             sed 's/^/  /' "$err" >&2 || true
-            fail "src/cli.tl compile failed with exit $code"
+            fail "src/main.tl compile failed with exit $code"
         fi
-        assemble_link_windows "$asm" "$obj" "$CHECK_BIN" "src/cli.tl" "$out" "$err"
+        assemble_link_windows "$asm" "$obj" "$CHECK_BIN" "src/main.tl" "$out" "$err"
     else
         # The compile-only bootstrapped stage1 has `compile`/`check` but not the
         # `build` host action, so assemble + link the checker by hand (mirrors
@@ -180,7 +180,7 @@ build_selfhost_checker() {
         asm="$WORKDIR/selfhost-check.s"
         obj="$WORKDIR/selfhost-check.o"
         run_case "$out" "$err" 0 \
-            "$COMPILER" compile src/cli.tl \
+            "$COMPILER" compile src/main.tl \
             --target "$BUILD_TARGET" \
             $TARGET_CFG_ARGS \
             --stdlib-root stdlib \
@@ -190,16 +190,16 @@ build_selfhost_checker() {
             sed 's/^/  /' "$out" >&2 || true
             echo "stderr:" >&2
             sed 's/^/  /' "$err" >&2 || true
-            fail "src/cli.tl compile failed with exit $code"
+            fail "src/main.tl compile failed with exit $code"
         fi
         if ! as "$asm" -o "$obj" >> "$out" 2>> "$err"; then
             show_stream_if_nonempty stderr "$err"
-            fail "src/cli.tl assemble failed"
+            fail "src/main.tl assemble failed"
         fi
         if ! ld "$obj" -o "$CHECK_BIN" -static -e "$(linux_entry_symbol_for_asm "$asm")" \
             >> "$out" 2>> "$err"; then
             show_stream_if_nonempty stderr "$err"
-            fail "src/cli.tl link failed"
+            fail "src/main.tl link failed"
         fi
     fi
 }

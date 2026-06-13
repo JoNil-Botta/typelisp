@@ -433,10 +433,10 @@ package-cache helpers; conflicting corrupt entries are preserved with a
 `.corrupt.N` suffix before replacement.
 
 The repository root is also a package. From a checkout, `typelisp build` builds
-the unified selfhost CLI from `src/cli.tl` and writes
+the unified selfhost CLI from `src/main.tl` and writes
 `target/release/typelisp` (or `target/release/typelisp.exe` on Windows). Stage0
 publication uses
-`scripts/build-stage0.sh`, which compiles `src/cli.tl` directly and links
+`scripts/build-stage0.sh`, which compiles `src/main.tl` directly and links
 it with the host toolchain so a seed compiler does not depend on its own
 `build` command.
 
@@ -706,13 +706,13 @@ TypeLisp*:
 
 Compiler self-test and smoke-driver conventions are documented in
 [`src/TESTING.md`](src/TESTING.md).
-The published stage0 is a single self-hosted [`src/cli.tl`](src/cli.tl)
+The published stage0 is a single self-hosted [`src/main.tl`](src/main.tl)
 binary per OS (`typelisp-stage0-linux`, `typelisp-stage0-windows.exe`) that
 handles every toolchain command in-process. The `Bootstrap Stage0` workflow
 ([`.github/workflows/bootstrap-stage0.yml`](.github/workflows/bootstrap-stage0.yml))
 is **self-perpetuating**: on each merge to `main` it fetches the
 previously published stage0, uses *that* compiler to build the next stage0 from
-`src/cli.tl`, and publishes the result to the `stage0-latest` and immutable
+`src/main.tl`, and publishes the result to the `stage0-latest` and immutable
 `stage0-*` releases. Each stage0 therefore builds its own successor. To reproduce
 that build locally, run [`scripts/build-stage0.sh`](scripts/build-stage0.sh) with
 a fetched stage0 as the seed:
@@ -723,7 +723,7 @@ scripts/build-stage0.sh target/stage0/typelisp typelisp-stage0-linux   # Linux
 scripts/build-stage0.sh target/stage0/typelisp.exe typelisp-stage0-windows.exe  # Windows (Git Bash)
 ```
 
-`build-stage0.sh` compiles `src/cli.tl` to assembly with the seed and links
+`build-stage0.sh` compiles `src/main.tl` to assembly with the seed and links
 it through the host toolchain (`as`/`ld` on Linux; `clang` + MSVC `link.exe` on
 Windows). The bootstrap path deliberately uses `compile` plus the native linker
 so a stage0 can build its successor without depending on its own `build` command.
@@ -738,7 +738,7 @@ To run the same stage0 verification gate used by CI, run
 `scripts/ci-verify.sh`; it fetches `stage0-latest` when
 `TYPELISP_BIN` is unset. The gate performs a single compiler build on every
 host: the published compiler seeds the stage1->stage2->stage3 bootstrap
-fixpoint over `src/cli.tl`, and every remaining gate then runs on the
+fixpoint over `src/main.tl`, and every remaining gate then runs on the
 freshly bootstrapped stage2 compiler (the branch-built full CLI).
 
 The fixpoint gate is `scripts/check-bootstrap-fixpoint.sh`. On Linux it emits

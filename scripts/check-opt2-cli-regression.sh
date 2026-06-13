@@ -4,7 +4,7 @@ set -eu
 # check-opt2-cli-regression.sh - bounded opt2-generated compiler crash gate.
 #
 # Builds the repository root package as a release opt2 compiler, then verifies
-# that generated compiler can compile src/cli.tl at opt2. This protects the
+# that generated compiler can compile src/main.tl at opt2. This protects the
 # historical #2515 crash path without running a full second bootstrap.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
@@ -82,12 +82,12 @@ if [ ! -x "$GENERATED" ]; then
     exit 1
 fi
 
-echo "[opt2-cli-gate] generated compiler compiles src/cli.tl at opt2"
+echo "[opt2-cli-gate] generated compiler compiles src/main.tl at opt2"
 if ! run_with_heartbeat_capture \
     "opt2 compiler compiles cli.tl" \
     "$COMPILE_STDOUT" \
     "$COMPILE_STDERR" \
-    "$GENERATED" compile src/cli.tl \
+    "$GENERATED" compile src/main.tl \
     -o "$ASM" \
     --target "$NL_BOOTSTRAP_TARGET" \
     $(native_target_cfg_args) \

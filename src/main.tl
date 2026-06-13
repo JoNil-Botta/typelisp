@@ -1,13 +1,11 @@
-;; cli.tl - Unified pure-TypeLisp toolchain dispatcher.
+;; main.tl - Unified pure-TypeLisp toolchain dispatcher (the package entry).
 ;;
 ;; A single self-hosted entry point that dispatches every toolchain subcommand
-;; in-process, instead of compiling and spawning a separate per-command driver
-;; (build.tl, run.tl, check.tl, format.tl, lint.tl, test.tl, doc.tl). Each
-;; command's logic lives in a main-free `*_cli_core.tl` (or `*_driver_core.tl`)
-;; module shared with retained compatibility/coverage wrappers, so this file
-;; only routes:
+;; in-process. Each command's logic lives in a main-free `*_cli_core.tl` (or
+;; `*_driver_core.tl`) module, so this file only routes. Built as the package
+;; binary (`typelisp build`), it is then invoked as:
 ;;
-;;   typelisp run selfhost/cli.tl -- <command> <args...>
+;;   typelisp <command> <args...>
 ;;
 ;; Recognized commands: build, run, check, fmt, lint, test, doc, compile, clean,
 ;; inspect, repl, lsp, new, and init. The command name is `(arg 1)`; each

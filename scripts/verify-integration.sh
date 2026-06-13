@@ -202,16 +202,14 @@ dep_source_path() {
             printf '%s\n' "$ROOT/src/sym_i64_env.tl"
             return
             ;;
-        text_buf_core.tl)
-            printf '%s\n' "$ROOT/src/text_buf.tl"
-            return
-            ;;
     esac
 
     if [ -f "$_source_dir/$_dep" ]; then
         printf '%s\n' "$_source_dir/$_dep"
     elif [ -f "$ROOT/src/$_dep" ]; then
         printf '%s\n' "$ROOT/src/$_dep"
+    elif [ -f "$ROOT/src/tests/$_dep" ]; then
+        printf '%s\n' "$ROOT/src/tests/$_dep"
     elif [ -f "$ROOT/tests/integration/$_dep" ]; then
         printf '%s\n' "$ROOT/tests/integration/$_dep"
     else
@@ -225,13 +223,18 @@ copy_dep() {
     _source_dir=$2
     _case_dir=$3
     _src=$(dep_source_path "$_dep" "$_source_dir")
+    # src/ and src/tests/ sources import `../stdlib/...`, so stage stdlib at the
+    # parent of the case dir; tests/integration/ sources use `stdlib/...`.
     case "$_dep" in
         stdlib/*)
-            if [ "$_source_dir" = "$ROOT/src" ]; then
-                _dst="$(dirname -- "$_case_dir")/$_dep"
-            else
-                _dst="$_case_dir/$_dep"
-            fi
+            case "$_source_dir" in
+                "$ROOT/src" | "$ROOT/src/tests")
+                    _dst="$(dirname -- "$_case_dir")/$_dep"
+                    ;;
+                *)
+                    _dst="$_case_dir/$_dep"
+                    ;;
+            esac
             ;;
         *)
             _dst="$_case_dir/$_dep"
@@ -243,11 +246,14 @@ copy_dep() {
     case "$_dep" in
         stdlib/core_macros.tl) ;;
         stdlib/*)
-            if [ "$_source_dir" = "$ROOT/src" ]; then
-                _core_dst="$(dirname -- "$_case_dir")/stdlib/core_macros.tl"
-            else
-                _core_dst="$_case_dir/stdlib/core_macros.tl"
-            fi
+            case "$_source_dir" in
+                "$ROOT/src" | "$ROOT/src/tests")
+                    _core_dst="$(dirname -- "$_case_dir")/stdlib/core_macros.tl"
+                    ;;
+                *)
+                    _core_dst="$_case_dir/stdlib/core_macros.tl"
+                    ;;
+            esac
             mkdir -p "$(dirname -- "$_core_dst")"
             cp "$ROOT/stdlib/core_macros.tl" "$_core_dst"
             ;;
@@ -681,7 +687,7 @@ run_linux_backend_fixtures() {
 
     echo "[backend-runtime] emit -> assemble -> link -> run"
     build_linux_fixture_driver backend-runtime-driver \
-        src/compiler_backend_runtime_fixture.tl "$_runtime_driver"
+        src/tests/compiler_backend_runtime_fixture.tl "$_runtime_driver"
     "$_runtime_driver" "$_runtime_asm"
     for _snippet in \
         ".globl tl_alloc" \
@@ -790,7 +796,7 @@ EOF
 
     echo "[backend-stack-args] emit -> assemble -> link -> run"
     build_linux_fixture_driver backend-stack-args-driver \
-        src/compiler_backend_stack_args_fixture.tl "$_stack_driver"
+        src/tests/compiler_backend_stack_args_fixture.tl "$_stack_driver"
     "$_stack_driver" "$_stack_asm" linux-x86_64
     for _snippet in \
         "subq \$16, %rsp" \
@@ -827,7 +833,7 @@ EOF
 
     echo "[backend-raw-pointer] emit -> assemble -> link -> run"
     build_linux_fixture_driver backend-raw-pointer-driver \
-        src/compiler_backend_raw_pointer_fixture.tl "$_raw_ptr_driver"
+        src/tests/compiler_backend_raw_pointer_fixture.tl "$_raw_ptr_driver"
     "$_raw_ptr_driver" "$_raw_ptr_asm" linux-x86_64
     for _snippet in \
         "_tl_write_i64:" \
@@ -932,7 +938,7 @@ run_windows_backend_fixtures() {
     _driver_asm="$_runtime_dir/fixture_driver.s"
     _driver_obj="$_runtime_dir/fixture_driver.obj"
     _driver_bin="$_runtime_dir/fixture_driver.exe"
-    "$COMPILER" compile src/compiler_backend_runtime_fixture.tl \
+    "$COMPILER" compile src/tests/compiler_backend_runtime_fixture.tl \
         --target windows-x86_64 --cfg windows -o "$_driver_asm" || {
         echo "FAIL: windows-backend-runtime driver compile failed" >&2
         exit 1
@@ -1075,7 +1081,7 @@ EOF
     # driver via compile + clang + lld-link (mirrors the runtime fixture above).
     _driver_self_asm="$_driver_dir/selfhost-compile.s"
     _driver_self_obj="$_driver_dir/selfhost-compile.obj"
-    "$COMPILER" compile src/cli.tl --target windows-x86_64 --cfg windows -o "$_driver_self_asm" || {
+    "$COMPILER" compile src/main.tl --target windows-x86_64 --cfg windows -o "$_driver_self_asm" || {
         echo "FAIL: windows-selfhost-compile-driver compile failed" >&2
         exit 1
     }

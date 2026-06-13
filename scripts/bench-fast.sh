@@ -5,7 +5,7 @@ set -eu
 #
 # Trimmed cousin of scripts/benchmark-compile-cli.sh for iterating on compiler
 # performance changes. Builds stage1 and stage2 from the working-tree sources,
-# then times the stage2 CLI compiling src/cli.tl into stage3.s REPS times
+# then times the stage2 CLI compiling src/main.tl into stage3.s REPS times
 # (default 5), reporting the minimum and median wall-clock milliseconds, and
 # verifies stage3.s is byte-identical to stage2.s (fixpoint). No profile driver,
 # no cache.
@@ -47,7 +47,7 @@ now_ms() {
 
 compile() {
     _c=$1; _o=$2
-    "$_c" compile src/cli.tl -o "$_o" \
+    "$_c" compile src/main.tl -o "$_o" \
         --target "$NL_BOOTSTRAP_TARGET" \
         $(native_target_cfg_args) \
         --stdlib-root stdlib --stdlib-root src \

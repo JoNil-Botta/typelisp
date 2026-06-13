@@ -182,7 +182,7 @@ compile_cli_to_asm() {
     echo "[tool-bench] $label"
     start=$(now_ms)
     if ! run_with_heartbeat "$label" \
-        "$compiler" compile src/cli.tl -o "$asm" \
+        "$compiler" compile src/main.tl -o "$asm" \
         --target "$NL_BOOTSTRAP_TARGET" \
         $(native_target_cfg_args) \
         --stdlib-root stdlib \
@@ -506,8 +506,8 @@ frame_append() {
 write_lsp_input() {
     output=$1
     : > "$output"
-    source_json=$(json_escape_file src/cli.tl)
-    uri="file://src/cli.tl"
+    source_json=$(json_escape_file src/main.tl)
+    uri="file://src/main.tl"
     frame_append "$output" '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}'
     frame_append "$output" '{"jsonrpc":"2.0","method":"initialized","params":{}}'
     did_open=$(printf '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"%s","languageId":"typelisp","version":1,"text":%s}}}' "$uri" "$source_json")
@@ -651,8 +651,8 @@ strip_if_needed "$CHOOSER_BIN"
 measure_case "fmt-check" "$TMPDIR_BENCH/run-fmt-check-corpus.sh" "$CLI_BIN" "$CORPUS_MANIFEST"
 verify_formatter_no_mutation
 measure_case "lint-check-corpus" "$TMPDIR_BENCH/run-lint-corpus.sh" "$CLI_BIN" "$CORPUS_MANIFEST"
-measure_case "doc-markdown-cli-graph" "$CLI_BIN" doc src/cli.tl -o "$ARTIFACTS/compiler.md" --stdlib-root stdlib --stdlib-root src
-measure_case "doc-html-cli" "$CLI_BIN" doc --html src/cli.tl "$ARTIFACTS/compiler.html"
+measure_case "doc-markdown-cli-graph" "$CLI_BIN" doc src/main.tl -o "$ARTIFACTS/compiler.md" --stdlib-root stdlib --stdlib-root src
+measure_case "doc-html-cli" "$CLI_BIN" doc --html src/main.tl "$ARTIFACTS/compiler.html"
 measure_case "doc-test-corpus" "$TMPDIR_BENCH/run-doc-test-corpus.sh" "$CLI_BIN" "$CORPUS_MANIFEST"
 measure_case "lsp-diagnostics-cli" "$TMPDIR_BENCH/run-lsp-compiler.sh" "$CLI_BIN" "$TMPDIR_BENCH/lsp-compiler.in"
 measure_case_unstable_stdout "chooser-corpus" "$TMPDIR_BENCH/run-chooser-corpus.sh" "$CHOOSER_BIN" "$TMPDIR_BENCH/chooser-corpus.json"

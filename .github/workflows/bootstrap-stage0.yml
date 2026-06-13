@@ -8,7 +8,7 @@ name: Bootstrap Stage0
 # Self-perpetuation: the new
 # stage0 is built by FETCHING THE PREVIOUSLY PUBLISHED stage0 (the last cli.tl
 # binary, via scripts/fetch-stage0.sh) and using THAT compiler to compile
-# src/cli.tl to assembly, then assembling + linking it into the next stage0
+# src/main.tl to assembly, then assembling + linking it into the next stage0
 # binary. Each published stage0 thus builds its successor.
 #
 # IMPORTANT: bootstrap uses `compile` (frontend + backend -> .s) and the host
@@ -56,7 +56,7 @@ jobs:
 
       - name: Smoke-check the new stage0 binary
         run: |
-          ./typelisp-stage0-linux compile src/cli.tl -o /tmp/stage0-smoke.s \
+          ./typelisp-stage0-linux compile src/main.tl -o /tmp/stage0-smoke.s \
             --target linux-x86_64 --stdlib-root stdlib --stdlib-root src
           test -s /tmp/stage0-smoke.s
 
@@ -97,7 +97,7 @@ jobs:
       - name: Smoke-check the new stage0 binary
         shell: bash
         run: |
-          ./typelisp-stage0-windows.exe compile src/cli.tl -o /tmp/stage0-smoke.s \
+          ./typelisp-stage0-windows.exe compile src/main.tl -o /tmp/stage0-smoke.s \
             --target windows-x86_64 --cfg windows --cfg target-windows --cfg os-windows \
             --stdlib-root stdlib --stdlib-root src
           test -s /tmp/stage0-smoke.s
@@ -105,7 +105,7 @@ jobs:
       - name: Corpus-check the new stage0 (frontend only)
         shell: bash
         run: |
-          for module in stdlib/io.tl stdlib/string.tl stdlib/fs.tl stdlib/env.tl src/cli.tl; do
+          for module in stdlib/io.tl stdlib/string.tl stdlib/fs.tl stdlib/env.tl src/main.tl; do
             ./typelisp-stage0-windows.exe check "$module" --stdlib-root stdlib --stdlib-root src
           done
 

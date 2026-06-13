@@ -318,7 +318,7 @@ function Invoke-SuperluminalCapture {
         "--no-microsoft-symbol-server",
         "--no-nuget-symbol-server",
         $Stage2Exe,
-        "compile", "src/cli.tl",
+        "compile", "src/main.tl",
         "-o", $stage3,
         "--target", "windows-x86_64",
         "--cfg", "windows",

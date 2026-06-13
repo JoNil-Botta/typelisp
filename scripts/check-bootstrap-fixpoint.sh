@@ -3,7 +3,7 @@ set -eu
 
 # check-bootstrap-fixpoint.sh - selfhost compiler stage2/stage3 fixpoint gate.
 #
-# A seed TypeLisp compiler builds the full selfhost toolchain (src/cli.tl)
+# A seed TypeLisp compiler builds the full selfhost toolchain (src/main.tl)
 # to stage1. stage1 then compiles the same source to stage2.s, stage2 repeats
 # that compile to stage3.s, and the selfhost-emitted stage2/stage3 assembly must
 # be byte-identical. The stages use the same compile flags as the stage0
@@ -266,7 +266,7 @@ EOF
 # publication build (scripts/build-stage0.sh), so the stage2 produced here is
 # the branch-built equivalent of a published stage0 and CI can run every
 # downstream gate on it.
-BOOTSTRAP_SRC=src/cli.tl
+BOOTSTRAP_SRC=src/main.tl
 
 echo "[bootstrap] stage0 -> stage1.s"
 run_with_heartbeat "stage0 -> stage1.s" "$COMPILER" compile "$BOOTSTRAP_SRC" -o "$STAGE1_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) --stdlib-root stdlib --stdlib-root src --opt-level 1

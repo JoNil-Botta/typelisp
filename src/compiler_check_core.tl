@@ -320,7 +320,7 @@
 
 (define (compiler-check-virtual-import-ok?) : bool
   (match (compiler-check-source
-    "selfhost/virtual_entry.tl"
+    "src/virtual_entry.tl"
     (compiler-check-virtual-import-source))
     [(OkCompilerCheck summary) (> (compiler-typecheck-summary-score summary) 0)]
     [(ErrCompilerCheck _) false]))
@@ -334,7 +334,7 @@
 
 (define (compiler-check-virtual-import-inline-layout-ok?) : bool
   (match (compiler-load-source-with-paths
-    "selfhost/virtual_entry.tl"
+    "src/virtual_entry.tl"
     (compiler-check-virtual-import-source)
     (sym-i64-empty))
     [(OkCompilerLoadWithPaths decls _ _ _)
@@ -361,7 +361,7 @@
 
 (define (compiler-check-export-ok?) : bool
   (match (compiler-check-source
-    "selfhost/export_entry.tl"
+    "src/export_entry.tl"
     (compiler-check-export-source))
     [(OkCompilerCheck summary) (> (compiler-typecheck-summary-score summary) 0)]
     [(ErrCompilerCheck _) false]))
@@ -456,9 +456,9 @@
 
 (define (compiler-check-seen-root-ok?) : bool
   (match (compiler-load-source
-    "selfhost/already_loaded.tl"
+    "src/already_loaded.tl"
     "(define answer : i64 1)"
-    (sym-i64-bind (sym-i64-empty) "selfhost/already_loaded.tl" 1))
+    (sym-i64-bind (sym-i64-empty) "src/already_loaded.tl" 1))
     [(OkCompilerLoad decls _)
       (match decls
         [(AstDeclNil) true]

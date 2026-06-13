@@ -229,7 +229,7 @@ verify_linux_direct_object_link() {
     _out="$_dir/build.stdout"
     _err="$_dir/build.stderr"
 
-    compile_selfhost_binary direct-object-build src/cli.tl "$_tool"
+    compile_selfhost_binary direct-object-build src/main.tl "$_tool"
     cat > "$_src" <<'EOF'
 (define (main) : i64 42)
 EOF
@@ -311,7 +311,7 @@ build_selfhost_compiler_driver() {
     _bin=$1
     # The standalone compiler_driver.tl was removed; the unified cli `compile`
     # subcommand is the file-to-file driver (same backend / codegen).
-    compile_selfhost_binary compiler-driver src/cli.tl "$_bin"
+    compile_selfhost_binary compiler-driver src/main.tl "$_bin"
 }
 
 verify_compiler_driver_stack_args() {

@@ -124,7 +124,7 @@ run:
 bash scripts/benchmark-cli-tools.sh
 ```
 
-The harness builds one fresh `src/cli.tl` binary, then times tools whose
+The harness builds one fresh `src/main.tl` binary, then times tools whose
 implementation is not the compiler compile path: formatter, linter,
 documentation generation, doctest discovery, LSP framing/diagnostics, and the
 work-queue chooser. Compiler-front-end debug surfaces such as tokenize/parse are

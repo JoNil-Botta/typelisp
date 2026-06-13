@@ -1,7 +1,7 @@
 ;; compiler_backend_windows_driver_fixture.tl - emit Windows driver primitive fixture assembly.
-(import "../stdlib/io.tl")
+(import "../../stdlib/io.tl")
 
-(import "compiler_backend.tl")
+(import "../compiler_backend.tl")
 
 (define (main) : i64
   (if (< (arg-count) 2)

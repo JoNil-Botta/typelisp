@@ -2,7 +2,7 @@
 # bench-iter.sh - fast inner-loop benchmark for stage2 compiling stage3.
 #
 # Builds stage1 and stage2 at OPT (default 2), then times the stage2 binary
-# compiling src/cli.tl into stage3.s (best of N runs) and verifies
+# compiling src/main.tl into stage3.s (best of N runs) and verifies
 # stage2.s == stage3.s. Skips the profile-driver build/run that the full
 # benchmark does, so it is ~2x faster for iteration.
 set -eu
@@ -34,7 +34,7 @@ now_ms() {
 }
 
 compile() { # compiler out
-    "$1" compile src/cli.tl -o "$2" \
+    "$1" compile src/main.tl -o "$2" \
         --target "$NL_BOOTSTRAP_TARGET" $(native_target_cfg_args) \
         --stdlib-root stdlib --stdlib-root src --opt-level "$OPT"
 }

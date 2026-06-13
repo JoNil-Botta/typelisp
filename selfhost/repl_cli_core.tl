@@ -6,20 +6,24 @@
 ;; Owns the REPL line loop and the dot-command behavior of the Rust REPL
 ;; skeleton's in-process slices. It reads
 ;; lines with `read-stdin-line` until `.exit` or end of input, printing a flushed
-;; `tl> ` prompt before each read so the prompt is visible in an interactive
+;; `tl> ` prompt (or a `... ` continuation marker while a multiline form is
+;; pending) before each read so the prompt is visible in an interactive
 ;; session, and dispatches the dot commands:
 ;;
 ;;   - `.exit`            ends the session.
 ;;   - `.help`            prints the command help to stdout.
 ;;   - `.type <expr>`     prints the inferred type without running code.
-;;   - blank line         is skipped.
+;;   - blank line         is skipped at the top level, and cancels a pending
+;;                        multiline form (discarding the buffered input).
 ;;   - any other `.cmd`   reports an unknown command (to stderr).
 ;;   - declarations       are checked and persisted for later inputs.
 ;;   - expressions         are checked, compiled as scratch source, and run.
 ;;
-;; Multiline input is accumulated until its delimiters are complete. Parse and
-;; type errors report diagnostics, discard only the failing input, and return to
-;; the prompt with previously accepted declarations intact.
+;; Multiline input is accumulated until its delimiters are complete; while a form
+;; is pending the prompt shows a `... ` continuation marker and a blank line
+;; abandons it. Parse and type errors report diagnostics, discard only the
+;; failing input, and return to the prompt with previously accepted declarations
+;; intact.
 (import "stdlib/io.tl")
 
 (import "compiler_typecheck.tl")
@@ -73,9 +77,11 @@
   (try-remove-dir-if-exists (& path)))
 
 ;; Print the prompt and flush stdout so it is visible before the blocking read.
-(define (repl-prompt) : unit
+;; A pending multiline form shows a `... ` continuation marker (aligned to the
+;; 4-column `tl> ` prompt) so it is clear the previous input was not yet complete.
+(define (repl-prompt [continuation? : bool]) : unit
   (begin
-    (repl-stdout-write "tl> ")
+    (repl-stdout-write (if continuation? "... " "tl> "))
     (stdout-flush)))
 
 ;; `line` begins with `.` (a dot command). Empty lines are handled safely.
@@ -726,21 +732,34 @@
     (repl-handle-source-line session-source pending line)))
 
 ;; The REPL loop: prompt, then read and dispatch until `.exit` or end of input.
+;; While a multiline form is pending the prompt becomes a `... ` continuation
+;; marker, and a blank line (Enter on an empty line, as distinct from EOF)
+;; discards the pending buffer and returns to the top-level prompt.
 (define (repl-loop [session-source : String] [pending : String]) : unit
-  (begin
-    (repl-prompt)
-    (if (stdin-at-eof?)
-      (if (string-eq pending "")
-        unit
-        (repl-stderr-write "Error: incomplete REPL input at EOF\n"))
-      (let
-        [line-read : StdinRead (stdin-read-line)]
-        [line : String (repl-normalize-input-line (stdin-read-text line-read))]
-        (if (and (string-eq pending "") (string-eq line ".exit"))
-          unit
-          (match (repl-handle-line session-source pending line)
-            [(ReplLineResult next-session next-pending)
-              (repl-loop next-session next-pending)]))))))
+  (let
+    [pending? : bool (not (string-eq pending ""))]
+    (begin
+      (repl-prompt pending?)
+      (if (stdin-at-eof?)
+        (if pending?
+          (repl-stderr-write "Error: incomplete REPL input at EOF\n")
+          unit)
+        (let
+          [line-read : StdinRead (stdin-read-line)]
+          [line : String (repl-normalize-input-line (stdin-read-text line-read))]
+          (if (and (not pending?) (string-eq line ".exit"))
+            unit
+            ;; A blank line while a form is pending cancels it. Guard on the
+            ;; read's EOF flag so an EOF-induced empty read is not mistaken for a
+            ;; user-entered blank line (that path still reports incomplete-at-EOF).
+            (if (and
+                  pending?
+                  (string-eq line "")
+                  (not (stdin-read-eof? line-read)))
+              (repl-loop session-source "")
+              (match (repl-handle-line session-source pending line)
+                [(ReplLineResult next-session next-pending)
+                  (repl-loop next-session next-pending)]))))))))
 
 (define (repl-run) : i64
   (begin

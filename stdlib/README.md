@@ -224,11 +224,13 @@ names so runtime-plan additions must be assigned an owner first.
   `tl_current_arena` slot, and must stay import-free and allocation-free on
   allocation/reclaim paths. Their checked OS-call inventory is Linux
   `mmap`/`munmap` in `tl_alloc`, `tl_arena_make`, `tl_arena_destroy`, and
-  `tl_region_reset`, plus the current `tl_arena_make` fatal-exit syscall;
+  `tl_region_reset(0)`, plus the current `tl_arena_make` fatal-exit syscall;
   Windows uses kernel32 `VirtualAlloc`/`VirtualFree` in the corresponding page
-  acquisition/release paths. `tl_region_mark`, `tl_arena_current`,
-  `tl_arena_set`, and `tl_arena_poison_enable` only read or update backend
-  runtime state.
+  acquisition/release paths. Nonzero `tl_region_reset(mark)` retires overflow
+  chunks on the arena root instead of releasing them immediately, and reset-all
+  or destroy releases those retained chunks. `tl_region_mark`,
+  `tl_arena_current`, `tl_arena_set`, and `tl_arena_poison_enable` only read or
+  update backend runtime state.
 - **Stdlib FFI wrapper dependency:** backend shims still needed by stdlib
   wrappers around OS/profile surfaces: `tl_profile_alloc_total`,
   `tl_profile_alloc_live`, `tl_profile_alloc_peak`,

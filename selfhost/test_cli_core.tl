@@ -2453,6 +2453,31 @@
         " test(s) in "
         (string-append (int->string file-count) " file(s)\n")))))
 
+(define (tltest-run-batch-check-path
+  [source : String]
+  [roots : StringVec]
+  [backend-target : CompilerBackendTarget]) : i64
+  (let
+    [home : i64 (arena-current)]
+    [scratch : i64 (arena-make)]
+    (begin
+      (unsafe
+        (arena-set! scratch))
+      (let
+        [entry-result : i64
+          (begin
+            (compiler-driver-reset-file-state!)
+            (match (tltest-check-file-source source roots backend-target)
+              [(ErrTestFileCheck status) (- 0 status)]
+              [(OkTestFileCheck count) count]))]
+        [scratch-head : i64 (arena-current)]
+        (begin
+          (unsafe
+            (arena-set! home))
+          (unsafe
+            (arena-destroy scratch-head))
+          entry-result)))))
+
 (define (tltest-run-batch-check-paths
   [paths : TestBatchPathList]
   [roots : StringVec]
@@ -2466,19 +2491,12 @@
         0)]
     [(TestBatchPathCons source rest)
       (let
-        ;; Match compile --batch: isolate each entry's load/harness/typecheck
-        ;; working set in a scratch arena, then clear transient parser/type and
-        ;; intern state before the next entry can observe reclaimed nodes.
-        ;; Session-cached prelude nodes and their intern ids stay live across
-        ;; entries (#2596).
+        ;; Match compile --batch: isolate each entry in a destroyable scratch
+        ;; arena. Lexical arena rewind keeps overflow chunks retired until the
+        ;; owning arena is destroyed (#2441), so destroying the entry arena is
+        ;; required for long one-process batches to stay bounded.
         [entry-result : i64
-          (with-arena
-            batch-entry
-            (begin
-              (compiler-driver-reset-file-state!)
-              (match (tltest-check-file-source source roots backend-target)
-                [(ErrTestFileCheck status) (- 0 status)]
-                [(OkTestFileCheck count) count])))]
+          (tltest-run-batch-check-path source roots backend-target)]
         (if (< entry-result 0)
           (begin
             (print-error (string-append "test: batch source failed: " source))

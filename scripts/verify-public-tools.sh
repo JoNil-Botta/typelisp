@@ -412,7 +412,7 @@ assert_subcommand_help_pair() {
 
 assert_subcommand_help_pair build "typelisp build"
 if [ "$EXPECT_NORMALIZED_HELP" -eq 1 ]; then
-    assert_contains "$err" "--opt-level <0|1|2>            Package-build optimizer level"
+    assert_contains "$err" "--opt-level <0|1|2>            Override package optimizer level (release 2, dev 0)"
     assert_contains "$err" "--locked"
     assert_contains "$err" "--update-lock"
 fi
@@ -1467,8 +1467,8 @@ EOF
     assert_contains "$err" "build: unknown opt level '3'; expected 0, 1, or 2"
 
     # Profile and opt-level forwarding are observable in the emitted package
-    # assembly: release defaults to optimized code, dev defaults to opt level 0,
-    # and an explicit --opt-level overrides the profile default.
+    # assembly: release defaults to opt2 scalar register allocation, dev
+    # defaults to opt level 0, and explicit --opt-level overrides the profile.
     SELFHOST_OPTPKG="$SELFHOST_PLANNER_DIR/optpkg"
     mkdir -p "$SELFHOST_OPTPKG/src"
     cat > "$SELFHOST_OPTPKG/typelisp.pkg" <<'EOF'
@@ -1480,49 +1480,108 @@ EOF
 EOF
     maybe_strip_manifest_kind "$SELFHOST_OPTPKG/typelisp.pkg"
     cat > "$SELFHOST_OPTPKG/src/main.tl" <<'EOF'
-(define (main) : i64 (* 6 7))
+(define (calc [a : i64] [b : i64]) : i64
+  (let
+    [x : i64 (+ a b)]
+    [y : i64 (* x 2)]
+    (+ y x)))
+(define (main) : i64
+  (calc 10 5))
 EOF
     SELFHOST_OPT_RELEASE_ASM="$SELFHOST_OPTPKG/target/release/selfhost_opt_pkg.s"
     SELFHOST_OPT_DEV_ASM="$SELFHOST_OPTPKG/target/dev/selfhost_opt_pkg.s"
-    SELFHOST_OPT_FOLDED_MUL='    movq $42, %rax'
-    SELFHOST_OPT_UNFOLDED_MUL="    imulq %r8, %rax"
+    SELFHOST_OPT2_REGALLOC='    addq %r8, %r12'
+    SELFHOST_OPT0_STACK_MUL="    imulq %r8, %rax"
+
+    SELFHOST_OPTWORKER="$SELFHOST_PLANNER_DIR/optworker"
+    mkdir -p "$SELFHOST_OPTWORKER/src"
+    cat > "$SELFHOST_OPTWORKER/typelisp.pkg" <<'EOF'
+(package
+  (name "selfhost_opt_worker")
+  (version "0.1.0")
+  (kind "staticlib")
+  (entry "src/lib.tl"))
+EOF
+    cat > "$SELFHOST_OPTWORKER/src/lib.tl" <<'EOF'
+(define (worker_calc [a : i64] [b : i64]) : i64
+  (let
+    [x : i64 (+ a b)]
+    [y : i64 (* x 2)]
+    (+ y x)))
+EOF
+    SELFHOST_OPT_WORKER_RELEASE_ASM="$SELFHOST_OPTWORKER/target/release/selfhost_opt_worker.s"
+    SELFHOST_OPT_WORKER_DEV_ASM="$SELFHOST_OPTWORKER/target/dev/selfhost_opt_worker.s"
 
     rm -rf "$SELFHOST_OPTPKG/target"
     run_cmd selfhost-build-package-opt-default "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg"
     assert_success
     assert_stderr_empty
     [ -f "$SELFHOST_OPT_RELEASE_ASM" ] || fail "selfhost opt package default build did not keep release assembly"
-    assert_contains "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT_FOLDED_MUL"
-    assert_not_contains "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT_UNFOLDED_MUL"
+    assert_contains "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT2_REGALLOC"
+    assert_not_contains "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT0_STACK_MUL"
+
+    rm -rf "$SELFHOST_OPTWORKER/target"
+    run_cmd selfhost-build-package-worker-opt-default "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --package-worker --manifest-path "$SELFHOST_OPTWORKER/typelisp.pkg"
+    assert_success
+    assert_stderr_empty
+    [ -f "$SELFHOST_OPT_WORKER_RELEASE_ASM" ] || fail "selfhost opt package worker default build did not keep release assembly"
+    assert_contains "$SELFHOST_OPT_WORKER_RELEASE_ASM" "$SELFHOST_OPT2_REGALLOC"
+    assert_not_contains "$SELFHOST_OPT_WORKER_RELEASE_ASM" "$SELFHOST_OPT0_STACK_MUL"
 
     rm -rf "$SELFHOST_OPTPKG/target"
     run_cmd selfhost-build-package-profile-dev "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --profile dev
     assert_success
     assert_stderr_empty
     [ -f "$SELFHOST_OPT_DEV_ASM" ] || fail "selfhost opt package dev profile build did not keep dev assembly"
-    assert_contains "$SELFHOST_OPT_DEV_ASM" "$SELFHOST_OPT_UNFOLDED_MUL"
+    assert_contains "$SELFHOST_OPT_DEV_ASM" "$SELFHOST_OPT0_STACK_MUL"
+    assert_not_contains "$SELFHOST_OPT_DEV_ASM" "$SELFHOST_OPT2_REGALLOC"
 
     rm -rf "$SELFHOST_OPTPKG/target"
     run_cmd selfhost-build-package-opt-zero "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --opt-level 0
     assert_success
     assert_stderr_empty
     [ -f "$SELFHOST_OPT_RELEASE_ASM" ] || fail "selfhost opt package --opt-level 0 build did not keep release assembly"
-    assert_contains "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT_UNFOLDED_MUL"
+    assert_contains "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT0_STACK_MUL"
+    assert_not_contains "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT2_REGALLOC"
+
+    rm -rf "$SELFHOST_OPTPKG/target"
+    run_cmd selfhost-build-package-opt-one "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --opt-level 1
+    assert_success
+    assert_stderr_empty
+    [ -f "$SELFHOST_OPT_RELEASE_ASM" ] || fail "selfhost opt package --opt-level 1 build did not keep release assembly"
+    assert_not_contains "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT2_REGALLOC"
 
     rm -rf "$SELFHOST_OPTPKG/target"
     run_cmd selfhost-build-package-opt-two "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --opt-level 2
     assert_success
     assert_stderr_empty
     [ -f "$SELFHOST_OPT_RELEASE_ASM" ] || fail "selfhost opt package --opt-level 2 build did not keep release assembly"
-    assert_contains "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT_FOLDED_MUL"
-    assert_not_contains "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT_UNFOLDED_MUL"
+    assert_contains "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT2_REGALLOC"
+    assert_not_contains "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT0_STACK_MUL"
 
     rm -rf "$SELFHOST_OPTPKG/target"
     run_cmd selfhost-build-package-profile-release-opt-zero "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --profile release --opt-level 0
     assert_success
     assert_stderr_empty
     [ -f "$SELFHOST_OPT_RELEASE_ASM" ] || fail "selfhost opt package release profile --opt-level 0 build did not keep release assembly"
-    assert_contains "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT_UNFOLDED_MUL"
+    assert_contains "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT0_STACK_MUL"
+    assert_not_contains "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT2_REGALLOC"
+
+    rm -rf "$SELFHOST_OPTPKG/target"
+    run_cmd selfhost-build-package-profile-dev-opt-two "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --profile dev --opt-level 2
+    assert_success
+    assert_stderr_empty
+    [ -f "$SELFHOST_OPT_DEV_ASM" ] || fail "selfhost opt package dev profile --opt-level 2 build did not keep dev assembly"
+    assert_contains "$SELFHOST_OPT_DEV_ASM" "$SELFHOST_OPT2_REGALLOC"
+    assert_not_contains "$SELFHOST_OPT_DEV_ASM" "$SELFHOST_OPT0_STACK_MUL"
+
+    rm -rf "$SELFHOST_OPTWORKER/target"
+    run_cmd selfhost-build-package-worker-opt-before-profile "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --package-worker --manifest-path "$SELFHOST_OPTWORKER/typelisp.pkg" --opt-level 2 --profile dev
+    assert_success
+    assert_stderr_empty
+    [ -f "$SELFHOST_OPT_WORKER_DEV_ASM" ] || fail "selfhost opt package worker --opt-level 2 --profile dev build did not keep dev assembly"
+    assert_contains "$SELFHOST_OPT_WORKER_DEV_ASM" "$SELFHOST_OPT2_REGALLOC"
+    assert_not_contains "$SELFHOST_OPT_WORKER_DEV_ASM" "$SELFHOST_OPT0_STACK_MUL"
 
     rm -rf "$SELFHOST_OPTPKG/target"
     run_cmd selfhost-build-package-profile-invalid "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --profile fast
@@ -2216,9 +2275,10 @@ else
     assert_contains_any "$PKG_ASM" \
         "_tl_inc:" \
         "_tl_math_inc:" \
-        "_tl_public_tool_pkg_src_math_inc"
+        "_tl_public_tool_pkg_src_math_inc" \
+        '    movq $41, %rcx' \
+        '    movq $41, %rdi'
     assert_contains "$PKG_ASM" "add_one"
-    assert_contains "$PKG_ASM" "_tl_public_tool_pkg_src_math_inc"
     assert_contains "$PKG_ASM" "_tl_math_src_lib_add_one"
     assert_contains "$PKG_ASM" "_tl_stdlib_runtime_runtime_os_write"
     assert_not_contains "$PKG_ASM" "_tl_public_tool_pkg_vendor_math"

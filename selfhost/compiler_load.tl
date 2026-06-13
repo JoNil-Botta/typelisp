@@ -99,6 +99,10 @@
   (CompilerLoadProgramCacheEmpty)
   (CompilerLoadProgramCacheFull String AstProgram))
 
+(defenum CompilerLoadProgramAdmissionSlot
+  (CompilerLoadProgramAdmissionEmpty)
+  (CompilerLoadProgramAdmissionFull String))
+
 (define compiler-load-session-ast-floor : i64
   0)
 
@@ -114,10 +118,20 @@
 (define compiler-load-program-cache-capacity : i64
   256)
 
+(define compiler-load-local-program-cache-node-limit : i64
+  2048)
+
 (define compiler-load-program-cache : (Array CompilerLoadProgramCacheSlot)
   (make-array CompilerLoadProgramCacheSlot 256))
 
+(define compiler-load-program-admission : (Array
+    CompilerLoadProgramAdmissionSlot)
+  (make-array CompilerLoadProgramAdmissionSlot 256))
+
 (define compiler-load-program-cache-ready : bool
+  false)
+
+(define compiler-load-program-admission-ready : bool
   false)
 
 (define compiler-load-program-cache-hit-count : i64
@@ -149,6 +163,7 @@
   (begin
     (compiler-load-program-cache-fill! 0)
     (set! compiler-load-program-cache-ready true)
+    (compiler-load-program-admission-clear!)
     (compiler-load-program-cache-stats-reset!)))
 
 (define (compiler-load-program-cache-ensure!) : unit
@@ -233,6 +248,81 @@
   (begin
     (compiler-load-program-cache-ensure!)
     (compiler-load-program-cache-can-store-at key 0)))
+
+(define (compiler-load-program-admission-fill! [index : i64]) : unit
+  (if (>= index compiler-load-program-cache-capacity)
+    unit
+    (begin
+      (array-set!
+        compiler-load-program-admission
+        index
+        (CompilerLoadProgramAdmissionEmpty))
+      (compiler-load-program-admission-fill! (+ index 1)))))
+
+(define (compiler-load-program-admission-clear!) : unit
+  (begin
+    (compiler-load-program-admission-fill! 0)
+    (set! compiler-load-program-admission-ready true)))
+
+(define (compiler-load-program-admission-ensure!) : unit
+  (if compiler-load-program-admission-ready
+    unit
+    (compiler-load-program-admission-clear!)))
+
+(define (compiler-load-program-admission-contains-from?
+  [key : String]
+  [index : i64]) : bool
+  (if (>= index compiler-load-program-cache-capacity)
+    false
+    (match (array-ref compiler-load-program-admission index)
+      [(CompilerLoadProgramAdmissionEmpty) false]
+      [(CompilerLoadProgramAdmissionFull slot-key)
+        (if (string-eq slot-key key)
+          true
+          (compiler-load-program-admission-contains-from? key (+ index 1)))])))
+
+(define (compiler-load-program-admission-contains? [key : String]) : bool
+  (begin
+    (compiler-load-program-admission-ensure!)
+    (compiler-load-program-admission-contains-from? key 0)))
+
+(define (compiler-load-program-admission-record-at [key : String] [index : i64]) : bool
+  (if (>= index compiler-load-program-cache-capacity)
+    false
+    (match (array-ref compiler-load-program-admission index)
+      [(CompilerLoadProgramAdmissionEmpty)
+        (begin
+          (array-set!
+            compiler-load-program-admission
+            index
+            (CompilerLoadProgramAdmissionFull key))
+          true)]
+      [(CompilerLoadProgramAdmissionFull slot-key)
+        (if (string-eq slot-key key)
+          true
+          (compiler-load-program-admission-record-at key (+ index 1)))])))
+
+(define (compiler-load-program-admission-record [key : String]) : bool
+  (begin
+    (compiler-load-program-admission-ensure!)
+    (compiler-load-program-admission-record-at key 0)))
+
+(define (compiler-load-program-admission-record-persistent [key : String]) : bool
+  (if (compiler-load-program-admission-contains? key)
+    true
+    (let
+      [prev-arena : i64 (arena-current)]
+      [recorded : bool
+        (begin
+          (unsafe
+            (arena-set! node-pool-base-arena))
+          (let
+            [persistent-key : String (string-copy-borrowed (& key))]
+            (begin
+              (unsafe
+                (arena-set! prev-arena))
+              (compiler-load-program-admission-record persistent-key))))]
+      recorded)))
 
 (define (compiler-load-session-note-persistent!) : unit
   (begin
@@ -456,6 +546,13 @@
         count))))
 
 (define (compiler-load-session-file-cacheable?
+  [path : String]
+  [stdlib-roots : StringVec]) : bool
+  ;; Entry files opt out before this helper. Resolved import files are safe to
+  ;; cache by path + cfg, including local and package-owned modules.
+  (> (string-length (compiler-load-normalize-path path)) 0))
+
+(define (compiler-load-session-file-cache-immediate?
   [path : String]
   [stdlib-roots : StringVec]) : bool
   (let
@@ -1525,6 +1622,45 @@
       loaded)
     (compiler-load-parse-file-diagnostic-escaping path cfgs)))
 
+(define (compiler-load-ast-program-result-ok?
+  [result : ResultAstProgramDiagnostic]) : bool
+  (match result
+    [(OkAstProgramDiagnostic _) true]
+    [(ErrAstProgramDiagnostic _) false]))
+
+(define (compiler-load-parse-file-diagnostic-cache-miss-local
+  [key : String]
+  [path : String]
+  [cfgs : SymI64Env]) : ResultAstProgramDiagnostic
+  (if (compiler-load-program-cache-can-store key)
+    (let
+      [start-nodes : i64 (ast-node-pool-len)]
+      [cold : ResultAstProgramDiagnostic
+        (compiler-load-parse-file-diagnostic-escaping path cfgs)]
+      [node-delta : i64 (- (ast-node-pool-len) start-nodes)]
+      (if (and
+        (compiler-load-ast-program-result-ok? cold)
+        (<= node-delta compiler-load-local-program-cache-node-limit))
+        (compiler-load-parse-file-diagnostic-cache-miss key path cfgs)
+        cold))
+    (compiler-load-parse-file-diagnostic-escaping path cfgs)))
+
+(define (compiler-load-parse-file-diagnostic-admit-only
+  [key : String]
+  [path : String]
+  [cfgs : SymI64Env]) : ResultAstProgramDiagnostic
+  (let
+    [parsed : ResultAstProgramDiagnostic
+      (compiler-load-parse-file-diagnostic-escaping path cfgs)]
+    (begin
+      (match parsed
+        [(OkAstProgramDiagnostic _)
+          (if (compiler-load-program-admission-record-persistent key)
+            unit
+            unit)]
+        [(ErrAstProgramDiagnostic _) unit])
+      parsed)))
+
 (define (compiler-load-parse-file-diagnostic-session
   [path : String]
   [stdlib-roots : StringVec]
@@ -1542,7 +1678,18 @@
         [(CompilerLoadProgramCacheMiss)
           (begin
             (compiler-load-program-cache-note-miss!)
-            (compiler-load-parse-file-diagnostic-cache-miss key path cfgs))]))
+            (if (or
+              (compiler-load-session-file-cache-immediate? path stdlib-roots)
+              (compiler-load-program-admission-contains? key))
+              (if (compiler-load-session-file-cache-immediate?
+                path
+                stdlib-roots)
+                (compiler-load-parse-file-diagnostic-cache-miss key path cfgs)
+                (compiler-load-parse-file-diagnostic-cache-miss-local
+                  key
+                  path
+                  cfgs))
+              (compiler-load-parse-file-diagnostic-admit-only key path cfgs)))]))
     (compiler-load-parse-file-diagnostic-escaping path cfgs)))
 
 (define (compiler-load-parse-embedded-source-diagnostic-cache-miss
@@ -2595,16 +2742,19 @@
               [(ErrCompilerLoadModuleId diag) (ErrCompilerLoadWithPaths diag)])]
           [(ErrCompilerLoadModuleId diag) (ErrCompilerLoadWithPaths diag)]))]))
 
-(define (compiler-load-package-file-with-paths-and-roots-expect
+(define (compiler-load-package-file-with-paths-and-roots-expect-cache-current
   [path : String]
   [seen : SymI64Env]
   [stdlib-roots : StringVec]
   [expected-module : AstMaybeModuleName]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]
-  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  [cfgs : SymI64Env]
+  [cache-current : bool]) : ResultCompilerLoadWithPaths
   (if (file-exists? path)
-    (match (compiler-load-parse-file-diagnostic-session path stdlib-roots cfgs)
+    (match (if cache-current
+      (compiler-load-parse-file-diagnostic-session path stdlib-roots cfgs)
+      (compiler-load-parse-file-diagnostic-escaping path cfgs))
       [(OkAstProgramDiagnostic program)
         (compiler-load-package-program-with-paths-and-roots-expect
           path
@@ -2618,10 +2768,12 @@
       [(ErrAstProgramDiagnostic diag) (ErrCompilerLoadWithPaths diag)])
     (match (compiler-load-embedded-stdlib-source-for-path path)
       [(CompilerEmbeddedStdlibSomeSource source)
-        (match (compiler-load-parse-embedded-source-diagnostic-session
-          path
-          source
-          cfgs)
+        (match (if cache-current
+          (compiler-load-parse-embedded-source-diagnostic-session
+            path
+            source
+            cfgs)
+          (compiler-load-parse-source-diagnostic-escaping path source cfgs))
           [(OkAstProgramDiagnostic program)
             (compiler-load-package-program-with-paths-and-roots-expect
               path
@@ -2638,6 +2790,24 @@
           (compiler-diagnostic-at-start
             path
             (string-append "compiler-load: cannot read import " path)))])))
+
+(define (compiler-load-package-file-with-paths-and-roots-expect
+  [path : String]
+  [seen : SymI64Env]
+  [stdlib-roots : StringVec]
+  [expected-module : AstMaybeModuleName]
+  [manifest-dir : String]
+  [deps : CompilerPkgDeps]
+  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  (compiler-load-package-file-with-paths-and-roots-expect-cache-current
+    path
+    seen
+    stdlib-roots
+    expected-module
+    manifest-dir
+    deps
+    cfgs
+    true))
 
 (define (compiler-load-package-file-with-paths-and-roots
   [path : String]
@@ -2669,6 +2839,23 @@
     manifest-dir
     deps
     cfgs))
+
+(define (compiler-load-package-entry-file-with-paths-and-roots-cfg
+  [path : String]
+  [seen : SymI64Env]
+  [stdlib-roots : StringVec]
+  [manifest-dir : String]
+  [deps : CompilerPkgDeps]
+  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  (compiler-load-package-file-with-paths-and-roots-expect-cache-current
+    path
+    seen
+    stdlib-roots
+    AstNoModuleName
+    manifest-dir
+    deps
+    cfgs
+    false))
 
 (define (compiler-load-package-core-macro-prelude-with-roots-cfg
   [seen : SymI64Env]
@@ -3182,6 +3369,186 @@
                 (sym-i64-empty)
                 roots-b)
                 [(OkCompilerLoadWithPaths _ _ _ _) (set! ok true)]
+                [(ErrCompilerLoadWithPaths _) (set! ok false)]))
+            (set! ok false))
+          (compiler-load-session-cache-disable-for-test!)
+          ok)))))
+
+(define (compiler-load-session-cache-entry-cold-ok?) : bool
+  (begin
+    (write-file
+      "target/cl_cache_cold_entry.tl"
+      "(module cache.cold.entry)
+(define entry-value : i64 1)")
+    (compiler-load-session-cache-enable!)
+    (compiler-load-program-cache-clear!)
+    (let
+      [ok : bool false]
+      (begin
+        (if (match (compiler-load-entry-file-with-paths-and-roots-cfg
+          "target/cl_cache_cold_entry.tl"
+          (sym-i64-empty)
+          (string-vec-new)
+          (compiler-cfg-empty))
+          [(OkCompilerLoadWithPaths _ _ _ _) true]
+          [(ErrCompilerLoadWithPaths _) false])
+          (begin
+            (compiler-load-session-reset-pools!)
+            (compiler-load-session-reset-interns!)
+            (match (compiler-load-entry-file-with-paths-and-roots-cfg
+              "target/cl_cache_cold_entry.tl"
+              (sym-i64-empty)
+              (string-vec-new)
+              (compiler-cfg-empty))
+              [(OkCompilerLoadWithPaths _ _ _ _)
+                (set!
+                  ok
+                  (and
+                    (= compiler-load-program-cache-hit-count 0)
+                    (= compiler-load-program-cache-store-count 0)))]
+              [(ErrCompilerLoadWithPaths _) (set! ok false)]))
+          (set! ok false))
+        (compiler-load-session-cache-disable-for-test!)
+        ok))))
+
+(define (compiler-load-session-cache-local-common-dep-ok?) : bool
+  (let
+    [dir : String "target/cl_cache_local"]
+    [dep : String (compiler-load-join-root-path dir "dep.tl")]
+    [entry-a : String (compiler-load-join-root-path dir "entry_a.tl")]
+    [entry-b : String (compiler-load-join-root-path dir "entry_b.tl")]
+    [entry-c : String (compiler-load-join-root-path dir "entry_c.tl")]
+    (begin
+      (compiler-load-test-mkdir dir)
+      (write-file dep "(module cache.local.dep)
+(define dep-value : i64 1)")
+      (write-file
+        entry-a
+        "(module cache.local.entry.a)
+(import \"dep.tl\" module cache.local.dep as dep)
+(define entry-a : i64 1)")
+      (write-file
+        entry-b
+        "(module cache.local.entry.b)
+(import \"dep.tl\" module cache.local.dep as dep)
+(define entry-b : i64 2)")
+      (write-file
+        entry-c
+        "(module cache.local.entry.c)
+(import \"dep.tl\" module cache.local.dep as dep)
+(define entry-c : i64 3)")
+      (compiler-load-session-cache-enable!)
+      (compiler-load-program-cache-clear!)
+      (let
+        [ok : bool false]
+        (begin
+          (if (match (compiler-load-entry-file-with-paths-and-roots-cfg
+            entry-a
+            (sym-i64-empty)
+            (string-vec-new)
+            (compiler-cfg-empty))
+            [(OkCompilerLoadWithPaths _ _ _ _) true]
+            [(ErrCompilerLoadWithPaths _) false])
+            (begin
+              (compiler-load-session-reset-pools!)
+              (compiler-load-session-reset-interns!)
+              (match (compiler-load-entry-file-with-paths-and-roots-cfg
+                entry-b
+                (sym-i64-empty)
+                (string-vec-new)
+                (compiler-cfg-empty))
+                [(OkCompilerLoadWithPaths _ _ _ _)
+                  (begin
+                    (compiler-load-session-reset-pools!)
+                    (compiler-load-session-reset-interns!)
+                    (match (compiler-load-entry-file-with-paths-and-roots-cfg
+                      entry-c
+                      (sym-i64-empty)
+                      (string-vec-new)
+                      (compiler-cfg-empty))
+                      [(OkCompilerLoadWithPaths _ _ _ _)
+                        (set!
+                          ok
+                          (and
+                            (> compiler-load-program-cache-hit-count 0)
+                            (>= compiler-load-program-cache-store-count 1)))]
+                      [(ErrCompilerLoadWithPaths _) (set! ok false)]))]
+                [(ErrCompilerLoadWithPaths _) (set! ok false)]))
+            (set! ok false))
+          (compiler-load-session-cache-disable-for-test!)
+          ok)))))
+
+(define (compiler-load-session-cache-package-common-dep-ok?) : bool
+  (let
+    [root : String "target/cl_cache_pkg"]
+    [src : String (compiler-load-join-root-path root "src")]
+    [dep : String (compiler-load-join-root-path src "common.tl")]
+    [entry-a : String (compiler-load-join-root-path src "entry_a.tl")]
+    [entry-b : String (compiler-load-join-root-path src "entry_b.tl")]
+    [entry-c : String (compiler-load-join-root-path src "entry_c.tl")]
+    [deps : CompilerPkgDeps (compiler-pkg-deps-empty)]
+    (begin
+      (compiler-load-test-mkdir root)
+      (compiler-load-test-mkdir src)
+      (write-file dep "(module cache.pkg.common)
+(define common-value : i64 1)")
+      (write-file
+        entry-a
+        "(module cache.pkg.entry.a)
+(import \"common.tl\" module cache.pkg.common as common)
+(define entry-a : i64 1)")
+      (write-file
+        entry-b
+        "(module cache.pkg.entry.b)
+(import \"common.tl\" module cache.pkg.common as common)
+(define entry-b : i64 2)")
+      (write-file
+        entry-c
+        "(module cache.pkg.entry.c)
+(import \"common.tl\" module cache.pkg.common as common)
+(define entry-c : i64 3)")
+      (compiler-load-session-cache-enable!)
+      (compiler-load-program-cache-clear!)
+      (let
+        [ok : bool false]
+        (begin
+          (if (match (compiler-load-package-entry-file-with-paths-and-roots-cfg
+            entry-a
+            (sym-i64-empty)
+            (string-vec-new)
+            root
+            deps
+            (compiler-cfg-empty))
+            [(OkCompilerLoadWithPaths _ _ _ _) true]
+            [(ErrCompilerLoadWithPaths _) false])
+            (begin
+              (compiler-load-session-reset-pools!)
+              (compiler-load-session-reset-interns!)
+              (match (compiler-load-package-entry-file-with-paths-and-roots-cfg
+                entry-b
+                (sym-i64-empty)
+                (string-vec-new)
+                root
+                deps
+                (compiler-cfg-empty))
+                [(OkCompilerLoadWithPaths _ _ _ _)
+                  (begin
+                    (compiler-load-session-reset-pools!)
+                    (compiler-load-session-reset-interns!)
+                    (match (compiler-load-package-entry-file-with-paths-and-roots-cfg
+                      entry-c
+                      (sym-i64-empty)
+                      (string-vec-new)
+                      root
+                      deps
+                      (compiler-cfg-empty))
+                      [(OkCompilerLoadWithPaths _ _ _ _)
+                        (set!
+                          ok
+                          (and
+                            (> compiler-load-program-cache-hit-count 0)
+                            (>= compiler-load-program-cache-store-count 1)))]
+                      [(ErrCompilerLoadWithPaths _) (set! ok false)]))]
                 [(ErrCompilerLoadWithPaths _) (set! ok false)]))
             (set! ok false))
           (compiler-load-session-cache-disable-for-test!)
@@ -5262,6 +5629,25 @@
       (return
         (begin
           (panic "compiler-load: session cache root isolation smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-session-cache-entry-cold-ok?)
+      (return
+        (begin
+          (panic "compiler-load: session cache entry cold smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-session-cache-local-common-dep-ok?)
+      (return
+        (begin
+          (panic "compiler-load: session cache local common dep smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-session-cache-package-common-dep-ok?)
+      (return
+        (begin
+          (panic
+            "compiler-load: session cache package common dep smoke mismatch")
           0)))
     (unless
       (compiler-load-file-import-dedup-cycle-ok?)

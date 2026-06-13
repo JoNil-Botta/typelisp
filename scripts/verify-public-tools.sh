@@ -1244,6 +1244,42 @@ EOF
     assert_code 42
     assert_stdout_empty
     assert_stderr_empty
+
+    # Package manifest `(link ...)` section (#2892): a bin package with no
+    # per-extern link metadata links a native library through only the manifest
+    # `link` section. The relative `search-paths` entry is resolved against the
+    # manifest directory (the build runs from the repository root, not the
+    # package directory), the library is requested via a per-target
+    # `linux-libraries` field, and a `windows-libraries` entry must be filtered
+    # out on the Linux build or the link would fail on a missing library.
+    PKG_LINK_DIR="$SELFHOST_PLANNER_DIR/pkg-link"
+    mkdir -p "$PKG_LINK_DIR/src" "$PKG_LINK_DIR/vendor"
+    cp "$LINK_LIB_DIR/libffi_add7.a" "$PKG_LINK_DIR/vendor/libffi_add7.a"
+    cat > "$PKG_LINK_DIR/typelisp.pkg" <<'EOF'
+(package
+  (name "pkg_link_app")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "src/main.tl")
+  (link
+    (search-paths "vendor")
+    (linux-libraries "ffi_add7")
+    (windows-libraries "pkg_link_missing_on_linux")))
+EOF
+    cat > "$PKG_LINK_DIR/src/main.tl" <<'EOF'
+(extern (ffi_add7 [x : i64]) : i64)
+(define (main) : i64 (ffi_add7 35))
+EOF
+    run_cmd pkg-link-build "$COMPILER" build --manifest-path "$PKG_LINK_DIR/typelisp.pkg" --target linux-x86_64
+    assert_success
+    assert_stderr_empty
+    assert_contains "$out" "Built "
+    PKG_LINK_BIN="$PKG_LINK_DIR/target/release/pkg_link_app"
+    [ -x "$PKG_LINK_BIN" ] || fail "package link build did not write executable $PKG_LINK_BIN"
+    run_cmd pkg-link-output "$PKG_LINK_BIN"
+    assert_code 42
+    assert_stdout_empty
+    assert_stderr_empty
     fi
 
     PLANNER_AVX2_OUTPUT="$SELFHOST_PLANNER_DIR/with space/avx2 program$HOST_EXE_SUFFIX"

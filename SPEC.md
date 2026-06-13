@@ -2484,6 +2484,48 @@ Example:
   `<package-name>` on Linux and `<package-name>.exe` on Windows. `staticlib`
   packages produce `lib<package-name>.a` on Linux and `<package-name>.lib` on
   Windows. Assembly and object side artifacts use the same profile directory.
+- The optional top-level `(link ...)` section declares native link inputs for
+  `bin` package builds, so a package that links system or vendored libraries
+  does not need `(:link-lib ...)`/`(:link-search ...)`/`(:link-arg ...)`
+  metadata on every `extern`:
+
+  ```lisp test=ignore name=package-link reason="manifest file, not TypeLisp source"
+  (package
+    (name "tl-platformer")
+    (version "0.1.0")
+    (link
+      (libraries "raylib")
+      (search-paths "vendor/raylib/lib")
+      (linux-libraries "GL" "m" "pthread" "dl" "rt" "X11")
+      (windows-libraries "opengl32" "gdi32" "winmm" "shell32" "user32")))
+  ```
+
+  - `libraries`, `search-paths`, and `args` apply to every target. `libraries`
+    are native library names (`-l<name>` on Linux, `<name>.lib` on Windows),
+    `search-paths` are library search directories (`-L<dir>` / `/LIBPATH:<dir>`),
+    and `args` are raw linker arguments passed through verbatim.
+  - `linux-libraries`, `linux-search-paths`, `linux-args` and
+    `windows-libraries`, `windows-search-paths`, `windows-args` add inputs only
+    when building for that target.
+  - Each field is a list of one or more non-empty strings. Unknown field names,
+    a repeated `link` section, a repeated field, empty strings, and non-string
+    values are rejected with manifest diagnostics.
+  - Relative `search-paths` (all-target and per-target) are resolved against the
+    manifest directory before the linker runs, so builds are independent of the
+    caller's working directory. Absolute search paths, library names, and raw
+    arguments are used as written.
+  - Effective link inputs for a `bin` build are assembled in first-seen order
+    with exact duplicates removed within each class (libraries, search paths,
+    raw args): all-target manifest inputs, then the selected target's inputs,
+    then the static archives of package dependencies (kept positional after the
+    requested libraries and arguments). On Linux, any non-empty link input
+    switches the package link from the freestanding `ld` path to the `cc` path
+    so the program links against the C runtime and the requested libraries.
+  - The `link` section affects only `bin` artifacts. `staticlib` packages still
+    emit an archive, and a dependency package's `link` section is not yet
+    propagated to a dependent `bin`, so declare shared native inputs in the
+    binary package's own manifest. Dynamic/shared library output remains out of
+    scope for this package layer.
 - Package-root-qualified imports use the reserved string prefix
   `pkg:<alias>/...`, for example `(import "pkg:math/src/lib.tl")`.
 - Package-manager roadmap boundary for the next package phase:

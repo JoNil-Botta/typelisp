@@ -2036,7 +2036,8 @@
                         (struct-get manifest version)
                         (struct-get manifest kind)
                         (struct-get manifest entry)
-                        (compiler-pkg-deps-from-list (struct-get resolved deps))))])])])])))
+                        (compiler-pkg-deps-from-list (struct-get resolved deps))
+                        (struct-get manifest link)))])])])])))
 
 (define (build-package-normalize-manifest-path [manifest-path : String]) : String
   (compiler-load-normalize-path manifest-path))
@@ -2284,13 +2285,101 @@
       (compiler-load-join-root-path target-dir (build-profile-name profile))]
     (and (build-mkdir-ok? target-dir) (build-mkdir-ok? profile-dir))))
 
+;: Resolve a manifest `search-paths` value against the manifest directory.
+;: Relative paths are joined and normalized so package builds do not depend on
+;: the caller's working directory; absolute paths are left as written.
+(define (build-package-link-resolve-search-path
+  [manifest-dir : String]
+  [value : String]) : String
+  (if (compiler-load-absolute-path? value)
+    value
+    (compiler-load-normalize-path
+      (compiler-load-join-root-path manifest-dir value))))
+
+(define (build-package-link-add-libs
+  [inputs : SourceToolLinkInputs]
+  [vec : StringVec]
+  [idx : i64]) : SourceToolLinkInputs
+  (if (>= idx (string-vec-len vec))
+    inputs
+    (build-package-link-add-libs
+      (source-tool-link-inputs-add-ast
+        inputs
+        (AstExternLinkLib (string-vec-get vec idx "")))
+      vec
+      (+ idx 1))))
+
+(define (build-package-link-add-search-paths
+  [inputs : SourceToolLinkInputs]
+  [manifest-dir : String]
+  [vec : StringVec]
+  [idx : i64]) : SourceToolLinkInputs
+  (if (>= idx (string-vec-len vec))
+    inputs
+    (build-package-link-add-search-paths
+      (source-tool-link-inputs-add-ast
+        inputs
+        (AstExternLinkSearch
+          (build-package-link-resolve-search-path
+            manifest-dir
+            (string-vec-get vec idx ""))))
+      manifest-dir
+      vec
+      (+ idx 1))))
+
+(define (build-package-link-add-args
+  [inputs : SourceToolLinkInputs]
+  [vec : StringVec]
+  [idx : i64]) : SourceToolLinkInputs
+  (if (>= idx (string-vec-len vec))
+    inputs
+    (build-package-link-add-args
+      (source-tool-link-inputs-add-ast
+        inputs
+        (AstExternLinkArg (string-vec-get vec idx "")))
+      vec
+      (+ idx 1))))
+
+;: Add one link scope set (libraries, then search paths, then raw args) onto
+;: `inputs`. The three classes are stored separately, so intra-set ordering
+;: across classes does not affect the emitted command.
+(define (build-package-link-add-set
+  [inputs : SourceToolLinkInputs]
+  [manifest-dir : String]
+  [set : CompilerPkgLinkSet]) : SourceToolLinkInputs
+  (build-package-link-add-args
+    (build-package-link-add-search-paths
+      (build-package-link-add-libs inputs (struct-get set libraries) 0)
+      manifest-dir
+      (struct-get set search-paths)
+      0)
+    (struct-get set args)
+    0))
+
+;: Convert a manifest `(link ...)` section into link inputs for `target`:
+;: all-target inputs first, then the per-target (linux / windows) inputs,
+;: preserving first-seen order and dropping exact duplicates within each class.
+(define (build-package-manifest-link-inputs
+  [link : CompilerPkgLink]
+  [manifest-dir : String]
+  [target : CompilerBackendTarget]) : SourceToolLinkInputs
+  (build-package-link-add-set
+    (build-package-link-add-set
+      (source-tool-link-inputs-empty)
+      manifest-dir
+      (struct-get link all))
+    manifest-dir
+    (match target
+      [(BackendTargetLinux) (struct-get link linux)]
+      [(BackendTargetWindows) (struct-get link windows)])))
+
 (define (build-package-artifact-status
   [kind : CompilerPkgKind]
   [target : CompilerBackendTarget]
   [asm-path : String]
   [obj-path : String]
   [artifact-path : String]
-  [dep-libs : ProcessStringList]) : SourceToolCommandStatus
+  [link-inputs : SourceToolLinkInputs]) : SourceToolCommandStatus
   (match kind
     [(CompilerPkgKindBin)
       (source-tool-assemble-and-link
@@ -2298,7 +2387,7 @@
         asm-path
         obj-path
         artifact-path
-        (source-tool-link-inputs-from-archives dep-libs))]
+        link-inputs)]
     [(CompilerPkgKindLib)
       (source-tool-assemble-and-archive target asm-path obj-path artifact-path)]))
 
@@ -2345,7 +2434,8 @@
     "0.1.0"
     (CompilerPkgKindLib)
     "src/lib.tl"
-    (compiler-pkg-deps-empty)))
+    (compiler-pkg-deps-empty)
+    (compiler-pkg-link-empty)))
 
 (define (build-package-graph-test-manifest-with-deps
   [name : String]
@@ -2355,7 +2445,8 @@
     "0.1.0"
     (CompilerPkgKindLib)
     "src/lib.tl"
-    (compiler-pkg-deps-from-list deps)))
+    (compiler-pkg-deps-from-list deps)
+    (compiler-pkg-link-empty)))
 
 (define (build-package-graph-test-node [manifest-path : String] [name : String]) : BuildPackageGraphNode
   (BuildPackageGraphNode manifest-path (build-package-graph-test-manifest name)))
@@ -2475,11 +2566,22 @@
             (build-package-output-dir-profile manifest-dir name profile)))
         1)
       (let
+        [manifest-link-inputs : SourceToolLinkInputs
+          (build-package-manifest-link-inputs
+            (struct-get manifest link)
+            manifest-dir
+            target)]
         [dep-link-inputs : SourceToolLinkInputs
           (source-tool-link-inputs-from-archives dep-libs)]
+        ;; Merge order: manifest all-target/target link inputs first, then the
+        ;; dependency static archives (positional after requested libs/args).
+        [effective-link-inputs : SourceToolLinkInputs
+          (source-tool-link-inputs-merge manifest-link-inputs dep-link-inputs)]
         [emit-entry : bool (build-package-kind-entry? kind)]
         [crt-entry : bool
-          (and emit-entry (source-tool-linux-crt-entry? target dep-link-inputs))]
+          (and
+            emit-entry
+            (source-tool-linux-crt-entry? target effective-link-inputs))]
         (match (source-tool-emit-package-assembly
           entry-path
           target
@@ -2511,7 +2613,7 @@
                   asm-path
                   obj-path
                   artifact-path
-                  dep-libs)
+                  effective-link-inputs)
                   [(SourceToolCommandErr message)
                     (begin
                       (print-error message)

@@ -3983,12 +3983,36 @@
   (CompilerPkgKindLib))
 
 ;: A parsed `typelisp.pkg` manifest.
+;: One link scope's native inputs: ordered libraries, search paths, and raw
+;: linker arguments. Order within each list is preserved from the manifest.
+(defstruct CompilerPkgLinkSet
+  (libraries StringVec)
+  (search-paths StringVec)
+  (args StringVec))
+
+;: Parsed `(link ...)` manifest section. `all` applies to every target; `linux`
+;: and `windows` add per-target inputs. Empty lists mean the field was omitted.
+(defstruct CompilerPkgLink
+  (all CompilerPkgLinkSet)
+  (linux CompilerPkgLinkSet)
+  (windows CompilerPkgLinkSet))
+
+(defenum ResultCompilerPkgLink
+  (OkCompilerPkgLink CompilerPkgLink)
+  (ErrCompilerPkgLink String))
+
+;: Internal: a parsed list of `link` field string values, or a diagnostic.
+(defenum ResultPkgStrVec
+  (OkPkgStrVec StringVec)
+  (ErrPkgStrVec String))
+
 (defstruct CompilerPkgManifest
   (name String)
   (version String)
   (kind CompilerPkgKind)
   (entry String)
-  (deps CompilerPkgDeps))
+  (deps CompilerPkgDeps)
+  (link CompilerPkgLink))
 
 ;: Parse result: the manifest or a legacy string diagnostic.
 (defenum ResultCompilerPkgManifest
@@ -4411,6 +4435,219 @@
       (ErrCompilerPkgDeps
         "`dependencies` must be a list of `(alias \"path\")` or `(alias (github ...))` entries")]))
 
+;: An empty link scope (no libraries, search paths, or args).
+(define (compiler-pkg-link-set-empty) : CompilerPkgLinkSet
+  (CompilerPkgLinkSet (string-vec-new) (string-vec-new) (string-vec-new)))
+
+;: An empty `(link ...)` section (every scope empty).
+(define (compiler-pkg-link-empty) : CompilerPkgLink
+  (CompilerPkgLink
+    (compiler-pkg-link-set-empty)
+    (compiler-pkg-link-set-empty)
+    (compiler-pkg-link-set-empty)))
+
+;: Map a `link` sub-field name to its scope index, or -1 when unknown.
+;: scope: 0 all-target, 1 linux, 2 windows.
+(define (compiler-load-link-field-scope [fname : String]) : i64
+  (cond
+    (string-eq fname "libraries")
+    0
+    (string-eq fname "search-paths")
+    0
+    (string-eq fname "args")
+    0
+    (string-eq fname "linux-libraries")
+    1
+    (string-eq fname "linux-search-paths")
+    1
+    (string-eq fname "linux-args")
+    1
+    (string-eq fname "windows-libraries")
+    2
+    (string-eq fname "windows-search-paths")
+    2
+    (string-eq fname "windows-args")
+    2
+    -1))
+
+;: Map a `link` sub-field name to its category index, or -1 when unknown.
+;: category: 0 libraries, 1 search-paths, 2 args.
+(define (compiler-load-link-field-category [fname : String]) : i64
+  (cond
+    (string-eq fname "libraries")
+    0
+    (string-eq fname "search-paths")
+    1
+    (string-eq fname "args")
+    2
+    (string-eq fname "linux-libraries")
+    0
+    (string-eq fname "linux-search-paths")
+    1
+    (string-eq fname "linux-args")
+    2
+    (string-eq fname "windows-libraries")
+    0
+    (string-eq fname "windows-search-paths")
+    1
+    (string-eq fname "windows-args")
+    2
+    -1))
+
+;: The link scope's set for a scope index.
+(define (compiler-pkg-link-scope-set [link : CompilerPkgLink] [scope : i64]) : CompilerPkgLinkSet
+  (cond
+    (= scope 0)
+    (struct-get link all)
+    (= scope 1)
+    (struct-get link linux)
+    (struct-get link windows)))
+
+;: Return `link` with the given scope's set replaced.
+(define (compiler-pkg-link-replace-scope
+  [link : CompilerPkgLink]
+  [scope : i64]
+  [set : CompilerPkgLinkSet]) : CompilerPkgLink
+  (cond
+    (= scope 0)
+    (CompilerPkgLink set (struct-get link linux) (struct-get link windows))
+    (= scope 1)
+    (CompilerPkgLink (struct-get link all) set (struct-get link windows))
+    (CompilerPkgLink (struct-get link all) (struct-get link linux) set)))
+
+;: The category's value list within a link scope set.
+(define (compiler-pkg-link-set-category [set : CompilerPkgLinkSet] [cat : i64]) : StringVec
+  (cond
+    (= cat 0)
+    (struct-get set libraries)
+    (= cat 1)
+    (struct-get set search-paths)
+    (struct-get set args)))
+
+;: Return `set` with the given category's value list replaced.
+(define (compiler-pkg-link-set-replace-category
+  [set : CompilerPkgLinkSet]
+  [cat : i64]
+  [vec : StringVec]) : CompilerPkgLinkSet
+  (cond
+    (= cat 0)
+    (CompilerPkgLinkSet vec (struct-get set search-paths) (struct-get set args))
+    (= cat 1)
+    (CompilerPkgLinkSet (struct-get set libraries) vec (struct-get set args))
+    (CompilerPkgLinkSet
+      (struct-get set libraries)
+      (struct-get set search-paths)
+      vec)))
+
+;: The value list for a (scope, category) pair.
+(define (compiler-pkg-link-get-vec
+  [link : CompilerPkgLink]
+  [scope : i64]
+  [cat : i64]) : StringVec
+  (compiler-pkg-link-set-category (compiler-pkg-link-scope-set link scope) cat))
+
+;: Return `link` with the (scope, category) value list replaced.
+(define (compiler-pkg-link-set-vec
+  [link : CompilerPkgLink]
+  [scope : i64]
+  [cat : i64]
+  [vec : StringVec]) : CompilerPkgLink
+  (compiler-pkg-link-replace-scope
+    link
+    scope
+    (compiler-pkg-link-set-replace-category
+      (compiler-pkg-link-scope-set link scope)
+      cat
+      vec)))
+
+;: Parse the one-or-more non-empty string values of one `link` sub-field.
+(define (compiler-load-manifest-link-values
+  [values : Sexpr]
+  [fname : String]
+  [acc : StringVec]) : ResultPkgStrVec
+  (match values
+    [(SNil)
+      (if (= (string-vec-len acc) 0)
+        (ErrPkgStrVec
+          (string-append
+            "`link` field `"
+            (string-append fname "` requires at least one value")))
+        (OkPkgStrVec acc))]
+    [(SCons vhead vrest)
+      (match (box-get vhead)
+        [(SStr val)
+          (if (string-eq val "")
+            (ErrPkgStrVec
+              (string-append
+                "`link` field `"
+                (string-append fname "` values must not be empty")))
+            (compiler-load-manifest-link-values
+              (box-get vrest)
+              fname
+              (string-vec-push acc val)))]
+        [_
+          (ErrPkgStrVec
+            (string-append
+              "`link` field `"
+              (string-append fname "` values must be strings")))])]
+    [_
+      (ErrPkgStrVec
+        (string-append
+          "`link` field `"
+          (string-append fname "` must be a list of string values")))]))
+
+;: Store one parsed sub-field into the accumulating link section, rejecting
+;: unknown field names and a field that was already provided.
+(define (compiler-load-manifest-link-store
+  [acc : CompilerPkgLink]
+  [fname : String]
+  [values : StringVec]) : ResultCompilerPkgLink
+  (let
+    [scope : i64 (compiler-load-link-field-scope fname)]
+    [cat : i64 (compiler-load-link-field-category fname)]
+    (if (or (< scope 0) (< cat 0))
+      (ErrCompilerPkgLink
+        (string-append "unknown `link` field `" (string-append fname "`")))
+      (if (> (string-vec-len (compiler-pkg-link-get-vec acc scope cat)) 0)
+        (ErrCompilerPkgLink
+          (string-append "duplicate `link` field `" (string-append fname "`")))
+        (OkCompilerPkgLink (compiler-pkg-link-set-vec acc scope cat values))))))
+
+;: Walk the `(field "...")` entries of a `(link ...)` section.
+(define (compiler-load-manifest-parse-link-into
+  [entries : Sexpr]
+  [acc : CompilerPkgLink]) : ResultCompilerPkgLink
+  (match entries
+    [(SNil) (OkCompilerPkgLink acc)]
+    [(SCons entry rest)
+      (match (box-get entry)
+        [(SCons ehead etail)
+          (match (box-get ehead)
+            [(SSym fname)
+              (match (compiler-load-manifest-link-values
+                (box-get etail)
+                fname
+                (string-vec-new))
+                [(ErrPkgStrVec m) (ErrCompilerPkgLink m)]
+                [(OkPkgStrVec values)
+                  (match (compiler-load-manifest-link-store acc fname values)
+                    [(ErrCompilerPkgLink m) (ErrCompilerPkgLink m)]
+                    [(OkCompilerPkgLink acc2)
+                      (compiler-load-manifest-parse-link-into
+                        (box-get rest)
+                        acc2)])])]
+            [_
+              (ErrCompilerPkgLink "`link` entries must start with a field name")])]
+        [_
+          (ErrCompilerPkgLink
+            "`link` entries must be lists like `(libraries \"...\")`")])]
+    [_
+      (ErrCompilerPkgLink "`link` must be a list of `(field \"...\")` entries")]))
+
+;: Parse a `(link ...)` manifest section into a CompilerPkgLink.
+(define (compiler-load-manifest-parse-link [entries : Sexpr]) : ResultCompilerPkgLink
+  (compiler-load-manifest-parse-link-into entries (compiler-pkg-link-empty)))
+
 (define (compiler-load-manifest-default-entry [kind : CompilerPkgKind]) : String
   (match kind
     [(CompilerPkgKindBin) "src/main.tl"]
@@ -4424,7 +4661,8 @@
     (struct-get manifest version)
     kind
     (compiler-load-manifest-default-entry kind)
-    (struct-get manifest deps)))
+    (struct-get manifest deps)
+    (struct-get manifest link)))
 
 ;: Walk the package fields, accumulating name/version/kind/entry/deps, then
 ;: check required fields and synthesize convention defaults for omitted kind
@@ -4440,7 +4678,9 @@
   [entry : String]
   [has-entry : bool]
   [has-deps : bool]
-  [deps : CompilerPkgDeps]) : ResultCompilerPkgManifest
+  [deps : CompilerPkgDeps]
+  [has-link : bool]
+  [link : CompilerPkgLink]) : ResultCompilerPkgManifest
   (match fields
     [(SNil)
       (let
@@ -4466,7 +4706,7 @@
           (ErrCompilerPkgManifest
             "manifest field `entry` must be a normal relative path below the manifest directory")
           (OkCompilerPkgManifest
-            (CompilerPkgManifest name version kind final-entry deps))))]
+            (CompilerPkgManifest name version kind final-entry deps link))))]
     [(SCons field rest)
       (match (box-get field)
         [(SCons fhead ftail)
@@ -4491,7 +4731,29 @@
                         entry
                         has-entry
                         true
-                        parsed-deps)]))
+                        parsed-deps
+                        has-link
+                        link)]))
+                (string-eq fname "link")
+                (if has-link
+                  (ErrCompilerPkgManifest "duplicate manifest field `link`")
+                  (match (compiler-load-manifest-parse-link (box-get ftail))
+                    [(ErrCompilerPkgLink m) (ErrCompilerPkgManifest m)]
+                    [(OkCompilerPkgLink parsed-link)
+                      (compiler-load-manifest-fields
+                        (box-get rest)
+                        name
+                        has-name
+                        version
+                        has-version
+                        kind
+                        has-kind
+                        entry
+                        has-entry
+                        has-deps
+                        deps
+                        true
+                        parsed-link)]))
                 (string-eq fname "name")
                 (if has-name
                   (ErrCompilerPkgManifest "duplicate manifest field `name`")
@@ -4511,7 +4773,9 @@
                         entry
                         has-entry
                         has-deps
-                        deps)]))
+                        deps
+                        has-link
+                        link)]))
                 (string-eq fname "version")
                 (if has-version
                   (ErrCompilerPkgManifest "duplicate manifest field `version`")
@@ -4531,7 +4795,9 @@
                         entry
                         has-entry
                         has-deps
-                        deps)]))
+                        deps
+                        has-link
+                        link)]))
                 (string-eq fname "kind")
                 (if has-kind
                   (ErrCompilerPkgManifest "duplicate manifest field `kind`")
@@ -4549,7 +4815,9 @@
                         entry
                         has-entry
                         has-deps
-                        deps)]))
+                        deps
+                        has-link
+                        link)]))
                 (string-eq fname "entry")
                 (if has-entry
                   (ErrCompilerPkgManifest "duplicate manifest field `entry`")
@@ -4569,7 +4837,9 @@
                         val
                         true
                         has-deps
-                        deps)]))
+                        deps
+                        has-link
+                        link)]))
                 (ErrCompilerPkgManifest
                   (string-append
                     "unknown manifest field `"
@@ -4602,7 +4872,9 @@
               ""
               false
               false
-              (compiler-pkg-deps-empty))
+              (compiler-pkg-deps-empty)
+              false
+              (compiler-pkg-link-empty))
             (ErrCompilerPkgManifest
               (string-append
                 "expected `package` form, got `"
@@ -5165,10 +5437,114 @@
       "(package (name \"x\") (version \"1\") (kind \"bin\") (entry \"e.tl\") (dependencies (math \"\")))"
       "manifest dependency `math` path must not be empty")))
 
+;: True when a StringVec is empty.
+(define (compiler-load-link-vec-empty? [vec : StringVec]) : bool
+  (= (string-vec-len vec) 0))
+
+;: True when a StringVec holds exactly one value equal to `a`.
+(define (compiler-load-link-vec-single? [vec : StringVec] [a : String]) : bool
+  (and (= (string-vec-len vec) 1) (string-eq (string-vec-get vec 0 "") a)))
+
+;: True when a StringVec holds exactly `a` then `b`, in order.
+(define (compiler-load-link-vec-pair?
+  [vec : StringVec]
+  [a : String]
+  [b : String]) : bool
+  (and
+    (= (string-vec-len vec) 2)
+    (and
+      (string-eq (string-vec-get vec 0 "") a)
+      (string-eq (string-vec-get vec 1 "") b))))
+
+;: Self-test: a `(link ...)` section parses into all-target and per-target sets
+;: with manifest order preserved.
+(define (compiler-load-manifest-link-valid-ok?) : bool
+  (match (compiler-load-parse-manifest
+    "(package (name \"p\") (version \"1\") (kind \"bin\") (entry \"src/main.tl\") (link (libraries \"raylib\") (search-paths \"vendor/lib\") (linux-libraries \"GL\" \"m\") (linux-args \"-Wl,--as-needed\") (windows-libraries \"opengl32\")))")
+    [(OkCompilerPkgManifest m)
+      (let
+        [link : CompilerPkgLink (struct-get m link)]
+        [all : CompilerPkgLinkSet (struct-get link all)]
+        [lin : CompilerPkgLinkSet (struct-get link linux)]
+        [win : CompilerPkgLinkSet (struct-get link windows)]
+        (and
+          (compiler-load-link-vec-single? (struct-get all libraries) "raylib")
+          (and
+            (compiler-load-link-vec-single?
+              (struct-get all search-paths)
+              "vendor/lib")
+            (and
+              (compiler-load-link-vec-empty? (struct-get all args))
+              (and
+                (compiler-load-link-vec-pair?
+                  (struct-get lin libraries)
+                  "GL"
+                  "m")
+                (and
+                  (compiler-load-link-vec-single?
+                    (struct-get lin args)
+                    "-Wl,--as-needed")
+                  (compiler-load-link-vec-single?
+                    (struct-get win libraries)
+                    "opengl32")))))))]
+    [(ErrCompilerPkgManifest _) false]))
+
+;: Self-test: a manifest with no `link` section parses with empty link sets.
+(define (compiler-load-manifest-link-default-ok?) : bool
+  (match (compiler-load-parse-manifest
+    "(package (name \"p\") (version \"1\") (kind \"bin\") (entry \"src/main.tl\"))")
+    [(OkCompilerPkgManifest m)
+      (let
+        [link : CompilerPkgLink (struct-get m link)]
+        (and
+          (compiler-load-link-vec-empty?
+            (struct-get (struct-get link all) libraries))
+          (and
+            (compiler-load-link-vec-empty?
+              (struct-get (struct-get link linux) libraries))
+            (compiler-load-link-vec-empty?
+              (struct-get (struct-get link windows) libraries)))))]
+    [(ErrCompilerPkgManifest _) false]))
+
+;: Self-test: invalid `(link ...)` sections produce the expected diagnostics.
+(define (compiler-load-manifest-link-rejections-ok?) : bool
+  (and
+    (compiler-load-manifest-rejects?
+      "(package (name \"x\") (version \"1\") (kind \"bin\") (entry \"e.tl\") (link (libraries \"a\")) (link (args \"b\")))"
+      "duplicate manifest field `link`")
+    (and
+      (compiler-load-manifest-rejects?
+        "(package (name \"x\") (version \"1\") (kind \"bin\") (entry \"e.tl\") (link (libraries \"a\") (libraries \"b\")))"
+        "duplicate `link` field `libraries`")
+      (and
+        (compiler-load-manifest-rejects?
+          "(package (name \"x\") (version \"1\") (kind \"bin\") (entry \"e.tl\") (link (frobs \"a\")))"
+          "unknown `link` field `frobs`")
+        (and
+          (compiler-load-manifest-rejects?
+            "(package (name \"x\") (version \"1\") (kind \"bin\") (entry \"e.tl\") (link (libraries \"\")))"
+            "`link` field `libraries` values must not be empty")
+          (and
+            (compiler-load-manifest-rejects?
+              "(package (name \"x\") (version \"1\") (kind \"bin\") (entry \"e.tl\") (link (libraries)))"
+              "`link` field `libraries` requires at least one value")
+            (compiler-load-manifest-rejects?
+              "(package (name \"x\") (version \"1\") (kind \"bin\") (entry \"e.tl\") (link (libraries 5)))"
+              "`link` field `libraries` values must be strings")))))))
+
+;: Aggregate link-section self-test.
+(define (compiler-load-manifest-link-ok?) : bool
+  (and
+    (compiler-load-manifest-link-valid-ok?)
+    (and
+      (compiler-load-manifest-link-default-ok?)
+      (compiler-load-manifest-link-rejections-ok?))))
+
 ;: Aggregate manifest-parser self-test (#834).
 (define (compiler-load-pkg-manifest-ok?) : bool
   (and
     (compiler-load-manifest-valid-full-ok?)
+    (compiler-load-manifest-link-ok?)
     (compiler-load-manifest-valid-nodeps-ok?)
     (compiler-load-manifest-default-bin-ok?)
     (compiler-load-manifest-entry-override-ok?)

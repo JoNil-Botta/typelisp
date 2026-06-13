@@ -5575,11 +5575,14 @@
   [value : CompilerIrValue]
   [from-ty : AstType]
   [to-ty : AstType]) : LowerExpr
-  (if (or (tc-type-eq from-ty to-ty) (tc-never-type? from-ty))
+  (core/cond
+    (tc-never-type? from-ty)
+    (LowerExpr state value from-ty)
+    (tc-type-eq from-ty to-ty)
     (LowerExpr state value to-ty)
-    (if (tc-type-compatible? to-ty from-ty)
-      (lower-cast-value state value from-ty to-ty)
-      (LowerExpr state value to-ty))))
+    (tc-type-compatible? to-ty from-ty)
+    (lower-cast-value state value from-ty to-ty)
+    (LowerExpr state value to-ty)))
 
 (define (lower-oob-abort [state : LowerState]) : LowerState
   (match (lower-state-alloc-var state)

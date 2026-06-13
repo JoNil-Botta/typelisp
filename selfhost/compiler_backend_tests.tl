@@ -330,6 +330,20 @@
 (define (main) : i64
   (score (Some 42)))")
 
+(define (compiler-backend-never-branch-register-group-source) : String
+  "(extern (fail) : never)
+(defenum Token (TInt i64) (TPlus) (TEnd))
+(define (single [c : char]) : Token
+  (if (= c #+')
+    TPlus
+    (begin
+      (fail)
+      TEnd)))
+(define (main) : i64
+  (match (single #+')
+    [TPlus 42]
+    [_ 0]))")
+
 (define (compiler-backend-regalloc-source) : String
   "(define (calc [a : i64] [b : i64]) : i64
   (let
@@ -1883,6 +1897,15 @@
         (compiler-backend-string-contains? asm "_match_arm.")
         (not (compiler-backend-string-contains? asm "    call _tl_None\n"))
         (not (compiler-backend-string-contains? asm "    call _tl_Some\n")))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-never-branch-register-group-ok?) : bool
+  (match (compiler-backend-emit-source
+    (compiler-backend-never-branch-register-group-source))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "main:\n")
+        (not (compiler-backend-string-contains? asm "register-group")))]
     [(ErrCompilerBackend _) false]))
 
 ;; Scalar backend emission intentionally uses the stack-only plan by default for
@@ -6330,7 +6353,9 @@
       (compiler-backend-aggregate-ok?))
     (backend-and8
       (compiler-backend-literal-payload-ok?)
-      (compiler-backend-enum-match-ok?)
+      (and
+        (compiler-backend-enum-match-ok?)
+        (compiler-backend-never-branch-register-group-ok?))
       (compiler-backend-regalloc-ok?)
       (compiler-backend-peephole-ok?)
       (and

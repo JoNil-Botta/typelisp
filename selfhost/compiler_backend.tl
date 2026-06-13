@@ -8869,6 +8869,54 @@
               (box-get rest)
               dst-home-var))])]))
 
+(define (compiler-backend-phi-group-temp-reg
+  [program-index : CompilerBackendProgramIndex]
+  [ty : AstType]
+  [word-index : i64]) : String
+  (if (compiler-backend-group-word-sse? program-index ty word-index)
+    (if (= word-index 0)
+      "%xmm14"
+      "%xmm15")
+    (if (= word-index 0)
+      "%r10"
+      "%r11")))
+
+(define (compiler-backend-emit-phi-temp-save
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [ty : AstType]
+  [program-index : CompilerBackendProgramIndex]
+  [vars : i64]) : ResultCompilerBackend
+  (if (compiler-backend-group-type? program-index ty)
+    (compiler-backend-emit-group-load
+      assignments
+      (IrValueVar dst)
+      (compiler-backend-phi-group-temp-reg program-index ty 0)
+      (compiler-backend-phi-group-temp-reg program-index ty 1)
+      vars
+      ty
+      program-index)
+    (OkCompilerBackend
+      (compiler-backend-emit-load-var-with-plan assignments dst "%r11"))))
+
+(define (compiler-backend-emit-phi-temp-restore
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [ty : AstType]
+  [program-index : CompilerBackendProgramIndex]
+  [vars : i64]) : ResultCompilerBackend
+  (if (compiler-backend-group-type? program-index ty)
+    (compiler-backend-emit-group-store
+      assignments
+      dst
+      (compiler-backend-phi-group-temp-reg program-index ty 0)
+      (compiler-backend-phi-group-temp-reg program-index ty 1)
+      vars
+      ty
+      program-index)
+    (OkCompilerBackend
+      (compiler-backend-emit-store-var-with-plan assignments dst "%r11"))))
+
 (define (compiler-backend-emit-phi-source-to-var
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
@@ -8878,8 +8926,12 @@
   [vars : i64]) : ResultCompilerBackend
   (match source
     [(BackendPhiSourceTemp)
-      (OkCompilerBackend
-        (compiler-backend-emit-store-var-with-plan assignments dst "%r11"))]
+      (compiler-backend-emit-phi-temp-restore
+        assignments
+        dst
+        ty
+        program-index
+        vars)]
     [(BackendPhiSourceValue value)
       (if (compiler-backend-phi-same-home? assignments dst value)
         (OkCompilerBackend "")
@@ -8973,34 +9025,36 @@
         [(BackendNoPhiCopy)
           (match first
             [(BackendPhiCopy dst source ty)
-              (let
-                [save : String
-                  (compiler-backend-emit-load-var-with-plan
+              (match (compiler-backend-emit-phi-temp-save
+                assignments
+                dst
+                ty
+                program-index
+                vars)
+                [(OkCompilerBackend save)
+                  (match (compiler-backend-emit-phi-source-to-var
                     assignments
                     dst
-                    "%r11")]
-                (match (compiler-backend-emit-phi-source-to-var
-                  assignments
-                  dst
-                  source
-                  ty
-                  program-index
-                  vars)
-                  [(OkCompilerBackend head)
-                    (match (compiler-backend-emit-phi-copy-list
-                      assignments
-                      (compiler-backend-phi-copy-list-replace-source-home
+                    source
+                    ty
+                    program-index
+                    vars)
+                    [(OkCompilerBackend head)
+                      (match (compiler-backend-emit-phi-copy-list
                         assignments
-                        (compiler-backend-phi-copy-list-remove-dst copies dst)
-                        dst)
-                      program-index
-                      vars)
-                      [(OkCompilerBackend tail)
-                        (OkCompilerBackend
-                          (string-append save (string-append head tail)))]
-                      [(ErrCompilerBackend message)
-                        (ErrCompilerBackend message)])]
-                  [(ErrCompilerBackend message) (ErrCompilerBackend message)]))])])]))
+                        (compiler-backend-phi-copy-list-replace-source-home
+                          assignments
+                          (compiler-backend-phi-copy-list-remove-dst copies dst)
+                          dst)
+                        program-index
+                        vars)
+                        [(OkCompilerBackend tail)
+                          (OkCompilerBackend
+                            (string-append save (string-append head tail)))]
+                        [(ErrCompilerBackend message)
+                          (ErrCompilerBackend message)])]
+                    [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+                [(ErrCompilerBackend message) (ErrCompilerBackend message)])])])]))
 
 (define (compiler-backend-leading-phi-copies
   [assignments : CompilerRegAssignmentList]

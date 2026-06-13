@@ -3082,7 +3082,7 @@
   "(extern (bad [arg0 : (Array i64 2)]) : i64 (:abi c) (:symbol \"bad_array\"))")
 
 (define (compiler-typecheck-extern-abi-f32-source) : String
-  "(extern (bad [arg0 : f32]) : i64 (:abi c) (:symbol \"bad_f32\"))")
+  "(extern (scale [arg0 : f32] [arg1 : f32]) : f32 (:abi c) (:symbol \"scale_f32\"))")
 
 (define (compiler-typecheck-extern-abi-tag-only-enum-source) : String
   "(defenum Status (Ready) (Done) (Failed))
@@ -3170,9 +3170,9 @@
     (compiler-typecheck-error-ok?
       (compiler-typecheck-extern-abi-array-source)
       "typecheck: extern ABI c does not support parameter type (Array i64 2)")
-    (compiler-typecheck-error-ok?
-      (compiler-typecheck-extern-abi-f32-source)
-      "typecheck: extern ABI c does not support parameter type f32")
+    ;; Scalar `f32` is a supported C ABI extern parameter and return type
+    ;; (passed/returned in XMM registers via single-precision `movss`).
+    (compiler-typecheck-ok? (compiler-typecheck-extern-abi-f32-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-extern-abi-tag-only-enum-source))
     (compiler-typecheck-error-ok?

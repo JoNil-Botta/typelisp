@@ -18945,6 +18945,7 @@
     [(AstTyU16) true]
     [(AstTyU8) true]
     [(AstTyF64) true]
+    [(AstTyF32) true]
     [(AstTyBool) true]
     [(AstTyChar) true]
     [(AstTyUnit) true]

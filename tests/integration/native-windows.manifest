@@ -10,6 +10,7 @@ auto_borrow_call|tests/integration/auto_borrow_call.tl|42|-|-|-
 implicit_core_prelude|tests/integration/implicit_core_prelude.tl|42|-|-|-
 include_bin|tests/integration/include_bin.tl|42|-|-|include_bin_payload.bin
 c_abi_aggregate_color|tests/integration/c_abi_aggregate_color.tl|42|-|-|benchmarks/c_abi_aggregate_color/baseline.c
+c_abi_f32_scalar|tests/integration/c_abi_f32_scalar.tl|42|-|-|benchmarks/c_abi_f32_scalar/baseline.c
 c_abi_win64_sret_return|tests/integration/c_abi_win64_sret_return.tl|42|-|-|benchmarks/c_abi_win64_sret_return/baseline.c
 c_abi_win64_aggregate_args|tests/integration/c_abi_win64_aggregate_args.tl|42|-|-|benchmarks/c_abi_win64_aggregate_args/baseline.c
 c_abi_win64_small_aggregate_float_mixed|tests/integration/c_abi_win64_small_aggregate_float_mixed.tl|42|-|-|benchmarks/c_abi_win64_small_aggregate_float_mixed/baseline.c

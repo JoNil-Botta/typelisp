@@ -85,8 +85,6 @@
 
 (include-str compiler-embedded-stdlib-tests-fs-path-join-many-api "stdlib/tests/fs_path_join_many_api.tl")
 
-(include-str compiler-embedded-stdlib-tests-hash-api "stdlib/tests/hash_api.tl")
-
 (include-str compiler-embedded-stdlib-tests-hashmap-api "stdlib/tests/hashmap_api.tl")
 
 (include-str compiler-embedded-stdlib-tests-hashmap-mut-borrow-insert-or-update-live "stdlib/tests/hashmap_mut_borrow_insert_or_update_live.tl")
@@ -118,8 +116,6 @@
 (include-str compiler-embedded-stdlib-tests-process-runtime "stdlib/tests/process_runtime.tl")
 
 (include-str compiler-embedded-stdlib-tests-profile-api "stdlib/tests/profile_api.tl")
-
-(include-str compiler-embedded-stdlib-tests-queue-api "stdlib/tests/queue_api.tl")
 
 (include-str compiler-embedded-stdlib-tests-random-api "stdlib/tests/random_api.tl")
 
@@ -246,8 +242,6 @@
     (string-eq suffix "tests/fs_path_join_many_api.tl")
     (CompilerEmbeddedStdlibSomeSource
       compiler-embedded-stdlib-tests-fs-path-join-many-api)
-    (string-eq suffix "tests/hash_api.tl")
-    (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-tests-hash-api)
     (string-eq suffix "tests/hashmap_api.tl")
     (CompilerEmbeddedStdlibSomeSource
       compiler-embedded-stdlib-tests-hashmap-api)
@@ -293,8 +287,6 @@
     (string-eq suffix "tests/profile_api.tl")
     (CompilerEmbeddedStdlibSomeSource
       compiler-embedded-stdlib-tests-profile-api)
-    (string-eq suffix "tests/queue_api.tl")
-    (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-tests-queue-api)
     (string-eq suffix "tests/random_api.tl")
     (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-tests-random-api)
     (string-eq suffix "tests/sort_api.tl")

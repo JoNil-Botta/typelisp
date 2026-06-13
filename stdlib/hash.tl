@@ -114,3 +114,155 @@
 ;: Return true when two borrowed string keys are equal.
 (define (hash-key-string-eq? [a : (& a str)] [b : (& b str)]) : bool
   (string-eq-borrowed a b))
+
+(test
+  hash-api
+  (let
+    [fail : (-> unit)
+      (lambda () : unit
+        (begin
+          (/ 1 0)
+          unit))]
+    [empty : String ""]
+    [a : String "a"]
+    [ab : String "ab"]
+    [abc : String "abc"]
+    [abcd : String "abcd"]
+    [abcdefgh : String "abcdefgh"]
+    [ba : String "ba"]
+    [a-newline-b : String "a\nb"]
+    [bc : String "bc"]
+    [joined : String (string-append a bc)]
+    [same : String "same"]
+    [same-copy : String (string-append "sa" "me")]
+    [different : String "different"]
+    [edge : String "edge\ncase"]
+    [range-min : i64 (hash-i64 -9223372036854775808)]
+    [range-max : i64 (hash-i64 9223372036854775807)]
+    [range-combine : i64 (hash-combine -1 -1)]
+    [range-empty : i64 (hash-string (& empty))]
+    [range-edge : i64 (hash-string (& edge))]
+    (begin
+      (if (= (hash-modulus) 2147483647)
+        unit
+        (fail))
+      (if (= (hash-multiplier) 131)
+        unit
+        (fail))
+      (if (= (hash-normalize 2147483647) 0)
+        unit
+        (fail))
+      (if (= (hash-normalize -1) 2147483646)
+        unit
+        (fail))
+      (if (= (hash-i64 42) 42)
+        unit
+        (fail))
+      (if (= (hash-i64 -42) 2147483605)
+        unit
+        (fail))
+      (if (= (hash-bool false) 0)
+        unit
+        (fail))
+      (if (= (hash-bool true) 1)
+        unit
+        (fail))
+      (if (= (hash-char #A') 65)
+        unit
+        (fail))
+      (if (= (hash-char #\newline') 10)
+        unit
+        (fail))
+      (if (= (hash-combine 0 0) 1)
+        unit
+        (fail))
+      (if (= (hash-combine 42 7) 5510)
+        unit
+        (fail))
+      (if (= (hash-string (& empty)) 0)
+        unit
+        (fail))
+      (if (= (hash-string (& a)) 98)
+        unit
+        (fail))
+      (if (= (hash-string (& ab)) 12937)
+        unit
+        (fail))
+      (if (= (hash-string (& abc)) 1694847)
+        unit
+        (fail))
+      (if (= (hash-string (& abcd)) 222025058)
+        unit
+        (fail))
+      (if (= (hash-string (& abcdefgh)) 1379066653)
+        unit
+        (fail))
+      (if (= (hash-string (& ba)) 13067)
+        unit
+        (fail))
+      (if (= (hash-string (& a-newline-b)) 1683318)
+        unit
+        (fail))
+      (if (= (hash-i64 42) (hash-i64 (+ 40 2)))
+        unit
+        (fail))
+      (if (= (hash-bool true) (hash-bool (not false)))
+        unit
+        (fail))
+      (if (= (hash-char #A') (hash-char (string-ref "A" 0)))
+        unit
+        (fail))
+      (if (= (hash-string (& abc)) (hash-string (& joined)))
+        unit
+        (fail))
+      (if (hash-key-i64-eq? 5 5)
+        unit
+        (fail))
+      (if (not (hash-key-i64-eq? 5 6))
+        unit
+        (fail))
+      (if (hash-key-bool-eq? true true)
+        unit
+        (fail))
+      (if (not (hash-key-bool-eq? true false))
+        unit
+        (fail))
+      (if (hash-key-char-eq? #x' #x')
+        unit
+        (fail))
+      (if (not (hash-key-char-eq? #x' #y'))
+        unit
+        (fail))
+      (if (hash-key-string-eq? (& same) (& same-copy))
+        unit
+        (fail))
+      (if (not (hash-key-string-eq? (& same) (& different)))
+        unit
+        (fail))
+      (if (= (hash-i64 0) (hash-i64 2147483647))
+        unit
+        (fail))
+      (if (not (hash-key-i64-eq? 0 2147483647))
+        unit
+        (fail))
+      (if (= (hash-combine 0 131) (hash-combine 1 0))
+        unit
+        (fail))
+      (if (not (hash-key-i64-eq? 0 1))
+        unit
+        (fail))
+      (if (and (>= range-min 0) (< range-min (hash-modulus)))
+        unit
+        (fail))
+      (if (and (>= range-max 0) (< range-max (hash-modulus)))
+        unit
+        (fail))
+      (if (and (>= range-combine 0) (< range-combine (hash-modulus)))
+        unit
+        (fail))
+      (if (and (>= range-empty 0) (< range-empty (hash-modulus)))
+        unit
+        (fail))
+      (if (and (>= range-edge 0) (< range-edge (hash-modulus)))
+        unit
+        (fail)))))

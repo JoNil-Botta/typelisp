@@ -1948,7 +1948,7 @@
         (compiler-backend-string-contains? asm "    movq %rsi, -16(%rbp)\n")
         (compiler-backend-string-contains? asm "    movq -32(%rbp), %rax\n")
         (compiler-backend-string-contains? asm "    imulq %r8, %rax\n")
-        (not (compiler-backend-string-contains? asm "%r12"))
+        (not (compiler-backend-string-contains? asm "    movq %r12, -"))
         true
         true)]
     [(ErrCompilerBackend _) false]))
@@ -4219,8 +4219,8 @@
           (compiler-backend-string-count
             asm
             "    movq $11, %rax\n    syscall\n")
-          3)
-        (= (compiler-backend-string-count asm "    syscall\n") 9)
+          4)
+        (= (compiler-backend-string-count asm "    syscall\n") 10)
         (=
           (compiler-backend-string-count
             asm
@@ -4250,7 +4250,7 @@
         (compiler-backend-string-contains? asm "tl_arena_poison_enable:\n"))
       (backend-and4
         (= (compiler-backend-string-count asm "    call VirtualAlloc\n") 2)
-        (= (compiler-backend-string-count asm "    call VirtualFree\n") 3)
+        (= (compiler-backend-string-count asm "    call VirtualFree\n") 4)
         (not (compiler-backend-string-contains? asm "    syscall\n"))
         (not (compiler-backend-string-contains? asm "    call WriteFile\n")))
       (compiler-backend-string-contains? asm "    movq %gs:0x28, %r8\n")
@@ -4489,7 +4489,7 @@
               "    movq $1, .L_tl_arena_poison_enabled(%rip)\n")
             (compiler-backend-string-contains?
               asm
-              ".L_tl_region_reset_drop_newer_unmap:\n")
+              ".L_tl_region_reset_drop_newer_retire:\n")
             (compiler-backend-string-contains?
               asm
               ".L_tl_region_reset_restore_set:\n")

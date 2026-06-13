@@ -3518,6 +3518,9 @@ Syntax:
 
 - `(spmd-reduce op ([i : i64 start end]) init value)` evaluates to one scalar
   result.
+- `(spmd-broadcast value lane)` evaluates `value` for the selected source lane
+  in the current SPMD gang and makes that scalar value available to every
+  active lane in the gang.
 - `op` is a fixed operator symbol, not an expression. The first supported
   operators are `sum`, `min`, `max`, `all`, and `any`.
 - The range clause has the same half-open `[start, end)` meaning as `foreach`.
@@ -3565,8 +3568,8 @@ Purity and varying rules for the first slice:
 
 - The `value` expression may use the varying index, `(program-index)`,
   `(program-count)`, dynamic-array reads, arithmetic/comparison/boolean
-  operators over supported types, and local `let` bindings whose values satisfy
-  the same rules.
+  operators over supported types, `spmd-broadcast`, and local `let` bindings
+  whose values satisfy the same rules.
 - `value` must not perform writes or other side effects. In particular, `set!`,
   `array-set!`, `print*`, file I/O, `panic`/`error`, nested `foreach`, nested
   `spmd-reduce`, and user-defined calls with varying arguments are rejected in
@@ -3577,8 +3580,29 @@ Purity and varying rules for the first slice:
 
 Cross-lane operations:
 
-- `spmd-reduce` is the only public cross-lane source operation in this slice.
-- Scans/prefix reductions, shuffles, broadcasts, lane extraction/insertion,
+- `spmd-reduce` and `spmd-broadcast` are the public cross-lane source
+  operations in this slice.
+- `spmd-broadcast` is valid only inside a `foreach` body or inside the `value`
+  expression of `spmd-reduce`. It is invalid in ordinary expressions, type
+  positions, `foreach` bounds, and `spmd-reduce` start/end/init expressions.
+- The first broadcast slice supports `i32`, `i64`, `f32`, and `f64` values.
+  `lane` must be a uniform `i64` source-lane slot. The result type is the
+  value type. If `value` is varying, the result is varying; if `value` is
+  uniform, the result remains uniform.
+- In scalar backend modes the current gang has one active lane: source lane `0`
+  returns `value`, and any other source lane traps through the standard
+  out-of-bounds abort path.
+- In SIMD backend modes the source lane must be active in the current gang.
+  Full gangs accept `0 <= lane < gang-width`; tail gangs accept only source
+  lanes that are active in that tail. Inactive source lanes trap through the
+  standard out-of-bounds abort path. Inactive tail lanes do not evaluate the
+  source value or perform memory effects.
+- The current SIMD lowering vectorizes direct contiguous array-value
+  broadcasts in simple `foreach` map bodies, including AVX2 scalar tail gangs
+  and AVX-512 predicated tail gangs. Other supported broadcast expressions use
+  scalar reference lowering in scalar backend modes and may be rejected by
+  explicit SIMD backend modes until a vector pattern accepts them.
+- Scans/prefix reductions, general shuffles, lane extraction/insertion,
   gathers/scatters, atomics, task parallelism, and public vector/mask values
   remain deferred.
 - IR and backend work may add private horizontal-reduction primitives as needed
@@ -3676,7 +3700,7 @@ Unsupported in the current SPMD implementation:
   `(program-count)`.
 - Public vector types and public mask types.
 - Gather/scatter, indirect indexing through arrays, and non-contiguous memory.
-- Scans, general cross-lane operations, atomics, and overlapping writes.
+- Scans, general shuffles, atomics, and overlapping writes.
 - Reduction-by-mutation through `set!` to an outer accumulator.
 - Varying `if` until the v2 masked-control-flow implementation lands; varying
   `while`, varying `match`, early exits, `break`, and `continue`.
@@ -5205,8 +5229,8 @@ not the future safe reference/borrow model (#182), not a replacement for
 | Move-only aggregate handle checking | Implemented: the selfhost checker enforces move-only aggregates with use-after-move, path-move, and move-while-borrowed diagnostics (#805/#1048/#1049/#1050) |
 | `(with ...)` scoped non-memory resource cleanup | Implemented (#907): parser/typechecker/lowering with LIFO cleanup order |
 | Cleanup-owning aggregate declarations | Implemented for structs (#907); cleanup-owning enums remain reserved |
-| SPMD / SIMD `foreach` and `spmd-reduce` | Scalar reference lowering implemented; AVX2/AVX-512 support a first contiguous `foreach` map/zip subset over `i32`, `i64`, `f32`, and `f64`, plus eligible `spmd-reduce` folds; masked varying `if` is in flight (#2131/#2205/#2207) |
-| Public cross-lane ops beyond `spmd-reduce` | Scans/prefix reductions, shuffles, broadcasts, public lane indices/counts, gathers/scatters, atomics, and public vector/mask values remain deferred; split across #2761, #2762, #2764, #2765, and #2766 |
+| SPMD / SIMD `foreach` and `spmd-reduce` | Scalar reference lowering implemented; AVX2/AVX-512 support a first contiguous `foreach` map/zip subset over `i32`, `i64`, `f32`, and `f64`, eligible `spmd-reduce` folds, and direct array-value `spmd-broadcast` maps; masked varying `if` is in flight (#2131/#2205/#2207) |
+| Public cross-lane ops beyond `spmd-reduce`/`spmd-broadcast` | Scans/prefix reductions, shuffles, public lane indices/counts, gathers/scatters, atomics, and public vector/mask values remain deferred; split across #2761, #2762, #2764, #2765, and #2766 |
 | Runtime SIMD dispatch (`defdispatch`) | Implemented for scalar/AVX2/AVX-512 variants with cached runtime selection and end-to-end selection verification |
 | Windows region helpers | Implemented for `tl_region_mark`/`tl_region_reset` and `with-arena` scoped reclamation |
 | Complete source locations for all semantic errors | Partial |
@@ -5775,6 +5799,7 @@ expr          ::= literal
                 | "(" "foreach" foreach-clause expr ")"
                 | "(" "cfg" cfg-predicate expr [expr] ")"
                 | "(" "spmd-reduce" reduce-op foreach-clause expr expr ")"
+                | "(" "spmd-broadcast" expr expr ")"
                 | "(" spmd-lane-form ")"
                 | "(" "lambda" "(" param* ")" [":" type] expr ")"
                 | "(" "return" expr ")"

@@ -38,6 +38,10 @@ safe_syscall_reject|check-fail|tests/safety/safe_syscall_reject.tl|-|syscall req
 manual_arena_reset_unsafe_reject|check-fail|tests/safety/manual_arena_reset_unsafe_reject.tl|-|arena-rewind requires unsafe context
 spmd_outer_mutation_reject|check-fail|tests/safety/spmd_outer_mutation_reject.tl|-|foreach cannot set binding declared outside foreach
 spmd_reduce_f64_min_reject|check-fail|tests/safety/spmd_reduce_f64_min_reject.tl|-|spmd-reduce min requires an i32 or i64 type
+spmd_broadcast_outside_reject|check-fail|tests/safety/spmd_broadcast_outside_reject.tl|-|spmd-broadcast is only valid inside a foreach body or spmd-reduce value expression
+spmd_broadcast_varying_lane_reject|check-fail|tests/safety/spmd_broadcast_varying_lane_reject.tl|-|spmd-broadcast lane must be uniform
+spmd_broadcast_bool_reject|check-fail|tests/safety/spmd_broadcast_bool_reject.tl|-|spmd-broadcast value must have type i32, i64, f32, or f64
+spmd_broadcast_masked_if_reject|check-fail|tests/safety/spmd_broadcast_masked_if_reject.tl|-|SPMD masked if does not support spmd-broadcast inside masked branches
 spmd_varying_call_reject|check-fail|tests/safety/spmd_varying_call_reject.tl|-|foreach calls with varying arguments are not supported
 spmd_unmasked_gather_index_reject|check-fail|tests/safety/spmd_unmasked_gather_index_reject.tl|-|foreach does not support gather/scatter-like array indexes
 spmd_unmasked_scatter_index_reject|check-fail|tests/safety/spmd_unmasked_scatter_index_reject.tl|-|foreach does not support gather/scatter-like array indexes

@@ -39,12 +39,15 @@ falling back to scalar code.
 - `runtime_dispatch_select.tl` — one `defdispatch` binary whose variants share
   the same i64 SPMD checksum and encode the selected variant in the exit code.
   Scalar exits 42, AVX2 exits 106, and AVX-512 exits 170.
+- `broadcast_lane0_i64.tl` and `broadcast_lane1_i64.tl` are backend-observable
+  `spmd-broadcast` fixtures checked by `scripts/verify-spmd-broadcast.sh`.
+  They are intentionally separate from the scalar-vs-SIMD same-exit corpus.
 
-Future `(program-index)`/`(program-count)` fixtures should be kept separate from
-the scalar-vs-SIMD same-exit corpus when they intentionally observe backend gang
-width. They should instead assert the scalar contract (`program-index = 0`,
-`program-count = 1`) and backend-specific SIMD lane/tail behavior from
-`SPEC.md` section 5.15.
+Future `(program-index)`/`(program-count)` and other backend-observable fixtures
+should be kept separate from the scalar-vs-SIMD same-exit corpus when they
+intentionally observe backend gang width. They should instead assert the scalar
+contract (`program-index = 0`, `program-count = 1`) and backend-specific SIMD
+lane/tail behavior from `SPEC.md` section 5.15.
 
 Coverage map:
 
@@ -55,6 +58,9 @@ Coverage map:
   coverage lives in `masked_if_i64.tl` and `masked_if_offset_i64.tl`.
 - `spmd-reduce` scalar coverage for the documented operator/type surface lives
   in `../integration/spmd_reduce_scalar.tl`.
+- `spmd-broadcast` executable coverage lives in `broadcast_lane0_i64.tl` and
+  `broadcast_lane1_i64.tl`, with mode-specific expectations in
+  `scripts/verify-spmd-broadcast.sh`.
 - SIMD reduction vectorization shape checks live in `selfhost/compiler_lower.tl`
   and `selfhost/compiler_backend_tests.tl`; this corpus runs the executable
   scalar/SIMD comparison for the same reduction fixture.
@@ -71,8 +77,10 @@ Coverage map:
 # Uses the release compiler unless TYPELISP_BIN is set.
 scripts/verify-spmd-simd.sh
 scripts/verify-spmd-runtime-dispatch.sh
+sh scripts/verify-spmd-broadcast.sh
 TYPELISP_BIN=./target/stage0/typelisp scripts/verify-spmd-simd.sh
 TYPELISP_BIN=./target/stage0/typelisp scripts/verify-spmd-runtime-dispatch.sh
+TYPELISP_BIN=./target/stage0/typelisp sh scripts/verify-spmd-broadcast.sh
 ```
 
 SIMD modes are gated by `scripts/detect-simd-isa.sh` (real CPUID capability, not

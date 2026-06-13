@@ -267,6 +267,7 @@
   (AstExprMatch i64 AstMatchArmList)
   (AstExprForeach i64 AstType i64 i64 i64)
   (AstExprSpmdReduce AstReduceOp i64 AstType i64 i64 i64 i64)
+  (AstExprSpmdBroadcast i64 i64)
   (AstExprStructGet i64 i64)
   (AstExprStructSet i64 i64 i64)
   (AstExprWithRegion String AstExprList)
@@ -1281,6 +1282,9 @@
   [value : i64]) : i64
   (ast-node-push (AstExprSpmdReduce op name index-ty start end init value)))
 
+(define (ast-expr-spmd-broadcast [value : i64] [lane : i64]) : i64
+  (ast-node-push (AstExprSpmdBroadcast value lane)))
+
 (define (ast-expr-struct-get [target : i64] [field : String]) : i64
   (ast-node-push (AstExprStructGet target (intern field))))
 
@@ -1632,6 +1636,7 @@
     [(AstExprInit _) 61]
     [(AstExprComptime _) 27]
     [(AstExprSpmdReduce _ _ _ _ _ _ _) 28]
+    [(AstExprSpmdBroadcast _ _) 64]
     [(AstExprTry _) 29]
     [(AstExprReturn _) 48]
     [(AstExprPtrNull _) 30]

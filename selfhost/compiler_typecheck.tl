@@ -5140,6 +5140,25 @@
       "(define (main [xs : (Array i64)] [ys : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs (array-ref ys i))))"
       "indirect array indexing is not allowed inside a spmd-reduce value expression; gather/scatter is deferred in the first slice (SPEC.md 5.15)")))
 
+(define (compiler-typecheck-spmd-broadcast-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok?
+      "(define (main [xs : (Array i64)] [out : (Array i64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (array-set! out i (spmd-broadcast (array-ref xs i) 0))) 0))")
+    (compiler-typecheck-ok?
+      "(define (main [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (spmd-broadcast (array-ref xs i) 0)))")
+    (compiler-typecheck-error-ok?
+      "(define (main) : i64 (spmd-broadcast 1 0))"
+      "typecheck: spmd-broadcast is only valid inside a foreach body or spmd-reduce value expression")
+    (compiler-typecheck-error-ok?
+      "(define (main [xs : (Array i64)] [out : (Array i64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (array-set! out i (spmd-broadcast (array-ref xs i) i))) 0))"
+      "typecheck: spmd-broadcast lane must be uniform")
+    (compiler-typecheck-error-ok?
+      "(define (main [xs : (Array i64)] [out : (Array i64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (array-set! out i (spmd-broadcast (array-ref xs i) true))) 0))"
+      "typecheck: spmd-broadcast lane must have type i64")
+    (compiler-typecheck-error-ok?
+      "(define (main [bs : (Array bool)] [out : (Array bool)] [n : i64]) : bool (begin (foreach ([i : i64 0 n]) (array-set! out i (spmd-broadcast (array-ref bs i) 0))) true))"
+      "typecheck: spmd-broadcast value must have type i32, i64, f32, or f64")))
+
 ;; array-builtin signature rules (#1042): make-array length, array-ref array/index
 ;; types, array-set! value-type agreement, and array-push! dynamic-array
 ;; restrictions, with valid accepts.
@@ -6453,6 +6472,9 @@
     (if (compiler-typecheck-spmd-reduce-purity-tests-ok?)
       unit
       (panic "typecheck: spmd-reduce purity tests failed"))
+    (if (compiler-typecheck-spmd-broadcast-tests-ok?)
+      unit
+      (panic "typecheck: spmd-broadcast tests failed"))
     (if (compiler-typecheck-array-builtin-tests-ok?)
       unit
       (panic "typecheck: array-builtin signature tests failed"))

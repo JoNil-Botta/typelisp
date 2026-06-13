@@ -267,7 +267,6 @@ compiler_corpus_manifest() {
     fi
 
     git ls-files 'selfhost/*.tl' \
-        | grep -v '^selfhost/tests/' \
         | grep -vE '(_fixture|_smoke|_tests|_test)\.tl$' \
         | sort
 }

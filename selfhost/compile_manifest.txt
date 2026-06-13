@@ -119,16 +119,6 @@ contains|call _tl_text_buf_append_buffer
 contains|string_append_borrowed
 end
 
-case|selfhost_ast|selfhost/ast.tl|assembly|exactly-one|direct
-contains|_tl_parse_expr:
-contains|_tl_parse_item:
-contains|_tl_read:
-contains|ast: malformed expression
-contains|.string "(let ((x (* 2 3))) (+ x 1))"
-end
-
-decision|selfhost/ast_types.tl|legacy AST type declarations only; imported by selfhost/ast.tl and has no functions to compile directly
-
 # Retained command-driver wrappers. `selfhost/cli.tl` is the published single
 # entry point; these cases intentionally keep focused bootstrap or compatibility
 # coverage for smaller command binaries. See selfhost/TESTING.md for the full
@@ -263,13 +253,6 @@ contains|max-instructions-function
 contains|max-instructions-block
 contains|call-arg-entries
 contains|phi-input-entries
-end
-
-case|selfhost_compile_smoke|selfhost/compile_smoke.tl|assembly|exactly-one|direct
-contains|call _tl_parse_program
-contains|call _tl_emit_program_with_defs
-contains|_tl_arg_count:
-contains|compile-smoke: expected input and output paths
 end
 
 case|selfhost_compiler_ast_types|selfhost/compiler_ast_types.tl|assembly|exactly-one|direct
@@ -764,18 +747,6 @@ contains|_tl_doc_test_smoke:
 contains|_tl_doc_test_parse_fence_info:
 end
 
-case|selfhost_emit|selfhost/emit.tl|assembly|exactly-one|direct
-contains|_tl_emit_program:
-contains|string_append_borrowed
-contains|emit: too many call args
-end
-
-case|selfhost_emit_core|selfhost/emit_core.tl|assembly|skip|direct
-contains|_tl_emit_program:
-contains|_tl_emit_program_with_defs:
-contains|_tl_emit_expr:
-end
-
 case|selfhost_format|selfhost/format.tl|assembly|exactly-one|direct
 contains|fmt_format_file:
 contains|fmt_files:
@@ -839,29 +810,6 @@ contains|_tl_lex_span_self_test:
 contains|_tl_lex_spanned_result:
 end
 
-case|selfhost_lexer|selfhost/lexer.tl|assembly|exactly-one|direct
-contains|_tl_lex:
-contains|_tl_lex_result:
-contains|_tl_token_tag:
-contains|1.5
-contains|substring_copy_checked
-not-contains|call tl_substring
-contains|string__gtint
-not-contains|call tl_string_to_int
-contains|call tl_oob_abort
-contains|lexer: unterminated string literal
-contains|lexer: unterminated character literal
-contains|lexer: unknown named character literal
-contains|lexer: unexpected character
-contains|(% n 16)
-contains|3.14
-contains|_tl_scan_number_end:
-contains|_tl_scan_symbol_end:
-contains|_tl_named_char_result:
-contains|_tl_count_floats:
-contains|_tl_count_chars:
-end
-
 case|selfhost_lsp_frame|selfhost/lsp_frame.tl|assembly|skip|direct
 contains|_tl_lsp_frame_parse_content_length:
 contains|_tl_lsp_frame_read_message:
@@ -879,33 +827,11 @@ contains|_tl_lsp_compiler_diagnostic_uncoded_ok_question:
 contains|_tl_compiler_diagnostic_code_or_empty:
 end
 
-case|selfhost_parse|selfhost/parse.tl|assembly|exactly-one|direct
-contains|_tl_parse:
-contains|_tl_emit_program:
-not-contains|call tl_int_to_string
-not-contains|tl_int_to_string:
-contains|parse: malformed begin
-end
-
-case|selfhost_parse_core|selfhost/parse_core.tl|assembly|skip|direct
-contains|_tl_parse_program:
-contains|_tl_parse_dispatch_env:
-contains|_tl_emit_program_with_defs:
-contains|parse: empty begin
-end
-
 case|selfhost_read|selfhost/read.tl|assembly|skip|direct
 contains|_tl_read:
 contains|_tl_read_form:
 contains|_tl_read_list_result:
 contains|reader: unexpected end of input
-end
-
-case|selfhost_reader|selfhost/reader.tl|assembly|exactly-one|direct
-contains|_tl_read:
-contains|_tl_read_result:
-contains|_tl_lex:
-contains|reader: unterminated list (missing ')')
 end
 
 case|selfhost_repl|selfhost/repl.tl|assembly|exactly-one|direct

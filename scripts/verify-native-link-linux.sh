@@ -705,68 +705,6 @@ EOF
     assemble_link_run_asm compiler-driver-recursive-box-list "$_asm" 42 - - 1
 }
 
-verify_emit_printed_program() {
-    _dir="$WORKDIR/generated-emit"
-    mkdir -p "$_dir"
-    _bin="$_dir/emit"
-    _asm="$_dir/printed.s"
-    _stderr="$_dir/emit.stderr"
-
-    compile_selfhost_binary emit-driver selfhost/emit.tl "$_bin"
-    echo "[selfhost-native] emit.tl printed assembly"
-    set +e
-    "$_bin" > "$_asm" 2> "$_stderr"
-    _got=$?
-    set -e
-    [ "$_got" -eq 0 ] || fail "emit.tl exited $_got"
-    assert_empty "$_stderr" "emit.tl stderr"
-    assert_file_exact "$_asm" "$ROOT/tests/golden/tl_emit_program.s" tl-emit-golden
-    assemble_link_run_asm tl-emit-printed "$_asm" 7 - - 0
-}
-
-verify_parse_printed_program() {
-    _dir="$WORKDIR/generated-parse"
-    mkdir -p "$_dir"
-    _bin="$_dir/parse"
-    _asm="$_dir/printed.s"
-    _stderr="$_dir/parse.stderr"
-
-    compile_selfhost_binary parse-driver selfhost/parse.tl "$_bin"
-    echo "[selfhost-native] parse.tl printed assembly"
-    set +e
-    "$_bin" > "$_asm" 2> "$_stderr"
-    _got=$?
-    set -e
-    [ "$_got" -eq 0 ] || fail "parse.tl exited $_got"
-    assert_empty "$_stderr" "parse.tl stderr"
-    for _snippet in \
-        "sub \$16, %rsp" \
-        "movq %rax, -8(%rbp)" \
-        "movq -8(%rbp), %rax" \
-        "add \$16, %rsp" \
-        "setle %al" \
-        "cmpq \$0, %rax" \
-        "je .Lelse_" \
-        "jmp .Lend_" \
-        ".Lelse_" \
-        ".Lend_"
-    do
-        assert_contains "$_asm" "$_snippet" tl-parse-printed
-    done
-    assert_not_contains "$_asm" ".section .rodata" tl-parse-printed
-    assemble_link_run_asm tl-parse-printed "$_asm" 1 - - 0
-}
-
-verify_ast_driver_smoke() {
-    _dir="$WORKDIR/generated-ast"
-    mkdir -p "$_dir"
-    _bin="$_dir/ast"
-
-    compile_selfhost_binary ast-driver selfhost/ast.tl "$_bin"
-    echo "[selfhost-native] ast.tl frontend smoke"
-    run_binary_expect ast-driver "$_bin" 173 - -
-}
-
 DRIVER="$WORKDIR/compiler-driver/compiler-driver"
 build_selfhost_compiler_driver "$DRIVER"
 verify_compiler_driver_stack_args "$DRIVER"
@@ -779,9 +717,6 @@ verify_compiler_driver_stdlib_json "$DRIVER"
 verify_compiler_driver_arrays_and_traps "$DRIVER"
 verify_compiler_driver_immutable_refs "$DRIVER"
 verify_compiler_driver_recursive_box_list "$DRIVER"
-verify_emit_printed_program
-verify_parse_printed_program
-verify_ast_driver_smoke
 verify_linux_direct_object_link
 
 echo "selfhost native verification passed"

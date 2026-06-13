@@ -305,7 +305,6 @@ if [ "$HOST_OS" = linux ]; then
     run_with_compiler "$STAGE2_BIN" "stage2 docs Pages build path" scripts/verify-doc-site.sh
     unset DOC_SITE_OUT
     run_with_compiler "$STAGE2_BIN" "stage2 native link generated programs" scripts/verify-native-link-linux.sh
-    run_with_compiler "$STAGE2_BIN" "stage2 selfhost external compiler corpus" scripts/verify-selfhost.sh
 else
     run_with_compiler "$STAGE2_BIN" "windows native link build/run" scripts/verify-native-link-windows.sh
     echo

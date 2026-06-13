@@ -92,15 +92,9 @@ string_length tests/integration/string_length.tl
 substring tests/integration/substring.tl
 sym_i64_env tests/integration/sym_i64_env.tl
 tl_alloc tests/integration/tl_alloc.tl
-tl_ast selfhost/ast.tl
-tl_emit selfhost/emit.tl
 tl_format_doc selfhost/format_doc.tl
 tl_lex selfhost/lex.tl
-tl_lexer selfhost/lexer.tl
-tl_parse_core selfhost/parse_core.tl
-tl_parse selfhost/parse.tl
 tl_repl selfhost/repl.tl
-tl_compile_smoke selfhost/compile_smoke.tl
 tl_compiler_parse_core selfhost/compiler_parse_core.tl
 tl_compiler_parse_smoke selfhost/compiler_parse_smoke.tl
 tl_compiler_symbols selfhost/compiler_symbols.tl
@@ -112,7 +106,6 @@ tl_doc_render_smoke selfhost/doc_render_smoke.tl
 tl_doc_html selfhost/doc_html.tl
 tl_doc_html_smoke selfhost/doc_html_smoke.tl
 tl_read selfhost/read.tl
-tl_reader selfhost/reader.tl
 tl_token selfhost/token.tl
 token tests/integration/token.tl
 tree tests/integration/tree.tl

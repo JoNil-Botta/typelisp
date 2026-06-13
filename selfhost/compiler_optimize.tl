@@ -5931,6 +5931,23 @@
 (define (opt-cfg-context-empty) : OptCfgContext
   (opt-cfg-context-build (IrBlockNil)))
 
+;; (#2874) Carries an optimized function together with an OptCfgContext that is
+;; valid for the returned function's *current* blocks, so the next pass in
+;; optimize-function-once can reuse it for entry verification and dominance
+;; queries instead of rebuilding from scratch. The context is only paired with
+;; the exact block list it was built from; passes that rewrite the CFG build a
+;; fresh context for their output before handing it back.
+(defenum OptFunctionCtxResult
+  (OptFunctionCtxResult CompilerIrFunction OptCfgContext))
+
+(defenum OptBlockCtxResult
+  (OptBlockCtxResult CompilerIrBlockList OptCfgContext bool))
+
+(define (opt-cfg-context-all-blocks-reachable? [context : OptCfgContext]) : bool
+  (let
+    [index : OptCfgIndex (struct-get context index)]
+    (= (struct-get index reach-count) (opt-cfg-index-block-count index))))
+
 (define (opt-cfg-dominators [blocks : CompilerIrBlockList]) : OptDomInfo
   (struct-get (opt-cfg-context-build blocks) doms))
 
@@ -8044,6 +8061,33 @@
             outs
             sites)))]))
 
+(define (opt-ssa-construct-materialized-with-context-result
+  [fallback : CompilerIrFunction]
+  [name : String]
+  [params : CompilerIrParamList]
+  [ret-ty : AstType]
+  [blocks : CompilerIrBlockList]
+  [context : OptCfgContext]
+  [sites : OptSsaPhiSites]
+  [state : OptSsaRenameState]) : OptFunctionCtxResult
+  (match state
+    [(OptSsaRenameState renamed outs next-frame)
+      (let
+        [next-blocks : CompilerIrBlockList
+          (opt-ssa-materialize-blocks
+            blocks
+            (struct-get context pred-map)
+            renamed
+            outs
+            sites)]
+        [next : CompilerIrFunction
+          (IrFunction name params ret-ty next-frame next-blocks)]
+        [next-context : OptCfgContext (opt-cfg-context-build next-blocks)]
+        (match (opt-verify-function-with-context next next-context)
+          [(OkCompilerOptimizeVerify) (OptFunctionCtxResult next next-context)]
+          [(ErrCompilerOptimizeVerify _)
+            (OptFunctionCtxResult fallback context)]))]))
+
 ;; True when the entry block has an explicit CFG predecessor (e.g. the
 ;; tail-recursion-to-loop back edge jumps to the function entry block).
 (define (opt-ssa-entry-has-preds? [context : OptCfgContext]) : bool
@@ -8126,6 +8170,74 @@
             sites
             phi-next
             blocks))])))
+
+(define (opt-ssa-construct-with-context-result
+  [func : CompilerIrFunction]
+  [name : String]
+  [params : CompilerIrParamList]
+  [ret-ty : AstType]
+  [frame : i64]
+  [blocks : CompilerIrBlockList]
+  [facts : OptSsaFacts]
+  [context : OptCfgContext]) : OptFunctionCtxResult
+  (let
+    [phi-state : OptSsaPhiInsertState
+      (opt-ssa-insert-phis facts context params frame blocks)]
+    (match phi-state
+      [(OptSsaPhiInsertState sites phi-next _)
+        (opt-ssa-construct-materialized-with-context-result
+          func
+          name
+          params
+          ret-ty
+          blocks
+          context
+          sites
+          (opt-ssa-rename-function-blocks
+            context
+            params
+            facts
+            sites
+            phi-next
+            blocks))])))
+
+(define (opt-ssa-construct-function-with-context-result
+  [func : CompilerIrFunction]) : OptFunctionCtxResult
+  (match func
+    [(IrFunction name params ret-ty frame blocks)
+      (let
+        [context : OptCfgContext (opt-cfg-context-build blocks)]
+        (cond
+          (opt-verify-single-defs? params blocks)
+          (OptFunctionCtxResult func context)
+          ;; Existing phi nodes have edge-local inputs that must be renamed
+          ;; together with their predecessor edges. Leave them unchanged until
+          ;; that rewrite is supported, keeping pipeline use verifier-safe.
+          (opt-ssa-blocks-have-phi? blocks)
+          (OptFunctionCtxResult func context)
+          (let
+            [facts : OptSsaFacts (opt-ssa-facts-from-function params blocks)]
+            (if (not (opt-ssa-any-candidate? facts))
+              (OptFunctionCtxResult func context)
+              ;; A CFG edge into the entry block (the tail-recursion-to-loop
+              ;; back edge) cannot be represented in SSA: the entry block's
+              ;; initial values (parameters and prologue defs) arrive over the
+              ;; implicit function-entry edge, which has no predecessor block
+              ;; or label. A phi inserted at the entry block only sees the
+              ;; explicit predecessors, so renaming silently drops the
+              ;; first-iteration values. Skip SSA construction for such
+              ;; functions; the non-SSA passes still run.
+              (if (opt-ssa-entry-has-preds? context)
+                (OptFunctionCtxResult func context)
+                (opt-ssa-construct-with-context-result
+                  func
+                  name
+                  params
+                  ret-ty
+                  frame
+                  blocks
+                  facts
+                  context))))))]))
 
 ;; --- conservative global value numbering / cross-block copies (#1349) -------
 ;;
@@ -9104,6 +9216,38 @@
       (opt-global-value-number-function-with-context
         (opt-cfg-context-build blocks)
         func)]))
+
+(define (opt-cfg-foldable-branch-instr? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(IrInstrBranch cond _ _)
+      (match cond
+        [(IrValueBool _) true]
+        [_ false])]
+    [_ false]))
+
+(define (opt-cfg-foldable-branch-instr-seq?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    false
+    (if (opt-cfg-foldable-branch-instr?
+      (compiler-ir-instr-seq-ref instrs index))
+      true
+      (opt-cfg-foldable-branch-instr-seq? instrs (+ index 1)))))
+
+(define (opt-cfg-foldable-branch-block? [block : CompilerIrBlock]) : bool
+  (match block
+    [(IrBlock _ instrs) (opt-cfg-foldable-branch-instr-seq? instrs 0)]))
+
+(define (opt-cfg-blocks-have-foldable-branch? [blocks : CompilerIrBlockList]) : bool
+  (match blocks
+    [(IrBlockNil) false]
+    [(IrBlockCons block rest)
+      (if (opt-cfg-foldable-branch-block? block)
+        true
+        (opt-cfg-blocks-have-foldable-branch? (box-get rest)))]
+    [(IrBlockArray seq)
+      (opt-cfg-blocks-have-foldable-branch? (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-cfg-fold-branch [instr : CompilerIrInstr]) : CompilerIrInstr
   (match instr
@@ -10130,15 +10274,6 @@
   (opt-loop-preheaders-blocks-fixed
     blocks
     (+ 1 (compiler-ir-block-list-count blocks))))
-
-;; (#2874) Carries a heavy-pass result together with an OptCfgContext that is
-;; valid for the returned function's *current* blocks, so the next pass in
-;; optimize-function-once can reuse it for its entry verify and dominance
-;; queries instead of rebuilding from scratch. The context is only ever paired
-;; with the exact block list it was built from; passes that rewrite the CFG
-;; build a fresh context for their output before handing it back.
-(defenum OptFunctionCtxResult
-  (OptFunctionCtxResult CompilerIrFunction OptCfgContext))
 
 (define (opt-loop-preheaders-function-with-context-result
   [context : OptCfgContext]
@@ -11916,6 +12051,22 @@
     [reachable : OptLabelSet (opt-cfg-reachable-blocks folded)]
     (opt-cfg-filter-clean-blocks reachable folded)))
 
+(define (opt-cfg-simplify-blocks-with-context-result
+  [input : OptBlockCtxResult]) : OptBlockCtxResult
+  (match input
+    [(OptBlockCtxResult blocks context context-valid)
+      (if (and
+        context-valid
+        (not (opt-cfg-blocks-have-foldable-branch? blocks))
+        (opt-cfg-context-all-blocks-reachable? context))
+        (OptBlockCtxResult
+          (opt-cfg-filter-clean-blocks (struct-get context reachable) blocks)
+          context
+          true)
+        (let
+          [simplified : CompilerIrBlockList (opt-cfg-simplify-blocks blocks)]
+          (OptBlockCtxResult simplified (opt-cfg-context-build simplified) true)))]))
+
 ;; --- sparse conditional constant propagation (#1348) -----------------------
 ;;
 ;; SCCP v1 runs after the local scalar simplifier. It keeps a small scalar
@@ -12422,6 +12573,48 @@
         [_ value])]
     [_ value]))
 
+(define (opt-sccp-instr-changes-successors?
+  [env : OptSccpEnv]
+  [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(IrInstrBranch cond _ _)
+      (match (opt-sccp-rewrite-value env cond)
+        [(IrValueBool _) true]
+        [_ false])]
+    [_ false]))
+
+(define (opt-sccp-instr-seq-changes-successors?
+  [env : OptSccpEnv]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    false
+    (if (opt-sccp-instr-changes-successors?
+      env
+      (compiler-ir-instr-seq-ref instrs index))
+      true
+      (opt-sccp-instr-seq-changes-successors? env instrs (+ index 1)))))
+
+(define (opt-sccp-block-changes-successors?
+  [env : OptSccpEnv]
+  [block : CompilerIrBlock]) : bool
+  (match block
+    [(IrBlock _ instrs) (opt-sccp-instr-seq-changes-successors? env instrs 0)]))
+
+(define (opt-sccp-blocks-change-successors?
+  [env : OptSccpEnv]
+  [blocks : CompilerIrBlockList]) : bool
+  (match blocks
+    [(IrBlockNil) false]
+    [(IrBlockCons block rest)
+      (if (opt-sccp-block-changes-successors? env block)
+        true
+        (opt-sccp-blocks-change-successors? env (box-get rest)))]
+    [(IrBlockArray seq)
+      (opt-sccp-blocks-change-successors?
+        env
+        (compiler-ir-block-seq-to-list seq))]))
+
 (define (opt-sccp-rewrite-maybe-value
   [env : OptSccpEnv]
   [value : CompilerIrMaybeValue]) : CompilerIrMaybeValue
@@ -12735,6 +12928,18 @@
   (match (opt-sccp-analyze params blocks)
     [(OptSccpState _ env _)
       (opt-cfg-simplify-blocks (opt-sccp-rewrite-blocks env blocks))]))
+
+(define (opt-sccp-blocks-with-context-result
+  [context : OptCfgContext]
+  [params : CompilerIrParamList]
+  [blocks : CompilerIrBlockList]) : OptBlockCtxResult
+  (match (opt-sccp-analyze params blocks)
+    [(OptSccpState _ env _)
+      (opt-cfg-simplify-blocks-with-context-result
+        (OptBlockCtxResult
+          (opt-sccp-rewrite-blocks env blocks)
+          context
+          (not (opt-sccp-blocks-change-successors? env blocks))))]))
 
 (defenum OptFunctionPassResult
   (OptFunctionPassResult CompilerIrFunction bool))
@@ -15071,10 +15276,17 @@
                       ;; dominator passes below. Unsupported cases fall back to the
                       ;; original function, so the optimization path remains safe.
                       [t-ssa : i64 (cfg compile-profile (profile-now-ms) 0)]
-                      [ssa : CompilerIrFunction
+                      [ssa-result : OptFunctionCtxResult
                         (if run-heavy?
-                          (opt-ssa-construct-function rotated)
-                          rotated)]
+                          (opt-ssa-construct-function-with-context-result
+                            rotated)
+                          (OptFunctionCtxResult rotated (opt-cfg-context-empty)))]
+                      [ssa : CompilerIrFunction
+                        (match ssa-result
+                          [(OptFunctionCtxResult f _) f])]
+                      [ssa-context : OptCfgContext
+                        (match ssa-result
+                          [(OptFunctionCtxResult _ ctx) ctx])]
                       [_p-ssa : unit
                         (cfg
                           compile-profile
@@ -15086,13 +15298,10 @@
                       [t-gvn : i64 (cfg compile-profile (profile-now-ms) 0)]
                       [gvn : CompilerIrBlockList
                         (if run-heavy?
-                          (let
-                            [gvn-context : OptCfgContext
-                              (opt-cfg-context-build ssa-blocks)]
-                            (opt-gvn-blocks-with-context
-                              gvn-context
-                              params
-                              ssa-blocks))
+                          (opt-gvn-blocks-with-context
+                            ssa-context
+                            params
+                            ssa-blocks)
                           ssa-blocks)]
                       [_p-gvn : unit
                         (cfg
@@ -15100,14 +15309,48 @@
                           (compiler-opt-profile-pass-finish "gvn" name t-gvn)
                           unit)]
                       [t-sccp : i64 (cfg compile-profile (profile-now-ms) 0)]
-                      [sccp : CompilerIrBlockList (opt-sccp-blocks params gvn)]
+                      [sccp-result : OptBlockCtxResult
+                        (if run-heavy?
+                          (opt-sccp-blocks-with-context-result
+                            ssa-context
+                            params
+                            gvn)
+                          (OptBlockCtxResult
+                            (opt-sccp-blocks params gvn)
+                            (opt-cfg-context-empty)
+                            false))]
+                      [sccp : CompilerIrBlockList
+                        (match sccp-result
+                          [(OptBlockCtxResult b _ _) b])]
+                      [sccp-context : OptCfgContext
+                        (match sccp-result
+                          [(OptBlockCtxResult _ ctx _) ctx])]
+                      [sccp-context-valid : bool
+                        (match sccp-result
+                          [(OptBlockCtxResult _ _ valid) valid])]
                       [_p-sccp : unit
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish "sccp" name t-sccp)
                           unit)]
                       [t-cfg2 : i64 (cfg compile-profile (profile-now-ms) 0)]
-                      [cfg : CompilerIrBlockList (opt-cfg-simplify-blocks sccp)]
+                      [cfg-result : OptBlockCtxResult
+                        (if run-heavy?
+                          (opt-cfg-simplify-blocks-with-context-result
+                            (OptBlockCtxResult
+                              sccp
+                              sccp-context
+                              sccp-context-valid))
+                          (OptBlockCtxResult
+                            (opt-cfg-simplify-blocks sccp)
+                            (opt-cfg-context-empty)
+                            false))]
+                      [cfg : CompilerIrBlockList
+                        (match cfg-result
+                          [(OptBlockCtxResult b _ _) b])]
+                      [cfg-context : OptCfgContext
+                        (match cfg-result
+                          [(OptBlockCtxResult _ ctx _) ctx])]
                       [_p-cfg2 : unit
                         (cfg
                           compile-profile
@@ -15129,7 +15372,7 @@
                             [preheaders-input : CompilerIrFunction
                               (IrFunction name params ret-ty ssa-frame cfg)]
                             (opt-loop-preheaders-function-with-context-result
-                              (opt-cfg-context-build cfg)
+                              cfg-context
                               preheaders-input))
                           (OptFunctionCtxResult
                             (IrFunction name params ret-ty ssa-frame cfg)

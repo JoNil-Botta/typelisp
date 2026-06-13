@@ -201,6 +201,27 @@
 
 (cfg
   compile-profile
+  (define (compiler-opt-profile-pass-finish
+    [pass : String]
+    [name : String]
+    [start-ms : i64]) : unit
+    (let
+      [elapsed : i64 (- (profile-now-ms) start-ms)]
+      (if (>= elapsed 1)
+        (print-error
+          (string-append
+            "compile-profile-detail|optimize.pass."
+            (string-append
+              pass
+              (string-append
+                "|"
+                (string-append
+                  (int->string elapsed)
+                  (string-append "|" (string-append name "\n")))))))
+        unit))))
+
+(cfg
+  compile-profile
   (define (compiler-opt-profile-function-name [func : CompilerIrFunction]) : String
     (match func
       [(IrFunction name _ _ _ _) name])))
@@ -13472,137 +13493,250 @@
           func))]))
 
 (define (optimize-function-once [func : CompilerIrFunction]) : CompilerIrFunction
-  (match (opt-tailrec-function func)
-    [(IrFunction name params ret-ty frame blocks)
-      ;; Fold first so SCCP can reuse local facts, then simplify the reachable
-      ;; CFG and eliminate dead pure assignments.
-      (let
-        [folded : CompilerIrBlockList (optimize-block-list blocks)]
-        [promoted : CompilerIrFunction
-          (opt-aggregate-stack-promote-function
-            (IrFunction name params ret-ty frame folded))]
-        (match promoted
-          [(IrFunction _ _ _ promoted-frame promoted-blocks)
-            ;; Aggregate field-load SROA (#1562) runs on the post-promotion
-            ;; blocks/frame (it leaves the frame unchanged), so the slots stay
-            ;; consistent with the later #1530 global-GVN pass below.
-            (match (opt-aggregate-sroa-function
-              (IrFunction name params ret-ty promoted-frame promoted-blocks))
-              [(IrFunction _ _ _ _ sroa-blocks)
-                (let
-                  ;; #perf: the dominator-based passes (GVN, LICM, induction,
-                  ;; global GVN) are super-linear in block count (their dominance
-                  ;; queries walk string label-sets), so on the handful of huge
-                  ;; self-host functions (hundreds of blocks) they dominate
-                  ;; compile time. Gate them off above a block-count threshold;
-                  ;; register allocation and the linear cleanups still run, so
-                  ;; only the incremental redundancy elimination is skipped on
-                  ;; those few functions, which bounds opt-level-3 compile time.
-                  [run-heavy? : bool
-                    (<=
-                      (compiler-ir-block-list-count sroa-blocks)
-                      (opt-heavy-pass-block-limit))]
-                  [rotated : CompilerIrFunction
-                    (if run-heavy?
-                      (opt-loop-rotation-function
-                        (IrFunction
-                          name
-                          params
-                          ret-ty
-                          promoted-frame
-                          sroa-blocks))
-                      (IrFunction name params ret-ty promoted-frame sroa-blocks))]
-                  ;; Scalar SSA construction feeds the verifier-gated
-                  ;; dominator passes below. Unsupported cases fall back to the
-                  ;; original function, so the optimization path remains safe.
-                  [ssa : CompilerIrFunction
-                    (if run-heavy?
-                      (opt-ssa-construct-function rotated)
-                      rotated)]
-                  [ssa-frame : i64 (opt-function-frame ssa)]
-                  [ssa-blocks : CompilerIrBlockList (opt-function-blocks ssa)]
-                  [gvn : CompilerIrBlockList
-                    (if run-heavy?
-                      (let
-                        [gvn-context : OptCfgContext
-                          (opt-cfg-context-build ssa-blocks)]
-                        (opt-gvn-blocks-with-context
-                          gvn-context
-                          params
-                          ssa-blocks))
-                      ssa-blocks)]
-                  [sccp : CompilerIrBlockList (opt-sccp-blocks params gvn)]
-                  [cfg : CompilerIrBlockList (opt-cfg-simplify-blocks sccp)]
-                  [preheaders : CompilerIrFunction
-                    (if run-heavy?
-                      (opt-loop-preheaders-function
-                        (IrFunction name params ret-ty ssa-frame cfg))
-                      (IrFunction name params ret-ty ssa-frame cfg))]
-                  [preheader-frame : i64 (opt-function-frame preheaders)]
-                  [preheader-blocks : CompilerIrBlockList
-                    (opt-function-blocks preheaders)]
-                  [licm : CompilerIrFunction
-                    (if run-heavy?
-                      (let
-                        [licm-context : OptCfgContext
-                          (opt-cfg-context-build preheader-blocks)]
-                        (opt-licm-function-with-context
-                          licm-context
+  (let
+    [t-tailrec : i64 (cfg compile-profile (profile-now-ms) 0)]
+    [tailrec : CompilerIrFunction (opt-tailrec-function func)]
+    (match tailrec
+      [(IrFunction name params ret-ty frame blocks)
+        ;; Fold first so SCCP can reuse local facts, then simplify the reachable
+        ;; CFG and eliminate dead pure assignments.
+        (let
+          [_p-tailrec : unit
+            (cfg
+              compile-profile
+              (compiler-opt-profile-pass-finish "tailrec" name t-tailrec)
+              unit)]
+          [t-fold : i64 (cfg compile-profile (profile-now-ms) 0)]
+          [folded : CompilerIrBlockList (optimize-block-list blocks)]
+          [_p-fold : unit
+            (cfg
+              compile-profile
+              (compiler-opt-profile-pass-finish "fold" name t-fold)
+              unit)]
+          [t-promote : i64 (cfg compile-profile (profile-now-ms) 0)]
+          [promoted : CompilerIrFunction
+            (opt-aggregate-stack-promote-function
+              (IrFunction name params ret-ty frame folded))]
+          [_p-promote : unit
+            (cfg
+              compile-profile
+              (compiler-opt-profile-pass-finish "stack_promote" name t-promote)
+              unit)]
+          (match promoted
+            [(IrFunction _ _ _ promoted-frame promoted-blocks)
+              ;; Aggregate field-load SROA (#1562) runs on the post-promotion
+              ;; blocks/frame (it leaves the frame unchanged), so the slots stay
+              ;; consistent with the later #1530 global-GVN pass below.
+              (let
+                [t-sroa : i64 (cfg compile-profile (profile-now-ms) 0)]
+                [sroa : CompilerIrFunction
+                  (opt-aggregate-sroa-function
+                    (IrFunction
+                      name
+                      params
+                      ret-ty
+                      promoted-frame
+                      promoted-blocks))]
+                [_p-sroa : unit
+                  (cfg
+                    compile-profile
+                    (compiler-opt-profile-pass-finish "sroa" name t-sroa)
+                    unit)]
+                (match sroa
+                  [(IrFunction _ _ _ _ sroa-blocks)
+                    (let
+                      ;; #perf: the dominator-based passes (GVN, LICM, induction,
+                      ;; global GVN) are super-linear in block count (their dominance
+                      ;; queries walk string label-sets), so on the handful of huge
+                      ;; self-host functions (hundreds of blocks) they dominate
+                      ;; compile time. Gate them off above a block-count threshold;
+                      ;; register allocation and the linear cleanups still run, so
+                      ;; only the incremental redundancy elimination is skipped on
+                      ;; those few functions, which bounds opt-level-3 compile time.
+                      [run-heavy? : bool
+                        (<=
+                          (compiler-ir-block-list-count sroa-blocks)
+                          (opt-heavy-pass-block-limit))]
+                      [t-rotation : i64
+                        (cfg compile-profile (profile-now-ms) 0)]
+                      [rotated : CompilerIrFunction
+                        (if run-heavy?
+                          (opt-loop-rotation-function
+                            (IrFunction
+                              name
+                              params
+                              ret-ty
+                              promoted-frame
+                              sroa-blocks))
                           (IrFunction
                             name
                             params
                             ret-ty
-                            preheader-frame
-                            preheader-blocks)))
-                      preheaders)]
-                  [licm-blocks : CompilerIrBlockList (opt-function-blocks licm)]
-                  [induction : CompilerIrFunction
-                    (if run-heavy?
-                      (let
-                        [induction-context : OptCfgContext
-                          (opt-cfg-context-build licm-blocks)]
-                        (opt-induction-function-with-context
-                          induction-context
-                          licm))
-                      licm)]
-                  [induction-frame : i64 (opt-function-frame induction)]
-                  [induction-blocks : CompilerIrBlockList
-                    (opt-function-blocks induction)]
-                  ;; Cross-block global value numbering + copy propagation
-                  ;; (#1530) runs after local GVN/SCCP/CFG/LICM cleanup, on
-                  ;; the post-stack-promotion frame so its slots stay
-                  ;; consistent with the promoted blocks.
-                  [global : CompilerIrFunction
-                    (if run-heavy?
-                      (let
-                        [global-context : OptCfgContext
-                          (opt-cfg-context-build induction-blocks)]
-                        (opt-global-value-number-function-with-context
-                          global-context
+                            promoted-frame
+                            sroa-blocks))]
+                      [_p-rotation : unit
+                        (cfg
+                          compile-profile
+                          (compiler-opt-profile-pass-finish
+                            "rotation"
+                            name
+                            t-rotation)
+                          unit)]
+                      ;; Scalar SSA construction feeds the verifier-gated
+                      ;; dominator passes below. Unsupported cases fall back to the
+                      ;; original function, so the optimization path remains safe.
+                      [t-ssa : i64 (cfg compile-profile (profile-now-ms) 0)]
+                      [ssa : CompilerIrFunction
+                        (if run-heavy?
+                          (opt-ssa-construct-function rotated)
+                          rotated)]
+                      [_p-ssa : unit
+                        (cfg
+                          compile-profile
+                          (compiler-opt-profile-pass-finish "ssa" name t-ssa)
+                          unit)]
+                      [ssa-frame : i64 (opt-function-frame ssa)]
+                      [ssa-blocks : CompilerIrBlockList
+                        (opt-function-blocks ssa)]
+                      [t-gvn : i64 (cfg compile-profile (profile-now-ms) 0)]
+                      [gvn : CompilerIrBlockList
+                        (if run-heavy?
+                          (let
+                            [gvn-context : OptCfgContext
+                              (opt-cfg-context-build ssa-blocks)]
+                            (opt-gvn-blocks-with-context
+                              gvn-context
+                              params
+                              ssa-blocks))
+                          ssa-blocks)]
+                      [_p-gvn : unit
+                        (cfg
+                          compile-profile
+                          (compiler-opt-profile-pass-finish "gvn" name t-gvn)
+                          unit)]
+                      [t-sccp : i64 (cfg compile-profile (profile-now-ms) 0)]
+                      [sccp : CompilerIrBlockList (opt-sccp-blocks params gvn)]
+                      [_p-sccp : unit
+                        (cfg
+                          compile-profile
+                          (compiler-opt-profile-pass-finish "sccp" name t-sccp)
+                          unit)]
+                      [t-cfg2 : i64 (cfg compile-profile (profile-now-ms) 0)]
+                      [cfg : CompilerIrBlockList (opt-cfg-simplify-blocks sccp)]
+                      [_p-cfg2 : unit
+                        (cfg
+                          compile-profile
+                          (compiler-opt-profile-pass-finish "cfg" name t-cfg2)
+                          unit)]
+                      [t-preheaders : i64
+                        (cfg compile-profile (profile-now-ms) 0)]
+                      [preheaders : CompilerIrFunction
+                        (if run-heavy?
+                          (opt-loop-preheaders-function
+                            (IrFunction name params ret-ty ssa-frame cfg))
+                          (IrFunction name params ret-ty ssa-frame cfg))]
+                      [_p-preheaders : unit
+                        (cfg
+                          compile-profile
+                          (compiler-opt-profile-pass-finish
+                            "preheaders"
+                            name
+                            t-preheaders)
+                          unit)]
+                      [preheader-frame : i64 (opt-function-frame preheaders)]
+                      [preheader-blocks : CompilerIrBlockList
+                        (opt-function-blocks preheaders)]
+                      [t-licm : i64 (cfg compile-profile (profile-now-ms) 0)]
+                      [licm : CompilerIrFunction
+                        (if run-heavy?
+                          (let
+                            [licm-context : OptCfgContext
+                              (opt-cfg-context-build preheader-blocks)]
+                            (opt-licm-function-with-context
+                              licm-context
+                              (IrFunction
+                                name
+                                params
+                                ret-ty
+                                preheader-frame
+                                preheader-blocks)))
+                          preheaders)]
+                      [_p-licm : unit
+                        (cfg
+                          compile-profile
+                          (compiler-opt-profile-pass-finish "licm" name t-licm)
+                          unit)]
+                      [licm-blocks : CompilerIrBlockList
+                        (opt-function-blocks licm)]
+                      [t-induction : i64
+                        (cfg compile-profile (profile-now-ms) 0)]
+                      [induction : CompilerIrFunction
+                        (if run-heavy?
+                          (let
+                            [induction-context : OptCfgContext
+                              (opt-cfg-context-build licm-blocks)]
+                            (opt-induction-function-with-context
+                              induction-context
+                              licm))
+                          licm)]
+                      [_p-induction : unit
+                        (cfg
+                          compile-profile
+                          (compiler-opt-profile-pass-finish
+                            "induction"
+                            name
+                            t-induction)
+                          unit)]
+                      [induction-frame : i64 (opt-function-frame induction)]
+                      [induction-blocks : CompilerIrBlockList
+                        (opt-function-blocks induction)]
+                      ;; Cross-block global value numbering + copy propagation
+                      ;; (#1530) runs after local GVN/SCCP/CFG/LICM cleanup, on
+                      ;; the post-stack-promotion frame so its slots stay
+                      ;; consistent with the promoted blocks.
+                      [t-global : i64 (cfg compile-profile (profile-now-ms) 0)]
+                      [global : CompilerIrFunction
+                        (if run-heavy?
+                          (let
+                            [global-context : OptCfgContext
+                              (opt-cfg-context-build induction-blocks)]
+                            (opt-global-value-number-function-with-context
+                              global-context
+                              (IrFunction
+                                name
+                                params
+                                ret-ty
+                                induction-frame
+                                induction-blocks)))
                           (IrFunction
                             name
                             params
                             ret-ty
                             induction-frame
-                            induction-blocks)))
-                      (IrFunction
-                        name
-                        params
-                        ret-ty
-                        induction-frame
-                        induction-blocks))]
-                  [global-blocks : CompilerIrBlockList
-                    (opt-function-blocks global)]
-                  [used : (Array bool)
-                    (opt-collect-blocks-uses-array
-                      induction-frame
-                      global-blocks)]
-                  (IrFunction
-                    name
-                    params
-                    ret-ty
-                    induction-frame
-                    (opt-dce-block-list-array used global-blocks)))])]))]))
+                            induction-blocks))]
+                      [_p-global : unit
+                        (cfg
+                          compile-profile
+                          (compiler-opt-profile-pass-finish
+                            "global_gvn"
+                            name
+                            t-global)
+                          unit)]
+                      [global-blocks : CompilerIrBlockList
+                        (opt-function-blocks global)]
+                      [t-dce : i64 (cfg compile-profile (profile-now-ms) 0)]
+                      [used : (Array bool)
+                        (opt-collect-blocks-uses-array
+                          induction-frame
+                          global-blocks)]
+                      [dced : CompilerIrBlockList
+                        (opt-dce-block-list-array used global-blocks)]
+                      [_p-dce : unit
+                        (cfg
+                          compile-profile
+                          (compiler-opt-profile-pass-finish "dce" name t-dce)
+                          unit)]
+                      (IrFunction name params ret-ty induction-frame dced))]))]))])))
 
 ;; Level 2 keeps the self-build path lightweight while preserving the explicit
 ;; optimized-level checks for local scalar cleanup, bounds checks, stack
@@ -13611,23 +13745,43 @@
   (match func
     [(IrFunction name params ret-ty frame blocks)
       (let
+        [t-fold : i64 (cfg compile-profile (profile-now-ms) 0)]
         [folded : CompilerIrBlockList (optimize-block-list blocks)]
+        [_p-fold : unit
+          (cfg
+            compile-profile
+            (compiler-opt-profile-pass-finish "fold" name t-fold)
+            unit)]
+        [t-promote : i64 (cfg compile-profile (profile-now-ms) 0)]
         [promoted : CompilerIrFunction
           (opt-aggregate-stack-promote-function
             (IrFunction name params ret-ty frame folded))]
+        [_p-promote : unit
+          (cfg
+            compile-profile
+            (compiler-opt-profile-pass-finish "stack_promote" name t-promote)
+            unit)]
         (match promoted
           [(IrFunction _ _ _ promoted-frame promoted-blocks)
             (let
+              [t-cfg : i64 (cfg compile-profile (profile-now-ms) 0)]
               [cfg : CompilerIrBlockList
                 (opt-cfg-simplify-blocks promoted-blocks)]
+              [_p-cfg : unit
+                (cfg
+                  compile-profile
+                  (compiler-opt-profile-pass-finish "cfg" name t-cfg)
+                  unit)]
+              [t-dce : i64 (cfg compile-profile (profile-now-ms) 0)]
               [used : (Array bool)
                 (opt-collect-blocks-uses-array promoted-frame cfg)]
-              (IrFunction
-                name
-                params
-                ret-ty
-                promoted-frame
-                (opt-dce-block-list-array used cfg)))]))]))
+              [dced : CompilerIrBlockList (opt-dce-block-list-array used cfg)]
+              [_p-dce : unit
+                (cfg
+                  compile-profile
+                  (compiler-opt-profile-pass-finish "dce" name t-dce)
+                  unit)]
+              (IrFunction name params ret-ty promoted-frame dced))]))]))
 
 (define (optimize-function-once-fast [func : CompilerIrFunction]) : CompilerIrFunction
   (match func

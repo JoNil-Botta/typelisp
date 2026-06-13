@@ -11,6 +11,8 @@
 
 (import "compiler_check_core.tl")
 
+(import "compiler_load.tl")
+
 (import "../stdlib/string.tl")
 
 (import "../stdlib/str_cat.tl")
@@ -673,6 +675,7 @@
           (compiler-diagnostic-code-typecheck))
         (return 2))
       (unless (lsp-compiler-diagnostic-uncoded-ok? uncoded) (return 3))
+      (unless (lsp-frame-session-cache-smoke-ok?) (return 4))
       42)))
 
 (define (lsp-diagnostic-uri
@@ -918,6 +921,19 @@
 (define (lsp-stdlib-roots [idx : i64]) : StringVec
   (lsp-stdlib-roots-from idx (arg-count)))
 
+(define (lsp-frame-session-cache-enable!) : unit
+  (compiler-load-session-cache-enable!))
+
+(define (lsp-frame-session-cache-smoke-ok?) : bool
+  (begin
+    (compiler-load-session-cache-disable-for-test!)
+    (lsp-frame-session-cache-enable!)
+    (let
+      [ok : bool (compiler-load-session-cache-enabled?)]
+      (begin
+        (compiler-load-session-cache-disable-for-test!)
+        ok))))
+
 (define (lsp-frame-run-from [idx : i64] [count : i64]) : i64
   (let
     [done : bool false]
@@ -925,6 +941,7 @@
     [docs : LspDocuments (lsp-documents-new)]
     [stdlib-roots : StringVec (lsp-stdlib-roots-from idx count)]
     (begin
+      (lsp-frame-session-cache-enable!)
       (while (not done)
         (match (lsp-frame-read-message)
           [(LspFrameOk payload)

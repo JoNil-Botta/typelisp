@@ -237,12 +237,14 @@
 ;; `lower-decls` also threads the `CompilerSourceSpans` provenance side table
 ;;
 ;; (#605) so each lowered function's source span is recorded alongside the IR.
+(defstruct LowerDeclsSuccess
+  (globals CompilerIrGlobalList)
+  (functions CompilerIrFunctionList)
+  (externs CompilerIrExternList)
+  (spans CompilerSourceSpans))
+
 (defenum ResultLowerDecls
-  (OkLowerDecls
-    CompilerIrGlobalList
-    CompilerIrFunctionList
-    CompilerIrExternList
-    CompilerSourceSpans)
+  (OkLowerDecls (Box LowerDeclsSuccess))
   (ErrLowerDecls CompilerDiagnostic))
 
 (defenum LowerDispatchDecl
@@ -252,7 +254,7 @@
     CompilerSourceSpans))
 
 (defenum ResultLowerDispatchDecl
-  (OkLowerDispatchDecl LowerDispatchDecl)
+  (OkLowerDispatchDecl (Box LowerDispatchDecl))
   (ErrLowerDispatchDecl CompilerDiagnostic))
 
 ;; A successful lowering returns the IR `CompilerIrProgram` plus a
@@ -26966,15 +26968,16 @@
                 variant-spans)
                 [(OkLowerFunction thunk-functions thunk-spans)
                   (OkLowerDispatchDecl
-                    (LowerDispatchDecl
-                      (IrGlobal
-                        (lower-dispatch-cache-name logical-name)
-                        fn-ty
-                        (IrValueI64 0))
-                      (lower-function-list-append
-                        thunk-functions
-                        variant-functions)
-                      thunk-spans))]
+                    (box
+                      (LowerDispatchDecl
+                        (IrGlobal
+                          (lower-dispatch-cache-name logical-name)
+                          fn-ty
+                          (IrValueI64 0))
+                        (lower-function-list-append
+                          thunk-functions
+                          variant-functions)
+                        thunk-spans)))]
                 [(ErrLowerFunction message) (ErrLowerDispatchDecl message)])]
             [(ErrLowerFunction message) (ErrLowerDispatchDecl message)]))]
       [(ErrTcType message) (ErrLowerDispatchDecl (lower-diagnostic message))])))
@@ -27053,10 +27056,12 @@
               (set!
                 result
                 (OkLowerDecls
-                  (lower-global-list-reverse cur-globals)
-                  (lower-function-list-reverse cur-functions)
-                  (lower-extern-list-reverse cur-externs)
-                  cur-spans))
+                  (box
+                    (LowerDeclsSuccess
+                      (lower-global-list-reverse cur-globals)
+                      (lower-function-list-reverse cur-functions)
+                      (lower-extern-list-reverse cur-externs)
+                      cur-spans))))
               (set! done true))]
           [(AstDeclCons decl rest)
             (let
@@ -27250,7 +27255,7 @@
                     mode
                     cur-module)
                     [(OkLowerDispatchDecl lowered)
-                      (match lowered
+                      (match (box-get lowered)
                         [(LowerDispatchDecl
                             cache-global
                             lowered-functions
@@ -27438,13 +27443,16 @@
             (compiler-source-spans-empty)
             names
             mode)
-            [(OkLowerDecls globals functions externs spans)
-              (OkCompilerLower
-                (IrProgram
-                  globals
-                  (compiler-ir-function-list-compact functions)
-                  externs)
-                spans)]
+            [(OkLowerDecls payload)
+              (let
+                [success : LowerDeclsSuccess (box-get payload)]
+                (OkCompilerLower
+                  (IrProgram
+                    (struct-get success globals)
+                    (compiler-ir-function-list-compact
+                      (struct-get success functions))
+                    (struct-get success externs))
+                  (struct-get success spans)))]
             [(ErrLowerDecls message) (ErrCompilerLower message)]))])))
 
 (define (lower-compiler-program-checked-with-names

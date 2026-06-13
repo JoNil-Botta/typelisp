@@ -29,9 +29,9 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   compile-time-only macro representation during the CTFE migration. Import it
   with `(import "stdlib/comptime.tl")`.
 - `io.tl`: file I/O helpers, explicit file-handle open/close wrappers, stdio
-  wrappers, argv access, panic/error, and monomorphic Result-style I/O error
-  APIs built as stdlib extern wrappers over backend runtime symbols. Import it with
-  `(import "stdlib/io.tl")`.
+  wrappers, argv access, panic/error, deterministic float parse/format support,
+  and monomorphic Result-style I/O error APIs built as stdlib extern wrappers
+  over backend runtime symbols. Import it with `(import "stdlib/io.tl")`.
 - `io_caller_result.tl`: lifetime-preserving `read-file-or-result` surface that
   can return a borrow of the caller fallback or owned file contents. Import it
   with `(import "stdlib/io_caller_result.tl")`; it remains separate from
@@ -122,7 +122,8 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   mutation through a semaphore-backed mutex. Import it with
   `(import "stdlib/sync.tl")`.
 - `json.tl`: JSON value parser and serializer for tool protocols and data
-  exchange. Import it with `(import "stdlib/json.tl")`.
+  exchange, plus deterministic finite `f64`/`f32` JSON number conversion
+  helpers. Import it with `(import "stdlib/json.tl")`.
 - `list.tl`: monomorphic `StringList` and `StringListBuilder` compatibility
   helpers for common cons-list workflows, with reverse/append/count, array
   conversion, and `StringVec` bridge helpers. Use `StringList` for public
@@ -339,7 +340,7 @@ owned stdlib imports keep the compatibility wrappers.
 | Future `byte-buf-*` / `bytes-*` helpers in `byte_buf.tl` | `ByteBuf` construction, copy-in, reserve, growth, and copy-out allocate in the active arena. Borrowing a buffer's live range as `(& r bytes)` or `(&mut r bytes)` is non-allocating; mutable views are exclusive and fixed-length. String/`str`/`(Array u8)` conversion boundaries are explicit copies unless a helper explicitly returns an immutable borrowed byte view. |
 | `arena-*` helpers in `arena.tl` | First-class arena control does not allocate returned aggregate storage. `arena-make` creates an independent arena handle, `arena-current` observes the active arena, and `arena-mark` observes the current bump mark. `arena-set!`, `arena-destroy`, and `arena-rewind` can invalidate live heap handles and require `(unsafe ...)`. |
 | `args-*` helpers in `args.tl` | Option specs, parse results, occurrence lists, positional list spines, diagnostic payloads, and helper substrings allocate in the active arena. Token classification, option lookup, count/presence checks, and value accessors are non-allocating aside from caller-provided owned strings and existing result storage. |
-| `json-*` helpers | Parser, lookup, and escaping helpers borrow source text or keys. Object lookup compares borrowed keys without allocating. Parsed JSON aggregates, decoded strings, escaped strings, stringified output, and list/member spines allocate owned results in the active arena. |
+| `json-*` helpers | Parser, lookup, escaping, and JSON number parsing helpers borrow source text or keys. Object lookup compares borrowed keys without allocating. Parsed JSON aggregates, decoded strings, escaped strings, stringified output, float number text, validation copies, and list/member spines allocate owned results in the active arena. Float conversion is deterministic, finite-only, host-locale independent, and currently accepts up to 300 non-zero significant decimal digits; longer non-zero number text is rejected rather than rounded through an unbounded scratch representation. |
 | `string-eq`, `string=?`, `string-eq-borrowed`, `string->int`, `string->int-borrowed` | Equality and integer parsing helpers inspect string bytes without allocating. The owned wrappers borrow their inputs internally; the borrowed variants are available to stdlib code that already has `(& r str)` values. `string->int` keeps the legacy runtime parser rules, including `""`/`"-"` as zero and byte-minus-`'0'` arithmetic for non-digits. |
 | `string-list-*` helpers | Construct immutable `StringList` cons nodes and `StringListBuilder` values in the active arena. `string-list-reverse`, `-reverse-onto`, `-append`, `-from-array`, `-from-vec`, and builder build helpers allocate fresh list spines; `string-list-to-array` and `string-list-to-vec` allocate fresh active-arena storage and copy the string handles into it. |
 | `process-*` helpers in `process.tl` / `process_borrowed.tl` | Owned `process.tl` helpers construct process command/output/error aggregates in the active arena. Command builders keep owned `String` parameters because `ProcessCommand`, argv, env, cwd, and stdin fields store owned strings; validators use borrowed text inspection where they do not store inputs. Ordered argv append helpers allocate list nodes; validators inspect executable/env/cwd metadata and reject invalid env names. `process_borrowed.tl` exposes lifetime-parameterized `ProcessBorrowedCommand` storage for borrowed executable, argv, cwd, env, and stdin text. Borrowed `process-borrowed-output`, `process-borrowed-run`, and `process-borrowed-start` validate borrowed storage and copy once to owned `ProcessCommand` before the runtime boundary. Borrowed argv and env lists are lifetime-homogeneous; use the owned conversion boundary to join independently scoped text. On Linux, owned and borrowed process-output/run/start paths execute through `process_runtime.tl`, preserving inherited environment entries, replacing entries named by env overrides, honoring cwd, and feeding string stdin. Unsupported targets return structured errors. |

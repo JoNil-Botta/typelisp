@@ -76,6 +76,45 @@
       (assert-owned-string-eq value expected message)]
     [(ErrJsonCodepointString _) (panic message)]))
 
+(define (assert-json-f64
+  [result : JsonNumberF64Result]
+  [expected : f64]
+  [message : String]) : unit
+  (match result
+    [(OkJsonNumberF64 value) (assert-f64-eq value expected message)]
+    [(ErrJsonNumberF64 _) (panic message)]))
+
+(define (assert-json-f32-as-f64
+  [result : JsonNumberF32Result]
+  [expected : f64]
+  [message : String]) : unit
+  (match result
+    [(OkJsonNumberF32 value)
+      (assert-f64-eq (cast value : f64) expected message)]
+    [(ErrJsonNumberF32 _) (panic message)]))
+
+(define (assert-json-f64-error
+  [result : JsonNumberF64Result]
+  [message : String]) : unit
+  (match result
+    [(ErrJsonNumberF64 _) unit]
+    [(OkJsonNumberF64 _) (panic message)]))
+
+(define (assert-json-f32-error
+  [result : JsonNumberF32Result]
+  [message : String]) : unit
+  (match result
+    [(ErrJsonNumberF32 _) unit]
+    [(OkJsonNumberF32 _) (panic message)]))
+
+(define (assert-json-number-text
+  [result : JsonNumberTextResult]
+  [expected : String]
+  [message : String]) : unit
+  (match result
+    [(OkJsonNumberText text) (assert-owned-string-eq text expected message)]
+    [(ErrJsonNumberText _) (panic message)]))
+
 (define (assert-parse-value-number
   [result : JsonParseValueResult]
   [expected : String]
@@ -180,6 +219,12 @@
 
 (define (json-test-parse-number [text : String] [pos : i64]) : JsonParseValueResult
   (json-parse-number (& text) pos))
+
+(define (json-test-number-f64 [text : String]) : JsonNumberF64Result
+  (json-number->f64 (& text)))
+
+(define (json-test-number-f32 [text : String]) : JsonNumberF32Result
+  (json-number->f32 (& text)))
 
 (define (json-test-parse-keyword
   [text : String]
@@ -353,6 +398,56 @@
     (match (json-test-parse-number "01" 0)
       [(ErrJsonParseValue _) unit]
       [(OkJsonParseValue _ _) (panic "json-parse-number rejects leading zero")])
+    (assert-json-f64 (json-test-number-f64 "42") 42.0 "json-number->f64 int")
+    (assert-json-f64
+      (json-test-number-f64 "-2.5e3")
+      -2500.0
+      "json-number->f64 exponent")
+    (assert-json-f64
+      (json-test-number-f64 "6.25E-1")
+      0.625
+      "json-number->f64 fraction exponent")
+    (match (json-test-number-f64 "-0")
+      [(OkJsonNumberF64 value)
+        (assert-json-number-text
+          (json-f64->number-text value)
+          "-0"
+          "json-number->f64 preserves negative zero")]
+      [(ErrJsonNumberF64 _) (panic "json-number->f64 negative zero")])
+    (match (json-test-number-f64 "1e+17")
+      [(OkJsonNumberF64 value)
+        (assert-json-number-text
+          (json-f64->number-text value)
+          "1e+17"
+          "json-number->f64 large magnitude")]
+      [(ErrJsonNumberF64 _) (panic "json-number->f64 large magnitude")])
+    (assert-json-f64-error
+      (json-test-number-f64 "1x")
+      "json-number->f64 trailing")
+    (assert-json-f64-error
+      (json-test-number-f64 "01")
+      "json-number->f64 leading")
+    (assert-json-f64-error
+      (json-test-number-f64 "1e309")
+      "json-number->f64 overflow")
+    (assert-json-f64-error
+      (json-test-number-f64 "1e-400")
+      "json-number->f64 underflow")
+    (assert-json-f32-as-f64 (json-test-number-f32 "1.5") 1.5 "json-number->f32")
+    (assert-json-f32-error
+      (json-test-number-f32 "1e39")
+      "json-number->f32 overflow")
+    (assert-json-f32-error
+      (json-test-number-f32 "1e-50")
+      "json-number->f32 underflow")
+    (assert-json-number-text
+      (json-f64->number-text 0.125)
+      "0.125"
+      "json-f64->number-text")
+    (assert-json-number-text
+      (json-f32->number-text (cast 1.25 : f32))
+      "1.25"
+      "json-f32->number-text")
     (assert-parse-value-bool
       (json-test-parse-keyword "true" 0 "true" (JsonBool true))
       true

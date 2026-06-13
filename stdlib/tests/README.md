@@ -29,7 +29,8 @@ Coverage notes:
   strings, empty needles, misses, prefix positions, legacy `string->int` edge
   cases, and replacement edge cases.
 - `json_helpers.tl` exercises the JSON data model, list/member helpers, escape
-  helpers, parser subroutines, and serializer helpers directly.
+  helpers, parser subroutines, deterministic finite f64/f32 number conversion,
+  and serializer helpers directly.
 - `json_parse_stringify.tl` covers end-to-end parsing and stringifying for
   invalid input, escapes, nesting, arrays, objects, lookup, and number forms.
 - `list_api.tl` covers the monomorphic `StringList` and `StringListBuilder`

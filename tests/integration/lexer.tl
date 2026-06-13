@@ -27,7 +27,7 @@
 ;;   - Digit char literals: `#\0` lexes as NUL (the `\0` escape), so digit and
 ;;     whitespace classification compares the char's `i64` code point against
 ;;     ASCII constants rather than against char literals.
-(import "stdlib/core_macros.tl" module stdlib.core-macros as core)
+(import "stdlib/core_macros.tl" module stdlib.core_macros as core)
 
 (import "stdlib/io.tl")
 

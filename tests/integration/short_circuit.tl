@@ -8,7 +8,7 @@
 ;; `(- (arg-count) 1)` is a runtime-opaque zero (arg-count is 1 with no extra
 ;; arguments), which keeps the optimizer from constant-folding the guarded
 ;; division at compile time.
-(import "stdlib/core_macros.tl" module stdlib.core-macros as core)
+(import "stdlib/core_macros.tl" module stdlib.core_macros as core)
 
 (import "stdlib/io.tl")
 

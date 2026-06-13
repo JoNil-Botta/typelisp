@@ -42,7 +42,7 @@
 ;; parallel pair of `(Array i64)` - a tag array (the Token kind, via `token-tag`)
 ;; and a value array (the integer payload of a `TInt`, else 0) - so the cursor is
 ;; a plain `i64` index the helpers advance.
-(import "stdlib/core_macros.tl" module stdlib.core-macros as core)
+(import "stdlib/core_macros.tl" module stdlib.core_macros as core)
 
 (import "stdlib/io.tl")
 

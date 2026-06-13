@@ -3,7 +3,7 @@
 ;; Removes deterministic TypeLisp build artifacts without walking arbitrary
 ;; directories. Source-file cleanup targets default source-adjacent outputs;
 ;; package cleanup targets the manifest's package output directory.
-(import "../stdlib/core_macros.tl" module stdlib.core-macros as core)
+(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
 
 (import "../stdlib/fs.tl")
 

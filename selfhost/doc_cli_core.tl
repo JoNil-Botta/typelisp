@@ -8,7 +8,7 @@
 ;;   typelisp run selfhost/cli.tl -- doc --test input.tl
 ;;   typelisp run selfhost/cli.tl -- doc --test --batch inputs.txt
 ;;   typelisp run selfhost/cli.tl -- doc --load input.tl output.md [--stdlib-root <dir>...]
-(import "../stdlib/core_macros.tl" module stdlib.core-macros as core)
+(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
 
 (import "../stdlib/io.tl")
 

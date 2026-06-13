@@ -10,7 +10,7 @@
 ;;
 ;; Reuses `doc-html-escape` (entity escaping for & < > ") from doc_html.tl and
 ;; `doc-render-anchor` from doc_render.tl via doc_html.tl.
-(import "../stdlib/core_macros.tl" module stdlib.core-macros as core)
+(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
 
 (import "doc_html.tl")
 

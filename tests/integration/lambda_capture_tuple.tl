@@ -1,4 +1,4 @@
-(import "stdlib/core_macros.tl" module stdlib.core-macros as core)
+(import "stdlib/core_macros.tl" module stdlib.core_macros as core)
 
 ; Capturing scalar tuple values in closure environments (#542).
 ; Each case reads scalars out of a captured tuple so the test exercises capture

@@ -1,5 +1,5 @@
 ;; build_run_core.tl - Shared selfhost source build/run execution helpers (#1018).
-(import "../stdlib/core_macros.tl" module stdlib.core-macros as core)
+(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
 
 (import "compiler_driver_core.tl")
 

@@ -2,7 +2,7 @@
 ;;
 ;; This module is deliberately dormant: it specifies and validates the tlci
 ;; container and metadata schema, but does not change package build behavior.
-(import "../stdlib/core_macros.tl" module stdlib.core-macros as core)
+(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
 
 (import "../stdlib/string.tl")
 

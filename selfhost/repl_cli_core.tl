@@ -20,7 +20,7 @@
 ;; Multiline input is accumulated until its delimiters are complete. Parse and
 ;; type errors report diagnostics, discard only the failing input, and return to
 ;; the prompt with previously accepted declarations intact.
-(import "../stdlib/core_macros.tl" module stdlib.core-macros as core)
+(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
 
 (import "stdlib/io.tl")
 
@@ -403,7 +403,7 @@
     [(OkReplString body)
       (OkReplString
         (string-append
-          "(import \"stdlib/io.tl\")\n(import \"stdlib/core_macros.tl\" module stdlib.core-macros as core)\n"
+          "(import \"stdlib/io.tl\")\n(import \"stdlib/core_macros.tl\" module stdlib.core_macros as core)\n"
           (string-append
             session-source
             (string-append

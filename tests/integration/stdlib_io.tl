@@ -4,7 +4,7 @@
 ;; every helper behaves as expected. Scratch files live under the gitignored
 ;; target/ directory (the program runs with the repo root as its working
 ;; directory).
-(import "stdlib/core_macros.tl" module stdlib.core-macros as core)
+(import "stdlib/core_macros.tl" module stdlib.core_macros as core)
 
 (import "stdlib/io.tl")
 

@@ -3,7 +3,7 @@
 ; known constants, across reduction kinds, result types, and range lengths
 ; (0, < a likely lane width, exactly one lane, and a non-divisible tail).
 ; `main` returns 42 only when every case agrees.
-(import "stdlib/core_macros.tl" module stdlib.core-macros as core)
+(import "stdlib/core_macros.tl" module stdlib.core_macros as core)
 
 (define (manual-sum [xs : (Array i64)] [n : i64]) : i64
   (let

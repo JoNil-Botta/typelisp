@@ -21,7 +21,7 @@
 ;# The buffer and rendered strings allocate in the active arena: the default
 ;# program-lifetime arena outside `(with-arena ...)`, or the scoped arena inside
 ;# one.
-(import "core_macros.tl" module stdlib.core-macros as core)
+(import "core_macros.tl" module stdlib.core_macros as core)
 
 (import "io.tl")
 

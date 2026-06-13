@@ -1,6 +1,6 @@
 (import "stdlib/io.tl")
 
-(import "stdlib/core_macros.tl" module stdlib.core-macros as core)
+(import "stdlib/core_macros.tl" module stdlib.core_macros as core)
 
 (define (sc-and [n : i64]) : bool
   (core/and (!= n 0) (= (/ 100 n) 100)))

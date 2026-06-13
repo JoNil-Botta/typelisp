@@ -1,5 +1,5 @@
 ;; ast.tl - Sexpr -> compiler AST parser for the M1 self-hosting slice (#154).
-(import "../stdlib/core_macros.tl" module stdlib.core-macros as core)
+(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
 
 (import "../stdlib/io.tl")
 

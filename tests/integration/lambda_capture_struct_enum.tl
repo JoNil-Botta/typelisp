@@ -1,4 +1,4 @@
-(import "stdlib/core_macros.tl" module stdlib.core-macros as core)
+(import "stdlib/core_macros.tl" module stdlib.core_macros as core)
 
 ; Capturing scalar-field struct and enum values in closure environments (#540).
 ; Each case reads scalars out of a captured aggregate; `main` yields 42 only if

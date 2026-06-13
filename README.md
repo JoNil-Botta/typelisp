@@ -316,7 +316,7 @@ The compile driver prepends the stdlib runtime and the core macro module as an
 implicit prelude. Bare `when`, `unless`, `and`, `or`, and flat call-shaped
 `cond` resolve to `stdlib/core_macros.tl` unless a local or imported macro
 shadows them. The same module can still be imported explicitly as
-`(import "stdlib/core_macros.tl" module stdlib.core-macros as core)` for
+`(import "stdlib/core_macros.tl" module stdlib.core_macros as core)` for
 qualified calls such as `core.when`, `core.unless`, `core.and`, `core.or`, and
 `core.cond`.
 

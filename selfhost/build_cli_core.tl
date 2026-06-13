@@ -4,7 +4,7 @@
 ;; helpers. Package builds are handled in-process by the selfhost compiler:
 ;; parse/discover `typelisp.pkg`, emit assembly for the manifest entry, and
 ;; produce the package artifact selected by manifest kind.
-(import "../stdlib/core_macros.tl" module stdlib.core-macros as core)
+(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
 
 (import "../stdlib/fs.tl")
 

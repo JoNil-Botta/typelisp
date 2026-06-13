@@ -1,5 +1,5 @@
 ; Locks down integer wrapping and cast bit semantics.
-(import "stdlib/core_macros.tl" module stdlib.core-macros as core)
+(import "stdlib/core_macros.tl" module stdlib.core_macros as core)
 
 (define (add8 [a : i8] [b : i8]) : i8
   (+ a b))

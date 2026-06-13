@@ -2191,10 +2191,10 @@ sections 4.4 and 4.4.1; there is no separate macro search path.
 
 The compile driver prepends `stdlib/core_macros.tl` as an implicit macro
 prelude. Bare `when`, `unless`, `and`, `or`, and flat call-shaped `cond` resolve
-to exported macros from `stdlib.core-macros` unless a local or imported macro
+to exported macros from `stdlib.core_macros` unless a local or imported macro
 with the same name takes precedence. The module can also be loaded with an
 ordinary explicit import, for example
-`(import "stdlib/core_macros.tl" module stdlib.core-macros as core)`, and its
+`(import "stdlib/core_macros.tl" module stdlib.core_macros as core)`, and its
 exports can be called through the import alias such as `core.when`,
 `core.unless`, `core.and`, `core.or`, and `core.cond`.
 

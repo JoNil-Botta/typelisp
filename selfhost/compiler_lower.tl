@@ -4,7 +4,7 @@
 ;; CompilerIrProgram. It also covers scalar match and heap-backed struct/enum
 ;; construction/projection; closure, array, and enum-match lowering remain
 ;; explicit future work.
-(import "../stdlib/core_macros.tl" module stdlib.core-macros as core)
+(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
 
 (import "../stdlib/io.tl")
 

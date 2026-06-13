@@ -3,7 +3,7 @@
 ;; This module models the lockfile data needed after remote package pins are
 ;; resolved. It parses and emits `typelisp.lock` S-expressions only; build-time
 ;; fetch/replay behavior remains owned by the package build pipeline.
-(import "../stdlib/core_macros.tl" module stdlib.core-macros as core)
+(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
 
 (import "../stdlib/string.tl")
 

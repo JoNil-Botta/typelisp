@@ -8,10 +8,10 @@
 ;# The qualified surface remains available for explicit callers; the import only
 ;# adds the `core/` alias since the macros are already in scope:
 ;#
-;# Usage: `(import "stdlib/core_macros.tl" module stdlib.core-macros as core)`
+;# Usage: `(import "stdlib/core_macros.tl" module stdlib.core_macros as core)`
 ;#
 ;# ```typelisp
-;# (import "stdlib/core_macros.tl" module stdlib.core-macros as core)
+;# (import "stdlib/core_macros.tl" module stdlib.core_macros as core)
 ;#
 ;# (define (main) : i64
 ;#   (let
@@ -24,7 +24,7 @@
 ;#       (set! value (core/cond false 0 true value value))
 ;#       value)))
 ;# ```
-(module stdlib.core-macros)
+(module stdlib.core_macros)
 
 ;: Short-circuiting boolean conjunction.
 ;:

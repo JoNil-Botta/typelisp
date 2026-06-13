@@ -5,7 +5,7 @@
 ;; import it. Warn-only by default; callers can pass `--check` after the input
 ;; path to exit non-zero when findings remain. The deprecated string-concat rule
 ;; is opt-in until the remaining in-tree str-cat migrations land.
-(import "../stdlib/core_macros.tl" module stdlib.core-macros as core)
+(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
 
 (import "../stdlib/io.tl")
 

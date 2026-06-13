@@ -1,4 +1,4 @@
-(import "stdlib/core_macros.tl" module stdlib.core-macros as core)
+(import "stdlib/core_macros.tl" module stdlib.core_macros as core)
 
 ; Capturing fixed arrays whose elements or fields contain aggregate storage
 ; (#631). Returned closures read after the creator frame has gone away, so each

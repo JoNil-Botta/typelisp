@@ -9,7 +9,7 @@
 ;# for suppression (`;; lint-allow: <rule-id>`). This module owns stable rule
 ;# metadata and the lint core verified by `compiler-lint-self-test` (driver:
 ;# `selfhost/lint_smoke.tl`).
-(import "../stdlib/core_macros.tl" module stdlib.core-macros as core)
+(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
 
 (import "../stdlib/io.tl")
 

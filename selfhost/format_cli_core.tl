@@ -3,7 +3,7 @@
 ;; The formatter CLI logic, factored out of `format.tl` so both the retained
 ;; formatter compatibility/coverage driver and the unified `cli.tl` dispatcher
 ;; can run the `fmt` command without duplicating a `main`.
-(import "../stdlib/core_macros.tl" module stdlib.core-macros as core)
+(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
 
 (import "../stdlib/io.tl")
 

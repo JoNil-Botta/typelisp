@@ -1,5 +1,5 @@
 ;; compiler_backend.tl - First selfhost CompilerIrProgram -> x86_64 .s emitter (#447).
-(import "../stdlib/core_macros.tl" module stdlib.core-macros as core)
+(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
 
 (import "../stdlib/io.tl")
 

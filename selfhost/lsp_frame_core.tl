@@ -3,7 +3,7 @@
 ;; This driver owns JSON-RPC/LSP Content-Length framing over stdin/stdout plus
 ;; the first selfhost protocol loop: initialize/shutdown, document tracking, and
 ;; diagnostics for full-document open/change notifications.
-(import "../stdlib/core_macros.tl" module stdlib.core-macros as core)
+(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
 
 (import "stdlib/io.tl")
 

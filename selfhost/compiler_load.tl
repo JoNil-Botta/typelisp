@@ -822,7 +822,7 @@
 (define compiler-load-core-macro-prelude-path : String
   "stdlib/core_macros.tl")
 
-;; `core_macros.tl` declares `(module stdlib.core-macros)`. Add a root module
+;; `core_macros.tl` declares `(module stdlib.core_macros)`. Add a root module
 ;; marker after loading it so the following entry resumes in the root module,
 ;; matching import restoration and keeping module-less `main` discoverable.
 (define (compiler-load-append-root-module-marker

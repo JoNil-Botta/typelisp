@@ -5,7 +5,7 @@
 ;; in `<name>/`;
 ;; `init [--lib] <name>` creates the skeleton in the current directory. Both
 ;; refuse to clobber an existing manifest or entry source.
-(import "../stdlib/core_macros.tl" module stdlib.core-macros as core)
+(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
 
 (import "../stdlib/io.tl")
 

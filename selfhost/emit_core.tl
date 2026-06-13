@@ -1,5 +1,5 @@
 ;; emit_core.tl - Main-less M1 assembly emitter shared by demos/tests (#163).
-(import "../stdlib/core_macros.tl" module stdlib.core-macros as core)
+(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
 
 (import "../stdlib/io.tl")
 

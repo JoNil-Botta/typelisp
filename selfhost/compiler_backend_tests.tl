@@ -2604,6 +2604,32 @@
           IrInstrNil)))
     IrBlockNil))
 
+(define (compiler-backend-phi-group-cycle-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment 0 (CompilerRegRegisterPair "%r12" "%r13"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment 1 (CompilerRegRegisterPair "%r14" "%r15"))
+      CompilerRegAssignmentNil)))
+
+(define (compiler-backend-phi-group-cycle-blocks) : CompilerIrBlockList
+  (let
+    [ty : AstType (compiler-backend-register-group-test-type)]
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "join"
+        (compiler-ir-instr-cons
+          (IrInstrPhi
+            0
+            (compiler-ir-phi-input-cons (IrValueVar 1) "back" IrPhiInputNil)
+            ty)
+          (compiler-ir-instr-cons
+            (IrInstrPhi
+              1
+              (compiler-ir-phi-input-cons (IrValueVar 0) "back" IrPhiInputNil)
+              ty)
+            IrInstrNil)))
+      IrBlockNil)))
+
 (define (compiler-backend-branch-phi-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
@@ -2693,6 +2719,26 @@
               cycle
               "    movq %r11, -16(%rbp)\n"))]
         [(ErrCompilerBackend _) false])]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-phi-group-cycle-copy-ok?) : bool
+  (match (compiler-backend-emit-phi-edge-copies
+    (compiler-backend-phi-group-cycle-assignments)
+    (compiler-backend-phi-group-cycle-blocks)
+    "join"
+    "back"
+    (compiler-backend-register-group-test-index)
+    4)
+    [(OkCompilerBackend cycle)
+      (and
+        (compiler-backend-string-contains? cycle "    movq %r12, %r10\n")
+        (compiler-backend-string-contains? cycle "    movq %r13, %r11\n")
+        (compiler-backend-string-contains? cycle "    movq %r14, %rax\n")
+        (compiler-backend-string-contains? cycle "    movq %r15, %rdx\n")
+        (compiler-backend-string-contains? cycle "    movq %rax, %r12\n")
+        (compiler-backend-string-contains? cycle "    movq %rdx, %r13\n")
+        (compiler-backend-string-contains? cycle "    movq %r10, %r14\n")
+        (compiler-backend-string-contains? cycle "    movq %r11, %r15\n"))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-reg-is? [r : ResultBackendReg] [name : String]) : bool
@@ -6516,6 +6562,7 @@
       (compiler-backend-peephole-ok?)
       (and
         (compiler-backend-phi-parallel-copy-ok?)
+        (compiler-backend-phi-group-cycle-copy-ok?)
         (compiler-backend-branch-phi-edge-copy-ok?))
       (and (compiler-backend-f64-ok?) (compiler-backend-f32-literal-binop-ok?))
       (compiler-backend-bool-control-flow-ok?)

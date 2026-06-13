@@ -160,6 +160,7 @@ lambda_capture_lifetime_aggregate|tests/integration/lambda_capture_lifetime_aggr
 register_resident_enum|tests/integration/register_resident_enum.tl|42|-|-|-
 register_pair_struct|tests/integration/register_pair_struct.tl|42|-|-|-
 register_group_phi_return|tests/integration/register_group_phi_return.tl|42|-|-|-
+register_group_phi_swap_cycle|tests/integration/register_group_phi_swap_cycle.tl|42|-|-|-
 register_group_borrowed_match|tests/integration/register_group_borrowed_match.tl|42|-|-|-
 register_group_try|tests/integration/register_group_try.tl|42|-|-|-
 register_resident_enum16|tests/integration/register_resident_enum16.tl|42|-|-|-

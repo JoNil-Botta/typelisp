@@ -263,7 +263,8 @@
 (define (process-linux-close-if [fd : i64]) : unit
   (if (>= fd 0)
     (begin
-      (syscall 3 fd)
+      (unsafe
+        (syscall 3 fd))
       unit)
     unit))
 
@@ -385,7 +386,9 @@
     (begin
       (while (and (not done) (< off len))
         (let
-          [written : i64 (syscall 1 fd (+ data-addr off) (- len off))]
+          [written : i64
+            (unsafe
+              (syscall 1 fd (+ data-addr off) (- len off)))]
           (core/cond
             (< written 0)
             (begin
@@ -416,17 +419,19 @@
         [old : (Array u64) (make-array u64 4)]
         (begin
           (array-set! act 0 (cast 1 : u64))
-          (syscall
-            13
-            13
-            (process-array-u64-addr act)
-            (process-array-u64-addr old)
-            8)
+          (unsafe
+            (syscall
+              13
+              13
+              (process-array-u64-addr act)
+              (process-array-u64-addr old)
+              8))
           (let
             [written : i64 (process-linux-write-all stdin-w data-addr len)]
             (begin
               (process-linux-close-if stdin-w)
-              (syscall 13 13 (process-array-u64-addr old) 0 8)
+              (unsafe
+                (syscall 13 13 (process-array-u64-addr old) 0 8))
               (if (>= written 0)
                 0
                 (if (= written -32)
@@ -459,7 +464,10 @@
     [ebuf : (Array i32) (make-array i32 2)]
     (begin
       (if has-stdin
-        (if (< (syscall 293 (process-array-i32-addr pbuf) 524288) 0)
+        (if (<
+          (unsafe
+            (syscall 293 (process-array-i32-addr pbuf) 524288))
+          0)
           (set! failed true)
           (begin
             (set! stdin-r (cast (array-ref pbuf 0) : i64))
@@ -468,10 +476,11 @@
       (if (not failed)
         (let
           [fd : i64
-            (syscall
-              319
-              (process-array-u8-addr (io-c-string "typelisp-process-stdout"))
-              0)]
+            (unsafe
+              (syscall
+                319
+                (process-array-u8-addr (io-c-string "typelisp-process-stdout"))
+                0))]
           (if (< fd 0)
             (set! failed true)
             (set! stdout-fd fd)))
@@ -479,16 +488,20 @@
       (if (not failed)
         (let
           [fd : i64
-            (syscall
-              319
-              (process-array-u8-addr (io-c-string "typelisp-process-stderr"))
-              0)]
+            (unsafe
+              (syscall
+                319
+                (process-array-u8-addr (io-c-string "typelisp-process-stderr"))
+                0))]
           (if (< fd 0)
             (set! failed true)
             (set! stderr-fd fd)))
         unit)
       (if (not failed)
-        (if (< (syscall 293 (process-array-i32-addr ebuf) 524288) 0)
+        (if (<
+          (unsafe
+            (syscall 293 (process-array-i32-addr ebuf) 524288))
+          0)
           (set! failed true)
           (begin
             (set! exec-r (cast (array-ref ebuf 0) : i64))
@@ -526,42 +539,58 @@
 ;: parent learns `execve` did not take over, then exit(127). Never returns.
 (define (process-linux-child-fail [exec-w : i64] [marker-addr : i64]) : never
   (begin
-    (syscall 1 exec-w marker-addr 4)
-    (syscall 60 127)
+    (unsafe
+      (syscall 1 exec-w marker-addr 4))
+    (unsafe
+      (syscall 60 127))
     (process-linux-child-fail exec-w marker-addr)))
 
 ;: Forked child path (syscalls only, no allocation): wire stdin/stdout/stderr,
 ;: chdir, then `execve`. Never returns (it execs or exits 127).
 (define (process-linux-exec-child [spawn : ProcessLinuxSpawn]) : never
   (begin
-    (syscall 3 (struct-get spawn exec-r))
+    (unsafe
+      (syscall 3 (struct-get spawn exec-r)))
     (if (>= (struct-get spawn stdin-w) 0)
       (begin
-        (syscall 3 (struct-get spawn stdin-w))
-        (if (< (syscall 33 (struct-get spawn stdin-r) 0) 0)
+        (unsafe
+          (syscall 3 (struct-get spawn stdin-w)))
+        (if (<
+          (unsafe
+            (syscall 33 (struct-get spawn stdin-r) 0))
+          0)
           (process-linux-child-fail
             (struct-get spawn exec-w)
             (struct-get spawn marker-addr))
           (begin
-            (syscall 3 (struct-get spawn stdin-r))
+            (unsafe
+              (syscall 3 (struct-get spawn stdin-r)))
             unit)))
       unit)
-    (syscall 33 (struct-get spawn stdout-fd) 1)
-    (syscall 33 (struct-get spawn stderr-fd) 2)
-    (syscall 3 (struct-get spawn stdout-fd))
-    (syscall 3 (struct-get spawn stderr-fd))
+    (unsafe
+      (syscall 33 (struct-get spawn stdout-fd) 1))
+    (unsafe
+      (syscall 33 (struct-get spawn stderr-fd) 2))
+    (unsafe
+      (syscall 3 (struct-get spawn stdout-fd)))
+    (unsafe
+      (syscall 3 (struct-get spawn stderr-fd)))
     (if (not (= (struct-get spawn cwd-addr) 0))
-      (if (< (syscall 80 (struct-get spawn cwd-addr)) 0)
+      (if (<
+        (unsafe
+          (syscall 80 (struct-get spawn cwd-addr)))
+        0)
         (process-linux-child-fail
           (struct-get spawn exec-w)
           (struct-get spawn marker-addr))
         unit)
       unit)
-    (syscall
-      59
-      (struct-get spawn exec-addr)
-      (struct-get spawn argv-addr)
-      (struct-get spawn envp-addr))
+    (unsafe
+      (syscall
+        59
+        (struct-get spawn exec-addr)
+        (struct-get spawn argv-addr)
+        (struct-get spawn envp-addr)))
     (process-linux-child-fail
       (struct-get spawn exec-w)
       (struct-get spawn marker-addr))))
@@ -570,7 +599,9 @@
 (define (process-linux-exec-failed? [exec-r : i64]) : bool
   (let
     [buf : (Array u8) (make-array u8 8)]
-    [count : i64 (syscall 0 exec-r (process-array-u8-addr buf) 8)]
+    [count : i64
+      (unsafe
+        (syscall 0 exec-r (process-array-u8-addr buf) 8))]
     (begin
       (process-linux-close-if exec-r)
       (> count 0))))
@@ -596,7 +627,9 @@
           (process-wait-error))
         (let
           [statusbuf : (Array i32) (make-array i32 1)]
-          [waited : i64 (syscall 61 pid (process-array-i32-addr statusbuf) 0 0)]
+          [waited : i64
+            (unsafe
+              (syscall 61 pid (process-array-i32-addr statusbuf) 0 0))]
           (if (< waited 0)
             (begin
               (process-linux-close-if (struct-get spawn stdout-fd))
@@ -635,14 +668,16 @@
           (struct-get spawn stdin-len))]
       (if (= stdin-status 1)
         (begin
-          (syscall 61 pid (process-array-i32-addr (make-array i32 1)) 0 0)
+          (unsafe
+            (syscall 61 pid (process-array-i32-addr (make-array i32 1)) 0 0))
           (process-linux-close-if (struct-get spawn stdout-fd))
           (process-linux-close-if (struct-get spawn stderr-fd))
           (process-linux-close-if (struct-get spawn exec-r))
           (process-wait-error-child))
         (if (process-linux-exec-failed? (struct-get spawn exec-r))
           (begin
-            (syscall 61 pid (process-array-i32-addr (make-array i32 1)) 0 0)
+            (unsafe
+              (syscall 61 pid (process-array-i32-addr (make-array i32 1)) 0 0))
             (process-linux-close-if (struct-get spawn stdout-fd))
             (process-linux-close-if (struct-get spawn stderr-fd))
             (process-spawn-error-child))
@@ -661,7 +696,9 @@
         (process-linux-cleanup-spawn spawn)
         (process-spawn-error))
       (let
-        [pid : i64 (syscall 57)]
+        [pid : i64
+          (unsafe
+            (syscall 57))]
         (core/cond
           (< pid 0)
           (begin
@@ -680,7 +717,9 @@
         (process-linux-cleanup-spawn spawn)
         (process-spawn-error-child))
       (let
-        [pid : i64 (syscall 57)]
+        [pid : i64
+          (unsafe
+            (syscall 57))]
         (core/cond
           (< pid 0)
           (begin
@@ -698,7 +737,9 @@
     [stdout-fd : i64 (struct-get child stdout-handle)]
     [stderr-fd : i64 (struct-get child stderr-handle)]
     [statusbuf : (Array i32) (make-array i32 1)]
-    [waited : i64 (syscall 61 pid (process-array-i32-addr statusbuf) 0 0)]
+    [waited : i64
+      (unsafe
+        (syscall 61 pid (process-array-i32-addr statusbuf) 0 0))]
     (if (< waited 0)
       (begin
         (process-linux-close-if stdout-fd)

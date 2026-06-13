@@ -612,16 +612,24 @@
         AstExprNil))))
 
 (define (tltest-linux-write-syscall) : i64
-  (ast-expr-syscall
-    (ast-expr-cons
-      (ast-node-push (AstExprLiteral (AstLitInt 1)))
+  (ast-node-push
+    (AstExprUnsafe
       (ast-expr-cons
-        (ast-expr-cast (ast-node-push (AstExprVar (intern "fd"))) (AstTyI64))
-        (ast-expr-cons
-          (tltest-linux-write-ptr-arg)
+        (ast-expr-syscall
           (ast-expr-cons
-            (ast-expr-cast (ast-node-push (AstExprVar (intern "n"))) (AstTyI64))
-            AstExprNil))))))
+            (ast-node-push (AstExprLiteral (AstLitInt 1)))
+            (ast-expr-cons
+              (ast-expr-cast
+                (ast-node-push (AstExprVar (intern "fd")))
+                (AstTyI64))
+              (ast-expr-cons
+                (tltest-linux-write-ptr-arg)
+                (ast-expr-cons
+                  (ast-expr-cast
+                    (ast-node-push (AstExprVar (intern "n")))
+                    (AstTyI64))
+                  AstExprNil)))))
+        AstExprNil))))
 
 (define (tltest-linux-print-runtime-write-decl) : AstDecl
   (ast-decl-def-fn

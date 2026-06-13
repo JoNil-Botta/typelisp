@@ -164,16 +164,19 @@
 
 ;: Linux futex wait operation.
 (define (thread-linux-futex-wait [addr : i64] [expected : i64]) : i64
-  (syscall 202 addr 0 expected 0 0 0))
+  (unsafe
+    (syscall 202 addr 0 expected 0 0 0)))
 
 ;: Linux futex wake operation.
 (define (thread-linux-futex-wake [addr : i64]) : i64
-  (syscall 202 addr 1 2147483647 0 0 0))
+  (unsafe
+    (syscall 202 addr 1 2147483647 0 0 0)))
 
 ;: Linux current-thread exit syscall wrapper.
 (define (thread-linux-exit-current [code : i64]) : never
   (begin
-    (syscall 60 code)
+    (unsafe
+      (syscall 60 code))
     (thread-linux-exit-current code)))
 
 ;: Linux child path entered immediately after raw `clone` returns zero.
@@ -215,7 +218,8 @@
       (array-set! clear-cell 0 (cast 1 : i32))
       (let
         [tid : i64
-          (syscall 56 (thread-linux-clone-flags) stack-top 0 clear-addr 0)]
+          (unsafe
+            (syscall 56 (thread-linux-clone-flags) stack-top 0 clear-addr 0))]
         (if (< tid 0)
           (ThreadSpawnErr "thread: spawn failed")
           (if (= tid 0)
@@ -332,7 +336,9 @@
 (define (thread-linux-default-worker-count) : i64
   (let
     [mask : (Array u8) (make-array u8 128)]
-    [rc : i64 (syscall 204 0 128 (thread-array-u8-addr mask))]
+    [rc : i64
+      (unsafe
+        (syscall 204 0 128 (thread-array-u8-addr mask)))]
     (if (< rc 0)
       1
       (let
@@ -378,7 +384,9 @@
             (ThreadSemaphoreErr "thread: semaphore create failed")
             (ThreadSemaphoreOk (ThreadSemaphore handle))))
         (let
-          [fd : i64 (syscall 290 initial 1)]
+          [fd : i64
+            (unsafe
+              (syscall 290 initial 1))]
           (if (< fd 0)
             (ThreadSemaphoreErr "thread: semaphore create failed")
             (ThreadSemaphoreOk (ThreadSemaphore fd))))))))
@@ -398,7 +406,12 @@
         (while (not done)
           (let
             [n : i64
-              (syscall 0 (struct-get sem handle) (thread-array-u64-addr buf) 8)]
+              (unsafe
+                (syscall
+                  0
+                  (struct-get sem handle)
+                  (thread-array-u64-addr buf)
+                  8))]
             (if (= n 8)
               (begin
                 (set! ok true)
@@ -423,7 +436,10 @@
       [buf : (Array u64) (make-array u64 1)]
       (begin
         (array-set! buf 0 (cast 1 : u64))
-        (= (syscall 1 (struct-get sem handle) (thread-array-u64-addr buf) 8) 8)))))
+        (=
+          (unsafe
+            (syscall 1 (struct-get sem handle) (thread-array-u64-addr buf) 8))
+          8)))))
 
 ;: Close a semaphore handle.
 (define (thread-semaphore-close [sem : ThreadSemaphore]) : bool
@@ -431,4 +447,7 @@
     windows
     (not
       (= (thread-windows-close-handle (struct-get sem handle)) (cast 0 : i32)))
-    (= (syscall 3 (struct-get sem handle)) 0)))
+    (=
+      (unsafe
+        (syscall 3 (struct-get sem handle)))
+      0)))

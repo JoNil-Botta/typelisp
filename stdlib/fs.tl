@@ -45,24 +45,32 @@
 
 ;: Linux `mkdir` via the `mkdir` syscall (number 83).
 (define (fs-linux-syscall-mkdir [path : (Ptr u8)] [mode : i64]) : i64
-  (io-linux-syscall-status (syscall 83 (io-linux-ptr-arg path) mode)))
+  (io-linux-syscall-status
+    (unsafe
+      (syscall 83 (io-linux-ptr-arg path) mode))))
 
 ;: Linux `unlink` via the `unlink` syscall (number 87).
 (define (fs-linux-syscall-unlink [path : (Ptr u8)]) : i64
-  (io-linux-syscall-status (syscall 87 (io-linux-ptr-arg path))))
+  (io-linux-syscall-status
+    (unsafe
+      (syscall 87 (io-linux-ptr-arg path)))))
 
 ;: Linux `rmdir` via the `rmdir` syscall (number 84).
 (define (fs-linux-syscall-rmdir [path : (Ptr u8)]) : i64
-  (io-linux-syscall-status (syscall 84 (io-linux-ptr-arg path))))
+  (io-linux-syscall-status
+    (unsafe
+      (syscall 84 (io-linux-ptr-arg path)))))
 
 ;: Linux `rename` via the `rename` syscall (number 82).
 (define (fs-linux-syscall-rename [source : (Ptr u8)] [destination : (Ptr u8)]) : i64
   (io-linux-syscall-status
-    (syscall 82 (io-linux-ptr-arg source) (io-linux-ptr-arg destination))))
+    (unsafe
+      (syscall 82 (io-linux-ptr-arg source) (io-linux-ptr-arg destination)))))
 
 ;: Linux `getpid` via the `getpid` syscall (number 39); never fails.
 (define (fs-linux-syscall-getpid) : i64
-  (syscall 39))
+  (unsafe
+    (syscall 39)))
 
 ;: Linux `getcwd` via the `getcwd` syscall (number 79).
 ;: Returns the buffer pointer on success or a null pointer on error, matching
@@ -73,7 +81,10 @@
       (io-linux-ptr-arg
         (unsafe
           (ptr-cast buf : (Ptr u8))))]
-    [result : i64 (io-linux-syscall-status (syscall 79 ptr size))]
+    [result : i64
+      (io-linux-syscall-status
+        (unsafe
+          (syscall 79 ptr size)))]
     (if (< result 0)
       (unsafe
         (int->ptr (cast 0 : u64) : (Ptr u8)))
@@ -87,7 +98,8 @@
   [flags : i64]
   [mode : i64]) : i64
   (io-linux-syscall-status
-    (syscall 257 dirfd (io-linux-ptr-arg path) flags mode)))
+    (unsafe
+      (syscall 257 dirfd (io-linux-ptr-arg path) flags mode))))
 
 ;: Linux `getdents64` syscall (number 217), returning bytes read or -1.
 (define (fs-linux-syscall-getdents64
@@ -95,13 +107,14 @@
   [buf : (MutPtr u8)]
   [count : i64]) : i64
   (io-linux-syscall-status
-    (syscall
-      217
-      fd
-      (io-linux-ptr-arg
-        (unsafe
-          (ptr-cast buf : (Ptr u8))))
-      count)))
+    (unsafe
+      (syscall
+        217
+        fd
+        (io-linux-ptr-arg
+          (unsafe
+            (ptr-cast buf : (Ptr u8))))
+        count))))
 
 ;: Windows kernel32 bindings backing the directory/file primitives (#2142
 ;: slice 1), replacing the former `_mkdir`/`_unlink`/`_rmdir` CRT-ABI shims.
@@ -606,14 +619,15 @@
     [path : (Ptr u8)]
     [statbuf : (MutPtr u8)]) : i64
     (io-linux-syscall-status
-      (syscall
-        262
-        fs-linux-at-fdcwd
-        (io-linux-ptr-arg path)
-        (io-linux-ptr-arg
-          (unsafe
-            (ptr-cast statbuf : (Ptr u8))))
-        0))))
+      (unsafe
+        (syscall
+          262
+          fs-linux-at-fdcwd
+          (io-linux-ptr-arg path)
+          (io-linux-ptr-arg
+            (unsafe
+              (ptr-cast statbuf : (Ptr u8))))
+          0)))))
 
 (cfg
   (not windows)

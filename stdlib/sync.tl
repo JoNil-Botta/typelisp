@@ -78,7 +78,9 @@
       windows
       (sync-windows-virtual-alloc 0 bytes (cast 12288 : i32) (cast 4 : i32))
       (let
-        [addr : i64 (syscall 9 0 bytes 3 34 -1 0)]
+        [addr : i64
+          (unsafe
+            (syscall 9 0 bytes 3 34 -1 0))]
         (if (< addr 0)
           0
           addr)))))
@@ -91,7 +93,10 @@
       windows
       (not
         (= (sync-windows-virtual-free addr 0 (cast 32768 : i32)) (cast 0 : i32)))
-      (= (syscall 11 addr bytes) 0))))
+      (=
+        (unsafe
+          (syscall 11 addr bytes))
+        0))))
 
 ;: Convert an integer address into a mutable `i64` pointer.
 (define (sync-addr->mut-i64 [addr : i64]) : (MutPtr i64)

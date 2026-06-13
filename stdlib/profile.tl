@@ -44,7 +44,9 @@
 ;: Linux `clock_gettime(CLOCK_MONOTONIC)` via raw syscall 228.
 (define (profile-linux-now-ms) : i64
   (let
-    [status : i64 (syscall 228 1 (profile-scratch-addr))]
+    [status : i64
+      (unsafe
+        (syscall 228 1 (profile-scratch-addr)))]
     (if (< status 0)
       0
       (+

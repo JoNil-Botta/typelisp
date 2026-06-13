@@ -124,7 +124,7 @@ table.
 | SPMD safe-code data-race freedom | Static reject | Safe `foreach`/SPMD code rejects varying calls, unsupported varying control flow, unsafe shared mutation, and reduction shapes that cannot be proven race-free by the SPMD rules. See section 5.15 and #937/#1012. |
 | Task-thread data-race freedom | Static reject | Safe task-threading APIs reject captured, sent, returned, or shared values whose arena owner does not prove storage lifetime across the participating threads, or whose structural transfer/share classification does not prove race-free access. See section 6.5 and #2590/#2592. |
 | Invalid enum/struct states | Static reject | Safe code constructs enums and structs only through their checked constructors and pattern forms. Arbitrary bit construction, invalid variants, invalid field layouts, packed-field access, and recursive-by-value aggregate states are rejected. See sections 3.5, 4.6, and 5.13. |
-| Raw pointer dereference/write/arithmetic/casts, foreign ABI assumptions, and manual arena reset | Static reject | Safe code may pass, return, compare, and null-test raw pointer values as specified, but dereference, write, offset, pointer/integer cast, foreign ABI invariants beyond the declared signature, and invalidating manual arena operations require `(unsafe ...)`. See sections 3.4, 5.19, 7.3, and 7.4; design/implementation owners are #954, #809, #812, #1052, #1054, and #1055. |
+| Raw pointer dereference/write/arithmetic/casts, direct syscalls, foreign ABI assumptions, and manual arena reset | Static reject | Safe code may pass, return, compare, and null-test raw pointer values as specified, but dereference, write, offset, pointer/integer cast, direct host syscall invocation, foreign ABI invariants beyond the declared signature, and invalidating manual arena operations require `(unsafe ...)`. See sections 3.4, 5.19, 7.3, 7.4, and 5.20; design/implementation owners are #954, #809, #812, #1052, #1054, #1055, and #2155. |
 | Invalid comptime-to-runtime values | Static reject | Comptime generation and reflection cannot smuggle invalid runtime values, invalid types, or unstable compiler-internal identities into safe runtime code. Runtime observation of comptime-only metadata is rejected. See sections 3.7 and 5.17; reflection surface owner is #970. |
 | Valid comptime-generated runtime values | Defined result | Accepted generated declarations and values have ordinary valid runtime representations and follow the same safe-code contract as hand-written declarations. See sections 3.7 and 5.17; reflection surface owner is #970. |
 
@@ -4224,7 +4224,7 @@ function and extern declarations are supported through the `(unsafe
 declaration)` wrapper described in section 4.3.1. "Unsafe by default" modules
 are deferred.
 
-Initial raw pointer operation set:
+Initial unsafe operation set:
 
 | Form | Safe? | Type rule | Notes |
 |------|-------|-----------|-------|
@@ -4237,6 +4237,7 @@ Initial raw pointer operation set:
 | `(ptr-addr-of name)` | Unsafe | local/parameter `name : T` -> `(MutPtr T)` | V1 supports local or parameter scalar cells only. The pointer is valid only while that stack slot is live; escaping or storing it is the caller's responsibility. |
 | `(ptr->int p)` | Unsafe | raw pointer -> `u64` | Exposes the target address representation. |
 | `(int->ptr n : (Ptr T))` / `(int->ptr n : (MutPtr T))` | Unsafe | integer -> requested raw pointer type | Address validity is entirely outside the typechecker. |
+| `(syscall number arg0 ... arg5)` | Unsafe | integer operands -> `i64` | Issues a raw Linux x86_64 host syscall. The number plus up to six arguments are passed directly to the kernel ABI; argument validity, pointer lifetimes, platform availability, and side effects are caller obligations. |
 
 `stdlib/ffi.tl` provides caller-owned C string marshalling helpers on top of
 this raw-pointer surface. `ffi-c-string-required-bytes` computes

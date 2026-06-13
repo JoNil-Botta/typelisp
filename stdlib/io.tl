@@ -567,7 +567,9 @@
   (cfg
     windows
     -1
-    (io-linux-syscall-status (syscall 2 (io-linux-ptr-arg path) flags mode))))
+    (io-linux-syscall-status
+      (unsafe
+        (syscall 2 (io-linux-ptr-arg path) flags mode)))))
 
 ;: Linux `read` via the `read` syscall (number 0).
 (define (io-linux-syscall-read [fd : i64] [buf : (MutPtr u8)] [count : i64]) : i64
@@ -575,35 +577,50 @@
     windows
     -1
     (io-linux-syscall-status
-      (syscall
-        0
-        fd
-        (io-linux-ptr-arg
-          (unsafe
-            (ptr-cast buf : (Ptr u8))))
-        count))))
+      (unsafe
+        (syscall
+          0
+          fd
+          (io-linux-ptr-arg
+            (unsafe
+              (ptr-cast buf : (Ptr u8))))
+          count)))))
 
 ;: Linux `write` via the `write` syscall (number 1).
 (define (io-linux-syscall-write [fd : i64] [buf : (Ptr u8)] [count : i64]) : i64
   (cfg
     windows
     -1
-    (io-linux-syscall-status (syscall 1 fd (io-linux-ptr-arg buf) count))))
+    (io-linux-syscall-status
+      (unsafe
+        (syscall 1 fd (io-linux-ptr-arg buf) count)))))
 
 ;: Linux `close` via the `close` syscall (number 3).
 (define (io-linux-syscall-close [fd : i64]) : i64
-  (cfg windows -1 (io-linux-syscall-status (syscall 3 fd))))
+  (cfg
+    windows
+    -1
+    (io-linux-syscall-status
+      (unsafe
+        (syscall 3 fd)))))
 
 ;: Linux `lseek` via the `lseek` syscall (number 8).
 (define (io-linux-syscall-lseek [fd : i64] [offset : i64] [whence : i64]) : i64
-  (cfg windows -1 (io-linux-syscall-status (syscall 8 fd offset whence))))
+  (cfg
+    windows
+    -1
+    (io-linux-syscall-status
+      (unsafe
+        (syscall 8 fd offset whence)))))
 
 ;: Linux `access` via the `access` syscall (number 21).
 (define (io-linux-syscall-access [path : (Ptr u8)] [mode : i64]) : i64
   (cfg
     windows
     -1
-    (io-linux-syscall-status (syscall 21 (io-linux-ptr-arg path) mode))))
+    (io-linux-syscall-status
+      (unsafe
+        (syscall 21 (io-linux-ptr-arg path) mode)))))
 
 ;: Linux process exit via the `exit_group` syscall (number 231); never returns.
 ;: The tail call is unreachable at runtime (the syscall terminates the process)
@@ -613,7 +630,8 @@
     windows
     (io-windows-exit (cast code : i32))
     (begin
-      (syscall 231 code)
+      (unsafe
+        (syscall 231 code))
       (io-linux-exit code))))
 
 ;: Dispatch a platform process exit; never returns.

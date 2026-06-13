@@ -101,7 +101,8 @@
             (unsafe
               (ptr-read (ptr-cast written : (Ptr i32))))
             : i64))))
-    (syscall 1 fd (runtime-ptr-arg buf) count)))
+    (unsafe
+      (syscall 1 fd (runtime-ptr-arg buf) count))))
 
 ;: Terminate the process with `code`; never returns. Linux uses the
 ;: `exit_group` syscall (231); Windows uses ExitProcess.
@@ -110,7 +111,8 @@
     windows
     (runtime-windows-exit-process (cast code : i32))
     (begin
-      (syscall 231 code)
+      (unsafe
+        (syscall 231 code))
       (runtime-os-exit code))))
 
 ;: Write a fixed diagnostic message to stderr (fd 2), ignoring partial writes.

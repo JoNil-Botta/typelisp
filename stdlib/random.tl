@@ -66,13 +66,14 @@
     [len : i64]
     [flags : i64]) : i64
     (io-linux-syscall-status
-      (syscall
-        318
-        (io-linux-ptr-arg
-          (unsafe
-            (ptr-cast buf : (Ptr u8))))
-        len
-        flags))))
+      (unsafe
+        (syscall
+          318
+          (io-linux-ptr-arg
+            (unsafe
+              (ptr-cast buf : (Ptr u8))))
+          len
+          flags)))))
 
 ;: Windows kernel32 `QueryPerformanceCounter` binding used for seed variation.
 (cfg

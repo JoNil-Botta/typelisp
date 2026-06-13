@@ -333,9 +333,10 @@
   (AstExprCpuIdEcx i64 i64)
   (AstExprCpuIdEdx i64 i64)
   (AstExprXgetbv i64)
-  ;; Raw Linux x86_64 syscall. `(syscall number a0 .. a5)` lowers directly to a
-  ;; `syscall` instruction: the number plus up to six arguments. Returns the raw
-  ;; kernel result in an i64 (negative is `-errno`); callers translate errno.
+  ;; Raw Linux x86_64 syscall. `(unsafe (syscall number a0 .. a5))` lowers
+  ;; directly to a `syscall` instruction: the number plus up to six arguments.
+  ;; Returns the raw kernel result in an i64 (negative is `-errno`); callers
+  ;; translate errno.
   (AstExprSyscall AstExprList))
 
 ;; --- flat AST node pool (flat-node rewrite; owner directive "do the hard thing")

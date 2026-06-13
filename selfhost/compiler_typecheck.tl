@@ -2991,6 +2991,15 @@
   "(define (main [p : (Ptr i64)]) : i64
   (let [__tl_unsafe_context : unit unit] (ptr-read p)))")
 
+(define (compiler-typecheck-safe-syscall-source) : String
+  "(define (main) : i64 (syscall 39))")
+
+(define (compiler-typecheck-unsafe-syscall-source) : String
+  "(define (main) : i64 (unsafe (syscall 39)))")
+
+(define (compiler-typecheck-unsafe-syscall-operand-source) : String
+  "(define (main) : i64 (unsafe (syscall true)))")
+
 (define (compiler-typecheck-raw-pointer-write-const-source) : String
   "(define (main [p : (Ptr i64)]) : unit (unsafe (ptr-write! p 1)))")
 
@@ -3027,6 +3036,13 @@
     (compiler-typecheck-error-ok?
       (compiler-typecheck-raw-pointer-safe-marker-shadow-source)
       "typecheck: ptr-read requires unsafe context")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-safe-syscall-source)
+      "typecheck: syscall requires unsafe context")
+    (compiler-typecheck-ok? (compiler-typecheck-unsafe-syscall-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-unsafe-syscall-operand-source)
+      "typecheck: syscall operands must be integer")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-raw-pointer-write-const-source)
       "typecheck: ptr-write! requires a MutPtr pointer operand")

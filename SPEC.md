@@ -1871,10 +1871,17 @@ source checker; the runtime representation does not retain aliasing state.
 
 ### 4.1 `(define name [: type] init)` — global variable
 
-Declares a global variable with a constant literal initializer.
+Declares a global variable with a typed or inferred initializer. Scalar constant
+initializers can be emitted directly as static data. `String` and aggregate
+initializers, including struct, enum, tuple, fixed-array, and dynamic-array
+values, are lowered through generated runtime initializer functions when static
+data emission is not sufficient. Those initializer functions run before the
+selected `main`.
 
-**Supported global types:** scalar integers, `bool`, `char`, `f64`, `unit`.
-**Not supported:** `String`, structs, enums, arrays, dynamic arrays, function pointers.
+Global initializers are typechecked like ordinary expressions but must be
+closed over top-level declarations that are safe to evaluate during global
+initialization. Unsupported initializer forms are diagnosed rather than treated
+as implicit runtime work.
 
 Example:
 ```lisp test=check name=scalar-globals
@@ -2502,7 +2509,7 @@ Example:
 
 See §3.5.
 
-#### 4.6.1 Cleanup-owning aggregate declarations (specified, pending implementation)
+#### 4.6.1 Cleanup-owning aggregate declarations (implemented for structs; enum lowering pending)
 
 Cleanup-required values are values that must be passed to a cleanup function
 exactly once before their owner scope exits. Ordinary aggregates do not own
@@ -2516,7 +2523,7 @@ metadata immediately after the struct name and before all fields. The metadata
 declares the cleanup function for the struct type and makes values of that type
 move-only:
 
-```lisp test=ignore name=cleanup-owning-buffered-file-struct reason="cleanup-owning aggregate declarations are specified before compiler support"
+```lisp test=ignore name=cleanup-owning-buffered-file-struct reason="sketch omits concrete external cleanup hooks"
 (defstruct FileHandle
   (:cleanup close-file-handle)
   (fd i64 (:cleanup close-fd)))
@@ -2589,7 +2596,7 @@ Copying a cleanup-owning value is never allowed. A cleanup-owning value cannot
 be stored in a global, captured by an escaping closure, or returned from a
 `with` scope that owns it.
 
-```lisp test=ignore name=cleanup-owning-nested-struct reason="cleanup-owning aggregate declarations are specified before compiler support"
+```lisp test=ignore name=cleanup-owning-nested-struct reason="sketch omits concrete external cleanup hooks"
 (defstruct FileHandle
   (:cleanup close-file-handle)
   (fd i64 (:cleanup close-fd)))
@@ -2607,7 +2614,7 @@ be stored in a global, captured by an escaping closure, or returned from a
 The example above ignores `bytes-written` and cleans `file`; cleaning `file`
 recursively cleans `handle`.
 
-```lisp test=ignore name=cleanup-owning-reject-ordinary-storage reason="negative example for future cleanup-required aggregate checks"
+```lisp test=ignore name=cleanup-owning-reject-ordinary-storage reason="negative cleanup-required aggregate check"
 (defstruct FileHandle
   (:cleanup close-file-handle)
   (fd i64 (:cleanup close-fd)))
@@ -2619,7 +2626,7 @@ recursively cleans `handle`.
 `BadWrapper` is rejected because it stores a cleanup-owning value without
 declaring its own cleanup ownership and without marking the field `(:owned)`.
 
-```lisp test=ignore name=cleanup-owning-reject-copy reason="negative example for future move-only cleanup-owning aggregate checks"
+```lisp test=ignore name=cleanup-owning-reject-copy reason="negative move-only cleanup-owning aggregate check"
 (defstruct FileHandle
   (:cleanup close-file-handle)
   (fd i64 (:cleanup close-fd)))
@@ -2637,7 +2644,7 @@ The `let` binding moves `h` into `copy`; the later read from `h` is rejected as
 use-after-move. The compiler must also ensure the moved value still has exactly
 one owner that will clean it.
 
-```lisp test=ignore name=cleanup-owning-reject-escape reason="negative example for future cleanup-owning aggregate escape checks"
+```lisp test=ignore name=cleanup-owning-reject-escape reason="negative cleanup-owning aggregate escape check"
 (defstruct FileHandle
   (:cleanup close-file-handle)
   (fd i64 (:cleanup close-fd)))
@@ -2669,12 +2676,15 @@ return `unit`; if a cleanup function panics, the program aborts and the
 language does not guarantee that remaining field, nested, or outer cleanups
 run. A direct `panic`/abort has no unwinding cleanup guarantee.
 
-Cleanup-owning `defenum` declarations are deferred in v1. The reserved shape is
-`(defenum Name (:cleanup cleanup-fn) variant+)`, but the parser/typechecker must
-reject it until enum payload ownership is implemented. Ordinary enum payloads
-must reject cleanup-required and cleanup-owning types. A future cleanup-owning
-enum must clean only the active variant payload, in reverse payload declaration
-order, using field-style `(:cleanup ...)` and `(:owned)` payload metadata.
+Cleanup-owning `defenum` declarations reserve the shape
+`(defenum Name (:cleanup cleanup-fn) variant+)`. The parser and typechecker
+accept the metadata, validate payload cleanup functions, and reject ordinary
+enum payloads that store cleanup-required or cleanup-owning values without an
+owning cleanup contract. Lowering of generated enum cleanup functions remains
+pending: until it lands, cleanup-owning enums are a checked metadata surface,
+not a runtime cleanup surface. A cleanup-owning enum must eventually clean only
+the active variant payload, in reverse payload declaration order, using
+field-style `(:cleanup ...)` and `(:owned)` payload metadata.
 
 #### 4.6.2 Move-only aggregate handle semantics (specified, pending implementation)
 

@@ -5,6 +5,7 @@
 # primitives or expected-stderr:<printf escapes> for native trap diagnostics.
 aggregate_globals|tests/integration/aggregate_globals.tl|42|-|-|-
 array_stride_24byte|tests/integration/array_stride_24byte.tl|42|-|-|-
+ptr_offset_inline_aggregate_stride|tests/integration/ptr_offset_inline_aggregate_stride.tl|42|-|-|-
 auto_borrow_call|tests/integration/auto_borrow_call.tl|42|-|-|-
 implicit_core_prelude|tests/integration/implicit_core_prelude.tl|42|-|-|-
 c_abi_aggregate_color|tests/integration/c_abi_aggregate_color.tl|42|-|-|benchmarks/c_abi_aggregate_color/baseline.c

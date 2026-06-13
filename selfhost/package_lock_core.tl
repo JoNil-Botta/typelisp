@@ -3,8 +3,6 @@
 ;; This module models the lockfile data needed after remote package pins are
 ;; resolved. It parses and emits `typelisp.lock` S-expressions only; build-time
 ;; fetch/replay behavior remains owned by the package build pipeline.
-(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (import "../stdlib/string.tl")
 
 (import "../stdlib/str_cat.tl")
@@ -139,7 +137,7 @@
       (OkPackageLockEntryList
         (PackageLockEntryCons entry (box PackageLockEntryNil)))]
     [(PackageLockEntryCons head rest)
-      (core/cond
+      (cond
         (string-eq (struct-get head alias) (struct-get entry alias))
         (ErrPackageLockEntryList
           (str-cat
@@ -176,7 +174,7 @@
         (str-cat "package-lock: field `" fname "` must have a string value"))]))
 
 (define (package-lock-parse-pin-kind [value : String]) : ResultPackageLockPinKind
-  (core/cond
+  (cond
     (string-eq value "rev")
     (OkPackageLockPinKind (PackageCachePinRev))
     (string-eq value "tag")
@@ -236,7 +234,7 @@
   [has-commit : bool]) : ResultPackageLockEntry
   (match fields
     [(SNil)
-      (core/cond
+      (cond
         (not has-alias)
         (ErrPackageLockEntry
           "package-lock: dependency missing required field `alias`")
@@ -266,7 +264,7 @@
         [(SCons fhead ftail)
           (match (box-get fhead)
             [(SSym fname)
-              (core/cond
+              (cond
                 (string-eq fname "alias")
                 (if has-alias
                   (ErrPackageLockEntry
@@ -401,7 +399,7 @@
   [has-deps : bool]) : ResultPackageLockFile
   (match fields
     [(SNil)
-      (core/cond
+      (cond
         (not has-version)
         (ErrPackageLockFile "package-lock: missing required field `version`")
         (not (string-eq version package-lock-version))
@@ -416,7 +414,7 @@
         [(SCons fhead ftail)
           (match (box-get fhead)
             [(SSym fname)
-              (core/cond
+              (cond
                 (string-eq fname "version")
                 (if has-version
                   (ErrPackageLockFile "package-lock: duplicate field `version`")
@@ -499,7 +497,7 @@
         (begin
           (let
             [code : i64 (package-lock-char-code-at text i)]
-            (core/cond
+            (cond
               (= code 34)
               (set! out (string-append out (string-append slash quote)))
               (= code 92)

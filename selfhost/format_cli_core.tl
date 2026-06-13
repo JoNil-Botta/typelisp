@@ -3,8 +3,6 @@
 ;; The formatter CLI logic, factored out of `format.tl` so both the retained
 ;; formatter compatibility/coverage driver and the unified `cli.tl` dispatcher
 ;; can run the `fmt` command without duplicating a `main`.
-(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (import "../stdlib/io.tl")
 
 (import "../stdlib/list.tl")
@@ -83,7 +81,7 @@
           (panic message)))]))
 
 (define (fmt-flag? [value : String]) : bool
-  (core/and (> (string-length value) 0) (= (string-ref value 0) #-')))
+  (and (> (string-length value) 0) (= (string-ref value 0) #-')))
 
 (define (fmt-path-list-empty? [paths : StringList]) : bool
   (match paths
@@ -118,7 +116,7 @@
     (fmt-config-finish check paths manifest-path has-manifest)
     (let
       [current : String (arg idx)]
-      (core/cond
+      (cond
         (string-eq current "--check")
         (fmt-parse-args (+ idx 1) count true paths manifest-path has-manifest)
         (string-eq current "--manifest-path")

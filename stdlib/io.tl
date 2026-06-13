@@ -33,8 +33,6 @@
 ;#     (let [text : String "hello from io\n"] (stdout-write (& text)))
 ;#     0))
 ;# ```
-(import "core_macros.tl" module stdlib.core_macros as core)
-
 (import "string.tl")
 
 ;: Private errno-style status slot used by stdlib IO/FS helpers. This is not
@@ -108,7 +106,7 @@
 (cfg
   windows
   (define (io-windows-fd-handle [fd : i32]) : i64
-    (core/cond
+    (cond
       (= fd (cast 0 : i32))
       (io-win-get-std-handle (cast -10 : i32))
       (= fd (cast 1 : i32))
@@ -698,7 +696,7 @@
 
 ;: Return platform open flags for stdlib file mode `mode`.
 (define (io-open-flags-for-mode [mode : i64]) : i64
-  (core/cond
+  (cond
     (= mode 0)
     (io-open-read-flags)
     (= mode 1)
@@ -798,7 +796,7 @@
     (begin
       (array-set! (struct-get r limbs) 0 lo)
       (array-set! (struct-get r limbs) 1 hi)
-      (core/cond
+      (cond
         (> hi (cast 0 : u64))
         (BigNum (struct-get r limbs) 2)
         (> lo (cast 0 : u64))
@@ -824,7 +822,7 @@
                 [av : u64 (array-ref (struct-get a limbs) i)]
                 [bv : u64 (array-ref (struct-get b limbs) i)]
                 (begin
-                  (core/cond
+                  (cond
                     (> av bv)
                     (begin
                       (set! res 1)
@@ -1035,7 +1033,7 @@
     [body : String ""]
     [ndig : i64 (string-length s)]
     (begin
-      (core/cond
+      (cond
         (or (< k -4) (>= k 17))
         (set!
           body
@@ -1076,7 +1074,7 @@
         [neg : bool (= (bit-and (shr bits 63) (cast 1 : u64)) (cast 1 : u64))]
         [expf : u64 (bit-and (shr bits 52) (cast 0x7ff : u64))]
         [frac : u64 (bit-and bits (cast 0xfffffffffffff : u64))]
-        (core/cond
+        (cond
           (= expf (cast 0x7ff : u64))
           (if (= frac (cast 0 : u64))
             (if neg
@@ -1124,7 +1122,7 @@
                       [c : i64 (bn-cmp two-num t)]
                       (begin
                         (set! d q)
-                        (core/cond
+                        (cond
                           (> c 0)
                           (set! d (+ q (cast 1 : u64)))
                           (= c 0)
@@ -1132,7 +1130,7 @@
                             (= (bit-and q (cast 1 : u64)) (cast 1 : u64))
                             (set! d (+ q (cast 1 : u64))))
                           unit)
-                        (core/cond
+                        (cond
                           (>= d (cast 100000000000000000 : u64))
                           (set! kest (+ kest 1))
                           (< d (cast 10000000000000000 : u64))
@@ -1370,7 +1368,7 @@
 
 ;: Return the host status code for reading a chunk into the stdlib handle cache.
 (define (file-read-chunk-status [raw : i64] [count : i64]) : i64
-  (core/cond
+  (cond
     (not (io-valid-handle? raw))
     38
     (not (= (io-file-i64-ref (io-file-modes-ptr) raw) 0))
@@ -1663,7 +1661,7 @@
 (define (io-error-from-status [path : (& path str)] [code : i64]) : IoError
   (let
     [owned-path : String (io-copy-path path)]
-    (core/cond
+    (cond
       (io-status-expected-absence? code)
       (IoNotFound owned-path)
       (= code io-status-permission-denied)
@@ -1684,7 +1682,7 @@
 
 ;: Convert a runtime status code for an already-owned path.
 (define (io-error-from-owned-status [path : String] [code : i64]) : IoError
-  (core/cond
+  (cond
     (io-status-expected-absence? code)
     (IoNotFound path)
     (= code io-status-permission-denied)

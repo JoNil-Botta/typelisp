@@ -28,8 +28,6 @@
 ;#       (if (args-option-present? parsed "verbose") 1 0)]
 ;#     [(ErrArgsParsed _) 2]))
 ;# ```
-(import "core_macros.tl" module stdlib.core_macros as core)
-
 (import "io.tl")
 
 (import "list.tl")
@@ -419,7 +417,7 @@
   [next-value : String]
   [has-next : bool]
   [index : i64]) : ResultArgsParseAdvance
-  (core/cond
+  (cond
     (struct-get state stop-options)
     (args-advance-positional state current index)
     (args-end-of-options-token? current)

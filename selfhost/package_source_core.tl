@@ -6,8 +6,6 @@
 ;; `tests` directories are reserved for `typelisp test` and fixture corpora, so
 ;; ordinary package source discovery skips them. Hosts without directory
 ;; enumeration fall back to the manifest entry source.
-(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (import "../stdlib/fs.tl")
 
 (import "../stdlib/io.tl")
@@ -268,7 +266,7 @@
         [(OkFsMetadata metadata)
           (let
             [kind : FsFileKind (fs-metadata-kind metadata)]
-            (core/cond
+            (cond
               (fs-file-kind-directory? kind)
               (if (package-source-dir-has-manifest? child-path)
                 (OkPackageSourceList acc)

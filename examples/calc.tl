@@ -40,8 +40,6 @@
 ;; The shared token model: the `Token` enum, the `token-tag` / `token-int`
 ;; accessors, and the tag constants. Resolved relative to this file, so it finds
 ;; the co-located `token.tl`.
-(import "stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (import "stdlib/io.tl")
 
 (import "token.tl")
@@ -100,7 +98,7 @@
 ;; `TEnd` is dead code that only satisfies the `Token` result type, since `panic`
 ;; yields unit and never returns.
 (define (single-token [c : char]) : Token
-  (core/cond
+  (cond
     (= c #+')
     TPlus
     (= c #-')

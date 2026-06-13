@@ -3,8 +3,6 @@
 ;; Removes deterministic TypeLisp build artifacts without walking arbitrary
 ;; directories. Source-file cleanup targets default source-adjacent outputs;
 ;; package cleanup targets the manifest's package output directory.
-(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (import "../stdlib/fs.tl")
 
 (import "../stdlib/io.tl")
@@ -408,7 +406,7 @@
         (OkCleanConfig (CleanPackageConfig manifest has-manifest dry-run))))
     (let
       [current : String (arg idx)]
-      (core/cond
+      (cond
         (string-eq current "--dry-run")
         (clean-parse-options
           (+ idx 1)

@@ -33,8 +33,6 @@
 ;; `token.tl` token model, so this single import transitively pulls in BOTH
 ;; the `lex` entry and the `Token` enum + token accessors/tag constants.
 ;; Resolved relative to this file, so it finds the co-located `lex.tl`.
-(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (import "../stdlib/io.tl")
 
 (import "lex.tl")
@@ -220,7 +218,7 @@
     (= t (tag-comma-at))))
 
 (define (read-prefix-symbol [t : i64]) : String
-  (core/cond
+  (cond
     (= t (tag-quote))
     "quote"
     (= t (tag-backtick))
@@ -268,7 +266,7 @@
     [tok : Token (spanned-token-token st)]
     [span : SourceSpan (spanned-token-span st)]
     [t : i64 (token-tag tok)]
-    (core/cond
+    (cond
       (= t (tag-int))
       (let
         [v : i64 (token-int tok)]
@@ -384,7 +382,7 @@
 (define (read-form-result [toks : (Array Token)] [cur : (Array i64)]) : ResultSexpr
   (let
     [t : i64 (peek-tag toks cur)]
-    (core/cond
+    (cond
       (= t (tag-int))
       (let
         [v : i64 (token-int (peek-tok toks cur))]

@@ -9,8 +9,6 @@
 ;# for suppression (`;; lint-allow: <rule-id>`). This module owns stable rule
 ;# metadata and the lint core verified by `compiler-lint-self-test` (driver:
 ;# `selfhost/lint_smoke.tl`).
-(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (import "../stdlib/io.tl")
 
 (import "compiler_ast_types.tl")
@@ -443,7 +441,7 @@
   [in-chain : bool]
   [span : AstSourceSpan]) : LintFinding
   (LintFinding
-    (core/cond
+    (cond
       in-loop
       "deprecated string concatenation in loop: use text_buf for incremental building"
       in-chain
@@ -454,7 +452,7 @@
     span))
 
 (define (lint-and-or-op-name [name : String]) : String
-  (core/cond
+  (cond
     (or (string-eq name "and") (string-eq name "core/and"))
     "and"
     (or (string-eq name "or") (string-eq name "core/or"))
@@ -697,7 +695,7 @@
                 [spanned : SpannedToken (array-ref toks i)]
                 [tok : Token (spanned-token-tok spanned)]
                 [tag : i64 (token-tag tok)]
-                (core/cond
+                (cond
                   (= tag (tag-end))
                   (set! done true)
                   (= tag (tag-lparen))
@@ -993,7 +991,7 @@
     [else-return : bool (lint-return-branch? else-branch)]
     [cond-not : bool (lint-not-call? cond)]
     [else-side-effect : bool (lint-side-effect-branch? else-branch)]
-    (core/cond
+    (cond
       (and
         then-unit
         (not else-unit)
@@ -1957,7 +1955,9 @@
         [(LintSomeFinding finding)
           (if (string-eq
             (struct-get finding message)
-            "cascading and: prefer flat n-ary form (core/and x y z)")
+            (string-append
+              "cascading and: prefer flat n-ary form ("
+              (string-append "core/and" " x y z)")))
             unit
             (panic "lint: core/and cascade should preserve callee spelling"))]
         [(LintNoFinding)

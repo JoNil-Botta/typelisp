@@ -4,8 +4,6 @@
 ;; compile_smoke AST. It stays parser-only: later #27 work can reuse the
 ;; parsed `AstProgram` for typechecking/lowering once those selfhost passes
 ;; exist.
-(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (import "../stdlib/io.tl")
 
 (import "compiler_ast_types.tl")
@@ -331,7 +329,7 @@
     [(SpSCons head predicates _)
       (match (sp-node-get head)
         [(SpSSym op _)
-          (core/cond
+          (cond
             (string-eq op "all")
             (compiler-cfg-eval-list-all dispatch (sp-node-get predicates))
             (string-eq op "any")
@@ -354,7 +352,7 @@
       "; TypeLisp has no source-level generic type constructors; use comptime-decl and comptime-generated concrete declarations instead (#893/#913/#970/#902)")))
 
 (define (compiler-parse-policy-form? [name : String]) : bool
-  (core/cond
+  (cond
     (string-eq name "defgeneric")
     true
     (string-eq name "generic")
@@ -974,9 +972,9 @@
 (define (compiler-parse-dispatch-tag [dispatch : SymI64Env] [name : String]) : i64
   (let
     [n : i64 (string-length name)]
-    (core/cond
+    (cond
       (= n 1)
-      (core/cond
+      (cond
         (string-eq name "+")
         (compiler-parse-tag-bin-add)
         (string-eq name "-")
@@ -999,7 +997,7 @@
         (compiler-parse-tag-pattern-wildcard)
         (compiler-parse-tag-unknown))
       (= n 2)
-      (core/cond
+      (cond
         (string-eq name "!=")
         (compiler-parse-tag-bin-ne)
         (string-eq name "<=")
@@ -1018,7 +1016,7 @@
         (compiler-parse-tag-expr-if)
         (compiler-parse-tag-unknown))
       (= n 3)
-      (core/cond
+      (cond
         (string-eq name "shl")
         (compiler-parse-tag-bin-shl)
         (string-eq name "shr")
@@ -1059,7 +1057,7 @@
         (compiler-parse-tag-expr-box)
         (compiler-parse-tag-unknown))
       (= n 4)
-      (core/cond
+      (cond
         (string-eq name "bool")
         (compiler-parse-tag-ty-bool)
         (string-eq name "char")
@@ -1084,7 +1082,7 @@
         (compiler-parse-tag-decl-test)
         (compiler-parse-tag-unknown))
       (= n 5)
-      (core/cond
+      (cond
         (string-eq name "never")
         (compiler-parse-tag-ty-never)
         (string-eq name "Tuple")
@@ -1107,7 +1105,7 @@
         (compiler-parse-tag-lit-false)
         (compiler-parse-tag-unknown))
       (= n 6)
-      (core/cond
+      (cond
         (string-eq name "bit-or")
         (compiler-parse-tag-bin-bit-or)
         (string-eq name "String")
@@ -1134,7 +1132,7 @@
         (compiler-parse-tag-decl-export)
         (compiler-parse-tag-unknown))
       (= n 7)
-      (core/cond
+      (cond
         (string-eq name "bit-and")
         (compiler-parse-tag-bin-bit-and)
         (string-eq name "bit-xor")
@@ -1153,7 +1151,7 @@
         (compiler-parse-tag-expr-syscall)
         (compiler-parse-tag-unknown))
       (= n 8)
-      (core/cond
+      (cond
         (string-eq name "comptime")
         (compiler-parse-tag-expr-comptime)
         (string-eq name "ptr-null")
@@ -1170,7 +1168,7 @@
         (compiler-parse-tag-decl-defmacro)
         (compiler-parse-tag-unknown))
       (= n 9)
-      (core/cond
+      (cond
         (string-eq name "tuple-ref")
         (compiler-parse-tag-expr-tuple-ref)
         (string-eq name "array-ref")
@@ -1189,7 +1187,7 @@
         (compiler-parse-tag-decl-defstruct)
         (compiler-parse-tag-unknown))
       (= n 10)
-      (core/cond
+      (cond
         (string-eq name "make-array")
         (compiler-parse-tag-expr-make-array)
         (string-eq name "array-set!")
@@ -1208,7 +1206,7 @@
         (compiler-parse-tag-expr-quasiquote)
         (compiler-parse-tag-unknown))
       (= n 11)
-      (core/cond
+      (cond
         (string-eq name "array-push!")
         (compiler-parse-tag-expr-array-push)
         (string-eq name "spmd-reduce")
@@ -1225,7 +1223,7 @@
         (compiler-parse-tag-decl-defdispatch)
         (compiler-parse-tag-unknown))
       (= n 12)
-      (core/cond
+      (cond
         (string-eq name "program-argc")
         (compiler-parse-tag-expr-program-argc)
         (string-eq name "program-argv")
@@ -1234,29 +1232,29 @@
         (compiler-parse-tag-expr-program-envp)
         (compiler-parse-tag-unknown))
       (= n 13)
-      (core/cond
+      (cond
         (string-eq name "comptime-decl")
         (compiler-parse-tag-decl-comptime-decl)
         (compiler-parse-tag-unknown))
       (= n 14)
-      (core/cond
+      (cond
         (string-eq name "comptime-decls")
         (compiler-parse-tag-decl-comptime-decls)
         (compiler-parse-tag-unknown))
       (= n 16)
-      (core/cond
+      (cond
         (string-eq name "unquote-splicing")
         (compiler-parse-tag-expr-unquote-splicing)
         (compiler-parse-tag-unknown))
       (= n 17)
-      (core/cond
+      (cond
         (string-eq name "string-from-bytes")
         (compiler-parse-tag-expr-string-from-bytes)
         (compiler-parse-tag-unknown))
       (compiler-parse-tag-unknown))))
 
 (define (ast-binop-tag? [tag : i64]) : bool
-  (core/cond
+  (cond
     (= tag (compiler-parse-tag-bin-add))
     true
     (= tag (compiler-parse-tag-bin-sub))
@@ -1293,7 +1291,7 @@
   (ast-binop-tag? (compiler-parse-dispatch-tag dispatch name)))
 
 (define (ast-binop-from-tag [tag : i64]) : AstBinOp
-  (core/cond
+  (cond
     (= tag (compiler-parse-tag-bin-add))
     (AstBinAdd)
     (= tag (compiler-parse-tag-bin-sub))
@@ -1330,7 +1328,7 @@
   (ast-binop-from-tag (compiler-parse-dispatch-tag dispatch name)))
 
 (define (ast-unop-tag? [tag : i64]) : bool
-  (core/cond
+  (cond
     (= tag (compiler-parse-tag-un-not))
     true
     (= tag (compiler-parse-tag-un-neg))
@@ -1341,7 +1339,7 @@
   (ast-unop-tag? (compiler-parse-dispatch-tag dispatch name)))
 
 (define (ast-unop-from-tag [tag : i64]) : AstUnOp
-  (core/cond
+  (cond
     (= tag (compiler-parse-tag-un-not))
     (AstUnNot)
     (= tag (compiler-parse-tag-un-neg))
@@ -1465,7 +1463,7 @@
     [(SSym name)
       (let
         [tag : i64 (compiler-parse-dispatch-tag dispatch name)]
-        (core/cond
+        (cond
           (= tag (compiler-parse-tag-ty-i64))
           (OkAstType (AstTyI64))
           (= tag (compiler-parse-tag-ty-i32))
@@ -1507,7 +1505,7 @@
           (let
             [rest : Sexpr (box-get rest-box)]
             [tag : i64 (compiler-parse-dispatch-tag dispatch head)]
-            (core/cond
+            (cond
               (= tag (compiler-parse-tag-ty-func))
               (match (parse-ast-func-type-parts dispatch rest)
                 [(OkAstFuncTypeParts args ret)
@@ -1756,7 +1754,7 @@
     [(SCons key-node tail)
       (match (box-get key-node)
         [(SSym key)
-          (core/cond
+          (cond
             (string-eq key ":cleanup")
             (match (box-get tail)
               [(SCons cleanup-node end)
@@ -1789,7 +1787,7 @@
     [(SCons key-node tail)
       (match (box-get key-node)
         [(SSym key)
-          (core/cond
+          (cond
             (string-eq key ":cleanup")
             (match (box-get tail)
               [(SCons cleanup-node end)
@@ -1993,7 +1991,7 @@
         [(SCons key-node after-key)
           (match (box-get key-node)
             [(SSym key)
-              (core/cond
+              (cond
                 (string-eq key ":lifetimes")
                 (if seen-field
                   (ErrAstStructDefParts
@@ -2243,7 +2241,7 @@
     [_ (ErrAstVariantDefList "parse: malformed variant list")]))
 
 (define (parse-ast-dispatch-isa [name : String]) : ResultAstDispatchIsa
-  (core/cond
+  (cond
     (string-eq name "scalar")
     (OkAstDispatchIsa (AstDispatchScalar))
     (string-eq name "avx2")
@@ -2337,7 +2335,7 @@
         [(SCons key-node after-key)
           (match (box-get key-node)
             [(SSym key)
-              (core/cond
+              (cond
                 (not (compiler-parse-metadata-key? key))
                 (parse-ast-defenum-variant-item
                   dispatch
@@ -2425,7 +2423,7 @@
     [(SSym name)
       (let
         [tag : i64 (compiler-parse-dispatch-tag dispatch name)]
-        (core/cond
+        (cond
           (= tag (compiler-parse-tag-pattern-wildcard))
           (OkAstPattern AstPatWildcard)
           (= tag (compiler-parse-tag-lit-true))
@@ -3123,7 +3121,7 @@
     [_ (ErrAstExpr "parse: type expects exactly one type")]))
 
 (define (parse-ast-reduce-op [name : String]) : ResultAstReduceOp
-  (core/cond
+  (cond
     (string-eq name "sum")
     (OkAstReduceOp (AstReduceSum))
     (string-eq name "min")
@@ -3556,7 +3554,7 @@
       (let
         [leaf : i64 (struct-get pair first)]
         [subleaf : i64 (struct-get pair second)]
-        (core/cond
+        (cond
           (= tag (compiler-parse-tag-expr-cpuid-eax))
           (OkAstExpr (ast-expr-cpuid-eax leaf subleaf))
           (= tag (compiler-parse-tag-expr-cpuid-ebx))
@@ -3911,7 +3909,7 @@
         [(SpSNil _)
           (match (parse-ast-expr dispatch (sp-node-get expr))
             [(OkAstExpr parsed)
-              (core/cond
+              (cond
                 (= tag (compiler-parse-tag-expr-quote))
                 (OkAstExpr (ast-expr-quote parsed))
                 (= tag (compiler-parse-tag-expr-quasiquote))
@@ -3928,7 +3926,7 @@
   [tag : i64]
   [head : SpannedSexpr]
   [rest : SpannedSexpr]) : ResultAstExpr
-  (core/cond
+  (cond
     (= tag (compiler-parse-tag-expr-if))
     (parse-ast-if dispatch rest)
     (= tag (compiler-parse-tag-expr-let))
@@ -4059,7 +4057,7 @@
           [tag : i64 (compiler-parse-dispatch-tag dispatch op)]
           (if (parse-ast-cond-bracket-call? op rest)
             (ErrAstExpr (parse-ast-cond-bracket-diagnostic))
-            (core/cond
+            (cond
               (= tag (compiler-parse-tag-expr-ptr-addr-of))
               (parse-ast-ptr-addr-of rest)
               (= tag (compiler-parse-tag-expr-ptr-read))
@@ -4106,7 +4104,7 @@
     [(SpSSym name _)
       (let
         [tag : i64 (compiler-parse-dispatch-tag dispatch name)]
-        (core/cond
+        (cond
           (= tag (compiler-parse-tag-lit-true))
           (OkAstExpr
             (ast-expr-wrap-span
@@ -4258,7 +4256,7 @@
             [(SCons key-node after-key)
               (match (box-get key-node)
                 [(SSym key)
-                  (core/cond
+                  (cond
                     (string-eq key ":export-symbol")
                     (if seen-export
                       (ErrAstDecl
@@ -4421,7 +4419,7 @@
                   (if (sexpr-colon? (spanned-sexpr-form (sp-node-get colon)))
                     (match (sp-node-get ty-node)
                       [(SpSSym ty-name _)
-                        (core/cond
+                        (cond
                           (string-eq ty-name "...")
                           (ErrAstExternHeadItem
                             "parse: extern typed varargs tail needs a type")
@@ -4447,7 +4445,7 @@
   [item : SpannedSexpr]) : ResultAstExternHeadItem
   (match item
     [(SpSSym name _)
-      (core/cond
+      (cond
         (string-eq name "...")
         (OkAstExternHeadItem (AstExternHeadVarargsOpen))
         (parse-ast-extern-varargs-typed-name? name)
@@ -4520,7 +4518,7 @@
         [(SSym name)
           (match (box-get rest)
             [(SNil)
-              (core/cond
+              (cond
                 (string-eq name "c")
                 (OkAstExternAbi (AstExternAbiC))
                 (string-eq name "c-varargs")
@@ -4616,7 +4614,7 @@
           [(SCons key-node after-key)
             (match (box-get key-node)
               [(SSym key)
-                (core/cond
+                (cond
                   (string-eq key ":abi")
                   (if seen-abi
                     (ErrAstExternParts "parse: duplicate extern :abi metadata")
@@ -4737,7 +4735,7 @@
         [(SCons key-node after-key)
           (match (box-get key-node)
             [(SSym key)
-              (core/cond
+              (cond
                 (string-eq key ":abi")
                 (if seen-abi
                   (ErrAstExternParts "parse: duplicate extern :abi metadata")
@@ -4884,7 +4882,7 @@
           [(SCons key-node after-key)
             (match (box-get key-node)
               [(SSym key)
-                (core/cond
+                (cond
                   (string-eq key ":abi")
                   (if seen-abi
                     (ErrAstExternParts "parse: duplicate extern :abi metadata")
@@ -5213,7 +5211,7 @@
         (if (< i n)
           (let
             [c : char (string-ref name i)]
-            (core/cond
+            (cond
               (or (char-eq c #/') (char-eq c #\\') (char-eq c #:'))
               (set! ok false)
               (char-eq c #.')
@@ -5305,7 +5303,7 @@
     [(SpSCons kind-node rest _)
       (match (sp-node-get kind-node)
         [(SpSSym kind _)
-          (core/cond
+          (cond
             (string-eq kind "value")
             (match (sp-node-get rest)
               [(SpSCons name-node end _)
@@ -5494,7 +5492,7 @@
         [(SpSSym head _)
           (let
             [tag : i64 (compiler-parse-dispatch-tag dispatch head)]
-            (core/cond
+            (cond
               (= tag (compiler-parse-tag-decl-define))
               (parse-ast-define dispatch (sp-node-get template-rest))
               (= tag (compiler-parse-tag-decl-defenum))
@@ -5679,7 +5677,7 @@
         [(SpSSym head _)
           (let
             [tag : i64 (compiler-parse-dispatch-tag dispatch head)]
-            (core/cond
+            (cond
               (= tag (compiler-parse-tag-decl-define))
               (parse-ast-define dispatch (sp-node-get rest))
               (= tag (compiler-parse-tag-decl-extern))
@@ -6480,7 +6478,7 @@
   "(define (main) : i64 (cond [(= 1 1) 1] [else 0]))")
 
 (define (compiler-parse-qualified-bracket-cond-source) : String
-  "(define (main) : i64 (core/cond [(= 1 1) 1] [else 0]))")
+  "(define (main) : i64 (cond [(= 1 1) 1] [else 0]))")
 
 (define (compiler-parse-region-source) : String
   "(define (main) : (in r String)
@@ -8274,7 +8272,7 @@
       "parse: return expects exactly one expression")))
 
 (define (compiler-parse-error-tests-ok?) : bool
-  (core/cond
+  (cond
     (not (compiler-parse-diagnostic-code-ok?))
     false
     (not (compiler-parse-special-form-error-tests-ok?))

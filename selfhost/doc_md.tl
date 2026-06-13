@@ -10,8 +10,6 @@
 ;;
 ;; Reuses `doc-html-escape` (entity escaping for & < > ") from doc_html.tl and
 ;; `doc-render-anchor` from doc_render.tl via doc_html.tl.
-(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (import "doc_html.tl")
 
 (import "../stdlib/string.tl")
@@ -705,7 +703,7 @@
     [line : String (substring src pos (- line-end pos))]
     [next : i64 (md-next-line-start src line-end n)]
     [level : i64 (md-heading-level line)]
-    (core/cond
+    (cond
       (md-blank-line? line)
       (MdScanBlock next (MdBlank))
       (md-code-fence-start? line)
@@ -784,7 +782,7 @@
       (while (< i n)
         (let
           [c : char (string-ref text i)]
-          (core/cond
+          (cond
             (= c #`')
             (let
               [j : i64 (md-find-char text (+ i 1) #`')]

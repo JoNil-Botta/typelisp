@@ -29,8 +29,6 @@
 ;; `main` and there is no duplicate-symbol clash. The selfhost namespace model
 ;; specified in SPEC.md replaces this flat import behavior with qualified module
 ;; identities.
-(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (import "../stdlib/io.tl")
 
 (import "lex.tl")
@@ -156,7 +154,7 @@
     (= t (tag-comma-at))))
 
 (define (read-prefix-symbol [t : i64]) : String
-  (core/cond
+  (cond
     (= t (tag-quote))
     "quote"
     (= t (tag-backtick))
@@ -204,7 +202,7 @@
     [tok : Token (spanned-token-token st)]
     [span : SourceSpan (spanned-token-span st)]
     [t : i64 (token-tag tok)]
-    (core/cond
+    (cond
       (= t (tag-int))
       (let
         [v : i64 (token-int tok)]
@@ -320,7 +318,7 @@
 (define (read-form-result [toks : (Array Token)] [cur : (Array i64)]) : ResultSexpr
   (let
     [t : i64 (peek-tag toks cur)]
-    (core/cond
+    (cond
       (= t (tag-int))
       ;; An integer atom: project the literal out of the TInt and consume it.
       (let

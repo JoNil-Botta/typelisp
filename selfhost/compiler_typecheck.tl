@@ -6046,9 +6046,10 @@
 
 (define (compiler-typecheck-macro-runtime-import-order-source) : String
   "(define (runtime-touch [text : String]) : unit
-  (when true
+  (if true
     (unsafe
-      (let [ptr : (Ptr u8) (string-data text)] unit))))
+      (let [ptr : (Ptr u8) (string-data text)] unit))
+    unit))
 (module stdlib.core_macros)
 (defmacro (and [args : bool ...]) : bool
   (if (expr-list-empty? args)
@@ -6071,13 +6072,12 @@
 (export (macro when))
 (export (macro unless))
 (module main)
-(import \"stdlib/core_macros.tl\" module stdlib.core_macros :as core)
 (define (main) : i64
       (let [value : i64 0]
     (begin
-      (core.when true (set! value 21))
-      (core.unless false (set! value (+ value 21)))
-      (if (core.and (= value 42) (core.or false true)) value 0))))")
+      (when true (set! value 21))
+      (unless false (set! value (+ value 21)))
+      (if (and (= value 42) (or false true)) value 0))))")
 
 (define (compiler-typecheck-macro-prelude-module-source) : String
   "(module stdlib.core_macros)

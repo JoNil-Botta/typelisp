@@ -20,8 +20,6 @@
 ;; Multiline input is accumulated until its delimiters are complete. Parse and
 ;; type errors report diagnostics, discard only the failing input, and return to
 ;; the prompt with previously accepted declarations intact.
-(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (import "stdlib/io.tl")
 
 (import "compiler_typecheck.tl")
@@ -288,7 +286,7 @@
 (define (__tl_repl_char_string [c : char]) : String
   (let
     [code : i64 (cast c : i64)]
-    (core/cond
+    (cond
       (= code 9)
       \"\t\"
       (= code 10)
@@ -403,7 +401,7 @@
     [(OkReplString body)
       (OkReplString
         (string-append
-          "(import \"stdlib/io.tl\")\n(import \"stdlib/core_macros.tl\" module stdlib.core_macros as core)\n"
+          "(import \"stdlib/io.tl\")\n"
           (string-append
             session-source
             (string-append
@@ -574,9 +572,9 @@
     (and (not in-string) (= parens 0) (= brackets 0))
     (let
       [c : char (string-ref text idx)]
-      (core/cond
+      (cond
         in-string
-        (core/cond
+        (cond
           escaped
           (repl-input-complete-loop
             text

@@ -1630,7 +1630,7 @@
       [(TcTypeCache _ _ _ _ _ _ _ rest _)
         (tc-c-abi-fnptr-marker-near-id? (box-get rest) name-id remaining)]
       [(TcTypeBind key _ rest)
-        (core/cond
+        (cond
           (= key (tc-c-abi-fnptr-marker-id name-id))
           true
           (= key name-id)
@@ -3826,8 +3826,9 @@
     " is no longer supported; use "
     (tc-name-slashes-to-dots name)))
 
-;; Bootstrap bridge: published stage0 still parses selfhost core macro calls as
-;; `core/...`. Keep this narrow until the stage0 seed understands `core.`.
+;; Bootstrap bridge: published stage0 builds may still encounter legacy
+;; slash-qualified core macro spellings. Keep this narrow until the seed no
+;; longer needs the compatibility path.
 (define (tc-source-legacy-core-macro-compat? [name : String]) : bool
   (if (tc-name-qualified? name)
     (let
@@ -4297,7 +4298,7 @@
 (define (tc-nominal-owner-cache-lookup [ctx : TcContext] [handle : i64]) : ResultTcString
   (let
     [slot : i64 (tc-nominal-owner-cache-slot handle)]
-    (core/cond
+    (cond
       (= slot 0)
       (tc-nominal-owner-cache-entry-lookup
         ctx
@@ -4351,7 +4352,7 @@
     unit
     (let
       [slot : i64 (tc-nominal-owner-cache-slot handle)]
-      (core/cond
+      (cond
         (= slot 0)
         (begin
           (set! tc-nominal-owner-cache-handle handle)
@@ -4507,7 +4508,7 @@
                 (tc-resolved-nominal-type canonical-name handle)]
               [(ErrTcString _) (tc-resolved-nominal-type lookup-name handle)])]
           [(NoneI64)
-            (core/cond
+            (cond
               (string-eq name "Expr")
               (AstTyExpr)
               (string-eq name "ExprList")
@@ -5599,7 +5600,7 @@
       (tc-f32-to-f64-compatible? expected actual))))
 
 (define (tc-merge-branch-type [a : AstType] [b : AstType]) : ResultTcType
-  (core/cond
+  (cond
     (tc-never-type? a)
     (OkTcType b)
     (tc-never-type? b)
@@ -6465,7 +6466,7 @@
         [(SomeI64 handle)
           (let
             [kind : i64 (compiler-symbol-handle-kind handle)]
-            (core/cond
+            (cond
               (= kind (compiler-symbol-kind-defdispatch))
               (ErrTcType
                 "typecheck: defdispatch variant cannot be another dispatch")
@@ -9276,7 +9277,7 @@
   [args : AstExprList]) : ResultTcType
   (let
     [name-id : i64 (tc-builtin-name-id name)]
-    (core/cond
+    (cond
       (compiler-builtin-typecheck-string-eq-id? name-id)
       (tc-two-string-handle-builtin-call ctx env args (AstTyBool))
       (compiler-builtin-typecheck-string-to-int-id? name-id)
@@ -9565,7 +9566,7 @@
       (let
         [name : String (tc-hygiene-global-call-name (intern-str raw-name))]
         [name-id : i64 (tc-builtin-name-id name)]
-        (core/cond
+        (cond
           (and (tc-layout-query-name? name) (not (tc-name-bound? env name)))
           (tc-layout-query-runtime-call name args)
           (compiler-builtin-typecheck-length-call-id? name-id)
@@ -12702,7 +12703,7 @@
     [(TcTypeBind key ty rest)
       (let
         [name : String (intern-str key)]
-        (core/cond
+        (cond
           (or
             (= key (tc-region-marker-id))
             (= key (tc-default-boundary-id))
@@ -13035,7 +13036,7 @@
     [(TcInlinePayloadLayoutCons payload rest)
       (let
         [class : i64 (tc-register-payload-class payload)]
-        (core/cond
+        (cond
           (= class 2)
           2
           (= found -1)
@@ -13054,7 +13055,7 @@
         [(TcInlineVariantLayout _ _ _ payloads)
           (let
             [class : i64 (tc-inline-payloads-register-class payloads -1)]
-            (core/cond
+            (cond
               (= class 2)
               2
               (= class -1)
@@ -14596,7 +14597,7 @@
   [first-fields : AstTypeList]
   [second-name : String]
   [second-fields : AstTypeList]) : ResultTcResultInfo
-  (core/cond
+  (cond
     (and (tc-ok-variant-name? first-name) (tc-err-variant-name? second-name))
     (tc-result-info-build
       ctx
@@ -17134,7 +17135,7 @@
         [elem : AstType (tc-resolve-type ctx elem-ty)]
         (match (tc-expr ctx env len)
           [(OkTcType len-ty)
-            (core/cond
+            (cond
               (not (tc-integer-type? len-ty))
               (ErrTcType "typecheck: make-array length must be integer")
               (not (tc-dyn-array-elem-supported? env elem))
@@ -17769,7 +17770,7 @@
 (define (tc-macro-signature-type [ty : AstType]) : AstType
   (match ty
     [(AstTyVar name)
-      (core/cond
+      (cond
         (= name (intern "Expr"))
         (AstTyExpr)
         (= name (intern "ExprList"))
@@ -17833,7 +17834,7 @@
           (tc-comptime-purity-chain-path chain name))))))
 
 (define (tc-comptime-purity-banned-module? [module : String]) : bool
-  (core/cond
+  (cond
     (string-eq module "io")
     true
     (string-eq module "stdlib.io")
@@ -17875,7 +17876,7 @@
     false))
 
 (define (tc-comptime-purity-ctfe-builtin? [name : String]) : bool
-  (core/cond
+  (cond
     (string-eq name "size-of")
     true
     (string-eq name "align-of")
@@ -18775,7 +18776,7 @@
   [name-id : i64]) : ResultTcUnit
   (let
     [name : String (intern-str name-id)]
-    (core/cond
+    (cond
       (tc-string-list-contains bound name)
       OkTcUnit
       (tc-comptime-purity-banned-qualified? ctx name)
@@ -18818,7 +18819,7 @@
       (let
         [name : String (intern-str name-id)]
         [kind : i64 (compiler-symbol-handle-kind handle)]
-        (core/cond
+        (cond
           (= kind (compiler-symbol-kind-extern))
           (tc-comptime-purity-error
             expr
@@ -19749,7 +19750,7 @@
       (let
         [rest-env : TcTypeEnv (box-get rest)]
         [name : String (intern-str key)]
-        (core/cond
+        (cond
           (or
             (= key (tc-region-marker-id))
             (= key (tc-default-boundary-id))
@@ -21031,7 +21032,7 @@
         suffix-len))))
 
 (define (tc-hashmap-mutating-call-name? [name : String]) : bool
-  (core/cond
+  (cond
     (tc-string-has-suffix? name "-map-insert")
     true
     (tc-string-has-suffix? name "-map-put")
@@ -22196,9 +22197,9 @@
 
 ;; Cached program export table for the current expansion run. `macro-qualified-
 ;; call-decl` previously rebuilt the entire export table on EVERY qualified macro
-;; call (e.g. `core/and`, `core/or`, `core/cond`); combined with the recursive
-;; re-expansion of those variadic macros that made expanding a single nested
-;; `core/or` chain rebuild the whole program's exports O(n^2) times -- hundreds of
+;; call; combined with the recursive re-expansion of variadic core macros, that
+;; made expanding a single nested qualified chain rebuild the whole program's
+;; exports O(n^2) times -- hundreds of
 ;; MB for one predicate. The exports are invariant across an expansion run, so
 ;; build them once (in `macro-expand-program`) and reuse.
 (define macro-expand-exports-ready : bool
@@ -23480,7 +23481,7 @@
   (let
     [resolved-expected : AstType
       (tc-resolve-type ctx (tc-macro-signature-type expected))]
-    (core/cond
+    (cond
       (tc-macro-expr-clause-type? resolved-expected)
       (match (macro-expr-clause-from-arg arg)
         [(OkMacroClause _) OkMacroCheck]
@@ -23855,7 +23856,7 @@
   [call-expr : AstExpr]) : ResultMacroCompatCall
   (match (macro-compat-call-name func)
     [(TcSomeString name)
-      (core/cond
+      (cond
         (string-eq name "when")
         (macro-expand-compat-guard-call
           ctx

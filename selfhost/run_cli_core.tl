@@ -2,8 +2,6 @@
 ;;
 ;; Source-file runs build and execute in-process through stdlib fs/process
 ;; helpers. `--direct` remains accepted as a compatibility no-op.
-(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (import "../stdlib/io.tl")
 
 (import "host_plan.tl")
@@ -77,7 +75,7 @@
       (RunPlanConfig source target mode opt-level stdlib-lines runtime-lines))
     (let
       [current : String (arg idx)]
-      (core/cond
+      (cond
         (string-eq current "--")
         (OkRunPlanConfig
           (RunPlanConfig
@@ -236,7 +234,7 @@
         link-inputs))
     (let
       [current : String (arg idx)]
-      (core/cond
+      (cond
         (string-eq current "--")
         (OkRunCliConfig
           (RunCliConfig
@@ -476,6 +474,6 @@
 ;; first argument after any subcommand name). The bare form builds and executes
 ;; in-process.
 (define (run-run-from [start : i64] [count : i64]) : i64
-  (if (core/and (> count start) (string-eq (arg start) "--direct"))
+  (if (and (> count start) (string-eq (arg start) "--direct"))
     (run-direct-from (+ start 1) count)
     (run-direct-from start count)))

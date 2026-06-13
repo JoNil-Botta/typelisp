@@ -1,8 +1,6 @@
 ;; #2601: exact aligned f64 fields in <=16-byte aggregates are register-resident
 ;; SSE eightbytes. Packed f32/mixed sub-word float eightbytes intentionally stay
 ;; memory-backed until bit-preserving pack/extract IR exists.
-(import "stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (defstruct PairF64
   (x f64)
   (y f64))
@@ -108,12 +106,12 @@
 
 (define (main) : i64
   (begin
-    (core/unless (case-pair-return) (return 1))
-    (core/unless (case-pair-phi) (return 2))
-    (core/unless (case-mixed) (return 3))
-    (core/unless (case-enum) (return 4))
-    (core/unless (case-stack) (return 5))
-    (core/unless (case-global) (return 6))
-    (core/unless (case-array) (return 7))
-    (core/unless (case-capture) (return 8))
+    (unless (case-pair-return) (return 1))
+    (unless (case-pair-phi) (return 2))
+    (unless (case-mixed) (return 3))
+    (unless (case-enum) (return 4))
+    (unless (case-stack) (return 5))
+    (unless (case-global) (return 6))
+    (unless (case-array) (return 7))
+    (unless (case-capture) (return 8))
     42))

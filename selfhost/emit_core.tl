@@ -1,6 +1,4 @@
 ;; emit_core.tl - Main-less M1 assembly emitter shared by demos/tests (#163).
-(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (import "../stdlib/io.tl")
 
 (import "ast_types.tl")
@@ -120,7 +118,7 @@
   (cast c : i64))
 
 (define (octal-digit [n : i64]) : String
-  (core/cond
+  (cond
     (= n 0)
     "0"
     (= n 1)
@@ -145,7 +143,7 @@
       (string-append (octal-digit (% (/ n 8) 8)) (octal-digit (% n 8))))))
 
 (define (escape-string-byte [text : String] [idx : i64] [k : i64]) : String
-  (core/cond
+  (cond
     (= k 34)
     "\\\""
     (= k 92)
@@ -156,7 +154,7 @@
     "\\t"
     (= k 13)
     "\\r"
-    (core/and (>= k 32) (<= k 126))
+    (and (>= k 32) (<= k 126))
     (substring text idx 1)
     (octal-escape k)))
 
@@ -241,7 +239,7 @@
     n))
 
 (define (arg-reg [idx : i64]) : String
-  (core/cond
+  (cond
     (= idx 0)
     "%rdi"
     (= idx 1)

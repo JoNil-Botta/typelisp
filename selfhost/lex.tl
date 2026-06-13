@@ -35,8 +35,6 @@
 ;; module, then the reader.
 (import "compiler_intern.tl")
 
-(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (import "../stdlib/io.tl")
 
 (import "token.tl")
@@ -90,7 +88,7 @@
 (define (hex-digit-value [c : char]) : i64
   (let
     [code : i64 (cast c : i64)]
-    (core/cond
+    (cond
       (and (>= code 48) (<= code 57))
       (- code 48)
       (and (>= code 97) (<= code 102))
@@ -130,7 +128,7 @@
 (define (is-symbol-char [c : char]) : bool
   (let
     [code : i64 (cast c : i64)]
-    (core/cond
+    (cond
       (and (>= code 97) (<= code 122))
       true
       (and (>= code 65) (<= code 90))
@@ -242,7 +240,7 @@
     [base : i64 (number-prefix-base src start)]
     [value-start : i64 (+ digits-start 2)]
     [end : i64 (scan-based-int-end src value-start n base)]
-    (core/cond
+    (cond
       (= end value-start)
       (ErrLexI64 "lexer: malformed integer literal")
       (if (< end n)
@@ -354,7 +352,7 @@
 (define (string-escape-piece [src : String] [idx : i64]) : String
   (let
     [c : char (string-ref src idx)]
-    (core/cond
+    (cond
       (= c #n')
       "\n"
       (= c #t')
@@ -450,7 +448,7 @@
 
 ;; Map a multi-letter `#\name'` character literal to its character payload.
 (define (named-char-result [name : String]) : ResultLexChar
-  (core/cond
+  (cond
     (string-eq name "space")
     (OkLexChar #\space')
     (string-eq name "newline")
@@ -474,7 +472,7 @@
 ;; Map single-character escapes after `#\`; unknown escapes read as the literal
 ;; character, matching stage0 (`#\a'` is `a`).
 (define (escaped-char [c : char]) : char
-  (core/cond
+  (cond
     (= c #n')
     #\newline'
     (= c #t')
@@ -563,7 +561,7 @@
 (define (lex-check-step [src : String] [i : i64] [n : i64]) : ResultLexI64
   (let
     [c : char (string-ref src i)]
-    (core/cond
+    (cond
       (is-space c)
       (OkLexI64 (+ i 1))
       (or (= c #(') (= c #['))
@@ -645,7 +643,7 @@
       (while (and (< i n) ok)
         (let
           [c : char (string-ref src i)]
-          (core/cond
+          (cond
             (is-space c)
             (set! i (+ i 1))
             (= c #(')
@@ -827,7 +825,7 @@
       (while (and (< i n) ok)
         (let
           [c : char (string-ref src i)]
-          (core/cond
+          (cond
             (is-space c)
             (begin
               (if (= c #\newline')

@@ -55,11 +55,9 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   checks.
 - `core_macros.tl`: typed expression macros for core guard and boolean forms.
   The compile driver imports it as an implicit prelude, so bare `when`,
-  `unless`, `and`, `or`, and flat `cond` are available without imports. Import
-  it explicitly with
-  `(import "stdlib/core_macros.tl" module stdlib.core_macros as core)` for
-  qualified calls such as `core/when`, `core/unless`, `core/and`, `core/or`,
-  and `core/cond`.
+  `unless`, `and`, `or`, and flat `cond` are available without imports.
+  Repository code should use the bare prelude forms; the explicit qualified API
+  surface is covered by `tests/core_macros_api.tl`.
 - `fs.tl`: minimal recoverable filesystem helpers for tool artifact paths,
   current-directory lookup, lexical path normalization, safe relative suffix
   checks, temporary directories, cleanup, process ids, coarse file-kind probes,

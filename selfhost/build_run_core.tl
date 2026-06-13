@@ -1,6 +1,4 @@
 ;; build_run_core.tl - Shared selfhost source build/run execution helpers (#1018).
-(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (import "compiler_driver_core.tl")
 
 (import "compiler_object_coff.tl")
@@ -83,7 +81,7 @@
     [(BackendTargetWindows) true]))
 
 (define (source-tool-backend-mode [command : String] [value : String]) : ResultSourceToolBackendMode
-  (core/cond
+  (cond
     (string-eq value "scalar")
     (OkSourceToolBackendMode (BackendModeScalar))
     (string-eq value "avx2")

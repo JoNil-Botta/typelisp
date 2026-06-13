@@ -1,6 +1,4 @@
 ;; compiler_backend.tl - First selfhost CompilerIrProgram -> x86_64 .s emitter (#447).
-(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (import "../stdlib/io.tl")
 
 (import "../stdlib/arena.tl")
@@ -719,7 +717,7 @@
         ""))))
 
 (define (compiler-backend-vector-home-to-ymm [home : String]) : String
-  (core/cond
+  (cond
     (string-eq home "%vec6")
     "%ymm6"
     (string-eq home "%vec7")
@@ -739,7 +737,7 @@
     ""))
 
 (define (compiler-backend-vector-home-to-xmm [home : String]) : String
-  (core/cond
+  (cond
     (string-eq home "%vec6")
     "%xmm6"
     (string-eq home "%vec7")
@@ -759,7 +757,7 @@
     ""))
 
 (define (compiler-backend-vector-home-to-zmm [home : String]) : String
-  (core/cond
+  (cond
     (string-eq home "%vec6")
     "%zmm6"
     (string-eq home "%vec7")
@@ -801,7 +799,7 @@
         [(CompilerRegRegister home)
           (let
             [reg : String
-              (core/cond
+              (cond
                 (string-eq width "xmm")
                 (compiler-backend-vector-home-to-xmm home)
                 (string-eq width "zmm")
@@ -1354,7 +1352,7 @@
     [_ (compiler-backend-avx2-vector-reduce-op-mnemonic op elem-ty)]))
 
 (define (compiler-backend-avx512-lane-mask [lanes : i64]) : i64
-  (core/cond (= lanes 8) 0xff (= lanes 16) 0xffff 0))
+  (cond (= lanes 8) 0xff (= lanes 16) 0xffff 0))
 
 (define (compiler-backend-avx512-mask-label
   [function : String]
@@ -2095,7 +2093,7 @@
   (backend-cat4 ".L" (compiler-backend-asm-safe-symbol function) "_" label))
 
 (define (compiler-backend-arg-reg [idx : i64]) : ResultBackendReg
-  (core/cond
+  (cond
     (= idx 0)
     (OkBackendReg "%rdi")
     (= idx 1)
@@ -2111,7 +2109,7 @@
     (ErrBackendReg "backend: too many call args")))
 
 (define (compiler-backend-float-arg-reg [idx : i64]) : ResultBackendReg
-  (core/cond
+  (cond
     (= idx 0)
     (OkBackendReg "%xmm0")
     (= idx 1)
@@ -2477,7 +2475,7 @@
     [_ (CompilerBackendNoI64)]))
 
 (define (compiler-backend-symbol-char [text : String] [idx : i64] [c : char]) : String
-  (core/cond
+  (cond
     (or
       (and (>= c #A') (<= c #Z'))
       (and (>= c #a') (<= c #z'))
@@ -2797,7 +2795,7 @@
   [name : String]
   [plan : CompilerBackendRuntimePlan]
   [index : CompilerBackendProgramIndex]) : String
-  (core/cond
+  (cond
     (compiler-backend-index-extern-provided? index name)
     (compiler-backend-index-extern-link-symbol index name)
     (compiler-backend-index-extern-references? index name)
@@ -2878,7 +2876,7 @@
     [_ false]))
 
 (define (compiler-backend-hex-digit [n : i64]) : String
-  (core/cond
+  (cond
     (= n 0)
     "0"
     (= n 1)
@@ -2917,7 +2915,7 @@
     (compiler-backend-hex-digit (% n 16))))
 
 (define (compiler-backend-octal-digit [n : i64]) : String
-  (core/cond
+  (cond
     (= n 0)
     "0"
     (= n 1)
@@ -2947,7 +2945,7 @@
   [text : String]
   [idx : i64]
   [c : char]) : String
-  (core/cond
+  (cond
     (= c #"')
     "\\\""
     (= c #\\')
@@ -2963,7 +2961,7 @@
     (compiler-backend-octal-escape (compiler-backend-char-code c))))
 
 (define (compiler-backend-string-byte-raw? [c : char]) : bool
-  (core/cond
+  (cond
     (= c #"')
     false
     (= c #\\')
@@ -3191,7 +3189,7 @@
 (define (compiler-backend-emit-load-memory [addr : String] [ty : AstType]) : String
   (let
     [size : i64 (compiler-backend-type-size ty)]
-    (core/cond
+    (cond
       (= size 8)
       (backend-cat3 "    movq " addr ", %rax\n")
       (= size 4)
@@ -3223,7 +3221,7 @@
   (compiler-backend-emit-load-float-memory addr reg (AstTyF64)))
 
 (define (compiler-backend-reg-part [reg : String] [size : i64]) : String
-  (core/cond
+  (cond
     (= size 8)
     reg
     (string-eq reg "%rax")
@@ -3319,7 +3317,7 @@
 (define (compiler-backend-emit-load-register [reg : String] [ty : AstType]) : String
   (let
     [size : i64 (compiler-backend-type-size ty)]
-    (core/cond
+    (cond
       (= size 8)
       (backend-cat3 "    movq " reg ", %rax\n")
       (= size 4)
@@ -3359,7 +3357,7 @@
   [ty : AstType]) : String
   (let
     [size : i64 (compiler-backend-type-size ty)]
-    (core/cond
+    (cond
       (= size 8)
       (backend-cat3 "    movq %rax, " addr "\n")
       (= size 4)
@@ -3384,7 +3382,7 @@
 (define (compiler-backend-store-immediate-mnemonic [ty : AstType]) : String
   (let
     [size : i64 (compiler-backend-type-size ty)]
-    (core/cond
+    (cond
       (= size 8)
       "movq"
       (= size 4)
@@ -4640,7 +4638,7 @@
 (define (compiler-backend-int-instruction-suffix [ty : AstType]) : String
   (let
     [size : i64 (compiler-backend-type-size ty)]
-    (core/cond (= size 1) "b" (= size 2) "w" (= size 4) "l" "q")))
+    (cond (= size 1) "b" (= size 2) "w" (= size 4) "l" "q")))
 
 (define (compiler-backend-sized-reg [reg : String] [ty : AstType]) : String
   (compiler-backend-reg-part reg (compiler-backend-type-size ty)))
@@ -4694,7 +4692,7 @@
 (define (compiler-backend-signed-min-value [ty : AstType]) : i64
   (let
     [size : i64 (compiler-backend-type-size ty)]
-    (core/cond
+    (cond
       (= size 1)
       (- 0 128)
       (= size 2)
@@ -4745,7 +4743,7 @@
     [signed : bool (compiler-backend-type-signed? ty)]
     (string-append
       (compiler-backend-divmod-guard-asm ty)
-      (core/cond
+      (cond
         (= size 1)
         (string-append
           (if signed
@@ -5982,10 +5980,10 @@
     (backend-cat4 (int->string disp) "(" reg ")")))
 
 (define (compiler-backend-copy-chunk-size [remaining : i64]) : i64
-  (core/cond (>= remaining 8) 8 (>= remaining 4) 4 (>= remaining 2) 2 1))
+  (cond (>= remaining 8) 8 (>= remaining 4) 4 (>= remaining 2) 2 1))
 
 (define (compiler-backend-copy-chunk-type [chunk : i64]) : AstType
-  (core/cond
+  (cond
     (= chunk 8)
     (AstTyU64)
     (= chunk 4)
@@ -6467,7 +6465,7 @@
   [from-ty : AstType]
   [to-ty : AstType]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
-  (core/cond
+  (cond
     (and
       (opt-type-eq from-ty to-ty)
       (compiler-backend-value-same-home? assignments dst src))
@@ -7408,7 +7406,7 @@
           (let
             [symbol : String
               (compiler-backend-function-symbol-index index name)]
-            (core/cond
+            (cond
               (and
                 (string-eq name "main")
                 (compiler-backend-index-extern-provided? index name))
@@ -7520,7 +7518,7 @@
 (define (compiler-backend-runtime-param-types [name : String]) : AstTypeList
   (let
     [name-id : i64 (compiler-backend-runtime-helper-name-id name)]
-    (core/cond
+    (cond
       (compiler-builtin-backend-tl-print-char-id? name-id)
       (ast-type-cons (AstTyChar) AstTypeNil)
       (compiler-builtin-backend-tl-print-f64-id? name-id)
@@ -7586,7 +7584,7 @@
         (compiler-backend-varargs-linux-vector-count rest next-float next-count))]))
 
 (define (compiler-backend-windows-vararg-int-reg [position : i64]) : String
-  (core/cond
+  (cond
     (= position 0)
     "%rcx"
     (= position 1)
@@ -9939,7 +9937,7 @@
   [ty : AstType]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]) : ResultCompilerBackend
-  (core/cond
+  (cond
     (compiler-backend-group-type? program-index ty)
     ;; #2386: moving a register-group value copies BOTH words (via %rax:%rdx so
     ;; memory<->memory slot moves are legal).
@@ -10069,7 +10067,7 @@
         ty))))
 
 (define (compiler-backend-cpuid-result-move [reg-index : i64]) : String
-  (core/cond
+  (cond
     (= reg-index 0)
     "    movl %eax, %eax\n"
     (= reg-index 1)
@@ -10132,7 +10130,7 @@
 
 ;; Linux syscall argument register for operand position: 0=number, 1..6=args.
 (define (compiler-backend-syscall-reg [pos : i64]) : String
-  (core/cond
+  (cond
     (= pos 0)
     "%rax"
     (= pos 1)
@@ -15598,7 +15596,7 @@
   false)
 
 (define (compiler-backend-runtime-helper-owner-id [name-id : i64]) : CompilerBackendRuntimeHelperOwner
-  (core/cond
+  (cond
     (compiler-backend-runtime-helper-core-id? name-id)
     (BackendRuntimeOwnerCore)
     (compiler-backend-runtime-helper-stdlib-ffi-id? name-id)
@@ -18350,7 +18348,7 @@ tl_memcpy:
   (match target
     [(BackendTargetLinux) (compiler-backend-arg-reg idx)]
     [(BackendTargetWindows)
-      (core/cond
+      (cond
         (= idx 0)
         (OkBackendReg "%rcx")
         (= idx 1)
@@ -18367,7 +18365,7 @@ tl_memcpy:
   (match target
     [(BackendTargetLinux) (compiler-backend-float-arg-reg idx)]
     [(BackendTargetWindows)
-      (core/cond
+      (cond
         (= idx 0)
         (OkBackendReg "%xmm0")
         (= idx 1)

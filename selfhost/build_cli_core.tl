@@ -4,8 +4,6 @@
 ;; helpers. Package builds are handled in-process by the selfhost compiler:
 ;; parse/discover `typelisp.pkg`, emit assembly for the manifest entry, and
 ;; produce the package artifact selected by manifest kind.
-(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (import "../stdlib/fs.tl")
 
 (import "../stdlib/env.tl")
@@ -293,7 +291,7 @@
     (panic "build package profile opt-level smoke failed")))
 
 (define (build-parse-profile [value : String]) : ResultBuildProfile
-  (core/cond
+  (cond
     (string-eq value "dev")
     (OkBuildProfile (BuildProfileDev))
     (string-eq value "release")
@@ -339,7 +337,7 @@
       (ErrBuildTarget (build-unknown-target value)))))
 
 (define (build-parse-opt-level [value : String]) : i64
-  (core/cond
+  (cond
     (string-eq value "0")
     0
     (string-eq value "1")
@@ -409,7 +407,7 @@
               stdlib-roots)))))
     (let
       [current : String (arg idx)]
-      (core/cond
+      (cond
         (string-eq current "-o")
         (if (>= (+ idx 1) count)
           (ErrBuildConfig "build: -o requires a value")
@@ -731,7 +729,7 @@
         "build: --package-worker requires --manifest-path"))
     (let
       [current : String (arg idx)]
-      (core/cond
+      (cond
         (string-eq current "--manifest-path")
         (if (>= (+ idx 1) count)
           (ErrBuildPackageWorkerConfig
@@ -1185,7 +1183,7 @@
 (define (build-git-dep-pin-kind [alias : String] [dep : BuildGitDependency]) : ResultPackageCachePinKind
   (let
     [kind : String (struct-get dep pin-kind)]
-    (core/cond
+    (cond
       (string-eq kind "rev")
       (OkPackageCachePinKind (PackageCachePinRev))
       (string-eq kind "tag")
@@ -1415,7 +1413,7 @@
     [target-dir : String (compiler-load-join-root-path manifest-dir "target")]
     [typelisp-dir : String (compiler-load-join-root-path target-dir "typelisp")]
     [deps-dir : String (compiler-load-join-root-path typelisp-dir "git-deps")]
-    (core/cond
+    (cond
       (not (build-mkdir-ok? target-dir))
       (ErrBuildString
         (build-git-dep-error alias "could not create target directory"))
@@ -1465,7 +1463,7 @@
     [cache-dir : String (compiler-load-join-root-path typelisp-dir "cache")]
     [packages-dir : String (compiler-load-join-root-path cache-dir "packages")]
     [root : String (package-cache-default-root manifest-dir)]
-    (core/cond
+    (cond
       (not (build-mkdir-ok? target-dir))
       (ErrBuildString
         (build-git-dep-error alias "could not create target directory"))
@@ -3356,7 +3354,7 @@
   (BuildCliOptionOther))
 
 (define (build-cli-option-rest6 [current : String]) : BuildCliOption
-  (core/cond
+  (cond
     (string-eq current "--link-arg")
     (BuildCliOptionLinkArg)
     (string-eq current "--manifest-path")
@@ -3717,7 +3715,7 @@
 ;; first argument after any subcommand name). `--direct` remains accepted as a
 ;; compatibility no-op; the bare form also builds in-process.
 (define (build-run-from [start : i64] [count : i64]) : i64
-  (core/cond
+  (cond
     (and (> count start) (string-eq (arg start) "--package-worker"))
     (build-package-worker-run-from (+ start 1) count)
     (and (> count start) (string-eq (arg start) "--direct"))

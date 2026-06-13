@@ -11,8 +11,6 @@
 ;; item docs. Pending item docs at EOF are ignored. Declaration identities are read
 ;; from the captured top-level form with the formatter token lexer so original
 ;; source text remains available as the item signature.
-(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (import "../stdlib/io.tl")
 
 (import "format_tokens.tl")
@@ -239,7 +237,7 @@
         (if (< i n)
           (let
             [c : char (string-ref src i)]
-            (core/cond
+            (cond
               escaped
               (begin
                 (set! escaped false)
@@ -281,7 +279,7 @@
         (if (< i n)
           (let
             [c : char (string-ref src i)]
-            (core/cond
+            (cond
               (= c #;')
               (set! i (doc-next-line-start src (doc-line-end src i n) n))
               (= c #"')
@@ -332,7 +330,7 @@
         (let
           [tag : i64 (format-token-tag (format-token-at stream i))]
           (begin
-            (core/cond
+            (cond
               (or (= tag (fmt-tag-lparen)) (= tag (fmt-tag-lbracket)))
               (set! depth (+ depth 1))
               (or (= tag (fmt-tag-rparen)) (= tag (fmt-tag-rbracket)))
@@ -401,7 +399,7 @@
         (let
           [head : String (doc-symbol-text stream head-idx)]
           [after-head : i64 (+ head-idx 1)]
-          (core/cond
+          (cond
             (string-eq head "define")
             (doc-info-after-define stream after-head)
             (string-eq head "extern")

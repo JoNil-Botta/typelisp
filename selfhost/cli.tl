@@ -19,8 +19,6 @@
 ;; (`compiler_check_core` ->
 ;; `compiler_typecheck`), so `check` does the same macro-expansion and
 ;; specialization as build/run/test.
-(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (import "../stdlib/io.tl")
 
 (import "build_cli_core.tl")
@@ -313,7 +311,7 @@ Options:
     1))
 
 (define (cli-dispatch [command : String] [count : i64]) : i64
-  (core/cond
+  (cond
     (or
       (string-eq command "help")
       (string-eq command "--help")

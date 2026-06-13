@@ -3,8 +3,6 @@
 ;; The TypeLisp site composition layer combines language guides and reusable API
 ;; trees. API pages still use the source/module documentation extractor and HTML
 ;; renderer without hard-coding TypeLisp guide-page knowledge into that path.
-(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (import "../stdlib/io.tl")
 
 (import "doc_html.tl")
@@ -317,7 +315,7 @@
 (define (doc-site-rewrite-language-link-target
   [sections : DocSiteSectionList]
   [target : String]) : String
-  (core/cond
+  (cond
     (doc-site-href-anchor? target)
     target
     (doc-site-href-external? target)

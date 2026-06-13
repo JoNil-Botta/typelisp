@@ -1,5 +1,3 @@
-(import "stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (defstruct InnerByteC
   (:repr c)
   (value u8))
@@ -127,7 +125,7 @@
       (nested-wide-score (nested-wide-make (cast 13 : u64)) (cast 13 : u64))]
     [wide-indirect-returned : i64
       (nested-wide-score (nested-wide-maker (cast 14 : u64)) (cast 14 : u64))]
-    (core/cond
+    (cond
       (not (= byte-direct 11))
       1
       (not (= byte-returned 12))

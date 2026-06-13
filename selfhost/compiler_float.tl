@@ -2,8 +2,6 @@
 ;; compiler. The parser accepts the current source grammar
 ;; `[-]?[0-9]+\.[0-9]+` plus canonical integer spellings emitted by the
 ;; compiler float formatter.
-(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (import "../stdlib/io.tl")
 
 (import "../stdlib/string.tl")
@@ -59,7 +57,7 @@
                 (compiler-float-bn-append-digit significand digit))
               (set! int-digits (+ int-digits 1))
               (set! index (+ index 1)))))
-        (core/cond
+        (cond
           (= (+ int-digits frac-digits) 0)
           (CompilerFloatNoDecimal)
           (= index n)
@@ -178,7 +176,7 @@
     [twice-num : BigNum (bn-shl-bits num 1)]
     [mid : BigNum (bn-mul-u64 den (+ (* (cast 2 : u64) q) (cast 1 : u64)))]
     [cmp : i64 (bn-cmp twice-num mid)]
-    (core/cond
+    (cond
       (> cmp 0)
       (+ q (cast 1 : u64))
       (= cmp 0)
@@ -224,7 +222,7 @@
           [e : i64 (compiler-float-ratio-floor-log2 num den)]
           [two52 : u64 (cast 0x10000000000000 : u64)]
           [two53 : u64 (cast 0x20000000000000 : u64)]
-          (core/cond
+          (cond
             (> e 1023)
             (CompilerFloatNoF64)
             (>= e -1022)

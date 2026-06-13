@@ -1,5 +1,3 @@
-(import "stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (defstruct WideArg
   (:repr c)
   (a u64)
@@ -18,4 +16,4 @@
     [ptr-arg : WideArg (WideArg (cast 20 : u64) 2.5)]
     [direct : i64 (wide-arg-score direct-arg (cast 7 : u64))]
     [via-ptr : i64 (wide-arg-scorer ptr-arg (cast 5 : u64))]
-    (core/cond (not (= direct 32)) 1 (not (= via-ptr 75)) 2 42)))
+    (cond (not (= direct 32)) 1 (not (= via-ptr 75)) 2 42)))

@@ -1,5 +1,3 @@
-(import "stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (defstruct Vec2
   (:repr c)
   (x f32)
@@ -36,7 +34,7 @@
     [returned-mix-score : i64 (mix8-score returned-mix (cast 17 : u64))]
     [indirect-mix : Mix8 (mix8-maker (cast 19 : u32))]
     [indirect-mix-score : i64 (mix8-score indirect-mix (cast 19 : u64))]
-    (core/cond
+    (cond
       (not (= direct-vec-score 11))
       1
       (not (= returned-vec-score 12))

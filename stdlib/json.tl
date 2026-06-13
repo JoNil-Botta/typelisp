@@ -17,8 +17,6 @@
 ;# (import "stdlib/json.tl")
 ;# (define sample : String (json-stringify (JsonBool true)))
 ;# ```
-(import "core_macros.tl" module stdlib.core_macros as core)
-
 (import "string.tl")
 
 (import "str_cat.tl")
@@ -218,7 +216,7 @@
 (define (json-hex-value [c : char]) : i64
   (let
     [code : i64 (json-char-code c)]
-    (core/cond
+    (cond
       (and (>= code 48) (<= code 57))
       (- code 48)
       (and (>= code 65) (<= code 70))
@@ -229,7 +227,7 @@
 
 ;: Encode a value from 0 through 15 as a one-character lowercase hex string.
 (define (json-hex-digit [value : i64]) : String
-  (core/cond
+  (cond
     (= value 0)
     "0"
     (= value 1)
@@ -264,7 +262,7 @@
 
 ;: Return the JSON escape spelling for a control scalar code.
 (define (json-control-escape [code : i64]) : String
-  (core/cond
+  (cond
     (= code 8)
     "\\b"
     (= code 9)
@@ -395,7 +393,7 @@
 ;: Only tab, newline, carriage return, and printable ASCII are supported today.
 ;: Successful decoded strings allocate in the active arena.
 (define (json-codepoint-string [code : i64]) : JsonCodepointStringResult
-  (core/cond
+  (cond
     (= code 9)
     (OkJsonCodepointString "\t")
     (= code 10)
@@ -444,7 +442,7 @@
     (ErrJsonParseEscape "json: unterminated JSON escape")
     (let
       [code : i64 (json-char-code-at text pos)]
-      (core/cond
+      (cond
         (= code 34)
         (OkJsonParseEscape "\"" (+ pos 1))
         (= code 92)
@@ -484,7 +482,7 @@
               (set! message "json: unterminated string"))
             (let
               [code : i64 (json-char-code-at text i)]
-              (core/cond
+              (cond
                 (= code 34)
                 (begin
                   (set!
@@ -725,7 +723,7 @@
       (ErrJsonParseValue "json: expected JSON value")
       (let
         [code : i64 (json-char-code-at text i)]
-        (core/cond
+        (cond
           (= code 110)
           (json-parse-keyword text i "null" JsonNull)
           (= code 116)

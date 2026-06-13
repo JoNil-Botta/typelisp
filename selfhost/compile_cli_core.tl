@@ -16,8 +16,6 @@
 ;; as the command name. The retained bootstrap `compile.tl` driver and the
 ;; unified `cli.tl` dispatcher both call it, so the single binary drives the
 ;; compiler (#1638).
-(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (import "../stdlib/io.tl")
 
 (import "compiler_check_core.tl")
@@ -168,7 +166,7 @@
   (ErrCompileCliBackendMode String))
 
 (define (compile-cli-backend-mode [value : String]) : ResultCompileCliBackendMode
-  (core/cond
+  (cond
     (string-eq value "scalar")
     (OkCompileCliBackendMode (BackendModeScalar))
     (string-eq value "avx2")
@@ -215,7 +213,7 @@
           opt-level)))
     (let
       [current : String (arg idx)]
-      (core/cond
+      (cond
         (string-eq current "-o")
         (if (>= (+ idx 1) count)
           (ErrCompileCliConfig "compile: -o requires a value")
@@ -404,7 +402,7 @@
         opt-level))
     (let
       [current : String (arg idx)]
-      (core/cond
+      (cond
         (string-eq current "-o")
         (ErrCompileCliBatchConfig
           "compile: --batch reads output paths from the batch file")
@@ -611,7 +609,7 @@
       (compile-cli-message-with-usage "typelisp: expected command"))
     (let
       [command : String (arg 1)]
-      (core/cond
+      (cond
         (or
           (string-eq command "help")
           (string-eq command "--help")
@@ -668,7 +666,7 @@
         (compiler-driver-reset-file-state!)
         (let
           [cfgs : SymI64Env (compile-cli-cfg-names-to-env cfg-names)]
-          (core/cond
+          (cond
             emit-ir
             (compiler-driver-write-result
               (compiler-driver-emit-ir-summary-file-with-target-roots-level-mode-and-cfg

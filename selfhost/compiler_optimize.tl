@@ -19,8 +19,6 @@
 ;;   control-flow edge.
 ;;
 ;; Out of scope: aggregate/String/array IR optimization.
-(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (import "../stdlib/io.tl")
 
 (import "../stdlib/arena.tl")
@@ -817,7 +815,7 @@
           (let
             [operand-ty : AstType
               (opt-binop-operand-type op lhs-ty rhs-ty result-ty)]
-            (core/cond
+            (cond
               (opt-bool-type? operand-ty)
               (opt-fold-bool op lhs-value rhs-value)
               (opt-int-or-char-type? operand-ty)
@@ -907,7 +905,7 @@
         (IrSomeValue lhs)
         (IrNoValue))]
     [(IrBinMul)
-      (core/cond
+      (cond
         (or (opt-i64-zero? resolved-lhs) (opt-i64-zero? resolved-rhs))
         (IrSomeValue (IrValueI64 0))
         (opt-i64-one? resolved-rhs)
@@ -925,7 +923,7 @@
   [resolved-rhs : CompilerIrValue]) : CompilerIrMaybeValue
   (match op
     [(IrBinAnd)
-      (core/cond
+      (cond
         (or (opt-bool-false? resolved-lhs) (opt-bool-false? resolved-rhs))
         (IrSomeValue (IrValueBool false))
         (opt-bool-true? resolved-rhs)
@@ -934,7 +932,7 @@
         (IrSomeValue rhs)
         (IrNoValue))]
     [(IrBinOr)
-      (core/cond
+      (cond
         (or (opt-bool-true? resolved-lhs) (opt-bool-true? resolved-rhs))
         (IrSomeValue (IrValueBool true))
         (opt-bool-false? resolved-rhs)
@@ -6753,7 +6751,7 @@
   [context : OptCfgContext]) : ResultCompilerOptimizeVerify
   (match func
     [(IrFunction _ params _ _ blocks)
-      (core/cond
+      (cond
         (not (opt-cfg-block-labels-unique? blocks))
         (ErrCompilerOptimizeVerify "optimizer verify: duplicate block label")
         (not (opt-cfg-successor-targets-known? blocks))
@@ -6774,7 +6772,7 @@
 (define (opt-verify-function [func : CompilerIrFunction]) : ResultCompilerOptimizeVerify
   (match func
     [(IrFunction _ params _ _ blocks)
-      (core/cond
+      (cond
         (not (opt-cfg-block-labels-unique? blocks))
         (ErrCompilerOptimizeVerify "optimizer verify: duplicate block label")
         (not (opt-cfg-successor-targets-known? blocks))
@@ -8056,7 +8054,7 @@
 (define (opt-ssa-construct-function [func : CompilerIrFunction]) : CompilerIrFunction
   (match func
     [(IrFunction name params ret-ty frame blocks)
-      (core/cond
+      (cond
         (opt-verify-single-defs? params blocks)
         func
         ;; Existing phi nodes have edge-local inputs that must be renamed
@@ -13949,7 +13947,7 @@
 ;; between 0 and the cheap level) was collapsed: old level 2 became level 1 and
 ;; old level 3 became level 2.
 (define (optimize-function-with-level [func : CompilerIrFunction] [level : i64]) : CompilerIrFunction
-  (core/cond
+  (cond
     (= level 0)
     func
     (= level 1)
@@ -17525,7 +17523,7 @@
     [_ false]))
 
 (define (compiler-optimize-aggregate-candidate-self-test) : i64
-  (core/cond
+  (cond
     (not (opt-aggregate-positive-classified?))
     1
     (not (opt-aggregate-no-candidates? (opt-aggregate-returned-instrs)))
@@ -17644,7 +17642,7 @@
       (optimize-program-with-level
         (opt-spans-program (opt-aggregate-positive-instrs))
         2)]
-    (core/cond
+    (cond
       (not (= (opt-count-tl-alloc-calls positive) 0))
       1
       (not (= (opt-count-ir-alloc-instrs positive) 1))
@@ -17876,7 +17874,7 @@
       (opt-aggregate-sroa-test-instrs (opt-aggregate-array-typed-load-instrs))]
     [branched : CompilerIrBlockList
       (opt-aggregate-sroa-test-blocks (opt-aggregate-branch-load-blocks))]
-    (core/cond
+    (cond
       (not (= (opt-count-load-dst-instrs positive 5) 0))
       1
       (not (= (opt-mov-dst-i64-value positive 5 -1) 10))
@@ -18135,7 +18133,7 @@
       (opt-copy-instrs (OptCopyNil) (opt-mask-copy-instrs))]
     [mask-reduce-copy : CompilerIrInstrList
       (opt-copy-instrs (OptCopyNil) (opt-mask-reduce-copy-instrs))]
-    (core/cond
+    (cond
       (not (opt-instr-list-eq folded instrs))
       1
       (not (= (compiler-ir-instr-list-count dce) 8))
@@ -18474,7 +18472,7 @@
       (opt-strength-instrs (OptConstNil) (opt-strength-self-test-instrs))]
     [neg : CompilerIrInstrList
       (opt-strength-instrs (OptConstNil) (opt-strength-negative-instrs))]
-    (core/cond
+    (cond
       (not (= (opt-count-arith-instrs pos) 0))
       1
       (not (= (opt-sum-mov-var-src pos) 49))
@@ -18527,7 +18525,7 @@
       (opt-instr-dead?
         (i64-i64-map-with-capacity 4)
         (IrInstrWord 3 (IrValueVar 2) 0 (AstTyI64)))]
-    (core/cond
+    (cond
       (not (opt-used-contains used 1))
       0
       (opt-used-contains used 0)
@@ -18960,7 +18958,7 @@
       (opt-copy-instrs (OptCopyNil) (opt-copy-f64-instrs))]
     [phi : CompilerIrInstrList
       (opt-copy-instrs (OptCopyNil) (opt-copy-phi-instrs))]
-    (core/cond
+    (cond
       (not (= (opt-copy-binop-lhs-var pos 2) 0))
       1
       (not (= (opt-copy-binop-lhs-var src-redef 2) 1))
@@ -19122,7 +19120,7 @@
         (opt-bounds-dce-instrs))]
     [cross : CompilerIrBlockList
       (optimize-block-list (opt-bounds-cross-blocks))]
-    (core/cond
+    (cond
       (not (= (opt-count-bounds-instrs duplicate) 1))
       1
       (not (= (opt-count-bounds-instrs different) 2))
@@ -19246,7 +19244,7 @@
       (opt-program-first-instrs level1-fixed)]
     [level2-fixed-instrs : CompilerIrInstrList
       (opt-program-first-instrs level2-fixed)]
-    (core/cond
+    (cond
       (not (opt-program-eq program level0))
       false
       (not (= (opt-count-arith-instrs level0-instrs) 1))
@@ -19429,7 +19427,7 @@
     [functions : CompilerIrFunctionList (opt-callgraph-acyclic-functions)]
     [index : OptFunctionIndex (opt-function-index-build functions)]
     [graph : OptCallGraph (opt-callgraph-build index)]
-    (core/cond
+    (cond
       (not (= (struct-get graph count) 5))
       false
       (not (= (opt-callgraph-test-edge-count index graph "main") 2))
@@ -19461,7 +19459,7 @@
     [functions : CompilerIrFunctionList (opt-callgraph-recursive-functions)]
     [index : OptFunctionIndex (opt-function-index-build functions)]
     [graph : OptCallGraph (opt-callgraph-build index)]
-    (core/cond
+    (cond
       (not (= (struct-get graph count) 3))
       false
       (not (= (opt-callgraph-test-edge-count index graph "rec_even") 1))
@@ -19534,7 +19532,7 @@
     [leaf-slot : i64 (opt-callgraph-test-slot index "leaf")]
     [self-scc : i64 (opt-scc-result-component result self-slot)]
     [leaf-scc : i64 (opt-scc-result-component result leaf-slot)]
-    (core/cond
+    (cond
       (not (opt-callgraph-has-edge? graph self-slot self-slot))
       false
       (< self-scc 0)
@@ -19561,7 +19559,7 @@
     [even-scc : i64 (opt-scc-result-component result even-slot)]
     [odd-scc : i64 (opt-scc-result-component result odd-slot)]
     [lonely-scc : i64 (opt-scc-result-component result lonely-slot)]
-    (core/cond
+    (cond
       (< even-scc 0)
       false
       (not (= even-scc odd-scc))
@@ -19593,7 +19591,7 @@
       (opt-scc-result-component
         result
         (opt-callgraph-test-slot index "address_taken"))]
-    (core/cond
+    (cond
       (not (= (array-length order) 5))
       false
       (not (= (array-ref order 0) b-scc))
@@ -19617,7 +19615,7 @@
       true)))
 
 (define (compiler-optimize-scc-self-test) : i64
-  (core/cond
+  (cond
     (not (compiler-optimize-scc-self-recursive-ok?))
     1
     (not (compiler-optimize-scc-mutual-recursive-ok?))
@@ -20194,7 +20192,7 @@
       (opt-inline-program-functions (opt-inline-multi-call-functions) 2)]
     [instrs : CompilerIrInstrList (opt-inline-function-instrs optimized "main")]
     [frame : i64 (opt-inline-function-frame optimized "main")]
-    (core/cond
+    (cond
       (not (= frame 8))
       false
       (not (= (compiler-ir-instr-list-count instrs) 7))
@@ -20381,7 +20379,7 @@
       [(OptSomeFunction main)
         (let
           [instrs : CompilerIrInstrList (opt-function-first-instrs main)]
-          (core/cond
+          (cond
             (not (= (opt-function-frame main) 4))
             1
             (not (= (compiler-ir-instr-list-count instrs) 5))
@@ -20425,7 +20423,7 @@
                 (let
                   [indirect-instrs : CompilerIrInstrList
                     (opt-function-first-instrs indirect-main)]
-                  (core/cond
+                  (cond
                     (not (= (opt-function-frame indirect-main) 4))
                     11
                     (not (= (compiler-ir-instr-list-count indirect-instrs) 5))
@@ -20716,7 +20714,7 @@
     [once-blocks : CompilerIrBlockList (opt-function-blocks once)]
     [rewritten-instrs : CompilerIrInstrList
       (opt-function-first-instrs rewritten)]
-    (core/cond
+    (cond
       (not (= (opt-function-frame rewritten) 4))
       1
       (not (opt-instr-list-eq rewritten-instrs (opt-tailrec-expected-instrs)))
@@ -21617,7 +21615,7 @@
             (opt-gvn-scalar-params)
             (AstTyI64)
             (opt-gvn-global-gep-call-blocks))))]
-    (core/cond
+    (cond
       (not (= (opt-count-arith-blocks dominated) 1))
       1
       (not (= (opt-blocks-mov-src-var dominated 4 (- 0 1)) 3))
@@ -21898,7 +21896,7 @@
       (opt-sccp-blocks (IrParamNil) (opt-sccp-trap-blocks))]
     [group : CompilerIrBlockList
       (opt-sccp-blocks (IrParamNil) (opt-sccp-group-word-branch-blocks))]
-    (core/cond
+    (cond
       (not (= (opt-count-arith-blocks cross) 0))
       1
       (not (= (opt-blocks-mov-dst-i64-value cross 1 (- 0 999)) 42))
@@ -23010,7 +23008,7 @@
     [load-varying-func : CompilerIrFunction
       (opt-licm-optimized-function (opt-licm-load-varying-address-blocks))]
     [load-varying : CompilerIrBlockList (opt-function-blocks load-varying-func)]
-    (core/cond
+    (cond
       (not (opt-verify-ok? (opt-verify-function arith-func)))
       1
       (not (= (opt-count-arith-label-blocks arith "entry") 2))
@@ -23408,7 +23406,7 @@
     [no-preheader-func : CompilerIrFunction
       (opt-induction-optimized-function (opt-induction-no-preheader-blocks))]
     [no-preheader : CompilerIrBlockList (opt-function-blocks no-preheader-func)]
-    (core/cond
+    (cond
       (not (opt-verify-ok? (opt-verify-function func)))
       1
       (not (= (opt-count-phi-blocks out) 2))
@@ -23673,7 +23671,7 @@
       (opt-induction-function preheadered-induction)]
     [induction-after-preheader-blocks : CompilerIrBlockList
       (opt-function-blocks induction-after-preheader)]
-    (core/cond
+    (cond
       (not (= (opt-natural-loop-list-count single-loops) 1))
       1
       (not (= (opt-natural-loop-maybe-body-count single) 2))
@@ -23845,7 +23843,7 @@
     [multi-backedge : CompilerIrBlockList
       (opt-natural-loop-multi-backedge-blocks)]
     [with-phi : CompilerIrBlockList (opt-ssa-loop-blocks)]
-    (core/cond
+    (cond
       (not (= (compiler-ir-block-list-count rotated) 3))
       1
       (opt-block-list-has-label? rotated "loop")
@@ -23928,7 +23926,7 @@
     [entry-backedge : CompilerIrFunction (opt-ssa-entry-backedge-function)]
     [entry-backedge-out : CompilerIrFunction
       (opt-ssa-construct-function (opt-ssa-entry-backedge-function))]
-    (core/cond
+    (cond
       (not (= (opt-label-count (opt-cfg-predecessors diamond-blocks "join")) 2))
       1
       (not (= (opt-cfg-index-block-count diamond-index) 4))
@@ -24109,7 +24107,7 @@
         3)]
     [again-program : CompilerIrProgram
       (optimize-program-with-level optimized-program 3)]
-    (core/cond
+    (cond
       (not (= (compiler-ir-instr-list-count once-instrs) 4))
       1
       (not (= (opt-count-arith-instrs once-instrs) 3))
@@ -24172,7 +24170,7 @@
     [(OptAliasDerived root) root]))
 
 (define (opt-alias-kind-decode [value : i64]) : OptAliasKind
-  (core/cond
+  (cond
     (>= value 0)
     (OptAliasDerived value)
     (= value -1)
@@ -25057,7 +25055,7 @@
           (IrInstrCall 9 "tl_region_mark" (IrCallArgsNil) (AstTyI64))))]
     [return-blocked : OptScratchScopeReport
       (opt-scratch-scope-report-instrs (opt-scratch-returned-instrs))]
-    (core/cond
+    (cond
       (not (opt-scratch-report-candidate? positive 1 32))
       1
       (not loop-positive)
@@ -25651,7 +25649,7 @@
       (opt-alias-intersect (opt-alias-join-facts-a) (opt-alias-join-facts-b))]
     [invalidated : OptAliasFacts
       (opt-alias-mark-invalidated (opt-alias-mark-unique (opt-alias-empty) 0) 0)]
-    (core/cond
+    (cond
       ;; unique root + derived pointer + survival across a pure scalar instr
       (not (opt-alias-contains? unique 0 (OptAliasUnique)))
       1
@@ -25842,7 +25840,7 @@
     [pipeline-instrs : CompilerIrInstrList
       (match pipeline
         [(IrBlock _ instrs) (compiler-ir-instr-seq-to-list instrs)])]
-    (core/cond
+    (cond
       (not (= (opt-count-load-instrs positive) 1))
       1
       (not (= (opt-count-mov-dst-instrs positive 3) 1))

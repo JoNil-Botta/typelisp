@@ -1,5 +1,3 @@
-(import "stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (defstruct Wide
   (:repr c)
   (a u64)
@@ -35,7 +33,7 @@
         (cast 7 : u32)
         (cast 8 : u32)
         (cast 2 : u64))]
-    (core/cond
+    (cond
       (not (= (wide-score direct) 120))
       1
       (not (= (wide-score via-ptr) 52))

@@ -1,6 +1,4 @@
 ;; stdlib_json.tl - Integration witness for canonical stdlib JSON support.
-(import "stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (import "stdlib/json.tl")
 
 (define (json-test-name [doc : Json]) : bool
@@ -55,10 +53,10 @@
     (match (json-parse (& text))
       [(OkJson doc)
         (begin
-          (core/unless (json-test-name doc) (return 1))
-          (core/unless (json-test-items doc) (return 2))
-          (core/unless (json-test-escaped doc) (return 3))
-          (core/unless (json-test-stringify doc) (return 4))
+          (unless (json-test-name doc) (return 1))
+          (unless (json-test-items doc) (return 2))
+          (unless (json-test-escaped doc) (return 3))
+          (unless (json-test-stringify doc) (return 4))
           42)]
       [(ErrJson _) 7])))
 
@@ -66,7 +64,7 @@
   (let
     [document-code : i64 (json-test-document-code)]
     (begin
-      (core/unless (= document-code 42) (return document-code))
-      (core/unless (json-test-string-escapes) (return 12))
-      (core/unless (json-test-invalid) (return 13))
+      (unless (= document-code 42) (return document-code))
+      (unless (json-test-string-escapes) (return 12))
+      (unless (json-test-invalid) (return 13))
       42)))

@@ -4,8 +4,6 @@
 ;; every helper behaves as expected. Scratch files live under the gitignored
 ;; target/ directory (the program runs with the repo root as its working
 ;; directory).
-(import "stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (import "stdlib/io.tl")
 
 (define io-smoke-path : String
@@ -65,34 +63,34 @@
 (define (main) : i64
   (begin
     (write-file io-smoke-path "alpha")
-    (core/unless
+    (unless
       (= (read-result-score (test-try-read-file io-smoke-path)) 1)
       (return 80))
-    (core/unless
+    (unless
       (= (read-result-score (test-try-read-file io-absent-path)) 2)
       (return 70))
-    (core/unless
+    (unless
       (= (write-result-score (test-try-write-file "" "bad")) 4)
       (return 60))
-    (core/unless
+    (unless
       (=
         (write-result-score (test-try-write-file io-missing-parent-path "bad"))
         5)
       (return 57))
-    (core/unless
+    (unless
       (= (bool-result-score (test-try-file-exists? io-smoke-path)) 6)
       (return 56))
-    (core/unless
+    (unless
       (= (bool-result-score (test-try-file-exists? io-absent-path)) 7)
       (return 55))
-    (core/unless
+    (unless
       (string-eq (test-read-file-or io-smoke-path "MISS") "alpha")
       (return 50))
-    (core/unless
+    (unless
       (string-eq (test-read-file-or io-absent-path "MISS") "MISS")
       (return 40))
     (test-append-file io-smoke-path "-beta")
-    (core/unless (string-eq (read-file io-smoke-path) "alpha-beta") (return 30))
-    (core/unless (test-file-nonempty? io-smoke-path) (return 20))
-    (core/when (test-file-nonempty? io-absent-path) (return 10))
+    (unless (string-eq (read-file io-smoke-path) "alpha-beta") (return 30))
+    (unless (test-file-nonempty? io-smoke-path) (return 20))
+    (when (test-file-nonempty? io-absent-path) (return 10))
     42))

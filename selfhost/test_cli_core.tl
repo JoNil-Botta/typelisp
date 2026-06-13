@@ -1672,6 +1672,53 @@
     (compiler-diagnostic-with-path diag source)
     diag))
 
+(define (tltest-executable-spawn-detail [bin-path : String]) : String
+  (match (source-tool-try-file-exists? bin-path)
+    [(OkIoBool exists)
+      (if exists
+        "test executable exists; child-process spawn failed"
+        "test executable is missing after link")]
+    [(ErrIoBool error)
+      (string-append
+        "could not inspect test executable: "
+        (io-error-message error))]))
+
+(define (tltest-run-executable-error-message
+  [bin-path : String]
+  [temp-dir : String]
+  [error : ProcessError]) : String
+  (string-append
+    (string-append
+      (string-append
+        (string-append "Error: failed to run test executable '" bin-path)
+        (string-append "': " (process-error-message error)))
+      (string-append " (" (tltest-executable-spawn-detail bin-path)))
+    (string-append
+      (string-append "); preserving test artifacts in '" temp-dir)
+      "'\n")))
+
+(define (tltest-run-executable-error-message-self-test?) : bool
+  (let
+    [bin-path : String "target/typelisp-missing-test-executable-2619.exe"]
+    [temp-dir : String "target/typelisp-test-2619"]
+    [message : String
+      (tltest-run-executable-error-message
+        bin-path
+        temp-dir
+        (ProcessSpawnFailed "process: spawn failed"))]
+    [missing-detail : String "test executable is missing after link"]
+    [preserve-detail : String
+      "preserving test artifacts in 'target/typelisp-test-2619'"]
+    (and
+      (string-contains (& message) (& missing-detail))
+      (string-contains (& message) (& preserve-detail)))))
+
+(test
+  test-cli-spawn-error-preserves-artifacts
+  (unless
+    (tltest-run-executable-error-message-self-test?)
+    (panic "test CLI spawn error diagnostic did not preserve artifacts")))
+
 (define (tltest-run-harness-in-temp
   [source : String]
   [entry-path : String]
@@ -1746,17 +1793,10 @@
                   [(ErrProcessOutput error)
                     (begin
                       (print-error
-                        (string-append
-                          (string-append
-                            "Error: failed to run test executable '"
-                            bin-path)
-                          (string-append "': " (process-error-message error))))
-                      (source-tool-clean-temp
-                        temp-dir
-                        asm-path
-                        obj-path
-                        bin-path
-                        true)
+                        (tltest-run-executable-error-message
+                          bin-path
+                          temp-dir
+                          error))
                       1)])])]
           [(ErrCompilerDriver diag)
             (begin

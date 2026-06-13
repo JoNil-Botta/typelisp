@@ -5367,6 +5367,48 @@
           (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-register-f64-aggregate-source) : String
+  "(defstruct PairF64 (x f64) (y f64))
+(defstruct MixIF (i i64) (f f64))
+(define global-pair : PairF64 (PairF64 1.0 2.0))
+(define (make-pair [x : f64] [y : f64]) : PairF64
+  (PairF64 x y))
+(define (sum-pair [p : PairF64]) : f64
+  (+ (struct-get p x) (struct-get p y)))
+(define (mixed [m : MixIF]) : f64
+  (struct-get m f))
+(define (main) : i64
+  (begin
+    (set! global-pair (make-pair 3.0 4.0))
+    (if (= (+ (sum-pair global-pair) (mixed (MixIF 5 6.0))) 13.0)
+      42
+      0)))")
+
+(define (compiler-backend-register-f64-aggregate-target-ok?
+  [target : CompilerBackendTarget]) : bool
+  (match (compiler-backend-emit-source-for-target
+    (compiler-backend-register-f64-aggregate-source)
+    target)
+    [(OkCompilerBackend asm)
+      (and
+        (backend-and8
+          (compiler-backend-string-contains? asm "    movsd ")
+          (compiler-backend-string-contains? asm "%xmm0")
+          (compiler-backend-string-contains? asm "%xmm1")
+          (compiler-backend-string-contains? asm "    call ")
+          (not (compiler-backend-string-contains? asm "    movsd %rax"))
+          (not (compiler-backend-string-contains? asm "    movsd %rdx"))
+          (not (compiler-backend-string-contains? asm ", %rax\n    movsd"))
+          (not (compiler-backend-string-contains? asm ", %rdx\n    movsd")))
+        (not
+          (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-register-f64-aggregate-ok?) : bool
+  (and
+    (compiler-backend-register-f64-aggregate-target-ok? (BackendTargetLinux))
+    (compiler-backend-register-f64-aggregate-target-ok? (BackendTargetWindows))))
+
 ;; #750: a SysV call with seven integer args no longer rejects as "too many
 ;; call args". The 7th arg spills: 16-byte call space is reserved, the spilled
 ;; value is staged through %r11 and stored at 0(%rsp), and `add8` reads its
@@ -6280,7 +6322,9 @@
       (and
         (compiler-backend-narrow-scalar-instr-ok?)
         (compiler-backend-global-compare-width-ok?))
-      (compiler-backend-f64-abi-ok?)
+      (and
+        (compiler-backend-f64-abi-ok?)
+        (compiler-backend-register-f64-aggregate-ok?))
       (compiler-backend-win64-f64-abi-ok?)
       (compiler-backend-aggregate-storage-shape-ok?)
       (compiler-backend-shift-guard-ok?)

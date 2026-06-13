@@ -4740,6 +4740,110 @@
     [(AstTyEnumArgs name _) (tc-inline-aggregate-regwords-cached ctx name)]
     [_ 0]))
 
+(define (lower-f64-register-word-field?
+  [field-ty : AstType]
+  [offset : i64]
+  [word-index : i64]) : bool
+  (match (tc-type-strip-region field-ty)
+    [(AstTyF64) (and (= (/ offset 8) word-index) (= (% offset 8) 0))]
+    [_ false]))
+
+(define (lower-register-word-type-merge
+  [current : AstType]
+  [field-ty : AstType]
+  [offset : i64]
+  [word-index : i64]) : AstType
+  (if (lower-f64-register-word-field? field-ty offset word-index)
+    (AstTyF64)
+    current))
+
+(define (lower-register-struct-word-type-fields
+  [fields : TcInlineFieldLayoutList]
+  [word-index : i64]
+  [current : AstType]) : AstType
+  (match fields
+    [(TcInlineFieldLayoutNil) current]
+    [(TcInlineFieldLayoutCons field rest)
+      (lower-register-struct-word-type-fields
+        (box-get rest)
+        word-index
+        (lower-register-word-type-merge
+          current
+          (tc-inline-field-layout-type field)
+          (tc-inline-field-layout-offset field)
+          word-index))]))
+
+(define (lower-register-payload-word-type-fields
+  [payloads : TcInlinePayloadLayoutList]
+  [word-index : i64]
+  [current : AstType]) : AstType
+  (match payloads
+    [(TcInlinePayloadLayoutNil) current]
+    [(TcInlinePayloadLayoutCons payload rest)
+      (lower-register-payload-word-type-fields
+        (box-get rest)
+        word-index
+        (lower-register-word-type-merge
+          current
+          (tc-inline-payload-layout-type payload)
+          (tc-inline-payload-layout-offset payload)
+          word-index))]))
+
+(define (lower-register-enum-word-type-variants
+  [variants : TcInlineVariantLayoutList]
+  [word-index : i64]
+  [current : AstType]) : AstType
+  (match variants
+    [(TcInlineVariantLayoutNil) current]
+    [(TcInlineVariantLayoutCons variant rest)
+      (match variant
+        [(TcInlineVariantLayout _ _ _ payloads)
+          (lower-register-enum-word-type-variants
+            (box-get rest)
+            word-index
+            (lower-register-payload-word-type-fields
+              payloads
+              word-index
+              current))])]))
+
+;; Register-resident aggregate word type for lowering/backend movement. INTEGER
+;; words are represented as i64 bit words; #2601 admits exact f64 eightbytes as
+;; SSE words represented by f64 values. Packed f32 eightbytes remain memory-backed.
+(define (lower-register-word-type
+  [ctx : TcContext]
+  [ty : AstType]
+  [word-index : i64]) : AstType
+  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(AstTyStruct name)
+      (match (tc-inline-aggregate-layout-for ctx (intern-str name))
+        [(OkTcInlineAggregateLayout layout)
+          (match layout
+            [(TcInlineStructLayout _ _ fields)
+              (lower-register-struct-word-type-fields
+                fields
+                word-index
+                (AstTyI64))]
+            [(TcInlineEnumLayout _ _ _) (AstTyI64)])]
+        [(ErrTcInlineAggregateLayout _) (AstTyI64)])]
+    [(AstTyStructArgs name _)
+      (lower-register-word-type ctx (AstTyStruct name) word-index)]
+    [(AstTyEnum name)
+      (if (= word-index 0)
+        (AstTyI64)
+        (match (tc-inline-aggregate-layout-for ctx (intern-str name))
+          [(OkTcInlineAggregateLayout layout)
+            (match layout
+              [(TcInlineEnumLayout _ _ variants)
+                (lower-register-enum-word-type-variants
+                  variants
+                  word-index
+                  (AstTyI64))]
+              [(TcInlineStructLayout _ _ _) (AstTyI64)])]
+          [(ErrTcInlineAggregateLayout _) (AstTyI64)]))]
+    [(AstTyEnumArgs name _)
+      (lower-register-word-type ctx (AstTyEnum name) word-index)]
+    [_ (AstTyI64)]))
+
 (define (lower-type-signed? [ty : AstType]) : bool
   (match (tc-type-strip-region ty)
     [(AstTyI64) true]
@@ -4818,35 +4922,40 @@
   [field-ty : AstType]) : LowerExpr
   (let
     [size : i64 (lower-type-size ctx field-ty)]
-    [masked : LowerExpr
-      (if (>= size 8)
-        (LowerExpr state value (AstTyU64))
-        (lower-emit-binop
-          state
-          IrBinBitAnd
-          value
-          (IrValueI64 (lower-low-bits-mask size))
-          (AstTyU64)))]
-    (match masked
-      [(LowerExpr mask-state mask-value _)
-        (let
-          [shifted : LowerExpr
-            (if (> byte-offset 0)
-              (lower-emit-binop
-                mask-state
-                IrBinShl
-                mask-value
-                (IrValueI64 (* byte-offset 8))
-                (AstTyI64))
-              (LowerExpr mask-state mask-value (AstTyU64)))]
-          (match shifted
-            [(LowerExpr shift-state shift-value _)
-              (lower-emit-binop
-                shift-state
-                IrBinBitOr
-                acc
-                shift-value
-                (AstTyU64))]))])))
+    (if (and
+      (>= size 8)
+      (lower-f64-register-word-field? field-ty byte-offset 0))
+      (LowerExpr state value field-ty)
+      (let
+        [masked : LowerExpr
+          (if (>= size 8)
+            (LowerExpr state value (AstTyU64))
+            (lower-emit-binop
+              state
+              IrBinBitAnd
+              value
+              (IrValueI64 (lower-low-bits-mask size))
+              (AstTyU64)))]
+        (match masked
+          [(LowerExpr mask-state mask-value _)
+            (let
+              [shifted : LowerExpr
+                (if (> byte-offset 0)
+                  (lower-emit-binop
+                    mask-state
+                    IrBinShl
+                    mask-value
+                    (IrValueI64 (* byte-offset 8))
+                    (AstTyI64))
+                  (LowerExpr mask-state mask-value (AstTyU64)))]
+              (match shifted
+                [(LowerExpr shift-state shift-value _)
+                  (lower-emit-binop
+                    shift-state
+                    IrBinBitOr
+                    acc
+                    shift-value
+                    (AstTyU64))]))])))))
 
 ;; Build the packed word for a register-resident struct by folding each field
 ;; (masked + shifted) into a zero accumulator, in declaration order.
@@ -4934,19 +5043,37 @@
     [_ false]))
 
 (define (lower-group-equality
+  [ctx : TcContext]
   [state : LowerState]
   [op : AstBinOp]
   [left : CompilerIrValue]
   [right : CompilerIrValue]
+  [group-ty : AstType]
   [expr-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
-  (match (lower-emit-word state left 0 (AstTyI64))
+  (match (lower-emit-word
+    state
+    left
+    0
+    (lower-register-word-type ctx group-ty 0))
     [(LowerExpr ls0 l0 _)
-      (match (lower-emit-word ls0 left 1 (AstTyI64))
+      (match (lower-emit-word
+        ls0
+        left
+        1
+        (lower-register-word-type ctx group-ty 1))
         [(LowerExpr ls1 l1 _)
-          (match (lower-emit-word ls1 right 0 (AstTyI64))
+          (match (lower-emit-word
+            ls1
+            right
+            0
+            (lower-register-word-type ctx group-ty 0))
             [(LowerExpr rs0 r0 _)
-              (match (lower-emit-word rs0 right 1 (AstTyI64))
+              (match (lower-emit-word
+                rs0
+                right
+                1
+                (lower-register-word-type ctx group-ty 1))
                 [(LowerExpr rs1 r1 _)
                   (match (lower-state-alloc-var rs1)
                     [(LowerAlloc alloc0 word0-cmp)
@@ -4993,9 +5120,14 @@
   [ctx : TcContext]
   [state : LowerState]
   [base : CompilerIrValue]
+  [base-ty : AstType]
   [offset : i64]
   [field-ty : AstType]) : LowerExpr
-  (match (lower-emit-word state base (/ offset 8) (AstTyI64))
+  (match (lower-emit-word
+    state
+    base
+    (/ offset 8)
+    (lower-register-word-type ctx base-ty (/ offset 8)))
     [(LowerExpr w-state w-value _)
       (lower-extract-word-field
         ctx
@@ -5008,29 +5140,36 @@
 ;; (word0 at [ptr], word1 at [ptr+8]) -- used when a group is embedded in a
 ;; pointer-addressed container (array element, dynarray, box, ...).
 (define (lower-store-group-at-ptr
+  [ctx : TcContext]
   [state : LowerState]
   [ptr : CompilerIrValue]
-  [value : CompilerIrValue]) : LowerState
-  (match (lower-emit-word state value 0 (AstTyI64))
+  [value : CompilerIrValue]
+  [ty : AstType]) : LowerState
+  (match (lower-emit-word state value 0 (lower-register-word-type ctx ty 0))
     [(LowerExpr s0 w0 _)
-      (match (lower-emit-word s0 value 1 (AstTyI64))
+      (match (lower-emit-word s0 value 1 (lower-register-word-type ctx ty 1))
         [(LowerExpr s1 w1 _)
           (match (lower-gep-byte
-            (lower-state-emit s1 (IrInstrStorePtr ptr w0 (AstTyI64)))
+            (lower-state-emit
+              s1
+              (IrInstrStorePtr ptr w0 (lower-register-word-type ctx ty 0)))
             ptr
             8)
             [(LowerExpr s2 ptr8 _)
-              (lower-state-emit s2 (IrInstrStorePtr ptr8 w1 (AstTyI64)))])])]))
+              (lower-state-emit
+                s2
+                (IrInstrStorePtr ptr8 w1 (lower-register-word-type ctx ty 1)))])])]))
 
 ;; #2386: load a 2-word register-group from memory at pointer `ptr` and reassemble
 ;; it with IrInstrPack (word0 from [ptr], word1 from [ptr+8]).
 (define (lower-load-group-from-ptr
+  [ctx : TcContext]
   [state : LowerState]
   [ptr : CompilerIrValue]
   [ty : AstType]) : LowerExpr
-  (match (lower-load-at-offset state ptr 0 (AstTyI64))
+  (match (lower-load-at-offset state ptr 0 (lower-register-word-type ctx ty 0))
     [(LowerExpr s0 w0 _)
-      (match (lower-load-at-offset s0 ptr 8 (AstTyI64))
+      (match (lower-load-at-offset s0 ptr 8 (lower-register-word-type ctx ty 1))
         [(LowerExpr s1 w1 _)
           (lower-emit-pack
             s1
@@ -5043,8 +5182,13 @@
   [ptr : CompilerIrValue]
   [ty : AstType]) : LowerExpr
   (if (lower-type-register-group? ctx ty)
-    (lower-load-group-from-ptr state ptr ty)
-    (lower-load-at-offset state ptr 0 ty)))
+    (lower-load-group-from-ptr ctx state ptr ty)
+    (match (lower-load-at-offset
+      state
+      ptr
+      0
+      (lower-register-word-type ctx ty 0))
+      [(LowerExpr load-state loaded _) (LowerExpr load-state loaded ty)])))
 
 ;; #2386: build the packed value for ONE machine word (`word-index`) of a
 ;; register-group struct: fold in only the fields that live in that word, each at
@@ -5186,7 +5330,17 @@
   [values : CompilerIrValueList]
   [fields : AstTypeList]
   [enum-ty : AstType]) : ResultLowerExpr
-  (match (lower-pack-enum-payload-word ctx state (IrValueI64 0) 0 values fields)
+  (match (lower-pack-enum-payload-word
+    ctx
+    state
+    (if (match (lower-register-word-type ctx enum-ty 1)
+      [(AstTyF64) true]
+      [_ false])
+      (IrValueF64 "0.0")
+      (IrValueI64 0))
+    0
+    values
+    fields)
     [(OkLowerExpr (LowerExpr s1 word1 _))
       (match (lower-emit-pack
         s1
@@ -5215,17 +5369,33 @@
     (not (lower-type-register-resident? ctx ty)))
     (lower-copy-bytes state base offset value 0 size)
     (if (lower-type-register-group? ctx ty)
-      (match (lower-emit-word state value 0 (AstTyI64))
+      (match (lower-emit-word state value 0 (lower-register-word-type ctx ty 0))
         [(LowerExpr s0 w0 _)
-          (match (lower-emit-word s0 value 1 (AstTyI64))
+          (match (lower-emit-word
+            s0
+            value
+            1
+            (lower-register-word-type ctx ty 1))
             [(LowerExpr s1 w1 _)
               (lower-store-at-offset
-                (lower-store-at-offset s1 base offset w0 (AstTyI64))
+                (lower-store-at-offset
+                  s1
+                  base
+                  offset
+                  w0
+                  (lower-register-word-type ctx ty 0))
                 base
                 (+ offset 8)
                 w1
-                (AstTyI64))])])
-      (lower-store-at-offset state base offset value ty))))
+                (lower-register-word-type ctx ty 1))])])
+      (lower-store-at-offset
+        state
+        base
+        offset
+        value
+        (if (lower-type-register-resident? ctx ty)
+          (lower-register-word-type ctx ty 0)
+          ty)))))
 
 (define (lower-load-inline-value-at-offset
   [ctx : TcContext]
@@ -5238,22 +5408,38 @@
   ;; load), not returned as a pointer into the containing slot. A 2-word
   ;; register-group loads BOTH words and reassembles them with IrInstrPack. Only a
   ;; genuine memory aggregate keeps the pointer-return shape.
-  (if (and
-    (lower-mode-inline-aggregates? mode)
-    (lower-type-inline-struct-or-enum? ctx ty)
-    (not (lower-type-register-resident? ctx ty)))
+  (core/cond
+    (and
+      (lower-mode-inline-aggregates? mode)
+      (lower-type-inline-struct-or-enum? ctx ty)
+      (not (lower-type-register-resident? ctx ty)))
     (match (lower-gep-byte state base offset)
       [(LowerExpr ptr-state ptr _) (LowerExpr ptr-state ptr ty)])
-    (if (lower-type-register-group? ctx ty)
-      (match (lower-load-at-offset state base offset (AstTyI64))
-        [(LowerExpr s0 w0 _)
-          (match (lower-load-at-offset s0 base (+ offset 8) (AstTyI64))
-            [(LowerExpr s1 w1 _)
-              (lower-emit-pack
-                s1
-                (IrValueCons w0 (box (IrValueCons w1 (box IrValueNil))))
-                ty)])])
-      (lower-load-at-offset state base offset ty))))
+    (lower-type-register-group? ctx ty)
+    (match (lower-load-at-offset
+      state
+      base
+      offset
+      (lower-register-word-type ctx ty 0))
+      [(LowerExpr s0 w0 _)
+        (match (lower-load-at-offset
+          s0
+          base
+          (+ offset 8)
+          (lower-register-word-type ctx ty 1))
+          [(LowerExpr s1 w1 _)
+            (lower-emit-pack
+              s1
+              (IrValueCons w0 (box (IrValueCons w1 (box IrValueNil))))
+              ty)])])
+    (lower-type-register-resident? ctx ty)
+    (match (lower-load-at-offset
+      state
+      base
+      offset
+      (lower-register-word-type ctx ty 0))
+      [(LowerExpr load-state loaded _) (LowerExpr load-state loaded ty)])
+    (lower-load-at-offset state base offset ty)))
 
 (define (lower-copy-bytes-compact
   [state : LowerState]
@@ -5303,14 +5489,15 @@
               ty))])]
     [(ErrLowerSize message) (ErrLowerExpr (lower-diagnostic message))]))
 
-(define (lower-copy-inline-aggregate-to-heap
+(define (lower-copy-inline-aggregate-to-heap-as
   [ctx : TcContext]
   [state : LowerState]
   [value : CompilerIrValue]
-  [ty : AstType]) : ResultLowerExpr
+  [ty : AstType]
+  [storage-ty : AstType]) : ResultLowerExpr
   (match (lower-inline-aggregate-copy-size ctx ty)
     [(OkLowerSize size)
-      (match (lower-reserve-heap-storage state size ty)
+      (match (lower-reserve-heap-storage state size storage-ty)
         [(LowerExpr copy-state copy-value _)
           (OkLowerExpr
             (LowerExpr
@@ -5328,8 +5515,15 @@
                   size)
                 (lower-copy-bytes-compact copy-state copy-value 0 value 0 size))
               copy-value
-              ty))])]
+              storage-ty))])]
     [(ErrLowerSize message) (ErrLowerExpr (lower-diagnostic message))]))
+
+(define (lower-copy-inline-aggregate-to-heap
+  [ctx : TcContext]
+  [state : LowerState]
+  [value : CompilerIrValue]
+  [ty : AstType]) : ResultLowerExpr
+  (lower-copy-inline-aggregate-to-heap-as ctx state value ty ty))
 
 (define (lower-inline-aggregate-abi-copy-needed?
   [ctx : TcContext]
@@ -6767,6 +6961,7 @@
                         ctx
                         state
                         base
+                        (AstTyEnum (intern enum-name))
                         offset
                         resolved)
                       (lower-load-inline-value-at-offset
@@ -6805,6 +7000,7 @@
                           ctx
                           state
                           base
+                          (AstTyEnum (intern enum-name))
                           offset
                           resolved)
                         (lower-load-at-offset state base offset resolved))
@@ -8263,7 +8459,12 @@
                       ;; #2386: a captured 2-word group stores both words.
                       (match (lower-gep-byte snap-state env-value offset)
                         [(LowerExpr gep-state ptr _)
-                          (lower-store-group-at-ptr gep-state ptr snap-value)])
+                          (lower-store-group-at-ptr
+                            ctx
+                            gep-state
+                            ptr
+                            snap-value
+                            capture-ty)])
                       (lower-store-at-offset
                         snap-state
                         env-value
@@ -8342,7 +8543,7 @@
             ;; #2386: a captured 2-word group loads both words and repacks.
             (match (lower-gep-byte state env-value offset)
               [(LowerExpr gep-state ptr _)
-                (lower-load-group-from-ptr gep-state ptr capture-ty)])
+                (lower-load-group-from-ptr ctx gep-state ptr capture-ty)])
             (lower-load-at-offset
               state
               env-value
@@ -11076,7 +11277,11 @@
           (match v
             [(IrValueGlobal name)
               (if (lower-type-register-group? ctx t)
-                (match (lower-load-group-from-ptr s (IrValueGlobalAddr name) t)
+                (match (lower-load-group-from-ptr
+                  ctx
+                  s
+                  (IrValueGlobalAddr name)
+                  t)
                   [(LowerExpr ls lv _) (OkLowerExpr (LowerExpr ls lv t))])
                 (OkLowerExpr lowered))]
             [_ (OkLowerExpr lowered)])])]
@@ -12120,10 +12325,12 @@
                                       (lower-binop-group-eq? op)
                                       (lower-type-register-group? ctx left-ty))
                                       (lower-group-equality
+                                        ctx
                                         right-state
                                         op
                                         left-value
                                         right-value
+                                        left-ty
                                         expr-ty
                                         origin)
                                       (match (lower-state-alloc-var right-state)
@@ -12848,7 +13055,10 @@
                 state
                 receiver-value
                 (/ offset 8)
-                (AstTyI64))
+                (lower-register-word-type
+                  ctx
+                  (AstTyStruct (intern struct-name))
+                  (/ offset 8)))
                 [(LowerExpr w-state w-value _)
                   (match (lower-extract-word-field
                     ctx
@@ -12874,32 +13084,46 @@
                 ;; later `match`/`=` would read the address as if it were the tag).
                 ;; A genuine memory aggregate field still returns its in-place
                 ;; pointer. This mirrors `lower-load-inline-value-at-offset`.
-                (if (and
-                  (not (lower-type-register-resident? ctx field-ty))
-                  (or
-                    (and
-                      (lower-struct-repr-c? ctx struct-name)
-                      (lower-repr-c-inline-field? ctx field-ty))
-                    (and
-                      (lower-mode-inline-aggregates?
-                        (lower-state-mode ptr-state))
-                      (lower-type-inline-struct-or-enum? ctx field-ty))))
+                (core/cond
+                  (and
+                    (not (lower-type-register-resident? ctx field-ty))
+                    (or
+                      (and
+                        (lower-struct-repr-c? ctx struct-name)
+                        (lower-repr-c-inline-field? ctx field-ty))
+                      (and
+                        (lower-mode-inline-aggregates?
+                          (lower-state-mode ptr-state))
+                        (lower-type-inline-struct-or-enum? ctx field-ty))))
                   (OkLowerExpr (LowerExpr ptr-state ptr result-ty))
-                  (if (lower-type-register-group? ctx field-ty)
-                    ;; #2386: a register-group field is two words in memory; load
-                    ;; both and reassemble it.
-                    (match (lower-load-group-from-ptr ptr-state ptr field-ty)
-                      [(LowerExpr g-state g-value _)
-                        (OkLowerExpr (LowerExpr g-state g-value result-ty))])
-                    (match (lower-state-alloc-var ptr-state)
-                      [(LowerAlloc allocated var-id)
-                        (OkLowerExpr
-                          (LowerExpr
-                            (lower-state-emit
-                              allocated
-                              (IrInstrLoad var-id ptr field-ty))
-                            (IrValueVar var-id)
-                            result-ty))])))]))])]
+                  (lower-type-register-group? ctx field-ty)
+                  ;; #2386: a register-group field is two words in memory; load
+                  ;; both and reassemble it.
+                  (match (lower-load-group-from-ptr ctx ptr-state ptr field-ty)
+                    [(LowerExpr g-state g-value _)
+                      (OkLowerExpr (LowerExpr g-state g-value result-ty))])
+                  (lower-type-register-resident? ctx field-ty)
+                  (match (lower-state-alloc-var ptr-state)
+                    [(LowerAlloc allocated var-id)
+                      (OkLowerExpr
+                        (LowerExpr
+                          (lower-state-emit
+                            allocated
+                            (IrInstrLoad
+                              var-id
+                              ptr
+                              (lower-register-word-type ctx field-ty 0)))
+                          (IrValueVar var-id)
+                          result-ty))])
+                  (match (lower-state-alloc-var ptr-state)
+                    [(LowerAlloc allocated var-id)
+                      (OkLowerExpr
+                        (LowerExpr
+                          (lower-state-emit
+                            allocated
+                            (IrInstrLoad var-id ptr field-ty))
+                          (IrValueVar var-id)
+                          result-ty))]))]))])]
     [(ErrLowerFieldInfo message) (ErrLowerExpr message)]))
 
 (define (lower-struct-get-through-reference
@@ -13040,7 +13264,12 @@
                 (if (lower-type-register-group? ctx inner-ty)
                   (OkLowerExpr
                     (LowerExpr
-                      (lower-store-group-at-ptr base-state base inner-value)
+                      (lower-store-group-at-ptr
+                        ctx
+                        base-state
+                        base
+                        inner-value
+                        inner-ty)
                       base
                       result-ty))
                   (OkLowerExpr
@@ -14207,11 +14436,16 @@
                                 [(ErrLowerArgs message) (ErrLowerArgs message)])]
                             [(ErrLowerArgs message) (ErrLowerArgs message)])]
                         [(LowerCAbiByRefAggregate _)
-                          (match (lower-copy-inline-aggregate-to-heap
+                          ;; The ABI argument is the address of the copied
+                          ;; object, not the aggregate itself. Type the value as
+                          ;; u64 so direct extern-call register assignment does
+                          ;; not reclassify this pointer as a multi-word group.
+                          (match (lower-copy-inline-aggregate-to-heap-as
                             ctx
                             arg-state
                             value
-                            arg-ty)
+                            arg-ty
+                            (AstTyU64))
                             [(OkLowerExpr copied)
                               (match copied
                                 [(LowerExpr copy-state copy-value _)
@@ -14359,7 +14593,7 @@
       ;; by-value call argument) get the pointer in word0 and garbage in word1.
       ;; A genuine memory aggregate (>16B, or float-containing) stays the pointer.
       (if (lower-type-register-group? ctx result-ty)
-        (OkLowerExpr (lower-load-group-from-ptr state call-value result-ty))
+        (OkLowerExpr (lower-load-group-from-ptr ctx state call-value result-ty))
         (OkLowerExpr (LowerExpr state call-value result-ty)))]
     [(LowerCAbiUnsupportedAggregate message)
       (ErrLowerExpr (lower-diagnostic-at-expr origin message))]))
@@ -17528,7 +17762,7 @@
     (not (lower-type-register-resident? ctx elem-ir-ty)))
     (OkLowerExpr (LowerExpr addr-state elem-ptr elem-ir-ty))
     (if (lower-type-register-group? ctx elem-ir-ty)
-      (match (lower-load-group-from-ptr addr-state elem-ptr elem-ir-ty)
+      (match (lower-load-group-from-ptr ctx addr-state elem-ptr elem-ir-ty)
         [(LowerExpr load-state load-value _)
           (OkLowerExpr (LowerExpr load-state load-value elem-ir-ty))])
       (match (lower-emit-load addr-state elem-ptr elem-ir-ty)
@@ -17647,7 +17881,7 @@
       0
       (lower-type-size ctx elem-ir-ty))
     (if (lower-type-register-group? ctx elem-ir-ty)
-      (lower-store-group-at-ptr addr-state elem-ptr value-ir)
+      (lower-store-group-at-ptr ctx addr-state elem-ptr value-ir elem-ir-ty)
       (lower-state-emit
         addr-state
         (IrInstrStorePtr elem-ptr value-ir elem-ir-ty)))))

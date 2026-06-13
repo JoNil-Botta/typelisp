@@ -80,7 +80,7 @@ opt_levels() {
 }
 
 check_optimizer_target_free() {
-    if grep -nE 'BackendTarget|compiler-backend-target|target-windows|target-linux|windows-x86_64|linux-x86_64|lower-mode-windows|lower-mode-linux' selfhost/compiler_optimize.tl; then
+    if grep -nE 'BackendTarget|compiler-backend-target|target-windows|target-linux|windows-x86_64|linux-x86_64|lower-mode-windows|lower-mode-linux' src/compiler_optimize.tl; then
         echo "optimizer target parity violation: compiler_optimize.tl must stay target-independent" >&2
         exit 1
     fi

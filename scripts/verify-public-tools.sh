@@ -1327,7 +1327,7 @@ EOF
 EOF
     fi
     if [ "$HOST_OS" = windows ]; then
-        run_cmd selfhost-run-tool "$COMPILER" run --direct "$PLANNER_RUN_SOURCE" --target "$SELFHOST_TOOL_TARGET" --backend-mode scalar --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/selfhost"
+        run_cmd selfhost-run-tool "$COMPILER" run --direct "$PLANNER_RUN_SOURCE" --target "$SELFHOST_TOOL_TARGET" --backend-mode scalar --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src"
         assert_code 7
         assert_stderr_empty
         assert_contains "$out" "hello"
@@ -1344,7 +1344,7 @@ EOF
         assert_stderr_empty
         assert_contains "$out" "arg with spaces"
     elif printf '%s\n' "$SIMD_ISAS" | grep -qx avx2; then
-        run_cmd selfhost-run-tool-avx2 "$COMPILER" run --direct "$PLANNER_RUN_SOURCE" --target "$SELFHOST_TOOL_TARGET" --backend-mode avx2 --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/selfhost"
+        run_cmd selfhost-run-tool-avx2 "$COMPILER" run --direct "$PLANNER_RUN_SOURCE" --target "$SELFHOST_TOOL_TARGET" --backend-mode avx2 --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src"
         assert_code 7
         assert_stderr_empty
         assert_contains "$out" "hello"

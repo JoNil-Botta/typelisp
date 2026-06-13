@@ -27,7 +27,7 @@ target_ra
 /target
 
 # Self-host build artifacts
-selfhost/compiler_backend_runtime_fixture
+src/compiler_backend_runtime_fixture
 
 # Native build artifacts
 *.exe

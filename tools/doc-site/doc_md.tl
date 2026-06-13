@@ -10,7 +10,7 @@
 ;;
 ;; Reuses `doc-html-escape` (entity escaping for & < > ") from doc_html.tl and
 ;; `doc-render-anchor` from doc_render.tl via doc_html.tl.
-(import "../../selfhost/doc_html.tl")
+(import "../../src/doc_html.tl")
 
 (import "../../stdlib/string.tl")
 

@@ -1,7 +1,7 @@
 # Selfhost compiler testing
 
 This guide describes the testing convention for compiler-facing TypeLisp code
-under `selfhost/`. The self-hosted compiler is built in layers, so tests
+under `src/`. The self-hosted compiler is built in layers, so tests
 are also layered: keep each case at the lowest layer that proves the behavior,
 then add runnable or end-to-end coverage only when that extra boundary matters.
 
@@ -79,7 +79,7 @@ Keep smoke drivers for existing compiler-module self-tests until those modules
 are intentionally migrated.
 
 [`../scripts/verify-inline-tests.sh`](../scripts/verify-inline-tests.sh)
-auto-discovers top-level inline tests under `selfhost/`, `stdlib/`, `tools/`,
+auto-discovers top-level inline tests under `src/`, `stdlib/`, `tools/`,
 `tests/integration/`, `tests/inline/`, and `examples/`. It runs
 one batched `typelisp test --check --batch <listfile>` process first, then
 per-file `typelisp test` executions, so malformed, untyped, unbuildable, and
@@ -103,7 +103,7 @@ symbol markers also accept compact selfhost symbol metadata. The default
 Use `requires-stage0-mode|<reason>` only for a case that must remain seed-only
 for a named blocker such as the current #1437 stage1->stage2 resource limit.
 
-Every top-level `selfhost/*.tl` file must appear as a manifest `case` or a
+Every top-level `src/*.tl` file must appear as a manifest `case` or a
 `decision` line. This makes new modules and smoke drivers fail CI until they
 have an explicit compile-coverage decision. Staged cases cover integration
 drivers whose imports need temporary sibling names, such as the text buffer and
@@ -116,7 +116,7 @@ to catch Linux/Windows drift before backend assembly. The script compiles a
 small non-target-cfg corpus with `compile --emit-ir` for `linux-x86_64` and
 `windows-x86_64` at opt levels 0, 1, and 2, then diffs the deterministic IR
 summaries. It also fails if target-specific tokens appear in
-`selfhost/compiler_optimize.tl`, keeping the optimizer target-independent. A
+`src/compiler_optimize.tl`, keeping the optimizer target-independent. A
 separate target-cfg probe confirms that `compile --emit-ir --target` is actually
 honoring the requested target.
 
@@ -133,7 +133,7 @@ symbols, and runtime shims.
 
 Use [`../scripts/analyze-selfhost-build-asm-size.sh`](../scripts/analyze-selfhost-build-asm-size.sh)
 for local code-size comparisons of the selfhost compiler. It compiles
-`selfhost/cli.tl` with `TYPELISP_BIN` when set, otherwise with the published
+`src/cli.tl` with `TYPELISP_BIN` when set, otherwise with the published
 stage0 selected by `scripts/lib-stage0.sh`, then prints total assembly
 bytes/lines, section totals, top `.text` symbols, module/file buckets inferred
 from TypeLisp symbol names, and generated clone-helper totals:
@@ -184,31 +184,31 @@ scripts/fetch-stage0.sh
 TYPELISP_BIN=./target/stage0/typelisp ./scripts/verify-selfhost-compile-manifest.sh
 ```
 
-Each published asset is a single self-hosted `selfhost/cli.tl` binary
+Each published asset is a single self-hosted `src/cli.tl` binary
 (`typelisp-stage0-linux`, `typelisp-stage0-windows.exe`) that handles every
 toolchain command (compile/build/run/check/fmt/lint/test/doc/repl/lsp/new/init)
 in-process. The `Bootstrap Stage0` workflow is
 self-perpetuating: it fetches the previously published stage0 and uses it to
 build the next stage0 via [`../scripts/build-stage0.sh`](../scripts/build-stage0.sh)
-(`compile selfhost/cli.tl` + native link).
+(`compile src/cli.tl` + native link).
 
 The checkout root also has a `typelisp.pkg` whose binary entry is
-`selfhost/cli.tl`, so `typelisp build` from the repository root builds the
+`src/cli.tl`, so `typelisp build` from the repository root builds the
 selfhost CLI package into `target/release/`. The CI smoke keeps a
 root package-build check in `scripts/verify-selfhost-cli-build-run.sh`; the
 published stage0 workflow intentionally keeps using the direct
-`compile selfhost/cli.tl` path plus native linking so a seed compiler can build
+`compile src/cli.tl` path plus native linking so a seed compiler can build
 its successor without depending on its own `build` command.
 
 ### Single command surface
 
-The published toolchain is the single `selfhost/cli.tl` binary, and every command
+The published toolchain is the single `src/cli.tl` binary, and every command
 (`build`, `run`, `check`, `fmt`, `lint`, `test`, `doc`, `compile`, `clean`,
 `repl`, `lsp`, `new`, `init`) is reached only through its dispatcher. There are no
 separate per-command driver binaries: each command's logic lives in a main-free
 `*_cli_core.tl` module compiled as part of `cli.tl`, and the `selfhost_cli`
 compile-manifest case asserts every command's dispatch entry, internal symbols,
-and diagnostic strings. Gates that need a command binary build `selfhost/cli.tl`
+and diagnostic strings. Gates that need a command binary build `src/cli.tl`
 and invoke the subcommand directly (e.g. `cli build --direct …`,
 `cli check <file>`, `cli fmt --check …`, `cli doc --html …`).
 
@@ -227,7 +227,7 @@ scripts/ci-verify.sh
 That script fetches `stage0-latest` when `TYPELISP_BIN` is unset and treats it
 as the seed compiler. The seed performs the single compiler build of the flow:
 the stage1->stage2->stage3 bootstrap fixpoint in `check-bootstrap-fixpoint.sh`
-over `selfhost/cli.tl`.
+over `src/cli.tl`.
 Every remaining gate then runs on the captured stage2 compiler — the
 branch-built full CLI — after a fail-closed probe confirms it can compile,
 assemble, link, and run a native program on the host (`as`/`ld` on Linux,
@@ -264,7 +264,7 @@ bash scripts/check-bootstrap-fixpoint.sh target/stage0/typelisp.exe
 ```
 
 The bootstrapped stage2 compiler captured by the CI gate is the full
-`selfhost/cli.tl` toolchain binary, so a single artifact serves every gate:
+`src/cli.tl` toolchain binary, so a single artifact serves every gate:
 the compile-path corpora (deterministic assembly, selfhost compile manifest,
 safety corpus, native integration corpus, examples, stdlib module/fixture
 verifier) assemble and link with the host toolchain after stage2 emits
@@ -279,7 +279,7 @@ source-only selfhost changes should not need a staging marker just because the
 published `stage0-latest` artifact lags `main`.
 `requires-stage0-symbol` covers the narrower case of a backend/runtime
 primitive that the *published* stage0 (the seed/Windows-driving compiler) cannot
-emit yet, even though the in-tree `selfhost/compiler_backend.tl` source already
+emit yet, even though the in-tree `src/compiler_backend.tl` source already
 implements it. The marker lets such a row land before the next stage0 republish
 catches up.
 
@@ -313,7 +313,7 @@ builds, exits with the wrong status, and stderr contains the tracked substring.
 If the row starts passing on that host, the verifier reports that the marker
 should be removed.
 
-Workflow: introduce the primitive in `selfhost/compiler_backend.tl` plus the
+Workflow: introduce the primitive in `src/compiler_backend.tl` plus the
 marked stdlib, inline, or native integration coverage in one PR when the
 published stage0 cannot emit the primitive yet, then drop the
 `requires-stage0-symbol` marker once a stage0 republish carries it. For
@@ -328,7 +328,7 @@ For new selfhost tests:
   generated test harness is enough.
 - Add a `*_smoke.tl` driver when the module should be executable through the
   compiler boundary.
-- Add compile/symbol smoke coverage to `selfhost/compile_manifest.txt` for new
+- Add compile/symbol smoke coverage to `src/compile_manifest.txt` for new
   top-level selfhost modules or smoke drivers, or add an explicit `decision`.
 - Add public command, package, docs, LSP, REPL, formatter, or platform cases to
   `scripts/verify-public-tools.sh` or the narrower verification script that
@@ -355,15 +355,15 @@ For Windows import-only regressions that fail before a native executable is
 linked, use the published stage0 directly from PowerShell:
 
 ```powershell
-tools\stage0\typelisp.exe run selfhost\compiler_parse_core.tl --stdlib-root stdlib --stdlib-root selfhost
-tools\stage0\typelisp.exe run selfhost\compiler_backend_tests.tl --stdlib-root stdlib --stdlib-root selfhost
+tools\stage0\typelisp.exe run src\compiler_parse_core.tl --stdlib-root stdlib --stdlib-root src
+tools\stage0\typelisp.exe run src\compiler_backend_tests.tl --stdlib-root stdlib --stdlib-root src
 ```
 
 ### Selfhost native generated programs
 
 `scripts/verify-native-link-linux.sh` covers Linux-only cases where the selfhost
 compiler emits assembly that must then assemble, link, and run as a native
-executable. It builds `selfhost/cli.tl` and drives its `compile` subcommand to
+executable. It builds `src/cli.tl` and drives its `compile` subcommand to
 verify generated file-to-file assembly for multi-file imports, stdlib imports,
 runtime helpers, dynamic arrays, traps, and stack-argument call shape, plus the
 direct-object (no-assembler) ELF link path via `cli build --direct`.
@@ -385,7 +385,7 @@ explicit fallback/skip path is tied to #1662 and #1437.
 ### Repository doctest gate
 
 `scripts/verify-doc-tests.sh` discovers documented `.tl` files under
-`stdlib/`, `selfhost/`, `examples/`, and `tests/` by scanning for public
+`stdlib/`, `src/`, `examples/`, and `tests/` by scanning for public
 canonical `;#`/`;:` doc comments or TypeLisp fenced examples, then runs
 one `typelisp doc --test --batch <listfile>` process with `--stdlib-root`.
 This gate does not use a hand-maintained file manifest, so adding documented
@@ -397,7 +397,7 @@ Linux and Windows.
 ### Repository inline-test gate
 
 `scripts/verify-inline-tests.sh` discovers `.tl` files with top-level
-`(test ...)` items under `selfhost/`, `stdlib/`, `tests/integration/`,
+`(test ...)` items under `src/`, `stdlib/`, `tests/integration/`,
 `tools/`, `tests/inline/`, and `examples/`. It type-checks the discovered files
 with one batched `test --check --batch` invocation, preserving per-file counts,
 then runs each generated inline-test harness with `--stdlib-root`, reporting the
@@ -447,7 +447,7 @@ the artifact.
 Pull requests get Linux and Windows coverage from the single self-hosted
 verification gate `scripts/ci-verify.sh` (wired in
 [`../.github/workflows/ci.yml`](../.github/workflows/ci.yml)). Both jobs first
-build a fresh `selfhost/cli.tl` binary from the published stage0 compiler and
+build a fresh `src/cli.tl` binary from the published stage0 compiler and
 smoke-test public `compile`, `build`, `run`, package build, staticlib build, and
 the work-queue chooser through `typelisp run`. The Linux job then bootstraps a
 compile-only stage1 compiler and runs deterministic assembly, the selfhost
@@ -460,13 +460,13 @@ explicit seed/fresh-cli fallback or skip paths until #1662 and related resource
 blockers are closed. The Windows job runs host-supported gates against the
 published stage0 compiler, verifies the fresh CLI build/run smoke, runs the
 Windows bootstrap stage2/stage3 fixpoint when staged runtime symbols are present,
-and explicitly skips the Linux-only selfhost/docs checks.
+and explicitly skips the Linux-only src/docs checks.
 
 For a selfhost compiler change, a typical local check (after
 `scripts/fetch-stage0.sh`, with `tl=target/stage0/typelisp[.exe]`) is:
 
 ```sh
-$tl fmt --check selfhost/<changed>.tl
+$tl fmt --check src/<changed>.tl
 TYPELISP_BIN=$tl ./scripts/verify-selfhost-compile-manifest.sh
 TYPELISP_BIN=$tl ./scripts/check-tl-format.sh
 TYPELISP_BIN=$tl ./scripts/check-tl-lint.sh
@@ -498,7 +498,7 @@ Linux environment.
   change.
 - Use inline `(test ...)` items for source-owned runnable checks; they are
   picked up automatically by `scripts/verify-inline-tests.sh`.
-- Keep `selfhost/compile_manifest.txt` in sync with top-level selfhost sources
+- Keep `src/compile_manifest.txt` in sync with top-level selfhost sources
   and compile/symbol smoke expectations.
 - Prefer naming conventions and representative examples in docs and comments;
   avoid maintaining long file lists that will go stale.

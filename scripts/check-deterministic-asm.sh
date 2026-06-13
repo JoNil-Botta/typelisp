@@ -92,20 +92,20 @@ string_length tests/integration/string_length.tl
 substring tests/integration/substring.tl
 sym_i64_env tests/integration/sym_i64_env.tl
 tl_alloc tests/integration/tl_alloc.tl
-tl_format_doc selfhost/format_doc.tl
-tl_lex selfhost/lex.tl
-tl_compiler_parse_core selfhost/compiler_parse_core.tl
-tl_compiler_parse_smoke selfhost/compiler_parse_smoke.tl
-tl_compiler_symbols selfhost/compiler_symbols.tl
-tl_compiler_symbols_smoke selfhost/compiler_symbols_smoke.tl
-tl_doc_extract selfhost/doc_extract.tl
-tl_doc_extract_smoke selfhost/doc_extract_smoke.tl
-tl_doc_render selfhost/doc_render.tl
-tl_doc_render_smoke selfhost/doc_render_smoke.tl
-tl_doc_html selfhost/doc_html.tl
-tl_doc_html_smoke selfhost/doc_html_smoke.tl
-tl_read selfhost/read.tl
-tl_token selfhost/token.tl
+tl_format_doc src/format_doc.tl
+tl_lex src/lex.tl
+tl_compiler_parse_core src/compiler_parse_core.tl
+tl_compiler_parse_smoke src/compiler_parse_smoke.tl
+tl_compiler_symbols src/compiler_symbols.tl
+tl_compiler_symbols_smoke src/compiler_symbols_smoke.tl
+tl_doc_extract src/doc_extract.tl
+tl_doc_extract_smoke src/doc_extract_smoke.tl
+tl_doc_render src/doc_render.tl
+tl_doc_render_smoke src/doc_render_smoke.tl
+tl_doc_html src/doc_html.tl
+tl_doc_html_smoke src/doc_html_smoke.tl
+tl_read src/read.tl
+tl_token src/token.tl
 token tests/integration/token.tl
 tree tests/integration/tree.tl
 unit_functions tests/integration/unit_functions.tl
@@ -125,8 +125,8 @@ compile_source_for_case() {
             rm -rf "$input_dir"
             mkdir -p "$input_dir"
             cp "$source" "$input_dir/sym_i64_env.tl"
-            cp selfhost/sym_i64_env.tl "$input_dir/sym_i64_env_core.tl"
-            cp selfhost/compiler_intern.tl "$input_dir/compiler_intern.tl"
+            cp src/sym_i64_env.tl "$input_dir/sym_i64_env_core.tl"
+            cp src/compiler_intern.tl "$input_dir/compiler_intern.tl"
             echo "$input_dir/sym_i64_env.tl"
             ;;
         *)
@@ -144,7 +144,7 @@ compile_source_for_case() {
 # is still two independent compiles by the same binary, compared byte-for-byte
 # (and the shared entries additionally assert batch/single-compile parity).
 MANIFEST_SHARE_DIR=${TYPELISP_DETERMINISTIC_ASM_MANIFEST_DIR:-}
-MANIFEST_FILE=${TYPELISP_COMPILE_MANIFEST:-selfhost/compile_manifest.txt}
+MANIFEST_FILE=${TYPELISP_COMPILE_MANIFEST:-src/compile_manifest.txt}
 
 compiler_input_path() {
     if command -v cygpath >/dev/null 2>&1; then

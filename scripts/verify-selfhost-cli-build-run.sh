@@ -363,7 +363,7 @@ assert_active_cli_surface_command() {
             assert_status "$label" "$status" 0
             assert_empty "$label" "$WORKDIR/$label.err"
             large_label="${label}-large-backend"
-            run_cli_capture "$large_label" "$COMPILER" fmt --check selfhost/compiler_backend.tl --stdlib-root stdlib
+            run_cli_capture "$large_label" "$COMPILER" fmt --check src/compiler_backend.tl --stdlib-root stdlib
             assert_status "$large_label" "$status" 0
             assert_empty "$large_label" "$WORKDIR/$large_label.out"
             assert_empty "$large_label" "$WORKDIR/$large_label.err"

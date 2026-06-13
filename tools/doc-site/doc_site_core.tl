@@ -5,7 +5,7 @@
 ;; renderer without hard-coding TypeLisp guide-page knowledge into that path.
 (import "../../stdlib/io.tl")
 
-(import "../../selfhost/doc_html.tl")
+(import "../../src/doc_html.tl")
 
 (import "doc_md.tl")
 

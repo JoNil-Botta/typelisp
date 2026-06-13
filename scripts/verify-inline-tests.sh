@@ -50,7 +50,7 @@ DISCOVERED="$WORKDIR/discovered.txt"
 : > "$CANDIDATES"
 : > "$DISCOVERED"
 
-for root in selfhost stdlib tools tests/integration tests/inline examples; do
+for root in src stdlib tools tests/integration tests/inline examples; do
     if [ -d "$root" ]; then
         find "$root" \
             -type f \

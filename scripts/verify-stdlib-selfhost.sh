@@ -98,9 +98,9 @@ CHECK_ERR="$WORKDIR/check.compile.err"
 BUILD_TARGET=linux-x86_64
 [ "$HOST_OS" = windows ] && BUILD_TARGET=windows-x86_64
 
-if ! "$COMPILER" build selfhost/cli.tl --target "$BUILD_TARGET" \
+if ! "$COMPILER" build src/cli.tl --target "$BUILD_TARGET" \
     --stdlib-root stdlib -o "$CHECK_BIN" >"$CHECK_OUT" 2>"$CHECK_ERR"; then
-    echo "FAIL: selfhost/cli.tl build failed" >&2
+    echo "FAIL: src/cli.tl build failed" >&2
     sed 's/^/  /' "$CHECK_ERR" >&2 || true
     exit 1
 fi

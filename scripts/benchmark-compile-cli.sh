@@ -4,7 +4,7 @@ set -eu
 # benchmark-compile-cli.sh - benchmark optimized selfhost CLI self-builds.
 #
 # For each requested optimization level, the script builds stage1 and stage2
-# CLIs, measures the real stage2 CLI compiling selfhost/cli.tl into stage3.s,
+# CLIs, measures the real stage2 CLI compiling src/cli.tl into stage3.s,
 # and verifies that stage3.s is byte-identical to stage2.s. A profile-enabled
 # compile driver then records phase timing, allocator peak-live counters, and
 # per-function optimizer timing for the same opt-level compile pipeline.
@@ -178,11 +178,11 @@ compile_cli_to_asm() {
     echo "[compile-bench] opt$opt_level $label"
     start=$(now_ms)
     if ! run_with_heartbeat "$label" \
-        "$compiler" compile selfhost/cli.tl -o "$asm" \
+        "$compiler" compile src/cli.tl -o "$asm" \
         --target "$NL_BOOTSTRAP_TARGET" \
         $(native_target_cfg_args) \
         --stdlib-root stdlib \
-        --stdlib-root selfhost \
+        --stdlib-root src \
         --opt-level "$opt_level" \
         >"$stdout" 2>"$stderr"; then
         echo "[compile-bench] $label failed" >&2
@@ -218,11 +218,11 @@ measure_compile_cli_to_asm() {
     echo "[compile-bench] opt$opt_level measure $label"
     start=$(now_ms)
     if ! run_with_heartbeat "$label" \
-        "$compiler" compile selfhost/cli.tl -o "$asm" \
+        "$compiler" compile src/cli.tl -o "$asm" \
         --target "$NL_BOOTSTRAP_TARGET" \
         $(native_target_cfg_args) \
         --stdlib-root stdlib \
-        --stdlib-root selfhost \
+        --stdlib-root src \
         --opt-level "$opt_level" \
         >"$stdout" 2>"$stderr"; then
         echo "[compile-bench] $label failed" >&2
@@ -323,11 +323,11 @@ run_opt_level() {
     profile_build_stderr="$optdir/compile_profile-build.stderr"
     start=$(now_ms)
     if ! run_with_heartbeat "opt$opt_level-profile-compile-driver" \
-        "$stage2_bin" compile selfhost/cli.tl -o "$profile_asm" \
+        "$stage2_bin" compile src/cli.tl -o "$profile_asm" \
         --target "$NL_BOOTSTRAP_TARGET" \
         $(native_target_cfg_args) \
         --stdlib-root stdlib \
-        --stdlib-root selfhost \
+        --stdlib-root src \
         --opt-level "$opt_level" \
         --cfg compile-profile \
         >"$profile_build_stdout" \
@@ -346,11 +346,11 @@ run_opt_level() {
     profile_run_stdout="$optdir/profile-run.stdout"
     profile_run_stderr="$optdir/profile-run.stderr"
     start=$(now_ms)
-    if ! "$profile_bin" compile selfhost/cli.tl -o "$profile_cli_asm" \
+    if ! "$profile_bin" compile src/cli.tl -o "$profile_cli_asm" \
         --target "$NL_BOOTSTRAP_TARGET" \
         $(native_target_cfg_args) \
         --stdlib-root stdlib \
-        --stdlib-root selfhost \
+        --stdlib-root src \
         --opt-level "$opt_level" \
         >"$profile_run_stdout" \
         2>"$profile_run_stderr"; then

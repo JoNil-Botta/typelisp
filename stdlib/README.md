@@ -218,7 +218,7 @@ installed-root discovery, namespace isolation, or an implicit prelude.
 
 The backend runtime plan is a compatibility boundary, not a place for new
 stdlib APIs by default. The checked inventory in
-`selfhost/compiler_backend.tl` (`compiler-backend-runtime-helper-owner`) is the
+`src/compiler_backend.tl` (`compiler-backend-runtime-helper-owner`) is the
 authoritative ownership table for symbols accepted by
 `compiler-backend-plan-provides?`; that function rejects unclassified helper
 names so runtime-plan additions must be assigned an owner first.
@@ -471,7 +471,7 @@ contracts, and intentional panic/exit-status checks.
 4. Add the new top-level `.tl` file to `scripts/verify-stdlib.sh`'s module
    manifest.
 5. Add new stdlib `.tl` files, including test fixtures, to
-   `selfhost/compiler_embedded_stdlib.tl` so installed compiler binaries can use
+   `src/compiler_embedded_stdlib.tl` so installed compiler binaries can use
    them through embedded stdlib fallback.
 6. Add inline `(test ...)` items next to declarations for source-local runnable
    API behavior; `scripts/verify-inline-tests.sh` discovers them automatically.

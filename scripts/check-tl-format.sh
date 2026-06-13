@@ -71,11 +71,11 @@ build_current_cli_for_format() {
         "compile current formatter for format" \
         "$CURRENT_CLI_COMPILE_STDOUT" \
         "$CURRENT_CLI_COMPILE_STDERR" \
-        "$COMPILER" compile selfhost/cli.tl -o "$CURRENT_CLI_ASM" \
+        "$COMPILER" compile src/cli.tl -o "$CURRENT_CLI_ASM" \
         --target "$NL_BOOTSTRAP_TARGET" \
         $(native_target_cfg_args) \
         --stdlib-root stdlib \
-        --stdlib-root selfhost \
+        --stdlib-root src \
         --opt-level 1; then
         echo "Failed to compile current formatter for current-syntax-aware formatting." >&2
         sed 's/^/  /' "$CURRENT_CLI_COMPILE_STDOUT" >&2 || true

@@ -2,7 +2,7 @@
 set -eu
 
 # analyze-selfhost-build-asm-size.sh - local assembly size report for the
-# selfhost compiler (selfhost/cli.tl). The default path compiles
+# selfhost compiler (src/cli.tl). The default path compiles
 # the source with TYPELISP_BIN when set, otherwise with the published stage0
 # selected by scripts/lib-stage0.sh.
 
@@ -89,7 +89,7 @@ cd "$ROOT"
 
 WORKDIR=${TYPELISP_ASM_SIZE_OUT:-target/selfhost-build-asm-size}
 ASM_PATH=${ASM_ARG:-"$WORKDIR/build.s"}
-SOURCE=selfhost/cli.tl
+SOURCE=src/cli.tl
 
 if [ -n "$ASM_ARG" ]; then
     [ -f "$ASM_PATH" ] || {
@@ -120,7 +120,7 @@ else
         if ! "$COMPILER" compile "$SOURCE" -o "$ASM_PATH" \
             --target "$TARGET" \
             --stdlib-root stdlib \
-            --stdlib-root selfhost \
+            --stdlib-root src \
             >"$compile_stdout" 2>"$compile_stderr"; then
             echo "[asm-size] compile failed" >&2
             sed 's/^/  /' "$compile_stdout" >&2 || true
@@ -130,7 +130,7 @@ else
     else
         if ! "$COMPILER" compile "$SOURCE" -o "$ASM_PATH" \
             --stdlib-root stdlib \
-            --stdlib-root selfhost \
+            --stdlib-root src \
             >"$compile_stdout" 2>"$compile_stderr"; then
             echo "[asm-size] compile failed" >&2
             sed 's/^/  /' "$compile_stdout" >&2 || true

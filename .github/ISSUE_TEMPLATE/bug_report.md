@@ -22,7 +22,7 @@ What actually happens. Include full compiler output.
 
 **Selfhost implementation target**
 If this affects compiler, tooling, runtime, or stdlib behavior, where should the
-TypeLisp-owned fix or regression fixture live? Prefer `selfhost/...` or
+TypeLisp-owned fix or regression fixture live? Prefer `src/...` or
 `stdlib/...`. If a non-TypeLisp implementation-language exception seems
 necessary, link the tracking issue and explain why it cannot stay in the
 selfhost or stdlib code.

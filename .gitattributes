@@ -1,5 +1,5 @@
 # TypeLisp sources and shell scripts must stay LF in the working tree.
-# The self-hosted formatter (`selfhost/cli.tl fmt`) emits LF, so a CRLF checkout
+# The self-hosted formatter (`src/cli.tl fmt`) emits LF, so a CRLF checkout
 # (e.g. Git's `autocrlf=true` default on Windows CI runners) would make
 # `typelisp fmt --check` report every .tl file as needing reformat, breaking the
 # Windows formatter gate added in #763. Forcing LF keeps the gate consistent

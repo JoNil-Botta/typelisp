@@ -30,7 +30,7 @@ Options:
   --filter NAME    Run manifest cases whose names match NAME or start with NAME
   --clang-opt OPT  clang optimization flag (default: TYPELISP_BENCH_CLANG_OPT or -O3)
   --tl-opt-level N  In correctness mode, compile TypeLisp cases with --opt-level N
-  --selfhost       In timing mode, compile through selfhost/cli.tl `compile` (default)
+  --selfhost       In timing mode, compile through src/cli.tl `compile` (default)
   --rust-stage0    In timing mode, compile through typelisp compile
   -h, --help       Show this help
 EOF
@@ -465,7 +465,7 @@ SELFHOST_DRIVER=
 if [ "$CORRECTNESS" -eq 0 ] && [ "$USE_SELFHOST" -eq 1 ]; then
     SELFHOST_DRIVER="$WORKDIR/compiler_driver"
     echo "# building selfhost compiler driver (cli): $SELFHOST_DRIVER" >&2
-    "$COMPILER" build selfhost/cli.tl -o "$SELFHOST_DRIVER"
+    "$COMPILER" build src/cli.tl -o "$SELFHOST_DRIVER"
     [ -x "$SELFHOST_DRIVER" ] || fail "selfhost cli build did not write executable"
 fi
 

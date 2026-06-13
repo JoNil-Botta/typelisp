@@ -2,4 +2,4 @@
   (name "typelisp")
   (version "0.1.0")
   (kind "bin")
-  (entry "selfhost/cli.tl"))
+  (entry "src/cli.tl"))

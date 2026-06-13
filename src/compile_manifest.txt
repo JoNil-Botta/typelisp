@@ -101,8 +101,8 @@ not-contains|call _tl_Green
 end
 
 case|integration_sym_i64_env|tests/integration/sym_i64_env.tl|assembly|present|stage
-copy|selfhost/sym_i64_env.tl|sym_i64_env_core.tl
-copy|selfhost/compiler_intern.tl|compiler_intern.tl
+copy|src/sym_i64_env.tl|sym_i64_env_core.tl
+copy|src/compiler_intern.tl|compiler_intern.tl
 contains|_tl_sym_i64_empty:
 contains|_tl_sym_i64_bind:
 contains|_tl_sym_i64_lookup:
@@ -113,7 +113,7 @@ count-at-least|call _tl_sym_i64_lookup|2
 end
 
 case|integration_text_buf_driver|tests/integration/text_buf.tl|assembly|present|stage
-copy|selfhost/text_buf.tl|text_buf_core.tl
+copy|src/text_buf.tl|text_buf_core.tl
 contains|call _tl_text_buf_render
 contains|call _tl_text_buf_append_buffer
 contains|string_append_borrowed
@@ -123,7 +123,7 @@ end
 # build/clean/run/check/fmt/lint/test/doc/inspect/repl/lsp). Each subcommand routes
 # through its `*-run-from` entry in a shared main-free `*_cli_core.tl` module, so
 # the dispatcher's assembly must reference every command's runner.
-case|selfhost_cli|selfhost/cli.tl|assembly|exactly-one|direct
+case|selfhost_cli|src/cli.tl|assembly|exactly-one|direct
 contains|_tl_cli_dispatch:
 contains|_tl_build_run_from:
 contains|_tl_clean_run_from:
@@ -305,27 +305,27 @@ contains|_tl_scaffold_emit:
 contains|scaffold: usage
 end
 
-# Per-command logic modules used by the unified dispatcher (selfhost/cli.tl).
+# Per-command logic modules used by the unified dispatcher (src/cli.tl).
 # Main-less; compiled transitively through the selfhost_cli case, so they get a
 # decision row rather than a direct compile case.
-decision|selfhost/build_cli_core.tl|build command logic (#622/#1339): arg parsing, source/package build, and direct source build execution; main-less, imported by selfhost/cli.tl and exercised through the selfhost_cli case
-decision|selfhost/clean_cli_core.tl|clean command logic (#1643): dry-run/source artifact cleanup and manifest package output cleanup; main-less, imported by selfhost/cli.tl and exercised through the selfhost_cli case
-decision|selfhost/run_cli_core.tl|run command logic: arg parsing and direct source run execution; main-less, imported by selfhost/cli.tl and exercised through the selfhost_cli case
-decision|selfhost/check_cli_core.tl|check (typecheck) command logic: arg parsing plus file/package full-frontend checks; main-less, imported by selfhost/cli.tl and exercised through the selfhost_cli case
-decision|selfhost/package_source_core.tl|package source discovery helper (#1986/#1987/#2494): resolves typelisp.pkg, loads the manifest, and walks regular package .tl sources while excluding target, VCS, package-local tests directories, and nested package roots; main-less, imported by check/fmt/lint command cores and exercised through their driver cases plus selfhost_cli
-decision|selfhost/package_cache_core.tl|package cache helper layer (#2002): parses normalized remote dependency pins, plans deterministic v1 cache paths, validates metadata/complete-marker state, and exposes staging/finalize helpers; main-less and exercised through the selfhost_package_cache_smoke case
-decision|selfhost/package_lock_core.tl|package lockfile parser/emitter (#1993): models typelisp.lock v1 entries, parses selfhost S-expressions with duplicate/missing/type diagnostics, and emits stable alias-sorted lockfile text; main-less and exercised through the selfhost_package_lock_smoke case
-decision|selfhost/format_cli_core.tl|fmt command logic (#522/#1987): --check vs rewrite over explicit input paths or discovered package sources; main-less, imported by selfhost/cli.tl and exercised through the selfhost_cli case
-decision|selfhost/test_cli_core.tl|test command logic: config parsing and test run dispatch; main-less, imported by selfhost/cli.tl and exercised through the selfhost_cli case
-decision|selfhost/doc_cli_core.tl|doc command logic: kind dispatch (test/html/load/default) with a base-offset arg model; main-less, imported by selfhost/cli.tl and exercised through the selfhost_cli case
-decision|selfhost/compile_cli_core.tl|compile/check command logic (#565/#1639): arg parsing and compile/check dispatch + execution (compile-cli-run); main-less, imported by selfhost/cli.tl and exercised through the selfhost_cli case
-decision|selfhost/inspect_cli_core.tl|inspect command logic (#2655): parse and render tlci comptime image headers/metadata; main-less, imported by selfhost/cli.tl and exercised through the selfhost_cli case and public command-surface smoke
-decision|selfhost/repl_cli_core.tl|REPL command logic (#1641): line loop, dot commands, type queries, and scratch expression execution; main-less, imported by selfhost/cli.tl and exercised through the selfhost_cli case
-decision|selfhost/scaffold_cli_core.tl|new/init scaffold command logic (#1642): package skeleton creation shared by selfhost/cli.tl; main-less and exercised through the selfhost_cli case
-decision|selfhost/lsp_frame_core.tl|lsp command logic (#1640): stdio JSON-RPC framing and diagnostics server; main-less, imported by selfhost/cli.tl and exercised through the selfhost_cli case
-decision|selfhost/compiler_clone.tl|type-directed clone$<Type> helper synthesis (#1633): least-fixpoint clone-ability over the type graph plus match-reconstruct/tail-recursive AST generation for (clone x); main-less, imported by selfhost/compiler_lower.tl and exercised through the selfhost_compiler_lower case
+decision|src/build_cli_core.tl|build command logic (#622/#1339): arg parsing, source/package build, and direct source build execution; main-less, imported by src/cli.tl and exercised through the selfhost_cli case
+decision|src/clean_cli_core.tl|clean command logic (#1643): dry-run/source artifact cleanup and manifest package output cleanup; main-less, imported by src/cli.tl and exercised through the selfhost_cli case
+decision|src/run_cli_core.tl|run command logic: arg parsing and direct source run execution; main-less, imported by src/cli.tl and exercised through the selfhost_cli case
+decision|src/check_cli_core.tl|check (typecheck) command logic: arg parsing plus file/package full-frontend checks; main-less, imported by src/cli.tl and exercised through the selfhost_cli case
+decision|src/package_source_core.tl|package source discovery helper (#1986/#1987/#2494): resolves typelisp.pkg, loads the manifest, and walks regular package .tl sources while excluding target, VCS, package-local tests directories, and nested package roots; main-less, imported by check/fmt/lint command cores and exercised through their driver cases plus selfhost_cli
+decision|src/package_cache_core.tl|package cache helper layer (#2002): parses normalized remote dependency pins, plans deterministic v1 cache paths, validates metadata/complete-marker state, and exposes staging/finalize helpers; main-less and exercised through the selfhost_package_cache_smoke case
+decision|src/package_lock_core.tl|package lockfile parser/emitter (#1993): models typelisp.lock v1 entries, parses selfhost S-expressions with duplicate/missing/type diagnostics, and emits stable alias-sorted lockfile text; main-less and exercised through the selfhost_package_lock_smoke case
+decision|src/format_cli_core.tl|fmt command logic (#522/#1987): --check vs rewrite over explicit input paths or discovered package sources; main-less, imported by src/cli.tl and exercised through the selfhost_cli case
+decision|src/test_cli_core.tl|test command logic: config parsing and test run dispatch; main-less, imported by src/cli.tl and exercised through the selfhost_cli case
+decision|src/doc_cli_core.tl|doc command logic: kind dispatch (test/html/load/default) with a base-offset arg model; main-less, imported by src/cli.tl and exercised through the selfhost_cli case
+decision|src/compile_cli_core.tl|compile/check command logic (#565/#1639): arg parsing and compile/check dispatch + execution (compile-cli-run); main-less, imported by src/cli.tl and exercised through the selfhost_cli case
+decision|src/inspect_cli_core.tl|inspect command logic (#2655): parse and render tlci comptime image headers/metadata; main-less, imported by src/cli.tl and exercised through the selfhost_cli case and public command-surface smoke
+decision|src/repl_cli_core.tl|REPL command logic (#1641): line loop, dot commands, type queries, and scratch expression execution; main-less, imported by src/cli.tl and exercised through the selfhost_cli case
+decision|src/scaffold_cli_core.tl|new/init scaffold command logic (#1642): package skeleton creation shared by src/cli.tl; main-less and exercised through the selfhost_cli case
+decision|src/lsp_frame_core.tl|lsp command logic (#1640): stdio JSON-RPC framing and diagnostics server; main-less, imported by src/cli.tl and exercised through the selfhost_cli case
+decision|src/compiler_clone.tl|type-directed clone$<Type> helper synthesis (#1633): least-fixpoint clone-ability over the type graph plus match-reconstruct/tail-recursive AST generation for (clone x); main-less, imported by src/compiler_lower.tl and exercised through the selfhost_compiler_lower case
 
-case|selfhost_build_run_core|selfhost/build_run_core.tl|assembly|skip|direct
+case|selfhost_build_run_core|src/build_run_core.tl|assembly|skip|direct
 contains|_tl_source_tool_build_source:
 contains|_tl_source_tool_run_source:
 contains|_tl_source_tool_run_command:
@@ -335,18 +335,18 @@ contains|tl_process_output:
 contains|_tl_fs_mkdir_status:
 end
 
-case|selfhost_compiler_ast_types|selfhost/compiler_ast_types.tl|assembly|exactly-one|direct
+case|selfhost_compiler_ast_types|src/compiler_ast_types.tl|assembly|exactly-one|direct
 contains|_tl_ast_type_tag:
 contains|_tl_ast_expr_tag:
 contains|_tl_ast_decl_tag:
 contains|_tl_compiler_ast_smoke:
 end
 
-case|selfhost_compiler_ast_types_smoke|selfhost/compiler_ast_types_smoke.tl|assembly|exactly-one|direct
+case|selfhost_compiler_ast_types_smoke|src/compiler_ast_types_smoke.tl|assembly|exactly-one|direct
 contains|_tl_compiler_ast_smoke:
 end
 
-case|selfhost_compiler_backend|selfhost/compiler_backend.tl|assembly|skip|direct
+case|selfhost_compiler_backend|src/compiler_backend.tl|assembly|skip|direct
 contains|_tl_compiler_backend_emit_source:
 contains|_tl_compiler_backend_emit_program_for_target:
 contains|_tl_compiler_backend_emit_program_object_image:
@@ -364,81 +364,81 @@ not-contains|_tl_compiler_backend_runtime_windows_file_read_chunk_functions:
 not-contains|backend: Windows runtime helpers not yet implemented (#648)
 end
 
-decision|selfhost/compiler_object.tl|structured object-image data model (#2308): main-less, imported by selfhost/compiler_backend.tl and exercised through the backend object-image self-test plus selfhost_compiler_backend_smoke
-decision|selfhost/compiler_object_coff.tl|COFF object serialization helper (#2310): main-less, imported by selfhost/compiler_backend_tests.tl and exercised through selfhost_compiler_backend_smoke
-decision|selfhost/compiler_object_elf.tl|ELF64 object serialization helper (#2309): main-less, imported by selfhost/compiler_backend_tests.tl and exercised through selfhost_compiler_backend_smoke
-decision|selfhost/compiler_backend_tests.tl|backend smoke-test helper module imported by selfhost/compiler_backend_smoke.tl and backend fixture drivers; no direct CLI/main compile case
+decision|src/compiler_object.tl|structured object-image data model (#2308): main-less, imported by src/compiler_backend.tl and exercised through the backend object-image self-test plus selfhost_compiler_backend_smoke
+decision|src/compiler_object_coff.tl|COFF object serialization helper (#2310): main-less, imported by src/compiler_backend_tests.tl and exercised through selfhost_compiler_backend_smoke
+decision|src/compiler_object_elf.tl|ELF64 object serialization helper (#2309): main-less, imported by src/compiler_backend_tests.tl and exercised through selfhost_compiler_backend_smoke
+decision|src/compiler_backend_tests.tl|backend smoke-test helper module imported by src/compiler_backend_smoke.tl and backend fixture drivers; no direct CLI/main compile case
 
-case|selfhost_compiler_backend_runtime_fixture|selfhost/compiler_backend_runtime_fixture.tl|assembly|skip|direct
+case|selfhost_compiler_backend_runtime_fixture|src/compiler_backend_runtime_fixture.tl|assembly|skip|direct
 contains|_tl_compiler_backend_runtime_fixture_emit:
 contains|_tl_compiler_backend_runtime_helper_program:
 contains|_tl_compiler_backend_emit_program:
 end
 
-case|selfhost_compiler_backend_windows_driver_fixture|selfhost/compiler_backend_windows_driver_fixture.tl|assembly|skip|direct
+case|selfhost_compiler_backend_windows_driver_fixture|src/compiler_backend_windows_driver_fixture.tl|assembly|skip|direct
 contains|_tl_compiler_backend_windows_driver_runtime_source:
 contains|_tl_compiler_backend_emit_source_for_target:
 contains|compiler-backend-windows-driver-fixture: expected output path
 end
 
-case|selfhost_compiler_backend_smoke|selfhost/compiler_backend_smoke.tl|assembly|exactly-one|direct
+case|selfhost_compiler_backend_smoke|src/compiler_backend_smoke.tl|assembly|exactly-one|direct
 contains|_tl_compiler_backend_self_test:
 contains|_tl_compiler_backend_env_runtime_ok_question:
 contains|_tl_compiler_backend_emit_source:
 contains|_tl_lower_compiler_source:
 end
 
-case|selfhost_compiler_bounds_check_smoke|selfhost/compiler_bounds_check_smoke.tl|assembly|exactly-one|direct
+case|selfhost_compiler_bounds_check_smoke|src/compiler_bounds_check_smoke.tl|assembly|exactly-one|direct
 contains|_tl_bounds_check_smoke_program:
 contains|_tl_compiler_backend_emit_program:
 contains|_tl_optimize_program_with_level:
 end
 
-case|selfhost_compiler_backend_stack_args_fixture|selfhost/compiler_backend_stack_args_fixture.tl|assembly|exactly-one|direct
+case|selfhost_compiler_backend_stack_args_fixture|src/compiler_backend_stack_args_fixture.tl|assembly|exactly-one|direct
 contains|_tl_compiler_backend_stack_args_fixture_for_name:
 contains|windows-x86_64
 contains|linux-x86_64
 end
 
-case|selfhost_compiler_backend_raw_pointer_fixture|selfhost/compiler_backend_raw_pointer_fixture.tl|assembly|exactly-one|direct
+case|selfhost_compiler_backend_raw_pointer_fixture|src/compiler_backend_raw_pointer_fixture.tl|assembly|exactly-one|direct
 contains|_tl_compiler_backend_raw_pointer_fixture_for_name:
 contains|_tl_compiler_backend_raw_pointer_fixture_emit:
 contains|windows-x86_64
 contains|linux-x86_64
 end
 
-case|selfhost_compiler_check_core|selfhost/compiler_check_core.tl|assembly|skip|direct
+case|selfhost_compiler_check_core|src/compiler_check_core.tl|assembly|skip|direct
 contains|_tl_compiler_check_file:
 contains|_tl_compiler_check_file_with_roots:
 contains|_tl_compiler_check_source_with_roots:
 contains|_tl_compiler_check_package_source_with_roots:
 end
 
-case|selfhost_compiler_check_smoke|selfhost/compiler_check_smoke.tl|assembly|exactly-one|direct
+case|selfhost_compiler_check_smoke|src/compiler_check_smoke.tl|assembly|exactly-one|direct
 contains|_tl_compiler_check_self_test:
 contains|_tl_compiler_load_self_test:
 contains|_tl_compiler_check_source:
 end
 
-case|selfhost_compiler_ctfe|selfhost/compiler_ctfe.tl|assembly|skip|direct
+case|selfhost_compiler_ctfe|src/compiler_ctfe.tl|assembly|skip|direct
 contains|_tl_compiler_ctfe_eval:
 contains|_tl_ctfe_eval_node:
 contains|_tl_ctfe_value_to_literal:
 contains|_tl_compiler_ctfe_self_test:
 end
 
-case|selfhost_compiler_ctfe_smoke|selfhost/compiler_ctfe_smoke.tl|assembly|exactly-one|direct
+case|selfhost_compiler_ctfe_smoke|src/compiler_ctfe_smoke.tl|assembly|exactly-one|direct
 contains|_tl_compiler_ctfe_self_test:
 end
 
-case|selfhost_compiler_diagnostic|selfhost/compiler_diagnostic.tl|assembly|skip|direct
+case|selfhost_compiler_diagnostic|src/compiler_diagnostic.tl|assembly|skip|direct
 contains|_tl_compiler_diagnostic_render:
 contains|_tl_compiler_diagnostic_at_start:
 contains|_tl_compiler_diagnostic_from_source_error:
 contains|_tl_compiler_diagnostic_self_test:
 end
 
-case|selfhost_compiler_driver_core|selfhost/compiler_driver_core.tl|assembly|skip|direct
+case|selfhost_compiler_driver_core|src/compiler_driver_core.tl|assembly|skip|direct
 contains|_tl_compiler_driver_compile_file:
 contains|_tl_compiler_driver_compile_file_with_roots_level_and_mode:
 contains|_tl_compiler_driver_compile_file_for_target:
@@ -455,7 +455,7 @@ contains|_tl_compiler_backend_emit_program_target_with_mode_buffer_and_crt:
 contains|_tl_compiler_backend_emit_source:
 end
 
-case|selfhost_compiler_ir_types|selfhost/compiler_ir_types.tl|assembly|skip|direct
+case|selfhost_compiler_ir_types|src/compiler_ir_types.tl|assembly|skip|direct
 contains|_tl_compiler_ir_program_summary:
 contains|_tl_compiler_ir_summary_globals:
 contains|_tl_compiler_ir_summary_functions:
@@ -470,45 +470,45 @@ contains|_tl_compiler_ir_instr_effect:
 contains|_tl_compiler_ir_effect_self_test:
 end
 
-case|selfhost_compiler_ir_types_smoke|selfhost/compiler_ir_types_smoke.tl|assembly|exactly-one|direct
+case|selfhost_compiler_ir_types_smoke|src/compiler_ir_types_smoke.tl|assembly|exactly-one|direct
 contains|_tl_compiler_ir_effect_self_test:
 contains|_tl_compiler_ir_tail_call_render_ok_question:
 end
 
-case|selfhost_compiler_typecheck_reflection_smoke|selfhost/compiler_typecheck_reflection_smoke.tl|assembly|exactly-one|direct
+case|selfhost_compiler_typecheck_reflection_smoke|src/compiler_typecheck_reflection_smoke.tl|assembly|exactly-one|direct
 contains|_tl_compiler_typecheck_reflection_tests_ok_question:
 end
 
-case|selfhost_compiler_liveness|selfhost/compiler_liveness.tl|assembly|skip|direct
+case|selfhost_compiler_liveness|src/compiler_liveness.tl|assembly|skip|direct
 contains|_tl_compiler_live_analyze_function:
 contains|_tl_compiler_live_self_test:
 contains|liveness: smoke mismatch
 end
 
-case|selfhost_compiler_liveness_smoke|selfhost/compiler_liveness_smoke.tl|assembly|exactly-one|direct
+case|selfhost_compiler_liveness_smoke|src/compiler_liveness_smoke.tl|assembly|exactly-one|direct
 contains|_tl_compiler_live_self_test:
 contains|_tl_compiler_live_analyze_function:
 end
 
-case|selfhost_compiler_embedded_stdlib|selfhost/compiler_embedded_stdlib.tl|assembly|skip|direct
+case|selfhost_compiler_embedded_stdlib|src/compiler_embedded_stdlib.tl|assembly|skip|direct
 contains|compiler_embedded_stdlib_lookup:
 end
 
-case|selfhost_compiler_float|selfhost/compiler_float.tl|assembly|skip|direct
+case|selfhost_compiler_float|src/compiler_float.tl|assembly|skip|direct
 contains|_tl_compiler_float_parse_f64:
 contains|_tl_compiler_float_format_f64:
 contains|_tl_compiler_float_f64_finite_question:
 contains|_tl_compiler_float_self_test:
 end
 
-case|selfhost_compiler_intern|selfhost/compiler_intern.tl|assembly|skip|direct
+case|selfhost_compiler_intern|src/compiler_intern.tl|assembly|skip|direct
 contains|_tl_compiler_intern_intern_str:
 contains|_tl_compiler_intern_intern_slice:
 end
 
-decision|selfhost/compiler_builtin_ids.tl|reset-aware interned builtin/runtime id predicates (#2380/#2464): imports only selfhost/compiler_intern.tl; used by selfhost/compiler_lower.tl dispatch, selfhost/compiler_typecheck_core.tl dispatch, backend runtime-plan id dispatch, and backend target-lowering cache resets
+decision|src/compiler_builtin_ids.tl|reset-aware interned builtin/runtime id predicates (#2380/#2464): imports only src/compiler_intern.tl; used by src/compiler_lower.tl dispatch, src/compiler_typecheck_core.tl dispatch, backend runtime-plan id dispatch, and backend target-lowering cache resets
 
-case|selfhost_compiler_load|selfhost/compiler_load.tl|assembly|skip|direct
+case|selfhost_compiler_load|src/compiler_load.tl|assembly|skip|direct
 contains|_tl_compiler_load_file:
 contains|_tl_compiler_load_file_with_roots:
 contains|_tl_compiler_load_file_with_paths_and_roots_cfg:
@@ -518,19 +518,19 @@ contains|_tl_compiler_load_self_test:
 contains|_tl_compiler_load_cfg_import_ok_question:
 end
 
-case|selfhost_compiler_lower|selfhost/compiler_lower.tl|assembly|skip|direct
+case|selfhost_compiler_lower|src/compiler_lower.tl|assembly|skip|direct
 contains|_tl_lower_compiler_source:
 contains|_tl_lower_compiler_program_checked:
 contains|_tl_compiler_lower_self_test:
 contains|lower: unsupported expression
 end
 
-case|selfhost_compiler_lower_smoke|selfhost/compiler_lower_smoke.tl|assembly|exactly-one|direct
+case|selfhost_compiler_lower_smoke|src/compiler_lower_smoke.tl|assembly|exactly-one|direct
 contains|_tl_compiler_lower_self_test:
 contains|_tl_lower_compiler_source:
 end
 
-case|selfhost_compiler_optimize|selfhost/compiler_optimize.tl|assembly|skip|direct
+case|selfhost_compiler_optimize|src/compiler_optimize.tl|assembly|skip|direct
 contains|_tl_optimize_program:
 contains|_tl_optimize_program_with_level:
 contains|_tl_opt_fold_instrs:
@@ -547,7 +547,7 @@ contains|_tl_opt_cfg_dominators:
 contains|_tl_opt_verify_function:
 end
 
-case|selfhost_compiler_optimize_smoke|selfhost/compiler_optimize_smoke.tl|assembly|exactly-one|direct
+case|selfhost_compiler_optimize_smoke|src/compiler_optimize_smoke.tl|assembly|exactly-one|direct
 contains|_tl_compiler_optimize_self_test:
 contains|_tl_compiler_optimize_strength_self_test:
 contains|_tl_compiler_optimize_bounds_self_test:
@@ -559,7 +559,7 @@ contains|_tl_compiler_optimize_global_value_number_self_test:
 contains|_tl_compiler_optimize_aggregate_sroa_self_test:
 end
 
-case|selfhost_compiler_parse_core|selfhost/compiler_parse_core.tl|assembly|skip|direct
+case|selfhost_compiler_parse_core|src/compiler_parse_core.tl|assembly|skip|direct
 contains|_tl_parse_ast_source:
 contains|_tl_parse_ast_source_with_cfg:
 contains|_tl_parse_ast_program:
@@ -575,46 +575,46 @@ contains|source-level generics or traits
 count-at-least|call _tl_compiler_parse_dispatch_env|1
 end
 
-case|selfhost_compiler_parse_smoke|selfhost/compiler_parse_smoke.tl|assembly|exactly-one|direct
+case|selfhost_compiler_parse_smoke|src/compiler_parse_smoke.tl|assembly|exactly-one|direct
 contains|_tl_compiler_parse_smoke:
 contains|_tl_compiler_diagnostic_self_test:
 contains|_tl_parse_ast_source:
 end
 
-case|selfhost_compiler_regalloc|selfhost/compiler_regalloc.tl|assembly|skip|direct
+case|selfhost_compiler_regalloc|src/compiler_regalloc.tl|assembly|skip|direct
 contains|_tl_compiler_reg_plan_function:
 contains|_tl_compiler_regalloc_self_test:
 contains|regalloc: smoke mismatch
 end
 
-case|selfhost_compiler_regalloc_smoke|selfhost/compiler_regalloc_smoke.tl|assembly|exactly-one|direct
+case|selfhost_compiler_regalloc_smoke|src/compiler_regalloc_smoke.tl|assembly|exactly-one|direct
 contains|_tl_compiler_regalloc_self_test:
 contains|_tl_compiler_reg_plan_function:
 end
 
-case|selfhost_compiler_specialize|selfhost/compiler_specialize.tl|assembly|skip|direct
+case|selfhost_compiler_specialize|src/compiler_specialize.tl|assembly|skip|direct
 contains|_tl_compiler_specialize_program:
 contains|_tl_compiler_specialize_self_test:
 contains|__tl_specialized_alloc_type_i64_none
 contains|specialize: expected type value
 end
 
-case|selfhost_compiler_specialize_smoke|selfhost/compiler_specialize_smoke.tl|assembly|exactly-one|direct
+case|selfhost_compiler_specialize_smoke|src/compiler_specialize_smoke.tl|assembly|exactly-one|direct
 contains|_tl_compiler_specialize_self_test:
 contains|_tl_compiler_specialize_program:
 end
 
-case|selfhost_compiler_symbols|selfhost/compiler_symbols.tl|assembly|skip|direct
+case|selfhost_compiler_symbols|src/compiler_symbols.tl|assembly|skip|direct
 contains|_tl_compiler_symbols_add_decl:
 contains|_tl_compiler_symbols_self_test:
 contains|symbols: duplicate value declaration
 end
 
-case|selfhost_compiler_symbols_smoke|selfhost/compiler_symbols_smoke.tl|assembly|exactly-one|direct
+case|selfhost_compiler_symbols_smoke|src/compiler_symbols_smoke.tl|assembly|exactly-one|direct
 contains|_tl_compiler_symbols_self_test:
 end
 
-case|selfhost_compiler_typecheck|selfhost/compiler_typecheck.tl|assembly|skip|direct
+case|selfhost_compiler_typecheck|src/compiler_typecheck.tl|assembly|skip|direct
 contains|_tl_typecheck_compiler_program:
 contains|_tl_compiler_typecheck_self_test:
 contains|_tl_tc_source_type_policy_message:
@@ -623,7 +623,7 @@ contains|typecheck: return type mismatch
 contains|source-level type parameters
 end
 
-case|selfhost_compiler_typecheck_core|selfhost/compiler_typecheck_core.tl|assembly|skip|direct
+case|selfhost_compiler_typecheck_core|src/compiler_typecheck_core.tl|assembly|skip|direct
 contains|_tl_typecheck_compiler_specialized_program_with_paths:
 contains|tc_inline_aggregate_layout_for:
 contains|tc_inline_aggregate_type_layout:
@@ -633,17 +633,17 @@ contains|typecheck: return type mismatch
 contains|source-level type parameters
 end
 
-case|selfhost_compiler_typecheck_smoke|selfhost/compiler_typecheck_smoke.tl|assembly|exactly-one|direct
+case|selfhost_compiler_typecheck_smoke|src/compiler_typecheck_smoke.tl|assembly|exactly-one|direct
 contains|_tl_compiler_typecheck_self_test:
 contains|_tl_typecheck_compiler_program:
 end
 
-case|selfhost_compiler_macro_prelude_smoke|selfhost/compiler_macro_prelude_smoke.tl|assembly|exactly-one|direct
+case|selfhost_compiler_macro_prelude_smoke|src/compiler_macro_prelude_smoke.tl|assembly|exactly-one|direct
 contains|compiler_macro_prelude_selfhost_smoke:
 contains|main:
 end
 
-case|selfhost_doc_extract|selfhost/doc_extract.tl|assembly|skip|direct
+case|selfhost_doc_extract|src/doc_extract.tl|assembly|skip|direct
 contains|_tl_doc_extract_file:
 contains|_tl_doc_extract_source:
 contains|_tl_doc_extract_smoke:
@@ -664,13 +664,13 @@ contains|;: EOF unattached
 contains|Module title\nsecond module line\nlater module
 end
 
-case|selfhost_doc_extract_smoke|selfhost/doc_extract_smoke.tl|assembly|exactly-one|direct
+case|selfhost_doc_extract_smoke|src/doc_extract_smoke.tl|assembly|exactly-one|direct
 contains|_tl_doc_extract_smoke:
 contains|_tl_doc_extract_source:
 contains|_tl_format_lex:
 end
 
-case|selfhost_doc_html|selfhost/doc_html.tl|assembly|skip|direct
+case|selfhost_doc_html|src/doc_html.tl|assembly|skip|direct
 contains|_tl_doc_html_render_module_page:
 contains|_tl_doc_html_render_module_graph:
 contains|_tl_doc_html_render_source:
@@ -688,7 +688,7 @@ contains|doc-html: item anchor missing
 contains|No documented declarations.
 end
 
-case|selfhost_doc_html_smoke|selfhost/doc_html_smoke.tl|assembly|exactly-one|direct
+case|selfhost_doc_html_smoke|src/doc_html_smoke.tl|assembly|exactly-one|direct
 contains|_tl_doc_html_smoke:
 contains|_tl_doc_html_render_module_page:
 contains|_tl_doc_html_render_module_graph:
@@ -697,18 +697,18 @@ contains|_tl_doc_extract_source:
 contains|_tl_format_lex:
 end
 
-case|selfhost_doc_render|selfhost/doc_render.tl|assembly|skip|direct
+case|selfhost_doc_render|src/doc_render.tl|assembly|skip|direct
 contains|_tl_doc_render_markdown:
 contains|_tl_doc_render_module_graph_markdown:
 contains|_tl_doc_render_smoke:
 end
 
-case|selfhost_doc_render_smoke|selfhost/doc_render_smoke.tl|assembly|exactly-one|direct
+case|selfhost_doc_render_smoke|src/doc_render_smoke.tl|assembly|exactly-one|direct
 contains|_tl_doc_render_smoke:
 contains|_tl_doc_render_markdown:
 end
 
-case|selfhost_doc_test|selfhost/doc_test.tl|assembly|skip|direct
+case|selfhost_doc_test|src/doc_test.tl|assembly|skip|direct
 contains|_tl_doc_test_extract_source:
 contains|_tl_doc_test_extract_file:
 contains|_tl_doc_test_parse_run_metadata:
@@ -738,32 +738,32 @@ contains|doc-test-run: unexpected-error mismatch
 contains|was expected to fail
 end
 
-case|selfhost_doc_test_smoke|selfhost/doc_test_smoke.tl|assembly|exactly-one|direct
+case|selfhost_doc_test_smoke|src/doc_test_smoke.tl|assembly|exactly-one|direct
 contains|_tl_doc_test_smoke_all:
 contains|_tl_doc_test_run_smoke:
 contains|_tl_doc_test_smoke:
 contains|_tl_doc_test_parse_fence_info:
 end
 
-case|selfhost_format_core|selfhost/format_core.tl|assembly|skip|direct
+case|selfhost_format_core|src/format_core.tl|assembly|skip|direct
 contains|_tl_format_core_source_doc:
 contains|_tl_format_core_render_source_width:
 contains|_tl_format_core_self_test:
 end
 
-case|selfhost_format_cst|selfhost/format_cst.tl|assembly|skip|direct
+case|selfhost_format_cst|src/format_cst.tl|assembly|skip|direct
 contains|_tl_format_lex:
 contains|_tl_parse_format_source:
 contains|format cst: unclosed delimiter
 end
 
-case|selfhost_format_doc|selfhost/format_doc.tl|assembly|skip|direct
+case|selfhost_format_doc|src/format_doc.tl|assembly|skip|direct
 contains|_tl_doc_empty:
 contains|_tl_render_doc:
 contains|_tl_format_doc_self_test:
 end
 
-case|selfhost_format_rules|selfhost/format_rules.tl|assembly|skip|direct
+case|selfhost_format_rules|src/format_rules.tl|assembly|skip|direct
 contains|_tl_format_rules_define_doc:
 contains|_tl_format_rules_let_binding_annotated_doc:
 contains|_tl_format_rules_let_doc:
@@ -771,19 +771,19 @@ contains|_tl_format_rules_render_source_width:
 contains|_tl_format_rules_self_test:
 end
 
-case|selfhost_format_tokens|selfhost/format_tokens.tl|assembly|skip|direct
+case|selfhost_format_tokens|src/format_tokens.tl|assembly|skip|direct
 contains|_tl_format_lex:
 contains|_tl_format_token_tag:
 contains|format lexer: unexpected character
 end
 
-case|selfhost_host_plan|selfhost/host_plan.tl|assembly|skip|direct
+case|selfhost_host_plan|src/host_plan.tl|assembly|skip|direct
 contains|_tl_host_plan_header:
 contains|_tl_host_plan_netline:
 contains|_tl_host_plan_target_valid_question:
 end
 
-case|selfhost_lex|selfhost/lex.tl|assembly|skip|direct
+case|selfhost_lex|src/lex.tl|assembly|skip|direct
 contains|_tl_lex:
 contains|_tl_lex_result:
 contains|_tl_lex_span_self_test:
@@ -793,43 +793,43 @@ contains|_tl_lex_error_spans_ok_question:
 contains|lexer: unexpected character
 end
 
-case|selfhost_lex_span_smoke|selfhost/lex_span_smoke.tl|assembly|exactly-one|direct
+case|selfhost_lex_span_smoke|src/lex_span_smoke.tl|assembly|exactly-one|direct
 contains|_tl_lex_span_self_test:
 contains|_tl_lex_spanned_result:
 end
 
-case|selfhost_lsp_frame_smoke|selfhost/lsp_frame_smoke.tl|assembly|exactly-one|direct
+case|selfhost_lsp_frame_smoke|src/lsp_frame_smoke.tl|assembly|exactly-one|direct
 contains|_tl_lsp_diagnostic_metadata_smoke:
 contains|_tl_lsp_compiler_diagnostic_code_ok_question:
 contains|_tl_lsp_compiler_diagnostic_uncoded_ok_question:
 contains|_tl_compiler_diagnostic_code_or_empty:
 end
 
-case|selfhost_read|selfhost/read.tl|assembly|skip|direct
+case|selfhost_read|src/read.tl|assembly|skip|direct
 contains|_tl_read:
 contains|_tl_read_form:
 contains|_tl_read_list_result:
 contains|reader: unexpected end of input
 end
 
-decision|selfhost/tlci_core.tl|tlci v1 container and metadata parse/emit helpers (#2651/#2655): main-less helper module with inline tests, executable smoke coverage, package metadata emission, and inspect-command parsing; tlci code loading remains a later slice
+decision|src/tlci_core.tl|tlci v1 container and metadata parse/emit helpers (#2651/#2655): main-less helper module with inline tests, executable smoke coverage, package metadata emission, and inspect-command parsing; tlci code loading remains a later slice
 
-case|selfhost_tlci_core_smoke|selfhost/tlci_core_smoke.tl|assembly|exactly-one|direct
+case|selfhost_tlci_core_smoke|src/tlci_core_smoke.tl|assembly|exactly-one|direct
 contains|_tl_tlci_core_tlci_core_self_test:
 contains|_tl_tlci_core_tlci_emit_image:
 contains|_tl_tlci_core_tlci_parse_image:
 contains|tlci-core: self-test mismatch
 end
 
-decision|selfhost/tlci_pages.tl|tlci loader host page mapping/protection shim (#2671): main-less OS-boundary helper module exercised through inline tests and intended for the future tlci loader
+decision|src/tlci_pages.tl|tlci loader host page mapping/protection shim (#2671): main-less OS-boundary helper module exercised through inline tests and intended for the future tlci loader
 
-case|selfhost_sym_i64_env|selfhost/sym_i64_env.tl|assembly|skip|direct
+case|selfhost_sym_i64_env|src/sym_i64_env.tl|assembly|skip|direct
 contains|_tl_sym_i64_empty:
 contains|_tl_sym_i64_bind:
 contains|_tl_sym_i64_lookup:
 end
 
-case|selfhost_text_buf|selfhost/text_buf.tl|assembly|skip|direct
+case|selfhost_text_buf|src/text_buf.tl|assembly|skip|direct
 contains|_tl_text_buf_empty:
 contains|_tl_text_buf_append:
 contains|_tl_text_chunk_list_concat:
@@ -838,35 +838,35 @@ contains|_tl_text_chunks_render_rev:
 contains|_tl_text_buf_render:
 end
 
-case|selfhost_token|selfhost/token.tl|assembly|skip|direct
+case|selfhost_token|src/token.tl|assembly|skip|direct
 contains|_tl_token_tag:
 contains|_tl_token_sym:
 contains|_tl_source_error_message:
 end
 
-decision|selfhost/lint_core.tl|lint rule engine (nested-if-ladder rule, #1163); imported by selfhost/lint_smoke.tl and exercised through the selfhost_lint_smoke case; has no main to compile directly
+decision|src/lint_core.tl|lint rule engine (nested-if-ladder rule, #1163); imported by src/lint_smoke.tl and exercised through the selfhost_lint_smoke case; has no main to compile directly
 
-case|selfhost_lint_smoke|selfhost/lint_smoke.tl|assembly|exactly-one|direct
+case|selfhost_lint_smoke|src/lint_smoke.tl|assembly|exactly-one|direct
 contains|_tl_compiler_lint_self_test:
 contains|_tl_lint_walk_expr:
 contains|_tl_lint_ladder_length:
 end
 
-decision|selfhost/lint_driver_core.tl|selfhost lint driver logic (#1163/#1987): arg parsing, finding rendering (path:line:col), file/package source linting, and the driver self-test; main-less, imported by selfhost/cli.tl and selfhost/lint_driver_smoke.tl and exercised through the selfhost_lint_driver_smoke and selfhost_cli cases; has no main to compile directly
+decision|src/lint_driver_core.tl|selfhost lint driver logic (#1163/#1987): arg parsing, finding rendering (path:line:col), file/package source linting, and the driver self-test; main-less, imported by src/cli.tl and src/lint_driver_smoke.tl and exercised through the selfhost_lint_driver_smoke and selfhost_cli cases; has no main to compile directly
 
-case|selfhost_lint_driver_smoke|selfhost/lint_driver_smoke.tl|assembly|exactly-one|direct
+case|selfhost_lint_driver_smoke|src/lint_driver_smoke.tl|assembly|exactly-one|direct
 contains|_tl_compiler_lint_driver_self_test:
 contains|_tl_selfhost_lint_source_with_roots:
 end
 
-case|selfhost_package_cache_smoke|selfhost/package_cache_smoke.tl|assembly|exactly-one|direct
+case|selfhost_package_cache_smoke|src/package_cache_smoke.tl|assembly|exactly-one|direct
 contains|main:
 contains|typelisp-package-cache-v1
 contains|package-cache: self-test mismatch
 contains|package-cache: cache key requires exact rev pin
 end
 
-case|selfhost_package_lock_smoke|selfhost/package_lock_smoke.tl|assembly|exactly-one|direct
+case|selfhost_package_lock_smoke|src/package_lock_smoke.tl|assembly|exactly-one|direct
 contains|main:
 contains|typelisp-lock
 contains|package-lock: self-test mismatch
@@ -877,7 +877,7 @@ end
 # optimization_benchmark_manifest_and_tl_sources_compile harness: each of the 11
 # benchmark TypeLisp sources must compile to assembly that defines main: with no
 # backend "# TODO" (the runner auto-rejects "# TODO"). Sources live outside
-# selfhost/ so they are not subject to check_selfhost_manifest_sync().
+# src/ so they are not subject to check_selfhost_manifest_sync().
 
 case|bench_opt_arithmetic_loops|benchmarks/optimization/tl/arithmetic_loops.tl|assembly|exactly-one|direct
 contains|main:

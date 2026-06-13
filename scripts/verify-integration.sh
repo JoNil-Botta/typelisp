@@ -199,19 +199,19 @@ dep_source_path() {
             return
             ;;
         sym_i64_env_core.tl)
-            printf '%s\n' "$ROOT/selfhost/sym_i64_env.tl"
+            printf '%s\n' "$ROOT/src/sym_i64_env.tl"
             return
             ;;
         text_buf_core.tl)
-            printf '%s\n' "$ROOT/selfhost/text_buf.tl"
+            printf '%s\n' "$ROOT/src/text_buf.tl"
             return
             ;;
     esac
 
     if [ -f "$_source_dir/$_dep" ]; then
         printf '%s\n' "$_source_dir/$_dep"
-    elif [ -f "$ROOT/selfhost/$_dep" ]; then
-        printf '%s\n' "$ROOT/selfhost/$_dep"
+    elif [ -f "$ROOT/src/$_dep" ]; then
+        printf '%s\n' "$ROOT/src/$_dep"
     elif [ -f "$ROOT/tests/integration/$_dep" ]; then
         printf '%s\n' "$ROOT/tests/integration/$_dep"
     else
@@ -227,7 +227,7 @@ copy_dep() {
     _src=$(dep_source_path "$_dep" "$_source_dir")
     case "$_dep" in
         stdlib/*)
-            if [ "$_source_dir" = "$ROOT/selfhost" ]; then
+            if [ "$_source_dir" = "$ROOT/src" ]; then
                 _dst="$(dirname -- "$_case_dir")/$_dep"
             else
                 _dst="$_case_dir/$_dep"
@@ -243,7 +243,7 @@ copy_dep() {
     case "$_dep" in
         stdlib/core_macros.tl) ;;
         stdlib/*)
-            if [ "$_source_dir" = "$ROOT/selfhost" ]; then
+            if [ "$_source_dir" = "$ROOT/src" ]; then
                 _core_dst="$(dirname -- "$_case_dir")/stdlib/core_macros.tl"
             else
                 _core_dst="$_case_dir/stdlib/core_macros.tl"
@@ -681,7 +681,7 @@ run_linux_backend_fixtures() {
 
     echo "[backend-runtime] emit -> assemble -> link -> run"
     build_linux_fixture_driver backend-runtime-driver \
-        selfhost/compiler_backend_runtime_fixture.tl "$_runtime_driver"
+        src/compiler_backend_runtime_fixture.tl "$_runtime_driver"
     "$_runtime_driver" "$_runtime_asm"
     for _snippet in \
         ".globl tl_alloc" \
@@ -790,7 +790,7 @@ EOF
 
     echo "[backend-stack-args] emit -> assemble -> link -> run"
     build_linux_fixture_driver backend-stack-args-driver \
-        selfhost/compiler_backend_stack_args_fixture.tl "$_stack_driver"
+        src/compiler_backend_stack_args_fixture.tl "$_stack_driver"
     "$_stack_driver" "$_stack_asm" linux-x86_64
     for _snippet in \
         "subq \$16, %rsp" \
@@ -827,7 +827,7 @@ EOF
 
     echo "[backend-raw-pointer] emit -> assemble -> link -> run"
     build_linux_fixture_driver backend-raw-pointer-driver \
-        selfhost/compiler_backend_raw_pointer_fixture.tl "$_raw_ptr_driver"
+        src/compiler_backend_raw_pointer_fixture.tl "$_raw_ptr_driver"
     "$_raw_ptr_driver" "$_raw_ptr_asm" linux-x86_64
     for _snippet in \
         "_tl_write_i64:" \
@@ -932,7 +932,7 @@ run_windows_backend_fixtures() {
     _driver_asm="$_runtime_dir/fixture_driver.s"
     _driver_obj="$_runtime_dir/fixture_driver.obj"
     _driver_bin="$_runtime_dir/fixture_driver.exe"
-    "$COMPILER" compile selfhost/compiler_backend_runtime_fixture.tl \
+    "$COMPILER" compile src/compiler_backend_runtime_fixture.tl \
         --target windows-x86_64 --cfg windows -o "$_driver_asm" || {
         echo "FAIL: windows-backend-runtime driver compile failed" >&2
         exit 1
@@ -1075,7 +1075,7 @@ EOF
     # driver via compile + clang + lld-link (mirrors the runtime fixture above).
     _driver_self_asm="$_driver_dir/selfhost-compile.s"
     _driver_self_obj="$_driver_dir/selfhost-compile.obj"
-    "$COMPILER" compile selfhost/cli.tl --target windows-x86_64 --cfg windows -o "$_driver_self_asm" || {
+    "$COMPILER" compile src/cli.tl --target windows-x86_64 --cfg windows -o "$_driver_self_asm" || {
         echo "FAIL: windows-selfhost-compile-driver compile failed" >&2
         exit 1
     }

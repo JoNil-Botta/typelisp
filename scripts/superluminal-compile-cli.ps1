@@ -318,14 +318,14 @@ function Invoke-SuperluminalCapture {
         "--no-microsoft-symbol-server",
         "--no-nuget-symbol-server",
         $Stage2Exe,
-        "compile", "selfhost/cli.tl",
+        "compile", "src/cli.tl",
         "-o", $stage3,
         "--target", "windows-x86_64",
         "--cfg", "windows",
         "--cfg", "target-windows",
         "--cfg", "os-windows",
         "--stdlib-root", "stdlib",
-        "--stdlib-root", "selfhost",
+        "--stdlib-root", "src",
         "--opt-level", "$OptLevel"
     )
 

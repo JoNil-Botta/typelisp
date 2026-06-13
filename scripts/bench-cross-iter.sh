@@ -36,9 +36,9 @@ now_ms() {
 }
 
 compile() { # compiler out opt
-    "$1" compile selfhost/cli.tl -o "$2" \
+    "$1" compile src/cli.tl -o "$2" \
         --target "$NL_BOOTSTRAP_TARGET" $(native_target_cfg_args) \
-        --stdlib-root stdlib --stdlib-root selfhost --opt-level "$3"
+        --stdlib-root stdlib --stdlib-root src --opt-level "$3"
 }
 
 build_chain() { # opt prefix

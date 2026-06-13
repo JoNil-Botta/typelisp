@@ -18,7 +18,7 @@ case "$(uname -s)" in
     *) ;;
 esac
 
-MANIFEST=${TYPELISP_COMPILE_MANIFEST:-selfhost/compile_manifest.txt}
+MANIFEST=${TYPELISP_COMPILE_MANIFEST:-src/compile_manifest.txt}
 WORKDIR=${TYPELISP_COMPILE_MANIFEST_WORKDIR:-target/selfhost-compile-manifest}
 EXPECTATION_MODE=${TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE:-stage0}
 # #2357: the batch driver scopes each entry's compile in its own arena region
@@ -79,11 +79,11 @@ check_selfhost_manifest_sync() {
     actual="$WORKDIR/actual-selfhost-sources.txt"
 
     awk -F'|' '
-        $1 == "case" && $3 ~ /^selfhost\/[^/]+\.tl$/ { print $3 }
-        $1 == "decision" && $2 ~ /^selfhost\/[^/]+\.tl$/ { print $2 }
+        $1 == "case" && $3 ~ /^src\/[^/]+\.tl$/ { print $3 }
+        $1 == "decision" && $2 ~ /^src\/[^/]+\.tl$/ { print $2 }
     ' "$MANIFEST_INPUT" | sort -u > "$expected"
 
-    find selfhost -maxdepth 1 -type f -name '*.tl' | sort > "$actual"
+    find src -maxdepth 1 -type f -name '*.tl' | sort > "$actual"
 
     if ! cmp -s "$expected" "$actual"; then
         echo "selfhost compile manifest is out of date" >&2

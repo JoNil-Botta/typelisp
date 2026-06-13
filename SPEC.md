@@ -5621,7 +5621,9 @@ declarations.
 | 9th+ | Stack (8-byte aligned) | Stack |
 
 - Integer and float arguments consume **independent** register sequences.
-- Return value: `%rax` (integer), `%xmm0` (float).
+- Scalar `f64` and `f32` both use the float (`%xmm`) registers: `f64` moves with
+  `movsd`, `f32` with single-precision `movss`.
+- Return value: `%rax` (integer), `%xmm0` (float, `f64` or `f32`).
 - Callee-saved: `%rbx`, `%rbp`, `%r12-%r15`.
 - Stack aligned to 16 bytes before `call`.
 
@@ -5636,7 +5638,9 @@ declarations.
 | 5th+ | Stack after 32-byte shadow space | Stack after 32-byte shadow space |
 
 - Integer and float arguments share the four register slots.
-- Return value: `%rax` (integer), `%xmm0` (float).
+- Scalar `f64` and `f32` both use the float (`%xmm`) registers: `f64` moves with
+  `movsd`, `f32` with single-precision `movss`.
+- Return value: `%rax` (integer), `%xmm0` (float, `f64` or `f32`).
 - Callers reserve 32 bytes of shadow space before each call.
 - The CRT owns process startup; Windows output emits `main` and no Linux
   `_tl_start` wrapper.

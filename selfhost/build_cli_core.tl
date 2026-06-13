@@ -2558,6 +2558,7 @@
         kind
         profile
         target)]
+    [reset-file-state : unit (compiler-driver-reset-file-state!)]
     (if (not (build-ensure-package-output-dirs manifest-dir name profile))
       (begin
         (print-error

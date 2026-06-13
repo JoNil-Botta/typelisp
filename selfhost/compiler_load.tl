@@ -829,6 +829,12 @@
     (AstSomeType (AstTyString))
     (ast-node-push (AstExprLiteral (AstLitString contents)))))
 
+(define (compiler-load-include-bin-def [name : String] [contents : String]) : AstDecl
+  (ast-decl-def
+    name
+    (AstSomeType (ast-ty-dyn-array (AstTyU8)))
+    (ast-node-push (AstExprBinaryData contents))))
+
 (define (compiler-load-include-str-read-error
   [importer-path : String]
   [include-path : String]
@@ -863,6 +869,39 @@
             include-path
             resolved))])))
 
+(define (compiler-load-include-bin-read-error
+  [importer-path : String]
+  [include-path : String]
+  [resolved : String]) : CompilerDiagnostic
+  (compiler-diagnostic-at-start
+    importer-path
+    (str-cat
+      "compiler-load: cannot read include-bin "
+      include-path
+      " from "
+      importer-path
+      " (resolved "
+      resolved
+      ")")))
+
+(define (compiler-load-include-bin-from-resolved
+  [importer-path : String]
+  [include-path : String]
+  [resolved : String]
+  [name : String]) : ResultCompilerLoadInclude
+  (if (file-exists? resolved)
+    (OkCompilerLoadInclude
+      (compiler-load-include-bin-def name (read-file resolved)))
+    (match (compiler-load-embedded-stdlib-source-for-path resolved)
+      [(CompilerEmbeddedStdlibSomeSource source)
+        (OkCompilerLoadInclude (compiler-load-include-bin-def name source))]
+      [(CompilerEmbeddedStdlibNoSource)
+        (ErrCompilerLoadInclude
+          (compiler-load-include-bin-read-error
+            importer-path
+            include-path
+            resolved))])))
+
 (define (compiler-load-expand-include-str
   [importer-path : String]
   [include-path : String]
@@ -874,6 +913,25 @@
     stdlib-roots)
     [(OkPkgResolve resolved)
       (compiler-load-include-str-from-resolved
+        importer-path
+        include-path
+        resolved
+        name)]
+    [(ErrPkgResolve message)
+      (ErrCompilerLoadInclude
+        (compiler-diagnostic-at-start importer-path message))]))
+
+(define (compiler-load-expand-include-bin
+  [importer-path : String]
+  [include-path : String]
+  [name : String]
+  [stdlib-roots : StringVec]) : ResultCompilerLoadInclude
+  (match (compiler-load-resolve-import-result-with-roots
+    importer-path
+    include-path
+    stdlib-roots)
+    [(OkPkgResolve resolved)
+      (compiler-load-include-bin-from-resolved
         importer-path
         include-path
         resolved
@@ -1302,6 +1360,35 @@
                   (compiler-diagnostic-at-start importer-path message))])]
           [(AstDeclIncludeStr name include-path)
             (match (compiler-load-expand-include-str
+              importer-path
+              include-path
+              name
+              stdlib-roots)
+              [(OkCompilerLoadInclude expanded)
+                (match (compiler-load-decls-with-module-and-roots-cfg-root
+                  rest
+                  importer-path
+                  importer-module
+                  importer-source-module
+                  seen
+                  stdlib-roots
+                  import-root
+                  cfgs)
+                  [(OkCompilerLoadWithPaths
+                      rest-decls
+                      rest-paths
+                      rest-modules
+                      rest-seen)
+                    (OkCompilerLoadWithPaths
+                      (ast-decl-cons expanded rest-decls)
+                      (ast-decl-path-cons importer-path rest-paths)
+                      (ast-decl-module-cons importer-module rest-modules)
+                      rest-seen)]
+                  [(ErrCompilerLoadWithPaths diag)
+                    (ErrCompilerLoadWithPaths diag)])]
+              [(ErrCompilerLoadInclude diag) (ErrCompilerLoadWithPaths diag)])]
+          [(AstDeclIncludeBin name include-path)
+            (match (compiler-load-expand-include-bin
               importer-path
               include-path
               name
@@ -2542,6 +2629,29 @@
       (ErrCompilerLoadInclude
         (compiler-diagnostic-at-start importer-path message))]))
 
+(define (compiler-load-package-expand-include-bin
+  [importer-path : String]
+  [include-path : String]
+  [name : String]
+  [stdlib-roots : StringVec]
+  [manifest-dir : String]
+  [deps : CompilerPkgDeps]) : ResultCompilerLoadInclude
+  (match (if (compiler-load-pkg-import? include-path)
+    (compiler-load-resolve-pkg-import include-path manifest-dir deps)
+    (compiler-load-resolve-import-result-with-roots
+      importer-path
+      include-path
+      stdlib-roots))
+    [(OkPkgResolve resolved)
+      (compiler-load-include-bin-from-resolved
+        importer-path
+        include-path
+        resolved
+        name)]
+    [(ErrPkgResolve message)
+      (ErrCompilerLoadInclude
+        (compiler-diagnostic-at-start importer-path message))]))
+
 (define (compiler-load-package-decls-with-module-and-roots
   [decls : AstDeclList]
   [importer-path : String]
@@ -2642,6 +2752,38 @@
                   (compiler-diagnostic-at-start importer-path message))])]
           [(AstDeclIncludeStr name include-path)
             (match (compiler-load-package-expand-include-str
+              importer-path
+              include-path
+              name
+              stdlib-roots
+              manifest-dir
+              deps)
+              [(OkCompilerLoadInclude expanded)
+                (match (compiler-load-package-decls-with-module-and-roots
+                  rest
+                  importer-path
+                  importer-module
+                  importer-source-module
+                  seen
+                  stdlib-roots
+                  manifest-dir
+                  deps
+                  cfgs)
+                  [(OkCompilerLoadWithPaths
+                      rest-decls
+                      rest-paths
+                      rest-modules
+                      rest-seen)
+                    (OkCompilerLoadWithPaths
+                      (ast-decl-cons expanded rest-decls)
+                      (ast-decl-path-cons importer-path rest-paths)
+                      (ast-decl-module-cons importer-module rest-modules)
+                      rest-seen)]
+                  [(ErrCompilerLoadWithPaths diag)
+                    (ErrCompilerLoadWithPaths diag)])]
+              [(ErrCompilerLoadInclude diag) (ErrCompilerLoadWithPaths diag)])]
+          [(AstDeclIncludeBin name include-path)
+            (match (compiler-load-package-expand-include-bin
               importer-path
               include-path
               name
@@ -2893,6 +3035,48 @@
             (and (string-eq (intern-str got) name) (string-eq text want))]
           [_ false]))]
     [_ false]))
+
+(define (compiler-load-binary-payload-ok? [text : String]) : bool
+  (and
+    (= (string-length text) 6)
+    (= (compiler-load-char-code-at text 0) 0)
+    (= (compiler-load-char-code-at text 1) 65)
+    (= (compiler-load-char-code-at text 2) 127)
+    (= (compiler-load-char-code-at text 3) 128)
+    (= (compiler-load-char-code-at text 4) 255)
+    (= (compiler-load-char-code-at text 5) 10)))
+
+(define (compiler-load-first-bin-def? [decls : AstDeclList] [name : String]) : bool
+  (match decls
+    [(AstDeclCons
+        (AstDeclDef got (AstSomeType (AstTyDynArray elem-id)) value-box)
+        _)
+      (let
+        [value : AstExpr (ast-node-get value-box)]
+        [elem : AstType (ty-node-get elem-id)]
+        (match value
+          [(AstExprBinaryData text)
+            (and
+              (string-eq (intern-str got) name)
+              (match elem
+                [(AstTyU8) true]
+                [_ false])
+              (compiler-load-binary-payload-ok? text))]
+          [_ false]))]
+    [_ false]))
+
+(define (compiler-load-binary-fixture) : String
+  (let
+    [bytes : (Array u8) (make-array u8 6)]
+    (begin
+      (array-set! bytes 0 (cast 0 : u8))
+      (array-set! bytes 1 (cast 65 : u8))
+      (array-set! bytes 2 (cast 127 : u8))
+      (array-set! bytes 3 (cast 128 : u8))
+      (array-set! bytes 4 (cast 255 : u8))
+      (array-set! bytes 5 (cast 10 : u8))
+      (unsafe
+        (string-from-bytes (ptr-cast (array-data bytes) : (Ptr u8)) 6)))))
 
 (define (compiler-load-decl-list-has-import-alias?
   [decls : AstDeclList]
@@ -3801,6 +3985,36 @@
             (= (compiler-load-decl-list-count decls) 2)
             (compiler-load-first-string-def? decls "payload" payload))]
         [(ErrCompilerLoadWithPaths _) false]))))
+
+(define (compiler-load-include-bin-relative-ok?) : bool
+  (begin
+    (write-file
+      "target/cl_include_bin_payload.bin"
+      (compiler-load-binary-fixture))
+    (write-file
+      "target/cl_include_bin_entry.tl"
+      "(include-bin payload \"cl_include_bin_payload.bin\")
+(define (main) : i64 0)")
+    (match (compiler-load-file-with-paths
+      "target/cl_include_bin_entry.tl"
+      (sym-i64-empty))
+      [(OkCompilerLoadWithPaths decls _ _ _)
+        (and
+          (= (compiler-load-decl-list-count decls) 2)
+          (compiler-load-first-bin-def? decls "payload"))]
+      [(ErrCompilerLoadWithPaths _) false])))
+
+(define (compiler-load-missing-include-bin-ok?) : bool
+  (match (compiler-load-source
+    "src/app.tl"
+    "(include-bin missing \"no_such_resource_xyz.bin\")
+(define value : i64 1)"
+    (sym-i64-empty))
+    [(ErrCompilerLoad diag)
+      (string-eq
+        (compiler-diagnostic-message diag)
+        "compiler-load: cannot read include-bin no_such_resource_xyz.bin from src/app.tl (resolved src/no_such_resource_xyz.bin)")]
+    [(OkCompilerLoad _ _) false]))
 
 (define (compiler-load-embedded-stdlib-lookup-ok?) : bool
   (match (compiler-load-embedded-stdlib-source "string.tl")
@@ -6106,6 +6320,18 @@
       (return
         (begin
           (panic "compiler-load: include-str raw text smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-include-bin-relative-ok?)
+      (return
+        (begin
+          (panic "compiler-load: include-bin relative smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-missing-include-bin-ok?)
+      (return
+        (begin
+          (panic "compiler-load: missing include-bin smoke mismatch")
           0)))
     (unless
       (compiler-load-embedded-stdlib-lookup-ok?)

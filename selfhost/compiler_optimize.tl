@@ -2805,6 +2805,10 @@
       (match b
         [(IrValueString sb) (string-eq sa sb)]
         [_ false])]
+    [(IrValueBytes sa)
+      (match b
+        [(IrValueBytes sb) (string-eq sa sb)]
+        [_ false])]
     [(IrValueUnit)
       (match b
         [(IrValueUnit) true]
@@ -3018,6 +3022,7 @@
     [(IrValueBool value) (hash-combine 7 (hash-bool value))]
     [(IrValueChar value) (hash-combine 8 (hash-char value))]
     [(IrValueString value) (hash-combine 9 (hash-string (& value)))]
+    [(IrValueBytes value) (hash-combine 11 (hash-string (& value)))]
     [(IrValueUnit) (hash-i64 10)]))
 
 (define (opt-expr-key-hash [key : OptExprKey]) : i64
@@ -3897,6 +3902,7 @@
     [(IrValueUnit) true]
     [(IrValueF64 _) false]
     [(IrValueString _) false]
+    [(IrValueBytes _) false]
     [(IrValueGlobal _) false]
     [(IrValueGlobalAddr _) false]
     [(IrValueFunction _) false]))
@@ -13025,6 +13031,7 @@
     [(IrValueUnit) true]
     [(IrValueF64 _) false]
     [(IrValueString _) false]
+    [(IrValueBytes _) false]
     [(IrValueGlobal _) false]
     [(IrValueGlobalAddr _) false]
     [(IrValueFunction _) false]))
@@ -16855,6 +16862,7 @@
     [(IrValueBool b) (IrValueBool b)]
     [(IrValueChar c) (IrValueChar c)]
     [(IrValueString s) (IrValueString (clone s))]
+    [(IrValueBytes s) (IrValueBytes (clone s))]
     [(IrValueUnit) (IrValueUnit)]))
 
 (define (opt-inline-remap-args

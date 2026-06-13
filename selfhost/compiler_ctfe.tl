@@ -591,6 +591,7 @@
     [(AstExprStringData _) "string-data"]
     [(AstExprStringFromBytes _ _) "string-from-bytes"]
     [(AstExprArrayData _) "array-data"]
+    [(AstExprBinaryData _) "binary-data"]
     [(AstExprProgramArgc) "program-argc"]
     [(AstExprProgramArgv) "program-argv"]
     [(AstExprProgramEnvp) "program-envp"]
@@ -4159,6 +4160,11 @@
           [(OkCtfeQuoteExpr quoted _ next-fuel)
             (OkCtfeQuoteExpr (ast-expr-array-data quoted) (AstTyExpr) next-fuel)]
           [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+    [(AstExprBinaryData bytes)
+      (OkCtfeQuoteExpr
+        (ast-node-push (AstExprBinaryData bytes))
+        (AstTyExpr)
+        fuel)]
     [(AstExprCpuIdEax leaf-box subleaf-box)
       (let
         [leaf : AstExpr (ast-node-get leaf-box)]
@@ -5075,6 +5081,10 @@
               [b-inner : AstExpr (ast-node-get b-inner-box)]
               (ctfe-expr-eq a-inner b-inner))]
           [_ false]))]
+    [(AstExprBinaryData a-bytes)
+      (match b
+        [(AstExprBinaryData b-bytes) (string-eq a-bytes b-bytes)]
+        [_ false])]
     [(AstExprProgramArgc)
       (match b
         [(AstExprProgramArgc) true]

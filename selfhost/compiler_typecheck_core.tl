@@ -4960,6 +4960,8 @@
             (tc-nominal-owner-name-list rest target index module)]
           [(AstDeclIncludeStr _ _)
             (tc-nominal-owner-name-list rest target index module)]
+          [(AstDeclIncludeBin _ _)
+            (tc-nominal-owner-name-list rest target index module)]
           [(AstDeclExport _)
             (tc-nominal-owner-name-list rest target index module)]
           [(AstDeclModule next-module)
@@ -6170,6 +6172,7 @@
       (let
         [array : AstExpr (ast-node-get array-box)]
         (tc-source-expr-policy-ok ctx array))]
+    [(AstExprBinaryData _) OkTcUnit]
     [(AstExprProgramArgc) OkTcUnit]
     [(AstExprProgramArgv) OkTcUnit]
     [(AstExprProgramEnvp) OkTcUnit]
@@ -6292,6 +6295,8 @@
     [(AstDeclDefDispatch _ _) OkTcUnit]
     [(AstDeclIncludeStr _ _)
       (ErrTcUnit "typecheck: include-str must be expanded by compiler loader")]
+    [(AstDeclIncludeBin _ _)
+      (ErrTcUnit "typecheck: include-bin must be expanded by compiler loader")]
     [(AstDeclImport _) OkTcUnit]
     [(AstDeclExport _) OkTcUnit]
     [(AstDeclModule _) OkTcUnit]
@@ -7789,6 +7794,7 @@
         (tc-build-top-env-bind-decl-in-module ctx env module template))]
     [(AstDeclImport _) (OkTcEnv env)]
     [(AstDeclIncludeStr _ _) (OkTcEnv env)]
+    [(AstDeclIncludeBin _ _) (OkTcEnv env)]
     [(AstDeclExport _) (OkTcEnv env)]
     [(AstDeclTest _ _ _) (OkTcEnv env)]))
 
@@ -8055,6 +8061,14 @@
               alias
               module)]
           [(AstDeclIncludeStr _ _)
+            (tc-bind-import-alias-module-list
+              ctx
+              rest
+              env
+              target-module
+              alias
+              module)]
+          [(AstDeclIncludeBin _ _)
             (tc-bind-import-alias-module-list
               ctx
               rest
@@ -11092,6 +11106,7 @@
       (let
         [array : AstExpr (ast-node-get array-box)]
         (tc-ref-closure-local-uses-ok? array name bound))]
+    [(AstExprBinaryData _) true]
     [(AstExprCpuIdEax leaf-box subleaf-box)
       (let
         [leaf : AstExpr (ast-node-get leaf-box)]
@@ -12810,6 +12825,7 @@
               [(TcSpmdExprInfo _ class next-spmd-env)
                 (tc-spmd-finish expr-ty class next-spmd-env)])]
           [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]
+    [(AstExprBinaryData _) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)]
     [(AstExprProgramArgc) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)]
     [(AstExprProgramArgv) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)]
     [(AstExprProgramEnvp) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)]
@@ -13290,6 +13306,7 @@
       (let
         [array : AstExpr (ast-node-get array-box)]
         (tc-expr-uses-free-name? array name bound))]
+    [(AstExprBinaryData _) false]
     [(AstExprProgramArgc) false]
     [(AstExprProgramArgv) false]
     [(AstExprProgramEnvp) false]
@@ -13684,6 +13701,7 @@
       (let
         [array : AstExpr (ast-node-get array-box)]
         (tc-expr-sets-free-name? array name bound))]
+    [(AstExprBinaryData _) false]
     [(AstExprProgramArgc) false]
     [(AstExprProgramArgv) false]
     [(AstExprProgramEnvp) false]
@@ -16004,6 +16022,8 @@
             (tc-variant-owner-name-list rest target index module)]
           [(AstDeclIncludeStr _ _)
             (tc-variant-owner-name-list rest target index module)]
+          [(AstDeclIncludeBin _ _)
+            (tc-variant-owner-name-list rest target index module)]
           [(AstDeclExport _)
             (tc-variant-owner-name-list rest target index module)]
           [(AstDeclModule next-module)
@@ -18251,6 +18271,7 @@
           [(OkTcType ty) (OkTcType ty)]
           [(ErrTcType message) (tc-locate-spanned-error inner span message)]))]
     [(AstExprLiteral lit) (OkTcType (tc-literal-type lit))]
+    [(AstExprBinaryData _) (OkTcType (ast-ty-dyn-array (AstTyU8)))]
     [(AstExprVar name)
       (if (tc-hygiene-global-name? (intern-str name))
         (match (tc-hygiene-global-decode (intern-str name))
@@ -19982,6 +20003,7 @@
         "array-data"
         "unsafe FFI bridge"
         array)]
+    [(AstExprBinaryData _) OkTcUnit]
     [(AstExprProgramArgc)
       (tc-comptime-purity-reject-or-template-ok
         expr
@@ -22047,6 +22069,7 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (tc-move-check-expr ctx env locals loop-carried moved inner))]
+    [(AstExprBinaryData _) (OkTcMove moved)]
     [(AstExprProgramArgc) (OkTcMove moved)]
     [(AstExprProgramArgv) (OkTcMove moved)]
     [(AstExprProgramEnvp) (OkTcMove moved)]
@@ -23359,6 +23382,7 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (tc-borrow-check-expr ctx env locals borrowed inner))]
+    [(AstExprBinaryData _) (OkTcBorrowCheck borrowed)]
     [(AstExprProgramArgc) (OkTcBorrowCheck borrowed)]
     [(AstExprProgramArgv) (OkTcBorrowCheck borrowed)]
     [(AstExprProgramEnvp) (OkTcBorrowCheck borrowed)]
@@ -24108,6 +24132,7 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (ast-expr-array-data (macro-hygiene-expr inner env macro-name depth)))]
+    [(AstExprBinaryData bytes) (ast-node-push (AstExprBinaryData bytes))]
     [(AstExprCpuIdEax leaf-box subleaf-box)
       (let
         [leaf : AstExpr (ast-node-get leaf-box)]
@@ -24206,6 +24231,7 @@
   (match decl
     [(AstDeclImport _) false]
     [(AstDeclIncludeStr _ _) false]
+    [(AstDeclIncludeBin _ _) false]
     [(AstDeclExport _) false]
     [(AstDeclModule _) false]
     [(AstDeclTest _ _ _) false]
@@ -25510,6 +25536,8 @@
           (match (macro-expand-expr ctx env decls depth inner)
             [(OkMacroExpr ninner) (OkMacroExpr (ast-expr-array-data ninner))]
             [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+      [(AstExprBinaryData bytes)
+        (OkMacroExpr (ast-node-push (AstExprBinaryData bytes)))]
       [(AstExprCpuIdEax leaf-box subleaf-box)
         (let
           [leaf : AstExpr (ast-node-get leaf-box)]
@@ -25815,6 +25843,7 @@
         (macro-node-uses-macro? ctx decls a)
         (macro-node-uses-macro? ctx decls b))]
     [(AstExprArrayData i) (macro-node-uses-macro? ctx decls i)]
+    [(AstExprBinaryData _) false]
     [(AstExprCpuIdEax a b)
       (or
         (macro-node-uses-macro? ctx decls a)
@@ -25984,6 +26013,7 @@
     [(AstExprStringFromBytes a b)
       (or (ctfe-node-has-type-literal? a) (ctfe-node-has-type-literal? b))]
     [(AstExprArrayData i) (ctfe-node-has-type-literal? i)]
+    [(AstExprBinaryData _) false]
     [(AstExprCpuIdEax a b)
       (or (ctfe-node-has-type-literal? a) (ctfe-node-has-type-literal? b))]
     [(AstExprCpuIdEbx a b)

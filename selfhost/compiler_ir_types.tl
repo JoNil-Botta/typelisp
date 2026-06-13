@@ -57,6 +57,7 @@
   (IrValueBool bool)
   (IrValueChar char)
   (IrValueString String)
+  (IrValueBytes String)
   (IrValueUnit))
 
 (defenum CompilerIrMaybeValue
@@ -497,6 +498,7 @@
     [(IrValueBool b) (IrValueBool b)]
     [(IrValueChar c) (IrValueChar c)]
     [(IrValueString s) (IrValueString (clone s))]
+    [(IrValueBytes s) (IrValueBytes (clone s))]
     [(IrValueUnit) (IrValueUnit)]))
 
 (define (compiler-ir-clone-maybe-value [value : CompilerIrMaybeValue]) : CompilerIrMaybeValue
@@ -1176,6 +1178,8 @@
         "false")]
     [(IrValueChar value) (int->string (cast value : i64))]
     [(IrValueString value) value]
+    [(IrValueBytes value)
+      (str-cat "<bytes:" (int->string (string-length value)) ">")]
     [(IrValueUnit) "unit"]))
 
 (define (compiler-ir-value-list-render [values : CompilerIrValueList]) : String
@@ -2466,6 +2470,7 @@
         "false")]
     [(IrValueChar c) (int->string (cast c : i64))]
     [(IrValueString s) s]
+    [(IrValueBytes s) (str-cat "<bytes:" (int->string (string-length s)) ">")]
     [(IrValueUnit) "unit"]))
 
 (define (compiler-ir-value-list-describe [values : CompilerIrValueList]) : String

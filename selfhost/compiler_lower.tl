@@ -1343,6 +1343,16 @@
               alias
               module
               path-aware)]
+          [(AstDeclIncludeBin _ _)
+            (lower-name-env-add-module-aliases
+              rest
+              rest-paths
+              entry-path
+              names
+              target-module
+              alias
+              module
+              path-aware)]
           [(AstDeclExport _)
             (lower-name-env-add-module-aliases
               rest
@@ -2582,6 +2592,7 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lower-clone-roots-expr ctx env decls able roots inner))]
+    [(AstExprBinaryData _) roots]
     [(AstExprProgramArgc) roots]
     [(AstExprProgramArgv) roots]
     [(AstExprProgramEnvp) roots]
@@ -3111,6 +3122,7 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lower-reach-expr all-functions names state inner))]
+    [(AstExprBinaryData _) state]
     [(AstExprProgramArgc) state]
     [(AstExprProgramArgv) state]
     [(AstExprProgramEnvp) state]
@@ -11914,6 +11926,7 @@
                 (OkTcType ty))]
             [(ErrTcType message) (ErrTcType message)])))]
     [(AstExprLiteral lit) (OkTcType (tc-literal-type lit))]
+    [(AstExprBinaryData _) (OkTcType (ast-ty-dyn-array (AstTyU8)))]
     [(AstExprVar name)
       (match (lower-lookup-type-id ctx type-cache env type-env name)
         [(OkTcType expr-ty) (OkTcType (tc-type-without-regions expr-ty))]
@@ -12101,6 +12114,15 @@
         expr
         origin
         (tc-literal-type lit))]
+    [(AstExprBinaryData _)
+      (lower-expr-with-type
+        ctx
+        state
+        env
+        type-env
+        expr
+        origin
+        (ast-ty-dyn-array (AstTyU8)))]
     [(AstExprVar name)
       (match (lower-lookup-type-id
         ctx
@@ -12243,6 +12265,8 @@
         (lower-expr-with-type ctx state env type-env inner origin expr-ty))]
     [(AstExprLiteral lit)
       (lower-materialize-at-expr state (lower-literal-value lit) expr-ty origin)]
+    [(AstExprBinaryData bytes)
+      (lower-materialize-at-expr state (IrValueBytes bytes) expr-ty origin)]
     [(AstExprInit maybe-ty)
       (match maybe-ty
         [(AstSomeType ty)
@@ -26008,6 +26032,7 @@
         [inner : AstExpr (ast-node-get inner-box)]
         (lower-global-value names inner))]
     [(AstExprLiteral lit) (OkLowerValue (lower-literal-value lit))]
+    [(AstExprBinaryData bytes) (OkLowerValue (IrValueBytes bytes))]
     [(AstExprVar name)
       (OkLowerValue
         (IrValueGlobal (lower-name-cache-resolve names (intern-str name))))]
@@ -27277,6 +27302,7 @@
                         (set! done true))])]
                 [(AstDeclImport _) (set! cur-decls rest)]
                 [(AstDeclIncludeStr _ _) (set! cur-decls rest)]
+                [(AstDeclIncludeBin _ _) (set! cur-decls rest)]
                 [(AstDeclExport _) (set! cur-decls rest)]
                 [(AstDeclModule next-module)
                   (let

@@ -5760,6 +5760,8 @@
           [(OkSpecExpr rewritten state2)
             (OkSpecExpr (ast-expr-array-data rewritten) state2)]
           [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+    [(AstExprBinaryData bytes)
+      (OkSpecExpr (ast-node-push (AstExprBinaryData bytes)) state)]
     [(AstExprProgramArgc)
       (OkSpecExpr (ast-node-push (AstExprProgramArgc)) state)]
     [(AstExprProgramArgv)
@@ -6324,6 +6326,8 @@
           [(OkSpecSubExpr rewritten)
             (OkSpecSubExpr (ast-expr-array-data rewritten))]
           [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprBinaryData bytes)
+      (OkSpecSubExpr (ast-node-push (AstExprBinaryData bytes)))]
     [(AstExprProgramArgc) (OkSpecSubExpr (ast-node-push (AstExprProgramArgc)))]
     [(AstExprProgramArgv) (OkSpecSubExpr (ast-node-push (AstExprProgramArgv)))]
     [(AstExprProgramEnvp) (OkSpecSubExpr (ast-node-push (AstExprProgramEnvp)))]
@@ -6974,6 +6978,8 @@
           [(OkSpecSubExpr rewritten)
             (OkSpecSubExpr (ast-expr-array-data rewritten))]
           [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprBinaryData bytes)
+      (OkSpecSubExpr (ast-node-push (AstExprBinaryData bytes)))]
     [(AstExprProgramArgc) (OkSpecSubExpr (ast-node-push (AstExprProgramArgc)))]
     [(AstExprProgramArgv) (OkSpecSubExpr (ast-node-push (AstExprProgramArgv)))]
     [(AstExprProgramEnvp) (OkSpecSubExpr (ast-node-push (AstExprProgramEnvp)))]

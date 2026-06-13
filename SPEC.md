@@ -2299,8 +2299,8 @@ the loader reads the file and expands the directive into an ordinary
 string-valued `define` before typechecking, lowering, and codegen, so later
 stages only ever see a normal global.
 
-- Text-only: the file is read as UTF-8 source payload. Binary includes and
-  arbitrary resource packaging are out of scope for this directive.
+- Text-only: the file is read as UTF-8 source payload. Use `include-bin` for
+  arbitrary binary payloads.
 - `path` is resolved exactly like an `import` path (§4.4): relative paths resolve
   from the including file's directory, and `stdlib/...` paths use the same
   stdlib-root / embedded-provider precedence and the same parent-escape (`..`)
@@ -2309,7 +2309,23 @@ stages only ever see a normal global.
   deduplication.
 - An include failure reports both the including file and the requested path.
 
-#### 4.4.7 `(cfg predicate declaration)` - conditional compilation
+#### 4.4.7 `(include-bin name "path")` - embed a binary file
+
+Embeds the exact byte contents of `path` as a global `name : (Array u8)`. This
+is the binary sibling of `include-str`: the module loader resolves and reads the
+file during compilation, then expands the directive into a generated global
+definition before typechecking, lowering, and codegen.
+
+- Bytes are embedded exactly as read, including NUL bytes, bytes above 127, and
+  trailing newlines. There is no UTF-8 decoding, escaping, or source parsing.
+- `path` resolution and failure diagnostics are the same as `include-str`.
+- The current representation is a process-global static dynamic-array header
+  pointing at writable static data. No startup copy is required. Because the
+  surface type is mutable `(Array u8)`, writes intentionally mutate the global
+  static payload for the process; use included payloads as read-only unless that
+  shared mutation is intended.
+
+#### 4.4.8 `(cfg predicate declaration)` - conditional compilation
 
 `cfg` conditionally includes source forms before normal declaration parsing and
 import resolution. The selfhost compiler supports top-level declarations of the
@@ -5764,6 +5780,8 @@ top-level     ::= define-var
                 | module-decl
                 | import-decl
                 | export-decl
+                | include-str-decl
+                | include-bin-decl
                 | defenum
                 | defstruct
                 | test-decl
@@ -5779,6 +5797,8 @@ generated-meta ::= "(" ":generated" qualified-name ident expr* ")"
 generated-bundle-meta ::= "(" ":generated" qualified-name expr* ")"
 generated-payload ::= defstruct | defenum | define-var | define-func
 define-var    ::= "(" "define" ident [":" type] expr ")"
+include-str-decl ::= "(" "include-str" ident string ")"
+include-bin-decl ::= "(" "include-bin" ident string ")"
 define-func   ::= "(" "define" "(" ident param* ")" [":" type] expr ")"
 unsafe-decl   ::= "(" "unsafe" unsafe-decl-payload ")"
 unsafe-decl-payload ::= define-func | extern-decl

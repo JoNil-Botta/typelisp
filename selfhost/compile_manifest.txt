@@ -358,13 +358,6 @@ contains|_tl_compiler_diagnostic_from_source_error:
 contains|_tl_compiler_diagnostic_self_test:
 end
 
-case|selfhost_compiler_driver|selfhost/compiler_driver.tl|assembly|exactly-one|direct
-contains|_tl_compiler_driver_compile_file:
-contains|_tl_compiler_driver_emit_file_buffer_with_target_roots_level_mode_and_cfg:
-contains|_tl_compiler_load_file_with_paths_and_roots_cfg:
-contains|compiler-driver: expected input and output paths
-end
-
 case|selfhost_compiler_driver_core|selfhost/compiler_driver_core.tl|assembly|skip|direct
 contains|_tl_compiler_driver_compile_file:
 contains|_tl_compiler_driver_compile_file_with_roots_level_and_mode:

@@ -203,7 +203,10 @@ compile_selfhost_binary() {
 
     echo "[selfhost-native] compile $_source"
     set +e
-    "$COMPILER" compile "$_source" --stdlib-root "$ROOT/stdlib" -o "$_asm" > "$_out" 2> "$_err"
+    # Relative --stdlib-root (cwd is $ROOT) so the implicit stdlib/runtime.tl
+    # prelude and resolved imports share one path spelling and dedup; an
+    # absolute root makes cli.tl's larger closure trip a duplicate-symbol error.
+    "$COMPILER" compile "$_source" --stdlib-root stdlib -o "$_asm" > "$_out" 2> "$_err"
     _got=$?
     set -e
     if [ "$_got" -ne 0 ]; then
@@ -265,7 +268,7 @@ run_compiler_driver() {
     _stderr="$WORKDIR/$_label.driver.stderr"
 
     set +e
-    "$_driver" "$_source" "$_asm" > "$_stdout" 2> "$_stderr"
+    "$_driver" compile "$_source" -o "$_asm" > "$_stdout" 2> "$_stderr"
     _got=$?
     set -e
     if [ "$_got" -ne 0 ]; then
@@ -289,7 +292,7 @@ run_compiler_driver_expect_error() {
     rm -f "$_asm"
 
     set +e
-    "$_driver" "$_source" "$_asm" > "$_stdout" 2> "$_stderr"
+    "$_driver" compile "$_source" -o "$_asm" > "$_stdout" 2> "$_stderr"
     _got=$?
     set -e
     if [ "$_got" -eq 0 ]; then
@@ -306,7 +309,9 @@ run_compiler_driver_expect_error() {
 
 build_selfhost_compiler_driver() {
     _bin=$1
-    compile_selfhost_binary compiler-driver selfhost/compiler_driver.tl "$_bin"
+    # The standalone compiler_driver.tl was removed; the unified cli `compile`
+    # subcommand is the file-to-file driver (same backend / codegen).
+    compile_selfhost_binary compiler-driver selfhost/cli.tl "$_bin"
 }
 
 verify_compiler_driver_stack_args() {

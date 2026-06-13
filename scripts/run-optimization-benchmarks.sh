@@ -30,7 +30,7 @@ Options:
   --filter NAME    Run manifest cases whose names match NAME or start with NAME
   --clang-opt OPT  clang optimization flag (default: TYPELISP_BENCH_CLANG_OPT or -O3)
   --tl-opt-level N  In correctness mode, compile TypeLisp cases with --opt-level N
-  --selfhost       In timing mode, compile through selfhost/compiler_driver.tl (default)
+  --selfhost       In timing mode, compile through selfhost/cli.tl `compile` (default)
   --rust-stage0    In timing mode, compile through typelisp compile
   -h, --help       Show this help
 EOF
@@ -351,7 +351,7 @@ compile_tl_selfhost() {
 
     set +e
     _start=$(now_ns)
-    "$_driver" "$_src" "$_asm" > "$_out" 2> "$_err"
+    "$_driver" compile "$_src" -o "$_asm" > "$_out" 2> "$_err"
     _status=$?
     _end=$(now_ns)
     set -e
@@ -362,9 +362,10 @@ compile_tl_selfhost() {
         if [ -s "$_err" ]; then sed 's/^/  stderr: /' "$_err" >&2; fi
         exit 1
     fi
-    if [ -s "$_out" ] || [ -s "$_err" ]; then
+    # cli `compile` prints a `Wrote <asm>` success line on stdout; only stderr
+    # output is unexpected (warnings/diagnostics).
+    if [ -s "$_err" ]; then
         echo "FAIL: selfhost compiler driver wrote unexpected output for $_src" >&2
-        if [ -s "$_out" ]; then sed 's/^/  stdout: /' "$_out" >&2; fi
         if [ -s "$_err" ]; then sed 's/^/  stderr: /' "$_err" >&2; fi
         exit 1
     fi
@@ -463,9 +464,9 @@ build_c_correctness() {
 SELFHOST_DRIVER=
 if [ "$CORRECTNESS" -eq 0 ] && [ "$USE_SELFHOST" -eq 1 ]; then
     SELFHOST_DRIVER="$WORKDIR/compiler_driver"
-    echo "# building selfhost compiler driver: $SELFHOST_DRIVER" >&2
-    "$COMPILER" build selfhost/compiler_driver.tl -o "$SELFHOST_DRIVER"
-    [ -x "$SELFHOST_DRIVER" ] || fail "compiler_driver build did not write executable"
+    echo "# building selfhost compiler driver (cli): $SELFHOST_DRIVER" >&2
+    "$COMPILER" build selfhost/cli.tl -o "$SELFHOST_DRIVER"
+    [ -x "$SELFHOST_DRIVER" ] || fail "selfhost cli build did not write executable"
 fi
 
 if [ "$CORRECTNESS" -eq 1 ]; then

@@ -1,6 +1,6 @@
 ;; compile_cli_core.tl - Main-free selfhost compile/check core (#565, #1639).
 ;;
-;; Wraps compiler_driver.tl's input/output API with the selfhost compile CLI:
+;; Wraps compiler_driver_core.tl's input/output API with the selfhost compile CLI:
 ;; `compile <file.tl> [-o <file>] [--emit-ir] [--pic] [--target <target>]
 ;; [--opt-level <0|1|2>] [--backend-mode scalar] [--stdlib-root <dir>...]
 ;; [--cfg <name>...]`,

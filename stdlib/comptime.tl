@@ -7,6 +7,7 @@
 ;# the CTFE value migration lands.
 (module stdlib.comptime)
 
+;: Syntax value passed to and returned from expression macros.
 (comptime-decl
   (:generated stdlib/comptime-well-known Expr "v0")
   (defenum Expr
@@ -22,77 +23,90 @@
     (ExprUnquote (Box Expr))
     (ExprUnquoteSplicing (Box Expr))))
 
+;: Dense ordered sequence of syntax expressions.
 (comptime-decl
   (:generated stdlib/comptime-well-known ExprList "v0")
   (defstruct ExprList
     (items (Array Expr))
     (len i64)))
 
+;: Pair of expressions used by clause-oriented macro forms.
 (comptime-decl
   (:generated stdlib/comptime-well-known ExprClause "v0")
   (defstruct ExprClause
     (first Expr)
     (second Expr)))
 
+;: Dense ordered sequence of expression clauses.
 (comptime-decl
   (:generated stdlib/comptime-well-known ExprClauseList "v0")
   (defstruct ExprClauseList
     (items (Array ExprClause))
     (len i64)))
 
+;: Dense ordered sequence of reflected type descriptors.
 (comptime-decl
   (:generated stdlib/comptime-well-known TypeInfoList "v0")
   (defstruct TypeInfoList
     (items (Array TypeInfo))
     (len i64)))
 
+;: Reflected struct field name and type.
 (comptime-decl
   (:generated stdlib/comptime-well-known TypeField "v0")
   (defstruct TypeField
     (name String)
     (ty TypeInfo)))
 
+;: Dense ordered sequence of reflected struct fields.
 (comptime-decl
   (:generated stdlib/comptime-well-known TypeFieldList "v0")
   (defstruct TypeFieldList
     (items (Array TypeField))
     (len i64)))
 
+;: Reflected enum variant payload type.
 (comptime-decl
   (:generated stdlib/comptime-well-known TypeVariantPayload "v0")
   (defstruct TypeVariantPayload
     (ty TypeInfo)))
 
+;: Dense ordered sequence of reflected enum variant payloads.
 (comptime-decl
   (:generated stdlib/comptime-well-known TypeVariantPayloadList "v0")
   (defstruct TypeVariantPayloadList
     (items (Array TypeVariantPayload))
     (len i64)))
 
+;: Reflected enum variant name and payload list.
 (comptime-decl
   (:generated stdlib/comptime-well-known TypeVariant "v0")
   (defstruct TypeVariant
     (name String)
     (payloads TypeVariantPayloadList)))
 
+;: Dense ordered sequence of reflected enum variants.
 (comptime-decl
   (:generated stdlib/comptime-well-known TypeVariantList "v0")
   (defstruct TypeVariantList
     (items (Array TypeVariant))
     (len i64)))
 
+;: Reflected nominal type parameter name and resolved type.
 (comptime-decl
   (:generated stdlib/comptime-well-known TypeParam "v0")
   (defstruct TypeParam
     (name String)
     (ty TypeInfo)))
 
+;: Dense ordered sequence of reflected nominal type parameters.
 (comptime-decl
   (:generated stdlib/comptime-well-known TypeParamList "v0")
   (defstruct TypeParamList
     (items (Array TypeParam))
     (len i64)))
 
+;: Compile-time reflection descriptor for a TypeLisp type.
 (comptime-decl
   (:generated stdlib/comptime-well-known TypeInfo "v0")
   (defenum TypeInfo

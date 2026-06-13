@@ -2615,31 +2615,19 @@
 (define (tc-stdlib-comptime-well-known-type? [type-name : String]) : bool
   (or
     (string-eq type-name "Expr")
-    (or
-      (string-eq type-name "ExprList")
-      (or
-        (string-eq type-name "ExprClause")
-        (or
-          (string-eq type-name "ExprClauseList")
-          (or
-            (string-eq type-name "TypeInfo")
-            (or
-              (string-eq type-name "TypeInfoList")
-              (or
-                (string-eq type-name "TypeField")
-                (or
-                  (string-eq type-name "TypeFieldList")
-                  (or
-                    (string-eq type-name "TypeVariantPayload")
-                    (or
-                      (string-eq type-name "TypeVariantPayloadList")
-                      (or
-                        (string-eq type-name "TypeVariant")
-                        (or
-                          (string-eq type-name "TypeVariantList")
-                          (or
-                            (string-eq type-name "TypeParam")
-                            (string-eq type-name "TypeParamList")))))))))))))))
+    (string-eq type-name "ExprList")
+    (string-eq type-name "ExprClause")
+    (string-eq type-name "ExprClauseList")
+    (string-eq type-name "TypeInfo")
+    (string-eq type-name "TypeInfoList")
+    (string-eq type-name "TypeField")
+    (string-eq type-name "TypeFieldList")
+    (string-eq type-name "TypeVariantPayload")
+    (string-eq type-name "TypeVariantPayloadList")
+    (string-eq type-name "TypeVariant")
+    (string-eq type-name "TypeVariantList")
+    (string-eq type-name "TypeParam")
+    (string-eq type-name "TypeParamList")))
 
 (define (tc-stdlib-comptime-raw-type-name [decl : AstDecl]) : TcMaybeString
   (match decl

@@ -2587,6 +2587,82 @@
       ": "
       detail)))
 
+(define (tc-stdlib-comptime-generated-metadata-message) : String
+  "expected comptime-decl generated metadata stdlib/comptime-well-known \"v0\"")
+
+(define (tc-stdlib-comptime-version-arg? [args : AstExprList]) : bool
+  (match args
+    [(AstExprCons head rest)
+      (match (box-get rest)
+        [(AstExprNil)
+          (match (ast-expr-unspan (ast-node-get head))
+            [(AstExprLiteral (AstLitString version)) (string-eq version "v0")]
+            [_ false])]
+        [_ false])]
+    [_ false]))
+
+(define (tc-stdlib-comptime-generated-meta-ok?
+  [type-name : String]
+  [meta : AstGeneratedDeclMeta]) : bool
+  (match meta
+    [(AstSomeGeneratedDeclMeta generator item args _)
+      (and
+        (string-eq generator "stdlib/comptime-well-known")
+        (string-eq item type-name)
+        (tc-stdlib-comptime-version-arg? args))]
+    [(AstNoGeneratedDeclMeta) false]))
+
+(define (tc-program-raw-decl-at-index-list
+  [decls : AstDeclList]
+  [target : i64]
+  [index : i64]) : ResultAstDecl
+  (match decls
+    [(AstDeclNil) (ErrAstDecl "symbols: declaration index not found")]
+    [(AstDeclCons decl rest)
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (match decl
+          [(AstDeclImport _)
+            (tc-program-raw-decl-at-index-list rest target index)]
+          [(AstDeclIncludeStr _ _)
+            (tc-program-raw-decl-at-index-list rest target index)]
+          [(AstDeclExport _)
+            (tc-program-raw-decl-at-index-list rest target index)]
+          [(AstDeclModule _)
+            (tc-program-raw-decl-at-index-list rest target index)]
+          [(AstDeclTest _ _ _)
+            (tc-program-raw-decl-at-index-list rest target index)]
+          [_
+            (if (= target index)
+              (OkAstDecl decl)
+              (tc-program-raw-decl-at-index-list rest target (+ index 1)))]))]))
+
+(define (tc-program-raw-decl-at-index [program : AstProgram] [target : i64]) : ResultAstDecl
+  (match program
+    [(AstProgram decls-box)
+      (tc-program-raw-decl-at-index-list (box-get decls-box) target 0)]))
+
+(define (tc-stdlib-check-comptime-metadata
+  [ctx : TcContext]
+  [type-name : String]
+  [handle : i64]) : ResultTcUnit
+  (match (tc-program-raw-decl-at-index
+    (tc-context-program ctx)
+    (compiler-symbol-handle-index handle))
+    [(OkAstDecl decl)
+      (match decl
+        [(AstDeclComptimeDecl meta _)
+          (if (tc-stdlib-comptime-generated-meta-ok? type-name meta)
+            OkTcUnit
+            (tc-stdlib-well-known-mismatch
+              type-name
+              (tc-stdlib-comptime-generated-metadata-message)))]
+        [_
+          (tc-stdlib-well-known-mismatch
+            type-name
+            (tc-stdlib-comptime-generated-metadata-message))])]
+    [(ErrAstDecl message) (tc-stdlib-well-known-mismatch type-name message)]))
+
 (define (tc-stdlib-type-match?
   [ctx : TcContext]
   [actual : AstType]
@@ -2731,20 +2807,27 @@
     (tc-stdlib-comptime-module-name)
     type-name)
     [(SomeI64 handle)
-      (match (compiler-symbols-decl-at-index
-        (tc-context-symbols ctx)
-        (compiler-symbol-handle-index handle))
-        [(OkAstDecl decl)
-          (match decl
-            [(AstDeclDefStruct _ _ _ fields)
-              (tc-stdlib-check-field-specs
-                (tc-context-with-module ctx (tc-stdlib-comptime-module-name))
-                type-name
-                fields
-                specs
-                0)]
-            [_ (tc-stdlib-well-known-mismatch type-name "expected defstruct")])]
-        [(ErrAstDecl message) (tc-stdlib-well-known-mismatch type-name message)])]
+      (match (tc-stdlib-check-comptime-metadata ctx type-name handle)
+        [(OkTcUnit)
+          (match (compiler-symbols-decl-at-index
+            (tc-context-symbols ctx)
+            (compiler-symbol-handle-index handle))
+            [(OkAstDecl decl)
+              (match decl
+                [(AstDeclDefStruct _ _ _ fields)
+                  (tc-stdlib-check-field-specs
+                    (tc-context-with-module
+                      ctx
+                      (tc-stdlib-comptime-module-name))
+                    type-name
+                    fields
+                    specs
+                    0)]
+                [_
+                  (tc-stdlib-well-known-mismatch type-name "expected defstruct")])]
+            [(ErrAstDecl message)
+              (tc-stdlib-well-known-mismatch type-name message)])]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
     [(NoneI64) (tc-stdlib-well-known-mismatch type-name "missing declaration")]))
 
 (define (tc-stdlib-check-enum
@@ -2756,20 +2839,26 @@
     (tc-stdlib-comptime-module-name)
     type-name)
     [(SomeI64 handle)
-      (match (compiler-symbols-decl-at-index
-        (tc-context-symbols ctx)
-        (compiler-symbol-handle-index handle))
-        [(OkAstDecl decl)
-          (match decl
-            [(AstDeclDefEnum _ _ variants)
-              (tc-stdlib-check-variant-specs
-                (tc-context-with-module ctx (tc-stdlib-comptime-module-name))
-                type-name
-                variants
-                specs
-                0)]
-            [_ (tc-stdlib-well-known-mismatch type-name "expected defenum")])]
-        [(ErrAstDecl message) (tc-stdlib-well-known-mismatch type-name message)])]
+      (match (tc-stdlib-check-comptime-metadata ctx type-name handle)
+        [(OkTcUnit)
+          (match (compiler-symbols-decl-at-index
+            (tc-context-symbols ctx)
+            (compiler-symbol-handle-index handle))
+            [(OkAstDecl decl)
+              (match decl
+                [(AstDeclDefEnum _ _ variants)
+                  (tc-stdlib-check-variant-specs
+                    (tc-context-with-module
+                      ctx
+                      (tc-stdlib-comptime-module-name))
+                    type-name
+                    variants
+                    specs
+                    0)]
+                [_ (tc-stdlib-well-known-mismatch type-name "expected defenum")])]
+            [(ErrAstDecl message)
+              (tc-stdlib-well-known-mismatch type-name message)])]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
     [(NoneI64) (tc-stdlib-well-known-mismatch type-name "missing declaration")]))
 
 (define (tc-stdlib-comptime-present? [ctx : TcContext]) : bool

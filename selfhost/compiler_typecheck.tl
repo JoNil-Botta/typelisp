@@ -5275,6 +5275,37 @@
     (ExprListNil)
     (ExprListCons Expr (Box ExprList))))"))
 
+(define (compiler-typecheck-stdlib-comptime-plain-expr-source) : String
+  "(module stdlib.comptime)
+(defenum Expr
+  (ExprBool bool)
+  (ExprInt i64)
+  (ExprVar String)
+  (ExprSplice (Box Expr))
+  (ExprIf (Box Expr) (Box Expr) (Box Expr))
+  (ExprCall (Box Expr) ExprList)
+  (ExprBegin ExprList)
+  (ExprQuote (Box Expr))
+  (ExprQuasiquote (Box Expr))
+  (ExprUnquote (Box Expr))
+  (ExprUnquoteSplicing (Box Expr)))")
+
+(define (compiler-typecheck-stdlib-comptime-stale-expr-source) : String
+  "(module stdlib.comptime)
+(comptime-decl (:generated stdlib/comptime-well-known Expr \"v1\")
+  (defenum Expr
+    (ExprBool bool)
+    (ExprInt i64)
+    (ExprVar String)
+    (ExprSplice (Box Expr))
+    (ExprIf (Box Expr) (Box Expr) (Box Expr))
+    (ExprCall (Box Expr) ExprList)
+    (ExprBegin ExprList)
+    (ExprQuote (Box Expr))
+    (ExprQuasiquote (Box Expr))
+    (ExprUnquote (Box Expr))
+    (ExprUnquoteSplicing (Box Expr))))")
+
 (define (compiler-typecheck-stdlib-comptime-surface-tests-ok?) : bool
   (and
     (compiler-typecheck-error-ok?
@@ -5282,7 +5313,13 @@
       "typecheck: stdlib well-known type mismatch for stdlib.comptime.Expr: expected variant ExprBool at index 0")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-stdlib-comptime-bad-expr-list-source)
-      "typecheck: stdlib well-known type mismatch for stdlib.comptime.ExprList: expected defstruct")))
+      "typecheck: stdlib well-known type mismatch for stdlib.comptime.ExprList: expected defstruct")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-stdlib-comptime-plain-expr-source)
+      "typecheck: stdlib well-known type mismatch for stdlib.comptime.Expr: expected comptime-decl generated metadata stdlib/comptime-well-known \"v0\"")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-stdlib-comptime-stale-expr-source)
+      "typecheck: stdlib well-known type mismatch for stdlib.comptime.Expr: expected comptime-decl generated metadata stdlib/comptime-well-known \"v0\"")))
 
 (define (compiler-typecheck-comptime-tests-ok?) : bool
   (and

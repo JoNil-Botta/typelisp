@@ -22,6 +22,12 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   missing-value and unknown-option diagnostics. The intended CLI migration path
   is for selfhost command modules to define local specs and replace hand-rolled
   flag loops incrementally. Import it with `(import "stdlib/args.tl")`.
+- `comptime.tl`: public stdlib-owned declarations for well-known macro syntax
+  and reflection values (`Expr`, `ExprList`, `ExprClause`, `ExprClauseList`,
+  `TypeInfo`, and dense sequence wrappers). The compiler verifies these shapes
+  when the module is loaded and maps the syntax declarations to the current
+  compile-time-only macro representation during the CTFE migration. Import it
+  with `(import "stdlib/comptime.tl")`.
 - `io.tl`: file I/O helpers, explicit file-handle open/close wrappers, stdio
   wrappers, argv access, panic/error, and monomorphic Result-style I/O error
   APIs built as stdlib extern wrappers over backend runtime symbols. Import it with

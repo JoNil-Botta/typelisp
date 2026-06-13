@@ -3082,7 +3082,7 @@
   "(extern (bad [arg0 : (Array i64 2)]) : i64 (:abi c) (:symbol \"bad_array\"))")
 
 (define (compiler-typecheck-extern-abi-f32-source) : String
-  "(extern (scale [arg0 : f32] [arg1 : f32]) : f32 (:abi c) (:symbol \"scale_f32\"))")
+  "(extern (bad [arg0 : f32]) : f32 (:abi c) (:symbol \"bad_f32\"))")
 
 (define (compiler-typecheck-extern-abi-tag-only-enum-source) : String
   "(defenum Status (Ready) (Done) (Failed))

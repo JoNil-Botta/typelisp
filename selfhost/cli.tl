@@ -107,7 +107,7 @@ Options:
     --release                      Alias for --profile release
     --target <target>              linux-x86_64 or windows-x86_64
     --backend-mode <mode>          scalar, avx2, or avx512
-    --opt-level <0|1|2>            Package-build optimizer level
+    --opt-level <0|1|2>            Override package optimizer level (release 2, dev 0)
     --locked                       Require matching typelisp.lock; do not rewrite
     --update-lock                  Refresh remote pins and rewrite typelisp.lock
     --link-lib <name>              Link a named native library for source builds

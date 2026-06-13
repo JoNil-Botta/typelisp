@@ -82,9 +82,6 @@ Coverage notes:
   directory iteration through list and vector wrappers, read-dir split order,
   missing and empty rename paths, and Windows unsupported rename/read-dir
   results.
-- `hash_api.tl` covers stable deterministic hashes, equal-values-same-hash
-  checks, primitive key equality predicates, known collision behavior, hash
-  range normalization, and string edge cases.
 - `hashmap_api.tl` covers the compatibility `StringI64Map`, generated
   `StringStringMap` and `I64I64Map` APIs, key descriptor identities, borrowed
   string-key wrappers, update-only, entry-or-insert, live mutable-entry helpers,
@@ -155,5 +152,11 @@ Inline stdlib coverage:
   negative/zero/positive absolute values and sign predicates, min/max order,
   clamp low/high/inside cases, reversed bounds, and explicit signed-min
   fallback behavior for integer abs.
+- `hash.tl` owns inline tests for stable deterministic hashes,
+  equal-values-same-hash checks, primitive key equality predicates, known
+  collision behavior, hash range normalization, and string edge cases.
+- `queue.tl` owns inline tests for the growable `i64` queue/deque API:
+  capacity clamping, push/pop from both ends, fallback reads, wraparound
+  growth, reuse after draining, and explicit empty-pop results.
 - `test.tl` owns inline tests for successful assertion helpers, including the
   borrowed `assert-string-eq` path with explicit borrows.

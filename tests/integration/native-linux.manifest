@@ -9,6 +9,7 @@ ptr_offset_inline_aggregate_stride|tests/integration/ptr_offset_inline_aggregate
 auto_borrow_call|tests/integration/auto_borrow_call.tl|42|-|-|-
 implicit_core_prelude|tests/integration/implicit_core_prelude.tl|42|-|-|-
 macro_forward_order|tests/integration/macro_forward_order.tl|42|-|-|-
+compile_profile_macro_detail|tests/integration/compile_profile_macro_detail.tl|42|-|-|stdlib/string.tl stdlib/core_macros.tl stdlib/str_cat.tl
 include_bin|tests/integration/include_bin.tl|42|-|-|include_bin_payload.bin
 c_abi_aggregate_color|tests/integration/c_abi_aggregate_color.tl|42|-|-|benchmarks/c_abi_aggregate_color/baseline.c
 c_abi_f32_scalar|tests/integration/c_abi_f32_scalar.tl|42|-|-|benchmarks/c_abi_f32_scalar/baseline.c

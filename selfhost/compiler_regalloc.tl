@@ -3637,16 +3637,18 @@
       (compiler-reg-color-invalidate-value! roots invalid index)]
     [(IrInstrSyscall _ args)
       (compiler-reg-color-invalidate-call-args! roots invalid args)]
+    [(IrInstrCall _ name args _)
+      (if (string-eq name "tl_memcpy")
+        unit
+        (compiler-reg-color-invalidate-call-args! roots invalid args))]
     [(IrInstrCallIndirect _ callee args _)
       (begin
         (compiler-reg-color-invalidate-value! roots invalid callee)
-        ;; Ordinary call arguments are stack-live through the call only; keep
-        ;; those colorable. The callee value itself must not be a frame pointer.
-        unit)]
+        (compiler-reg-color-invalidate-call-args! roots invalid args))]
     [(IrInstrCallIndirectC _ callee args _)
       (begin
         (compiler-reg-color-invalidate-value! roots invalid callee)
-        unit)]
+        (compiler-reg-color-invalidate-call-args! roots invalid args))]
     [(IrInstrTailCall _ args _)
       (compiler-reg-color-invalidate-call-args! roots invalid args)]
     [(IrInstrStore _ value _)

@@ -119,35 +119,6 @@ contains|call _tl_text_buf_append_buffer
 contains|string_append_borrowed
 end
 
-# Retained command-driver wrappers. `selfhost/cli.tl` is the published single
-# entry point; these cases intentionally keep focused bootstrap or compatibility
-# coverage for smaller command binaries. See selfhost/TESTING.md for the full
-# inventory and removal policy.
-case|selfhost_build|selfhost/build.tl|assembly|skip|direct
-contains|_tl_build_cli_config_from:
-contains|_tl_source_tool_build_source:
-contains|_tl_build_config_from:
-contains|_tl_build_source_plan_render:
-contains|_tl_build_package:
-contains|_tl_build_package_emit:
-contains|_tl_build_package_write_tlci:
-contains|_tl_build_doctest_build_source:
-contains|_tl_build_doctest_typecheck_package:
-contains|_tl_doc_test_typecheck_source_with_roots:
-contains|_tl_doc_test_typecheck_package_file_with_roots:
-contains|_tl_host_plan_netline:
-contains|could not find typelisp.pkg
-contains|Built
-end
-
-case|selfhost_clean|selfhost/clean.tl|assembly|skip|direct
-contains|_tl_clean_run_from:
-contains|_tl_clean_source:
-contains|_tl_clean_package:
-contains|clean: could not find typelisp.pkg
-contains|Would remove:
-end
-
 # Unified pure-TypeLisp toolchain dispatcher (single self-hosted entry point for
 # build/clean/run/check/fmt/lint/test/doc/inspect/repl/lsp). Each subcommand routes
 # through its `*-run-from` entry in a shared main-free `*_cli_core.tl` module, so
@@ -171,63 +142,46 @@ contains|typelisp: unknown subcommand
 contains|typelisp inspect
 contains|Enable a compile-time cfg predicate name
 contains|--pic
-end
-
-# Per-command logic modules shared by the unified dispatcher (selfhost/cli.tl)
-# and retained compatibility/coverage wrappers. Main-less; compiled
-# transitively through their wrapper case (and the selfhost_cli case), so they
-# get a decision row rather than a direct compile case.
-decision|selfhost/build_cli_core.tl|build command logic (#622/#1339): arg parsing, source/package build, and direct source build execution; main-less, imported by the retained selfhost/build.tl wrapper and selfhost/cli.tl and exercised through the selfhost_build and selfhost_cli cases
-decision|selfhost/clean_cli_core.tl|clean command logic (#1643): dry-run/source artifact cleanup and manifest package output cleanup; main-less, imported by the retained selfhost/clean.tl wrapper and selfhost/cli.tl and exercised through the selfhost_clean and selfhost_cli cases
-decision|selfhost/run_cli_core.tl|run command logic: arg parsing and direct source run execution; main-less, imported by the retained selfhost/run.tl wrapper and selfhost/cli.tl and exercised through the selfhost_run and selfhost_cli cases
-decision|selfhost/check_cli_core.tl|check (typecheck) command logic: arg parsing plus file/package full-frontend checks; main-less, imported by the retained selfhost/check.tl wrapper and selfhost/cli.tl and exercised through the selfhost_check and selfhost_cli cases
-decision|selfhost/package_source_core.tl|package source discovery helper (#1986/#1987/#2494): resolves typelisp.pkg, loads the manifest, and walks regular package .tl sources while excluding target, VCS, package-local tests directories, and nested package roots; main-less, imported by check/fmt/lint command cores and exercised through their driver cases plus selfhost_cli
-decision|selfhost/package_cache_core.tl|package cache helper layer (#2002): parses normalized remote dependency pins, plans deterministic v1 cache paths, validates metadata/complete-marker state, and exposes staging/finalize helpers; main-less and exercised through the selfhost_package_cache_smoke case
-decision|selfhost/package_lock_core.tl|package lockfile parser/emitter (#1993): models typelisp.lock v1 entries, parses selfhost S-expressions with duplicate/missing/type diagnostics, and emits stable alias-sorted lockfile text; main-less and exercised through the selfhost_package_lock_smoke case
-decision|selfhost/format_cli_core.tl|fmt command logic (#522/#1987): --check vs rewrite over explicit input paths or discovered package sources; main-less, imported by the retained selfhost/format.tl wrapper and selfhost/cli.tl and exercised through the selfhost_format and selfhost_cli cases
-decision|selfhost/test_cli_core.tl|test command logic: config parsing and test run dispatch; main-less, imported by the retained selfhost/test.tl wrapper and selfhost/cli.tl and exercised through the selfhost_test and selfhost_cli cases
-decision|selfhost/doc_cli_core.tl|doc command logic: kind dispatch (test/html/load/default) with a base-offset arg model; main-less, imported by the retained selfhost/doc.tl wrapper and selfhost/cli.tl and exercised through the selfhost_doc and selfhost_cli cases
-decision|selfhost/compile_cli_core.tl|compile/check command logic (#565/#1639): arg parsing and compile/check dispatch + execution (compile-cli-run); main-less, imported by the required bootstrap selfhost/compile.tl driver and selfhost/cli.tl and exercised through the selfhost_compile and selfhost_cli cases
-decision|selfhost/inspect_cli_core.tl|inspect command logic (#2655): parse and render tlci comptime image headers/metadata; main-less, imported by selfhost/cli.tl and exercised through the selfhost_cli case and public command-surface smoke
-decision|selfhost/repl_cli_core.tl|REPL command logic (#1641): line loop, dot commands, type queries, and scratch expression execution; main-less, imported by the retained selfhost/repl.tl wrapper and selfhost/cli.tl and exercised through the selfhost_repl and selfhost_cli cases
-decision|selfhost/scaffold_cli_core.tl|new/init scaffold command logic (#1642): package skeleton creation shared by the retained selfhost/scaffold.tl wrapper and selfhost/cli.tl; main-less and exercised through the selfhost_scaffold and selfhost_cli cases
-decision|selfhost/lsp_frame_core.tl|lsp command logic (#1640): stdio JSON-RPC framing and diagnostics server; main-less, imported by the retained selfhost/lsp_frame.tl wrapper and selfhost/cli.tl and exercised through selfhost_lsp_frame and selfhost_cli cases
-decision|selfhost/compiler_clone.tl|type-directed clone$<Type> helper synthesis (#1633): least-fixpoint clone-ability over the type graph plus match-reconstruct/tail-recursive AST generation for (clone x); main-less, imported by selfhost/compiler_lower.tl and exercised through the selfhost_compiler_lower case
-
-case|selfhost_build_run_core|selfhost/build_run_core.tl|assembly|skip|direct
+not-contains|root_list_append
+# Folded per-command assertions (the standalone command wrappers were
+# removed; cli.tl dispatches to every command core, so these symbols and
+# diagnostic strings are reachable from its main).
+# build
+contains|_tl_build_cli_config_from:
 contains|_tl_source_tool_build_source:
-contains|_tl_source_tool_run_source:
-contains|_tl_source_tool_run_command:
-contains|_tl_source_tool_augment_assembly_for_target:
-not-contains|.globl _tl_print_string
-contains|tl_process_output:
-contains|_tl_fs_mkdir_status:
-end
-
-case|selfhost_check|selfhost/check.tl|assembly|exactly-one|direct
+contains|_tl_build_config_from:
+contains|_tl_build_source_plan_render:
+contains|_tl_build_package:
+contains|_tl_build_package_emit:
+contains|_tl_build_package_write_tlci:
+contains|_tl_build_doctest_build_source:
+contains|_tl_build_doctest_typecheck_package:
+contains|_tl_doc_test_typecheck_source_with_roots:
+contains|_tl_doc_test_typecheck_package_file_with_roots:
+contains|_tl_host_plan_netline:
+contains|could not find typelisp.pkg
+contains|Built
+# clean
+contains|_tl_clean_source:
+contains|_tl_clean_package:
+contains|clean: could not find typelisp.pkg
+contains|Would remove:
+# check
 contains|_tl_selfhost_check_config_from:
-contains|_tl_selfhost_check_run_from:
 contains|_tl_selfhost_check_file:
 contains|selfhost_check_package:
 contains|_tl_compiler_check_file_with_roots:
 contains|compiler_check_package_file_with_roots
 contains|_tl_doc_test_typecheck_file_with_roots:
-contains|_tl_doc_test_typecheck_package_file_with_roots:
 contains|package_source_discover
-contains|_tl_compiler_load_file_with_paths_and_roots
 contains|selfhost-check: cannot combine input path with --manifest-path
 contains|selfhost-check: --stdlib-root requires a value
-end
-
-case|selfhost_compile|selfhost/compile.tl|assembly|exactly-one|direct
+# compile
 contains|_tl_compile_cli_config_from:
 contains|_tl_compile_cli_target:
 contains|_tl_compile_cli_invalid_opt_level:
 contains|_tl_compile_cli_backend_mode:
 contains|_tl_compile_cli_typecheck_doctests:
-contains|_tl_doc_test_typecheck_source_with_roots:
-contains|call _tl_string_vec_push
-not-contains|root_list_append
 contains|_tl_compiler_cfg_enable:
 contains|_tl_compiler_driver_compile_file_with_roots_level_mode_and_cfg:
 contains|_tl_compiler_driver_compile_file_for_target_with_roots_level_mode_and_cfg:
@@ -245,7 +199,6 @@ contains|compile: --backend-mode requires a value
 contains|Expected scalar, avx2, or avx512
 contains|Error: unknown target '
 contains|--emit-ir
-contains|--pic
 contains|--cfg
 contains|typelisp-ir-summary v1
 contains|empty-blocks
@@ -253,6 +206,133 @@ contains|max-instructions-function
 contains|max-instructions-block
 contains|call-arg-entries
 contains|phi-input-entries
+# doc
+contains|_tl_doc_generate_file:
+contains|_tl_doc_generate_package:
+contains|_tl_doc_generate_html_file:
+contains|_tl_doc_generate_html_module_graph:
+contains|_tl_doc_test_file:
+contains|_tl_doc_test_package:
+contains|_tl_doc_test_run_file_with_roots:
+contains|_tl_doc_test_run_report_render:
+contains|_tl_doc_render_markdown:
+contains|_tl_doc_html_render_module_page:
+contains|_tl_doc_html_render_module_graph:
+contains|_tl_doc_extract_source:
+contains|_tl_format_lex:
+contains|_tl_doc_stdlib_roots:
+contains|_tl_arg_count:
+contains|_tl_arg:
+contains|_tl_read_file:
+contains|_tl_write_file:
+contains|Doc tests passed:
+contains|doc tests failed:
+contains|: could not find typelisp.pkg from '.' or any parent directory
+contains|doc: package documentation requires -o <out.md>
+contains|doc: cannot combine input paths with --manifest-path
+contains|doc: expected --html input and output paths
+contains|<!doctype html>
+contains|doc: expected input and output paths
+# inspect
+contains|_tl_tlci_inspect_render:
+contains|inspect: expected one .tlci path
+# fmt
+contains|fmt_format_file:
+contains|fmt_files:
+contains|fmt_package:
+contains|package_source_discover_for
+contains|fmt: would reformat 
+contains|fmt: failed to write
+contains|fmt: cannot combine input paths with --manifest-path
+# lsp
+contains|_tl_lsp_frame_parse_content_length:
+contains|_tl_lsp_frame_read_message:
+contains|_tl_lsp_handle_message:
+contains|_tl_lsp_analyze_document:
+contains|Content-Length
+contains|textDocument/publishDiagnostics
+contains|Method not found
+# repl
+contains|_tl_repl_loop:
+contains|_tl_repl_handle_input:
+contains|_tl_repl_banner:
+contains|_tl_repl_help_text:
+contains|_tl_repl_prompt:
+contains|_tl_repl_dot_command_question:
+contains|_tl_repl_type_command:
+contains|_tl_repl_type_render:
+contains|_tl_repl_handle_type_command:
+contains|_tl_repl_handle_line:
+contains|_tl_stdin_read_line:
+contains|_tl_stdin_at_eof_question:
+contains|_tl_stdout_flush:
+contains|tl>
+# run
+contains|_tl_run_direct_from:
+contains|_tl_run_cli_config_from:
+contains|_tl_run_cli_run_source_with_doctests:
+contains|_tl_source_tool_run_source:
+contains|run: expected source path
+# test
+contains|_tl_tltest_run_config:
+contains|_tl_tltest_build_harness:
+contains|_tl_tltest_run_direct:
+contains|_tl_tltest_run_batch_check:
+contains|_tl_tltest_run_package:
+contains|_tl_tltest_package_run_sources:
+contains|_tl_tltest_run_harness_in_temp:
+contains|_tl_tltest_invalid_opt_level:
+contains|_tl_source_tool_assemble_and_link:
+contains|_tl_source_tool_run_executable:
+contains|_tl_optimize_program_with_spans_and_level:
+contains|_tl_opt_inline_program_functions_with_spans:
+contains|TypeLisp package tests passed:
+contains|TypeLisp test batch typecheck passed:
+contains|test: --batch requires --check
+contains|test: --opt-level requires a value
+contains|test: invalid --opt-level
+contains|typelisp test: test executable exited with exit status:
+contains|test: failed to write assembly artifact
+# lint
+contains|selfhost_lint_file:
+contains|selfhost_lint_render_finding:
+contains|selfhost_lint_package:
+contains|selfhost-lint: cannot combine input paths with --manifest-path
+# scaffold
+contains|_tl_scaffold_new:
+contains|_tl_scaffold_init:
+contains|_tl_scaffold_emit:
+contains|scaffold: usage
+end
+
+# Per-command logic modules used by the unified dispatcher (selfhost/cli.tl).
+# Main-less; compiled transitively through the selfhost_cli case, so they get a
+# decision row rather than a direct compile case.
+decision|selfhost/build_cli_core.tl|build command logic (#622/#1339): arg parsing, source/package build, and direct source build execution; main-less, imported by selfhost/cli.tl and exercised through the selfhost_cli case
+decision|selfhost/clean_cli_core.tl|clean command logic (#1643): dry-run/source artifact cleanup and manifest package output cleanup; main-less, imported by selfhost/cli.tl and exercised through the selfhost_cli case
+decision|selfhost/run_cli_core.tl|run command logic: arg parsing and direct source run execution; main-less, imported by selfhost/cli.tl and exercised through the selfhost_cli case
+decision|selfhost/check_cli_core.tl|check (typecheck) command logic: arg parsing plus file/package full-frontend checks; main-less, imported by selfhost/cli.tl and exercised through the selfhost_cli case
+decision|selfhost/package_source_core.tl|package source discovery helper (#1986/#1987/#2494): resolves typelisp.pkg, loads the manifest, and walks regular package .tl sources while excluding target, VCS, package-local tests directories, and nested package roots; main-less, imported by check/fmt/lint command cores and exercised through their driver cases plus selfhost_cli
+decision|selfhost/package_cache_core.tl|package cache helper layer (#2002): parses normalized remote dependency pins, plans deterministic v1 cache paths, validates metadata/complete-marker state, and exposes staging/finalize helpers; main-less and exercised through the selfhost_package_cache_smoke case
+decision|selfhost/package_lock_core.tl|package lockfile parser/emitter (#1993): models typelisp.lock v1 entries, parses selfhost S-expressions with duplicate/missing/type diagnostics, and emits stable alias-sorted lockfile text; main-less and exercised through the selfhost_package_lock_smoke case
+decision|selfhost/format_cli_core.tl|fmt command logic (#522/#1987): --check vs rewrite over explicit input paths or discovered package sources; main-less, imported by selfhost/cli.tl and exercised through the selfhost_cli case
+decision|selfhost/test_cli_core.tl|test command logic: config parsing and test run dispatch; main-less, imported by selfhost/cli.tl and exercised through the selfhost_cli case
+decision|selfhost/doc_cli_core.tl|doc command logic: kind dispatch (test/html/load/default) with a base-offset arg model; main-less, imported by selfhost/cli.tl and exercised through the selfhost_cli case
+decision|selfhost/compile_cli_core.tl|compile/check command logic (#565/#1639): arg parsing and compile/check dispatch + execution (compile-cli-run); main-less, imported by selfhost/cli.tl and exercised through the selfhost_cli case
+decision|selfhost/inspect_cli_core.tl|inspect command logic (#2655): parse and render tlci comptime image headers/metadata; main-less, imported by selfhost/cli.tl and exercised through the selfhost_cli case and public command-surface smoke
+decision|selfhost/repl_cli_core.tl|REPL command logic (#1641): line loop, dot commands, type queries, and scratch expression execution; main-less, imported by selfhost/cli.tl and exercised through the selfhost_cli case
+decision|selfhost/scaffold_cli_core.tl|new/init scaffold command logic (#1642): package skeleton creation shared by selfhost/cli.tl; main-less and exercised through the selfhost_cli case
+decision|selfhost/lsp_frame_core.tl|lsp command logic (#1640): stdio JSON-RPC framing and diagnostics server; main-less, imported by selfhost/cli.tl and exercised through the selfhost_cli case
+decision|selfhost/compiler_clone.tl|type-directed clone$<Type> helper synthesis (#1633): least-fixpoint clone-ability over the type graph plus match-reconstruct/tail-recursive AST generation for (clone x); main-less, imported by selfhost/compiler_lower.tl and exercised through the selfhost_compiler_lower case
+
+case|selfhost_build_run_core|selfhost/build_run_core.tl|assembly|skip|direct
+contains|_tl_source_tool_build_source:
+contains|_tl_source_tool_run_source:
+contains|_tl_source_tool_run_command:
+contains|_tl_source_tool_augment_assembly_for_target:
+not-contains|.globl _tl_print_string
+contains|tl_process_output:
+contains|_tl_fs_mkdir_status:
 end
 
 case|selfhost_compiler_ast_types|selfhost/compiler_ast_types.tl|assembly|exactly-one|direct
@@ -563,35 +643,6 @@ contains|compiler_macro_prelude_selfhost_smoke:
 contains|main:
 end
 
-case|selfhost_doc|selfhost/doc.tl|assembly|exactly-one|direct
-contains|_tl_doc_generate_file:
-contains|_tl_doc_generate_package:
-contains|_tl_doc_generate_html_file:
-contains|_tl_doc_generate_html_module_graph:
-contains|_tl_doc_test_file:
-contains|_tl_doc_test_package:
-contains|_tl_doc_test_run_file_with_roots:
-contains|_tl_doc_test_run_report_render:
-contains|_tl_doc_render_markdown:
-contains|_tl_doc_html_render_module_page:
-contains|_tl_doc_html_render_module_graph:
-contains|_tl_doc_extract_source:
-contains|_tl_format_lex:
-contains|_tl_doc_stdlib_roots:
-contains|_tl_arg_count:
-contains|_tl_arg:
-contains|_tl_read_file:
-contains|_tl_write_file:
-contains|Doc tests passed:
-contains|doc tests failed:
-contains|: could not find typelisp.pkg from '.' or any parent directory
-contains|doc: package documentation requires -o <out.md>
-contains|doc: cannot combine input paths with --manifest-path
-contains|doc: expected --html input and output paths
-contains|<!doctype html>
-contains|doc: expected input and output paths
-end
-
 case|selfhost_doc_extract|selfhost/doc_extract.tl|assembly|skip|direct
 contains|_tl_doc_extract_file:
 contains|_tl_doc_extract_source:
@@ -740,16 +791,6 @@ contains|_tl_doc_test_smoke:
 contains|_tl_doc_test_parse_fence_info:
 end
 
-case|selfhost_format|selfhost/format.tl|assembly|exactly-one|direct
-contains|fmt_format_file:
-contains|fmt_files:
-contains|fmt_package:
-contains|package_source_discover_for
-contains|fmt: would reformat 
-contains|fmt: failed to write
-contains|fmt: cannot combine input paths with --manifest-path
-end
-
 case|selfhost_format_core|selfhost/format_core.tl|assembly|skip|direct
 contains|_tl_format_core_source_doc:
 contains|_tl_format_core_render_source_width:
@@ -803,16 +844,6 @@ contains|_tl_lex_span_self_test:
 contains|_tl_lex_spanned_result:
 end
 
-case|selfhost_lsp_frame|selfhost/lsp_frame.tl|assembly|skip|direct
-contains|_tl_lsp_frame_parse_content_length:
-contains|_tl_lsp_frame_read_message:
-contains|_tl_lsp_handle_message:
-contains|_tl_lsp_analyze_document:
-contains|Content-Length
-contains|textDocument/publishDiagnostics
-contains|Method not found
-end
-
 case|selfhost_lsp_frame_smoke|selfhost/lsp_frame_smoke.tl|assembly|exactly-one|direct
 contains|_tl_lsp_diagnostic_metadata_smoke:
 contains|_tl_lsp_compiler_diagnostic_code_ok_question:
@@ -825,57 +856,6 @@ contains|_tl_read:
 contains|_tl_read_form:
 contains|_tl_read_list_result:
 contains|reader: unexpected end of input
-end
-
-case|selfhost_repl|selfhost/repl.tl|assembly|exactly-one|direct
-contains|_tl_repl_loop:
-contains|_tl_repl_handle_input:
-contains|_tl_repl_banner:
-contains|_tl_repl_help_text:
-contains|_tl_repl_prompt:
-contains|_tl_repl_dot_command_question:
-contains|_tl_repl_type_command:
-contains|_tl_repl_type_render:
-contains|_tl_repl_handle_type_command:
-contains|_tl_repl_handle_line:
-contains|_tl_stdin_read_line:
-contains|_tl_stdin_at_eof_question:
-contains|_tl_stdout_flush:
-contains|tl>
-end
-
-case|selfhost_run|selfhost/run.tl|assembly|skip|direct
-contains|_tl_run_direct_from:
-contains|_tl_run_run_from:
-contains|_tl_run_cli_config_from:
-contains|_tl_run_cli_run_source_with_doctests:
-contains|_tl_doc_test_typecheck_source_with_roots:
-contains|_tl_source_tool_run_source:
-contains|run: expected source path
-end
-
-case|selfhost_test|selfhost/test.tl|assembly|skip|direct
-contains|_tl_tltest_run_config:
-contains|_tl_tltest_build_harness:
-contains|_tl_tltest_run_direct:
-contains|_tl_tltest_run_batch_check:
-contains|_tl_tltest_run_package:
-contains|_tl_tltest_package_run_sources:
-contains|_tl_tltest_run_harness_in_temp:
-contains|_tl_tltest_invalid_opt_level:
-contains|_tl_source_tool_assemble_and_link:
-contains|_tl_source_tool_run_executable:
-contains|_tl_optimize_program_with_spans_and_level:
-contains|_tl_opt_inline_program_functions_with_spans:
-contains|_tl_compiler_backend_emit_program_target_with_mode_buffer_and_crt:
-contains|could not find typelisp.pkg
-contains|TypeLisp package tests passed:
-contains|TypeLisp test batch typecheck passed:
-contains|test: --batch requires --check
-contains|test: --opt-level requires a value
-contains|test: invalid --opt-level
-contains|typelisp test: test executable exited with exit status:
-contains|test: failed to write assembly artifact
 end
 
 decision|selfhost/tlci_core.tl|tlci v1 container and metadata parse/emit helpers (#2651/#2655): main-less helper module with inline tests, executable smoke coverage, package metadata emission, and inspect-command parsing; tlci code loading remains a later slice
@@ -918,15 +898,7 @@ contains|_tl_lint_walk_expr:
 contains|_tl_lint_ladder_length:
 end
 
-decision|selfhost/lint_driver_core.tl|selfhost lint driver logic (#1163/#1987): arg parsing, finding rendering (path:line:col), file/package source linting, and the driver self-test; main-less, imported by the retained selfhost/lint.tl wrapper and selfhost/lint_driver_smoke.tl and exercised through the selfhost_lint and selfhost_lint_driver_smoke cases; has no main to compile directly
-
-case|selfhost_lint|selfhost/lint.tl|assembly|exactly-one|direct
-contains|selfhost_lint_file:
-contains|selfhost_lint_render_finding:
-contains|selfhost_lint_package:
-contains|package_source_discover_for
-contains|selfhost-lint: cannot combine input paths with --manifest-path
-end
+decision|selfhost/lint_driver_core.tl|selfhost lint driver logic (#1163/#1987): arg parsing, finding rendering (path:line:col), file/package source linting, and the driver self-test; main-less, imported by selfhost/cli.tl and selfhost/lint_driver_smoke.tl and exercised through the selfhost_lint_driver_smoke and selfhost_cli cases; has no main to compile directly
 
 case|selfhost_lint_driver_smoke|selfhost/lint_driver_smoke.tl|assembly|exactly-one|direct
 contains|_tl_compiler_lint_driver_self_test:
@@ -945,14 +917,6 @@ contains|main:
 contains|typelisp-lock
 contains|package-lock: self-test mismatch
 contains|package-lock: duplicate dependency alias
-end
-
-case|selfhost_scaffold|selfhost/scaffold.tl|assembly|skip|direct
-contains|_tl_scaffold_new:
-contains|_tl_scaffold_init:
-contains|_tl_scaffold_emit:
-contains|_tl_scaffold_run_from:
-contains|scaffold: usage
 end
 
 # Optimization-benchmark codegen smoke. Mirrors the dropped Rust

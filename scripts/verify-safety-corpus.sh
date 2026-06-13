@@ -160,19 +160,19 @@ build_selfhost_checker() {
         asm="$WORKDIR/selfhost-check.s"
         obj="$WORKDIR/selfhost-check.obj"
         run_case "$out" "$err" 0 \
-            "$COMPILER" compile selfhost/check.tl \
+            "$COMPILER" compile selfhost/cli.tl \
             --target "$BUILD_TARGET" \
             $TARGET_CFG_ARGS \
-            --stdlib-root "$ROOT/stdlib" \
+            --stdlib-root stdlib \
             -o "$asm"
         if [ "$code" -ne 0 ]; then
             echo "stdout:" >&2
             sed 's/^/  /' "$out" >&2 || true
             echo "stderr:" >&2
             sed 's/^/  /' "$err" >&2 || true
-            fail "selfhost/check.tl compile failed with exit $code"
+            fail "selfhost/cli.tl compile failed with exit $code"
         fi
-        assemble_link_windows "$asm" "$obj" "$CHECK_BIN" "selfhost/check.tl" "$out" "$err"
+        assemble_link_windows "$asm" "$obj" "$CHECK_BIN" "selfhost/cli.tl" "$out" "$err"
     else
         # The compile-only bootstrapped stage1 has `compile`/`check` but not the
         # `build` host action, so assemble + link the checker by hand (mirrors
@@ -180,26 +180,26 @@ build_selfhost_checker() {
         asm="$WORKDIR/selfhost-check.s"
         obj="$WORKDIR/selfhost-check.o"
         run_case "$out" "$err" 0 \
-            "$COMPILER" compile selfhost/check.tl \
+            "$COMPILER" compile selfhost/cli.tl \
             --target "$BUILD_TARGET" \
             $TARGET_CFG_ARGS \
-            --stdlib-root "$ROOT/stdlib" \
+            --stdlib-root stdlib \
             -o "$asm"
         if [ "$code" -ne 0 ]; then
             echo "stdout:" >&2
             sed 's/^/  /' "$out" >&2 || true
             echo "stderr:" >&2
             sed 's/^/  /' "$err" >&2 || true
-            fail "selfhost/check.tl compile failed with exit $code"
+            fail "selfhost/cli.tl compile failed with exit $code"
         fi
         if ! as "$asm" -o "$obj" >> "$out" 2>> "$err"; then
             show_stream_if_nonempty stderr "$err"
-            fail "selfhost/check.tl assemble failed"
+            fail "selfhost/cli.tl assemble failed"
         fi
         if ! ld "$obj" -o "$CHECK_BIN" -static -e "$(linux_entry_symbol_for_asm "$asm")" \
             >> "$out" 2>> "$err"; then
             show_stream_if_nonempty stderr "$err"
-            fail "selfhost/check.tl link failed"
+            fail "selfhost/cli.tl link failed"
         fi
     fi
 }
@@ -303,13 +303,13 @@ while IFS='|' read -r case_id mode source expected_code stderr_contains; do
     case "$mode" in
         check-ok)
             echo "[safety-corpus] check-ok $case_id"
-            run_case "$out" "$err" 0 "$CHECK_BIN" "$source" --stdlib-root "$ROOT/stdlib"
+            run_case "$out" "$err" 0 "$CHECK_BIN" check "$source" --stdlib-root "$ROOT/stdlib"
             [ "$code" -eq 0 ] || fail "$case_id expected check success, got $code"
             assert_empty "$err" || fail "$case_id expected empty check stderr"
             ;;
         check-fail)
             echo "[safety-corpus] check-fail $case_id"
-            run_case "$out" "$err" - "$CHECK_BIN" "$source" --stdlib-root "$ROOT/stdlib"
+            run_case "$out" "$err" - "$CHECK_BIN" check "$source" --stdlib-root "$ROOT/stdlib"
             [ "$code" -ne 0 ] || fail "$case_id expected check failure"
             [ "$stderr_contains" != "-" ] || fail "$case_id check-fail missing stderr expectation"
             assert_contains "$err" "$stderr_contains" || fail "$case_id stderr did not match expectation"

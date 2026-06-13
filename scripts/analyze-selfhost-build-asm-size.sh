@@ -2,7 +2,7 @@
 set -eu
 
 # analyze-selfhost-build-asm-size.sh - local assembly size report for the
-# retained selfhost/build.tl compatibility wrapper. The default path compiles
+# selfhost compiler (selfhost/cli.tl). The default path compiles
 # the source with TYPELISP_BIN when set, otherwise with the published stage0
 # selected by scripts/lib-stage0.sh.
 
@@ -89,7 +89,7 @@ cd "$ROOT"
 
 WORKDIR=${TYPELISP_ASM_SIZE_OUT:-target/selfhost-build-asm-size}
 ASM_PATH=${ASM_ARG:-"$WORKDIR/build.s"}
-SOURCE=selfhost/build.tl
+SOURCE=selfhost/cli.tl
 
 if [ -n "$ASM_ARG" ]; then
     [ -f "$ASM_PATH" ] || {

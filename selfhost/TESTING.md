@@ -132,8 +132,8 @@ symbols, and runtime shims.
 ### Assembly size reports
 
 Use [`../scripts/analyze-selfhost-build-asm-size.sh`](../scripts/analyze-selfhost-build-asm-size.sh)
-for local code-size comparisons of the selfhost build driver. It compiles
-`selfhost/build.tl` with `TYPELISP_BIN` when set, otherwise with the published
+for local code-size comparisons of the selfhost compiler. It compiles
+`selfhost/cli.tl` with `TYPELISP_BIN` when set, otherwise with the published
 stage0 selected by `scripts/lib-stage0.sh`, then prints total assembly
 bytes/lines, section totals, top `.text` symbols, module/file buckets inferred
 from TypeLisp symbol names, and generated clone-helper totals:
@@ -181,7 +181,7 @@ Windows compiler assets to the `stage0-latest` release and to an immutable
 
 ```sh
 scripts/fetch-stage0.sh
-TYPELISP_BIN=./target/stage0/typelisp ./scripts/verify-selfhost.sh
+TYPELISP_BIN=./target/stage0/typelisp ./scripts/verify-selfhost-compile-manifest.sh
 ```
 
 Each published asset is a single self-hosted `selfhost/cli.tl` binary
@@ -200,32 +200,17 @@ published stage0 workflow intentionally keeps using the direct
 `compile selfhost/cli.tl` path plus native linking so a seed compiler can build
 its successor without depending on its own `build` command.
 
-### Retained command-driver wrappers
+### Single command surface
 
-The published toolchain surface is the single `selfhost/cli.tl` binary. The
-remaining top-level command drivers are compatibility/coverage wrappers, not a
-second published surface. They stay only when they anchor a bootstrap path or a
-focused gate that would otherwise lose coverage; any future removal must first
-move the named gate to `selfhost/cli.tl` or to an equivalent focused smoke.
-
-| Driver | Classification | Reason retained |
-|--------|----------------|-----------------|
-| `selfhost/compile.tl` | Required focused compatibility/coverage entry | Compile-manifest (`selfhost_compile`), integration-corpus, and bootstrap-smoke coverage keep the compile-only entry typechecked and exercised. The bootstrap fixpoint itself compiles `selfhost/cli.tl`. |
-| `selfhost/build.tl` | Required focused compatibility/coverage entry | `scripts/verify-public-tools.sh`, `scripts/verify-native-link-windows.sh`, and `scripts/analyze-selfhost-build-asm-size.sh` compile or run the build command as a smaller focused tool. |
-| `selfhost/run.tl` | Required focused compatibility/coverage entry | Public-tool and Windows link gates compile or run the run command as a focused host-action tool. |
-| `selfhost/check.tl` | Required focused compatibility/coverage entry | Stdlib selfhost and safety-corpus gates build a smaller frontend checker binary rather than the full CLI. |
-| `selfhost/doc.tl` | Required focused compatibility/coverage entry | Public-tool and documentation gates compile the doc command as a focused generator while `typelisp doc` remains the public command. |
-| `selfhost/format.tl` | Required focused compatibility/coverage entry | Compile-manifest coverage keeps the formatter command independently typechecked and symbol-smoked. |
-| `selfhost/lint.tl` | Required focused compatibility/coverage entry | Compile-manifest and lint-driver smoke coverage keep the lint command independently typechecked. |
-| `selfhost/test.tl` | Required focused compatibility/coverage entry | Compile-manifest coverage keeps inline-test command lowering visible outside the unified CLI case. |
-| `selfhost/repl.tl` | Required focused compatibility/coverage entry | Manifest and public-tool REPL scratch coverage keep the REPL command independently exercised. |
-| `selfhost/lsp_frame.tl` | Required focused compatibility/coverage entry | Manifest coverage keeps the LSP frame server independently typechecked without running an editor client. |
-| `selfhost/clean.tl` | Required focused compatibility/coverage entry | Compile-manifest coverage keeps package/source cleanup command lowering visible outside the unified CLI case. |
-| `selfhost/scaffold.tl` | Required focused compatibility/coverage entry | Compile-manifest coverage keeps `new`/`init` scaffold lowering visible outside the unified CLI case. |
-
-No current command wrapper is classified as redundant. The comments in those
-files deliberately call them retained wrappers so new docs and scripts prefer
-`selfhost/cli.tl` for the public path.
+The published toolchain is the single `selfhost/cli.tl` binary, and every command
+(`build`, `run`, `check`, `fmt`, `lint`, `test`, `doc`, `compile`, `clean`,
+`repl`, `lsp`, `new`, `init`) is reached only through its dispatcher. There are no
+separate per-command driver binaries: each command's logic lives in a main-free
+`*_cli_core.tl` module compiled as part of `cli.tl`, and the `selfhost_cli`
+compile-manifest case asserts every command's dispatch entry, internal symbols,
+and diagnostic strings. Gates that need a command binary build `selfhost/cli.tl`
+and invoke the subcommand directly (e.g. `cli build --direct …`,
+`cli check <file>`, `cli fmt --check …`, `cli doc --html …`).
 
 Use `scripts/fetch-stage0.sh <stage0-tag>` to pin an immutable artifact. The
 script downloads the host platform asset, verifies the file is non-empty,
@@ -343,8 +328,6 @@ For new selfhost tests:
   generated test harness is enough.
 - Add a `*_smoke.tl` driver when the module should be executable through the
   compiler boundary.
-- Add standalone source programs to `selfhost/tests/` when the external compiler
-  driver should accept or reject them, then update `scripts/verify-selfhost.sh`.
 - Add compile/symbol smoke coverage to `selfhost/compile_manifest.txt` for new
   top-level selfhost modules or smoke drivers, or add an explicit `decision`.
 - Add public command, package, docs, LSP, REPL, formatter, or platform cases to
@@ -378,28 +361,17 @@ tools\stage0\typelisp.exe run selfhost\compiler_backend_tests.tl --stdlib-root s
 
 ### Selfhost native generated programs
 
-`scripts/verify-native-link-linux.sh` covers Linux-only cases where a selfhost
-TypeLisp driver emits assembly that must then assemble, link, and run as a native
-executable. It builds `selfhost/compiler_driver.tl`, verifies generated
-file-to-file assembly for multi-file imports, stdlib imports, runtime helpers,
-dynamic arrays, traps, and stack-argument call shape, and also runs the printed
-assembly from `selfhost/emit.tl` and `selfhost/parse.tl`.
+`scripts/verify-native-link-linux.sh` covers Linux-only cases where the selfhost
+compiler emits assembly that must then assemble, link, and run as a native
+executable. It builds `selfhost/cli.tl` and drives its `compile` subcommand to
+verify generated file-to-file assembly for multi-file imports, stdlib imports,
+runtime helpers, dynamic arrays, traps, and stack-argument call shape, plus the
+direct-object (no-assembler) ELF link path via `cli build --direct`.
 
 This runner is intentionally separate from the plain integration manifest:
 manifest rows cover source programs built by the public compiler, while this
 script covers generated-program behavior where the generated `.s` is the test
 artifact.
-
-### External compiler corpus
-
-The standalone source corpus under `selfhost/tests/` is for programs accepted or
-rejected by `selfhost/compile_smoke.tl`. The runner
-`scripts/verify-selfhost.sh` builds the smoke compiler once, compiles each
-corpus program, and checks the expected exit code, stdout, stderr, or diagnostic.
-
-Each new corpus file must be listed in the script manifest. See
-[`selfhost/tests/README.md`](tests/README.md) for the corpus layout and local
-runner commands.
 
 ### Stdlib documentation gate
 
@@ -502,7 +474,6 @@ TYPELISP_BIN=$tl ./scripts/verify-public-tools.sh
 TYPELISP_BIN=$tl ./scripts/verify-stdlib-docs.sh
 TYPELISP_BIN=$tl ./scripts/verify-doc-tests.sh
 TYPELISP_BIN=$tl ./scripts/verify-inline-tests.sh
-TYPELISP_BIN=$tl ./scripts/verify-selfhost.sh
 TYPELISP_BIN=$tl ./scripts/check-codegen-target-parity.sh
 scripts/ci-verify.sh
 ```
@@ -525,8 +496,6 @@ Linux environment.
 - Keep dependency staging in sync for `tests/integration/native-*.manifest` and
   the host fixture sections in `scripts/verify-integration.sh` whenever imports
   change.
-- Use `selfhost/tests/` plus `scripts/verify-selfhost.sh` for source programs
-  that should be accepted or rejected by `compile_smoke.tl`.
 - Use inline `(test ...)` items for source-owned runnable checks; they are
   picked up automatically by `scripts/verify-inline-tests.sh`.
 - Keep `selfhost/compile_manifest.txt` in sync with top-level selfhost sources

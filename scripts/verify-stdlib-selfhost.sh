@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # verify-stdlib-selfhost.sh — prove the canonical stdlib witness programs are
 # accepted (or correctly rejected) by the SELFHOST compiler frontend
-# (retained selfhost/check.tl wrapper: parse + typecheck via the selfhost
+# (selfhost cli `check`: parse + typecheck via the selfhost
 # parser/typechecker), complementing scripts/verify-stdlib.sh which drives the
 # same witnesses through the full self-hosted compiler. Part of #842 (prove
 # stdlib modules with the selfhost
@@ -75,7 +75,7 @@ reject_diag() {
     esac
 }
 
-# Each witness is a separate retained selfhost/check.tl binary invocation, and
+# Each witness is a separate selfhost cli `check` binary invocation, and
 # the Windows build intermittently SEGFAULTs mid-compile (#1204). A segfault
 # exits non-zero with no diagnostic, which would otherwise look like "a
 # positive witness was rejected" or "a reject witness rejected without its
@@ -98,9 +98,9 @@ CHECK_ERR="$WORKDIR/check.compile.err"
 BUILD_TARGET=linux-x86_64
 [ "$HOST_OS" = windows ] && BUILD_TARGET=windows-x86_64
 
-if ! "$COMPILER" build selfhost/check.tl --target "$BUILD_TARGET" \
-    --stdlib-root "$ROOT/stdlib" -o "$CHECK_BIN" >"$CHECK_OUT" 2>"$CHECK_ERR"; then
-    echo "FAIL: selfhost/check.tl build failed" >&2
+if ! "$COMPILER" build selfhost/cli.tl --target "$BUILD_TARGET" \
+    --stdlib-root stdlib -o "$CHECK_BIN" >"$CHECK_OUT" 2>"$CHECK_ERR"; then
+    echo "FAIL: selfhost/cli.tl build failed" >&2
     sed 's/^/  /' "$CHECK_ERR" >&2 || true
     exit 1
 fi
@@ -125,7 +125,7 @@ for witness in stdlib/tests/*.tl; do
     attempt=0
     while [ "$attempt" -lt "$ATTEMPTS" ]; do
         attempt=$((attempt + 1))
-        if out="$("$CHECK_BIN" "$witness" --stdlib-root stdlib 2>&1)"; then
+        if out="$("$CHECK_BIN" check "$witness" --stdlib-root stdlib 2>&1)"; then
             rc=0
         else
             rc=$?

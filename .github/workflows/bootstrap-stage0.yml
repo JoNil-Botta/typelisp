@@ -56,7 +56,7 @@ jobs:
 
       - name: Smoke-check the new stage0 binary
         run: |
-          ./typelisp-stage0-linux compile selfhost/compile.tl -o /tmp/stage0-smoke.s \
+          ./typelisp-stage0-linux compile selfhost/cli.tl -o /tmp/stage0-smoke.s \
             --target linux-x86_64 --stdlib-root stdlib --stdlib-root selfhost
           test -s /tmp/stage0-smoke.s
 
@@ -97,7 +97,7 @@ jobs:
       - name: Smoke-check the new stage0 binary
         shell: bash
         run: |
-          ./typelisp-stage0-windows.exe compile selfhost/compile.tl -o /tmp/stage0-smoke.s \
+          ./typelisp-stage0-windows.exe compile selfhost/cli.tl -o /tmp/stage0-smoke.s \
             --target windows-x86_64 --cfg windows --cfg target-windows --cfg os-windows \
             --stdlib-root stdlib --stdlib-root selfhost
           test -s /tmp/stage0-smoke.s
@@ -105,7 +105,7 @@ jobs:
       - name: Corpus-check the new stage0 (frontend only)
         shell: bash
         run: |
-          for module in stdlib/io.tl stdlib/string.tl stdlib/fs.tl stdlib/env.tl selfhost/compile.tl; do
+          for module in stdlib/io.tl stdlib/string.tl stdlib/fs.tl stdlib/env.tl selfhost/cli.tl; do
             ./typelisp-stage0-windows.exe check "$module" --stdlib-root stdlib --stdlib-root selfhost
           done
 

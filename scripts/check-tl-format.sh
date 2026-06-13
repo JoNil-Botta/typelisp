@@ -71,7 +71,7 @@ build_current_cli_for_format() {
         "compile current formatter for format" \
         "$CURRENT_CLI_COMPILE_STDOUT" \
         "$CURRENT_CLI_COMPILE_STDERR" \
-        "$COMPILER" compile selfhost/format.tl -o "$CURRENT_CLI_ASM" \
+        "$COMPILER" compile selfhost/cli.tl -o "$CURRENT_CLI_ASM" \
         --target "$NL_BOOTSTRAP_TARGET" \
         $(native_target_cfg_args) \
         --stdlib-root stdlib \
@@ -137,9 +137,9 @@ fi
 if [ -s "$METADATA_FILES" ]; then
     echo "Checking current-syntax-aware TypeLisp formatting for $metadata_count file(s)."
     build_current_cli_for_format
-    if ! xargs "$CURRENT_CLI_BIN" --check < "$METADATA_FILES"; then
+    if ! xargs "$CURRENT_CLI_BIN" fmt --check < "$METADATA_FILES"; then
         echo "Current-syntax-aware TypeLisp format check failed." >&2
-        echo "Run: $CURRENT_CLI_BIN --check \$(cat $METADATA_FILES)" >&2
+        echo "Run: $CURRENT_CLI_BIN fmt --check \$(cat $METADATA_FILES)" >&2
         exit 1
     fi
 fi

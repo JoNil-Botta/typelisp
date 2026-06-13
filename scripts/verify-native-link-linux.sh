@@ -229,7 +229,7 @@ verify_linux_direct_object_link() {
     _out="$_dir/build.stdout"
     _err="$_dir/build.stderr"
 
-    compile_selfhost_binary direct-object-build selfhost/build.tl "$_tool"
+    compile_selfhost_binary direct-object-build selfhost/cli.tl "$_tool"
     cat > "$_src" <<'EOF'
 (define (main) : i64 42)
 EOF
@@ -244,7 +244,7 @@ EOF
     echo "[selfhost-native] Linux direct ELF object links without assembler"
     set +e
     PATH="$_shim:$PATH" TYPELISP_LINUX_DIRECT_OBJECT=1 \
-        "$_tool" --direct "$_src" --target linux-x86_64 --backend-mode scalar \
+        "$_tool" build --direct "$_src" --target linux-x86_64 --backend-mode scalar \
         --stdlib-root "$ROOT/stdlib" -o "$_bin" > "$_out" 2> "$_err"
     _got=$?
     set -e

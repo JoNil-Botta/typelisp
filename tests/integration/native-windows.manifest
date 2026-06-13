@@ -24,6 +24,7 @@ constant_divisor_strength|tests/integration/constant_divisor_strength.tl|42|-|-|
 calc|tests/integration/calc.tl|14|-|-|token.tl
 clone_deep_copy|tests/integration/clone_deep_copy.tl|42|-|-|stdlib/arena.tl stdlib/string.tl|requires-stage0-symbol:_tl_clone_u24Bundle
 comptime_scalar|tests/integration/comptime_scalar.tl|3|-|-|-
+comptime_type_specialization|tests/integration/comptime_type_specialization.tl|42|-|-|-
 generated_option_result_families|tests/integration/generated_option_result_families.tl|61|-|-|-
 cond|tests/integration/cond.tl|42|-|-|-
 control_flow|tests/integration/control_flow.tl|15|-|-|-

@@ -94,7 +94,6 @@ sym_i64_env tests/integration/sym_i64_env.tl
 tl_alloc tests/integration/tl_alloc.tl
 tl_format_doc selfhost/format_doc.tl
 tl_lex selfhost/lex.tl
-tl_repl selfhost/repl.tl
 tl_compiler_parse_core selfhost/compiler_parse_core.tl
 tl_compiler_parse_smoke selfhost/compiler_parse_smoke.tl
 tl_compiler_symbols selfhost/compiler_symbols.tl

@@ -1075,7 +1075,7 @@ EOF
     # driver via compile + clang + lld-link (mirrors the runtime fixture above).
     _driver_self_asm="$_driver_dir/selfhost-compile.s"
     _driver_self_obj="$_driver_dir/selfhost-compile.obj"
-    "$COMPILER" compile selfhost/compile.tl --target windows-x86_64 --cfg windows -o "$_driver_self_asm" || {
+    "$COMPILER" compile selfhost/cli.tl --target windows-x86_64 --cfg windows -o "$_driver_self_asm" || {
         echo "FAIL: windows-selfhost-compile-driver compile failed" >&2
         exit 1
     }

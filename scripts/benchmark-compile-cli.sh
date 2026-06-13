@@ -323,7 +323,7 @@ run_opt_level() {
     profile_build_stderr="$optdir/compile_profile-build.stderr"
     start=$(now_ms)
     if ! run_with_heartbeat "opt$opt_level-profile-compile-driver" \
-        "$stage2_bin" compile selfhost/compile.tl -o "$profile_asm" \
+        "$stage2_bin" compile selfhost/cli.tl -o "$profile_asm" \
         --target "$NL_BOOTSTRAP_TARGET" \
         $(native_target_cfg_args) \
         --stdlib-root stdlib \

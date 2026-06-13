@@ -289,8 +289,6 @@ run_with_compiler "$STAGE2_BIN" "stage2 stdlib modules and fixtures" scripts/ver
 
 if [ "$HOST_OS" = linux ]; then
     run_with_compiler "$STAGE2_BIN" "stage2 CLI host-action smoke" scripts/check-stage1-wrapper.sh
-    run_with_compiler "$STAGE2_BIN" "comptime-type specialization smoke" \
-        env TYPELISP_BOOTSTRAP_SMOKE_STAGE1_BIN="$STAGE2_BIN" scripts/check-bootstrap-smoke.sh
     run_with_compiler "$STAGE2_BIN" "stage2 stdlib documentation" scripts/verify-stdlib-docs.sh
     run_with_compiler "$STAGE2_BIN" "stage2 stdlib selfhost verifier" scripts/verify-stdlib-selfhost.sh
     run_with_compiler "$STAGE2_BIN" "stage2 SPMD SIMD comparison" scripts/verify-spmd-simd.sh

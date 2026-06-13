@@ -605,21 +605,23 @@
 ;; ... The retained doc wrapper passes base=1; the unified dispatcher passes
 ;; base=2.
 (define (doc-main-test [base : i64]) : i64
-  (match (doc-test-config-from base (arg-count))
-    [(OkDocTestCliConfig config)
-      (match config
-        [(DocTestCliFileConfig input-paths stdlib-roots)
-          (doc-test-files
-            input-paths
-            stdlib-roots
-            (> (string-vec-len input-paths) 1)
-            0)]
-        [(DocTestCliPackageConfig manifest-path has-manifest stdlib-roots)
-          (doc-test-package manifest-path has-manifest stdlib-roots)])]
-    [(ErrDocTestCliConfig message)
-      (begin
-        (print-error message)
-        1)]))
+  (begin
+    (compiler-load-session-cache-enable!)
+    (match (doc-test-config-from base (arg-count))
+      [(OkDocTestCliConfig config)
+        (match config
+          [(DocTestCliFileConfig input-paths stdlib-roots)
+            (doc-test-files
+              input-paths
+              stdlib-roots
+              (> (string-vec-len input-paths) 1)
+              0)]
+          [(DocTestCliPackageConfig manifest-path has-manifest stdlib-roots)
+            (doc-test-package manifest-path has-manifest stdlib-roots)])]
+      [(ErrDocTestCliConfig message)
+        (begin
+          (print-error message)
+          1)])))
 
 (define (doc-main-html [base : i64]) : i64
   (if (= (arg-count) (+ base 3))

@@ -18,6 +18,8 @@
 
 (import "compiler_check_core.tl")
 
+(import "compiler_load.tl")
+
 (import "build_run_core.tl")
 
 (import "../stdlib/string.tl")
@@ -2541,6 +2543,41 @@ typecheck: return type mismatch"))]
         (doc-test-run-report-render fail-report)
         "return type mismatch"))))
 
+(define (doc-test-session-cache-source) : String
+  ";# ```typelisp
+;# (import \"stdlib/dep.tl\")
+;# (define (main) : i64 shared-value)
+;# ```
+;# ```typelisp
+;# (import \"stdlib/dep.tl\")
+;# (define (main) : i64 shared-value)
+;# ```
+")
+
+(define (doc-test-session-cache-smoke-ok?) : bool
+  (let
+    [root : String "target/doc_test_session_cache"]
+    [dep-file : String "target/doc_test_session_cache/dep.tl"]
+    [doc-file : String "target/doc_test_session_cache/docs.tl"]
+    [roots : StringVec
+      (string-vec-push (string-vec-new) "target/doc_test_session_cache")]
+    (begin
+      (compiler-load-test-mkdir "target")
+      (compiler-load-test-mkdir root)
+      (write-file dep-file "(define shared-value : i64 7)")
+      (compiler-load-session-cache-enable!)
+      (compiler-load-program-cache-clear!)
+      (let
+        [report : DocTestRunReport
+          (doc-test-typecheck-source-with-roots
+            doc-file
+            (doc-test-session-cache-source)
+            roots)]
+        [hits : i64 compiler-load-program-cache-hit-count]
+        (begin
+          (compiler-load-session-cache-disable-for-test!)
+          (and (doc-test-run-report-ok? report) (> hits 0)))))))
+
 (define (doc-test-run-smoke) : i64
   (begin
     (unless
@@ -2614,6 +2651,12 @@ typecheck: return type mismatch"))]
       (return
         (begin
           (panic "doc-test-run: report render mismatch")
+          0)))
+    (unless
+      (doc-test-session-cache-smoke-ok?)
+      (return
+        (begin
+          (panic "doc-test-run: session cache smoke mismatch")
           0)))
     42))
 

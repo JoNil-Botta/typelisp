@@ -1,10 +1,11 @@
 ;# Deterministic pseudo-random helpers for TypeLisp tools (#882).
 ;#
 ;# This module provides a small seeded, deterministic, non-cryptographic
-;# generator plus weighted index selection for selfhost tooling. Deterministic
-;# draws do not read host entropy; callers choose the seed, commonly from a
-;# literal in tests or from argv in local tools that want variation. The
-;# optional `random-system-seed` wrapper reads a platform seed through direct FFI.
+;# generator plus array/vector/list weighted index selection for selfhost
+;# tooling. Deterministic draws do not read host entropy; callers choose the
+;# seed, commonly from a literal in tests or from argv in local tools that want
+;# variation. The optional `random-system-seed` wrapper reads a platform seed
+;# through direct FFI.
 ;#
 ;# Usage: `(import "stdlib/random.tl")`
 ;#
@@ -16,11 +17,14 @@
 ;#     [(ErrRandomBounded _) 0]))
 ;# ```
 ;#
-;# `RandomState`, draw results, and weight-list cons nodes are ordinary
-;# aggregates allocated in the active arena when constructed. The generator is
-;# MINSTD/Park-Miller with Schrage constants, so it avoids signed `i64`
-;# overflow and remains portable across current TypeLisp targets.
+;# `RandomState`, draw results, and compatibility weight-list cons nodes are
+;# ordinary aggregates allocated in the active arena when constructed. Array and
+;# `I64Vec` weighted-index helpers scan caller-owned storage directly. The
+;# generator is MINSTD/Park-Miller with Schrage constants, so it avoids signed
+;# `i64` overflow and remains portable across current TypeLisp targets.
 (import "io.tl")
+
+(import "vector.tl")
 
 ;: Pseudo-random generator state. Valid normalized seeds are in `1..2147483647`.
 (defstruct RandomState
@@ -181,48 +185,65 @@
     [(RandomWeightNil) true]
     [(RandomWeightCons _ _) false]))
 
-;: Accumulate and validate non-negative weights.
-(define (random-weight-list-total-nonempty
-  [weights : RandomWeightList]
+;: Accumulate and validate non-negative array weights in the prefix
+;: `[0, count)`.
+(define (random-weight-array-total-from
+  [weights : (Array i64)]
+  [count : i64]
+  [index : i64]
   [acc : i64]) : RandomWeightTotalResult
-  (match weights
-    [(RandomWeightNil) (OkRandomWeightTotal acc)]
-    [(RandomWeightCons weight rest)
+  (if (>= index count)
+    (OkRandomWeightTotal acc)
+    (let
+      [weight : i64 (array-ref weights index)]
       (if (< weight 0)
         (ErrRandomWeightTotal "random: weight must not be negative")
-        (random-weight-list-total-nonempty (box-get rest) (+ acc weight)))]))
+        (random-weight-array-total-from
+          weights
+          count
+          (+ index 1)
+          (+ acc weight))))))
 
-;: Return the total weight, rejecting empty lists and negative weights.
-(define (random-weight-list-total [weights : RandomWeightList]) : RandomWeightTotalResult
-  (if (random-weight-list-empty? weights)
-    (ErrRandomWeightTotal "random: weight list must not be empty")
-    (random-weight-list-total-nonempty weights 0)))
+;: Return the total weight for an array prefix, rejecting empty prefixes and
+;: negative weights.
+(define (random-weight-array-total-prefix
+  [weights : (Array i64)]
+  [count : i64]
+  [empty-message : String]) : RandomWeightTotalResult
+  (if (<= count 0)
+    (ErrRandomWeightTotal empty-message)
+    (random-weight-array-total-from weights count 0 0)))
 
-;: Pick the first index whose cumulative positive weight contains `target`.
-(define (random-weighted-index-scan
-  [weights : RandomWeightList]
+;: Pick the first array-prefix index whose cumulative positive weight contains
+;: `target`.
+(define (random-weight-array-scan-from
+  [weights : (Array i64)]
+  [count : i64]
   [target : i64]
   [index : i64]) : i64
-  (match weights
-    [(RandomWeightNil) -1]
-    [(RandomWeightCons weight rest)
+  (if (>= index count)
+    -1
+    (let
+      [weight : i64 (array-ref weights index)]
       (if (<= weight 0)
-        (random-weighted-index-scan (box-get rest) target (+ index 1))
+        (random-weight-array-scan-from weights count target (+ index 1))
         (if (< target weight)
           index
-          (random-weighted-index-scan
-            (box-get rest)
+          (random-weight-array-scan-from
+            weights
+            count
             (- target weight)
-            (+ index 1))))]))
+            (+ index 1)))))))
 
-;: Choose an index from `weights`, skipping zero weights.
-;:
-;: The result index is zero-based in list order. Empty lists, negative weights,
-;: and lists whose total weight is zero return structured errors.
-(define (random-weighted-index
+;: Choose an index from the first `count` entries of `weights`, skipping zero
+;: weights. `empty-message` lets compatibility wrappers keep their historical
+;: diagnostics while sharing the array-backed implementation.
+(define (random-weighted-index-array-prefix
   [state : RandomState]
-  [weights : RandomWeightList]) : RandomWeightedIndexResult
-  (match (random-weight-list-total weights)
+  [weights : (Array i64)]
+  [count : i64]
+  [empty-message : String]) : RandomWeightedIndexResult
+  (match (random-weight-array-total-prefix weights count empty-message)
     [(ErrRandomWeightTotal message) (ErrRandomWeightedIndex message)]
     [(OkRandomWeightTotal total)
       (if (<= total 0)
@@ -231,8 +252,88 @@
           [(OkRandomBounded next-state target)
             (OkRandomWeightedIndex
               next-state
-              (random-weighted-index-scan weights target 0))]
+              (random-weight-array-scan-from weights count target 0))]
           [(ErrRandomBounded message) (ErrRandomWeightedIndex message)]))]))
+
+;: Choose an index from `weights`, skipping zero weights.
+;:
+;: The result index is zero-based in array order. Empty arrays, negative
+;: weights, and arrays whose total weight is zero return structured errors.
+(define (random-weighted-index-array
+  [state : RandomState]
+  [weights : (Array i64)]) : RandomWeightedIndexResult
+  (random-weighted-index-array-prefix
+    state
+    weights
+    (array-length weights)
+    "random: weight array must not be empty"))
+
+;: Choose an index from the live prefix of `weights`, skipping zero weights.
+;:
+;: The result index is zero-based in vector order. Empty vectors, negative
+;: weights, and vectors whose total weight is zero return structured errors.
+(define (random-weighted-index-vec [state : RandomState] [weights : I64Vec]) : RandomWeightedIndexResult
+  (random-weighted-index-array-prefix
+    state
+    (i64-vec-slots weights)
+    (i64-vec-len weights)
+    "random: weight vector must not be empty"))
+
+;: Count weight-list entries.
+(define (random-weight-list-count-from [weights : RandomWeightList] [acc : i64]) : i64
+  (match weights
+    [(RandomWeightNil) acc]
+    [(RandomWeightCons _ rest)
+      (random-weight-list-count-from (box-get rest) (+ acc 1))]))
+
+;: Copy a weight list into `out` starting at `index`.
+(define (random-weight-list-fill-array
+  [out : (Array i64)]
+  [weights : RandomWeightList]
+  [index : i64]) : unit
+  (match weights
+    [(RandomWeightNil) unit]
+    [(RandomWeightCons weight rest)
+      (begin
+        (array-set! out index weight)
+        (random-weight-list-fill-array out (box-get rest) (+ index 1)))]))
+
+;: Return a fresh array containing the weight list in list order.
+(define (random-weight-list-to-array [weights : RandomWeightList]) : (Array i64)
+  (let
+    [count : i64 (random-weight-list-count-from weights 0)]
+    [out : (Array i64) (make-array i64 count)]
+    (begin
+      (random-weight-list-fill-array out weights 0)
+      out)))
+
+;: Return the total weight, rejecting empty lists and negative weights.
+(define (random-weight-list-total [weights : RandomWeightList]) : RandomWeightTotalResult
+  (if (random-weight-list-empty? weights)
+    (ErrRandomWeightTotal "random: weight list must not be empty")
+    (let
+      [array-weights : (Array i64) (random-weight-list-to-array weights)]
+      (random-weight-array-total-prefix
+        array-weights
+        (array-length array-weights)
+        "random: weight list must not be empty"))))
+
+;: Choose an index from `weights`, skipping zero weights.
+;:
+;: The result index is zero-based in list order. Empty lists, negative weights,
+;: and lists whose total weight is zero return structured errors.
+(define (random-weighted-index
+  [state : RandomState]
+  [weights : RandomWeightList]) : RandomWeightedIndexResult
+  (if (random-weight-list-empty? weights)
+    (ErrRandomWeightedIndex "random: weight list must not be empty")
+    (let
+      [array-weights : (Array i64) (random-weight-list-to-array weights)]
+      (random-weighted-index-array-prefix
+        state
+        array-weights
+        (array-length array-weights)
+        "random: weight list must not be empty"))))
 
 ;: Return the shared system-seed failure result.
 (define (random-system-seed-unavailable) : ResultSystemSeed

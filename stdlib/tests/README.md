@@ -121,8 +121,8 @@ Coverage notes:
   nonzero status, failed spawn, and async start/wait on Linux, plus the
   structured unsupported async result on Windows.
 - `random_api.tl` covers deterministic seed normalization and MINSTD sequences,
-  bounded draws, invalid bounds, weighted-index edge cases, zero-weight
-  skipping, and stable picks for fixed seeds.
+  bounded draws, invalid bounds, list/array/vector weighted-index edge cases,
+  zero-weight skipping, storage parity, and stable picks for fixed seeds.
 - `thread_api.tl` covers worker count fallback shape, invalid semaphore
   creation, two native worker threads, semaphore signaling, and join return
   values.

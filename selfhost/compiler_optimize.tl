@@ -4573,13 +4573,75 @@
         (compiler-ir-block-seq-to-list seq)
         seen)]))
 
+;; #2117: a hash-set seen-check; the incremental label-list scan made this
+;; O(blocks^2) string comparisons on large functions.
+(define (opt-cfg-block-labels-unique-map?
+  [blocks : CompilerIrBlockList]
+  [seen : StringI64Map]) : bool
+  (match blocks
+    [(IrBlockNil) true]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label _)
+          (if (string-i64-map-contains? seen label)
+            false
+            (opt-cfg-block-labels-unique-map?
+              (box-get rest)
+              (string-i64-map-put seen label 1)))])]
+    [(IrBlockArray seq)
+      (opt-cfg-block-labels-unique-map?
+        (compiler-ir-block-seq-to-list seq)
+        seen)]))
+
 (define (opt-cfg-block-labels-unique? [blocks : CompilerIrBlockList]) : bool
-  (opt-cfg-block-labels-unique-from? blocks (OptLabelNil)))
+  (opt-cfg-block-labels-unique-map? blocks (string-i64-map-with-capacity 64)))
+
+(define (opt-cfg-block-label-map
+  [blocks : CompilerIrBlockList]
+  [seen : StringI64Map]) : StringI64Map
+  (match blocks
+    [(IrBlockNil) seen]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label _)
+          (opt-cfg-block-label-map
+            (box-get rest)
+            (string-i64-map-put seen label 1))])]
+    [(IrBlockArray seq)
+      (opt-cfg-block-label-map (compiler-ir-block-seq-to-list seq) seen)]))
+
+(define (opt-cfg-label-set-known-in-map?
+  [labels : OptLabelSet]
+  [known : StringI64Map]) : bool
+  (match labels
+    [(OptLabelNil) true]
+    [(OptLabelCons label rest)
+      (and
+        (string-i64-map-contains? known label)
+        (opt-cfg-label-set-known-in-map? (box-get rest) known))]))
+
+(define (opt-cfg-successor-targets-known-map?
+  [blocks : CompilerIrBlockList]
+  [known : StringI64Map]) : bool
+  (match blocks
+    [(IrBlockNil) true]
+    [(IrBlockCons block rest)
+      (and
+        (opt-cfg-label-set-known-in-map?
+          (opt-cfg-block-successors-with-next
+            block
+            (opt-cfg-entry-label (box-get rest)))
+          known)
+        (opt-cfg-successor-targets-known-map? (box-get rest) known))]
+    [(IrBlockArray seq)
+      (opt-cfg-successor-targets-known-map?
+        (compiler-ir-block-seq-to-list seq)
+        known)]))
 
 (define (opt-cfg-successor-targets-known? [blocks : CompilerIrBlockList]) : bool
-  (let
-    [labels : OptLabelSet (opt-cfg-block-labels blocks)]
-    (opt-cfg-successor-targets-known-in-blocks? blocks labels)))
+  (opt-cfg-successor-targets-known-map?
+    blocks
+    (opt-cfg-block-label-map blocks (string-i64-map-with-capacity 64))))
 
 (define (opt-cfg-successor-targets-known-in-blocks?
   [blocks : CompilerIrBlockList]
@@ -6207,18 +6269,55 @@
       (opt-cfg-entry-label blocks)
       (OptVarDefNil))))
 
-(define (opt-var-def-lookup [defs : OptVarDefList] [var : i64]) : OptMaybeVarDef
+;; #2117: the use verifier resolves every operand's defining block, so the
+;; def list is indexed into a var-id-keyed array once per verification
+;; (the list scan per use made the verifier quadratic on large functions).
+(define (opt-var-defs-max-id [defs : OptVarDefList] [highest : i64]) : i64
   (match defs
-    [(OptVarDefNil) (OptNoVarDef)]
+    [(OptVarDefNil) highest]
     [(OptVarDefCons def rest)
       (match def
-        [(OptVarDef def-var _ _)
-          (if (= def-var var)
-            (OptSomeVarDef def)
-            (opt-var-def-lookup (box-get rest) var))])]))
+        [(OptVarDef var _ _)
+          (opt-var-defs-max-id
+            (box-get rest)
+            (if (> var highest)
+              var
+              highest))])]))
+
+(define (opt-var-defs-index-fill!
+  [items : (Array OptMaybeVarDef)]
+  [defs : OptVarDefList]) : unit
+  (match defs
+    [(OptVarDefNil) unit]
+    [(OptVarDefCons def rest)
+      (begin
+        (match def
+          [(OptVarDef var _ _)
+            (if (and (>= var 0) (< var (array-length items)))
+              (array-set! items var (OptSomeVarDef def))
+              unit)])
+        (opt-var-defs-index-fill! items (box-get rest)))]))
+
+(define (opt-var-defs-index [defs : OptVarDefList]) : (Array OptMaybeVarDef)
+  (let
+    [count : i64 (+ (opt-var-defs-max-id defs (- 0 1)) 1)]
+    [items : (Array OptMaybeVarDef) (make-array OptMaybeVarDef count)]
+    [i : i64 0]
+    (begin
+      (while (< i count)
+        (begin
+          (array-set! items i (OptNoVarDef))
+          (set! i (+ i 1))))
+      (opt-var-defs-index-fill! items defs)
+      items)))
+
+(define (opt-var-def-lookup [defs : (Array OptMaybeVarDef)] [var : i64]) : OptMaybeVarDef
+  (if (and (>= var 0) (< var (array-length defs)))
+    (array-ref defs var)
+    (OptNoVarDef)))
 
 (define (opt-verify-var-use
-  [defs : OptVarDefList]
+  [defs : (Array OptMaybeVarDef)]
   [doms : OptDomInfo]
   [var : i64]
   [use-block : String]
@@ -6238,7 +6337,7 @@
               (OkCompilerOptimizeVerify)))])]))
 
 (define (opt-verify-var-use-on-edge
-  [defs : OptVarDefList]
+  [defs : (Array OptMaybeVarDef)]
   [doms : OptDomInfo]
   [var : i64]
   [pred-label : String]) : ResultCompilerOptimizeVerify
@@ -6254,7 +6353,7 @@
               "optimizer verify: use is not dominated by definition"))])]))
 
 (define (opt-verify-value-use
-  [defs : OptVarDefList]
+  [defs : (Array OptMaybeVarDef)]
   [doms : OptDomInfo]
   [value : CompilerIrValue]
   [use-block : String]
@@ -6264,7 +6363,7 @@
     [_ (OkCompilerOptimizeVerify)]))
 
 (define (opt-verify-value-list-uses
-  [defs : OptVarDefList]
+  [defs : (Array OptMaybeVarDef)]
   [doms : OptDomInfo]
   [values : CompilerIrValueList]
   [use-block : String]
@@ -6284,7 +6383,7 @@
           (ErrCompilerOptimizeVerify message)])]))
 
 (define (opt-verify-call-args-array-uses
-  [defs : OptVarDefList]
+  [defs : (Array OptMaybeVarDef)]
   [doms : OptDomInfo]
   [values : (Array CompilerIrValue)]
   [use-block : String]
@@ -6309,7 +6408,7 @@
       [(ErrCompilerOptimizeVerify message) (ErrCompilerOptimizeVerify message)])))
 
 (define (opt-verify-call-args-uses
-  [defs : OptVarDefList]
+  [defs : (Array OptMaybeVarDef)]
   [doms : OptDomInfo]
   [args : CompilerIrCallArgs]
   [use-block : String]
@@ -6326,7 +6425,7 @@
       (opt-verify-call-args-array-uses defs doms values use-block use-pos 0)]))
 
 (define (opt-verify-maybe-value-use
-  [defs : OptVarDefList]
+  [defs : (Array OptMaybeVarDef)]
   [doms : OptDomInfo]
   [value : CompilerIrMaybeValue]
   [use-block : String]
@@ -6337,7 +6436,7 @@
       (opt-verify-value-use defs doms inner use-block use-pos)]))
 
 (define (opt-verify-phi-input-uses
-  [defs : OptVarDefList]
+  [defs : (Array OptMaybeVarDef)]
   [doms : OptDomInfo]
   [inputs : CompilerIrPhiInputList]) : ResultCompilerOptimizeVerify
   (match inputs
@@ -6360,7 +6459,7 @@
     [(ErrCompilerOptimizeVerify message) (ErrCompilerOptimizeVerify message)]))
 
 (define (opt-verify-instr-uses
-  [defs : OptVarDefList]
+  [defs : (Array OptMaybeVarDef)]
   [doms : OptDomInfo]
   [block-label : String]
   [pos : i64]
@@ -6491,7 +6590,7 @@
         (opt-verify-call-args-uses defs doms args block-label pos))]))
 
 (define (opt-verify-instr-list-uses
-  [defs : OptVarDefList]
+  [defs : (Array OptMaybeVarDef)]
   [doms : OptDomInfo]
   [block-label : String]
   [instrs : CompilerIrInstrList]
@@ -6511,7 +6610,7 @@
           (ErrCompilerOptimizeVerify message)])]))
 
 (define (opt-verify-instr-seq-uses-from
-  [defs : OptVarDefList]
+  [defs : (Array OptMaybeVarDef)]
   [doms : OptDomInfo]
   [block-label : String]
   [instrs : CompilerIrInstrSeq]
@@ -6633,7 +6732,7 @@
         (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-verify-block-uses
-  [defs : OptVarDefList]
+  [defs : (Array OptMaybeVarDef)]
   [doms : OptDomInfo]
   [blocks : CompilerIrBlockList]) : ResultCompilerOptimizeVerify
   (match blocks
@@ -6664,7 +6763,8 @@
         (let
           [doms : OptDomInfo (struct-get context doms)]
           [pred-map : OptPredMap (struct-get context pred-map)]
-          [defs : OptVarDefList (opt-var-defs-from-function params blocks)]
+          [defs : (Array OptMaybeVarDef)
+            (opt-var-defs-index (opt-var-defs-from-function params blocks))]
           (match (opt-verify-phi-predecessors-blocks pred-map blocks)
             [(OkCompilerOptimizeVerify)
               (opt-verify-block-uses defs doms blocks)]
@@ -9309,35 +9409,48 @@
         (OptSomeNaturalLoop loop)
         (opt-natural-loop-find (box-get rest) header latch))]))
 
+;; #2117: membership during body collection is an O(1) id-indexed marks
+;; array (the body/worklist LISTS keep their exact construction order, so
+;; downstream output is byte-identical); reachability reads the CFG index's
+;; bool array instead of scanning the label list.
 (define (opt-natural-loop-collect-add-pred
-  [reachable : OptLabelSet]
+  [index : OptCfgIndex]
+  [marks : (Array bool)]
   [state : OptNaturalLoopCollectState]
   [pred : String]) : OptNaturalLoopCollectState
   (match state
     [(OptNaturalLoopCollectState body worklist)
-      (if (and
-        (opt-label-contains reachable pred)
-        (not (opt-label-contains body pred)))
-        (OptNaturalLoopCollectState
-          (opt-label-add body pred)
-          (opt-label-add worklist pred))
-        state)]))
+      (match (opt-cfg-index-id index pred)
+        [(OptSomeI64 pred-id)
+          (if (and
+            (array-ref (struct-get index reachable) pred-id)
+            (not (array-ref marks pred-id)))
+            (begin
+              (array-set! marks pred-id true)
+              (OptNaturalLoopCollectState
+                (opt-label-add body pred)
+                (opt-label-add worklist pred)))
+            state)]
+        [(OptNoI64) state])]))
 
 (define (opt-natural-loop-collect-add-preds
-  [reachable : OptLabelSet]
+  [index : OptCfgIndex]
+  [marks : (Array bool)]
   [preds : OptLabelSet]
   [state : OptNaturalLoopCollectState]) : OptNaturalLoopCollectState
   (match preds
     [(OptLabelNil) state]
     [(OptLabelCons pred rest)
       (opt-natural-loop-collect-add-preds
-        reachable
+        index
+        marks
         (box-get rest)
-        (opt-natural-loop-collect-add-pred reachable state pred))]))
+        (opt-natural-loop-collect-add-pred index marks state pred))]))
 
 (define (opt-natural-loop-collect-body
   [pred-map : OptPredMap]
-  [reachable : OptLabelSet]
+  [index : OptCfgIndex]
+  [marks : (Array bool)]
   [body : OptLabelSet]
   [worklist : OptLabelSet]) : OptLabelSet
   (match worklist
@@ -9346,16 +9459,26 @@
       (let
         [state : OptNaturalLoopCollectState
           (opt-natural-loop-collect-add-preds
-            reachable
+            index
+            marks
             (opt-pred-map-lookup pred-map label)
             (OptNaturalLoopCollectState body (box-get rest)))]
         (match state
           [(OptNaturalLoopCollectState next-body next-worklist)
             (opt-natural-loop-collect-body
               pred-map
-              reachable
+              index
+              marks
               next-body
               next-worklist)]))]))
+
+(define (opt-natural-loop-mark-label!
+  [index : OptCfgIndex]
+  [marks : (Array bool)]
+  [label : String]) : unit
+  (match (opt-cfg-index-id index label)
+    [(OptSomeI64 id) (array-set! marks id true)]
+    [(OptNoI64) unit]))
 
 (define (opt-natural-loop-safe-preheader-block?
   [pred-map : OptPredMap]
@@ -9440,10 +9563,16 @@
   [header : String]
   [latch : String]) : OptNaturalLoop
   (let
+    [index : OptCfgIndex (struct-get pred-map index)]
+    [marks : (Array bool) (make-array bool (opt-cfg-index-block-count index))]
+    [_clear-marks : unit (opt-cfg-fill-bool! marks (array-length marks) false)]
+    [_seed-header : unit (opt-natural-loop-mark-label! index marks header)]
+    [_seed-latch : unit (opt-natural-loop-mark-label! index marks latch)]
     [body-labels : OptLabelSet
       (opt-natural-loop-collect-body
         pred-map
-        reachable
+        index
+        marks
         (opt-label-add (opt-label-add (OptLabelNil) header) latch)
         (opt-label-add (OptLabelNil) latch))]
     [body : OptLoopBody

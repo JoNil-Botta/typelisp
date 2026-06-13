@@ -969,6 +969,152 @@
             (set! bit (- bit 1)))))
       q)))
 
+;: Optional f64 result for deterministic decimal parsing.
+(defenum IoFloatMaybeF64
+  (IoFloatNoF64)
+  (IoFloatSomeF64 f64))
+
+;: Internal exact decimal components used by the f64 parser.
+(defenum IoFloatMaybeDecimal
+  (IoFloatNoDecimal)
+  (IoFloatSomeDecimal bool BigNum i64))
+
+;: True when c is an ASCII decimal digit.
+(define (io-float-decimal-digit? [c : char]) : bool
+  (and (>= c #0') (<= c #9')))
+
+;: Numeric value of an ASCII decimal digit.
+(define (io-float-decimal-digit-value [c : char]) : i64
+  (- (cast c : i64) (cast #0' : i64)))
+
+;: True when c is an exponent marker accepted by the float parser.
+(define (io-float-exponent-char? [c : char]) : bool
+  (or (= c #e') (= c #E')))
+
+;: Append one decimal digit to an exact bignum significand.
+(define (io-float-bn-append-digit [value : BigNum] [digit : i64]) : BigNum
+  (bn-add (bn-mul-u32 value (cast 10 : u64)) (bn-from-u64 (cast digit : u64))))
+
+;: Parse decimal text into exact sign, significand, and decimal exponent.
+(define (io-float-parse-decimal [text : String]) : IoFloatMaybeDecimal
+  (let
+    [n : i64 (string-length text)]
+    [index : i64 0]
+    [negative : bool false]
+    [significand : BigNum (bn-zero)]
+    [int-digits : i64 0]
+    [frac-digits : i64 0]
+    [exp-negative : bool false]
+    [exp-value : i64 0]
+    [exp-digits : i64 0]
+    (if (= n 0)
+      (IoFloatNoDecimal)
+      (begin
+        (if (= (string-ref text 0) #-')
+          (begin
+            (set! negative true)
+            (set! index 1))
+          unit)
+        (while (and
+          (< index n)
+          (io-float-decimal-digit? (string-ref text index)))
+          (let
+            [digit : i64 (io-float-decimal-digit-value (string-ref text index))]
+            (begin
+              (set! significand (io-float-bn-append-digit significand digit))
+              (set! int-digits (+ int-digits 1))
+              (set! index (+ index 1)))))
+        (cond
+          (= (+ int-digits frac-digits) 0)
+          (IoFloatNoDecimal)
+          (= index n)
+          (IoFloatSomeDecimal negative significand 0)
+          (= (string-ref text index) #.')
+          (begin
+            (set! index (+ index 1))
+            (while (and
+              (< index n)
+              (io-float-decimal-digit? (string-ref text index)))
+              (let
+                [digit : i64
+                  (io-float-decimal-digit-value (string-ref text index))]
+                (begin
+                  (set!
+                    significand
+                    (io-float-bn-append-digit significand digit))
+                  (set! frac-digits (+ frac-digits 1))
+                  (set! index (+ index 1)))))
+            (if (= frac-digits 0)
+              (IoFloatNoDecimal)
+              (begin
+                (if (and
+                  (< index n)
+                  (io-float-exponent-char? (string-ref text index)))
+                  (begin
+                    (set! index (+ index 1))
+                    (if (and (< index n) (= (string-ref text index) #-'))
+                      (begin
+                        (set! exp-negative true)
+                        (set! index (+ index 1)))
+                      (if (and (< index n) (= (string-ref text index) #+'))
+                        (set! index (+ index 1))
+                        unit))
+                    (while (and
+                      (< index n)
+                      (io-float-decimal-digit? (string-ref text index)))
+                      (let
+                        [digit : i64
+                          (io-float-decimal-digit-value (string-ref text index))]
+                        (begin
+                          (when
+                            (< exp-value 4000)
+                            (set! exp-value (+ (* exp-value 10) digit)))
+                          (set! exp-digits (+ exp-digits 1))
+                          (set! index (+ index 1)))))
+                    (when (= exp-digits 0) (set! index (+ n 1))))
+                  unit)
+                (if (!= index n)
+                  (IoFloatNoDecimal)
+                  (IoFloatSomeDecimal
+                    negative
+                    significand
+                    (-
+                      (if exp-negative
+                        (- 0 exp-value)
+                        exp-value)
+                      frac-digits))))))
+          (io-float-exponent-char? (string-ref text index))
+          (begin
+            (set! index (+ index 1))
+            (if (and (< index n) (= (string-ref text index) #-'))
+              (begin
+                (set! exp-negative true)
+                (set! index (+ index 1)))
+              (if (and (< index n) (= (string-ref text index) #+'))
+                (set! index (+ index 1))
+                unit))
+            (while (and
+              (< index n)
+              (io-float-decimal-digit? (string-ref text index)))
+              (let
+                [digit : i64
+                  (io-float-decimal-digit-value (string-ref text index))]
+                (begin
+                  (when
+                    (< exp-value 4000)
+                    (set! exp-value (+ (* exp-value 10) digit)))
+                  (set! exp-digits (+ exp-digits 1))
+                  (set! index (+ index 1)))))
+            (if (or (= exp-digits 0) (!= index n))
+              (IoFloatNoDecimal)
+              (IoFloatSomeDecimal
+                negative
+                significand
+                (if exp-negative
+                  (- 0 exp-value)
+                  exp-value))))
+          (IoFloatNoDecimal))))))
+
 ;: floor(a / b) for b > 0 (TL `/` truncates toward zero).
 (define (ftoa-floor-div [a : i64] [b : i64]) : i64
   (if (>= a 0)
@@ -986,6 +1132,174 @@
           (set! v (shr v 1))
           (set! i (+ i 1))))
       i)))
+
+;: Bit length of a non-negative BigNum.
+(define (io-float-bn-bit-length [value : BigNum]) : i64
+  (let
+    [len : i64 (struct-get value len)]
+    (if (= len 0)
+      0
+      (+
+        (* (- len 1) 32)
+        (+ (ftoa-msb-index (array-ref (struct-get value limbs) (- len 1))) 1)))))
+
+;: Floor log2 of the positive rational `num / den`.
+(define (io-float-ratio-floor-log2 [num : BigNum] [den : BigNum]) : i64
+  (let
+    [estimate : i64
+      (- (io-float-bn-bit-length num) (io-float-bn-bit-length den))]
+    [ok : bool
+      (if (>= estimate 0)
+        (>= (bn-cmp num (bn-shl-bits den estimate)) 0)
+        (>= (bn-cmp (bn-shl-bits num (- 0 estimate)) den) 0))]
+    (if ok
+      estimate
+      (- estimate 1))))
+
+;: Rounded quotient of `num / den`, ties to even.
+(define (io-float-round-div-u64 [num : BigNum] [den : BigNum]) : u64
+  (let
+    [q : u64 (bn-div-floor-u64 num den)]
+    [twice-num : BigNum (bn-shl-bits num 1)]
+    [mid : BigNum (bn-mul-u64 den (+ (* (cast 2 : u64) q) (cast 1 : u64)))]
+    [cmp : i64 (bn-cmp twice-num mid)]
+    (cond
+      (> cmp 0)
+      (+ q (cast 1 : u64))
+      (= cmp 0)
+      (if (= (bit-and q (cast 1 : u64)) (cast 1 : u64))
+        (+ q (cast 1 : u64))
+        q)
+      q)))
+
+;: Rounded quotient of `num * 2^shift / den`, ties to even.
+(define (io-float-round-scaled-u64 [num : BigNum] [den : BigNum] [shift : i64]) : u64
+  (if (>= shift 0)
+    (io-float-round-div-u64 (bn-shl-bits num shift) den)
+    (io-float-round-div-u64 num (bn-shl-bits den (- 0 shift)))))
+
+;: Reinterpret IEEE-754 binary64 bits as f64.
+(define (io-float-f64-from-bits [bits : u64]) : f64
+  (let
+    [buf : (Array u64) (make-array u64 1)]
+    (begin
+      (array-set! buf 0 bits)
+      (unsafe
+        (ptr-read (ptr-cast (array-data buf) : (Ptr f64)))))))
+
+;: Reinterpret an f64 as IEEE-754 binary64 bits.
+(define (io-float-f64-bits [value : f64]) : u64
+  (let
+    [buf : (Array f64) (make-array f64 1)]
+    [bits : u64 (cast 0 : u64)]
+    (begin
+      (array-set! buf 0 value)
+      (set!
+        bits
+        (unsafe
+          (ptr-read (ptr-cast (array-data buf) : (Ptr u64)))))
+      bits)))
+
+;: Reinterpret an f32 as IEEE-754 binary32 bits.
+(define (io-float-f32-bits [value : f32]) : u32
+  (let
+    [buf : (Array f32) (make-array f32 1)]
+    [bits : u32 (cast 0 : u32)]
+    (begin
+      (array-set! buf 0 value)
+      (set!
+        bits
+        (unsafe
+          (ptr-read (ptr-cast (array-data buf) : (Ptr u32)))))
+      bits)))
+
+;: Return true when an f64 is neither NaN nor infinity.
+(define (io-float-f64-finite? [value : f64]) : bool
+  (let
+    [bits : u64 (io-float-f64-bits value)]
+    [expf : u64 (bit-and (shr bits 52) (cast 0x7ff : u64))]
+    (not (= expf (cast 0x7ff : u64)))))
+
+;: Return true when an f32 is neither NaN nor infinity.
+(define (io-float-f32-finite? [value : f32]) : bool
+  (let
+    [bits : u32 (io-float-f32-bits value)]
+    [expf : u32 (bit-and (shr bits 23) (cast 0xff : u32))]
+    (not (= expf (cast 0xff : u32)))))
+
+;: Return true when the f64 magnitude bits are zero.
+(define (io-float-f64-zero-magnitude? [value : f64]) : bool
+  (=
+    (bit-and (io-float-f64-bits value) (cast 0x7fffffffffffffff : u64))
+    (cast 0 : u64)))
+
+;: Return true when the f32 magnitude bits are zero.
+(define (io-float-f32-zero-magnitude? [value : f32]) : bool
+  (= (bit-and (io-float-f32-bits value) (cast 0x7fffffff : u32)) (cast 0 : u32)))
+
+;: Convert exact decimal components to an IEEE-754 binary64 value.
+(define (io-float-decimal-to-f64
+  [negative : bool]
+  [significand : BigNum]
+  [decimal-exp : i64]) : IoFloatMaybeF64
+  (let
+    [sign-bit : u64
+      (if negative
+        (cast 0x8000000000000000 : u64)
+        (cast 0 : u64))]
+    [num : BigNum significand]
+    [den : BigNum (bn-from-u64 (cast 1 : u64))]
+    (if (= (struct-get num len) 0)
+      (IoFloatSomeF64 (io-float-f64-from-bits sign-bit))
+      (begin
+        (if (>= decimal-exp 0)
+          (set! num (bn-mul-pow10 num decimal-exp))
+          (set! den (bn-mul-pow10 den (- 0 decimal-exp))))
+        (let
+          [e : i64 (io-float-ratio-floor-log2 num den)]
+          [two52 : u64 (cast 0x10000000000000 : u64)]
+          [two53 : u64 (cast 0x20000000000000 : u64)]
+          (cond
+            (> e 1023)
+            (IoFloatNoF64)
+            (>= e -1022)
+            (let
+              [m0 : u64 (io-float-round-scaled-u64 num den (- 52 e))]
+              [m : u64 m0]
+              [exp : i64 e]
+              (begin
+                (when
+                  (= m two53)
+                  (begin
+                    (set! m two52)
+                    (set! exp (+ exp 1))))
+                (if (> exp 1023)
+                  (IoFloatNoF64)
+                  (IoFloatSomeF64
+                    (io-float-f64-from-bits
+                      (bit-or
+                        sign-bit
+                        (bit-or (shl (cast (+ exp 1023) : u64) 52) (- m two52))))))))
+            (let
+              [m : u64 (io-float-round-scaled-u64 num den 1074)]
+              (if (= m (cast 0 : u64))
+                (IoFloatSomeF64 (io-float-f64-from-bits sign-bit))
+                (if (>= m two52)
+                  (IoFloatSomeF64
+                    (io-float-f64-from-bits
+                      (bit-or sign-bit (shl (cast 1 : u64) 52))))
+                  (IoFloatSomeF64 (io-float-f64-from-bits (bit-or sign-bit m))))))))))))
+
+;: Parse finite decimal text into an IEEE-754 binary64 value.
+(define (io-float-parse-f64 [text : String]) : IoFloatMaybeF64
+  (match (io-float-parse-decimal text)
+    [(IoFloatSomeDecimal negative significand decimal-exp)
+      (io-float-decimal-to-f64 negative significand decimal-exp)]
+    [(IoFloatNoDecimal) (IoFloatNoF64)]))
+
+;: Return `value` rounded to f32 precision and widened back to f64.
+(define (io-float-round-f32-as-f64 [value : f64]) : f64
+  (cast (cast value : f32) : f64))
 
 ;: Significant-digit string of `d` with trailing zeros removed (>= 1 digit).
 (define (ftoa-strip-zeros [d : i64]) : String

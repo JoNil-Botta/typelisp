@@ -5,7 +5,7 @@
 ;#
 ;# Primitives required from the compiler/runtime: `string-length`,
 ;# `string-ref`, `substring`, `string-append`, and the imported
-;# `stdlib/string.tl` / `stdlib/text_buf.tl` helpers.
+;# `stdlib/string.tl`, `stdlib/io.tl`, and `stdlib/text_buf.tl` helpers.
 ;#
 ;# Usage: `(import "stdlib/json.tl")`
 ;#
@@ -18,6 +18,8 @@
 ;# (define sample : String (json-stringify (JsonBool true)))
 ;# ```
 (import "string.tl")
+
+(import "io.tl")
 
 (import "str_cat.tl")
 
@@ -67,6 +69,26 @@
   (OkJsonCodepointString String)
   (ErrJsonCodepointString String))
 
+;: Result for converting valid JSON number text into a finite f64.
+(defenum JsonNumberF64Result
+  (OkJsonNumberF64 f64)
+  (ErrJsonNumberF64 String))
+
+;: Result for converting valid JSON number text into a finite f32.
+(defenum JsonNumberF32Result
+  (OkJsonNumberF32 f32)
+  (ErrJsonNumberF32 String))
+
+;: Result for rendering a finite float as valid JSON number text.
+(defenum JsonNumberTextResult
+  (OkJsonNumberText String)
+  (ErrJsonNumberText String))
+
+;: Internal decimal shape extracted from JSON number text.
+(defenum JsonNumberShapeResult
+  (OkJsonNumberShape i64 i64)
+  (ErrJsonNumberShape String))
+
 ;: Object lookup result that distinguishes missing keys from JSON null values.
 (defenum JsonLookup
   (JsonFound Json)
@@ -103,6 +125,10 @@
   (if (< idx (string-length text))
     (json-digit-code? (json-char-code-at text idx))
     false))
+
+;: Maximum non-zero significant decimal digits accepted by JSON float helpers.
+(define json-number-max-significant-digits : i64
+  300)
 
 ;: Return the first offset at or after `pos` that is not JSON whitespace.
 (define (json-skip-ws [text : (& text str)] [pos : i64]) : i64
@@ -605,6 +631,182 @@
           (JsonNumber (substring-borrowed text pos (- i pos)))
           i)
         (ErrJsonParseValue message)))))
+
+;: Return the integer value of an ASCII decimal digit.
+(define (json-number-digit-value [c : char]) : i64
+  (- (json-char-code c) 48))
+
+;: Return true when `code` is a JSON exponent marker.
+(define (json-number-exponent-code? [code : i64]) : bool
+  (or (= code 101) (= code 69)))
+
+;: Scan grammar-checked JSON number text for significant digits and exponent.
+(define (json-number-shape [text : String]) : JsonNumberShapeResult
+  (let
+    [n : i64 (string-length text)]
+    [index : i64 0]
+    [seen-significant : bool false]
+    [significant-digits : i64 0]
+    [digit-count : i64 0]
+    [frac-digits : i64 0]
+    [exp-negative : bool false]
+    [exp-value : i64 0]
+    [exp-digits : i64 0]
+    [saw-exp : bool false]
+    (if (= n 0)
+      (ErrJsonNumberShape "json: expected digit in number")
+      (begin
+        (if (= (string-ref text 0) #-')
+          (set! index 1)
+          unit)
+        (while (and
+          (< index n)
+          (json-digit-code? (json-char-code (string-ref text index))))
+          (let
+            [digit : i64 (json-number-digit-value (string-ref text index))]
+            (begin
+              (when
+                (or seen-significant (!= digit 0))
+                (begin
+                  (set! seen-significant true)
+                  (set! significant-digits (+ significant-digits 1))))
+              (set! digit-count (+ digit-count 1))
+              (set! index (+ index 1)))))
+        (if (and (< index n) (= (string-ref text index) #.'))
+          (begin
+            (set! index (+ index 1))
+            (while (and
+              (< index n)
+              (json-digit-code? (json-char-code (string-ref text index))))
+              (let
+                [digit : i64 (json-number-digit-value (string-ref text index))]
+                (begin
+                  (when
+                    (or seen-significant (!= digit 0))
+                    (begin
+                      (set! seen-significant true)
+                      (set! significant-digits (+ significant-digits 1))))
+                  (set! frac-digits (+ frac-digits 1))
+                  (set! digit-count (+ digit-count 1))
+                  (set! index (+ index 1))))))
+          unit)
+        (if (and
+          (< index n)
+          (json-number-exponent-code? (json-char-code (string-ref text index))))
+          (begin
+            (set! saw-exp true)
+            (set! index (+ index 1))
+            (if (and (< index n) (= (string-ref text index) #-'))
+              (begin
+                (set! exp-negative true)
+                (set! index (+ index 1)))
+              (if (and (< index n) (= (string-ref text index) #+'))
+                (set! index (+ index 1))
+                unit))
+            (while (and
+              (< index n)
+              (json-digit-code? (json-char-code (string-ref text index))))
+              (let
+                [digit : i64 (json-number-digit-value (string-ref text index))]
+                (begin
+                  (when
+                    (< exp-value 4000)
+                    (set! exp-value (+ (* exp-value 10) digit)))
+                  (set! exp-digits (+ exp-digits 1))
+                  (set! index (+ index 1))))))
+          unit)
+        (if (or (= digit-count 0) (!= index n) (and saw-exp (= exp-digits 0)))
+          (ErrJsonNumberShape "json: invalid number")
+          (OkJsonNumberShape
+            (-
+              (if exp-negative
+                (- 0 exp-value)
+                exp-value)
+              frac-digits)
+            significant-digits))))))
+
+;: Validate that borrowed text is exactly one JSON number and return an owned copy.
+(define (json-number-validated-text [text : (& text str)]) : JsonNumberTextResult
+  (let
+    [n : i64 (string-length text)]
+    (match (json-parse-number text 0)
+      [(OkJsonParseValue _ next)
+        (if (= next n)
+          (OkJsonNumberText (substring-borrowed text 0 n))
+          (ErrJsonNumberText "json: trailing characters after number"))]
+      [(ErrJsonParseValue message) (ErrJsonNumberText message)])))
+
+;: Convert validated JSON number text into a finite f64 result.
+(define (json-number-decimal-f64-result
+  [owned : String]
+  [decimal-exp : i64]
+  [significant-digits : i64]) : JsonNumberF64Result
+  (let
+    [nonzero : bool (> significant-digits 0)]
+    [adjusted-exp : i64
+      (if nonzero
+        (+ decimal-exp (- significant-digits 1))
+        0)]
+    (cond
+      (> significant-digits json-number-max-significant-digits)
+      (ErrJsonNumberF64 "json: number has too many significant digits")
+      (and nonzero (> adjusted-exp 308))
+      (ErrJsonNumberF64 "json: number outside finite f64 range")
+      (and nonzero (< adjusted-exp -324))
+      (ErrJsonNumberF64 "json: number underflows f64")
+      (match (io-float-parse-f64 owned)
+        [(IoFloatSomeF64 value)
+          (if (and nonzero (io-float-f64-zero-magnitude? value))
+            (ErrJsonNumberF64 "json: number underflows f64")
+            (OkJsonNumberF64 value))]
+        [(IoFloatNoF64)
+          (ErrJsonNumberF64 "json: number outside finite f64 range")]))))
+
+;: Parse borrowed JSON number text into a finite f64.
+;:
+;: The text must be exactly one JSON number; overflow and underflow reject.
+(define (json-number->f64 [text : (& text str)]) : JsonNumberF64Result
+  (match (json-number-validated-text text)
+    [(OkJsonNumberText owned)
+      (match (json-number-shape owned)
+        [(OkJsonNumberShape decimal-exp significant-digits)
+          (json-number-decimal-f64-result owned decimal-exp significant-digits)]
+        [(ErrJsonNumberShape message) (ErrJsonNumberF64 message)])]
+    [(ErrJsonNumberText message) (ErrJsonNumberF64 message)]))
+
+;: Parse borrowed JSON number text into a finite f32.
+;:
+;: Uses the f64 path, then rejects f32 overflow and non-zero underflow.
+(define (json-number->f32 [text : (& text str)]) : JsonNumberF32Result
+  (match (json-number->f64 text)
+    [(OkJsonNumberF64 wide)
+      (let
+        [narrow : f32 (cast wide : f32)]
+        (cond
+          (not (io-float-f32-finite? narrow))
+          (ErrJsonNumberF32 "json: number outside finite f32 range")
+          (and
+            (io-float-f32-zero-magnitude? narrow)
+            (not (io-float-f64-zero-magnitude? wide)))
+          (ErrJsonNumberF32 "json: number underflows f32")
+          (OkJsonNumberF32 narrow)))]
+    [(ErrJsonNumberF64 message) (ErrJsonNumberF32 message)]))
+
+;: Render a finite f64 as deterministic JSON number text.
+;:
+;: NaN and infinity are rejected; negative zero renders as `-0`.
+(define (json-f64->number-text [value : f64]) : JsonNumberTextResult
+  (if (io-float-f64-finite? value)
+    (OkJsonNumberText (io-format-float-core value))
+    (ErrJsonNumberText "json: non-finite f64 cannot be rendered as a number")))
+
+;: Render a finite f32 as deterministic JSON number text.
+;:
+;: Widens to f64 so the binary32-rounded value is formatted deterministically.
+(define (json-f32->number-text [value : f32]) : JsonNumberTextResult
+  (if (io-float-f32-finite? value)
+    (OkJsonNumberText (io-format-float-core (cast value : f64)))
+    (ErrJsonNumberText "json: non-finite f32 cannot be rendered as a number")))
 
 ;: Parse `keyword` at `pos` and return its fixed JSON value.
 (define (json-parse-keyword

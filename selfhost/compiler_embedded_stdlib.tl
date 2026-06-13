@@ -47,6 +47,8 @@
 
 (include-str compiler-embedded-stdlib-sort "stdlib/sort.tl")
 
+(include-str compiler-embedded-stdlib-sync "stdlib/sync.tl")
+
 (include-str compiler-embedded-stdlib-string "stdlib/string.tl")
 
 (include-str compiler-embedded-stdlib-test "stdlib/test.tl")
@@ -123,6 +125,8 @@
 
 (include-str compiler-embedded-stdlib-tests-sort-api "stdlib/tests/sort_api.tl")
 
+(include-str compiler-embedded-stdlib-tests-sync-api "stdlib/tests/sync_api.tl")
+
 (include-str compiler-embedded-stdlib-tests-string-edges "stdlib/tests/string_edges.tl")
 
 (include-str compiler-embedded-stdlib-tests-test-assert-failure "stdlib/tests/test_assert_failure.tl")
@@ -185,6 +189,8 @@
     (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-runtime)
     (string-eq suffix "sort.tl")
     (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-sort)
+    (string-eq suffix "sync.tl")
+    (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-sync)
     (string-eq suffix "string.tl")
     (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-string)
     (string-eq suffix "test.tl")
@@ -293,6 +299,8 @@
     (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-tests-random-api)
     (string-eq suffix "tests/sort_api.tl")
     (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-tests-sort-api)
+    (string-eq suffix "tests/sync_api.tl")
+    (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-tests-sync-api)
     (string-eq suffix "tests/string_edges.tl")
     (CompilerEmbeddedStdlibSomeSource
       compiler-embedded-stdlib-tests-string-edges)

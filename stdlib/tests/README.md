@@ -101,6 +101,9 @@ Coverage notes:
   for `I64Vec` and `StringVec`, including empty, single, already sorted,
   reverse sorted, duplicate, negative-number, prefix, and lexicographic string
   cases.
+- `sync_api.tl` covers `stdlib/sync.tl` bounded `ChannelI64` creation
+  failures, blocking send/recv success paths in a single thread, FIFO
+  wraparound, raw handle packing, and resource close.
 - `msvc_api.tl` covers pure MSVC discovery helpers with fake temp-directory
   toolset and SDK trees, including newest-usable candidate selection through
   the vector-backed scanners.

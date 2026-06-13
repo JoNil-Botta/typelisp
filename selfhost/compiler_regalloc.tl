@@ -2901,10 +2901,12 @@
 ;; allocation has moved many values into registers. This slice does not share
 ;; live ranges yet; it renumbers stack-resident scalar variables into a dense
 ;; frame-slot prefix after regalloc, preserving parameter ids for the prologue
-;; spill contract. Variables that already have a register home, group variables
-;; (their two-word formula slots stay untouched), and plans with no intervals
-;; (the stack-only opt0/opt1 path skips liveness) pass through unchanged. The
-;; result's slot count replaces the raw var count in the backend's frame layout.
+;; spill contract. Variables that already have a register home receive free
+;; non-slot ids, and stack-homed register groups are remapped by their word0 id;
+;; the backend places word1 in the matching second var-region. Plans with no
+;; intervals (the stack-only opt0/opt1 path skips liveness) pass through
+;; unchanged. The result's slot count replaces the raw var count in the backend's
+;; frame layout.
 (defenum CompilerRegColoring
   (CompilerRegColoringNone)
   (CompilerRegColoringRemap (Array i64) i64))
@@ -2912,7 +2914,8 @@
 ;; Per-var slot-colorability flags: only values the register allocator could
 ;; legally home in one 64-bit register (scalars and 8-byte handles) are known
 ;; to occupy exactly one frame slot. Anything else (vectors, masks, inline
-;; groups, unknown) keeps its formula slot and is pinned conservatively.
+;; groups, unknown) is skipped by the scalar interval walk and then receives a
+;; private dense slot if it still needs stack storage.
 (define (compiler-reg-color-flags
   [types : CompilerRegVarTypeList]
   [flags : (Array bool)]) : unit
@@ -4622,6 +4625,39 @@
         (= (compiler-reg-string-list-count win-callees) 10))]
     (and pool-ok sysv-ok win-ok counts-ok)))
 
+(define (compiler-reg-color-register-assignments-to [last : i64]) : CompilerRegAssignmentList
+  (if (< last 0)
+    CompilerRegAssignmentNil
+    (compiler-reg-assignment-insert
+      (compiler-reg-color-register-assignments-to (- last 1))
+      last
+      (CompilerRegRegister "%r12"))))
+
+(define (compiler-reg-color-stack-group-ok?) : bool
+  (let
+    [group-var : i64 7]
+    [coloring : CompilerRegColoring
+      (compiler-reg-color-stack-slots
+        (CompilerRegPlan
+          (compiler-reg-color-register-assignments-to (- group-var 1))
+          (compiler-live-set-empty)
+          (CompilerRegIntervalCons
+            (CompilerRegInterval group-var 0 2)
+            (box CompilerRegIntervalNil))
+          (compiler-reg-var-type-cons
+            (CompilerRegVarType group-var (AstTyStruct (intern "RegGroup")))
+            CompilerRegVarTypeNil))
+        (compiler-live-set1 group-var)
+        IrParamNil
+        (+ group-var 1))]
+    (match coloring
+      [(CompilerRegColoringRemap remap slots)
+        (and
+          (= slots 1)
+          (= (array-ref remap group-var) 0)
+          (<= (+ (array-ref remap group-var) 1) slots))]
+      [(CompilerRegColoringNone) false])))
+
 (define (compiler-regalloc-self-test) : i64
   (if (and
     (compiler-reg-reuse-ok?)
@@ -4642,7 +4678,8 @@
     (compiler-reg-scalar-handle-eligible-ok?)
     (compiler-reg-scalar-function-intervals-ok?)
     (compiler-reg-scalar-interval-guardrail-ok?)
-    (compiler-reg-scalar-loop-backedge-ok?))
+    (compiler-reg-scalar-loop-backedge-ok?)
+    (compiler-reg-color-stack-group-ok?))
     42
     (begin
       (panic "regalloc: smoke mismatch")

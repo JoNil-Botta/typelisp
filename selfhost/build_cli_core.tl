@@ -2542,6 +2542,9 @@
   [stdlib-roots : StringVec]
   [dep-libs : ProcessStringList]) : i64
   (let
+    ;; Windows package DAG nodes are serial same-process compiles; keep only
+    ;; persistent cache floors between dependency and root emits.
+    [_ : unit (cfg windows (compiler-driver-reset-file-state!) unit)]
     [manifest-dir : String (compiler-load-dirname manifest-path)]
     [entry-path : String
       (compiler-load-join-root-path manifest-dir (struct-get manifest entry))]

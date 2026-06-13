@@ -42,6 +42,11 @@
         (assert-false (string-eq (process-output-stderr output) "") message))]
     [(ErrProcessOutput _) (panic message)]))
 
+(define (process-runtime-expected-spawn-failed-message) : String
+  (if (string-eq (env-path-list-separator) ";")
+    "process: spawn failed: windows error 2 (file not found)"
+    "process: spawn failed"))
+
 (define (assert-process-spawn-failed
   [result : ResultProcessOutput]
   [message : String]) : unit
@@ -51,7 +56,7 @@
         (assert-true (process-error-spawn-failed? error) message)
         (assert-owned-string-eq
           (process-error-message error)
-          "process: spawn failed"
+          (process-runtime-expected-spawn-failed-message)
           message))]
     [(OkProcessOutput _) (panic message)]))
 

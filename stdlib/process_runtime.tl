@@ -76,6 +76,45 @@
 (define (process-spawn-error) : ResultProcessOutput
   (ErrProcessOutput (ProcessSpawnFailed "process: spawn failed")))
 
+;: Return the common meaning for a Windows `CreateProcessA` error code.
+(cfg
+  windows
+  (define (process-windows-spawn-error-name [code : i64]) : String
+    (cond
+      (= code 2)
+      "file not found"
+      (= code 3)
+      "path not found"
+      (= code 5)
+      "access denied"
+      (= code 193)
+      "bad executable format"
+      "unknown")))
+
+;: Return the current Windows last-error code, never zero.
+(cfg
+  windows
+  (define (process-windows-last-error-code) : i64
+    (let
+      [code : i64 (cast (io-win-get-last-error) : i64)]
+      (if (= code 0)
+        1
+        code))))
+
+;: Windows spawn-failure result with the captured `CreateProcessA` error code.
+(cfg
+  windows
+  (define (process-windows-spawn-error [code : i64]) : ResultProcessOutput
+    (ErrProcessOutput
+      (ProcessSpawnFailed
+        (string-append
+          (string-append
+            "process: spawn failed: windows error "
+            (int->string code))
+          (string-append
+            " ("
+            (string-append (process-windows-spawn-error-name code) ")")))))))
+
 ;: Shared wait-failure result for the captured-output path.
 (define (process-wait-error) : ResultProcessOutput
   (ErrProcessOutput (ProcessWaitFailed "process: wait failed")))
@@ -918,7 +957,8 @@
                     handle))))))))))
 
 ;: Launch the process with stdout/stderr bound to the temp handles, wait for it
-;: to exit, and return the exit code (or -1 when CreateProcessA fails).
+;: to exit, and return the exit code (or negative last-error code when
+;: CreateProcessA fails).
 (cfg
   windows
   (define (process-windows-create-and-wait
@@ -954,7 +994,7 @@
               (process-array-u64-addr startup)
               (process-array-u64-addr procinfo))]
           (if (= created (cast 0 : i32))
-            -1
+            (- 0 (process-windows-last-error-code))
             (let
               [codebuf : (Array i32) (make-array i32 1)]
               [process-handle : i64 (cast (array-ref procinfo 0) : i64)]
@@ -1003,7 +1043,7 @@
             (begin
               (process-windows-close-if out-handle)
               (process-windows-close-if err-handle)
-              (process-spawn-error))
+              (process-windows-spawn-error (- 0 status)))
             (let
               [stdout-text : String (io-read-fd-to-string out-handle)]
               [stderr-text : String (io-read-fd-to-string err-handle)]

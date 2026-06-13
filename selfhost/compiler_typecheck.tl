@@ -5049,6 +5049,18 @@
       (lambda ([n : i64]) : i64 (begin (set! n (+ n 1)) n))]
     (g 1)))")
 
+(define (compiler-typecheck-lambda-shadowed-local-set-source) : String
+  "(define (main) : i64
+  (let
+    [n : i64 0]
+    (let
+      [g : (-> i64)
+        (lambda () : i64
+          (let
+            [n : i64 1]
+            (begin (set! n (+ n 1)) n)))]
+      (g))))")
+
 (define (compiler-typecheck-lambda-aggregate-return-source) : String
   "(defstruct P (a i64))
 (define (main) : i64
@@ -5079,6 +5091,8 @@
       (compiler-typecheck-lambda-captured-set-with-escape-source)
       "typecheck: lambda cannot assign captured binding")
     (compiler-typecheck-ok? (compiler-typecheck-lambda-param-set-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-lambda-shadowed-local-set-source))
     (compiler-typecheck-ok? (compiler-typecheck-lambda-aggregate-return-source))))
 
 (define (compiler-typecheck-cast-tests-ok?) : bool

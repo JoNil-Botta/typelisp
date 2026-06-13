@@ -3312,10 +3312,20 @@ specified.
 - Lambda literals can return the same value categories as named function
   returns, including `String`, enums, structs, dynamic arrays, tuples, and
   fixed arrays.
-- `set!` to captured names is rejected (#2552). A fixed array of aggregate
-  elements, and a fixed array reached through an aggregate field, are also
-  rejected: array elements live inline (not as pointer-sized handles), so their
-  per-element deep-copy is not yet wired (tracked under #571/#435).
+- `set!` to captured names is rejected by design (#2552). A lambda may assign
+  its own parameters and locals, including a local that shadows an outer name,
+  but it may not assign a lexical binding captured from an enclosing scope.
+  Captures are by-value snapshots, so implicit rebinding would either mutate a
+  hidden environment copy or require capture-by-reference semantics that the
+  function type does not expose.
+- Captured-name assignment is distinct from mutation through explicit storage
+  reached by a captured value. For example, `array-set!` on a captured dynamic
+  array handle is legal when the receiver is otherwise mutable; future `Box` or
+  mutable-reference APIs define their own explicit storage mutation rules.
+- A fixed array of aggregate elements, and a fixed array reached through an
+  aggregate field, are rejected: array elements live inline (not as
+  pointer-sized handles), so their per-element deep-copy is not yet wired
+  (tracked under #571/#435).
 - Immutable reference captures are specified in section 3.10.2 and implemented
   for non-escaping closures (#808/#2280); escaping closures still reject
   reference-typed captures.
@@ -5280,7 +5290,7 @@ not the future safe reference/borrow model (#182), not a replacement for
 | Fixed-array by-value return | Implemented |
 | Tuple/Struct/Enum/String globals | Implemented, including runtime initializers (#331) |
 | Reference captures in lambdas | Implemented for local non-escaping immutable captures (#808/#2280); escaping closures still reject reference captures. By-value captures work for scalars, String, dynamic arrays, tuples/structs/enums, and fixed arrays, including nested aggregate/fixed-array contents |
-| Mutable captures (`set!` to captured names) in lambdas | Not implemented; implement-or-reject decision tracked by #2552 |
+| Mutable captures (`set!` to captured names) in lambdas | Rejected by design (#2552): closure captures are by-value snapshots; assign lambda parameters/locals or mutate explicit captured storage instead |
 | Tail call optimization | Direct/self tail jumps implemented (#2506); indirect and closure tail calls tracked by #2363 |
 | Raw pointer types, `(unsafe ...)`, and unsafe function/extern declarations | Implemented v1 parser/typechecker/lowering/backend surface |
 | Raw pointer dereference/write/offset/cast | Implemented unsafe v1 operations; address-of, C-string helpers, volatile/atomic access, and borrow-checked references remain follow-ups |

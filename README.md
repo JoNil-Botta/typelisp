@@ -889,9 +889,8 @@ x86_64 Linux/Windows backend targets. Integers, floats (`f64`/`f32`), bool/char/
 `extern`, multi-file modules, scalar `foreach`, an initial SIMD `foreach`
 map/zip path, and initial SIMD `spmd-reduce` folds all compile to native code. See the
 [project roadmap](https://github.com/JoNil-Botta/typelisp/issues/8) and
-[SPEC.md §8](SPEC.md) for what is not yet supported (mutation of captured
-names, indirect/closure tail calls, general GC/free, non-lexical lifetimes,
-masked varying SPMD control flow, and
+[SPEC.md §8](SPEC.md) for what is not yet supported (indirect/closure tail
+calls, general GC/free, non-lexical lifetimes, masked varying SPMD control flow, and
 later public SPMD/SIMD cross-lane work). Raw pointer types and unsafe pointer
 operations are implemented, including local scalar address-of scratch pointers
 for FFI out-params. Broader C-string and address-of ergonomics remain follow-up

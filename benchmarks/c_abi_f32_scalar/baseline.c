@@ -1,5 +1,10 @@
 #include <stdint.h>
 
+/* MSVC ABI float-use marker needed for the -NODEFAULTLIB integration links on
+ * Windows: clang emits a reference to _fltused for any float-using object, and
+ * the TypeLisp Windows link is freestanding (no CRT). Harmless on Linux. */
+int _fltused = 0;
+
 /* C baseline for tests/integration/c_abi_f32_scalar.tl.
  *
  * Exercises the scalar `f32` C ABI in extern positions: arguments and returns

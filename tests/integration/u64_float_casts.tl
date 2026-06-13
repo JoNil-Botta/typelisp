@@ -1,8 +1,6 @@
 ;; Locks down unsigned u64 -> float casts for values with the high bit set.
 ;; The signed cvtsi2s{s,d}q path turns these into negative floats; a correct
 ;; unsigned lowering keeps them at or above 2^63.
-(import "stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (define (u64-high) : u64
   (+ (cast 9223372036854775807 : u64) (cast 1 : u64)))
 
@@ -22,7 +20,7 @@
   (let
     [two63 : f64 9223372036854775808.0]
     [two63f : f32 9223372036854775808.0]
-    (core/cond
+    (cond
       (< (u64-to-f64 (u64-high)) two63)
       1
       (< (u64-to-f64 (u64-max)) two63)

@@ -3,8 +3,6 @@
 ;; This lexer is separate from lex.tl because a formatter must keep source
 ;; spelling and comments. Whitespace is skipped for now; comments are retained
 ;; as trivia tokens so later layout rules can place them deliberately.
-(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (import "../stdlib/io.tl")
 
 (import "../stdlib/string.tl")
@@ -341,7 +339,7 @@
     [base : i64 (fmt-number-prefix-base src start)]
     [value-start : i64 (+ digits-start 2)]
     [end : i64 (fmt-scan-based-int-end src value-start n base)]
-    (core/cond
+    (cond
       (= end value-start)
       (ErrFmtI64
         (fmt-source-error-at
@@ -438,7 +436,7 @@
         (if (< j n)
           (let
             [c : char (string-ref src j)]
-            (core/cond
+            (cond
               escaped
               (begin
                 (set! escaped false)
@@ -535,7 +533,7 @@
       (while (< i n)
         (let
           [c : char (string-ref src i)]
-          (core/cond
+          (cond
             (fmt-is-space c)
             (set! i (+ i 1))
             (= c #;')

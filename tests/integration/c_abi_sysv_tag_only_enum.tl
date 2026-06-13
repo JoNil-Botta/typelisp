@@ -1,5 +1,3 @@
-(import "stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (defenum Status
   (Ready)
   (Done)
@@ -34,7 +32,7 @@
     [rank-total : i64
       (+ (status-rank ready) (+ (status-rank done) (status-rank failed)))]
     (begin
-      (core/unless (= direct 1) (return 1))
-      (core/unless (= via-ptr 1) (return 2))
-      (core/unless (= rank-total 6) (return 3))
+      (unless (= direct 1) (return 1))
+      (unless (= via-ptr 1) (return 2))
+      (unless (= rank-total 6) (return 3))
       42)))

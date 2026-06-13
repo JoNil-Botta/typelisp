@@ -131,7 +131,7 @@
       (opt-bounds-instrs (OptBoundsNil) (smoke-bounds-object-call-barrier))]
     [object-store : CompilerIrInstrList
       (opt-bounds-instrs (OptBoundsNil) (smoke-bounds-object-store-barrier))]
-    (core/cond
+    (cond
       (not (= (opt-count-bounds-instrs object-array) 1))
       1
       (not (= (opt-count-bounds-instrs object-string) 1))

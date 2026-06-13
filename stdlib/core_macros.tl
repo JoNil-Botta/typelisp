@@ -5,23 +5,16 @@
 ;# not bound locally resolves to these macros without an import. Local macros
 ;# and explicit imports shadow the prelude.
 ;#
-;# The qualified surface remains available for explicit callers; the import only
-;# adds the `core/` alias since the macros are already in scope:
-;#
-;# Usage: `(import "stdlib/core_macros.tl" module stdlib.core_macros as core)`
-;#
 ;# ```typelisp
-;# (import "stdlib/core_macros.tl" module stdlib.core_macros as core)
-;#
 ;# (define (main) : i64
 ;#   (let
 ;#     [value : i64 0]
 ;#     (begin
-;#       (core/and true true)
-;#       (core/or false true)
-;#       (core/when true (set! value 21))
-;#       (core/unless false (set! value (+ value 21)))
-;#       (set! value (core/cond false 0 true value value))
+;#       (and true true)
+;#       (or false true)
+;#       (when true (set! value 21))
+;#       (unless false (set! value (+ value 21)))
+;#       (set! value (cond false 0 true value value))
 ;#       value)))
 ;# ```
 (module stdlib.core_macros)
@@ -69,7 +62,7 @@
 ;: Flat conditional expression macro.
 ;:
 ;: Arguments are `test result` pairs followed by a final fallback expression,
-;: for example `(core/cond test1 value1 test2 value2 fallback)`. Conditions and
+;: for example `(cond test1 value1 test2 value2 fallback)`. Conditions and
 ;: results are captured as `Expr` operands; the expanded `if` chain performs the
 ;: ordinary post-expansion bool/result typechecking.
 (defmacro (cond [args : Expr ...]) : Expr

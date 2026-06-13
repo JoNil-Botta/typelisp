@@ -8,8 +8,6 @@
 ;;   typelisp run selfhost/cli.tl -- doc --test input.tl
 ;;   typelisp run selfhost/cli.tl -- doc --test --batch inputs.txt
 ;;   typelisp run selfhost/cli.tl -- doc --load input.tl output.md [--stdlib-root <dir>...]
-(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (import "../stdlib/io.tl")
 
 (import "../stdlib/list.tl")
@@ -317,7 +315,7 @@
       batch-list)
     (let
       [current : String (arg idx)]
-      (core/cond
+      (cond
         (string-eq current "--stdlib-root")
         (if (>= (+ idx 1) count)
           (ErrDocTestCliConfig "doc: --stdlib-root requires a value")
@@ -482,7 +480,7 @@
       stdlib-roots)
     (let
       [current : String (arg idx)]
-      (core/cond
+      (cond
         (string-eq current "-o")
         (if (>= (+ idx 1) count)
           (ErrDocDefaultCliConfig "doc: -o requires a value")
@@ -576,7 +574,7 @@
     [(DocNoString)
       (let
         [path-count : i64 (string-vec-len input-paths)]
-        (core/cond
+        (cond
           (= path-count 2)
           (doc-generate-file
             (string-vec-get input-paths 0 "")

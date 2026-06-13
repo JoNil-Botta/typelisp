@@ -9,8 +9,6 @@
 ; reads the clone after later scratch cycles. RSS/peak-memory assertion is left
 ; manual because host reporting differs across CI platforms; stale handles fail
 ; as output/exit mismatches here.
-(import "stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (import "stdlib/arena.tl")
 
 (import "stdlib/string.tl")
@@ -43,7 +41,7 @@
   (match items
     [(StressNil) (= count 0)]
     [(StressCons head rest)
-      (core/and
+      (and
         (> count 0)
         (string-eq head (payload seed count))
         (list-ok? (box-get rest) (- count 1) seed))]))
@@ -126,7 +124,7 @@
     (let
       [escaped : String (escape-string n)]
       [noise : StressList (escape-list 8 (+ n 1000))]
-      (if (core/and
+      (if (and
         (string-eq escaped (payload n 999))
         (list-ok? noise 8 (+ n 1000)))
         (string-cycles (- n 1) (+ acc (string-length escaped)))
@@ -138,9 +136,7 @@
     (let
       [items : StressList (escape-list 96 n)]
       [after : String (escape-string (+ n 2000))]
-      (if (core/and
-        (list-ok? items 96 n)
-        (string-eq after (payload (+ n 2000) 999)))
+      (if (and (list-ok? items 96 n) (string-eq after (payload (+ n 2000) 999)))
         (list-cycles (- n 1) (+ acc 1))
         0))))
 
@@ -150,7 +146,7 @@
     (let
       [items : StressList (escape-list-rewind scratch 96 n)]
       [after : StressList (escape-list-rewind scratch 8 (+ n 3000))]
-      (if (core/and (list-ok? after 8 (+ n 3000)) (list-ok? items 96 n))
+      (if (and (list-ok? after 8 (+ n 3000)) (list-ok? items 96 n))
         (rewind-list-cycles-inner scratch (- n 1) (+ acc 1))
         0))))
 
@@ -169,7 +165,7 @@
     [list-score : i64 (list-cycles 3 0)]
     [rewind-score : i64 (rewind-list-cycles 3)]
     (begin
-      (core/unless (> string-score 0) (return 1))
-      (core/unless (= list-score 3) (return 2))
-      (core/unless (= rewind-score 3) (return 3))
+      (unless (> string-score 0) (return 1))
+      (unless (= list-score 3) (return 2))
+      (unless (= rewind-score 3) (return 3))
       42)))

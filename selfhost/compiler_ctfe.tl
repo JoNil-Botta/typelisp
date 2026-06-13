@@ -8,8 +8,6 @@
 ;; Evaluation is purely functional: the environment is an immutable cons list
 ;; threaded through recursion, and the step budget ("fuel") is threaded through
 ;; results so the evaluator stays deterministic without a mutable counter.
-(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (import "../stdlib/io.tl")
 
 (import "../stdlib/hashmap.tl")
@@ -1848,7 +1846,7 @@
           "offset-of expects exactly one type argument and one field name"))]))
 
 (define (ctfe-reflection-query-name? [name : String]) : bool
-  (core/cond
+  (cond
     (string-eq name "type-kind")
     true
     (string-eq name "type-key")
@@ -1901,7 +1899,7 @@
               [(OkCtfeTypeArg ty arg-fuel)
                 (let
                   [infos : CtfeReflectInfoList (ctfe-env-reflections env)]
-                  (core/cond
+                  (cond
                     (string-eq name "type-kind")
                     (OkCtfe
                       (CtfeString (ctfe-type-kind-with-reflections infos ty))
@@ -2428,7 +2426,7 @@
   [expr : AstExpr]
   [env : CtfeEnv]
   [fuel : i64]) : ResultCtfe
-  (core/cond
+  (cond
     (or
       (string-eq name "type-kind")
       (string-eq name "type-key")
@@ -2798,7 +2796,7 @@
               [(OkCtfe value arg-fuel)
                 (match value
                   [(CtfeExpr node ty)
-                    (core/cond
+                    (cond
                       (string-eq name "expr-bool?")
                       (OkCtfe (CtfeBool (ctfe-expr-bool? node)) arg-fuel)
                       (string-eq name "expr-bool-value")
@@ -2811,7 +2809,7 @@
                       (string-eq name "expr-if?")
                       (OkCtfe (CtfeBool (ctfe-expr-if? node)) arg-fuel)
                       (ctfe-expr-if? node)
-                      (core/cond
+                      (cond
                         (string-eq name "expr-if-cond")
                         (OkCtfe
                           (CtfeExpr (ctfe-expr-if-cond node) (AstTyBool))
@@ -2874,7 +2872,7 @@
                 [(OkCtfe value arg-fuel)
                   (match value
                     [(CtfeExprList nodes)
-                      (core/cond
+                      (cond
                         (string-eq name "expr-list-empty?")
                         (OkCtfe
                           (CtfeBool (ctfe-expr-list-empty? nodes))
@@ -2931,7 +2929,7 @@
               [(OkCtfe value arg-fuel)
                 (match value
                   [(CtfeExprClause clause)
-                    (core/cond
+                    (cond
                       (string-eq name "expr-clause-first")
                       (OkCtfe
                         (CtfeExpr (ctfe-expr-clause-first clause) (AstTyExpr))
@@ -3033,7 +3031,7 @@
                 [(OkCtfe value arg-fuel)
                   (match value
                     [(CtfeExprClauseList clauses)
-                      (core/cond
+                      (cond
                         (string-eq name "expr-clause-list-empty?")
                         (OkCtfe
                           (CtfeBool (ctfe-expr-clause-list-empty? clauses))
@@ -3193,7 +3191,7 @@
         [inner : AstExpr (ast-node-get inner-box)]
         (ctfe-eval-call inner args expr env fuel))]
     [(AstExprVar name)
-      (core/cond
+      (cond
         (or
           (string-eq (intern-str name) "size-of")
           (string-eq (intern-str name) "align-of"))

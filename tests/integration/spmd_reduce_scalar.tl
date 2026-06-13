@@ -3,8 +3,6 @@
 ; known constants, across reduction kinds, result types, and range lengths
 ; (0, < a likely lane width, exactly one lane, and a non-divisible tail).
 ; `main` returns 42 only when every case agrees.
-(import "stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (define (manual-sum [xs : (Array i64)] [n : i64]) : i64
   (let
     [acc : i64 0]
@@ -103,7 +101,7 @@
       (fill-signed-i32 hs)
       ; xs = [1,2,3,4,5]; gs = [1..11]; hs has mixed signed i32 values;
       ; fs = [1.0..5.0].
-      (core/cond
+      (cond
         (!= (reduce-sum xs n) (manual-sum xs n))
         1
         (!= (reduce-sum xs n) 15)

@@ -1,5 +1,3 @@
-(import "core_macros.tl" module stdlib.core_macros as core)
-
 ;# String utility library for TypeLisp.
 ;#
 ;# Provides string operations built on compiler/runtime primitives:
@@ -92,7 +90,7 @@
 (define (substring-bounds-check [text : (& text str)] [start : i64] [len : i64]) : unit
   (let
     [n : i64 (string-length text)]
-    (core/cond
+    (cond
       (< start 0)
       (tl_oob_abort)
       (< len 0)

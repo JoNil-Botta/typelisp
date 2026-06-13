@@ -1,5 +1,3 @@
-(import "stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (define seen : i64
   0)
 
@@ -24,7 +22,7 @@
 (define (main) : i64
   (begin
     (apply0u mark)
-    (core/unless (= (apply1 inc 41) 42) (return 1))
-    (core/unless (= (shadow-inc dec 43) 42) (return 2))
-    (core/unless (= seen 42) (return 3))
+    (unless (= (apply1 inc 41) 42) (return 1))
+    (unless (= (shadow-inc dec 43) 42) (return 2))
+    (unless (= seen 42) (return 3))
     42))

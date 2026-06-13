@@ -2,8 +2,6 @@
 ;; proves two INTEGER eightbytes, Outer proves recursive nested flattening,
 ;; Mixed proves independent INTEGER/SSE banks for a two-eightbyte struct, and
 ;; Vec2 proves a packed {f32, f32} SSE eightbyte for args and returns.
-(import "stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (defstruct Pair
   (lo i64)
   (hi i64))
@@ -49,11 +47,11 @@
     [vec2-result : i64 (vec2-score vec 8)]
     [made : Vec2 (vec2-make 4)]
     (begin
-      (core/unless (= pair-result 135) (return 1))
-      (core/unless (= pair-via-ptr 106) (return 2))
-      (core/unless (= outer-result 42) (return 3))
-      (core/unless (= mixed-result 17) (return 4))
-      (core/unless (= vec2-result 45) (return 5))
-      (core/unless (= (cast (struct-get made x) : i64) 6) (return 6))
-      (core/unless (= (cast (struct-get made y) : i64) 7) (return 7))
+      (unless (= pair-result 135) (return 1))
+      (unless (= pair-via-ptr 106) (return 2))
+      (unless (= outer-result 42) (return 3))
+      (unless (= mixed-result 17) (return 4))
+      (unless (= vec2-result 45) (return 5))
+      (unless (= (cast (struct-get made x) : i64) 6) (return 6))
+      (unless (= (cast (struct-get made y) : i64) 7) (return 7))
       42)))

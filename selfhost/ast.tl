@@ -1,6 +1,4 @@
 ;; ast.tl - Sexpr -> compiler AST parser for the M1 self-hosting slice (#154).
-(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (import "../stdlib/io.tl")
 
 (import "ast_types.tl")
@@ -246,7 +244,7 @@
     [(SCons head rest)
       (match (box-get head)
         [(SSym op)
-          (core/cond
+          (cond
             (string-eq op "+")
             (parse-binary (OpAdd) (box-get rest))
             (string-eq op "-")

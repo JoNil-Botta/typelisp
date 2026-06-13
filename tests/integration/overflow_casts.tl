@@ -1,6 +1,4 @@
 ; Locks down integer wrapping and cast bit semantics.
-(import "stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (define (add8 [a : i8] [b : i8]) : i8
   (+ a b))
 
@@ -29,7 +27,7 @@
   (cast a : char))
 
 (define (main) : i64
-  (core/cond
+  (cond
     (!= (cast (add8 (cast 127 : i8) (cast 1 : i8)) : i64) -128)
     1
     (!= (cast (sub8 (cast -128 : i8) (cast 1 : i8)) : i64) 127)

@@ -1,5 +1,3 @@
-(import "stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (import "stdlib/fs.tl")
 
 (import "stdlib/io.tl")
@@ -493,7 +491,7 @@
             "cleanup read-dir child: "))))))
 
 (define (fs-test-drive-absolute? [path : String]) : bool
-  (core/and
+  (and
     (> (string-length path) 2)
     (= (string-ref path 1) #:')
     (fs-path-separator? (string-ref path 2))))
@@ -512,7 +510,7 @@
           (assert-true (> (string-length cwd) 0) "current dir is non-empty")
           (assert-true
             (if (fs-windows?)
-              (core/or
+              (or
                 (test-fs-path-starts-separator? cwd)
                 (fs-test-drive-absolute? cwd))
               (test-fs-path-starts-separator? cwd))

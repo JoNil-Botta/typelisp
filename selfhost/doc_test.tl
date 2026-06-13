@@ -12,8 +12,6 @@
 ;; path where the target supports process execution. Each failure records the
 ;; source path, the fence's source line, the example index, and the rendered
 ;; diagnostic when one is available.
-(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (import "../stdlib/io.tl")
 
 (import "compiler_check_core.tl")
@@ -313,7 +311,7 @@
               (set! message "trailing escape in doctest output metadata")
               (let
                 [esc : char (string-ref text (+ i 1))]
-                (core/cond
+                (cond
                   (= esc #n')
                   (begin
                     (set! out (string-append out "\n"))

@@ -5,8 +5,6 @@
 ;; import it. Warn-only by default; callers can pass `--check` after the input
 ;; path to exit non-zero when findings remain. The deprecated string-concat rule
 ;; is opt-in until the remaining in-tree str-cat migrations land.
-(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (import "../stdlib/io.tl")
 
 (import "../stdlib/list.tl")
@@ -77,7 +75,7 @@
       deprecated-string-concat)
     (let
       [current : String (arg idx)]
-      (core/cond
+      (cond
         (string-eq current "--check")
         (selfhost-lint-parse-options
           (+ idx 1)
@@ -697,7 +695,7 @@
 
 (define (selfhost-lint-cascading-core-and-source) : String
   "(define (check [a : bool] [b : bool] [c : bool]) : bool
-  (core/and a (and b c)))")
+  (and a (and b c)))")
 
 (define (selfhost-lint-flat-and-source) : String
   "(define (check [a : bool] [b : bool] [c : bool]) : bool
@@ -863,7 +861,7 @@
         "lint_driver_self_test.tl"
         (selfhost-lint-cascading-core-and-source)
         (string-vec-new))]
-    (core/cond
+    (cond
       (not (= (lint-findings-count reported) 1))
       1
       (not (selfhost-lint-reported-finding-ok? reported))
@@ -903,7 +901,7 @@
       (not
         (selfhost-lint-cascading-and-or-finding-ok?
           cascading-core-and-reported
-          "cascading and: prefer flat n-ary form (core/and a b c)"))
+          "cascading and: prefer flat n-ary form (and a b c)"))
       25
       (not
         (=

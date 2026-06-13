@@ -1,5 +1,3 @@
-(import "stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (define (main) : i64
   (begin
     (let
@@ -7,7 +5,7 @@
       [i64-max : i64 (shr 1 63)]
       [u64-max : u64 (shr (cast -1 : u64) 63)]
       [u8-max : u8 (shr (cast 128 : u8) (cast 7 : u8))]
-      (if (core/and
+      (if (and
         (= i64-zero 1)
         (= i64-max 0)
         (= u64-max (cast 1 : u64))

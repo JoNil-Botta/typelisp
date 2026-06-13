@@ -2,8 +2,6 @@
 ;;
 ;; This module is deliberately dormant: it specifies and validates the tlci
 ;; container and metadata schema, but does not change package build behavior.
-(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (import "../stdlib/string.tl")
 
 (import "../stdlib/str_cat.tl")
@@ -348,7 +346,7 @@
     [(TlciExportNil)
       (OkTlciExportList (TlciExportCons entry (box TlciExportNil)))]
     [(TlciExportCons head rest)
-      (core/cond
+      (cond
         (tlci-export-same-key? head entry)
         (ErrTlciExportList
           (str-cat
@@ -385,7 +383,7 @@
         (str-cat "tlci metadata: field `" fname "` must be a string"))]))
 
 (define (tlci-parse-export-kind [name : String]) : ResultTlciExportKind
-  (core/cond
+  (cond
     (string-eq name "value")
     (OkTlciExportKind (TlciExportValue))
     (string-eq name "type")
@@ -406,7 +404,7 @@
   [has-layout : bool]) : ResultTlciExport
   (match fields
     [(SNil)
-      (core/cond
+      (cond
         (not has-name)
         (ErrTlciExport "tlci metadata: export missing required field `name`")
         (string-eq name "")
@@ -414,7 +412,7 @@
         (or
           (tlci-export-kind-eq? kind (TlciExportValue))
           (tlci-export-kind-eq? kind (TlciExportMacro)))
-        (core/cond
+        (cond
           has-layout
           (ErrTlciExport
             "tlci metadata: value and macro exports must not include `layout`")
@@ -424,7 +422,7 @@
           (string-eq signature "")
           (ErrTlciExport "tlci metadata: export signature must not be empty")
           (OkTlciExport (TlciExport kind name signature "")))
-        (core/cond
+        (cond
           has-signature
           (ErrTlciExport
             "tlci metadata: type exports must not include `signature`")
@@ -438,7 +436,7 @@
         [(SCons fhead ftail)
           (match (box-get fhead)
             [(SSym fname)
-              (core/cond
+              (cond
                 (string-eq fname "name")
                 (if has-name
                   (ErrTlciExport "tlci metadata: duplicate export field `name`")
@@ -534,7 +532,7 @@
   [has-version : bool]) : ResultTlciMetadata
   (match fields
     [(SNil)
-      (core/cond
+      (cond
         (not has-name)
         (ErrTlciMetadata "tlci metadata: package missing required field `name`")
         (not has-version)
@@ -551,7 +549,7 @@
         [(SCons fhead ftail)
           (match (box-get fhead)
             [(SSym fname)
-              (core/cond
+              (cond
                 (string-eq fname "name")
                 (if has-name
                   (ErrTlciMetadata
@@ -600,7 +598,7 @@
   [has-exports : bool]) : ResultTlciMetadata
   (match fields
     [(SNil)
-      (core/cond
+      (cond
         (not has-version)
         (ErrTlciMetadata "tlci metadata: missing required field `version`")
         (not (string-eq version tlci-metadata-version))
@@ -617,7 +615,7 @@
         [(SCons fhead ftail)
           (match (box-get fhead)
             [(SSym fname)
-              (core/cond
+              (cond
                 (string-eq fname "version")
                 (if has-version
                   (ErrTlciMetadata "tlci metadata: duplicate field `version`")
@@ -718,7 +716,7 @@
         (begin
           (let
             [code : i64 (tlci-char-code-at text i)]
-            (core/cond
+            (cond
               (= code 34)
               (set! out (str-cat out slash quote))
               (= code 92)
@@ -795,7 +793,7 @@
   (or (= len 0) (>= offset cursor)))
 
 (define (tlci-emit-image [image : TlciImage]) : ResultTlciBytes
-  (core/cond
+  (cond
     (string-eq (struct-get image compiler-build-hash) "")
     (ErrTlciBytes "tlci: compiler build hash must not be empty")
     (not
@@ -961,7 +959,7 @@
             (tlci-section-end fixups-end entries-offset entries-len)]
           [content-end : i64
             (tlci-section-end entries-end symbols-offset symbols-len)]
-          (core/cond
+          (cond
             (not (= version tlci-format-version))
             (ErrTlciImage
               (str-cat
@@ -1232,7 +1230,7 @@
     "tlci: malformed fixup table length"))
 
 (define (tlci-core-self-test-status) : i64
-  (core/cond
+  (cond
     (not (tlci-test-metadata-emit-parse?))
     1
     (not (tlci-test-parse-round-trip? (tlci-test-metadata-only-image)))

@@ -2,8 +2,6 @@
 ;; the full load -> lint -> render path on an embedded source and returns 42.
 (import "../stdlib/io.tl")
 
-(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (import "lint_driver_core.tl")
 
 (define (lint-driver-smoke-string-concat-source) : String
@@ -76,7 +74,7 @@
         (lint-driver-smoke-nested-string-concat-source)
         (string-vec-new)
         true)]
-    (core/cond
+    (cond
       (not (= (lint-findings-count string-concat-reported) 1))
       20
       (not

@@ -3,8 +3,6 @@
 ;; Factored out of `check.tl` so the unified `cli.tl` dispatcher and the
 ;; retained check compatibility/coverage driver share the command without a
 ;; duplicate `main`.
-(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (import "../stdlib/io.tl")
 
 (import "../stdlib/list.tl")
@@ -26,7 +24,7 @@
   (ErrSelfhostCheckConfig String))
 
 (define (selfhost-check-flag? [value : String]) : bool
-  (core/and (> (string-length value) 0) (= (string-ref value 0) #-')))
+  (and (> (string-length value) 0) (= (string-ref value 0) #-')))
 
 (define (selfhost-check-config-finish
   [input-path : String]
@@ -59,7 +57,7 @@
       stdlib-roots)
     (let
       [current : String (arg idx)]
-      (core/cond
+      (cond
         (string-eq current "--stdlib-root")
         (if (>= (+ idx 1) count)
           (ErrSelfhostCheckConfig

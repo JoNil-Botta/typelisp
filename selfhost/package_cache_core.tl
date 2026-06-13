@@ -5,8 +5,6 @@
 ;; partial/corrupt. It does not fetch, resolve tag/branch pins, or update
 ;; lockfiles itself; build_cli_core.tl consumes these helpers for package build
 ;; cache reuse/refetch and lockfile integration.
-(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (import "../stdlib/fs.tl")
 
 (import "../stdlib/io.tl")
@@ -79,7 +77,7 @@
   (ErrPackageCachePinKind String))
 
 (define (package-cache-parse-pin-kind [value : String]) : ResultPackageCachePinKind
-  (core/cond
+  (cond
     (string-eq value "rev")
     (OkPackageCachePinKind (PackageCachePinRev))
     (string-eq value "tag")
@@ -108,7 +106,7 @@
   (let
     [n : i64 (string-length dep)]
     [hash : i64 (package-cache-find-code-from dep 35 0)]
-    (core/cond
+    (cond
       (or (<= hash 0) (>= hash (- n 1)))
       (ErrPackageCacheRemoteSpec
         "package-cache: remote dependency must be URL#rev|tag|branch=value")
@@ -117,7 +115,7 @@
         [fragment : String (substring dep (+ hash 1) (- n (+ hash 1)))]
         [eq : i64 (package-cache-find-code-from fragment 61 0)]
         [fragment-len : i64 (string-length fragment)]
-        (core/cond
+        (cond
           (or (<= eq 0) (>= eq (- fragment-len 1)))
           (ErrPackageCacheRemoteSpec
             "package-cache: remote dependency pin must be rev|tag|branch=value")
@@ -166,7 +164,7 @@
     (= code 95)))
 
 (define (package-cache-hex-digit [value : i64]) : String
-  (core/cond
+  (cond
     (= value 0)
     "0"
     (= value 1)
@@ -303,7 +301,7 @@
     [has-entry : bool (package-cache-file-exists? entry-path)]
     [has-metadata : bool (package-cache-file-exists? metadata-path)]
     [has-marker : bool (package-cache-file-exists? marker-path)]
-    (core/cond
+    (cond
       (and (not has-entry) (not has-metadata) (not has-marker))
       (PackageCacheMiss entry-path)
       (not has-metadata)

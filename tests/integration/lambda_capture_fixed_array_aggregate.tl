@@ -1,5 +1,3 @@
-(import "stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 ; Capturing fixed arrays whose elements or fields contain aggregate storage
 ; (#631). Returned closures read after the creator frame has gone away, so each
 ; case only passes if capture snapshots fixed-array storage and rewrites nested
@@ -92,10 +90,10 @@
 
 (define (main) : i64
   (begin
-    (core/unless (case-string-array) (return 1))
-    (core/unless (case-point-array) (return 2))
-    (core/unless (case-nested-array) (return 3))
-    (core/unless (case-fixed-array-field) (return 4))
-    (core/unless (case-fixed-array-field-mutated-after-capture) (return 5))
-    (core/unless (case-aggregate-array-field) (return 6))
+    (unless (case-string-array) (return 1))
+    (unless (case-point-array) (return 2))
+    (unless (case-nested-array) (return 3))
+    (unless (case-fixed-array-field) (return 4))
+    (unless (case-fixed-array-field-mutated-after-capture) (return 5))
+    (unless (case-aggregate-array-field) (return 6))
     42))

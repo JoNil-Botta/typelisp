@@ -27,8 +27,6 @@
 ;;   - Digit char literals: `#\0` lexes as NUL (the `\0` escape), so digit and
 ;;     whitespace classification compares the char's `i64` code point against
 ;;     ASCII constants rather than against char literals.
-(import "stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (import "stdlib/io.tl")
 
 (import "stdlib/string.tl")
@@ -64,24 +62,21 @@
 
 ;; `c` is a decimal digit char.
 (define (is-digit [c : char]) : bool
-  (core/and (>= c #0') (<= c #9')))
+  (and (>= c #0') (<= c #9')))
 
 ;; `c` is an ASCII letter (A-Z, a-z) or `_`: the set of characters that may
 ;; start an identifier.
 (define (is-alpha [c : char]) : bool
-  (core/or
-    (= c #_')
-    (core/and (>= c #A') (<= c #Z'))
-    (core/and (>= c #a') (<= c #z'))))
+  (or (= c #_') (and (>= c #A') (<= c #Z')) (and (>= c #a') (<= c #z'))))
 
 ;; `c` may appear in an identifier after the first char: a letter, `_`, or a
 ;; digit.
 (define (is-ident-char [c : char]) : bool
-  (core/or (is-alpha c) (is-digit c)))
+  (or (is-alpha c) (is-digit c)))
 
 ;; `c` is ASCII whitespace: space, tab, or newline.
 (define (is-space [c : char]) : bool
-  (core/or (= c #\space') (= c #\tab') (= c #\newline')))
+  (or (= c #\space') (= c #\tab') (= c #\newline')))
 
 ;; Decimal value of a digit char, e.g. the digit char `7` -> 7.
 (define (digit-value [c : char]) : i64
@@ -93,7 +88,7 @@
 ;; compatibility-style dead code, though builtin `panic` can now satisfy the
 ;; `Token` result directly.
 (define (single-token [c : char]) : Token
-  (core/cond
+  (cond
     (= c #+')
     TPlus
     (= c #-')
@@ -116,7 +111,7 @@
   (let
     [j : i64 start]
     (begin
-      (while (core/and (< j n) (is-ident-char (string-ref src j)))
+      (while (and (< j n) (is-ident-char (string-ref src j)))
         (set! j (+ j 1)))
       j)))
 
@@ -154,7 +149,7 @@
       (while (< i n)
         (let
           [c : char (string-ref src i)]
-          (core/cond
+          (cond
             (is-space c)
             (set! i (+ i 1))
             (is-alpha c)
@@ -171,7 +166,7 @@
             (let
               [acc : i64 0]
               (begin
-                (while (core/and (< i n) (is-digit (string-ref src i)))
+                (while (and (< i n) (is-digit (string-ref src i)))
                   (begin
                     (set! acc (+ (* acc 10) (digit-value (string-ref src i))))
                     (set! i (+ i 1))))

@@ -6,8 +6,6 @@
 ;; directly. Imported files provide runtime declarations but do not contribute
 ;; their own tests to this source's harness. Normal compile paths ignore
 ;; `AstDeclTest`.
-(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (import "../stdlib/io.tl")
 
 (import "../stdlib/arena.tl")
@@ -239,7 +237,7 @@
       batch-list)
     (let
       [current : String (arg idx)]
-      (core/cond
+      (cond
         (string-eq current "--check")
         (tltest-parse-options
           (+ idx 1)
@@ -1860,7 +1858,7 @@
       (while (and (not found) (< i n))
         (let
           [c : char (string-ref source i)]
-          (core/cond
+          (cond
             (and open (tltest-source-line-break? c))
             (begin
               (set! i (+ i 1))

@@ -1786,7 +1786,7 @@
     (compiler-load-file-with-paths-and-roots path seen stdlib-roots)))
 
 (define (compiler-load-package-hex-digit [n : i64]) : String
-  (core/cond
+  (cond
     (= n 0)
     "0"
     (= n 1)
@@ -1828,7 +1828,7 @@
   [text : String]
   [idx : i64]
   [c : char]) : String
-  (core/cond
+  (cond
     (or
       (and (>= c #A') (<= c #Z'))
       (and (>= c #a') (<= c #z'))
@@ -3757,13 +3757,13 @@
     [body : String (compiler-load-github-address-body address)]
     [body-len : i64 (string-length body)]
     [slash : i64 (compiler-load-slash-index-from body 0 body-len)]
-    (core/cond
+    (cond
       (or (< slash 1) (>= slash (- body-len 1)))
       (compiler-load-github-address-error alias)
       (let
         [owner : String (substring body 0 slash)]
         [repo : String (substring body (+ slash 1) (- body-len (+ slash 1)))]
-        (core/cond
+        (cond
           (>= (compiler-load-slash-index-from repo 0 (string-length repo)) 0)
           (compiler-load-github-address-error alias)
           (not (compiler-load-github-component-valid? owner))
@@ -3998,7 +3998,7 @@
   [alias : String]
   [path : String]
   [rest : Sexpr]) : ResultCompilerPkgDeps
-  (core/cond
+  (cond
     (string-eq alias "")
     (ErrCompilerPkgDeps "dependency alias must not be empty")
     (not (compiler-load-package-token-valid? alias))
@@ -4081,7 +4081,7 @@
           (if has-entry
             entry
             (compiler-load-manifest-default-entry kind))]
-        (core/cond
+        (cond
           (not has-name)
           (ErrCompilerPkgManifest "manifest missing required field `name`")
           (string-eq name "")
@@ -4105,7 +4105,7 @@
         [(SCons fhead ftail)
           (match (box-get fhead)
             [(SSym fname)
-              (core/cond
+              (cond
                 (string-eq fname "dependencies")
                 (if has-deps
                   (ErrCompilerPkgManifest
@@ -4289,7 +4289,7 @@
     [has-lib : bool
       (file-exists?
         (compiler-load-manifest-convention-path manifest-path "src/lib.tl"))]
-    (core/cond
+    (cond
       (and has-main (not has-lib))
       (OkCompilerPkgKind (CompilerPkgKindBin))
       (and has-lib (not has-main))

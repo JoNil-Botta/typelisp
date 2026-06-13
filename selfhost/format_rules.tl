@@ -3,8 +3,6 @@
 ;; `format_core.tl` stays syntax-neutral. This module adds a deterministic
 ;; gofmt-like first pass for common TypeLisp special forms while still building
 ;; `Doc` values for width-aware rendering.
-(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (import "../stdlib/io.tl")
 
 (import "format_tokens.tl")
@@ -529,7 +527,7 @@
 (define (format-rules-special-list-doc
   [head : FormatCst]
   [rest : FormatCstList]) : Doc
-  (core/cond
+  (cond
     (format-rules-node-symbol? head "import")
     (format-rules-inline-form-doc "import" rest)
     (format-rules-node-symbol? head "include-str")

@@ -3,8 +3,6 @@
 ;; The runnable `parse.tl` demo used to contain these definitions directly.
 ;; Keeping them here lets other drivers reuse the parser without importing a
 ;; second `main`.
-(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (import "../stdlib/io.tl")
 
 (import "sym_i64_env.tl")
@@ -98,7 +96,7 @@
     [(NoneI64) (parse-tag-call)]))
 
 (define (parse-op-tag [tag : i64]) : BinOp
-  (core/cond
+  (cond
     (= tag (parse-tag-add))
     (OpAdd)
     (= tag (parse-tag-sub))
@@ -129,7 +127,7 @@
   (parse-op-tag (parse-dispatch-tag (parse-dispatch-env) op)))
 
 (define (is-binary-tag [tag : i64]) : bool
-  (core/cond
+  (cond
     (= tag (parse-tag-add))
     true
     (= tag (parse-tag-sub))
@@ -362,7 +360,7 @@
         [(SSym op)
           (let
             [tag : i64 (parse-dispatch-tag dispatch op)]
-            (core/cond
+            (cond
               (= tag (parse-tag-let))
               (parse-let dispatch (box-get rest))
               (= tag (parse-tag-if))

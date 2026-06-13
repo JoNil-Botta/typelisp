@@ -21,8 +21,6 @@
 ;# The buffer and rendered strings allocate in the active arena: the default
 ;# program-lifetime arena outside `(with-arena ...)`, or the scoped arena inside
 ;# one.
-(import "core_macros.tl" module stdlib.core_macros as core)
-
 (import "io.tl")
 
 ;: Reversed chunk list. Each cons node is allocated in the active arena.
@@ -66,7 +64,7 @@
 (define (text-buf-char-string [c : char]) : String
   (let
     [code : i64 (cast c : i64)]
-    (core/cond
+    (cond
       (= code 9)
       "\t"
       (= code 10)

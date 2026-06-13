@@ -3,8 +3,6 @@
 ;; The CST keeps enough shape for a formatter without committing to final
 ;; layout: atoms keep original token spelling, comments stay as trivia nodes,
 ;; and parenthesized/bracketed lists keep their delimiter kind.
-(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (import "../stdlib/io.tl")
 
 (import "format_tokens.tl")
@@ -110,7 +108,7 @@
   [stop-tag : i64]) : ResultFormatParsedCstList
   (let
     [tag : i64 (format-token-tag (format-token-at stream idx))]
-    (core/cond
+    (cond
       (= tag (fmt-tag-end))
       (if (= stop-tag 0)
         (OkFormatParsedCstList (FmtParsedCstList FmtCstNil idx))
@@ -153,7 +151,7 @@
   (let
     [tok : FormatToken (format-token-at stream idx)]
     [tag : i64 (format-token-tag (format-token-at stream idx))]
-    (core/cond
+    (cond
       (= tag (fmt-tag-lparen))
       (match (fmt-parse-seq-result stream (+ idx 1) (fmt-tag-rparen))
         [(OkFormatParsedCstList parsed)

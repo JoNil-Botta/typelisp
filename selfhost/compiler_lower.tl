@@ -4,8 +4,6 @@
 ;; CompilerIrProgram. It also covers scalar match and heap-backed struct/enum
 ;; construction/projection; closure, array, and enum-match lowering remain
 ;; explicit future work.
-(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (import "../stdlib/io.tl")
 
 (import "../stdlib/arena.tl")
@@ -4569,10 +4567,10 @@
             ty)])]))
 
 (define (lower-copy-chunk-size [remaining : i64]) : i64
-  (core/cond (>= remaining 8) 8 (>= remaining 4) 4 (>= remaining 2) 2 1))
+  (cond (>= remaining 8) 8 (>= remaining 4) 4 (>= remaining 2) 2 1))
 
 (define (lower-copy-chunk-type [chunk : i64]) : AstType
-  (core/cond
+  (cond
     (= chunk 8)
     (AstTyU64)
     (= chunk 4)
@@ -4645,7 +4643,7 @@
   [src : CompilerIrValue]
   [src-offset : i64]
   [size : i64]) : LowerState
-  (core/cond
+  (cond
     (<= size 0)
     state
     ;; Large copy: one tl_memcpy call instead of size/8 inline chunks.
@@ -5408,7 +5406,7 @@
   ;; load), not returned as a pointer into the containing slot. A 2-word
   ;; register-group loads BOTH words and reassembles them with IrInstrPack. Only a
   ;; genuine memory aggregate keeps the pointer-return shape.
-  (core/cond
+  (cond
     (and
       (lower-mode-inline-aggregates? mode)
       (lower-type-inline-struct-or-enum? ctx ty)
@@ -5575,7 +5573,7 @@
   [value : CompilerIrValue]
   [from-ty : AstType]
   [to-ty : AstType]) : LowerExpr
-  (core/cond
+  (cond
     (tc-never-type? from-ty)
     (LowerExpr state value from-ty)
     (tc-type-eq from-ty to-ty)
@@ -5669,7 +5667,7 @@
           (ast-expr-cons (ast-node-push right) AstExprNil))])))
 
 (define (lower-string-concat-runtime-name [count : i64]) : String
-  (core/cond
+  (cond
     (= count 3)
     "tl_string_concat3"
     (= count 4)
@@ -8839,7 +8837,7 @@
   lower-spmd-reduce-current-id-cache)
 
 (define (lower-name-id [name : String]) : i64
-  (core/cond
+  (cond
     (string-eq name (lower-spmd-reduce-acc-name))
     (lower-spmd-reduce-acc-id)
     (string-eq name (lower-spmd-reduce-end-name))
@@ -9485,7 +9483,7 @@
   (lower-arena-builtin-nullary-id? (intern name)))
 
 (define (lower-arena-builtin-symbol-id [name-id : i64]) : String
-  (core/cond
+  (cond
     (compiler-builtin-lower-arena-make-id? name-id)
     "tl_arena_make"
     (compiler-builtin-lower-arena-current-id? name-id)
@@ -11363,7 +11361,7 @@
               [_ (ErrTcType "lower: call result type is not fast-pathable")])]
           [(ErrTcType message)
             (if (lower-builtin-call-available? ctx env name-text)
-              (core/cond
+              (cond
                 (compiler-builtin-lower-array-length-id? name)
                 (OkTcType (AstTyI64))
                 (compiler-builtin-lower-string-ref-call-id? name)
@@ -13087,7 +13085,7 @@
                 ;; later `match`/`=` would read the address as if it were the tag).
                 ;; A genuine memory aggregate field still returns its in-place
                 ;; pointer. This mirrors `lower-load-inline-value-at-offset`.
-                (core/cond
+                (cond
                   (and
                     (not (lower-type-register-resident? ctx field-ty))
                     (or
@@ -13962,7 +13960,7 @@
     (lower-c-abi-inline-fields-integer-only? ctx fields)))
 
 (define (lower-c-abi-integer-scalar-type [size : i64]) : AstType
-  (core/cond
+  (cond
     (<= size 1)
     (AstTyU8)
     (<= size 2)
@@ -14059,7 +14057,7 @@
   [slot-index : i64]) : LowerCAbiSysvSlots
   (match slots
     [(LowerCAbiSysvSlots first second)
-      (core/cond
+      (cond
         (= slot-index 0)
         (LowerCAbiSysvSlots (lower-c-abi-sysv-merge-integer first) second)
         (= slot-index 1)
@@ -14090,7 +14088,7 @@
     [slot-index : i64 (/ offset 8)]
     (match slots
       [(LowerCAbiSysvSlots first second)
-        (core/cond
+        (cond
           (= slot-index 0)
           (LowerCAbiSysvSlots
             (lower-c-abi-sysv-merge-sse first ty offset)
@@ -14182,7 +14180,7 @@
   [size : i64]
   [fields : TcInlineFieldLayoutList]
   [allow-return? : bool]) : LowerCAbiAggregate
-  (core/cond
+  (cond
     (or (<= size 0) (> size 16))
     (LowerCAbiUnsupportedAggregate
       (lower-c-abi-unsupported-message mode resolved))
@@ -14206,7 +14204,7 @@
                 (LowerCAbiUnsupportedAggregate
                   (lower-c-abi-unsupported-message mode resolved))]
               [_
-                (core/cond
+                (cond
                   (and allow-return? (> size 8))
                   (LowerCAbiUnsupportedAggregate
                     (lower-c-abi-two-register-return-message resolved))
@@ -14238,7 +14236,7 @@
   (match layout
     [(TcInlineStructLayout size _ fields)
       (if (lower-mode-windows-c-abi? mode)
-        (core/cond
+        (cond
           (and
             (lower-c-abi-register-aggregate-size? mode size)
             (lower-c-abi-register-aggregate-fields-ok? ctx mode fields))
@@ -16072,7 +16070,7 @@
   [args : AstExprList]
   [result-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
-  (core/cond
+  (cond
     (or (string-eq name "string-eq") (string-eq name "string=?"))
     (lower-string-eq-call ctx state env type-env args result-ty origin)
     (string-eq name "string->int")
@@ -16350,7 +16348,7 @@
                   [name-id : i64 (intern name)]
                   [builtin-available : bool
                     (not (lower-top-level-value-defined? ctx name))]
-                  (core/cond
+                  (cond
                     (and builtin-available (tc-layout-query-name? name))
                     (ErrLowerExpr
                       (lower-diagnostic-at-expr
@@ -16708,7 +16706,7 @@
     [(LowerAlloc allocated var-id)
       (let
         [instr : CompilerIrInstr
-          (core/cond
+          (cond
             (= kind 0)
             (IrInstrEntryArgc var-id)
             (= kind 1)
@@ -17499,7 +17497,7 @@
   [elem-ty : AstType]
   [elem-size : i64]
   [origin : AstExpr]) : ResultLowerState
-  (core/cond
+  (cond
     (= elem-size 0)
     (OkLowerState state)
     (lower-make-array-zero-fill-supported? ctx elem-ty)
@@ -20061,7 +20059,7 @@
             [right : AstExpr (ast-node-get right-box)]
             [left-offset : i64 (lower-masked-vector-index-offset index left)]
             [right-offset : i64 (lower-masked-vector-index-offset index right)]
-            (core/cond
+            (cond
               (= left-offset 0)
               (lower-masked-vector-index-literal-offset right)
               (= right-offset 0)
@@ -20071,7 +20069,7 @@
     [_ -1]))
 
 (define (lower-masked-vector-lanes-merge [left : i64] [right : i64]) : i64
-  (core/cond
+  (cond
     (< left 0)
     -1
     (< right 0)

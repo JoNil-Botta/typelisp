@@ -1,12 +1,10 @@
 ;; compiler_backend_runtime_fixture.tl - emit runtime-helper backend fixture assembly.
-(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (import "../stdlib/io.tl")
 
 (import "compiler_backend.tl")
 
 (define (compiler-backend-runtime-fixture-emit [target-name : String]) : ResultCompilerBackend
-  (core/cond
+  (cond
     (string-eq target-name "linux-x86_64")
     (compiler-backend-emit-program (compiler-backend-runtime-helper-program))
     (string-eq target-name "windows-x86_64")

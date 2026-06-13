@@ -1,5 +1,3 @@
-(import "stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (defenum BinOp
   (OpAdd)
   (OpSub)
@@ -7,14 +5,7 @@
   (OpUnknown))
 
 (define (parse-op [op : char]) : BinOp
-  (core/cond
-    (= op #+')
-    (OpAdd)
-    (= op #-')
-    (OpSub)
-    (= op #*')
-    (OpMul)
-    (OpUnknown)))
+  (cond (= op #+') (OpAdd) (= op #-') (OpSub) (= op #*') (OpMul) (OpUnknown)))
 
 (define (score [op : BinOp]) : i64
   (match op

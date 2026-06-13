@@ -4,8 +4,6 @@
 ;# Also imports stdlib/hashmap.tl and uses a generated `I64I64Map` function in
 ;# the same program as a macro, covering the "generate declaration families
 ;# before macro expansion" pipeline ordering. Exits 42 on success.
-(import "stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (import "stdlib/str_cat.tl")
 
 (import "stdlib/hashmap.tl")
@@ -65,6 +63,6 @@
     8))
 
 (define (main) : i64
-  (if (core/and (= (str-cat-api-checks) 8) (str-cat-api-generated-ok))
+  (if (and (= (str-cat-api-checks) 8) (str-cat-api-generated-ok))
     42
     1))

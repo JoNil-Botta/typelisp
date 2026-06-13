@@ -1,5 +1,3 @@
-(import "stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (import "stdlib/arena.tl")
 
 (import "stdlib/string.tl")
@@ -44,7 +42,7 @@
         (box (piece seed 6))))))
 
 (define (items-ok? [items : (Array String)] [seed : i64]) : bool
-  (core/and
+  (and
     (string-eq (array-ref items 0) (piece seed 1))
     (string-eq (array-ref items 1) (piece seed 2))))
 
@@ -52,7 +50,7 @@
   (string-eq (box-get cell) (piece seed slot)))
 
 (define (bundle-ok? [bundle : EscapeBundle] [seed : i64]) : bool
-  (core/and
+  (and
     (string-eq (struct-get bundle name) (piece seed 0))
     (items-ok? (struct-get bundle items) seed)
     (string-eq (array-ref (struct-get bundle fixed) 0) (piece seed 4))
@@ -71,7 +69,7 @@
     [cell : (Box String) (escape-cell scratch 20)]
     [bundle : EscapeOutcome (escape-bundle scratch 30)]
     [noise : EscapeOutcome (escape-bundle scratch 99)]
-    (if (core/and
+    (if (and
       (items-ok? items 10)
       (cell-ok? cell 20 3)
       (outcome-ok? bundle 30)

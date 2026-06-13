@@ -21,8 +21,6 @@
 ;# (define nested : String
 ;#   (fs-path-join-many "target" "typelisp" "cache"))
 ;# ```
-(import "core_macros.tl" module stdlib.core_macros as core)
-
 (import "env.tl")
 
 (import "io.tl")
@@ -445,7 +443,7 @@
                     fd
                     (io-array-ptr buf)
                     fs-read-dir-buffer-size)]
-                (core/cond
+                (cond
                   (< read-count 0)
                   (begin
                     (set! ok false)
@@ -464,7 +462,7 @@
   (define (fs-windows-last-error-status) : i64
     (let
       [code : i64 (cast (fs-win-get-last-error) : i64)]
-      (core/cond
+      (cond
         (= code 2)
         io-status-not-found
         (= code 3)
@@ -664,7 +662,7 @@
   (define (fs-linux-file-kind-from-mode [mode : i64]) : i64
     (let
       [kind : i64 (bit-and mode fs-linux-stat-mode-kind-mask)]
-      (core/cond
+      (cond
         (= kind fs-linux-stat-regular-mode)
         fs-file-kind-regular-code
         (= kind fs-linux-stat-directory-mode)
@@ -805,7 +803,7 @@
               (cast capacity : u32)
               (io-array-ptr buf))
             : i64)]
-        (core/cond
+        (cond
           (= written 0)
           io-status-io-error
           (< written capacity)
@@ -842,7 +840,7 @@
               (cast capacity : u32)
               (io-array-ptr buf))
             : i64)]
-        (core/cond
+        (cond
           (= written 0)
           ""
           (< written capacity)
@@ -1045,7 +1043,7 @@
           rooted))
       (let
         [body : String (fs-path-segment-vec-render segments)]
-        (core/cond
+        (cond
           (and drive-root (= (string-length body) 0))
           (string-append (substring-borrowed path 0 2) "/")
           drive-root
@@ -1090,7 +1088,7 @@
 ;:
 ;: Empty sides are returned without allocating an extra separator.
 (define (fs-path-join [left : (& left str)] [right : (& right str)]) : String
-  (core/cond
+  (cond
     (= (string-length left) 0)
     (string-copy-borrowed right)
     (= (string-length right) 0)
@@ -1206,7 +1204,7 @@
 
 ;: Convert a runtime file-kind status into a structured result.
 (define (fs-file-kind-status-result [path : (& path str)] [status : i64]) : ResultFsFileKind
-  (core/cond
+  (cond
     (= status fs-file-kind-regular-code)
     (OkFsFileKind (FsFileRegular))
     (= status fs-file-kind-directory-code)
@@ -1459,7 +1457,7 @@
     (let
       [name : String (fs-temp-name prefix pid attempt)]
       [path : String
-        (core/cond
+        (cond
           (= (string-length root) 0)
           name
           (= (string-length name) 0)

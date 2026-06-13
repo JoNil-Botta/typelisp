@@ -1,6 +1,4 @@
 ;; compiler_specialize.tl - Selfhost comptime function specialization (#832).
-(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (import "../stdlib/io.tl")
 
 (import "../stdlib/text_buf.tl")
@@ -1141,7 +1139,7 @@
   (let
     [c : char (string-ref name index)]
     [code : i64 (cast c : i64)]
-    (core/cond
+    (cond
       (and (>= code 65) (<= code 90))
       (string-append
         (if (> index 0)
@@ -3949,7 +3947,7 @@
       (string-append
         key-prefix
         (string-append "-" (string-append value-prefix "-map")))]
-    (core/cond
+    (cond
       (not (string-eq map-name expected-map))
       (ErrGenHashmapSource
         (gen-hashmap-diag
@@ -4224,7 +4222,7 @@
     [key-prefix : String (gen-hashmap-type-info-prefix key-info)]
     [expected-set : String (string-append key-name "Set")]
     [prefix : String (string-append key-prefix "-set")]
-    (core/cond
+    (cond
       (not (string-eq set-name expected-set))
       (ErrGenSetSource
         (gen-set-diag

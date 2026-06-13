@@ -16,8 +16,6 @@
 ;# matching the previous backend behavior.
 ;#
 ;# Usage: imported by `process.tl` (which provides the public wrappers).
-(import "core_macros.tl" module stdlib.core_macros as core)
-
 (import "process.tl")
 
 (import "io.tl")
@@ -389,7 +387,7 @@
           [written : i64
             (unsafe
               (syscall 1 fd (+ data-addr off) (- len off)))]
-          (core/cond
+          (cond
             (< written 0)
             (begin
               (set! result written)
@@ -699,7 +697,7 @@
         [pid : i64
           (unsafe
             (syscall 57))]
-        (core/cond
+        (cond
           (< pid 0)
           (begin
             (process-linux-cleanup-spawn spawn)
@@ -720,7 +718,7 @@
         [pid : i64
           (unsafe
             (syscall 57))]
-        (core/cond
+        (cond
           (< pid 0)
           (begin
             (process-linux-cleanup-spawn spawn)

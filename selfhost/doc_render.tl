@@ -3,8 +3,6 @@
 ;; The #387 extractor exposes module docs and documented top-level items. It
 ;; does not expose undocumented declarations as separate records yet, so this
 ;; renderer emits exactly the declarations present in the extracted model.
-(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (import "../stdlib/io.tl")
 
 (import "doc_extract.tl")
@@ -61,7 +59,7 @@
 (define (doc-render-escape-one [text : String] [idx : i64]) : String
   (let
     [c : char (string-ref text idx)]
-    (core/cond
+    (cond
       (= c #&')
       "&amp;"
       (= c #<')

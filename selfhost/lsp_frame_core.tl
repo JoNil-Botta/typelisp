@@ -3,8 +3,6 @@
 ;; This driver owns JSON-RPC/LSP Content-Length framing over stdin/stdout plus
 ;; the first selfhost protocol loop: initialize/shutdown, document tracking, and
 ;; diagnostics for full-document open/change notifications.
-(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (import "stdlib/io.tl")
 
 (import "stdlib/json.tl")
@@ -197,7 +195,7 @@
                         (set! err message)
                         (set! done true))])))))
           (set! done true)))
-      (core/cond
+      (cond
         clean-eof
         LspFrameEof
         (not (string-eq err ""))
@@ -477,7 +475,7 @@
 (define (lsp-hex-value [c : char]) : i64
   (let
     [code : i64 (cast c : i64)]
-    (core/cond
+    (cond
       (and (>= code 48) (<= code 57))
       (- code 48)
       (and (>= code 65) (<= code 70))
@@ -859,7 +857,7 @@
   [stdlib-roots : StringVec]) : LspHandleResult
   (match (lsp-json-string-field message "method")
     [(OkLspJsonText method)
-      (core/cond
+      (cond
         (string-eq method "initialize")
         (begin
           (let

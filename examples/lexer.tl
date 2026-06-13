@@ -27,8 +27,6 @@
 ;;   - Digit char literals: `#\0` lexes as NUL (the `\0` escape), so digit and
 ;;     whitespace classification compares the char's `i64` code point against
 ;;     ASCII constants rather than against char literals.
-(import "stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (import "stdlib/io.tl")
 
 (import "stdlib/string.tl")
@@ -90,7 +88,7 @@
 ;; dead code that only satisfies the `Token` result type, since `panic` yields
 ;; unit and never returns.
 (define (single-token [c : char]) : Token
-  (core/cond
+  (cond
     (= c #+')
     TPlus
     (= c #-')
@@ -151,7 +149,7 @@
       (while (< i n)
         (let
           [c : char (string-ref src i)]
-          (core/cond
+          (cond
             (is-space c)
             (set! i (+ i 1))
             (is-alpha c)

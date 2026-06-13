@@ -4,8 +4,6 @@
 ;; synthetic byte buffers into it, flips code pages from RW to RX, keeps data
 ;; pages non-executable, and releases the mapping. Container parsing, fixups,
 ;; callback ABI entry, and real comptime images belong to later tlci slices.
-(import "../stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (import "../stdlib/io.tl")
 
 (defstruct TlciPageRegion
@@ -231,7 +229,7 @@
           (OkTlciPageUnit))))))
 
 (define (tlci-pages-protect-code-executable [region : TlciPageRegion]) : ResultTlciPageRegion
-  (core/cond
+  (cond
     (not (struct-get region code))
     (ErrTlciPageRegion "tlci pages: data pages cannot be executable")
     (struct-get region executable)
@@ -247,7 +245,7 @@
     (ErrTlciPageRegion "tlci pages: code page protection failed")))
 
 (define (tlci-pages-protect-data-readonly [region : TlciPageRegion]) : ResultTlciPageRegion
-  (core/cond
+  (cond
     (struct-get region code)
     (ErrTlciPageRegion "tlci pages: code pages cannot use data protection")
     (tlci-pages-platform-protect-data-readonly region)

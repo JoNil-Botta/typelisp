@@ -41,8 +41,6 @@
 ;; The shared token model: the `Token` enum, the `token-tag` / `token-int`
 ;; accessors, and the tag constants. Resolved relative to this file, so it finds
 ;; the co-located `token.tl`.
-(import "stdlib/core_macros.tl" module stdlib.core_macros as core)
-
 (import "stdlib/io.tl")
 
 (import "token.tl")
@@ -69,11 +67,11 @@
 
 ;; `c` is a decimal digit char.
 (define (is-digit [c : char]) : bool
-  (core/and (>= c #0') (<= c #9')))
+  (and (>= c #0') (<= c #9')))
 
 ;; `c` is ASCII whitespace: space, tab, or newline.
 (define (is-space [c : char]) : bool
-  (core/or (= c #\space') (= c #\tab') (= c #\newline')))
+  (or (= c #\space') (= c #\tab') (= c #\newline')))
 
 ;; Decimal value of a digit char, e.g. the digit char `7` -> 7.
 (define (digit-value [c : char]) : i64
@@ -101,7 +99,7 @@
 ;; `TEnd` is compatibility-style dead code, though builtin `panic` can now
 ;; satisfy the `Token` result directly.
 (define (single-token [c : char]) : Token
-  (core/cond
+  (cond
     (= c #+')
     TPlus
     (= c #-')
@@ -227,7 +225,7 @@
   (let
     [acc : Expr (parse-factor toks cur)]
     (begin
-      (while (core/or
+      (while (or
         (= (current-tag toks cur) (tag-star))
         (= (current-tag toks cur) (tag-slash)))
         (if (= (current-tag toks cur) (tag-star))
@@ -247,7 +245,7 @@
   (let
     [acc : Expr (parse-term toks cur)]
     (begin
-      (while (core/or
+      (while (or
         (= (current-tag toks cur) (tag-plus))
         (= (current-tag toks cur) (tag-minus)))
         (if (= (current-tag toks cur) (tag-plus))

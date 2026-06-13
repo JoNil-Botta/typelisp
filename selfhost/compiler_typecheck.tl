@@ -6131,6 +6131,16 @@
 (define (main) : i64
   (if (b.and2 true true) 42 0))")
 
+(define (compiler-typecheck-macro-forward-qualified-export-source) : String
+  "(module main)
+(import \"bool.tl\" module bool :as b)
+(define (main) : i64
+  (if (b.and-later true true) 42 0))
+(module bool)
+(export (macro and-later))
+(defmacro (and-later [lhs : bool] [rhs : bool]) : bool
+  `(if ,lhs ,rhs false))")
+
 (define (compiler-typecheck-macro-private-source) : String
   "(module hidden)
 (defmacro (private-and [lhs : bool] [rhs : bool]) : bool
@@ -6149,10 +6159,22 @@
 (define (main) : i64
   (if (hidden.missing true true) 0 1))")
 
-(define (compiler-typecheck-macro-late-local-source) : String
+(define (compiler-typecheck-macro-forward-local-source) : String
   "(define eager : bool (late true))
 (defmacro (late [value : bool]) : bool value)
-(define (main) : i64 0)")
+(define (main) : i64 (if eager 42 0))")
+
+(define (compiler-typecheck-macro-forward-chain-source) : String
+  "(define (main) : i64
+  (if (outer true) 42 0))
+(defmacro (outer [value : bool]) : bool
+  `(inner ,value))
+(defmacro (inner [value : bool]) : bool value)")
+
+(define (compiler-typecheck-macro-mutual-depth-source) : String
+  "(define (main) : i64 (macro-a))
+(defmacro (macro-a) : Expr `(macro-b))
+(defmacro (macro-b) : Expr `(macro-a))")
 
 (define (compiler-typecheck-macro-runtime-import-order-source) : String
   "(define (runtime-touch [text : String]) : unit
@@ -6226,6 +6248,13 @@
     (compiler-typecheck-macro-prelude-module-source)
     "(define (main [a : bool]) : bool (or 1 a))"))
 
+(define (compiler-typecheck-macro-forward-prelude-shadow-source) : String
+  (string-append
+    (compiler-typecheck-macro-prelude-module-source)
+    "(define (main) : i64 (and 1 41))
+(defmacro (and [lhs : i64] [rhs : i64]) : i64
+  `(+ ,lhs ,rhs))"))
+
 (define (compiler-typecheck-macro-hygiene-capture-source) : String
   "(defmacro (with-temp-bool [body : bool]) : bool
   `(let ([tmp : i64 1])
@@ -6233,6 +6262,14 @@
 (define (main) : bool
   (let ([tmp : bool true])
     (with-temp-bool tmp)))")
+
+(define (compiler-typecheck-macro-forward-hygiene-source) : String
+  "(define (main) : bool
+  (let ([tmp : bool true])
+    (with-late-temp tmp)))
+(defmacro (with-late-temp [body : bool]) : bool
+  `(let ([tmp : i64 1])
+     ,body))")
 
 (define (compiler-typecheck-macro-hygiene-definition-source) : String
   "(define (macro-helper [x : bool]) : bool (not x))
@@ -6372,6 +6409,8 @@
     (compiler-typecheck-ok? (compiler-typecheck-macro-own-flat-cond-source))
     (compiler-typecheck-ok? (compiler-typecheck-macro-own-and-source))
     (compiler-typecheck-ok? (compiler-typecheck-macro-own-or-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-macro-forward-prelude-shadow-source))
     (compiler-typecheck-ok? (compiler-typecheck-macro-prelude-and-or-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-macro-prelude-and-bad-source)
@@ -6384,15 +6423,19 @@
 (define (compiler-typecheck-macro-export-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-macro-export-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-macro-forward-qualified-export-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-macro-private-source)
       "typecheck: private macro hidden/private-and")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-macro-missing-export-source)
       "typecheck: missing macro export hidden/missing")
+    (compiler-typecheck-ok? (compiler-typecheck-macro-forward-local-source))
+    (compiler-typecheck-ok? (compiler-typecheck-macro-forward-chain-source))
     (compiler-typecheck-error-ok?
-      (compiler-typecheck-macro-late-local-source)
-      "typecheck: local macro late is defined later")
+      (compiler-typecheck-macro-mutual-depth-source)
+      "macro expansion exceeded depth limit")
     (compiler-typecheck-ok?
       (compiler-typecheck-macro-runtime-import-order-source))))
 
@@ -6422,6 +6465,7 @@
       "macro expansion exceeded depth limit")
     (compiler-typecheck-macro-export-tests-ok?)
     (compiler-typecheck-ok? (compiler-typecheck-macro-hygiene-capture-source))
+    (compiler-typecheck-ok? (compiler-typecheck-macro-forward-hygiene-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-macro-hygiene-definition-source))
     (compiler-typecheck-ok?

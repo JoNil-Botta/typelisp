@@ -23532,9 +23532,6 @@
 (define macro-expand-active-module : String
   "")
 
-(define macro-expand-active-index : i64
-  0)
-
 ;; Set of macro (and compat-guard) names callable in the program. Used as a
 ;; cheap, allocation-free pre-filter in the macro-use detector so the common
 ;; case (a plain function call whose name is not a macro) avoids the allocating
@@ -24488,11 +24485,6 @@
 (define (macro-private-message [name : String]) : String
   (string-append "typecheck: private macro " name))
 
-(define (macro-late-local-message [name : String]) : String
-  (string-append
-    "typecheck: local macro "
-    (string-append name " is defined later")))
-
 (define (macro-qualified-call-decl-with-exports
   [ctx : TcContext]
   [exports : CompilerExports]
@@ -24651,18 +24643,13 @@
     (intern module)
     (intern lookup-name))
     [(SomeI64 handle)
-      (if (< (compiler-symbol-handle-index handle) macro-expand-active-index)
-        (match (macro-find-decl-by-index
-          decls
-          (compiler-symbol-handle-index handle))
-          [(MacroSomeDecl macro-name def-module params ret body)
-            (OkMacroCallDecl
-              (MacroSomeDecl macro-name def-module params ret body))]
-          [(MacroNoDecl) (OkMacroCallDecl (MacroNoDecl))])
-        (ErrMacroCallDecl
-          (ctfe-diagnostic-at-expr
-            call-expr
-            (macro-late-local-message lookup-name))))]
+      (match (macro-find-decl-by-index
+        decls
+        (compiler-symbol-handle-index handle))
+        [(MacroSomeDecl macro-name def-module params ret body)
+          (OkMacroCallDecl
+            (MacroSomeDecl macro-name def-module params ret body))]
+        [(MacroNoDecl) (OkMacroCallDecl (MacroNoDecl))])]
     [(NoneI64)
       (macro-prelude-call-decl
         (tc-context-with-module ctx module)
@@ -24706,8 +24693,9 @@
           (ErrMacroCallDecl (ctfe-diagnostic-at-expr call-expr message))]))))
 
 ;; If `func` names a visible macro, return that macro's decl. Bare local macros
-;; are source-order visible; qualified macro calls must pass the export table.
-;; A bare name not bound locally falls back to the implicit core macro prelude.
+;; are module-scope visible regardless of source order; qualified macro calls
+;; must pass the export table. A bare name not bound locally falls back to the
+;; implicit core macro prelude.
 (define (macro-call-decl
   [ctx : TcContext]
   [func : AstExpr]
@@ -24737,11 +24725,6 @@
           (intern-str name)
           call-expr))]
     [_ (OkMacroCallDecl (MacroNoDecl))]))
-
-(define (macro-local-decl-index-step! [decl : AstDecl]) : unit
-  (if (macro-decl-counts-for-symbol-index? decl)
-    (set! macro-expand-active-index (+ macro-expand-active-index 1))
-    unit))
 
 (define (macro-operand-mismatch-message [expected : AstType] [actual : AstType]) : String
   (str-cat
@@ -26075,32 +26058,27 @@
               [decl-ctx : TcContext
                 (tc-context-with-module ctx macro-expand-active-module)]
               (if (not (macro-decl-uses-macro? decl-ctx orig-decls decl))
-                (begin
-                  (macro-local-decl-index-step! decl)
-                  (match (macro-expand-decls
-                    ctx
-                    top-env
-                    orig-decls
-                    rest
-                    compat-only)
-                    [(OkMacroDecls nrest)
-                      (OkMacroDecls (ast-decl-cons decl nrest))]
-                    [(ErrMacroDecls diag) (ErrMacroDecls diag)]))
-                (begin
-                  (match (macro-expand-decl decl-ctx top-env orig-decls decl)
-                    [(OkMacroDecl ndecl)
-                      (begin
-                        (macro-local-decl-index-step! decl)
-                        (match (macro-expand-decls
-                          ctx
-                          top-env
-                          orig-decls
-                          rest
-                          compat-only)
-                          [(OkMacroDecls nrest)
-                            (OkMacroDecls (ast-decl-cons ndecl nrest))]
-                          [(ErrMacroDecls diag) (ErrMacroDecls diag)]))]
-                    [(ErrMacroDecl diag) (ErrMacroDecls diag)]))))]))]))
+                (match (macro-expand-decls
+                  ctx
+                  top-env
+                  orig-decls
+                  rest
+                  compat-only)
+                  [(OkMacroDecls nrest)
+                    (OkMacroDecls (ast-decl-cons decl nrest))]
+                  [(ErrMacroDecls diag) (ErrMacroDecls diag)])
+                (match (macro-expand-decl decl-ctx top-env orig-decls decl)
+                  [(OkMacroDecl ndecl)
+                    (match (macro-expand-decls
+                      ctx
+                      top-env
+                      orig-decls
+                      rest
+                      compat-only)
+                      [(OkMacroDecls nrest)
+                        (OkMacroDecls (ast-decl-cons ndecl nrest))]
+                      [(ErrMacroDecls diag) (ErrMacroDecls diag)])]
+                  [(ErrMacroDecl diag) (ErrMacroDecls diag)])))]))]))
 
 (define (macro-expr-needs-compat-expansion? [expr : AstExpr]) : bool
   (or
@@ -26207,7 +26185,6 @@
                             (set! macro-expand-exports-value exports)
                             (set! macro-expand-exports-ready true)
                             (set! macro-expand-active-module "")
-                            (set! macro-expand-active-index 0)
                             (set!
                               macro-expand-macro-names
                               (macro-collect-macro-names

@@ -13931,7 +13931,12 @@
           ;; slot; word1 indexes the second var-region by the same remapped id.
           ;; That keeps both words inside the `slot-vars`-sized frame instead of
           ;; preserving the old high raw ids that drove #2598 frame growth.
-          (compiler-reg-color-stack-slots reg-plan fn-group-vars params vars)]
+          (compiler-reg-color-stack-slots
+            reg-plan
+            fn-group-vars
+            params
+            blocks
+            vars)]
         [assignments : CompilerRegAssignmentList
           (match coloring
             [(CompilerRegColoringNone) (compiler-reg-plan-assignments reg-plan)]

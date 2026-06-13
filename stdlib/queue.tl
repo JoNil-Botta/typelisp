@@ -177,3 +177,161 @@
             0
             (i64-deque-head q))
           new-len)))))
+
+(test
+  i64-deque-api
+  (let
+    [fail : (-> unit)
+      (lambda () : unit
+        (begin
+          (/ 1 0)
+          unit))]
+    (begin
+      (let
+        [empty : I64Deque (i64-deque-with-capacity 2)]
+        (begin
+          (if (= (i64-deque-len empty) 0)
+            unit
+            (fail))
+          (if (= (i64-deque-capacity empty) 2)
+            unit
+            (fail))
+          (if (i64-deque-is-empty? empty)
+            unit
+            (fail))
+          (if (= (i64-deque-peek-front empty -1) -1)
+            unit
+            (fail))
+          (if (= (i64-deque-peek-back empty -1) -1)
+            unit
+            (fail))
+          (if (= (i64-deque-get empty 0 -1) -1)
+            unit
+            (fail))
+          (if (= (i64-deque-capacity (i64-deque-with-capacity 0)) 1)
+            unit
+            (fail))))
+      (let
+        [q3 : I64Deque
+          (i64-deque-push-back
+            (i64-deque-push-back
+              (i64-deque-push-back (i64-deque-with-capacity 3) 10)
+              20)
+            30)]
+        (begin
+          (if (= (i64-deque-len q3) 3)
+            unit
+            (fail))
+          (if (= (i64-deque-peek-front q3 -1) 10)
+            unit
+            (fail))
+          (if (= (i64-deque-peek-back q3 -1) 30)
+            unit
+            (fail))
+          (if (= (i64-deque-get q3 1 -1) 20)
+            unit
+            (fail))
+          (if (= (i64-deque-get q3 -1 -1) -1)
+            unit
+            (fail))
+          (if (= (i64-deque-get q3 3 -1) -1)
+            unit
+            (fail))
+          (match (i64-deque-pop-front q3)
+            [(I64DequePopOk value1 q2)
+              (begin
+                (if (= value1 10)
+                  unit
+                  (fail))
+                (if (= (i64-deque-peek-front q2 -1) 20)
+                  unit
+                  (fail))
+                (match (i64-deque-pop-front q2)
+                  [(I64DequePopOk value2 _)
+                    (if (= value2 20)
+                      unit
+                      (fail))]
+                  [(I64DequePopEmpty) (fail)]))]
+            [(I64DequePopEmpty) (fail)])))
+      (let
+        [base : I64Deque
+          (i64-deque-push-back
+            (i64-deque-push-back
+              (i64-deque-push-back (i64-deque-with-capacity 3) 1)
+              2)
+            3)]
+        (match (i64-deque-pop-front base)
+          [(I64DequePopOk _ rest)
+            (let
+              [wrapped : I64Deque (i64-deque-push-back rest 4)]
+              [grown : I64Deque (i64-deque-push-back wrapped 5)]
+              (begin
+                (if (= (i64-deque-capacity grown) 6)
+                  unit
+                  (fail))
+                (if (= (i64-deque-len grown) 4)
+                  unit
+                  (fail))
+                (if (= (i64-deque-get grown 0 -1) 2)
+                  unit
+                  (fail))
+                (if (= (i64-deque-get grown 1 -1) 3)
+                  unit
+                  (fail))
+                (if (= (i64-deque-get grown 2 -1) 4)
+                  unit
+                  (fail))
+                (if (= (i64-deque-get grown 3 -1) 5)
+                  unit
+                  (fail))
+                (if (= (i64-deque-peek-front grown -1) 2)
+                  unit
+                  (fail))
+                (if (= (i64-deque-peek-back grown -1) 5)
+                  unit
+                  (fail))))]
+          [(I64DequePopEmpty) (fail)]))
+      (let
+        [dq : I64Deque
+          (i64-deque-push-front
+            (i64-deque-push-back (i64-deque-with-capacity 2) 20)
+            10)]
+        (begin
+          (if (= (i64-deque-get dq 0 -1) 10)
+            unit
+            (fail))
+          (if (= (i64-deque-get dq 1 -1) 20)
+            unit
+            (fail))
+          (match (i64-deque-pop-back dq)
+            [(I64DequePopOk back-value after-back)
+              (begin
+                (if (= back-value 20)
+                  unit
+                  (fail))
+                (match (i64-deque-pop-front after-back)
+                  [(I64DequePopOk front-value drained)
+                    (begin
+                      (if (= front-value 10)
+                        unit
+                        (fail))
+                      (if (i64-deque-is-empty? drained)
+                        unit
+                        (fail))
+                      (let
+                        [again : I64Deque (i64-deque-push-back drained 99)]
+                        (begin
+                          (if (= (i64-deque-len again) 1)
+                            unit
+                            (fail))
+                          (if (= (i64-deque-peek-front again -1) 99)
+                            unit
+                            (fail)))))]
+                  [(I64DequePopEmpty) (fail)]))]
+            [(I64DequePopEmpty) (fail)])))
+      (match (i64-deque-pop-front (i64-deque-new))
+        [(I64DequePopEmpty) unit]
+        [(I64DequePopOk _ _) (fail)])
+      (match (i64-deque-pop-back (i64-deque-new))
+        [(I64DequePopEmpty) unit]
+        [(I64DequePopOk _ _) (fail)]))))

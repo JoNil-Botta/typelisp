@@ -2529,6 +2529,566 @@
     [(AstTyVar name) (= name (intern "ExprClauseList"))]
     [_ false]))
 
+(define (tc-stdlib-comptime-module-name) : String
+  "stdlib.comptime")
+
+(define (tc-stdlib-comptime-type-key [name : String]) : String
+  (compiler-symbol-module-key (tc-stdlib-comptime-module-name) name))
+
+(define (tc-stdlib-comptime-type-display-name [name : String]) : String
+  (str-cat (tc-stdlib-comptime-module-name) "." name))
+
+(define (tc-stdlib-comptime-syntax-type [canonical-name : String]) : AstMaybeType
+  (cond
+    (string-eq canonical-name (tc-stdlib-comptime-type-key "Expr"))
+    (AstSomeType (AstTyExpr))
+    (string-eq canonical-name (tc-stdlib-comptime-type-key "ExprList"))
+    (AstSomeType (AstTyExprList))
+    (string-eq canonical-name (tc-stdlib-comptime-type-key "ExprClause"))
+    (AstSomeType (tc-macro-expr-clause-type))
+    (string-eq canonical-name (tc-stdlib-comptime-type-key "ExprClauseList"))
+    (AstSomeType (tc-macro-expr-clause-list-type))
+    (AstNoType)))
+
+(defenum TcStdlibFieldSpecList
+  (TcStdlibFieldSpecNil)
+  (TcStdlibFieldSpecCons String AstType (Box TcStdlibFieldSpecList)))
+
+(defenum TcStdlibVariantSpecList
+  (TcStdlibVariantSpecNil)
+  (TcStdlibVariantSpecCons String AstTypeList (Box TcStdlibVariantSpecList)))
+
+(define (tc-stdlib-field-spec-cons
+  [name : String]
+  [ty : AstType]
+  [rest : TcStdlibFieldSpecList]) : TcStdlibFieldSpecList
+  (TcStdlibFieldSpecCons name ty (box rest)))
+
+(define (tc-stdlib-variant-spec-cons
+  [name : String]
+  [payloads : AstTypeList]
+  [rest : TcStdlibVariantSpecList]) : TcStdlibVariantSpecList
+  (TcStdlibVariantSpecCons name payloads (box rest)))
+
+(define (tc-stdlib-name-type [name : String]) : AstType
+  (AstTyVar (intern name)))
+
+(define (tc-stdlib-box-name-type [name : String]) : AstType
+  (ast-ty-box (tc-stdlib-name-type name)))
+
+(define (tc-stdlib-array-name-type [name : String]) : AstType
+  (ast-ty-dyn-array (tc-stdlib-name-type name)))
+
+(define (tc-stdlib-well-known-mismatch [type-name : String] [detail : String]) : ResultTcUnit
+  (ErrTcUnit
+    (str-cat
+      "typecheck: stdlib well-known type mismatch for "
+      (tc-stdlib-comptime-type-display-name type-name)
+      ": "
+      detail)))
+
+(define (tc-stdlib-comptime-generated-metadata-message) : String
+  "expected comptime-decl generated metadata stdlib/comptime-well-known \"v0\"")
+
+(define (tc-stdlib-comptime-version-arg? [args : AstExprList]) : bool
+  (match args
+    [(AstExprCons head rest)
+      (match (box-get rest)
+        [(AstExprNil)
+          (match (ast-expr-unspan (ast-node-get head))
+            [(AstExprLiteral (AstLitString version)) (string-eq version "v0")]
+            [_ false])]
+        [_ false])]
+    [_ false]))
+
+(define (tc-stdlib-comptime-generated-meta-ok?
+  [type-name : String]
+  [meta : AstGeneratedDeclMeta]) : bool
+  (match meta
+    [(AstSomeGeneratedDeclMeta generator item args _)
+      (and
+        (string-eq generator "stdlib/comptime-well-known")
+        (string-eq item type-name)
+        (tc-stdlib-comptime-version-arg? args))]
+    [(AstNoGeneratedDeclMeta) false]))
+
+(define (tc-stdlib-comptime-well-known-type? [type-name : String]) : bool
+  (or
+    (string-eq type-name "Expr")
+    (string-eq type-name "ExprList")
+    (string-eq type-name "ExprClause")
+    (string-eq type-name "ExprClauseList")
+    (string-eq type-name "TypeInfo")
+    (string-eq type-name "TypeInfoList")
+    (string-eq type-name "TypeField")
+    (string-eq type-name "TypeFieldList")
+    (string-eq type-name "TypeVariantPayload")
+    (string-eq type-name "TypeVariantPayloadList")
+    (string-eq type-name "TypeVariant")
+    (string-eq type-name "TypeVariantList")
+    (string-eq type-name "TypeParam")
+    (string-eq type-name "TypeParamList")))
+
+(define (tc-stdlib-comptime-raw-type-name [decl : AstDecl]) : TcMaybeString
+  (match decl
+    [(AstDeclComptimeDecl _ template-box)
+      (tc-stdlib-comptime-raw-type-name (box-get template-box))]
+    [(AstDeclUnsafe inner-box)
+      (tc-stdlib-comptime-raw-type-name (box-get inner-box))]
+    [(AstDeclDefEnum name _ _) (TcSomeString (intern-str name))]
+    [(AstDeclDefEnumLifetimes name _ _ _) (TcSomeString (intern-str name))]
+    [(AstDeclDefStruct name _ _ _) (TcSomeString (intern-str name))]
+    [(AstDeclDefStructLifetimes name _ _ _ _) (TcSomeString (intern-str name))]
+    [_ (TcNoString)]))
+
+(define (tc-stdlib-comptime-raw-meta-ok? [type-name : String] [decl : AstDecl]) : bool
+  (match decl
+    [(AstDeclComptimeDecl meta _)
+      (tc-stdlib-comptime-generated-meta-ok? type-name meta)]
+    [(AstDeclUnsafe inner-box)
+      (tc-stdlib-comptime-raw-meta-ok? type-name (box-get inner-box))]
+    [_ false]))
+
+(define (tc-stdlib-check-comptime-metadata-decl
+  [module : String]
+  [decl : AstDecl]) : ResultTcUnit
+  (if (not (string-eq module (tc-stdlib-comptime-module-name)))
+    OkTcUnit
+    (match (tc-stdlib-comptime-raw-type-name decl)
+      [(TcNoString) OkTcUnit]
+      [(TcSomeString type-name)
+        (if (not (tc-stdlib-comptime-well-known-type? type-name))
+          OkTcUnit
+          (if (tc-stdlib-comptime-raw-meta-ok? type-name decl)
+            OkTcUnit
+            (tc-stdlib-well-known-mismatch
+              type-name
+              (tc-stdlib-comptime-generated-metadata-message))))])))
+
+(define (tc-stdlib-check-comptime-metadata-list
+  [decls : AstDeclList]
+  [module : String]) : ResultTcUnit
+  (match decls
+    [(AstDeclNil) OkTcUnit]
+    [(AstDeclCons decl rest)
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (match decl
+          [(AstDeclModule module-id)
+            (tc-stdlib-check-comptime-metadata-list rest (intern-str module-id))]
+          [_
+            (match (tc-stdlib-check-comptime-metadata-decl module decl)
+              [(OkTcUnit) (tc-stdlib-check-comptime-metadata-list rest module)]
+              [(ErrTcUnit message) (ErrTcUnit message)])]))]))
+
+(define (tc-stdlib-check-comptime-metadata [ctx : TcContext]) : ResultTcUnit
+  (match (tc-context-program ctx)
+    [(AstProgram decls-box)
+      (tc-stdlib-check-comptime-metadata-list (box-get decls-box) "")]))
+
+(define (tc-stdlib-type-match?
+  [ctx : TcContext]
+  [actual : AstType]
+  [expected : AstType]) : bool
+  (tc-type-eq (tc-resolve-type ctx actual) (tc-resolve-type ctx expected)))
+
+(define (tc-stdlib-check-field-specs
+  [ctx : TcContext]
+  [type-name : String]
+  [fields : AstFieldDefList]
+  [specs : TcStdlibFieldSpecList]
+  [index : i64]) : ResultTcUnit
+  (match specs
+    [(TcStdlibFieldSpecNil)
+      (match fields
+        [(AstFieldDefNil) OkTcUnit]
+        [_ (tc-stdlib-well-known-mismatch type-name "unexpected extra field")])]
+    [(TcStdlibFieldSpecCons expected-name expected-ty rest-specs)
+      (match fields
+        [(AstFieldDefNil)
+          (tc-stdlib-well-known-mismatch
+            type-name
+            (str-cat "missing field " expected-name))]
+        [(AstFieldDefCons field rest-fields)
+          (let
+            [rest-fields : AstFieldDefList (box-get rest-fields)]
+            [rest-specs : TcStdlibFieldSpecList (box-get rest-specs)]
+            (match field
+              [(AstFieldDef actual-name actual-ty _)
+                (if (not (string-eq (intern-str actual-name) expected-name))
+                  (tc-stdlib-well-known-mismatch
+                    type-name
+                    (str-cat
+                      "expected field "
+                      expected-name
+                      " at index "
+                      (int->string index)))
+                  (if (tc-stdlib-type-match? ctx actual-ty expected-ty)
+                    (tc-stdlib-check-field-specs
+                      ctx
+                      type-name
+                      rest-fields
+                      rest-specs
+                      (+ index 1))
+                    (tc-stdlib-well-known-mismatch
+                      type-name
+                      (str-cat
+                        "expected field "
+                        expected-name
+                        " type "
+                        (tc-type-render (tc-resolve-type ctx expected-ty))))))]))])]))
+
+(define (tc-stdlib-check-payload-specs
+  [ctx : TcContext]
+  [type-name : String]
+  [variant-name : String]
+  [actual : AstTypeList]
+  [expected : AstTypeList]
+  [index : i64]) : ResultTcUnit
+  (if (!= (tc-type-list-len actual) (tc-type-list-len expected))
+    (tc-stdlib-well-known-mismatch
+      type-name
+      (str-cat "payload arity mismatch for variant " variant-name))
+    (if (= index (tc-type-list-len expected))
+      OkTcUnit
+      (match (tc-type-list-ref actual index)
+        [(OkTcType actual-ty)
+          (match (tc-type-list-ref expected index)
+            [(OkTcType expected-ty)
+              (if (tc-stdlib-type-match? ctx actual-ty expected-ty)
+                (tc-stdlib-check-payload-specs
+                  ctx
+                  type-name
+                  variant-name
+                  actual
+                  expected
+                  (+ index 1))
+                (tc-stdlib-well-known-mismatch
+                  type-name
+                  (str-cat
+                    "payload type mismatch for variant "
+                    variant-name
+                    " at index "
+                    (int->string index))))]
+            [(ErrTcType message)
+              (tc-stdlib-well-known-mismatch type-name message)])]
+        [(ErrTcType message) (tc-stdlib-well-known-mismatch type-name message)]))))
+
+(define (tc-stdlib-check-variant-specs
+  [ctx : TcContext]
+  [type-name : String]
+  [variants : AstVariantDefList]
+  [specs : TcStdlibVariantSpecList]
+  [index : i64]) : ResultTcUnit
+  (match specs
+    [(TcStdlibVariantSpecNil)
+      (match variants
+        [(AstVariantDefNil) OkTcUnit]
+        [_ (tc-stdlib-well-known-mismatch type-name "unexpected extra variant")])]
+    [(TcStdlibVariantSpecCons expected-name expected-payloads rest-specs)
+      (match variants
+        [(AstVariantDefNil)
+          (tc-stdlib-well-known-mismatch
+            type-name
+            (str-cat "missing variant " expected-name))]
+        [(AstVariantDefCons variant rest-variants)
+          (let
+            [rest-variants : AstVariantDefList (box-get rest-variants)]
+            [rest-specs : TcStdlibVariantSpecList (box-get rest-specs)]
+            (match variant
+              [(AstVariantDef actual-name actual-payloads _)
+                (if (not (string-eq (intern-str actual-name) expected-name))
+                  (tc-stdlib-well-known-mismatch
+                    type-name
+                    (str-cat
+                      "expected variant "
+                      expected-name
+                      " at index "
+                      (int->string index)))
+                  (match (tc-stdlib-check-payload-specs
+                    ctx
+                    type-name
+                    expected-name
+                    actual-payloads
+                    expected-payloads
+                    0)
+                    [(OkTcUnit)
+                      (tc-stdlib-check-variant-specs
+                        ctx
+                        type-name
+                        rest-variants
+                        rest-specs
+                        (+ index 1))]
+                    [(ErrTcUnit message) (ErrTcUnit message)]))]))])]))
+
+(define (tc-stdlib-check-struct
+  [ctx : TcContext]
+  [type-name : String]
+  [specs : TcStdlibFieldSpecList]) : ResultTcUnit
+  (match (compiler-symbols-lookup-type-in-module
+    (tc-context-symbols ctx)
+    (tc-stdlib-comptime-module-name)
+    type-name)
+    [(SomeI64 handle)
+      (match (compiler-symbols-decl-at-index
+        (tc-context-symbols ctx)
+        (compiler-symbol-handle-index handle))
+        [(OkAstDecl decl)
+          (match decl
+            [(AstDeclDefStruct _ _ _ fields)
+              (tc-stdlib-check-field-specs
+                (tc-context-with-module ctx (tc-stdlib-comptime-module-name))
+                type-name
+                fields
+                specs
+                0)]
+            [_ (tc-stdlib-well-known-mismatch type-name "expected defstruct")])]
+        [(ErrAstDecl message) (tc-stdlib-well-known-mismatch type-name message)])]
+    [(NoneI64) (tc-stdlib-well-known-mismatch type-name "missing declaration")]))
+
+(define (tc-stdlib-check-enum
+  [ctx : TcContext]
+  [type-name : String]
+  [specs : TcStdlibVariantSpecList]) : ResultTcUnit
+  (match (compiler-symbols-lookup-type-in-module
+    (tc-context-symbols ctx)
+    (tc-stdlib-comptime-module-name)
+    type-name)
+    [(SomeI64 handle)
+      (match (compiler-symbols-decl-at-index
+        (tc-context-symbols ctx)
+        (compiler-symbol-handle-index handle))
+        [(OkAstDecl decl)
+          (match decl
+            [(AstDeclDefEnum _ _ variants)
+              (tc-stdlib-check-variant-specs
+                (tc-context-with-module ctx (tc-stdlib-comptime-module-name))
+                type-name
+                variants
+                specs
+                0)]
+            [_ (tc-stdlib-well-known-mismatch type-name "expected defenum")])]
+        [(ErrAstDecl message) (tc-stdlib-well-known-mismatch type-name message)])]
+    [(NoneI64) (tc-stdlib-well-known-mismatch type-name "missing declaration")]))
+
+(define (tc-stdlib-comptime-present? [ctx : TcContext]) : bool
+  (or
+    (match (compiler-symbols-lookup-type-in-module
+      (tc-context-symbols ctx)
+      (tc-stdlib-comptime-module-name)
+      "Expr")
+      [(SomeI64 _) true]
+      [(NoneI64) false])
+    (match (compiler-symbols-lookup-type-in-module
+      (tc-context-symbols ctx)
+      (tc-stdlib-comptime-module-name)
+      "TypeInfo")
+      [(SomeI64 _) true]
+      [(NoneI64) false])))
+
+(define (tc-stdlib-expr-specs) : TcStdlibVariantSpecList
+  (tc-stdlib-variant-spec-cons
+    "ExprBool"
+    (tc-type-list1 (AstTyBool))
+    (tc-stdlib-variant-spec-cons
+      "ExprInt"
+      (tc-type-list1 (AstTyI64))
+      (tc-stdlib-variant-spec-cons
+        "ExprVar"
+        (tc-type-list1 (AstTyString))
+        (tc-stdlib-variant-spec-cons
+          "ExprSplice"
+          (tc-type-list1 (tc-stdlib-box-name-type "Expr"))
+          (tc-stdlib-variant-spec-cons
+            "ExprIf"
+            (tc-type-list3
+              (tc-stdlib-box-name-type "Expr")
+              (tc-stdlib-box-name-type "Expr")
+              (tc-stdlib-box-name-type "Expr"))
+            (tc-stdlib-variant-spec-cons
+              "ExprCall"
+              (tc-type-list2
+                (tc-stdlib-box-name-type "Expr")
+                (tc-stdlib-name-type "ExprList"))
+              (tc-stdlib-variant-spec-cons
+                "ExprBegin"
+                (tc-type-list1 (tc-stdlib-name-type "ExprList"))
+                (tc-stdlib-variant-spec-cons
+                  "ExprQuote"
+                  (tc-type-list1 (tc-stdlib-box-name-type "Expr"))
+                  (tc-stdlib-variant-spec-cons
+                    "ExprQuasiquote"
+                    (tc-type-list1 (tc-stdlib-box-name-type "Expr"))
+                    (tc-stdlib-variant-spec-cons
+                      "ExprUnquote"
+                      (tc-type-list1 (tc-stdlib-box-name-type "Expr"))
+                      (tc-stdlib-variant-spec-cons
+                        "ExprUnquoteSplicing"
+                        (tc-type-list1 (tc-stdlib-box-name-type "Expr"))
+                        (TcStdlibVariantSpecNil)))))))))))))
+
+(define (tc-stdlib-sequence-fields [elem-name : String]) : TcStdlibFieldSpecList
+  (tc-stdlib-field-spec-cons
+    "items"
+    (tc-stdlib-array-name-type elem-name)
+    (tc-stdlib-field-spec-cons "len" (AstTyI64) (TcStdlibFieldSpecNil))))
+
+(define (tc-stdlib-type-info-specs) : TcStdlibVariantSpecList
+  (tc-stdlib-variant-spec-cons
+    "TypeInfoBuiltin"
+    (tc-type-list1 (AstTyString))
+    (tc-stdlib-variant-spec-cons
+      "TypeInfoArray"
+      (tc-type-list2 (tc-stdlib-box-name-type "TypeInfo") (AstTyI64))
+      (tc-stdlib-variant-spec-cons
+        "TypeInfoDynArray"
+        (tc-type-list1 (tc-stdlib-box-name-type "TypeInfo"))
+        (tc-stdlib-variant-spec-cons
+          "TypeInfoFunction"
+          (tc-type-list2
+            (tc-stdlib-name-type "TypeInfoList")
+            (tc-stdlib-box-name-type "TypeInfo"))
+          (tc-stdlib-variant-spec-cons
+            "TypeInfoTuple"
+            (tc-type-list1 (tc-stdlib-name-type "TypeInfoList"))
+            (tc-stdlib-variant-spec-cons
+              "TypeInfoStruct"
+              (tc-type-list2
+                (AstTyString)
+                (tc-stdlib-name-type "TypeFieldList"))
+              (tc-stdlib-variant-spec-cons
+                "TypeInfoEnum"
+                (tc-type-list2
+                  (AstTyString)
+                  (tc-stdlib-name-type "TypeVariantList"))
+                (tc-stdlib-variant-spec-cons
+                  "TypeInfoOpaque"
+                  (tc-type-list1 (AstTyString))
+                  (TcStdlibVariantSpecNil))))))))))
+
+(define (tc-stdlib-comptime-surface-ok [ctx : TcContext]) : ResultTcUnit
+  (if (not (tc-stdlib-comptime-present? ctx))
+    OkTcUnit
+    (match (tc-stdlib-check-comptime-metadata ctx)
+      [(OkTcUnit)
+        (match (tc-stdlib-check-enum ctx "Expr" (tc-stdlib-expr-specs))
+          [(OkTcUnit)
+            (match (tc-stdlib-check-struct
+              ctx
+              "ExprList"
+              (tc-stdlib-sequence-fields "Expr"))
+              [(OkTcUnit)
+                (match (tc-stdlib-check-struct
+                  ctx
+                  "ExprClause"
+                  (tc-stdlib-field-spec-cons
+                    "first"
+                    (tc-stdlib-name-type "Expr")
+                    (tc-stdlib-field-spec-cons
+                      "second"
+                      (tc-stdlib-name-type "Expr")
+                      (TcStdlibFieldSpecNil))))
+                  [(OkTcUnit)
+                    (match (tc-stdlib-check-struct
+                      ctx
+                      "ExprClauseList"
+                      (tc-stdlib-sequence-fields "ExprClause"))
+                      [(OkTcUnit)
+                        (match (tc-stdlib-check-struct
+                          ctx
+                          "TypeInfoList"
+                          (tc-stdlib-sequence-fields "TypeInfo"))
+                          [(OkTcUnit)
+                            (match (tc-stdlib-check-struct
+                              ctx
+                              "TypeField"
+                              (tc-stdlib-field-spec-cons
+                                "name"
+                                (AstTyString)
+                                (tc-stdlib-field-spec-cons
+                                  "ty"
+                                  (tc-stdlib-name-type "TypeInfo")
+                                  (TcStdlibFieldSpecNil))))
+                              [(OkTcUnit)
+                                (match (tc-stdlib-check-struct
+                                  ctx
+                                  "TypeFieldList"
+                                  (tc-stdlib-sequence-fields "TypeField"))
+                                  [(OkTcUnit)
+                                    (match (tc-stdlib-check-struct
+                                      ctx
+                                      "TypeVariantPayload"
+                                      (tc-stdlib-field-spec-cons
+                                        "ty"
+                                        (tc-stdlib-name-type "TypeInfo")
+                                        (TcStdlibFieldSpecNil)))
+                                      [(OkTcUnit)
+                                        (match (tc-stdlib-check-struct
+                                          ctx
+                                          "TypeVariantPayloadList"
+                                          (tc-stdlib-sequence-fields
+                                            "TypeVariantPayload"))
+                                          [(OkTcUnit)
+                                            (match (tc-stdlib-check-struct
+                                              ctx
+                                              "TypeVariant"
+                                              (tc-stdlib-field-spec-cons
+                                                "name"
+                                                (AstTyString)
+                                                (tc-stdlib-field-spec-cons
+                                                  "payloads"
+                                                  (tc-stdlib-name-type
+                                                    "TypeVariantPayloadList")
+                                                  (TcStdlibFieldSpecNil))))
+                                              [(OkTcUnit)
+                                                (match (tc-stdlib-check-struct
+                                                  ctx
+                                                  "TypeVariantList"
+                                                  (tc-stdlib-sequence-fields
+                                                    "TypeVariant"))
+                                                  [(OkTcUnit)
+                                                    (match (tc-stdlib-check-struct
+                                                      ctx
+                                                      "TypeParam"
+                                                      (tc-stdlib-field-spec-cons
+                                                        "name"
+                                                        (AstTyString)
+                                                        (tc-stdlib-field-spec-cons
+                                                          "ty"
+                                                          (tc-stdlib-name-type
+                                                            "TypeInfo")
+                                                          (TcStdlibFieldSpecNil))))
+                                                      [(OkTcUnit)
+                                                        (match (tc-stdlib-check-struct
+                                                          ctx
+                                                          "TypeParamList"
+                                                          (tc-stdlib-sequence-fields
+                                                            "TypeParam"))
+                                                          [(OkTcUnit)
+                                                            (tc-stdlib-check-enum
+                                                              ctx
+                                                              "TypeInfo"
+                                                              (tc-stdlib-type-info-specs))]
+                                                          [(ErrTcUnit message)
+                                                            (ErrTcUnit message)])]
+                                                      [(ErrTcUnit message)
+                                                        (ErrTcUnit message)])]
+                                                  [(ErrTcUnit message)
+                                                    (ErrTcUnit message)])]
+                                              [(ErrTcUnit message)
+                                                (ErrTcUnit message)])]
+                                          [(ErrTcUnit message)
+                                            (ErrTcUnit message)])]
+                                      [(ErrTcUnit message) (ErrTcUnit message)])]
+                                  [(ErrTcUnit message) (ErrTcUnit message)])]
+                              [(ErrTcUnit message) (ErrTcUnit message)])]
+                          [(ErrTcUnit message) (ErrTcUnit message)])]
+                      [(ErrTcUnit message) (ErrTcUnit message)])]
+                  [(ErrTcUnit message) (ErrTcUnit message)])]
+              [(ErrTcUnit message) (ErrTcUnit message)])]
+          [(ErrTcUnit message) (ErrTcUnit message)])]
+      [(ErrTcUnit message) (ErrTcUnit message)])))
+
 (define (tc-macro-helper-env [env : TcTypeEnv]) : TcTypeEnv
   (let
     [expr : AstType (AstTyExpr)]
@@ -4505,8 +5065,13 @@
           [(SomeI64 handle)
             (match (tc-nominal-owner-name ctx handle)
               [(OkTcString canonical-name)
-                (tc-resolved-nominal-type canonical-name handle)]
-              [(ErrTcString _) (tc-resolved-nominal-type lookup-name handle)])]
+                (match (tc-stdlib-comptime-syntax-type canonical-name)
+                  [(AstSomeType syntax-ty) syntax-ty]
+                  [(AstNoType) (tc-resolved-nominal-type canonical-name handle)])]
+              [(ErrTcString _)
+                (match (tc-stdlib-comptime-syntax-type lookup-name)
+                  [(AstSomeType syntax-ty) syntax-ty]
+                  [(AstNoType) (tc-resolved-nominal-type lookup-name handle)])])]
           [(NoneI64)
             (cond
               (string-eq name "Expr")
@@ -4568,15 +5133,21 @@
           [(SomeI64 handle)
             (match (tc-nominal-owner-name ctx handle)
               [(OkTcString canonical-name)
-                (tc-resolved-nominal-type-with-args
-                  canonical-name
-                  handle
-                  lifetimes)]
+                (match (tc-stdlib-comptime-syntax-type canonical-name)
+                  [(AstSomeType syntax-ty) syntax-ty]
+                  [(AstNoType)
+                    (tc-resolved-nominal-type-with-args
+                      canonical-name
+                      handle
+                      lifetimes)])]
               [(ErrTcString _)
-                (tc-resolved-nominal-type-with-args
-                  lookup-name
-                  handle
-                  lifetimes)])]
+                (match (tc-stdlib-comptime-syntax-type lookup-name)
+                  [(AstSomeType syntax-ty) syntax-ty]
+                  [(AstNoType)
+                    (tc-resolved-nominal-type-with-args
+                      lookup-name
+                      handle
+                      lifetimes)])])]
           [(NoneI64) (AstTyVarArgs (intern name) lifetimes)]))]))
 
 (define (tc-source-str-value-policy-message) : String
@@ -17770,16 +18341,39 @@
 (define (tc-macro-signature-type [ty : AstType]) : AstType
   (match ty
     [(AstTyVar name)
-      (cond
-        (= name (intern "Expr"))
-        (AstTyExpr)
-        (= name (intern "ExprList"))
-        (AstTyExprList)
-        (= name (intern "ExprClause"))
-        (tc-macro-expr-clause-type)
-        (= name (intern "ExprClauseList"))
-        (tc-macro-expr-clause-list-type)
-        ty)]
+      (match (tc-stdlib-comptime-syntax-type (intern-str name))
+        [(AstSomeType syntax-ty) syntax-ty]
+        [(AstNoType)
+          (cond
+            (= name (intern "Expr"))
+            (AstTyExpr)
+            (= name (intern "ExprList"))
+            (AstTyExprList)
+            (= name (intern "ExprClause"))
+            (tc-macro-expr-clause-type)
+            (= name (intern "ExprClauseList"))
+            (tc-macro-expr-clause-list-type)
+            ty)])]
+    [(AstTyVarArgs name _)
+      (match (tc-stdlib-comptime-syntax-type (intern-str name))
+        [(AstSomeType syntax-ty) syntax-ty]
+        [(AstNoType) ty])]
+    [(AstTyEnum name)
+      (match (tc-stdlib-comptime-syntax-type (intern-str name))
+        [(AstSomeType syntax-ty) syntax-ty]
+        [(AstNoType) ty])]
+    [(AstTyEnumArgs name _)
+      (match (tc-stdlib-comptime-syntax-type (intern-str name))
+        [(AstSomeType syntax-ty) syntax-ty]
+        [(AstNoType) ty])]
+    [(AstTyStruct name)
+      (match (tc-stdlib-comptime-syntax-type (intern-str name))
+        [(AstSomeType syntax-ty) syntax-ty]
+        [(AstNoType) ty])]
+    [(AstTyStructArgs name _)
+      (match (tc-stdlib-comptime-syntax-type (intern-str name))
+        [(AstSomeType syntax-ty) syntax-ty]
+        [(AstNoType) ty])]
     [_ ty]))
 
 (define (tc-check-defmacro-produced-type
@@ -24858,41 +25452,49 @@
                             (let
                               [ctx : TcContext
                                 (TcContext program symbols registries "")]
-                              (match (tc-build-top-env ctx program)
-                                [(OkTcEnv top-env)
-                                  (begin
-                                    (tc-hygiene-reset-active-top-env! top-env)
-                                    (cfg
-                                      compile-profile
-                                      (compiler-tc-profile-finish "macro_setup"))
-                                    (set!
-                                      macro-expand-ctfe-env-value
-                                      (tc-ctfe-env ctx))
-                                    (set! macro-expand-ctfe-env-ready true)
-                                    (cfg
-                                      compile-profile
-                                      (compiler-tc-profile-start))
-                                    (match (macro-expand-decls
-                                      ctx
-                                      top-env
-                                      decls
-                                      decls
-                                      (not has-defmacro))
-                                      [(OkMacroDecls ndecls)
-                                        (begin
-                                          (cfg
-                                            compile-profile
-                                            (compiler-tc-profile-finish
-                                              "macro_walk"))
-                                          (OkMacroExpand (ast-program ndecls)))]
-                                      [(ErrMacroDecls diag)
-                                        (begin
-                                          (cfg
-                                            compile-profile
-                                            (compiler-tc-profile-finish
-                                              "macro_walk"))
-                                          (ErrMacroExpand diag))]))]
-                                [(ErrTcEnv message)
+                              (match (tc-stdlib-comptime-surface-ok ctx)
+                                [(OkTcUnit)
+                                  (match (tc-build-top-env ctx program)
+                                    [(OkTcEnv top-env)
+                                      (begin
+                                        (tc-hygiene-reset-active-top-env!
+                                          top-env)
+                                        (cfg
+                                          compile-profile
+                                          (compiler-tc-profile-finish
+                                            "macro_setup"))
+                                        (set!
+                                          macro-expand-ctfe-env-value
+                                          (tc-ctfe-env ctx))
+                                        (set! macro-expand-ctfe-env-ready true)
+                                        (cfg
+                                          compile-profile
+                                          (compiler-tc-profile-start))
+                                        (match (macro-expand-decls
+                                          ctx
+                                          top-env
+                                          decls
+                                          decls
+                                          (not has-defmacro))
+                                          [(OkMacroDecls ndecls)
+                                            (begin
+                                              (cfg
+                                                compile-profile
+                                                (compiler-tc-profile-finish
+                                                  "macro_walk"))
+                                              (OkMacroExpand
+                                                (ast-program ndecls)))]
+                                          [(ErrMacroDecls diag)
+                                            (begin
+                                              (cfg
+                                                compile-profile
+                                                (compiler-tc-profile-finish
+                                                  "macro_walk"))
+                                              (ErrMacroExpand diag))]))]
+                                    [(ErrTcEnv message)
+                                      (ErrMacroExpand
+                                        (tc-diag-at-start message))])]
+                                [(ErrTcUnit message)
                                   (ErrMacroExpand (tc-diag-at-start message))])))]
                         [(ErrCompilerExports message)
                           (ErrMacroExpand (tc-diag-at-start message))])]
@@ -25783,31 +26385,36 @@
             [(OkCompilerExports _)
               (let
                 [ctx : TcContext (TcContext program symbols registries "")]
-                (match (tc-program-source-types-policy-ok ctx program)
+                (match (tc-stdlib-comptime-surface-ok ctx)
                   [(OkTcUnit)
-                    (match (tc-build-top-env ctx program)
-                      [(OkTcEnv top-env)
-                        (match program
-                          [(AstProgram decls-box)
-                            (let
-                              [decls : AstDeclList (box-get decls-box)]
-                              (begin
-                                (tc-hygiene-reset-active-top-env! top-env)
-                                (tc-clone-able-cache-populate! ctx)
-                                (match (tc-check-decls-with-paths
-                                  ctx
-                                  top-env
-                                  decls
-                                  paths
-                                  (CompilerTypecheckSummary 0 0 0))
-                                  [(OkCompilerTypecheck summary)
-                                    (OkCompilerTypecheckChecked
-                                      summary
+                    (match (tc-program-source-types-policy-ok ctx program)
+                      [(OkTcUnit)
+                        (match (tc-build-top-env ctx program)
+                          [(OkTcEnv top-env)
+                            (match program
+                              [(AstProgram decls-box)
+                                (let
+                                  [decls : AstDeclList (box-get decls-box)]
+                                  (begin
+                                    (tc-hygiene-reset-active-top-env! top-env)
+                                    (tc-clone-able-cache-populate! ctx)
+                                    (match (tc-check-decls-with-paths
                                       ctx
-                                      top-env)]
-                                  [(ErrCompilerTypecheck diag)
-                                    (ErrCompilerTypecheckChecked diag)])))])]
-                      [(ErrTcEnv message)
+                                      top-env
+                                      decls
+                                      paths
+                                      (CompilerTypecheckSummary 0 0 0))
+                                      [(OkCompilerTypecheck summary)
+                                        (OkCompilerTypecheckChecked
+                                          summary
+                                          ctx
+                                          top-env)]
+                                      [(ErrCompilerTypecheck diag)
+                                        (ErrCompilerTypecheckChecked diag)])))])]
+                          [(ErrTcEnv message)
+                            (ErrCompilerTypecheckChecked
+                              (tc-diag-at-start message))])]
+                      [(ErrTcUnit message)
                         (ErrCompilerTypecheckChecked (tc-diag-at-start message))])]
                   [(ErrTcUnit message)
                     (ErrCompilerTypecheckChecked (tc-diag-at-start message))]))]

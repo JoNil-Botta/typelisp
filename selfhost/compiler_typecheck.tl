@@ -5245,6 +5245,82 @@
       (compiler-typecheck-type-valued-comptime-scalar-arg-source)
       "comptime argument 'T' for function 'field-count' must be a type value such as `(type i64)`")))
 
+(define (compiler-typecheck-stdlib-comptime-expr-decl-source) : String
+  "(comptime-decl (:generated stdlib/comptime-well-known Expr \"v0\")
+  (defenum Expr
+    (ExprBool bool)
+    (ExprInt i64)
+    (ExprVar String)
+    (ExprSplice (Box Expr))
+    (ExprIf (Box Expr) (Box Expr) (Box Expr))
+    (ExprCall (Box Expr) ExprList)
+    (ExprBegin ExprList)
+    (ExprQuote (Box Expr))
+    (ExprQuasiquote (Box Expr))
+    (ExprUnquote (Box Expr))
+    (ExprUnquoteSplicing (Box Expr))))")
+
+(define (compiler-typecheck-stdlib-comptime-bad-expr-source) : String
+  "(module stdlib.comptime)
+(comptime-decl (:generated stdlib/comptime-well-known Expr \"v0\")
+  (defenum Expr
+    (ExprInt i64)))")
+
+(define (compiler-typecheck-stdlib-comptime-bad-expr-list-source) : String
+  (str-cat
+    "(module stdlib.comptime)\n"
+    (compiler-typecheck-stdlib-comptime-expr-decl-source)
+    "\n(comptime-decl (:generated stdlib/comptime-well-known ExprList \"v0\")
+  (defenum ExprList
+    (ExprListNil)
+    (ExprListCons Expr (Box ExprList))))"))
+
+(define (compiler-typecheck-stdlib-comptime-plain-expr-source) : String
+  "(module stdlib.comptime)
+(defenum Expr
+  (ExprBool bool)
+  (ExprInt i64)
+  (ExprVar String)
+  (ExprSplice (Box Expr))
+  (ExprIf (Box Expr) (Box Expr) (Box Expr))
+  (ExprCall (Box Expr) ExprList)
+  (ExprBegin ExprList)
+  (ExprQuote (Box Expr))
+  (ExprQuasiquote (Box Expr))
+  (ExprUnquote (Box Expr))
+  (ExprUnquoteSplicing (Box Expr)))")
+
+(define (compiler-typecheck-stdlib-comptime-stale-expr-source) : String
+  "(module stdlib.comptime)
+(comptime-decl (:generated stdlib/comptime-well-known Expr \"v1\")
+  (defenum Expr
+    (ExprBool bool)
+    (ExprInt i64)
+    (ExprVar String)
+    (ExprSplice (Box Expr))
+    (ExprIf (Box Expr) (Box Expr) (Box Expr))
+    (ExprCall (Box Expr) ExprList)
+    (ExprBegin ExprList)
+    (ExprQuote (Box Expr))
+    (ExprQuasiquote (Box Expr))
+    (ExprUnquote (Box Expr))
+    (ExprUnquoteSplicing (Box Expr))))")
+
+(define (compiler-typecheck-stdlib-comptime-surface-tests-ok?) : bool
+  (and
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-stdlib-comptime-bad-expr-source)
+      "typecheck: stdlib well-known type mismatch for stdlib.comptime.Expr: expected variant ExprBool at index 0")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-stdlib-comptime-bad-expr-list-source)
+      "typecheck: stdlib well-known type mismatch for stdlib.comptime.ExprList: expected defstruct")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-stdlib-comptime-plain-expr-source)
+      "typecheck: stdlib well-known type mismatch for stdlib.comptime.Expr: expected comptime-decl generated metadata stdlib/comptime-well-known \"v0\"")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-stdlib-comptime-stale-expr-source)
+      "typecheck: stdlib well-known type mismatch for stdlib.comptime.Expr: expected comptime-decl generated metadata stdlib/comptime-well-known \"v0\"")))
+
 (define (compiler-typecheck-comptime-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? "(define (main) : i64 (comptime (+ 1 2)))")
@@ -5267,7 +5343,8 @@
       "compile-time evaluation cannot reference runtime variable 'x'")
     (compiler-typecheck-error-ok?
       "(define (main) : i64 (comptime (< 1 2)))"
-      "typecheck: return type mismatch")))
+      "typecheck: return type mismatch")
+    (compiler-typecheck-stdlib-comptime-surface-tests-ok?)))
 
 ;; IO-builtin signature rules (#1042): whole-file helpers and file-handle status
 ;; primitives accept, plus wrong-argument, wrong-arity, and result-type-mismatch

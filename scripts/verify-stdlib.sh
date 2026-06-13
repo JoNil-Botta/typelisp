@@ -172,6 +172,7 @@ stdlib_manifest() {
     cat <<'EOF'
 arena.tl
 args.tl
+comptime.tl
 core_macros.tl
 io.tl
 io_caller_result.tl
@@ -225,6 +226,7 @@ stdlib_test_manifest() {
 stdlib/tests/arena_api.tl|42|-|-
 stdlib/tests/arena_patterns.tl|42|-|-|-|requires-stage0-symbol:with-escape
 stdlib/tests/args_api.tl|42|-|-|-
+stdlib/tests/comptime_api.tl|42|-|-|-
 stdlib/tests/str_cat_api.tl|42|-|-|-
 stdlib/tests/core_macros_runtime_import.tl|42|-|-|-
 stdlib/tests/string_edges.tl|42|-|-

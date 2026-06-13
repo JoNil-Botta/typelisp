@@ -1,5 +1,5 @@
 {
   "exit": 0,
-  "stdout_exact": "TypeLisp REPL. Type .help for commands.\ntl> tl> tl> ",
+  "stdout_exact": "TypeLisp REPL. Type .help for commands.\ntl> ... ... ",
   "stderr_contains": ["Error: incomplete REPL input at EOF"]
 }

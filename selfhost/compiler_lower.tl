@@ -24914,11 +24914,19 @@
 
 (define (lower-tail-call-indirect-supported?
   [ctx : TcContext]
+  [state : LowerState]
   [type-env : TcTypeEnv]
   [func-ty : AstType]
   [args : AstExprList]
-  [ret-ty : AstType]) : bool
-  (if (lower-tail-call-inline-aggregate-risk? ctx type-env args ret-ty)
+  [ret-ty : AstType]
+  [sret-var : i64]) : bool
+  (if (lower-tail-call-inline-aggregate-risk?
+    ctx
+    state
+    type-env
+    args
+    ret-ty
+    sret-var)
     false
     (match (tc-type-strip-region (tc-resolve-type ctx func-ty))
       [(AstTyFunc _ callee-ret)
@@ -24937,7 +24945,14 @@
   [origin : AstExpr]) : ResultLowerState
   (match (tc-expr ctx type-env callee)
     [(OkTcType func-ty)
-      (if (lower-tail-call-indirect-supported? ctx type-env func-ty args ret-ty)
+      (if (lower-tail-call-indirect-supported?
+        ctx
+        state
+        type-env
+        func-ty
+        args
+        ret-ty
+        sret-var)
         (match (lower-expr ctx state env type-env callee)
           [(OkLowerExpr lowered-func)
             (match lowered-func
@@ -24950,14 +24965,22 @@
                   args
                   lowered-func-ty)
                   [(OkLowerArgs args-state values)
-                    (OkLowerState
-                      (lower-state-emit-at-expr
-                        args-state
-                        (IrInstrTailCallIndirect
-                          func-value
-                          (compiler-ir-call-args-from-list values)
-                          ret-ty)
-                        origin))]
+                    (match (lower-tail-call-append-current-sret-arg
+                      ctx
+                      args-state
+                      values
+                      ret-ty
+                      sret-var)
+                      [(OkLowerArgs tail-state tail-values)
+                        (OkLowerState
+                          (lower-state-emit-at-expr
+                            tail-state
+                            (IrInstrTailCallIndirect
+                              func-value
+                              (compiler-ir-call-args-from-list tail-values)
+                              ret-ty)
+                            origin))]
+                      [(ErrLowerArgs message) (ErrLowerState message)])]
                   [(ErrLowerArgs message) (ErrLowerState message)])])]
           [(ErrLowerExpr message) (ErrLowerState message)])
         (lower-return-expr ctx state env type-env origin ret-ty sret-var))]
@@ -25300,12 +25323,32 @@
 
 (define (lower-tail-call-inline-aggregate-risk?
   [ctx : TcContext]
+  [state : LowerState]
   [type-env : TcTypeEnv]
   [args : AstExprList]
-  [ret-ty : AstType]) : bool
+  [ret-ty : AstType]
+  [sret-var : i64]) : bool
   (or
-    (lower-type-contains-inline-aggregate? ctx ret-ty)
+    ;; Aggregate returns do not make frame reuse unsafe when the current
+    ;; function has the caller-owned sret slot to forward to the callee.
+    (and
+      (< sret-var 0)
+      (lower-inline-aggregate-abi-copy-needed? ctx state ret-ty))
     (lower-expr-list-contains-inline-aggregate? ctx type-env args)))
+
+(define (lower-tail-call-append-current-sret-arg
+  [ctx : TcContext]
+  [state : LowerState]
+  [values : CompilerIrValueList]
+  [ret-ty : AstType]
+  [sret-var : i64]) : ResultLowerArgs
+  (if (and
+    (>= sret-var 0)
+    (lower-inline-aggregate-abi-copy-needed? ctx state ret-ty))
+    (OkLowerArgs
+      state
+      (lower-value-list-append-one values (IrValueVar sret-var)))
+    (OkLowerArgs state values)))
 
 (define (lower-tail-call
   [ctx : TcContext]
@@ -25325,7 +25368,14 @@
         ;; aggregates (sret/by-value risk); a broad inline-aggregates-mode guard
         ;; disabled tail-call optimization for every call (mode is always on),
         ;; losing TCO entirely (deep self-recursion, smoke shape failure).
-        (not (lower-tail-call-inline-aggregate-risk? ctx type-env args ret-ty))
+        (not
+          (lower-tail-call-inline-aggregate-risk?
+            ctx
+            state
+            type-env
+            args
+            ret-ty
+            sret-var))
         (lower-tail-call-direct-supported? ctx state env type-env name ret-ty))
         (match (lower-tail-call-args-for-target
           ctx
@@ -25335,14 +25385,22 @@
           name
           args)
           [(OkLowerArgs args-state values)
-            (OkLowerState
-              (lower-state-emit-at-expr
-                args-state
-                (IrInstrTailCall
-                  (lower-resolve-name args-state (intern-str name))
-                  (compiler-ir-call-args-from-list values)
-                  ret-ty)
-                origin))]
+            (match (lower-tail-call-append-current-sret-arg
+              ctx
+              args-state
+              values
+              ret-ty
+              sret-var)
+              [(OkLowerArgs tail-state tail-values)
+                (OkLowerState
+                  (lower-state-emit-at-expr
+                    tail-state
+                    (IrInstrTailCall
+                      (lower-resolve-name tail-state (intern-str name))
+                      (compiler-ir-call-args-from-list tail-values)
+                      ret-ty)
+                    origin))]
+              [(ErrLowerArgs message) (ErrLowerState message)])]
           [(ErrLowerArgs message) (ErrLowerState message)])
         (cond
           (lower-tail-call-var-unshadowed? env name)
@@ -32438,11 +32496,33 @@
 (define (step5 [x : i64]) : i64 (finish5 x 1 2 3 4))
 (define (main) : i64 (step5 32))")
 
+(define (compiler-lower-tail-aggregate-return-source) : String
+  "(defstruct Big (a i64) (b i64) (c i64))
+(define (finish [x : i64]) : Big
+  (Big x (+ x 1) (+ x 2)))
+(define (step [n : i64] [acc : i64]) : Big
+  (if (= n 0)
+    (finish acc)
+    (step (- n 1) (+ acc 1))))
+(define (main) : i64
+  (let ([value : Big (step 3 39)])
+    (struct-get value c)))")
+
 (define (compiler-lower-tail-indirect-source) : String
   "(define (finish [x : i64]) : i64 x)
 (define (step [f : (-> i64 i64)] [x : i64]) : i64
   (f x))
 (define (main) : i64 (step finish 42))")
+
+(define (compiler-lower-tail-indirect-aggregate-return-source) : String
+  "(defstruct Big (a i64) (b i64) (c i64))
+(define (finish [x : i64]) : Big
+  (Big x (+ x 1) (+ x 2)))
+(define (step [f : (-> i64 Big)] [x : i64]) : Big
+  (f x))
+(define (main) : i64
+  (let ([value : Big (step finish 39)])
+    (struct-get value c)))")
 
 (define (compiler-lower-tail-cleanup-source) : String
   "(define (finish [x : i64]) : i64 x)
@@ -32505,8 +32585,35 @@
             (= (lower-test-function-call-count functions "step5" "finish5") 0))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-tail-aggregate-return-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-tail-aggregate-return-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (= (lower-test-function-tail-call-count functions "step" "step") 1)
+            (= (lower-test-function-call-count functions "step" "step") 0)
+            (=
+              (lower-test-function-tail-call-count functions "step" "finish")
+              1)
+            (= (lower-test-function-call-count functions "step" "finish") 0))])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-tail-indirect-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-tail-indirect-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (=
+              (lower-test-function-indirect-tail-call-count functions "step")
+              1)
+            (= (lower-test-function-indirect-call-count functions "step") 0))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-tail-indirect-aggregate-return-shape-ok?) : bool
+  (match (lower-compiler-source
+    (compiler-lower-tail-indirect-aggregate-return-source))
     [(OkCompilerLower program _)
       (match program
         [(IrProgram _ functions _)
@@ -32536,7 +32643,9 @@
     (compiler-lower-tail-operand-shape-ok?)
     (compiler-lower-tail-direct-shape-ok?)
     (compiler-lower-tail-direct-stack-shape-ok?)
+    (compiler-lower-tail-aggregate-return-shape-ok?)
     (compiler-lower-tail-indirect-shape-ok?)
+    (compiler-lower-tail-indirect-aggregate-return-shape-ok?)
     (compiler-lower-tail-cleanup-shape-ok?)))
 
 ;; CTFE fold verification (#719): a folded `(comptime ...)` lowers to a literal,

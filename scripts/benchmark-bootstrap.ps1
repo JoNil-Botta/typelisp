@@ -4,7 +4,7 @@ param(
     [string]$Target = $env:TYPELISP_BOOTSTRAP_BENCH_TARGET,
     [string]$OptLevel = $env:TYPELISP_BOOTSTRAP_BENCH_OPT_LEVEL,
     [string]$WorkDir = $(Join-Path $PSScriptRoot "..\target\bootstrap-bench"),
-    [string]$Source = "src\cli.tl",
+    [string]$Source = "src\main.tl",
     [string]$StdlibRoot = "stdlib"
 )
 

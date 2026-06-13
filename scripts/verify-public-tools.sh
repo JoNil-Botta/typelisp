@@ -2483,7 +2483,7 @@ else
 (+ 1 2) ; trailing comment must not swallow generated wrapper delimiters
 .exit
 EOF
-    run_stdin selfhost-repl-scratch-smoke "$SELFHOST_REPL_SMOKE" "$COMPILER" repl --stdlib-root "$ROOT/stdlib"
+    run_stdin selfhost-repl-scratch-smoke "$SELFHOST_REPL_SMOKE" "$COMPILER" repl
     assert_success
     assert_contains "$out" "3"
     assert_stderr_empty

@@ -48,9 +48,9 @@ repr_c_f32_fields|tests/integration/repr_c_f32_fields.tl|42|-|-|-
 factorial|tests/integration/factorial.tl|120|-|-|-
 fibonacci|tests/integration/fibonacci.tl|13|-|-|-
 fixed_array|tests/integration/fixed_array.tl|42|-|-|-
-format_cst_integration|tests/integration/format_cst_integration.tl|42|-|-|format_cst.tl format_tokens.tl stdlib/io.tl stdlib/string.tl
-format_doc_integration|tests/integration/format_doc_integration.tl|42|-|-|format_doc.tl
-format_rules_integration|tests/integration/format_rules_integration.tl|42|-|-|format_rules.tl format_cst.tl format_tokens.tl format_doc.tl stdlib/io.tl stdlib/string.tl
+format_cst_integration|src/tests/format_cst_integration.tl|42|-|-|format_cst.tl format_tokens.tl stdlib/io.tl stdlib/string.tl
+format_doc_integration|src/tests/format_doc_integration.tl|42|-|-|format_doc.tl stdlib/io.tl stdlib/string.tl stdlib/text_buf.tl
+format_rules_integration|src/tests/format_rules_integration.tl|42|-|-|format_cst.tl format_doc.tl format_rules.tl format_tokens.tl stdlib/io.tl stdlib/string.tl stdlib/text_buf.tl
 function_pointer_values|tests/integration/function_pointer_values.tl|42|-|-|-
 functions|tests/integration/functions.tl|32|-|-|-
 global_initializer|tests/integration/global_initializer.tl|120|-|-|-

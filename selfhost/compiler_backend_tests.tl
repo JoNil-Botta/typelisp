@@ -4161,9 +4161,14 @@
           (compiler-backend-string-contains? asm "    call tl_oob_abort\n")
           (compiler-backend-string-contains?
             asm
-            "    leaq (%rax,%r8,8), %rax\n")
-          (compiler-backend-string-contains? asm "    movq %rax, (%r10)\n")
-          (compiler-backend-string-contains? asm "    movq (%r10), %rax\n")
+            "    movq %rax, (%r10,%r8,8)\n")
+          (compiler-backend-string-contains?
+            asm
+            "    movq (%r10,%r8,8), %rax\n")
+          (not
+            (compiler-backend-string-contains?
+              asm
+              "    leaq (%rax,%r8,8), %rax\n"))
           (not (compiler-backend-string-contains? asm "tl_oob_abort:\n")))
         (not
           (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]

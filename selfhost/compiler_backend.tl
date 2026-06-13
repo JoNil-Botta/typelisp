@@ -5535,6 +5535,20 @@
         (backend-cat5 "    imulq $" (int->string scale) ", " "%r8" "\n")
         "    addq %r8, %rax\n"))))
 
+(define (compiler-backend-gep-index-r10-asm [scale : i64]) : String
+  (if (= scale 1)
+    "    addq %r8, %r10\n"
+    (if (or (= scale 2) (= scale 4) (= scale 8))
+      (backend-cat4 "    leaq (%r10,%r8," (int->string scale) "), %r10\n" "")
+      (string-append
+        (backend-cat5 "    imulq $" (int->string scale) ", " "%r8" "\n")
+        "    addq %r8, %r10\n"))))
+
+(define (compiler-backend-gep-index-address-r10 [scale : i64]) : String
+  (if (or (= scale 1) (= scale 2) (= scale 4) (= scale 8))
+    (backend-cat4 "(%r10,%r8," (int->string scale) ")" "")
+    ""))
+
 (define (compiler-backend-gep-immediate-asm [disp : i64]) : CompilerBackendMaybeAsm
   (if (= disp 0)
     (CompilerBackendSomeAsm "")
@@ -5771,10 +5785,61 @@
                       "%rax")))))]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
     [(CompilerBackendNoI64)
-      (ErrCompilerBackend
-        (compiler-diagnostic-at-start
-          ""
-          "backend: non-immediate fused gep load"))]))
+      (let
+        [scale : i64 (compiler-backend-type-size elem-ty)]
+        [addr : String (compiler-backend-gep-index-address-r10 scale)]
+        [addr-asm : String
+          (if (string-eq addr "")
+            (compiler-backend-gep-index-r10-asm scale)
+            "")]
+        [load-addr : String
+          (if (string-eq addr "")
+            "(%r10)"
+            addr)]
+        (match (compiler-backend-emit-load-value-with-plan
+          assignments
+          base
+          "%r10")
+          [(OkCompilerBackend base-asm)
+            (match (compiler-backend-emit-load-value-with-plan
+              assignments
+              offset
+              "%r8")
+              [(OkCompilerBackend offset-asm)
+                (OkCompilerBackend
+                  (if (compiler-backend-float-type? load-ty)
+                    (string-append
+                      base-asm
+                      (string-append
+                        offset-asm
+                        (string-append
+                          addr-asm
+                          (string-append
+                            (compiler-backend-emit-load-float-memory
+                              load-addr
+                              "%xmm0"
+                              load-ty)
+                            (compiler-backend-emit-store-float-var-with-plan
+                              assignments
+                              dst
+                              "%xmm0"
+                              load-ty)))))
+                    (string-append
+                      base-asm
+                      (string-append
+                        offset-asm
+                        (string-append
+                          addr-asm
+                          (string-append
+                            (compiler-backend-emit-load-memory
+                              load-addr
+                              load-ty)
+                            (compiler-backend-emit-store-var-with-plan
+                              assignments
+                              dst
+                              "%rax")))))))]
+              [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]))
 
 (define (compiler-backend-emit-store-ptr
   [assignments : CompilerRegAssignmentList]
@@ -5855,10 +5920,66 @@
                   [(ErrCompilerBackend message) (ErrCompilerBackend message)])])]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
     [(CompilerBackendNoI64)
-      (ErrCompilerBackend
-        (compiler-diagnostic-at-start
-          ""
-          "backend: non-immediate fused gep store"))]))
+      (let
+        [scale : i64 (compiler-backend-type-size elem-ty)]
+        [addr : String (compiler-backend-gep-index-address-r10 scale)]
+        [addr-asm : String
+          (if (string-eq addr "")
+            (compiler-backend-gep-index-r10-asm scale)
+            "")]
+        [store-addr : String
+          (if (string-eq addr "")
+            "(%r10)"
+            addr)]
+        (match (compiler-backend-emit-load-value-with-plan
+          assignments
+          base
+          "%r10")
+          [(OkCompilerBackend base-asm)
+            (match (compiler-backend-emit-load-value-with-plan
+              assignments
+              offset
+              "%r8")
+              [(OkCompilerBackend offset-asm)
+                (match (compiler-backend-emit-store-immediate-to-memory
+                  value
+                  store-addr
+                  store-ty)
+                  [(CompilerBackendSomeAsm store-asm)
+                    (OkCompilerBackend
+                      (string-append
+                        base-asm
+                        (string-append
+                          offset-asm
+                          (string-append addr-asm store-asm))))]
+                  [(CompilerBackendNoAsm)
+                    (match (compiler-backend-emit-load-typed-value-with-plan
+                      assignments
+                      value
+                      store-ty
+                      program-index)
+                      [(OkCompilerBackend value-asm)
+                        (OkCompilerBackend
+                          (string-append
+                            base-asm
+                            (string-append
+                              offset-asm
+                              (string-append
+                                addr-asm
+                                (string-append
+                                  value-asm
+                                  (if (compiler-backend-float-type? store-ty)
+                                    (compiler-backend-emit-store-xmm-to-memory
+                                      store-addr
+                                      "%xmm0"
+                                      store-ty)
+                                    (compiler-backend-emit-store-rax-to-memory
+                                      store-addr
+                                      store-ty)))))))]
+                      [(ErrCompilerBackend message)
+                        (ErrCompilerBackend message)])])]
+              [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]))
 
 (define (compiler-backend-float-precision-cast-asm
   [from-ty : AstType]
@@ -11911,28 +12032,285 @@
                       use-counts
                       buf)])]
               [(CompilerBackendNoI64)
-                (compiler-backend-emit-instrs-normal
-                  target
-                  function
-                  source-function
-                  blocks
-                  current-label
-                  fallthrough
-                  instr
-                  (box-get rest)
-                  assignments
-                  vars
-                  types
-                  global-types
-                  ret-ty
-                  plan
-                  functions
-                  externs
-                  program-index
-                  spans
-                  func-diag
-                  use-counts
-                  buf)])
+                (match (box-get rest)
+                  [(IrInstrCons next after-gep)
+                    (match next
+                      [(IrInstrMov ptr-var src _)
+                        (if (and
+                          (compiler-backend-branch-uses-var? src gep-dst)
+                          (compiler-backend-var-single-use? use-counts ptr-var))
+                          (match (box-get after-gep)
+                            [(IrInstrCons maybe-store after-store)
+                              (match maybe-store
+                                [(IrInstrStorePtr dst value store-ty)
+                                  (if (compiler-backend-branch-uses-var?
+                                    dst
+                                    ptr-var)
+                                    (compiler-backend-emit-fused-gep-store-rest
+                                      target
+                                      function
+                                      source-function
+                                      blocks
+                                      current-label
+                                      fallthrough
+                                      gep-dst
+                                      base
+                                      offset
+                                      elem-ty
+                                      value
+                                      store-ty
+                                      (box-get after-store)
+                                      assignments
+                                      vars
+                                      types
+                                      global-types
+                                      ret-ty
+                                      plan
+                                      functions
+                                      externs
+                                      program-index
+                                      spans
+                                      func-diag
+                                      use-counts
+                                      buf)
+                                    (compiler-backend-emit-instrs-normal
+                                      target
+                                      function
+                                      source-function
+                                      blocks
+                                      current-label
+                                      fallthrough
+                                      instr
+                                      (box-get rest)
+                                      assignments
+                                      vars
+                                      types
+                                      global-types
+                                      ret-ty
+                                      plan
+                                      functions
+                                      externs
+                                      program-index
+                                      spans
+                                      func-diag
+                                      use-counts
+                                      buf))]
+                                [_
+                                  (compiler-backend-emit-instrs-normal
+                                    target
+                                    function
+                                    source-function
+                                    blocks
+                                    current-label
+                                    fallthrough
+                                    instr
+                                    (box-get rest)
+                                    assignments
+                                    vars
+                                    types
+                                    global-types
+                                    ret-ty
+                                    plan
+                                    functions
+                                    externs
+                                    program-index
+                                    spans
+                                    func-diag
+                                    use-counts
+                                    buf)])]
+                            [_
+                              (compiler-backend-emit-instrs-normal
+                                target
+                                function
+                                source-function
+                                blocks
+                                current-label
+                                fallthrough
+                                instr
+                                (box-get rest)
+                                assignments
+                                vars
+                                types
+                                global-types
+                                ret-ty
+                                plan
+                                functions
+                                externs
+                                program-index
+                                spans
+                                func-diag
+                                use-counts
+                                buf)])
+                          (compiler-backend-emit-instrs-normal
+                            target
+                            function
+                            source-function
+                            blocks
+                            current-label
+                            fallthrough
+                            instr
+                            (box-get rest)
+                            assignments
+                            vars
+                            types
+                            global-types
+                            ret-ty
+                            plan
+                            functions
+                            externs
+                            program-index
+                            spans
+                            func-diag
+                            use-counts
+                            buf))]
+                      [(IrInstrLoad load-dst src load-ty)
+                        (if (compiler-backend-branch-uses-var? src gep-dst)
+                          (compiler-backend-emit-fused-gep-load-rest
+                            target
+                            function
+                            source-function
+                            blocks
+                            current-label
+                            fallthrough
+                            gep-dst
+                            base
+                            offset
+                            elem-ty
+                            load-dst
+                            load-ty
+                            (box-get after-gep)
+                            assignments
+                            vars
+                            types
+                            global-types
+                            ret-ty
+                            plan
+                            functions
+                            externs
+                            program-index
+                            spans
+                            func-diag
+                            use-counts
+                            buf)
+                          (compiler-backend-emit-instrs-normal
+                            target
+                            function
+                            source-function
+                            blocks
+                            current-label
+                            fallthrough
+                            instr
+                            (box-get rest)
+                            assignments
+                            vars
+                            types
+                            global-types
+                            ret-ty
+                            plan
+                            functions
+                            externs
+                            program-index
+                            spans
+                            func-diag
+                            use-counts
+                            buf))]
+                      [(IrInstrStorePtr dst value store-ty)
+                        (if (compiler-backend-branch-uses-var? dst gep-dst)
+                          (compiler-backend-emit-fused-gep-store-rest
+                            target
+                            function
+                            source-function
+                            blocks
+                            current-label
+                            fallthrough
+                            gep-dst
+                            base
+                            offset
+                            elem-ty
+                            value
+                            store-ty
+                            (box-get after-gep)
+                            assignments
+                            vars
+                            types
+                            global-types
+                            ret-ty
+                            plan
+                            functions
+                            externs
+                            program-index
+                            spans
+                            func-diag
+                            use-counts
+                            buf)
+                          (compiler-backend-emit-instrs-normal
+                            target
+                            function
+                            source-function
+                            blocks
+                            current-label
+                            fallthrough
+                            instr
+                            (box-get rest)
+                            assignments
+                            vars
+                            types
+                            global-types
+                            ret-ty
+                            plan
+                            functions
+                            externs
+                            program-index
+                            spans
+                            func-diag
+                            use-counts
+                            buf))]
+                      [_
+                        (compiler-backend-emit-instrs-normal
+                          target
+                          function
+                          source-function
+                          blocks
+                          current-label
+                          fallthrough
+                          instr
+                          (box-get rest)
+                          assignments
+                          vars
+                          types
+                          global-types
+                          ret-ty
+                          plan
+                          functions
+                          externs
+                          program-index
+                          spans
+                          func-diag
+                          use-counts
+                          buf)])]
+                  [_
+                    (compiler-backend-emit-instrs-normal
+                      target
+                      function
+                      source-function
+                      blocks
+                      current-label
+                      fallthrough
+                      instr
+                      (box-get rest)
+                      assignments
+                      vars
+                      types
+                      global-types
+                      ret-ty
+                      plan
+                      functions
+                      externs
+                      program-index
+                      spans
+                      func-diag
+                      use-counts
+                      buf)])])
             (compiler-backend-emit-instrs-normal
               target
               function

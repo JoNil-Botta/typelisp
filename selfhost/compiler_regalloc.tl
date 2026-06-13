@@ -2894,17 +2894,18 @@
       CompilerRegIntervalNil
       (compiler-reg-var-types-list type-info))))
 
-;; --- stack-slot compaction (#2598 slice 1) ---------------------------------
+;; --- stack-slot compaction and storage coloring (#2598) ---------------------
 ;; One frame slot per raw IR variable wastes most of the frame once register
-;; allocation has moved many values into registers. This slice does not share
-;; live ranges yet; it renumbers stack-resident scalar variables into a dense
-;; frame-slot prefix after regalloc, preserving parameter ids for the prologue
-;; spill contract. Variables that already have a register home receive free
-;; non-slot ids, and stack-homed register groups are remapped by their word0 id;
-;; the backend places word1 in the matching second var-region. Plans with no
-;; intervals (the stack-only opt0/opt1 path skips liveness) pass through
-;; unchanged. The result's slot count replaces the raw var count in the backend's
-;; frame layout.
+;; allocation has moved many values into registers. The scalar pass renumbers
+;; stack-resident scalar variables into a dense frame-slot prefix after regalloc,
+;; preserving parameter ids for the prologue spill contract. A second pass colors
+;; contiguous inline-storage ranges, sharing those range slots when their
+;; AddrOf/Gep-derived pointer lifetimes are disjoint. Variables that already
+;; have a register home receive free non-slot ids, and stack-homed register
+;; groups are remapped by their word0 id; the backend places word1 in the
+;; matching second var-region. Plans with no intervals (the stack-only opt0/opt1
+;; path skips liveness) pass through unchanged. The result's slot count replaces
+;; the raw var count in the backend's frame layout.
 (defenum CompilerRegColoring
   (CompilerRegColoringNone)
   (CompilerRegColoringRemap (Array i64) i64))
@@ -3119,13 +3120,820 @@
                 next-used
                 remap))))])))
 
+(define (compiler-reg-color-fill-interval-bounds
+  [intervals : CompilerRegIntervalList]
+  [starts : (Array i64)]
+  [ends : (Array i64)]) : unit
+  (match intervals
+    [(CompilerRegIntervalNil) unit]
+    [(CompilerRegIntervalCons head rest)
+      (begin
+        (match head
+          [(CompilerRegInterval var start end)
+            (if (and (>= var 0) (< var (array-length starts)))
+              (begin
+                (array-set! starts var start)
+                (array-set! ends var end))
+              unit)])
+        (compiler-reg-color-fill-interval-bounds (box-get rest) starts ends))]))
+
+(define (compiler-reg-color-mark-storage-vars
+  [range-of-var : (Array i64)]
+  [first : i64]
+  [count : i64]
+  [range-id : i64]) : unit
+  (let
+    [i : i64 0]
+    (while (< i count)
+      (begin
+        (if (and (>= (+ first i) 0) (< (+ first i) (array-length range-of-var)))
+          (array-set! range-of-var (+ first i) range-id)
+          unit)
+        (set! i (+ i 1))))))
+
+(define (compiler-reg-color-detect-storage-seq
+  [instrs : CompilerIrInstrSeq]
+  [range-of-var : (Array i64)]
+  [range-base : (Array i64)]
+  [range-size : (Array i64)]
+  [range-count : i64]) : i64
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [len : i64 (compiler-ir-instr-seq-count instrs)]
+    [i : i64 0]
+    [run-first : i64 (- 0 1)]
+    [run-last : i64 (- 0 1)]
+    [run-count : i64 0]
+    [ranges : i64 range-count]
+    (begin
+      (while (< i len)
+        (begin
+          (match (array-ref slots i)
+            [(IrInstrAlloc dst _)
+              (if (or (= run-count 0) (= dst (+ run-last 1)))
+                (begin
+                  (if (= run-count 0)
+                    (set! run-first dst)
+                    unit)
+                  (set! run-last dst)
+                  (set! run-count (+ run-count 1)))
+                (begin
+                  (set! run-first dst)
+                  (set! run-last dst)
+                  (set! run-count 1)))]
+            [(IrInstrAddrOf _ src)
+              (begin
+                (if (and
+                  (> run-count 0)
+                  (= src run-last)
+                  (= run-first (+ (- src run-count) 1))
+                  (< ranges (array-length range-base)))
+                  (begin
+                    (array-set! range-base ranges src)
+                    (array-set! range-size ranges run-count)
+                    (compiler-reg-color-mark-storage-vars
+                      range-of-var
+                      run-first
+                      run-count
+                      ranges)
+                    (set! ranges (+ ranges 1)))
+                  unit)
+                (set! run-first (- 0 1))
+                (set! run-last (- 0 1))
+                (set! run-count 0))]
+            [_
+              (begin
+                (set! run-first (- 0 1))
+                (set! run-last (- 0 1))
+                (set! run-count 0))])
+          (set! i (+ i 1))))
+      ranges)))
+
+(define (compiler-reg-color-detect-storage-blocks
+  [blocks : CompilerIrBlockList]
+  [range-of-var : (Array i64)]
+  [range-base : (Array i64)]
+  [range-size : (Array i64)]
+  [range-count : i64]) : i64
+  (match blocks
+    [(IrBlockNil) range-count]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (compiler-reg-color-detect-storage-blocks
+            (box-get rest)
+            range-of-var
+            range-base
+            range-size
+            (compiler-reg-color-detect-storage-seq
+              instrs
+              range-of-var
+              range-base
+              range-size
+              range-count))])]
+    [(IrBlockArray seq)
+      (let
+        [i : i64 0]
+        [count : i64 range-count]
+        (begin
+          (while (< i (compiler-ir-block-seq-count seq))
+            (begin
+              (match (compiler-ir-block-seq-ref seq i)
+                [(IrBlock _ instrs)
+                  (set!
+                    count
+                    (compiler-reg-color-detect-storage-seq
+                      instrs
+                      range-of-var
+                      range-base
+                      range-size
+                      count))])
+              (set! i (+ i 1))))
+          count))]))
+
+(define (compiler-reg-color-value-root
+  [roots : (Array i64)]
+  [value : CompilerIrValue]) : i64
+  (match value
+    [(IrValueVar var)
+      (if (and (>= var 0) (< var (array-length roots)))
+        (array-ref roots var)
+        (- 0 1))]
+    [_ (- 0 1)]))
+
+(define (compiler-reg-color-merge-root [acc : i64] [root : i64]) : i64
+  (cond (< root 0) (- 0 1) (< acc 0) root (= acc root) root (- 0 2)))
+
+(define (compiler-reg-color-value-list-root
+  [roots : (Array i64)]
+  [values : CompilerIrValueList]
+  [acc : i64]) : i64
+  (match values
+    [(IrValueNil) acc]
+    [(IrValueCons value rest)
+      (let
+        [next : i64
+          (compiler-reg-color-merge-root
+            acc
+            (compiler-reg-color-value-root roots value))]
+        (if (= next (- 0 1))
+          (- 0 1)
+          (if (= next (- 0 2))
+            (- 0 2)
+            (compiler-reg-color-value-list-root roots (box-get rest) next))))]))
+
+(define (compiler-reg-color-phi-root
+  [roots : (Array i64)]
+  [inputs : CompilerIrPhiInputList]
+  [acc : i64]) : i64
+  (match inputs
+    [(IrPhiInputNil) acc]
+    [(IrPhiInputCons value _ rest)
+      (let
+        [next : i64
+          (compiler-reg-color-merge-root
+            acc
+            (compiler-reg-color-value-root roots value))]
+        (if (= next (- 0 1))
+          (- 0 1)
+          (if (= next (- 0 2))
+            (- 0 2)
+            (compiler-reg-color-phi-root roots (box-get rest) next))))]))
+
+(define (compiler-reg-color-set-root!
+  [roots : (Array i64)]
+  [invalid : (Array bool)]
+  [dst : i64]
+  [root : i64]) : bool
+  (if (or (< root 0) (< dst 0) (>= dst (array-length roots)))
+    false
+    (let
+      [old : i64 (array-ref roots dst)]
+      (if (= old root)
+        false
+        (if (< old 0)
+          (begin
+            (array-set! roots dst root)
+            true)
+          (begin
+            (if (< old (array-length invalid))
+              (array-set! invalid old true)
+              unit)
+            (if (< root (array-length invalid))
+              (array-set! invalid root true)
+              unit)
+            (array-set! roots dst (- 0 2))
+            true))))))
+
+(define (compiler-reg-color-propagate-root-instr
+  [instr : CompilerIrInstr]
+  [range-of-var : (Array i64)]
+  [roots : (Array i64)]
+  [invalid : (Array bool)]) : bool
+  (match instr
+    [(IrInstrAddrOf dst src)
+      (if (and (>= src 0) (< src (array-length range-of-var)))
+        (compiler-reg-color-set-root!
+          roots
+          invalid
+          dst
+          (array-ref range-of-var src))
+        false)]
+    [(IrInstrGep dst base _ _)
+      (compiler-reg-color-set-root!
+        roots
+        invalid
+        dst
+        (compiler-reg-color-value-root roots base))]
+    [(IrInstrMov dst value _)
+      (compiler-reg-color-set-root!
+        roots
+        invalid
+        dst
+        (compiler-reg-color-value-root roots value))]
+    [(IrInstrPhi dst inputs _)
+      (compiler-reg-color-set-root!
+        roots
+        invalid
+        dst
+        (compiler-reg-color-phi-root roots inputs (- 0 1)))]
+    [(IrInstrSelect dst _ true-value false-value _ _)
+      (let
+        [left : i64 (compiler-reg-color-value-root roots true-value)]
+        [right : i64 (compiler-reg-color-value-root roots false-value)]
+        (if (and (>= left 0) (= left right))
+          (compiler-reg-color-set-root! roots invalid dst left)
+          false))]
+    [_ false]))
+
+(define (compiler-reg-color-propagate-root-seq
+  [instrs : CompilerIrInstrSeq]
+  [range-of-var : (Array i64)]
+  [roots : (Array i64)]
+  [invalid : (Array bool)]) : bool
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [len : i64 (compiler-ir-instr-seq-count instrs)]
+    [i : i64 0]
+    [changed : bool false]
+    (begin
+      (while (< i len)
+        (begin
+          (if (compiler-reg-color-propagate-root-instr
+            (array-ref slots i)
+            range-of-var
+            roots
+            invalid)
+            (set! changed true)
+            unit)
+          (set! i (+ i 1))))
+      changed)))
+
+(define (compiler-reg-color-propagate-root-blocks
+  [blocks : CompilerIrBlockList]
+  [range-of-var : (Array i64)]
+  [roots : (Array i64)]
+  [invalid : (Array bool)]) : bool
+  (match blocks
+    [(IrBlockNil) false]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (let
+            [head : bool
+              (compiler-reg-color-propagate-root-seq
+                instrs
+                range-of-var
+                roots
+                invalid)]
+            [tail : bool
+              (compiler-reg-color-propagate-root-blocks
+                (box-get rest)
+                range-of-var
+                roots
+                invalid)]
+            (or head tail))])]
+    [(IrBlockArray seq)
+      (let
+        [i : i64 0]
+        [changed : bool false]
+        (begin
+          (while (< i (compiler-ir-block-seq-count seq))
+            (begin
+              (match (compiler-ir-block-seq-ref seq i)
+                [(IrBlock _ instrs)
+                  (if (compiler-reg-color-propagate-root-seq
+                    instrs
+                    range-of-var
+                    roots
+                    invalid)
+                    (set! changed true)
+                    unit)])
+              (set! i (+ i 1))))
+          changed))]))
+
+(define (compiler-reg-color-propagate-roots
+  [blocks : CompilerIrBlockList]
+  [range-of-var : (Array i64)]
+  [roots : (Array i64)]
+  [invalid : (Array bool)]) : unit
+  (let
+    [changed : bool true]
+    [rounds : i64 0]
+    [limit : i64 (array-length roots)]
+    (while (and changed (< rounds limit))
+      (begin
+        (set!
+          changed
+          (compiler-reg-color-propagate-root-blocks
+            blocks
+            range-of-var
+            roots
+            invalid))
+        (set! rounds (+ rounds 1))))))
+
+(define (compiler-reg-color-invalidate-root!
+  [invalid : (Array bool)]
+  [root : i64]) : unit
+  (if (and (>= root 0) (< root (array-length invalid)))
+    (array-set! invalid root true)
+    unit))
+
+(define (compiler-reg-color-invalidate-value!
+  [roots : (Array i64)]
+  [invalid : (Array bool)]
+  [value : CompilerIrValue]) : unit
+  (compiler-reg-color-invalidate-root!
+    invalid
+    (compiler-reg-color-value-root roots value)))
+
+(define (compiler-reg-color-invalidate-maybe-value!
+  [roots : (Array i64)]
+  [invalid : (Array bool)]
+  [value : CompilerIrMaybeValue]) : unit
+  (match value
+    [(IrNoValue) unit]
+    [(IrSomeValue inner)
+      (compiler-reg-color-invalidate-value! roots invalid inner)]))
+
+(define (compiler-reg-color-invalidate-value-list!
+  [roots : (Array i64)]
+  [invalid : (Array bool)]
+  [values : CompilerIrValueList]) : unit
+  (match values
+    [(IrValueNil) unit]
+    [(IrValueCons value rest)
+      (begin
+        (compiler-reg-color-invalidate-value! roots invalid value)
+        (compiler-reg-color-invalidate-value-list! roots invalid (box-get rest)))]))
+
+(define (compiler-reg-color-invalidate-call-args!
+  [roots : (Array i64)]
+  [invalid : (Array bool)]
+  [args : CompilerIrCallArgs]) : unit
+  (match args
+    [(IrCallArgsNil) unit]
+    [(IrCallArgsOne a) (compiler-reg-color-invalidate-value! roots invalid a)]
+    [(IrCallArgsTwo a b)
+      (begin
+        (compiler-reg-color-invalidate-value! roots invalid a)
+        (compiler-reg-color-invalidate-value! roots invalid b))]
+    [(IrCallArgsArray items)
+      (let
+        [i : i64 0]
+        [len : i64 (array-length items)]
+        (while (< i len)
+          (begin
+            (compiler-reg-color-invalidate-value!
+              roots
+              invalid
+              (array-ref items i))
+            (set! i (+ i 1)))))]))
+
+(define (compiler-reg-color-invalidate-phi!
+  [roots : (Array i64)]
+  [invalid : (Array bool)]
+  [dst-root : i64]
+  [inputs : CompilerIrPhiInputList]) : unit
+  (match inputs
+    [(IrPhiInputNil) unit]
+    [(IrPhiInputCons value _ rest)
+      (let
+        [root : i64 (compiler-reg-color-value-root roots value)]
+        (begin
+          (if (and (>= root 0) (not (= root dst-root)))
+            (compiler-reg-color-invalidate-root! invalid root)
+            unit)
+          (compiler-reg-color-invalidate-phi!
+            roots
+            invalid
+            dst-root
+            (box-get rest))))]))
+
+(define (compiler-reg-color-invalidate-instr!
+  [instr : CompilerIrInstr]
+  [roots : (Array i64)]
+  [invalid : (Array bool)]) : unit
+  (match instr
+    [(IrInstrMov dst value _)
+      (let
+        [root : i64 (compiler-reg-color-value-root roots value)]
+        (if (and
+          (>= root 0)
+          (or
+            (>= dst (array-length roots))
+            (not (= (array-ref roots dst) root))))
+          (compiler-reg-color-invalidate-root! invalid root)
+          unit))]
+    [(IrInstrGep dst base _ _)
+      (let
+        [root : i64 (compiler-reg-color-value-root roots base)]
+        (if (and
+          (>= root 0)
+          (or
+            (>= dst (array-length roots))
+            (not (= (array-ref roots dst) root))))
+          (compiler-reg-color-invalidate-root! invalid root)
+          unit))]
+    [(IrInstrStorePtr dst src _)
+      (compiler-reg-color-invalidate-value! roots invalid src)]
+    [(IrInstrBoundsCheck index length _)
+      (begin
+        (compiler-reg-color-invalidate-value! roots invalid index)
+        (compiler-reg-color-invalidate-value! roots invalid length))]
+    [(IrInstrCast _ src _ _)
+      (compiler-reg-color-invalidate-value! roots invalid src)]
+    [(IrInstrBinOp _ _ lhs rhs _)
+      (begin
+        (compiler-reg-color-invalidate-value! roots invalid lhs)
+        (compiler-reg-color-invalidate-value! roots invalid rhs))]
+    [(IrInstrUnOp _ _ value _)
+      (compiler-reg-color-invalidate-value! roots invalid value)]
+    [(IrInstrSplat _ value _ _)
+      (compiler-reg-color-invalidate-value! roots invalid value)]
+    [(IrInstrVectorBinOp _ _ lhs rhs _ _)
+      (begin
+        (compiler-reg-color-invalidate-value! roots invalid lhs)
+        (compiler-reg-color-invalidate-value! roots invalid rhs))]
+    [(IrInstrVectorReduce _ _ src _ _)
+      (compiler-reg-color-invalidate-value! roots invalid src)]
+    [(IrInstrVectorCompare _ _ lhs rhs _ _)
+      (begin
+        (compiler-reg-color-invalidate-value! roots invalid lhs)
+        (compiler-reg-color-invalidate-value! roots invalid rhs))]
+    [(IrInstrMaskBinOp _ _ lhs rhs _)
+      (begin
+        (compiler-reg-color-invalidate-value! roots invalid lhs)
+        (compiler-reg-color-invalidate-value! roots invalid rhs))]
+    [(IrInstrMaskNot _ src _)
+      (compiler-reg-color-invalidate-value! roots invalid src)]
+    [(IrInstrMaskReduce _ _ src _)
+      (compiler-reg-color-invalidate-value! roots invalid src)]
+    [(IrInstrSelect dst mask true-value false-value _ _)
+      (let
+        [left : i64 (compiler-reg-color-value-root roots true-value)]
+        [right : i64 (compiler-reg-color-value-root roots false-value)]
+        [dst-root : i64
+          (if (and (>= dst 0) (< dst (array-length roots)))
+            (array-ref roots dst)
+            (- 0 1))]
+        (begin
+          (compiler-reg-color-invalidate-value! roots invalid mask)
+          (if (and (>= left 0) (not (= left dst-root)))
+            (compiler-reg-color-invalidate-root! invalid left)
+            unit)
+          (if (and (>= right 0) (not (= right dst-root)))
+            (compiler-reg-color-invalidate-root! invalid right)
+            unit)))]
+    [(IrInstrVectorLoad _ base index _ _)
+      (begin
+        (compiler-reg-color-invalidate-value! roots invalid base)
+        (compiler-reg-color-invalidate-value! roots invalid index))]
+    [(IrInstrVectorStore base index value _ _)
+      (begin
+        (compiler-reg-color-invalidate-value! roots invalid base)
+        (compiler-reg-color-invalidate-value! roots invalid index)
+        (compiler-reg-color-invalidate-value! roots invalid value))]
+    [(IrInstrPredicatedStore base index value mask _ _)
+      (begin
+        (compiler-reg-color-invalidate-value! roots invalid base)
+        (compiler-reg-color-invalidate-value! roots invalid index)
+        (compiler-reg-color-invalidate-value! roots invalid value)
+        (compiler-reg-color-invalidate-value! roots invalid mask))]
+    [(IrInstrPredicatedLoad _ base index mask _ _)
+      (begin
+        (compiler-reg-color-invalidate-value! roots invalid base)
+        (compiler-reg-color-invalidate-value! roots invalid index)
+        (compiler-reg-color-invalidate-value! roots invalid mask))]
+    [(IrInstrTailMask _ index length _)
+      (begin
+        (compiler-reg-color-invalidate-value! roots invalid index)
+        (compiler-reg-color-invalidate-value! roots invalid length))]
+    [(IrInstrCpuId _ leaf subleaf _)
+      (begin
+        (compiler-reg-color-invalidate-value! roots invalid leaf)
+        (compiler-reg-color-invalidate-value! roots invalid subleaf))]
+    [(IrInstrXgetbv _ index)
+      (compiler-reg-color-invalidate-value! roots invalid index)]
+    [(IrInstrSyscall _ args)
+      (compiler-reg-color-invalidate-call-args! roots invalid args)]
+    [(IrInstrCall _ name args _)
+      (if (string-eq name "tl_memcpy")
+        unit
+        (compiler-reg-color-invalidate-call-args! roots invalid args))]
+    [(IrInstrCallIndirect _ callee args _)
+      (begin
+        (compiler-reg-color-invalidate-value! roots invalid callee)
+        (compiler-reg-color-invalidate-call-args! roots invalid args))]
+    [(IrInstrCallIndirectC _ callee args _)
+      (begin
+        (compiler-reg-color-invalidate-value! roots invalid callee)
+        (compiler-reg-color-invalidate-call-args! roots invalid args))]
+    [(IrInstrTailCall _ args _)
+      (compiler-reg-color-invalidate-call-args! roots invalid args)]
+    [(IrInstrStore _ value _)
+      (compiler-reg-color-invalidate-value! roots invalid value)]
+    [(IrInstrBranch value _ _)
+      (compiler-reg-color-invalidate-value! roots invalid value)]
+    [(IrInstrReturn value)
+      (compiler-reg-color-invalidate-maybe-value! roots invalid value)]
+    [(IrInstrPhi dst inputs _)
+      (compiler-reg-color-invalidate-phi!
+        roots
+        invalid
+        (if (and (>= dst 0) (< dst (array-length roots)))
+          (array-ref roots dst)
+          (- 0 1))
+        inputs)]
+    [_ unit]))
+
+(define (compiler-reg-color-invalidate-seq!
+  [instrs : CompilerIrInstrSeq]
+  [roots : (Array i64)]
+  [invalid : (Array bool)]) : unit
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [len : i64 (compiler-ir-instr-seq-count instrs)]
+    [i : i64 0]
+    (while (< i len)
+      (begin
+        (compiler-reg-color-invalidate-instr! (array-ref slots i) roots invalid)
+        (set! i (+ i 1))))))
+
+(define (compiler-reg-color-invalidate-blocks!
+  [blocks : CompilerIrBlockList]
+  [roots : (Array i64)]
+  [invalid : (Array bool)]) : unit
+  (match blocks
+    [(IrBlockNil) unit]
+    [(IrBlockCons block rest)
+      (begin
+        (match block
+          [(IrBlock _ instrs)
+            (compiler-reg-color-invalidate-seq! instrs roots invalid)])
+        (compiler-reg-color-invalidate-blocks! (box-get rest) roots invalid))]
+    [(IrBlockArray seq)
+      (let
+        [i : i64 0]
+        (while (< i (compiler-ir-block-seq-count seq))
+          (begin
+            (match (compiler-ir-block-seq-ref seq i)
+              [(IrBlock _ instrs)
+                (compiler-reg-color-invalidate-seq! instrs roots invalid)])
+            (set! i (+ i 1)))))]))
+
+(define (compiler-reg-color-range-liveness!
+  [roots : (Array i64)]
+  [starts : (Array i64)]
+  [ends : (Array i64)]
+  [range-starts : (Array i64)]
+  [range-ends : (Array i64)]) : unit
+  (let
+    [i : i64 0]
+    [max-start : i64 9223372036854775807]
+    (while (< i (array-length roots))
+      (let
+        [root : i64 (array-ref roots i)]
+        (begin
+          (if (and (>= root 0) (< root (array-length range-starts)))
+            (let
+              [start : i64 (array-ref starts i)]
+              [end : i64 (array-ref ends i)]
+              (if (>= start 0)
+                (begin
+                  (if (< start (array-ref range-starts root))
+                    (array-set! range-starts root start)
+                    unit)
+                  (if (> end (array-ref range-ends root))
+                    (array-set! range-ends root end)
+                    unit))
+                unit))
+            unit)
+          (set! i (+ i 1)))))))
+
+(define (compiler-reg-color-range-free?
+  [slot-ends : (Array i64)]
+  [slot : i64]
+  [size : i64]
+  [start : i64]) : bool
+  (let
+    [i : i64 0]
+    [ok : bool true]
+    (begin
+      (if (> (+ slot size) (array-length slot-ends))
+        (set! ok false)
+        unit)
+      (while (and ok (< i size))
+        (begin
+          (if (< (array-ref slot-ends (+ slot i)) start)
+            unit
+            (set! ok false))
+          (set! i (+ i 1))))
+      ok)))
+
+(define (compiler-reg-color-next-free-range
+  [slot-ends : (Array i64)]
+  [from : i64]
+  [size : i64]
+  [start : i64]) : i64
+  (let
+    [slot : i64 from]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (if (compiler-reg-color-range-free? slot-ends slot size start)
+          (set! done true)
+          (set! slot (+ slot 1))))
+      slot)))
+
+(define (compiler-reg-color-set-range-ends!
+  [slot-ends : (Array i64)]
+  [slot : i64]
+  [size : i64]
+  [end : i64]) : unit
+  (let
+    [i : i64 0]
+    (while (< i size)
+      (begin
+        (if (< (+ slot i) (array-length slot-ends))
+          (array-set! slot-ends (+ slot i) end)
+          unit)
+        (set! i (+ i 1))))))
+
+(define (compiler-reg-color-remap-storage-range!
+  [remap : (Array i64)]
+  [base : i64]
+  [size : i64]
+  [slot : i64]) : unit
+  (let
+    [first : i64 (+ (- base size) 1)]
+    [i : i64 0]
+    (while (< i size)
+      (begin
+        (if (and (>= (+ first i) 0) (< (+ first i) (array-length remap)))
+          (array-set! remap (+ first i) (+ slot i))
+          unit)
+        (set! i (+ i 1))))))
+
+(define (compiler-reg-color-range-clear?
+  [remap : (Array i64)]
+  [base : i64]
+  [size : i64]) : bool
+  (let
+    [first : i64 (+ (- base size) 1)]
+    [i : i64 0]
+    [ok : bool true]
+    (begin
+      (while (and ok (< i size))
+        (begin
+          (if (and
+            (>= (+ first i) 0)
+            (< (+ first i) (array-length remap))
+            (< (array-ref remap (+ first i)) 0))
+            unit
+            (set! ok false))
+          (set! i (+ i 1))))
+      ok)))
+
+(define (compiler-reg-color-storage-ranges
+  [slot-ends : (Array i64)]
+  [remap : (Array i64)]
+  [range-base : (Array i64)]
+  [range-size : (Array i64)]
+  [range-starts : (Array i64)]
+  [range-ends : (Array i64)]
+  [invalid : (Array bool)]
+  [range-count : i64]
+  [from : i64]) : i64
+  (let
+    [range : i64 0]
+    [used : i64 from]
+    [max-start : i64 9223372036854775807]
+    (begin
+      (while (< range range-count)
+        (let
+          [start : i64 (array-ref range-starts range)]
+          [end : i64 (array-ref range-ends range)]
+          [size : i64 (array-ref range-size range)]
+          [base : i64 (array-ref range-base range)]
+          (begin
+            (if (and
+              (not (array-ref invalid range))
+              (< start max-start)
+              (>= end start)
+              (> size 0)
+              (compiler-reg-color-range-clear? remap base size))
+              (let
+                [slot : i64
+                  (compiler-reg-color-next-free-range slot-ends from size start)]
+                (begin
+                  (compiler-reg-color-set-range-ends! slot-ends slot size end)
+                  (compiler-reg-color-remap-storage-range! remap base size slot)
+                  (if (> (+ slot size) used)
+                    (set! used (+ slot size))
+                    unit)))
+              unit)
+            (set! range (+ range 1)))))
+      used)))
+
+;; Color only contiguous inline-storage ranges. These slots are addressed only
+;; through AddrOf/Gep-derived pointers, so ranges may share ids with each other
+;; when their pointer lifetimes are disjoint. They deliberately start after the
+;; scalar stack prefix to avoid giving a real scalar value and an aggregate
+;; storage word the same global type-table key.
+(define (compiler-reg-color-inline-storage
+  [blocks : CompilerIrBlockList]
+  [intervals : CompilerRegIntervalList]
+  [slot-ends : (Array i64)]
+  [remap : (Array i64)]
+  [vars : i64]
+  [from : i64]) : i64
+  (let
+    [range-of-var : (Array i64) (make-array i64 vars)]
+    [range-base : (Array i64) (make-array i64 vars)]
+    [range-size : (Array i64) (make-array i64 vars)]
+    [range-starts : (Array i64) (make-array i64 vars)]
+    [range-ends : (Array i64) (make-array i64 vars)]
+    [invalid : (Array bool) (make-array bool vars)]
+    [roots : (Array i64) (make-array i64 vars)]
+    [starts : (Array i64) (make-array i64 vars)]
+    [ends : (Array i64) (make-array i64 vars)]
+    [max-start : i64 9223372036854775807]
+    [cleared : unit
+      (let
+        [i : i64 0]
+        (while (< i vars)
+          (begin
+            (array-set! range-of-var i (- 0 1))
+            (array-set! range-base i (- 0 1))
+            (array-set! range-size i 0)
+            (array-set! range-starts i max-start)
+            (array-set! range-ends i (- 0 1))
+            (array-set! invalid i false)
+            (array-set! roots i (- 0 1))
+            (array-set! starts i (- 0 1))
+            (array-set! ends i (- 0 1))
+            (set! i (+ i 1)))))]
+    [range-count : i64
+      (compiler-reg-color-detect-storage-blocks
+        blocks
+        range-of-var
+        range-base
+        range-size
+        0)]
+    (begin
+      (if (= range-count 0)
+        from
+        (begin
+          (compiler-reg-color-fill-interval-bounds intervals starts ends)
+          (compiler-reg-color-propagate-roots blocks range-of-var roots invalid)
+          (compiler-reg-color-invalidate-blocks! blocks roots invalid)
+          (compiler-reg-color-range-liveness!
+            roots
+            starts
+            ends
+            range-starts
+            range-ends)
+          (compiler-reg-color-storage-ranges
+            slot-ends
+            remap
+            range-base
+            range-size
+            range-starts
+            range-ends
+            invalid
+            range-count
+            from))))))
+
 ;; Rebuild the var-type table on remapped keys. Type and assignment lookups
 ;; early-exit on the ascending-id list invariant, so remapping keys in place
 ;; would silently break every lookup past the first out-of-order entry
 ;; (observed: register homes lost to formula-slot fallbacks and i64 compares
 ;; emitted as cmpb once the width lookup missed). Scatter the entries into
-;; new-id-indexed arrays and rebuild the list in id order instead; the remap
-;; is a bijection into [0, vars), so every key lands in range.
+;; new-id-indexed arrays and rebuild the list in id order instead. Storage-range
+;; coloring may alias multiple old inline-storage vars onto the same new id, but
+;; those ids are never used as scalar value keys; later entries may overwrite the
+;; unused storage type without affecting emission.
 (define (compiler-reg-color-scatter-types
   [remap : (Array i64)]
   [present : (Array i64)]
@@ -3248,14 +4056,16 @@
               slot-ends
               (compiler-reg-max highest (+ var-id 1))))])]))
 
-;; Total dense renumbering: colorable stack scalars are assigned fresh dense
-;; slots first, every other slot-resident variable gets a private dense slot
+;; Total frame renumbering: colorable stack scalars are assigned fresh dense
+;; slots first, colorable inline-storage ranges are shared above that scalar
+;; prefix, every remaining slot-resident variable gets a private dense slot
 ;; above them, and register-homed variables move to ids that are not used by a
 ;; stack slot. The assignment table is rebuilt on the new keys.
 (define (compiler-reg-color-stack-slots
   [plan : CompilerRegPlan]
   [group-vars : CompilerLiveI64Set]
   [params : CompilerIrParamList]
+  [blocks : CompilerIrBlockList]
   [vars : i64]) : CompilerRegColoring
   (let
     [intervals : CompilerRegIntervalList (compiler-reg-plan-intervals plan)]
@@ -3302,15 +4112,22 @@
               slot-ends
               0
               remap)]
+          [storage-prefix : i64
+            (compiler-reg-color-inline-storage
+              blocks
+              intervals
+              slot-ends
+              remap
+              vars
+              stack-prefix)]
           [slot-count
             : i64
-            ;; Private dense slots for everything slot-resident that the
-            ;; walk skipped, one slot each (stack-resident vectors are
-            ;; rejected at emission, so nothing slot-resident exceeds
-            ;; 8 bytes). Fresh ids skip param pins, so the slot region is
-            ;; the dense prefix [0, watermark) with params in place.
+            ;; Private dense slots for everything slot-resident that the scalar
+            ;; and inline-storage walks skipped, one slot each. Fresh ids skip
+            ;; param pins, so the slot region is the dense prefix [0,
+            ;; watermark) with params in place.
             (let
-              [next : i64 stack-prefix]
+              [next : i64 storage-prefix]
               [i : i64 0]
               (begin
                 (while (< i vars)
@@ -4631,6 +5448,86 @@
       last
       (CompilerRegRegister "%r12"))))
 
+(define (compiler-reg-color-storage-function) : CompilerIrFunction
+  (let
+    [big : AstType (AstTyStruct (intern "BigStorage"))]
+    (IrFunction
+      "storage_ranges"
+      IrParamNil
+      (AstTyUnit)
+      6
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "entry"
+          (compiler-ir-instr-cons
+            (IrInstrAlloc 0 big)
+            (compiler-ir-instr-cons
+              (IrInstrAlloc 1 big)
+              (compiler-ir-instr-cons
+                (IrInstrAddrOf 2 1)
+                (compiler-ir-instr-cons
+                  (IrInstrStorePtr (IrValueVar 2) (IrValueI64 11) (AstTyI64))
+                  (compiler-ir-instr-cons
+                    (IrInstrAlloc 3 big)
+                    (compiler-ir-instr-cons
+                      (IrInstrAlloc 4 big)
+                      (compiler-ir-instr-cons
+                        (IrInstrAddrOf 5 4)
+                        (compiler-ir-instr-cons
+                          (IrInstrStorePtr
+                            (IrValueVar 5)
+                            (IrValueI64 22)
+                            (AstTyI64))
+                          (compiler-ir-instr-cons
+                            (IrInstrReturn IrNoValue)
+                            IrInstrNil))))))))))
+        IrBlockNil))))
+
+(define (compiler-reg-color-pointer-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-insert
+    (compiler-reg-assignment-insert
+      CompilerRegAssignmentNil
+      2
+      (CompilerRegRegister "%r12"))
+    5
+    (CompilerRegRegister "%r13")))
+
+(define (compiler-reg-color-pointer-intervals) : CompilerRegIntervalList
+  (compiler-reg-interval-cons
+    (CompilerRegInterval 2 1 3)
+    (compiler-reg-interval-cons
+      (CompilerRegInterval 5 5 7)
+      CompilerRegIntervalNil)))
+
+(define (compiler-reg-color-pointer-types) : CompilerRegVarTypeList
+  (compiler-reg-var-type-cons
+    (CompilerRegVarType 2 (AstTyU64))
+    (compiler-reg-var-type-cons
+      (CompilerRegVarType 5 (AstTyU64))
+      CompilerRegVarTypeNil)))
+
+(define (compiler-reg-color-storage-ranges-ok?) : bool
+  (match (compiler-reg-color-storage-function)
+    [(IrFunction _ params _ vars blocks)
+      (match (compiler-reg-color-stack-slots
+        (CompilerRegPlan
+          (compiler-reg-color-pointer-assignments)
+          (compiler-live-set-empty)
+          (compiler-reg-color-pointer-intervals)
+          (compiler-reg-color-pointer-types))
+        (compiler-live-set-empty)
+        params
+        blocks
+        vars)
+        [(CompilerRegColoringRemap remap slots)
+          (and
+            (= slots 2)
+            (= (array-ref remap 0) 0)
+            (= (array-ref remap 1) 1)
+            (= (array-ref remap 3) 0)
+            (= (array-ref remap 4) 1))]
+        [(CompilerRegColoringNone) false])]))
+
 (define (compiler-reg-color-stack-group-ok?) : bool
   (let
     [group-var : i64 7]
@@ -4647,6 +5544,7 @@
             CompilerRegVarTypeNil))
         (compiler-live-set1 group-var)
         IrParamNil
+        IrBlockNil
         (+ group-var 1))]
     (match coloring
       [(CompilerRegColoringRemap remap slots)
@@ -4677,7 +5575,8 @@
     (compiler-reg-scalar-function-intervals-ok?)
     (compiler-reg-scalar-interval-guardrail-ok?)
     (compiler-reg-scalar-loop-backedge-ok?)
-    (compiler-reg-color-stack-group-ok?))
+    (compiler-reg-color-stack-group-ok?)
+    (compiler-reg-color-storage-ranges-ok?))
     42
     (begin
       (panic "regalloc: smoke mismatch")

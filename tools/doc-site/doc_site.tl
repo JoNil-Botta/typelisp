@@ -1,8 +1,8 @@
 ;; doc_site.tl - Static stdlib/API HTML site builder CLI (#964).
 ;;
 ;; Usage through the current compiler runner:
-;;   typelisp run selfhost/doc_site.tl -- target/site
-(import "../stdlib/io.tl")
+;;   typelisp run tools/doc-site/doc_site.tl -- target/site
+(import "../../stdlib/io.tl")
 
 (import "doc_site_core.tl")
 

@@ -5,11 +5,11 @@ set -eu
 # refs #873
 #
 # Builds the static stdlib/API and language-reference HTML site via
-# selfhost/doc_site.tl, runs the
+# tools/doc-site/doc_site.tl, runs the
 # in-memory smoke driver, and validates the on-disk output contract: required
 # pages/assets exist, every local link resolves, every in-page/cross-page anchor
 # target exists, and pages reference the stylesheet. Escaping and manifest-count
-# behavior is asserted authoritatively by selfhost/doc_site_smoke.tl.
+# behavior is asserted authoritatively by tools/doc-site/doc_site_smoke.tl.
 #
 # It drives the published/staged selfhost
 # compiler. CI runs it on pull requests and default-branch pushes WITHOUT
@@ -86,7 +86,7 @@ compile_linux_binary() {
     _out="$WORK/.$_label.compile.out"
     _err="$WORK/.$_label.compile.err"
 
-    if ! "$COMPILER" compile "$_source" --stdlib-root "$ROOT/stdlib" -o "$_asm" >"$_out" 2>"$_err"; then
+    if ! "$COMPILER" compile "$_source" --stdlib-root stdlib -o "$_asm" >"$_out" 2>"$_err"; then
         echo "$_label compile failed:" >&2
         sed 's/^/  /' "$_err" >&2 || true
         fail "$_source did not compile"
@@ -104,39 +104,55 @@ compile_linux_binary() {
     fi
 }
 
-echo "[doc-site] building site via selfhost/doc_site.tl"
+echo "[doc-site] building site via tools/doc-site/doc_site.tl"
 if [ "$HOST_OS" = linux ]; then
     command -v as >/dev/null 2>&1 || fail "missing assembler: as"
     command -v ld >/dev/null 2>&1 || fail "missing linker: ld"
     SITE_BUILDER="$WORK/.doc_site"
-    compile_linux_binary doc-site selfhost/doc_site.tl "$SITE_BUILDER"
+    compile_linux_binary doc-site tools/doc-site/doc_site.tl "$SITE_BUILDER"
     if ! "$SITE_BUILDER" "$SITE" >"$WORK/.build.out" 2>"$WORK/.build.err"; then
         echo "site builder failed:" >&2
         sed 's/^/  /' "$WORK/.build.err" >&2 || true
-        fail "selfhost/doc_site.tl did not build the site"
+        fail "tools/doc-site/doc_site.tl did not build the site"
     fi
 else
-    if ! "$COMPILER" run selfhost/doc_site.tl -- "$SITE" >"$WORK/.build.out" 2>"$WORK/.build.err"; then
+    if ! "$COMPILER" run tools/doc-site/doc_site.tl -- "$SITE" >"$WORK/.build.out" 2>"$WORK/.build.err"; then
         echo "site builder failed:" >&2
         sed 's/^/  /' "$WORK/.build.err" >&2 || true
-        fail "selfhost/doc_site.tl did not build the site"
+        fail "tools/doc-site/doc_site.tl did not build the site"
     fi
 fi
 
-echo "[doc-site] running selfhost/doc_site_smoke.tl"
+echo "[doc-site] running tools/doc-site/doc_site_smoke.tl"
 set +e
 if [ "$HOST_OS" = linux ]; then
     SITE_SMOKE="$WORK/.doc_site_smoke"
-    compile_linux_binary doc-site-smoke selfhost/doc_site_smoke.tl "$SITE_SMOKE"
+    compile_linux_binary doc-site-smoke tools/doc-site/doc_site_smoke.tl "$SITE_SMOKE"
     "$SITE_SMOKE" >"$WORK/.smoke.out" 2>"$WORK/.smoke.err"
 else
-    "$COMPILER" run selfhost/doc_site_smoke.tl -- >"$WORK/.smoke.out" 2>"$WORK/.smoke.err"
+    "$COMPILER" run tools/doc-site/doc_site_smoke.tl -- >"$WORK/.smoke.out" 2>"$WORK/.smoke.err"
 fi
 smoke_code=$?
 set -e
 if [ "$smoke_code" -ne 42 ]; then
     sed 's/^/  /' "$WORK/.smoke.err" >&2 || true
     fail "doc_site_smoke.tl returned $smoke_code (expected 42)"
+fi
+
+echo "[doc-site] running tools/doc-site/doc_md_smoke.tl"
+set +e
+if [ "$HOST_OS" = linux ]; then
+    MD_SMOKE="$WORK/.doc_md_smoke"
+    compile_linux_binary doc-md-smoke tools/doc-site/doc_md_smoke.tl "$MD_SMOKE"
+    "$MD_SMOKE" >"$WORK/.md_smoke.out" 2>"$WORK/.md_smoke.err"
+else
+    "$COMPILER" run tools/doc-site/doc_md_smoke.tl -- >"$WORK/.md_smoke.out" 2>"$WORK/.md_smoke.err"
+fi
+md_smoke_code=$?
+set -e
+if [ "$md_smoke_code" -ne 42 ]; then
+    sed 's/^/  /' "$WORK/.md_smoke.err" >&2 || true
+    fail "doc_md_smoke.tl returned $md_smoke_code (expected 42)"
 fi
 
 # Required pages and assets.

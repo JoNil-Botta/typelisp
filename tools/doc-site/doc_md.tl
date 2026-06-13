@@ -10,13 +10,13 @@
 ;;
 ;; Reuses `doc-html-escape` (entity escaping for & < > ") from doc_html.tl and
 ;; `doc-render-anchor` from doc_render.tl via doc_html.tl.
-(import "doc_html.tl")
+(import "../../selfhost/doc_html.tl")
 
-(import "../stdlib/string.tl")
+(import "../../stdlib/string.tl")
 
-(import "../stdlib/vector.tl")
+(import "../../stdlib/vector.tl")
 
-(import "../stdlib/str_cat.tl")
+(import "../../stdlib/str_cat.tl")
 
 (defenum MdTableRow
   (MdTableRow StringVec))

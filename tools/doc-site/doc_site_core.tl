@@ -3,17 +3,17 @@
 ;; The TypeLisp site composition layer combines language guides and reusable API
 ;; trees. API pages still use the source/module documentation extractor and HTML
 ;; renderer without hard-coding TypeLisp guide-page knowledge into that path.
-(import "../stdlib/io.tl")
+(import "../../stdlib/io.tl")
 
-(import "doc_html.tl")
+(import "../../selfhost/doc_html.tl")
 
 (import "doc_md.tl")
 
-(import "../stdlib/fs.tl")
+(import "../../stdlib/fs.tl")
 
-(import "../stdlib/string.tl")
+(import "../../stdlib/string.tl")
 
-(import "../stdlib/str_cat.tl")
+(import "../../stdlib/str_cat.tl")
 
 (defenum DocSiteModule
   (DocSiteModule String String))
@@ -949,7 +949,7 @@ pre {
 (define (doc-site-language-smoke-source) : String
   "# Language Reference
 
-See [the spec](SPEC.md), [the second module](stdlib/second.tl), and [the builder](selfhost/doc_site.tl).
+See [the spec](SPEC.md), [the second module](stdlib/second.tl), and [the builder](tools/doc-site/doc_site.tl).
 
 ```typelisp
 (define answer : i64 42)
@@ -1104,7 +1104,7 @@ See [the spec](SPEC.md), [the second module](stdlib/second.tl), and [the builder
         "doc-site: language api link rewrite missing")
       (doc-html-require-contains
         language-page
-        "href=\"https://github.com/JoNil-Botta/typelisp/blob/main/selfhost/doc_site.tl\""
+        "href=\"https://github.com/JoNil-Botta/typelisp/blob/main/tools/doc-site/doc_site.tl\""
         "doc-site: language repo link rewrite missing")
       (doc-html-require-contains
         language-page

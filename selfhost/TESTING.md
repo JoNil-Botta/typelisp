@@ -407,12 +407,12 @@ added next to the declarations they exercise.
 
 ### Stdlib API site
 
-`selfhost/doc_site.tl` builds a static language-reference and stdlib/API HTML
+`tools/doc-site/doc_site.tl` builds a static language-reference and stdlib/API HTML
 directory from `README.md`, `SPEC.md`, and the explicit top-level stdlib
 manifest owned by the selfhost source. The local command is:
 
 ```sh
-typelisp run selfhost/doc_site.tl -- target/site
+typelisp run tools/doc-site/doc_site.tl -- target/site
 ```
 
 The generated directory contains `index.html`, `readme.html`, `spec.html`,
@@ -421,7 +421,7 @@ for each manifested top-level stdlib module. `README.md` and `SPEC.md` are
 rendered through the constrained selfhost Markdown renderer: supported blocks
 become HTML, source-repository Markdown links are rewritten to generated pages
 or GitHub source links, and unsupported Markdown syntax is emitted as escaped
-literal text. The smoke driver `selfhost/doc_site_smoke.tl` checks the
+literal text. The smoke driver `tools/doc-site/doc_site_smoke.tl` checks the
 navigation links, generated page anchors, CSS asset marker, duplicate output
 detection, manifest count guard, and HTML escaping behavior without depending
 on file-system writes.

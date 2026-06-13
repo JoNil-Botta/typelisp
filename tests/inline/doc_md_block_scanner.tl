@@ -1,5 +1,5 @@
 ;; doc_md_block_scanner.tl - Inline coverage for #1276's Markdown block scanner.
-(import "../../selfhost/doc_md.tl")
+(import "../../tools/doc-site/doc_md.tl")
 
 (define (doc-md-assert-i64-eq
   [actual : i64]

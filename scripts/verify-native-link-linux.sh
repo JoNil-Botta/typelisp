@@ -216,6 +216,46 @@ compile_selfhost_binary() {
     [ -x "$_bin" ] || fail "$_source compile/link did not write executable"
 }
 
+verify_linux_direct_object_link() {
+    _dir="$WORKDIR/direct-object"
+    mkdir -p "$_dir"
+    _tool="$_dir/build-tool"
+    _src="$_dir/main.tl"
+    _bin="$_dir/main"
+    _shim="$_dir/no-assembler-bin"
+    _out="$_dir/build.stdout"
+    _err="$_dir/build.stderr"
+
+    compile_selfhost_binary direct-object-build selfhost/build.tl "$_tool"
+    cat > "$_src" <<'EOF'
+(define (main) : i64 42)
+EOF
+    mkdir -p "$_shim"
+    cat > "$_shim/as" <<'EOF'
+#!/usr/bin/env sh
+echo "unexpected assembler fallback" >&2
+exit 97
+EOF
+    chmod +x "$_shim/as"
+
+    echo "[selfhost-native] Linux direct ELF object links without assembler"
+    set +e
+    PATH="$_shim:$PATH" TYPELISP_LINUX_DIRECT_OBJECT=1 \
+        "$_tool" --direct "$_src" --target linux-x86_64 --backend-mode scalar \
+        --stdlib-root "$ROOT/stdlib" -o "$_bin" > "$_out" 2> "$_err"
+    _got=$?
+    set -e
+    if [ "$_got" -ne 0 ]; then
+        echo "FAIL: Linux direct object build exited $_got" >&2
+        if [ -s "$_out" ]; then sed 's/^/  stdout: /' "$_out" >&2; fi
+        if [ -s "$_err" ]; then sed 's/^/  stderr: /' "$_err" >&2; fi
+        exit 1
+    fi
+    assert_empty "$_err" "Linux direct object build stderr"
+    assert_contains "$_out" "Built $_bin" "Linux direct object build stdout"
+    [ -x "$_bin" ] || fail "Linux direct object build did not write executable"
+}
+
 run_compiler_driver() {
     _driver=$1
     _label=$2
@@ -742,5 +782,6 @@ verify_compiler_driver_recursive_box_list "$DRIVER"
 verify_emit_printed_program
 verify_parse_printed_program
 verify_ast_driver_smoke
+verify_linux_direct_object_link
 
 echo "selfhost native verification passed"

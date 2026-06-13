@@ -696,6 +696,32 @@
         [(ErrCompilerObjectCoff _) false])]
     [(ErrCompilerBackendObject _) false]))
 
+(define (compiler-backend-elf-renders-real-text-ok?) : bool
+  (match (compiler-backend-emit-source-object-image-for-target
+    (compiler-backend-coff-real-text-source)
+    (BackendTargetLinux))
+    [(OkCompilerBackendObject image)
+      (match (compiler-object-elf-render image)
+        [(OkCompilerObjectElf obj)
+          (let
+            [text-size : i64
+              (compiler-object-elf-section-header-size-at
+                obj
+                image
+                compiler-object-elf-section-text-index)]
+            [rela-text-size : i64
+              (compiler-object-elf-section-header-size-at
+                obj
+                image
+                compiler-object-elf-section-rela-text-index)]
+            (and
+              (> text-size 0)
+              (> rela-text-size 0)
+              (= (% rela-text-size compiler-object-elf-relocation-size) 0)
+              (compiler-object-elf-contains? obj "foreign_exact")))]
+        [(ErrCompilerObjectElf _) false])]
+    [(ErrCompilerBackendObject _) false]))
+
 (define (compiler-backend-windows-object-entry-unwind-ok?) : bool
   (match (compiler-backend-emit-source-object-image-for-target
     "(define (main) : i64 0)"
@@ -6469,6 +6495,8 @@
         (compiler-backend-coff-renders-real-text-ok?)
         (compiler-backend-windows-object-entry-unwind-ok?)
         (compiler-object-elf-smoke-ok?)
+        (compiler-object-elf-text-smoke-ok?)
+        (compiler-backend-elf-renders-real-text-ok?)
         (compiler-backend-pic-ok?)
         (compiler-backend-deterministic-ok? (compiler-backend-smoke-source)))
       (compiler-backend-string-ok?)

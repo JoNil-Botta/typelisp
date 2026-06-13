@@ -1092,10 +1092,16 @@
 
 (define (source-tool-linux-direct-object-linkability-smoke-ok?) : bool
   (match (compiler-backend-emit-source-object-image-for-target
-    "(define (main) : i64 0)"
+    "(define answer : i64 40)
+(define (inc [x : i64]) : i64 (+ x 1))
+(define (main) : i64 (inc answer))"
     (BackendTargetLinux))
     [(OkCompilerBackendObject image)
-      (not (source-tool-linux-direct-object-linkable? image))]
+      (if (source-tool-linux-direct-object-linkable? image)
+        (match (source-tool-render-linkable-linux-elf-object image)
+          [(OkSourceToolString obj) (> (string-length obj) 0)]
+          [(ErrSourceToolString _) false])
+        false)]
     [(ErrCompilerBackendObject _) false]))
 
 (define (source-tool-windows-direct-object-linkability-smoke-ok?) : bool

@@ -3577,7 +3577,8 @@
     [(AstExprCons _ rest) (+ 1 (parse-ast-syscall-count (box-get rest)))]))
 
 ;; `(syscall number a0 .. a5)`: the syscall number followed by up to six
-;; arguments (1 to 7 operands total). Lowers to a raw `syscall` instruction.
+;; arguments (1 to 7 operands total). Typechecking requires an enclosing
+;; `(unsafe ...)` context before this lowers to a raw `syscall` instruction.
 (define (parse-ast-syscall [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
   (match (parse-ast-expr-list dispatch rest)
     [(OkAstExprList args)

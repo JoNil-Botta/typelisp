@@ -55,7 +55,9 @@
   (define (time-linux-clock-ms [clock-id : i64]) : ResultTimeMs
     (let
       [timespec : (Array i64) (make-array i64 2)]
-      [status : i64 (syscall 228 clock-id (time-array-addr timespec))]
+      [status : i64
+        (unsafe
+          (syscall 228 clock-id (time-array-addr timespec)))]
       (if (< status 0)
         (time-unavailable "time: clock_gettime unavailable")
         (OkTimeMs (time-timespec-ms timespec))))))

@@ -114,26 +114,29 @@
 (cfg
   (not windows)
   (define (tlci-pages-linux-allocate-rw [size : i64]) : i64
-    (syscall
-      9
-      0
-      size
-      (+ tlci-pages-linux-prot-read tlci-pages-linux-prot-write)
-      (+ tlci-pages-linux-map-private tlci-pages-linux-map-anonymous)
-      -1
-      0)))
+    (unsafe
+      (syscall
+        9
+        0
+        size
+        (+ tlci-pages-linux-prot-read tlci-pages-linux-prot-write)
+        (+ tlci-pages-linux-map-private tlci-pages-linux-map-anonymous)
+        -1
+        0))))
 
 (cfg
   (not windows)
   (define (tlci-pages-linux-protect [region : TlciPageRegion] [prot : i64]) : bool
     (tlci-pages-linux-status-ok?
-      (syscall 10 (struct-get region addr) (struct-get region size) prot))))
+      (unsafe
+        (syscall 10 (struct-get region addr) (struct-get region size) prot)))))
 
 (cfg
   (not windows)
   (define (tlci-pages-linux-release [region : TlciPageRegion]) : bool
     (tlci-pages-linux-status-ok?
-      (syscall 11 (struct-get region addr) (struct-get region size)))))
+      (unsafe
+        (syscall 11 (struct-get region addr) (struct-get region size))))))
 
 (cfg
   windows

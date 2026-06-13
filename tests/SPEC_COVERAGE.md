@@ -125,7 +125,7 @@ Primary coverage owners referenced below:
 | S5-020 | 5.17.1 | `.tlci` container/header/hash/metadata helpers validate and round-trip dormant comptime images. | Implemented helper layer; build emission/loading staged | `selfhost/tlci_core_smoke.tl`, `selfhost/tlci_core.tl` inline tests | Partial | #2688, #2655 |
 | S5-021 | 5.18 | Compile-time `size-of`, `align-of`, and `offset-of` layout queries reject invalid use and produce stable metadata. | Implemented | `tests/integration/repr_c_f32_fields.tl`, `tests/integration/nested_repr_c_aggregate.tl`, `selfhost/compiler_typecheck_reflection_smoke.tl` | Partial | #2688 |
 | S5-022 | 5.19 | Resource `with` initializes left-to-right, cleans LIFO, prevents resource escape, and composes with future recoverable propagation. | Implemented for current resource cleanup surface | Stdlib IO/process tests, selfhost typechecker/lowerer smokes | GAP | #2688 |
-| S5-023 | 5.20 | `unsafe` expression blocks permit only explicitly unsafe raw-pointer/manual-arena operations while preserving ordinary typechecking. | Implemented | `tests/safety/safe_raw_pointer_read_reject.tl`, `tests/safety/manual_arena_reset_unsafe_reject.tl`, `stdlib/tests/ffi_api.tl`, `stdlib/tests/arena_api.tl` | Covered | - |
+| S5-023 | 5.20 | `unsafe` expression blocks permit only explicitly unsafe raw-pointer/syscall/manual-arena operations while preserving ordinary typechecking. | Implemented | `tests/safety/safe_raw_pointer_read_reject.tl`, `tests/safety/safe_syscall_reject.tl`, `tests/safety/unsafe_syscall_defined.tl`, `tests/safety/manual_arena_reset_unsafe_reject.tl`, `stdlib/tests/ffi_api.tl`, `stdlib/tests/arena_api.tl` | Covered | - |
 
 ## Section 6: Built-in Functions and Runtime
 

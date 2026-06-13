@@ -16369,8 +16369,11 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [args : AstExprList]) : ResultTcType
-  (match (tc-syscall-args ctx env args)
-    [(OkTcUnit) (OkTcType (AstTyI64))]
+  (match (tc-require-unsafe env "syscall")
+    [(OkTcUnit)
+      (match (tc-syscall-args ctx env args)
+        [(OkTcUnit) (OkTcType (AstTyI64))]
+        [(ErrTcUnit message) (ErrTcType message)])]
     [(ErrTcUnit message) (ErrTcType message)]))
 
 (define (tc-box-expr [ctx : TcContext] [env : TcTypeEnv] [inner : AstExpr]) : ResultTcType

@@ -2719,11 +2719,11 @@
   (let
     [message : String \"syscall-ok\\n\"]
     [addr : i64 (ptr-i64 (unsafe (string-data message)))]
-    [wrote : i64 (syscall 1 1 addr (string-length message))]
-    [bad-read : i64 (syscall 0 -1 addr 1)]
+    [wrote : i64 (unsafe (syscall 1 1 addr (string-length message)))]
+    [bad-read : i64 (unsafe (syscall 0 -1 addr 1))]
     (if (if (= wrote (string-length message)) (= bad-read -9) false)
       (begin
-        (syscall 231 42)
+        (unsafe (syscall 231 42))
         1)
       2)))")
 

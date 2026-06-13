@@ -891,6 +891,15 @@ in v1. Hygiene and binding-introducing macros are not part of v1; parser-owned
 guard/conditional forms such as `when`, `unless`, and `cond` introduce no
 user-visible bindings.
 
+Local `defmacro` declarations are visible throughout their module regardless of
+source order, matching functions, values, and types. A macro may therefore be
+called before its declaration, and one macro may expand to a call of another
+macro declared later in the same module. Declarations produced by
+`comptime-decl` / `comptime-decls` are materialized before macro expansion; a
+generated `defmacro` participates in the same module-wide macro table for the
+generated program, but is not visible while evaluating the generator that emits
+it.
+
 #### 3.7.2.2 Stdlib-owned comptime syntax and reflection types
 
 The public macro/comptime syntax and reflection surface is owned by the stdlib,
@@ -2213,17 +2222,18 @@ that module through qualified names such as `bool.and2`. The imported macro's
 typed signature is used for call-site checking in the importing module; operand
 expressions are not evaluated before expansion.
 
-Local macros are source-order declarations. A local `defmacro` is available
-only after its declaration has been parsed and checked; using a local macro
-before its `defmacro` is a source-located error. A local macro may call imported
-macros and earlier local macros while its body is checked and expanded, but it
-may not depend on later local macros.
+Local macros are module-scope declarations. A local `defmacro` is available to
+all non-import forms in its module after imports and generated declarations have
+been processed, regardless of whether the call appears before or after the
+declaration. Local macros may call imported macros and any local macro in the
+same module; recursive expansion is bounded by the macro expansion depth limit
+and rejected with a source-located diagnostic.
 
-Macro export tables are complete only after the exporting module's own imports
-and earlier local macro declarations have been processed. V1 rejects cycles
-that require a macro export from a module whose macro table is still being
-built. Non-macro import cycles keep the ordinary loader behavior described in
-section 4.4 until the general module-cycle policy is tightened.
+Macro export tables are complete after the exporting module's own imports and
+local macro declarations have been collected. V1 rejects cycles that require a
+macro export from a module whose macro table is still being built. Non-macro
+import cycles keep the ordinary loader behavior described in section 4.4 until
+the general module-cycle policy is tightened.
 
 Diagnostics required by v1:
 
@@ -2234,8 +2244,9 @@ Diagnostics required by v1:
 - Duplicate macro export: two distinct macro declarations would be exported
   under the same `(module, macro-name)` identity.
 - Unknown export item: `(export (macro name))` names no local macro.
-- Late local macro use: an unqualified macro head appears before the local
-  `defmacro` declaration that would bind it.
+- Recursive macro expansion: expanding a macro reaches the implementation's
+  deterministic depth limit, typically because macros expand to each other in a
+  cycle.
 
 Cross-module macro use:
 
@@ -2266,10 +2277,10 @@ Private or missing macro diagnostic:
   (if (hidden.private-and true true) 0 1)) ; error: private macro hidden.private-and
 ```
 
-Late local macro diagnostic:
+Forward local macro use:
 
-```lisp test=ignore name=module-late-local-macro-diagnostic reason="negative macro ordering example for #1140"
-(define eager : bool (late true)) ; error: local macro late is defined later
+```lisp test=ignore name=module-forward-local-macro-use reason="macro ordering example for #2584"
+(define eager : bool (late true)) ; accepted: local macros are module-scope
 
 (defmacro (late [value : bool]) : bool
   value)

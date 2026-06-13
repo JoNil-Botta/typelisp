@@ -225,6 +225,9 @@
 (define build-default-opt-level : i64
   1)
 
+(define build-package-release-opt-level : i64
+  2)
+
 (define build-package-visit-visiting : i64
   1)
 
@@ -272,7 +275,22 @@
 (define (build-profile-default-opt-level [profile : BuildProfile]) : i64
   (match profile
     [(BuildProfileDev) 0]
-    [(BuildProfileRelease) build-default-opt-level]))
+    [(BuildProfileRelease) build-package-release-opt-level]))
+
+(define (build-package-default-opt-level) : i64
+  (build-profile-default-opt-level (build-default-profile)))
+
+(define (build-package-profile-opt-level-smoke-ok?) : bool
+  (and
+    (= (build-profile-default-opt-level (BuildProfileRelease)) 2)
+    (= (build-profile-default-opt-level (BuildProfileDev)) 0)
+    (= (build-package-default-opt-level) 2)))
+
+(test
+  build-package-profile-opt-level-smoke
+  (unless
+    (build-package-profile-opt-level-smoke-ok?)
+    (panic "build package profile opt-level smoke failed")))
 
 (define (build-parse-profile [value : String]) : ResultBuildProfile
   (core/cond
@@ -679,7 +697,7 @@
     "scalar"
     (build-default-profile)
     false
-    build-default-opt-level
+    (build-package-default-opt-level)
     false
     (BuildPackageLockDefault)
     ""
@@ -694,6 +712,7 @@
   [mode : CompilerBackendMode]
   [profile : BuildProfile]
   [opt-level : i64]
+  [has-opt-level : bool]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : StringVec]) : ResultBuildPackageWorkerConfig
   (if (>= idx count)
@@ -726,6 +745,7 @@
             mode
             profile
             opt-level
+            has-opt-level
             lock-policy
             stdlib-roots))
         (string-eq current "--target")
@@ -744,6 +764,7 @@
                   mode
                   profile
                   opt-level
+                  has-opt-level
                   lock-policy
                   stdlib-roots)]
               [(ErrSourceToolTarget _)
@@ -764,6 +785,7 @@
                   parsed-mode
                   profile
                   opt-level
+                  has-opt-level
                   lock-policy
                   stdlib-roots)]
               [(ErrSourceToolBackendMode message)
@@ -774,17 +796,23 @@
           (match (build-parse-profile (arg (+ idx 1)))
             [(ErrBuildProfile message) (ErrBuildPackageWorkerConfig message)]
             [(OkBuildProfile parsed-profile)
-              (build-package-worker-parse-options
-                (+ idx 2)
-                count
-                manifest-path
-                has-manifest
-                target
-                mode
-                parsed-profile
-                opt-level
-                lock-policy
-                stdlib-roots)]))
+              (let
+                [next-opt-level : i64
+                  (if has-opt-level
+                    opt-level
+                    (build-profile-default-opt-level parsed-profile))]
+                (build-package-worker-parse-options
+                  (+ idx 2)
+                  count
+                  manifest-path
+                  has-manifest
+                  target
+                  mode
+                  parsed-profile
+                  next-opt-level
+                  has-opt-level
+                  lock-policy
+                  stdlib-roots))]))
         (string-eq current "--release")
         (build-package-worker-parse-options
           (+ idx 1)
@@ -794,7 +822,10 @@
           target
           mode
           (BuildProfileRelease)
-          opt-level
+          (if has-opt-level
+            opt-level
+            (build-profile-default-opt-level (BuildProfileRelease)))
+          has-opt-level
           lock-policy
           stdlib-roots)
         (string-eq current "--opt-level")
@@ -812,6 +843,7 @@
                 mode
                 profile
                 (string->int value)
+                true
                 lock-policy
                 stdlib-roots)
               (ErrBuildPackageWorkerConfig (build-unknown-opt-level value)))))
@@ -827,6 +859,7 @@
             mode
             profile
             opt-level
+            has-opt-level
             (BuildPackageLockLocked)
             stdlib-roots))
         (string-eq current "--update-lock")
@@ -841,6 +874,7 @@
             mode
             profile
             opt-level
+            has-opt-level
             (BuildPackageLockUpdate)
             stdlib-roots))
         (string-eq current "--stdlib-root")
@@ -855,6 +889,7 @@
             mode
             profile
             opt-level
+            has-opt-level
             lock-policy
             (string-vec-push stdlib-roots (arg (+ idx 1)))))
         (host-plan-flag? current)
@@ -872,7 +907,8 @@
     (source-tool-default-target)
     (BackendModeScalar)
     (build-default-profile)
-    build-default-opt-level
+    (build-package-default-opt-level)
+    false
     (BuildPackageLockDefault)
     (string-vec-new)))
 

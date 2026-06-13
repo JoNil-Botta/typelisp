@@ -81,7 +81,10 @@
 ;; 4-column `tl> ` prompt) so it is clear the previous input was not yet complete.
 (define (repl-prompt [continuation? : bool]) : unit
   (begin
-    (repl-stdout-write (if continuation? "... " "tl> "))
+    (repl-stdout-write
+      (if continuation?
+        "... "
+        "tl> "))
     (stdout-flush)))
 
 ;; `line` begins with `.` (a dot command). Empty lines are handled safely.
@@ -746,16 +749,17 @@
           unit)
         (let
           [line-read : StdinRead (stdin-read-line)]
-          [line : String (repl-normalize-input-line (stdin-read-text line-read))]
+          [line : String
+            (repl-normalize-input-line (stdin-read-text line-read))]
           (if (and (not pending?) (string-eq line ".exit"))
             unit
             ;; A blank line while a form is pending cancels it. Guard on the
             ;; read's EOF flag so an EOF-induced empty read is not mistaken for a
             ;; user-entered blank line (that path still reports incomplete-at-EOF).
             (if (and
-                  pending?
-                  (string-eq line "")
-                  (not (stdin-read-eof? line-read)))
+              pending?
+              (string-eq line "")
+              (not (stdin-read-eof? line-read)))
               (repl-loop session-source "")
               (match (repl-handle-line session-source pending line)
                 [(ReplLineResult next-session next-pending)

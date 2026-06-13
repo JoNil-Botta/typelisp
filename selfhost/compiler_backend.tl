@@ -166,6 +166,11 @@
   (CompilerBackendNoI64)
   (CompilerBackendSomeI64 i64))
 
+(defenum CompilerBackendUnsignedDivMagic
+  (CompilerBackendNoUnsignedDivMagic)
+  (CompilerBackendUnsignedDivMagicRoundUp u64 i64)
+  (CompilerBackendUnsignedDivMagicRoundDown u64 i64))
+
 (defenum CompilerBackendMaybeLabel
   (CompilerBackendNoLabel)
   (CompilerBackendSomeLabel String))
@@ -193,6 +198,15 @@
 (defstruct CompilerBackendPicOutput
   (asm String)
   (fixups String))
+
+(defstruct CompilerBackendU64DivPow2
+  (quot u64)
+  (rem u64)
+  (overflow bool))
+
+(defstruct CompilerBackendSignedDivMagic
+  (magic u64)
+  (shift i64))
 
 (defenum ResultCompilerBackendPic
   (OkCompilerBackendPic CompilerBackendPicOutput)
@@ -4735,46 +4749,524 @@
     (compiler-backend-div-zero-guard-asm ty)
     (compiler-backend-div-overflow-guard-asm ty)))
 
-(define (compiler-backend-binop-divmod-asm
+(define (compiler-backend-binop-divmod-core-asm
   [ty : AstType]
   [want-remainder : bool]) : String
   (let
     [size : i64 (compiler-backend-type-size ty)]
     [signed : bool (compiler-backend-type-signed? ty)]
+    (cond
+      (= size 1)
+      (string-append
+        (if signed
+          "    cbw\n    idivb %r8b\n"
+          "    andw $0x00ff, %ax\n    divb %r8b\n")
+        (if want-remainder
+          "    movb %ah, %al\n"
+          ""))
+      (= size 2)
+      (string-append
+        (if signed
+          "    cwd\n    idivw %r8w\n"
+          "    xorw %dx, %dx\n    divw %r8w\n")
+        (if want-remainder
+          "    movw %dx, %ax\n"
+          ""))
+      (= size 4)
+      (string-append
+        (if signed
+          "    cdq\n    idivl %r8d\n"
+          "    xorl %edx, %edx\n    divl %r8d\n")
+        (if want-remainder
+          "    movl %edx, %eax\n"
+          ""))
+      (string-append
+        (if signed
+          "    cqto\n    idivq %r8\n"
+          "    xorq %rdx, %rdx\n    divq %r8\n")
+        (if want-remainder
+          "    movq %rdx, %rax\n"
+          "")))))
+
+(define (compiler-backend-binop-divmod-asm
+  [ty : AstType]
+  [want-remainder : bool]) : String
+  (string-append
+    (compiler-backend-divmod-guard-asm ty)
+    (compiler-backend-binop-divmod-core-asm ty want-remainder)))
+
+(define (compiler-backend-emit-load-u64-absolute [n : u64] [reg : String]) : String
+  (compiler-backend-emit-load-i64-absolute (cast n : i64) reg))
+
+(define (compiler-backend-u64-max) : u64
+  (cast (- 0 1) : u64))
+
+(define (compiler-backend-u64-high-bit? [n : u64]) : bool
+  (>= n (shl (cast 1 : u64) 63)))
+
+(define (compiler-backend-u64-power-of-two? [n : u64]) : bool
+  (and (> n (cast 0 : u64)) (= (bit-and n (- n (cast 1 : u64))) (cast 0 : u64))))
+
+(define (compiler-backend-u64-log2 [n : u64]) : i64
+  (let
+    [out : i64 0]
+    [cursor : u64 n]
+    (begin
+      (while (> cursor (cast 1 : u64))
+        (begin
+          (set! cursor (shr cursor 1))
+          (set! out (+ out 1))))
+      out)))
+
+(define (compiler-backend-i64-min-value) : i64
+  (- (- 0 9223372036854775807) 1))
+
+(define (compiler-backend-normalized-signed-immediate [n : i64] [ty : AstType]) : i64
+  (match ty
+    [(AstTyI8) (cast (cast n : i8) : i64)]
+    [(AstTyI16) (cast (cast n : i16) : i64)]
+    [(AstTyI32) (cast (cast n : i32) : i64)]
+    [_ n]))
+
+(define (compiler-backend-normalized-unsigned-immediate
+  [n : i64]
+  [ty : AstType]) : u64
+  (match ty
+    [(AstTyU8) (cast (cast n : u8) : u64)]
+    [(AstTyU16) (cast (cast n : u16) : u64)]
+    [(AstTyU32) (cast (cast n : u32) : u64)]
+    [_ (cast n : u64)]))
+
+(define (compiler-backend-divmod-safe-literal-i64? [n : i64] [ty : AstType]) : bool
+  (if (compiler-backend-type-signed? ty)
+    (let
+      [d : i64 (compiler-backend-normalized-signed-immediate n ty)]
+      (and (not (= d 0)) (not (= d (- 0 1)))))
+    (not
+      (= (compiler-backend-normalized-unsigned-immediate n ty) (cast 0 : u64)))))
+
+(define (compiler-backend-divmod-safe-literal?
+  [value : CompilerIrValue]
+  [ty : AstType]) : bool
+  (match (compiler-backend-value-as-i64 value)
+    [(CompilerBackendSomeI64 n)
+      (compiler-backend-divmod-safe-literal-i64? n ty)]
+    [(CompilerBackendNoI64) false]))
+
+(define (compiler-backend-u64-div-pow2 [bits : i64] [divisor : u64]) : CompilerBackendU64DivPow2
+  (let
+    [i : i64 bits]
+    [quot : u64 (cast 0 : u64)]
+    [rem : u64 (cast 0 : u64)]
+    [overflow : bool false]
+    (begin
+      (while (>= i 0)
+        (begin
+          (set! rem (* rem (cast 2 : u64)))
+          (if (= i bits)
+            (set! rem (+ rem (cast 1 : u64)))
+            unit)
+          (if (>= rem divisor)
+            (begin
+              (set! rem (- rem divisor))
+              (if (>= i 64)
+                (set! overflow true)
+                (set! quot (bit-or quot (shl (cast 1 : u64) i)))))
+            unit)
+          (set! i (- i 1))))
+      (CompilerBackendU64DivPow2 quot rem overflow))))
+
+(define (compiler-backend-unsigned-divisor-round-up-magic [divisor : u64]) : CompilerBackendUnsignedDivMagic
+  (let
+    [shift : i64 0]
+    [done : bool false]
+    [out : CompilerBackendUnsignedDivMagic (CompilerBackendNoUnsignedDivMagic)]
+    (begin
+      (while (and (not done) (< shift 64))
+        (let
+          [pow : CompilerBackendU64DivPow2
+            (compiler-backend-u64-div-pow2 (+ 64 shift) divisor)]
+          [quot : u64 (struct-get pow quot)]
+          [rem : u64 (struct-get pow rem)]
+          [overflow : bool (struct-get pow overflow)]
+          [limit : u64 (shl (cast 1 : u64) shift)]
+          [error : u64
+            (if (= rem (cast 0 : u64))
+              (cast 0 : u64)
+              (- divisor rem))]
+          [needs-inc : bool (not (= rem (cast 0 : u64)))]
+          [inc-overflow : bool
+            (and needs-inc (= quot (compiler-backend-u64-max)))]
+          (begin
+            (if (and (not overflow) (not inc-overflow) (< error limit))
+              (begin
+                (set!
+                  out
+                  (CompilerBackendUnsignedDivMagicRoundUp
+                    (if needs-inc
+                      (+ quot (cast 1 : u64))
+                      quot)
+                    shift))
+                (set! done true))
+              unit)
+            (set! shift (+ shift 1)))))
+      out)))
+
+(define (compiler-backend-unsigned-divisor-round-down-magic [divisor : u64]) : CompilerBackendUnsignedDivMagic
+  (let
+    [shift : i64 0]
+    [done : bool false]
+    [out : CompilerBackendUnsignedDivMagic (CompilerBackendNoUnsignedDivMagic)]
+    (begin
+      (while (and (not done) (< shift 64))
+        (let
+          [pow : CompilerBackendU64DivPow2
+            (compiler-backend-u64-div-pow2 (+ 64 shift) divisor)]
+          [quot : u64 (struct-get pow quot)]
+          [rem : u64 (struct-get pow rem)]
+          [overflow : bool (struct-get pow overflow)]
+          [limit : u64 (shl (cast 1 : u64) shift)]
+          (begin
+            (if (and (not overflow) (<= rem limit))
+              (begin
+                (set! out (CompilerBackendUnsignedDivMagicRoundDown quot shift))
+                (set! done true))
+              unit)
+            (set! shift (+ shift 1)))))
+      out)))
+
+(define (compiler-backend-unsigned-divisor-magic [divisor : u64]) : CompilerBackendUnsignedDivMagic
+  (match (compiler-backend-unsigned-divisor-round-up-magic divisor)
+    [(CompilerBackendNoUnsignedDivMagic)
+      (compiler-backend-unsigned-divisor-round-down-magic divisor)]
+    [(CompilerBackendUnsignedDivMagicRoundUp magic shift)
+      (CompilerBackendUnsignedDivMagicRoundUp magic shift)]
+    [(CompilerBackendUnsignedDivMagicRoundDown magic shift)
+      (CompilerBackendUnsignedDivMagicRoundDown magic shift)]))
+
+(define (compiler-backend-signed-divisor-magic [divisor : i64]) : CompilerBackendSignedDivMagic
+  (let
+    [ad : u64 (cast divisor : u64)]
+    [two63 : u64 (shl (cast 1 : u64) 63)]
+    [anc : u64 (- (- two63 (cast 1 : u64)) (% two63 ad))]
+    [p : i64 63]
+    [q1 : u64 (/ two63 anc)]
+    [r1 : u64 (- two63 (* q1 anc))]
+    [q2 : u64 (/ two63 ad)]
+    [r2 : u64 (- two63 (* q2 ad))]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (begin
+          (set! p (+ p 1))
+          (set! q1 (* q1 (cast 2 : u64)))
+          (set! r1 (* r1 (cast 2 : u64)))
+          (if (>= r1 anc)
+            (begin
+              (set! q1 (+ q1 (cast 1 : u64)))
+              (set! r1 (- r1 anc)))
+            unit)
+          (set! q2 (* q2 (cast 2 : u64)))
+          (set! r2 (* r2 (cast 2 : u64)))
+          (if (>= r2 ad)
+            (begin
+              (set! q2 (+ q2 (cast 1 : u64)))
+              (set! r2 (- r2 ad)))
+            unit)
+          (let
+            [delta : u64 (- ad r2)]
+            (if (or (< q1 delta) (and (= q1 delta) (= r1 (cast 0 : u64))))
+              unit
+              (set! done true)))))
+      (CompilerBackendSignedDivMagic (+ q2 (cast 1 : u64)) (- p 64)))))
+
+(define (compiler-backend-divmod-shift-rax [mnemonic : String] [shift : i64]) : String
+  (if (= shift 0)
+    ""
+    (backend-cat5 "    " mnemonic "q $" (int->string shift) ", %rax\n")))
+
+(define (compiler-backend-divmod-shift-reg
+  [mnemonic : String]
+  [shift : i64]
+  [reg : String]) : String
+  (if (= shift 0)
+    ""
+    (backend-cat5
+      "    "
+      mnemonic
+      "q $"
+      (int->string shift)
+      (backend-cat3 ", " reg "\n"))))
+
+(define (compiler-backend-divmod-remainder-from-quotient-reg
+  [divisor : u64]
+  [quotient-reg : String]) : String
+  (string-append
+    (compiler-backend-emit-load-u64-absolute divisor "%r8")
+    (backend-cat5
+      "    imulq "
+      quotient-reg
+      ", %r8\n"
+      "    movq %r10, %rax\n    subq %r8, %rax\n"
+      "")))
+
+(define (compiler-backend-divmod-remainder-from-quotient [divisor : u64]) : String
+  (compiler-backend-divmod-remainder-from-quotient-reg divisor "%rax"))
+
+(define (compiler-backend-unsigned-power-divmod-asm
+  [divisor : u64]
+  [want-remainder : bool]) : String
+  (let
+    [shift : i64 (compiler-backend-u64-log2 divisor)]
+    [mask : u64 (- divisor (cast 1 : u64))]
+    (if want-remainder
+      (if (= mask (cast 0 : u64))
+        "    xorq %rax, %rax\n"
+        (string-append
+          (compiler-backend-emit-load-u64-absolute mask "%r8")
+          "    andq %r8, %rax\n"))
+      (compiler-backend-divmod-shift-rax "shr" shift))))
+
+(define (compiler-backend-unsigned-high-bit-divmod-asm
+  [divisor : u64]
+  [want-remainder : bool]) : String
+  (if want-remainder
     (string-append
-      (compiler-backend-divmod-guard-asm ty)
-      (cond
-        (= size 1)
-        (string-append
-          (if signed
-            "    cbw\n    idivb %r8b\n"
-            "    andw $0x00ff, %ax\n    divb %r8b\n")
+      "    movq %rax, %r10\n"
+      (string-append
+        (compiler-backend-emit-load-u64-absolute divisor "%r8")
+        "    cmpq %r8, %rax\n    jb 1f\n    subq %r8, %r10\n1:\n    movq %r10, %rax\n"))
+    (string-append
+      (compiler-backend-emit-load-u64-absolute divisor "%r8")
+      "    cmpq %r8, %rax\n    setae %al\n    movzbq %al, %rax\n")))
+
+(define (compiler-backend-unsigned-magic-divmod-asm
+  [divisor : u64]
+  [want-remainder : bool]) : CompilerBackendMaybeAsm
+  (match (compiler-backend-unsigned-divisor-magic divisor)
+    [(CompilerBackendUnsignedDivMagicRoundUp magic shift)
+      (let
+        [quotient-asm : String
           (if want-remainder
-            "    movb %ah, %al\n"
-            ""))
-        (= size 2)
-        (string-append
-          (if signed
-            "    cwd\n    idivw %r8w\n"
-            "    xorw %dx, %dx\n    divw %r8w\n")
+            (string-append
+              "    movq %rax, %r10\n"
+              (string-append
+                (compiler-backend-emit-load-u64-absolute magic "%r8")
+                (string-append
+                  "    mulq %r8\n"
+                  (compiler-backend-divmod-shift-reg "shr" shift "%rdx"))))
+            (string-append
+              (compiler-backend-emit-load-u64-absolute magic "%r8")
+              (string-append
+                "    mulq %r8\n    movq %rdx, %rax\n"
+                (compiler-backend-divmod-shift-rax "shr" shift))))]
+        (CompilerBackendSomeAsm
           (if want-remainder
-            "    movw %dx, %ax\n"
-            ""))
-        (= size 4)
-        (string-append
-          (if signed
-            "    cdq\n    idivl %r8d\n"
-            "    xorl %edx, %edx\n    divl %r8d\n")
+            (string-append
+              quotient-asm
+              (compiler-backend-divmod-remainder-from-quotient-reg
+                divisor
+                "%rdx"))
+            quotient-asm)))]
+    [(CompilerBackendUnsignedDivMagicRoundDown magic shift)
+      (let
+        [quotient-asm : String
           (if want-remainder
-            "    movl %edx, %eax\n"
-            ""))
-        (string-append
-          (if signed
-            "    cqto\n    idivq %r8\n"
-            "    xorq %rdx, %rdx\n    divq %r8\n")
+            (string-append
+              "    movq %rax, %r10\n"
+              (string-append
+                (compiler-backend-emit-load-u64-absolute magic "%r8")
+                (string-append
+                  "    mulq %r8\n    addq %r8, %rax\n    adcq $0, %rdx\n"
+                  (compiler-backend-divmod-shift-reg "shr" shift "%rdx"))))
+            (string-append
+              (compiler-backend-emit-load-u64-absolute magic "%r8")
+              (string-append
+                "    mulq %r8\n    addq %r8, %rax\n    adcq $0, %rdx\n    movq %rdx, %rax\n"
+                (compiler-backend-divmod-shift-rax "shr" shift))))]
+        (CompilerBackendSomeAsm
           (if want-remainder
-            "    movq %rdx, %rax\n"
-            ""))))))
+            (string-append
+              quotient-asm
+              (compiler-backend-divmod-remainder-from-quotient-reg
+                divisor
+                "%rdx"))
+            quotient-asm)))]
+    [(CompilerBackendNoUnsignedDivMagic) (CompilerBackendNoAsm)]))
+
+(define (compiler-backend-signed-power-divmod-asm
+  [divisor : u64]
+  [negative-divisor : bool]
+  [want-remainder : bool]) : String
+  (let
+    [shift : i64 (compiler-backend-u64-log2 divisor)]
+    [mask : u64 (- divisor (cast 1 : u64))]
+    [quotient-asm : String
+      (string-append
+        "    movq %rax, %r10\n    movq %rax, %r11\n    sarq $63, %r11\n"
+        (string-append
+          (compiler-backend-emit-load-u64-absolute mask "%r8")
+          (string-append
+            "    andq %r8, %r11\n    addq %r11, %rax\n"
+            (compiler-backend-divmod-shift-rax "sar" shift))))]
+    (if want-remainder
+      (string-append
+        quotient-asm
+        (compiler-backend-divmod-remainder-from-quotient divisor))
+      (if negative-divisor
+        (string-append quotient-asm "    negq %rax\n")
+        quotient-asm))))
+
+(define (compiler-backend-signed-magic-divmod-asm
+  [divisor : i64]
+  [negative-divisor : bool]
+  [want-remainder : bool]) : String
+  (let
+    [plan : CompilerBackendSignedDivMagic
+      (compiler-backend-signed-divisor-magic divisor)]
+    [magic : u64 (struct-get plan magic)]
+    [shift : i64 (struct-get plan shift)]
+    [quotient-asm : String
+      (if want-remainder
+        (string-append
+          "    movq %rax, %r10\n"
+          (string-append
+            (compiler-backend-emit-load-u64-absolute magic "%r8")
+            (string-append
+              "    imulq %r8\n"
+              (string-append
+                (if (compiler-backend-u64-high-bit? magic)
+                  "    addq %r10, %rdx\n"
+                  "")
+                (string-append
+                  (compiler-backend-divmod-shift-reg "sar" shift "%rdx")
+                  "    movq %r10, %r11\n    sarq $63, %r11\n    subq %r11, %rdx\n")))))
+        (string-append
+          "    movq %rax, %r10\n"
+          (string-append
+            (compiler-backend-emit-load-u64-absolute magic "%r8")
+            (string-append
+              "    imulq %r8\n    movq %rdx, %rax\n"
+              (string-append
+                (if (compiler-backend-u64-high-bit? magic)
+                  "    addq %r10, %rax\n"
+                  "")
+                (string-append
+                  (compiler-backend-divmod-shift-rax "sar" shift)
+                  "    movq %r10, %r11\n    sarq $63, %r11\n    subq %r11, %rax\n"))))))]
+    (if want-remainder
+      (string-append
+        quotient-asm
+        (compiler-backend-divmod-remainder-from-quotient-reg
+          (cast divisor : u64)
+          "%rdx"))
+      (if negative-divisor
+        (string-append quotient-asm "    negq %rax\n")
+        quotient-asm))))
+
+(define (compiler-backend-signed-constant-divmod-strength-asm
+  [divisor : i64]
+  [want-remainder : bool]) : CompilerBackendMaybeAsm
+  (if (= divisor 1)
+    (CompilerBackendSomeAsm
+      (if want-remainder
+        "    xorq %rax, %rax\n"
+        ""))
+    (if (= divisor (compiler-backend-i64-min-value))
+      (CompilerBackendNoAsm)
+      (let
+        [negative-divisor : bool (< divisor 0)]
+        [abs-divisor : i64
+          (if (< divisor 0)
+            (- 0 divisor)
+            divisor)]
+        [abs-u64 : u64 (cast abs-divisor : u64)]
+        (CompilerBackendSomeAsm
+          (if (compiler-backend-u64-power-of-two? abs-u64)
+            (compiler-backend-signed-power-divmod-asm
+              abs-u64
+              negative-divisor
+              want-remainder)
+            (compiler-backend-signed-magic-divmod-asm
+              abs-divisor
+              negative-divisor
+              want-remainder)))))))
+
+(define (compiler-backend-unsigned-constant-divmod-strength-asm
+  [divisor : u64]
+  [want-remainder : bool]) : CompilerBackendMaybeAsm
+  (if (compiler-backend-u64-power-of-two? divisor)
+    (CompilerBackendSomeAsm
+      (compiler-backend-unsigned-power-divmod-asm divisor want-remainder))
+    (compiler-backend-unsigned-magic-divmod-asm divisor want-remainder)))
+
+(define (compiler-backend-constant-divmod-unguarded-asm
+  [n : i64]
+  [ty : AstType]
+  [want-remainder : bool]) : String
+  (string-append
+    (compiler-backend-emit-load-i64-absolute
+      (if (compiler-backend-type-signed? ty)
+        (compiler-backend-normalized-signed-immediate n ty)
+        (cast (compiler-backend-normalized-unsigned-immediate n ty) : i64))
+      "%r8")
+    (compiler-backend-binop-divmod-core-asm ty want-remainder)))
+
+(define (compiler-backend-constant-divmod-asm
+  [n : i64]
+  [ty : AstType]
+  [want-remainder : bool]) : CompilerBackendMaybeAsm
+  (cond
+    (not (compiler-backend-divmod-safe-literal-i64? n ty))
+    (CompilerBackendNoAsm)
+    (not (= (compiler-backend-type-size ty) 8))
+    (CompilerBackendSomeAsm
+      (compiler-backend-constant-divmod-unguarded-asm n ty want-remainder))
+    (compiler-backend-type-signed? ty)
+    (let
+      [divisor : i64 (compiler-backend-normalized-signed-immediate n ty)]
+      (match (compiler-backend-signed-constant-divmod-strength-asm
+        divisor
+        want-remainder)
+        [(CompilerBackendSomeAsm asm) (CompilerBackendSomeAsm asm)]
+        [(CompilerBackendNoAsm)
+          (CompilerBackendSomeAsm
+            (compiler-backend-constant-divmod-unguarded-asm n ty want-remainder))]))
+    (let
+      [divisor : u64 (compiler-backend-normalized-unsigned-immediate n ty)]
+      ;; The 64-bit magic search below assumes divisor < 2^63 so rem*2 cannot
+      ;; overflow while generating constants. Wider unsigned literals reduce to
+      ;; a compare because the quotient can only be 0 or 1.
+      (if (compiler-backend-u64-high-bit? divisor)
+        (CompilerBackendSomeAsm
+          (compiler-backend-unsigned-high-bit-divmod-asm divisor want-remainder))
+        (match (compiler-backend-unsigned-constant-divmod-strength-asm
+          divisor
+          want-remainder)
+          [(CompilerBackendSomeAsm asm) (CompilerBackendSomeAsm asm)]
+          [(CompilerBackendNoAsm)
+            (CompilerBackendSomeAsm
+              (compiler-backend-constant-divmod-unguarded-asm
+                n
+                ty
+                want-remainder))])))))
+
+(define (compiler-backend-binop-literal-divmod-asm
+  [op : CompilerIrBinOp]
+  [rhs : CompilerIrValue]
+  [ty : AstType]) : CompilerBackendMaybeAsm
+  (match op
+    [(IrBinDiv)
+      (match (compiler-backend-value-as-i64 rhs)
+        [(CompilerBackendSomeI64 n)
+          (compiler-backend-constant-divmod-asm n ty false)]
+        [(CompilerBackendNoI64) (CompilerBackendNoAsm)])]
+    [(IrBinMod)
+      (match (compiler-backend-value-as-i64 rhs)
+        [(CompilerBackendSomeI64 n)
+          (compiler-backend-constant-divmod-asm n ty true)]
+        [(CompilerBackendNoI64) (CompilerBackendNoAsm)])]
+    [_ (CompilerBackendNoAsm)]))
 
 (define (compiler-backend-shift-count-width [ty : AstType]) : i64
   (* (compiler-backend-type-size ty) 8))
@@ -5236,21 +5728,57 @@
           lhs
           "%rax")
           [(OkCompilerBackend lhs-asm)
-            (match (compiler-backend-immediate-operand rhs)
-              [(CompilerBackendSomeImmediate imm)
-                (match (compiler-backend-binop-immediate-asm op imm operand-ty)
-                  [(CompilerBackendSomeAsm op-asm)
-                    (OkCompilerBackend
-                      (string-append
-                        lhs-asm
-                        (string-append
-                          op-asm
-                          (compiler-backend-emit-store-typed-var-with-plan
-                            assignments
-                            dst
-                            "%rax"
-                            ty))))]
-                  [(CompilerBackendNoAsm)
+            (match (compiler-backend-binop-literal-divmod-asm op rhs operand-ty)
+              [(CompilerBackendSomeAsm op-asm)
+                (OkCompilerBackend
+                  (string-append
+                    lhs-asm
+                    (string-append
+                      op-asm
+                      (compiler-backend-emit-store-typed-var-with-plan
+                        assignments
+                        dst
+                        "%rax"
+                        ty))))]
+              [(CompilerBackendNoAsm)
+                (match (compiler-backend-immediate-operand rhs)
+                  [(CompilerBackendSomeImmediate imm)
+                    (match (compiler-backend-binop-immediate-asm
+                      op
+                      imm
+                      operand-ty)
+                      [(CompilerBackendSomeAsm op-asm)
+                        (OkCompilerBackend
+                          (string-append
+                            lhs-asm
+                            (string-append
+                              op-asm
+                              (compiler-backend-emit-store-typed-var-with-plan
+                                assignments
+                                dst
+                                "%rax"
+                                ty))))]
+                      [(CompilerBackendNoAsm)
+                        (match (compiler-backend-emit-load-value-with-plan
+                          assignments
+                          rhs
+                          "%r8")
+                          [(OkCompilerBackend rhs-asm)
+                            (OkCompilerBackend
+                              (string-append
+                                lhs-asm
+                                (string-append
+                                  rhs-asm
+                                  (string-append
+                                    (compiler-backend-binop-asm op operand-ty)
+                                    (compiler-backend-emit-store-typed-var-with-plan
+                                      assignments
+                                      dst
+                                      "%rax"
+                                      ty)))))]
+                          [(ErrCompilerBackend message)
+                            (ErrCompilerBackend message)])])]
+                  [(CompilerBackendNoImmediate)
                     (match (compiler-backend-emit-load-value-with-plan
                       assignments
                       rhs
@@ -5269,26 +5797,7 @@
                                   "%rax"
                                   ty)))))]
                       [(ErrCompilerBackend message)
-                        (ErrCompilerBackend message)])])]
-              [(CompilerBackendNoImmediate)
-                (match (compiler-backend-emit-load-value-with-plan
-                  assignments
-                  rhs
-                  "%r8")
-                  [(OkCompilerBackend rhs-asm)
-                    (OkCompilerBackend
-                      (string-append
-                        lhs-asm
-                        (string-append
-                          rhs-asm
-                          (string-append
-                            (compiler-backend-binop-asm op operand-ty)
-                            (compiler-backend-emit-store-typed-var-with-plan
-                              assignments
-                              dst
-                              "%rax"
-                              ty)))))]
-                  [(ErrCompilerBackend message) (ErrCompilerBackend message)])])]
+                        (ErrCompilerBackend message)])])])]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)])))))
 
 (define (compiler-backend-emit-binop-return
@@ -5340,13 +5849,39 @@
           lhs
           "%rax")
           [(OkCompilerBackend lhs-asm)
-            (match (compiler-backend-immediate-operand rhs)
-              [(CompilerBackendSomeImmediate imm)
-                (match (compiler-backend-binop-immediate-asm op imm operand-ty)
-                  [(CompilerBackendSomeAsm op-asm)
-                    (OkCompilerBackend
-                      (string-append lhs-asm (string-append op-asm return-tail)))]
-                  [(CompilerBackendNoAsm)
+            (match (compiler-backend-binop-literal-divmod-asm op rhs operand-ty)
+              [(CompilerBackendSomeAsm op-asm)
+                (OkCompilerBackend
+                  (string-append lhs-asm (string-append op-asm return-tail)))]
+              [(CompilerBackendNoAsm)
+                (match (compiler-backend-immediate-operand rhs)
+                  [(CompilerBackendSomeImmediate imm)
+                    (match (compiler-backend-binop-immediate-asm
+                      op
+                      imm
+                      operand-ty)
+                      [(CompilerBackendSomeAsm op-asm)
+                        (OkCompilerBackend
+                          (string-append
+                            lhs-asm
+                            (string-append op-asm return-tail)))]
+                      [(CompilerBackendNoAsm)
+                        (match (compiler-backend-emit-load-value-with-plan
+                          assignments
+                          rhs
+                          "%r8")
+                          [(OkCompilerBackend rhs-asm)
+                            (OkCompilerBackend
+                              (string-append
+                                lhs-asm
+                                (string-append
+                                  rhs-asm
+                                  (string-append
+                                    (compiler-backend-binop-asm op operand-ty)
+                                    return-tail))))]
+                          [(ErrCompilerBackend message)
+                            (ErrCompilerBackend message)])])]
+                  [(CompilerBackendNoImmediate)
                     (match (compiler-backend-emit-load-value-with-plan
                       assignments
                       rhs
@@ -5361,22 +5896,7 @@
                                 (compiler-backend-binop-asm op operand-ty)
                                 return-tail))))]
                       [(ErrCompilerBackend message)
-                        (ErrCompilerBackend message)])])]
-              [(CompilerBackendNoImmediate)
-                (match (compiler-backend-emit-load-value-with-plan
-                  assignments
-                  rhs
-                  "%r8")
-                  [(OkCompilerBackend rhs-asm)
-                    (OkCompilerBackend
-                      (string-append
-                        lhs-asm
-                        (string-append
-                          rhs-asm
-                          (string-append
-                            (compiler-backend-binop-asm op operand-ty)
-                            return-tail))))]
-                  [(ErrCompilerBackend message) (ErrCompilerBackend message)])])]
+                        (ErrCompilerBackend message)])])])]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)])))))
 
 (define (compiler-backend-jump-label [function : String] [label : String]) : String
@@ -5454,6 +5974,12 @@
     [(IrBinLe) true]
     [(IrBinGt) true]
     [(IrBinGe) true]
+    [_ false]))
+
+(define (compiler-backend-divmod-op? [op : CompilerIrBinOp]) : bool
+  (match op
+    [(IrBinDiv) true]
+    [(IrBinMod) true]
     [_ false]))
 
 (define (compiler-backend-compare-true-jcc
@@ -12057,6 +12583,195 @@
           (match (box-get rest)
             [(IrInstrCons next after-jump)
               (match next
+                [(IrInstrCast cast-dst cast-src _ _)
+                  (match (box-get after-jump)
+                    [(IrInstrCons after-cast after-binop)
+                      (match after-cast
+                        [(IrInstrBinOp bin-dst op lhs rhs bin-ty)
+                          (if (and
+                            (compiler-backend-divmod-op? op)
+                            (compiler-backend-branch-uses-var? cast-src dst)
+                            (compiler-backend-branch-uses-var? rhs cast-dst)
+                            (compiler-backend-var-single-use? use-counts dst)
+                            (compiler-backend-var-single-use?
+                              use-counts
+                              cast-dst)
+                            (compiler-backend-divmod-safe-literal? src bin-ty))
+                            (match (compiler-backend-emit-binop
+                              types
+                              global-types
+                              assignments
+                              bin-dst
+                              op
+                              lhs
+                              src
+                              bin-ty)
+                              [(OkCompilerBackend binop-asm)
+                                (compiler-backend-emit-instrs
+                                  target
+                                  function
+                                  source-function
+                                  blocks
+                                  current-label
+                                  fallthrough
+                                  (box-get after-binop)
+                                  assignments
+                                  vars
+                                  types
+                                  global-types
+                                  ret-ty
+                                  plan
+                                  functions
+                                  externs
+                                  program-index
+                                  spans
+                                  func-diag
+                                  use-counts
+                                  (text-buf-append buf binop-asm))]
+                              [(ErrCompilerBackend message)
+                                (ErrCompilerBackend message)])
+                            (compiler-backend-emit-instrs-normal
+                              target
+                              function
+                              source-function
+                              blocks
+                              current-label
+                              fallthrough
+                              instr
+                              (box-get rest)
+                              assignments
+                              vars
+                              types
+                              global-types
+                              ret-ty
+                              plan
+                              functions
+                              externs
+                              program-index
+                              spans
+                              func-diag
+                              use-counts
+                              buf))]
+                        [_
+                          (compiler-backend-emit-instrs-normal
+                            target
+                            function
+                            source-function
+                            blocks
+                            current-label
+                            fallthrough
+                            instr
+                            (box-get rest)
+                            assignments
+                            vars
+                            types
+                            global-types
+                            ret-ty
+                            plan
+                            functions
+                            externs
+                            program-index
+                            spans
+                            func-diag
+                            use-counts
+                            buf)])]
+                    [_
+                      (compiler-backend-emit-instrs-normal
+                        target
+                        function
+                        source-function
+                        blocks
+                        current-label
+                        fallthrough
+                        instr
+                        (box-get rest)
+                        assignments
+                        vars
+                        types
+                        global-types
+                        ret-ty
+                        plan
+                        functions
+                        externs
+                        program-index
+                        spans
+                        func-diag
+                        use-counts
+                        buf)])]
+                [(IrInstrBinOp bin-dst op lhs rhs bin-ty)
+                  (if (and
+                    (compiler-backend-divmod-op? op)
+                    (compiler-backend-branch-uses-var? rhs dst)
+                    (compiler-backend-divmod-safe-literal? src bin-ty))
+                    (match (if (compiler-backend-var-single-use? use-counts dst)
+                      (OkCompilerBackend "")
+                      (compiler-backend-emit-mov
+                        assignments
+                        dst
+                        src
+                        ty
+                        program-index
+                        vars))
+                      [(OkCompilerBackend prefix)
+                        (match (compiler-backend-emit-binop
+                          types
+                          global-types
+                          assignments
+                          bin-dst
+                          op
+                          lhs
+                          src
+                          bin-ty)
+                          [(OkCompilerBackend binop-asm)
+                            (compiler-backend-emit-instrs
+                              target
+                              function
+                              source-function
+                              blocks
+                              current-label
+                              fallthrough
+                              (box-get after-jump)
+                              assignments
+                              vars
+                              types
+                              global-types
+                              ret-ty
+                              plan
+                              functions
+                              externs
+                              program-index
+                              spans
+                              func-diag
+                              use-counts
+                              (text-buf-append
+                                (text-buf-append buf prefix)
+                                binop-asm))]
+                          [(ErrCompilerBackend message)
+                            (ErrCompilerBackend message)])]
+                      [(ErrCompilerBackend message)
+                        (ErrCompilerBackend message)])
+                    (compiler-backend-emit-instrs-normal
+                      target
+                      function
+                      source-function
+                      blocks
+                      current-label
+                      fallthrough
+                      instr
+                      (box-get rest)
+                      assignments
+                      vars
+                      types
+                      global-types
+                      ret-ty
+                      plan
+                      functions
+                      externs
+                      program-index
+                      spans
+                      func-diag
+                      use-counts
+                      buf))]
                 [(IrInstrJump target-label)
                   (compiler-backend-emit-fused-mov-trivial-phi-return-rest
                     target
@@ -15392,12 +16107,13 @@
 
 (define (compiler-backend-binop-needs-div-abort?
   [op : CompilerIrBinOp]
+  [rhs : CompilerIrValue]
   [ty : AstType]) : bool
   (if (compiler-backend-float-type? ty)
     false
     (match op
-      [(IrBinDiv) true]
-      [(IrBinMod) true]
+      [(IrBinDiv) (not (compiler-backend-divmod-safe-literal? rhs ty))]
+      [(IrBinMod) (not (compiler-backend-divmod-safe-literal? rhs ty))]
       [_ false])))
 
 (define (compiler-backend-binop-needs-shift-abort?
@@ -15507,16 +16223,30 @@
       (compiler-backend-runtime-index-add-call index call-name)]
     [(IrInstrBoundsCheck _ _ _)
       (compiler-backend-runtime-index-add-call index "tl_oob_abort")]
-    [(IrInstrBinOp _ op _ _ ty)
+    [(IrInstrBinOp _ op _ rhs ty)
       (let
         [with-div : CompilerBackendRuntimeIndex
-          (if (compiler-backend-binop-needs-div-abort? op ty)
+          (if (compiler-backend-binop-needs-div-abort? op rhs ty)
             (compiler-backend-runtime-index-with-div-abort index)
             index)]
         (if (compiler-backend-binop-needs-shift-abort? op ty)
           (compiler-backend-runtime-index-with-shift-abort with-div)
           with-div))]
     [_ index]))
+
+(define (compiler-backend-runtime-index-safe-literal-divmod-fusion?
+  [instr : CompilerIrInstr]
+  [next : CompilerIrInstr]) : bool
+  (match instr
+    [(IrInstrMov dst src _)
+      (match next
+        [(IrInstrBinOp _ op _ rhs bin-ty)
+          (and
+            (compiler-backend-divmod-op? op)
+            (compiler-backend-branch-uses-var? rhs dst)
+            (compiler-backend-divmod-safe-literal? src bin-ty))]
+        [_ false])]
+    [_ false]))
 
 (define (compiler-backend-runtime-index-instr-seq
   [index : CompilerBackendRuntimeIndex]
@@ -15528,11 +16258,18 @@
     [out : CompilerBackendRuntimeIndex index]
     (begin
       (while (< i count)
-        (begin
-          (set!
-            out
-            (compiler-backend-runtime-index-instr out (array-ref slots i)))
-          (set! i (+ i 1))))
+        (let
+          [instr : CompilerIrInstr (array-ref slots i)]
+          [advance : i64 1]
+          (begin
+            (if (and
+              (< (+ i 1) count)
+              (compiler-backend-runtime-index-safe-literal-divmod-fusion?
+                instr
+                (array-ref slots (+ i 1))))
+              (set! advance 2)
+              (set! out (compiler-backend-runtime-index-instr out instr)))
+            (set! i (+ i advance)))))
       out)))
 
 (define (compiler-backend-runtime-index-blocks

@@ -5249,6 +5249,48 @@
           (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-constant-divisor-strength-source) : String
+  "(define (sdiv3 [a : i64]) : i64 (/ a 3))
+(define (smod-prime [a : i64]) : i64 (% a 1000000007))
+(define (udiv3 [a : u64]) : u64 (/ a (cast 3 : u64)))
+(define (umod8 [a : u64]) : u64 (% a (cast 8 : u64)))
+(define (udiv-high [a : u64]) : u64 (/ a (cast -2 : u64)))
+(define (main) : i64
+  (+ (sdiv3 -10)
+    (+ (smod-prime -10)
+      (+ (cast (udiv3 (cast 42 : u64)) : i64)
+        (+ (cast (umod8 (cast 42 : u64)) : i64)
+          (cast (udiv-high (cast -1 : u64)) : i64))))))")
+
+(define (compiler-backend-constant-divisor-strength-ok?) : bool
+  (match (compiler-backend-emit-source
+    (compiler-backend-constant-divisor-strength-source))
+    [(OkCompilerBackend asm)
+      (backend-and8
+        (compiler-backend-string-contains?
+          asm
+          "    movabsq $6148914691236517206, %r8\n    imulq %r8\n")
+        (compiler-backend-string-contains?
+          asm
+          "    movabsq $-8543223828751151131, %r8\n    imulq %r8\n")
+        (compiler-backend-string-contains?
+          asm
+          "    movabsq $-6148914691236517205, %r8\n    mulq %r8\n")
+        (compiler-backend-string-contains?
+          asm
+          "    movabsq $7, %r8\n    andq %r8, %rax\n")
+        (not (compiler-backend-string-contains? asm "    idivq %r8\n"))
+        (not (compiler-backend-string-contains? asm "    divq %r8\n"))
+        (not (compiler-backend-string-contains? asm "    call tl_div_abort\n"))
+        (and
+          (not (compiler-backend-string-contains? asm ".extern tl_div_abort\n"))
+          (not (compiler-backend-string-contains? asm ".globl tl_div_abort\n"))
+          (not
+            (compiler-backend-string-contains?
+              asm
+              (compiler-backend-todo-marker)))))]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-shift-guard-source) : String
   "(define (main) : i64 (shl 1 -1))")
 
@@ -6634,7 +6676,9 @@
     (compiler-backend-alloc-runtime-shape-ok?)
     (backend-and8
       (compiler-backend-scalar-wide-ops-ok?)
-      (compiler-backend-scalar-div-mod-ok?)
+      (and
+        (compiler-backend-scalar-div-mod-ok?)
+        (compiler-backend-constant-divisor-strength-ok?))
       (and
         (compiler-backend-narrow-scalar-instr-ok?)
         (compiler-backend-global-compare-width-ok?))

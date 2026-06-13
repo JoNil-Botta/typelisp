@@ -15,6 +15,7 @@ c_abi_sysv_tag_only_enum|tests/integration/c_abi_sysv_tag_only_enum.tl|42|-|-|be
 arena_escape_stress|tests/integration/arena_escape_stress.tl|42|-|-|stdlib/arena.tl stdlib/string.tl
 argv|tests/integration/argv.tl|7|alpha\n|alpha beta|-
 arithmetic|tests/integration/arithmetic.tl|47|-|-|-
+constant_divisor_strength|tests/integration/constant_divisor_strength.tl|42|-|-|-
 arena_poison_clone_survives|tests/integration/arena_poison_clone_survives.tl|42|-|-|stdlib/arena.tl stdlib/string.tl|requires-stage0-symbol:tl_arena_poison_enable
 arena_poison_stale_array_trap|tests/integration/arena_poison_stale_array_trap.tl|139|-|-|stdlib/arena.tl stdlib/string.tl|requires-stage0-symbol:tl_arena_poison_enable
 calc|tests/integration/calc.tl|14|-|-|token.tl

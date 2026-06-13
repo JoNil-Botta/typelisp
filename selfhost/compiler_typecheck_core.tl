@@ -10378,6 +10378,84 @@
     [(TcSpmdFound _ (TcSpmdVarying) (TcSpmdLocal) (TcSpmdForeachIndex)) true]
     [_ false]))
 
+(define (tc-spmd-foreach-index-unsupported) : ResultTcUnit
+  (ErrTcUnit
+    "typecheck: foreach does not support gather/scatter-like array indexes; use the foreach index plus a uniform offset"))
+
+(define (tc-spmd-foreach-uniform-offset
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [expr : AstExpr]) : ResultTcUnit
+  (match (tc-spmd-expr ctx env spmd-env expr)
+    [(OkTcSpmdExprInfo info)
+      (match info
+        [(TcSpmdExprInfo _ class _)
+          (if (tc-spmd-varying? class)
+            (tc-spmd-foreach-index-unsupported)
+            OkTcUnit)])]
+    [(ErrTcSpmdExprInfo message) (ErrTcUnit message)]))
+
+(define (tc-spmd-foreach-direct-index [spmd-env : TcSpmdEnv] [expr : AstExpr]) : ResultTcUnit
+  (match expr
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (tc-spmd-foreach-direct-index spmd-env inner))]
+    [(AstExprAnn inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (tc-spmd-foreach-direct-index spmd-env inner))]
+    [(AstExprCast inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (tc-spmd-foreach-direct-index spmd-env inner))]
+    [(AstExprVar name)
+      (if (tc-spmd-masked-if-index-var? spmd-env (intern-str name))
+        OkTcUnit
+        (tc-spmd-foreach-index-unsupported))]
+    [_ (tc-spmd-foreach-index-unsupported)]))
+
+(define (tc-spmd-foreach-index
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [expr : AstExpr]) : ResultTcUnit
+  (match expr
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (tc-spmd-foreach-index ctx env spmd-env inner))]
+    [(AstExprAnn inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (tc-spmd-foreach-index ctx env spmd-env inner))]
+    [(AstExprCast inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (tc-spmd-foreach-index ctx env spmd-env inner))]
+    [(AstExprBinary op left-box right-box)
+      (let
+        [left : AstExpr (ast-node-get left-box)]
+        [right : AstExpr (ast-node-get right-box)]
+        (match op
+          [(AstBinAdd)
+            (match (tc-spmd-foreach-direct-index spmd-env left)
+              [(OkTcUnit)
+                (tc-spmd-foreach-uniform-offset ctx env spmd-env right)]
+              [(ErrTcUnit _)
+                (match (tc-spmd-foreach-direct-index spmd-env right)
+                  [(OkTcUnit)
+                    (tc-spmd-foreach-uniform-offset ctx env spmd-env left)]
+                  [(ErrTcUnit message) (ErrTcUnit message)])])]
+          [(AstBinSub)
+            (match (tc-spmd-foreach-direct-index spmd-env left)
+              [(OkTcUnit)
+                (tc-spmd-foreach-uniform-offset ctx env spmd-env right)]
+              [(ErrTcUnit message) (ErrTcUnit message)])]
+          [_ (tc-spmd-foreach-index-unsupported)]))]
+    [_ (tc-spmd-foreach-direct-index spmd-env expr)]))
+
 (define (tc-spmd-masked-if-uniform-offset
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -11046,10 +11124,15 @@
                   [(OkTcSpmdExprInfo index-info)
                     (match index-info
                       [(TcSpmdExprInfo _ index-class index-env)
-                        (tc-spmd-finish-lane
-                          expr-ty
-                          (tc-spmd-merge-class array-class index-class)
-                          index-env)])]
+                        (match (if (tc-spmd-varying? index-class)
+                          (tc-spmd-foreach-index ctx env array-env index)
+                          OkTcUnit)
+                          [(OkTcUnit)
+                            (tc-spmd-finish-lane
+                              expr-ty
+                              (tc-spmd-merge-class array-class index-class)
+                              index-env)]
+                          [(ErrTcUnit message) (ErrTcSpmdExprInfo message)])])]
                   [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])])]
           [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]
     [(AstExprArraySet array-box index-box value-box)
@@ -11065,57 +11148,62 @@
                   [(OkTcSpmdExprInfo index-info)
                     (match index-info
                       [(TcSpmdExprInfo _ index-class index-env)
-                        (match (tc-spmd-expr ctx env index-env value)
-                          [(OkTcSpmdExprInfo value-info)
-                            (match value-info
-                              [(TcSpmdExprInfo _ value-class value-env)
-                                (let
-                                  [write-class : TcSpmdClass
-                                    (tc-spmd-merge-class
-                                      array-class
-                                      (tc-spmd-merge-class
-                                        index-class
-                                        value-class))]
-                                  (match (tc-type-strip-region array-ty)
-                                    [(AstTyArray elem-ty _)
-                                      (if (and
-                                        (tc-spmd-varying? write-class)
-                                        (not
-                                          (tc-spmd-lane-type-supported?
-                                            (ty-node-get elem-ty))))
-                                        (ErrTcSpmdExprInfo
-                                          (string-append
-                                            "typecheck: foreach varying array lane type is not supported: "
-                                            (tc-type-render
-                                              (tc-type-strip-region
-                                                (ty-node-get elem-ty)))))
-                                        (tc-spmd-finish
-                                          expr-ty
-                                          TcSpmdUniform
-                                          value-env))]
-                                    [(AstTyDynArray elem-ty)
-                                      (if (and
-                                        (tc-spmd-varying? write-class)
-                                        (not
-                                          (tc-spmd-lane-type-supported?
-                                            (ty-node-get elem-ty))))
-                                        (ErrTcSpmdExprInfo
-                                          (string-append
-                                            "typecheck: foreach varying array lane type is not supported: "
-                                            (tc-type-render
-                                              (tc-type-strip-region
-                                                (ty-node-get elem-ty)))))
-                                        (tc-spmd-finish
-                                          expr-ty
-                                          TcSpmdUniform
-                                          value-env))]
-                                    [_
-                                      (tc-spmd-finish
-                                        expr-ty
-                                        TcSpmdUniform
-                                        value-env)]))])]
-                          [(ErrTcSpmdExprInfo message)
-                            (ErrTcSpmdExprInfo message)])])]
+                        (match (if (tc-spmd-varying? index-class)
+                          (tc-spmd-foreach-index ctx env array-env index)
+                          OkTcUnit)
+                          [(OkTcUnit)
+                            (match (tc-spmd-expr ctx env index-env value)
+                              [(OkTcSpmdExprInfo value-info)
+                                (match value-info
+                                  [(TcSpmdExprInfo _ value-class value-env)
+                                    (let
+                                      [write-class : TcSpmdClass
+                                        (tc-spmd-merge-class
+                                          array-class
+                                          (tc-spmd-merge-class
+                                            index-class
+                                            value-class))]
+                                      (match (tc-type-strip-region array-ty)
+                                        [(AstTyArray elem-ty _)
+                                          (if (and
+                                            (tc-spmd-varying? write-class)
+                                            (not
+                                              (tc-spmd-lane-type-supported?
+                                                (ty-node-get elem-ty))))
+                                            (ErrTcSpmdExprInfo
+                                              (string-append
+                                                "typecheck: foreach varying array lane type is not supported: "
+                                                (tc-type-render
+                                                  (tc-type-strip-region
+                                                    (ty-node-get elem-ty)))))
+                                            (tc-spmd-finish
+                                              expr-ty
+                                              TcSpmdUniform
+                                              value-env))]
+                                        [(AstTyDynArray elem-ty)
+                                          (if (and
+                                            (tc-spmd-varying? write-class)
+                                            (not
+                                              (tc-spmd-lane-type-supported?
+                                                (ty-node-get elem-ty))))
+                                            (ErrTcSpmdExprInfo
+                                              (string-append
+                                                "typecheck: foreach varying array lane type is not supported: "
+                                                (tc-type-render
+                                                  (tc-type-strip-region
+                                                    (ty-node-get elem-ty)))))
+                                            (tc-spmd-finish
+                                              expr-ty
+                                              TcSpmdUniform
+                                              value-env))]
+                                        [_
+                                          (tc-spmd-finish
+                                            expr-ty
+                                            TcSpmdUniform
+                                            value-env)]))])]
+                              [(ErrTcSpmdExprInfo message)
+                                (ErrTcSpmdExprInfo message)])]
+                          [(ErrTcUnit message) (ErrTcSpmdExprInfo message)])])]
                   [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])])]
           [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]
     [(AstExprStructSet receiver-box field value-box)

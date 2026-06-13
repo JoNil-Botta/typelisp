@@ -3262,13 +3262,7 @@
     [_ (- 0 1)]))
 
 (define (compiler-reg-color-merge-root [acc : i64] [root : i64]) : i64
-  (if (< root 0)
-    (- 0 1)
-    (if (< acc 0)
-      root
-      (if (= acc root)
-        root
-        (- 0 2)))))
+  (cond (< root 0) (- 0 1) (< acc 0) root (= acc root) root (- 0 2)))
 
 (define (compiler-reg-color-value-list-root
   [roots : (Array i64)]

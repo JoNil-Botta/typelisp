@@ -2023,6 +2023,91 @@
         [(OkCompilerBackend asm) (string-eq asm "    movq $7, -16(%rbp)\n")]
         [(ErrCompilerBackend _) false]))))
 
+(define (compiler-backend-register-group-test-type) : AstType
+  (AstTyStruct (intern "BackendGroupTest")))
+
+(define (compiler-backend-register-group-test-index) : CompilerBackendProgramIndex
+  (let
+    [ty : AstType (compiler-backend-register-group-test-type)]
+    (compiler-backend-program-index-build
+      (compiler-ir-function-cons
+        (IrFunction
+          "main"
+          IrParamNil
+          (AstTyI64)
+          3
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              "entry"
+              (compiler-ir-instr-cons
+                (IrInstrPack
+                  2
+                  (compiler-ir-value-cons
+                    (IrValueI64 1)
+                    (compiler-ir-value-cons (IrValueI64 2) IrValueNil))
+                  ty)
+                IrInstrNil))
+            IrBlockNil))
+        IrFunctionNil)
+      IrExternNil)))
+
+(define (compiler-backend-register-group-mov-error-ok?
+  [assignments : CompilerRegAssignmentList]
+  [src : CompilerIrValue]
+  [want : String]) : bool
+  (let
+    [ty : AstType (compiler-backend-register-group-test-type)]
+    [index : CompilerBackendProgramIndex
+      (compiler-backend-register-group-test-index)]
+    (match (compiler-backend-emit-mov assignments 1 src ty index 4)
+      [(ErrCompilerBackend diag)
+        (string-eq (compiler-diagnostic-message diag) want)]
+      [(OkCompilerBackend _) false])))
+
+(define (compiler-backend-register-group-call-arg-error-ok?) : bool
+  (let
+    [ty : AstType (compiler-backend-register-group-test-type)]
+    [index : CompilerBackendProgramIndex
+      (compiler-backend-register-group-test-index)]
+    (match (compiler-backend-emit-call-args
+      (BackendTargetLinux)
+      CompilerRegAssignmentNil
+      (IrCallArgsOne (IrValueI64 7))
+      (ast-type-cons ty AstTypeNil)
+      0
+      0
+      0
+      0
+      0
+      (compiler-diagnostic-at-start "" "")
+      index
+      4)
+      [(ErrCompilerBackend diag)
+        (string-eq
+          (compiler-diagnostic-message diag)
+          "backend: register-group call argument requires var operand (#2386)")]
+      [(OkCompilerBackend _) false])))
+
+(define (compiler-backend-register-group-fail-closed-ok?) : bool
+  (and
+    (compiler-backend-register-group-mov-error-ok?
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 0 (CompilerRegRegister "%r12"))
+        CompilerRegAssignmentNil)
+      (IrValueVar 0)
+      "backend: register-group var assigned scalar register home (#2386)")
+    (compiler-backend-register-group-mov-error-ok?
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 0 (CompilerRegSpill 16))
+        CompilerRegAssignmentNil)
+      (IrValueVar 0)
+      "backend: register-group var assigned spill slot (#2386)")
+    (compiler-backend-register-group-mov-error-ok?
+      CompilerRegAssignmentNil
+      (IrValueI64 7)
+      "backend: register-group load requires var operand (#2386)")
+    (compiler-backend-register-group-call-arg-error-ok?)))
+
 (define (compiler-backend-peephole-asm-ok?) : bool
   (let
     [assignments : CompilerRegAssignmentList
@@ -6258,7 +6343,9 @@
         (compiler-backend-direct-tail-call-ok?)
         (compiler-backend-indirect-tail-call-ok?)))
     (backend-and8
-      (compiler-backend-instr-diagnostics-ok?)
+      (and
+        (compiler-backend-instr-diagnostics-ok?)
+        (compiler-backend-register-group-fail-closed-ok?))
       (compiler-backend-optimizer-rewrite-diagnostic-ok?)
       (and
         (compiler-backend-runtime-helper-asm-ok?)

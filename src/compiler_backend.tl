@@ -4895,8 +4895,16 @@
 (define (compiler-backend-u64-max) : u64
   (cast (- 0 1) : u64))
 
+;; Test bit 63 directly instead of `(>= n 2^63)`. The unsigned compare against a
+;; constant whose own bit 63 is set is miscompiled by the opt2 pipeline when this
+;; helper is inlined into the magic-division codegen below: the opt2-built
+;; compiler then treated `0x6666666666666667` (signed-/10 magic, bit 63 clear) as
+;; high-bit-set and emitted a spurious "add dividend back" correction, corrupting
+;; every constant `/`,`%` in the release self-build (garbled int formatting,
+;; #2921). A bit-test (`!= 0`) is sign-agnostic and lowers identically at every
+;; opt level, so it dodges the bad rewrite while staying provably equivalent.
 (define (compiler-backend-u64-high-bit? [n : u64]) : bool
-  (>= n (shl (cast 1 : u64) 63)))
+  (not (= (bit-and n (shl (cast 1 : u64) 63)) (cast 0 : u64))))
 
 (define (compiler-backend-u64-power-of-two? [n : u64]) : bool
   (and (> n (cast 0 : u64)) (= (bit-and n (- n (cast 1 : u64))) (cast 0 : u64))))

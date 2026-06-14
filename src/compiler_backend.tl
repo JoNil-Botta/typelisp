@@ -25,6 +25,8 @@
 
 (import "../stdlib/string.tl")
 
+(import "../stdlib/str_cat.tl")
+
 (cfg
   compile-profile
   (define compiler-backend-profile-start-ms : i64
@@ -2112,15 +2114,15 @@
                 (OkCompilerBackend
                   (string-append
                     addr-asm
-                    (backend-cat5
+                    (str-cat
                       "    "
                       (compiler-backend-avx512-vector-move elem-ty)
                       " "
                       (compiler-backend-avx2-indexed-addr elem-ty)
-                      (backend-cat5
+                      (str-cat
                         ", "
                         dst-reg
-                        (backend-cat3 "{" mask-reg "}{z}\n")
+                        (str-cat "{" mask-reg "}{z}\n")
                         ""
                         ""))))]
               [(ErrCompilerBackend message)
@@ -2162,15 +2164,15 @@
                 (OkCompilerBackend
                   (string-append
                     addr-asm
-                    (backend-cat5
+                    (str-cat
                       "    "
                       (compiler-backend-avx512-vector-move elem-ty)
                       " "
                       value-reg
-                      (backend-cat5
+                      (str-cat
                         ", "
                         (compiler-backend-avx2-indexed-addr elem-ty)
-                        (backend-cat3 "{" mask-reg "}\n")
+                        (str-cat "{" mask-reg "}\n")
                         ""
                         ""))))]
               [(ErrCompilerBackend message)
@@ -2213,12 +2215,12 @@
               "mask binop dst")
               [(OkBackendReg dst-reg)
                 (OkCompilerBackend
-                  (backend-cat5
+                  (str-cat
                     "    "
                     (compiler-backend-mask-binop-mnemonic op lanes)
                     " "
                     rhs-reg
-                    (backend-cat5 ", " lhs-reg ", " dst-reg "\n")))]
+                    (str-cat ", " lhs-reg ", " dst-reg "\n")))]
               [(ErrBackendReg message)
                 (ErrCompilerBackend
                   (compiler-diagnostic-with-message instr-diag message))])]
@@ -2252,28 +2254,28 @@
             [(OkBackendReg dst-reg)
               (OkCompilerBackend
                 (string-append
-                  (backend-cat5
+                  (str-cat
                     "    "
                     (string-append "knot" mask-suffix)
                     " "
                     src-reg
-                    (backend-cat3 ", " dst-reg "\n"))
-                  (backend-cat5
+                    (str-cat ", " dst-reg "\n"))
+                  (str-cat
                     "    "
                     mov-imm
                     " $"
                     (int->string full-mask)
-                    (backend-cat5
+                    (str-cat
                       ", "
                       mask-gpr
                       "\n    "
                       mask-move
-                      (backend-cat5
+                      (str-cat
                         " "
                         mask-gpr
                         ", %k7\n    "
                         (string-append "kand" mask-suffix)
-                        (backend-cat5 " %k7, " dst-reg ", " dst-reg "\n"))))))]
+                        (str-cat " %k7, " dst-reg ", " dst-reg "\n"))))))]
             [(ErrBackendReg message)
               (ErrCompilerBackend
                 (compiler-diagnostic-with-message instr-diag message))])]
@@ -2306,32 +2308,32 @@
             (string-append
               (string-append
                 (string-append
-                  (backend-cat5
+                  (str-cat
                     "    "
                     mask-move
                     " "
                     src-reg
-                    (backend-cat3 ", " mask-gpr "\n"))
+                    (str-cat ", " mask-gpr "\n"))
                   (match op
                     [(IrMaskReduceAny)
-                      (backend-cat5
+                      (str-cat
                         "    "
                         test-op
                         " "
                         mask-gpr
-                        (backend-cat3 ", " mask-gpr "\n    setne %al\n"))]
+                        (str-cat ", " mask-gpr "\n    setne %al\n"))]
                     [(IrMaskReduceAll)
-                      (backend-cat5
+                      (str-cat
                         "    "
                         and-op
                         " $"
                         (int->string full-mask)
-                        (backend-cat5
+                        (str-cat
                           ", "
                           mask-gpr
                           "\n    "
                           cmp-op
-                          (backend-cat5
+                          (str-cat
                             " $"
                             (int->string full-mask)
                             ", "
@@ -2442,7 +2444,7 @@
   (compiler-backend-frame-offset (- 0 (* 8 (+ vars (+ idx 1))))))
 
 (define (compiler-backend-asm-label [function : String] [label : String]) : String
-  (backend-cat4 ".L" (compiler-backend-asm-safe-symbol function) "_" label))
+  (str-cat ".L" (compiler-backend-asm-safe-symbol function) "_" label))
 
 (define (compiler-backend-arg-reg [idx : i64]) : ResultBackendReg
   (if (= idx 0)
@@ -2486,21 +2488,21 @@
     (match target
       [(BackendTargetWindows)
         (if (>= frame 4096)
-          (backend-cat5
+          (str-cat
             "    movl $"
             (int->string frame)
             ", %eax\n    callq __chkstk\n    subq %rax, %rsp\n"
             ""
             "")
-          (backend-cat4 "    subq $" (int->string frame) ", %rsp\n" ""))]
+          (str-cat "    subq $" (int->string frame) ", %rsp\n" ""))]
       [(BackendTargetLinux)
-        (backend-cat4 "    subq $" (int->string frame) ", %rsp\n" "")])))
+        (str-cat "    subq $" (int->string frame) ", %rsp\n" "")])))
 
 (define (compiler-backend-emit-windows-seh-proc
   [target : CompilerBackendTarget]
   [symbol : String]) : String
   (if (compiler-backend-target-windows? target)
-    (backend-cat4 ".seh_proc " symbol "\n" "")
+    (str-cat ".seh_proc " symbol "\n" "")
     ""))
 
 (define (compiler-backend-emit-windows-seh-push-rbp
@@ -2519,7 +2521,7 @@
   [target : CompilerBackendTarget]
   [frame : i64]) : String
   (if (and (compiler-backend-target-windows? target) (> frame 0))
-    (backend-cat4 "    .seh_stackalloc " (int->string frame) "\n" "")
+    (str-cat "    .seh_stackalloc " (int->string frame) "\n" "")
     ""))
 
 (define (compiler-backend-emit-windows-seh-endprologue
@@ -2557,7 +2559,7 @@
                   (compiler-backend-emit-windows-seh-endprologue target))))))))))
 
 (define (compiler-backend-emit-store-var [var-id : i64] [reg : String]) : String
-  (backend-cat5 "    movq " reg ", " (compiler-backend-slot var-id) "\n"))
+  (str-cat "    movq " reg ", " (compiler-backend-slot var-id) "\n"))
 
 (define (compiler-backend-float-type? [ty : AstType]) : bool
   (match ty
@@ -2580,7 +2582,7 @@
   [reg : String]
   [ty : AstType]) : String
   (string-append
-    (backend-cat5 "    " (compiler-backend-float-move ty) " " reg ", ")
+    (str-cat "    " (compiler-backend-float-move ty) " " reg ", ")
     (string-append (compiler-backend-slot var-id) "\n")))
 
 (define (compiler-backend-emit-store-xmm-var [var-id : i64] [reg : String]) : String
@@ -2596,23 +2598,23 @@
         [(CompilerRegRegister home)
           (if (string-eq home reg)
             ""
-            (backend-cat5 "    movq " home ", " reg "\n"))]
+            (str-cat "    movq " home ", " reg "\n"))]
         [(CompilerRegRegisterPair home _)
           ;; #2386: loading a whole register-group var into one register is not a
           ;; scalar op; word extraction goes through IrInstrWord. Word0's home is
           ;; the low register -- used only by the (unreached here) group paths.
           (if (string-eq home reg)
             ""
-            (backend-cat5 "    movq " home ", " reg "\n"))]
+            (str-cat "    movq " home ", " reg "\n"))]
         [(CompilerRegSpill offset)
-          (backend-cat5
+          (str-cat
             "    movq "
             (compiler-backend-frame-offset offset)
             ", "
             reg
             "\n")])]
     [(CompilerRegNoLocation)
-      (backend-cat5 "    movq " (compiler-backend-slot var-id) ", " reg "\n")]))
+      (str-cat "    movq " (compiler-backend-slot var-id) ", " reg "\n")]))
 
 (define (compiler-backend-emit-store-var-with-plan
   [assignments : CompilerRegAssignmentList]
@@ -2624,13 +2626,13 @@
         [(CompilerRegRegister home)
           (if (string-eq home reg)
             ""
-            (backend-cat5 "    movq " reg ", " home "\n"))]
+            (str-cat "    movq " reg ", " home "\n"))]
         [(CompilerRegRegisterPair home _)
           (if (string-eq home reg)
             ""
-            (backend-cat5 "    movq " reg ", " home "\n"))]
+            (str-cat "    movq " reg ", " home "\n"))]
         [(CompilerRegSpill offset)
-          (backend-cat5
+          (str-cat
             "    movq "
             reg
             ", "
@@ -2651,21 +2653,21 @@
           [(CompilerRegRegister home)
             (if (string-eq home reg)
               ""
-              (backend-cat5 "    " mov (backend-cat3 " " home ", ") reg "\n"))]
+              (str-cat "    " mov (str-cat " " home ", ") reg "\n"))]
           ;; #2386: a register-group var is never float-class; unreachable.
           [(CompilerRegRegisterPair _ _) ""]
           [(CompilerRegSpill offset)
-            (backend-cat5
+            (str-cat
               "    "
               mov
-              (backend-cat3 " " (compiler-backend-frame-offset offset) ", ")
+              (str-cat " " (compiler-backend-frame-offset offset) ", ")
               reg
               "\n")])]
       [(CompilerRegNoLocation)
-        (backend-cat5
+        (str-cat
           "    "
           mov
-          (backend-cat3 " " (compiler-backend-slot var-id) ", ")
+          (str-cat " " (compiler-backend-slot var-id) ", ")
           reg
           "\n")])))
 
@@ -2692,14 +2694,14 @@
           [(CompilerRegRegister home)
             (if (string-eq home reg)
               ""
-              (backend-cat5 "    " mov (backend-cat3 " " reg ", ") home "\n"))]
+              (str-cat "    " mov (str-cat " " reg ", ") home "\n"))]
           ;; #2386: a register-group var is never float-class; unreachable.
           [(CompilerRegRegisterPair _ _) ""]
           [(CompilerRegSpill offset)
-            (backend-cat5
+            (str-cat
               "    "
               mov
-              (backend-cat3 " " reg ", ")
+              (str-cat " " reg ", ")
               (compiler-backend-frame-offset offset)
               "\n")])]
       [(CompilerRegNoLocation)
@@ -2721,7 +2723,7 @@
   [reg : String]
   [idx : i64]) : String
   (if (compiler-backend-plan-uses-reg? assignments reg)
-    (backend-cat5
+    (str-cat
       "    movq "
       reg
       ", "
@@ -2735,7 +2737,7 @@
   [reg : String]
   [idx : i64]) : String
   (if (compiler-backend-plan-uses-reg? assignments reg)
-    (backend-cat5
+    (str-cat
       "    movq "
       (compiler-backend-callee-save-slot vars idx)
       ", "
@@ -2787,7 +2789,7 @@
   [target : String]) : String
   (string-append
     (compiler-backend-emit-restore-callee-regs assignments vars)
-    (backend-cat4 "    leave\n    jmp " target "\n" "")))
+    (str-cat "    leave\n    jmp " target "\n" "")))
 
 (define (compiler-backend-char-code [c : char]) : i64
   (cast c : i64))
@@ -3055,7 +3057,7 @@
     (compiler-backend-index-extern-link-symbol index name)
     (if (compiler-backend-compact-function-symbol? name)
       (match (compiler-backend-index-function-slot index name)
-        [(I64I64MapFound slot) (backend-cat3 "_tl_f" (int->string slot) "")]
+        [(I64I64MapFound slot) (str-cat "_tl_f" (int->string slot) "")]
         [(I64I64MapMissing) (compiler-backend-user-symbol name)])
       (compiler-backend-user-symbol name))))
 
@@ -3171,7 +3173,7 @@
   [index : CompilerBackendProgramIndex]
   [name : String]) : String
   (match (compiler-backend-index-function-slot index name)
-    [(I64I64MapFound slot) (backend-cat3 "f" (int->string slot) "")]
+    [(I64I64MapFound slot) (str-cat "f" (int->string slot) "")]
     [(I64I64MapMissing) (compiler-backend-user-symbol name)]))
 
 (define (compiler-backend-type-size [ty : AstType]) : i64
@@ -3362,7 +3364,7 @@
     [n : i64 (string-length text)]
     (if (= n 0)
       "empty"
-      (backend-cat5
+      (str-cat
         "l"
         (int->string n)
         "_"
@@ -3423,16 +3425,16 @@
           (compiler-backend-emit-load-float-var-with-plan assignments id ty reg))]
       [(IrValueGlobal name)
         (OkCompilerBackend
-          (backend-cat5
+          (str-cat
             "    "
             mov
-            (backend-cat3 " " (compiler-backend-user-symbol name) "(%rip), ")
+            (str-cat " " (compiler-backend-user-symbol name) "(%rip), ")
             reg
             "\n"))]
       [(IrValueF64 text)
         (if (compiler-backend-f64-type? ty)
           (OkCompilerBackend
-            (backend-cat5
+            (str-cat
               "    movsd "
               (compiler-backend-f64-label text)
               "(%rip), "
@@ -3440,13 +3442,13 @@
               "\n"))
           (OkCompilerBackend
             (string-append
-              (backend-cat5
+              (str-cat
                 "    movsd "
                 (compiler-backend-f64-label text)
                 "(%rip), "
                 reg
                 "\n")
-              (backend-cat5 "    cvtsd2ss " reg ", " reg "\n"))))]
+              (str-cat "    cvtsd2ss " reg ", " reg "\n"))))]
       [_
         (ErrCompilerBackend
           (compiler-diagnostic-at-start
@@ -3476,12 +3478,12 @@
   (if (= n 0)
     (let
       [reg32 : String (compiler-backend-reg-part reg 4)]
-      (backend-cat5 "    xorl " reg32 ", " reg32 "\n"))
+      (str-cat "    xorl " reg32 ", " reg32 "\n"))
     (if (and (> n 0) (< n 2147483648))
       (let
         [reg32 : String (compiler-backend-reg-part reg 4)]
-        (backend-cat5 "    movl $" (int->string n) ", " reg32 "\n"))
-      (backend-cat5 "    movq $" (int->string n) ", " reg "\n"))))
+        (str-cat "    movl $" (int->string n) ", " reg32 "\n"))
+      (str-cat "    movq $" (int->string n) ", " reg "\n"))))
 
 (define (compiler-backend-emit-load-value-with-plan
   [assignments : CompilerRegAssignmentList]
@@ -3493,7 +3495,7 @@
         (compiler-backend-emit-load-var-with-plan assignments id reg))]
     [(IrValueGlobal name)
       (OkCompilerBackend
-        (backend-cat5
+        (str-cat
           "    movq "
           (compiler-backend-user-symbol name)
           "(%rip), "
@@ -3501,7 +3503,7 @@
           "\n"))]
     [(IrValueGlobalAddr name)
       (OkCompilerBackend
-        (backend-cat5
+        (str-cat
           "    leaq "
           (compiler-backend-user-symbol name)
           "(%rip), "
@@ -3509,7 +3511,7 @@
           "\n"))]
     [(IrValueFunction name)
       (OkCompilerBackend
-        (backend-cat5
+        (str-cat
           "    leaq "
           (compiler-backend-closure-descriptor-label name)
           "(%rip), "
@@ -3535,7 +3537,7 @@
           "backend: f64 values are not supported yet"))]
     [(IrValueString text)
       (OkCompilerBackend
-        (backend-cat5
+        (str-cat
           "    leaq "
           (compiler-backend-string-fat-label text)
           "(%rip), "
@@ -3543,7 +3545,7 @@
           "\n"))]
     [(IrValueBytes text)
       (OkCompilerBackend
-        (backend-cat5
+        (str-cat
           "    leaq "
           (compiler-backend-bytes-fat-label text)
           "(%rip), "
@@ -3562,29 +3564,29 @@
   (let
     [size : i64 (compiler-backend-type-size ty)]
     (if (= size 8)
-      (backend-cat3 "    movq " addr ", %rax\n")
+      (str-cat "    movq " addr ", %rax\n")
       (if (= size 4)
         (if (compiler-backend-type-signed? ty)
-          (backend-cat3 "    movslq " addr ", %rax\n")
-          (backend-cat3 "    movl " addr ", %eax\n"))
+          (str-cat "    movslq " addr ", %rax\n")
+          (str-cat "    movl " addr ", %eax\n"))
         (if (= size 2)
           (if (compiler-backend-type-signed? ty)
-            (backend-cat3 "    movswq " addr ", %rax\n")
-            (backend-cat3 "    movzwq " addr ", %rax\n"))
+            (str-cat "    movswq " addr ", %rax\n")
+            (str-cat "    movzwq " addr ", %rax\n"))
           (if (= size 1)
             (if (compiler-backend-type-signed? ty)
-              (backend-cat3 "    movsbq " addr ", %rax\n")
-              (backend-cat3 "    movzbq " addr ", %rax\n"))
+              (str-cat "    movsbq " addr ", %rax\n")
+              (str-cat "    movzbq " addr ", %rax\n"))
             ""))))))
 
 (define (compiler-backend-emit-load-float-memory
   [addr : String]
   [reg : String]
   [ty : AstType]) : String
-  (backend-cat5
+  (str-cat
     "    "
     (compiler-backend-float-move ty)
-    (backend-cat3 " " addr ", ")
+    (str-cat " " addr ", ")
     reg
     "\n"))
 
@@ -3688,34 +3690,31 @@
   (let
     [size : i64 (compiler-backend-type-size ty)]
     (if (= size 8)
-      (backend-cat3 "    movq " reg ", %rax\n")
+      (str-cat "    movq " reg ", %rax\n")
       (if (= size 4)
         (if (compiler-backend-type-signed? ty)
-          (backend-cat3
+          (str-cat
             "    movslq "
             (compiler-backend-reg-part reg size)
             ", %rax\n")
-          (backend-cat3
-            "    movl "
-            (compiler-backend-reg-part reg size)
-            ", %eax\n"))
+          (str-cat "    movl " (compiler-backend-reg-part reg size) ", %eax\n"))
         (if (= size 2)
           (if (compiler-backend-type-signed? ty)
-            (backend-cat3
+            (str-cat
               "    movswq "
               (compiler-backend-reg-part reg size)
               ", %rax\n")
-            (backend-cat3
+            (str-cat
               "    movzwq "
               (compiler-backend-reg-part reg size)
               ", %rax\n"))
           (if (= size 1)
             (if (compiler-backend-type-signed? ty)
-              (backend-cat3
+              (str-cat
                 "    movsbq "
                 (compiler-backend-reg-part reg size)
                 ", %rax\n")
-              (backend-cat3
+              (str-cat
                 "    movzbq "
                 (compiler-backend-reg-part reg size)
                 ", %rax\n"))
@@ -3727,23 +3726,23 @@
   (let
     [size : i64 (compiler-backend-type-size ty)]
     (if (= size 8)
-      (backend-cat3 "    movq %rax, " addr "\n")
+      (str-cat "    movq %rax, " addr "\n")
       (if (= size 4)
-        (backend-cat3 "    movl %eax, " addr "\n")
+        (str-cat "    movl %eax, " addr "\n")
         (if (= size 2)
-          (backend-cat3 "    movw %ax, " addr "\n")
+          (str-cat "    movw %ax, " addr "\n")
           (if (= size 1)
-            (backend-cat3 "    movb %al, " addr "\n")
+            (str-cat "    movb %al, " addr "\n")
             ""))))))
 
 (define (compiler-backend-emit-store-xmm-to-memory
   [addr : String]
   [reg : String]
   [ty : AstType]) : String
-  (backend-cat5
+  (str-cat
     "    "
     (compiler-backend-float-move ty)
-    (backend-cat3 " " reg ", ")
+    (str-cat " " reg ", ")
     addr
     "\n"))
 
@@ -3773,12 +3772,7 @@
           (if (string-eq mnemonic "")
             (CompilerBackendNoAsm)
             (CompilerBackendSomeAsm
-              (backend-cat5
-                "    "
-                mnemonic
-                " "
-                imm
-                (backend-cat3 ", " addr "\n")))))]
+              (str-cat "    " mnemonic " " imm (str-cat ", " addr "\n")))))]
       [(CompilerBackendNoImmediate) (CompilerBackendNoAsm)])))
 
 (define (compiler-backend-emit-load-immediate-to-reg
@@ -3790,7 +3784,7 @@
     [(CompilerBackendNoI64)
       (match (compiler-backend-immediate-operand value)
         [(CompilerBackendSomeImmediate imm)
-          (CompilerBackendSomeAsm (backend-cat5 "    movq " imm ", " reg "\n"))]
+          (CompilerBackendSomeAsm (str-cat "    movq " imm ", " reg "\n"))]
         [(CompilerBackendNoImmediate) (CompilerBackendNoAsm)])]))
 
 (define (compiler-backend-emit-store-immediate-to-var-home
@@ -3809,7 +3803,7 @@
               (compiler-backend-emit-load-immediate-to-reg value home)]
             [(CompilerRegSpill offset)
               (CompilerBackendSomeAsm
-                (backend-cat5
+                (str-cat
                   "    movq "
                   imm
                   ", "
@@ -3817,12 +3811,7 @@
                   "\n"))])]
         [(CompilerRegNoLocation)
           (CompilerBackendSomeAsm
-            (backend-cat5
-              "    movq "
-              imm
-              ", "
-              (compiler-backend-slot var-id)
-              "\n"))])]
+            (str-cat "    movq " imm ", " (compiler-backend-slot var-id) "\n"))])]
     [(CompilerBackendNoImmediate) (CompilerBackendNoAsm)]))
 
 (define (compiler-backend-avx2-vector-reduce-move-scalar [elem-ty : AstType]) : String
@@ -3844,41 +3833,41 @@
   (match elem-ty
     [(AstTyF64)
       (string-append
-        (backend-cat5
+        (str-cat
           "    vextractf128 $1, "
           ymm
           ", %xmm0\n    "
           mnemonic
-          (backend-cat3 " %xmm0, " xmm ", %xmm0\n"))
+          (str-cat " %xmm0, " xmm ", %xmm0\n"))
         "    vunpckhpd %xmm0, %xmm0, %xmm1\n    vaddsd %xmm1, %xmm0, %xmm0\n")]
     [(AstTyI64)
       (string-append
-        (backend-cat5
+        (str-cat
           "    vextracti128 $1, "
           ymm
           ", %xmm0\n    "
           mnemonic
-          (backend-cat3 " %xmm0, " xmm ", %xmm0\n"))
-        (backend-cat4
+          (str-cat " %xmm0, " xmm ", %xmm0\n"))
+        (str-cat
           "    vpsrldq $8, %xmm0, %xmm1\n    "
           mnemonic
           " %xmm1, %xmm0, %xmm0\n"
           ""))]
     [(AstTyI32)
       (string-append
-        (backend-cat5
+        (str-cat
           "    vextracti128 $1, "
           ymm
           ", %xmm0\n    "
           mnemonic
-          (backend-cat3 " %xmm0, " xmm ", %xmm0\n"))
+          (str-cat " %xmm0, " xmm ", %xmm0\n"))
         (string-append
-          (backend-cat4
+          (str-cat
             "    vpsrldq $8, %xmm0, %xmm1\n    "
             mnemonic
             " %xmm1, %xmm0, %xmm0\n"
             "")
-          (backend-cat4
+          (str-cat
             "    vpsrldq $4, %xmm0, %xmm1\n    "
             mnemonic
             " %xmm1, %xmm0, %xmm0\n"
@@ -3953,13 +3942,13 @@
     [(AstTyF64)
       (string-append
         (string-append
-          (backend-cat5
+          (str-cat
             "    vextractf64x4 $1, "
             zmm
             ", %ymm0\n    "
             mnemonic
-            (backend-cat3 " %ymm0, " ymm ", %ymm0\n"))
-          (backend-cat4
+            (str-cat " %ymm0, " ymm ", %ymm0\n"))
+          (str-cat
             "    vextractf128 $1, %ymm0, %xmm1\n    "
             mnemonic
             " %xmm1, %xmm0, %xmm0\n"
@@ -3968,18 +3957,18 @@
     [(AstTyI64)
       (string-append
         (string-append
-          (backend-cat5
+          (str-cat
             "    vextracti64x4 $1, "
             zmm
             ", %ymm0\n    "
             mnemonic
-            (backend-cat3 " %ymm0, " ymm ", %ymm0\n"))
-          (backend-cat4
+            (str-cat " %ymm0, " ymm ", %ymm0\n"))
+          (str-cat
             "    vextracti128 $1, %ymm0, %xmm1\n    "
             mnemonic
             " %xmm1, %xmm0, %xmm0\n"
             ""))
-        (backend-cat4
+        (str-cat
           "    vpsrldq $8, %xmm0, %xmm1\n    "
           mnemonic
           " %xmm1, %xmm0, %xmm0\n"
@@ -3988,23 +3977,23 @@
       (string-append
         (string-append
           (string-append
-            (backend-cat5
+            (str-cat
               "    vextracti64x4 $1, "
               zmm
               ", %ymm0\n    "
               mnemonic
-              (backend-cat3 " %ymm0, " ymm ", %ymm0\n"))
-            (backend-cat4
+              (str-cat " %ymm0, " ymm ", %ymm0\n"))
+            (str-cat
               "    vextracti128 $1, %ymm0, %xmm1\n    "
               mnemonic
               " %xmm1, %xmm0, %xmm0\n"
               ""))
-          (backend-cat4
+          (str-cat
             "    vpsrldq $8, %xmm0, %xmm1\n    "
             mnemonic
             " %xmm1, %xmm0, %xmm0\n"
             ""))
-        (backend-cat4
+        (str-cat
           "    vpsrldq $4, %xmm0, %xmm1\n    "
           mnemonic
           " %xmm1, %xmm0, %xmm0\n"
@@ -4095,14 +4084,14 @@
   [sse? : bool]) : String
   (if (string-eq src dst)
     ""
-    (backend-cat5
+    (str-cat
       "    "
       (if sse?
         "movsd"
         "movq")
       " "
       src
-      (backend-cat3 ", " dst "\n"))))
+      (str-cat ", " dst "\n"))))
 
 (define (compiler-backend-emit-load-pack-word
   [assignments : CompilerRegAssignmentList]
@@ -4450,7 +4439,7 @@
                       (if (compiler-backend-group-word-sse? program-index ty 0)
                         "%xmm15"
                         "%r11")
-                      (backend-cat3
+                      (str-cat
                         (int->string
                           (compiler-backend-outgoing-stack-arg-offset
                             target
@@ -4475,7 +4464,7 @@
                           1)
                           "%xmm15"
                           "%r11")
-                        (backend-cat3
+                        (str-cat
                           (int->string
                             (compiler-backend-outgoing-stack-arg-offset
                               target
@@ -4513,7 +4502,7 @@
       (OkCompilerBackend
         (string-append
           (compiler-backend-emit-group-word-move
-            (backend-cat3
+            (str-cat
               (int->string
                 (compiler-backend-incoming-stack-arg-offset target stack-idx))
               "(%rbp)"
@@ -4522,7 +4511,7 @@
             (compiler-backend-group-word-sse? program-index ty 0))
           (string-append
             (compiler-backend-emit-group-word-move
-              (backend-cat3
+              (str-cat
                 (int->string
                   (compiler-backend-incoming-stack-arg-offset
                     target
@@ -4581,7 +4570,7 @@
                 (compiler-backend-emit-group-word-move operand scratch sse?)
                 (compiler-backend-emit-group-word-move
                   scratch
-                  (backend-cat3
+                  (str-cat
                     (int->string
                       (compiler-backend-outgoing-stack-arg-offset
                         target
@@ -4704,7 +4693,7 @@
           (OkCompilerBackend
             (string-append
               (compiler-backend-emit-group-word-move
-                (backend-cat3
+                (str-cat
                   (int->string
                     (compiler-backend-incoming-stack-arg-offset
                       target
@@ -4743,10 +4732,10 @@
     (match value
       [(IrValueGlobal name)
         (OkCompilerBackend
-          (backend-cat5
+          (str-cat
             "    "
             (compiler-backend-float-move ty)
-            (backend-cat3
+            (str-cat
               " "
               (compiler-backend-global-symbol-index program-index name)
               "(%rip), ")
@@ -4782,14 +4771,14 @@
       [(IrValueGlobal name)
         (OkCompilerBackend
           (compiler-backend-emit-load-memory
-            (backend-cat3
+            (str-cat
               (compiler-backend-global-symbol-index program-index name)
               "(%rip)"
               "")
             ty))]
       [(IrValueGlobalAddr name)
         (OkCompilerBackend
-          (backend-cat5
+          (str-cat
             "    leaq "
             (compiler-backend-function-or-global-addr-symbol program-index name)
             "(%rip), %rax\n"
@@ -5865,7 +5854,7 @@
 (define (compiler-backend-unop-asm [op : CompilerIrUnOp]) : String
   (match op
     [(IrUnNeg) "    negq %rax\n"]
-    [(IrUnNot) "    testq %rax, %rax\n    sete %al\n    movzbl %al, %eax\n"]
+    [(IrUnNot) "    xorq $1, %rax\n"]
     [(IrUnBitNot) "    notq %rax\n"]))
 
 ;; Scalar floating-point binary ops. `fty` selects single (`ss`, f32) vs double

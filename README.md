@@ -377,6 +377,9 @@ neither conventional entry exists, add an explicit `kind` or `entry`. `kind
 "bin"` builds a native executable named after the package; `kind "staticlib"`
 builds a static archive (`lib<name>.a` on Linux, `<name>.lib` on Windows).
 Assembly and object side artifacts use the same `target/<profile>/` directory.
+Package builds also emit a metadata-only comptime image named `<name>.tlci`
+beside the native artifact; `typelisp inspect <file.tlci>` renders the tlci
+header, section table, package metadata, and exports.
 `kind "lib"` remains accepted as a compatibility alias. Dependency entries may
 use a local path relative to that same package root, an absolute path, or the
 GitHub shorthand form shown above. `tag` and `branch` pins are also accepted,
@@ -811,6 +814,7 @@ Commands:
     typelisp doc            Generate documentation or run doc tests
     typelisp fmt            Format source files or a package
     typelisp init           Scaffold a package in the current directory
+    typelisp inspect        Inspect a TypeLisp comptime image
     typelisp lint           Lint source files or a package
     typelisp lsp            Start stdio LSP diagnostics server
     typelisp new            Scaffold a new package directory
@@ -820,6 +824,10 @@ Commands:
 ```
 
 `check` is the public type-check command.
+
+`inspect <file.tlci>` reads a TypeLisp comptime image and prints stable header,
+section, package, and export metadata. Malformed images report tlci parse
+diagnostics.
 
 Common options include `--target <target>`, `--backend-mode <mode>`,
 `--manifest-path <file>`, `--stdlib-root <dir>`, `--opt-level <0|1|2>`,

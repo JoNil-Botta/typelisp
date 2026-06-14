@@ -379,6 +379,11 @@ if grep -q "typelisp lint" "$USAGE_ERR"; then
 else
     HAS_LINT_COMMAND=0
 fi
+if grep -q "typelisp inspect" "$USAGE_ERR"; then
+    HAS_INSPECT_COMMAND=1
+else
+    HAS_INSPECT_COMMAND=0
+fi
 if [ "$HAS_LSP_COMMAND" -eq 1 ]; then
     LSP_COMMAND_PROBE="$WORKDIR/lsp-command-probe.in"
     printf 'X-Test: 1\r\n\r\n' > "$LSP_COMMAND_PROBE"
@@ -427,6 +432,9 @@ assert_subcommand_help_pair doc "typelisp doc"
 assert_subcommand_help_pair compile "typelisp compile"
 if [ "$EXPECT_NORMALIZED_HELP" -eq 1 ]; then
     assert_contains "$err" "--emit-ir                      Emit intermediate representation"
+fi
+if [ "$HAS_INSPECT_COMMAND" -eq 1 ]; then
+    assert_subcommand_help_pair inspect "typelisp inspect"
 fi
 assert_subcommand_help_pair repl "typelisp repl"
 if [ "$EXPECT_NORMALIZED_HELP" -eq 1 ]; then
@@ -2334,6 +2342,26 @@ assert_stderr_empty
 PKG_ASM="$PKG/target/release/public_tool_pkg.s"
 [ -f "$PKG_ASM" ] || fail "package build did not write deterministic assembly"
 assert_contains "$out" "Built "
+PKG_TLCI="$PKG/target/release/public_tool_pkg.tlci"
+MATH_TLCI="$PKG/vendor/math/target/release/math.tlci"
+if [ "$HAS_INSPECT_COMMAND" -eq 1 ]; then
+    [ -s "$PKG_TLCI" ] || fail "package build did not write tlci image"
+    [ -s "$MATH_TLCI" ] || fail "package build did not write dependency tlci image"
+    run_cmd package-inspect-tlci "$COMPILER" inspect "$PKG_TLCI"
+    assert_success
+    assert_stderr_empty
+    assert_contains "$out" "tlci image"
+    assert_contains "$out" "package-name: public_tool_pkg"
+    assert_contains "$out" "metadata-version: v1"
+    assert_contains "$out" "code: offset=0 bytes=0"
+    assert_contains "$out" "  (none)"
+    BAD_TLCI="$WORKDIR/bad.tlci"
+    printf 'bad' > "$BAD_TLCI"
+    run_cmd package-inspect-bad-tlci "$COMPILER" inspect "$BAD_TLCI"
+    assert_failure
+    assert_stdout_empty
+    assert_contains "$err" "inspect: tlci: truncated header"
+fi
 assert_contains "$PKG_ASM" "main:"
 if [ "$IS_STAGE1_WRAPPER" -eq 1 ]; then
     assert_contains "$PKG_ASM" "inc:"

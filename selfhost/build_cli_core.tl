@@ -32,6 +32,8 @@
 
 (import "compiler_driver_core.tl")
 
+(import "tlci_core.tl")
+
 (defenum BuildConfig
   (BuildSourceConfig String bool String bool String String String String)
   (BuildPackageConfig
@@ -1043,6 +1045,17 @@
     (build-package-output-dir-profile manifest-dir name profile)
     (source-tool-static-library-filename name target)))
 
+(define (build-package-tlci-path [manifest-dir : String] [name : String]) : String
+  (build-package-tlci-path-profile manifest-dir name (build-default-profile)))
+
+(define (build-package-tlci-path-profile
+  [manifest-dir : String]
+  [name : String]
+  [profile : BuildProfile]) : String
+  (compiler-load-join-root-path
+    (build-package-output-dir-profile manifest-dir name profile)
+    (string-append name ".tlci")))
+
 (define (build-package-artifact-path
   [manifest-dir : String]
   [name : String]
@@ -1088,7 +1101,10 @@
         "pkg"
         (BuildProfileRelease)
         (BackendTargetLinux))
-      "root/app/target/release/libpkg.a")))
+      "root/app/target/release/libpkg.a")
+    (string-eq
+      (build-package-tlci-path-profile "root/app" "pkg" (BuildProfileDev))
+      "root/app/target/dev/pkg.tlci")))
 
 (test
   build-package-path-layout-smoke
@@ -2532,6 +2548,41 @@
       (build-package-graph-scheduler-no-progress-smoke-ok?))
     (panic "build package graph vector smoke failed")))
 
+(define build-package-tlci-compiler-build-hash : String
+  "typelisp-selfhost-v1")
+
+(define (build-package-tlci-metadata [manifest : CompilerPkgManifest]) : TlciMetadata
+  (TlciMetadata
+    tlci-metadata-version
+    (struct-get manifest name)
+    (struct-get manifest version)
+    TlciExportNil))
+
+(define (build-package-tlci-image [manifest : CompilerPkgManifest]) : TlciImage
+  (TlciImage
+    tlci-host-arch-x86-64
+    tlci-callback-abi-version
+    build-package-tlci-compiler-build-hash
+    (build-package-tlci-metadata manifest)
+    (tlci-empty-bytes)
+    (tlci-empty-bytes)
+    (tlci-empty-bytes)
+    (tlci-empty-bytes)
+    (tlci-empty-bytes)))
+
+(define (build-package-write-tlci
+  [path : String]
+  [manifest : CompilerPkgManifest]) : SourceToolCommandStatus
+  (match (tlci-emit-image (build-package-tlci-image manifest))
+    [(ErrTlciBytes message)
+      (SourceToolCommandErr
+        (str-cat "build: failed to emit package tlci: " message))]
+    [(OkTlciBytes bytes)
+      (source-tool-write-file
+        path
+        (tlci-bytes->string bytes 0 (array-length bytes))
+        "build: failed to write package tlci")]))
+
 (define (build-package-emit-one
   [manifest-path : String]
   [manifest : CompilerPkgManifest]
@@ -2561,6 +2612,8 @@
         kind
         profile
         target)]
+    [tlci-path : String
+      (build-package-tlci-path-profile manifest-dir name profile)]
     [reset-file-state : unit (compiler-driver-reset-file-state!)]
     (if (not (build-ensure-package-output-dirs manifest-dir name profile))
       (begin
@@ -2645,12 +2698,22 @@
                             (print-error message)
                             1)]
                         [(SourceToolCommandOk)
-                          (begin
-                            (print-string
-                              (string-append
-                                "Built "
-                                (string-append artifact-path "\n")))
-                            0)])])]))])))))
+                          (match (build-package-write-tlci tlci-path manifest)
+                            [(SourceToolCommandErr message)
+                              (begin
+                                (print-error message)
+                                1)]
+                            [(SourceToolCommandOk)
+                              (begin
+                                (print-string
+                                  (string-append
+                                    "Built "
+                                    (string-append artifact-path "\n")))
+                                (print-string
+                                  (string-append
+                                    "Built "
+                                    (string-append tlci-path "\n")))
+                                0)])])])]))])))))
 
 (define (build-package-worker-unified-cli?) : bool
   (and (> (arg-count) 1) (string-eq (arg 1) "build")))

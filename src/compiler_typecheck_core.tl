@@ -11500,6 +11500,85 @@
     OkTcUnit
     (ErrTcUnit (tc-reference-closure-escape-message))))
 
+;; --------------------------------------------------------------------------
+;; Inferred-type hint collection (used by the LSP for inlay hints).
+;;
+;; Disabled by default so normal and bootstrap compiles are byte-for-byte
+;; unaffected. When enabled, the typechecker records the rendered inferred type
+;; and 1-based source position of each un-annotated `let` binding value. A ring
+;; buffer keeps the most recent records, so the entry document (whose decls are
+;; checked last) is always retained even when imported modules are re-checked.
+;; Records are not file-attributed; the LSP filters them against the open
+;; document's text before turning them into hints.
+;; --------------------------------------------------------------------------
+(define tc-inlay-hint-capacity : i64
+  65536)
+
+(define tc-inlay-hint-enabled : bool
+  false)
+
+(define tc-inlay-hint-count : i64
+  0)
+
+(define tc-inlay-hint-lines : (Array i64)
+  (make-array i64 65536))
+
+(define tc-inlay-hint-cols : (Array i64)
+  (make-array i64 65536))
+
+(define tc-inlay-hint-types : (Array String)
+  (make-array String 65536))
+
+(define (tc-inlay-hints-enable!) : unit
+  (begin
+    (set! tc-inlay-hint-count 0)
+    (set! tc-inlay-hint-enabled true)))
+
+(define (tc-inlay-hints-disable!) : unit
+  (set! tc-inlay-hint-enabled false))
+
+(define (tc-inlay-hints-size) : i64
+  (if (< tc-inlay-hint-count tc-inlay-hint-capacity)
+    tc-inlay-hint-count
+    tc-inlay-hint-capacity))
+
+(define (tc-inlay-hint-line-at [i : i64]) : i64
+  (array-ref tc-inlay-hint-lines i))
+
+(define (tc-inlay-hint-col-at [i : i64]) : i64
+  (array-ref tc-inlay-hint-cols i))
+
+(define (tc-inlay-hint-type-at [i : i64]) : String
+  (array-ref tc-inlay-hint-types i))
+
+(define (tc-inlay-hint-record! [line : i64] [col : i64] [ty : String]) : unit
+  (let
+    [slot : i64 (% tc-inlay-hint-count tc-inlay-hint-capacity)]
+    (begin
+      (array-set! tc-inlay-hint-lines slot line)
+      (array-set! tc-inlay-hint-cols slot col)
+      (array-set! tc-inlay-hint-types slot ty)
+      (set! tc-inlay-hint-count (+ tc-inlay-hint-count 1)))))
+
+;; Record the inferred type of an un-annotated let binding value, if collection
+;; is enabled and the value expression carries a source span.
+(define (tc-inlay-hint-maybe-record
+  [maybe-ty : AstMaybeType]
+  [init : AstExpr]
+  [init-ty : AstType]) : unit
+  (if tc-inlay-hint-enabled
+    (match maybe-ty
+      [(AstNoType)
+        (match init
+          [(AstExprSpanned _ span)
+            (tc-inlay-hint-record!
+              (struct-get span start-line)
+              (struct-get span start-col)
+              (tc-type-render init-ty))]
+          [_ unit])]
+      [(AstSomeType _) unit])
+    unit))
+
 (define (tc-let-binding-init-type
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -11572,67 +11651,69 @@
                 rest
                 body)
                 [(OkTcType init-ty)
-                  (match maybe-ty
-                    [(AstSomeType want)
-                      (let
-                        [resolved-want : AstType (tc-resolve-type ctx want)]
-                        (match (tc-expect
-                          init-ty
-                          resolved-want
-                          "typecheck: let binding type mismatch")
+                  (begin
+                    (tc-inlay-hint-maybe-record maybe-ty init init-ty)
+                    (match maybe-ty
+                      [(AstSomeType want)
+                        (let
+                          [resolved-want : AstType (tc-resolve-type ctx want)]
+                          (match (tc-expect
+                            init-ty
+                            resolved-want
+                            "typecheck: let binding type mismatch")
+                            [(OkTcUnit)
+                              (match (tc-ensure-cleanup-resource-not-let-bound
+                                ctx
+                                env
+                                init
+                                init-ty)
+                                [(OkTcUnit)
+                                  (match (tc-ensure-reference-value-can-bind
+                                    env
+                                    init-ty)
+                                    [(OkTcUnit)
+                                      (tc-let-bindings-for-body
+                                        ctx
+                                        (let
+                                          [binding-ty : AstType
+                                            (if (tc-type-contains-any-region
+                                              init-ty)
+                                              init-ty
+                                              resolved-want)]
+                                          (tc-bind-c-abi-fnptr-if-needed-id
+                                            ctx
+                                            env
+                                            name
+                                            binding-ty
+                                            init))
+                                        rest
+                                        body)]
+                                    [(ErrTcUnit message) (ErrTcEnv message)])]
+                                [(ErrTcUnit message) (ErrTcEnv message)])]
+                            [(ErrTcUnit message) (ErrTcEnv message)]))]
+                      [(AstNoType)
+                        (match (tc-ensure-cleanup-resource-not-let-bound
+                          ctx
+                          env
+                          init
+                          init-ty)
                           [(OkTcUnit)
-                            (match (tc-ensure-cleanup-resource-not-let-bound
-                              ctx
+                            (match (tc-ensure-reference-value-can-bind
                               env
-                              init
                               init-ty)
                               [(OkTcUnit)
-                                (match (tc-ensure-reference-value-can-bind
-                                  env
-                                  init-ty)
-                                  [(OkTcUnit)
-                                    (tc-let-bindings-for-body
-                                      ctx
-                                      (let
-                                        [binding-ty : AstType
-                                          (if (tc-type-contains-any-region
-                                            init-ty)
-                                            init-ty
-                                            resolved-want)]
-                                        (tc-bind-c-abi-fnptr-if-needed-id
-                                          ctx
-                                          env
-                                          name
-                                          binding-ty
-                                          init))
-                                      rest
-                                      body)]
-                                  [(ErrTcUnit message) (ErrTcEnv message)])]
-                              [(ErrTcUnit message) (ErrTcEnv message)])]
-                          [(ErrTcUnit message) (ErrTcEnv message)]))]
-                    [(AstNoType)
-                      (match (tc-ensure-cleanup-resource-not-let-bound
-                        ctx
-                        env
-                        init
-                        init-ty)
-                        [(OkTcUnit)
-                          (match (tc-ensure-reference-value-can-bind
-                            env
-                            init-ty)
-                            [(OkTcUnit)
-                              (tc-let-bindings-for-body
-                                ctx
-                                (tc-bind-c-abi-fnptr-if-needed-id
+                                (tc-let-bindings-for-body
                                   ctx
-                                  env
-                                  name
-                                  init-ty
-                                  init)
-                                rest
-                                body)]
-                            [(ErrTcUnit message) (ErrTcEnv message)])]
-                        [(ErrTcUnit message) (ErrTcEnv message)])])]
+                                  (tc-bind-c-abi-fnptr-if-needed-id
+                                    ctx
+                                    env
+                                    name
+                                    init-ty
+                                    init)
+                                  rest
+                                  body)]
+                              [(ErrTcUnit message) (ErrTcEnv message)])]
+                          [(ErrTcUnit message) (ErrTcEnv message)])]))]
                 [(ErrTcType message) (ErrTcEnv message)]))]))]))
 
 (define (tc-resource-cleanup-direct-name-ok [cleanup : AstExpr]) : ResultTcUnit

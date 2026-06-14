@@ -387,16 +387,15 @@
           [written : i64
             (unsafe
               (syscall 1 fd (+ data-addr off) (- len off)))]
-          (cond
-            (< written 0)
+          (if (< written 0)
             (begin
               (set! result written)
               (set! done true))
-            (= written 0)
-            (begin
-              (set! result -1)
-              (set! done true))
-            (set! off (+ off written)))))
+            (if (= written 0)
+              (begin
+                (set! result -1)
+                (set! done true))
+              (set! off (+ off written))))))
       result)))
 
 ;: Feed `data-addr`/`len` to the child stdin pipe while ignoring SIGPIPE, then
@@ -697,14 +696,13 @@
         [pid : i64
           (unsafe
             (syscall 57))]
-        (cond
-          (< pid 0)
+        (if (< pid 0)
           (begin
             (process-linux-cleanup-spawn spawn)
             (process-spawn-error))
-          (= pid 0)
-          (process-linux-exec-child spawn)
-          (process-linux-output-parent spawn pid))))))
+          (if (= pid 0)
+            (process-linux-exec-child spawn)
+            (process-linux-output-parent spawn pid)))))))
 
 ;: Linux asynchronous start runtime: prepare, fork, and dispatch parent/child.
 (define (process-linux-start [command : ProcessCommand]) : ResultProcessChild
@@ -718,14 +716,13 @@
         [pid : i64
           (unsafe
             (syscall 57))]
-        (cond
-          (< pid 0)
+        (if (< pid 0)
           (begin
             (process-linux-cleanup-spawn spawn)
             (process-spawn-error-child))
-          (= pid 0)
-          (process-linux-exec-child spawn)
-          (process-linux-start-parent spawn pid))))))
+          (if (= pid 0)
+            (process-linux-exec-child spawn)
+            (process-linux-start-parent spawn pid)))))))
 
 ;: Linux asynchronous wait runtime: reap the child, read the memfd-captured
 ;: stdout/stderr, release the capture descriptors, and decode the exit status.

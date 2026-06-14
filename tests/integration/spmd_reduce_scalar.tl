@@ -102,60 +102,32 @@
       ; xs = [1,2,3,4,5]; gs = [1..11]; hs has mixed signed i32 values;
       ; fs = [1.0..5.0].
       (cond
-        (!= (reduce-sum xs n) (manual-sum xs n))
-        1
-        (!= (reduce-sum xs n) 15)
-        2
-        (!= (reduce-sum xs 3) 6)
-        3
-        (!= (reduce-sum xs 4) 10)
-        16
-        (!= (spmd-reduce sum ([i : i64 0 0]) 99 (array-ref xs i)) 99)
-        4
-        (!= (reduce-max xs n 0) (manual-max xs n 0))
-        5
-        (!= (reduce-max xs n 0) 5)
-        6
-        (!= (reduce-max xs n 100) 100)
-        7
-        (!= (reduce-min xs n 1000) 1)
-        8
-        (!= (reduce-min xs n 0) 0)
-        9
-        (!= (reduce-sum-i32 gs n) (cast 15 : i32))
-        10
-        (!= (reduce-sum-i32 gs 8) (cast 36 : i32))
-        21
-        (!= (reduce-sum-i32 gs n32) (cast 66 : i32))
-        22
-        (< (reduce-sum-f64 fs n) 14.5)
-        11
-        (> (reduce-sum-f64 fs n) 15.5)
-        12
-        (not (reduce-all-pos xs n))
-        13
-        (reduce-any-zero xs n)
-        14
-        (not (spmd-reduce all ([i : i64 0 0]) true (> (array-ref xs i) 0)))
-        15
-        (!= (reduce-max-i32 gs n (cast 0 : i32)) (cast 5 : i32))
-        17
-        (!= (reduce-max-i32 gs n (cast 100 : i32)) (cast 100 : i32))
-        18
-        (!= (reduce-min-i32 gs n (cast 1000 : i32)) (cast 1 : i32))
-        19
-        (!= (reduce-min-i32 gs n (cast 0 : i32)) (cast 0 : i32))
-        20
-        (!= (reduce-max-i32 gs n32 (cast 0 : i32)) (cast 11 : i32))
-        23
-        (!= (reduce-min-i32 gs n32 (cast 1000 : i32)) (cast 1 : i32))
-        24
-        (!= (reduce-sum-i32 hs 8) (cast 11 : i32))
-        25
-        (!= (reduce-sum-i32 hs n32) (cast (- 0 7) : i32))
-        26
-        (!= (reduce-max-i32 hs n32 (cast (- 0 100) : i32)) (cast 12 : i32))
-        27
-        (!= (reduce-min-i32 hs n32 (cast 100 : i32)) (cast (- 0 20) : i32))
-        28
-        42))))
+        [(!= (reduce-sum xs n) (manual-sum xs n)) 1]
+        [(!= (reduce-sum xs n) 15) 2]
+        [(!= (reduce-sum xs 3) 6) 3]
+        [(!= (reduce-sum xs 4) 10) 16]
+        [(!= (spmd-reduce sum ([i : i64 0 0]) 99 (array-ref xs i)) 99) 4]
+        [(!= (reduce-max xs n 0) (manual-max xs n 0)) 5]
+        [(!= (reduce-max xs n 0) 5) 6]
+        [(!= (reduce-max xs n 100) 100) 7]
+        [(!= (reduce-min xs n 1000) 1) 8]
+        [(!= (reduce-min xs n 0) 0) 9]
+        [(!= (reduce-sum-i32 gs n) (cast 15 : i32)) 10]
+        [(!= (reduce-sum-i32 gs 8) (cast 36 : i32)) 21]
+        [(!= (reduce-sum-i32 gs n32) (cast 66 : i32)) 22]
+        [(< (reduce-sum-f64 fs n) 14.5) 11]
+        [(> (reduce-sum-f64 fs n) 15.5) 12]
+        [(not (reduce-all-pos xs n)) 13]
+        [(reduce-any-zero xs n) 14]
+        [(not (spmd-reduce all ([i : i64 0 0]) true (> (array-ref xs i) 0))) 15]
+        [(!= (reduce-max-i32 gs n (cast 0 : i32)) (cast 5 : i32)) 17]
+        [(!= (reduce-max-i32 gs n (cast 100 : i32)) (cast 100 : i32)) 18]
+        [(!= (reduce-min-i32 gs n (cast 1000 : i32)) (cast 1 : i32)) 19]
+        [(!= (reduce-min-i32 gs n (cast 0 : i32)) (cast 0 : i32)) 20]
+        [(!= (reduce-max-i32 gs n32 (cast 0 : i32)) (cast 11 : i32)) 23]
+        [(!= (reduce-min-i32 gs n32 (cast 1000 : i32)) (cast 1 : i32)) 24]
+        [(!= (reduce-sum-i32 hs 8) (cast 11 : i32)) 25]
+        [(!= (reduce-sum-i32 hs n32) (cast (- 0 7) : i32)) 26]
+        [(!= (reduce-max-i32 hs n32 (cast (- 0 100) : i32)) (cast 12 : i32)) 27]
+        [(!= (reduce-min-i32 hs n32 (cast 100 : i32)) (cast (- 0 20) : i32)) 28]
+        [else 42]))))

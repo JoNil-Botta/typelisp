@@ -74,20 +74,12 @@
     [made-via-ptr : ReturnChoice
       (return-copy (cast 5 : u32) (cast 6 : u32) (cast 2 : u64))]
     (cond
-      (not (= (status-rank picked) 2))
-      1
-      (not (= (status-rank picked-via-ptr) 3))
-      2
-      (not (= small-direct 116))
-      3
-      (not (= small-via-ptr 707))
-      4
-      (not (= wide-direct 48))
-      5
-      (not (= wide-via-ptr 904))
-      6
-      (not (= (return-choice-score made) 117))
-      7
-      (not (= (return-choice-score made-via-ptr) 33))
-      8
-      42)))
+      [(not (= (status-rank picked) 2)) 1]
+      [(not (= (status-rank picked-via-ptr) 3)) 2]
+      [(not (= small-direct 116)) 3]
+      [(not (= small-via-ptr 707)) 4]
+      [(not (= wide-direct 48)) 5]
+      [(not (= wide-via-ptr 904)) 6]
+      [(not (= (return-choice-score made) 117)) 7]
+      [(not (= (return-choice-score made-via-ptr) 33)) 8]
+      [else 42])))

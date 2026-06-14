@@ -1729,16 +1729,15 @@
     [(CompilerRegInterval left-var left-start left-end)
       (match right
         [(CompilerRegInterval right-var right-start right-end)
-          (cond
-            (< left-start right-start)
+          (if (< left-start right-start)
             true
-            (> left-start right-start)
-            false
-            (< left-end right-end)
-            true
-            (> left-end right-end)
-            false
-            (< left-var right-var))])]))
+            (if (> left-start right-start)
+              false
+              (if (< left-end right-end)
+                true
+                (if (> left-end right-end)
+                  false
+                  (< left-var right-var)))))])]))
 
 (define (compiler-reg-candidate-insert
   [candidates : CompilerRegIntervalList]
@@ -3352,7 +3351,13 @@
     [_ (- 0 1)]))
 
 (define (compiler-reg-color-merge-root [acc : i64] [root : i64]) : i64
-  (cond (< root 0) (- 0 1) (< acc 0) root (= acc root) root (- 0 2)))
+  (if (< root 0)
+    (- 0 1)
+    (if (< acc 0)
+      root
+      (if (= acc root)
+        root
+        (- 0 2)))))
 
 (define (compiler-reg-color-value-list-root
   [roots : (Array i64)]

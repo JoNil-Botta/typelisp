@@ -4,21 +4,20 @@
 (import "../compiler_backend.tl")
 
 (define (compiler-backend-runtime-fixture-emit [target-name : String]) : ResultCompilerBackend
-  (cond
-    (string-eq target-name "linux-x86_64")
+  (if (string-eq target-name "linux-x86_64")
     (compiler-backend-emit-program (compiler-backend-runtime-helper-program))
-    (string-eq target-name "windows-x86_64")
-    (compiler-backend-emit-program-for-target
-      (compiler-backend-runtime-helper-program)
-      (BackendTargetWindows))
-    (string-eq target-name "windows-driver-primitives")
-    (compiler-backend-emit-source-for-target
-      (compiler-backend-windows-driver-runtime-source)
-      (BackendTargetWindows))
-    (ErrCompilerBackend
-      (compiler-diagnostic-at-start
-        ""
-        "compiler-backend-runtime-fixture: unknown target"))))
+    (if (string-eq target-name "windows-x86_64")
+      (compiler-backend-emit-program-for-target
+        (compiler-backend-runtime-helper-program)
+        (BackendTargetWindows))
+      (if (string-eq target-name "windows-driver-primitives")
+        (compiler-backend-emit-source-for-target
+          (compiler-backend-windows-driver-runtime-source)
+          (BackendTargetWindows))
+        (ErrCompilerBackend
+          (compiler-diagnostic-at-start
+            ""
+            "compiler-backend-runtime-fixture: unknown target"))))))
 
 (define (main) : i64
   (if (< (arg-count) 2)

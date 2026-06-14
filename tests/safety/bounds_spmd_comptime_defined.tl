@@ -21,18 +21,14 @@
     (begin
       (fill items 3)
       (cond
-        (!= (array-ref items 2) 3)
-        1
-        (!= (string-length (substring "abcdef" 1 3)) 3)
-        2
-        (!= (+ (struct-get p x) (struct-get p y)) 42)
-        3
-        (!=
-          (match m
-            [(SomeI64 v) v]
-            [Nope 0])
-          7)
-        4
-        (!= (comptime (+ 40 2)) 42)
-        5
-        42))))
+        [(!= (array-ref items 2) 3) 1]
+        [(!= (string-length (substring "abcdef" 1 3)) 3) 2]
+        [(!= (+ (struct-get p x) (struct-get p y)) 42) 3]
+        [(!=
+            (match m
+              [(SomeI64 v) v]
+              [Nope 0])
+            7)
+          4]
+        [(!= (comptime (+ 40 2)) 42) 5]
+        [else 42]))))

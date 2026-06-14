@@ -1,9 +1,9 @@
 ;# TypeLisp lint engine + source cleanup rules (#1163, #1177).
 ;#
 ;# A selfhost lint pass: walk the parsed AST, run registered rules, and collect
-;# findings. The rules flag deeply-nested `if` ladders, body-only nested `let` forms,
-;# nested success-path `if` return chains, unit-branch return guards, and
-;# deprecated user-facing string concatenation primitives.
+;# findings. The rules flag body-only nested `let` forms, nested success-path
+;# `if` return chains, unit-branch return guards, and deprecated user-facing
+;# string concatenation primitives.
 ;#
 ;# The `typelisp lint` CLI driver consumes the rule id attached to each finding
 ;# for suppression (`;; lint-allow: <rule-id>`). This module owns stable rule
@@ -24,14 +24,13 @@
   (depth i64)
   (span AstSourceSpan))
 
-;: Stable rule id for the nested-`if`-ladder rule. Rule ids are the suppression
-;: key (`;; lint-allow: <rule-id>`) and the registry key, so they must stay
-;: stable across releases.
+;: Stable rule id for the dormant nested-`if`-ladder rule. Rule ids are the
+;: suppression key (`;; lint-allow: <rule-id>`) and the registry key, so this
+;: remains registered even while #2579 keeps bootstrap source on nested `if`.
 (define (lint-rule-nested-if-ladder-id) : String
   "nested-if-ladder")
 
-;: Public message text for the nested-`if`-ladder rule. Kept separate from the
-;: registry constructor so rule walkers and self-tests use the same metadata.
+;: Public message text retained for compatibility with rule metadata lookups.
 (define (lint-rule-nested-if-ladder-message) : String
   "nested if-ladder: chain of if/else-if; prefer cond (value/guard ladders) or match (variant dispatch)")
 
@@ -441,23 +440,21 @@
   [in-chain : bool]
   [span : AstSourceSpan]) : LintFinding
   (LintFinding
-    (cond
-      in-loop
+    (if in-loop
       "deprecated string concatenation in loop: use text_buf for incremental building"
-      in-chain
-      "deprecated string concatenation chain: use one str-cat call for fixed arity"
-      (lint-rule-message (lint-rule-deprecated-string-concat-id)))
+      (if in-chain
+        "deprecated string concatenation chain: use one str-cat call for fixed arity"
+        (lint-rule-message (lint-rule-deprecated-string-concat-id))))
     (lint-rule-deprecated-string-concat-id)
     (lint-deprecated-string-concat-depth in-loop in-chain)
     span))
 
 (define (lint-and-or-op-name [name : String]) : String
-  (cond
-    (or (string-eq name "and") (string-eq name "core/and"))
+  (if (or (string-eq name "and") (string-eq name "core/and"))
     "and"
-    (or (string-eq name "or") (string-eq name "core/or"))
-    "or"
-    ""))
+    (if (or (string-eq name "or") (string-eq name "core/or"))
+      "or"
+      "")))
 
 (define (lint-and-or-func-op [func : AstExpr]) : String
   (match func
@@ -695,52 +692,51 @@
                 [spanned : SpannedToken (array-ref toks i)]
                 [tok : Token (spanned-token-tok spanned)]
                 [tag : i64 (token-tag tok)]
-                (cond
-                  (= tag (tag-end))
+                (if (= tag (tag-end))
                   (set! done true)
-                  (= tag (tag-lparen))
-                  (let
-                    [head-spanned : SpannedToken (array-ref toks (+ i 1))]
-                    [head : Token (spanned-token-tok head-spanned)]
-                    [name : String (lint-token-name head)]
-                    [is-loop : bool
-                      (lint-deprecated-string-concat-loop-form? name)]
-                    [is-concat : bool
-                      (lint-deprecated-string-concat-name? name)]
-                    (begin
-                      (set! depth (+ depth 1))
-                      (array-set! loop-stack depth is-loop)
-                      (array-set! concat-stack depth is-concat)
-                      (if is-concat
-                        (set!
-                          findings
-                          (lint-findings-add
-                            (lint-deprecated-string-concat-finding
-                              (> loop-depth 0)
-                              (> concat-depth 0)
-                              (lint-deprecated-string-concat-token-span
-                                head-spanned
-                                name))
-                            findings))
+                  (if (= tag (tag-lparen))
+                    (let
+                      [head-spanned : SpannedToken (array-ref toks (+ i 1))]
+                      [head : Token (spanned-token-tok head-spanned)]
+                      [name : String (lint-token-name head)]
+                      [is-loop : bool
+                        (lint-deprecated-string-concat-loop-form? name)]
+                      [is-concat : bool
+                        (lint-deprecated-string-concat-name? name)]
+                      (begin
+                        (set! depth (+ depth 1))
+                        (array-set! loop-stack depth is-loop)
+                        (array-set! concat-stack depth is-concat)
+                        (if is-concat
+                          (set!
+                            findings
+                            (lint-findings-add
+                              (lint-deprecated-string-concat-finding
+                                (> loop-depth 0)
+                                (> concat-depth 0)
+                                (lint-deprecated-string-concat-token-span
+                                  head-spanned
+                                  name))
+                              findings))
+                          unit)
+                        (if is-loop
+                          (set! loop-depth (+ loop-depth 1))
+                          unit)
+                        (if is-concat
+                          (set! concat-depth (+ concat-depth 1))
+                          unit)))
+                    (if (= tag (tag-rparen))
+                      (if (> depth 0)
+                        (begin
+                          (if (array-ref loop-stack depth)
+                            (set! loop-depth (- loop-depth 1))
+                            unit)
+                          (if (array-ref concat-stack depth)
+                            (set! concat-depth (- concat-depth 1))
+                            unit)
+                          (set! depth (- depth 1)))
                         unit)
-                      (if is-loop
-                        (set! loop-depth (+ loop-depth 1))
-                        unit)
-                      (if is-concat
-                        (set! concat-depth (+ concat-depth 1))
-                        unit)))
-                  (= tag (tag-rparen))
-                  (if (> depth 0)
-                    (begin
-                      (if (array-ref loop-stack depth)
-                        (set! loop-depth (- loop-depth 1))
-                        unit)
-                      (if (array-ref concat-stack depth)
-                        (set! concat-depth (- concat-depth 1))
-                        unit)
-                      (set! depth (- depth 1)))
-                    unit)
-                  unit))
+                      unit))))
               (set! i (+ i 1))))
           findings))]))
 
@@ -971,9 +967,10 @@
     (lint-walk-expr branch threshold acc)))
 
 ;: Walk an `if`-headed expression whose source span is `span` (`lint-no-span`
-;: when unspanned): a maximal ladder of length >= `threshold` flags ONCE at
-;: `span` and then descends the else-chain via `lint-walk-ladder` (so inner
-;: rungs are not re-flagged); otherwise ordinary recursion into cond/then/else.
+;: when unspanned): while the nested-if-ladder rule is dormant, a maximal
+;: ladder of length >= `threshold` descends through the else-chain without
+;: emitting a ladder finding; otherwise this performs ordinary recursion into
+;: cond/then/else.
 (define (lint-walk-if
   [cond : AstExpr]
   [then-branch : AstExpr]
@@ -991,11 +988,10 @@
     [else-return : bool (lint-return-branch? else-branch)]
     [cond-not : bool (lint-not-call? cond)]
     [else-side-effect : bool (lint-side-effect-branch? else-branch)]
-    (cond
-      (and
-        then-unit
-        (not else-unit)
-        (or else-return (and cond-not else-side-effect)))
+    (if (and
+      then-unit
+      (not else-unit)
+      (or else-return (and cond-not else-side-effect)))
       (lint-walk-unit-if-guard-branch
         else-branch
         tail-return-path
@@ -1003,48 +999,51 @@
         (lint-findings-add
           (lint-unit-if-guard-finding true span)
           (lint-walk-expr cond threshold acc)))
-      (and else-unit (not then-unit) then-return)
-      (lint-walk-unit-if-guard-branch
-        then-branch
-        tail-return-path
-        threshold
-        (lint-findings-add
-          (lint-unit-if-guard-finding false span)
-          (lint-walk-expr cond threshold acc)))
-      (and tail-return-path (>= return-chain threshold))
-      (lint-walk-return-path-chain
-        (AstExprIf
-          (ast-node-push cond)
-          (ast-node-push then-branch)
-          (ast-node-push else-branch))
-        threshold
-        (lint-findings-add
-          (lint-return-path-chain-finding return-chain span)
-          acc))
-      (>= ladder threshold)
-      (lint-walk-ladder
-        (AstExprIf
-          (ast-node-push cond)
-          (ast-node-push then-branch)
-          (ast-node-push else-branch))
-        threshold
-        tail-return-path
-        (lint-findings-add (lint-ladder-finding ladder span) acc))
-      tail-return-path
-      (lint-walk-tail-expr
-        else-branch
-        threshold
-        (lint-walk-tail-expr
+      (if (and else-unit (not then-unit) then-return)
+        (lint-walk-unit-if-guard-branch
           then-branch
+          tail-return-path
           threshold
-          (lint-walk-expr cond threshold acc)))
-      (lint-walk-expr
-        else-branch
-        threshold
-        (lint-walk-expr
-          then-branch
-          threshold
-          (lint-walk-expr cond threshold acc))))))
+          (lint-findings-add
+            (lint-unit-if-guard-finding false span)
+            (lint-walk-expr cond threshold acc)))
+        (if (and tail-return-path (>= return-chain threshold))
+          (lint-walk-return-path-chain
+            (AstExprIf
+              (ast-node-push cond)
+              (ast-node-push then-branch)
+              (ast-node-push else-branch))
+            threshold
+            (lint-findings-add
+              (lint-return-path-chain-finding return-chain span)
+              acc))
+          ;; #2579: bootstrap source cannot use bracket `cond` until the
+          ;; published seed parser has the bracket-arm surface, so keep this
+          ;; rule registered but do not emit ladder findings.
+          (if (>= ladder threshold)
+            (lint-walk-ladder
+              (AstExprIf
+                (ast-node-push cond)
+                (ast-node-push then-branch)
+                (ast-node-push else-branch))
+              threshold
+              tail-return-path
+              acc)
+            (if tail-return-path
+              (lint-walk-tail-expr
+                else-branch
+                threshold
+                (lint-walk-tail-expr
+                  then-branch
+                  threshold
+                  (lint-walk-expr cond threshold acc)))
+              (lint-walk-expr
+                else-branch
+                threshold
+                (lint-walk-expr
+                  then-branch
+                  threshold
+                  (lint-walk-expr cond threshold acc))))))))))
 
 ;;; Walk a list of expressions where only the final expression is in tail
 ;;; position.
@@ -1231,9 +1230,9 @@
           (lint-walk-expr func threshold acc)))
       (lint-walk-expr-list args threshold (lint-walk-expr func threshold acc)))))
 
-;: Walk `expr`, flagging each maximal nested-`if` ladder of length >=
-;: `threshold` exactly once and recursing into all sub-expressions. A ladder
-;: head's finding span comes from the enclosing `AstExprSpanned` wrapper.
+;: Walk `expr`, collecting active lint findings while recursing into all
+;: sub-expressions. Spanned expressions pass their wrapper span to rules that
+;: need source locations.
 (define (lint-walk-expr [expr : AstExpr] [threshold : i64] [acc : LintFindings]) : LintFindings
   (match expr
     [(AstExprSpanned inner-box span)
@@ -1710,16 +1709,18 @@
       (if (= (lint-test-ladder-length vx) 0)
         unit
         (panic "lint: non-if ladder length should be 0"))
-      ;; a 3-deep ladder is flagged at the default threshold (3)
+      ;; The nested-if-ladder rule remains registered, but #2579 keeps it
+      ;; dormant while bootstrap source must use nested `if` instead of bracket
+      ;; `cond`, so ladders are traversed without emitting findings.
       (if (=
         (lint-findings-count
           (lint-test-walk
             ladder3
             (lint-default-ladder-threshold)
             (lint-findings-empty)))
-        1)
+        0)
         unit
-        (panic "lint: 3-deep ladder should be flagged once"))
+        (panic "lint: dormant 3-deep ladder should not be flagged"))
       ;; a 2-deep ladder is NOT flagged at threshold 3
       (if (=
         (lint-findings-count
@@ -1730,12 +1731,12 @@
         0)
         unit
         (panic "lint: 2-deep ladder should not be flagged at threshold 3"))
-      ;; ... but IS flagged at threshold 2
+      ;; ... and is still not flagged at threshold 2 while dormant.
       (if (=
         (lint-findings-count (lint-test-walk ladder2 2 (lint-findings-empty)))
-        1)
+        0)
         unit
-        (panic "lint: 2-deep ladder should be flagged at threshold 2"))
+        (panic "lint: dormant 2-deep ladder should not be flagged"))
       ;; return-path chains are only reported in tail contexts, where replacing
       ;; nested failure values with `(return ...)` preserves semantics.
       (if (=
@@ -1816,9 +1817,9 @@
             nested
             (lint-default-ladder-threshold)
             (lint-findings-empty)))
-        1)
+        0)
         unit
-        (panic "lint: ladder nested in begin should be found"))
+        (panic "lint: dormant ladder nested in begin should not be flagged"))
       ;; ... and into let-binding initializers
       (if (=
         (lint-findings-count
@@ -1826,37 +1827,28 @@
             in-let
             (lint-default-ladder-threshold)
             (lint-findings-empty)))
-        1)
+        0)
         unit
-        (panic "lint: ladder in a let binding should be found"))
-      ;; a ladder LONGER than the threshold is reported ONCE, not once per
-      ;; over-threshold rung (maximal-ladder dedup, #1163).
+        (panic "lint: dormant ladder in a let binding should not be flagged"))
+      ;; Longer ladders are also traversed without findings while dormant.
       (if (=
         (lint-findings-count
           (lint-test-walk
             ladder4
             (lint-default-ladder-threshold)
             (lint-findings-empty)))
-        1)
-        unit
-        (panic "lint: a 4-deep ladder at threshold 3 should be flagged once"))
-      ;; a spanned ladder head carries its wrapper's source span in the finding
-      ;; (real parsed `if`s are `AstExprSpanned`-wrapped; the driver reports it).
-      (match (lint-findings-get
-        (lint-test-walk
-          spanned
-          (lint-default-ladder-threshold)
-          (lint-findings-empty))
         0)
-        [(LintSomeFinding finding)
-          (let
-            [fspan : AstSourceSpan (struct-get finding span)]
-            (if (= (struct-get fspan start-line) 7)
-              unit
-              (panic
-                "lint: spanned ladder finding should carry its head start-line")))]
-        [(LintNoFinding)
-          (panic "lint: spanned ladder should produce a finding")])
+        unit
+        (panic "lint: dormant 4-deep ladder should not be flagged"))
+      (if (=
+        (lint-findings-count
+          (lint-test-walk
+            spanned
+            (lint-default-ladder-threshold)
+            (lint-findings-empty)))
+        0)
+        unit
+        (panic "lint: dormant spanned ladder should not be flagged"))
       (if (=
         (lint-findings-count
           (lint-test-walk

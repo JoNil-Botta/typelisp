@@ -59,30 +59,29 @@
 (define (doc-render-escape-one [text : String] [idx : i64]) : String
   (let
     [c : char (string-ref text idx)]
-    (cond
-      (= c #&')
+    (if (= c #&')
       "&amp;"
-      (= c #<')
-      "&lt;"
-      (= c #>')
-      "&gt;"
-      (= c #\\')
-      "\\\\"
-      (= c #`')
-      "\\`"
-      (= c #[')
-      "\\["
-      (= c #]')
-      "\\]"
-      (= c #*')
-      "\\*"
-      (= c #_')
-      "\\_"
-      (= c ##')
-      "\\#"
-      (= c #|')
-      "\\|"
-      (substring text idx 1))))
+      (if (= c #<')
+        "&lt;"
+        (if (= c #>')
+          "&gt;"
+          (if (= c #\\')
+            "\\\\"
+            (if (= c #`')
+              "\\`"
+              (if (= c #[')
+                "\\["
+                (if (= c #]')
+                  "\\]"
+                  (if (= c #*')
+                    "\\*"
+                    (if (= c #_')
+                      "\\_"
+                      (if (= c ##')
+                        "\\#"
+                        (if (= c #|')
+                          "\\|"
+                          (substring text idx 1))))))))))))))
 
 (define (doc-render-escape-markdown [text : String]) : String
   (let

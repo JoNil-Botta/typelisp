@@ -67,15 +67,11 @@
     [total : i64 (sync-mutex-integration-total mutex)]
     [closed : bool (mutex-i64-close mutex)]
     (cond
-      (not closed)
-      2
-      (not (= a-code 0))
-      3
-      (not (= b-code 0))
-      4
-      (not (= total (* sync-mutex-integration-count 2)))
-      5
-      42)))
+      [(not closed) 2]
+      [(not (= a-code 0)) 3]
+      [(not (= b-code 0)) 4]
+      [(not (= total (* sync-mutex-integration-count 2))) 5]
+      [else 42])))
 
 (define (sync-mutex-integration-run [mutex : MutexI64]) : i64
   (let

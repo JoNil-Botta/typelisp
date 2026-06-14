@@ -569,17 +569,16 @@
 (define (doc-site-rewrite-language-link-target
   [sections : DocSiteSectionList]
   [target : String]) : String
-  (cond
-    (doc-site-href-anchor? target)
+  (if (doc-site-href-anchor? target)
     target
-    (doc-site-href-external? target)
-    target
-    (let
-      [site-target : String
-        (doc-site-sections-output-for-source target sections)]
-      (if (> (string-length site-target) 0)
-        site-target
-        (doc-site-repo-source-url target)))))
+    (if (doc-site-href-external? target)
+      target
+      (let
+        [site-target : String
+          (doc-site-sections-output-for-source target sections)]
+        (if (> (string-length site-target) 0)
+          site-target
+          (doc-site-repo-source-url target))))))
 
 (define (doc-site-rewrite-language-links
   [sections : DocSiteSectionList]

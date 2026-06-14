@@ -1355,14 +1355,13 @@
     (string-eq name "tl_shift_abort")))
 
 (define (compiler-ir-direct-call-effect [name : String]) : CompilerIrEffect
-  (cond
-    (compiler-ir-runtime-memory-read? name)
+  (if (compiler-ir-runtime-memory-read? name)
     IrEffectMemoryRead
-    (compiler-ir-runtime-memory-write? name)
-    IrEffectMemoryWrite
-    (compiler-ir-runtime-control-flow? name)
-    IrEffectControlFlow
-    IrEffectUnknown))
+    (if (compiler-ir-runtime-memory-write? name)
+      IrEffectMemoryWrite
+      (if (compiler-ir-runtime-control-flow? name)
+        IrEffectControlFlow
+        IrEffectUnknown))))
 
 (define (compiler-ir-instr-effect [instr : CompilerIrInstr]) : CompilerIrEffect
   (match instr

@@ -69,8 +69,8 @@ of imitating transitional patterns still present in the tree:
 - **Core macros**: bare prelude spellings (`when`, `unless`, `and`, `or`,
   `cond`) are canonical; qualified `core.` calls are transitional (#2581).
   Macros support bracket operands for clause-shaped surfaces (#2578), and
-  `cond` returns to bracket arms `(cond [test expr] ... [else fallback])`
-  when the core macro is migrated; the flat call shape is transitional (#2579).
+  core `cond` uses bracket arms `(cond [test expr] ... [else fallback])`;
+  the flat call shape is rejected (#2579).
   Macros become order-independent within a module (#2584).
 - **Strings**: `str-cat` (single-allocation variadic concat, #2576) and
   `text_buf` are the blessed forms; user-facing `string-append`/
@@ -114,7 +114,7 @@ of imitating transitional patterns still present in the tree:
 
 Transitional states in the current tree — do **not** imitate them in new
 code: path imports, `core.`-qualified macro calls, module-name-prefixed
-stdlib calls, flat `cond`, `string-append` chains, copy-on-update for record
+stdlib calls, `string-append` chains, copy-on-update for record
 mutation, and the in-flight aggregate-inline representation work
 (#1867/#2296/#2357).
 
@@ -315,9 +315,11 @@ Prefer `--stdlib-root` for CI, bootstrap, and reproducible scripts. See
 verification conventions.
 
 The compile driver prepends the stdlib runtime and the core macro module as an
-implicit prelude. Bare `when`, `unless`, `and`, `or`, and flat call-shaped
+implicit prelude. Bare `when`, `unless`, `and`, `or`, and bracket-arm
 `cond` resolve to `stdlib/core_macros.tl` unless a local or imported macro
-shadows them. The same module can still be imported explicitly as
+shadows them. `cond` is written `(cond [test expr] ... [else fallback])`; the
+flat `(cond test expr ... fallback)` shape is rejected by the core macro. The
+same module can still be imported explicitly as
 `(import "stdlib/core_macros.tl" module stdlib.core_macros as core)` for
 qualified calls such as `core.when`, `core.unless`, `core.and`, `core.or`, and
 `core.cond`.

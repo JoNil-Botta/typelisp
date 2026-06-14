@@ -34,8 +34,6 @@
         (cast 8 : u32)
         (cast 2 : u64))]
     (cond
-      (not (= (wide-score direct) 120))
-      1
-      (not (= (wide-score via-ptr) 52))
-      2
-      42)))
+      [(not (= (wide-score direct) 120)) 1]
+      [(not (= (wide-score via-ptr) 52)) 2]
+      [else 42])))

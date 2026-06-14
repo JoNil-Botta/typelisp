@@ -90,18 +90,17 @@
 (define (substring-bounds-check [text : (& text str)] [start : i64] [len : i64]) : unit
   (let
     [n : i64 (string-length text)]
-    (cond
-      (< start 0)
+    (if (< start 0)
       (tl_oob_abort)
-      (< len 0)
-      (tl_oob_abort)
-      (> start n)
-      (tl_oob_abort)
-      (let
-        [remaining : i64 (- n start)]
-        (if (> len remaining)
+      (if (< len 0)
+        (tl_oob_abort)
+        (if (> start n)
           (tl_oob_abort)
-          unit)))))
+          (let
+            [remaining : i64 (- n start)]
+            (if (> len remaining)
+              (tl_oob_abort)
+              unit)))))))
 
 ;: Copy `n` bytes from `src` into `dst` at byte offset `doff`, eight bytes at a
 ;: time with a byte tail. x86 tolerates the unaligned word stores, and the final

@@ -46,12 +46,19 @@ OBJ="$WORKDIR/cli.$NL_OBJ_EXT"
 COMPILE_STDOUT="$WORKDIR/compile.stdout"
 COMPILE_STDERR="$WORKDIR/compile.stderr"
 
+# The published stage0 is built at opt-level 2: it enables scalar register
+# allocation in the binary's own code, which makes the shipped binary both
+# smaller (.text ~127 KB / ~2.8% lower than opt1, since reg-reg movs encode in
+# 3-4 bytes vs 7-8 bytes for rbp-displacement movs) and ~14% faster to run.
+# This is orthogonal to the bootstrap fixpoint, which still compiles src/main.tl
+# at --opt-level 1 (scripts/check-bootstrap-fixpoint.sh), so downstream goldens
+# stay byte-identical. A correct opt2-built compiler emits identical opt1 output.
 echo "[build-stage0] compile src/main.tl with seed ($NL_BOOTSTRAP_TARGET)"
 if ! run_with_heartbeat_capture "compile cli.tl" "$COMPILE_STDOUT" "$COMPILE_STDERR" \
     "$SEED" compile src/main.tl -o "$ASM" \
     --target "$NL_BOOTSTRAP_TARGET" \
     $(native_target_cfg_args) \
-    --stdlib-root stdlib --stdlib-root src --opt-level 1; then
+    --stdlib-root stdlib --stdlib-root src --opt-level 2; then
     echo "[build-stage0] seed compiler failed while compiling src/main.tl" >&2
     echo "[build-stage0] compiler stdout:" >&2
     sed 's/^/  /' "$COMPILE_STDOUT" >&2 || true

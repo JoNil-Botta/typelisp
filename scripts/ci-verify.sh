@@ -276,6 +276,7 @@ run_with_compiler "$STAGE2_BIN" "stage2 selfhost compile manifest" env TYPELISP_
 # compile for overlapping sources, so it must run after the manifest gate.
 run_with_compiler "$STAGE2_BIN" "stage2 deterministic assembly" env TYPELISP_DETERMINISTIC_ASM_MANIFEST_DIR="$ROOT/target/selfhost-compile-manifest" scripts/check-deterministic-asm.sh
 run_with_compiler "$STAGE2_BIN" "stage2 codegen target parity" scripts/check-codegen-target-parity.sh
+run_with_compiler "$STAGE2_BIN" "stage2 backend target assembly parity" scripts/check-backend-target-asm-parity.sh
 run_with_compiler "$STAGE2_BIN" "stage2 safety corpus" scripts/verify-safety-corpus.sh
 run_with_compiler "$STAGE2_BIN" "stage2 native integration corpus" scripts/verify-integration.sh
 run_with_compiler "$STAGE2_BIN" "stage2 examples" scripts/verify-examples.sh

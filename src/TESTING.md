@@ -140,10 +140,25 @@ honoring the requested target.
 TYPELISP_BIN=target/stage0/typelisp scripts/check-codegen-target-parity.sh
 ```
 
+Use [`../scripts/check-backend-target-asm-parity.sh`](../scripts/check-backend-target-asm-parity.sh)
+for the next layer down: normalized Linux/Windows assembly parity for selected
+user helper bodies. The script compiles a conservative corpus for both targets
+at opt levels 0, 1, and 2, strips target-owned wrappers and assembler metadata,
+normalizes compiler-generated local labels, and diffs the resulting helper
+bodies. It also has a `--self-test` mutation mode that proves the diff gate
+fails when a normalized body changes.
+
+```sh
+TYPELISP_BIN=target/stage0/typelisp scripts/check-backend-target-asm-parity.sh
+TYPELISP_BIN=target/stage0/typelisp scripts/check-backend-target-asm-parity.sh --self-test
+```
+
 The corpus intentionally avoids C ABI fixtures, source-level target cfgs, and
-runtime-helper-heavy programs; use the backend smoke tests for ABI-required
-differences such as argument registers, shadow space, sret, stack probing, entry
-symbols, and runtime shims.
+runtime-helper-heavy programs. The assembly parity corpus is even narrower: it
+compares helper bodies only after function prologues, and deliberately leaves
+direct C ABI call setup, indirect-call register differences, shadow space,
+sret, stack probing, entry symbols, and runtime shims to the backend smoke and
+native integration layers until the normalizer has an explicit target-ABI model.
 
 ### Assembly size reports
 

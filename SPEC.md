@@ -3415,8 +3415,9 @@ Uniform and varying rules:
 - `array-set!` with a varying index or value performs one write per active
   logical program instance.
 - There is no public `(varying T)` or mask type in the first source surface.
-  Varying information is inferred inside `foreach` and masks are internal to
-  lowering.
+  Public vector, mask, and `(varying T)` type spellings are reserved and
+  rejected; varying information is inferred inside `foreach`, and vector/mask
+  values are internal to lowering.
 - `let` bindings inside the `foreach` body may be uniform or varying by
   inference. `set!` to a binding declared outside the `foreach` is rejected;
   reductions must use `spmd-reduce`, and other cross-lane updates are deferred.

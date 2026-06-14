@@ -20020,17 +20020,21 @@
     [(AstTyEnumArgs _ _) true]
     [_ false]))
 
-(define (tc-extern-abi-tag-only-enum-type-ok? [ctx : TcContext] [ty : AstType]) : bool
+(define (tc-extern-abi-inline-enum-type-ok? [ctx : TcContext] [ty : AstType]) : bool
   (match (tc-type-without-regions ty)
     [(AstTyEnum name)
       (match (tc-inline-aggregate-layout-for ctx (intern-str name))
         [(OkTcInlineAggregateLayout layout)
-          (tc-inline-aggregate-layout-tag-only-enum? layout)]
+          (match layout
+            [(TcInlineEnumLayout _ _ _) true]
+            [_ false])]
         [(ErrTcInlineAggregateLayout _) false])]
     [(AstTyEnumArgs name _)
       (match (tc-inline-aggregate-layout-for ctx (intern-str name))
         [(OkTcInlineAggregateLayout layout)
-          (tc-inline-aggregate-layout-tag-only-enum? layout)]
+          (match layout
+            [(TcInlineEnumLayout _ _ _) true]
+            [_ false])]
         [(ErrTcInlineAggregateLayout _) false])]
     [_ false]))
 
@@ -20055,8 +20059,8 @@
     [(AstTyMutPtr _) true]
     [(AstTyString) true]
     [(AstTyDynArray _) true]
-    [(AstTyEnum _) (tc-extern-abi-tag-only-enum-type-ok? ctx ty)]
-    [(AstTyEnumArgs _ _) (tc-extern-abi-tag-only-enum-type-ok? ctx ty)]
+    [(AstTyEnum _) (tc-extern-abi-inline-enum-type-ok? ctx ty)]
+    [(AstTyEnumArgs _ _) (tc-extern-abi-inline-enum-type-ok? ctx ty)]
     [(AstTyStruct _) true]
     [(AstTyStructArgs _ _) true]
     [_ false]))

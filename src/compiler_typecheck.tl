@@ -3312,9 +3312,8 @@
     (compiler-typecheck-error-ok?
       (compiler-typecheck-extern-head-varargs-typed-mismatch-source)
       "typecheck: argument type mismatch")
-    (compiler-typecheck-error-ok?
-      (compiler-typecheck-extern-head-varargs-tail-enum-source)
-      "typecheck: extern ABI c does not support enum aggregate variadic argument type ResultI64")
+    (compiler-typecheck-ok?
+      (compiler-typecheck-extern-head-varargs-tail-enum-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-extern-raw-fnptr-to-tl-param-source)
       "typecheck: raw C function pointer cannot be used as a TypeLisp function value")))
@@ -3334,18 +3333,12 @@
     (compiler-typecheck-ok? (compiler-typecheck-extern-abi-f32-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-extern-abi-tag-only-enum-source))
-    (compiler-typecheck-error-ok?
-      (compiler-typecheck-extern-abi-enum-param-source)
-      "typecheck: extern ABI c does not support enum aggregate parameter type ResultI64")
-    (compiler-typecheck-error-ok?
-      (compiler-typecheck-extern-abi-enum-return-source)
-      "typecheck: extern ABI c does not support enum aggregate return type ResultI64")
-    (compiler-typecheck-error-ok?
-      (compiler-typecheck-extern-abi-enum-args-param-source)
-      "typecheck: extern ABI c does not support enum aggregate parameter type (RefOption n)")
-    (compiler-typecheck-error-ok?
-      (compiler-typecheck-extern-abi-enum-args-return-source)
-      "typecheck: extern ABI c does not support enum aggregate return type (RefOption n)")))
+    (compiler-typecheck-ok? (compiler-typecheck-extern-abi-enum-param-source))
+    (compiler-typecheck-ok? (compiler-typecheck-extern-abi-enum-return-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-extern-abi-enum-args-param-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-extern-abi-enum-args-return-source))))
 
 (define (compiler-typecheck-reference-local-source) : String
   "(define (take [r : (& n i64)]) : unit unit)

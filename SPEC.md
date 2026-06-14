@@ -546,6 +546,12 @@ Target C ABI call/return lowering for by-value aggregate externs is separate:
 the backend must still validate the target ABI classes it supports before
 lowering an extern call or return. A source layout being stable does not by
 itself mean every aggregate shape is accepted in every external ABI position.
+The selfhost Windows x64 C ABI path accepts default-layout enum aggregates by
+classifying a synthetic aggregate view consisting of the 8-byte tag followed by
+the max-sized payload union. Tag-only enums are scalar register aggregates;
+payload enum arguments larger than 8 bytes are passed by hidden reference and
+payload enum returns larger than 8 bytes use sret. The Linux x86_64 System V
+C ABI path currently accepts tag-only enum externs only.
 
 Supported v1 targets use an x86_64 data model: fixed-width integer and floating
 types use their explicit sizes; `bool` and `char` are one byte; raw pointers are

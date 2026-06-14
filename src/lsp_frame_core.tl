@@ -1946,17 +1946,26 @@
     [n : i64 (string-length text)]
     [after-open : i64 (lsp-skip-space text (+ form-off 1) n)]
     [kw-end : i64 (lsp-scan-ident text after-open n)]
-    [j : i64 (lsp-skip-space text kw-end n)]
-    (begin
-      (if (and (< j n) (= (string-ref text j) #('))
-        (set! j (lsp-skip-paren-group text j n))
-        (set! j (lsp-scan-ident text j n)))
+    [kw : String (substring text after-open (- kw-end after-open))]
+    (if (or (string-eq kw "defenum") (string-eq kw "defstruct"))
+      ;; Enums/structs have no (params) : ret; show the whole form (variants
+      ;; or fields), so multi-line definitions render in full.
+      (substring
+        text
+        form-off
+        (- (lsp-skip-paren-group text form-off n) form-off))
       (let
-        [k : i64 (lsp-skip-space text j n)]
-        (if (and (< k n) (= (string-ref text k) #:'))
-          (set! j (lsp-scan-type text (lsp-skip-space text (+ k 1) n) n))
-          unit))
-      (substring text form-off (- j form-off)))))
+        [j : i64 (lsp-skip-space text kw-end n)]
+        (begin
+          (if (and (< j n) (= (string-ref text j) #('))
+            (set! j (lsp-skip-paren-group text j n))
+            (set! j (lsp-scan-ident text j n)))
+          (let
+            [k : i64 (lsp-skip-space text j n)]
+            (if (and (< k n) (= (string-ref text k) #:'))
+              (set! j (lsp-scan-type text (lsp-skip-space text (+ k 1) n) n))
+              unit))
+          (substring text form-off (- j form-off)))))))
 
 ;; Start index of the line containing `pos`.
 (define (lsp-line-start-before [text : String] [pos : i64]) : i64

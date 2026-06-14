@@ -1678,6 +1678,18 @@
         spans
         (compiler-source-spans-value-key function dst)
         span)]
+    [(IrInstrPack dst _ _)
+      (compiler-source-spans-insert-instr-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
+    [(IrInstrWord dst _ _ _)
+      (compiler-source-spans-insert-instr-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
+    ;; Tail-indirect is control flow and does not define a destination value.
+    [(IrInstrTailCallIndirect _ _ _) spans]
     [(IrInstrStore name _ _)
       (compiler-source-spans-insert-instr-entry
         spans
@@ -1813,6 +1825,16 @@
           (compiler-source-spans-entry-list-lookup
             instr-entries
             (compiler-source-spans-value-key function dst))]
+        [(IrInstrPack dst _ _)
+          (compiler-source-spans-entry-list-lookup
+            instr-entries
+            (compiler-source-spans-value-key function dst))]
+        [(IrInstrWord dst _ _ _)
+          (compiler-source-spans-entry-list-lookup
+            instr-entries
+            (compiler-source-spans-value-key function dst))]
+        ;; Tail-indirect is control flow and does not define a destination value.
+        [(IrInstrTailCallIndirect _ _ _) (CompilerNoSourceSpan)]
         [(IrInstrStore name _ _)
           (compiler-source-spans-entry-list-lookup
             instr-entries

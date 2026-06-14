@@ -18905,6 +18905,12 @@
       (OptRemapSpanSomeKey (opt-remap-spans-value-key value-prefix dst))]
     [(IrInstrCall dst _ _ _)
       (OptRemapSpanSomeKey (opt-remap-spans-value-key value-prefix dst))]
+    [(IrInstrPack dst _ _)
+      (OptRemapSpanSomeKey (opt-remap-spans-value-key value-prefix dst))]
+    [(IrInstrWord dst _ _ _)
+      (OptRemapSpanSomeKey (opt-remap-spans-value-key value-prefix dst))]
+    ;; Tail-indirect is control flow and does not define a destination value.
+    [(IrInstrTailCallIndirect _ _ _) (OptRemapSpanNoKey)]
     [(IrInstrStore name _ _)
       (OptRemapSpanSomeKey (compiler-source-spans-store-key function name))]
     [(IrInstrPhi dst _ _)
@@ -19571,6 +19577,60 @@
       [(CompilerOptimizedProgram _ optimized-spans)
         (opt-span-lookup-ok? optimized-spans "main" call 101 19)])))
 
+(define (compiler-optimize-spans-pack-word-ok?) : bool
+  (let
+    [pack : CompilerIrInstr
+      (IrInstrPack
+        2
+        (compiler-ir-value-cons
+          (IrValueVar 0)
+          (compiler-ir-value-cons (IrValueVar 1) IrValueNil))
+        (AstTyStruct (intern "Pair")))]
+    [word : CompilerIrInstr (IrInstrWord 3 (IrValueVar 2) 0 (AstTyI64))]
+    [tail : CompilerIrInstr
+      (IrInstrTailCallIndirect
+        (IrValueFunction "tail_target")
+        (IrCallArgsNil)
+        (AstTyI64))]
+    [instrs : CompilerIrInstrList
+      (compiler-ir-instr-cons
+        pack
+        (compiler-ir-instr-cons
+          word
+          (compiler-ir-instr-cons
+            tail
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueVar 3)))
+              IrInstrNil))))]
+    [spans : CompilerSourceSpans
+      (compiler-source-spans-insert-instr
+        (compiler-source-spans-insert-instr
+          (compiler-source-spans-insert-instr
+            (opt-spans-base)
+            "main"
+            pack
+            (opt-test-span 111 21))
+          "main"
+          word
+          (opt-test-span 121 23))
+        "main"
+        tail
+        (opt-test-span 131 25))]
+    (match (optimize-program-with-spans-and-level
+      (opt-spans-program instrs)
+      spans
+      0)
+      [(CompilerOptimizedProgram _ optimized-spans)
+        (and
+          (= (compiler-source-spans-instr-count spans) 2)
+          (opt-span-lookup-ok? spans "main" pack 111 21)
+          (opt-span-lookup-ok? spans "main" word 121 23)
+          (opt-span-lookup-missing? spans "main" tail)
+          (= (compiler-source-spans-instr-count optimized-spans) 2)
+          (opt-span-lookup-ok? optimized-spans "main" pack 111 21)
+          (opt-span-lookup-ok? optimized-spans "main" word 121 23)
+          (opt-span-lookup-missing? optimized-spans "main" tail))])))
+
 (define (compiler-optimize-spans-self-test) : i64
   (if (and
     (compiler-optimize-spans-dce-ok?)
@@ -19578,7 +19638,8 @@
     (compiler-optimize-spans-cse-ok?)
     (compiler-optimize-spans-inline-callee-ok?)
     (compiler-optimize-spans-inline-fallback-ok?)
-    (compiler-optimize-spans-non-inline-call-ok?))
+    (compiler-optimize-spans-non-inline-call-ok?)
+    (compiler-optimize-spans-pack-word-ok?))
     42
     1))
 

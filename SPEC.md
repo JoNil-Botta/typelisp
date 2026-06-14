@@ -4044,8 +4044,8 @@ package eventually emits one: metadata-only images carry signature/layout
 metadata, and packages with macros additionally carry compiled comptime code.
 The runtime archive (`lib<name>.a` / `<name>.lib`) remains separate. This
 section specifies the v1 container and metadata schema implemented by
-`selfhost/tlci_core.tl`. Package builds emit metadata-only images; code-bearing
-image emission and loading are staged separately.
+`src/tlci_core.tl`. Package builds emit metadata-only images; code-bearing image
+emission and loading are staged separately.
 
 The container is a custom little-endian binary format shared by Linux and
 Windows. It is not ELF or COFF. The first 160 bytes are a fixed header:

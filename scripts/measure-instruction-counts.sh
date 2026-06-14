@@ -328,7 +328,7 @@ build_benchmark() {
     if ! "$COMPILER" build "$bench_tl" -o "$bin" \
         --target "$NL_BOOTSTRAP_TARGET" \
         --stdlib-root stdlib \
-        --stdlib-root selfhost \
+        --stdlib-root src \
         >"$stdout" 2>"$stderr"; then
         show_logs "$stdout" "$stderr"
         fail "failed to build benchmark $name"
@@ -369,11 +369,11 @@ measure_benchmarks() {
 measure_self_compile() {
     asm="$WORKDIR/bin/self-compile.opt$OPT_LEVEL.s"
     measure_repeated self_compile "compile_cli_opt$OPT_LEVEL" 1 \
-        "$COMPILER" compile selfhost/cli.tl -o "$asm" \
+        "$COMPILER" compile src/main.tl -o "$asm" \
         --target "$NL_BOOTSTRAP_TARGET" \
         $(native_target_cfg_args) \
         --stdlib-root stdlib \
-        --stdlib-root selfhost \
+        --stdlib-root src \
         --opt-level "$OPT_LEVEL"
     [ -s "$asm" ] || fail "self-compile did not write assembly: $asm"
 }

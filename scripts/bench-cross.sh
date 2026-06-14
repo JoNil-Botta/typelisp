@@ -33,7 +33,7 @@ SEED="$ROOT/target/stage0/typelisp$NL_BIN_EXT"
 rm -rf "$W"; mkdir -p "$W"
 
 now_ms() { v=$(date +%s%3N 2>/dev/null||true); case "$v" in *[!0-9]*|"") perl -MTime::HiRes=time -e 'printf "%d\n",time()*1000';; *) printf '%s\n' "$v";; esac; }
-compile() { c=$1; o=$2; lvl=$3; "$c" compile selfhost/cli.tl -o "$o" --target "$NL_BOOTSTRAP_TARGET" $(native_target_cfg_args) --stdlib-root stdlib --stdlib-root selfhost --opt-level "$lvl" >/dev/null 2>&1; }
+compile() { c=$1; o=$2; lvl=$3; "$c" compile src/main.tl -o "$o" --target "$NL_BOOTSTRAP_TARGET" $(native_target_cfg_args) --stdlib-root stdlib --stdlib-root src --opt-level "$lvl" >/dev/null 2>&1; }
 link() { assemble_and_link "$1" "$2" "$3" "$4" >/dev/null 2>&1; }
 fail() { echo "[bench-cross] FAIL: $*" >&2; exit 1; }
 

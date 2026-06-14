@@ -607,60 +607,6 @@ run_lsp_fixture() {
     rm -rf "$tmpdir"
 }
 
-build_selfhost_binary() {
-    name=$1
-    bin_path="$WORKDIR/typelisp-corpus-$name"
-    src="$ROOT/selfhost/$name.tl"
-
-    if [ "$HOST_OS" = linux ]; then
-        command -v as >/dev/null 2>&1 || {
-            printf '  FAIL selfhost %s: missing assembler\n' "$name" >&2
-            return 1
-        }
-        command -v ld >/dev/null 2>&1 || {
-            printf '  FAIL selfhost %s: missing linker\n' "$name" >&2
-            return 1
-        }
-        asm="$bin_path.s"
-        obj="$bin_path.o"
-        set +e
-        "$COMPILER" compile "$src" --stdlib-root "$ROOT/stdlib" -o "$asm" > "$WORKDIR/build-$name.out" 2> "$WORKDIR/build-$name.err"
-        code=$?
-        set -e
-        if [ "$code" -ne 0 ]; then
-            printf '  FAIL selfhost %s: compile failed\n' "$name" >&2
-            sed 's/^/    /' "$WORKDIR/build-$name.out" >&2 || true
-            sed 's/^/    /' "$WORKDIR/build-$name.err" >&2 || true
-            return 1
-        fi
-        if ! as "$asm" -o "$obj" >> "$WORKDIR/build-$name.out" 2>> "$WORKDIR/build-$name.err"; then
-            printf '  FAIL selfhost %s: assemble failed\n' "$name" >&2
-            sed 's/^/    /' "$WORKDIR/build-$name.out" >&2 || true
-            sed 's/^/    /' "$WORKDIR/build-$name.err" >&2 || true
-            return 1
-        fi
-        if ! ld "$obj" -o "$bin_path" -static -e "$(linux_entry_symbol_for_asm "$asm")" \
-            >> "$WORKDIR/build-$name.out" 2>> "$WORKDIR/build-$name.err"; then
-            printf '  FAIL selfhost %s: link failed\n' "$name" >&2
-            sed 's/^/    /' "$WORKDIR/build-$name.out" >&2 || true
-            sed 's/^/    /' "$WORKDIR/build-$name.err" >&2 || true
-            return 1
-        fi
-    else
-        set +e
-        "$COMPILER" build "$src" --stdlib-root "$ROOT/stdlib" -o "$bin_path" > "$WORKDIR/build-$name.out" 2> "$WORKDIR/build-$name.err"
-        code=$?
-        set -e
-        if [ "$code" -ne 0 ]; then
-            printf '  FAIL selfhost %s: build failed\n' "$name" >&2
-            sed 's/^/    /' "$WORKDIR/build-$name.out" >&2 || true
-            sed 's/^/    /' "$WORKDIR/build-$name.err" >&2 || true
-            return 1
-        fi
-    fi
-    printf '%s\n' "$bin_path"
-}
-
 run_selfhost_lsp_fixture() {
     path=$1
     name=$2
@@ -695,7 +641,7 @@ run_selfhost_lsp_fixture() {
     esac
 
     set +e
-    "$binary" < "$stdin_file" > "$out" 2> "$err"
+    "$binary" lsp < "$stdin_file" > "$out" 2> "$err"
     code=$?
     set -e
 
@@ -726,14 +672,11 @@ run_repl_corpus() {
 
     selfhost_repl_dir="$FIXTURE_ROOT/selfhost-repl"
     if [ "$HOST_OS" = linux ] && [ -d "$selfhost_repl_dir" ]; then
-        selfhost_repl_bin=$(build_selfhost_binary repl)
-        if [ -n "$selfhost_repl_bin" ]; then
-            for path in "$selfhost_repl_dir"/*.linux.in; do
-                [ -f "$path" ] || continue
-                base=${path%.linux.in}
-                run_repl_fixture "$path" "selfhost-repl/$(basename "$path")" "$base.linux.spec.json" "$selfhost_repl_bin" direct
-            done
-        fi
+        for path in "$selfhost_repl_dir"/*.linux.in; do
+            [ -f "$path" ] || continue
+            base=${path%.linux.in}
+            run_repl_fixture "$path" "selfhost-repl/$(basename "$path")" "$base.linux.spec.json" "$COMPILER"
+        done
     fi
 }
 
@@ -749,18 +692,15 @@ run_lsp_corpus() {
 
     selfhost_lsp_dir="$FIXTURE_ROOT/selfhost-lsp"
     if [ "$HOST_OS" = linux ] && [ -d "$selfhost_lsp_dir" ]; then
-        selfhost_lsp_bin=$(build_selfhost_binary lsp_frame)
-        if [ -n "$selfhost_lsp_bin" ]; then
-            for path in "$selfhost_lsp_dir"/*.linux.in "$selfhost_lsp_dir"/*.linux.in.json; do
-                [ -f "$path" ] || continue
-                case "$path" in
-                    *.linux.in.json) base=${path%.linux.in.json} ;;
-                    *.linux.in) base=${path%.linux.in} ;;
-                    *) continue ;;
-                esac
-                run_selfhost_lsp_fixture "$path" "selfhost-lsp/$(basename "$path")" "$base.linux.spec.json" "$selfhost_lsp_bin"
-            done
-        fi
+        for path in "$selfhost_lsp_dir"/*.linux.in "$selfhost_lsp_dir"/*.linux.in.json; do
+            [ -f "$path" ] || continue
+            case "$path" in
+                *.linux.in.json) base=${path%.linux.in.json} ;;
+                *.linux.in) base=${path%.linux.in} ;;
+                *) continue ;;
+            esac
+            run_selfhost_lsp_fixture "$path" "selfhost-lsp/$(basename "$path")" "$base.linux.spec.json" "$COMPILER"
+        done
     fi
 }
 

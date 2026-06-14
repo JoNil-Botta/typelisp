@@ -12,7 +12,7 @@ Fixes #(issue number)
 - [ ] Refactor
 
 ## Selfhost Impact
-- Target TypeLisp path (`selfhost/...`, `stdlib/...`, or `n/a`):
+- Target TypeLisp path (`src/...`, `stdlib/...`, or `n/a`):
 - Selfhost tests run:
 - Stdlib tests run:
 

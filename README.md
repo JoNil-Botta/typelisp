@@ -10,7 +10,7 @@ Current implementation goals:
 
 - **Typed**: Every expression has a known type at compile time. No runtime type tagging.
 - **Native**: Compiles straight to x86_64 assembly, then native toolchains produce executables. Linux uses `as` + `ld`; Windows uses `clang` + MSVC `link.exe`. No bytecode VM, no interpreter, no garbage collector. Supported targets are `linux-x86_64` and `windows-x86_64`; macOS and ARM are not supported yet and are not near-term goals.
-- **Self-hosted**: The compiler, tooling, and stdlib are written in TypeLisp (see [`selfhost/`](selfhost) and [`stdlib/`](stdlib)). The published stage0 compiler is a single self-hosted binary that builds its own successor; the toolchain has no other-language implementation.
+- **Self-hosted**: The compiler, tooling, and stdlib are written in TypeLisp (see [`src/`](selfhost) and [`stdlib/`](stdlib)). The published stage0 compiler is a single self-hosted binary that builds its own successor; the toolchain has no other-language implementation.
 - **Zero dependencies**: No third-party packages. The only build inputs are the native assembler/linker toolchain.
 - **Fast**: Generated code quality should approach LLVM (`clang -O2`) on the benchmark corpus while compilation itself stays fast. Performance is tracked deterministically — paired C baselines under [`benchmarks/`](benchmarks) and a cachegrind instruction-count CI gate under [`perf/`](perf) — rather than by wall-clock noise. The codegen-quality roadmap is #2559.
 
@@ -43,7 +43,7 @@ Language direction:
   imports is tracked by #2452, #2453, #2454, and #2492.
 - Use an arena-based memory model with a default program-lifetime arena and
   scoped `(with-arena ...)` allocation regions (implemented).
-- Land new language features in the self-hosted compiler ([`selfhost/`](selfhost)).
+- Land new language features in the self-hosted compiler ([`src/`](selfhost)).
   The toolchain is fully self-hosted (#666, #795); each published stage0 binary
   builds its successor.
 
@@ -433,10 +433,10 @@ package-cache helpers; conflicting corrupt entries are preserved with a
 `.corrupt.N` suffix before replacement.
 
 The repository root is also a package. From a checkout, `typelisp build` builds
-the unified selfhost CLI from `selfhost/cli.tl` and writes
+the unified selfhost CLI from `src/main.tl` and writes
 `target/release/typelisp` (or `target/release/typelisp.exe` on Windows). Stage0
 publication uses
-`scripts/build-stage0.sh`, which compiles `selfhost/cli.tl` directly and links
+`scripts/build-stage0.sh`, which compiles `src/main.tl` directly and links
 it with the host toolchain so a seed compiler does not depend on its own
 `build` command.
 
@@ -444,7 +444,7 @@ Package-wide source discovery walks regular `.tl` source files below the
 manifest directory while skipping build/tool state (`target`, VCS directories),
 nested package roots that have their own `typelisp.pkg`, and directories named
 `tests`. Test directories are reserved for `typelisp test` integration
-discovery and repository fixture corpora such as `selfhost/tests/`.
+discovery and repository fixture corpora such as `src/tests/`.
 
 Package builds load local dependency manifests into a normalized DAG keyed by
 manifest path before code generation. Transitive dependencies are built once per
@@ -523,7 +523,7 @@ discovery skips reserved fixture corpora such as
 own those files. Tests commonly import `stdlib/test.tl` for assertion helpers.
 
 CI runs `scripts/verify-inline-tests.sh`, which auto-discovers inline
-test-bearing `.tl` files under `selfhost/`, `stdlib/`, `tests/integration/`,
+test-bearing `.tl` files under `src/`, `stdlib/`, `tests/integration/`,
 `tests/inline/`, and `examples/`. Add inline tests without editing a manifest;
 the script fails if discovered tests do not type-check, build, or pass.
 
@@ -695,7 +695,7 @@ See [SPEC.md](SPEC.md) for the full language reference.
 
 ## Self-hosting sources
 
-The [`selfhost/`](selfhost) directory builds up a TypeLisp front end *written in
+The [`src/`](selfhost) directory builds up a TypeLisp front end *written in
 TypeLisp*:
 
 - `lexer.tl` — a tokenizer for TypeLisp's own s-expression syntax.
@@ -705,14 +705,14 @@ TypeLisp*:
   used for non-interactive commands.
 
 Compiler self-test and smoke-driver conventions are documented in
-[`selfhost/TESTING.md`](selfhost/TESTING.md).
-The published stage0 is a single self-hosted [`selfhost/cli.tl`](selfhost/cli.tl)
+[`src/TESTING.md`](src/TESTING.md).
+The published stage0 is a single self-hosted [`src/main.tl`](src/main.tl)
 binary per OS (`typelisp-stage0-linux`, `typelisp-stage0-windows.exe`) that
 handles every toolchain command in-process. The `Bootstrap Stage0` workflow
 ([`.github/workflows/bootstrap-stage0.yml`](.github/workflows/bootstrap-stage0.yml))
 is **self-perpetuating**: on each merge to `main` it fetches the
 previously published stage0, uses *that* compiler to build the next stage0 from
-`selfhost/cli.tl`, and publishes the result to the `stage0-latest` and immutable
+`src/main.tl`, and publishes the result to the `stage0-latest` and immutable
 `stage0-*` releases. Each stage0 therefore builds its own successor. To reproduce
 that build locally, run [`scripts/build-stage0.sh`](scripts/build-stage0.sh) with
 a fetched stage0 as the seed:
@@ -723,7 +723,7 @@ scripts/build-stage0.sh target/stage0/typelisp typelisp-stage0-linux   # Linux
 scripts/build-stage0.sh target/stage0/typelisp.exe typelisp-stage0-windows.exe  # Windows (Git Bash)
 ```
 
-`build-stage0.sh` compiles `selfhost/cli.tl` to assembly with the seed and links
+`build-stage0.sh` compiles `src/main.tl` to assembly with the seed and links
 it through the host toolchain (`as`/`ld` on Linux; `clang` + MSVC `link.exe` on
 Windows). The bootstrap path deliberately uses `compile` plus the native linker
 so a stage0 can build its successor without depending on its own `build` command.
@@ -738,7 +738,7 @@ To run the same stage0 verification gate used by CI, run
 `scripts/ci-verify.sh`; it fetches `stage0-latest` when
 `TYPELISP_BIN` is unset. The gate performs a single compiler build on every
 host: the published compiler seeds the stage1->stage2->stage3 bootstrap
-fixpoint over `selfhost/cli.tl`, and every remaining gate then runs on the
+fixpoint over `src/main.tl`, and every remaining gate then runs on the
 freshly bootstrapped stage2 compiler (the branch-built full CLI).
 
 The fixpoint gate is `scripts/check-bootstrap-fixpoint.sh`. On Linux it emits
@@ -769,7 +769,7 @@ Smaller runnable examples, including `calc.tl`, remain in [`examples/`](examples
 ## Documentation site
 
 A static language-reference and stdlib/API documentation site is generated
-entirely in TypeLisp by [`selfhost/doc_site.tl`](selfhost/doc_site.tl) and
+entirely in TypeLisp by [`tools/doc-site/doc_site.tl`](tools/doc-site/doc_site.tl) and
 published to GitHub Pages at <https://jonil-botta.github.io/typelisp/>. Pushes
 to `main` rebuild and publish it automatically via the
 [`Publish Docs`](.github/workflows/docs-pages.yml) workflow; pull requests build
@@ -778,7 +778,7 @@ and validate the site without publishing (the "Verify docs site" step in CI).
 Build the site locally into any output directory:
 
 ```bash
-typelisp run selfhost/doc_site.tl -- target/site
+typelisp run tools/doc-site/doc_site.tl -- target/site
 # Build + validate links/anchors the way CI does (no publish):
 scripts/verify-doc-site.sh
 ```

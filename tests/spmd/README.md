@@ -61,8 +61,8 @@ Coverage map:
 - `spmd-broadcast` executable coverage lives in `broadcast_lane0_i64.tl` and
   `broadcast_lane1_i64.tl`, with mode-specific expectations in
   `scripts/verify-spmd-broadcast.sh`.
-- SIMD reduction vectorization shape checks live in `selfhost/compiler_lower.tl`
-  and `selfhost/compiler_backend_tests.tl`; this corpus runs the executable
+- SIMD reduction vectorization shape checks live in `src/compiler_lower.tl`
+  and `src/compiler_backend_tests.tl`; this corpus runs the executable
   scalar/SIMD comparison for the same reduction fixture.
 - Unsupported SPMD diagnostics are covered by `tests/safety/manifest.txt`,
   including outer mutation, unsupported `f64` min reduction, and calls with

@@ -3,7 +3,7 @@ set -eu
 
 # check-bootstrap-fixpoint.sh - selfhost compiler stage2/stage3 fixpoint gate.
 #
-# A seed TypeLisp compiler builds the full selfhost toolchain (selfhost/cli.tl)
+# A seed TypeLisp compiler builds the full selfhost toolchain (src/main.tl)
 # to stage1. stage1 then compiles the same source to stage2.s, stage2 repeats
 # that compile to stage3.s, and the selfhost-emitted stage2/stage3 assembly must
 # be byte-identical. The stages use the same compile flags as the stage0
@@ -160,7 +160,7 @@ check_stage1_compile_cli() {
         --backend-mode scalar \
         --opt-level 0 \
         --stdlib-root "$ROOT/stdlib" \
-        --stdlib-root "$ROOT/selfhost"
+        --stdlib-root "$ROOT/src"
     [ -s "$STAGE1_CLI_ASM" ] || {
         echo "stage1 compile command did not write default assembly: $STAGE1_CLI_ASM" >&2
         exit 1
@@ -266,22 +266,22 @@ EOF
 # publication build (scripts/build-stage0.sh), so the stage2 produced here is
 # the branch-built equivalent of a published stage0 and CI can run every
 # downstream gate on it.
-BOOTSTRAP_SRC=selfhost/cli.tl
+BOOTSTRAP_SRC=src/main.tl
 
 echo "[bootstrap] stage0 -> stage1.s"
-run_with_heartbeat "stage0 -> stage1.s" "$COMPILER" compile "$BOOTSTRAP_SRC" -o "$STAGE1_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) --stdlib-root stdlib --stdlib-root selfhost --opt-level 1
+run_with_heartbeat "stage0 -> stage1.s" "$COMPILER" compile "$BOOTSTRAP_SRC" -o "$STAGE1_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) --stdlib-root stdlib --stdlib-root src --opt-level 1
 
 assemble_and_link "stage1" "$STAGE1_ASM" "$STAGE1_OBJ" "$STAGE1_BIN"
 
 check_stage1_compile_cli
 
 echo "[bootstrap] stage1 -> stage2.s"
-run_with_heartbeat "stage1 -> stage2.s" "$STAGE1_BIN" compile "$BOOTSTRAP_SRC" -o "$STAGE2_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) --stdlib-root stdlib --stdlib-root selfhost --opt-level 1
+run_with_heartbeat "stage1 -> stage2.s" "$STAGE1_BIN" compile "$BOOTSTRAP_SRC" -o "$STAGE2_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) --stdlib-root stdlib --stdlib-root src --opt-level 1
 
 assemble_and_link_stage2
 
 echo "[bootstrap] stage2 -> stage3.s"
-run_with_heartbeat "stage2 -> stage3.s" "$STAGE2_BIN" compile "$BOOTSTRAP_SRC" -o "$STAGE3_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) --stdlib-root stdlib --stdlib-root selfhost --opt-level 1
+run_with_heartbeat "stage2 -> stage3.s" "$STAGE2_BIN" compile "$BOOTSTRAP_SRC" -o "$STAGE3_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) --stdlib-root stdlib --stdlib-root src --opt-level 1
 
 echo "[bootstrap] compare stage2.s and stage3.s"
 if ! cmp -s "$STAGE2_ASM" "$STAGE3_ASM"; then

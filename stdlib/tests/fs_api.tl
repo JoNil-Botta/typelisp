@@ -617,8 +617,8 @@
         "."
         "normalize dot path")
       (assert-owned-string-eq
-        (test-fs-path-normalize "selfhost/./x/../compiler_load.tl")
-        "selfhost/compiler_load.tl"
+        (test-fs-path-normalize "src/./x/../compiler_load.tl")
+        "src/compiler_load.tl"
         "normalize dot and parent segments")
       (assert-owned-string-eq
         (test-fs-path-normalize "target\\loader\\..\\dep.tl")

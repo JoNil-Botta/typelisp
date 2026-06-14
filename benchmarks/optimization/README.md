@@ -25,7 +25,7 @@ mode runs the same corpus through `typelisp compile --target windows-x86_64`,
 `clang`, and `lld-link` for TypeLisp binaries plus `clang` for the C baselines.
 
 The runner defaults to compiling TypeLisp benchmark sources through the
-selfhost `selfhost/compiler_driver.tl` path, then assembling and linking the
+selfhost `src/compiler_driver.tl` path, then assembling and linking the
 generated Linux x86_64 assembly. Set `TYPELISP_BENCH_SELFHOST=0` or pass
 `--rust-stage0` to compile TypeLisp sources through the Rust stage0 CLI instead.
 These knobs apply to the local timing report; correctness mode always uses the

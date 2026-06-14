@@ -194,7 +194,7 @@ run_windows_link_smoke() {
   42)
 EOF
 echo "[windows-native-link] build --direct"
-if ! "$COMPILER" run "$ROOT/selfhost/build.tl" --stdlib-root "$ROOT/stdlib" -- \
+if ! "$COMPILER" build \
     --direct "$SRC" --target windows-x86_64 -o "$BIN" --stdlib-root "$ROOT/stdlib" \
     > "$WORKDIR/build.stdout" 2> "$WORKDIR/build.stderr"; then
     sed 's/^/  /' "$WORKDIR/build.stdout" >&2 || true
@@ -219,7 +219,7 @@ assert_empty "$WORKDIR/built.stderr"
 
 echo "[windows-native-link] run --direct"
 set +e
-"$COMPILER" run "$ROOT/selfhost/run.tl" --stdlib-root "$ROOT/stdlib" -- \
+"$COMPILER" run \
     --direct "$SRC" --target windows-x86_64 --stdlib-root "$ROOT/stdlib" \
     > "$WORKDIR/run.stdout" 2> "$WORKDIR/run.stderr"
 run_status=$?
@@ -283,7 +283,7 @@ LINK_SEARCH=$(to_windows_path "$LINK_LIB_DIR")
 LINK_SEARCH_METADATA=$(printf '%s' "$LINK_SEARCH" | sed 's/\\/\\\\/g; s/"/\\"/g')
 
 echo "[windows-native-link] build --direct --link-lib"
-if ! "$COMPILER" run "$ROOT/selfhost/build.tl" --stdlib-root "$ROOT/stdlib" -- \
+if ! "$COMPILER" build \
     --direct "$LINK_SRC" --target windows-x86_64 -o "$LINK_BIN" \
     --stdlib-root "$ROOT/stdlib" --link-search "$LINK_SEARCH" --link-lib ffi_add7 \
     > "$WORKDIR/build-link.stdout" 2> "$WORKDIR/build-link.stderr"; then
@@ -309,7 +309,7 @@ assert_empty "$WORKDIR/built-link.stderr"
 
 echo "[windows-native-link] run --direct --link-lib"
 set +e
-"$COMPILER" run "$ROOT/selfhost/run.tl" --stdlib-root "$ROOT/stdlib" -- \
+"$COMPILER" run \
     --direct "$LINK_SRC" --target windows-x86_64 --stdlib-root "$ROOT/stdlib" \
     --link-search "$LINK_SEARCH" --link-lib ffi_add7 \
     > "$WORKDIR/run-link.stdout" 2> "$WORKDIR/run-link.stderr"
@@ -336,7 +336,7 @@ if command -v cygpath >/dev/null 2>&1; then
 fi
 
 echo "[windows-native-link] build --direct extern function pointer"
-if ! "$COMPILER" run "$ROOT/selfhost/build.tl" --stdlib-root "$ROOT/stdlib" -- \
+if ! "$COMPILER" build \
     --direct "$LINK_FNPTR_SRC" --target windows-x86_64 -o "$LINK_FNPTR_BIN" \
     --stdlib-root "$ROOT/stdlib" --link-search "$LINK_SEARCH" --link-lib ffi_add7 \
     > "$WORKDIR/build-link-fnptr.stdout" 2> "$WORKDIR/build-link-fnptr.stderr"; then
@@ -362,7 +362,7 @@ assert_empty "$WORKDIR/built-link-fnptr.stderr"
 
 echo "[windows-native-link] run --direct extern function pointer"
 set +e
-"$COMPILER" run "$ROOT/selfhost/run.tl" --stdlib-root "$ROOT/stdlib" -- \
+"$COMPILER" run \
     --direct "$LINK_FNPTR_SRC" --target windows-x86_64 --stdlib-root "$ROOT/stdlib" \
     --link-search "$LINK_SEARCH" --link-lib ffi_add7 \
     > "$WORKDIR/run-link-fnptr.stdout" 2> "$WORKDIR/run-link-fnptr.stderr"
@@ -392,7 +392,7 @@ if command -v cygpath >/dev/null 2>&1; then
 fi
 
 echo "[windows-native-link] build --direct extern link metadata"
-if ! "$COMPILER" run "$ROOT/selfhost/build.tl" --stdlib-root "$ROOT/stdlib" -- \
+if ! "$COMPILER" build \
     --direct "$LINK_METADATA_SRC" --target windows-x86_64 -o "$LINK_METADATA_BIN" \
     --stdlib-root "$ROOT/stdlib" \
     > "$WORKDIR/build-link-metadata.stdout" 2> "$WORKDIR/build-link-metadata.stderr"; then
@@ -418,7 +418,7 @@ assert_empty "$WORKDIR/built-link-metadata.stderr"
 
 echo "[windows-native-link] run --direct extern link metadata"
 set +e
-"$COMPILER" run "$ROOT/selfhost/run.tl" --stdlib-root "$ROOT/stdlib" -- \
+"$COMPILER" run \
     --direct "$LINK_METADATA_SRC" --target windows-x86_64 --stdlib-root "$ROOT/stdlib" \
     > "$WORKDIR/run-link-metadata.stdout" 2> "$WORKDIR/run-link-metadata.stderr"
 run_link_metadata_status=$?

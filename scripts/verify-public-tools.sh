@@ -227,39 +227,6 @@ native_arg_path() {
     fi
 }
 
-build_linux_cli_tool() {
-    _case=$1
-    _source=$2
-    _output=$3
-    _asm="$_output.s"
-    _obj="$_output.o"
-
-    run_cmd "$_case-compile" "$COMPILER" compile "$_source" --stdlib-root "$ROOT/stdlib" -o "$_asm"
-    assert_success
-    assert_stderr_empty
-    assert_contains "$out" "Wrote "
-    run_cmd "$_case-assemble" as "$_asm" -o "$_obj"
-    assert_success
-    assert_stdout_empty
-    assert_stderr_empty
-    run_cmd "$_case-link" ld "$_obj" -o "$_output" -static -e "$(linux_entry_symbol_for_asm "$_asm")"
-    assert_success
-    assert_stdout_empty
-    assert_stderr_empty
-}
-
-build_host_cli_tool() {
-    _case=$1
-    _source=$2
-    _output=$3
-
-    run_cmd "$_case-build" "$COMPILER" build "$_source" -o "$_output" --target "$HOST_TARGET"
-    assert_success
-    assert_stderr_empty
-    assert_contains "$out" "Built $(native_arg_path "$_output")"
-    [ -x "$_output" ] || fail "$_case did not write executable $_output"
-}
-
 strip_expected_trailing_lf() {
     src=$1
     dst=$2
@@ -1118,11 +1085,11 @@ if [ "$HOST_ACTION_ENABLED" -eq 1 ]; then
     assert_contains_any "$err" "cannot read module" "cannot read import"
 fi
 
-# Retained selfhost build/run compatibility executables. The public cli.tl path
-# above is the primary surface; these checks keep the shared build/run cores
-# covered as separate compiled tools on every supported host. These gates must
-# run on every supported host because omitted build/run tools can hide
-# target-specific compiler bugs.
+# selfhost build/run host-action coverage. These exercise the cli `build` and
+# `run` subcommands (the published surface) over the planner corpus: package
+# opt-level/profile matrices, --direct source builds, link-lib/link-ctor, and
+# the argument/error diagnostics. They must run on every supported host because
+# omitted build/run coverage can hide target-specific compiler bugs.
 if [ "$HOST_ACTION_ENABLED" -eq 1 ]; then
     SELFHOST_PLANNER_DIR="$WORKDIR/selfhost-planners"
     mkdir -p "$SELFHOST_PLANNER_DIR/with space" "$SELFHOST_PLANNER_DIR/stdlib one"
@@ -1132,11 +1099,6 @@ if [ "$HOST_ACTION_ENABLED" -eq 1 ]; then
         command -v ld >/dev/null 2>&1 || fail "missing linker: ld"
         command -v cc >/dev/null 2>&1 || fail "missing C compiler: cc"
         command -v ar >/dev/null 2>&1 || fail "missing archiver: ar"
-        build_linux_cli_tool selfhost-build-tool selfhost/build.tl "$SELFHOST_PLANNER_DIR/build-tool"
-        build_linux_cli_tool selfhost-run-tool selfhost/run.tl "$SELFHOST_PLANNER_DIR/run-tool"
-    else
-        build_host_cli_tool selfhost-build-tool selfhost/build.tl "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX"
-        build_host_cli_tool selfhost-run-tool selfhost/run.tl "$SELFHOST_PLANNER_DIR/run-tool$HOST_EXE_SUFFIX"
     fi
 
     PLANNER_SOURCE="$SELFHOST_PLANNER_DIR/with space/main file.tl"
@@ -1144,7 +1106,7 @@ if [ "$HOST_ACTION_ENABLED" -eq 1 ]; then
     cat > "$PLANNER_SOURCE" <<'EOF'
 (define (main) : i64 23)
 EOF
-    run_cmd selfhost-build-tool "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct "$PLANNER_SOURCE" -o "$PLANNER_OUTPUT" --target "$SELFHOST_TOOL_TARGET" --backend-mode scalar
+    run_cmd selfhost-build-tool "$COMPILER" build --direct "$PLANNER_SOURCE" -o "$PLANNER_OUTPUT" --target "$SELFHOST_TOOL_TARGET" --backend-mode scalar
     assert_success
     assert_stderr_empty
     assert_contains "$out" "Built $(native_arg_path "$PLANNER_OUTPUT")"
@@ -1153,12 +1115,12 @@ EOF
     assert_code 23
     assert_stderr_empty
 
-    run_cmd selfhost-build-source-locked "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct "$PLANNER_SOURCE" --locked
+    run_cmd selfhost-build-source-locked "$COMPILER" build --direct "$PLANNER_SOURCE" --locked
     assert_failure
     assert_stdout_empty
     assert_contains "$err" "build: --locked is only valid for package builds"
 
-    run_cmd selfhost-build-source-update-lock "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct "$PLANNER_SOURCE" --update-lock
+    run_cmd selfhost-build-source-update-lock "$COMPILER" build --direct "$PLANNER_SOURCE" --update-lock
     assert_failure
     assert_stdout_empty
     assert_contains "$err" "build: --update-lock is only valid for package builds"
@@ -1189,14 +1151,14 @@ EOF
 (extern (ffi_add7 [x : i64]) : i64)
 (define (main) : i64 (ffi_add7 35))
 EOF
-    run_cmd selfhost-build-tool-link-lib "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct "$LINK_SOURCE" -o "$LINK_OUTPUT" --target linux-x86_64 --backend-mode scalar --link-search "$LINK_LIB_DIR" --link-lib ffi_add7
+    run_cmd selfhost-build-tool-link-lib "$COMPILER" build --direct "$LINK_SOURCE" -o "$LINK_OUTPUT" --target linux-x86_64 --backend-mode scalar --link-search "$LINK_LIB_DIR" --link-lib ffi_add7
     assert_success
     assert_stderr_empty
     assert_contains "$out" "Built $LINK_OUTPUT"
     run_cmd selfhost-build-tool-link-output "$LINK_OUTPUT"
     assert_code 42
     assert_stderr_empty
-    run_cmd selfhost-run-tool-link-lib "$SELFHOST_PLANNER_DIR/run-tool$HOST_EXE_SUFFIX" --direct "$LINK_SOURCE" --target linux-x86_64 --backend-mode scalar --link-search "$LINK_LIB_DIR" --link-lib ffi_add7
+    run_cmd selfhost-run-tool-link-lib "$COMPILER" run --direct "$LINK_SOURCE" --target linux-x86_64 --backend-mode scalar --link-search "$LINK_LIB_DIR" --link-lib ffi_add7
     assert_code 42
     assert_stdout_empty
     assert_stderr_empty
@@ -1244,7 +1206,7 @@ EOF
     (ffi_ctor_value)
     1))
 EOF
-    run_cmd selfhost-run-tool-link-ctor "$SELFHOST_PLANNER_DIR/run-tool$HOST_EXE_SUFFIX" --direct "$CTOR_SOURCE" --target linux-x86_64 --backend-mode scalar --stdlib-root "$ROOT/stdlib" --link-search "$LINK_LIB_DIR" --link-lib ffi_ctor
+    run_cmd selfhost-run-tool-link-ctor "$COMPILER" run --direct "$CTOR_SOURCE" --target linux-x86_64 --backend-mode scalar --stdlib-root "$ROOT/stdlib" --link-search "$LINK_LIB_DIR" --link-lib ffi_ctor
     assert_code 42
     assert_stdout_empty
     assert_stderr_empty
@@ -1322,7 +1284,7 @@ EOF
     fi
 
     PLANNER_AVX2_OUTPUT="$SELFHOST_PLANNER_DIR/with space/avx2 program$HOST_EXE_SUFFIX"
-    run_cmd selfhost-build-tool-avx2 "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct "$PLANNER_SOURCE" -o "$PLANNER_AVX2_OUTPUT" --target "$SELFHOST_TOOL_TARGET" --backend-mode avx2
+    run_cmd selfhost-build-tool-avx2 "$COMPILER" build --direct "$PLANNER_SOURCE" -o "$PLANNER_AVX2_OUTPUT" --target "$SELFHOST_TOOL_TARGET" --backend-mode avx2
     assert_success
     assert_stderr_empty
     assert_contains "$out" "Built $(native_arg_path "$PLANNER_AVX2_OUTPUT")"
@@ -1365,24 +1327,24 @@ EOF
 EOF
     fi
     if [ "$HOST_OS" = windows ]; then
-        run_cmd selfhost-run-tool "$SELFHOST_PLANNER_DIR/run-tool$HOST_EXE_SUFFIX" --direct "$PLANNER_RUN_SOURCE" --target "$SELFHOST_TOOL_TARGET" --backend-mode scalar --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/selfhost"
+        run_cmd selfhost-run-tool "$COMPILER" run --direct "$PLANNER_RUN_SOURCE" --target "$SELFHOST_TOOL_TARGET" --backend-mode scalar --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src"
         assert_code 7
         assert_stderr_empty
         assert_contains "$out" "hello"
     else
-    run_cmd selfhost-run-tool "$SELFHOST_PLANNER_DIR/run-tool$HOST_EXE_SUFFIX" --direct "$PLANNER_RUN_SOURCE" --target "$SELFHOST_TOOL_TARGET" --backend-mode scalar --stdlib-root "$ROOT/stdlib" -- "arg with spaces" "colon:arg"
+    run_cmd selfhost-run-tool "$COMPILER" run --direct "$PLANNER_RUN_SOURCE" --target "$SELFHOST_TOOL_TARGET" --backend-mode scalar --stdlib-root "$ROOT/stdlib" -- "arg with spaces" "colon:arg"
     assert_code 13
     assert_stderr_empty
     assert_contains "$out" "arg with spaces"
     fi
 
     if [ "$HOST_OS" = linux ]; then
-        run_cmd selfhost-run-tool-avx512 "$SELFHOST_PLANNER_DIR/run-tool$HOST_EXE_SUFFIX" --direct "$PLANNER_RUN_SOURCE" --target "$SELFHOST_TOOL_TARGET" --backend-mode avx512 --stdlib-root "$ROOT/stdlib" -- "arg with spaces" "colon:arg"
+        run_cmd selfhost-run-tool-avx512 "$COMPILER" run --direct "$PLANNER_RUN_SOURCE" --target "$SELFHOST_TOOL_TARGET" --backend-mode avx512 --stdlib-root "$ROOT/stdlib" -- "arg with spaces" "colon:arg"
         assert_code 13
         assert_stderr_empty
         assert_contains "$out" "arg with spaces"
     elif printf '%s\n' "$SIMD_ISAS" | grep -qx avx2; then
-        run_cmd selfhost-run-tool-avx2 "$SELFHOST_PLANNER_DIR/run-tool$HOST_EXE_SUFFIX" --direct "$PLANNER_RUN_SOURCE" --target "$SELFHOST_TOOL_TARGET" --backend-mode avx2 --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/selfhost"
+        run_cmd selfhost-run-tool-avx2 "$COMPILER" run --direct "$PLANNER_RUN_SOURCE" --target "$SELFHOST_TOOL_TARGET" --backend-mode avx2 --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src"
         assert_code 7
         assert_stderr_empty
         assert_contains "$out" "hello"
@@ -1417,7 +1379,7 @@ EOF
   (entry "src/lib.tl"))
 EOF
     maybe_strip_manifest_kind "$SELFHOST_PKG/vendor/math/typelisp.pkg"
-    run_cmd selfhost-build-package "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_PKG/typelisp.pkg" --opt-level 0
+    run_cmd selfhost-build-package "$COMPILER" build --direct --manifest-path "$SELFHOST_PKG/typelisp.pkg" --opt-level 0
     assert_success
     assert_stderr_empty
     SELFHOST_PKG_OUT_DIR="$SELFHOST_PKG/target/release"
@@ -1435,7 +1397,7 @@ EOF
     [ "$selfhost_pkg_status" -eq 42 ] || fail "selfhost package executable expected exit 42, got $selfhost_pkg_status"
 
     rm -rf "$SELFHOST_PKG/target"
-    run_cmd_cwd selfhost-build-package-discover "$SELFHOST_PKG/src/nested/deeper" "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX"
+    run_cmd_cwd selfhost-build-package-discover "$SELFHOST_PKG/src/nested/deeper" "$COMPILER" build
     assert_success
     assert_stderr_empty
     [ -x "$SELFHOST_PKG_BIN" ] || fail "selfhost package discovery did not write executable"
@@ -1455,7 +1417,7 @@ EOF
     cat > "$SELFHOST_LIBPKG/src/lib.tl" <<'EOF'
 (define (add-two [x : i64]) : i64 (+ x 2))
 EOF
-    run_cmd selfhost-build-package-lib "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_LIBPKG/typelisp.pkg"
+    run_cmd selfhost-build-package-lib "$COMPILER" build --direct --manifest-path "$SELFHOST_LIBPKG/typelisp.pkg"
     assert_success
     assert_stderr_empty
     SELFHOST_LIB_ARCHIVE="$SELFHOST_LIBPKG/target/release/${HOST_STATIC_LIB_PREFIX}selfhost_lib$HOST_STATIC_LIB_SUFFIX"
@@ -1473,7 +1435,7 @@ EOF
   (deps "not-yet"))
 EOF
     maybe_strip_manifest_kind "$SELFHOST_BADPKG/typelisp.pkg"
-    run_cmd selfhost-build-package-parse-error "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_BADPKG/typelisp.pkg"
+    run_cmd selfhost-build-package-parse-error "$COMPILER" build --direct --manifest-path "$SELFHOST_BADPKG/typelisp.pkg"
     assert_failure
     assert_stdout_empty
     assert_contains "$err" "invalid package manifest"
@@ -1491,7 +1453,7 @@ EOF
 (import "pkg:math/src/lib.tl")
 (define (main) : i64 0)
 EOF
-    run_cmd selfhost-build-package-missing-alias "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_BADPKG/typelisp.pkg"
+    run_cmd selfhost-build-package-missing-alias "$COMPILER" build --direct --manifest-path "$SELFHOST_BADPKG/typelisp.pkg"
     assert_failure
     assert_stdout_empty
     assert_contains "$err" "compiler-load: unknown package alias 'math'"
@@ -1522,7 +1484,7 @@ EOF
 (import "pkg:math/src/missing.tl")
 (define (main) : i64 0)
 EOF
-    run_cmd selfhost-build-package-missing-dep "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_BADPKG/typelisp.pkg"
+    run_cmd selfhost-build-package-missing-dep "$COMPILER" build --direct --manifest-path "$SELFHOST_BADPKG/typelisp.pkg"
     assert_failure
     # The selfhost --direct planner builds the path dependency's archive first
     # (emitting its `Built` line) before resolving the entry package's
@@ -1531,12 +1493,12 @@ EOF
     assert_contains "$err" "compiler-load: cannot read import"
     assert_contains "$err" "vendor/math/src/missing.tl"
 
-    run_cmd selfhost-build-package-opt-duplicate "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_PKG/typelisp.pkg" --opt-level 1 --opt-level 2
+    run_cmd selfhost-build-package-opt-duplicate "$COMPILER" build --direct --manifest-path "$SELFHOST_PKG/typelisp.pkg" --opt-level 1 --opt-level 2
     assert_failure
     assert_stdout_empty
     assert_contains "$err" "build: --opt-level was provided more than once"
 
-    run_cmd selfhost-build-package-opt-invalid "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_PKG/typelisp.pkg" --opt-level 3
+    run_cmd selfhost-build-package-opt-invalid "$COMPILER" build --direct --manifest-path "$SELFHOST_PKG/typelisp.pkg" --opt-level 3
     assert_failure
     assert_stdout_empty
     assert_contains "$err" "build: unknown opt level '3'; expected 0, 1, or 2"
@@ -1588,7 +1550,7 @@ EOF
     SELFHOST_OPT_WORKER_DEV_ASM="$SELFHOST_OPTWORKER/target/dev/selfhost_opt_worker.s"
 
     rm -rf "$SELFHOST_OPTPKG/target"
-    run_cmd selfhost-build-package-opt-default "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg"
+    run_cmd selfhost-build-package-opt-default "$COMPILER" build --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg"
     assert_success
     assert_stderr_empty
     [ -f "$SELFHOST_OPT_RELEASE_ASM" ] || fail "selfhost opt package default build did not keep release assembly"
@@ -1596,7 +1558,7 @@ EOF
     assert_not_contains "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT0_STACK_MUL"
 
     rm -rf "$SELFHOST_OPTWORKER/target"
-    run_cmd selfhost-build-package-worker-opt-default "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --package-worker --manifest-path "$SELFHOST_OPTWORKER/typelisp.pkg"
+    run_cmd selfhost-build-package-worker-opt-default "$COMPILER" build --package-worker --manifest-path "$SELFHOST_OPTWORKER/typelisp.pkg"
     assert_success
     assert_stderr_empty
     [ -f "$SELFHOST_OPT_WORKER_RELEASE_ASM" ] || fail "selfhost opt package worker default build did not keep release assembly"
@@ -1604,7 +1566,7 @@ EOF
     assert_not_contains "$SELFHOST_OPT_WORKER_RELEASE_ASM" "$SELFHOST_OPT0_STACK_MUL"
 
     rm -rf "$SELFHOST_OPTPKG/target"
-    run_cmd selfhost-build-package-profile-dev "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --profile dev
+    run_cmd selfhost-build-package-profile-dev "$COMPILER" build --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --profile dev
     assert_success
     assert_stderr_empty
     [ -f "$SELFHOST_OPT_DEV_ASM" ] || fail "selfhost opt package dev profile build did not keep dev assembly"
@@ -1612,7 +1574,7 @@ EOF
     assert_not_contains "$SELFHOST_OPT_DEV_ASM" "$SELFHOST_OPT2_REGALLOC"
 
     rm -rf "$SELFHOST_OPTPKG/target"
-    run_cmd selfhost-build-package-opt-zero "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --opt-level 0
+    run_cmd selfhost-build-package-opt-zero "$COMPILER" build --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --opt-level 0
     assert_success
     assert_stderr_empty
     [ -f "$SELFHOST_OPT_RELEASE_ASM" ] || fail "selfhost opt package --opt-level 0 build did not keep release assembly"
@@ -1620,14 +1582,14 @@ EOF
     assert_not_contains "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT2_REGALLOC"
 
     rm -rf "$SELFHOST_OPTPKG/target"
-    run_cmd selfhost-build-package-opt-one "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --opt-level 1
+    run_cmd selfhost-build-package-opt-one "$COMPILER" build --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --opt-level 1
     assert_success
     assert_stderr_empty
     [ -f "$SELFHOST_OPT_RELEASE_ASM" ] || fail "selfhost opt package --opt-level 1 build did not keep release assembly"
     assert_not_contains "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT2_REGALLOC"
 
     rm -rf "$SELFHOST_OPTPKG/target"
-    run_cmd selfhost-build-package-opt-two "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --opt-level 2
+    run_cmd selfhost-build-package-opt-two "$COMPILER" build --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --opt-level 2
     assert_success
     assert_stderr_empty
     [ -f "$SELFHOST_OPT_RELEASE_ASM" ] || fail "selfhost opt package --opt-level 2 build did not keep release assembly"
@@ -1635,7 +1597,7 @@ EOF
     assert_not_contains "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT0_STACK_MUL"
 
     rm -rf "$SELFHOST_OPTPKG/target"
-    run_cmd selfhost-build-package-profile-release-opt-zero "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --profile release --opt-level 0
+    run_cmd selfhost-build-package-profile-release-opt-zero "$COMPILER" build --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --profile release --opt-level 0
     assert_success
     assert_stderr_empty
     [ -f "$SELFHOST_OPT_RELEASE_ASM" ] || fail "selfhost opt package release profile --opt-level 0 build did not keep release assembly"
@@ -1643,7 +1605,7 @@ EOF
     assert_not_contains "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT2_REGALLOC"
 
     rm -rf "$SELFHOST_OPTPKG/target"
-    run_cmd selfhost-build-package-profile-dev-opt-two "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --profile dev --opt-level 2
+    run_cmd selfhost-build-package-profile-dev-opt-two "$COMPILER" build --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --profile dev --opt-level 2
     assert_success
     assert_stderr_empty
     [ -f "$SELFHOST_OPT_DEV_ASM" ] || fail "selfhost opt package dev profile --opt-level 2 build did not keep dev assembly"
@@ -1651,7 +1613,7 @@ EOF
     assert_not_contains "$SELFHOST_OPT_DEV_ASM" "$SELFHOST_OPT0_STACK_MUL"
 
     rm -rf "$SELFHOST_OPTWORKER/target"
-    run_cmd selfhost-build-package-worker-opt-before-profile "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --package-worker --manifest-path "$SELFHOST_OPTWORKER/typelisp.pkg" --opt-level 2 --profile dev
+    run_cmd selfhost-build-package-worker-opt-before-profile "$COMPILER" build --package-worker --manifest-path "$SELFHOST_OPTWORKER/typelisp.pkg" --opt-level 2 --profile dev
     assert_success
     assert_stderr_empty
     [ -f "$SELFHOST_OPT_WORKER_DEV_ASM" ] || fail "selfhost opt package worker --opt-level 2 --profile dev build did not keep dev assembly"
@@ -1659,30 +1621,30 @@ EOF
     assert_not_contains "$SELFHOST_OPT_WORKER_DEV_ASM" "$SELFHOST_OPT0_STACK_MUL"
 
     rm -rf "$SELFHOST_OPTPKG/target"
-    run_cmd selfhost-build-package-profile-invalid "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --profile fast
+    run_cmd selfhost-build-package-profile-invalid "$COMPILER" build --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --profile fast
     assert_failure
     assert_stdout_empty
     assert_contains "$err" "build: unknown profile 'fast'; expected dev or release"
 
-    run_cmd selfhost-build-package-profile-duplicate "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --profile dev --release
+    run_cmd selfhost-build-package-profile-duplicate "$COMPILER" build --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --profile dev --release
     assert_failure
     assert_stdout_empty
     assert_contains "$err" "build: profile was provided more than once"
 
-    run_cmd selfhost-build-package-opt-missing "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --opt-level
+    run_cmd selfhost-build-package-opt-missing "$COMPILER" build --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --opt-level
     assert_failure
     assert_stdout_empty
     assert_contains "$err" "build: --opt-level requires a value"
 
     rm -rf "$SELFHOST_PKG/target"
-    run_cmd selfhost-build-package-mode-staged "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_PKG/typelisp.pkg" --backend-mode avx2
+    run_cmd selfhost-build-package-mode-staged "$COMPILER" build --direct --manifest-path "$SELFHOST_PKG/typelisp.pkg" --backend-mode avx2
     assert_success
     assert_stderr_empty
     [ -f "$SELFHOST_PKG_ASM" ] || fail "selfhost package --backend-mode avx2 did not keep assembly"
     assert_contains "$out" "Built $(native_arg_path "$SELFHOST_PKG_BIN")"
     assert_contains "$SELFHOST_PKG_ASM" "vzeroupper"
 
-    run_cmd selfhost-run-tool-missing-target "$SELFHOST_PLANNER_DIR/run-tool$HOST_EXE_SUFFIX" --direct "$PLANNER_SOURCE" --target
+    run_cmd selfhost-run-tool-missing-target "$COMPILER" run --direct "$PLANNER_SOURCE" --target
     assert_failure
     assert_stdout_empty
     assert_contains "$err" "run: --target requires a value"
@@ -2121,13 +2083,7 @@ EOF
     assert_contains "$DOC_GRAPH_EXPLICIT_OUT" "Local module docs."
     assert_contains "$DOC_GRAPH_EXPLICIT_OUT" "Stdlib module docs."
 
-    DOC_TOOL="$WORKDIR/selfhost-doc-tool$HOST_EXE_SUFFIX"
-    if [ "$HOST_OS" = linux ]; then
-        build_linux_cli_tool selfhost-doc-tool selfhost/doc.tl "$DOC_TOOL"
-    else
-        build_host_cli_tool selfhost-doc-tool selfhost/doc.tl "$DOC_TOOL"
-    fi
-    run_cmd doc-generate-html "$DOC_TOOL" --html "$WORKDIR/doc_source.tl" "$WORKDIR/doc_source.html"
+    run_cmd doc-generate-html "$COMPILER" doc --html "$WORKDIR/doc_source.tl" "$WORKDIR/doc_source.html"
     assert_success
     assert_contains "$out" "Wrote $(native_arg_path "$WORKDIR/doc_source.html")"
     assert_stderr_empty
@@ -2527,7 +2483,7 @@ else
 (+ 1 2) ; trailing comment must not swallow generated wrapper delimiters
 .exit
 EOF
-    run_stdin selfhost-repl-scratch-smoke "$SELFHOST_REPL_SMOKE" "$COMPILER" run "$ROOT/selfhost/repl.tl" --stdlib-root "$ROOT/stdlib"
+    run_stdin selfhost-repl-scratch-smoke "$SELFHOST_REPL_SMOKE" "$COMPILER" repl
     assert_success
     assert_contains "$out" "3"
     assert_stderr_empty

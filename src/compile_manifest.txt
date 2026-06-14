@@ -1,0 +1,717 @@
+# Selfhost compile manifest.
+#
+# Format:
+#   case|id|source|assembly|main-policy|direct
+#   case|id|source|assembly|main-policy|stage
+#   copy|source|staged-name
+#   requires-stage0-symbol|symbol
+#   requires-stage0-mode|reason
+#   contains|assembly text
+#   not-contains|assembly text
+#   count-at-least|assembly text|minimum-count
+#   end
+#
+# main-policy is exactly-one, present, none, or skip. Every case also rejects
+# generated assembly containing "# TODO". `decision` lines document top-level
+# selfhost files that intentionally are not direct compile cases.
+
+case|integration_calc|tests/integration/calc.tl|assembly|exactly-one|direct
+contains|_tl_lex:
+contains|_tl_parse:
+contains|_tl_parse_expr:
+contains|_tl_parse_term:
+contains|_tl_parse_factor:
+contains|_tl_expect:
+contains|_tl_advance:
+contains|_tl_eval:
+contains|_tl_token_tag:
+contains|_tl_token_int:
+contains|call tl_alloc
+contains|call tl_oob_abort
+contains|call _tl_panic
+contains|call _tl_lex
+contains|call _tl_parse
+contains|call _tl_parse_expr
+contains|call _tl_parse_term
+contains|call _tl_parse_factor
+contains|call _tl_eval
+end
+
+case|integration_lexer|tests/integration/lexer.tl|assembly|present|direct
+contains|_tl_lex:
+contains|_tl_ident_token:
+contains|call tl_alloc
+contains|substring_copy_checked
+not-contains|call tl_substring
+contains|lexer: unexpected character
+end
+
+case|integration_parser|tests/integration/parser.tl|assembly|present|direct
+contains|_tl_parse_expr:
+contains|_tl_parse_term:
+contains|_tl_parse_factor:
+contains|_tl_eval:
+contains|_tl_expect:
+contains|_tl_advance:
+contains|_tl_token_tag:
+contains|_tl_token_int:
+contains|parser: unexpected token
+contains|call tl_alloc
+contains|call tl_oob_abort
+contains|call _tl_panic
+contains|call _tl_parse_term
+contains|call _tl_parse_factor
+contains|call _tl_parse_expr
+contains|call _tl_eval
+end
+
+case|integration_maybe_result|tests/integration/maybe_result.tl|assembly|present|direct
+contains|_tl_find_answer:
+contains|_tl_read_small:
+contains|_tl_maybe_score:
+contains|_tl_result_score:
+not-contains|tl_string_eq:
+not-contains|call tl_string_eq
+contains|string_append_borrowed
+not-contains|tl_string_concat:
+not-contains|call tl_string_concat
+not-contains|tl_string_to_int:
+not-contains|call tl_string_to_int
+not-contains|tl_hash_string:
+not-contains|call tl_hash_string
+contains|call tl_alloc
+end
+
+case|integration_nested_eval|tests/integration/nested_eval.tl|assembly|present|direct
+contains|_tl_eval_sexpr:
+contains|_tl_sexpr_head:
+contains|_tl_sexpr_tail:
+contains|match_nested
+contains|string_eq
+contains|call _tl_eval_sexpr
+contains|call _tl_panic
+end
+
+case|integration_nullary_variant_call|tests/integration/nullary_variant_call.tl|assembly|skip|direct
+contains|_tl_code:
+contains|_tl_bias:
+contains|call _tl_bias
+not-contains|call _tl_Red
+not-contains|call _tl_Green
+end
+
+case|integration_sym_i64_env|tests/integration/sym_i64_env.tl|assembly|present|stage
+copy|src/sym_i64_env.tl|sym_i64_env_core.tl
+copy|src/compiler_intern.tl|compiler_intern.tl
+contains|_tl_sym_i64_empty:
+contains|_tl_sym_i64_bind:
+contains|_tl_sym_i64_lookup:
+contains|string_eq
+contains|substring_copy_checked
+contains|string_append_borrowed
+count-at-least|call _tl_sym_i64_lookup|2
+end
+
+# Unified pure-TypeLisp toolchain dispatcher (single self-hosted entry point for
+# build/clean/run/check/fmt/lint/test/doc/inspect/repl/lsp). Each subcommand routes
+# through its `*-run-from` entry in a shared main-free `*_cli_core.tl` module, so
+# the dispatcher's assembly must reference every command's runner.
+case|selfhost_main|src/main.tl|assembly|exactly-one|direct
+contains|_tl_cli_dispatch:
+contains|_tl_build_run_from:
+contains|_tl_clean_run_from:
+contains|_tl_run_run_from:
+contains|_tl_selfhost_check_run_from:
+contains|_tl_fmt_run_from:
+contains|_tl_selfhost_lint_run_from:
+contains|_tl_tltest_run_from:
+contains|_tl_doc_run_from:
+contains|_tl_tlci_inspect_run_from:
+contains|_tl_repl_run_from:
+contains|_tl_scaffold_new_run_from:
+contains|_tl_scaffold_init_run_from:
+contains|_tl_lsp_frame_run_from:
+contains|typelisp: unknown subcommand
+contains|typelisp inspect
+contains|Enable a compile-time cfg predicate name
+contains|--pic
+not-contains|root_list_append
+# Folded per-command assertions (the standalone command wrappers were
+# removed; cli.tl dispatches to every command core, so these symbols and
+# diagnostic strings are reachable from its main).
+# build
+contains|_tl_build_cli_config_from:
+contains|_tl_source_tool_build_source:
+contains|_tl_build_config_from:
+contains|_tl_build_source_plan_render:
+contains|_tl_build_package:
+contains|_tl_build_package_emit:
+contains|_tl_build_package_write_tlci:
+contains|_tl_build_doctest_build_source:
+contains|_tl_build_doctest_typecheck_package:
+contains|_tl_doc_test_typecheck_source_with_roots:
+contains|_tl_doc_test_typecheck_package_file_with_roots:
+contains|_tl_host_plan_netline:
+contains|could not find typelisp.pkg
+contains|Built
+# clean
+contains|_tl_clean_source:
+contains|_tl_clean_package:
+contains|clean: could not find typelisp.pkg
+contains|Would remove:
+# check
+contains|_tl_selfhost_check_config_from:
+contains|_tl_selfhost_check_file:
+contains|selfhost_check_package:
+contains|_tl_compiler_check_file_with_roots:
+contains|compiler_check_package_file_with_roots
+contains|_tl_doc_test_typecheck_file_with_roots:
+contains|package_source_discover
+contains|selfhost-check: cannot combine input path with --manifest-path
+contains|selfhost-check: --stdlib-root requires a value
+# compile
+contains|_tl_compile_cli_config_from:
+contains|_tl_compile_cli_target:
+contains|_tl_compile_cli_invalid_opt_level:
+contains|_tl_compile_cli_backend_mode:
+contains|_tl_compile_cli_typecheck_doctests:
+contains|_tl_compiler_cfg_enable:
+contains|_tl_compiler_driver_compile_file_with_roots_level_mode_and_cfg:
+contains|_tl_compiler_driver_compile_file_for_target_with_roots_level_mode_and_cfg:
+contains|_tl_compiler_driver_compile_file_pic_with_target_roots_level_mode_cfg:
+contains|_tl_compiler_driver_emit_ir_summary_file_with_target_roots_level_mode_and_cfg:
+contains|_tl_compiler_backend_emit_program_target_with_mode_buffer_and_crt:
+contains|_tl_compiler_backend_emit_program_target_with_mode_buffer:
+contains|compile: expected source path
+contains|compile: --target requires a value
+contains|compile: --stdlib-root requires a value
+contains|compile: --cfg requires a value
+contains|compile: --opt-level requires a value
+contains|compile: invalid --opt-level
+contains|compile: --backend-mode requires a value
+contains|Expected scalar, avx2, or avx512
+contains|Error: unknown target '
+contains|--emit-ir
+contains|--cfg
+contains|typelisp-ir-summary v1
+contains|empty-blocks
+contains|max-instructions-function
+contains|max-instructions-block
+contains|call-arg-entries
+contains|phi-input-entries
+# doc
+contains|_tl_doc_generate_file:
+contains|_tl_doc_generate_package:
+contains|_tl_doc_generate_html_file:
+contains|_tl_doc_generate_html_module_graph:
+contains|_tl_doc_test_file:
+contains|_tl_doc_test_package:
+contains|_tl_doc_test_run_file_with_roots:
+contains|_tl_doc_test_run_report_render:
+contains|_tl_doc_render_markdown:
+contains|_tl_doc_html_render_module_page:
+contains|_tl_doc_html_render_module_graph:
+contains|_tl_doc_extract_source:
+contains|_tl_format_lex:
+contains|_tl_doc_stdlib_roots:
+contains|_tl_arg_count:
+contains|_tl_arg:
+contains|_tl_read_file:
+contains|_tl_write_file:
+contains|Doc tests passed:
+contains|doc tests failed:
+contains|: could not find typelisp.pkg from '.' or any parent directory
+contains|doc: package documentation requires -o <out.md>
+contains|doc: cannot combine input paths with --manifest-path
+contains|doc: expected --html input and output paths
+contains|<!doctype html>
+contains|doc: expected input and output paths
+# inspect
+contains|_tl_tlci_inspect_render:
+contains|inspect: expected one .tlci path
+# fmt
+contains|fmt_format_file:
+contains|fmt_files:
+contains|fmt_package:
+contains|package_source_discover_for
+contains|fmt: would reformat 
+contains|fmt: failed to write
+contains|fmt: cannot combine input paths with --manifest-path
+# lsp
+contains|_tl_lsp_frame_parse_content_length:
+contains|_tl_lsp_frame_read_message:
+contains|_tl_lsp_handle_message:
+contains|_tl_lsp_analyze_document:
+contains|Content-Length
+contains|textDocument/publishDiagnostics
+contains|Method not found
+# repl
+contains|_tl_repl_loop:
+contains|_tl_repl_handle_input:
+contains|_tl_repl_banner:
+contains|_tl_repl_help_text:
+contains|_tl_repl_prompt:
+contains|_tl_repl_dot_command_question:
+contains|_tl_repl_type_command:
+contains|_tl_repl_type_render:
+contains|_tl_repl_handle_type_command:
+contains|_tl_repl_handle_line:
+contains|_tl_stdin_read_line:
+contains|_tl_stdin_at_eof_question:
+contains|_tl_stdout_flush:
+contains|tl>
+# run
+contains|_tl_run_direct_from:
+contains|_tl_run_cli_config_from:
+contains|_tl_run_cli_run_source_with_doctests:
+contains|_tl_source_tool_run_source:
+contains|run: expected source path
+# test
+contains|_tl_tltest_run_config:
+contains|_tl_tltest_build_harness:
+contains|_tl_tltest_run_direct:
+contains|_tl_tltest_run_batch_check:
+contains|_tl_tltest_run_package:
+contains|_tl_tltest_package_run_sources:
+contains|_tl_tltest_run_harness_in_temp:
+contains|_tl_tltest_invalid_opt_level:
+contains|_tl_source_tool_assemble_and_link:
+contains|_tl_source_tool_run_executable:
+contains|_tl_optimize_program_with_spans_and_level:
+contains|_tl_opt_inline_program_functions_with_spans:
+contains|TypeLisp package tests passed:
+contains|TypeLisp test batch typecheck passed:
+contains|test: --batch requires --check
+contains|test: --opt-level requires a value
+contains|test: invalid --opt-level
+contains|typelisp test: test executable exited with exit status:
+contains|test: failed to write assembly artifact
+# lint
+contains|selfhost_lint_file:
+contains|selfhost_lint_render_finding:
+contains|selfhost_lint_package:
+contains|selfhost-lint: cannot combine input paths with --manifest-path
+# scaffold
+contains|_tl_scaffold_new:
+contains|_tl_scaffold_init:
+contains|_tl_scaffold_emit:
+contains|scaffold: usage
+end
+
+# Per-command logic modules used by the unified dispatcher (src/main.tl).
+# Main-less; compiled transitively through the selfhost_main case, so they get a
+# decision row rather than a direct compile case.
+decision|src/build_cli_core.tl|build command logic (#622/#1339): arg parsing, source/package build, and direct source build execution; main-less, imported by src/main.tl and exercised through the selfhost_main case
+decision|src/clean_cli_core.tl|clean command logic (#1643): dry-run/source artifact cleanup and manifest package output cleanup; main-less, imported by src/main.tl and exercised through the selfhost_main case
+decision|src/run_cli_core.tl|run command logic: arg parsing and direct source run execution; main-less, imported by src/main.tl and exercised through the selfhost_main case
+decision|src/check_cli_core.tl|check (typecheck) command logic: arg parsing plus file/package full-frontend checks; main-less, imported by src/main.tl and exercised through the selfhost_main case
+decision|src/package_source_core.tl|package source discovery helper (#1986/#1987/#2494): resolves typelisp.pkg, loads the manifest, and walks regular package .tl sources while excluding target, VCS, package-local tests directories, and nested package roots; main-less, imported by check/fmt/lint command cores and exercised through their driver cases plus selfhost_main
+decision|src/package_cache_core.tl|package cache helper layer (#2002): parses normalized remote dependency pins, plans deterministic v1 cache paths, validates metadata/complete-marker state, and exposes staging/finalize helpers; main-less and exercised through the selfhost_package_cache_smoke case
+decision|src/package_lock_core.tl|package lockfile parser/emitter (#1993): models typelisp.lock v1 entries, parses selfhost S-expressions with duplicate/missing/type diagnostics, and emits stable alias-sorted lockfile text; main-less and exercised through the selfhost_package_lock_smoke case
+decision|src/format_cli_core.tl|fmt command logic (#522/#1987): --check vs rewrite over explicit input paths or discovered package sources; main-less, imported by src/main.tl and exercised through the selfhost_main case
+decision|src/test_cli_core.tl|test command logic: config parsing and test run dispatch; main-less, imported by src/main.tl and exercised through the selfhost_main case
+decision|src/doc_cli_core.tl|doc command logic: kind dispatch (test/html/load/default) with a base-offset arg model; main-less, imported by src/main.tl and exercised through the selfhost_main case
+decision|src/compile_cli_core.tl|compile/check command logic (#565/#1639): arg parsing and compile/check dispatch + execution (compile-cli-run); main-less, imported by src/main.tl and exercised through the selfhost_main case
+decision|src/inspect_cli_core.tl|inspect command logic (#2655): parse and render tlci comptime image headers/metadata; main-less, imported by src/main.tl and exercised through the selfhost_main case and public command-surface smoke
+decision|src/repl_cli_core.tl|REPL command logic (#1641): line loop, dot commands, type queries, and scratch expression execution; main-less, imported by src/main.tl and exercised through the selfhost_main case
+decision|src/scaffold_cli_core.tl|new/init scaffold command logic (#1642): package skeleton creation shared by src/main.tl; main-less and exercised through the selfhost_main case
+decision|src/lsp_frame_core.tl|lsp command logic (#1640): stdio JSON-RPC framing and diagnostics server; main-less, imported by src/main.tl and exercised through the selfhost_main case
+decision|src/compiler_clone.tl|type-directed clone$<Type> helper synthesis (#1633): least-fixpoint clone-ability over the type graph plus match-reconstruct/tail-recursive AST generation for (clone x); main-less, imported by src/compiler_lower.tl and exercised through the selfhost_compiler_lower case
+
+case|selfhost_build_run_core|src/build_run_core.tl|assembly|skip|direct
+contains|_tl_source_tool_build_source:
+contains|_tl_source_tool_run_source:
+contains|_tl_source_tool_run_command:
+contains|_tl_source_tool_augment_assembly_for_target:
+not-contains|.globl _tl_print_string
+contains|tl_process_output:
+contains|_tl_fs_mkdir_status:
+end
+
+case|selfhost_compiler_ast_types|src/compiler_ast_types.tl|assembly|exactly-one|direct
+contains|_tl_ast_type_tag:
+contains|_tl_ast_expr_tag:
+contains|_tl_ast_decl_tag:
+contains|_tl_compiler_ast_smoke:
+end
+
+case|selfhost_compiler_backend|src/compiler_backend.tl|assembly|skip|direct
+contains|_tl_compiler_backend_emit_source:
+contains|_tl_compiler_backend_emit_program_for_target:
+contains|_tl_compiler_backend_emit_program_object_image:
+contains|_tl_compiler_backend_extern_metadata_symbol_ok_question:
+contains|_tl_compiler_backend_runtime_windows_alloc_functions:
+contains|_tl_compiler_backend_runtime_fs_functions:
+contains|_tl_compiler_backend_runtime_env_var_value_functions:
+contains|foreign_exact
+contains|backend: too many call args
+not-contains|_tl_compiler_backend_runtime_file_open_status_functions:
+not-contains|_tl_compiler_backend_runtime_file_close_status_functions:
+not-contains|_tl_compiler_backend_runtime_windows_file_handle_functions:
+not-contains|_tl_compiler_backend_runtime_file_read_chunk_status_functions:
+not-contains|_tl_compiler_backend_runtime_windows_file_read_chunk_functions:
+not-contains|backend: Windows runtime helpers not yet implemented (#648)
+end
+
+decision|src/compiler_object.tl|structured object-image data model (#2308): main-less, imported by src/compiler_backend.tl and exercised through the backend object-image self-test plus selfhost_compiler_backend_smoke
+decision|src/compiler_object_coff.tl|COFF object serialization helper (#2310): main-less, imported by src/build_run_core.tl and the backend test helper, exercised through the selfhost_main case and the compiler_backend_smoke native integration test
+decision|src/compiler_object_elf.tl|ELF64 object serialization helper (#2309): main-less, imported by src/build_run_core.tl and the backend test helper, exercised through the selfhost_main case and the compiler_backend_smoke native integration test
+decision|src/compiler_backend_tests.tl|backend smoke-test helper module (main-less): imported by src/tests/compiler_backend_smoke.tl and the backend fixture drivers; kept in src/ for the native compiler_backend_smoke staging and the verify-integration.sh fixture drivers; no direct CLI/main compile case
+case|selfhost_compiler_check_core|src/compiler_check_core.tl|assembly|skip|direct
+contains|_tl_compiler_check_file:
+contains|_tl_compiler_check_file_with_roots:
+contains|_tl_compiler_check_source_with_roots:
+contains|_tl_compiler_check_package_source_with_roots:
+end
+
+case|selfhost_compiler_ctfe|src/compiler_ctfe.tl|assembly|skip|direct
+contains|_tl_compiler_ctfe_eval:
+contains|_tl_ctfe_eval_node:
+contains|_tl_ctfe_value_to_literal:
+contains|_tl_compiler_ctfe_self_test:
+end
+
+case|selfhost_compiler_diagnostic|src/compiler_diagnostic.tl|assembly|skip|direct
+contains|_tl_compiler_diagnostic_render:
+contains|_tl_compiler_diagnostic_at_start:
+contains|_tl_compiler_diagnostic_from_source_error:
+contains|_tl_compiler_diagnostic_self_test:
+end
+
+case|selfhost_compiler_driver_core|src/compiler_driver_core.tl|assembly|skip|direct
+contains|_tl_compiler_driver_compile_file:
+contains|_tl_compiler_driver_compile_file_with_roots_level_and_mode:
+contains|_tl_compiler_driver_compile_file_for_target:
+contains|_tl_compiler_driver_emit_file:
+contains|_tl_compiler_driver_emit_file_with_target_roots_level_and_mode:
+contains|_tl_compiler_driver_emit_file_with_target_roots_level_mode_and_cfg:
+contains|_tl_compiler_driver_emit_file_for_target:
+contains|_tl_compiler_driver_emit_ir_summary_file_with_roots_and_level:
+contains|_tl_compiler_driver_emit_ir_summary_file_with_target_roots_level_mode_and_cfg:
+contains|_tl_compiler_driver_compile_file_with_roots_level_mode_and_cfg:
+contains|_tl_compiler_driver_compile_file_for_target_with_roots_level_mode_and_cfg:
+contains|_tl_compiler_driver_ir_summary_render:
+contains|_tl_compiler_backend_emit_program_target_with_mode_buffer_and_crt:
+contains|_tl_compiler_backend_emit_source:
+end
+
+case|selfhost_compiler_ir_types|src/compiler_ir_types.tl|assembly|skip|direct
+contains|_tl_compiler_ir_program_summary:
+contains|_tl_compiler_ir_summary_globals:
+contains|_tl_compiler_ir_summary_functions:
+contains|_tl_compiler_ir_summary_empty_blocks:
+contains|_tl_compiler_ir_summary_max_instructions_function:
+contains|_tl_compiler_ir_summary_max_instructions_block:
+contains|_tl_compiler_ir_summary_call_arg_entries:
+contains|_tl_compiler_ir_summary_phi_input_entries:
+contains|_tl_compiler_ir_instr_render:
+contains|_tl_compiler_ir_tail_call_render_ok_question:
+contains|_tl_compiler_ir_instr_effect:
+contains|_tl_compiler_ir_effect_self_test:
+end
+
+case|selfhost_compiler_liveness|src/compiler_liveness.tl|assembly|skip|direct
+contains|_tl_compiler_live_analyze_function:
+contains|_tl_compiler_live_self_test:
+contains|liveness: smoke mismatch
+end
+
+case|selfhost_compiler_embedded_stdlib|src/compiler_embedded_stdlib.tl|assembly|skip|direct
+contains|compiler_embedded_stdlib_lookup:
+end
+
+case|selfhost_compiler_float|src/compiler_float.tl|assembly|skip|direct
+contains|_tl_compiler_float_parse_f64:
+contains|_tl_compiler_float_format_f64:
+contains|_tl_compiler_float_f64_finite_question:
+contains|_tl_compiler_float_self_test:
+end
+
+case|selfhost_compiler_intern|src/compiler_intern.tl|assembly|skip|direct
+contains|_tl_compiler_intern_intern_str:
+contains|_tl_compiler_intern_intern_slice:
+end
+
+decision|src/compiler_builtin_ids.tl|reset-aware interned builtin/runtime id predicates (#2380/#2464): imports only src/compiler_intern.tl; used by src/compiler_lower.tl dispatch, src/compiler_typecheck_core.tl dispatch, backend runtime-plan id dispatch, and backend target-lowering cache resets
+
+case|selfhost_compiler_load|src/compiler_load.tl|assembly|skip|direct
+contains|_tl_compiler_load_file:
+contains|_tl_compiler_load_file_with_roots:
+contains|_tl_compiler_load_file_with_paths_and_roots_cfg:
+contains|_tl_compiler_load_source_with_paths_and_roots_cfg:
+contains|_tl_compiler_load_resolve_import_with_roots:
+contains|_tl_compiler_load_self_test:
+contains|_tl_compiler_load_cfg_import_ok_question:
+end
+
+case|selfhost_compiler_lower|src/compiler_lower.tl|assembly|skip|direct
+contains|_tl_lower_compiler_source:
+contains|_tl_lower_compiler_program_checked:
+contains|_tl_compiler_lower_self_test:
+contains|lower: unsupported expression
+end
+
+case|selfhost_compiler_optimize|src/compiler_optimize.tl|assembly|skip|direct
+contains|_tl_optimize_program:
+contains|_tl_optimize_program_with_level:
+contains|_tl_opt_fold_instrs:
+contains|_tl_opt_strength_instrs:
+contains|_tl_compiler_optimize_self_test:
+contains|_tl_compiler_optimize_strength_self_test:
+contains|_tl_compiler_optimize_bounds_self_test:
+contains|_tl_compiler_optimize_level_self_test:
+contains|_tl_compiler_optimize_ssa_self_test:
+contains|_tl_compiler_optimize_aggregate_promote_self_test:
+contains|_tl_compiler_optimize_global_value_number_self_test:
+contains|_tl_compiler_optimize_aggregate_sroa_self_test:
+contains|_tl_opt_cfg_dominators:
+contains|_tl_opt_verify_function:
+end
+
+case|selfhost_compiler_parse_core|src/compiler_parse_core.tl|assembly|skip|direct
+contains|_tl_parse_ast_source:
+contains|_tl_parse_ast_source_with_cfg:
+contains|_tl_parse_ast_program:
+contains|_tl_parse_ast_program_with_cfg:
+contains|_tl_parse_ast_decl:
+contains|_tl_compiler_cfg_enable:
+contains|_tl_compiler_cfg_eval:
+contains|_tl_compiler_parse_abstraction_policy_message:
+contains|parse: unknown extern ABI
+contains|parse: cfg declaration expects predicate and declaration
+contains|parse: malformed define
+contains|source-level generics or traits
+count-at-least|call _tl_compiler_parse_dispatch_env|1
+end
+
+case|selfhost_compiler_regalloc|src/compiler_regalloc.tl|assembly|skip|direct
+contains|_tl_compiler_reg_plan_function:
+contains|_tl_compiler_regalloc_self_test:
+contains|regalloc: smoke mismatch
+end
+
+case|selfhost_compiler_specialize|src/compiler_specialize.tl|assembly|skip|direct
+contains|_tl_compiler_specialize_program:
+contains|_tl_compiler_specialize_self_test:
+contains|__tl_specialized_alloc_type_i64_none
+contains|specialize: expected type value
+end
+
+case|selfhost_compiler_symbols|src/compiler_symbols.tl|assembly|skip|direct
+contains|_tl_compiler_symbols_add_decl:
+contains|_tl_compiler_symbols_self_test:
+contains|symbols: duplicate value declaration
+end
+
+case|selfhost_compiler_typecheck|src/compiler_typecheck.tl|assembly|skip|direct
+contains|_tl_typecheck_compiler_program:
+contains|_tl_compiler_typecheck_self_test:
+contains|_tl_tc_source_type_policy_message:
+contains|extern ABI c does not support
+contains|typecheck: return type mismatch
+contains|source-level type parameters
+end
+
+case|selfhost_compiler_typecheck_core|src/compiler_typecheck_core.tl|assembly|skip|direct
+contains|_tl_typecheck_compiler_specialized_program_with_paths:
+contains|tc_inline_aggregate_layout_for:
+contains|tc_inline_aggregate_type_layout:
+contains|_tl_tc_source_type_policy_message:
+contains|extern ABI c does not support
+contains|typecheck: return type mismatch
+contains|source-level type parameters
+end
+
+case|selfhost_doc_extract|src/doc_extract.tl|assembly|skip|direct
+contains|_tl_doc_extract_file:
+contains|_tl_doc_extract_source:
+contains|_tl_doc_extract_smoke:
+contains|_tl_doc_decl_info:
+contains|_tl_doc_scan_form_end:
+contains|_tl_format_lex:
+contains|_tl_format_token_tag:
+contains|_tl_format_token_text:
+contains|doc-extract: module doc smoke mismatch
+contains|doc-extract: item count smoke mismatch
+contains|doc-extract: item doc smoke mismatch
+contains|;# Module title
+contains|;: answer doc
+contains|;; ordinary comment ignored
+contains|(define answer : i64 42)
+contains|(define (main [argc : i64])
+contains|;: EOF unattached
+contains|Module title\nsecond module line\nlater module
+end
+
+case|selfhost_doc_html|src/doc_html.tl|assembly|skip|direct
+contains|_tl_doc_html_render_module_page:
+contains|_tl_doc_html_render_module_graph:
+contains|_tl_doc_html_render_source:
+contains|_tl_doc_html_escape:
+contains|_tl_doc_html_smoke:
+contains|_tl_doc_render_anchor:
+contains|_tl_doc_extract_source:
+contains|_tl_format_lex:
+contains|<!doctype html>
+contains|typelisp-docs.css
+contains|tl-doc-module-nav
+contains|&quot;
+contains|tl-smoke-60-38-62-46tl
+contains|doc-html: item anchor missing
+contains|No documented declarations.
+end
+
+case|selfhost_doc_render|src/doc_render.tl|assembly|skip|direct
+contains|_tl_doc_render_markdown:
+contains|_tl_doc_render_module_graph_markdown:
+contains|_tl_doc_render_smoke:
+end
+
+case|selfhost_doc_test|src/doc_test.tl|assembly|skip|direct
+contains|_tl_doc_test_extract_source:
+contains|_tl_doc_test_extract_file:
+contains|_tl_doc_test_parse_run_metadata:
+contains|_tl_doc_test_parse_output_spec:
+contains|_tl_doc_test_parse_fence_info:
+contains|_tl_doc_test_scan_doc_block:
+contains|_tl_doc_test_supported_item_declaration_question:
+contains|_tl_doc_test_run_source:
+contains|_tl_doc_test_run_source_with_roots:
+contains|_tl_doc_test_check_example:
+contains|_tl_doc_test_typecheck_source_with_roots:
+contains|_tl_doc_test_typecheck_package_file_with_roots:
+contains|_tl_doc_test_run_examples:
+contains|_tl_doc_test_errors_to_failures:
+contains|_tl_doc_test_run_failure_render:
+contains|_tl_doc_test_run_smoke:
+contains|_tl_doc_test_smoke_all:
+contains|unsupported TypeLisp doctest option
+contains|doctest-exit metadata must be an integer
+contains|TypeLisp doctest options `run` and `expect-error` cannot be combined
+contains|runnable TypeLisp doctest requires doctest-exit metadata
+contains|empty TypeLisp doctest fence
+contains|unterminated TypeLisp doctest fence
+contains|E0200
+contains|doc-test: example metadata mismatch
+contains|doc-test-run: unexpected-error mismatch
+contains|was expected to fail
+end
+
+case|selfhost_format_cst|src/format_cst.tl|assembly|skip|direct
+contains|_tl_format_lex:
+contains|_tl_parse_format_source:
+contains|format cst: unclosed delimiter
+end
+
+case|selfhost_format_doc|src/format_doc.tl|assembly|skip|direct
+contains|_tl_doc_empty:
+contains|_tl_render_doc:
+contains|_tl_format_doc_self_test:
+end
+
+case|selfhost_format_rules|src/format_rules.tl|assembly|skip|direct
+contains|_tl_format_rules_define_doc:
+contains|_tl_format_rules_let_binding_annotated_doc:
+contains|_tl_format_rules_let_doc:
+contains|_tl_format_rules_render_source_width:
+contains|_tl_format_rules_self_test:
+end
+
+case|selfhost_format_tokens|src/format_tokens.tl|assembly|skip|direct
+contains|_tl_format_lex:
+contains|_tl_format_token_tag:
+contains|format lexer: unexpected character
+end
+
+case|selfhost_host_plan|src/host_plan.tl|assembly|skip|direct
+contains|_tl_host_plan_header:
+contains|_tl_host_plan_netline:
+contains|_tl_host_plan_target_valid_question:
+end
+
+case|selfhost_lex|src/lex.tl|assembly|skip|direct
+contains|_tl_lex:
+contains|_tl_lex_result:
+contains|_tl_lex_span_self_test:
+contains|_tl_lex_basic_token_sequence_ok_question:
+contains|_tl_lex_char_literals_ok_question:
+contains|_tl_lex_error_spans_ok_question:
+contains|lexer: unexpected character
+end
+
+case|selfhost_read|src/read.tl|assembly|skip|direct
+contains|_tl_read:
+contains|_tl_read_form:
+contains|_tl_read_list_result:
+contains|reader: unexpected end of input
+end
+
+decision|src/tlci_core.tl|tlci v1 container and metadata parse/emit helpers (#2651/#2655): main-less helper module with inline tests, executable smoke coverage, package metadata emission, and inspect-command parsing; tlci code loading remains a later slice
+
+decision|src/tlci_pages.tl|tlci loader host page mapping/protection shim (#2671): main-less OS-boundary helper module exercised through inline tests and intended for the future tlci loader
+
+case|selfhost_sym_i64_env|src/sym_i64_env.tl|assembly|skip|direct
+contains|_tl_sym_i64_empty:
+contains|_tl_sym_i64_bind:
+contains|_tl_sym_i64_lookup:
+end
+
+case|selfhost_token|src/token.tl|assembly|skip|direct
+contains|_tl_token_tag:
+contains|_tl_token_sym:
+contains|_tl_source_error_message:
+end
+
+decision|src/lint_core.tl|lint rule engine (nested-if-ladder rule, #1163); imported by src/lint_smoke.tl and exercised through the selfhost_lint_smoke case; has no main to compile directly
+
+decision|src/lint_driver_core.tl|selfhost lint driver logic (#1163/#1987): arg parsing, finding rendering (path:line:col), file/package source linting, and the driver self-test; main-less, imported by src/main.tl and src/lint_driver_smoke.tl and exercised through the selfhost_lint_driver_smoke and selfhost_main cases; has no main to compile directly
+
+# Optimization-benchmark codegen smoke. Mirrors the dropped Rust
+# optimization_benchmark_manifest_and_tl_sources_compile harness: each of the 11
+# benchmark TypeLisp sources must compile to assembly that defines main: with no
+# backend "# TODO" (the runner auto-rejects "# TODO"). Sources live outside
+# src/ so they are not subject to check_selfhost_manifest_sync().
+
+case|bench_opt_arithmetic_loops|benchmarks/optimization/tl/arithmetic_loops.tl|assembly|exactly-one|direct
+contains|main:
+end
+
+case|bench_opt_array_sum|benchmarks/optimization/tl/array_sum.tl|assembly|exactly-one|direct
+contains|main:
+end
+
+case|bench_opt_string_scan|benchmarks/optimization/tl/string_scan.tl|assembly|exactly-one|direct
+contains|main:
+end
+
+case|bench_opt_runtime_string_eq|benchmarks/optimization/tl/runtime_string_eq.tl|assembly|exactly-one|direct
+contains|main:
+end
+
+case|bench_opt_runtime_string_ops|benchmarks/optimization/tl/runtime_string_ops.tl|assembly|exactly-one|direct
+contains|main:
+end
+
+case|bench_opt_runtime_string_int|benchmarks/optimization/tl/runtime_string_int.tl|assembly|exactly-one|direct
+contains|main:
+end
+
+case|bench_opt_runtime_path_helpers|benchmarks/optimization/tl/runtime_path_helpers.tl|assembly|exactly-one|direct
+contains|main:
+end
+
+case|bench_opt_function_calls|benchmarks/optimization/tl/function_calls.tl|assembly|exactly-one|direct
+contains|main:
+end
+
+case|bench_opt_recursion_tail|benchmarks/optimization/tl/recursion_tail.tl|assembly|exactly-one|direct
+contains|main:
+end
+
+case|bench_opt_struct_enum_dispatch|benchmarks/optimization/tl/struct_enum_dispatch.tl|assembly|exactly-one|direct
+contains|main:
+end
+
+case|bench_opt_allocation_heavy|benchmarks/optimization/tl/allocation_heavy.tl|assembly|exactly-one|direct
+contains|main:
+end

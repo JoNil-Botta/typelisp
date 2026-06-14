@@ -1440,7 +1440,8 @@
           [line0 : i64 (- line1 1)]
           (begin
             (if (and
-              (and (>= line0 start-line) (<= line0 end-line))
+              (>= line0 start-line)
+              (<= line0 end-line)
               (lsp-inlay-valid-binding?
                 text
                 (lsp-offset-at-position text line0 (- col1 1))))

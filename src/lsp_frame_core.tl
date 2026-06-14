@@ -1210,16 +1210,106 @@
 
 ;; Resolve `needle` to a definition: the current document first, then any other
 ;; open document.
+;; Collect every (import "spec") spec from the document, skipping strings and
+;; comments so embedded source never yields a false import.
+(define (lsp-collect-imports [text : String] [acc : StringVec]) : StringVec
+  (let
+    [n : i64 (string-length text)]
+    [i : i64 0]
+    [out : StringVec acc]
+    (begin
+      (while (< i n)
+        (let
+          [c : char (string-ref text i)]
+          (cond
+            (= c #;')
+            (set! i (lsp-skip-line text i n))
+            (= c #"')
+            (set! i (lsp-skip-string text i n))
+            (= c #(')
+            (let
+              [kw-start : i64 (lsp-skip-space text (+ i 1) n)]
+              [kw-end : i64 (lsp-scan-ident text kw-start n)]
+              (if (and
+                (> kw-end kw-start)
+                (string-eq
+                  (substring text kw-start (- kw-end kw-start))
+                  "import"))
+                (let
+                  [q : i64 (lsp-skip-space text kw-end n)]
+                  (if (and (< q n) (= (string-ref text q) #"'))
+                    (let
+                      [str-end : i64 (lsp-skip-string text q n)]
+                      (begin
+                        (set!
+                          out
+                          (string-vec-push
+                            out
+                            (substring text (+ q 1) (- str-end (+ q 2)))))
+                        (set! i str-end)))
+                    (set! i (+ i 1))))
+                (set! i (+ i 1))))
+            (set! i (+ i 1)))))
+      out)))
+
+;; Search the document's directly-imported module files for the definition,
+;; resolving each import spec to a path the same way the compiler loader does.
+(define (lsp-find-definition-in-import-list
+  [current-path : String]
+  [stdlib-roots : StringVec]
+  [needle : String]
+  [imports : StringVec]
+  [idx : i64]) : LspDefLocation
+  (if (>= idx (string-vec-len imports))
+    MissingDefLoc
+    (let
+      [resolved : String
+        (compiler-load-resolve-import-with-roots
+          current-path
+          (string-vec-get imports idx "")
+          stdlib-roots)]
+      [src : String (read-file-or (& resolved) "")]
+      (if (string-eq src "")
+        (lsp-find-definition-in-import-list
+          current-path
+          stdlib-roots
+          needle
+          imports
+          (+ idx 1))
+        (let
+          [off : i64 (lsp-find-def-offset-in src needle)]
+          (if (>= off 0)
+            (lsp-def-loc-from (lsp-path-to-file-uri resolved) src off needle)
+            (lsp-find-definition-in-import-list
+              current-path
+              stdlib-roots
+              needle
+              imports
+              (+ idx 1))))))))
+
+;; Resolve `needle`: current document, then any other open document, then the
+;; files this document directly imports.
 (define (lsp-find-definition
   [docs : LspDocuments]
   [current-uri : String]
+  [current-path : String]
   [current-text : String]
+  [stdlib-roots : StringVec]
   [needle : String]) : LspDefLocation
   (let
     [off : i64 (lsp-find-def-offset-in current-text needle)]
     (if (>= off 0)
       (lsp-def-loc-from current-uri current-text off needle)
-      (lsp-find-definition-in-docs docs current-uri needle 0))))
+      (match (lsp-find-definition-in-docs docs current-uri needle 0)
+        [(FoundDefLoc def-uri def-line def-col def-len)
+          (FoundDefLoc def-uri def-line def-col def-len)]
+        [(MissingDefLoc)
+          (lsp-find-definition-in-import-list
+            current-path
+            stdlib-roots
+            needle
+            (lsp-collect-imports current-text (string-vec-new))
+            0)]))))
 
 (define (lsp-json-int-field-default
   [value : Json]
@@ -1254,9 +1344,10 @@
   [id : Json]
   [uri : String]
   [position : Json]
-  [docs : LspDocuments]) : unit
+  [docs : LspDocuments]
+  [stdlib-roots : StringVec]) : unit
   (match (lsp-documents-lookup docs uri)
-    [(FoundLspDocument _ text _)
+    [(FoundLspDocument path text _)
       (let
         [line0 : i64 (lsp-json-int-field-default position "line" 0)]
         [char0 : i64 (lsp-json-int-field-default position "character" 0)]
@@ -1264,7 +1355,13 @@
         [sym : String (lsp-symbol-at-offset text off)]
         (if (string-eq sym "")
           (lsp-write-response id JsonNull)
-          (match (lsp-find-definition docs uri text (lsp-symbol-base sym))
+          (match (lsp-find-definition
+            docs
+            uri
+            path
+            text
+            stdlib-roots
+            (lsp-symbol-base sym))
             [(FoundDefLoc def-uri def-line def-col def-len)
               (lsp-write-response
                 id
@@ -1275,7 +1372,8 @@
 (define (lsp-handle-definition
   [id : Json]
   [params : Json]
-  [docs : LspDocuments]) : unit
+  [docs : LspDocuments]
+  [stdlib-roots : StringVec]) : unit
   (let
     [td-key : String "textDocument"]
     (match (json-object-get params (& td-key))
@@ -1286,7 +1384,7 @@
               [pos-key : String "position"]
               (match (json-object-get params (& pos-key))
                 [(JsonFound position)
-                  (lsp-definition-respond id uri position docs)]
+                  (lsp-definition-respond id uri position docs stdlib-roots)]
                 [(JsonMissing) (lsp-write-response id JsonNull)]))]
           [(MissingLspJsonText) (lsp-write-response id JsonNull)])]
       [(JsonMissing) (lsp-write-response id JsonNull)])))
@@ -1302,7 +1400,9 @@
       (match (lsp-find-definition
         (lsp-documents-new)
         "file:///smoke.tl"
+        "smoke.tl"
         src
+        (string-vec-new)
         (lsp-symbol-base sym))
         [(FoundDefLoc _ line col len) (and (= line 1) (= col 10) (= len 3))]
         [(MissingDefLoc) false]))))
@@ -1314,7 +1414,9 @@
     (match (lsp-find-definition
       (lsp-documents-new)
       "file:///smoke.tl"
+      "smoke.tl"
       src
+      (string-vec-new)
       "decoy")
       [(FoundDefLoc _ _ _ _) false]
       [(MissingDefLoc) true])))
@@ -1326,7 +1428,9 @@
     (match (lsp-find-definition
       (lsp-documents-new)
       "file:///smoke.tl"
+      "smoke.tl"
       src
+      (string-vec-new)
       "target")
       [(FoundDefLoc _ line col len) (and (= line 2) (= col 10) (= len 6))]
       [(MissingDefLoc) false])))
@@ -1692,7 +1796,8 @@
                 (let
                   [params-key : String "params"]
                   (match (json-object-get message (& params-key))
-                    [(JsonFound params) (lsp-handle-definition id params docs)]
+                    [(JsonFound params)
+                      (lsp-handle-definition id params docs stdlib-roots)]
                     [(JsonMissing) (lsp-write-response id JsonNull)]))]
               [(JsonMissing) unit]))
           (LspContinue docs))

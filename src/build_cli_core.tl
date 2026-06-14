@@ -2395,17 +2395,99 @@
   [asm-path : String]
   [obj-path : String]
   [artifact-path : String]
-  [link-inputs : SourceToolLinkInputs]) : SourceToolCommandStatus
+  [link-inputs : SourceToolLinkInputs]
+  [direct-status : SourceToolDirectObjectStatus]) : SourceToolCommandStatus
+  (match direct-status
+    [(SourceToolDirectObjectOk) SourceToolCommandOk]
+    [(SourceToolDirectObjectErr message) (SourceToolCommandErr message)]
+    [(SourceToolDirectObjectUnavailable _)
+      (match kind
+        [(CompilerPkgKindBin)
+          (source-tool-assemble-and-link
+            target
+            asm-path
+            obj-path
+            artifact-path
+            link-inputs)]
+        [(CompilerPkgKindLib)
+          (source-tool-assemble-and-archive
+            target
+            asm-path
+            obj-path
+            artifact-path)])]))
+
+(define (build-package-render-linux-direct-object
+  [kind : CompilerPkgKind]
+  [image : CompilerObjectImage]) : ResultSourceToolString
+  (match kind
+    [(CompilerPkgKindBin) (source-tool-render-linkable-linux-elf-object image)]
+    [(CompilerPkgKindLib)
+      (source-tool-render-archivable-linux-elf-object image)]))
+
+(define (build-package-write-linux-direct-object-artifact
+  [kind : CompilerPkgKind]
+  [target : CompilerBackendTarget]
+  [obj-path : String]
+  [artifact-path : String]
+  [link-inputs : SourceToolLinkInputs]
+  [obj : String]) : SourceToolDirectObjectStatus
   (match kind
     [(CompilerPkgKindBin)
-      (source-tool-assemble-and-link
-        target
-        asm-path
+      (source-tool-write-direct-object-and-link
         obj-path
         artifact-path
-        link-inputs)]
+        target
+        link-inputs
+        obj
+        "build: failed to write package direct object artifact")]
     [(CompilerPkgKindLib)
-      (source-tool-assemble-and-archive target asm-path obj-path artifact-path)]))
+      (source-tool-write-direct-object-and-archive
+        obj-path
+        artifact-path
+        target
+        obj
+        "build: failed to write package direct object artifact")]))
+
+(define (build-package-try-linux-direct-object
+  [kind : CompilerPkgKind]
+  [target : CompilerBackendTarget]
+  [opt-level : i64]
+  [mode : CompilerBackendMode]
+  [emit-entry : bool]
+  [crt-entry : bool]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [obj-path : String]
+  [artifact-path : String]
+  [link-inputs : SourceToolLinkInputs]) : SourceToolDirectObjectStatus
+  (if (and
+    (source-tool-linux-direct-object-enabled?)
+    (compiler-backend-target-linux? target))
+    (match (compiler-driver-emit-package-loaded-object-image
+      ""
+      target
+      true
+      opt-level
+      mode
+      emit-entry
+      crt-entry
+      decls
+      paths)
+      [(OkCompilerDriverObject image)
+        (match (build-package-render-linux-direct-object kind image)
+          [(OkSourceToolString obj)
+            (build-package-write-linux-direct-object-artifact
+              kind
+              target
+              obj-path
+              artifact-path
+              link-inputs
+              obj)]
+          [(ErrSourceToolString message)
+            (SourceToolDirectObjectUnavailable message)])]
+      [(ErrCompilerDriverObject diag)
+        (SourceToolDirectObjectUnavailable (compiler-diagnostic-render diag))])
+    (SourceToolDirectObjectUnavailable "linux direct object disabled")))
 
 (define (build-package-graph-node-artifact-path
   [node : BuildPackageGraphNode]
@@ -2692,7 +2774,19 @@
                         asm-path
                         obj-path
                         artifact-path
-                        effective-link-inputs)
+                        effective-link-inputs
+                        (build-package-try-linux-direct-object
+                          kind
+                          target
+                          opt-level
+                          mode
+                          emit-entry
+                          crt-entry
+                          decls
+                          paths
+                          obj-path
+                          artifact-path
+                          effective-link-inputs))
                         [(SourceToolCommandErr message)
                           (begin
                             (print-error message)

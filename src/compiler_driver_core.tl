@@ -1060,12 +1060,13 @@
   [crt-entry : bool]
   [decls : AstDeclList]
   [paths : AstDeclPathList]) : ResultCompilerDriver
-  (match (lower-compiler-program-with-decl-paths-mode
+  (match (compiler-driver-lower-package-loaded
     input-path
-    (ast-program decls)
-    paths
-    (compiler-driver-lower-mode-for-target target mode))
-    [(OkCompilerLower program spans)
+    target
+    mode
+    decls
+    paths)
+    [(OkCompilerDriverLowered program spans)
       (compiler-driver-emit-lowered-with-level-mode-entry-and-crt
         input-path
         program
@@ -1076,7 +1077,50 @@
         opt-level
         emit-entry
         crt-entry)]
-    [(ErrCompilerLower diag) (ErrCompilerDriver diag)]))
+    [(ErrCompilerDriverLowered diag) (ErrCompilerDriver diag)]))
+
+(define (compiler-driver-lower-package-loaded
+  [input-path : String]
+  [target : CompilerBackendTarget]
+  [mode : CompilerBackendMode]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]) : ResultCompilerDriverLowered
+  (match (lower-compiler-program-with-decl-paths-mode
+    input-path
+    (ast-program decls)
+    paths
+    (compiler-driver-lower-mode-for-target target mode))
+    [(OkCompilerLower program spans) (OkCompilerDriverLowered program spans)]
+    [(ErrCompilerLower diag) (ErrCompilerDriverLowered diag)]))
+
+(define (compiler-driver-emit-package-loaded-object-image
+  [input-path : String]
+  [target : CompilerBackendTarget]
+  [has-target : bool]
+  [opt-level : i64]
+  [mode : CompilerBackendMode]
+  [emit-entry : bool]
+  [crt-entry : bool]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]) : ResultCompilerDriverObject
+  (match (compiler-driver-lower-package-loaded
+    input-path
+    target
+    mode
+    decls
+    paths)
+    [(OkCompilerDriverLowered program spans)
+      (compiler-driver-emit-lowered-object-image-with-level-mode-entry-and-crt
+        input-path
+        program
+        spans
+        target
+        has-target
+        mode
+        opt-level
+        emit-entry
+        crt-entry)]
+    [(ErrCompilerDriverLowered diag) (ErrCompilerDriverObject diag)]))
 
 (define (compiler-driver-emit-package-file-with-target-roots-level-mode-and-crt
   [input-path : String]

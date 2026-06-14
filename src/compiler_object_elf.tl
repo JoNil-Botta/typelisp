@@ -55,11 +55,14 @@
 (define compiler-object-elf-section-shstrtab-index : i64
   11)
 
-(define compiler-object-elf-section-count : i64
+(define compiler-object-elf-section-note-gnu-stack-index : i64
   12)
 
+(define compiler-object-elf-section-count : i64
+  13)
+
 (define compiler-object-elf-shstrtab-size : i64
-  97)
+  113)
 
 (define compiler-object-elf-sht-null : i64
   0)
@@ -633,7 +636,8 @@
     (compiler-object-elf-push-shstrtab-name! out ".rela.bss")
     (compiler-object-elf-push-shstrtab-name! out ".symtab")
     (compiler-object-elf-push-shstrtab-name! out ".strtab")
-    (compiler-object-elf-push-shstrtab-name! out ".shstrtab")))
+    (compiler-object-elf-push-shstrtab-name! out ".shstrtab")
+    (compiler-object-elf-push-shstrtab-name! out ".note.GNU-stack")))
 
 (define (compiler-object-elf-text-offset [image : CompilerObjectImage]) : i64
   (compiler-object-elf-align-offset compiler-object-elf-header-size 16))
@@ -763,6 +767,8 @@
     79
     (= index compiler-object-elf-section-shstrtab-index)
     87
+    (= index compiler-object-elf-section-note-gnu-stack-index)
+    97
     0))
 
 (define (compiler-object-elf-push-header!
@@ -1484,6 +1490,19 @@
       0
       0
       1
+      0)
+    (compiler-object-elf-push-section-header!
+      out
+      (compiler-object-elf-section-name-offset
+        compiler-object-elf-section-note-gnu-stack-index)
+      compiler-object-elf-sht-progbits
+      0
+      0
+      0
+      0
+      0
+      0
+      1
       0)))
 
 (define (compiler-object-elf-bytes-string [bytes : (Array u8)]) : String
@@ -1894,6 +1913,7 @@
           (compiler-object-elf-u16-at obj 60)
           compiler-object-elf-section-count)
         (compiler-object-elf-contains? obj ".rela.data")
+        (compiler-object-elf-contains? obj ".note.GNU-stack")
         (compiler-object-elf-contains? obj "_tl_message")
         (compiler-object-elf-contains? obj "foreign_exact"))]
     [(ErrCompilerObjectElf _) false]))

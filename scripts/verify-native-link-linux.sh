@@ -223,13 +223,20 @@ verify_linux_direct_object_link() {
     _dir="$WORKDIR/direct-object"
     mkdir -p "$_dir"
     _tool="$_dir/build-tool"
+
+    compile_selfhost_binary direct-object-build src/main.tl "$_tool"
     _src="$_dir/main.tl"
     _bin="$_dir/main"
     _shim="$_dir/no-assembler-bin"
     _out="$_dir/build.stdout"
     _err="$_dir/build.stderr"
+    _pkg="$_dir/package"
+    _dep="$_pkg/vendor/math"
+    _pkg_bin="$_pkg/target/release/direct_object_pkg"
+    _dep_archive="$_dep/target/release/libdirect_object_math.a"
+    _pkg_out="$_dir/package-build.stdout"
+    _pkg_err="$_dir/package-build.stderr"
 
-    compile_selfhost_binary direct-object-build src/main.tl "$_tool"
     cat > "$_src" <<'EOF'
 (define (main) : i64 42)
 EOF
@@ -257,6 +264,52 @@ EOF
     assert_empty "$_err" "Linux direct object build stderr"
     assert_contains "$_out" "Built $_bin" "Linux direct object build stdout"
     [ -x "$_bin" ] || fail "Linux direct object build did not write executable"
+
+    mkdir -p "$_pkg/src" "$_dep/src"
+    cat > "$_pkg/typelisp.pkg" <<'EOF'
+(package
+  (name "direct_object_pkg")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "src/main.tl")
+  (dependencies
+    (math "vendor/math")))
+EOF
+    cat > "$_pkg/src/main.tl" <<'EOF'
+(import "pkg:math/src/lib.tl")
+(define (main) : i64 (add 40 2))
+EOF
+    cat > "$_dep/typelisp.pkg" <<'EOF'
+(package
+  (name "direct_object_math")
+  (version "0.1.0")
+  (kind "staticlib")
+  (entry "src/lib.tl"))
+EOF
+    cat > "$_dep/src/lib.tl" <<'EOF'
+(define (add [left : i64] [right : i64]) : i64 (+ left right))
+EOF
+
+    echo "[selfhost-native] Linux direct ELF package artifacts build without assembler"
+    set +e
+    PATH="$_shim:$PATH" TYPELISP_LINUX_DIRECT_OBJECT=1 \
+        "$_tool" build --manifest-path "$_pkg/typelisp.pkg" --target linux-x86_64 \
+        --opt-level 0 --stdlib-root "$ROOT/stdlib" > "$_pkg_out" 2> "$_pkg_err"
+    _got=$?
+    set -e
+    if [ "$_got" -ne 0 ]; then
+        echo "FAIL: Linux direct object package build exited $_got" >&2
+        if [ -s "$_pkg_out" ]; then sed 's/^/  stdout: /' "$_pkg_out" >&2; fi
+        if [ -s "$_pkg_err" ]; then sed 's/^/  stderr: /' "$_pkg_err" >&2; fi
+        exit 1
+    fi
+    assert_empty "$_pkg_err" "Linux direct object package build stderr"
+    assert_contains "$_pkg_out" "Built $_dep_archive" "Linux direct object package build stdout"
+    assert_contains "$_pkg_out" "Built $_pkg_bin" "Linux direct object package build stdout"
+    [ -s "$_dep_archive" ] || fail "Linux direct object package build did not write dependency archive"
+    [ -x "$_pkg_bin" ] || fail "Linux direct object package build did not write executable"
+    # #2932 tracks executing direct ELF objects once ordinary function-body
+    # instruction encoding is complete for package objects.
 }
 
 run_compiler_driver() {

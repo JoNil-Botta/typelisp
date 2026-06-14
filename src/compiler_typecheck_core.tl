@@ -129,6 +129,17 @@
   (TcStringNil)
   (TcStringCons String (Box TcStringList)))
 
+(cfg
+  compile-profile
+  (defenum CompilerTcMacroProfileEntries
+    (CompilerTcMacroProfileNil)
+    (CompilerTcMacroProfileCons
+      String
+      i64
+      i64
+      i64
+      (Box CompilerTcMacroProfileEntries))))
+
 (defenum ResultTcStringList
   (OkTcStringList TcStringList)
   (ErrTcStringList String))
@@ -607,6 +618,143 @@
                   (compiler-tc-profile-field
                     (- end-live compiler-tc-profile-start-live))
                   (string-append (compiler-tc-profile-field peak-delta) "\n"))))))))))
+
+(cfg
+  compile-profile
+  (define compiler-tc-macro-profile-start-ms : i64
+    0))
+
+(cfg
+  compile-profile
+  (define compiler-tc-macro-profile-entries : CompilerTcMacroProfileEntries
+    (CompilerTcMacroProfileNil)))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-profile-reset) : unit
+    (begin
+      (set! compiler-tc-macro-profile-start-ms 0)
+      (set! compiler-tc-macro-profile-entries (CompilerTcMacroProfileNil)))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-profile-start) : unit
+    (set! compiler-tc-macro-profile-start-ms (profile-now-ms))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-profile-arg-count [args : AstExprList]) : i64
+    (match args
+      [(AstExprNil) 0]
+      [(AstExprCons _ rest)
+        (+ 1 (compiler-tc-macro-profile-arg-count (box-get rest)))])))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-profile-record-in
+    [entries : CompilerTcMacroProfileEntries]
+    [macro-name : String]
+    [arity : i64]
+    [elapsed-ms : i64]) : CompilerTcMacroProfileEntries
+    (match entries
+      [(CompilerTcMacroProfileNil)
+        (CompilerTcMacroProfileCons
+          macro-name
+          arity
+          1
+          elapsed-ms
+          (box (CompilerTcMacroProfileNil)))]
+      [(CompilerTcMacroProfileCons entry-name entry-arity calls total-ms rest)
+        (if (and (string-eq entry-name macro-name) (= entry-arity arity))
+          (CompilerTcMacroProfileCons
+            entry-name
+            entry-arity
+            (+ calls 1)
+            (+ total-ms elapsed-ms)
+            rest)
+          (CompilerTcMacroProfileCons
+            entry-name
+            entry-arity
+            calls
+            total-ms
+            (box
+              (compiler-tc-macro-profile-record-in
+                (box-get rest)
+                macro-name
+                arity
+                elapsed-ms))))])))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-profile-record
+    [macro-name : String]
+    [arity : i64]
+    [elapsed-ms : i64]) : unit
+    (set!
+      compiler-tc-macro-profile-entries
+      (compiler-tc-macro-profile-record-in
+        compiler-tc-macro-profile-entries
+        macro-name
+        arity
+        elapsed-ms))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-profile-finish
+    [macro-name : String]
+    [args : AstExprList]) : unit
+    (compiler-tc-macro-profile-record
+      macro-name
+      (compiler-tc-macro-profile-arg-count args)
+      (- (profile-now-ms) compiler-tc-macro-profile-start-ms))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-profile-detail
+    [macro-name : String]
+    [arity : i64]
+    [calls : i64]) : String
+    (string-append
+      macro-name
+      (string-append
+        " arity="
+        (string-append
+          (int->string arity)
+          (string-append " calls=" (int->string calls)))))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-profile-emit-entry
+    [macro-name : String]
+    [arity : i64]
+    [calls : i64]
+    [total-ms : i64]) : unit
+    (print-error
+      (string-append
+        "compile-profile-detail|typecheck.macro_expand|"
+        (string-append
+          (int->string total-ms)
+          (string-append
+            "|"
+            (string-append
+              (compiler-tc-macro-profile-detail macro-name arity calls)
+              "\n")))))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-profile-emit-entries
+    [entries : CompilerTcMacroProfileEntries]) : unit
+    (match entries
+      [(CompilerTcMacroProfileNil) unit]
+      [(CompilerTcMacroProfileCons macro-name arity calls total-ms rest)
+        (begin
+          (compiler-tc-macro-profile-emit-entry macro-name arity calls total-ms)
+          (compiler-tc-macro-profile-emit-entries (box-get rest)))])))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-profile-emit) : unit
+    (compiler-tc-macro-profile-emit-entries compiler-tc-macro-profile-entries)))
 
 (cfg
   compile-profile
@@ -24973,41 +25121,52 @@
         (tc-ctfe-env ctx)
         call-expr)
         [(OkMacroEnv env)
-          (match (ctfe-eval-node
-            body
-            (ctfe-env-extend env (ctfe-hygiene-enabled-name) (CtfeBool true))
-            (ctfe-fuel-limit))
-            [(OkCtfe value _)
-              (match value
-                [(CtfeExpr expanded produced)
-                  (if (or
-                    (tc-type-eq produced (AstTyExpr))
-                    (tc-type-compatible?
-                      (tc-resolve-type ctx (tc-macro-signature-type ret))
-                      (tc-resolve-type ctx produced)))
-                    (macro-expand-expr
-                      ctx
-                      type-env
-                      decls
-                      (+ depth 1)
-                      (ast-node-get
-                        (macro-hygiene-expr
-                          (ast-node-get expanded)
-                          MacroHygieneNil
-                          (macro-hygiene-context-macro-name
-                            macro-name
-                            definition-module)
-                          (+ depth 1))))
-                    (ErrMacroExpr
-                      (ctfe-diagnostic-at-expr
-                        call-expr
-                        "typecheck: macro expansion produced type does not match declaration")))]
-                [_
-                  (ErrMacroExpr
-                    (ctfe-diagnostic-at-expr
-                      call-expr
-                      "macro transformer did not produce an Expr"))])]
-            [(ErrCtfe diag) (ErrMacroExpr diag)])]
+          (begin
+            (cfg compile-profile (compiler-tc-macro-profile-start))
+            (match (ctfe-eval-node
+              body
+              (ctfe-env-extend env (ctfe-hygiene-enabled-name) (CtfeBool true))
+              (ctfe-fuel-limit))
+              [(OkCtfe value _)
+                (begin
+                  (cfg
+                    compile-profile
+                    (compiler-tc-macro-profile-finish macro-name expanded-args))
+                  (match value
+                    [(CtfeExpr expanded produced)
+                      (if (or
+                        (tc-type-eq produced (AstTyExpr))
+                        (tc-type-compatible?
+                          (tc-resolve-type ctx (tc-macro-signature-type ret))
+                          (tc-resolve-type ctx produced)))
+                        (macro-expand-expr
+                          ctx
+                          type-env
+                          decls
+                          (+ depth 1)
+                          (ast-node-get
+                            (macro-hygiene-expr
+                              (ast-node-get expanded)
+                              MacroHygieneNil
+                              (macro-hygiene-context-macro-name
+                                macro-name
+                                definition-module)
+                              (+ depth 1))))
+                        (ErrMacroExpr
+                          (ctfe-diagnostic-at-expr
+                            call-expr
+                            "typecheck: macro expansion produced type does not match declaration")))]
+                    [_
+                      (ErrMacroExpr
+                        (ctfe-diagnostic-at-expr
+                          call-expr
+                          "macro transformer did not produce an Expr"))]))]
+              [(ErrCtfe diag)
+                (begin
+                  (cfg
+                    compile-profile
+                    (compiler-tc-macro-profile-finish macro-name expanded-args))
+                  (ErrMacroExpr diag))]))]
         [(ErrMacroEnv diag) (ErrMacroExpr diag)])]
     [(ErrMacroExprList diag) (ErrMacroExpr diag)]))
 
@@ -26157,6 +26316,7 @@
           ;; (or the next program in a multi-program process) never reuses a stale
           ;; or another program's metadata. The cache is repopulated eagerly below.
           (set! macro-expand-ctfe-env-ready false)
+          (cfg compile-profile (compiler-tc-macro-profile-reset))
           ;; Same per-compile reset for the clone-able type set cache.
           (tc-clone-able-cache-reset!)
           ;; Same per-compile reset for the qualified-alias resolution cache:
@@ -26225,6 +26385,9 @@
                                                 compile-profile
                                                 (compiler-tc-profile-finish
                                                   "macro_walk"))
+                                              (cfg
+                                                compile-profile
+                                                (compiler-tc-macro-profile-emit))
                                               (OkMacroExpand
                                                 (ast-program ndecls)))]
                                           [(ErrMacroDecls diag)
@@ -26233,6 +26396,9 @@
                                                 compile-profile
                                                 (compiler-tc-profile-finish
                                                   "macro_walk"))
+                                              (cfg
+                                                compile-profile
+                                                (compiler-tc-macro-profile-emit))
                                               (ErrMacroExpand diag))]))]
                                     [(ErrTcEnv message)
                                       (ErrMacroExpand

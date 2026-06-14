@@ -4001,8 +4001,9 @@
   (match src
     [(IrValueVar src-var)
       (let
+        [is-float : bool (compiler-backend-float-type? ty)]
         [scratch : String
-          (if (compiler-backend-float-type? ty)
+          (if is-float
             "%xmm0"
             "%rax")]
         (match (compiler-backend-group-word-operand
@@ -4013,10 +4014,7 @@
           [(OkCompilerBackend operand)
             (OkCompilerBackend
               (string-append
-                (compiler-backend-emit-group-word-move
-                  operand
-                  scratch
-                  (compiler-backend-float-type? ty))
+                (compiler-backend-emit-group-word-move operand scratch is-float)
                 (compiler-backend-emit-store-typed-var-with-plan
                   assignments
                   dst
@@ -7114,53 +7112,55 @@
   [from-ty : AstType]
   [to-ty : AstType]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
-  (cond
-    (and
-      (opt-type-eq from-ty to-ty)
-      (compiler-backend-value-same-home? assignments dst src))
+  (if (and
+    (opt-type-eq from-ty to-ty)
+    (compiler-backend-value-same-home? assignments dst src))
     (OkCompilerBackend "")
-    (and
-      (compiler-backend-float-type? from-ty)
-      (compiler-backend-float-type? to-ty))
-    (compiler-backend-emit-float-to-float-cast
-      assignments
-      dst
-      src
-      from-ty
-      to-ty)
-    (and
-      (not (compiler-backend-float-type? from-ty))
-      (compiler-backend-float-type? to-ty))
-    (compiler-backend-emit-int-to-float-cast
-      function
-      current-label
-      assignments
-      dst
-      src
-      from-ty
-      to-ty
-      program-index)
-    (and
-      (compiler-backend-float-type? from-ty)
-      (not (compiler-backend-float-type? to-ty)))
-    (compiler-backend-emit-float-to-int-cast assignments dst src from-ty to-ty)
-    (match (compiler-backend-emit-load-typed-value-with-plan
-      assignments
-      src
-      from-ty
-      program-index)
-      [(OkCompilerBackend load)
-        (OkCompilerBackend
-          (string-append
-            load
-            (compiler-backend-emit-store-typed-var-with-plan
-              assignments
-              dst
-              (if (compiler-backend-float-type? to-ty)
-                "%xmm0"
-                "%rax")
-              to-ty)))]
-      [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
+    (let
+      [from-is-float : bool (compiler-backend-float-type? from-ty)]
+      [to-is-float : bool (compiler-backend-float-type? to-ty)]
+      (cond
+        (and from-is-float to-is-float)
+        (compiler-backend-emit-float-to-float-cast
+          assignments
+          dst
+          src
+          from-ty
+          to-ty)
+        (and (not from-is-float) to-is-float)
+        (compiler-backend-emit-int-to-float-cast
+          function
+          current-label
+          assignments
+          dst
+          src
+          from-ty
+          to-ty
+          program-index)
+        (and from-is-float (not to-is-float))
+        (compiler-backend-emit-float-to-int-cast
+          assignments
+          dst
+          src
+          from-ty
+          to-ty)
+        (match (compiler-backend-emit-load-typed-value-with-plan
+          assignments
+          src
+          from-ty
+          program-index)
+          [(OkCompilerBackend load)
+            (OkCompilerBackend
+              (string-append
+                load
+                (compiler-backend-emit-store-typed-var-with-plan
+                  assignments
+                  dst
+                  (if to-is-float
+                    "%xmm0"
+                    "%rax")
+                  to-ty)))]
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)])))))
 
 (define (compiler-backend-ir-value-list-count [args : CompilerIrValueList]) : i64
   (match args

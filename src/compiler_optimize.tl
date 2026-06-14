@@ -252,36 +252,42 @@
   (OptNoConst)
   (OptSomeConst CompilerIrValue AstType))
 
+;; The const env is threaded linearly through a single block's fold/strength
+;; passes (each block starts fresh at `OptConstNil`); it is never forked or
+;; reused across blocks. So bind/unbind only ever extend the most recent env.
+;; We exploit that: the newest entry for a var always shadows older ones, so
+;; `bind` and `unbind` just PREPEND (O(1)) instead of rebuilding the whole list
+;; to remove the prior entry (the old O(n)-per-instruction copy made folding a
+;; single large block O(n^2) in both time and allocation -- e.g. a function that
+;; is one giant `str-cat` lowers to a long `string-append` call chain, and each
+;; call's `opt-invalidate-def` rebuilt the entire env). `OptConstShadow` records
+;; "this var is no longer a known constant" so lookup stops at it.
 (defenum OptConstEnv
   (OptConstNil)
-  (OptConstCons i64 CompilerIrValue AstType (Box OptConstEnv)))
+  (OptConstCons i64 CompilerIrValue AstType (Box OptConstEnv))
+  (OptConstShadow i64 (Box OptConstEnv)))
 
 (define (opt-const-unbind [env : OptConstEnv] [var : i64]) : OptConstEnv
-  (match env
-    [(OptConstNil) (OptConstNil)]
-    [(OptConstCons id value ty rest)
-      (let
-        [rest : OptConstEnv (box-get rest)]
-        (if (= id var)
-          (opt-const-unbind rest var)
-          (OptConstCons id value ty (box (opt-const-unbind rest var)))))]))
+  (OptConstShadow var (box env)))
 
 (define (opt-const-bind
   [env : OptConstEnv]
   [var : i64]
   [value : CompilerIrValue]
   [ty : AstType]) : OptConstEnv
-  (OptConstCons var value ty (box (opt-const-unbind env var))))
+  (OptConstCons var value ty (box env)))
 
 (define (opt-const-lookup [env : OptConstEnv] [var : i64]) : OptKnownConst
   (match env
     [(OptConstNil) (OptNoConst)]
     [(OptConstCons id value ty rest)
-      (let
-        [rest : OptConstEnv (box-get rest)]
-        (if (= id var)
-          (OptSomeConst value ty)
-          (opt-const-lookup rest var)))]))
+      (if (= id var)
+        (OptSomeConst value ty)
+        (opt-const-lookup (box-get rest) var))]
+    [(OptConstShadow id rest)
+      (if (= id var)
+        (OptNoConst)
+        (opt-const-lookup (box-get rest) var))]))
 
 (define (opt-integer-type? [ty : AstType]) : bool
   (match ty

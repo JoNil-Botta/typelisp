@@ -1188,6 +1188,78 @@
             (set! i (+ i 1)))))
       found)))
 
+;; Offset of the variant named `needle` within a defenum body [start, end), or
+;; -1. Each top-level ( ... ) in the body is a variant constructor.
+(define (lsp-variant-name-offset-in
+  [text : String]
+  [start : i64]
+  [end : i64]
+  [needle : String]) : i64
+  (let
+    [i : i64 start]
+    [result : i64 -1]
+    (begin
+      (while (and (< i end) (< result 0))
+        (let
+          [c : char (string-ref text i)]
+          (cond
+            (= c #"')
+            (set! i (lsp-skip-string text i end))
+            (= c #(')
+            (let
+              [vs : i64 (lsp-skip-space text (+ i 1) end)]
+              [ve : i64 (lsp-scan-ident text vs end)]
+              (if (string-eq (substring text vs (- ve vs)) needle)
+                (set! result vs)
+                (set! i (lsp-skip-paren-group text i end))))
+            (set! i (+ i 1)))))
+      result)))
+
+;; Offset of the enum variant named `needle` (within its defenum), or -1.
+(define (lsp-find-variant-offset-in [text : String] [needle : String]) : i64
+  (let
+    [n : i64 (string-length text)]
+    [i : i64 0]
+    [result : i64 -1]
+    (begin
+      (while (and (< i n) (< result 0))
+        (let
+          [c : char (string-ref text i)]
+          (cond
+            (= c #;')
+            (set! i (lsp-skip-line text i n))
+            (= c ##')
+            (set! i (lsp-skip-char-literal text i n))
+            (= c #"')
+            (set! i (lsp-skip-string text i n))
+            (= c #(')
+            (let
+              [kw-start : i64 (lsp-skip-space text (+ i 1) n)]
+              [kw-end : i64 (lsp-scan-ident text kw-start n)]
+              (if (string-eq
+                (substring text kw-start (- kw-end kw-start))
+                "defenum")
+                (let
+                  [name-end : i64
+                    (lsp-scan-ident text (lsp-skip-space text kw-end n) n)]
+                  [form-end : i64 (lsp-skip-paren-group text i n)]
+                  [voff : i64
+                    (lsp-variant-name-offset-in text name-end form-end needle)]
+                  (if (>= voff 0)
+                    (set! result voff)
+                    (set! i form-end)))
+                (set! i (+ i 1))))
+            (set! i (+ i 1)))))
+      result)))
+
+;; A top-level definition, else an enum variant.
+(define (lsp-find-def-or-variant-offset-in [text : String] [needle : String]) : i64
+  (let
+    [off : i64 (lsp-find-def-offset-in text needle)]
+    (if (>= off 0)
+      off
+      (lsp-find-variant-offset-in text needle))))
+
 (define (lsp-def-loc-from
   [uri : String]
   [text : String]
@@ -1213,7 +1285,8 @@
       (if (string-eq (struct-get doc uri) current-uri)
         (lsp-find-definition-in-docs docs current-uri needle (+ idx 1))
         (let
-          [off : i64 (lsp-find-def-offset-in (struct-get doc text) needle)]
+          [off : i64
+            (lsp-find-def-or-variant-offset-in (struct-get doc text) needle)]
           (if (>= off 0)
             (lsp-def-loc-from
               (struct-get doc uri)
@@ -1291,7 +1364,7 @@
           imports
           (+ idx 1))
         (let
-          [off : i64 (lsp-find-def-offset-in src needle)]
+          [off : i64 (lsp-find-def-or-variant-offset-in src needle)]
           (if (>= off 0)
             (lsp-def-loc-from
               (lsp-path-to-file-uri (compiler-load-normalize-path resolved))
@@ -1315,7 +1388,7 @@
   [stdlib-roots : StringVec]
   [needle : String]) : LspDefLocation
   (let
-    [off : i64 (lsp-find-def-offset-in current-text needle)]
+    [off : i64 (lsp-find-def-or-variant-offset-in current-text needle)]
     (if (>= off 0)
       (lsp-def-loc-from current-uri current-text off needle)
       (match (lsp-find-definition-in-docs docs current-uri needle 0)

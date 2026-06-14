@@ -71,6 +71,10 @@
   (FoundDefSource String i64)
   (MissingDefSource))
 
+(defenum LspVariantHit
+  (FoundVariant String String)
+  (MissingVariant))
+
 (define (lsp-frame-space? [c : char]) : bool
   (or (= c #\space') (= c #\tab')))
 
@@ -360,7 +364,10 @@
                 (lsp-json-member
                   "hoverProvider"
                   (JsonBool true)
-                  JsonMemberListNil)))))))
+                  (lsp-json-member
+                    "documentLinkProvider"
+                    (lsp-json-object1 "resolveProvider" (JsonBool false))
+                    JsonMemberListNil))))))))
     "serverInfo"
     (lsp-json-object2
       "name"
@@ -2058,6 +2065,81 @@
       "end"
       (lsp-position line (+ col len)))))
 
+;; Within a defenum's body [start, end), the form of the variant named `needle`
+;; (e.g. "(OkCleanConfig CleanConfig)"), or "" if no variant matches.
+(define (lsp-variant-form-in
+  [text : String]
+  [start : i64]
+  [end : i64]
+  [needle : String]) : String
+  (let
+    [i : i64 start]
+    [result : String ""]
+    (begin
+      (while (and (< i end) (string-eq result ""))
+        (let
+          [c : char (string-ref text i)]
+          (cond
+            (= c #"')
+            (set! i (lsp-skip-string text i end))
+            (= c #(')
+            (let
+              [vs : i64 (lsp-skip-space text (+ i 1) end)]
+              [ve : i64 (lsp-scan-ident text vs end)]
+              (if (string-eq (substring text vs (- ve vs)) needle)
+                (set!
+                  result
+                  (substring text i (- (lsp-skip-paren-group text i end) i)))
+                (set! i (lsp-skip-paren-group text i end))))
+            (set! i (+ i 1)))))
+      result)))
+
+;; If `needle` names an enum variant, return its enum name and constructor form.
+(define (lsp-enum-of-variant [text : String] [needle : String]) : LspVariantHit
+  (let
+    [n : i64 (string-length text)]
+    [i : i64 0]
+    [enum-name : String ""]
+    [variant-form : String ""]
+    [found : bool false]
+    (begin
+      (while (and (< i n) (not found))
+        (let
+          [c : char (string-ref text i)]
+          (cond
+            (= c #;')
+            (set! i (lsp-skip-line text i n))
+            (= c ##')
+            (set! i (lsp-skip-char-literal text i n))
+            (= c #"')
+            (set! i (lsp-skip-string text i n))
+            (= c #(')
+            (let
+              [kw-start : i64 (lsp-skip-space text (+ i 1) n)]
+              [kw-end : i64 (lsp-scan-ident text kw-start n)]
+              (if (string-eq
+                (substring text kw-start (- kw-end kw-start))
+                "defenum")
+                (let
+                  [name-start : i64 (lsp-skip-space text kw-end n)]
+                  [name-end : i64 (lsp-scan-ident text name-start n)]
+                  [form-end : i64 (lsp-skip-paren-group text i n)]
+                  [variant : String
+                    (lsp-variant-form-in text name-end form-end needle)]
+                  (if (string-eq variant "")
+                    (set! i form-end)
+                    (begin
+                      (set!
+                        enum-name
+                        (substring text name-start (- name-end name-start)))
+                      (set! variant-form variant)
+                      (set! found true))))
+                (set! i (+ i 1))))
+            (set! i (+ i 1)))))
+      (if found
+        (FoundVariant enum-name variant-form)
+        MissingVariant))))
+
 ;; Curated hover for builtins, operators, and special forms (no source
 ;; (define ...) exists for these). Returns markdown, or "" when unknown.
 (define (lsp-builtin-hover [name : String]) : String
@@ -2249,17 +2331,31 @@
                       char0
                       (string-length sym)))]
                 [(MissingDefSource)
-                  (let
-                    [builtin : String (lsp-builtin-hover needle)]
-                    (if (string-eq builtin "")
-                      (lsp-write-response id JsonNull)
+                  (match (lsp-enum-of-variant text needle)
+                    [(FoundVariant enum-name variant-form)
                       (lsp-write-response
                         id
                         (lsp-hover-result
-                          builtin
+                          (lsp-hover-markdown
+                            variant-form
+                            (string-append
+                              "Variant of `"
+                              (string-append enum-name "`.")))
                           line0
                           char0
-                          (string-length sym)))))])))))]
+                          (string-length sym)))]
+                    [(MissingVariant)
+                      (let
+                        [builtin : String (lsp-builtin-hover needle)]
+                        (if (string-eq builtin "")
+                          (lsp-write-response id JsonNull)
+                          (lsp-write-response
+                            id
+                            (lsp-hover-result
+                              builtin
+                              line0
+                              char0
+                              (string-length sym)))))])])))))]
     [(MissingLspDocument) (lsp-write-response id JsonNull)]))
 
 (define (lsp-handle-hover
@@ -2281,6 +2377,111 @@
                 [(JsonMissing) (lsp-write-response id JsonNull)]))]
           [(MissingLspJsonText) (lsp-write-response id JsonNull)])]
       [(JsonMissing) (lsp-write-response id JsonNull)])))
+
+;; --------------------------------------------------------------------------
+;; Document links (textDocument/documentLink): make (import "spec") paths
+;; clickable, navigating to the resolved module file.
+;; --------------------------------------------------------------------------
+(define (lsp-document-link-json
+  [text : String]
+  [path : String]
+  [stdlib-roots : StringVec]
+  [content-start : i64]
+  [content-end : i64]) : Json
+  (let
+    [spec : String (substring text content-start (- content-end content-start))]
+    [resolved : String
+      (compiler-load-normalize-path
+        (compiler-load-resolve-import-with-roots path spec stdlib-roots))]
+    [start-lc : LspLineCol (lsp-line-col-at-offset text content-start)]
+    [end-lc : LspLineCol (lsp-line-col-at-offset text content-end)]
+    (lsp-json-object2
+      "range"
+      (lsp-json-object2
+        "start"
+        (lsp-position (struct-get start-lc line) (struct-get start-lc col))
+        "end"
+        (lsp-position (struct-get end-lc line) (struct-get end-lc col)))
+      "target"
+      (JsonString (lsp-path-to-file-uri resolved)))))
+
+(define (lsp-document-links
+  [text : String]
+  [path : String]
+  [stdlib-roots : StringVec]) : JsonList
+  (let
+    [n : i64 (string-length text)]
+    [i : i64 0]
+    [acc : JsonList JsonListNil]
+    (begin
+      (while (< i n)
+        (let
+          [c : char (string-ref text i)]
+          (cond
+            (= c #;')
+            (set! i (lsp-skip-line text i n))
+            (= c ##')
+            (set! i (lsp-skip-char-literal text i n))
+            (= c #"')
+            (set! i (lsp-skip-string text i n))
+            (= c #(')
+            (let
+              [kw-start : i64 (lsp-skip-space text (+ i 1) n)]
+              [kw-end : i64 (lsp-scan-ident text kw-start n)]
+              (if (and
+                (> kw-end kw-start)
+                (string-eq
+                  (substring text kw-start (- kw-end kw-start))
+                  "import"))
+                (let
+                  [q : i64 (lsp-skip-space text kw-end n)]
+                  (if (and (< q n) (= (string-ref text q) #"'))
+                    (let
+                      [str-end : i64 (lsp-skip-string text q n)]
+                      (begin
+                        (set!
+                          acc
+                          (lsp-json-list-cons
+                            (lsp-document-link-json
+                              text
+                              path
+                              stdlib-roots
+                              (+ q 1)
+                              (- str-end 1))
+                            acc))
+                        (set! i str-end)))
+                    (set! i (+ i 1))))
+                (set! i (+ i 1))))
+            (set! i (+ i 1)))))
+      acc)))
+
+(define (lsp-document-link-respond
+  [id : Json]
+  [uri : String]
+  [docs : LspDocuments]
+  [stdlib-roots : StringVec]) : unit
+  (match (lsp-documents-lookup docs uri)
+    [(FoundLspDocument path text _)
+      (lsp-write-response
+        id
+        (lsp-json-array (lsp-document-links text path stdlib-roots)))]
+    [(MissingLspDocument) (lsp-write-response id (lsp-json-array JsonListNil))]))
+
+(define (lsp-handle-document-link
+  [id : Json]
+  [params : Json]
+  [docs : LspDocuments]
+  [stdlib-roots : StringVec]) : unit
+  (let
+    [td-key : String "textDocument"]
+    (match (json-object-get params (& td-key))
+      [(JsonFound document)
+        (match (lsp-json-string-field document "uri")
+          [(OkLspJsonText uri)
+            (lsp-document-link-respond id uri docs stdlib-roots)]
+          [(MissingLspJsonText)
+            (lsp-write-response id (lsp-json-array JsonListNil))])]
+      [(JsonMissing) (lsp-write-response id (lsp-json-array JsonListNil))])))
 
 (define (lsp-maybe-write-method-not-found [message : Json]) : unit
   (let
@@ -2397,6 +2598,21 @@
                     [(JsonFound params)
                       (lsp-handle-hover id params docs stdlib-roots)]
                     [(JsonMissing) (lsp-write-response id JsonNull)]))]
+              [(JsonMissing) unit]))
+          (LspContinue docs))
+        (string-eq method "textDocument/documentLink")
+        (begin
+          (let
+            [id-key : String "id"]
+            (match (json-object-get message (& id-key))
+              [(JsonFound id)
+                (let
+                  [params-key : String "params"]
+                  (match (json-object-get message (& params-key))
+                    [(JsonFound params)
+                      (lsp-handle-document-link id params docs stdlib-roots)]
+                    [(JsonMissing)
+                      (lsp-write-response id (lsp-json-array JsonListNil))]))]
               [(JsonMissing) unit]))
           (LspContinue docs))
         (begin

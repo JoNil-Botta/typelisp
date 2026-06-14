@@ -2231,6 +2231,123 @@
         (compiler-backend-program-collections-floats worded)
         "2.5"))))
 
+(define (compiler-backend-ir-walker-program-collections-ok?) : bool
+  (let
+    [call-array : (Array CompilerIrValue) (make-array CompilerIrValue 2)]
+    (begin
+      (array-set! call-array 0 (IrValueF64 "8.5"))
+      (array-set! call-array 1 (IrValueBytes "arg-bytes"))
+      (let
+        [instrs : CompilerIrInstrSeq
+          (compiler-ir-instr-seq-from-list
+            (compiler-ir-instr-cons
+              (IrInstrCall
+                0
+                "direct"
+                (IrCallArgsTwo
+                  (IrValueFunction "call_fn")
+                  (IrValueString "call-string"))
+                (AstTyI64))
+              (compiler-ir-instr-cons
+                (IrInstrCallIndirect
+                  1
+                  (IrValueFunction "indirect_fn")
+                  (IrCallArgsArray call-array)
+                  (AstTyI64))
+                (compiler-ir-instr-cons
+                  (IrInstrPhi
+                    2
+                    (compiler-ir-phi-input-cons
+                      (IrValueString "phi-string")
+                      "entry"
+                      IrPhiInputNil)
+                    (AstTyString))
+                  (compiler-ir-instr-cons
+                    (IrInstrReturn (IrSomeValue (IrValueBytes "return-bytes")))
+                    IrInstrNil)))))]
+        [blocks : CompilerIrBlockList
+          (IrBlockArray
+            (compiler-ir-block-seq-from-list
+              (compiler-ir-block-cons (IrBlock "entry" instrs) IrBlockNil)))]
+        [functions : CompilerIrFunctionList
+          (IrFunctionArray
+            (compiler-ir-function-seq-from-list
+              (compiler-ir-function-cons
+                (IrFunction "main" IrParamNil (AstTyI64) 3 blocks)
+                IrFunctionNil)))]
+        [globals : CompilerIrGlobalList
+          (compiler-ir-global-cons
+            (IrGlobal
+              "global_text"
+              (AstTyString)
+              (IrValueString "global-string"))
+            IrGlobalNil)]
+        [collections : CompilerBackendProgramCollections
+          (compiler-backend-collect-program-collections
+            (IrProgram globals functions IrExternNil))]
+        (and
+          (compiler-backend-string-list-contains?
+            (compiler-backend-program-collections-functions collections)
+            "call_fn")
+          (compiler-backend-string-list-contains?
+            (compiler-backend-program-collections-functions collections)
+            "indirect_fn")
+          (compiler-backend-string-list-contains?
+            (compiler-backend-program-collections-strings collections)
+            "global-string")
+          (compiler-backend-string-list-contains?
+            (compiler-backend-program-collections-strings collections)
+            "call-string")
+          (compiler-backend-string-list-contains?
+            (compiler-backend-program-collections-strings collections)
+            "phi-string")
+          (compiler-backend-string-list-contains?
+            (compiler-backend-program-collections-floats collections)
+            "8.5")
+          (compiler-backend-string-list-contains?
+            (compiler-backend-program-collections-bytes collections)
+            "arg-bytes")
+          (compiler-backend-string-list-contains?
+            (compiler-backend-program-collections-bytes collections)
+            "return-bytes"))))))
+
+(define (compiler-backend-ir-walker-group-metadata-array-ok?) : bool
+  (let
+    [ty : AstType (compiler-backend-register-group-test-type)]
+    [name : String (compiler-backend-aggregate-type-name ty)]
+    [words : CompilerIrValueList
+      (compiler-ir-value-cons
+        (IrValueI64 1)
+        (compiler-ir-value-cons (IrValueF64 "3.5") IrValueNil))]
+    [instrs : CompilerIrInstrSeq
+      (compiler-ir-instr-seq-from-list
+        (compiler-ir-instr-cons (IrInstrPack 0 words ty) IrInstrNil))]
+    [blocks : CompilerIrBlockList
+      (IrBlockArray
+        (compiler-ir-block-seq-from-list
+          (compiler-ir-block-cons (IrBlock "entry" instrs) IrBlockNil)))]
+    [functions : CompilerIrFunctionList
+      (IrFunctionArray
+        (compiler-ir-function-seq-from-list
+          (compiler-ir-function-cons
+            (IrFunction "main" IrParamNil (AstTyI64) 1 blocks)
+            IrFunctionNil)))]
+    [counts : StringI64Map
+      (compiler-backend-collect-group-counts-functions
+        (string-i64-map-with-capacity 4)
+        functions)]
+    [masks : StringI64Map
+      (compiler-backend-collect-group-class-masks-functions
+        (string-i64-map-with-capacity 4)
+        functions)]
+    (and
+      (match (string-i64-map-get counts name)
+        [(StringI64MapFound count) (= count 2)]
+        [(StringI64MapMissing) false])
+      (match (string-i64-map-get masks name)
+        [(StringI64MapFound mask) (= mask 2)]
+        [(StringI64MapMissing) false]))))
+
 (define (compiler-backend-ir-walker-object-refs-with-plan
   [plan : CompilerBackendRuntimePlan]) : bool
   (let
@@ -2283,6 +2400,8 @@
   (and
     (compiler-backend-ir-walker-call-use-counts-ok?)
     (compiler-backend-ir-walker-collections-ok?)
+    (compiler-backend-ir-walker-program-collections-ok?)
+    (compiler-backend-ir-walker-group-metadata-array-ok?)
     (compiler-backend-ir-walker-object-refs-ok?)))
 
 (define (compiler-backend-peephole-asm-ok?) : bool

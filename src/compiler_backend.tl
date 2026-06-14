@@ -11209,13 +11209,23 @@
             (let
               [dst-home : String
                 (compiler-backend-var-register-home assignments dst)]
-              ;; Full-width (8-byte) value into a register home: load src straight
-              ;; into that register (a plain movq / leaq), skipping the %rax store.
-              ;; emit-load-value-with-plan handles var/global/global-addr/immediate
-              ;; sources and elides the move when src already lives in dst's home.
-              (if (if (= (compiler-backend-type-size ty) 8)
-                (not (string-eq dst-home ""))
-                false)
+              ;; Load src straight into the destination register home (a plain movq
+              ;; / leaq), skipping the %rax staging store. emit-load-value-with-plan
+              ;; handles var/global/global-addr sources and elides the move when src
+              ;; already lives in dst's home.
+              ;;
+              ;; #2981: a var source can always take this path regardless of `ty`
+              ;; width. Register and spill homes always hold the full normalized
+              ;; 64-bit value (emit-store-var-with-plan stores every scalar with a
+              ;; bare `movq`, and narrowing/extension happens when the value is first
+              ;; produced), so a `movq src-home, dst-home` copy needs no per-type
+              ;; reload. Non-var sources (globals/global-addr loaded from memory)
+              ;; still require the typed narrowing path unless they are 8 bytes.
+              (if (if (string-eq dst-home "")
+                false
+                (match src
+                  [(IrValueVar _) true]
+                  [_ (= (compiler-backend-type-size ty) 8)]))
                 (compiler-backend-emit-load-value-with-plan
                   assignments
                   src

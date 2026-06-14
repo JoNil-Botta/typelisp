@@ -1319,7 +1319,9 @@
             current-path
             stdlib-roots
             needle
-            (lsp-collect-imports current-text (string-vec-new))
+            (lsp-collect-imports
+              current-text
+              (string-vec-push (string-vec-new) "stdlib/core_macros.tl"))
             0)]))))
 
 (define (lsp-json-int-field-default
@@ -1932,7 +1934,9 @@
             current-path
             stdlib-roots
             needle
-            (lsp-collect-imports current-text (string-vec-new))
+            (lsp-collect-imports
+              current-text
+              (string-vec-push (string-vec-new) "stdlib/core_macros.tl"))
             0)]))))
 
 ;; The (define ...) header up to and including the return type, e.g.
@@ -2045,6 +2049,157 @@
       "end"
       (lsp-position line (+ col len)))))
 
+;; Curated hover for builtins, operators, and special forms (no source
+;; (define ...) exists for these). Returns markdown, or "" when unknown.
+(define (lsp-builtin-hover [name : String]) : String
+  (cond
+    (or
+      (string-eq name "+")
+      (string-eq name "-")
+      (string-eq name "*")
+      (string-eq name "/"))
+    (lsp-hover-markdown
+      (string-append name " : (-> num num num)")
+      "Arithmetic on two integers or floats of the same numeric type.")
+    (string-eq name "%")
+    (lsp-hover-markdown "% : (-> int int int)" "Integer remainder (modulo).")
+    (or (string-eq name "=") (string-eq name "!="))
+    (lsp-hover-markdown
+      (string-append name " : (-> a a bool)")
+      "Equality / inequality comparison.")
+    (or
+      (string-eq name "<")
+      (string-eq name "<=")
+      (string-eq name ">")
+      (string-eq name ">="))
+    (lsp-hover-markdown
+      (string-append name " : (-> a a bool)")
+      "Ordering comparison.")
+    (or (string-eq name "shl") (string-eq name "shr"))
+    (lsp-hover-markdown
+      (string-append name " : (-> int int int)")
+      "Bit shift left / right.")
+    (or
+      (string-eq name "bit-and")
+      (string-eq name "bit-or")
+      (string-eq name "bit-xor"))
+    (lsp-hover-markdown
+      (string-append name " : (-> int int int)")
+      "Bitwise and / or / xor.")
+    (string-eq name "bit-not")
+    (lsp-hover-markdown "bit-not : (-> int int)" "Bitwise complement.")
+    (string-eq name "not")
+    (lsp-hover-markdown "not : (-> bool bool)" "Logical negation.")
+    (string-eq name "neg")
+    (lsp-hover-markdown "neg : (-> num num)" "Numeric negation.")
+    (string-eq name "string-length")
+    (lsp-hover-markdown
+      "string-length : (-> String i64)"
+      "Number of bytes in a string.")
+    (string-eq name "string-ref")
+    (lsp-hover-markdown
+      "string-ref : (-> String i64 char)"
+      "Byte at the given index.")
+    (string-eq name "string-data")
+    (lsp-hover-markdown
+      "string-data : (-> String (Ptr u8))"
+      "Pointer to a string's bytes.")
+    (string-eq name "make-array")
+    (lsp-hover-markdown
+      "make-array : (-> Type i64 (Array T))"
+      "Allocate a zero-initialized array of the given element type and length.")
+    (string-eq name "array-ref")
+    (lsp-hover-markdown
+      "array-ref : (-> (Array T) i64 T)"
+      "Read an array element (bounds-checked).")
+    (string-eq name "array-set!")
+    (lsp-hover-markdown
+      "array-set! : (-> (Array T) i64 T unit)"
+      "Write an array element (bounds-checked).")
+    (string-eq name "array-push!")
+    (lsp-hover-markdown
+      "array-push! : (-> (Array T) T unit)"
+      "Append a value to a dynamic array.")
+    (string-eq name "array-data")
+    (lsp-hover-markdown
+      "array-data : (-> (Array T) (Ptr T))"
+      "Pointer to an array's storage.")
+    (string-eq name "tuple-ref")
+    (lsp-hover-markdown
+      "tuple-ref : (-> Tuple i64 T)"
+      "Read a tuple element by constant index.")
+    (string-eq name "struct-get")
+    (lsp-hover-markdown
+      "struct-get : (-> Struct field T)"
+      "Read a struct field by name.")
+    (string-eq name "ptr-null")
+    (lsp-hover-markdown
+      "ptr-null : (-> (Ptr T))"
+      "Null pointer of the given type.")
+    (string-eq name "ptr-null?")
+    (lsp-hover-markdown
+      "ptr-null? : (-> (Ptr T) bool)"
+      "Whether a pointer is null.")
+    (string-eq name "ptr-read")
+    (lsp-hover-markdown
+      "ptr-read : (-> (Ptr T) i64 T)"
+      "Read the element at an offset from a pointer (unsafe).")
+    (string-eq name "ptr-write!")
+    (lsp-hover-markdown
+      "ptr-write! : (-> (MutPtr T) i64 T unit)"
+      "Write the element at an offset through a pointer (unsafe).")
+    (string-eq name "ptr-offset")
+    (lsp-hover-markdown
+      "ptr-offset : (-> (Ptr T) i64 (Ptr T))"
+      "Offset a pointer by N elements (unsafe).")
+    (string-eq name "ptr-cast")
+    (lsp-hover-markdown
+      "ptr-cast : (-> (Ptr A) Type (Ptr B))"
+      "Reinterpret a pointer's element type (unsafe).")
+    (string-eq name "ptr->int")
+    (lsp-hover-markdown
+      "ptr->int : (-> (Ptr T) u64)"
+      "Pointer to integer address (unsafe).")
+    (string-eq name "int->ptr")
+    (lsp-hover-markdown
+      "int->ptr : (-> u64 Type (Ptr T))"
+      "Integer address to pointer (unsafe).")
+    (string-eq name "if")
+    (lsp-hover-markdown
+      "(if cond then else)"
+      "Conditional expression; both branches must have the same type.")
+    (string-eq name "let")
+    (lsp-hover-markdown
+      "(let [name : T value] ... body)"
+      "Introduce local bindings, then evaluate the body.")
+    (string-eq name "begin")
+    (lsp-hover-markdown
+      "(begin expr ...)"
+      "Evaluate expressions in sequence; the result is the last.")
+    (string-eq name "while")
+    (lsp-hover-markdown "(while cond body)" "Loop while the condition is true.")
+    (string-eq name "set!")
+    (lsp-hover-markdown "(set! name value)" "Mutate an existing binding.")
+    (string-eq name "match")
+    (lsp-hover-markdown
+      "(match value [pattern body] ...)"
+      "Pattern match on an enum value.")
+    (string-eq name "return")
+    (lsp-hover-markdown
+      "(return value)"
+      "Return early from the enclosing function.")
+    (string-eq name "lambda")
+    (lsp-hover-markdown "(lambda [p : T] ... body)" "Anonymous function.")
+    (string-eq name "cast")
+    (lsp-hover-markdown
+      "(cast value : Type)"
+      "Convert a value to another numeric or pointer type.")
+    (string-eq name "unsafe")
+    (lsp-hover-markdown
+      "(unsafe body)"
+      "Permit unsafe operations (raw pointers, syscalls) within the body.")
+    ""))
+
 (define (lsp-hover-respond
   [id : Json]
   [uri : String]
@@ -2084,7 +2239,18 @@
                       line0
                       char0
                       (string-length sym)))]
-                [(MissingDefSource) (lsp-write-response id JsonNull)])))))]
+                [(MissingDefSource)
+                  (let
+                    [builtin : String (lsp-builtin-hover needle)]
+                    (if (string-eq builtin "")
+                      (lsp-write-response id JsonNull)
+                      (lsp-write-response
+                        id
+                        (lsp-hover-result
+                          builtin
+                          line0
+                          char0
+                          (string-length sym)))))])))))]
     [(MissingLspDocument) (lsp-write-response id JsonNull)]))
 
 (define (lsp-handle-hover

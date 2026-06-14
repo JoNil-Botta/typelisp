@@ -1816,34 +1816,6 @@
   [rest : LowerSpmdInlineSubst]) : LowerSpmdInlineSubst
   (LowerSpmdInlineSubstCons name value (box rest)))
 
-(define (lower-spmd-inline-subst-remove-let-binding-names
-  [subst : LowerSpmdInlineSubst]
-  [bindings : AstLetBindingList]) : LowerSpmdInlineSubst
-  (match bindings
-    [(AstLetBindingNil) subst]
-    [(AstLetBindingCons binding rest)
-      (let
-        [rest : AstLetBindingList (box-get rest)]
-        (match binding
-          [(AstLetBinding name _ _)
-            (lower-spmd-inline-subst-remove-let-binding-names
-              (lower-spmd-inline-subst-remove subst (intern-str name))
-              rest)]))]))
-
-(define (lower-spmd-inline-let-binding-shadowed
-  [shadowed : LowerStringSet]
-  [bindings : AstLetBindingList]) : LowerStringSet
-  (match bindings
-    [(AstLetBindingNil) shadowed]
-    [(AstLetBindingCons binding rest)
-      (let
-        [rest : AstLetBindingList (box-get rest)]
-        (match binding
-          [(AstLetBinding name _ _)
-            (lower-spmd-inline-let-binding-shadowed
-              (lower-string-set-insert shadowed (intern-str name))
-              rest)]))]))
-
 (define (lower-spmd-inline-helper-from-decl [name : String] [decl : AstDecl]) : ResultLowerSpmdInlineHelper
   (match decl
     [(AstDeclDefFn _ params _ body-box _)

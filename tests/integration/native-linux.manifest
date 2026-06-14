@@ -37,6 +37,7 @@ tail_direct_stack_args|tests/integration/tail_direct_stack_args.tl|42|-|-|-
 tail_indirect_closure|tests/integration/tail_indirect_closure.tl|42|-|-|-
 early_return|tests/integration/early_return.tl|42|-|-|-
 div_zero_trap|tests/integration/div_zero_trap.tl|135|-|-|-|expected-stderr:tl: integer division or remainder error\n
+dot_field_access|tests/integration/dot_field_access.tl|0|-|-|-
 enum_match|tests/integration/enum_match.tl|42|-|-|-
 make_array_negative_trap|tests/integration/make_array_negative_trap.tl|134|-|-|-|expected-stderr:tl: array index out of bounds\n
 make_array_overflow_trap|tests/integration/make_array_overflow_trap.tl|134|-|-|-|expected-stderr:tl: array index out of bounds\n

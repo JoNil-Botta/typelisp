@@ -58,6 +58,7 @@ spmd_masked_if_side_effect_reject|check-fail|tests/safety/spmd_masked_if_side_ef
 spmd_masked_if_lane_type_reject|check-fail|tests/safety/spmd_masked_if_lane_type_reject.tl|-|SPMD masked if lane type is not supported: String
 spmd_masked_if_allocation_reject|check-fail|tests/safety/spmd_masked_if_allocation_reject.tl|-|SPMD masked if does not support allocations that can escape masked branches
 invalid_struct_field_reject|check-fail|tests/safety/invalid_struct_field_reject.tl|-|unknown struct field Point.z
+dotted_field_numeric_reject|check-fail|tests/safety/dotted_field_numeric_reject.tl|-|cannot use numeric field segments; use tuple-ref or array-ref
 struct_field_set_immutable_ref_reject|check-fail|tests/safety/struct_field_set_immutable_ref_reject.tl|-|set! struct field requires mutable struct access
 struct_field_set_temporary_reject|check-fail|tests/safety/struct_field_set_temporary_reject.tl|-|expression is not a storage place
 foreign_abi_metadata_reject|check-fail|tests/safety/foreign_abi_metadata_reject.tl|-|unknown extern ABI stdcall

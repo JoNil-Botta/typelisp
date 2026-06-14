@@ -70,9 +70,10 @@ transitional surface:
   signature metadata and macro code when present; `lib<name>.a` remains the
   runtime half (#2651, #2655, #2659). The umbrella map is #2645.
 - **Mutation.** In-place struct field mutation is written as
-  `(set! (struct-get place field) value)` (#1521). Mutable box access remains
-  tracked by #2553; the move/borrow rules in sections 3.10 and 4.6.2 are the
-  contract mutation must satisfy.
+  `(set! (struct-get place field) value)` or, for a local receiver, dotted
+  field sugar such as `(set! place.field value)` (#1521). Mutable box access
+  remains tracked by #2553; the move/borrow rules in sections 3.10 and 4.6.2
+  are the contract mutation must satisfy.
 - **Text and bytes.** `String`/`str` remain immutable text/byte views. Mutable
   binary storage uses the specified `ByteBuf` owner plus borrowed `bytes` views
   from section 3.11 (#2782), not mutable `str` and not `TextBuf`.
@@ -489,9 +490,14 @@ Examples:
 
 - Layout: fields stored sequentially with natural alignment per field. No tag word.
 - Constructor syntax: `(Point 10 20)` — a call-like expression.
-- Field access: `(struct-get p x)` — generates a GEP+load at the field's byte offset.
+- Field access: `(struct-get p x)` generates a GEP+load at the field's byte
+  offset. When the leading dotted segment is a local binding, `p.x` is sugar
+  for `(struct-get p x)`, and chains such as `p.inner.x` nest the same access.
 - Field mutation: `(set! (struct-get place x) value)` writes one field in
-  place and returns `unit`.
+  place and returns `unit`. `(set! place.x value)` is the corresponding local
+  dotted sugar.
+- Dotted numeric segments such as `p.0` are not index sugar; use `tuple-ref` or
+  `array-ref`.
 - Structs are heap-allocated when returned from functions (same rule as enums).
 - Not valid as global variables.
 
@@ -1205,8 +1211,9 @@ places whose owner/provenance is statically known:
 
 - Local bindings and function parameters.
 - Aggregate field and element projections rooted in a borrowable place. In a
-  borrow expression, forms such as `(struct-get p field)`, `(tuple-ref t 0)`,
-  and `(array-ref items i)` are treated as projections, not by-value reads.
+  borrow expression, forms such as `(struct-get p field)`, local dotted field
+  sugar `p.field`, `(tuple-ref t 0)`, and `(array-ref items i)` are treated as
+  projections, not by-value reads.
 - Arena-owned aggregate handles: `String`, dynamic-array, struct, enum, and
   tuple handles allocated in the active arena. Handles with type `(in phase T)`
   infer lifetime `phase`; untagged heap handles allocated in the default
@@ -2160,6 +2167,12 @@ local declarations and local bindings. It does not search imported modules.
 Slash-qualified source names such as `alias/name` are rejected; `/` remains the
 ordinary division operator.
 
+In expression and place contexts, a dotted name whose leading segment is a local
+binding is local struct-field sugar before qualified module lookup. For example,
+`data.value` resolves as `(struct-get data value)` when `data` is a local
+binding, even if `data` is also an imported module alias. If the leading segment
+is not local, the existing qualified lookup rules below apply.
+
 Qualified lookup applies to:
 
 - Values: `(vec.dot a b)`, `config.default-timeout`.
@@ -2857,8 +2870,9 @@ without moving it. In v1 these are limited to:
   reference receiver. These operations mutate the array storage and do not move
   the array handle; immutable-reference receivers are rejected.
 - Struct field-place assignment `(set! (struct-get place field) value)` on an
-  owned struct receiver or mutable-reference receiver. This mutates only the
-  selected field; immutable-reference receivers are rejected.
+  owned struct receiver or mutable-reference receiver. Local dotted sugar such
+  as `(set! place.field value)` is the same place operation. This mutates only
+  the selected field; immutable-reference receivers are rejected.
 
 Ordinary user-defined function parameters are by-value unless their type is a
 future reference type. Passing a `String`, array, tuple, struct, enum, or
@@ -2876,11 +2890,12 @@ been checked. Reinitializing one element does not clear sibling moved paths; if
 it clears the final moved path for the root, the partial-root marker is removed.
 Dynamic-array elements, non-literal indexes, boxes, and unsupported path forms
 do not clear moved state. Struct field-place assignment reinitializes the
-selected tracked path when the receiver path is supported. `struct-get`,
-`tuple-ref`, and `array-ref` may copy out only copyable fields or elements, and
-may move out move-only fields/elements only where this tracked-path policy
-accepts the path. A consuming `match` is the enum exception: it moves the whole
-scrutinee first, then binds payload values owned by the selected arm.
+selected tracked path when the receiver path is supported; local dotted field
+sugar follows the same rule. `struct-get`, `tuple-ref`, and `array-ref` may copy
+out only copyable fields or elements, and may move out move-only fields/elements
+only where this tracked-path policy accepts the path. A consuming `match` is the
+enum exception: it moves the whole scrutinee first, then binds payload values
+owned by the selected arm.
 
 **Diagnostics.** Move checking must produce source-located diagnostics for:
 
@@ -5943,6 +5958,9 @@ borrow-place  ::= ident
                 | "(" "struct-get" borrow-place ident ")"
                 | "(" "tuple-ref" borrow-place integer ")"
                 | "(" "array-ref" borrow-place expr ")"
+
+;; Dotted field sugar such as `p.x` is an `ident` in this grammar and becomes a
+;; borrow-place only when its leading segment resolves to a local binding.
 
 binding       ::= "[" ident [":" type] expr "]"
 resource-binding ::= "[" ident expr expr "]"  ; name init cleanup-fn

@@ -51,6 +51,9 @@
 (define intern-pool-last-slash-slots : (Array i64)
   (make-array i64 262144))
 
+(define intern-pool-first-dot-slots : (Array i64)
+  (make-array i64 262144))
+
 (define intern-pool-module-id-slots : (Array i64)
   (make-array i64 262144))
 
@@ -256,21 +259,26 @@
         ok))
     false))
 
-(define (intern-compute-last-slash [name : String]) : i64
-  (let
-    [i : i64 (- (string-length name) 1)]
-    (begin
-      (while (>= i 0)
-        (if (= (string-ref name i) #/')
-          (return i)
-          (set! i (- i 1))))
-      -1)))
-
 (define (intern-record-qualified-metadata [id : i64] [name : String]) : unit
   (let
-    [slash : i64 (intern-compute-last-slash name)]
+    [i : i64 0]
+    [n : i64 (string-length name)]
+    [slash : i64 -1]
+    [dot : i64 -1]
     (begin
+      (while (< i n)
+        (let
+          [c : char (string-ref name i)]
+          (begin
+            (if (= c #/')
+              (set! slash i)
+              unit)
+            (if (and (< dot 0) (= c #.'))
+              (set! dot i)
+              unit)
+            (set! i (+ i 1)))))
       (array-set! intern-pool-last-slash-slots id slash)
+      (array-set! intern-pool-first-dot-slots id dot)
       (if (< slash 0)
         (begin
           (array-set! intern-pool-qualified-slots id false)
@@ -554,6 +562,12 @@
 (define (intern-qualified-last-slash [id : i64]) : i64
   (array-ref intern-pool-last-slash-slots id))
 
+(define (intern-first-dot [id : i64]) : i64
+  (array-ref intern-pool-first-dot-slots id))
+
+(define (intern-dotted? [id : i64]) : bool
+  (>= (intern-first-dot id) 0))
+
 (define (intern-qualified-module-id [id : i64]) : i64
   (array-ref intern-pool-module-id-slots id))
 
@@ -575,6 +589,12 @@
 
 (define (intern-name-last-slash [name : String]) : i64
   (intern-qualified-last-slash (intern name)))
+
+(define (intern-name-first-dot [name : String]) : i64
+  (intern-first-dot (intern name)))
+
+(define (intern-name-dotted? [name : String]) : bool
+  (intern-dotted? (intern name)))
 
 (define (intern-name-module [name : String]) : String
   (intern-qualified-module (intern name)))
@@ -690,6 +710,8 @@
       [leading : i64 (intern "/name")]
       [trailing : i64 (intern "module/")]
       [slash : i64 (intern "/")]
+      [dotted : i64 (intern "point.x")]
+      [nested-dotted : i64 (intern "point.inner.x")]
       [ok : bool true]
       (begin
         (unless
@@ -697,9 +719,12 @@
           (set! ok false))
         (unless (= (intern-qualified-base-id plain) plain) (set! ok false))
         (unless (= (intern-qualified-module-id plain) -1) (set! ok false))
+        (unless (= (intern-first-dot plain) -1) (set! ok false))
+        (unless (not (intern-dotted? plain)) (set! ok false))
         (unless
           (intern-qualified-metadata-case-ok? qualified true 6 "module" "name")
           (set! ok false))
+        (unless (= (intern-first-dot qualified) -1) (set! ok false))
         (unless
           (intern-qualified-metadata-case-ok? nested true 7 "pkg/sub" "name")
           (set! ok false))
@@ -712,6 +737,11 @@
         (unless
           (intern-qualified-metadata-case-ok? slash true 0 "" "")
           (set! ok false))
+        (unless (= (intern-first-dot dotted) 5) (set! ok false))
+        (unless (intern-dotted? dotted) (set! ok false))
+        (unless (= (intern-first-dot nested-dotted) 5) (set! ok false))
+        (unless (intern-name-dotted? "point.x") (set! ok false))
+        (unless (= (intern-name-first-dot "point.x") 5) (set! ok false))
         (unless (intern-slice-tests-ok?) (set! ok false))
         (unless (intern-persistent-arena-tests-ok?) (set! ok false))
         (unless (intern-reset-to-tests-ok?) (set! ok false))

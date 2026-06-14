@@ -1013,6 +1013,33 @@
         [(data.Some v) v]
         [data.None 0]))))")
 
+(define (compiler-typecheck-dot-field-source) : String
+  "(defstruct Pair (x i64) (y i64))
+(defstruct Outer (p Pair) (z i64))
+(define (take [r : (& n i64)]) : i64 5)
+(define (main) : i64
+  (let [o : Outer (Outer (Pair 1 2) 3)]
+    (begin
+      (set! o.p.x 17)
+      (+ o.p.x (+ o.p.y (+ o.z (take (& o.p.x))))))))")
+
+(define (compiler-typecheck-dot-field-local-shadows-alias-source) : String
+  "(module pkg.data)
+(define (value) : i64 99)
+(export (value value))
+(module main)
+(import pkg.data)
+(defstruct Pair (value i64))
+(define (main) : i64
+  (let [data : Pair (Pair 42)]
+    data.value))")
+
+(define (compiler-typecheck-dot-field-index-source) : String
+  "(defstruct Pair (x i64))
+(define (main) : i64
+  (let [p : Pair (Pair 1)]
+    p.0))")
+
 (define (compiler-typecheck-dotted-import-default-alias-with-macro-source) : String
   "(module pkg.data)
 (define (get) : i64 20)
@@ -2066,6 +2093,18 @@
         (set! ok false))
       (if (compiler-typecheck-ok?
         (compiler-typecheck-dotted-import-default-alias-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok? (compiler-typecheck-dot-field-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-dot-field-local-shadows-alias-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-dot-field-index-source)
+        "typecheck: dotted field access p.0 cannot use numeric field segments; use tuple-ref or array-ref")
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?

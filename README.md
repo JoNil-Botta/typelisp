@@ -25,7 +25,8 @@ Language direction:
   aggregates, and scoped arenas are implemented; #182 remains the umbrella map,
   with non-lexical lifetimes (#810) as the main open slice. Struct field-place
   mutation through `(set! (struct-get place field) value)` is implemented by
-  #1521.
+  #1521; local dotted field syntax such as `(set! place.field value)` uses the
+  same machinery.
 - Treat ISPC-style SPMD as the data-parallel model. The current source surface
   is in [SPEC.md section 5.15](SPEC.md); masked varying `if` is in flight
   (#2131, #2205, #2207), while the post-masked-if queue is split across lane
@@ -79,9 +80,10 @@ of imitating transitional patterns still present in the tree:
   `(Array u8)` and `String` byte plumbing is compatibility surface until the
   stdlib byte-buffer module lands.
 - **Mutation**: in-place mutation is the direction: struct field-place
-  assignment uses `(set! (struct-get place field) value)` (#1521), and mutable
-  box access is tracked by #2553. Copy-on-update is transitional and hot paths
-  migrate once those land (#2575).
+  assignment uses `(set! (struct-get place field) value)` or local dotted sugar
+  `(set! place.field value)` (#1521), and mutable box access is tracked by
+  #2553. Copy-on-update is transitional and hot paths migrate once those land
+  (#2575).
 - **Memory + threads**: per-thread default arenas plus a shared atomic arena
   for concurrent allocation (#2591, #2593). Thread safety follows the Rust
   model via structural checker classification — no traits (#2590): values
@@ -554,7 +556,9 @@ nested/recursive enum patterns and `_`), `ann`, `cast`, `foreach`,
 arithmetic (`+ - * / %`),
 comparison (`= != < <= > >=`), boolean (`and` `or`), and bitwise/shift
 (`bit-and` `bit-or` `bit-xor` `shl` `shr`) operators. `struct-get` reads a
-struct field, and `(set! (struct-get place field) value)` writes one in place.
+struct field, and local dotted field syntax such as `place.field` is sugar for
+the same operation. `(set! (struct-get place field) value)` and
+`(set! place.field value)` write fields in place.
 
 Named top-level functions and `lambda` literals can be passed as pointer-sized
 closure descriptor values. Non-capturing lambdas use static descriptors.
@@ -619,9 +623,9 @@ reference/borrow model.
 `String` values are immutable at the source level. Dynamic arrays are mutable
 buffers reached through a live owner handle or an exclusive mutable reference;
 `array-set!` and `array-push!` reject immutable-reference receivers. Struct
-fields can be mutated in place with `(set! (struct-get place field) value)`
-when the receiver is an owned storage place or mutable reference; immutable
-reference receivers are rejected. The current IR/ABI may
+fields can be mutated in place with `(set! (struct-get place field) value)` or
+`(set! place.field value)` when the receiver is an owned storage place or
+mutable reference; immutable reference receivers are rejected. The current IR/ABI may
 still carry aggregate values through pointer-shaped heap handles in positions
 not covered by the new layout-query contract. Heap allocation uses a
 backend-emitted `tl_alloc` bump allocator and allocations live until process

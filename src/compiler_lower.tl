@@ -745,19 +745,23 @@
   [env : SymI64Env]
   [type-env : TcTypeEnv]
   [name : String]) : ResultTcType
-  (if (tc-hygiene-global-name? name)
-    (lower-type-cache-lookup-hygiene type-cache name)
-    (match (if (tc-name-qualified? name)
-      (OkTcString name)
-      (tc-source-name-lookup-key ctx type-env name))
-      [(OkTcString lookup-name)
-        (match (sym-i64-lookup env lookup-name)
-          [(SomeI64 _) (tc-lookup type-env lookup-name)]
-          [(NoneI64)
-            (match (tc-lookup type-env lookup-name)
-              [(OkTcType ty) (OkTcType ty)]
-              [(ErrTcType _) (lower-type-cache-lookup type-cache lookup-name)])])]
-      [(ErrTcString message) (ErrTcType message)])))
+  (if (tc-dotted-local-field-name? type-env name)
+    (match (tc-dotted-local-field-expr-id type-env name)
+      [(OkTcExprId virtual-id) (tc-expr ctx type-env (ast-node-get virtual-id))]
+      [(ErrTcExprId message) (ErrTcType message)])
+    (if (tc-hygiene-global-name? name)
+      (lower-type-cache-lookup-hygiene type-cache name)
+      (match (if (tc-name-qualified? name)
+        (OkTcString name)
+        (tc-source-name-lookup-key ctx type-env name))
+        [(OkTcString lookup-name)
+          (match (sym-i64-lookup env lookup-name)
+            [(SomeI64 _) (tc-lookup type-env lookup-name)]
+            [(NoneI64)
+              (match (tc-lookup type-env lookup-name)
+                [(OkTcType ty) (OkTcType ty)]
+                [(ErrTcType _) (lower-type-cache-lookup type-cache lookup-name)])])]
+        [(ErrTcString message) (ErrTcType message)]))))
 
 (define (lower-lookup-type-id
   [ctx : TcContext]
@@ -7239,14 +7243,29 @@
   [result-ty : AstType]) : ResultLowerExpr
   (match (ast-expr-unspan place)
     [(AstExprVar name)
-      (lower-borrow-var-address
-        ctx
-        state
-        env
-        type-env
-        (intern-str name)
-        origin
-        result-ty)]
+      (let
+        [name-text : String (intern-str name)]
+        (if (tc-dotted-local-field-name-id? type-env name)
+          (match (tc-dotted-local-field-expr-id type-env name-text)
+            [(OkTcExprId virtual-id)
+              (lower-borrow-place-address
+                ctx
+                state
+                env
+                type-env
+                (ast-node-get virtual-id)
+                origin
+                result-ty)]
+            [(ErrTcExprId message)
+              (ErrLowerExpr (lower-diagnostic-at-expr origin message))])
+          (lower-borrow-var-address
+            ctx
+            state
+            env
+            type-env
+            name-text
+            origin
+            result-ty)))]
     [(AstExprStructGet receiver-box field)
       (let
         [receiver : AstExpr (ast-node-get receiver-box)]
@@ -12839,23 +12858,37 @@
         origin
         (ast-ty-dyn-array (AstTyU8)))]
     [(AstExprVar name)
-      (match (lower-lookup-type-id
-        ctx
-        (lower-state-type-cache state)
-        env
-        type-env
-        name)
-        [(OkTcType expr-ty)
-          (lower-expr-with-type
+      (let
+        [name-text : String (intern-str name)]
+        (if (tc-dotted-local-field-name-id? type-env name)
+          (match (tc-dotted-local-field-expr-id type-env name-text)
+            [(OkTcExprId virtual-id)
+              (lower-expr-origin
+                ctx
+                state
+                env
+                type-env
+                (ast-node-get virtual-id)
+                origin)]
+            [(ErrTcExprId message)
+              (ErrLowerExpr (lower-diagnostic-at-expr origin message))])
+          (match (lower-lookup-type-id
             ctx
-            state
+            (lower-state-type-cache state)
             env
             type-env
-            expr
-            origin
-            (tc-type-without-regions expr-ty))]
-        [(ErrTcType message)
-          (ErrLowerExpr (lower-diagnostic-at-expr origin message))])]
+            name)
+            [(OkTcType expr-ty)
+              (lower-expr-with-type
+                ctx
+                state
+                env
+                type-env
+                expr
+                origin
+                (tc-type-without-regions expr-ty))]
+            [(ErrTcType message)
+              (ErrLowerExpr (lower-diagnostic-at-expr origin message))])))]
     [(AstExprAnn _ ty)
       (lower-expr-with-type
         ctx
@@ -12989,7 +13022,22 @@
         [(AstNoType)
           (lower-init-expr ctx state env type-env expr-ty origin expr-ty)])]
     [(AstExprVar name)
-      (lower-var-or-nullary-variant-id ctx state env type-env name expr-ty)]
+      (let
+        [name-text : String (intern-str name)]
+        (if (tc-dotted-local-field-name-id? type-env name)
+          (match (tc-dotted-local-field-expr-id type-env name-text)
+            [(OkTcExprId virtual-id)
+              (lower-expr-with-type
+                ctx
+                state
+                env
+                type-env
+                (ast-node-get virtual-id)
+                origin
+                expr-ty)]
+            [(ErrTcExprId message)
+              (ErrLowerExpr (lower-diagnostic-at-expr origin message))])
+          (lower-var-or-nullary-variant-id ctx state env type-env name expr-ty)))]
     [(AstExprAnn inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
@@ -13150,68 +13198,85 @@
       (let
         [name-id : i64 name]
         [value : AstExpr (ast-node-get value-box)]
-        (match (lower-lookup-type-id
-          ctx
-          (lower-state-type-cache state)
-          env
-          type-env
-          name-id)
-          [(OkTcType store-ty)
-            (let
-              [target-ty : AstType
-                (tc-type-without-regions (tc-resolve-type ctx store-ty))]
-              (match (lower-expr-expected
+        [name-text : String (intern-str name)]
+        (if (tc-dotted-local-field-name-id? type-env name)
+          (match (tc-dotted-local-field-set-expr-id
+            type-env
+            name-text
+            value-box)
+            [(OkTcExprId virtual-id)
+              (lower-expr-with-type
                 ctx
                 state
                 env
                 type-env
-                value
-                target-ty
-                value)
-                [(OkLowerExpr lowered)
-                  (match lowered
-                    [(LowerExpr value-state value-ir _)
-                      (match (sym-i64-lookup-id env name-id)
-                        [(SomeI64 id)
-                          (OkLowerExpr
-                            (LowerExpr
-                              (lower-state-emit-at-expr
-                                value-state
-                                (IrInstrMov id value-ir target-ty)
-                                origin)
-                              IrValueUnit
-                              expr-ty))]
-                        [(NoneI64)
-                          (match (lower-return-abi-value
-                            ctx
-                            value-state
-                            value-ir
-                            target-ty)
-                            [(OkLowerExpr store-copy)
-                              (match store-copy
-                                [(LowerExpr store-state store-ir _)
-                                  (OkLowerExpr
-                                    (LowerExpr
-                                      (lower-state-emit-at-expr
-                                        store-state
-                                        (IrInstrStore
-                                          (lower-resolve-name
-                                            store-state
-                                            (intern-str name))
-                                          store-ir
-                                          target-ty)
-                                        origin)
-                                      IrValueUnit
-                                      expr-ty))])]
-                            [(ErrLowerExpr message) (ErrLowerExpr message)])])])]
-                [(ErrLowerExpr message) (ErrLowerExpr message)]))]
-          [(ErrTcType _)
-            (ErrLowerExpr
-              (lower-diagnostic-at-expr
+                (ast-node-get virtual-id)
                 origin
-                (string-append
-                  "lower: assignment to unknown local "
-                  (intern-str name))))]))]
+                expr-ty)]
+            [(ErrTcExprId message)
+              (ErrLowerExpr (lower-diagnostic-at-expr origin message))])
+          (match (lower-lookup-type-id
+            ctx
+            (lower-state-type-cache state)
+            env
+            type-env
+            name-id)
+            [(OkTcType store-ty)
+              (let
+                [target-ty : AstType
+                  (tc-type-without-regions (tc-resolve-type ctx store-ty))]
+                (match (lower-expr-expected
+                  ctx
+                  state
+                  env
+                  type-env
+                  value
+                  target-ty
+                  value)
+                  [(OkLowerExpr lowered)
+                    (match lowered
+                      [(LowerExpr value-state value-ir _)
+                        (match (sym-i64-lookup-id env name-id)
+                          [(SomeI64 id)
+                            (OkLowerExpr
+                              (LowerExpr
+                                (lower-state-emit-at-expr
+                                  value-state
+                                  (IrInstrMov id value-ir target-ty)
+                                  origin)
+                                IrValueUnit
+                                expr-ty))]
+                          [(NoneI64)
+                            (match (lower-return-abi-value
+                              ctx
+                              value-state
+                              value-ir
+                              target-ty)
+                              [(OkLowerExpr store-copy)
+                                (match store-copy
+                                  [(LowerExpr store-state store-ir _)
+                                    (OkLowerExpr
+                                      (LowerExpr
+                                        (lower-state-emit-at-expr
+                                          store-state
+                                          (IrInstrStore
+                                            (lower-resolve-name
+                                              store-state
+                                              name-text)
+                                            store-ir
+                                            target-ty)
+                                          origin)
+                                        IrValueUnit
+                                        expr-ty))])]
+                              [(ErrLowerExpr message) (ErrLowerExpr message)])])])]
+                  [(ErrLowerExpr message) (ErrLowerExpr message)]))]
+            [(ErrTcType _)
+              (ErrLowerExpr
+                (lower-diagnostic-at-expr
+                  origin
+                  (string-append
+                    "lower: assignment to unknown local "
+                    name-text)))])))]
     [(AstExprIf cond-box then-branch-box else-branch-box)
       (let
         [cond : AstExpr (ast-node-get cond-box)]
@@ -17111,164 +17176,199 @@
       ;; lookup, and the generic call path strips the prefix itself.
       (let
         [raw-text : String (intern-str raw-name)]
-        (match (sym-i64-lookup env (intern-str raw-name))
-          [(SomeI64 local-id)
-            (match (tc-lookup type-env (intern-str raw-name))
-              [(OkTcType fn-ty)
-                (if (lower-function-type? fn-ty)
-                  (if (tc-binding-c-abi-fnptr-id? type-env raw-name)
-                    (lower-indirect-c-abi-call
-                      ctx
-                      state
-                      env
-                      type-env
-                      fn-ty
-                      (IrValueVar local-id)
-                      args
-                      result-ty
-                      origin)
-                    (lower-indirect-call
-                      ctx
-                      state
-                      env
-                      type-env
-                      fn-ty
-                      (IrValueVar local-id)
-                      args
-                      result-ty
-                      origin))
-                  (ErrLowerExpr
-                    (lower-diagnostic-at-expr
-                      func
-                      "lower: call target is not a function")))]
-              [(ErrTcType message)
-                (ErrLowerExpr (lower-diagnostic-at-expr func message))])]
-          [(NoneI64)
-            (match (if (tc-hygiene-global-name? raw-text)
-              (OkTcString (tc-hygiene-global-call-name raw-text))
-              (if (tc-name-qualified? raw-text)
-                (OkTcString raw-text)
-                (tc-source-name-lookup-key ctx type-env raw-text)))
-              [(OkTcString name)
-                ;; `array-length`/`length` on a dynamic array, and
-                ;; `string-length`/`length` on a String, load the fat value's length
-                ;; field directly instead of calling a runtime symbol (#528, #527).
-                ;; Other `length` argument types keep the ordinary direct-call path.
-                ;; `string-ref`/`char-at` likewise recover their String byte-index
-                ;; builtin here unless shadowed (#677).
-                (let
-                  [name-id : i64 (intern name)]
-                  [builtin-available : bool
-                    (not (lower-top-level-value-defined? ctx name))]
-                  (cond
-                    (and builtin-available (tc-layout-query-name? name))
+        (if (tc-dotted-local-field-name? type-env raw-text)
+          (match (lower-expr ctx state env type-env func)
+            [(OkLowerExpr lowered-func)
+              (match lowered-func
+                [(LowerExpr func-state func-value func-ty)
+                  (if (lower-function-type? func-ty)
+                    (if (tc-expr-c-abi-fnptr? ctx type-env func)
+                      (lower-indirect-c-abi-call
+                        ctx
+                        func-state
+                        env
+                        type-env
+                        func-ty
+                        func-value
+                        args
+                        result-ty
+                        origin)
+                      (lower-indirect-call
+                        ctx
+                        func-state
+                        env
+                        type-env
+                        func-ty
+                        func-value
+                        args
+                        result-ty
+                        origin))
                     (ErrLowerExpr
                       (lower-diagnostic-at-expr
-                        origin
-                        (string-append
-                          "lower: "
+                        func
+                        "lower: call target is not a function")))])]
+            [(ErrLowerExpr message) (ErrLowerExpr message)])
+          (match (sym-i64-lookup env (intern-str raw-name))
+            [(SomeI64 local-id)
+              (match (tc-lookup type-env (intern-str raw-name))
+                [(OkTcType fn-ty)
+                  (if (lower-function-type? fn-ty)
+                    (if (tc-binding-c-abi-fnptr-id? type-env raw-name)
+                      (lower-indirect-c-abi-call
+                        ctx
+                        state
+                        env
+                        type-env
+                        fn-ty
+                        (IrValueVar local-id)
+                        args
+                        result-ty
+                        origin)
+                      (lower-indirect-call
+                        ctx
+                        state
+                        env
+                        type-env
+                        fn-ty
+                        (IrValueVar local-id)
+                        args
+                        result-ty
+                        origin))
+                    (ErrLowerExpr
+                      (lower-diagnostic-at-expr
+                        func
+                        "lower: call target is not a function")))]
+                [(ErrTcType message)
+                  (ErrLowerExpr (lower-diagnostic-at-expr func message))])]
+            [(NoneI64)
+              (match (if (tc-hygiene-global-name? raw-text)
+                (OkTcString (tc-hygiene-global-call-name raw-text))
+                (if (tc-name-qualified? raw-text)
+                  (OkTcString raw-text)
+                  (tc-source-name-lookup-key ctx type-env raw-text)))
+                [(OkTcString name)
+                  ;; `array-length`/`length` on a dynamic array, and
+                  ;; `string-length`/`length` on a String, load the fat value's length
+                  ;; field directly instead of calling a runtime symbol (#528, #527).
+                  ;; Other `length` argument types keep the ordinary direct-call path.
+                  ;; `string-ref`/`char-at` likewise recover their String byte-index
+                  ;; builtin here unless shadowed (#677).
+                  (let
+                    [name-id : i64 (intern name)]
+                    [builtin-available : bool
+                      (not (lower-top-level-value-defined? ctx name))]
+                    (cond
+                      (and builtin-available (tc-layout-query-name? name))
+                      (ErrLowerExpr
+                        (lower-diagnostic-at-expr
+                          origin
                           (string-append
-                            name
-                            " is compile-time only; wrap it in (comptime ...)"))))
-                    (and
-                      builtin-available
-                      (compiler-builtin-lower-string-ref-call-id? name-id))
-                    (lower-string-ref-call
-                      ctx
-                      state
-                      env
-                      type-env
-                      name
-                      args
-                      result-ty
-                      origin)
-                    (and
-                      builtin-available
-                      (compiler-builtin-lower-length-call-id? name-id))
-                    (lower-array-length
-                      ctx
-                      state
-                      env
-                      type-env
-                      name
-                      args
-                      result-ty
-                      origin)
-                    (and builtin-available (lower-string-runtime-builtin? name))
-                    (lower-string-runtime-call
-                      ctx
-                      state
-                      env
-                      type-env
-                      name
-                      args
-                      result-ty
-                      origin)
-                    (and
-                      builtin-available
-                      (compiler-builtin-lower-cpuid-id? name-id))
-                    (lower-cpuid-call
-                      ctx
-                      state
-                      env
-                      type-env
-                      args
-                      result-ty
-                      origin)
-                    (and
-                      builtin-available
-                      (compiler-builtin-lower-xgetbv-id? name-id))
-                    (lower-xgetbv-call ctx state env type-env args origin)
-                    (and
-                      builtin-available
-                      (compiler-builtin-lower-clone-id? name-id))
-                    (match args
-                      [(AstExprCons arg tail)
-                        (let
-                          [arg : AstExpr (ast-node-get arg)]
-                          [tail : AstExprList (box-get tail)]
-                          (match tail
-                            [(AstExprNil)
-                              (lower-clone-call ctx state env type-env arg)]
-                            [_
-                              (ErrLowerExpr
-                                (lower-diagnostic
-                                  "lower: clone expects one argument"))]))]
-                      [_
-                        (ErrLowerExpr
-                          (lower-diagnostic "lower: clone expects one argument"))])
-                    (and builtin-available (lower-arena-builtin-id? name-id))
-                    (lower-arena-builtin-call
-                      ctx
-                      state
-                      env
-                      type-env
-                      name
-                      args
-                      result-ty)
-                    (and
-                      builtin-available
-                      (lower-bootstrap-runtime-builtin-id? name-id))
-                    (lower-bootstrap-runtime-call
-                      ctx
-                      state
-                      env
-                      type-env
-                      name
-                      args
-                      result-ty
-                      origin)
-                    (lower-call-non-builtin
-                      ctx
-                      state
-                      env
-                      type-env
-                      name
-                      args
-                      result-ty
-                      origin)))]
-              [(ErrTcString message)
-                (ErrLowerExpr (lower-diagnostic-at-expr origin message))])]))]
+                            "lower: "
+                            (string-append
+                              name
+                              " is compile-time only; wrap it in (comptime ...)"))))
+                      (and
+                        builtin-available
+                        (compiler-builtin-lower-string-ref-call-id? name-id))
+                      (lower-string-ref-call
+                        ctx
+                        state
+                        env
+                        type-env
+                        name
+                        args
+                        result-ty
+                        origin)
+                      (and
+                        builtin-available
+                        (compiler-builtin-lower-length-call-id? name-id))
+                      (lower-array-length
+                        ctx
+                        state
+                        env
+                        type-env
+                        name
+                        args
+                        result-ty
+                        origin)
+                      (and
+                        builtin-available
+                        (lower-string-runtime-builtin? name))
+                      (lower-string-runtime-call
+                        ctx
+                        state
+                        env
+                        type-env
+                        name
+                        args
+                        result-ty
+                        origin)
+                      (and
+                        builtin-available
+                        (compiler-builtin-lower-cpuid-id? name-id))
+                      (lower-cpuid-call
+                        ctx
+                        state
+                        env
+                        type-env
+                        args
+                        result-ty
+                        origin)
+                      (and
+                        builtin-available
+                        (compiler-builtin-lower-xgetbv-id? name-id))
+                      (lower-xgetbv-call ctx state env type-env args origin)
+                      (and
+                        builtin-available
+                        (compiler-builtin-lower-clone-id? name-id))
+                      (match args
+                        [(AstExprCons arg tail)
+                          (let
+                            [arg : AstExpr (ast-node-get arg)]
+                            [tail : AstExprList (box-get tail)]
+                            (match tail
+                              [(AstExprNil)
+                                (lower-clone-call ctx state env type-env arg)]
+                              [_
+                                (ErrLowerExpr
+                                  (lower-diagnostic
+                                    "lower: clone expects one argument"))]))]
+                        [_
+                          (ErrLowerExpr
+                            (lower-diagnostic
+                              "lower: clone expects one argument"))])
+                      (and builtin-available (lower-arena-builtin-id? name-id))
+                      (lower-arena-builtin-call
+                        ctx
+                        state
+                        env
+                        type-env
+                        name
+                        args
+                        result-ty)
+                      (and
+                        builtin-available
+                        (lower-bootstrap-runtime-builtin-id? name-id))
+                      (lower-bootstrap-runtime-call
+                        ctx
+                        state
+                        env
+                        type-env
+                        name
+                        args
+                        result-ty
+                        origin)
+                      (lower-call-non-builtin
+                        ctx
+                        state
+                        env
+                        type-env
+                        name
+                        args
+                        result-ty
+                        origin)))]
+                [(ErrTcString message)
+                  (ErrLowerExpr (lower-diagnostic-at-expr origin message))])])))]
     [_
       (match (lower-expr ctx state env type-env func)
         [(OkLowerExpr lowered-func)
@@ -18896,7 +18996,21 @@
   [origin : AstExpr]) : ResultLowerExpr
   (match (ast-expr-unspan place)
     [(AstExprVar name)
-      (lower-mutable-var-address-id ctx state env type-env name origin)]
+      (let
+        [name-text : String (intern-str name)]
+        (if (tc-dotted-local-field-name-id? type-env name)
+          (match (tc-dotted-local-field-expr-id type-env name-text)
+            [(OkTcExprId virtual-id)
+              (lower-mutable-place-address
+                ctx
+                state
+                env
+                type-env
+                (ast-node-get virtual-id)
+                origin)]
+            [(ErrTcExprId message)
+              (ErrLowerExpr (lower-diagnostic-at-expr origin message))])
+          (lower-mutable-var-address-id ctx state env type-env name origin)))]
     [(AstExprStructGet receiver-box field)
       (let
         [receiver : AstExpr (ast-node-get receiver-box)]
@@ -26047,42 +26161,51 @@
     [(AstExprVar raw-name)
       (let
         [raw-text : String (intern-str raw-name)]
-        (match (sym-i64-lookup env raw-text)
-          [(SomeI64 _)
-            (lower-return-expr-generic
-              ctx
-              state
-              env
-              type-env
-              origin
-              ret-ty
-              sret-var)]
-          [(NoneI64)
-            (match (if (tc-hygiene-global-name? raw-text)
-              (OkTcString (tc-hygiene-global-call-name raw-text))
-              (if (tc-name-qualified? raw-text)
-                (OkTcString raw-text)
-                (tc-source-name-lookup-key ctx type-env raw-text)))
-              [(OkTcString name)
-                (lower-return-call-name-to-sret
-                  ctx
-                  state
-                  env
-                  type-env
-                  name
-                  args
-                  ret-ty
-                  sret-var
-                  origin)]
-              [(ErrTcString _)
-                (lower-return-expr-generic
-                  ctx
-                  state
-                  env
-                  type-env
-                  origin
-                  ret-ty
-                  sret-var)])]))]
+        (if (tc-dotted-local-field-name? type-env raw-text)
+          (lower-return-expr-generic
+            ctx
+            state
+            env
+            type-env
+            origin
+            ret-ty
+            sret-var)
+          (match (sym-i64-lookup env raw-text)
+            [(SomeI64 _)
+              (lower-return-expr-generic
+                ctx
+                state
+                env
+                type-env
+                origin
+                ret-ty
+                sret-var)]
+            [(NoneI64)
+              (match (if (tc-hygiene-global-name? raw-text)
+                (OkTcString (tc-hygiene-global-call-name raw-text))
+                (if (tc-name-qualified? raw-text)
+                  (OkTcString raw-text)
+                  (tc-source-name-lookup-key ctx type-env raw-text)))
+                [(OkTcString name)
+                  (lower-return-call-name-to-sret
+                    ctx
+                    state
+                    env
+                    type-env
+                    name
+                    args
+                    ret-ty
+                    sret-var
+                    origin)]
+                [(ErrTcString _)
+                  (lower-return-expr-generic
+                    ctx
+                    state
+                    env
+                    type-env
+                    origin
+                    ret-ty
+                    sret-var)])])))]
     [_
       (lower-return-expr-generic ctx state env type-env origin ret-ty sret-var)]))
 

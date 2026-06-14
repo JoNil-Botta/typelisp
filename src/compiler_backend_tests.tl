@@ -841,7 +841,7 @@
     (compiler-backend-string-contains? asm ".globl main\n")
     (compiler-backend-string-contains? asm "main:\n")
     (compiler-backend-string-contains? asm "    call main\n")
-    (compiler-backend-string-contains? asm "    xorq %rax, %rax\n")
+    (compiler-backend-string-contains? asm "    xorl %eax, %eax\n")
     (compiler-backend-string-contains? asm ".text\n")
     true))
 
@@ -856,7 +856,7 @@
   (backend-and4
     (compiler-backend-string-contains? asm ".globl main\n")
     (compiler-backend-string-contains? asm "main:\n")
-    (compiler-backend-string-contains? asm "    xorq %rax, %rax\n")
+    (compiler-backend-string-contains? asm "    xorl %eax, %eax\n")
     (not (compiler-backend-string-contains? asm "\n_start:\n"))))
 
 (define (compiler-backend-implicit-main-ok?) : bool
@@ -2144,7 +2144,7 @@
         (AstTyI64)
         index
         8)
-        [(OkCompilerBackend asm) (string-eq asm "    xorq %r12, %r12\n")]
+        [(OkCompilerBackend asm) (string-eq asm "    xorl %r12d, %r12d\n")]
         [(ErrCompilerBackend _) false])
       (match (compiler-backend-emit-mov
         CompilerRegAssignmentNil
@@ -2695,7 +2695,7 @@
     CompilerRegAssignmentNil
     (IrValueI64 0)
     "%rax")
-    [(OkCompilerBackend asm) (string-eq asm "    xorq %rax, %rax\n")]
+    [(OkCompilerBackend asm) (string-eq asm "    xorl %eax, %eax\n")]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-zero-compare-ok?) : bool

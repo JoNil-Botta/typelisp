@@ -10062,6 +10062,202 @@
         ret
         (tc-expr-c-abi-fnptr? ctx env func))]))
 
+(define (tc-thread-name-base-eq? [name : String] [base : String]) : bool
+  (if (string-eq name base)
+    true
+    (if (tc-name-qualified? name)
+      (string-eq (tc-qualified-name-base name) base)
+      false)))
+
+(define (tc-thread-spawn-i64-name? [name : String]) : bool
+  (tc-thread-name-base-eq? name "thread-spawn-i64"))
+
+(define (tc-thread-spawn-i64-call? [func : AstExpr]) : bool
+  (match (tc-expr-var-name func)
+    [(TcSomeString name) (tc-thread-spawn-i64-name? name)]
+    [(TcNoString) false]))
+
+(define (tc-thread-spawn-i64-result-type? [ctx : TcContext] [ty : AstType]) : bool
+  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(AstTyEnum name)
+      (tc-thread-name-base-eq? (intern-str name) "ThreadI64SpawnResult")]
+    [(AstTyEnumArgs name _)
+      (tc-thread-name-base-eq? (intern-str name) "ThreadI64SpawnResult")]
+    [_ false]))
+
+(define (tc-thread-spawn-i64-task-type? [ctx : TcContext] [ty : AstType]) : bool
+  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(AstTyFunc task-params task-ret-box)
+      (match task-params
+        [(AstTypeNil)
+          (match (tc-type-strip-region
+            (tc-resolve-type ctx (ty-node-get task-ret-box)))
+            [(AstTyI64) true]
+            [_ false])]
+        [_ false])]
+    [_ false]))
+
+(define (tc-thread-spawn-i64-signature?
+  [ctx : TcContext]
+  [params : AstTypeList]
+  [ret : AstType]) : bool
+  (and
+    (tc-thread-spawn-i64-result-type? ctx ret)
+    (match params
+      [(AstTypeCons task-param rest-box)
+        (match (box-get rest-box)
+          [(AstTypeNil)
+            (tc-thread-spawn-i64-task-type? ctx (ty-node-get task-param))]
+          [_ false])]
+      [_ false])))
+
+(define (tc-thread-spawn-i64-safe-capture-type?
+  [ctx : TcContext]
+  [ty : AstType]) : bool
+  (if (tc-type-contains-any-region ty)
+    false
+    (let
+      [resolved : AstType (tc-type-strip-region (tc-resolve-type ctx ty))]
+      (if (tc-integer-type? resolved)
+        true
+        (match resolved
+          [(AstTyF64) true]
+          [(AstTyF32) true]
+          [(AstTyBool) true]
+          [(AstTyChar) true]
+          [(AstTyUnit) true]
+          [_ false])))))
+
+(define (tc-thread-spawn-i64-capture-message
+  [ctx : TcContext]
+  [name : String]
+  [ty : AstType]) : String
+  (str-cat
+    "typecheck: thread-spawn-i64 cannot capture `"
+    name
+    "` of type "
+    (tc-type-render (tc-type-without-regions (tc-resolve-type ctx ty)))
+    "; only copyable scalar captures are safe"))
+
+(define (tc-check-thread-spawn-i64-captures-scan-root
+  [ctx : TcContext]
+  [root : TcTypeEnv]
+  [env : TcTypeEnv]
+  [bound : TcStringList]
+  [body : AstExpr]) : ResultTcUnit
+  (match env
+    [(TcTypeNil) OkTcUnit]
+    [(TcTypeCache _ _ _ _ _ scan-through _ rest _)
+      (if scan-through
+        (tc-check-thread-spawn-i64-captures-scan-root
+          ctx
+          root
+          (box-get rest)
+          bound
+          body)
+        OkTcUnit)]
+    [(TcTypeBind key ty rest)
+      (let
+        [name : String (intern-str key)]
+        (cond
+          (or
+            (= key (tc-region-marker-id))
+            (= key (tc-default-boundary-id))
+            (tc-cleanup-owner-marker-entry? key ty))
+          (tc-check-thread-spawn-i64-captures-scan-root
+            ctx
+            root
+            (box-get rest)
+            bound
+            body)
+          (not (tc-expr-uses-free-name? body name bound))
+          (tc-check-thread-spawn-i64-captures-scan-root
+            ctx
+            root
+            (box-get rest)
+            bound
+            body)
+          (tc-expr-sets-free-name? body name bound)
+          (ErrTcUnit
+            "typecheck: thread-spawn-i64 lambda cannot assign captured binding")
+          (tc-cleanup-owner-active? root name)
+          (ErrTcUnit
+            "typecheck: thread-spawn-i64 cannot capture cleanup-required resource")
+          (tc-thread-spawn-i64-safe-capture-type? ctx ty)
+          (tc-check-thread-spawn-i64-captures-scan-root
+            ctx
+            root
+            (box-get rest)
+            bound
+            body)
+          (ErrTcUnit (tc-thread-spawn-i64-capture-message ctx name ty))))]))
+
+(define (tc-check-thread-spawn-i64-captures
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [params : AstParamList]
+  [body : AstExpr]) : ResultTcUnit
+  (match env
+    [(TcTypeCache _ _ _ _ _ _ _ rest _)
+      (tc-check-thread-spawn-i64-captures-scan-root
+        ctx
+        env
+        (box-get rest)
+        (tc-param-bound-names params)
+        body)]
+    [_
+      (tc-check-thread-spawn-i64-captures-scan-root
+        ctx
+        env
+        env
+        (tc-param-bound-names params)
+        body)]))
+
+(define (tc-check-thread-spawn-i64-direct-lambda
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [arg : AstExpr]) : ResultTcUnit
+  (match (tc-active-region env)
+    [(TcSomeString _)
+      (ErrTcUnit
+        "typecheck: thread-spawn-i64 cannot spawn from scoped arena; closure storage would not outlive the worker")]
+    [(TcNoString)
+      (match (ast-expr-unspan arg)
+        [(AstExprLambda params _ body-box)
+          (match params
+            [(AstParamNil)
+              (tc-check-thread-spawn-i64-captures
+                ctx
+                env
+                params
+                (ast-node-get body-box))]
+            [_
+              (ErrTcUnit
+                "typecheck: thread-spawn-i64 requires a direct nullary lambda argument so captures can be checked")])]
+        [_
+          (ErrTcUnit
+            "typecheck: thread-spawn-i64 requires a direct nullary lambda argument so captures can be checked")])]))
+
+(define (tc-check-thread-spawn-i64-call
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func : AstExpr]
+  [args : AstExprList]
+  [params : AstTypeList]
+  [ret : AstType]) : ResultTcUnit
+  (if (and
+    (tc-thread-spawn-i64-call? func)
+    (tc-thread-spawn-i64-signature? ctx params ret))
+    (match args
+      [(AstExprCons arg rest)
+        (match (box-get rest)
+          [(AstExprNil)
+            (tc-check-thread-spawn-i64-direct-lambda ctx env (ast-node-get arg))]
+          [_ (ErrTcUnit "typecheck: thread-spawn-i64 expects one argument")])]
+      [(AstExprNil)
+        (ErrTcUnit "typecheck: thread-spawn-i64 expects one argument")])
+    OkTcUnit))
+
 (define (tc-call-function-type-normal
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -10116,7 +10312,16 @@
                     constructor-target
                     arity-message
                     c-abi-args)
-                    [(OkTcUnit) (OkTcType (tc-tag-active-region env ret))]
+                    [(OkTcUnit)
+                      (match (tc-check-thread-spawn-i64-call
+                        ctx
+                        env
+                        func
+                        args
+                        params
+                        ret)
+                        [(OkTcUnit) (OkTcType (tc-tag-active-region env ret))]
+                        [(ErrTcUnit message) (ErrTcType message)])]
                     [(ErrTcUnit message) (ErrTcType message)])]
                 [_
                   (tc-call-lifetime-function-type
@@ -21474,8 +21679,14 @@
     [resolved : AstType (tc-type-strip-region (tc-resolve-type ctx ty))]
     (match resolved
       [(AstTyBox _) true]
-      [(AstTyStruct _) (tc-cleanup-owning-struct-type? ctx resolved)]
-      [(AstTyStructArgs _ _) (tc-cleanup-owning-struct-type? ctx resolved)]
+      [(AstTyStruct name)
+        (if (tc-thread-name-base-eq? (intern-str name) "ThreadI64")
+          true
+          (tc-cleanup-owning-struct-type? ctx resolved))]
+      [(AstTyStructArgs name _)
+        (if (tc-thread-name-base-eq? (intern-str name) "ThreadI64")
+          true
+          (tc-cleanup-owning-struct-type? ctx resolved))]
       [_ false])))
 
 ;; Matching a cleanup-owning enum consumes the whole scrutinee value. Ordinary

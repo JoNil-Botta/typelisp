@@ -32,6 +32,74 @@
     [(ThreadJoinOk code) code]
     [(ThreadJoinErr _) -1]))
 
+(define (thread-api-join-i64-code [result : ThreadI64JoinResult]) : i64
+  (match result
+    [(ThreadI64JoinOk code) code]
+    [(ThreadI64JoinErr _) -1]))
+
+(define (thread-api-safe-i64-expect
+  [spawn : ThreadI64SpawnResult]
+  [expected : i64]
+  [failure : i64]) : i64
+  (match spawn
+    [(ThreadI64SpawnErr _) failure]
+    [(ThreadI64SpawnOk thread)
+      (let
+        [code : i64 (thread-api-join-i64-code (thread-join-i64 thread))]
+        (if (= code expected)
+          42
+          failure))]))
+
+(define (thread-api-safe-i64-storm [count : i64]) : i64
+  (let
+    [i : i64 0]
+    [sum : i64 0]
+    [ok : bool true]
+    (begin
+      (while (< i count)
+        (let
+          [base : i64 i]
+          [expected : i64 (+ (* i 3) 1)]
+          [got : i64
+            (thread-api-safe-i64-expect
+              (thread-spawn-i64
+                (lambda () : i64
+                  (+ (* base 3) 1)))
+              expected
+              -1)]
+          (begin
+            (if (= got 42)
+              (set! sum (+ sum expected))
+              (set! ok false))
+            (set! i (+ i 1)))))
+      (if (and ok (= sum 92))
+        42
+        16))))
+
+(define (thread-api-safe-i64-run) : i64
+  (let
+    [base : i64 40]
+    [delta : i64 2]
+    [direct : i64
+      (thread-api-safe-i64-expect
+        (thread-spawn-i64
+          (lambda () : i64
+            17))
+        17
+        14)]
+    [captured : i64
+      (thread-api-safe-i64-expect
+        (thread-spawn-i64
+          (lambda () : i64
+            (+ base delta)))
+        42
+        15)]
+    (if (not (= direct 42))
+      direct
+      (if (not (= captured 42))
+        captured
+        (thread-api-safe-i64-storm 8)))))
+
 (define (thread-api-negative-semaphore-rejected?) : bool
   (match (thread-semaphore-create -1)
     [(ThreadSemaphoreErr _) true]
@@ -100,13 +168,17 @@
             [(ThreadSpawnOk b) (thread-api-finish-run sem a b out-a out-b)])]))))
 
 (define (main) : i64
-  (cond
-    (< (thread-default-worker-count) 1)
-    1
-    (not (thread-api-negative-semaphore-rejected?))
-    11
-    (not (thread-api-large-semaphore-rejected?))
-    12
-    (match (thread-semaphore-create 0)
-      [(ThreadSemaphoreErr _) 13]
-      [(ThreadSemaphoreOk sem) (thread-api-run-with-semaphore sem)])))
+  (let
+    [safe-code : i64 (thread-api-safe-i64-run)]
+    (cond
+      (< (thread-default-worker-count) 1)
+      1
+      (not (= safe-code 42))
+      safe-code
+      (not (thread-api-negative-semaphore-rejected?))
+      11
+      (not (thread-api-large-semaphore-rejected?))
+      12
+      (match (thread-semaphore-create 0)
+        [(ThreadSemaphoreErr _) 13]
+        [(ThreadSemaphoreOk sem) (thread-api-run-with-semaphore sem)]))))

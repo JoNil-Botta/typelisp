@@ -33,6 +33,20 @@
   (ThreadJoinOk i64)
   (ThreadJoinErr String))
 
+;: Typed handle returned by `thread-spawn-i64`.
+(defstruct ThreadI64
+  (raw Thread))
+
+;: Result returned by `thread-spawn-i64`.
+(defenum ThreadI64SpawnResult
+  (ThreadI64SpawnOk ThreadI64)
+  (ThreadI64SpawnErr String))
+
+;: Result returned by `thread-join-i64`.
+(defenum ThreadI64JoinResult
+  (ThreadI64JoinOk i64)
+  (ThreadI64JoinErr String))
+
 ;: Opaque counting semaphore handle.
 (defstruct ThreadSemaphore
   (handle i64))
@@ -276,6 +290,18 @@
 (define (thread-spawn [entry : (-> i64 i64)] [arg : i64]) : ThreadSpawnResult
   (cfg windows (thread-windows-spawn entry arg) (thread-linux-spawn entry arg)))
 
+;: Spawn a compiler-checked direct nullary closure returning `i64`.
+;:
+;: Safe calls must pass a direct lambda. The typechecker rejects captures that
+;: are not copyable scalar values and rejects calls from scoped arenas.
+(define (thread-spawn-i64 [task : (-> i64)]) : ThreadI64SpawnResult
+  (match (thread-spawn
+    (lambda ([ignored : i64]) : i64
+      (task))
+    0)
+    [(ThreadSpawnOk raw) (ThreadI64SpawnOk (ThreadI64 raw))]
+    [(ThreadSpawnErr message) (ThreadI64SpawnErr message)]))
+
 ;: Wait for a Linux raw-clone thread to clear its join cell.
 (define (thread-linux-join [thread : Thread]) : ThreadJoinResult
   (let
@@ -303,6 +329,12 @@
 ;: Join a thread and return the entry function's i64 result.
 (define (thread-join [thread : Thread]) : ThreadJoinResult
   (cfg windows (thread-windows-join thread) (thread-linux-join thread)))
+
+;: Join a typed `i64` thread and return its closure result.
+(define (thread-join-i64 [thread : ThreadI64]) : ThreadI64JoinResult
+  (match (thread-join (struct-get thread raw))
+    [(ThreadJoinOk value) (ThreadI64JoinOk value)]
+    [(ThreadJoinErr message) (ThreadI64JoinErr message)]))
 
 ;: Count set bits in a positive byte value.
 (define (thread-count-byte-bits [byte : i64]) : i64

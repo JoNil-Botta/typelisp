@@ -2340,8 +2340,8 @@ else
         "_tl_inc:" \
         "_tl_math_inc:" \
         "_tl_public_tool_pkg_src_math_inc" \
-        '    movq $41, %rcx' \
-        '    movq $41, %rdi'
+        '    movl $41, %ecx' \
+        '    movl $41, %edi'
     assert_contains "$PKG_ASM" "add_one"
     assert_contains "$PKG_ASM" "_tl_math_src_lib_add_one"
     assert_contains "$PKG_ASM" "_tl_stdlib_runtime_runtime_os_write"

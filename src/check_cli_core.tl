@@ -5,7 +5,7 @@
 ;; duplicate `main`.
 (import "../stdlib/io.tl")
 
-(import "../stdlib/list.tl")
+(import "../stdlib/vector.tl")
 
 (import "compiler_check_core.tl")
 
@@ -162,33 +162,42 @@
         (print-error (compiler-diagnostic-render diag))
         1)]))
 
-(define (selfhost-check-package-sources
-  [sources : StringList]
+(define (selfhost-check-package-sources-from
+  [sources : StringVec]
+  [index : i64]
   [stdlib-roots : StringVec]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : i64
-  (match sources
-    [(StringNil) 0]
-    [(StringCons source rest)
-      (let
-        [status : i64
-          (selfhost-check-package-source source stdlib-roots manifest-dir deps)]
-        (if (= status 0)
-          (let
-            [doctest-status : i64
-              (selfhost-check-package-source-doctests
-                source
-                stdlib-roots
-                manifest-dir
-                deps)]
-            (if (= doctest-status 0)
-              (selfhost-check-package-sources
-                (box-get rest)
-                stdlib-roots
-                manifest-dir
-                deps)
-              doctest-status))
-          status))]))
+  (if (>= index (string-vec-len sources))
+    0
+    (let
+      [source : String (string-vec-get sources index "")]
+      [status : i64
+        (selfhost-check-package-source source stdlib-roots manifest-dir deps)]
+      (if (= status 0)
+        (let
+          [doctest-status : i64
+            (selfhost-check-package-source-doctests
+              source
+              stdlib-roots
+              manifest-dir
+              deps)]
+          (if (= doctest-status 0)
+            (selfhost-check-package-sources-from
+              sources
+              (+ index 1)
+              stdlib-roots
+              manifest-dir
+              deps)
+            doctest-status))
+        status))))
+
+(define (selfhost-check-package-sources
+  [sources : StringVec]
+  [stdlib-roots : StringVec]
+  [manifest-dir : String]
+  [deps : CompilerPkgDeps]) : i64
+  (selfhost-check-package-sources-from sources 0 stdlib-roots manifest-dir deps))
 
 (define (selfhost-check-package
   [manifest-path : String]

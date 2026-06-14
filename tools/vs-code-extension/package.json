@@ -2,7 +2,7 @@
   "name": "typelisp",
   "displayName": "TypeLisp",
   "description": "Syntax highlighting and LSP client for the TypeLisp language.",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "publisher": "typelisp",
   "license": "UNLICENSED",
   "repository": {
@@ -28,7 +28,7 @@
     "check": "tsc -p . --noEmit",
     "lint": "npm run check",
     "package": "npm run package:smoke",
-    "package:smoke": "node -e \"require('fs').mkdirSync('dist', { recursive: true })\" && vsce package --out dist/typelisp-0.0.1.vsix",
+    "package:smoke": "node -e \"require('fs').mkdirSync('dist', { recursive: true })\" && vsce package --out dist/typelisp-0.1.0.vsix",
     "smoke": "npm run compile && npm run package:smoke"
   },
   "contributes": {

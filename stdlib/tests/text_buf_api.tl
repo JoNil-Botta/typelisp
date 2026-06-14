@@ -45,6 +45,16 @@
           "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
           "balanced repeated append")))
     (assert-text-buf
+      (text-buf-append
+        (text-buf-append
+          (text-buf-append
+            (text-buf-append (text-buf-empty) "0123456789abcdefg")
+            "a")
+          "b")
+        "0123456789abcdefg")
+      "0123456789abcdefgab0123456789abcdefg"
+      "mixed small and large chunks")
+    (assert-text-buf
       (text-buf-append-int
         (text-buf-append-char
           (text-buf-append-char

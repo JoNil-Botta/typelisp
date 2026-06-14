@@ -133,9 +133,9 @@
           f)))))")
 
 (define (compiler-typecheck-reference-lambda-mutable-reject-source) : String
-  "(define (read [r : (&mut n i64)]) : i64 42)
-(define (main [n : i64]) : i64
-  (let [r : (&mut n i64) (&mut n)]
+  "(define (read [r : (&mut items i64)]) : i64 42)
+(define (main [items : (Array i64)]) : i64
+  (let [r : (&mut items i64) (&mut (array-ref items 0))]
     ((lambda () : i64 (read r)))))")
 
 (define (compiler-typecheck-reference-tuple-return-ok-source) : String

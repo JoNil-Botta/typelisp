@@ -7502,6 +7502,19 @@
     (let [s : (&mut n i64) (&mut n)] unit)
     n))")
 
+(define (compiler-typecheck-live-mut-borrow-array-post-scope-source) : String
+  "(define (main [items : (Array i64)]) : unit
+  (begin
+    (let [r : (&mut items i64) (&mut (array-ref items 0))] unit)
+    (let [s : (&mut items i64) (&mut (array-ref items 0))] unit)))")
+
+(define (compiler-typecheck-live-mut-borrow-register-resident-binding-source) : String
+  "(defstruct Pair (x i64) (y i64))
+(define (bad) : unit
+  (let
+    [p : Pair (Pair 1 2)]
+    (let [r : (&mut p Pair) (&mut p)] unit)))")
+
 (define (compiler-typecheck-live-mut-borrow-function-call-source) : String
   "(define (take [r : (&mut n i64)]) : unit unit)
 (define (main [n : i64]) : unit
@@ -7510,19 +7523,19 @@
     (set! n 3)))")
 
 (define (compiler-typecheck-live-mut-borrow-duplicate-source) : String
-  "(define (bad [n : i64]) : unit
-  (let [r : (&mut n i64) (&mut n)]
-    (let [s : (&mut n i64) (&mut n)] unit)))")
+  "(define (bad [items : (Array i64)]) : unit
+  (let [r : (&mut items i64) (&mut (array-ref items 0))]
+    (let [s : (&mut items i64) (&mut (array-ref items 0))] unit)))")
 
 (define (compiler-typecheck-live-mut-borrow-after-immut-source) : String
-  "(define (bad [n : i64]) : unit
-  (let [r : (& n i64) (& n)]
-    (let [s : (&mut n i64) (&mut n)] unit)))")
+  "(define (bad [items : (Array i64)]) : unit
+  (let [r : (& items i64) (& (array-ref items 0))]
+    (let [s : (&mut items i64) (&mut (array-ref items 0))] unit)))")
 
 (define (compiler-typecheck-live-immut-borrow-after-mut-source) : String
-  "(define (bad [n : i64]) : unit
-  (let [r : (&mut n i64) (&mut n)]
-    (let [s : (& n i64) (& n)] unit)))")
+  "(define (bad [items : (Array i64)]) : unit
+  (let [r : (&mut items i64) (&mut (array-ref items 0))]
+    (let [s : (& items i64) (& (array-ref items 0))] unit)))")
 
 (define (compiler-typecheck-live-mut-borrow-call-duplicate-source) : String
   "(define (take2 [a : (&mut n i64)] [b : (&mut n i64)]) : unit unit)
@@ -7530,11 +7543,9 @@
   (take2 (&mut n) (&mut n)))")
 
 (define (compiler-typecheck-live-mut-borrow-assign-source) : String
-  "(define (bad [n : i64]) : i64
-  (let [r : (&mut n i64) (&mut n)]
-    (begin
-      (set! n 2)
-      n)))")
+  "(define (bad [items : (Array i64)]) : unit
+  (let [r : (&mut items i64) (&mut (array-ref items 0))]
+    (array-set! items 0 2)))")
 
 (define (compiler-typecheck-live-mut-borrow-array-set-source) : String
   "(define (bad [items : (Array i64)]) : unit
@@ -7611,8 +7622,18 @@
         "typecheck: cannot assign to borrowed place `items.#array.0`")
         unit
         (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-live-mut-borrow-post-scope-source)
+        "typecheck: mutable borrow of by-value place is only supported as an immediate call argument")
+        unit
+        (set! ok false))
       (if (compiler-typecheck-ok?
-        (compiler-typecheck-live-mut-borrow-post-scope-source))
+        (compiler-typecheck-live-mut-borrow-array-post-scope-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-live-mut-borrow-register-resident-binding-source)
+        "typecheck: mutable borrow of by-value place is only supported as an immediate call argument")
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
@@ -7621,17 +7642,17 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-live-mut-borrow-duplicate-source)
-        "typecheck: cannot mutably borrow borrowed place `n`")
+        "typecheck: cannot mutably borrow borrowed place `items.#array.0`")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-live-mut-borrow-after-immut-source)
-        "typecheck: cannot mutably borrow borrowed place `n`")
+        "typecheck: cannot mutably borrow borrowed place `items.#array.0`")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-live-immut-borrow-after-mut-source)
-        "typecheck: cannot immutably borrow mutably borrowed place `n`")
+        "typecheck: cannot immutably borrow mutably borrowed place `items.#array.0`")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -7641,7 +7662,7 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-live-mut-borrow-assign-source)
-        "typecheck: cannot assign to borrowed place `n`")
+        "typecheck: cannot assign to borrowed place `items.#array.0`")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?

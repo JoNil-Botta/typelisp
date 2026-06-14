@@ -1195,6 +1195,10 @@ Borrow expressions are specified as:
   lifetime/arena name to be `arena`; otherwise the checker reports a type error.
 - `(&mut place)` and `(&mut arena place)` create mutable references with the
   same lifetime inference and explicit-lifetime check.
+- Mutable borrows of scalar/register-resident by-value locals are supported only
+  as immediate call arguments. The compiler materializes a temporary and writes
+  it back after the call. Binding or storing such a mutable reference is rejected
+  until lexical-scope writeback support exists.
 - Borrow expressions are the explicit spelling. At call sites, a parameter of
   type `(& lifetime T)` may also auto-borrow an argument place under the same
   immutable borrow rules below. There is no general implicit conversion from

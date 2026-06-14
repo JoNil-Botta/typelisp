@@ -6697,23 +6697,19 @@
   [value : CompilerIrValue]
   [stack-idx : i64]
   [size : i64]) : ResultCompilerBackend
-  (if (<= size 0)
-    (OkCompilerBackend "")
-    (match (compiler-backend-emit-load-value-with-plan assignments value "%r11")
-      [(OkCompilerBackend src-asm)
-        (OkCompilerBackend
+  (match (compiler-backend-emit-load-value-with-plan assignments value "%r11")
+    [(OkCompilerBackend src-asm)
+      (OkCompilerBackend
+        (string-append
+          src-asm
           (string-append
-            src-asm
-            (string-append
-              (backend-cat5
-                "    leaq "
-                (int->string
-                  (compiler-backend-outgoing-stack-arg-offset target stack-idx))
-                "(%rsp), %r10\n"
-                ""
-                "")
-              (compiler-backend-emit-copy-bytes-chunks 0 size))))]
-      [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
+            (backend-cat3
+              "    leaq "
+              (int->string
+                (compiler-backend-outgoing-stack-arg-offset target stack-idx))
+              "(%rsp), %r10\n")
+            (compiler-backend-emit-copy-bytes-chunks 0 size))))]
+    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
 
 (define (compiler-backend-emit-load-from-gep
   [assignments : CompilerRegAssignmentList]
@@ -8636,17 +8632,19 @@
               tail)]
           [(AstTypeNil) AstTypeNil])]
       [is-float : bool (compiler-backend-float-type? arg-ty)]
+      [memory-aggregate? : bool
+        (compiler-backend-c-memory-aggregate-type? target c-abi? arg-ty)]
       [memory-size : i64
-        (compiler-backend-c-memory-aggregate-marker-size args (+ arg-index 1))]
+        (if memory-aggregate?
+          (compiler-backend-c-memory-aggregate-marker-size args (+ arg-index 1))
+          0)]
       ;; #2386: a register-group arg occupies two integer slots and, when it does
       ;; not fit in the remaining arg registers, two stack slots -- mirror exactly
       ;; what emit-call-args does so the reserved frame space matches. That
       ;; includes Windows: emit-call-args groups on BOTH targets (indexing by
       ;; `position` there), so counting a Windows group arg as one scalar slot
       ;; made tail-call stack accounting diverge from emission.
-      (if (and
-        (> memory-size 0)
-        (compiler-backend-c-memory-aggregate-type? target c-abi? arg-ty))
+      (if (> memory-size 0)
         (compiler-backend-call-stack-arg-count
           target
           args
@@ -9175,17 +9173,19 @@
         (if is-float
           (+ float-idx 1)
           float-idx)]
+      [memory-aggregate? : bool
+        (compiler-backend-c-memory-aggregate-type? target c-abi? arg-ty)]
       [memory-size : i64
-        (compiler-backend-c-memory-aggregate-marker-size args (+ arg-index 1))]
+        (if memory-aggregate?
+          (compiler-backend-c-memory-aggregate-marker-size args (+ arg-index 1))
+          0)]
       ;; #2386: a register-group argument occupies TWO consecutive integer arg
       ;; registers. Linux SysV indexes them by `int-idx`; Windows by the unified
       ;; `position`. The selfhost only passes register-group values between its own
       ;; functions (never to an `(:abi c)` boundary), so a 2-register/2-stack-slot
       ;; convention with a %rax:%rdx return is self-consistent on both targets.
       (cond
-        (and
-          (> memory-size 0)
-          (compiler-backend-c-memory-aggregate-type? target c-abi? arg-ty))
+        (> memory-size 0)
         (match (compiler-backend-emit-c-memory-stack-arg
           target
           assignments

@@ -2310,6 +2310,56 @@
 (define (lsp-builtin-hover [name : String]) : String
   (cond
     (or
+      (string-eq name "i64")
+      (string-eq name "i32")
+      (string-eq name "i16")
+      (string-eq name "i8"))
+    (lsp-hover-markdown
+      name
+      "Signed integer (two's complement) of the named bit width.")
+    (or
+      (string-eq name "u64")
+      (string-eq name "u32")
+      (string-eq name "u16")
+      (string-eq name "u8"))
+    (lsp-hover-markdown name "Unsigned integer of the named bit width.")
+    (or (string-eq name "f64") (string-eq name "f32"))
+    (lsp-hover-markdown name "IEEE-754 floating-point number (64- or 32-bit).")
+    (string-eq name "bool")
+    (lsp-hover-markdown "bool" "Boolean: `true` or `false`.")
+    (string-eq name "char")
+    (lsp-hover-markdown "char" "A character value (written like `#a'`).")
+    (string-eq name "String")
+    (lsp-hover-markdown "String" "Owned, heap-allocated UTF-8 string.")
+    (string-eq name "str")
+    (lsp-hover-markdown "str" "Borrowed string slice (used as `(& str)`).")
+    (string-eq name "unit")
+    (lsp-hover-markdown "unit" "The unit type; its only value is `unit`.")
+    (string-eq name "never")
+    (lsp-hover-markdown
+      "never"
+      "The empty type, for expressions that never return (e.g. `panic`).")
+    (string-eq name "Array")
+    (lsp-hover-markdown
+      "(Array T)"
+      "Dynamically sized, heap-allocated array of `T`.")
+    (string-eq name "Tuple")
+    (lsp-hover-markdown
+      "(Tuple A B ...)"
+      "Fixed-size tuple of the given element types.")
+    (string-eq name "Box")
+    (lsp-hover-markdown
+      "(Box T)"
+      "Heap-allocated `T`; used for recursive data structures.")
+    (string-eq name "Ptr")
+    (lsp-hover-markdown
+      "(Ptr T)"
+      "Raw immutable pointer to `T` (unsafe to dereference).")
+    (string-eq name "MutPtr")
+    (lsp-hover-markdown
+      "(MutPtr T)"
+      "Raw mutable pointer to `T` (unsafe to dereference).")
+    (or
       (string-eq name "+")
       (string-eq name "-")
       (string-eq name "*")
@@ -2474,7 +2524,9 @@
           (let
             [needle : String (lsp-symbol-base sym)]
             [bind-type : String (lsp-binding-type text needle off)]
-            (if (not (string-eq bind-type ""))
+            [builtin : String (lsp-builtin-hover needle)]
+            (cond
+              (not (string-eq bind-type ""))
               (lsp-write-response
                 id
                 (lsp-hover-result
@@ -2484,6 +2536,10 @@
                   line0
                   char0
                   (string-length sym)))
+              (not (string-eq builtin ""))
+              (lsp-write-response
+                id
+                (lsp-hover-result builtin line0 char0 (string-length sym)))
               (match (lsp-hover-resolve docs uri path text stdlib-roots needle)
                 [(FoundDefSource def-text form-off)
                   (lsp-write-response
@@ -2515,18 +2571,7 @@
                           line0
                           char0
                           (string-length sym)))]
-                    [(MissingVariant)
-                      (let
-                        [builtin : String (lsp-builtin-hover needle)]
-                        (if (string-eq builtin "")
-                          (lsp-write-response id JsonNull)
-                          (lsp-write-response
-                            id
-                            (lsp-hover-result
-                              builtin
-                              line0
-                              char0
-                              (string-length sym)))))])])))))]
+                    [(MissingVariant) (lsp-write-response id JsonNull)])])))))]
     [(MissingLspDocument) (lsp-write-response id JsonNull)]))
 
 (define (lsp-handle-hover

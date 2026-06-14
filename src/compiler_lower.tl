@@ -20972,6 +20972,8 @@
         [(AstTyF32) 8]
         [(AstTyI32) 8]
         [(AstTyU32) 8]
+        [(AstTyI16) 16]
+        [(AstTyU16) 16]
         [(AstTyI8) 32]
         [(AstTyU8) 32]
         [_ 0])]
@@ -20983,6 +20985,8 @@
         [(AstTyF32) 8]
         [(AstTyI32) 8]
         [(AstTyU32) 8]
+        [(AstTyI16) 16]
+        [(AstTyU16) 16]
         [(AstTyI8) 32]
         [(AstTyU8) 32]
         [_ 0])]
@@ -20994,6 +20998,8 @@
         [(AstTyF32) 8]
         [(AstTyI32) 8]
         [(AstTyU32) 8]
+        [(AstTyI16) 16]
+        [(AstTyU16) 16]
         [(AstTyI8) 32]
         [(AstTyU8) 32]
         [_ 0])]
@@ -21005,6 +21011,8 @@
         [(AstTyF32) 16]
         [(AstTyI32) 16]
         [(AstTyU32) 16]
+        [(AstTyI16) 32]
+        [(AstTyU16) 32]
         [(AstTyI8) 64]
         [(AstTyU8) 64]
         [_ 0])]
@@ -21016,6 +21024,8 @@
         [(AstTyF32) 16]
         [(AstTyI32) 16]
         [(AstTyU32) 16]
+        [(AstTyI16) 32]
+        [(AstTyU16) 32]
         [(AstTyI8) 64]
         [(AstTyU8) 64]
         [_ 0])]
@@ -21027,6 +21037,8 @@
         [(AstTyF32) 16]
         [(AstTyI32) 16]
         [(AstTyU32) 16]
+        [(AstTyI16) 32]
+        [(AstTyU16) 32]
         [(AstTyI8) 64]
         [(AstTyU8) 64]
         [_ 0])]
@@ -35585,6 +35597,18 @@
     ([i : i64 0 n])
     (array-set! out i (+ (array-ref a i) (array-ref b i)))))")
 
+(define (compiler-lower-avx2-foreach-map-i16-source) : String
+  "(define (fill [a : (Array i16)] [b : (Array i16)] [out : (Array i16)] [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (array-set! out i (+ (array-ref a i) (array-ref b i)))))")
+
+(define (compiler-lower-avx2-foreach-map-u16-source) : String
+  "(define (fill [a : (Array u16)] [b : (Array u16)] [out : (Array u16)] [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (array-set! out i (+ (array-ref a i) (array-ref b i)))))")
+
 (define (compiler-lower-avx2-foreach-map-f64-source) : String
   "(define (fill [a : (Array f64)] [b : (Array f64)] [out : (Array f64)] [n : i64]) : unit
   (foreach
@@ -35617,6 +35641,18 @@
 
 (define (compiler-lower-avx2-foreach-map-uniform-i32-source) : String
   "(define (fill [a : (Array i32)] [b : (Array i32)] [out : (Array i32)] [n : i64] [r : i32]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (array-set! out i (+ (+ (array-ref a i) (array-ref b i)) r))))")
+
+(define (compiler-lower-avx2-foreach-map-uniform-i16-source) : String
+  "(define (fill [a : (Array i16)] [b : (Array i16)] [out : (Array i16)] [n : i64] [r : i16]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (array-set! out i (+ (+ (array-ref a i) (array-ref b i)) r))))")
+
+(define (compiler-lower-avx2-foreach-map-uniform-u16-source) : String
+  "(define (fill [a : (Array u16)] [b : (Array u16)] [out : (Array u16)] [n : i64] [r : u16]) : unit
   (foreach
     ([i : i64 0 n])
     (array-set! out i (+ (+ (array-ref a i) (array-ref b i)) r))))")
@@ -35705,6 +35741,14 @@
       (AstTyI32)
       8)
     (compiler-lower-avx2-foreach-map-source-shape-ok?
+      (compiler-lower-avx2-foreach-map-i16-source)
+      (AstTyI16)
+      16)
+    (compiler-lower-avx2-foreach-map-source-shape-ok?
+      (compiler-lower-avx2-foreach-map-u16-source)
+      (AstTyU16)
+      16)
+    (compiler-lower-avx2-foreach-map-source-shape-ok?
       (compiler-lower-avx2-foreach-map-f64-source)
       (AstTyF64)
       4)
@@ -35768,6 +35812,20 @@
       (compiler-lower-avx2-foreach-map-uniform-i32-source)
       (AstTyI32)
       8
+      2
+      2
+      6)
+    (compiler-lower-avx2-foreach-uniform-source-shape-ok?
+      (compiler-lower-avx2-foreach-map-uniform-i16-source)
+      (AstTyI16)
+      16
+      2
+      2
+      6)
+    (compiler-lower-avx2-foreach-uniform-source-shape-ok?
+      (compiler-lower-avx2-foreach-map-uniform-u16-source)
+      (AstTyU16)
+      16
       2
       2
       6)
@@ -35889,6 +35947,14 @@
       (AstTyI32)
       16)
     (compiler-lower-avx512-foreach-map-source-shape-ok?
+      (compiler-lower-avx2-foreach-map-i16-source)
+      (AstTyI16)
+      32)
+    (compiler-lower-avx512-foreach-map-source-shape-ok?
+      (compiler-lower-avx2-foreach-map-u16-source)
+      (AstTyU16)
+      32)
+    (compiler-lower-avx512-foreach-map-source-shape-ok?
       (compiler-lower-avx2-foreach-map-f64-source)
       (AstTyF64)
       8)
@@ -35963,6 +36029,22 @@
       (compiler-lower-avx2-foreach-map-uniform-i32-source)
       (AstTyI32)
       16
+      2
+      2
+      4
+      12)
+    (compiler-lower-avx512-foreach-uniform-source-shape-ok?
+      (compiler-lower-avx2-foreach-map-uniform-i16-source)
+      (AstTyI16)
+      32
+      2
+      2
+      4
+      12)
+    (compiler-lower-avx512-foreach-uniform-source-shape-ok?
+      (compiler-lower-avx2-foreach-map-uniform-u16-source)
+      (AstTyU16)
+      32
       2
       2
       4

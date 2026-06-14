@@ -218,6 +218,122 @@
       (fill-u8-scalar a b want n)
       (eq-u8 got want n))))
 
+(define (init-i16 [a : (Array i16)] [b : (Array i16)] [n : i64]) : unit
+  (let
+    [i : i64 0]
+    (while (< i n)
+      (begin
+        (array-set! a i (cast (+ (* i 257) 12000) : i16))
+        (array-set! b i (cast (+ (* i 13) 300) : i16))
+        (set! i (+ i 1))))))
+
+(define (fill-i16-foreach
+  [a : (Array i16)]
+  [b : (Array i16)]
+  [out : (Array i16)]
+  [n : i64]
+  [factor : i16]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (array-set! out i (+ (array-ref a i) (* (array-ref b i) factor)))))
+
+(define (fill-i16-scalar
+  [a : (Array i16)]
+  [b : (Array i16)]
+  [out : (Array i16)]
+  [n : i64]
+  [factor : i16]) : unit
+  (let
+    [i : i64 0]
+    (while (< i n)
+      (begin
+        (array-set! out i (+ (array-ref a i) (* (array-ref b i) factor)))
+        (set! i (+ i 1))))))
+
+(define (eq-i16 [a : (Array i16)] [b : (Array i16)] [n : i64]) : bool
+  (let
+    [i : i64 0]
+    [ok : bool true]
+    (begin
+      (while (< i n)
+        (begin
+          (if (!= (array-ref a i) (array-ref b i))
+            (set! ok false)
+            unit)
+          (set! i (+ i 1))))
+      ok)))
+
+(define (case-i16 [n : i64]) : bool
+  (let
+    [a : (Array i16) (make-array i16 n)]
+    [b : (Array i16) (make-array i16 n)]
+    [got : (Array i16) (make-array i16 n)]
+    [want : (Array i16) (make-array i16 n)]
+    [factor : i16 (cast 7 : i16)]
+    (begin
+      (init-i16 a b n)
+      (fill-i16-foreach a b got n factor)
+      (fill-i16-scalar a b want n factor)
+      (eq-i16 got want n))))
+
+(define (init-u16 [a : (Array u16)] [b : (Array u16)] [n : i64]) : unit
+  (let
+    [i : i64 0]
+    (while (< i n)
+      (begin
+        (array-set! a i (cast (+ (* i 257) 65000) : u16))
+        (array-set! b i (cast (+ (* i 37) 500) : u16))
+        (set! i (+ i 1))))))
+
+(define (fill-u16-foreach
+  [a : (Array u16)]
+  [b : (Array u16)]
+  [out : (Array u16)]
+  [n : i64]
+  [factor : u16]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (array-set! out i (+ (array-ref a i) (* (array-ref b i) factor)))))
+
+(define (fill-u16-scalar
+  [a : (Array u16)]
+  [b : (Array u16)]
+  [out : (Array u16)]
+  [n : i64]
+  [factor : u16]) : unit
+  (let
+    [i : i64 0]
+    (while (< i n)
+      (begin
+        (array-set! out i (+ (array-ref a i) (* (array-ref b i) factor)))
+        (set! i (+ i 1))))))
+
+(define (eq-u16 [a : (Array u16)] [b : (Array u16)] [n : i64]) : bool
+  (let
+    [i : i64 0]
+    [ok : bool true]
+    (begin
+      (while (< i n)
+        (begin
+          (if (!= (array-ref a i) (array-ref b i))
+            (set! ok false)
+            unit)
+          (set! i (+ i 1))))
+      ok)))
+
+(define (case-u16 [n : i64]) : bool
+  (let
+    [a : (Array u16) (make-array u16 n)]
+    [b : (Array u16) (make-array u16 n)]
+    [got : (Array u16) (make-array u16 n)]
+    [want : (Array u16) (make-array u16 n)]
+    [factor : u16 (cast 19 : u16)]
+    (begin
+      (init-u16 a b n)
+      (fill-u16-foreach a b got n factor)
+      (fill-u16-scalar a b want n factor)
+      (eq-u16 got want n))))
+
 (define (init-f64 [a : (Array f64)] [b : (Array f64)] [n : i64]) : unit
   (let
     [i : i64 0]
@@ -427,6 +543,42 @@
         unit
         (set! ok false))
       (if (case-u8 65)
+        unit
+        (set! ok false))
+      (if (case-i16 0)
+        unit
+        (set! ok false))
+      (if (case-i16 3)
+        unit
+        (set! ok false))
+      (if (case-i16 16)
+        unit
+        (set! ok false))
+      (if (case-i16 17)
+        unit
+        (set! ok false))
+      (if (case-i16 32)
+        unit
+        (set! ok false))
+      (if (case-i16 33)
+        unit
+        (set! ok false))
+      (if (case-u16 0)
+        unit
+        (set! ok false))
+      (if (case-u16 3)
+        unit
+        (set! ok false))
+      (if (case-u16 16)
+        unit
+        (set! ok false))
+      (if (case-u16 17)
+        unit
+        (set! ok false))
+      (if (case-u16 32)
+        unit
+        (set! ok false))
+      (if (case-u16 33)
         unit
         (set! ok false))
       (if (case-f64 0)

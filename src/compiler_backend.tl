@@ -733,6 +733,8 @@
     [(AstTyF32) (= lanes 8)]
     [(AstTyI32) (= lanes 8)]
     [(AstTyU32) (= lanes 8)]
+    [(AstTyI16) (= lanes 16)]
+    [(AstTyU16) (= lanes 16)]
     [(AstTyI8) (= lanes 32)]
     [(AstTyU8) (= lanes 32)]
     [_ false]))
@@ -899,6 +901,8 @@
         [(AstTyU64) "vpaddq"]
         [(AstTyI32) "vpaddd"]
         [(AstTyU32) "vpaddd"]
+        [(AstTyI16) "vpaddw"]
+        [(AstTyU16) "vpaddw"]
         [(AstTyI8) "vpaddb"]
         [(AstTyU8) "vpaddb"]
         [(AstTyF64) "vaddpd"]
@@ -908,6 +912,8 @@
       (match elem-ty
         [(AstTyI32) "vpmulld"]
         [(AstTyU32) "vpmulld"]
+        [(AstTyI16) "vpmullw"]
+        [(AstTyU16) "vpmullw"]
         [(AstTyF64) "vmulpd"]
         [(AstTyF32) "vmulps"]
         [_ ""])]
@@ -1043,6 +1049,28 @@
             (string-append
               asm
               "    vmovd %eax, %xmm0\n    vpbroadcastd %xmm0, "))]
+        [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
+    [(AstTyI16)
+      (match (compiler-backend-emit-load-value-with-plan
+        assignments
+        value
+        "%rax")
+        [(OkCompilerBackend asm)
+          (OkCompilerBackend
+            (string-append
+              asm
+              "    vmovd %eax, %xmm0\n    vpbroadcastw %xmm0, "))]
+        [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
+    [(AstTyU16)
+      (match (compiler-backend-emit-load-value-with-plan
+        assignments
+        value
+        "%rax")
+        [(OkCompilerBackend asm)
+          (OkCompilerBackend
+            (string-append
+              asm
+              "    vmovd %eax, %xmm0\n    vpbroadcastw %xmm0, "))]
         [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
     [(AstTyI8)
       (match (compiler-backend-emit-load-value-with-plan
@@ -1258,6 +1286,8 @@
     [(AstTyF32) (= lanes 16)]
     [(AstTyI32) (= lanes 16)]
     [(AstTyU32) (= lanes 16)]
+    [(AstTyI16) (= lanes 32)]
+    [(AstTyU16) (= lanes 32)]
     [(AstTyI8) (= lanes 64)]
     [(AstTyU8) (= lanes 64)]
     [_ false]))
@@ -1304,6 +1334,8 @@
     [(AstTyU64) "vmovdqu64"]
     [(AstTyI32) "vmovdqu32"]
     [(AstTyU32) "vmovdqu32"]
+    [(AstTyI16) "vmovdqu16"]
+    [(AstTyU16) "vmovdqu16"]
     [(AstTyI8) "vmovdqu8"]
     [(AstTyU8) "vmovdqu8"]
     [_ ""]))
@@ -1318,6 +1350,8 @@
         [(AstTyU64) "vpaddq"]
         [(AstTyI32) "vpaddd"]
         [(AstTyU32) "vpaddd"]
+        [(AstTyI16) "vpaddw"]
+        [(AstTyU16) "vpaddw"]
         [(AstTyI8) "vpaddb"]
         [(AstTyU8) "vpaddb"]
         [(AstTyF64) "vaddpd"]
@@ -1329,6 +1363,8 @@
         [(AstTyU64) "vpmullq"]
         [(AstTyI32) "vpmulld"]
         [(AstTyU32) "vpmulld"]
+        [(AstTyI16) "vpmullw"]
+        [(AstTyU16) "vpmullw"]
         [(AstTyF64) "vmulpd"]
         [(AstTyF32) "vmulps"]
         [_ ""])]
@@ -1340,6 +1376,8 @@
     [(AstTyU64) "vpcmpuq"]
     [(AstTyI32) "vpcmpd"]
     [(AstTyU32) "vpcmpud"]
+    [(AstTyI16) "vpcmpw"]
+    [(AstTyU16) "vpcmpuw"]
     [(AstTyI8) "vpcmpb"]
     [(AstTyU8) "vpcmpub"]
     [(AstTyF64) "vcmppd"]
@@ -1394,6 +1432,28 @@
         "%rax")
         [(OkCompilerBackend asm)
           (OkCompilerBackend (string-append asm "    vpbroadcastd %eax, "))]
+        [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
+    [(AstTyI16)
+      (match (compiler-backend-emit-load-value-with-plan
+        assignments
+        value
+        "%rax")
+        [(OkCompilerBackend asm)
+          (OkCompilerBackend
+            (string-append
+              asm
+              "    vmovd %eax, %xmm0\n    vpbroadcastw %xmm0, "))]
+        [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
+    [(AstTyU16)
+      (match (compiler-backend-emit-load-value-with-plan
+        assignments
+        value
+        "%rax")
+        [(OkCompilerBackend asm)
+          (OkCompilerBackend
+            (string-append
+              asm
+              "    vmovd %eax, %xmm0\n    vpbroadcastw %xmm0, "))]
         [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
     [(AstTyI8)
       (match (compiler-backend-emit-load-value-with-plan

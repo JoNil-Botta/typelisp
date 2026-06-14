@@ -3441,6 +3441,8 @@
   (and
     (compiler-backend-avx2-map-asm-contains? "i64" "    vmovdqu " "    vpaddq ")
     (compiler-backend-avx2-map-asm-contains? "i32" "    vmovdqu " "    vpaddd ")
+    (compiler-backend-avx2-map-asm-contains? "i16" "    vmovdqu " "    vpaddw ")
+    (compiler-backend-avx2-map-asm-contains? "u16" "    vmovdqu " "    vpaddw ")
     (compiler-backend-avx2-map-asm-contains? "f64" "    vmovupd " "    vaddpd ")
     (compiler-backend-avx2-map-asm-contains? "f32" "    vmovups " "    vaddps ")
     (compiler-backend-avx2-map-asm-contains? "i8" "    vmovdqu " "    vpaddb ")
@@ -3520,6 +3522,16 @@
       "    vmovdqu "
       "    vpaddd "
       "    vpbroadcastd %xmm0, ")
+    (compiler-backend-avx2-uniform-map-asm-contains?
+      "i16"
+      "    vmovdqu "
+      "    vpaddw "
+      "    vpbroadcastw %xmm0, ")
+    (compiler-backend-avx2-uniform-map-asm-contains?
+      "u16"
+      "    vmovdqu "
+      "    vpaddw "
+      "    vpbroadcastw %xmm0, ")
     (compiler-backend-avx2-uniform-map-asm-contains?
       "f64"
       "    vmovupd "
@@ -3679,6 +3691,18 @@
       "kmovw"
       "shll %cl, %eax")
     (compiler-backend-avx512-map-asm-contains?
+      "i16"
+      "    vmovdqu16 "
+      "    vpaddw "
+      "kmovd"
+      "shll %cl, %eax")
+    (compiler-backend-avx512-map-asm-contains?
+      "u16"
+      "    vmovdqu16 "
+      "    vpaddw "
+      "kmovd"
+      "shll %cl, %eax")
+    (compiler-backend-avx512-map-asm-contains?
       "f64"
       "    vmovupd "
       "    vaddpd "
@@ -3777,6 +3801,16 @@
       "    vmovdqu32 "
       "    vpaddd "
       "    vpbroadcastd %eax, ")
+    (compiler-backend-avx512-uniform-map-asm-contains?
+      "i16"
+      "    vmovdqu16 "
+      "    vpaddw "
+      "    vpbroadcastw %xmm0, ")
+    (compiler-backend-avx512-uniform-map-asm-contains?
+      "u16"
+      "    vmovdqu16 "
+      "    vpaddw "
+      "    vpbroadcastw %xmm0, ")
     (compiler-backend-avx512-uniform-map-asm-contains?
       "f64"
       "    vmovupd "

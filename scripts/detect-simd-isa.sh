@@ -2,7 +2,7 @@
 set -eu
 
 # detect-simd-isa.sh - print the host CPU's runnable SIMD ISAs, one token per
-# line (currently `avx2` and/or `avx512f`). A token is printed only when the
+# line (currently `avx2`, `avx512f`, and/or `avx512bw`). A token is printed only when the
 # host running this script can actually EXECUTE that ISA (CPUID feature bit AND
 # OS XSAVE state enablement), not merely compile for it.
 #
@@ -12,7 +12,7 @@ set -eu
 #
 # Reusable shared helper:
 #   ISAS=$(sh scripts/detect-simd-isa.sh)
-#   printf '%s\n' "$ISAS" | grep -qx avx512f && run_avx512_checks
+#   printf '%s\n' "$ISAS" | grep -qx avx512bw && run_avx512_checks
 #
 # Linux reads /proc/cpuinfo (no build). Windows (Git Bash/MSYS/Cygwin) builds
 # and runs the TypeLisp cpuid detector (scripts/detect_simd_isa.tl, built on
@@ -27,6 +27,7 @@ case "$(uname -s)" in
         # The kernel only advertises a flag when the CPU+OS can use it.
         if grep -qw avx2 /proc/cpuinfo 2>/dev/null; then echo avx2; fi
         if grep -qw avx512f /proc/cpuinfo 2>/dev/null; then echo avx512f; fi
+        if grep -qw avx512bw /proc/cpuinfo 2>/dev/null; then echo avx512bw; fi
         ;;
     MINGW* | MSYS* | CYGWIN*)
         # No /proc/cpuinfo here: build and run the TypeLisp cpuid detector.

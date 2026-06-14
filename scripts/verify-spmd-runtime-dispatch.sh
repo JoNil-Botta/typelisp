@@ -5,7 +5,7 @@ set -eu
 #
 # Builds one defdispatch program without --backend-mode, runs it once, and
 # checks that the selected variant is the best runnable ISA on this host:
-# avx512 when avx512f is runnable, else avx2 when avx2 is runnable, else scalar.
+# avx512 when avx512bw is runnable, else avx2 when avx2 is runnable, else scalar.
 # The fixture encodes both the selected variant and the shared SPMD checksum in
 # its exit code, so a wrong selection or wrong SIMD result fails the harness.
 
@@ -60,7 +60,7 @@ isa_available() {
 
 expected_variant=scalar
 expected_code=42
-if isa_available avx512f; then
+if isa_available avx512bw; then
     expected_variant=avx512
     expected_code=170
 elif isa_available avx2; then

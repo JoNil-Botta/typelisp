@@ -137,11 +137,11 @@ else
     echo "[spmd-broadcast] skip avx2 (not runnable on this $HOST_OS host)"
 fi
 
-if isa_available avx512f; then
+if isa_available avx512bw; then
     expect_exit tests/spmd/broadcast_lane0_i64.tl avx512 62
     expect_exit tests/spmd/broadcast_lane1_i64.tl avx512 16
 else
-    echo "[spmd-broadcast] skip avx512 (avx512f not runnable on this $HOST_OS host)"
+    echo "[spmd-broadcast] skip avx512 (avx512bw not runnable on this $HOST_OS host)"
 fi
 
 if [ -s "$FAILURES" ]; then

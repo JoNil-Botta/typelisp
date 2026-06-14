@@ -108,6 +108,116 @@
       (fill-i32-scalar a b want n)
       (eq-i32 got want n))))
 
+(define (init-i8 [a : (Array i8)] [b : (Array i8)] [n : i64]) : unit
+  (let
+    [i : i64 0]
+    (while (< i n)
+      (begin
+        (array-set! a i (cast (+ i 1) : i8))
+        (array-set! b i (cast (+ (* i 2) 3) : i8))
+        (set! i (+ i 1))))))
+
+(define (fill-i8-foreach
+  [a : (Array i8)]
+  [b : (Array i8)]
+  [out : (Array i8)]
+  [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (array-set! out i (+ (array-ref a i) (array-ref b i)))))
+
+(define (fill-i8-scalar
+  [a : (Array i8)]
+  [b : (Array i8)]
+  [out : (Array i8)]
+  [n : i64]) : unit
+  (let
+    [i : i64 0]
+    (while (< i n)
+      (begin
+        (array-set! out i (+ (array-ref a i) (array-ref b i)))
+        (set! i (+ i 1))))))
+
+(define (eq-i8 [a : (Array i8)] [b : (Array i8)] [n : i64]) : bool
+  (let
+    [i : i64 0]
+    [ok : bool true]
+    (begin
+      (while (< i n)
+        (begin
+          (if (!= (array-ref a i) (array-ref b i))
+            (set! ok false)
+            unit)
+          (set! i (+ i 1))))
+      ok)))
+
+(define (case-i8 [n : i64]) : bool
+  (let
+    [a : (Array i8) (make-array i8 n)]
+    [b : (Array i8) (make-array i8 n)]
+    [got : (Array i8) (make-array i8 n)]
+    [want : (Array i8) (make-array i8 n)]
+    (begin
+      (init-i8 a b n)
+      (fill-i8-foreach a b got n)
+      (fill-i8-scalar a b want n)
+      (eq-i8 got want n))))
+
+(define (init-u8 [a : (Array u8)] [b : (Array u8)] [n : i64]) : unit
+  (let
+    [i : i64 0]
+    (while (< i n)
+      (begin
+        (array-set! a i (cast (+ i 1) : u8))
+        (array-set! b i (cast (+ (* i 2) 3) : u8))
+        (set! i (+ i 1))))))
+
+(define (fill-u8-foreach
+  [a : (Array u8)]
+  [b : (Array u8)]
+  [out : (Array u8)]
+  [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (array-set! out i (+ (array-ref a i) (array-ref b i)))))
+
+(define (fill-u8-scalar
+  [a : (Array u8)]
+  [b : (Array u8)]
+  [out : (Array u8)]
+  [n : i64]) : unit
+  (let
+    [i : i64 0]
+    (while (< i n)
+      (begin
+        (array-set! out i (+ (array-ref a i) (array-ref b i)))
+        (set! i (+ i 1))))))
+
+(define (eq-u8 [a : (Array u8)] [b : (Array u8)] [n : i64]) : bool
+  (let
+    [i : i64 0]
+    [ok : bool true]
+    (begin
+      (while (< i n)
+        (begin
+          (if (!= (array-ref a i) (array-ref b i))
+            (set! ok false)
+            unit)
+          (set! i (+ i 1))))
+      ok)))
+
+(define (case-u8 [n : i64]) : bool
+  (let
+    [a : (Array u8) (make-array u8 n)]
+    [b : (Array u8) (make-array u8 n)]
+    [got : (Array u8) (make-array u8 n)]
+    [want : (Array u8) (make-array u8 n)]
+    (begin
+      (init-u8 a b n)
+      (fill-u8-foreach a b got n)
+      (fill-u8-scalar a b want n)
+      (eq-u8 got want n))))
+
 (define (init-f64 [a : (Array f64)] [b : (Array f64)] [n : i64]) : unit
   (let
     [i : i64 0]
@@ -281,6 +391,42 @@
         unit
         (set! ok false))
       (if (case-i32 17)
+        unit
+        (set! ok false))
+      (if (case-i8 0)
+        unit
+        (set! ok false))
+      (if (case-i8 3)
+        unit
+        (set! ok false))
+      (if (case-i8 32)
+        unit
+        (set! ok false))
+      (if (case-i8 33)
+        unit
+        (set! ok false))
+      (if (case-i8 64)
+        unit
+        (set! ok false))
+      (if (case-i8 65)
+        unit
+        (set! ok false))
+      (if (case-u8 0)
+        unit
+        (set! ok false))
+      (if (case-u8 3)
+        unit
+        (set! ok false))
+      (if (case-u8 32)
+        unit
+        (set! ok false))
+      (if (case-u8 33)
+        unit
+        (set! ok false))
+      (if (case-u8 64)
+        unit
+        (set! ok false))
+      (if (case-u8 65)
         unit
         (set! ok false))
       (if (case-f64 0)

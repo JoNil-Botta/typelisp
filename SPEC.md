@@ -3419,9 +3419,12 @@ Initial dynamic-array use cases:
 - Reads through `array-ref` and writes through `array-set!`.
 - Array indexes must be the loop index or a simple uniform offset from it, such
   as `i` or `(+ base i)`. Gather/scatter through an index array is deferred.
-- Supported lane element types for the first slice are `i32`, `i64`, `f32`,
-  and `f64`. Narrow integers, unsigned integers, `bool`, `String`, structs,
-  enums, tuples, and arrays as lane elements are deferred.
+- Supported lane element types for the first contiguous map/zip slice are
+  `i8`, `u8`, `i32`, `i64`, `f32`, and `f64`. `i8`/`u8` support vectorized
+  `+` with the same modulo wrapping semantics as scalar integer addition; `*`
+  over `i8`/`u8` is rejected in explicit SIMD backend modes until a
+  widening/narrowing byte multiply policy is specified and implemented. `bool`,
+  `String`, structs, enums, tuples, and arrays as lane elements are deferred.
 
 Uniform and varying rules:
 
@@ -3545,7 +3548,8 @@ Masked varying `if` (v2):
   evaluate exactly the selected branch. SIMD lowering must produce the same
   observable result as this scalar fallback for every safe program.
 - Both branches must have the same type. A varying `if` expression may produce
-  `unit` or a supported lane value (`i32`, `i64`, `f32`, `f64`, or `bool`).
+  `unit` or a supported lane value (`i8`, `u8`, `i32`, `i64`, `f32`, `f64`, or
+  `bool`).
   Aggregate, string, function, array, and public vector/mask results remain
   deferred.
 - Branch bodies may use local `let`, `begin`, nested varying `if`, supported
@@ -3756,8 +3760,9 @@ compiled for one backend mode.
 Rules:
 
 - The first item in each variant pair is an ISA name: `scalar`, `avx2`, or
-  `avx512`. `avx512` means AVX-512 Foundation plus the OS ZMM/opmask state
-  needed to execute it.
+  `avx512`. The current `avx512` runtime dispatch path requires AVX-512
+  Foundation, AVX-512BW, and the OS ZMM/opmask state needed to execute it,
+  because the implemented backend mode may emit byte-lane BW instructions.
 - `scalar` is required and is the fallback on every target.
 - `avx2` and `avx512` are optional. Unknown ISA names are rejected.
 - Variant item order is not semantic. The resolver always prefers the best
@@ -3780,7 +3785,7 @@ Rules:
   implementation may instead resolve at program startup if that has the same
   observable behavior.
 - Selection may use the same CPUID/XGETBV capability checks exposed by
-  `stdlib/cpu.tl` (`cpu-runs-avx2?`, `cpu-runs-avx512f?`), but ordinary user
+  `stdlib/cpu.tl` (`cpu-runs-avx2?`, `cpu-runs-avx512bw?`), but ordinary user
   code does not need to import `stdlib/cpu.tl` or call those helpers to use a
   dispatched function.
 - Variant selection runs no user variant body and performs no user-visible I/O.
@@ -3810,9 +3815,9 @@ Unsupported in the current SPMD implementation:
   `while`, varying `match`, early exits, `break`, and `continue`.
 - Non-inlineable user-defined function calls with varying arguments or varying
   returns. Direct source-known, non-dispatch helper calls may be inlined when
-  their varying scalar arguments and result are `i32`, `i64`, `f32`, `f64`, or
-  `bool`, and the helper body uses only the same SPMD-safe expression surface as
-  the containing `foreach`/masked branch.
+  their varying scalar arguments and result are `i8`, `u8`, `i32`, `i64`,
+  `f32`, `f64`, or `bool`, and the helper body uses only the same SPMD-safe
+  expression surface as the containing `foreach`/masked branch.
 - Struct, enum, tuple, string, function, and nested array lane values.
 - Task parallelism, multicore scheduling, and public AVX-specific intrinsics.
 
@@ -5380,7 +5385,7 @@ not the future safe reference/borrow model (#182), not a replacement for
 | `(with ...)` scoped non-memory resource cleanup | Implemented (#907): parser/typechecker/lowering with LIFO cleanup order |
 | `(in-arena ...)` first-class arena target | Implemented (#2625): safe dynamic active-arena switch with restoration on normal and early exits, no mark/rewind/destroy/clone |
 | Cleanup-owning aggregate declarations | Implemented for structs (#907); cleanup-owning enums remain reserved |
-| SPMD / SIMD `foreach` and `spmd-reduce` | Scalar reference lowering implemented; AVX2/AVX-512 support a first contiguous `foreach` map/zip subset over `i32`, `i64`, `f32`, and `f64`, eligible `spmd-reduce` folds, and direct array-value `spmd-broadcast` maps; masked varying `if` is in flight (#2131/#2205/#2207) |
+| SPMD / SIMD `foreach` and `spmd-reduce` | Scalar reference lowering implemented; AVX2/AVX-512 support a first contiguous `foreach` map/zip subset over `i8`, `u8`, `i32`, `i64`, `f32`, and `f64`, eligible `spmd-reduce` folds, and direct array-value `spmd-broadcast` maps; masked varying `if` is in flight (#2131/#2205/#2207) |
 | Public cross-lane ops beyond `spmd-reduce`/`spmd-broadcast` | Scans/prefix reductions, shuffles, public lane indices/counts, gathers/scatters, atomics, and public vector/mask values remain deferred; split across #2761, #2762, #2764, #2765, and #2766 |
 | Runtime SIMD dispatch (`defdispatch`) | Implemented for scalar/AVX2/AVX-512 variants with cached runtime selection and end-to-end selection verification |
 | Windows region helpers | Implemented for `tl_region_mark`/`tl_region_reset` and `with-arena` scoped reclamation |

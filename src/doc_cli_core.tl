@@ -319,8 +319,7 @@
       batch-list)
     (let
       [current : String (arg idx)]
-      (cond
-        (string-eq current "--stdlib-root")
+      (if (string-eq current "--stdlib-root")
         (if (>= (+ idx 1) count)
           (ErrDocTestCliConfig "doc: --stdlib-root requires a value")
           (doc-test-parse-options
@@ -331,43 +330,44 @@
             has-manifest
             (string-vec-push stdlib-roots (arg (+ idx 1)))
             batch-list))
-        (string-eq current "--manifest-path")
-        (if (>= (+ idx 1) count)
-          (ErrDocTestCliConfig "doc: --manifest-path requires a value")
-          (if has-manifest
-            (ErrDocTestCliConfig "doc: duplicate --manifest-path")
-            (doc-test-parse-options
-              (+ idx 2)
-              count
-              input-paths
-              (arg (+ idx 1))
-              true
-              stdlib-roots
-              batch-list)))
-        (string-eq current "--batch")
-        (if (>= (+ idx 1) count)
-          (ErrDocTestCliConfig "doc: --batch requires a value")
-          (match batch-list
-            [(DocSomeString _) (ErrDocTestCliConfig "doc: duplicate --batch")]
-            [(DocNoString)
+        (if (string-eq current "--manifest-path")
+          (if (>= (+ idx 1) count)
+            (ErrDocTestCliConfig "doc: --manifest-path requires a value")
+            (if has-manifest
+              (ErrDocTestCliConfig "doc: duplicate --manifest-path")
               (doc-test-parse-options
                 (+ idx 2)
                 count
                 input-paths
+                (arg (+ idx 1))
+                true
+                stdlib-roots
+                batch-list)))
+          (if (string-eq current "--batch")
+            (if (>= (+ idx 1) count)
+              (ErrDocTestCliConfig "doc: --batch requires a value")
+              (match batch-list
+                [(DocSomeString _)
+                  (ErrDocTestCliConfig "doc: duplicate --batch")]
+                [(DocNoString)
+                  (doc-test-parse-options
+                    (+ idx 2)
+                    count
+                    input-paths
+                    manifest-path
+                    has-manifest
+                    stdlib-roots
+                    (DocSomeString (arg (+ idx 1))))]))
+            (if (doc-flag? current)
+              (ErrDocTestCliConfig (string-append "doc: unknown flag " current))
+              (doc-test-parse-options
+                (+ idx 1)
+                count
+                (string-vec-push input-paths current)
                 manifest-path
                 has-manifest
                 stdlib-roots
-                (DocSomeString (arg (+ idx 1))))]))
-        (doc-flag? current)
-        (ErrDocTestCliConfig (string-append "doc: unknown flag " current))
-        (doc-test-parse-options
-          (+ idx 1)
-          count
-          (string-vec-push input-paths current)
-          manifest-path
-          has-manifest
-          stdlib-roots
-          batch-list)))))
+                batch-list))))))))
 
 (define (doc-test-config-from [base : i64] [count : i64]) : ResultDocTestCliConfig
   (doc-test-parse-options
@@ -491,8 +491,7 @@
       stdlib-roots)
     (let
       [current : String (arg idx)]
-      (cond
-        (string-eq current "-o")
+      (if (string-eq current "-o")
         (if (>= (+ idx 1) count)
           (ErrDocDefaultCliConfig "doc: -o requires a value")
           (if has-output
@@ -506,43 +505,44 @@
               manifest-path
               has-manifest
               stdlib-roots)))
-        (string-eq current "--stdlib-root")
-        (if (>= (+ idx 1) count)
-          (ErrDocDefaultCliConfig "doc: --stdlib-root requires a value")
-          (doc-default-parse-options
-            (+ idx 2)
-            count
-            input-paths
-            output-path
-            has-output
-            manifest-path
-            has-manifest
-            (string-vec-push stdlib-roots (arg (+ idx 1)))))
-        (string-eq current "--manifest-path")
-        (if (>= (+ idx 1) count)
-          (ErrDocDefaultCliConfig "doc: --manifest-path requires a value")
-          (if has-manifest
-            (ErrDocDefaultCliConfig "doc: duplicate --manifest-path")
+        (if (string-eq current "--stdlib-root")
+          (if (>= (+ idx 1) count)
+            (ErrDocDefaultCliConfig "doc: --stdlib-root requires a value")
             (doc-default-parse-options
               (+ idx 2)
               count
               input-paths
               output-path
               has-output
-              (arg (+ idx 1))
-              true
-              stdlib-roots)))
-        (doc-flag? current)
-        (ErrDocDefaultCliConfig (string-append "doc: unknown flag " current))
-        (doc-default-parse-options
-          (+ idx 1)
-          count
-          (string-vec-push input-paths current)
-          output-path
-          has-output
-          manifest-path
-          has-manifest
-          stdlib-roots)))))
+              manifest-path
+              has-manifest
+              (string-vec-push stdlib-roots (arg (+ idx 1)))))
+          (if (string-eq current "--manifest-path")
+            (if (>= (+ idx 1) count)
+              (ErrDocDefaultCliConfig "doc: --manifest-path requires a value")
+              (if has-manifest
+                (ErrDocDefaultCliConfig "doc: duplicate --manifest-path")
+                (doc-default-parse-options
+                  (+ idx 2)
+                  count
+                  input-paths
+                  output-path
+                  has-output
+                  (arg (+ idx 1))
+                  true
+                  stdlib-roots)))
+            (if (doc-flag? current)
+              (ErrDocDefaultCliConfig
+                (string-append "doc: unknown flag " current))
+              (doc-default-parse-options
+                (+ idx 1)
+                count
+                (string-vec-push input-paths current)
+                output-path
+                has-output
+                manifest-path
+                has-manifest
+                stdlib-roots))))))))
 
 (define (doc-default-config-from [base : i64] [count : i64]) : ResultDocDefaultCliConfig
   (doc-default-parse-options
@@ -585,14 +585,13 @@
     [(DocNoString)
       (let
         [path-count : i64 (string-vec-len input-paths)]
-        (cond
-          (= path-count 2)
+        (if (= path-count 2)
           (doc-generate-file
             (string-vec-get input-paths 0 "")
             (string-vec-get input-paths 1 ""))
-          (> path-count 2)
-          (doc-generate-module-graph-from-input-paths input-paths)
-          (doc-invalid-args)))]))
+          (if (> path-count 2)
+            (doc-generate-module-graph-from-input-paths input-paths)
+            (doc-invalid-args))))]))
 
 (define (doc-command-kind-load [value : String]) : i64
   (if (or (string-eq value "--load") (string-eq value "load"))

@@ -1031,14 +1031,12 @@ cat > "$FMTLINT_PKG/src/needs_fmt.tl" <<'EOF'
 (+ 1 2))
 EOF
 cat > "$FMTLINT_PKG/src/lint_bad.tl" <<'EOF'
-(define (classify [x : i64]) : i64
-  (if (= x 0)
-    10
-    (if (= x 1)
-      20
-      (if (= x 2)
-        30
-        0))))
+(define (main) : i64
+  (let
+    [a : i64 1]
+    (let
+      [b : i64 (+ a 1)]
+      (+ a b))))
 EOF
 run_expect_failure fmt-package-check "$COMPILER" fmt --manifest-path "$FMTLINT_PKG/typelisp.pkg" --check
 assert_empty "$WORKDIR/fmt-package-check.stdout"
@@ -1080,41 +1078,38 @@ run_capture lint-clean-check "$COMPILER" lint "$SRC" --check
 assert_empty "$WORKDIR/lint-clean-check.stderr"
 assert_contains "$WORKDIR/lint-clean-check.stdout" "lint: 0 finding(s)"
 
-LINT_SRC="$WORKDIR/lint_ladder.tl"
+LINT_SRC="$WORKDIR/lint_bad.tl"
 cat > "$LINT_SRC" <<'EOF'
-(define (classify [x : i64]) : i64
-  (if (= x 0)
-    10
-    (if (= x 1)
-      20
-      (if (= x 2)
-        30
-        0))))
+(define (main) : i64
+  (let
+    [a : i64 1]
+    (let
+      [b : i64 (+ a 1)]
+      (+ a b))))
 EOF
-run_capture lint-nested-if "$COMPILER" lint "$LINT_SRC"
-assert_empty "$WORKDIR/lint-nested-if.stderr"
-assert_contains "$WORKDIR/lint-nested-if.stdout" "lint_ladder.tl:"
-assert_contains "$WORKDIR/lint-nested-if.stdout" "nested if-ladder"
-assert_contains "$WORKDIR/lint-nested-if.stdout" "prefer cond"
-assert_contains "$WORKDIR/lint-nested-if.stdout" "match"
-assert_contains "$WORKDIR/lint-nested-if.stdout" "lint: 1 finding(s)"
+run_capture lint-nested-let "$COMPILER" lint "$LINT_SRC"
+assert_empty "$WORKDIR/lint-nested-let.stderr"
+assert_contains "$WORKDIR/lint-nested-let.stdout" "lint_bad.tl:"
+assert_contains "$WORKDIR/lint-nested-let.stdout" "nested let"
+assert_contains "$WORKDIR/lint-nested-let.stdout" "merge bindings"
+assert_contains "$WORKDIR/lint-nested-let.stdout" "lint: 1 finding(s)"
 
-run_expect_failure lint-nested-if-check "$COMPILER" lint "$LINT_SRC" --check
-assert_empty "$WORKDIR/lint-nested-if-check.stderr"
-assert_contains "$WORKDIR/lint-nested-if-check.stdout" "lint_ladder.tl:"
-assert_contains "$WORKDIR/lint-nested-if-check.stdout" "nested if-ladder"
-assert_contains "$WORKDIR/lint-nested-if-check.stdout" "lint: 1 finding(s)"
+run_expect_failure lint-nested-let-check "$COMPILER" lint "$LINT_SRC" --check
+assert_empty "$WORKDIR/lint-nested-let-check.stderr"
+assert_contains "$WORKDIR/lint-nested-let-check.stdout" "lint_bad.tl:"
+assert_contains "$WORKDIR/lint-nested-let-check.stdout" "nested let"
+assert_contains "$WORKDIR/lint-nested-let-check.stdout" "lint: 1 finding(s)"
 
 run_capture lint-multi "$COMPILER" lint "$SRC" "$LINT_SRC"
 assert_empty "$WORKDIR/lint-multi.stderr"
 assert_contains "$WORKDIR/lint-multi.stdout" "--- $SRC"
 assert_contains "$WORKDIR/lint-multi.stdout" "--- $LINT_SRC"
-assert_contains "$WORKDIR/lint-multi.stdout" "lint_ladder.tl:"
+assert_contains "$WORKDIR/lint-multi.stdout" "lint_bad.tl:"
 assert_contains "$WORKDIR/lint-multi.stdout" "lint: 0 finding(s)"
 assert_contains "$WORKDIR/lint-multi.stdout" "lint: 1 finding(s)"
 lint_multi_clean_line=$(grep -nF -- "--- $SRC" "$WORKDIR/lint-multi.stdout" | head -n 1 | cut -d: -f1)
-lint_multi_ladder_line=$(grep -nF -- "--- $LINT_SRC" "$WORKDIR/lint-multi.stdout" | head -n 1 | cut -d: -f1)
-if [ "$lint_multi_clean_line" -ge "$lint_multi_ladder_line" ]; then
+lint_multi_bad_line=$(grep -nF -- "--- $LINT_SRC" "$WORKDIR/lint-multi.stdout" | head -n 1 | cut -d: -f1)
+if [ "$lint_multi_clean_line" -ge "$lint_multi_bad_line" ]; then
     fail "lint multi-file output did not preserve input path order"
 fi
 

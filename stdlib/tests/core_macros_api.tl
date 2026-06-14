@@ -18,16 +18,16 @@
       unit)))
 
 (define (stdlib-core-cond-i64 [value : i64]) : i64
-  (core/cond (< value 0) 0 (= value 0) 1 (+ value 1)))
+  (core/cond [(< value 0) 0] [(= value 0) 1] [else (+ value 1)]))
 
 (define (stdlib-core-cond-user-expr-shadow) : i64
-  (core/cond true 42 0))
+  (core/cond [true 42] [else 0]))
 
 (define (stdlib-core-cond-string [flag : bool]) : String
-  (core/cond flag "yes" "no"))
+  (core/cond [flag "yes"] [else "no"]))
 
 (define (stdlib-core-cond-unit [flag : bool]) : unit
-  (core/cond flag unit unit))
+  (core/cond [flag unit] [else unit]))
 
 (define (stdlib-core-macros-short-circuit-value) : i64
   (let

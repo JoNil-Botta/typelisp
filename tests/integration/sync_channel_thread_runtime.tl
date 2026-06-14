@@ -123,15 +123,11 @@
     [b-expected : i64 (sync-integration-sum 1000 sync-integration-count)]
     [closed : bool (channel-i64-close channel)]
     (cond
-      (not closed)
-      2
-      (not (= a-code a-expected))
-      3
-      (not (= b-code b-expected))
-      4
-      (not (= received (+ a-expected b-expected)))
-      5
-      42)))
+      [(not closed) 2]
+      [(not (= a-code a-expected)) 3]
+      [(not (= b-code b-expected)) 4]
+      [(not (= received (+ a-expected b-expected))) 5]
+      [else 42])))
 
 (define (sync-integration-run [channel : ChannelI64]) : i64
   (let

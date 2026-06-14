@@ -417,17 +417,22 @@
   [next-value : String]
   [has-next : bool]
   [index : i64]) : ResultArgsParseAdvance
-  (cond
-    (struct-get state stop-options)
+  (if (struct-get state stop-options)
     (args-advance-positional state current index)
-    (args-end-of-options-token? current)
-    (args-advance-end-of-options state index)
-    (args-option-looking-token? current)
-    (match (args-find-spec-token specs current)
-      [(ArgsNoOptionSpec) (ErrArgsParseAdvance (ArgsUnknownOption current))]
-      [(ArgsSomeOptionSpec spec)
-        (args-advance-known-option state spec current next-value has-next index)])
-    (args-advance-positional state current index)))
+    (if (args-end-of-options-token? current)
+      (args-advance-end-of-options state index)
+      (if (args-option-looking-token? current)
+        (match (args-find-spec-token specs current)
+          [(ArgsNoOptionSpec) (ErrArgsParseAdvance (ArgsUnknownOption current))]
+          [(ArgsSomeOptionSpec spec)
+            (args-advance-known-option
+              state
+              spec
+              current
+              next-value
+              has-next
+              index)])
+        (args-advance-positional state current index)))))
 
 ;: Clamp a sequence start index to zero.
 (define (args-clamp-start [start : i64]) : i64

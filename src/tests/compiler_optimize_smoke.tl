@@ -131,18 +131,17 @@
       (opt-bounds-instrs (OptBoundsNil) (smoke-bounds-object-call-barrier))]
     [object-store : CompilerIrInstrList
       (opt-bounds-instrs (OptBoundsNil) (smoke-bounds-object-store-barrier))]
-    (cond
-      (not (= (opt-count-bounds-instrs object-array) 1))
+    (if (not (= (opt-count-bounds-instrs object-array) 1))
       1
-      (not (= (opt-count-bounds-instrs object-string) 1))
-      2
-      (not (= (opt-count-bounds-instrs object-mismatch) 2))
-      3
-      (not (= (opt-count-bounds-instrs object-call) 2))
-      4
-      (not (= (opt-count-bounds-instrs object-store) 2))
-      5
-      42)))
+      (if (not (= (opt-count-bounds-instrs object-string) 1))
+        2
+        (if (not (= (opt-count-bounds-instrs object-mismatch) 2))
+          3
+          (if (not (= (opt-count-bounds-instrs object-call) 2))
+            4
+            (if (not (= (opt-count-bounds-instrs object-store) 2))
+              5
+              42)))))))
 
 (define (main) : i64
   (begin

@@ -126,32 +126,18 @@
     [wide-indirect-returned : i64
       (nested-wide-score (nested-wide-maker (cast 14 : u64)) (cast 14 : u64))]
     (cond
-      (not (= byte-direct 11))
-      1
-      (not (= byte-returned 12))
-      2
-      (not (= pair-direct 21))
-      3
-      (not (= pair-returned 22))
-      4
-      (not (= pair-indirect 23))
-      5
-      (not (= word-direct 31))
-      6
-      (not (= word-returned 32))
-      7
-      (not (= double-direct 41))
-      8
-      (not (= double-returned 42))
-      9
-      (not (= double-indirect-returned 43))
-      10
-      (not (= wide-direct 51))
-      11
-      (not (= wide-indirect 52))
-      12
-      (not (= wide-returned 53))
-      13
-      (not (= wide-indirect-returned 54))
-      14
-      42)))
+      [(not (= byte-direct 11)) 1]
+      [(not (= byte-returned 12)) 2]
+      [(not (= pair-direct 21)) 3]
+      [(not (= pair-returned 22)) 4]
+      [(not (= pair-indirect 23)) 5]
+      [(not (= word-direct 31)) 6]
+      [(not (= word-returned 32)) 7]
+      [(not (= double-direct 41)) 8]
+      [(not (= double-returned 42)) 9]
+      [(not (= double-indirect-returned 43)) 10]
+      [(not (= wide-direct 51)) 11]
+      [(not (= wide-indirect 52)) 12]
+      [(not (= wide-returned 53)) 13]
+      [(not (= wide-indirect-returned 54)) 14]
+      [else 42])))

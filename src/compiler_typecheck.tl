@@ -4290,14 +4290,18 @@
   "(define (main [a : bool]) : bool (= a 1))")
 
 (define (compiler-typecheck-scalar-cond-ok-source) : String
-  "(defmacro (cond [condition : Expr] [then-expr : Expr] [else-expr : Expr]) : Expr
-  `(if ,condition ,then-expr ,else-expr))
-(define (main [x : i64]) : i64 (cond (= x 0) 1 2))")
+  "(defmacro (cond [arm : ExprClause] [fallback : ExprClause]) : Expr
+  `(if ,(expr-clause-first arm)
+    ,(expr-clause-second arm)
+    ,(expr-clause-second fallback)))
+(define (main [x : i64]) : i64 (cond [(= x 0) 1] [else 2]))")
 
 (define (compiler-typecheck-scalar-cond-bad-source) : String
-  "(defmacro (cond [condition : Expr] [then-expr : Expr] [else-expr : Expr]) : Expr
-  `(if ,condition ,then-expr ,else-expr))
-(define (main) : i64 (cond 1 2 3))")
+  "(defmacro (cond [arm : ExprClause] [fallback : ExprClause]) : Expr
+  `(if ,(expr-clause-first arm)
+    ,(expr-clause-second arm)
+    ,(expr-clause-second fallback)))
+(define (main) : i64 (cond [1 2] [else 3]))")
 
 (define (compiler-typecheck-scalar-narrow-match-source) : String
   "(define (narrow-u8 [n : u8]) : i64 (match n [0 1] [_ 0]))
@@ -6515,10 +6519,10 @@
   "(defmacro (unless [condition : i64] [body : unit]) : unit body)
 (define (main) : unit (unless 1 unit))")
 
-(define (compiler-typecheck-macro-own-flat-cond-source) : String
-  "(defmacro (cond [condition : i64] [then-expr : i64] [else-expr : i64]) : i64
-  then-expr)
-(define (main) : i64 (cond 1 42 0))")
+(define (compiler-typecheck-macro-own-cond-source) : String
+  "(defmacro (cond [arm : ExprClause]) : i64
+  (expr-clause-second arm))
+(define (main) : i64 (cond [true 42]))")
 
 (define (compiler-typecheck-macro-own-and-source) : String
   "(defmacro (and [args : bool ...]) : bool
@@ -6558,7 +6562,7 @@
   (and
     (compiler-typecheck-ok? (compiler-typecheck-macro-own-when-source))
     (compiler-typecheck-ok? (compiler-typecheck-macro-own-unless-source))
-    (compiler-typecheck-ok? (compiler-typecheck-macro-own-flat-cond-source))
+    (compiler-typecheck-ok? (compiler-typecheck-macro-own-cond-source))
     (compiler-typecheck-ok? (compiler-typecheck-macro-own-and-source))
     (compiler-typecheck-ok? (compiler-typecheck-macro-own-or-source))
     (compiler-typecheck-ok?

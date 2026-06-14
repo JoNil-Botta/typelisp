@@ -73,17 +73,14 @@
         [a : i64 (eval-atom arg1)]
         [b : i64 (eval-atom arg2)]
         (cond
-          (string-eq name "+")
-          (+ a b)
-          (string-eq name "-")
-          (- a b)
-          (string-eq name "*")
-          (* a b)
-          (string-eq name "/")
-          (/ a b)
-          (begin
-            (panic "eval: unknown operator")
-            0)))]
+          [(string-eq name "+") (+ a b)]
+          [(string-eq name "-") (- a b)]
+          [(string-eq name "*") (* a b)]
+          [(string-eq name "/") (/ a b)]
+          [else
+            (begin
+              (panic "eval: unknown operator")
+              0)]))]
     ;; Any other shape (bare symbol, empty list, non-symbol operator head) is
     ;; not an evaluable call: the nested SSym above did not match, so we land
     ;; here.

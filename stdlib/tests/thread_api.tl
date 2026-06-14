@@ -170,15 +170,14 @@
 (define (main) : i64
   (let
     [safe-code : i64 (thread-api-safe-i64-run)]
-    (cond
-      (< (thread-default-worker-count) 1)
+    (if (< (thread-default-worker-count) 1)
       1
-      (not (= safe-code 42))
-      safe-code
-      (not (thread-api-negative-semaphore-rejected?))
-      11
-      (not (thread-api-large-semaphore-rejected?))
-      12
-      (match (thread-semaphore-create 0)
-        [(ThreadSemaphoreErr _) 13]
-        [(ThreadSemaphoreOk sem) (thread-api-run-with-semaphore sem)]))))
+      (if (not (= safe-code 42))
+        safe-code
+        (if (not (thread-api-negative-semaphore-rejected?))
+          11
+          (if (not (thread-api-large-semaphore-rejected?))
+            12
+            (match (thread-semaphore-create 0)
+              [(ThreadSemaphoreErr _) 13]
+              [(ThreadSemaphoreOk sem) (thread-api-run-with-semaphore sem)])))))))

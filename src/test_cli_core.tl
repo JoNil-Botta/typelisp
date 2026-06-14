@@ -247,8 +247,7 @@
       batch-list)
     (let
       [current : String (arg idx)]
-      (cond
-        (string-eq current "--check")
+      (if (string-eq current "--check")
         (tltest-parse-options
           (+ idx 1)
           count
@@ -263,34 +262,53 @@
           opt-level
           TestModeCheck
           batch-list)
-        (string-eq current "--target")
-        (if (>= (+ idx 1) count)
-          (ErrTestConfig "test: --target requires a value")
-          (let
-            [value : String (arg (+ idx 1))]
-            (if (tltest-target-valid? value)
-              (tltest-parse-options
-                (+ idx 2)
-                count
-                source
-                has-source
-                manifest-path
-                has-manifest
-                value
-                mode
-                roots
-                has-opt-level
-                opt-level
-                test-mode
-                batch-list)
-              (ErrTestConfig (tltest-unknown-target value)))))
-        (string-eq current "--backend-mode")
-        (if (>= (+ idx 1) count)
-          (ErrTestConfig "test: --backend-mode requires a value")
-          (let
-            [value : String (arg (+ idx 1))]
-            (if (tltest-backend-mode-valid? value)
-              (if (string-eq value "scalar")
+        (if (string-eq current "--target")
+          (if (>= (+ idx 1) count)
+            (ErrTestConfig "test: --target requires a value")
+            (let
+              [value : String (arg (+ idx 1))]
+              (if (tltest-target-valid? value)
+                (tltest-parse-options
+                  (+ idx 2)
+                  count
+                  source
+                  has-source
+                  manifest-path
+                  has-manifest
+                  value
+                  mode
+                  roots
+                  has-opt-level
+                  opt-level
+                  test-mode
+                  batch-list)
+                (ErrTestConfig (tltest-unknown-target value)))))
+          (if (string-eq current "--backend-mode")
+            (if (>= (+ idx 1) count)
+              (ErrTestConfig "test: --backend-mode requires a value")
+              (let
+                [value : String (arg (+ idx 1))]
+                (if (tltest-backend-mode-valid? value)
+                  (if (string-eq value "scalar")
+                    (tltest-parse-options
+                      (+ idx 2)
+                      count
+                      source
+                      has-source
+                      manifest-path
+                      has-manifest
+                      target
+                      value
+                      roots
+                      has-opt-level
+                      opt-level
+                      test-mode
+                      batch-list)
+                    (ErrTestConfig (tltest-unsupported-mode value)))
+                  (ErrTestConfig (tltest-unknown-mode value)))))
+            (if (string-eq current "--stdlib-root")
+              (if (>= (+ idx 1) count)
+                (ErrTestConfig "test: --stdlib-root requires a value")
                 (tltest-parse-options
                   (+ idx 2)
                   count
@@ -299,113 +317,97 @@
                   manifest-path
                   has-manifest
                   target
-                  value
-                  roots
+                  mode
+                  (string-vec-push roots (arg (+ idx 1)))
                   has-opt-level
                   opt-level
                   test-mode
-                  batch-list)
-                (ErrTestConfig (tltest-unsupported-mode value)))
-              (ErrTestConfig (tltest-unknown-mode value)))))
-        (string-eq current "--stdlib-root")
-        (if (>= (+ idx 1) count)
-          (ErrTestConfig "test: --stdlib-root requires a value")
-          (tltest-parse-options
-            (+ idx 2)
-            count
-            source
-            has-source
-            manifest-path
-            has-manifest
-            target
-            mode
-            (string-vec-push roots (arg (+ idx 1)))
-            has-opt-level
-            opt-level
-            test-mode
-            batch-list))
-        (string-eq current "--manifest-path")
-        (if (>= (+ idx 1) count)
-          (ErrTestConfig "test: --manifest-path requires a value")
-          (if has-manifest
-            (ErrTestConfig "test: duplicate --manifest-path")
-            (tltest-parse-options
-              (+ idx 2)
-              count
-              source
-              has-source
-              (arg (+ idx 1))
-              true
-              target
-              mode
-              roots
-              has-opt-level
-              opt-level
-              test-mode
-              batch-list)))
-        (string-eq current "--batch")
-        (if (>= (+ idx 1) count)
-          (ErrTestConfig "test: --batch requires a value")
-          (match batch-list
-            [(TestSomeString _) (ErrTestConfig "test: duplicate --batch")]
-            [(TestNoString)
-              (tltest-parse-options
-                (+ idx 2)
-                count
-                source
-                has-source
-                manifest-path
-                has-manifest
-                target
-                mode
-                roots
-                has-opt-level
-                opt-level
-                test-mode
-                (TestSomeString (arg (+ idx 1))))]))
-        (string-eq current "--opt-level")
-        (if (>= (+ idx 1) count)
-          (ErrTestConfig "test: --opt-level requires a value")
-          (if has-opt-level
-            (ErrTestConfig "test: --opt-level was provided more than once")
-            (let
-              [value : String (arg (+ idx 1))]
-              (match (compiler-optimize-parse-level value)
-                [(OkCompilerOptimizeLevel parsed-level)
-                  (tltest-parse-options
-                    (+ idx 2)
-                    count
-                    source
-                    has-source
-                    manifest-path
-                    has-manifest
-                    target
-                    mode
-                    roots
-                    true
-                    parsed-level
-                    test-mode
-                    batch-list)]
-                [(ErrCompilerOptimizeLevel)
-                  (ErrTestConfig (tltest-invalid-opt-level value))]))))
-        (source-tool-flag? current)
-        (ErrTestConfig (string-append "test: unknown flag " current))
-        has-source
-        (ErrTestConfig "test: accepts only one source file")
-        (tltest-parse-options
-          (+ idx 1)
-          count
-          current
-          true
-          manifest-path
-          has-manifest
-          target
-          mode
-          roots
-          has-opt-level
-          opt-level
-          test-mode
-          batch-list)))))
+                  batch-list))
+              (if (string-eq current "--manifest-path")
+                (if (>= (+ idx 1) count)
+                  (ErrTestConfig "test: --manifest-path requires a value")
+                  (if has-manifest
+                    (ErrTestConfig "test: duplicate --manifest-path")
+                    (tltest-parse-options
+                      (+ idx 2)
+                      count
+                      source
+                      has-source
+                      (arg (+ idx 1))
+                      true
+                      target
+                      mode
+                      roots
+                      has-opt-level
+                      opt-level
+                      test-mode
+                      batch-list)))
+                (if (string-eq current "--batch")
+                  (if (>= (+ idx 1) count)
+                    (ErrTestConfig "test: --batch requires a value")
+                    (match batch-list
+                      [(TestSomeString _)
+                        (ErrTestConfig "test: duplicate --batch")]
+                      [(TestNoString)
+                        (tltest-parse-options
+                          (+ idx 2)
+                          count
+                          source
+                          has-source
+                          manifest-path
+                          has-manifest
+                          target
+                          mode
+                          roots
+                          has-opt-level
+                          opt-level
+                          test-mode
+                          (TestSomeString (arg (+ idx 1))))]))
+                  (if (string-eq current "--opt-level")
+                    (if (>= (+ idx 1) count)
+                      (ErrTestConfig "test: --opt-level requires a value")
+                      (if has-opt-level
+                        (ErrTestConfig
+                          "test: --opt-level was provided more than once")
+                        (let
+                          [value : String (arg (+ idx 1))]
+                          (match (compiler-optimize-parse-level value)
+                            [(OkCompilerOptimizeLevel parsed-level)
+                              (tltest-parse-options
+                                (+ idx 2)
+                                count
+                                source
+                                has-source
+                                manifest-path
+                                has-manifest
+                                target
+                                mode
+                                roots
+                                true
+                                parsed-level
+                                test-mode
+                                batch-list)]
+                            [(ErrCompilerOptimizeLevel)
+                              (ErrTestConfig (tltest-invalid-opt-level value))]))))
+                    (if (source-tool-flag? current)
+                      (ErrTestConfig
+                        (string-append "test: unknown flag " current))
+                      (if has-source
+                        (ErrTestConfig "test: accepts only one source file")
+                        (tltest-parse-options
+                          (+ idx 1)
+                          count
+                          current
+                          true
+                          manifest-path
+                          has-manifest
+                          target
+                          mode
+                          roots
+                          has-opt-level
+                          opt-level
+                          test-mode
+                          batch-list)))))))))))))
 
 ;; Parse the `test` config from arguments starting at `start` (the index of the
 ;; first argument after any subcommand name). `count` is `(arg-count)`.
@@ -1926,24 +1928,23 @@
       (while (and (not found) (< i n))
         (let
           [c : char (string-ref source i)]
-          (cond
-            (and open (tltest-source-line-break? c))
+          (if (and open (tltest-source-line-break? c))
             (begin
               (set! i (+ i 1))
               (set! open true))
-            (and open (tltest-source-prefix-space? c))
-            (begin
-              (set! i (+ i 1))
-              (set! open true))
-            (and open (tltest-inline-marker-at? source i n))
-            (set! found true)
-            (tltest-source-line-break? c)
-            (begin
-              (set! i (+ i 1))
-              (set! open true))
-            (begin
-              (set! i (+ i 1))
-              (set! open false)))))
+            (if (and open (tltest-source-prefix-space? c))
+              (begin
+                (set! i (+ i 1))
+                (set! open true))
+              (if (and open (tltest-inline-marker-at? source i n))
+                (set! found true)
+                (if (tltest-source-line-break? c)
+                  (begin
+                    (set! i (+ i 1))
+                    (set! open true))
+                  (begin
+                    (set! i (+ i 1))
+                    (set! open false))))))))
       found)))
 
 (define (tltest-source-has-inline-tests? [source : String]) : bool

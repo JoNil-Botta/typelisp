@@ -16,9 +16,9 @@
 
 (define (main) : i64
   (if (core.cond
-    (profile-macro-detail-bool true)
-    (string-eq (profile-macro-detail-short-cat) "ab")
-    false)
+    [(profile-macro-detail-bool true)
+      (string-eq (profile-macro-detail-short-cat) "ab")]
+    [else false])
     (if (string-eq (profile-macro-detail-packed-cat) "abcdef")
       42
       1)

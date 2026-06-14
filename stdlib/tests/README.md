@@ -48,7 +48,7 @@ Coverage notes:
   to a shorter-lived vector.
 - `core_macros_api.tl` covers explicit import of the stdlib core macro module
   and the qualified macro API. The adjacent `core_macros_cond_*` check fixtures
-  cover post-expansion `cond` diagnostics, and
+  cover flat-syntax rejection and post-expansion `cond` diagnostics, and
   `core_macros_runtime_import.tl` covers bare prelude macros beside runtime
   stdlib modules such as `io`.
 - `io_edges.tl` covers `IoError` rendering, `try-read-file`,

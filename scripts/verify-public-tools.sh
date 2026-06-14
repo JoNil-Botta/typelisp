@@ -1704,30 +1704,27 @@ done < "$BACKEND_DIAG_MANIFEST"
 
 if [ "$HAS_LINT_COMMAND" = 1 ]; then
     echo "[public-tools] lint command"
-    cat > "$WORKDIR/lint_ladder.tl" <<'EOF'
-(define (classify [x : i64]) : i64
-  (if (= x 0)
-    10
-    (if (= x 1)
-      20
-      (if (= x 2)
-        30
-        0))))
+    cat > "$WORKDIR/lint_bad.tl" <<'EOF'
+(define (main) : i64
+  (let
+    [a : i64 1]
+    (let
+      [b : i64 (+ a 1)]
+      (+ a b))))
 EOF
-    run_cmd lint-nested-if "$COMPILER" lint "$WORKDIR/lint_ladder.tl"
+    run_cmd lint-nested-let "$COMPILER" lint "$WORKDIR/lint_bad.tl"
     assert_success
     assert_stderr_empty
-    assert_contains "$out" "lint_ladder.tl:"
-    assert_contains "$out" "nested if-ladder"
-    assert_contains "$out" "prefer cond"
-    assert_contains "$out" "match"
+    assert_contains "$out" "lint_bad.tl:"
+    assert_contains "$out" "nested let"
+    assert_contains "$out" "merge bindings"
     assert_contains "$out" "lint: 1 finding(s)"
 
-    run_cmd lint-nested-if-check "$COMPILER" lint "$WORKDIR/lint_ladder.tl" --check
+    run_cmd lint-nested-let-check "$COMPILER" lint "$WORKDIR/lint_bad.tl" --check
     assert_failure
     assert_stderr_empty
-    assert_contains "$out" "lint_ladder.tl:"
-    assert_contains "$out" "nested if-ladder"
+    assert_contains "$out" "lint_bad.tl:"
+    assert_contains "$out" "nested let"
     assert_contains "$out" "lint: 1 finding(s)"
 
     cat > "$WORKDIR/lint_clean.tl" <<'EOF'
@@ -1746,23 +1743,23 @@ EOF
     assert_stderr_empty
     assert_contains "$out" "lint: 0 finding(s)"
 
-    run_cmd lint-multi "$COMPILER" lint "$WORKDIR/lint_clean.tl" "$WORKDIR/lint_ladder.tl"
+    run_cmd lint-multi "$COMPILER" lint "$WORKDIR/lint_clean.tl" "$WORKDIR/lint_bad.tl"
     assert_success
     assert_stderr_empty
     lint_clean_display=$(native_arg_path "$WORKDIR/lint_clean.tl")
-    lint_ladder_display=$(native_arg_path "$WORKDIR/lint_ladder.tl")
+    lint_bad_display=$(native_arg_path "$WORKDIR/lint_bad.tl")
     assert_contains "$out" "--- $lint_clean_display"
-    assert_contains "$out" "--- $lint_ladder_display"
-    assert_contains "$out" "lint_ladder.tl:"
+    assert_contains "$out" "--- $lint_bad_display"
+    assert_contains "$out" "lint_bad.tl:"
     assert_contains "$out" "lint: 0 finding(s)"
     assert_contains "$out" "lint: 1 finding(s)"
     lint_multi_clean_line=$(grep -nF -- "--- $lint_clean_display" "$out" | head -n 1 | cut -d: -f1)
-    lint_multi_ladder_line=$(grep -nF -- "--- $lint_ladder_display" "$out" | head -n 1 | cut -d: -f1)
-    if [ "$lint_multi_clean_line" -ge "$lint_multi_ladder_line" ]; then
+    lint_multi_bad_line=$(grep -nF -- "--- $lint_bad_display" "$out" | head -n 1 | cut -d: -f1)
+    if [ "$lint_multi_clean_line" -ge "$lint_multi_bad_line" ]; then
         fail "lint multi-file output did not preserve input path order"
     fi
 
-    run_cmd lint-files-manifest "$COMPILER" lint "$WORKDIR/lint_clean.tl" "$WORKDIR/lint_ladder.tl" --manifest-path typelisp.pkg
+    run_cmd lint-files-manifest "$COMPILER" lint "$WORKDIR/lint_clean.tl" "$WORKDIR/lint_bad.tl" --manifest-path typelisp.pkg
     assert_failure
     assert_stdout_empty
     assert_contains "$err" "cannot combine input paths with --manifest-path"

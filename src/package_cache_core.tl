@@ -77,15 +77,14 @@
   (ErrPackageCachePinKind String))
 
 (define (package-cache-parse-pin-kind [value : String]) : ResultPackageCachePinKind
-  (cond
-    (string-eq value "rev")
+  (if (string-eq value "rev")
     (OkPackageCachePinKind (PackageCachePinRev))
-    (string-eq value "tag")
-    (OkPackageCachePinKind (PackageCachePinTag))
-    (string-eq value "branch")
-    (OkPackageCachePinKind (PackageCachePinBranch))
-    (ErrPackageCachePinKind
-      (str-cat "package-cache: unsupported remote pin kind '" value "'"))))
+    (if (string-eq value "tag")
+      (OkPackageCachePinKind (PackageCachePinTag))
+      (if (string-eq value "branch")
+        (OkPackageCachePinKind (PackageCachePinBranch))
+        (ErrPackageCachePinKind
+          (str-cat "package-cache: unsupported remote pin kind '" value "'"))))))
 
 (define (package-cache-find-code-from
   [text : String]
@@ -106,8 +105,7 @@
   (let
     [n : i64 (string-length dep)]
     [hash : i64 (package-cache-find-code-from dep 35 0)]
-    (cond
-      (or (<= hash 0) (>= hash (- n 1)))
+    (if (or (<= hash 0) (>= hash (- n 1)))
       (ErrPackageCacheRemoteSpec
         "package-cache: remote dependency must be URL#rev|tag|branch=value")
       (let
@@ -115,8 +113,7 @@
         [fragment : String (substring dep (+ hash 1) (- n (+ hash 1)))]
         [eq : i64 (package-cache-find-code-from fragment 61 0)]
         [fragment-len : i64 (string-length fragment)]
-        (cond
-          (or (<= eq 0) (>= eq (- fragment-len 1)))
+        (if (or (<= eq 0) (>= eq (- fragment-len 1)))
           (ErrPackageCacheRemoteSpec
             "package-cache: remote dependency pin must be rev|tag|branch=value")
           (let
@@ -164,38 +161,37 @@
     (= code 95)))
 
 (define (package-cache-hex-digit [value : i64]) : String
-  (cond
-    (= value 0)
+  (if (= value 0)
     "0"
-    (= value 1)
-    "1"
-    (= value 2)
-    "2"
-    (= value 3)
-    "3"
-    (= value 4)
-    "4"
-    (= value 5)
-    "5"
-    (= value 6)
-    "6"
-    (= value 7)
-    "7"
-    (= value 8)
-    "8"
-    (= value 9)
-    "9"
-    (= value 10)
-    "a"
-    (= value 11)
-    "b"
-    (= value 12)
-    "c"
-    (= value 13)
-    "d"
-    (= value 14)
-    "e"
-    "f"))
+    (if (= value 1)
+      "1"
+      (if (= value 2)
+        "2"
+        (if (= value 3)
+          "3"
+          (if (= value 4)
+            "4"
+            (if (= value 5)
+              "5"
+              (if (= value 6)
+                "6"
+                (if (= value 7)
+                  "7"
+                  (if (= value 8)
+                    "8"
+                    (if (= value 9)
+                      "9"
+                      (if (= value 10)
+                        "a"
+                        (if (= value 11)
+                          "b"
+                          (if (= value 12)
+                            "c"
+                            (if (= value 13)
+                              "d"
+                              (if (= value 14)
+                                "e"
+                                "f"))))))))))))))))
 
 (define (package-cache-escape-code [code : i64]) : String
   (let
@@ -301,34 +297,38 @@
     [has-entry : bool (package-cache-file-exists? entry-path)]
     [has-metadata : bool (package-cache-file-exists? metadata-path)]
     [has-marker : bool (package-cache-file-exists? marker-path)]
-    (cond
-      (and (not has-entry) (not has-metadata) (not has-marker))
+    (if (and (not has-entry) (not has-metadata) (not has-marker))
       (PackageCacheMiss entry-path)
-      (not has-metadata)
-      (PackageCachePartialOrCorrupt entry-path "missing metadata")
-      (not has-marker)
-      (PackageCachePartialOrCorrupt entry-path "missing completion marker")
-      (match (try-read-file (& metadata-path))
-        [(ErrIoString error)
-          (PackageCachePartialOrCorrupt
-            entry-path
-            (string-append "metadata read failed: " (io-error-message error)))]
-        [(OkIoString metadata)
-          (if (not (string-eq metadata (package-cache-metadata-content key)))
-            (PackageCachePartialOrCorrupt entry-path "metadata mismatch")
-            (match (try-read-file (& marker-path))
-              [(ErrIoString error)
-                (PackageCachePartialOrCorrupt
-                  entry-path
-                  (string-append
-                    "completion marker read failed: "
-                    (io-error-message error)))]
-              [(OkIoString marker)
-                (if (string-eq marker (package-cache-complete-marker-content))
-                  (PackageCacheCompleteHit entry-path)
-                  (PackageCachePartialOrCorrupt
-                    entry-path
-                    "completion marker mismatch"))]))]))))
+      (if (not has-metadata)
+        (PackageCachePartialOrCorrupt entry-path "missing metadata")
+        (if (not has-marker)
+          (PackageCachePartialOrCorrupt entry-path "missing completion marker")
+          (match (try-read-file (& metadata-path))
+            [(ErrIoString error)
+              (PackageCachePartialOrCorrupt
+                entry-path
+                (string-append
+                  "metadata read failed: "
+                  (io-error-message error)))]
+            [(OkIoString metadata)
+              (if (not
+                (string-eq metadata (package-cache-metadata-content key)))
+                (PackageCachePartialOrCorrupt entry-path "metadata mismatch")
+                (match (try-read-file (& marker-path))
+                  [(ErrIoString error)
+                    (PackageCachePartialOrCorrupt
+                      entry-path
+                      (string-append
+                        "completion marker read failed: "
+                        (io-error-message error)))]
+                  [(OkIoString marker)
+                    (if (string-eq
+                      marker
+                      (package-cache-complete-marker-content))
+                      (PackageCacheCompleteHit entry-path)
+                      (PackageCachePartialOrCorrupt
+                        entry-path
+                        "completion marker mismatch"))]))]))))))
 
 (define (package-cache-entry-reusable? [state : PackageCacheEntryState]) : bool
   (match state

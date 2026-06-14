@@ -317,14 +317,12 @@ EOF
 (+ 1 2))
 EOF
     cat > "$CLI_SURFACE_FMTLINT_PKG/src/lint_bad.tl" <<'EOF'
-(define (classify [x : i64]) : i64
-  (if (= x 0)
-    10
-    (if (= x 1)
-      20
-      (if (= x 2)
-        30
-        0))))
+(define (main) : i64
+  (let
+    [a : i64 1]
+    (let
+      [b : i64 (+ a 1)]
+      (+ a b))))
 EOF
     cat > "$CLI_SURFACE_INSPECT_PKG/typelisp.pkg" <<'EOF'
 (package

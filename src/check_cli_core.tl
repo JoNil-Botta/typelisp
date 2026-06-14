@@ -57,8 +57,7 @@
       stdlib-roots)
     (let
       [current : String (arg idx)]
-      (cond
-        (string-eq current "--stdlib-root")
+      (if (string-eq current "--stdlib-root")
         (if (>= (+ idx 1) count)
           (ErrSelfhostCheckConfig
             "selfhost-check: --stdlib-root requires a value")
@@ -70,34 +69,35 @@
             manifest-path
             has-manifest
             (string-vec-push stdlib-roots (arg (+ idx 1)))))
-        (string-eq current "--manifest-path")
-        (if (>= (+ idx 1) count)
-          (ErrSelfhostCheckConfig
-            "selfhost-check: --manifest-path requires a value")
-          (if has-manifest
-            (ErrSelfhostCheckConfig "selfhost-check: duplicate --manifest-path")
-            (selfhost-check-parse-args
-              (+ idx 2)
-              count
-              input-path
-              has-input
-              (arg (+ idx 1))
-              true
-              stdlib-roots)))
-        (selfhost-check-flag? current)
-        (ErrSelfhostCheckConfig
-          (string-append "selfhost-check: unknown flag " current))
-        has-input
-        (ErrSelfhostCheckConfig
-          (string-append "selfhost-check: unexpected argument " current))
-        (selfhost-check-parse-args
-          (+ idx 1)
-          count
-          current
-          true
-          manifest-path
-          has-manifest
-          stdlib-roots)))))
+        (if (string-eq current "--manifest-path")
+          (if (>= (+ idx 1) count)
+            (ErrSelfhostCheckConfig
+              "selfhost-check: --manifest-path requires a value")
+            (if has-manifest
+              (ErrSelfhostCheckConfig
+                "selfhost-check: duplicate --manifest-path")
+              (selfhost-check-parse-args
+                (+ idx 2)
+                count
+                input-path
+                has-input
+                (arg (+ idx 1))
+                true
+                stdlib-roots)))
+          (if (selfhost-check-flag? current)
+            (ErrSelfhostCheckConfig
+              (string-append "selfhost-check: unknown flag " current))
+            (if has-input
+              (ErrSelfhostCheckConfig
+                (string-append "selfhost-check: unexpected argument " current))
+              (selfhost-check-parse-args
+                (+ idx 1)
+                count
+                current
+                true
+                manifest-path
+                has-manifest
+                stdlib-roots))))))))
 
 ;; Parse the `check` config from arguments starting at `start`. `count` is
 ;; `(arg-count)`.

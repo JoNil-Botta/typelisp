@@ -39,6 +39,12 @@ reject_diag() {
             printf 'region-tagged value cannot escape with-arena' ;;
         stdlib/tests/arena_policy_escape_text_buf_borrowed.tl)
             printf 'typecheck: reference value would escape lexical scope' ;;
+        stdlib/tests/core_macros_cond_flat_reject.tl)
+            printf 'typecheck: ExprClause macro operand expects bracket syntax' ;;
+        stdlib/tests/core_macros_cond_missing_else.tl)
+            printf 'core-cond-missing-else' ;;
+        stdlib/tests/core_macros_cond_else_not_final.tl)
+            printf 'core-cond-else-must-be-final' ;;
         stdlib/tests/core_macros_cond_branch_mismatch.tl)
             printf 'typecheck: if branches must match' ;;
         stdlib/tests/core_macros_cond_non_bool.tl)

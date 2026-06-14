@@ -74,35 +74,34 @@
         (lint-driver-smoke-nested-string-concat-source)
         (string-vec-new)
         true)]
-    (cond
-      (not (= (lint-findings-count string-concat-reported) 1))
+    (if (not (= (lint-findings-count string-concat-reported) 1))
       20
-      (not
+      (if (not
         (lint-driver-smoke-string-concat-finding-ok? string-concat-reported 0 0))
-      21
-      (not (= (lint-findings-count loop-string-concat-reported) 1))
-      22
-      (not
-        (lint-driver-smoke-string-concat-finding-ok?
-          loop-string-concat-reported
-          0
-          2))
-      23
-      (not (= (lint-findings-count nested-string-concat-reported) 2))
-      24
-      (not
-        (lint-driver-smoke-string-concat-finding-ok?
-          nested-string-concat-reported
-          1
-          1))
-      25
-      (not
-        (=
-          (lint-driver-smoke-source-finding-count-with-deprecated-string-concat
-            (lint-driver-smoke-suppressed-string-concat-source))
-          0))
-      26
-      42)))
+        21
+        (if (not (= (lint-findings-count loop-string-concat-reported) 1))
+          22
+          (if (not
+            (lint-driver-smoke-string-concat-finding-ok?
+              loop-string-concat-reported
+              0
+              2))
+            23
+            (if (not (= (lint-findings-count nested-string-concat-reported) 2))
+              24
+              (if (not
+                (lint-driver-smoke-string-concat-finding-ok?
+                  nested-string-concat-reported
+                  1
+                  1))
+                25
+                (if (not
+                  (=
+                    (lint-driver-smoke-source-finding-count-with-deprecated-string-concat
+                      (lint-driver-smoke-suppressed-string-concat-source))
+                    0))
+                  26
+                  42)))))))))
 
 (define (main) : i64
   (begin

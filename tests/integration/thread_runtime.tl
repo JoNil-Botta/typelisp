@@ -67,23 +67,15 @@
     [c-expected : i64 (integration-worker-expected 41)]
     [d-expected : i64 (integration-worker-expected 59)]
     (cond
-      (not (= a-code a-expected))
-      3
-      (not (= b-code b-expected))
-      4
-      (not (= c-code c-expected))
-      5
-      (not (= d-code d-expected))
-      6
-      (not (= (array-ref out-a 0) a-expected))
-      7
-      (not (= (array-ref out-b 0) b-expected))
-      8
-      (not (= (array-ref out-c 0) c-expected))
-      9
-      (not (= (array-ref out-d 0) d-expected))
-      10
-      42)))
+      [(not (= a-code a-expected)) 3]
+      [(not (= b-code b-expected)) 4]
+      [(not (= c-code c-expected)) 5]
+      [(not (= d-code d-expected)) 6]
+      [(not (= (array-ref out-a 0) a-expected)) 7]
+      [(not (= (array-ref out-b 0) b-expected)) 8]
+      [(not (= (array-ref out-c 0) c-expected)) 9]
+      [(not (= (array-ref out-d 0) d-expected)) 10]
+      [else 42])))
 
 (define (integration-run-threads
   [out-a : (Array i64)]

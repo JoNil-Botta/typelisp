@@ -54,9 +54,9 @@ transitional surface:
   qualified short names once that migration lands (#2582/#2583). Linker
   symbols already carry module-qualified names.
 - **Core macro surface.** Bare prelude macros are canonical (#2581); `cond`
-  regains bracket arms `(cond [test expr] ... [else fallback])` through the
+  uses bracket arms `(cond [test expr] ... [else fallback])` through the
   macro-owned bracket operand surface (#2578), and the flat call shape is
-  removed when the core macro migrates (#2579, reversing the #2490 retirement).
+  rejected (#2579, reversing the #2490 retirement).
   Macros become order-independent within a module (#2584).
 - **Comptime execution.** The public macro/comptime surface is ordinary
   stdlib-owned `Expr` and reflection data pinned as compiler-verified well-known
@@ -2229,9 +2229,12 @@ fallback, and `pkg:<alias>/...` package dependency resolution are shared with
 sections 4.4 and 4.4.1; there is no separate macro search path.
 
 The compile driver prepends `stdlib/core_macros.tl` as an implicit macro
-prelude. Bare `when`, `unless`, `and`, `or`, and flat call-shaped `cond` resolve
-to exported macros from `stdlib.core_macros` unless a local or imported macro
-with the same name takes precedence. The module can also be loaded with an
+prelude. Bare `when`, `unless`, `and`, `or`, and bracket-arm `cond` resolve to
+exported macros from `stdlib.core_macros` unless a local or imported macro with
+the same name takes precedence. The core `cond` surface is
+`(cond [test expr] ... [else fallback])`; flat
+`(cond test expr ... fallback)` calls are rejected. The module can also be
+loaded with an
 ordinary explicit import, for example
 `(import "stdlib/core_macros.tl" module stdlib.core_macros as core)`, and its
 exports can be called through the import alias such as `core.when`,
@@ -3176,22 +3179,19 @@ All operators are prefix functions (or special forms):
 - Both branches must have the same type.
 - Returns the value of the taken branch.
 
-`(cond test expr ... fallback)` is the flat conditional macro surface provided
-by the implicit core macro prelude. It expands to nested `if` expressions, so
-each test must type-check as `bool` and all branch result types must merge using
-the normal `if` rules. The argument list is `test result` pairs followed by one
-final fallback expression, so at least three arguments are required and the
-arity must be odd. Qualified calls such as `core.cond` use the same flat shape.
-The legacy bracket-arm form `(cond [test expr] ... [else fallback])` is retired
-and is not accepted.
+`(cond [test expr] ... [else fallback])` is the conditional macro surface
+provided by the implicit core macro prelude. It expands to nested `if`
+expressions, so each test must type-check as `bool` and all branch result types
+must merge using the normal `if` rules. At least one `[test expr]` arm and a
+final `[else fallback]` arm are required. `else` must appear only in the final
+arm. Qualified calls such as `core.cond` use the same bracket-arm shape. The old
+flat `(cond test expr ... fallback)` shape is rejected.
 
 ```lisp test=ignore name=cond-expression reason=fragment
 (cond
-  (= x 0)
-  10
-  (= x 1)
-  20
-  30)
+  [(= x 0) 10]
+  [(= x 1) 20]
+  [else 30])
 ```
 
 `(when cond body)` and `(unless cond body)` are unit-valued guard macros.
@@ -5962,7 +5962,7 @@ variant-payload ::= type field-meta*           ; payload cleanup metadata reserv
 expr          ::= literal
                 | ident
                 | "(" "if" expr expr expr ")"
-                | "(" "cond" expr expr (expr expr)* expr ")"
+                | "(" "cond" cond-clause+ cond-else-clause ")"
                 | "(" "when" expr expr ")"
                 | "(" "unless" expr expr ")"
                 | "(" "let" binding+ expr ")"
@@ -6002,6 +6002,9 @@ expr          ::= literal
 
 call-operand  ::= expr
                 | "[" expr expr "]"            ; macro-only ExprClause operand
+
+cond-clause   ::= "[" expr expr "]"
+cond-else-clause ::= "[" "else" expr "]"
 
 borrow-expr   ::= "(" "&" borrow-place ")"
                 | "(" "&" ident borrow-place ")"

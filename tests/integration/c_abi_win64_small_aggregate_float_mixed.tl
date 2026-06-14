@@ -35,16 +35,10 @@
     [indirect-mix : Mix8 (mix8-maker (cast 19 : u32))]
     [indirect-mix-score : i64 (mix8-score indirect-mix (cast 19 : u64))]
     (cond
-      (not (= direct-vec-score 11))
-      1
-      (not (= returned-vec-score 12))
-      2
-      (not (= indirect-vec-score 13))
-      3
-      (not (= direct-mix-score 14))
-      4
-      (not (= returned-mix-score 15))
-      5
-      (not (= indirect-mix-score 16))
-      6
-      42)))
+      [(not (= direct-vec-score 11)) 1]
+      [(not (= returned-vec-score 12)) 2]
+      [(not (= indirect-vec-score 13)) 3]
+      [(not (= direct-mix-score 14)) 4]
+      [(not (= returned-mix-score 15)) 5]
+      [(not (= indirect-mix-score 16)) 6]
+      [else 42])))

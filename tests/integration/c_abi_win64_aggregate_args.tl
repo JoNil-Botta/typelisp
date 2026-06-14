@@ -16,4 +16,4 @@
     [ptr-arg : WideArg (WideArg (cast 20 : u64) 2.5)]
     [direct : i64 (wide-arg-score direct-arg (cast 7 : u64))]
     [via-ptr : i64 (wide-arg-scorer ptr-arg (cast 5 : u64))]
-    (cond (not (= direct 32)) 1 (not (= via-ptr 75)) 2 42)))
+    (cond [(not (= direct 32)) 1] [(not (= via-ptr 75)) 2] [else 42])))

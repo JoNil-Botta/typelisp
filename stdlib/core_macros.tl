@@ -5,7 +5,7 @@
 ;# not bound locally resolves to these macros without an import. Local macros
 ;# and explicit imports shadow the prelude.
 ;#
-;# ```typelisp
+;# ```lisp
 ;# (define (main) : i64
 ;#   (let
 ;#     [value : i64 0]
@@ -14,7 +14,7 @@
 ;#       (or false true)
 ;#       (when true (set! value 21))
 ;#       (unless false (set! value (+ value 21)))
-;#       (set! value (cond false 0 true value value))
+;#       (set! value (cond [false 0] [true value] [else value]))
 ;#       value)))
 ;# ```
 (module stdlib.core_macros)
@@ -59,28 +59,35 @@
     unit
     ,body))
 
-;: Flat conditional expression macro.
+;: Bracket-arm conditional expression macro.
 ;:
-;: Arguments are `test result` pairs followed by a final fallback expression,
-;: for example `(cond test1 value1 test2 value2 fallback)`. Conditions and
-;: results are captured as `Expr` operands; the expanded `if` chain performs the
-;: ordinary post-expansion bool/result typechecking.
-(defmacro (cond [args : Expr ...]) : Expr
-  (let
-    [arity : i64 (expr-list-length args)]
-    [invalid-arity? : bool
-      (if (< arity 3)
-        true
-        (= (* (/ arity 2) 2) arity))]
-    (if invalid-arity?
-      (expr-var "core-cond-invalid-arity")
-      (if (= arity 3)
-        `(if ,(expr-list-nth args 0)
-          ,(expr-list-nth args 1)
-          ,(expr-list-nth args 2))
-        `(if ,(expr-list-nth args 0)
-          ,(expr-list-nth args 1)
-          (cond ,@(expr-list-tail (expr-list-tail args))))))))
+;: Arguments are bracket clauses, ending with `[else fallback]`, for example
+;: `(cond [test1 value1] [test2 value2] [else fallback])`. Conditions and
+;: results are captured as `ExprClause` operands; the expanded `if` chain
+;: performs the ordinary post-expansion bool/result typechecking.
+(defmacro (cond [arms : ExprClause ...]) : Expr
+  (if (expr-clause-list-empty? arms)
+    (expr-var "core-cond-missing-else")
+    (let
+      [arm : ExprClause (expr-clause-list-head arms)]
+      [rest : ExprClauseList (expr-clause-list-tail arms)]
+      (match (expr-clause-first arm)
+        [(ExprVar name)
+          (if (string-eq name "else")
+            (if (expr-clause-list-empty? rest)
+              (expr-clause-second arm)
+              (expr-var "core-cond-else-must-be-final"))
+            (if (expr-clause-list-empty? rest)
+              (expr-var "core-cond-missing-else")
+              `(if ,(expr-clause-first arm)
+                ,(expr-clause-second arm)
+                (cond ,@(expr-clause-list->expr-list rest)))))]
+        [_
+          (if (expr-clause-list-empty? rest)
+            (expr-var "core-cond-missing-else")
+            `(if ,(expr-clause-first arm)
+              ,(expr-clause-second arm)
+              (cond ,@(expr-clause-list->expr-list rest))))]))))
 
 (export (macro and))
 

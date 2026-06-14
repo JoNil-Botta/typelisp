@@ -28,7 +28,13 @@
       (when false (set! value 1000))
       (unless false (set! value (* value 6)))
       (unless true (set! value 1000))
-      (set! value (cond false 1000 (= value 42) value 1000))
+      (set!
+        value
+        (if false
+          1000
+          (if (= value 42)
+            value
+            1000)))
       value)))
 
 (define (main) : i64

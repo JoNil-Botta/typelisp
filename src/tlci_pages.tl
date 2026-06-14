@@ -229,34 +229,32 @@
           (OkTlciPageUnit))))))
 
 (define (tlci-pages-protect-code-executable [region : TlciPageRegion]) : ResultTlciPageRegion
-  (cond
-    (not (struct-get region code))
+  (if (not (struct-get region code))
     (ErrTlciPageRegion "tlci pages: data pages cannot be executable")
-    (struct-get region executable)
-    (ErrTlciPageRegion "tlci pages: code page is already executable")
-    (tlci-pages-platform-protect-code region)
-    (OkTlciPageRegion
-      (TlciPageRegion
-        (struct-get region addr)
-        (struct-get region size)
-        true
-        false
-        true))
-    (ErrTlciPageRegion "tlci pages: code page protection failed")))
+    (if (struct-get region executable)
+      (ErrTlciPageRegion "tlci pages: code page is already executable")
+      (if (tlci-pages-platform-protect-code region)
+        (OkTlciPageRegion
+          (TlciPageRegion
+            (struct-get region addr)
+            (struct-get region size)
+            true
+            false
+            true))
+        (ErrTlciPageRegion "tlci pages: code page protection failed")))))
 
 (define (tlci-pages-protect-data-readonly [region : TlciPageRegion]) : ResultTlciPageRegion
-  (cond
-    (struct-get region code)
+  (if (struct-get region code)
     (ErrTlciPageRegion "tlci pages: code pages cannot use data protection")
-    (tlci-pages-platform-protect-data-readonly region)
-    (OkTlciPageRegion
-      (TlciPageRegion
-        (struct-get region addr)
-        (struct-get region size)
-        false
-        false
-        false))
-    (ErrTlciPageRegion "tlci pages: data page protection failed")))
+    (if (tlci-pages-platform-protect-data-readonly region)
+      (OkTlciPageRegion
+        (TlciPageRegion
+          (struct-get region addr)
+          (struct-get region size)
+          false
+          false
+          false))
+      (ErrTlciPageRegion "tlci pages: data page protection failed"))))
 
 (define (tlci-pages-release [region : TlciPageRegion]) : ResultTlciPageUnit
   (if (tlci-pages-platform-release region)

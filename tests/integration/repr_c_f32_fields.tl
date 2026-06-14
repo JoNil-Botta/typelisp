@@ -13,12 +13,8 @@
     [want-x : f32 1.5]
     [want-y : f32 2.25]
     (cond
-      (< x want-x)
-      1
-      (> x want-x)
-      2
-      (< y want-y)
-      3
-      (> y want-y)
-      4
-      (+ (struct-get value tag) 2))))
+      [(< x want-x) 1]
+      [(> x want-x) 2]
+      [(< y want-y) 3]
+      [(> y want-y) 4]
+      [else (+ (struct-get value tag) 2)])))

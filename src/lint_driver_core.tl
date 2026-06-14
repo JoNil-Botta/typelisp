@@ -75,8 +75,7 @@
       deprecated-string-concat)
     (let
       [current : String (arg idx)]
-      (cond
-        (string-eq current "--check")
+      (if (string-eq current "--check")
         (selfhost-lint-parse-options
           (+ idx 1)
           count
@@ -86,56 +85,57 @@
           stdlib-roots
           true
           deprecated-string-concat)
-        (string-eq current "--deprecated-string-concat")
-        (selfhost-lint-parse-options
-          (+ idx 1)
-          count
-          input-paths
-          manifest-path
-          has-manifest
-          stdlib-roots
-          enforcing
-          true)
-        (string-eq current "--stdlib-root")
-        (if (>= (+ idx 1) count)
-          (ErrSelfhostLintConfig
-            "selfhost-lint: --stdlib-root requires a value")
+        (if (string-eq current "--deprecated-string-concat")
           (selfhost-lint-parse-options
-            (+ idx 2)
+            (+ idx 1)
             count
             input-paths
             manifest-path
             has-manifest
-            (string-vec-push stdlib-roots (arg (+ idx 1)))
+            stdlib-roots
             enforcing
-            deprecated-string-concat))
-        (string-eq current "--manifest-path")
-        (if (>= (+ idx 1) count)
-          (ErrSelfhostLintConfig
-            "selfhost-lint: --manifest-path requires a value")
-          (if has-manifest
-            (ErrSelfhostLintConfig "selfhost-lint: duplicate --manifest-path")
-            (selfhost-lint-parse-options
-              (+ idx 2)
-              count
-              input-paths
-              (arg (+ idx 1))
-              true
-              stdlib-roots
-              enforcing
-              deprecated-string-concat)))
-        (selfhost-lint-flag? current)
-        (ErrSelfhostLintConfig
-          (string-append "selfhost-lint: unknown flag " current))
-        (selfhost-lint-parse-options
-          (+ idx 1)
-          count
-          (string-vec-push input-paths current)
-          manifest-path
-          has-manifest
-          stdlib-roots
-          enforcing
-          deprecated-string-concat)))))
+            true)
+          (if (string-eq current "--stdlib-root")
+            (if (>= (+ idx 1) count)
+              (ErrSelfhostLintConfig
+                "selfhost-lint: --stdlib-root requires a value")
+              (selfhost-lint-parse-options
+                (+ idx 2)
+                count
+                input-paths
+                manifest-path
+                has-manifest
+                (string-vec-push stdlib-roots (arg (+ idx 1)))
+                enforcing
+                deprecated-string-concat))
+            (if (string-eq current "--manifest-path")
+              (if (>= (+ idx 1) count)
+                (ErrSelfhostLintConfig
+                  "selfhost-lint: --manifest-path requires a value")
+                (if has-manifest
+                  (ErrSelfhostLintConfig
+                    "selfhost-lint: duplicate --manifest-path")
+                  (selfhost-lint-parse-options
+                    (+ idx 2)
+                    count
+                    input-paths
+                    (arg (+ idx 1))
+                    true
+                    stdlib-roots
+                    enforcing
+                    deprecated-string-concat)))
+              (if (selfhost-lint-flag? current)
+                (ErrSelfhostLintConfig
+                  (string-append "selfhost-lint: unknown flag " current))
+                (selfhost-lint-parse-options
+                  (+ idx 1)
+                  count
+                  (string-vec-push input-paths current)
+                  manifest-path
+                  has-manifest
+                  stdlib-roots
+                  enforcing
+                  deprecated-string-concat)))))))))
 
 ;; Parse the `lint` config from arguments starting at `start`.
 (define (selfhost-lint-config-from [start : i64] [count : i64]) : ResultSelfhostLintConfig
@@ -570,8 +570,9 @@
         2)]))
 
 ;; ---- self-test (driven by lint_driver_smoke.tl) ----
-;; A five-deep value-dispatch if-ladder (length 5 >= the default threshold of 3),
-;; so linting it yields exactly one finding at depth 5.
+;; A five-deep value-dispatch if-ladder. The nested-if-ladder rule remains
+;; registered, but #2579 keeps it dormant while bootstrap source must use
+;; nested `if` instead of bracket `cond`, so this emits no findings.
 (define (selfhost-lint-ladder-source) : String
   "(define (classify [x : i64]) : i64
   (if (= x 0)
@@ -586,8 +587,8 @@
             50
             0))))))")
 
-;; Same ladder, but with a `;; lint-allow: nested-if-ladder` directive on the
-;; line immediately above the flagged `if` - the finding must be suppressed.
+;; Same ladder, but with a `;; lint-allow: nested-if-ladder` directive retained
+;; to prove the dormant rule id still parses as a stable suppression key.
 (define (selfhost-lint-suppressed-ladder-source) : String
   "(define (classify [x : i64]) : i64
   ;; lint-allow: nested-if-ladder
@@ -599,7 +600,8 @@
         30
         0))))")
 
-;; A directive for a different rule id must not suppress this rule.
+;; A directive for a different rule id also emits no ladder finding while the
+;; rule is dormant.
 (define (selfhost-lint-wrong-allow-ladder-source) : String
   "(define (classify [x : i64]) : i64
   ;; lint-allow: other-rule
@@ -756,8 +758,7 @@
       source
       (string-vec-new))))
 
-;; The reported ladder finding has depth 5, a stable rule id, and a real source
-;; line.
+;; Compatibility helper retained for the nested-if-ladder metadata shape.
 (define (selfhost-lint-reported-finding-ok? [findings : LintFindings]) : bool
   (match (lint-findings-get findings 0)
     [(LintSomeFinding finding)
@@ -879,127 +880,146 @@
         "lint_driver_self_test.tl"
         (selfhost-lint-cascading-core-and-source)
         (string-vec-new))]
-    (cond
-      (not (= (lint-findings-count reported) 1))
+    (if (not (= (lint-findings-count reported) 0))
       1
-      (not (selfhost-lint-reported-finding-ok? reported))
-      2
-      (not (= (lint-findings-count return-reported) 1))
-      9
-      (not (selfhost-lint-return-path-finding-ok? return-reported))
-      10
-      (not (= (lint-findings-count unit-reported) 1))
-      12
-      (not (selfhost-lint-unit-if-finding-ok? unit-reported))
-      13
-      (not (= (lint-findings-count unit-set-reported) 1))
-      16
-      (not (selfhost-lint-unit-if-finding-ok? unit-set-reported))
-      17
-      (not (= (lint-findings-count two-reported) 2))
-      18
-      (not (selfhost-lint-render-order-ok? two-reported))
-      19
-      (not (= (lint-findings-count cascading-and-reported) 1))
-      20
-      (not
-        (selfhost-lint-cascading-and-or-finding-ok?
-          cascading-and-reported
-          "cascading and: prefer flat n-ary form (and a b c)"))
-      21
-      (not (= (lint-findings-count cascading-or-reported) 1))
-      22
-      (not
-        (selfhost-lint-cascading-and-or-finding-ok?
-          cascading-or-reported
-          "cascading or: prefer flat n-ary form (or a b c)"))
-      23
-      (not (= (lint-findings-count cascading-core-and-reported) 1))
-      24
-      (not
-        (selfhost-lint-cascading-and-or-finding-ok?
-          cascading-core-and-reported
-          "cascading and: prefer flat n-ary form (and a b c)"))
-      25
-      (not
-        (=
-          (selfhost-lint-source-finding-count (selfhost-lint-flat-and-source))
-          0))
-      26
-      (not
-        (=
-          (selfhost-lint-source-finding-count
-            (selfhost-lint-mixed-and-or-source))
-          0))
-      27
-      (not
-        (=
-          (selfhost-lint-source-finding-count
-            (selfhost-lint-suppressed-cascading-and-source))
-          0))
-      28
-      (not
-        (=
-          (selfhost-lint-source-finding-count
-            (selfhost-lint-suppressed-return-path-chain-source))
-          0))
-      11
-      (not
-        (=
-          (selfhost-lint-source-finding-count
-            (selfhost-lint-suppressed-unit-if-source))
-          0))
-      14
-      (not
-        (=
-          (selfhost-lint-source-finding-count
-            (selfhost-lint-when-unless-source))
-          0))
-      15
-      (not
-        (=
-          (selfhost-lint-source-finding-count
-            (selfhost-lint-suppressed-ladder-source))
-          0))
-      3
-      (not
-        (=
-          (selfhost-lint-source-finding-count
-            (selfhost-lint-wrong-allow-ladder-source))
-          1))
-      4
-      (not
-        (= (selfhost-lint-source-finding-count (selfhost-lint-clean-source)) 0))
-      5
-      (not
-        (selfhost-lint-nested-let-finding-ok?
-          (selfhost-lint-source-with-roots
-            "lint_driver_self_test.tl"
-            (selfhost-lint-nested-let-source)
-            (string-vec-new))))
-      9
-      (not
-        (=
-          (selfhost-lint-source-finding-count
-            (selfhost-lint-shadowing-nested-let-source))
-          0))
-      10
-      (not
-        (=
-          (selfhost-lint-source-finding-count
-            (selfhost-lint-begin-inner-let-source))
-          0))
-      11
-      (not
-        (=
-          (selfhost-lint-source-finding-count
-            (selfhost-lint-suppressed-nested-let-source))
-          0))
-      12
-      (not (= (selfhost-lint-enforce-exit true 1) 1))
-      6
-      (not (= (selfhost-lint-enforce-exit true 0) 0))
-      7
-      (not (= (selfhost-lint-enforce-exit false 1) 0))
-      8
-      42)))
+      (if (not (= (lint-findings-count return-reported) 1))
+        9
+        (if (not (selfhost-lint-return-path-finding-ok? return-reported))
+          10
+          (if (not (= (lint-findings-count unit-reported) 1))
+            12
+            (if (not (selfhost-lint-unit-if-finding-ok? unit-reported))
+              13
+              (if (not (= (lint-findings-count unit-set-reported) 1))
+                16
+                (if (not (selfhost-lint-unit-if-finding-ok? unit-set-reported))
+                  17
+                  (if (not (= (lint-findings-count two-reported) 0))
+                    18
+                    (if (not (= (lint-findings-count cascading-and-reported) 1))
+                      20
+                      (if (not
+                        (selfhost-lint-cascading-and-or-finding-ok?
+                          cascading-and-reported
+                          "cascading and: prefer flat n-ary form (and a b c)"))
+                        21
+                        (if (not
+                          (= (lint-findings-count cascading-or-reported) 1))
+                          22
+                          (if (not
+                            (selfhost-lint-cascading-and-or-finding-ok?
+                              cascading-or-reported
+                              "cascading or: prefer flat n-ary form (or a b c)"))
+                            23
+                            (if (not
+                              (=
+                                (lint-findings-count
+                                  cascading-core-and-reported)
+                                1))
+                              24
+                              (if (not
+                                (selfhost-lint-cascading-and-or-finding-ok?
+                                  cascading-core-and-reported
+                                  "cascading and: prefer flat n-ary form (and a b c)"))
+                                25
+                                (if (not
+                                  (=
+                                    (selfhost-lint-source-finding-count
+                                      (selfhost-lint-flat-and-source))
+                                    0))
+                                  26
+                                  (if (not
+                                    (=
+                                      (selfhost-lint-source-finding-count
+                                        (selfhost-lint-mixed-and-or-source))
+                                      0))
+                                    27
+                                    (if (not
+                                      (=
+                                        (selfhost-lint-source-finding-count
+                                          (selfhost-lint-suppressed-cascading-and-source))
+                                        0))
+                                      28
+                                      (if (not
+                                        (=
+                                          (selfhost-lint-source-finding-count
+                                            (selfhost-lint-suppressed-return-path-chain-source))
+                                          0))
+                                        11
+                                        (if (not
+                                          (=
+                                            (selfhost-lint-source-finding-count
+                                              (selfhost-lint-suppressed-unit-if-source))
+                                            0))
+                                          14
+                                          (if (not
+                                            (=
+                                              (selfhost-lint-source-finding-count
+                                                (selfhost-lint-when-unless-source))
+                                              0))
+                                            15
+                                            (if (not
+                                              (=
+                                                (selfhost-lint-source-finding-count
+                                                  (selfhost-lint-suppressed-ladder-source))
+                                                0))
+                                              3
+                                              (if (not
+                                                (=
+                                                  (selfhost-lint-source-finding-count
+                                                    (selfhost-lint-wrong-allow-ladder-source))
+                                                  0))
+                                                4
+                                                (if (not
+                                                  (=
+                                                    (selfhost-lint-source-finding-count
+                                                      (selfhost-lint-clean-source))
+                                                    0))
+                                                  5
+                                                  (if (not
+                                                    (selfhost-lint-nested-let-finding-ok?
+                                                      (selfhost-lint-source-with-roots
+                                                        "lint_driver_self_test.tl"
+                                                        (selfhost-lint-nested-let-source)
+                                                        (string-vec-new))))
+                                                    9
+                                                    (if (not
+                                                      (=
+                                                        (selfhost-lint-source-finding-count
+                                                          (selfhost-lint-shadowing-nested-let-source))
+                                                        0))
+                                                      10
+                                                      (if (not
+                                                        (=
+                                                          (selfhost-lint-source-finding-count
+                                                            (selfhost-lint-begin-inner-let-source))
+                                                          0))
+                                                        11
+                                                        (if (not
+                                                          (=
+                                                            (selfhost-lint-source-finding-count
+                                                              (selfhost-lint-suppressed-nested-let-source))
+                                                            0))
+                                                          12
+                                                          (if (not
+                                                            (=
+                                                              (selfhost-lint-enforce-exit
+                                                                true
+                                                                1)
+                                                              1))
+                                                            6
+                                                            (if (not
+                                                              (=
+                                                                (selfhost-lint-enforce-exit
+                                                                  true
+                                                                  0)
+                                                                0))
+                                                              7
+                                                              (if (not
+                                                                (=
+                                                                  (selfhost-lint-enforce-exit
+                                                                    false
+                                                                    1)
+                                                                  0))
+                                                                8
+                                                                42))))))))))))))))))))))))))))))))

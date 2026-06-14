@@ -315,17 +315,16 @@
         [(OkFsMetadata metadata)
           (let
             [kind : FsFileKind (fs-metadata-kind metadata)]
-            (cond
-              (fs-file-kind-directory? kind)
+            (if (fs-file-kind-directory? kind)
               (if (package-source-dir-has-manifest? child-path)
                 (OkPackageSourceList acc)
                 (package-source-scan-dir command root child-relative acc))
-              (package-source-include-file? child-path metadata)
-              (OkPackageSourceList
-                (package-source-vec-insert
-                  acc
-                  (compiler-load-normalize-path child-path)))
-              (OkPackageSourceList acc)))]))))
+              (if (package-source-include-file? child-path metadata)
+                (OkPackageSourceList
+                  (package-source-vec-insert
+                    acc
+                    (compiler-load-normalize-path child-path)))
+                (OkPackageSourceList acc))))]))))
 
 (define (package-source-scan-entries
   [command : String]

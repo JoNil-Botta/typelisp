@@ -329,7 +329,7 @@
 (define (lsp-initialize-result) : Json
   (lsp-json-object2
     "capabilities"
-    (lsp-json-object2
+    (lsp-json-object4
       "textDocumentSync"
       (lsp-json-object2
         "openClose"
@@ -337,6 +337,10 @@
         "change"
         (lsp-json-number 1))
       "definitionProvider"
+      (JsonBool true)
+      "completionProvider"
+      (lsp-json-object1 "resolveProvider" (JsonBool false))
+      "inlayHintProvider"
       (JsonBool true))
     "serverInfo"
     (lsp-json-object2
@@ -1259,6 +1263,241 @@
     (lsp-definition-smoke-skips-char-literals?)
     (lsp-definition-smoke-qualified-base?)))
 
+;; --------------------------------------------------------------------------
+;; Completion (textDocument/completion).
+;;
+;; Offers the language's special forms, builtins, and primitive types, plus the
+;; top-level names defined in any open document. The client filters by the
+;; typed prefix, so the full candidate set is returned.
+;; --------------------------------------------------------------------------
+(define (lsp-completion-keywords) : String
+  "define lambda let if begin while set! return match foreach cond when unless and or with-arena with-escape try unsafe quote quasiquote unquote ann init cast type defstruct defenum defmacro defdispatch import export extern module comptime comptime-decl comptime-decls include-str include-bin test spmd-reduce spmd-broadcast")
+
+(define (lsp-completion-builtins) : String
+  "ptr-null ptr-read ptr-write! ptr-offset ptr-cast ptr->int int->ptr ptr-null? ptr-addr-of make-array array-ref array-set! array-push! array-data tuple-ref struct-get string-data string-from-bytes program-argc program-argv program-envp cpuid-eax cpuid-ebx cpuid-ecx cpuid-edx xgetbv syscall box box-get array tuple")
+
+(define (lsp-completion-types) : String
+  "i64 i32 i16 i8 u64 u32 u16 u8 f64 f32 bool char String str unit never Array Tuple Box Ptr MutPtr")
+
+(define (lsp-split-spaces [s : String]) : StringVec
+  (let
+    [n : i64 (string-length s)]
+    [i : i64 0]
+    [start : i64 0]
+    [acc : StringVec (string-vec-new)]
+    (begin
+      (while (< i n)
+        (begin
+          (if (= (string-ref s i) #\space')
+            (begin
+              (if (> i start)
+                (set! acc (string-vec-push acc (substring s start (- i start))))
+                unit)
+              (set! start (+ i 1)))
+            unit)
+          (set! i (+ i 1))))
+      (if (> n start)
+        (set! acc (string-vec-push acc (substring s start (- n start))))
+        unit)
+      acc)))
+
+(define (lsp-completion-item [label : String] [kind : i64]) : Json
+  (lsp-json-object2 "label" (JsonString label) "kind" (lsp-json-number kind)))
+
+(define (lsp-completion-items-from
+  [labels : StringVec]
+  [kind : i64]
+  [idx : i64]
+  [acc : JsonList]) : JsonList
+  (if (>= idx (string-vec-len labels))
+    acc
+    (lsp-completion-items-from
+      labels
+      kind
+      (+ idx 1)
+      (lsp-json-list-cons
+        (lsp-completion-item (string-vec-get labels idx "") kind)
+        acc))))
+
+;; Collect every top-level definition name in `text`, skipping strings/comments.
+(define (lsp-collect-def-names [text : String] [acc : StringVec]) : StringVec
+  (let
+    [n : i64 (string-length text)]
+    [i : i64 0]
+    [out : StringVec acc]
+    (begin
+      (while (< i n)
+        (let
+          [c : char (string-ref text i)]
+          (cond
+            (= c #;')
+            (set! i (lsp-skip-line text i n))
+            (= c #"')
+            (set! i (lsp-skip-string text i n))
+            (= c #(')
+            (let
+              [name-off : i64 (lsp-def-name-offset-at text i n)]
+              (begin
+                (if (>= name-off 0)
+                  (set!
+                    out
+                    (string-vec-push out (lsp-symbol-at-offset text name-off)))
+                  unit)
+                (set! i (+ i 1))))
+            (set! i (+ i 1)))))
+      out)))
+
+(define (lsp-collect-def-names-all
+  [docs : LspDocuments]
+  [idx : i64]
+  [acc : StringVec]) : StringVec
+  (if (>= idx (lsp-documents-len docs))
+    acc
+    (lsp-collect-def-names-all
+      docs
+      (+ idx 1)
+      (lsp-collect-def-names
+        (struct-get (array-ref (lsp-documents-slots docs) idx) text)
+        acc))))
+
+(define (lsp-completion-respond [id : Json] [docs : LspDocuments]) : unit
+  (let
+    [names : StringVec (lsp-collect-def-names-all docs 0 (string-vec-new))]
+    [items : JsonList
+      (lsp-completion-items-from
+        names
+        3
+        0
+        (lsp-completion-items-from
+          (lsp-split-spaces (lsp-completion-types))
+          7
+          0
+          (lsp-completion-items-from
+            (lsp-split-spaces (lsp-completion-builtins))
+            3
+            0
+            (lsp-completion-items-from
+              (lsp-split-spaces (lsp-completion-keywords))
+              14
+              0
+              JsonListNil))))]
+    (lsp-write-response id (lsp-json-array items))))
+
+;; --------------------------------------------------------------------------
+;; Inlay hints (textDocument/inlayHint) for inferred types.
+;;
+;; The typechecker records the inferred type + position of each un-annotated
+;; `let` binding value (see tc-inlay-hint-* in compiler_typecheck_core). Here we
+;; re-check the document with collection enabled, then emit a `: <type>` hint at
+;; each recorded position that the open document confirms is a real un-annotated
+;; binding within the requested range.
+;; --------------------------------------------------------------------------
+;; True when `off` is the start of the value in an un-annotated `[name value]`
+;; binding: the char before (past whitespace) is the name, preceded by `[`.
+(define (lsp-inlay-valid-binding? [text : String] [off : i64]) : bool
+  (let
+    [p : i64 (- off 1)]
+    (begin
+      (while (and (>= p 0) (lsp-ws? (string-ref text p)))
+        (set! p (- p 1)))
+      (if (< p 0)
+        false
+        (if (not (lsp-ident-char? (string-ref text p)))
+          false
+          (begin
+            (while (and (>= p 0) (lsp-ident-char? (string-ref text p)))
+              (set! p (- p 1)))
+            (while (and (>= p 0) (lsp-ws? (string-ref text p)))
+              (set! p (- p 1)))
+            (and (>= p 0) (= (string-ref text p) #['))))))))
+
+(define (lsp-inlay-range-line [range : Json] [which : String] [fallback : i64]) : i64
+  (match (json-object-get range (& which))
+    [(JsonFound endpoint) (lsp-json-int-field-default endpoint "line" fallback)]
+    [(JsonMissing) fallback]))
+
+(define (lsp-inlay-hint-json [line : i64] [col : i64] [ty : String]) : Json
+  (lsp-json-object4
+    "position"
+    (lsp-position line col)
+    "label"
+    (JsonString (string-append ": " ty))
+    "kind"
+    (lsp-json-number 1)
+    "paddingRight"
+    (JsonBool true)))
+
+(define (lsp-inlay-build [text : String] [start-line : i64] [end-line : i64]) : JsonList
+  (let
+    [size : i64 (tc-inlay-hints-size)]
+    [i : i64 0]
+    [acc : JsonList JsonListNil]
+    (begin
+      (while (< i size)
+        (let
+          [line1 : i64 (tc-inlay-hint-line-at i)]
+          [col1 : i64 (tc-inlay-hint-col-at i)]
+          [line0 : i64 (- line1 1)]
+          (begin
+            (if (and
+              (and (>= line0 start-line) (<= line0 end-line))
+              (lsp-inlay-valid-binding?
+                text
+                (lsp-offset-at-position text line0 (- col1 1))))
+              (set!
+                acc
+                (lsp-json-list-cons
+                  (lsp-inlay-hint-json line1 col1 (tc-inlay-hint-type-at i))
+                  acc))
+              unit)
+            (set! i (+ i 1)))))
+      acc)))
+
+(define (lsp-inlay-respond
+  [id : Json]
+  [uri : String]
+  [range : Json]
+  [docs : LspDocuments]
+  [stdlib-roots : StringVec]) : unit
+  (match (lsp-documents-lookup docs uri)
+    [(FoundLspDocument path text _)
+      (let
+        [start-line : i64 (lsp-inlay-range-line range "start" 0)]
+        [end-line : i64 (lsp-inlay-range-line range "end" 1000000000)]
+        (begin
+          (tc-inlay-hints-enable!)
+          (match (compiler-check-source-with-roots path text stdlib-roots)
+            [(OkCompilerCheck _) unit]
+            [(ErrCompilerCheck _) unit])
+          (let
+            [hints : JsonList (lsp-inlay-build text start-line end-line)]
+            (begin
+              (tc-inlay-hints-disable!)
+              (lsp-write-response id (lsp-json-array hints))))))]
+    [(MissingLspDocument) (lsp-write-response id (lsp-json-array JsonListNil))]))
+
+(define (lsp-handle-inlay
+  [id : Json]
+  [params : Json]
+  [docs : LspDocuments]
+  [stdlib-roots : StringVec]) : unit
+  (let
+    [td-key : String "textDocument"]
+    (match (json-object-get params (& td-key))
+      [(JsonFound document)
+        (match (lsp-json-string-field document "uri")
+          [(OkLspJsonText uri)
+            (let
+              [range-key : String "range"]
+              (match (json-object-get params (& range-key))
+                [(JsonFound range)
+                  (lsp-inlay-respond id uri range docs stdlib-roots)]
+                [(JsonMissing)
+                  (lsp-write-response id (lsp-json-array JsonListNil))]))]
+          [(MissingLspJsonText)
+            (lsp-write-response id (lsp-json-array JsonListNil))])]
+      [(JsonMissing) (lsp-write-response id (lsp-json-array JsonListNil))])))
+
 (define (lsp-maybe-write-method-not-found [message : Json]) : unit
   (let
     [key : String "id"]
@@ -1322,6 +1561,29 @@
                   (match (json-object-get message (& params-key))
                     [(JsonFound params) (lsp-handle-definition id params docs)]
                     [(JsonMissing) (lsp-write-response id JsonNull)]))]
+              [(JsonMissing) unit]))
+          (LspContinue docs))
+        (string-eq method "textDocument/completion")
+        (begin
+          (let
+            [id-key : String "id"]
+            (match (json-object-get message (& id-key))
+              [(JsonFound id) (lsp-completion-respond id docs)]
+              [(JsonMissing) unit]))
+          (LspContinue docs))
+        (string-eq method "textDocument/inlayHint")
+        (begin
+          (let
+            [id-key : String "id"]
+            (match (json-object-get message (& id-key))
+              [(JsonFound id)
+                (let
+                  [params-key : String "params"]
+                  (match (json-object-get message (& params-key))
+                    [(JsonFound params)
+                      (lsp-handle-inlay id params docs stdlib-roots)]
+                    [(JsonMissing)
+                      (lsp-write-response id (lsp-json-array JsonListNil))]))]
               [(JsonMissing) unit]))
           (LspContinue docs))
         (begin

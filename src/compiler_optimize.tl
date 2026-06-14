@@ -15041,14 +15041,29 @@
     [(IrValueVar cond-var)
       (match (opt-loop-bce-cmp-lookup (struct-get state cmps) cond-var)
         [(OptLoopBceCmpCons _ lhs rhs _)
-          (if (opt-loop-bce-guard-nonnegative?
-            blocks
-            index
-            block-label
-            true-label
-            lhs)
-            (opt-loop-bce-state-bind-guard state true-label lhs rhs)
-            state)]
+          (let
+            [marker : OptLoopBceExpr (OptLoopBceValue (IrValueI64 (- 0 1)))]
+            [range-nonnegative : bool
+              (match (opt-loop-bce-guard-lookup
+                (struct-get state guards)
+                block-label)
+                [(OptLoopBceGuardCons _ found found-marker _)
+                  (and
+                    (opt-loop-bce-expr-eq found lhs)
+                    (opt-loop-bce-expr-eq found-marker marker))]
+                [(OptLoopBceGuardNil) false])]
+            [loop-nonnegative : bool
+              (opt-loop-bce-guard-nonnegative?
+                blocks
+                index
+                block-label
+                true-label
+                lhs)]
+            (if (opt-loop-bce-expr-eq rhs marker)
+              (opt-loop-bce-state-bind-guard state true-label lhs marker)
+              (if (or range-nonnegative loop-nonnegative)
+                (opt-loop-bce-state-bind-guard state true-label lhs rhs)
+                state)))]
         [(OptLoopBceCmpNil) state])]
     [_ state]))
 
@@ -15221,22 +15236,36 @@
           (OptLoopBceUnknown)))]
     [(IrInstrBitcast dst _ _ _) (opt-loop-bce-state-invalidate-def state dst)]
     [(IrInstrBinOp dst op lhs rhs ty)
-      (if (and (opt-binop-eq op (IrBinLt)) (opt-type-eq ty (AstTyBool)))
+      (if (and (opt-type-eq ty (AstTyBool)) (opt-binop-eq op (IrBinLt)))
         (opt-loop-bce-state-bind-cmp
           state
           sources
           dst
           (opt-loop-bce-value-expr sources (struct-get state exprs) lhs)
           (opt-loop-bce-value-expr sources (struct-get state exprs) rhs))
-        (opt-loop-bce-state-bind-expr
-          state
-          sources
-          dst
-          (OptLoopBceBin
-            op
-            (box (opt-loop-bce-value-expr sources (struct-get state exprs) lhs))
-            (box (opt-loop-bce-value-expr sources (struct-get state exprs) rhs))
-            ty)))]
+        (if (and
+          (opt-type-eq ty (AstTyBool))
+          (opt-binop-eq op (IrBinGe))
+          (match rhs
+            [(IrValueI64 value) (= value 0)]
+            [_ false]))
+          (opt-loop-bce-state-bind-cmp
+            state
+            sources
+            dst
+            (opt-loop-bce-value-expr sources (struct-get state exprs) lhs)
+            (OptLoopBceValue (IrValueI64 (- 0 1))))
+          (opt-loop-bce-state-bind-expr
+            state
+            sources
+            dst
+            (OptLoopBceBin
+              op
+              (box
+                (opt-loop-bce-value-expr sources (struct-get state exprs) lhs))
+              (box
+                (opt-loop-bce-value-expr sources (struct-get state exprs) rhs))
+              ty))))]
     [(IrInstrUnOp dst _ _ _) (opt-loop-bce-state-invalidate-def state dst)]
     [(IrInstrLaneId dst _ _) (opt-loop-bce-state-invalidate-def state dst)]
     [(IrInstrSplat dst _ _ _) (opt-loop-bce-state-invalidate-def state dst)]
@@ -15293,22 +15322,35 @@
     [(IrInstrJump _) state]
     [(IrInstrReturn _) state]))
 
+(define (opt-loop-bce-length-expr-known?
+  [lengths : OptLoopBceLengthEnv]
+  [expr : OptLoopBceExpr]) : bool
+  (match lengths
+    [(OptLoopBceLengthNil) false]
+    [(OptLoopBceLengthCons _ found rest)
+      (if (opt-loop-bce-expr-eq found expr)
+        true
+        (opt-loop-bce-length-expr-known? (box-get rest) expr))]))
+
 (define (opt-loop-bce-can-remove?
   [state : OptLoopBceState]
   [sources : I64I64Map]
   [block-label : String]
   [index : CompilerIrValue]
   [length : CompilerIrValue]) : bool
-  (match (opt-loop-bce-guard-lookup (struct-get state guards) block-label)
-    [(OptLoopBceGuardCons _ guard-index guard-length _)
-      (and
-        (opt-loop-bce-expr-eq
-          guard-index
-          (opt-loop-bce-value-expr sources (struct-get state exprs) index))
-        (opt-loop-bce-expr-eq
-          guard-length
-          (opt-loop-bce-value-expr sources (struct-get state exprs) length)))]
-    [(OptLoopBceGuardNil) false]))
+  (let
+    [length-expr : OptLoopBceExpr
+      (opt-loop-bce-value-expr sources (struct-get state exprs) length)]
+    (and
+      (opt-loop-bce-length-expr-known? (struct-get state lengths) length-expr)
+      (match (opt-loop-bce-guard-lookup (struct-get state guards) block-label)
+        [(OptLoopBceGuardCons _ guard-index guard-length _)
+          (and
+            (opt-loop-bce-expr-eq
+              guard-index
+              (opt-loop-bce-value-expr sources (struct-get state exprs) index))
+            (opt-loop-bce-expr-eq guard-length length-expr))]
+        [(OptLoopBceGuardNil) false]))))
 
 (define (opt-loop-bce-rewrite-instrs
   [state : OptLoopBceState]

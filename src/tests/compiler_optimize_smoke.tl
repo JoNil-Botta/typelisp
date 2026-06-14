@@ -143,6 +143,82 @@
               5
               42)))))))
 
+(define (smoke-range-bce-entry [with-nonnegative : bool]) : CompilerIrBlock
+  (compiler-ir-block
+    "entry"
+    (compiler-ir-instr-cons
+      (IrInstrGep 3 (IrValueVar 2) (IrValueI64 1) (AstTyI64))
+      (compiler-ir-instr-cons
+        (IrInstrLoad 1 (IrValueVar 3) (AstTyI64))
+        (compiler-ir-instr-cons
+          (IrInstrMov 0 (IrValueI64 0) (AstTyI64))
+          (if with-nonnegative
+            (compiler-ir-instr-cons
+              (IrInstrBinOp
+                14
+                (IrBinGe)
+                (IrValueVar 0)
+                (IrValueI64 0)
+                (AstTyBool))
+              (compiler-ir-instr-cons
+                (IrInstrBranch (IrValueVar 14) "lt" "exit")
+                (IrInstrNil)))
+            (compiler-ir-instr-cons (IrInstrJump "lt") (IrInstrNil))))))))
+
+(define (smoke-range-bce-lt [op : CompilerIrBinOp] [length-var : i64]) : CompilerIrBlock
+  (compiler-ir-block
+    "lt"
+    (compiler-ir-instr-cons
+      (IrInstrBinOp 15 op (IrValueVar 0) (IrValueVar length-var) (AstTyBool))
+      (compiler-ir-instr-cons
+        (IrInstrBranch (IrValueVar 15) "body" "exit")
+        (IrInstrNil)))))
+
+(define (smoke-range-bce-body) : CompilerIrBlock
+  (compiler-ir-block
+    "body"
+    (opt-loop-bce-string-test-ref-instrs
+      2
+      30
+      (compiler-ir-instr-cons
+        (IrInstrReturn (IrSomeValue (IrValueVar 37)))
+        (IrInstrNil)))))
+
+(define (smoke-range-bce-blocks
+  [with-nonnegative : bool]
+  [op : CompilerIrBinOp]
+  [length-var : i64]) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (smoke-range-bce-entry with-nonnegative)
+    (compiler-ir-block-cons
+      (smoke-range-bce-lt op length-var)
+      (compiler-ir-block-cons
+        (smoke-range-bce-body)
+        (compiler-ir-block-cons (opt-loop-bce-test-exit) (IrBlockNil))))))
+
+(define (smoke-range-bce-count
+  [with-nonnegative : bool]
+  [op : CompilerIrBinOp]
+  [length-var : i64]) : i64
+  (opt-count-bounds-blocks
+    (opt-loop-bce-blocks
+      (opt-loop-bce-test-summaries false false)
+      (opt-loop-bce-string-test-params)
+      (smoke-range-bce-blocks with-nonnegative op length-var))))
+
+(define (smoke-range-bce-self-test) : i64
+  (let
+    [positive : i64 (smoke-range-bce-count true (IrBinLt) 1)]
+    [missing-nonnegative : i64 (smoke-range-bce-count false (IrBinLt) 1)]
+    [off-by-one : i64 (smoke-range-bce-count true (IrBinLe) 1)]
+    [mismatched-length : i64 (smoke-range-bce-count true (IrBinLt) 20)]
+    (cond
+      [(not (= positive 0)) 1]
+      [(not (= missing-nonnegative 1)) 2]
+      [(not (= off-by-one 1)) 3]
+      [(not (= mismatched-length 1)) 4]
+      [else 42])))
+
 (define (main) : i64
   (begin
     (unless (= (compiler-optimize-self-test) 42) (return 1))
@@ -155,6 +231,7 @@
     (unless (= (compiler-optimize-copy-self-test) 42) (return 1))
     (unless (= (compiler-optimize-bounds-self-test) 42) (return 1))
     (unless (= (smoke-object-bounds-self-test) 42) (return 1))
+    (unless (= (smoke-range-bce-self-test) 42) (return 1))
     (unless (= (compiler-optimize-sccp-self-test) 42) (return 1))
     (unless (= (compiler-optimize-global-value-number-self-test) 42) (return 1))
     (unless (= (compiler-optimize-cfg-self-test) 42) (return 1))

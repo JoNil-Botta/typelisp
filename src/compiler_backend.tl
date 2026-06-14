@@ -9175,152 +9175,102 @@
         (if is-float
           (+ float-idx 1)
           float-idx)]
+      [memory-size : i64
+        (compiler-backend-c-memory-aggregate-marker-size args (+ arg-index 1))]
       ;; #2386: a register-group argument occupies TWO consecutive integer arg
       ;; registers. Linux SysV indexes them by `int-idx`; Windows by the unified
       ;; `position`. The selfhost only passes register-group values between its own
       ;; functions (never to an `(:abi c)` boundary), so a 2-register/2-stack-slot
       ;; convention with a %rax:%rdx return is self-consistent on both targets.
-      (let
-        [memory-size : i64
-          (compiler-backend-c-memory-aggregate-marker-size args (+ arg-index 1))]
-        (if (and
+      (cond
+        (and
           (> memory-size 0)
           (compiler-backend-c-memory-aggregate-type? target c-abi? arg-ty))
-          (match (compiler-backend-emit-c-memory-stack-arg
+        (match (compiler-backend-emit-c-memory-stack-arg
+          target
+          assignments
+          value
+          stack-idx
+          memory-size)
+          [(OkCompilerBackend head)
+            (match (compiler-backend-emit-call-args
+              target
+              assignments
+              args
+              (compiler-backend-skip-c-memory-marker-types rest-types)
+              c-abi?
+              (+ arg-index 3)
+              int-idx
+              float-idx
+              (+ position 1)
+              (+ stack-idx (compiler-backend-stack-slots-for-size memory-size))
+              func-diag
+              program-index
+              vars)
+              [(OkCompilerBackend tail)
+                (OkCompilerBackend (string-append head tail))]
+              [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+        (compiler-backend-group-type? program-index arg-ty)
+        (let
+          [w0-sse : bool
+            (compiler-backend-group-word-sse? program-index arg-ty 0)]
+          [w0-stack : bool
+            (compiler-backend-stack-call-arg-for-banks?
+              target
+              w0-sse
+              int-idx
+              float-idx
+              position)]
+          [int1 : i64
+            (if w0-sse
+              int-idx
+              (+ int-idx 1))]
+          [float1 : i64
+            (if w0-sse
+              (+ float-idx 1)
+              float-idx)]
+          [stack1 : i64
+            (if w0-stack
+              (+ stack-idx 1)
+              stack-idx)]
+          [w1-sse : bool
+            (compiler-backend-group-word-sse? program-index arg-ty 1)]
+          [w1-stack : bool
+            (compiler-backend-stack-call-arg-for-banks?
+              target
+              w1-sse
+              int1
+              float1
+              (+ position 1))]
+          (match (compiler-backend-emit-group-word-call-arg
             target
             assignments
             value
+            0
+            int-idx
+            float-idx
+            position
             stack-idx
-            memory-size)
-            [(OkCompilerBackend head)
-              (match (compiler-backend-emit-call-args
-                target
-                assignments
-                args
-                (compiler-backend-skip-c-memory-marker-types rest-types)
-                c-abi?
-                (+ arg-index 3)
-                int-idx
-                float-idx
-                (+ position 1)
-                (+
-                  stack-idx
-                  (compiler-backend-stack-slots-for-size memory-size))
-                func-diag
-                program-index
-                vars)
-                [(OkCompilerBackend tail)
-                  (OkCompilerBackend (string-append head tail))]
-                [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-            [(ErrCompilerBackend message) (ErrCompilerBackend message)])
-          (if (compiler-backend-group-type? program-index arg-ty)
-            (let
-              [w0-sse : bool
-                (compiler-backend-group-word-sse? program-index arg-ty 0)]
-              [w0-stack : bool
-                (compiler-backend-stack-call-arg-for-banks?
-                  target
-                  w0-sse
-                  int-idx
-                  float-idx
-                  position)]
-              [int1 : i64
-                (if w0-sse
-                  int-idx
-                  (+ int-idx 1))]
-              [float1 : i64
-                (if w0-sse
-                  (+ float-idx 1)
-                  float-idx)]
-              [stack1 : i64
-                (if w0-stack
-                  (+ stack-idx 1)
-                  stack-idx)]
-              [w1-sse : bool
-                (compiler-backend-group-word-sse? program-index arg-ty 1)]
-              [w1-stack : bool
-                (compiler-backend-stack-call-arg-for-banks?
-                  target
-                  w1-sse
-                  int1
-                  float1
-                  (+ position 1))]
+            vars
+            arg-ty
+            program-index
+            func-diag)
+            [(OkCompilerBackend head0)
               (match (compiler-backend-emit-group-word-call-arg
                 target
                 assignments
                 value
-                0
-                int-idx
-                float-idx
-                position
-                stack-idx
+                1
+                int1
+                float1
+                (+ position 1)
+                stack1
                 vars
                 arg-ty
                 program-index
                 func-diag)
-                [(OkCompilerBackend head0)
-                  (match (compiler-backend-emit-group-word-call-arg
-                    target
-                    assignments
-                    value
-                    1
-                    int1
-                    float1
-                    (+ position 1)
-                    stack1
-                    vars
-                    arg-ty
-                    program-index
-                    func-diag)
-                    [(OkCompilerBackend head1)
-                      (match (compiler-backend-emit-call-args
-                        target
-                        assignments
-                        args
-                        rest-types
-                        c-abi?
-                        (+ arg-index 1)
-                        (if w1-sse
-                          int1
-                          (+ int1 1))
-                        (if w1-sse
-                          (+ float1 1)
-                          float1)
-                        (+ position 2)
-                        (if w1-stack
-                          (+ stack1 1)
-                          stack1)
-                        func-diag
-                        program-index
-                        vars)
-                        [(OkCompilerBackend tail)
-                          (OkCompilerBackend
-                            (string-append head0 (string-append head1 tail)))]
-                        [(ErrCompilerBackend message)
-                          (ErrCompilerBackend message)])]
-                    [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-                [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
-            (if (compiler-backend-stack-call-arg-for-banks?
-              target
-              is-float
-              int-idx
-              float-idx
-              position)
-              ;; Stack-passed arg: load into a scratch register that no other
-              ;; call arg uses (%xmm15 / %r11, matching the legacy backend) so an
-              ;; earlier register arg in xmm0/%rax is never clobbered, then
-              ;; store it at its %rsp offset.
-              (match (if is-float
-                (compiler-backend-emit-load-float-value-with-plan
-                  assignments
-                  value
-                  arg-ty
-                  "%xmm15")
-                (compiler-backend-emit-load-value-with-plan
-                  assignments
-                  value
-                  "%r11"))
-                [(OkCompilerBackend head)
+                [(OkCompilerBackend head1)
                   (match (compiler-backend-emit-call-args
                     target
                     assignments
@@ -9328,77 +9278,117 @@
                     rest-types
                     c-abi?
                     (+ arg-index 1)
-                    next-int
-                    next-float
-                    (+ position 1)
-                    (+ stack-idx 1)
+                    (if w1-sse
+                      int1
+                      (+ int1 1))
+                    (if w1-sse
+                      (+ float1 1)
+                      float1)
+                    (+ position 2)
+                    (if w1-stack
+                      (+ stack1 1)
+                      stack1)
                     func-diag
                     program-index
                     vars)
                     [(OkCompilerBackend tail)
                       (OkCompilerBackend
-                        (backend-cat5
-                          head
-                          (if is-float
-                            (backend-cat4
-                              "    "
-                              (compiler-backend-float-move arg-ty)
-                              " %xmm15, "
-                              "")
-                            "    movq %r11, ")
-                          (int->string
-                            (compiler-backend-outgoing-stack-arg-offset
-                              target
-                              stack-idx))
-                          "(%rsp)\n"
-                          tail))]
+                        (string-append head0 (string-append head1 tail)))]
                     [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-                [(ErrCompilerBackend message) (ErrCompilerBackend message)])
-              (match (if is-float
-                (compiler-backend-target-float-arg-reg
-                  target
-                  (if (compiler-backend-target-windows? target)
-                    position
-                    float-idx))
-                (compiler-backend-target-arg-reg
-                  target
-                  (if (compiler-backend-target-windows? target)
-                    position
-                    int-idx)))
-                [(OkBackendReg reg)
-                  (match (if is-float
-                    (compiler-backend-emit-load-float-value-with-plan
-                      assignments
-                      value
-                      arg-ty
-                      reg)
-                    (compiler-backend-emit-load-value-with-plan
-                      assignments
-                      value
-                      reg))
-                    [(OkCompilerBackend head)
-                      (match (compiler-backend-emit-call-args
+                [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+            [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+        (compiler-backend-stack-call-arg-for-banks?
+          target
+          is-float
+          int-idx
+          float-idx
+          position)
+        ;; Stack-passed arg: load into a scratch register that no other
+        ;; call arg uses (%xmm15 / %r11, matching the legacy backend) so an
+        ;; earlier register arg in xmm0/%rax is never clobbered, then
+        ;; store it at its %rsp offset.
+        (match (if is-float
+          (compiler-backend-emit-load-float-value-with-plan
+            assignments
+            value
+            arg-ty
+            "%xmm15")
+          (compiler-backend-emit-load-value-with-plan assignments value "%r11"))
+          [(OkCompilerBackend head)
+            (match (compiler-backend-emit-call-args
+              target
+              assignments
+              args
+              rest-types
+              c-abi?
+              (+ arg-index 1)
+              next-int
+              next-float
+              (+ position 1)
+              (+ stack-idx 1)
+              func-diag
+              program-index
+              vars)
+              [(OkCompilerBackend tail)
+                (OkCompilerBackend
+                  (backend-cat5
+                    head
+                    (if is-float
+                      (backend-cat4
+                        "    "
+                        (compiler-backend-float-move arg-ty)
+                        " %xmm15, "
+                        "")
+                      "    movq %r11, ")
+                    (int->string
+                      (compiler-backend-outgoing-stack-arg-offset
                         target
-                        assignments
-                        args
-                        rest-types
-                        c-abi?
-                        (+ arg-index 1)
-                        next-int
-                        next-float
-                        (+ position 1)
-                        stack-idx
-                        func-diag
-                        program-index
-                        vars)
-                        [(OkCompilerBackend tail)
-                          (OkCompilerBackend (string-append head tail))]
-                        [(ErrCompilerBackend message)
-                          (ErrCompilerBackend message)])]
-                    [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-                [(ErrBackendReg message)
-                  (ErrCompilerBackend
-                    (compiler-diagnostic-with-message func-diag message))]))))))))
+                        stack-idx))
+                    "(%rsp)\n"
+                    tail))]
+              [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+        (match (if is-float
+          (compiler-backend-target-float-arg-reg
+            target
+            (if (compiler-backend-target-windows? target)
+              position
+              float-idx))
+          (compiler-backend-target-arg-reg
+            target
+            (if (compiler-backend-target-windows? target)
+              position
+              int-idx)))
+          [(OkBackendReg reg)
+            (match (if is-float
+              (compiler-backend-emit-load-float-value-with-plan
+                assignments
+                value
+                arg-ty
+                reg)
+              (compiler-backend-emit-load-value-with-plan assignments value reg))
+              [(OkCompilerBackend head)
+                (match (compiler-backend-emit-call-args
+                  target
+                  assignments
+                  args
+                  rest-types
+                  c-abi?
+                  (+ arg-index 1)
+                  next-int
+                  next-float
+                  (+ position 1)
+                  stack-idx
+                  func-diag
+                  program-index
+                  vars)
+                  [(OkCompilerBackend tail)
+                    (OkCompilerBackend (string-append head tail))]
+                  [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+              [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+          [(ErrBackendReg message)
+            (ErrCompilerBackend
+              (compiler-diagnostic-with-message func-diag message))])))))
 
 (define (compiler-backend-tail-stage-slot-offset
   [arg-count : i64]

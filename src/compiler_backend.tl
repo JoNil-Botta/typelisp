@@ -7441,23 +7441,42 @@
               src
               from-ty
               to-ty)
-            (match (compiler-backend-emit-load-typed-value-with-plan
-              assignments
-              src
-              from-ty
-              program-index)
-              [(OkCompilerBackend load)
-                (OkCompilerBackend
-                  (string-append
-                    load
-                    (compiler-backend-emit-store-typed-var-with-plan
-                      assignments
-                      dst
-                      (if to-is-float
-                        "%xmm0"
-                        "%rax")
-                      to-ty)))]
-              [(ErrCompilerBackend message) (ErrCompilerBackend message)])))))))
+            (let
+              [dst-home : String
+                (compiler-backend-var-register-home assignments dst)]
+              (if (if (string-eq dst-home "")
+                false
+                (=
+                  (compiler-backend-type-size from-ty)
+                  (compiler-backend-type-size to-ty)))
+                ;; #2981: a same-width int/char cast only reinterprets
+                ;; signedness; it needs neither extension nor narrowing, so
+                ;; copy the source straight into the destination register
+                ;; home (which holds the full normalized 64-bit value),
+                ;; skipping the %rax round-trip. Width-changing casts keep
+                ;; the typed load+store below so sign/zero extension is
+                ;; applied.
+                (compiler-backend-emit-load-value-with-plan
+                  assignments
+                  src
+                  dst-home)
+                (match (compiler-backend-emit-load-typed-value-with-plan
+                  assignments
+                  src
+                  from-ty
+                  program-index)
+                  [(OkCompilerBackend load)
+                    (OkCompilerBackend
+                      (string-append
+                        load
+                        (compiler-backend-emit-store-typed-var-with-plan
+                          assignments
+                          dst
+                          (if to-is-float
+                            "%xmm0"
+                            "%rax")
+                          to-ty)))]
+                  [(ErrCompilerBackend message) (ErrCompilerBackend message)])))))))))
 
 (define (compiler-backend-ir-value-list-count [args : CompilerIrValueList]) : i64
   (match args

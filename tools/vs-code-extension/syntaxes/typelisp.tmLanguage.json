@@ -82,7 +82,7 @@
     "keywords": {
       "comment": "Special forms, declarations, and core macros, recognised only in head position.",
       "name": "keyword.control.typelisp",
-      "match": "(?<=\\()(comptime-decls|comptime-decl|comptime|defdispatch|defstruct|defmacro|defenum|define|include-str|include-bin|spmd-broadcast|spmd-reduce|with-arena|with-escape|unquote-splicing|unquote|quasiquote|quote|foreach|unsafe|return|export|extern|import|module|lambda|begin|while|match|unless|when|cond|cast|test|try|set!|type|init|ann|let|and|or|if)(?=[\\s)])"
+      "match": "(?<=\\()(comptime-decls|comptime-decl|comptime|defdispatch|defstruct|defmacro|defenum|define|include-str|include-bin|spmd-broadcast|spmd-reduce|with-arena|with-escape|with|unquote-splicing|unquote|quasiquote|quote|foreach|unsafe|return|export|extern|import|module|lambda|begin|while|match|unless|when|cond|cast|test|try|set!|type|init|ann|let|and|or|if)(?=[\\s)])"
     },
     "builtins": {
       "comment": "Built-in intrinsic operations and constructors, recognised in head position.",

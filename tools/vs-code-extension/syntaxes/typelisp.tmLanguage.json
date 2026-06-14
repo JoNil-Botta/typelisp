@@ -13,6 +13,7 @@
     { "include": "#constants" },
     { "include": "#types" },
     { "include": "#definition-name" },
+    { "include": "#bindings" },
     { "include": "#user-types" }
   ],
   "repository": {
@@ -161,6 +162,13 @@
           }
         }
       ]
+    },
+    "bindings": {
+      "comment": "Binding/parameter name: the first identifier inside [ ... ] (function params and let bindings).",
+      "match": "(?<=\\[)\\s*([A-Za-z_][A-Za-z0-9_!?*/<>=+-]*)",
+      "captures": {
+        "1": { "name": "variable.parameter.typelisp" }
+      }
     },
     "user-types": {
       "comment": "PascalCase identifiers (user types and enum constructors).",

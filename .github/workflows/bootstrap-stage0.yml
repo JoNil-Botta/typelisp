@@ -102,6 +102,10 @@ jobs:
             --stdlib-root stdlib --stdlib-root src
           test -s /tmp/stage0-smoke.s
 
+      - name: Fixpoint-verify the new stage0 self-reproduces
+        shell: bash
+        run: scripts/check-bootstrap-fixpoint.sh "$PWD/typelisp-stage0-windows.exe"
+
       - name: Corpus-check the new stage0 (frontend only)
         shell: bash
         run: |

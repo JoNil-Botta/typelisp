@@ -5587,35 +5587,50 @@
 (define (compiler-backend-bool-eq-source) : String
   "(define (f [a : bool] [b : bool]) : bool (= a b))")
 
+(define (compiler-backend-bool-not-source) : String
+  "(define (f [a : bool]) : bool (not a))")
+
 (define (compiler-backend-todo-marker) : String
   (string-append "# " "TODO"))
 
 (define (compiler-backend-bool-control-flow-ok?) : bool
-  (backend-and8
-    (compiler-backend-source-contains?
-      (compiler-backend-bool-and-source)
-      "    je ")
-    (compiler-backend-source-not-contains?
-      (compiler-backend-bool-and-source)
-      "    andb ")
-    (compiler-backend-source-contains?
-      (compiler-backend-bool-or-source)
-      "    je ")
-    (compiler-backend-source-not-contains?
-      (compiler-backend-bool-or-source)
-      "    orb ")
-    (compiler-backend-source-contains?
-      (compiler-backend-bool-eq-source)
-      "    sete %al\n")
-    (compiler-backend-source-not-contains?
-      (compiler-backend-bool-and-source)
-      (compiler-backend-todo-marker))
-    (compiler-backend-source-not-contains?
-      (compiler-backend-bool-or-source)
-      (compiler-backend-todo-marker))
-    (compiler-backend-source-not-contains?
-      (compiler-backend-bool-eq-source)
-      (compiler-backend-todo-marker))))
+  (and
+    (backend-and8
+      (compiler-backend-source-contains?
+        (compiler-backend-bool-and-source)
+        "    je ")
+      (compiler-backend-source-not-contains?
+        (compiler-backend-bool-and-source)
+        "    andb ")
+      (compiler-backend-source-contains?
+        (compiler-backend-bool-or-source)
+        "    je ")
+      (compiler-backend-source-not-contains?
+        (compiler-backend-bool-or-source)
+        "    orb ")
+      (compiler-backend-source-contains?
+        (compiler-backend-bool-eq-source)
+        "    sete %al\n")
+      (compiler-backend-source-not-contains?
+        (compiler-backend-bool-and-source)
+        (compiler-backend-todo-marker))
+      (compiler-backend-source-not-contains?
+        (compiler-backend-bool-or-source)
+        (compiler-backend-todo-marker))
+      (compiler-backend-source-not-contains?
+        (compiler-backend-bool-eq-source)
+        (compiler-backend-todo-marker)))
+    (backend-and4
+      (compiler-backend-source-contains?
+        (compiler-backend-bool-not-source)
+        "    xorq $1, %rax\n")
+      (compiler-backend-source-not-contains?
+        (compiler-backend-bool-not-source)
+        "    testq %rax, %rax\n    sete %al\n    movzbl %al, %eax\n")
+      (compiler-backend-source-not-contains?
+        (compiler-backend-bool-not-source)
+        (compiler-backend-todo-marker))
+      true)))
 
 ;; Backend-owned scalar instruction emit-shape coverage for stable wide integer
 ;; forms (#1353).

@@ -50,6 +50,7 @@ CLI_SURFACE_DOC_SRC="$CLI_SURFACE_DIR/doc-main.tl"
 CLI_SURFACE_DOC_PKG="$CLI_SURFACE_DIR/doc-package"
 CLI_SURFACE_CHECK_PKG="$CLI_SURFACE_DIR/check-package"
 CLI_SURFACE_FMTLINT_PKG="$CLI_SURFACE_DIR/fmt-lint-package"
+CLI_SURFACE_INSPECT_PKG="$CLI_SURFACE_DIR/inspect-package"
 
 compiler_batch_path() {
     path=$1
@@ -225,7 +226,7 @@ assert_cli_surface_help_matches_manifest() {
 }
 
 prepare_cli_surface_files() {
-    mkdir -p "$CLI_SURFACE_DIR" "$CLI_SURFACE_DOC_PKG/src" "$CLI_SURFACE_CHECK_PKG/src" "$CLI_SURFACE_FMTLINT_PKG/src"
+    mkdir -p "$CLI_SURFACE_DIR" "$CLI_SURFACE_DOC_PKG/src" "$CLI_SURFACE_CHECK_PKG/src" "$CLI_SURFACE_FMTLINT_PKG/src" "$CLI_SURFACE_INSPECT_PKG/src"
     printf '%s' '(define (main) : i64
   0)' > "$CLI_SURFACE_SRC"
     cat > "$CLI_SURFACE_RUN_SRC" <<'EOF'
@@ -314,6 +315,15 @@ EOF
         30
         0))))
 EOF
+    cat > "$CLI_SURFACE_INSPECT_PKG/typelisp.pkg" <<'EOF'
+(package
+  (name "surface_inspect")
+  (version "0.1.0")
+  (kind "lib")
+  (entry "src/lib.tl"))
+EOF
+    printf '%s' '(define (surface-inspect-value) : i64
+  42)' > "$CLI_SURFACE_INSPECT_PKG/src/lib.tl"
 }
 
 assert_active_cli_surface_command() {
@@ -387,6 +397,28 @@ assert_active_cli_surface_command() {
             assert_status "$package_label" "$status" 0
             assert_empty "$package_label" "$WORKDIR/$package_label.err"
             assert_contains "$package_label" "$WORKDIR/$package_label.out" "lint_bad.tl:"
+            ;;
+        inspect)
+            package_label="${label}-build-package"
+            tlci="$CLI_SURFACE_INSPECT_PKG/target/release/surface_inspect.tlci"
+            run_cli_capture "$package_label" "$COMPILER" build --manifest-path "$CLI_SURFACE_INSPECT_PKG/typelisp.pkg"
+            assert_status "$package_label" "$status" 0
+            assert_empty "$package_label" "$WORKDIR/$package_label.err"
+            assert_file_nonempty "$package_label" "$tlci"
+            run_cli_capture "$label" "$COMPILER" inspect "$tlci"
+            assert_status "$label" "$status" 0
+            assert_empty "$label" "$WORKDIR/$label.err"
+            assert_contains "$label" "$WORKDIR/$label.out" "tlci image"
+            assert_contains "$label" "$WORKDIR/$label.out" "package-name: surface_inspect"
+            assert_contains "$label" "$WORKDIR/$label.out" "metadata-version: v1"
+            assert_contains "$label" "$WORKDIR/$label.out" "code: offset=0 bytes=0"
+            bad_tlci="$CLI_SURFACE_DIR/bad.tlci"
+            printf 'bad' > "$bad_tlci"
+            bad_label="${label}-bad"
+            run_cli_capture "$bad_label" "$COMPILER" inspect "$bad_tlci"
+            assert_status "$bad_label" "$status" 1
+            assert_empty "$bad_label" "$WORKDIR/$bad_label.out"
+            assert_contains "$bad_label" "$WORKDIR/$bad_label.err" "inspect: tlci: truncated header"
             ;;
         test)
             run_cli_capture "$label" "$COMPILER" test --check "$CLI_SURFACE_SRC"
@@ -712,6 +744,7 @@ assert_contains root-package-help "$WORKDIR/root-package-help.err" "Usage:"
 assert_contains root-package-help "$WORKDIR/root-package-help.err" "Synopsis:"
 assert_contains root-package-help "$WORKDIR/root-package-help.err" "Commands:"
 assert_contains root-package-help "$WORKDIR/root-package-help.err" "typelisp build          Build a source file or package artifact"
+assert_contains root-package-help "$WORKDIR/root-package-help.err" "typelisp inspect        Inspect a TypeLisp comptime image"
 assert_contains root-package-help "$WORKDIR/root-package-help.err" 'Run `typelisp <command> --help` for command-specific usage.'
 
 set +e

@@ -10,6 +10,7 @@ active|run|-
 active|check|-
 active|fmt|-
 active|lint|-
+active|inspect|-
 active|test|-
 active|doc|-
 active|compile|-

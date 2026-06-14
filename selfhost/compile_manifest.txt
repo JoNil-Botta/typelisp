@@ -140,6 +140,7 @@ contains|_tl_build_config_from:
 contains|_tl_build_source_plan_render:
 contains|_tl_build_package:
 contains|_tl_build_package_emit:
+contains|_tl_build_package_write_tlci:
 contains|_tl_build_doctest_build_source:
 contains|_tl_build_doctest_typecheck_package:
 contains|_tl_doc_test_typecheck_source_with_roots:
@@ -158,7 +159,7 @@ contains|Would remove:
 end
 
 # Unified pure-TypeLisp toolchain dispatcher (single self-hosted entry point for
-# build/clean/run/check/fmt/lint/test/doc/repl/lsp). Each subcommand routes
+# build/clean/run/check/fmt/lint/test/doc/inspect/repl/lsp). Each subcommand routes
 # through its `*-run-from` entry in a shared main-free `*_cli_core.tl` module, so
 # the dispatcher's assembly must reference every command's runner.
 case|selfhost_cli|selfhost/cli.tl|assembly|exactly-one|direct
@@ -171,11 +172,13 @@ contains|_tl_fmt_run_from:
 contains|_tl_selfhost_lint_run_from:
 contains|_tl_tltest_run_from:
 contains|_tl_doc_run_from:
+contains|_tl_tlci_inspect_run_from:
 contains|_tl_repl_run_from:
 contains|_tl_scaffold_new_run_from:
 contains|_tl_scaffold_init_run_from:
 contains|_tl_lsp_frame_run_from:
 contains|typelisp: unknown subcommand
+contains|typelisp inspect
 contains|Enable a compile-time cfg predicate name
 contains|--pic
 end
@@ -195,6 +198,7 @@ decision|selfhost/format_cli_core.tl|fmt command logic (#522/#1987): --check vs 
 decision|selfhost/test_cli_core.tl|test command logic: config parsing and test run dispatch; main-less, imported by the retained selfhost/test.tl wrapper and selfhost/cli.tl and exercised through the selfhost_test and selfhost_cli cases
 decision|selfhost/doc_cli_core.tl|doc command logic: kind dispatch (test/html/load/default) with a base-offset arg model; main-less, imported by the retained selfhost/doc.tl wrapper and selfhost/cli.tl and exercised through the selfhost_doc and selfhost_cli cases
 decision|selfhost/compile_cli_core.tl|compile/check command logic (#565/#1639): arg parsing and compile/check dispatch + execution (compile-cli-run); main-less, imported by the required bootstrap selfhost/compile.tl driver and selfhost/cli.tl and exercised through the selfhost_compile and selfhost_cli cases
+decision|selfhost/inspect_cli_core.tl|inspect command logic (#2655): parse and render tlci comptime image headers/metadata; main-less, imported by selfhost/cli.tl and exercised through the selfhost_cli case and public command-surface smoke
 decision|selfhost/repl_cli_core.tl|REPL command logic (#1641): line loop, dot commands, type queries, and scratch expression execution; main-less, imported by the retained selfhost/repl.tl wrapper and selfhost/cli.tl and exercised through the selfhost_repl and selfhost_cli cases
 decision|selfhost/scaffold_cli_core.tl|new/init scaffold command logic (#1642): package skeleton creation shared by the retained selfhost/scaffold.tl wrapper and selfhost/cli.tl; main-less and exercised through the selfhost_scaffold and selfhost_cli cases
 decision|selfhost/lsp_frame_core.tl|lsp command logic (#1640): stdio JSON-RPC framing and diagnostics server; main-less, imported by the retained selfhost/lsp_frame.tl wrapper and selfhost/cli.tl and exercised through selfhost_lsp_frame and selfhost_cli cases
@@ -955,7 +959,7 @@ contains|typelisp test: test executable exited with exit status:
 contains|test: failed to write assembly artifact
 end
 
-decision|selfhost/tlci_core.tl|tlci v1 container and metadata parse/emit helpers (#2651): main-less dormant helper module with inline tests and executable smoke coverage; build emission/loading remain later slices
+decision|selfhost/tlci_core.tl|tlci v1 container and metadata parse/emit helpers (#2651/#2655): main-less helper module with inline tests, executable smoke coverage, package metadata emission, and inspect-command parsing; tlci code loading remains a later slice
 
 case|selfhost_tlci_core_smoke|selfhost/tlci_core_smoke.tl|assembly|exactly-one|direct
 contains|_tl_tlci_core_tlci_core_self_test:

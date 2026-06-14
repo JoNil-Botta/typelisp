@@ -362,6 +362,15 @@
               status
               (clean-merge-status
                 status
+                (clean-remove-package-file
+                  manifest-dir
+                  name
+                  dry-run
+                  (build-package-tlci-path manifest-dir name))))
+            (set!
+              status
+              (clean-merge-status
+                status
                 (clean-remove-package-dir
                   manifest-dir
                   name

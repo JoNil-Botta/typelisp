@@ -10,8 +10,8 @@
 ;;   typelisp run selfhost/cli.tl -- <command> <args...>
 ;;
 ;; Recognized commands: build, run, check, fmt, lint, test, doc, compile, clean,
-;; repl, lsp, new, and init. The command name is `(arg 1)`; each `*-run-from`
-;; entry parses its own arguments starting at index 2.
+;; inspect, repl, lsp, new, and init. The command name is `(arg 1)`; each
+;; `*-run-from` entry parses its own arguments starting at index 2.
 ;;
 ;; This is the shipped Rust-free stage0 dispatcher (#666/#795): the toolchain
 ;; needs neither a host-language compiler driver nor per-command driver
@@ -38,6 +38,8 @@
 (import "compile_cli_core.tl")
 
 (import "clean_cli_core.tl")
+
+(import "inspect_cli_core.tl")
 
 (import "repl_cli_core.tl")
 
@@ -66,6 +68,7 @@ Commands:
     typelisp doc            Generate documentation or run doc tests
     typelisp fmt            Format source files or a package
     typelisp init           Scaffold a package in the current directory
+    typelisp inspect        Inspect a TypeLisp comptime image
     typelisp lint           Lint source files or a package
     typelisp lsp            Start stdio LSP diagnostics server
     typelisp new            Scaffold a new package directory
@@ -237,6 +240,9 @@ Options:
     --cfg <name>                   Enable a compile-time cfg predicate name
 ")
 
+(define (cli-inspect-help-text) : String
+  (tlci-inspect-help-text))
+
 (define (cli-repl-help-text) : String
   "Usage:
     typelisp repl
@@ -353,6 +359,10 @@ Options:
     (if (cli-subcommand-help-request? count)
       (cli-print-help-text (cli-compile-help-text) 0)
       (compile-cli-run count))
+    (string-eq command "inspect")
+    (if (cli-subcommand-help-request? count)
+      (cli-print-help-text (cli-inspect-help-text) 0)
+      (tlci-inspect-run-from 2 count))
     (string-eq command "lsp")
     (if (cli-subcommand-help-request? count)
       (cli-print-help-text (cli-lsp-help-text) 0)

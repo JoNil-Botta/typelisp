@@ -15,6 +15,8 @@
   (IrBinMul)
   (IrBinDiv)
   (IrBinMod)
+  (IrBinSafeDiv)
+  (IrBinSafeMod)
   (IrBinEq)
   (IrBinNe)
   (IrBinLt)
@@ -2537,6 +2539,8 @@
     [(IrBinMul) "mul"]
     [(IrBinDiv) "div"]
     [(IrBinMod) "mod"]
+    [(IrBinSafeDiv) "safe_div"]
+    [(IrBinSafeMod) "safe_mod"]
     [(IrBinEq) "eq"]
     [(IrBinNe) "ne"]
     [(IrBinLt) "lt"]

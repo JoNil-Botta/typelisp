@@ -16024,15 +16024,29 @@
 (define (tc-repr-c-struct-layout [ctx : TcContext] [struct-name : String]) : ResultTcReprCLayout
   (tc-repr-c-struct-layout-with-seen ctx struct-name TcStringNil))
 
-(define (tc-ctfe-inline-layout-fields [fields : TcInlineFieldLayoutList]) : CtfeLayoutFieldList
+(define (tc-ctfe-inline-layout-fields-into
+  [fields : TcInlineFieldLayoutList]
+  [out : CtfeLayoutFieldList]) : CtfeLayoutFieldList
   (match fields
-    [(TcInlineFieldLayoutNil) CtfeLayoutFieldNil]
+    [(TcInlineFieldLayoutNil) out]
     [(TcInlineFieldLayoutCons field rest)
       (match field
         [(TcInlineFieldLayout name _ offset)
-          (CtfeLayoutFieldCons
-            (CtfeLayoutField name offset)
-            (box (tc-ctfe-inline-layout-fields (box-get rest))))])]))
+          (tc-ctfe-inline-layout-fields-into
+            (box-get rest)
+            (ctfe-layout-field-list-push out (CtfeLayoutField name offset)))])]))
+
+(define (tc-ctfe-inline-layout-field-count [fields : TcInlineFieldLayoutList]) : i64
+  (match fields
+    [(TcInlineFieldLayoutNil) 0]
+    [(TcInlineFieldLayoutCons _ rest)
+      (+ 1 (tc-ctfe-inline-layout-field-count (box-get rest)))]))
+
+(define (tc-ctfe-inline-layout-fields [fields : TcInlineFieldLayoutList]) : CtfeLayoutFieldList
+  (tc-ctfe-inline-layout-fields-into
+    fields
+    (ctfe-layout-field-list-with-capacity
+      (tc-ctfe-inline-layout-field-count fields))))
 
 (define (tc-ctfe-inline-aggregate-layout-info
   [name : String]
@@ -16046,21 +16060,21 @@
         align
         (tc-ctfe-inline-layout-fields fields))]
     [(TcInlineEnumLayout size align _)
-      (CtfeLayoutInfo name false size align CtfeLayoutFieldNil)]))
+      (CtfeLayoutInfo name false size align (ctfe-layout-field-list-empty))]))
 
 (define (tc-ctfe-struct-layout-info [ctx : TcContext] [struct-name : String]) : CtfeLayoutInfo
   (match (tc-inline-aggregate-layout-for ctx struct-name)
     [(OkTcInlineAggregateLayout layout)
       (tc-ctfe-inline-aggregate-layout-info struct-name layout)]
     [(ErrTcInlineAggregateLayout _)
-      (CtfeLayoutInfo struct-name false 8 8 CtfeLayoutFieldNil)]))
+      (CtfeLayoutInfo struct-name false 8 8 (ctfe-layout-field-list-empty))]))
 
 (define (tc-ctfe-type-layout-info [ctx : TcContext] [type-name : String]) : CtfeLayoutInfo
   (match (tc-inline-aggregate-layout-for ctx type-name)
     [(OkTcInlineAggregateLayout layout)
       (tc-ctfe-inline-aggregate-layout-info type-name layout)]
     [(ErrTcInlineAggregateLayout _)
-      (CtfeLayoutInfo type-name false 8 8 CtfeLayoutFieldNil)]))
+      (CtfeLayoutInfo type-name false 8 8 (ctfe-layout-field-list-empty))]))
 
 (define (tc-ctfe-layout-add-alias
   [layouts : CtfeLayoutInfoList]
@@ -16197,7 +16211,12 @@
             [decls : AstDeclList (box-get decls-box)]
             (begin
               (ctfe-build-seen-reset!)
-              (tc-ctfe-layouts-from-decls ctx decls "" CtfeLayoutInfoNil)))])]))
+              (tc-ctfe-layouts-from-decls
+                ctx
+                decls
+                ""
+                (ctfe-layout-info-list-with-capacity
+                  (ctfe-metadata-decl-capacity decls)))))])]))
 
 ;; CTFE base environment (reflection + layout metadata). This is invariant across
 ;; a single compile (same program/symbols/registries), but is requested up to ~8

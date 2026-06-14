@@ -44,19 +44,33 @@
 
 ;; CTFE-owned type layout metadata. The typechecker/lowerer build this from
 ;; their `TcContext` without making CTFE import typecheck.
+;;
+;; Storage disposition (#2748):
+;; - CtfeLayoutFieldList, CtfeLayoutInfoList, CtfeReflectFieldList,
+;;   CtfeReflectVariantList, and CtfeReflectInfoList are vector-backed
+;;   generated-collection families. The historical `List` names are retained so
+;;   callers do not need a public naming churn while the representation changes.
+;; - CtfeEnv remains a persistent cons chain because lexical shadowing and cheap
+;;   push/pop are its primary operations.
+;; - AST-owned lists such as AstExprList, AstTypeList, and AstParamList remain
+;;   frontend data structures and are tracked separately by #2565.
 (defenum CtfeLayoutField
   (CtfeLayoutField String i64))
 
-(defenum CtfeLayoutFieldList
-  (CtfeLayoutFieldNil)
-  (CtfeLayoutFieldCons CtfeLayoutField (Box CtfeLayoutFieldList)))
+(comptime-decl
+  (:generated vector-family CtfeLayoutFieldList "CtfeLayoutField")
+  (defstruct CtfeLayoutFieldList
+    (slots (Array CtfeLayoutField))
+    (len i64)))
 
 (defenum CtfeLayoutInfo
   (CtfeLayoutInfo String bool i64 i64 CtfeLayoutFieldList))
 
-(defenum CtfeLayoutInfoList
-  (CtfeLayoutInfoNil)
-  (CtfeLayoutInfoCons CtfeLayoutInfo (Box CtfeLayoutInfoList)))
+(comptime-decl
+  (:generated vector-family CtfeLayoutInfoList "CtfeLayoutInfo")
+  (defstruct CtfeLayoutInfoList
+    (slots (Array CtfeLayoutInfo))
+    (len i64)))
 
 (defenum CtfeMaybeLayoutInfo
   (CtfeNoLayoutInfo)
@@ -71,24 +85,30 @@
 (defenum CtfeReflectField
   (CtfeReflectField String AstType))
 
-(defenum CtfeReflectFieldList
-  (CtfeReflectFieldNil)
-  (CtfeReflectFieldCons CtfeReflectField (Box CtfeReflectFieldList)))
+(comptime-decl
+  (:generated vector-family CtfeReflectFieldList "CtfeReflectField")
+  (defstruct CtfeReflectFieldList
+    (slots (Array CtfeReflectField))
+    (len i64)))
 
 (defenum CtfeReflectVariant
   (CtfeReflectVariant String AstTypeList))
 
-(defenum CtfeReflectVariantList
-  (CtfeReflectVariantNil)
-  (CtfeReflectVariantCons CtfeReflectVariant (Box CtfeReflectVariantList)))
+(comptime-decl
+  (:generated vector-family CtfeReflectVariantList "CtfeReflectVariant")
+  (defstruct CtfeReflectVariantList
+    (slots (Array CtfeReflectVariant))
+    (len i64)))
 
 (defenum CtfeReflectInfo
   (CtfeReflectStruct String String String CtfeReflectFieldList)
   (CtfeReflectEnum String String String CtfeReflectVariantList))
 
-(defenum CtfeReflectInfoList
-  (CtfeReflectInfoNil)
-  (CtfeReflectInfoCons CtfeReflectInfo (Box CtfeReflectInfoList)))
+(comptime-decl
+  (:generated vector-family CtfeReflectInfoList "CtfeReflectInfo")
+  (defstruct CtfeReflectInfoList
+    (slots (Array CtfeReflectInfo))
+    (len i64)))
 
 (defenum CtfeMaybeReflectInfo
   (CtfeNoReflectInfo)
@@ -102,13 +122,13 @@
   (CtfeEnvCons String CompilerCtfeValue (Box CtfeEnv)))
 
 (define (ctfe-env-empty) : CtfeEnv
-  (CtfeEnvNil CtfeLayoutInfoNil CtfeReflectInfoNil))
+  (CtfeEnvNil (ctfe-layout-info-list-empty) (ctfe-reflect-info-list-empty)))
 
 (define (ctfe-env-with-layouts [layouts : CtfeLayoutInfoList]) : CtfeEnv
-  (CtfeEnvNil layouts CtfeReflectInfoNil))
+  (CtfeEnvNil layouts (ctfe-reflect-info-list-empty)))
 
 (define (ctfe-env-with-reflections [reflections : CtfeReflectInfoList]) : CtfeEnv
-  (CtfeEnvNil CtfeLayoutInfoNil reflections))
+  (CtfeEnvNil (ctfe-layout-info-list-empty) reflections))
 
 (define (ctfe-env-with-metadata
   [layouts : CtfeLayoutInfoList]
@@ -121,25 +141,114 @@
   [value : CompilerCtfeValue]) : CtfeEnv
   (CtfeEnvCons name value (box env)))
 
+(define (ctfe-layout-field-list-with-capacity [capacity : i64]) : CtfeLayoutFieldList
+  (CtfeLayoutFieldList (make-array CtfeLayoutField capacity) 0))
+
+(define (ctfe-layout-field-list-empty) : CtfeLayoutFieldList
+  (ctfe-layout-field-list-with-capacity 0))
+
+(define (ctfe-layout-field-list-ref [items : CtfeLayoutFieldList] [index : i64]) : CtfeLayoutField
+  (array-ref (struct-get items slots) index))
+
+(define (ctfe-layout-field-list-push
+  [items : CtfeLayoutFieldList]
+  [value : CtfeLayoutField]) : CtfeLayoutFieldList
+  (let
+    [n : i64 (struct-get items len)]
+    [slots : (Array CtfeLayoutField) (struct-get items slots)]
+    (begin
+      (array-set! slots n value)
+      (CtfeLayoutFieldList slots (+ n 1)))))
+
+(define (ctfe-layout-info-list-with-capacity [capacity : i64]) : CtfeLayoutInfoList
+  (CtfeLayoutInfoList (make-array CtfeLayoutInfo capacity) 0))
+
+(define (ctfe-layout-info-list-empty) : CtfeLayoutInfoList
+  (ctfe-layout-info-list-with-capacity 0))
+
+(define (ctfe-layout-info-list-ref [items : CtfeLayoutInfoList] [index : i64]) : CtfeLayoutInfo
+  (array-ref (struct-get items slots) index))
+
+(define (ctfe-layout-info-list-push
+  [items : CtfeLayoutInfoList]
+  [value : CtfeLayoutInfo]) : CtfeLayoutInfoList
+  (let
+    [n : i64 (struct-get items len)]
+    [slots : (Array CtfeLayoutInfo) (struct-get items slots)]
+    (begin
+      (array-set! slots n value)
+      (CtfeLayoutInfoList slots (+ n 1)))))
+
+(define (ctfe-reflect-field-list-with-capacity [capacity : i64]) : CtfeReflectFieldList
+  (CtfeReflectFieldList (make-array CtfeReflectField capacity) 0))
+
+(define (ctfe-reflect-field-list-empty) : CtfeReflectFieldList
+  (ctfe-reflect-field-list-with-capacity 0))
+
+(define (ctfe-reflect-field-list-ref
+  [items : CtfeReflectFieldList]
+  [index : i64]) : CtfeReflectField
+  (array-ref (struct-get items slots) index))
+
+(define (ctfe-reflect-field-list-push
+  [items : CtfeReflectFieldList]
+  [value : CtfeReflectField]) : CtfeReflectFieldList
+  (let
+    [n : i64 (struct-get items len)]
+    [slots : (Array CtfeReflectField) (struct-get items slots)]
+    (begin
+      (array-set! slots n value)
+      (CtfeReflectFieldList slots (+ n 1)))))
+
+(define (ctfe-reflect-variant-list-with-capacity [capacity : i64]) : CtfeReflectVariantList
+  (CtfeReflectVariantList (make-array CtfeReflectVariant capacity) 0))
+
+(define (ctfe-reflect-variant-list-empty) : CtfeReflectVariantList
+  (ctfe-reflect-variant-list-with-capacity 0))
+
+(define (ctfe-reflect-variant-list-ref
+  [items : CtfeReflectVariantList]
+  [index : i64]) : CtfeReflectVariant
+  (array-ref (struct-get items slots) index))
+
+(define (ctfe-reflect-variant-list-push
+  [items : CtfeReflectVariantList]
+  [value : CtfeReflectVariant]) : CtfeReflectVariantList
+  (let
+    [n : i64 (struct-get items len)]
+    [slots : (Array CtfeReflectVariant) (struct-get items slots)]
+    (begin
+      (array-set! slots n value)
+      (CtfeReflectVariantList slots (+ n 1)))))
+
+(define (ctfe-reflect-info-list-with-capacity [capacity : i64]) : CtfeReflectInfoList
+  (CtfeReflectInfoList (make-array CtfeReflectInfo capacity) 0))
+
+(define (ctfe-reflect-info-list-empty) : CtfeReflectInfoList
+  (ctfe-reflect-info-list-with-capacity 0))
+
+(define (ctfe-reflect-info-list-ref [items : CtfeReflectInfoList] [index : i64]) : CtfeReflectInfo
+  (array-ref (struct-get items slots) index))
+
+(define (ctfe-reflect-info-list-push
+  [items : CtfeReflectInfoList]
+  [value : CtfeReflectInfo]) : CtfeReflectInfoList
+  (let
+    [n : i64 (struct-get items len)]
+    [slots : (Array CtfeReflectInfo) (struct-get items slots)]
+    (begin
+      (array-set! slots n value)
+      (CtfeReflectInfoList slots (+ n 1)))))
+
 (define (ctfe-layout-info-name [info : CtfeLayoutInfo]) : String
   (match info
     [(CtfeLayoutInfo name _ _ _ _) name]))
 
-(define (ctfe-layout-info-list-contains
-  [layouts : CtfeLayoutInfoList]
-  [name : String]) : bool
-  (match layouts
-    [(CtfeLayoutInfoNil) false]
-    [(CtfeLayoutInfoCons info rest)
-      (if (string-eq (ctfe-layout-info-name info) name)
-        true
-        (ctfe-layout-info-list-contains (box-get rest) name))]))
-
 ;; Per-build dedup set of keys already added to the metadata list. The reflection
 ;; and layout builds each register every type under its key (and module alias);
-;; checking membership against the linked list was O(types^2). This hashset makes
-;; each `add-if-missing` O(1), so the whole build is O(types). Reset at the start
-;; of each build (layouts then reflections run sequentially in tc-ctfe-env).
+;; checking membership against the old linked list was O(types^2). This hashset
+;; keeps each `add-if-missing` O(1), so the whole build is O(types). Reset at the
+;; start of each build (layouts then reflections run sequentially in tc-ctfe-env).
 (define ctfe-build-seen-keys : StringI64Map
   (string-i64-map-with-capacity 1))
 
@@ -159,28 +268,42 @@
   [layouts : CtfeLayoutInfoList]
   [info : CtfeLayoutInfo]) : CtfeLayoutInfoList
   (if (ctfe-build-seen-add? (ctfe-layout-info-name info))
-    (CtfeLayoutInfoCons info (box layouts))
+    (ctfe-layout-info-list-push layouts info)
     layouts))
 
-(define (ctfe-layout-info-lookup [layouts : CtfeLayoutInfoList] [name : String]) : CtfeMaybeLayoutInfo
-  (match layouts
-    [(CtfeLayoutInfoNil) (CtfeNoLayoutInfo)]
-    [(CtfeLayoutInfoCons info rest)
+(define (ctfe-layout-info-lookup-from
+  [layouts : CtfeLayoutInfoList]
+  [name : String]
+  [index : i64]) : CtfeMaybeLayoutInfo
+  (if (< index 0)
+    (CtfeNoLayoutInfo)
+    (let
+      [info : CtfeLayoutInfo (ctfe-layout-info-list-ref layouts index)]
       (if (string-eq (ctfe-layout-info-name info) name)
         (CtfeSomeLayoutInfo info)
-        (ctfe-layout-info-lookup (box-get rest) name))]))
+        (ctfe-layout-info-lookup-from layouts name (- index 1))))))
 
-(define (ctfe-layout-field-offset
+(define (ctfe-layout-info-lookup [layouts : CtfeLayoutInfoList] [name : String]) : CtfeMaybeLayoutInfo
+  (ctfe-layout-info-lookup-from layouts name (- (struct-get layouts len) 1)))
+
+(define (ctfe-layout-field-offset-from
   [fields : CtfeLayoutFieldList]
-  [name : String]) : i64
-  (match fields
-    [(CtfeLayoutFieldNil) -1]
-    [(CtfeLayoutFieldCons field rest)
+  [name : String]
+  [index : i64]) : i64
+  (if (>= index (struct-get fields len))
+    -1
+    (let
+      [field : CtfeLayoutField (ctfe-layout-field-list-ref fields index)]
       (match field
         [(CtfeLayoutField field-name offset)
           (if (string-eq field-name name)
             offset
-            (ctfe-layout-field-offset (box-get rest) name))])]))
+            (ctfe-layout-field-offset-from fields name (+ index 1)))]))))
+
+(define (ctfe-layout-field-offset
+  [fields : CtfeLayoutFieldList]
+  [name : String]) : i64
+  (ctfe-layout-field-offset-from fields name 0))
 
 (define (ctfe-env-layouts [env : CtfeEnv]) : CtfeLayoutInfoList
   (match env
@@ -245,54 +368,83 @@
     [(CtfeReflectStruct key _ _ _) key]
     [(CtfeReflectEnum key _ _ _) key]))
 
-(define (ctfe-reflect-info-list-contains
-  [infos : CtfeReflectInfoList]
-  [key : String]) : bool
-  (match infos
-    [(CtfeReflectInfoNil) false]
-    [(CtfeReflectInfoCons info rest)
-      (if (string-eq (ctfe-reflect-info-key info) key)
-        true
-        (ctfe-reflect-info-list-contains (box-get rest) key))]))
-
 (define (ctfe-reflect-info-list-add-if-missing
   [infos : CtfeReflectInfoList]
   [info : CtfeReflectInfo]) : CtfeReflectInfoList
   (if (ctfe-build-seen-add? (ctfe-reflect-info-key info))
-    (CtfeReflectInfoCons info (box infos))
+    (ctfe-reflect-info-list-push infos info)
     infos))
 
-(define (ctfe-reflect-info-lookup [infos : CtfeReflectInfoList] [key : String]) : CtfeMaybeReflectInfo
-  (match infos
-    [(CtfeReflectInfoNil) (CtfeNoReflectInfo)]
-    [(CtfeReflectInfoCons info rest)
+(define (ctfe-reflect-info-lookup-from
+  [infos : CtfeReflectInfoList]
+  [key : String]
+  [index : i64]) : CtfeMaybeReflectInfo
+  (if (< index 0)
+    (CtfeNoReflectInfo)
+    (let
+      [info : CtfeReflectInfo (ctfe-reflect-info-list-ref infos index)]
       (if (string-eq (ctfe-reflect-info-key info) key)
         (CtfeSomeReflectInfo info)
-        (ctfe-reflect-info-lookup (box-get rest) key))]))
+        (ctfe-reflect-info-lookup-from infos key (- index 1))))))
 
-(define (ctfe-reflect-field-list-from-fields [fields : AstFieldDefList]) : CtfeReflectFieldList
+(define (ctfe-reflect-info-lookup [infos : CtfeReflectInfoList] [key : String]) : CtfeMaybeReflectInfo
+  (ctfe-reflect-info-lookup-from infos key (- (struct-get infos len) 1)))
+
+(define (ctfe-reflect-field-def-count [fields : AstFieldDefList]) : i64
   (match fields
-    [(AstFieldDefNil) CtfeReflectFieldNil]
+    [(AstFieldDefNil) 0]
+    [(AstFieldDefCons _ rest)
+      (+ 1 (ctfe-reflect-field-def-count (box-get rest)))]))
+
+(define (ctfe-reflect-field-list-from-fields-into
+  [fields : AstFieldDefList]
+  [out : CtfeReflectFieldList]) : CtfeReflectFieldList
+  (match fields
+    [(AstFieldDefNil) out]
     [(AstFieldDefCons field rest)
       (let
         [rest : AstFieldDefList (box-get rest)]
         (match field
           [(AstFieldDef name ty _)
-            (CtfeReflectFieldCons
-              (CtfeReflectField (intern-str name) ty)
-              (box (ctfe-reflect-field-list-from-fields rest)))]))]))
+            (ctfe-reflect-field-list-from-fields-into
+              rest
+              (ctfe-reflect-field-list-push
+                out
+                (CtfeReflectField (intern-str name) ty)))]))]))
 
-(define (ctfe-reflect-variant-list-from-variants [variants : AstVariantDefList]) : CtfeReflectVariantList
+(define (ctfe-reflect-field-list-from-fields [fields : AstFieldDefList]) : CtfeReflectFieldList
+  (ctfe-reflect-field-list-from-fields-into
+    fields
+    (ctfe-reflect-field-list-with-capacity
+      (ctfe-reflect-field-def-count fields))))
+
+(define (ctfe-reflect-variant-def-count [variants : AstVariantDefList]) : i64
   (match variants
-    [(AstVariantDefNil) CtfeReflectVariantNil]
+    [(AstVariantDefNil) 0]
+    [(AstVariantDefCons _ rest)
+      (+ 1 (ctfe-reflect-variant-def-count (box-get rest)))]))
+
+(define (ctfe-reflect-variant-list-from-variants-into
+  [variants : AstVariantDefList]
+  [out : CtfeReflectVariantList]) : CtfeReflectVariantList
+  (match variants
+    [(AstVariantDefNil) out]
     [(AstVariantDefCons variant rest)
       (let
         [rest : AstVariantDefList (box-get rest)]
         (match variant
           [(AstVariantDef name payloads _)
-            (CtfeReflectVariantCons
-              (CtfeReflectVariant (intern-str name) payloads)
-              (box (ctfe-reflect-variant-list-from-variants rest)))]))]))
+            (ctfe-reflect-variant-list-from-variants-into
+              rest
+              (ctfe-reflect-variant-list-push
+                out
+                (CtfeReflectVariant (intern-str name) payloads)))]))]))
+
+(define (ctfe-reflect-variant-list-from-variants [variants : AstVariantDefList]) : CtfeReflectVariantList
+  (ctfe-reflect-variant-list-from-variants-into
+    variants
+    (ctfe-reflect-variant-list-with-capacity
+      (ctfe-reflect-variant-def-count variants))))
 
 (define (ctfe-reflect-info-add-alias
   [infos : CtfeReflectInfoList]
@@ -475,6 +627,29 @@
                 [_ (ctfe-reflections-from-decls rest module infos)]))]
           [_ (ctfe-reflections-from-decls rest module infos)]))]))
 
+(define (ctfe-metadata-decl-capacity [decls : AstDeclList]) : i64
+  (match decls
+    [(AstDeclNil) 1]
+    [(AstDeclCons decl rest)
+      (let
+        [rest : AstDeclList (box-get rest)]
+        [rest-capacity : i64 (ctfe-metadata-decl-capacity rest)]
+        (match decl
+          [(AstDeclDefStruct _ _ _ _) (+ rest-capacity 2)]
+          [(AstDeclDefStructLifetimes _ _ _ _ _) (+ rest-capacity 2)]
+          [(AstDeclDefEnum _ _ _) (+ rest-capacity 2)]
+          [(AstDeclDefEnumLifetimes _ _ _ _) (+ rest-capacity 2)]
+          [(AstDeclComptimeDecl _ template-box)
+            (let
+              [template : AstDecl (box-get template-box)]
+              (match template
+                [(AstDeclDefStruct _ _ _ _) (+ rest-capacity 2)]
+                [(AstDeclDefStructLifetimes _ _ _ _ _) (+ rest-capacity 2)]
+                [(AstDeclDefEnum _ _ _) (+ rest-capacity 2)]
+                [(AstDeclDefEnumLifetimes _ _ _ _) (+ rest-capacity 2)]
+                [_ rest-capacity]))]
+          [_ rest-capacity]))]))
+
 (define (ctfe-reflections-from-program [program : AstProgram]) : CtfeReflectInfoList
   (match program
     [(AstProgram decls-box)
@@ -482,7 +657,11 @@
         [decls : AstDeclList (box-get decls-box)]
         (begin
           (ctfe-build-seen-reset!)
-          (ctfe-reflections-from-decls decls "" CtfeReflectInfoNil)))]))
+          (ctfe-reflections-from-decls
+            decls
+            ""
+            (ctfe-reflect-info-list-with-capacity
+              (ctfe-metadata-decl-capacity decls)))))]))
 
 ;; Result of evaluating a sub-expression: either a value (carrying the remaining
 ;; fuel) or a diagnostic. Fuel is threaded so each evaluation step decrements a
@@ -1290,7 +1469,7 @@
           (string-append "_" (ctfe-lifetime-list-key lifetimes))))]))
 
 (define (ctfe-type-key [ty : AstType]) : String
-  (ctfe-type-key-with-reflections CtfeReflectInfoNil ty))
+  (ctfe-type-key-with-reflections (ctfe-reflect-info-list-empty) ty))
 
 (define (ctfe-type-kind-with-reflections
   [infos : CtfeReflectInfoList]
@@ -1386,70 +1565,52 @@
               (string-append name " expects a String argument")))])]))
 
 (define (ctfe-reflect-field-list-count [fields : CtfeReflectFieldList]) : i64
-  (match fields
-    [(CtfeReflectFieldNil) 0]
-    [(CtfeReflectFieldCons _ rest)
-      (+ 1 (ctfe-reflect-field-list-count (box-get rest)))]))
+  (struct-get fields len))
 
 (define (ctfe-reflect-field-name-at
   [fields : CtfeReflectFieldList]
   [index : i64]) : ResultCtfeStringLookup
-  (if (< index 0)
+  (if (if (< index 0)
+    true
+    (>= index (struct-get fields len)))
     (ErrCtfeStringLookup "index out of range")
-    (match fields
-      [(CtfeReflectFieldNil) (ErrCtfeStringLookup "index out of range")]
-      [(CtfeReflectFieldCons field rest)
-        (if (= index 0)
-          (match field
-            [(CtfeReflectField name _) (OkCtfeStringLookup name)])
-          (ctfe-reflect-field-name-at (box-get rest) (- index 1)))])))
+    (match (ctfe-reflect-field-list-ref fields index)
+      [(CtfeReflectField name _) (OkCtfeStringLookup name)])))
 
 (define (ctfe-reflect-field-type-at
   [fields : CtfeReflectFieldList]
   [infos : CtfeReflectInfoList]
   [index : i64]) : ResultCtfeTypeLookup
-  (if (< index 0)
+  (if (if (< index 0)
+    true
+    (>= index (struct-get fields len)))
     (ErrCtfeTypeLookup "index out of range")
-    (match fields
-      [(CtfeReflectFieldNil) (ErrCtfeTypeLookup "index out of range")]
-      [(CtfeReflectFieldCons field rest)
-        (if (= index 0)
-          (match field
-            [(CtfeReflectField _ ty)
-              (OkCtfeTypeLookup (ctfe-reflect-resolve-type infos ty))])
-          (ctfe-reflect-field-type-at (box-get rest) infos (- index 1)))])))
+    (match (ctfe-reflect-field-list-ref fields index)
+      [(CtfeReflectField _ ty)
+        (OkCtfeTypeLookup (ctfe-reflect-resolve-type infos ty))])))
 
 (define (ctfe-reflect-variant-list-count [variants : CtfeReflectVariantList]) : i64
-  (match variants
-    [(CtfeReflectVariantNil) 0]
-    [(CtfeReflectVariantCons _ rest)
-      (+ 1 (ctfe-reflect-variant-list-count (box-get rest)))]))
+  (struct-get variants len))
 
 (define (ctfe-reflect-variant-name-at
   [variants : CtfeReflectVariantList]
   [index : i64]) : ResultCtfeStringLookup
-  (if (< index 0)
+  (if (if (< index 0)
+    true
+    (>= index (struct-get variants len)))
     (ErrCtfeStringLookup "index out of range")
-    (match variants
-      [(CtfeReflectVariantNil) (ErrCtfeStringLookup "index out of range")]
-      [(CtfeReflectVariantCons variant rest)
-        (if (= index 0)
-          (match variant
-            [(CtfeReflectVariant name _) (OkCtfeStringLookup name)])
-          (ctfe-reflect-variant-name-at (box-get rest) (- index 1)))])))
+    (match (ctfe-reflect-variant-list-ref variants index)
+      [(CtfeReflectVariant name _) (OkCtfeStringLookup name)])))
 
 (define (ctfe-reflect-variant-payloads-at
   [variants : CtfeReflectVariantList]
   [index : i64]) : ResultCtfeTypeListLookup
-  (if (< index 0)
+  (if (if (< index 0)
+    true
+    (>= index (struct-get variants len)))
     (ErrCtfeTypeListLookup "index out of range")
-    (match variants
-      [(CtfeReflectVariantNil) (ErrCtfeTypeListLookup "index out of range")]
-      [(CtfeReflectVariantCons variant rest)
-        (if (= index 0)
-          (match variant
-            [(CtfeReflectVariant _ payloads) (OkCtfeTypeListLookup payloads)])
-          (ctfe-reflect-variant-payloads-at (box-get rest) (- index 1)))])))
+    (match (ctfe-reflect-variant-list-ref variants index)
+      [(CtfeReflectVariant _ payloads) (OkCtfeTypeListLookup payloads)])))
 
 (define (ctfe-type-list-count [types : AstTypeList]) : i64
   (match types
@@ -6156,34 +6317,25 @@
       (ast-node-push (AstExprTypeLiteral (AstTyVar (intern "Box"))))]
     [choice-ty : i64
       (ast-node-push (AstExprTypeLiteral (AstTyVar (intern "Choice"))))]
-    [env : CtfeEnv
-      (ctfe-env-with-layouts
-        (CtfeLayoutInfoCons
-          (CtfeLayoutInfo
-            "Packet"
-            true
-            16
-            8
-            (CtfeLayoutFieldCons
-              (CtfeLayoutField "tag" 0)
-              (box
-                (CtfeLayoutFieldCons
-                  (CtfeLayoutField "count" 8)
-                  (box CtfeLayoutFieldNil)))))
-          (box
-            (CtfeLayoutInfoCons
-              (CtfeLayoutInfo
-                "Box"
-                true
-                8
-                8
-                (CtfeLayoutFieldCons
-                  (CtfeLayoutField "x" 0)
-                  (box CtfeLayoutFieldNil)))
-              (box
-                (CtfeLayoutInfoCons
-                  (CtfeLayoutInfo "Choice" false 24 8 CtfeLayoutFieldNil)
-                  (box CtfeLayoutInfoNil)))))))]
+    [packet-fields : CtfeLayoutFieldList
+      (ctfe-layout-field-list-push
+        (ctfe-layout-field-list-push
+          (ctfe-layout-field-list-with-capacity 2)
+          (CtfeLayoutField "tag" 0))
+        (CtfeLayoutField "count" 8))]
+    [box-fields : CtfeLayoutFieldList
+      (ctfe-layout-field-list-push
+        (ctfe-layout-field-list-with-capacity 1)
+        (CtfeLayoutField "x" 0))]
+    [layouts : CtfeLayoutInfoList
+      (ctfe-layout-info-list-push
+        (ctfe-layout-info-list-push
+          (ctfe-layout-info-list-push
+            (ctfe-layout-info-list-with-capacity 3)
+            (CtfeLayoutInfo "Packet" true 16 8 packet-fields))
+          (CtfeLayoutInfo "Box" true 8 8 box-fields))
+        (CtfeLayoutInfo "Choice" false 24 8 (ctfe-layout-field-list-empty)))]
+    [env : CtfeEnv (ctfe-env-with-layouts layouts)]
     [ok : bool true]
     (begin
       (if (compiler-ctfe-eval-i64-ok?
@@ -6255,33 +6407,26 @@
       ok)))
 
 (define (compiler-ctfe-reflection-env) : CtfeEnv
-  (ctfe-env-with-reflections
-    (CtfeReflectInfoCons
-      (CtfeReflectStruct
-        "Point"
-        ""
-        "Point"
-        (CtfeReflectFieldCons
-          (CtfeReflectField "x" (AstTyI64))
-          (box
-            (CtfeReflectFieldCons
-              (CtfeReflectField "flag" (AstTyBool))
-              (box CtfeReflectFieldNil)))))
-      (box
-        (CtfeReflectInfoCons
-          (CtfeReflectEnum
-            "Maybe"
-            ""
-            "Maybe"
-            (CtfeReflectVariantCons
-              (CtfeReflectVariant "None" AstTypeNil)
-              (box
-                (CtfeReflectVariantCons
-                  (CtfeReflectVariant
-                    "Some"
-                    (ast-type-cons (AstTyString) AstTypeNil))
-                  (box CtfeReflectVariantNil)))))
-          (box CtfeReflectInfoNil))))))
+  (let
+    [point-fields : CtfeReflectFieldList
+      (ctfe-reflect-field-list-push
+        (ctfe-reflect-field-list-push
+          (ctfe-reflect-field-list-with-capacity 2)
+          (CtfeReflectField "x" (AstTyI64)))
+        (CtfeReflectField "flag" (AstTyBool)))]
+    [maybe-variants : CtfeReflectVariantList
+      (ctfe-reflect-variant-list-push
+        (ctfe-reflect-variant-list-push
+          (ctfe-reflect-variant-list-with-capacity 2)
+          (CtfeReflectVariant "None" AstTypeNil))
+        (CtfeReflectVariant "Some" (ast-type-cons (AstTyString) AstTypeNil)))]
+    [infos : CtfeReflectInfoList
+      (ctfe-reflect-info-list-push
+        (ctfe-reflect-info-list-push
+          (ctfe-reflect-info-list-with-capacity 2)
+          (CtfeReflectStruct "Point" "" "Point" point-fields))
+        (CtfeReflectEnum "Maybe" "" "Maybe" maybe-variants))]
+    (ctfe-env-with-reflections infos)))
 
 (define (compiler-ctfe-reflection-query-ok?) : bool
   (let
@@ -6423,6 +6568,76 @@
         (set! ok false))
       (if (compiler-ctfe-eval-type-ok?
         (compiler-ctfe-call1 "function-return-type" fn-ty)
+        env
+        (AstTyString))
+        unit
+        (set! ok false))
+      ok)))
+
+(define (compiler-ctfe-reflection-program) : AstProgram
+  (let
+    [fields : AstFieldDefList
+      (AstFieldDefCons
+        (AstFieldDef (intern "id") (AstTyI64) (AstFieldNoCleanup))
+        (box
+          (AstFieldDefCons
+            (AstFieldDef (intern "label") (AstTyString) (AstFieldNoCleanup))
+            (box AstFieldDefNil))))]
+    [variants : AstVariantDefList
+      (AstVariantDefCons
+        (AstVariantDef (intern "Ready") AstTypeNil AstVariantPayloadCleanupNil)
+        (box
+          (AstVariantDefCons
+            (AstVariantDef
+              (intern "Failed")
+              (ast-type-cons (AstTyString) AstTypeNil)
+              AstVariantPayloadCleanupNil)
+            (box AstVariantDefNil))))]
+    (AstProgram
+      (box
+        (AstDeclCons
+          (AstDeclDefStruct
+            (intern "Record")
+            (AstStructReprDefault)
+            (AstStructNoCleanup)
+            fields)
+          (box
+            (AstDeclCons
+              (AstDeclDefEnum (intern "Status") (AstEnumNoCleanup) variants)
+              (box AstDeclNil))))))))
+
+(define (compiler-ctfe-reflection-from-program-ok?) : bool
+  (let
+    [env : CtfeEnv
+      (ctfe-env-with-reflections
+        (ctfe-reflections-from-program (compiler-ctfe-reflection-program)))]
+    [record-ty : i64
+      (ast-node-push (AstExprTypeLiteral (AstTyVar (intern "Record"))))]
+    [status-ty : i64
+      (ast-node-push (AstExprTypeLiteral (AstTyVar (intern "Status"))))]
+    [ok : bool true]
+    (begin
+      (if (compiler-ctfe-eval-i64-ok?
+        (compiler-ctfe-call1 "struct-field-count" record-ty)
+        env
+        2)
+        unit
+        (set! ok false))
+      (if (compiler-ctfe-eval-string-ok?
+        (compiler-ctfe-call2
+          "struct-field-name"
+          record-ty
+          (ast-node-push (AstExprLiteral (AstLitInt 1))))
+        env
+        "label")
+        unit
+        (set! ok false))
+      (if (compiler-ctfe-eval-type-ok?
+        (compiler-ctfe-call3
+          "enum-variant-payload-type"
+          status-ty
+          (ast-node-push (AstExprLiteral (AstLitInt 1)))
+          (ast-node-push (AstExprLiteral (AstLitInt 0))))
         env
         (AstTyString))
         unit
@@ -6719,6 +6934,7 @@
     (unless (compiler-ctfe-f64-ok?) (return 1))
     (unless (compiler-ctfe-layout-query-ok?) (return 1))
     (unless (compiler-ctfe-reflection-query-ok?) (return 1))
+    (unless (compiler-ctfe-reflection-from-program-ok?) (return 1))
     (unless (compiler-ctfe-expr-eq-ok?) (return 1))
     (unless (compiler-ctfe-expr-list-ok?) (return 1))
     (unless (compiler-ctfe-expr-list-fold-sketch-ok?) (return 1))

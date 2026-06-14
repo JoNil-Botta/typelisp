@@ -1429,7 +1429,6 @@
     [(IrInstrAddrOf dst src)
       (compiler-live-set-insert (compiler-live-set-insert set dst) src)]
     [(IrInstrGep dst _ _ _) (compiler-live-set-insert set dst)]
-    [(IrInstrLaneId dst _ _) (compiler-live-set-insert set dst)]
     [(IrInstrSelect dst _ _ _ _ _) (compiler-live-set-insert set dst)]
     [_ set]))
 
@@ -1676,6 +1675,7 @@
   [instr : CompilerIrInstr]
   [set : CompilerLiveI64Set]) : CompilerLiveI64Set
   (match instr
+    [(IrInstrLaneId dst _ _) (compiler-live-set-insert set dst)]
     [(IrInstrSplat dst _ _ _) (compiler-live-set-insert set dst)]
     [(IrInstrVectorBinOp dst _ _ _ _ _) (compiler-live-set-insert set dst)]
     [(IrInstrVectorLoad dst _ _ _ _) (compiler-live-set-insert set dst)]

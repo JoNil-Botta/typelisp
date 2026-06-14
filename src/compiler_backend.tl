@@ -1391,6 +1391,66 @@
     function
     (backend-cat5 "tail_mask_" current-label "_v" (int->string dst) suffix)))
 
+(define (compiler-backend-lane-id-label
+  [function : String]
+  [current-label : String]
+  [dst : i64]
+  [suffix : String]) : String
+  (compiler-backend-asm-label
+    function
+    (backend-cat5 "lane_id_" current-label "_v" (int->string dst) suffix)))
+
+(define (compiler-backend-lane-id-avx512-i64-shape-ok?
+  [elem-ty : AstType]
+  [lanes : i64]) : bool
+  (match elem-ty
+    [(AstTyI64) (= lanes 8)]
+    [(AstTyU64) (= lanes 8)]
+    [_ false]))
+
+(define (compiler-backend-avx512-i64-lane-id-data) : String
+  "    .quad 0
+    .quad 1
+    .quad 2
+    .quad 3
+    .quad 4
+    .quad 5
+    .quad 6
+    .quad 7
+")
+
+(define (compiler-backend-emit-vector-lane-id
+  [function : String]
+  [current-label : String]
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [lanes : i64]
+  [elem-ty : AstType]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (if (compiler-backend-lane-id-avx512-i64-shape-ok? elem-ty lanes)
+    (match (compiler-backend-vector-var-reg assignments dst "lane id dst" "zmm")
+      [(OkBackendReg dst-reg)
+        (let
+          [data-label : String
+            (compiler-backend-lane-id-label function current-label dst "_data")]
+          [done-label : String
+            (compiler-backend-lane-id-label function current-label dst "_done")]
+          (OkCompilerBackend
+            (string-append
+              (backend-cat5 "    jmp " done-label "\n" data-label ":\n")
+              (string-append
+                (compiler-backend-avx512-i64-lane-id-data)
+                (backend-cat5
+                  done-label
+                  ":\n    vmovdqu64 "
+                  data-label
+                  (backend-cat5 "(%rip), " dst-reg "\n" "" "")
+                  "")))))]
+      [(ErrBackendReg message)
+        (ErrCompilerBackend
+          (compiler-diagnostic-with-message instr-diag message))])
+    (compiler-backend-avx512-shape-diagnostic instr-diag elem-ty lanes)))
+
 (define (compiler-backend-emit-avx512-vector-load
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
@@ -10954,8 +11014,15 @@
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
               (compiler-backend-apply-instr-diagnostic message instr-diag))])]
-      [(IrInstrLaneId _ _ _)
-        (compiler-backend-vector-mask-unimplemented instr-diag)]
+      [(IrInstrLaneId dst lanes elem-ty)
+        (compiler-backend-emit-vector-lane-id
+          function
+          current-label
+          assignments
+          dst
+          lanes
+          elem-ty
+          instr-diag)]
       [(IrInstrSplat dst value lanes elem-ty)
         (compiler-backend-emit-vector-splat
           assignments

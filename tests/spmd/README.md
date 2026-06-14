@@ -30,6 +30,9 @@ falling back to scalar code.
   lanes, with direct-index predicated reads/writes and a masked tail. Exit 42.
 - `masked_if_offset_i64.tl` - AVX-512-only masked varying `if` over `n = 12`
   i64 lanes with shifted contiguous `(+ i 1)` predicated reads/writes. Exit 42.
+- `masked_if_index_value_i64.tl` - AVX-512-only masked varying `if` over
+  `n = 13` i64 lanes whose condition and stores use the foreach index as a
+  varying value. Exit 42.
 - `../integration/spmd_foreach.tl` — `foreach` add over i64, i32, f64, and
   f32 arrays, self-checked against scalar loops across empty, sub-lane,
   exact-lane, and tail lengths. Exit 42.
@@ -54,8 +57,9 @@ Coverage map:
 - `foreach` scalar and SIMD map/zip coverage for `i64`, `i32`, `f64`, and
   `f32` lives in `../integration/spmd_foreach.tl`, the two tail fixtures, and
   `uniform_zip_i64.tl`.
-- AVX-512 masked varying `if` direct-index and shifted-contiguous-index
-  coverage lives in `masked_if_i64.tl` and `masked_if_offset_i64.tl`.
+- AVX-512 masked varying `if` direct-index, shifted-contiguous-index, and
+  foreach-index-as-value coverage lives in `masked_if_i64.tl`,
+  `masked_if_offset_i64.tl`, and `masked_if_index_value_i64.tl`.
 - `spmd-reduce` scalar coverage for the documented operator/type surface lives
   in `../integration/spmd_reduce_scalar.tl`.
 - `spmd-broadcast` executable coverage lives in `broadcast_lane0_i64.tl` and

@@ -348,6 +348,20 @@
     [(AstTyChar) 8]
     [_ 0]))
 
+;; #2998: a SAME-WIDTH int/char cast (e.g. i64<->u64, i32<->u32, char<->u8) only
+;; reinterprets signedness; it copies the identical bit pattern, so it can be
+;; lowered to a plain `IrInstrMov` that regalloc recognizes as a copy and can
+;; coalesce away. Width-changing casts are deliberately excluded: widening needs
+;; real sign/zero extension, and narrowing must mask the high bits, neither of
+;; which a coalesced mov performs (a coalesced mov leaves the source's full
+;; register intact, so a deferred-truncation scheme would feed un-narrowed bits
+;; to any consumer that reads the slot at full width).
+(define (opt-cast-is-noop-int? [from-ty : AstType] [to-ty : AstType]) : bool
+  (and
+    (opt-int-or-char-type? from-ty)
+    (opt-int-or-char-type? to-ty)
+    (= (opt-int-width to-ty) (opt-int-width from-ty))))
+
 (define (opt-value-to-i64 [value : CompilerIrValue]) : OptMaybeI64
   (match value
     [(IrValueI64 n) (OptSomeI64 n)]
@@ -990,7 +1004,15 @@
           (OptInstrResult
             (opt-const-bind env dst folded to-ty)
             (IrInstrMov dst folded to-ty))]
-        [(IrNoValue) (OptInstrResult (opt-const-unbind env dst) instr)])]
+        [(IrNoValue)
+          ;; #2998: when the operand is not a known constant, a same-size or
+          ;; narrowing int/char cast is a representational no-op, so lower it to
+          ;; a mov that regalloc can coalesce instead of a load+store cast.
+          (if (opt-cast-is-noop-int? from-ty to-ty)
+            (OptInstrResult
+              (opt-const-unbind env dst)
+              (IrInstrMov dst src to-ty))
+            (OptInstrResult (opt-const-unbind env dst) instr))])]
     [(IrInstrBinOp dst op l r ty)
       (match (opt-fold-binop
         op
@@ -20557,6 +20579,48 @@
       (opt-mov-dst-f64-text? pos 43 "-3.75")
       (opt-mov-dst-f64-text? pos 44 "1")
       (= (opt-count-arith-instrs neg) 1))))
+
+;; #2998 regression coverage: a non-constant same-WIDTH int-or-char cast lowers
+;; to a `Mov` of the original source var, while narrowing, widening, and
+;; int<->float casts keep a real `Cast`.
+(define (opt-mov-dst-var-src?
+  [instrs : CompilerIrInstrList]
+  [dst : i64]
+  [src : i64]) : bool
+  (match instrs
+    [(IrInstrNil) false]
+    [(IrInstrCons instr rest)
+      (match instr
+        [(IrInstrMov d (IrValueVar v) _)
+          (if (= d dst)
+            (= v src)
+            (opt-mov-dst-var-src? (box-get rest) dst src))]
+        [_ (opt-mov-dst-var-src? (box-get rest) dst src)])]))
+
+(define (opt-cast-mov-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (IrInstrCast 100 (IrValueVar 1) (AstTyI64) (AstTyU64))
+    (compiler-ir-instr-cons
+      (IrInstrCast 101 (IrValueVar 2) (AstTyI64) (AstTyI32))
+      (compiler-ir-instr-cons
+        (IrInstrCast 102 (IrValueVar 3) (AstTyI32) (AstTyI64))
+        (compiler-ir-instr-cons
+          (IrInstrCast 103 (IrValueVar 4) (AstTyI64) (AstTyF64))
+          (compiler-ir-instr-cons
+            (IrInstrCast 104 (IrValueVar 5) (AstTyChar) (AstTyU8))
+            (IrInstrNil)))))))
+
+(define (compiler-optimize-cast-mov-self-test) : i64
+  (let
+    [folded : CompilerIrInstrList
+      (opt-fold-instrs (OptConstNil) (opt-cast-mov-instrs))]
+    (begin
+      ;; The narrowing i64->i32, widening i32->i64, and int->float casts all
+      ;; remain; only the same-width i64->u64 and char->u8 casts become movs.
+      (unless (= (opt-count-cast-instrs folded) 3) (return 1))
+      (unless (opt-mov-dst-var-src? folded 100 1) (return 2))
+      (unless (opt-mov-dst-var-src? folded 104 5) (return 3))
+      42)))
 
 (define (compiler-optimize-typed-fold-self-test) : i64
   (let

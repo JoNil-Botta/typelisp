@@ -148,6 +148,7 @@
   (begin
     (unless (= (compiler-optimize-self-test) 42) (return 1))
     (unless (= (compiler-optimize-typed-fold-self-test) 42) (return 1))
+    (unless (= (compiler-optimize-cast-mov-self-test) 42) (return 1))
     (unless (= (compiler-optimize-strength-self-test) 42) (return 1))
     (unless (= (compiler-optimize-dce-self-test) 42) (return 1))
     (unless (= (compiler-optimize-dce-mem-self-test) 42) (return 1))

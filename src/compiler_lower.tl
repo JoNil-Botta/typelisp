@@ -20268,7 +20268,10 @@
         [inner : AstExpr (ast-node-get inner-box)]
         (lower-masked-vector-expr-lanes mode env type-env index inner))]
     [(AstExprLiteral _) 0]
-    [(AstExprVar _) 0]
+    [(AstExprVar name)
+      (if (string-eq (intern-str name) index)
+        (lower-simd-lanes-for-elem mode (AstTyI64))
+        0)]
     [(AstExprUnary op inner-box)
       (if (lower-masked-vector-unop-supported? op)
         (let
@@ -21055,6 +21058,33 @@
         (lower-state-emit s (IrInstrSplat v value lanes elem-ty))
         (IrValueVar v)
         elem-ty)]))
+
+(define (lower-emit-lane-id
+  [state : LowerState]
+  [lanes : i64]
+  [elem-ty : AstType]) : LowerExpr
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc s v)
+      (LowerExpr
+        (lower-state-emit s (IrInstrLaneId v lanes elem-ty))
+        (IrValueVar v)
+        elem-ty)]))
+
+(define (lower-emit-foreach-index-vector
+  [state : LowerState]
+  [index-var : i64]
+  [lanes : i64]) : LowerExpr
+  (match (lower-emit-splat state (IrValueVar index-var) lanes (AstTyI64))
+    [(LowerExpr base-state base-value _)
+      (match (lower-emit-lane-id base-state lanes (AstTyI64))
+        [(LowerExpr lane-state lane-value _)
+          (lower-emit-vector-binop
+            lane-state
+            (IrBinAdd)
+            base-value
+            lane-value
+            lanes
+            (AstTyI64))])]))
 
 (define (lower-emit-vector-compare
   [state : LowerState]
@@ -22288,6 +22318,7 @@
   [type-env : TcTypeEnv]
   [lane-locals : LowerStringSet]
   [index : String]
+  [index-var : i64]
   [lanes : i64]
   [expr : AstExpr]
   [name : String]) : ResultLowerExpr
@@ -22303,9 +22334,7 @@
       [(NoneI64)
         (lower-avx512-masked-unsupported expr "unknown lane-local binding")])
     (if (string-eq name index)
-      (lower-avx512-masked-unsupported
-        expr
-        "lane index values; direct array indexes are supported")
+      (OkLowerExpr (lower-emit-foreach-index-vector state index-var lanes))
       (match (sym-i64-lookup env name)
         [(SomeI64 var-id)
           (match (tc-lookup type-env name)
@@ -22970,6 +22999,7 @@
         type-env
         lane-locals
         index
+        index-var
         lanes
         expr
         (intern-str name))]
@@ -34709,6 +34739,14 @@
       (array-set! out (+ i 1) 0)
       (array-set! out (+ i 1) (+ (array-ref xs (+ i 1)) 1)))))")
 
+(define (compiler-lower-avx512-masked-if-index-value-source) : String
+  "(define (fill [out : (Array i64)] [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (if (< i 6)
+      (array-set! out i i)
+      (array-set! out i (+ i 1)))))")
+
 (define (compiler-lower-avx512-masked-if-source-shape-ok? [src : String]) : bool
   (match (lower-compiler-source-with-mode src (CompilerLowerAvx512))
     [(OkCompilerLower program _)
@@ -34748,6 +34786,45 @@
   (compiler-lower-avx512-masked-if-source-shape-ok?
     (compiler-lower-avx512-masked-if-offset-source)))
 
+(define (compiler-lower-avx512-masked-if-index-value-shape-ok?) : bool
+  (match (lower-compiler-source-with-mode
+    (compiler-lower-avx512-masked-if-index-value-source)
+    (CompilerLowerAvx512))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (let
+            [load-count : i64
+              (lower-test-function-vector-load-count functions "fill")]
+            [store-count : i64
+              (lower-test-function-vector-store-count functions "fill")]
+            [binop-count : i64
+              (lower-test-function-vector-binop-count functions "fill")]
+            [pred-load-count : i64
+              (lower-test-function-predicated-load-count functions "fill")]
+            [pred-store-count : i64
+              (lower-test-function-predicated-store-count functions "fill")]
+            [tail-mask-count : i64
+              (lower-test-function-tail-mask-count functions "fill")]
+            [shape-count : i64
+              (lower-test-function-vector-shape-count
+                functions
+                "fill"
+                8
+                (AstTyI64))]
+            [tail-store-count : i64
+              (lower-test-function-store-ptr-count functions "fill")]
+            (compiler-lower-and8
+              (= load-count 0)
+              (= store-count 0)
+              (>= binop-count 3)
+              (= pred-load-count 0)
+              (>= pred-store-count 4)
+              (= tail-mask-count 2)
+              (>= shape-count 6)
+              (> tail-store-count 0)))])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-avx2-masked-if-diagnostic-ok?) : bool
   (and
     (compiler-lower-mode-error-ok?
@@ -34756,6 +34833,10 @@
       (lower-avx2-masked-if-diagnostic))
     (compiler-lower-mode-error-ok?
       (compiler-lower-avx512-masked-if-offset-source)
+      (CompilerLowerAvx2)
+      (lower-avx2-masked-if-diagnostic))
+    (compiler-lower-mode-error-ok?
+      (compiler-lower-avx512-masked-if-index-value-source)
       (CompilerLowerAvx2)
       (lower-avx2-masked-if-diagnostic))))
 
@@ -34801,6 +34882,7 @@
     (compiler-lower-simd-foreach-fallback-diagnostic-ok?)
     (compiler-lower-avx512-masked-if-shape-ok?)
     (compiler-lower-avx512-masked-if-offset-shape-ok?)
+    (compiler-lower-avx512-masked-if-index-value-shape-ok?)
     (compiler-lower-avx2-masked-if-diagnostic-ok?)))
 
 (define (compiler-lower-avx2-spmd-reduce-shape-ok?

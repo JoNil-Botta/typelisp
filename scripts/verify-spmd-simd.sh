@@ -84,9 +84,13 @@ spmd_corpus() {
 tests/spmd/tail_i64_add.tl
 tests/spmd/tail_i32_add.tl
 tests/spmd/uniform_zip_i64.tl
+tests/spmd/inline_helper_i64.tl
+tests/spmd/inline_helper_shadow_i64.tl
+tests/spmd/inline_helper_f64.tl
 tests/spmd/masked_if_i64.tl
 tests/spmd/masked_if_offset_i64.tl
 tests/spmd/masked_if_index_value_i64.tl
+tests/spmd/inline_helper_masked_if_i64.tl
 tests/integration/spmd_foreach.tl
 tests/integration/spmd_reduce_scalar.tl
 EOF
@@ -107,6 +111,12 @@ spmd_mode_expected_compile_diagnostic() {
             printf '%s\n' "lower: SPMD masked if is not supported in AVX2 backend mode; use scalar or avx512"
             ;;
         tests/spmd/masked_if_index_value_i64.tl:avx2)
+            printf '%s\n' "lower: SPMD masked if is not supported in AVX2 backend mode; use scalar or avx512"
+            ;;
+        tests/spmd/inline_helper_shadow_i64.tl:avx2 | tests/spmd/inline_helper_shadow_i64.tl:avx512)
+            printf '%s\n' "lower: SPMD foreach does not match a SIMD lowering pattern for this backend mode; use scalar or a contiguous map/zip body with supported array and uniform operands"
+            ;;
+        tests/spmd/inline_helper_masked_if_i64.tl:avx2)
             printf '%s\n' "lower: SPMD masked if is not supported in AVX2 backend mode; use scalar or avx512"
             ;;
         *) return 1 ;;

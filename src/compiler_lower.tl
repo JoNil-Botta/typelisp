@@ -40,12 +40,20 @@
   (LowerStringNil)
   (LowerStringCons String (Box LowerStringSet)))
 
+(defenum LowerSpmdInlineSubst
+  (LowerSpmdInlineSubstNil)
+  (LowerSpmdInlineSubstCons String AstExpr (Box LowerSpmdInlineSubst)))
+
 (defenum LowerReachState
   (LowerReachState StringI64Map LowerStringSet))
 
 (defenum LowerMaybeFunctionBody
   (LowerNoFunctionBody)
   (LowerSomeFunctionBody AstExpr))
+
+(defenum LowerSpmdInlineHelper
+  (LowerNoSpmdInlineHelper)
+  (LowerSomeSpmdInlineHelper String AstParamList AstExpr))
 
 (defenum LowerCloneRootEnv
   (LowerCloneRootEnv CloneNameList TcTypeEnv))
@@ -96,6 +104,16 @@
 (defenum LowerMaybeIrValue
   (LowerNoIrValue)
   (LowerSomeIrValue CompilerIrValue))
+
+(defenum LowerMaybeAstExpr
+  (LowerNoAstExpr)
+  (LowerSomeAstExpr AstExpr))
+
+(defenum LowerSpmdInlineLetBindings
+  (LowerSpmdInlineLetBindings
+    AstLetBindingList
+    LowerSpmdInlineSubst
+    LowerStringSet))
 
 (defenum LowerVectorMapValue
   (LowerVectorMapArray i64)
@@ -158,6 +176,26 @@
 (defenum ResultLowerExpr
   (OkLowerExpr LowerExpr)
   (ErrLowerExpr CompilerDiagnostic))
+
+(defenum ResultLowerAstExpr
+  (OkLowerAstExpr AstExpr)
+  (ErrLowerAstExpr CompilerDiagnostic))
+
+(defenum ResultLowerAstExprList
+  (OkLowerAstExprList AstExprList)
+  (ErrLowerAstExprList CompilerDiagnostic))
+
+(defenum ResultLowerSpmdInlineLetBindings
+  (OkLowerSpmdInlineLetBindings LowerSpmdInlineLetBindings)
+  (ErrLowerSpmdInlineLetBindings CompilerDiagnostic))
+
+(defenum ResultLowerSpmdInlineSubst
+  (OkLowerSpmdInlineSubst LowerSpmdInlineSubst)
+  (ErrLowerSpmdInlineSubst CompilerDiagnostic))
+
+(defenum ResultLowerSpmdInlineHelper
+  (OkLowerSpmdInlineHelper LowerSpmdInlineHelper)
+  (ErrLowerSpmdInlineHelper CompilerDiagnostic))
 
 (defenum ResultLowerArgs
   (OkLowerArgs LowerState CompilerIrValueList)
@@ -1729,6 +1767,569 @@
   (if (lower-string-set-contains? items name)
     items
     (LowerStringCons name (box items))))
+
+(define (lower-spmd-inline-empty-helper-stack) : LowerStringSet
+  LowerStringNil)
+
+(define lower-spmd-inline-helper-stack : LowerStringSet
+  (lower-spmd-inline-empty-helper-stack))
+
+(define lower-spmd-inline-next-temp : i64
+  0)
+
+(define (lower-spmd-inline-recursive-message) : String
+  "lower: recursive SPMD inline helper call is not supported")
+
+(define (lower-spmd-inline-fresh-local [name : String]) : String
+  (let
+    [next : i64 lower-spmd-inline-next-temp]
+    (begin
+      (set! lower-spmd-inline-next-temp (+ lower-spmd-inline-next-temp 1))
+      (str-cat "__tl_spmd_inline_local$" (int->string next) "$" name))))
+
+(define (lower-spmd-inline-subst-lookup
+  [subs : LowerSpmdInlineSubst]
+  [name : String]) : LowerMaybeAstExpr
+  (match subs
+    [(LowerSpmdInlineSubstNil) (LowerNoAstExpr)]
+    [(LowerSpmdInlineSubstCons key value rest)
+      (if (string-eq key name)
+        (LowerSomeAstExpr value)
+        (lower-spmd-inline-subst-lookup (box-get rest) name))]))
+
+(define (lower-spmd-inline-subst-remove
+  [subs : LowerSpmdInlineSubst]
+  [name : String]) : LowerSpmdInlineSubst
+  (match subs
+    [(LowerSpmdInlineSubstNil) LowerSpmdInlineSubstNil]
+    [(LowerSpmdInlineSubstCons key value rest)
+      (if (string-eq key name)
+        (lower-spmd-inline-subst-remove (box-get rest) name)
+        (LowerSpmdInlineSubstCons
+          key
+          value
+          (box (lower-spmd-inline-subst-remove (box-get rest) name))))]))
+
+(define (lower-spmd-inline-subst-cons
+  [name : String]
+  [value : AstExpr]
+  [rest : LowerSpmdInlineSubst]) : LowerSpmdInlineSubst
+  (LowerSpmdInlineSubstCons name value (box rest)))
+
+(define (lower-spmd-inline-helper-from-decl [name : String] [decl : AstDecl]) : ResultLowerSpmdInlineHelper
+  (match decl
+    [(AstDeclDefFn _ params _ body-box _)
+      (let
+        [body : AstExpr (ast-node-get body-box)]
+        (OkLowerSpmdInlineHelper (LowerSomeSpmdInlineHelper name params body)))]
+    [(AstDeclUnsafe inner-box)
+      (let
+        [inner : AstDecl (box-get inner-box)]
+        (lower-spmd-inline-helper-from-decl name inner))]
+    [(AstDeclComptimeDecl _ template-box)
+      (let
+        [template : AstDecl (box-get template-box)]
+        (lower-spmd-inline-helper-from-decl name template))]
+    [_ (OkLowerSpmdInlineHelper (LowerNoSpmdInlineHelper))]))
+
+(define (lower-spmd-inline-helper-name
+  [ctx : TcContext]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [shadowed : LowerStringSet]
+  [func : AstExpr]) : ResultTcString
+  (match (ast-expr-unspan func)
+    [(AstExprVar raw-name)
+      (let
+        [raw-text : String (intern-str raw-name)]
+        (cond
+          (lower-string-set-contains? shadowed raw-text)
+          (ErrTcString "")
+          (tc-hygiene-global-name? raw-text)
+          (OkTcString (tc-hygiene-global-call-name raw-text))
+          (tc-name-qualified? raw-text)
+          (OkTcString raw-text)
+          (tc-source-name-lookup-key ctx type-env raw-text)))]
+    [_ (ErrTcString "")]))
+
+(define (lower-spmd-inline-helper-lookup
+  [ctx : TcContext]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [shadowed : LowerStringSet]
+  [func : AstExpr]) : ResultLowerSpmdInlineHelper
+  (match (lower-spmd-inline-helper-name ctx env type-env shadowed func)
+    [(OkTcString name)
+      (if (string-eq name "")
+        (OkLowerSpmdInlineHelper (LowerNoSpmdInlineHelper))
+        (if (lower-string-set-contains? lower-spmd-inline-helper-stack name)
+          (ErrLowerSpmdInlineHelper
+            (lower-diagnostic-at-expr
+              func
+              (lower-spmd-inline-recursive-message)))
+          (match (lower-symbols-lookup-value-hygiene
+            (tc-context-symbols ctx)
+            name)
+            [(SomeI64 handle)
+              (if (=
+                (compiler-symbol-handle-kind handle)
+                (compiler-symbol-kind-function-define))
+                (match (compiler-symbols-decl-at-index
+                  (tc-context-symbols ctx)
+                  (compiler-symbol-handle-index handle))
+                  [(OkAstDecl decl)
+                    (lower-spmd-inline-helper-from-decl name decl)]
+                  [(ErrAstDecl message)
+                    (ErrLowerSpmdInlineHelper (lower-diagnostic message))])
+                (OkLowerSpmdInlineHelper (LowerNoSpmdInlineHelper)))]
+            [(NoneI64) (OkLowerSpmdInlineHelper (LowerNoSpmdInlineHelper))])))]
+    [(ErrTcString message)
+      (if (string-eq message "")
+        (OkLowerSpmdInlineHelper (LowerNoSpmdInlineHelper))
+        (ErrLowerSpmdInlineHelper (lower-diagnostic-at-expr func message)))]))
+
+(define (lower-spmd-inline-build-subst
+  [params : AstParamList]
+  [args : AstExprList]
+  [subst : LowerSpmdInlineSubst]
+  [origin : AstExpr]) : ResultLowerSpmdInlineSubst
+  (match params
+    [(AstParamNil)
+      (match args
+        [(AstExprNil) (OkLowerSpmdInlineSubst subst)]
+        [_
+          (ErrLowerSpmdInlineSubst
+            (lower-diagnostic-at-expr origin "lower: arity mismatch"))])]
+    [(AstParamCons param rest-params)
+      (let
+        [rest-params : AstParamList (box-get rest-params)]
+        (match args
+          [(AstExprCons arg rest-args)
+            (let
+              [arg : AstExpr (ast-node-get arg)]
+              [rest-args : AstExprList (box-get rest-args)]
+              (match param
+                [(AstParam param-name _ _)
+                  (lower-spmd-inline-build-subst
+                    rest-params
+                    rest-args
+                    (lower-spmd-inline-subst-cons
+                      (intern-str param-name)
+                      arg
+                      subst)
+                    origin)]))]
+          [(AstExprNil)
+            (ErrLowerSpmdInlineSubst
+              (lower-diagnostic-at-expr origin "lower: arity mismatch"))]))]))
+
+(define (lower-spmd-inline-arg-subst
+  [params : AstParamList]
+  [args : AstExprList]
+  [origin : AstExpr]) : ResultLowerSpmdInlineSubst
+  (lower-spmd-inline-build-subst params args LowerSpmdInlineSubstNil origin))
+
+(define (lower-spmd-inline-expr-list
+  [ctx : TcContext]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [exprs : AstExprList]
+  [subst : LowerSpmdInlineSubst]
+  [shadowed : LowerStringSet]) : ResultLowerAstExprList
+  (match exprs
+    [(AstExprNil) (OkLowerAstExprList AstExprNil)]
+    [(AstExprCons head rest)
+      (let
+        [head : AstExpr (ast-node-get head)]
+        [rest : AstExprList (box-get rest)]
+        (match (lower-spmd-inline-expr ctx env type-env head subst shadowed)
+          [(OkLowerAstExpr rewritten-head)
+            (match (lower-spmd-inline-expr-list
+              ctx
+              env
+              type-env
+              rest
+              subst
+              shadowed)
+              [(OkLowerAstExprList rewritten-rest)
+                (OkLowerAstExprList
+                  (ast-expr-cons (ast-node-push rewritten-head) rewritten-rest))]
+              [(ErrLowerAstExprList diag) (ErrLowerAstExprList diag)])]
+          [(ErrLowerAstExpr diag) (ErrLowerAstExprList diag)]))]))
+
+(define (lower-spmd-inline-let-bindings
+  [ctx : TcContext]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [bindings : AstLetBindingList]
+  [subst : LowerSpmdInlineSubst]
+  [shadowed : LowerStringSet]) : ResultLowerSpmdInlineLetBindings
+  (match bindings
+    [(AstLetBindingNil)
+      (OkLowerSpmdInlineLetBindings
+        (LowerSpmdInlineLetBindings AstLetBindingNil subst shadowed))]
+    [(AstLetBindingCons binding rest)
+      (let
+        [rest : AstLetBindingList (box-get rest)]
+        (match binding
+          [(AstLetBinding name maybe-ty init-box)
+            (let
+              [init : AstExpr (ast-node-get init-box)]
+              [name-text : String (intern-str name)]
+              [renamed : bool
+                (match subst
+                  [(LowerSpmdInlineSubstNil) false]
+                  [_ true])]
+              [bind-name : String
+                (if renamed
+                  (lower-spmd-inline-fresh-local name-text)
+                  name-text)]
+              [bind-id : i64 (intern bind-name)]
+              (match (lower-spmd-inline-expr
+                ctx
+                env
+                type-env
+                init
+                subst
+                shadowed)
+                [(OkLowerAstExpr rewritten-init)
+                  (match (lower-spmd-inline-let-bindings
+                    ctx
+                    env
+                    type-env
+                    rest
+                    (if renamed
+                      (lower-spmd-inline-subst-cons
+                        name-text
+                        (AstExprVar bind-id)
+                        (lower-spmd-inline-subst-remove subst name-text))
+                      (lower-spmd-inline-subst-remove subst name-text))
+                    (lower-string-set-insert shadowed name-text))
+                    [(OkLowerSpmdInlineLetBindings rewritten)
+                      (match rewritten
+                        [(LowerSpmdInlineLetBindings
+                            rewritten-rest
+                            body-subst
+                            body-shadowed)
+                          (OkLowerSpmdInlineLetBindings
+                            (LowerSpmdInlineLetBindings
+                              (ast-let-binding-cons
+                                (ast-let-binding-id
+                                  bind-id
+                                  maybe-ty
+                                  (ast-node-push rewritten-init))
+                                rewritten-rest)
+                              body-subst
+                              body-shadowed))])]
+                    [(ErrLowerSpmdInlineLetBindings diag)
+                      (ErrLowerSpmdInlineLetBindings diag)])]
+                [(ErrLowerAstExpr diag) (ErrLowerSpmdInlineLetBindings diag)]))]))]))
+
+(define (lower-spmd-inline-helper-body
+  [ctx : TcContext]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [name : String]
+  [params : AstParamList]
+  [args : AstExprList]
+  [body : AstExpr]
+  [origin : AstExpr]) : ResultLowerAstExpr
+  (match (lower-spmd-inline-arg-subst params args origin)
+    [(OkLowerSpmdInlineSubst helper-subst)
+      (let
+        [previous : LowerStringSet lower-spmd-inline-helper-stack]
+        [result : ResultLowerAstExpr
+          (ErrLowerAstExpr
+            (lower-diagnostic-at-expr
+              origin
+              (lower-spmd-inline-recursive-message)))]
+        (begin
+          (set!
+            lower-spmd-inline-helper-stack
+            (lower-string-set-insert previous name))
+          (set!
+            result
+            (lower-spmd-inline-expr
+              ctx
+              env
+              type-env
+              body
+              helper-subst
+              LowerStringNil))
+          (set! lower-spmd-inline-helper-stack previous)
+          result))]
+    [(ErrLowerSpmdInlineSubst diag) (ErrLowerAstExpr diag)]))
+
+(define (lower-spmd-inline-call
+  [ctx : TcContext]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [func : AstExpr]
+  [args : AstExprList]
+  [subst : LowerSpmdInlineSubst]
+  [shadowed : LowerStringSet]
+  [origin : AstExpr]) : ResultLowerAstExpr
+  (match (lower-spmd-inline-expr-list ctx env type-env args subst shadowed)
+    [(OkLowerAstExprList rewritten-args)
+      (match (lower-spmd-inline-helper-lookup ctx env type-env shadowed func)
+        [(OkLowerSpmdInlineHelper helper)
+          (match helper
+            [(LowerSomeSpmdInlineHelper name params body)
+              (lower-spmd-inline-helper-body
+                ctx
+                env
+                type-env
+                name
+                params
+                rewritten-args
+                body
+                origin)]
+            [(LowerNoSpmdInlineHelper)
+              (match (lower-spmd-inline-expr
+                ctx
+                env
+                type-env
+                func
+                subst
+                shadowed)
+                [(OkLowerAstExpr rewritten-func)
+                  (OkLowerAstExpr
+                    (ast-node-get
+                      (ast-expr-call
+                        (ast-node-push rewritten-func)
+                        rewritten-args)))]
+                [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)])])]
+        [(ErrLowerSpmdInlineHelper diag) (ErrLowerAstExpr diag)])]
+    [(ErrLowerAstExprList diag) (ErrLowerAstExpr diag)]))
+
+(define (lower-spmd-inline-expr
+  [ctx : TcContext]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [expr : AstExpr]
+  [subst : LowerSpmdInlineSubst]
+  [shadowed : LowerStringSet]) : ResultLowerAstExpr
+  (match expr
+    [(AstExprSpanned inner-box span)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (match (lower-spmd-inline-expr ctx env type-env inner subst shadowed)
+          [(OkLowerAstExpr rewritten)
+            (OkLowerAstExpr
+              (ast-node-get (ast-expr-spanned (ast-node-push rewritten) span)))]
+          [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)]))]
+    [(AstExprVar name)
+      (match (lower-spmd-inline-subst-lookup subst (intern-str name))
+        [(LowerSomeAstExpr value) (OkLowerAstExpr value)]
+        [(LowerNoAstExpr) (OkLowerAstExpr expr)])]
+    [(AstExprBinary op left-box right-box)
+      (let
+        [left : AstExpr (ast-node-get left-box)]
+        [right : AstExpr (ast-node-get right-box)]
+        (match (lower-spmd-inline-expr ctx env type-env left subst shadowed)
+          [(OkLowerAstExpr rewritten-left)
+            (match (lower-spmd-inline-expr
+              ctx
+              env
+              type-env
+              right
+              subst
+              shadowed)
+              [(OkLowerAstExpr rewritten-right)
+                (OkLowerAstExpr
+                  (ast-node-get
+                    (ast-expr-binary
+                      op
+                      (ast-node-push rewritten-left)
+                      (ast-node-push rewritten-right))))]
+              [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)])]
+          [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)]))]
+    [(AstExprUnary op inner-box)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (match (lower-spmd-inline-expr ctx env type-env inner subst shadowed)
+          [(OkLowerAstExpr rewritten)
+            (OkLowerAstExpr
+              (ast-node-get (ast-expr-unary op (ast-node-push rewritten))))]
+          [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)]))]
+    [(AstExprCall func-box args)
+      (let
+        [func : AstExpr (ast-node-get func-box)]
+        (lower-spmd-inline-call ctx env type-env func args subst shadowed expr))]
+    [(AstExprIf cond-box then-box else-box)
+      (let
+        [cond : AstExpr (ast-node-get cond-box)]
+        [then-branch : AstExpr (ast-node-get then-box)]
+        [else-branch : AstExpr (ast-node-get else-box)]
+        (match (lower-spmd-inline-expr ctx env type-env cond subst shadowed)
+          [(OkLowerAstExpr rewritten-cond)
+            (match (lower-spmd-inline-expr
+              ctx
+              env
+              type-env
+              then-branch
+              subst
+              shadowed)
+              [(OkLowerAstExpr rewritten-then)
+                (match (lower-spmd-inline-expr
+                  ctx
+                  env
+                  type-env
+                  else-branch
+                  subst
+                  shadowed)
+                  [(OkLowerAstExpr rewritten-else)
+                    (OkLowerAstExpr
+                      (ast-node-get
+                        (ast-expr-if
+                          (ast-node-push rewritten-cond)
+                          (ast-node-push rewritten-then)
+                          (ast-node-push rewritten-else))))]
+                  [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)])]
+              [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)])]
+          [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)]))]
+    [(AstExprLet bindings body-box)
+      (let
+        [body : AstExpr (ast-node-get body-box)]
+        (match (lower-spmd-inline-let-bindings
+          ctx
+          env
+          type-env
+          bindings
+          subst
+          shadowed)
+          [(OkLowerSpmdInlineLetBindings rewritten)
+            (match rewritten
+              [(LowerSpmdInlineLetBindings
+                  rewritten-bindings
+                  body-subst
+                  body-shadowed)
+                (match (lower-spmd-inline-expr
+                  ctx
+                  env
+                  type-env
+                  body
+                  body-subst
+                  body-shadowed)
+                  [(OkLowerAstExpr rewritten-body)
+                    (OkLowerAstExpr
+                      (ast-node-get
+                        (ast-expr-let
+                          rewritten-bindings
+                          (ast-node-push rewritten-body))))]
+                  [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)])])]
+          [(ErrLowerSpmdInlineLetBindings diag) (ErrLowerAstExpr diag)]))]
+    [(AstExprBegin exprs)
+      (match (lower-spmd-inline-expr-list ctx env type-env exprs subst shadowed)
+        [(OkLowerAstExprList rewritten)
+          (OkLowerAstExpr (AstExprBegin rewritten))]
+        [(ErrLowerAstExprList diag) (ErrLowerAstExpr diag)])]
+    [(AstExprAnn inner-box ty)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (match (lower-spmd-inline-expr ctx env type-env inner subst shadowed)
+          [(OkLowerAstExpr rewritten)
+            (OkLowerAstExpr
+              (ast-node-get (ast-expr-ann (ast-node-push rewritten) ty)))]
+          [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)]))]
+    [(AstExprCast inner-box ty)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (match (lower-spmd-inline-expr ctx env type-env inner subst shadowed)
+          [(OkLowerAstExpr rewritten)
+            (OkLowerAstExpr
+              (ast-node-get (ast-expr-cast (ast-node-push rewritten) ty)))]
+          [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)]))]
+    [(AstExprArrayRef array-box index-box)
+      (let
+        [array : AstExpr (ast-node-get array-box)]
+        [index : AstExpr (ast-node-get index-box)]
+        (match (lower-spmd-inline-expr ctx env type-env array subst shadowed)
+          [(OkLowerAstExpr rewritten-array)
+            (match (lower-spmd-inline-expr
+              ctx
+              env
+              type-env
+              index
+              subst
+              shadowed)
+              [(OkLowerAstExpr rewritten-index)
+                (OkLowerAstExpr
+                  (ast-node-get
+                    (ast-expr-array-ref
+                      (ast-node-push rewritten-array)
+                      (ast-node-push rewritten-index))))]
+              [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)])]
+          [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)]))]
+    [(AstExprArraySet array-box index-box value-box)
+      (let
+        [array : AstExpr (ast-node-get array-box)]
+        [index : AstExpr (ast-node-get index-box)]
+        [value : AstExpr (ast-node-get value-box)]
+        (match (lower-spmd-inline-expr ctx env type-env array subst shadowed)
+          [(OkLowerAstExpr rewritten-array)
+            (match (lower-spmd-inline-expr
+              ctx
+              env
+              type-env
+              index
+              subst
+              shadowed)
+              [(OkLowerAstExpr rewritten-index)
+                (match (lower-spmd-inline-expr
+                  ctx
+                  env
+                  type-env
+                  value
+                  subst
+                  shadowed)
+                  [(OkLowerAstExpr rewritten-value)
+                    (OkLowerAstExpr
+                      (ast-node-get
+                        (ast-expr-array-set
+                          (ast-node-push rewritten-array)
+                          (ast-node-push rewritten-index)
+                          (ast-node-push rewritten-value))))]
+                  [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)])]
+              [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)])]
+          [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)]))]
+    [(AstExprStructSet receiver-box field value-box)
+      (let
+        [receiver : AstExpr (ast-node-get receiver-box)]
+        [value : AstExpr (ast-node-get value-box)]
+        (match (lower-spmd-inline-expr ctx env type-env receiver subst shadowed)
+          [(OkLowerAstExpr rewritten-receiver)
+            (match (lower-spmd-inline-expr
+              ctx
+              env
+              type-env
+              value
+              subst
+              shadowed)
+              [(OkLowerAstExpr rewritten-value)
+                (OkLowerAstExpr
+                  (ast-node-get
+                    (ast-expr-struct-set-id
+                      (ast-node-push rewritten-receiver)
+                      field
+                      (ast-node-push rewritten-value))))]
+              [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)])]
+          [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)]))]
+    [(AstExprSpmdBroadcast value-box lane-box)
+      (let
+        [value : AstExpr (ast-node-get value-box)]
+        [lane : AstExpr (ast-node-get lane-box)]
+        (match (lower-spmd-inline-expr ctx env type-env value subst shadowed)
+          [(OkLowerAstExpr rewritten-value)
+            (match (lower-spmd-inline-expr ctx env type-env lane subst shadowed)
+              [(OkLowerAstExpr rewritten-lane)
+                (OkLowerAstExpr
+                  (ast-node-get
+                    (ast-expr-spmd-broadcast
+                      (ast-node-push rewritten-value)
+                      (ast-node-push rewritten-lane))))]
+              [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)])]
+          [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)]))]
+    [_ (OkLowerAstExpr expr)]))
 
 (define (lower-function-logical-name-from-decl
   [entry-path : String]
@@ -23747,7 +24348,7 @@
         end-value
         body)]))
 
-(define (lower-foreach-lowered
+(define (lower-foreach-lowered-inlined
   [ctx : TcContext]
   [state : LowerState]
   [env : SymI64Env]
@@ -23845,6 +24446,36 @@
       start-value
       end-value
       body)))
+
+(define (lower-foreach-lowered
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [index-ty : AstType]
+  [start-value : CompilerIrValue]
+  [end-value : CompilerIrValue]
+  [body : AstExpr]) : ResultLowerExpr
+  (match (lower-spmd-inline-expr
+    ctx
+    env
+    type-env
+    body
+    LowerSpmdInlineSubstNil
+    (lower-string-set-insert LowerStringNil index))
+    [(OkLowerAstExpr inlined-body)
+      (lower-foreach-lowered-inlined
+        ctx
+        state
+        env
+        type-env
+        index
+        index-ty
+        start-value
+        end-value
+        inlined-body)]
+    [(ErrLowerAstExpr diag) (ErrLowerExpr diag)]))
 
 (define (lower-foreach
   [ctx : TcContext]

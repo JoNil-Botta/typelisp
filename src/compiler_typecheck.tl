@@ -18,23 +18,25 @@
   ;; specialization pass would otherwise produce them too late and any program
   ;; that both defines a macro and uses a generated function would fail to
   ;; typecheck. The downstream specialize call re-normalizes harmlessly.
-  (tc-typecheck-result-with-pool-check
-    (match (gen-normalize-program-with-paths program paths "")
-      [(OkGenProgramWithPaths generated generated-paths)
-        (match (macro-expand-program generated)
-          [(OkMacroExpand expanded)
-            (if (compiler-specialize-needed? expanded)
-              (match (compiler-specialize-program expanded)
-                [(OkSpecProgram specialized)
-                  (typecheck-compiler-specialized-program-with-paths
-                    specialized
-                    AstDeclPathNil)]
-                [(ErrSpecProgram diag) (ErrCompilerTypecheck diag)])
-              (typecheck-compiler-specialized-program-with-paths
-                expanded
-                generated-paths))]
-          [(ErrMacroExpand diag) (ErrCompilerTypecheck diag)])]
-      [(ErrGenProgramWithPaths diag) (ErrCompilerTypecheck diag)])))
+  (begin
+    (tc-spmd-inline-helper-stack-reset!)
+    (tc-typecheck-result-with-pool-check
+      (match (gen-normalize-program-with-paths program paths "")
+        [(OkGenProgramWithPaths generated generated-paths)
+          (match (macro-expand-program generated)
+            [(OkMacroExpand expanded)
+              (if (compiler-specialize-needed? expanded)
+                (match (compiler-specialize-program expanded)
+                  [(OkSpecProgram specialized)
+                    (typecheck-compiler-specialized-program-with-paths
+                      specialized
+                      AstDeclPathNil)]
+                  [(ErrSpecProgram diag) (ErrCompilerTypecheck diag)])
+                (typecheck-compiler-specialized-program-with-paths
+                  expanded
+                  generated-paths))]
+            [(ErrMacroExpand diag) (ErrCompilerTypecheck diag)])]
+        [(ErrGenProgramWithPaths diag) (ErrCompilerTypecheck diag)]))))
 
 (define (typecheck-compiler-program [program : AstProgram]) : ResultCompilerTypecheck
   (typecheck-compiler-program-with-paths program AstDeclPathNil))
@@ -553,11 +555,19 @@
   (foreach ([i : i64 0 n])
     (while (< (array-ref xs i) 0) unit)))")
 
-(define (compiler-typecheck-foreach-varying-call-source) : String
+(define (compiler-typecheck-foreach-inline-call-source) : String
   "(define (sink [x : i64]) : unit unit)
 (define (main [xs : (Array i64)] [n : i64]) : unit
   (foreach ([i : i64 0 n])
     (sink (array-ref xs i))))")
+
+(define (compiler-typecheck-foreach-varying-call-source) : String
+  "(define (sink [x : i64]) : unit unit)
+(define (main [xs : (Array i64)] [n : i64]) : unit
+  (let
+    [f : (-> i64 unit) sink]
+    (foreach ([i : i64 0 n])
+      (f (array-ref xs i)))))")
 
 (define (compiler-typecheck-foreach-outer-set-source) : String
   "(define (main [xs : (Array i64)] [n : i64]) : i64
@@ -578,33 +588,39 @@
 (define (compiler-typecheck-foreach-if-local-set-source) : String
   "(define (sink [x : i64]) : unit unit)
 (define (main [xs : (Array i64)] [flag : bool] [n : i64]) : unit
-  (foreach ([i : i64 0 n])
-    (let
-      [x : i64 0]
-      (begin
-        (if flag (set! x (array-ref xs i)) unit)
-        (sink x)))))")
+  (let
+    [f : (-> i64 unit) sink]
+    (foreach ([i : i64 0 n])
+      (let
+        [x : i64 0]
+        (begin
+          (if flag (set! x (array-ref xs i)) unit)
+          (f x))))))")
 
 (define (compiler-typecheck-foreach-while-local-set-source) : String
   "(define (sink [x : i64]) : unit unit)
 (define (main [xs : (Array i64)] [flag : bool] [n : i64]) : unit
-  (foreach ([i : i64 0 n])
-    (let
-      [x : i64 0]
-      (begin
-        (while flag (set! x (array-ref xs i)))
-        (sink x)))))")
+  (let
+    [f : (-> i64 unit) sink]
+    (foreach ([i : i64 0 n])
+      (let
+        [x : i64 0]
+        (begin
+          (while flag (set! x (array-ref xs i)))
+          (f x))))))")
 
 (define (compiler-typecheck-foreach-match-local-set-source) : String
   "(defenum Maybe (None) (Some i64))
 (define (sink [x : i64]) : unit unit)
 (define (main [m : Maybe] [xs : (Array i64)] [n : i64]) : unit
-  (foreach ([i : i64 0 n])
-    (let
-      [x : i64 0]
-      (begin
-        (match m [(Some v) (set! x (array-ref xs i))] [None unit])
-        (sink x)))))")
+  (let
+    [f : (-> i64 unit) sink]
+    (foreach ([i : i64 0 n])
+      (let
+        [x : i64 0]
+        (begin
+          (match m [(Some v) (set! x (array-ref xs i))] [None unit])
+          (f x))))))")
 
 (define (compiler-typecheck-foreach-local-set-ok-source) : String
   "(define (sink [x : i64]) : unit unit)
@@ -634,6 +650,7 @@
     (compiler-typecheck-ok? (compiler-typecheck-foreach-spmd-ok-source))
     (compiler-typecheck-ok? (compiler-typecheck-foreach-spmd-f32-ok-source))
     (compiler-typecheck-ok? (compiler-typecheck-foreach-varying-if-source))
+    (compiler-typecheck-ok? (compiler-typecheck-foreach-inline-call-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-foreach-varying-while-source)
       "typecheck: foreach while condition must be uniform")

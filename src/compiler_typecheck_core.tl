@@ -7948,20 +7948,19 @@
                 (OkTcEnv (tc-bind-module-name-unsafe-id env module name ty))]
               [(ErrTcType message) (ErrTcEnv message)])]
           [(AstDeclExtern name kind _ _)
-            (match (tc-top-decl-type (tc-context-with-module ctx module) inner)
-              [(OkTcType ty)
-                (OkTcEnv
-                  (if (tc-extern-value-c-abi-fnptr?
-                    (tc-context-with-module ctx module)
-                    kind
-                    ty)
-                    (tc-bind-module-name-unsafe-id-c-abi-fnptr
-                      env
-                      module
-                      name
-                      ty)
-                    (tc-bind-module-name-unsafe-id env module name ty)))]
-              [(ErrTcType message) (ErrTcEnv message)])]
+            (let
+              [extern-ctx : TcContext (tc-context-with-module ctx module)]
+              (match (tc-top-decl-type extern-ctx inner)
+                [(OkTcType ty)
+                  (OkTcEnv
+                    (if (tc-extern-value-c-abi-fnptr? extern-ctx kind ty)
+                      (tc-bind-module-name-unsafe-id-c-abi-fnptr
+                        env
+                        module
+                        name
+                        ty)
+                      (tc-bind-module-name-unsafe-id env module name ty)))]
+                [(ErrTcType message) (ErrTcEnv message)]))]
           [_ (OkTcEnv env)]))]
     [(AstDeclDef name _ _)
       (match (tc-top-decl-type-with-env
@@ -7980,16 +7979,15 @@
         [(ErrTcType message) (ErrTcEnv message)])]
     [(AstDeclDefMacro _ _ _ _) (OkTcEnv env)]
     [(AstDeclExtern name kind _ _)
-      (match (tc-top-decl-type (tc-context-with-module ctx module) decl)
-        [(OkTcType ty)
-          (OkTcEnv
-            (if (tc-extern-value-c-abi-fnptr?
-              (tc-context-with-module ctx module)
-              kind
-              ty)
-              (tc-bind-module-name-id-c-abi-fnptr env module name ty)
-              (tc-bind-module-name-id env module name ty)))]
-        [(ErrTcType message) (ErrTcEnv message)])]
+      (let
+        [extern-ctx : TcContext (tc-context-with-module ctx module)]
+        (match (tc-top-decl-type extern-ctx decl)
+          [(OkTcType ty)
+            (OkTcEnv
+              (if (tc-extern-value-c-abi-fnptr? extern-ctx kind ty)
+                (tc-bind-module-name-id-c-abi-fnptr env module name ty)
+                (tc-bind-module-name-id env module name ty)))]
+          [(ErrTcType message) (ErrTcEnv message)]))]
     [(AstDeclDefEnum name cleanup variants)
       (let
         [name-str : String (intern-str name)]
@@ -8161,23 +8159,22 @@
                     ty))]
               [(ErrTcType message) (ErrTcEnv message)])]
           [(AstDeclExtern name kind _ _)
-            (match (tc-top-decl-type (tc-context-with-module ctx module) inner)
-              [(OkTcType ty)
-                (OkTcEnv
-                  (if (tc-extern-value-c-abi-fnptr?
-                    (tc-context-with-module ctx module)
-                    kind
-                    ty)
-                    (tc-bind-unsafe-c-abi-fnptr-id
-                      env
-                      (tc-name-id
-                        (compiler-symbol-module-key alias (intern-str name)))
-                      ty)
-                    (tc-bind-unsafe
-                      env
-                      (compiler-symbol-module-key alias (intern-str name))
-                      ty)))]
-              [(ErrTcType message) (ErrTcEnv message)])]
+            (let
+              [extern-ctx : TcContext (tc-context-with-module ctx module)]
+              (match (tc-top-decl-type extern-ctx inner)
+                [(OkTcType ty)
+                  (OkTcEnv
+                    (if (tc-extern-value-c-abi-fnptr? extern-ctx kind ty)
+                      (tc-bind-unsafe-c-abi-fnptr-id
+                        env
+                        (tc-name-id
+                          (compiler-symbol-module-key alias (intern-str name)))
+                        ty)
+                      (tc-bind-unsafe
+                        env
+                        (compiler-symbol-module-key alias (intern-str name))
+                        ty)))]
+                [(ErrTcType message) (ErrTcEnv message)]))]
           [_ (OkTcEnv env)]))]
     [(AstDeclDef name _ _)
       (match (tc-top-decl-type (tc-context-with-module ctx module) decl)
@@ -8207,34 +8204,33 @@
               ty))]
         [(ErrTcType message) (ErrTcEnv message)])]
     [(AstDeclExtern name kind _ _)
-      (match (tc-top-decl-type (tc-context-with-module ctx module) decl)
-        [(OkTcType ty)
-          (OkTcEnv
-            (if (tc-extern-value-c-abi-fnptr?
-              (tc-context-with-module ctx module)
-              kind
-              ty)
-              (tc-bind-c-abi-fnptr
-                env
-                (compiler-symbol-module-key alias (intern-str name))
-                ty)
-              (tc-bind
-                env
-                (compiler-symbol-module-key alias (intern-str name))
-                ty)))]
-        [(ErrTcType message) (ErrTcEnv message)])]
+      (let
+        [extern-ctx : TcContext (tc-context-with-module ctx module)]
+        (match (tc-top-decl-type extern-ctx decl)
+          [(OkTcType ty)
+            (OkTcEnv
+              (if (tc-extern-value-c-abi-fnptr? extern-ctx kind ty)
+                (tc-bind-c-abi-fnptr
+                  env
+                  (compiler-symbol-module-key alias (intern-str name))
+                  ty)
+                (tc-bind
+                  env
+                  (compiler-symbol-module-key alias (intern-str name))
+                  ty)))]
+          [(ErrTcType message) (ErrTcEnv message)]))]
     [(AstDeclDefEnum name cleanup variants)
       (let
         [name-str : String (intern-str name)]
-        [enum-ty : AstType
-          (AstTyEnum (intern (compiler-symbol-module-key module name-str)))]
+        [scoped-name : String (compiler-symbol-module-key module name-str)]
+        [enum-ty : AstType (AstTyEnum (intern scoped-name))]
         (OkTcEnv
           (tc-bind-enum-cleanup-alias
             (tc-bind-enum-variant-aliases
               (tc-context-with-module ctx module)
               env
               alias
-              (compiler-symbol-module-key module name-str)
+              scoped-name
               AstLifetimeNil
               variants)
             alias
@@ -8243,17 +8239,15 @@
     [(AstDeclDefEnumLifetimes name lifetimes cleanup variants)
       (let
         [name-str : String (intern-str name)]
-        [enum-ty : AstType
-          (AstTyEnumArgs
-            (intern (compiler-symbol-module-key module name-str))
-            lifetimes)]
+        [scoped-name : String (compiler-symbol-module-key module name-str)]
+        [enum-ty : AstType (AstTyEnumArgs (intern scoped-name) lifetimes)]
         (OkTcEnv
           (tc-bind-enum-cleanup-alias
             (tc-bind-enum-variant-aliases
               (tc-context-with-module ctx module)
               env
               alias
-              (compiler-symbol-module-key module name-str)
+              scoped-name
               lifetimes
               variants)
             alias

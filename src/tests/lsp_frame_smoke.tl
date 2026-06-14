@@ -71,6 +71,23 @@
               (string-contains (& rendered) (& total-pos))
               (string-contains (& rendered) (& next-pos)))))))))
 
+(define (lsp-formatting-smoke-ok?) : bool
+  (let
+    [messy : String "(define   (f)  :  i64   (+ 1   2))"]
+    (match (format-rules-render-source-width-result messy 80)
+      [(OkFormatString formatted)
+        (let
+          [rendered : String
+            (json-stringify (lsp-formatting-edit messy formatted))]
+          [sig : String "(define (f) : i64"]
+          [newtext-key : String "\"newText\""]
+          [range-key : String "\"range\""]
+          (and
+            (string-contains (& formatted) (& sig))
+            (string-contains (& rendered) (& newtext-key))
+            (string-contains (& rendered) (& range-key))))]
+      [(ErrFormatString _) false])))
+
 (define (main) : i64
   (let
     [base-result : i64 (lsp-diagnostic-metadata-smoke)]
@@ -79,4 +96,5 @@
       (begin
         (unless (lsp-completion-smoke-ok?) (return 6))
         (unless (lsp-inlay-smoke-ok?) (return 7))
+        (unless (lsp-formatting-smoke-ok?) (return 8))
         42))))

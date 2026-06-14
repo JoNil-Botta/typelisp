@@ -3473,16 +3473,15 @@
 ;; >= 2^31 values keep the full-width `movq $n` (sign extension / 64-bit
 ;; immediate), which the assembler widens to movabs as needed.
 (define (compiler-backend-emit-load-i64-immediate [n : i64] [reg : String]) : String
-  (cond
-    (= n 0)
+  (if (= n 0)
     (let
       [reg32 : String (compiler-backend-reg-part reg 4)]
       (backend-cat5 "    xorl " reg32 ", " reg32 "\n"))
-    (and (> n 0) (< n 2147483648))
-    (let
-      [reg32 : String (compiler-backend-reg-part reg 4)]
-      (backend-cat5 "    movl $" (int->string n) ", " reg32 "\n"))
-    (backend-cat5 "    movq $" (int->string n) ", " reg "\n")))
+    (if (and (> n 0) (< n 2147483648))
+      (let
+        [reg32 : String (compiler-backend-reg-part reg 4)]
+        (backend-cat5 "    movl $" (int->string n) ", " reg32 "\n"))
+      (backend-cat5 "    movq $" (int->string n) ", " reg "\n"))))
 
 (define (compiler-backend-emit-load-value-with-plan
   [assignments : CompilerRegAssignmentList]

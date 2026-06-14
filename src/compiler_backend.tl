@@ -412,6 +412,11 @@
   (floats BackendStringSet)
   (bytes BackendStringSet))
 
+(defenum CompilerBackendCollectState
+  (BackendCollectCollections CompilerBackendProgramCollections)
+  (BackendCollectGroupCounts StringI64Map)
+  (BackendCollectGroupClassMasks StringI64Map CompilerRegVarTypes))
+
 (define (compiler-backend-string-set-new [capacity : i64]) : BackendStringSet
   (BackendStringSet (string-i64-map-with-capacity capacity) BackendStringNil))
 
@@ -7561,63 +7566,14 @@
               [(StringI64MapInsertFull next) next]))))]
     [_ map]))
 
-;; #2386 memory: walk the instruction seq by index instead of materializing a
-;; boxed cons list per block (each cons copies a multi-word inline IrInstr).
-(define (compiler-backend-collect-group-counts-instr-seq
-  [map : StringI64Map]
-  [instrs : CompilerIrInstrSeq]
-  [index : i64]) : StringI64Map
-  (if (>= index (compiler-ir-instr-seq-count instrs))
-    map
-    (compiler-backend-collect-group-counts-instr-seq
-      (compiler-backend-collect-group-counts-instr
-        map
-        (compiler-ir-instr-seq-ref instrs index))
-      instrs
-      (+ index 1))))
-
-(define (compiler-backend-collect-group-counts-block-seq
-  [map : StringI64Map]
-  [seq : CompilerIrBlockSeq]
-  [index : i64]) : StringI64Map
-  (if (>= index (compiler-ir-block-seq-count seq))
-    map
-    (compiler-backend-collect-group-counts-block-seq
-      (match (compiler-ir-block-seq-ref seq index)
-        [(IrBlock _ instrs)
-          (compiler-backend-collect-group-counts-instr-seq map instrs 0)])
-      seq
-      (+ index 1))))
-
-(define (compiler-backend-collect-group-counts-blocks
-  [map : StringI64Map]
-  [blocks : CompilerIrBlockList]) : StringI64Map
-  (match blocks
-    [(IrBlockNil) map]
-    [(IrBlockCons block rest)
-      (match block
-        [(IrBlock _ instrs)
-          (compiler-backend-collect-group-counts-blocks
-            (compiler-backend-collect-group-counts-instr-seq map instrs 0)
-            (box-get rest))])]
-    [(IrBlockArray seq)
-      (compiler-backend-collect-group-counts-block-seq map seq 0)]))
-
 (define (compiler-backend-collect-group-counts-functions
   [map : StringI64Map]
   [functions : CompilerIrFunctionList]) : StringI64Map
-  (match functions
-    [(IrFunctionNil) map]
-    [(IrFunctionCons func rest)
-      (match func
-        [(IrFunction _ _ _ _ blocks)
-          (compiler-backend-collect-group-counts-functions
-            (compiler-backend-collect-group-counts-blocks map blocks)
-            (box-get rest))])]
-    [(IrFunctionArray seq)
-      (compiler-backend-collect-group-counts-functions
-        map
-        (compiler-ir-function-seq-to-list seq))]))
+  (match (compiler-backend-collect-functions-shared
+    (BackendCollectGroupCounts map)
+    functions)
+    [(BackendCollectGroupCounts out) out]
+    [_ map]))
 
 (define (compiler-backend-group-word-sse-bit [index : i64]) : i64
   (if (= index 0)
@@ -7651,6 +7607,130 @@
           (bit-or mask (compiler-backend-group-word-sse-bit index))
           mask))]))
 
+(define (compiler-backend-empty-reg-var-types) : CompilerRegVarTypes
+  (CompilerRegVarTypes
+    CompilerRegVarTypeNil
+    (make-array i64 0)
+    (make-array AstType 0)))
+
+(define (compiler-backend-collect-group-counts-instr-seq
+  [map : StringI64Map]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : StringI64Map
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    map
+    (compiler-backend-collect-group-counts-instr-seq
+      (compiler-backend-collect-group-counts-instr
+        map
+        (compiler-ir-instr-seq-ref instrs index))
+      instrs
+      (+ index 1))))
+
+(define (compiler-backend-collect-group-class-masks-instr-seq
+  [map : StringI64Map]
+  [type-info : CompilerRegVarTypes]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : StringI64Map
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    map
+    (compiler-backend-collect-group-class-masks-instr-seq
+      (compiler-backend-collect-group-class-masks-instr
+        map
+        type-info
+        (compiler-ir-instr-seq-ref instrs index))
+      type-info
+      instrs
+      (+ index 1))))
+
+;; #2386: share the function/block traversal while keeping each instruction
+;; sequence leaf direct, avoiding a callback or tagged dispatch per instruction.
+(define (compiler-backend-collect-block-shared
+  [state : CompilerBackendCollectState]
+  [block : CompilerIrBlock]) : CompilerBackendCollectState
+  (match block
+    [(IrBlock _ instrs)
+      (match state
+        [(BackendCollectCollections collections)
+          (BackendCollectCollections
+            (compiler-backend-collect-instr-seq-collections collections instrs))]
+        [(BackendCollectGroupCounts map)
+          (BackendCollectGroupCounts
+            (compiler-backend-collect-group-counts-instr-seq map instrs 0))]
+        [(BackendCollectGroupClassMasks map type-info)
+          (BackendCollectGroupClassMasks
+            (compiler-backend-collect-group-class-masks-instr-seq
+              map
+              type-info
+              instrs
+              0)
+            type-info)])]))
+
+(define (compiler-backend-collect-block-seq-shared
+  [state : CompilerBackendCollectState]
+  [seq : CompilerIrBlockSeq]
+  [index : i64]) : CompilerBackendCollectState
+  (if (>= index (compiler-ir-block-seq-count seq))
+    state
+    (compiler-backend-collect-block-seq-shared
+      (compiler-backend-collect-block-shared
+        state
+        (compiler-ir-block-seq-ref seq index))
+      seq
+      (+ index 1))))
+
+(define (compiler-backend-collect-blocks-shared
+  [state : CompilerBackendCollectState]
+  [blocks : CompilerIrBlockList]) : CompilerBackendCollectState
+  (match blocks
+    [(IrBlockNil) state]
+    [(IrBlockCons block rest)
+      (compiler-backend-collect-blocks-shared
+        (compiler-backend-collect-block-shared state block)
+        (box-get rest))]
+    [(IrBlockArray seq) (compiler-backend-collect-block-seq-shared state seq 0)]))
+
+(define (compiler-backend-collect-enter-function-shared
+  [state : CompilerBackendCollectState]
+  [func : CompilerIrFunction]) : CompilerBackendCollectState
+  (match state
+    [(BackendCollectGroupClassMasks map _)
+      (BackendCollectGroupClassMasks map (compiler-reg-function-var-types func))]
+    [_ state]))
+
+(define (compiler-backend-collect-function-shared
+  [state : CompilerBackendCollectState]
+  [func : CompilerIrFunction]) : CompilerBackendCollectState
+  (match func
+    [(IrFunction _ _ _ _ blocks)
+      (compiler-backend-collect-blocks-shared
+        (compiler-backend-collect-enter-function-shared state func)
+        blocks)]))
+
+(define (compiler-backend-collect-function-seq-shared
+  [state : CompilerBackendCollectState]
+  [seq : CompilerIrFunctionSeq]
+  [index : i64]) : CompilerBackendCollectState
+  (if (>= index (compiler-ir-function-seq-count seq))
+    state
+    (compiler-backend-collect-function-seq-shared
+      (compiler-backend-collect-function-shared
+        state
+        (compiler-ir-function-seq-ref seq index))
+      seq
+      (+ index 1))))
+
+(define (compiler-backend-collect-functions-shared
+  [state : CompilerBackendCollectState]
+  [functions : CompilerIrFunctionList]) : CompilerBackendCollectState
+  (match functions
+    [(IrFunctionNil) state]
+    [(IrFunctionCons func rest)
+      (compiler-backend-collect-functions-shared
+        (compiler-backend-collect-function-shared state func)
+        (box-get rest))]
+    [(IrFunctionArray seq)
+      (compiler-backend-collect-function-seq-shared state seq 0)]))
+
 (define (compiler-backend-merge-group-class-mask
   [map : StringI64Map]
   [name : String]
@@ -7674,63 +7754,14 @@
         (compiler-backend-pack-word-class-mask type-info words 0 0))]
     [_ map]))
 
-(define (compiler-backend-collect-group-class-masks-instr-seq
-  [map : StringI64Map]
-  [type-info : CompilerRegVarTypes]
-  [instrs : CompilerIrInstrSeq]
-  [index : i64]) : StringI64Map
-  (if (>= index (compiler-ir-instr-seq-count instrs))
-    map
-    (compiler-backend-collect-group-class-masks-instr-seq
-      (compiler-backend-collect-group-class-masks-instr
-        map
-        type-info
-        (compiler-ir-instr-seq-ref instrs index))
-      type-info
-      instrs
-      (+ index 1))))
-
-(define (compiler-backend-collect-group-class-masks-blocks
-  [map : StringI64Map]
-  [type-info : CompilerRegVarTypes]
-  [blocks : CompilerIrBlockList]) : StringI64Map
-  (match blocks
-    [(IrBlockNil) map]
-    [(IrBlockCons block rest)
-      (match block
-        [(IrBlock _ instrs)
-          (compiler-backend-collect-group-class-masks-blocks
-            (compiler-backend-collect-group-class-masks-instr-seq
-              map
-              type-info
-              instrs
-              0)
-            type-info
-            (box-get rest))])]
-    [(IrBlockArray seq)
-      (compiler-backend-collect-group-class-masks-blocks
-        map
-        type-info
-        (compiler-ir-block-seq-to-list seq))]))
-
 (define (compiler-backend-collect-group-class-masks-functions
   [map : StringI64Map]
   [functions : CompilerIrFunctionList]) : StringI64Map
-  (match functions
-    [(IrFunctionNil) map]
-    [(IrFunctionCons func rest)
-      (match func
-        [(IrFunction _ _ _ _ blocks)
-          (compiler-backend-collect-group-class-masks-functions
-            (compiler-backend-collect-group-class-masks-blocks
-              map
-              (compiler-reg-function-var-types func)
-              blocks)
-            (box-get rest))])]
-    [(IrFunctionArray seq)
-      (compiler-backend-collect-group-class-masks-functions
-        map
-        (compiler-ir-function-seq-to-list seq))]))
+  (match (compiler-backend-collect-functions-shared
+    (BackendCollectGroupClassMasks map (compiler-backend-empty-reg-var-types))
+    functions)
+    [(BackendCollectGroupClassMasks out _) out]
+    [_ map]))
 
 (define (compiler-backend-program-index-build
   [functions : CompilerIrFunctionList]
@@ -15783,7 +15814,6 @@
       (compiler-backend-collect-call-args-collections
         (compiler-backend-collect-value-collections collections func)
         args)]
-    ;; Operand-free instructions and raw address-of have no constant payloads.
     [(IrInstrAlloc _ _) collections]
     [(IrInstrAddrOf _ _) collections]
     [(IrInstrLaneId _ _ _) collections]
@@ -15814,34 +15844,20 @@
 (define (compiler-backend-collect-block-collections
   [collections : CompilerBackendProgramCollections]
   [blocks : CompilerIrBlockList]) : CompilerBackendProgramCollections
-  (match blocks
-    [(IrBlockNil) collections]
-    [(IrBlockCons block rest)
-      (match block
-        [(IrBlock _ instrs)
-          (compiler-backend-collect-block-collections
-            (compiler-backend-collect-instr-seq-collections collections instrs)
-            (box-get rest))])]
-    [(IrBlockArray seq)
-      (compiler-backend-collect-block-collections
-        collections
-        (compiler-ir-block-seq-to-list seq))]))
+  (match (compiler-backend-collect-blocks-shared
+    (BackendCollectCollections collections)
+    blocks)
+    [(BackendCollectCollections out) out]
+    [_ collections]))
 
 (define (compiler-backend-collect-function-collections
   [collections : CompilerBackendProgramCollections]
   [functions : CompilerIrFunctionList]) : CompilerBackendProgramCollections
-  (match functions
-    [(IrFunctionNil) collections]
-    [(IrFunctionCons func rest)
-      (match func
-        [(IrFunction _ _ _ _ blocks)
-          (compiler-backend-collect-function-collections
-            (compiler-backend-collect-block-collections collections blocks)
-            (box-get rest))])]
-    [(IrFunctionArray seq)
-      (compiler-backend-collect-function-collections
-        collections
-        (compiler-ir-function-seq-to-list seq))]))
+  (match (compiler-backend-collect-functions-shared
+    (BackendCollectCollections collections)
+    functions)
+    [(BackendCollectCollections out) out]
+    [_ collections]))
 
 (define (compiler-backend-collect-global-collections
   [collections : CompilerBackendProgramCollections]

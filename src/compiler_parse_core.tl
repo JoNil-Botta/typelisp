@@ -704,6 +704,9 @@
 (define (compiler-parse-tag-expr-with-escape) : i64
   269)
 
+(define (compiler-parse-tag-expr-in-arena) : i64
+  291)
+
 (define (compiler-parse-tag-lit-true) : i64
   300)
 
@@ -868,6 +871,9 @@
       (set!
         out
         (sym-i64-bind out "with-escape" (compiler-parse-tag-expr-with-escape)))
+      (set!
+        out
+        (sym-i64-bind out "in-arena" (compiler-parse-tag-expr-in-arena)))
       (set!
         out
         (sym-i64-bind out "type" (compiler-parse-tag-expr-type-literal)))
@@ -1191,6 +1197,8 @@
         (compiler-parse-tag-expr-ptr-to-int)
         (string-eq name "int->ptr")
         (compiler-parse-tag-expr-int-to-ptr)
+        (string-eq name "in-arena")
+        (compiler-parse-tag-expr-in-arena)
         (string-eq name "defmacro")
         (compiler-parse-tag-decl-defmacro)
         (compiler-parse-tag-unknown))
@@ -3682,6 +3690,23 @@
             [(ErrAstExpr message) (ErrAstExpr message)])])]
     [_ (ErrAstExpr "parse: malformed with-escape")]))
 
+(define (parse-ast-in-arena [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
+  (match rest
+    [(SpSNil _)
+      (ErrAstExpr "parse: in-arena requires an arena before its body")]
+    [(SpSCons arena body _)
+      (match (sp-node-get body)
+        [(SpSNil _) (ErrAstExpr "parse: in-arena requires a non-empty body")]
+        [_
+          (match (parse-ast-expr dispatch (sp-node-get arena))
+            [(OkAstExpr parsed-arena)
+              (match (parse-ast-expr-list dispatch (sp-node-get body))
+                [(OkAstExprList exprs)
+                  (OkAstExpr (ast-expr-in-arena parsed-arena exprs))]
+                [(ErrAstExprList message) (ErrAstExpr message)])]
+            [(ErrAstExpr message) (ErrAstExpr message)])])]
+    [_ (ErrAstExpr "parse: malformed in-arena")]))
+
 (define (parse-ast-resource-binding-items
   [dispatch : SymI64Env]
   [items : SpannedSexpr]) : ResultAstResourceBinding
@@ -4026,6 +4051,8 @@
     (parse-ast-with-region dispatch rest)
     (= tag (compiler-parse-tag-expr-with-escape))
     (parse-ast-with-escape dispatch rest)
+    (= tag (compiler-parse-tag-expr-in-arena))
+    (parse-ast-in-arena dispatch rest)
     (= tag (compiler-parse-tag-expr-with-resource))
     (parse-ast-with-resource dispatch rest)
     (= tag (compiler-parse-tag-expr-quote))
@@ -8722,6 +8749,56 @@
       "(define (main) : i64 (with-escape (arena-make)))"
       "parse: with-escape requires a non-empty body")))
 
+(define (compiler-parse-in-arena-shape-ok?) : bool
+  (match (parse-ast-source
+    "(define (main [arena : i64]) : i64 (in-arena arena 1 2))")
+    [(OkAstProgram (AstProgram decls-box))
+      (let
+        [decls : AstDeclList (box-get decls-box)]
+        (match decls
+          [(AstDeclCons (AstDeclDefFn _ _ _ body-box _) rest)
+            (let
+              [body : AstExpr (ast-node-get body-box)]
+              [rest : AstDeclList (box-get rest)]
+              (match rest
+                [(AstDeclNil)
+                  (match (ast-expr-unspan body)
+                    [(AstExprInArena arena-box body-exprs)
+                      (let
+                        [arena : AstExpr (ast-node-get arena-box)]
+                        (match (ast-expr-unspan arena)
+                          [(AstExprVar name)
+                            (and
+                              (string-eq (intern-str name) "arena")
+                              (match body-exprs
+                                [(AstExprCons _ tail)
+                                  (let
+                                    [tail : AstExprList (box-get tail)]
+                                    (match tail
+                                      [(AstExprCons _ end)
+                                        (match (box-get end)
+                                          [(AstExprNil) true]
+                                          [_ false])]
+                                      [_ false]))]
+                                [_ false]))]
+                          [_ false]))]
+                    [_ false])]
+                [_ false]))]
+          [_ false]))]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-parse-in-arena-tests-ok?) : bool
+  (and
+    (compiler-parse-in-arena-shape-ok?)
+    (compiler-parse-ok?
+      "(define (main) : i64 (let ([arena : i64 0]) (in-arena arena 1 2 3)))")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (in-arena))"
+      "parse: in-arena requires an arena before its body")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (in-arena 0))"
+      "parse: in-arena requires a non-empty body")))
+
 (define (compiler-parse-resource-with-source) : String
   "(define (main) : i64
   (with ([h (open-handle) close-handle]
@@ -9018,6 +9095,7 @@
     (compiler-parse-defmacro-tests-ok?)
     (compiler-parse-resource-with-tests-ok?)
     (compiler-parse-with-escape-tests-ok?)
+    (compiler-parse-in-arena-tests-ok?)
     (compiler-parse-quote-syntax-tests-ok?)
     (compiler-parse-export-error-tests-ok?)
     (compiler-parse-define-export-metadata-error-tests-ok?)
@@ -9079,6 +9157,9 @@
     (if (compiler-parse-with-escape-shape-ok?)
       unit
       (panic "parse: with-escape shape test failed"))
+    (if (compiler-parse-in-arena-shape-ok?)
+      unit
+      (panic "parse: in-arena shape test failed"))
     (if (compiler-parse-quote-syntax-shape-ok?)
       unit
       (panic "parse: quote syntax shape test failed"))

@@ -6524,6 +6524,18 @@
                   body-state)]
               [(ErrSpecExprList diag) (ErrSpecExpr diag)])]
           [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+    [(AstExprInArena arena-box body)
+      (let
+        [arena : AstExpr (ast-node-get arena-box)]
+        (match (spec-rewrite-expr arena templates state)
+          [(OkSpecExpr rewritten-arena arena-state)
+            (match (spec-rewrite-expr-list body templates arena-state)
+              [(OkSpecExprList rewritten-body body-state)
+                (OkSpecExpr
+                  (ast-expr-in-arena rewritten-arena rewritten-body)
+                  body-state)]
+              [(ErrSpecExprList diag) (ErrSpecExpr diag)])]
+          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
     [(AstExprWithResource bindings body)
       (OkSpecExpr (ast-node-push (AstExprWithResource bindings body)) state)]
     [(AstExprBox inner-box)
@@ -7084,6 +7096,17 @@
               [(OkSpecSubExprList rewritten-body)
                 (OkSpecSubExpr
                   (ast-expr-with-escape rewritten-scratch rewritten-body))]
+              [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprInArena arena-box body)
+      (let
+        [arena : AstExpr (ast-node-get arena-box)]
+        (match (spec-substitute-values-expr arena subs)
+          [(OkSpecSubExpr rewritten-arena)
+            (match (spec-substitute-values-expr-list body subs)
+              [(OkSpecSubExprList rewritten-body)
+                (OkSpecSubExpr
+                  (ast-expr-in-arena rewritten-arena rewritten-body))]
               [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
           [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
     [(AstExprWithResource bindings body)
@@ -7730,6 +7753,17 @@
               [(OkSpecSubExprList rewritten-body)
                 (OkSpecSubExpr
                   (ast-expr-with-escape rewritten-scratch rewritten-body))]
+              [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprInArena arena-box body)
+      (let
+        [arena : AstExpr (ast-node-get arena-box)]
+        (match (spec-substitute-types-expr arena subs)
+          [(OkSpecSubExpr rewritten-arena)
+            (match (spec-substitute-types-expr-list body subs)
+              [(OkSpecSubExprList rewritten-body)
+                (OkSpecSubExpr
+                  (ast-expr-in-arena rewritten-arena rewritten-body))]
               [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
           [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
     [(AstExprWithResource bindings body)

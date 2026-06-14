@@ -754,6 +754,7 @@
     [(AstExprStructSet _ _ _) "set!"]
     [(AstExprWithRegion _ _) "with-arena"]
     [(AstExprWithEscape _ _) "with-escape"]
+    [(AstExprInArena _ _) "in-arena"]
     [(AstExprWithResource _ _) "with"]
     [(AstExprTypeLiteral _) "type literal"]
     [(AstExprInit _) "init"]
@@ -4403,6 +4404,19 @@
                   body-fuel)]
               [(ErrCtfeQuoteExprList diag) (ErrCtfeQuoteExpr diag)])]
           [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+    [(AstExprInArena arena-box body)
+      (let
+        [arena : AstExpr (ast-node-get arena-box)]
+        (match (ctfe-quote-expr arena env fuel quasiquote)
+          [(OkCtfeQuoteExpr quoted-arena _ arena-fuel)
+            (match (ctfe-quote-expr-list body env arena-fuel quasiquote)
+              [(OkCtfeQuoteExprList quoted-body body-fuel)
+                (OkCtfeQuoteExpr
+                  (ast-expr-in-arena quoted-arena quoted-body)
+                  (AstTyExpr)
+                  body-fuel)]
+              [(ErrCtfeQuoteExprList diag) (ErrCtfeQuoteExpr diag)])]
+          [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
     [(AstExprWithResource bindings body)
       (match (ctfe-quote-resource-binding-list bindings env fuel quasiquote)
         [(OkCtfeQuoteResourceBindings quoted-bindings bindings-fuel)
@@ -5279,6 +5293,17 @@
               [b-escape : AstExpr (ast-node-get b-escape-box)]
               (and
                 (ctfe-expr-eq a-escape b-escape)
+                (ctfe-expr-list-eq a-body b-body)))]
+          [_ false]))]
+    [(AstExprInArena a-arena-box a-body)
+      (let
+        [a-arena : AstExpr (ast-node-get a-arena-box)]
+        (match b
+          [(AstExprInArena b-arena-box b-body)
+            (let
+              [b-arena : AstExpr (ast-node-get b-arena-box)]
+              (and
+                (ctfe-expr-eq a-arena b-arena)
                 (ctfe-expr-list-eq a-body b-body)))]
           [_ false]))]
     [(AstExprWithResource a-bindings a-body)

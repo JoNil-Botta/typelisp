@@ -678,8 +678,10 @@ helpers below. See [SPEC.md §5.16](SPEC.md) and §7.3 for the full contract.
 The standard scratch patterns are: use `(with-arena scratch ...)` for temporary
 work that returns only scalars or outer-owned values; use `(with-escape scratch
 ...)` with a first-class arena from `arena-make` when one supported result must
-be cloned out; reserve manual `arena-set!` / `arena-rewind` / `arena-destroy`
-calls for unsafe internals that can prove every invalidated handle is dead.
+be cloned out; use `(in-arena arena body ...)` when the result should remain
+owned by that first-class arena; reserve manual `arena-set!` / `arena-rewind` /
+`arena-destroy` calls for unsafe internals that can prove every invalidated
+handle is dead.
 
 Scoped cleanup of non-memory resources is separate. The implemented
 `(with ([name init cleanup]) body ...)` form (SPEC.md §5.19) runs cleanup
@@ -693,7 +695,9 @@ safe because they only create/read handles or record a reset mark. `arena-set!`,
 `arena-destroy`, and `arena-rewind` require
 `(unsafe ...)`, because switching, freeing, or rewinding arenas can invalidate
 live heap handles. The safe `with-arena` surface remains preferred for scoped
-cleanup. See [SPEC.md §7.3](SPEC.md) for details.
+cleanup, while `in-arena` is the safe dynamic allocation-target switch without
+marking, rewinding, destroying, or cloning. See [SPEC.md §7.3](SPEC.md) for
+details.
 
 See [SPEC.md](SPEC.md) for the full language reference.
 

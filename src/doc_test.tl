@@ -36,37 +36,32 @@
 (defenum DocTestLine
   (DocTestLine i64 String))
 
-(defenum DocTestLineList
-  (DocTestLineNil)
-  (DocTestLineCons DocTestLine (Box DocTestLineList)))
+(comptime-decl
+  (:generated vector-family DocTestLineList "DocTestLine")
+  (defstruct DocTestLineList
+    (slots (Array DocTestLine))
+    (len i64)))
 
 (defenum DocTestExample
   (DocTestExample i64 i64 DocTestExpectation String))
 
-(defenum DocTestExampleList
-  (DocTestExampleNil)
-  (DocTestExampleCons DocTestExample (Box DocTestExampleList)))
+(comptime-decl
+  (:generated vector-family DocTestExampleList "DocTestExample")
+  (defstruct DocTestExampleList
+    (slots (Array DocTestExample))
+    (len i64)))
 
 (defenum DocTestError
   (DocTestError i64 String))
 
-(defenum DocTestErrorList
-  (DocTestErrorNil)
-  (DocTestErrorCons DocTestError (Box DocTestErrorList)))
+(comptime-decl
+  (:generated vector-family DocTestErrorList "DocTestError")
+  (defstruct DocTestErrorList
+    (slots (Array DocTestError))
+    (len i64)))
 
 (defenum DocTestExtraction
   (DocTestExtraction DocTestExampleList DocTestErrorList))
-
-(define (doc-test-line-cons [line : DocTestLine] [rest : DocTestLineList]) : DocTestLineList
-  (DocTestLineCons line (box rest)))
-
-(define (doc-test-example-cons
-  [example : DocTestExample]
-  [rest : DocTestExampleList]) : DocTestExampleList
-  (DocTestExampleCons example (box rest)))
-
-(define (doc-test-error-cons [err : DocTestError] [rest : DocTestErrorList]) : DocTestErrorList
-  (DocTestErrorCons err (box rest)))
 
 (defenum DocTestMaybeString
   (DocTestNoString)
@@ -78,7 +73,7 @@
   (DocTestFenceMalformed DocTestError))
 
 (defenum DocTestCodeCollect
-  (DocTestCodeCollect DocTestLineList String DocTestLineList bool))
+  (DocTestCodeCollect i64 String DocTestLineList bool))
 
 (defenum DocTestMaybeI64
   (DocTestNoI64 String)
@@ -97,6 +92,79 @@
 
 (defenum DocTestScanState
   (DocTestScanState DocTestExampleList DocTestErrorList i64))
+
+(define (doc-test-line-list-empty) : DocTestLineList
+  (DocTestLineList (make-array DocTestLine 0) 0))
+
+(define (doc-test-line-list-count [lines : DocTestLineList]) : i64
+  (struct-get lines len))
+
+(define (doc-test-line-list-ref [lines : DocTestLineList] [index : i64]) : DocTestLine
+  (array-ref (struct-get lines slots) index))
+
+(define (doc-test-line-list-push [lines : DocTestLineList] [line : DocTestLine]) : DocTestLineList
+  (let
+    [n : i64 (struct-get lines len)]
+    [slots : (Array DocTestLine) (struct-get lines slots)]
+    (begin
+      (array-push! slots line)
+      (DocTestLineList slots (+ n 1)))))
+
+(define (doc-test-example-list-empty) : DocTestExampleList
+  (DocTestExampleList (make-array DocTestExample 0) 0))
+
+(define (doc-test-example-list-count [examples : DocTestExampleList]) : i64
+  (struct-get examples len))
+
+(define (doc-test-example-list-ref
+  [examples : DocTestExampleList]
+  [index : i64]) : DocTestExample
+  (array-ref (struct-get examples slots) index))
+
+(define (doc-test-example-list-append
+  [examples : DocTestExampleList]
+  [example : DocTestExample]) : DocTestExampleList
+  (let
+    [n : i64 (struct-get examples len)]
+    [slots : (Array DocTestExample) (struct-get examples slots)]
+    (begin
+      (array-push! slots example)
+      (DocTestExampleList slots (+ n 1)))))
+
+(define (doc-test-error-list-empty) : DocTestErrorList
+  (DocTestErrorList (make-array DocTestError 0) 0))
+
+(define (doc-test-error-list-count [errors : DocTestErrorList]) : i64
+  (struct-get errors len))
+
+(define (doc-test-error-list-ref [errors : DocTestErrorList] [index : i64]) : DocTestError
+  (array-ref (struct-get errors slots) index))
+
+(define (doc-test-error-list-append
+  [errors : DocTestErrorList]
+  [err : DocTestError]) : DocTestErrorList
+  (let
+    [n : i64 (struct-get errors len)]
+    [slots : (Array DocTestError) (struct-get errors slots)]
+    (begin
+      (array-push! slots err)
+      (DocTestErrorList slots (+ n 1)))))
+
+(define (doc-test-error-list-append-all-from
+  [errors : DocTestErrorList]
+  [more : DocTestErrorList]
+  [index : i64]) : DocTestErrorList
+  (if (>= index (doc-test-error-list-count more))
+    errors
+    (doc-test-error-list-append-all-from
+      (doc-test-error-list-append errors (doc-test-error-list-ref more index))
+      more
+      (+ index 1))))
+
+(define (doc-test-error-list-append-all
+  [errors : DocTestErrorList]
+  [more : DocTestErrorList]) : DocTestErrorList
+  (doc-test-error-list-append-all-from errors more 0))
 
 (define (doc-test-line-number [line : DocTestLine]) : i64
   (match line
@@ -407,75 +475,6 @@
           (+ line-end 2)
           (+ line-end 1))))))
 
-(define (doc-test-line-list-reverse-into
-  [lines : DocTestLineList]
-  [acc : DocTestLineList]) : DocTestLineList
-  (match lines
-    [(DocTestLineNil) acc]
-    [(DocTestLineCons line rest)
-      (doc-test-line-list-reverse-into
-        (box-get rest)
-        (doc-test-line-cons line acc))]))
-
-(define (doc-test-line-list-reverse [lines : DocTestLineList]) : DocTestLineList
-  (doc-test-line-list-reverse-into lines DocTestLineNil))
-
-(define (doc-test-line-array-to-list-rev
-  [lines : (Array DocTestLine)]
-  [index : i64]
-  [acc : DocTestLineList]) : DocTestLineList
-  (if (< index 0)
-    acc
-    (doc-test-line-array-to-list-rev
-      lines
-      (- index 1)
-      (DocTestLineCons (array-ref lines index) (box acc)))))
-
-(define (doc-test-line-array-to-list [lines : (Array DocTestLine)]) : DocTestLineList
-  (doc-test-line-array-to-list-rev
-    lines
-    (- (array-length lines) 1)
-    DocTestLineNil))
-
-(define (doc-test-example-list-append
-  [examples : DocTestExampleList]
-  [example : DocTestExample]) : DocTestExampleList
-  (match examples
-    [(DocTestExampleNil) (doc-test-example-cons example DocTestExampleNil)]
-    [(DocTestExampleCons head rest)
-      (doc-test-example-cons
-        head
-        (doc-test-example-list-append (box-get rest) example))]))
-
-(define (doc-test-error-list-append
-  [errors : DocTestErrorList]
-  [err : DocTestError]) : DocTestErrorList
-  (match errors
-    [(DocTestErrorNil) (doc-test-error-cons err DocTestErrorNil)]
-    [(DocTestErrorCons head rest)
-      (doc-test-error-cons head (doc-test-error-list-append (box-get rest) err))]))
-
-(define (doc-test-error-list-append-all
-  [errors : DocTestErrorList]
-  [more : DocTestErrorList]) : DocTestErrorList
-  (match more
-    [(DocTestErrorNil) errors]
-    [(DocTestErrorCons err rest)
-      (doc-test-error-list-append-all
-        (doc-test-error-list-append errors err)
-        (box-get rest))]))
-
-(define (doc-test-example-list-count [examples : DocTestExampleList]) : i64
-  (match examples
-    [(DocTestExampleNil) 0]
-    [(DocTestExampleCons _ rest)
-      (+ 1 (doc-test-example-list-count (box-get rest)))]))
-
-(define (doc-test-error-list-count [errors : DocTestErrorList]) : i64
-  (match errors
-    [(DocTestErrorNil) 0]
-    [(DocTestErrorCons _ rest) (+ 1 (doc-test-error-list-count (box-get rest)))]))
-
 (define (doc-test-doc-comment-body-with-prefix
   [line : String]
   [prefix : String]) : DocTestMaybeString
@@ -588,43 +587,40 @@
             (DocTestFenceCheck (DocTestExpectPass)))
           (DocTestFenceIgnore))))))
 
-(define (doc-test-skip-ignored-fence [lines : DocTestLineList]) : DocTestLineList
-  (match lines
-    [(DocTestLineNil) DocTestLineNil]
-    [(DocTestLineCons line rest)
+(define (doc-test-skip-ignored-fence-from
+  [lines : DocTestLineList]
+  [index : i64]) : i64
+  (if (>= index (doc-test-line-list-count lines))
+    (doc-test-line-list-count lines)
+    (let
+      [line : DocTestLine (doc-test-line-list-ref lines index)]
       (if (doc-test-string-prefix?
         (doc-test-trim-left (doc-test-line-text line))
         "```")
-        (box-get rest)
-        (doc-test-skip-ignored-fence (box-get rest)))]))
+        (+ index 1)
+        (doc-test-skip-ignored-fence-from lines (+ index 1))))))
 
 (define (doc-test-collect-code-inner
   [lines : DocTestLineList]
+  [index : i64]
   [code : String]
   [collected : DocTestLineList]) : DocTestCodeCollect
-  (match lines
-    [(DocTestLineNil)
-      (DocTestCodeCollect
-        DocTestLineNil
-        code
-        (doc-test-line-list-reverse collected)
-        false)]
-    [(DocTestLineCons line rest)
+  (if (>= index (doc-test-line-list-count lines))
+    (DocTestCodeCollect (doc-test-line-list-count lines) code collected false)
+    (let
+      [line : DocTestLine (doc-test-line-list-ref lines index)]
       (if (doc-test-string-prefix?
         (doc-test-trim-left (doc-test-line-text line))
         "```")
-        (DocTestCodeCollect
-          (box-get rest)
-          code
-          (doc-test-line-list-reverse collected)
-          true)
+        (DocTestCodeCollect (+ index 1) code collected true)
         (doc-test-collect-code-inner
-          (box-get rest)
+          lines
+          (+ index 1)
           (string-append code (string-append (doc-test-line-text line) "\n"))
-          (doc-test-line-cons line collected)))]))
+          (doc-test-line-list-push collected line))))))
 
-(define (doc-test-collect-code [lines : DocTestLineList]) : DocTestCodeCollect
-  (doc-test-collect-code-inner lines "" DocTestLineNil))
+(define (doc-test-collect-code [lines : DocTestLineList] [index : i64]) : DocTestCodeCollect
+  (doc-test-collect-code-inner lines index "" (doc-test-line-list-empty)))
 
 (define (doc-test-metadata-value [line : DocTestLine] [prefix : String]) : DocTestMaybeString
   (let
@@ -798,22 +794,30 @@
                     "unsupported runnable doctest metadata"))
                 metadata)])])]))
 
+(define (doc-test-run-metadata-parse-lines-from
+  [lines : DocTestLineList]
+  [metadata : DocTestRunMetadata]
+  [index : i64]) : DocTestRunMetadata
+  (if (>= index (doc-test-line-list-count lines))
+    metadata
+    (doc-test-run-metadata-parse-lines-from
+      lines
+      (doc-test-run-metadata-parse-line
+        metadata
+        (doc-test-line-list-ref lines index))
+      (+ index 1))))
+
 (define (doc-test-run-metadata-parse-lines
   [lines : DocTestLineList]
   [metadata : DocTestRunMetadata]) : DocTestRunMetadata
-  (match lines
-    [(DocTestLineNil) metadata]
-    [(DocTestLineCons line rest)
-      (doc-test-run-metadata-parse-lines
-        (box-get rest)
-        (doc-test-run-metadata-parse-line metadata line))]))
+  (doc-test-run-metadata-parse-lines-from lines metadata 0))
 
 (define (doc-test-parse-run-metadata
   [source-line : i64]
   [lines : DocTestLineList]) : DocTestRunMetadataParse
   (match (doc-test-run-metadata-parse-lines
     lines
-    (DocTestRunMetadata false 0 false "" false "" DocTestErrorNil))
+    (DocTestRunMetadata false 0 false "" false "" (doc-test-error-list-empty)))
     [(DocTestRunMetadata
         has-exit
         expected-exit
@@ -831,24 +835,25 @@
               (DocTestError
                 source-line
                 "runnable TypeLisp doctest requires doctest-exit metadata")))]
-        (match all-errors
-          [(DocTestErrorNil)
-            (DocTestRunMetadataOk
-              (DocTestExpectRun expected-exit expected-stdout expected-stderr))]
-          [_ (DocTestRunMetadataErr all-errors)]))]))
+        (if (= (doc-test-error-list-count all-errors) 0)
+          (DocTestRunMetadataOk
+            (DocTestExpectRun expected-exit expected-stdout expected-stderr))
+          (DocTestRunMetadataErr all-errors)))]))
 
 (define (doc-test-scan-type-lisp-fence
-  [rest : DocTestLineList]
+  [lines : DocTestLineList]
+  [index : i64]
   [state : DocTestScanState]
   [source-line : i64]
   [mode : DocTestFenceMode]) : DocTestScanState
-  (match (doc-test-collect-code rest)
+  (match (doc-test-collect-code lines index)
     [(DocTestCodeCollect remaining code code-lines closed)
       (match state
         [(DocTestScanState examples errors next-index)
           (if closed
             (if (doc-test-string-blank? code)
-              (doc-test-scan-doc-block
+              (doc-test-scan-doc-block-from
+                lines
                 remaining
                 (DocTestScanState
                   examples
@@ -856,7 +861,8 @@
                     errors
                     (DocTestError source-line "empty TypeLisp doctest fence"))
                   next-index))
-              (doc-test-scan-doc-block
+              (doc-test-scan-doc-block-from
+                lines
                 remaining
                 (match mode
                   [(DocTestFenceCheck expectation)
@@ -893,58 +899,60 @@
                 (DocTestError source-line "unterminated TypeLisp doctest fence"))
               next-index))])]))
 
+(define (doc-test-scan-doc-block-from
+  [lines : DocTestLineList]
+  [index : i64]
+  [state : DocTestScanState]) : DocTestScanState
+  (if (>= index (doc-test-line-list-count lines))
+    state
+    (let
+      [line : DocTestLine (doc-test-line-list-ref lines index)]
+      [trimmed : String (doc-test-trim-left (doc-test-line-text line))]
+      (if (doc-test-string-prefix? trimmed "```")
+        (let
+          [info : String (substring trimmed 3 (- (string-length trimmed) 3))]
+          (match (doc-test-parse-fence-info info (doc-test-line-number line))
+            [(DocTestFenceIgnore)
+              (doc-test-scan-doc-block-from
+                lines
+                (doc-test-skip-ignored-fence-from lines (+ index 1))
+                state)]
+            [(DocTestFenceMalformed err)
+              (match state
+                [(DocTestScanState examples errors next-index)
+                  (doc-test-scan-doc-block-from
+                    lines
+                    (doc-test-skip-ignored-fence-from lines (+ index 1))
+                    (DocTestScanState
+                      examples
+                      (doc-test-error-list-append errors err)
+                      next-index))])]
+            [(DocTestFenceTypeLisp expectation)
+              (doc-test-scan-type-lisp-fence
+                lines
+                (+ index 1)
+                state
+                (doc-test-line-number line)
+                expectation)]))
+        (doc-test-scan-doc-block-from lines (+ index 1) state)))))
+
 (define (doc-test-scan-doc-block
   [lines : DocTestLineList]
   [state : DocTestScanState]) : DocTestScanState
-  (match lines
-    [(DocTestLineNil) state]
-    [(DocTestLineCons line rest)
-      (let
-        [trimmed : String (doc-test-trim-left (doc-test-line-text line))]
-        (if (doc-test-string-prefix? trimmed "```")
-          (let
-            [info : String (substring trimmed 3 (- (string-length trimmed) 3))]
-            (match (doc-test-parse-fence-info info (doc-test-line-number line))
-              [(DocTestFenceIgnore)
-                (doc-test-scan-doc-block
-                  (doc-test-skip-ignored-fence (box-get rest))
-                  state)]
-              [(DocTestFenceMalformed err)
-                (match state
-                  [(DocTestScanState examples errors next-index)
-                    (doc-test-scan-doc-block
-                      (doc-test-skip-ignored-fence (box-get rest))
-                      (DocTestScanState
-                        examples
-                        (doc-test-error-list-append errors err)
-                        next-index))])]
-              [(DocTestFenceTypeLisp expectation)
-                (doc-test-scan-type-lisp-fence
-                  (box-get rest)
-                  state
-                  (doc-test-line-number line)
-                  expectation)]))
-          (doc-test-scan-doc-block (box-get rest) state)))]))
-
-(define (doc-test-scan-reversed-block
-  [lines : DocTestLineList]
-  [state : DocTestScanState]) : DocTestScanState
-  (doc-test-scan-doc-block (doc-test-line-list-reverse lines) state))
-
-(define (doc-test-scan-line-array
-  [lines : (Array DocTestLine)]
-  [state : DocTestScanState]) : DocTestScanState
-  (doc-test-scan-doc-block (doc-test-line-array-to-list lines) state))
+  (doc-test-scan-doc-block-from lines 0 state))
 
 (define (doc-test-extract-source [src : String]) : DocTestExtraction
   (let
     [n : i64 (string-length src)]
     [pos : i64 0]
     [line-number : i64 1]
-    [module-lines : (Array DocTestLine) (make-array DocTestLine 0)]
-    [pending-lines : (Array DocTestLine) (make-array DocTestLine 0)]
+    [module-lines : DocTestLineList (doc-test-line-list-empty)]
+    [pending-lines : DocTestLineList (doc-test-line-list-empty)]
     [state : DocTestScanState
-      (DocTestScanState DocTestExampleNil DocTestErrorNil 1)]
+      (DocTestScanState
+        (doc-test-example-list-empty)
+        (doc-test-error-list-empty)
+        1)]
     (begin
       (while (< pos n)
         (let
@@ -954,30 +962,36 @@
             (match (doc-test-module-doc-comment-body line)
               [(DocTestSomeString body)
                 (begin
-                  (set! pending-lines (make-array DocTestLine 0))
-                  (array-push! module-lines (DocTestLine line-number body)))]
+                  (set! pending-lines (doc-test-line-list-empty))
+                  (set!
+                    module-lines
+                    (doc-test-line-list-push
+                      module-lines
+                      (DocTestLine line-number body))))]
               [(DocTestNoString)
                 (if (doc-test-string-blank? line)
                   unit
                   (begin
-                    (set! state (doc-test-scan-line-array module-lines state))
-                    (set! module-lines (make-array DocTestLine 0))
+                    (set! state (doc-test-scan-doc-block module-lines state))
+                    (set! module-lines (doc-test-line-list-empty))
                     (match (doc-test-item-doc-comment-body line)
                       [(DocTestSomeString body)
-                        (array-push!
+                        (set!
                           pending-lines
-                          (DocTestLine line-number body))]
+                          (doc-test-line-list-push
+                            pending-lines
+                            (DocTestLine line-number body)))]
                       [(DocTestNoString)
                         (if (doc-test-supported-item-declaration? line)
                           (begin
                             (set!
                               state
-                              (doc-test-scan-line-array pending-lines state))
-                            (set! pending-lines (make-array DocTestLine 0)))
-                          (set! pending-lines (make-array DocTestLine 0)))])))])
+                              (doc-test-scan-doc-block pending-lines state))
+                            (set! pending-lines (doc-test-line-list-empty)))
+                          (set! pending-lines (doc-test-line-list-empty)))])))])
             (set! pos (doc-test-next-line-start src line-end n))
             (set! line-number (+ line-number 1)))))
-      (set! state (doc-test-scan-line-array module-lines state))
+      (set! state (doc-test-scan-doc-block module-lines state))
       (match state
         [(DocTestScanState examples errors _)
           (DocTestExtraction examples errors)]))))
@@ -1645,49 +1659,113 @@
   [failures : DocTestRunFailureList]) : DocTestRunFailureList
   (doc-test-run-examples-with-roots path examples failures (string-vec-new)))
 
+(define (doc-test-run-examples-with-roots-from
+  [path : String]
+  [examples : DocTestExampleList]
+  [index : i64]
+  [failures : DocTestRunFailureList]
+  [stdlib-roots : StringVec]) : DocTestRunFailureList
+  (if (>= index (doc-test-example-list-count examples))
+    failures
+    (let
+      [example : DocTestExample (doc-test-example-list-ref examples index)]
+      (match (doc-test-check-example-with-roots path example stdlib-roots)
+        [(DocTestNoFailure)
+          (doc-test-run-examples-with-roots-from
+            path
+            examples
+            (+ index 1)
+            failures
+            stdlib-roots)]
+        [(DocTestSomeFailure failure)
+          (doc-test-run-examples-with-roots-from
+            path
+            examples
+            (+ index 1)
+            (doc-test-run-failure-list-append failures failure)
+            stdlib-roots)]))))
+
 (define (doc-test-run-examples-with-roots
   [path : String]
   [examples : DocTestExampleList]
   [failures : DocTestRunFailureList]
   [stdlib-roots : StringVec]) : DocTestRunFailureList
-  (match examples
-    [(DocTestExampleNil) failures]
-    [(DocTestExampleCons example rest)
-      (match (doc-test-check-example-with-roots path example stdlib-roots)
+  (doc-test-run-examples-with-roots-from path examples 0 failures stdlib-roots))
+
+(define (doc-test-typecheck-examples-with-roots-from
+  [path : String]
+  [examples : DocTestExampleList]
+  [index : i64]
+  [failures : DocTestRunFailureList]
+  [stdlib-roots : StringVec]) : DocTestRunFailureList
+  (if (>= index (doc-test-example-list-count examples))
+    failures
+    (let
+      [example : DocTestExample (doc-test-example-list-ref examples index)]
+      (match (doc-test-typecheck-example-with-roots path example stdlib-roots)
         [(DocTestNoFailure)
-          (doc-test-run-examples-with-roots
+          (doc-test-typecheck-examples-with-roots-from
             path
-            (box-get rest)
+            examples
+            (+ index 1)
             failures
             stdlib-roots)]
         [(DocTestSomeFailure failure)
-          (doc-test-run-examples-with-roots
+          (doc-test-typecheck-examples-with-roots-from
             path
-            (box-get rest)
+            examples
+            (+ index 1)
             (doc-test-run-failure-list-append failures failure)
-            stdlib-roots)])]))
+            stdlib-roots)]))))
 
 (define (doc-test-typecheck-examples-with-roots
   [path : String]
   [examples : DocTestExampleList]
   [failures : DocTestRunFailureList]
   [stdlib-roots : StringVec]) : DocTestRunFailureList
-  (match examples
-    [(DocTestExampleNil) failures]
-    [(DocTestExampleCons example rest)
-      (match (doc-test-typecheck-example-with-roots path example stdlib-roots)
+  (doc-test-typecheck-examples-with-roots-from
+    path
+    examples
+    0
+    failures
+    stdlib-roots))
+
+(define (doc-test-typecheck-package-examples-with-roots-from
+  [path : String]
+  [examples : DocTestExampleList]
+  [index : i64]
+  [failures : DocTestRunFailureList]
+  [stdlib-roots : StringVec]
+  [manifest-dir : String]
+  [deps : CompilerPkgDeps]) : DocTestRunFailureList
+  (if (>= index (doc-test-example-list-count examples))
+    failures
+    (let
+      [example : DocTestExample (doc-test-example-list-ref examples index)]
+      (match (doc-test-typecheck-package-example-with-roots
+        path
+        example
+        stdlib-roots
+        manifest-dir
+        deps)
         [(DocTestNoFailure)
-          (doc-test-typecheck-examples-with-roots
+          (doc-test-typecheck-package-examples-with-roots-from
             path
-            (box-get rest)
+            examples
+            (+ index 1)
             failures
-            stdlib-roots)]
+            stdlib-roots
+            manifest-dir
+            deps)]
         [(DocTestSomeFailure failure)
-          (doc-test-typecheck-examples-with-roots
+          (doc-test-typecheck-package-examples-with-roots-from
             path
-            (box-get rest)
+            examples
+            (+ index 1)
             (doc-test-run-failure-list-append failures failure)
-            stdlib-roots)])]))
+            stdlib-roots
+            manifest-dir
+            deps)]))))
 
 (define (doc-test-typecheck-package-examples-with-roots
   [path : String]
@@ -1696,51 +1774,43 @@
   [stdlib-roots : StringVec]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : DocTestRunFailureList
-  (match examples
-    [(DocTestExampleNil) failures]
-    [(DocTestExampleCons example rest)
-      (match (doc-test-typecheck-package-example-with-roots
-        path
-        example
-        stdlib-roots
-        manifest-dir
-        deps)
-        [(DocTestNoFailure)
-          (doc-test-typecheck-package-examples-with-roots
-            path
-            (box-get rest)
-            failures
-            stdlib-roots
-            manifest-dir
-            deps)]
-        [(DocTestSomeFailure failure)
-          (doc-test-typecheck-package-examples-with-roots
-            path
-            (box-get rest)
-            (doc-test-run-failure-list-append failures failure)
-            stdlib-roots
-            manifest-dir
-            deps)])]))
+  (doc-test-typecheck-package-examples-with-roots-from
+    path
+    examples
+    0
+    failures
+    stdlib-roots
+    manifest-dir
+    deps))
 
 ;; A malformed/empty/unterminated fence is a runner failure too; it has no
 ;; example index, so it is recorded with index `-1`.
-(define (doc-test-errors-to-failures
+(define (doc-test-errors-to-failures-from
   [path : String]
   [errors : DocTestErrorList]
+  [index : i64]
   [failures : DocTestRunFailureList]) : DocTestRunFailureList
-  (match errors
-    [(DocTestErrorNil) failures]
-    [(DocTestErrorCons err rest)
-      (doc-test-errors-to-failures
+  (if (>= index (doc-test-error-list-count errors))
+    failures
+    (let
+      [err : DocTestError (doc-test-error-list-ref errors index)]
+      (doc-test-errors-to-failures-from
         path
-        (box-get rest)
+        errors
+        (+ index 1)
         (doc-test-run-failure-list-append
           failures
           (DocTestRunFailure
             path
             (doc-test-error-line err)
             -1
-            (doc-test-error-message err))))]))
+            (doc-test-error-message err)))))))
+
+(define (doc-test-errors-to-failures
+  [path : String]
+  [errors : DocTestErrorList]
+  [failures : DocTestRunFailureList]) : DocTestRunFailureList
+  (doc-test-errors-to-failures-from path errors 0 failures))
 
 ;; Extract and check every example in `source` (attributed to `path`). Extraction
 ;; errors are folded in as failures first, then each example is checked. A source
@@ -1998,65 +2068,67 @@
             code-fragment))]
       [_ false])))
 
-(define (doc-test-error-list-has?
+(define (doc-test-error-list-has-from?
   [errors : DocTestErrorList]
+  [index : i64]
   [line : i64]
   [message-fragment : String]) : bool
-  (match errors
-    [(DocTestErrorNil) false]
-    [(DocTestErrorCons err rest)
+  (if (>= index (doc-test-error-list-count errors))
+    false
+    (let
+      [err : DocTestError (doc-test-error-list-ref errors index)]
       (if (= (doc-test-error-line err) line)
         (if (doc-test-string-contains?
           (doc-test-error-message err)
           message-fragment)
           true
-          (doc-test-error-list-has? (box-get rest) line message-fragment))
-        (doc-test-error-list-has? (box-get rest) line message-fragment))]))
+          (doc-test-error-list-has-from?
+            errors
+            (+ index 1)
+            line
+            message-fragment))
+        (doc-test-error-list-has-from? errors (+ index 1) line message-fragment)))))
+
+(define (doc-test-error-list-has?
+  [errors : DocTestErrorList]
+  [line : i64]
+  [message-fragment : String]) : bool
+  (doc-test-error-list-has-from? errors 0 line message-fragment))
 
 (define (doc-test-smoke-examples-ok? [examples : DocTestExampleList]) : bool
-  (match examples
-    [(DocTestExampleCons first rest-first)
-      (match (box-get rest-first)
-        [(DocTestExampleCons second rest-second)
-          (match (box-get rest-second)
-            [(DocTestExampleNil)
-              (if (doc-test-example-ok? first 1 2 false "(define (main)")
-                (doc-test-example-ok? second 2 9 true "(define (bad)")
-                false)]
-            [_ false])]
-        [_ false])]
-    [_ false]))
+  (if (= (doc-test-example-list-count examples) 2)
+    (let
+      [first : DocTestExample (doc-test-example-list-ref examples 0)]
+      [second : DocTestExample (doc-test-example-list-ref examples 1)]
+      (if (doc-test-example-ok? first 1 2 false "(define (main)")
+        (doc-test-example-ok? second 2 9 true "(define (bad)")
+        false))
+    false))
 
 (define (doc-test-malformed-errors-ok? [errors : DocTestErrorList]) : bool
-  (match errors
-    [(DocTestErrorCons first rest-first)
-      (match (box-get rest-first)
-        [(DocTestErrorCons second rest-second)
-          (match (box-get rest-second)
-            [(DocTestErrorCons third rest-third)
-              (match (box-get rest-third)
-                [(DocTestErrorNil)
-                  (begin
-                    (unless (= (doc-test-error-line first) 1) (return false))
-                    (unless
-                      (doc-test-string-contains?
-                        (doc-test-error-message first)
-                        "unsupported TypeLisp doctest option")
-                      (return false))
-                    (unless (= (doc-test-error-line second) 5) (return false))
-                    (unless
-                      (doc-test-string-contains?
-                        (doc-test-error-message second)
-                        "empty TypeLisp doctest fence")
-                      (return false))
-                    (unless (= (doc-test-error-line third) 8) (return false))
-                    (doc-test-string-contains?
-                      (doc-test-error-message third)
-                      "unterminated TypeLisp doctest fence"))]
-                [_ false])]
-            [_ false])]
-        [_ false])]
-    [_ false]))
+  (if (= (doc-test-error-list-count errors) 3)
+    (let
+      [first : DocTestError (doc-test-error-list-ref errors 0)]
+      [second : DocTestError (doc-test-error-list-ref errors 1)]
+      [third : DocTestError (doc-test-error-list-ref errors 2)]
+      (begin
+        (unless (= (doc-test-error-line first) 1) (return false))
+        (unless
+          (doc-test-string-contains?
+            (doc-test-error-message first)
+            "unsupported TypeLisp doctest option")
+          (return false))
+        (unless (= (doc-test-error-line second) 5) (return false))
+        (unless
+          (doc-test-string-contains?
+            (doc-test-error-message second)
+            "empty TypeLisp doctest fence")
+          (return false))
+        (unless (= (doc-test-error-line third) 8) (return false))
+        (doc-test-string-contains?
+          (doc-test-error-message third)
+          "unterminated TypeLisp doctest fence")))
+    false))
 
 (define (doc-test-ordinary-comments-ok?) : bool
   (match (doc-test-extract-source (doc-test-ordinary-comment-source))
@@ -2078,15 +2150,11 @@
       (begin
         (unless (= (doc-test-error-list-count errors) 0) (return false))
         (unless (= (doc-test-example-list-count examples) 1) (return false))
-        (match examples
-          [(DocTestExampleCons example rest)
-            (match (box-get rest)
-              [(DocTestExampleNil)
-                (doc-test-string-contains?
-                  (doc-test-example-code example)
-                  "(define legacy")]
-              [_ false])]
-          [_ false]))]))
+        (let
+          [example : DocTestExample (doc-test-example-list-ref examples 0)]
+          (doc-test-string-contains?
+            (doc-test-example-code example)
+            "(define legacy")))]))
 
 (define (doc-test-malformed-smoke-ok?) : bool
   (match (doc-test-extract-source (doc-test-malformed-source))
@@ -2103,34 +2171,28 @@
       (begin
         (unless (= (doc-test-error-list-count errors) 0) (return false))
         (unless (= (doc-test-example-list-count examples) 2) (return false))
-        (match examples
-          [(DocTestExampleCons first rest-first)
-            (match (box-get rest-first)
-              [(DocTestExampleCons second rest-second)
-                (match (box-get rest-second)
-                  [(DocTestExampleNil)
-                    (begin
-                      (unless
-                        (doc-test-runnable-example-ok?
-                          first
-                          1
-                          2
-                          0
-                          "hello\n"
-                          "error\tline\r"
-                          "(define (main)")
-                        (return false))
-                      (doc-test-runnable-example-ok?
-                        second
-                        2
-                        13
-                        42
-                        ""
-                        ""
-                        "(define (main)"))]
-                  [_ false])]
-              [_ false])]
-          [_ false]))]))
+        (let
+          [first : DocTestExample (doc-test-example-list-ref examples 0)]
+          [second : DocTestExample (doc-test-example-list-ref examples 1)]
+          (begin
+            (unless
+              (doc-test-runnable-example-ok?
+                first
+                1
+                2
+                0
+                "hello\n"
+                "error\tline\r"
+                "(define (main)")
+              (return false))
+            (doc-test-runnable-example-ok?
+              second
+              2
+              13
+              42
+              ""
+              ""
+              "(define (main)"))))]))
 
 (define (doc-test-runnable-malformed-smoke-ok?) : bool
   (match (doc-test-extract-source (doc-test-runnable-malformed-source))

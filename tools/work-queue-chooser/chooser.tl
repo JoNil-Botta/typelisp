@@ -1,8 +1,8 @@
 ;# work-queue-chooser/chooser.tl - TypeLisp work-queue chooser (#794).
 ;#
 ;# Reads the combined `{"prs":[...],"issues":[...]}` JSON from stdin, classifies
-;# each entry, skips PRs whose checks are still pending/running and issues
-;# labeled `blocked`, weights the rest (PR review = 45,
+;# each entry, skips draft PRs and PRs whose checks are still pending/running as
+;# well as issues labeled `blocked`, weights the rest (PR review = 45,
 ;# ready-for-implementation = 10, research/triage = 1, +50 for a p0 label,
 ;# +3 for a p1 label), uses system entropy to make a weighted pick, and prints
 ;# one action line:
@@ -208,6 +208,10 @@
     (json-field-string item "title")
     review-weight))
 
+;: Return true when a PR is a draft. Draft PRs are never offered for review.
+(define (pr-draft? [item : Json]) : bool
+  (json-field-bool item "isDraft"))
+
 ;: Return true when a check run status is terminal; conclusions may pass/fail.
 (define (pr-check-status-complete? [status : String]) : bool
   (string-eq status "COMPLETED"))
@@ -281,14 +285,16 @@
 (define (issue-ready? [item : Json]) : bool
   (label-list-has? (issue-label-list item) "ready-for-implementation"))
 
-;: Map a JSON array of PR objects to candidates, preserving source order.
+;: Map a JSON array of PR objects to candidates, preserving source order. Draft
+;: PRs are never eligible, and non-draft PRs whose checks are still pending or
+;: running are skipped until their checks reach a terminal state.
 (define (pr-candidates [items : JsonList]) : CandList
   (match items
     [(JsonListNil) (CandNil)]
     [(JsonListCons head rest)
       (let
         [tail : CandList (pr-candidates (box-get rest))]
-        (if (pr-checks-complete? head)
+        (if (and (not (pr-draft? head)) (pr-checks-complete? head))
           (CandCons (pr-candidate head) (box tail))
           tail))]))
 
@@ -389,7 +395,7 @@
   chooser-skips-incomplete-pr-checks
   (let
     [text : String
-      "{\"prs\":[{\"number\":1,\"title\":\"Draft without checks\",\"isDraft\":true},{\"number\":2,\"title\":\"Empty checks\",\"statusCheckRollup\":[]},{\"number\":3,\"title\":\"Completed checks\",\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"COMPLETED\",\"conclusion\":\"FAILURE\"}]},{\"number\":4,\"title\":\"Running checks\",\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":5,\"title\":\"Pending status\",\"statusCheckRollup\":[{\"__typename\":\"StatusContext\",\"state\":\"PENDING\"}]},{\"number\":6,\"title\":\"Failed status\",\"statusCheckRollup\":[{\"__typename\":\"StatusContext\",\"state\":\"FAILURE\"}]}],\"issues\":[{\"number\":7,\"title\":\"Fallback issue\",\"labels\":[]}]}"]
+      "{\"prs\":[{\"number\":1,\"title\":\"No checks\",\"isDraft\":false},{\"number\":2,\"title\":\"Empty checks\",\"statusCheckRollup\":[]},{\"number\":3,\"title\":\"Completed checks\",\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"COMPLETED\",\"conclusion\":\"FAILURE\"}]},{\"number\":4,\"title\":\"Running checks\",\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":5,\"title\":\"Pending status\",\"statusCheckRollup\":[{\"__typename\":\"StatusContext\",\"state\":\"PENDING\"}]},{\"number\":6,\"title\":\"Failed status\",\"statusCheckRollup\":[{\"__typename\":\"StatusContext\",\"state\":\"FAILURE\"}]}],\"issues\":[{\"number\":7,\"title\":\"Fallback issue\",\"labels\":[]}]}"]
     (match (json-parse (& text))
       [(OkJson root)
         (let
@@ -400,7 +406,7 @@
               (panic "expected only complete/no-check PRs plus issue"))
             (if (= (struct-get (cand-nth cands 0) number) 1)
               unit
-              (panic "draft no-check PR should remain eligible"))
+              (panic "non-draft PR without checks should remain eligible"))
             (if (= (struct-get (cand-nth cands 1) number) 2)
               unit
               (panic "empty check rollup should remain eligible"))
@@ -480,6 +486,28 @@
       [(ErrJson _) (panic "test JSON should parse")])))
 
 (test
+  chooser-never-chooses-draft-prs
+  (let
+    [text : String
+      "{\"prs\":[{\"number\":60,\"title\":\"Draft passing\",\"isDraft\":true,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"COMPLETED\",\"conclusion\":\"SUCCESS\"}]},{\"number\":61,\"title\":\"Draft no checks\",\"isDraft\":true},{\"number\":62,\"title\":\"Open passing\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"COMPLETED\",\"conclusion\":\"SUCCESS\"}]}],\"issues\":[{\"number\":70,\"title\":\"Triage issue\",\"labels\":[]}]}"]
+    (match (json-parse (& text))
+      [(OkJson root)
+        (let
+          [cands : CandList (build-candidates root)]
+          (begin
+            (if (= (cand-count cands) 2)
+              unit
+              (panic "only the non-draft PR and the triage issue should remain"))
+            (if (= (struct-get (cand-nth cands 0) number) 62)
+              unit
+              (panic
+                "the sole non-draft PR should be the only review candidate"))
+            (if (= (struct-get (cand-nth cands 1) number) 70)
+              unit
+              (panic "triage issue should follow once draft PRs are dropped"))))]
+      [(ErrJson _) (panic "test JSON should parse")])))
+
+(test
   chooser-caps-implement-when-many-open-prs
   (let
     [text : String
@@ -539,12 +567,16 @@
         (let
           [cands : CandList (build-candidates root)]
           (begin
-            (if (= (cand-count cands) 6)
+            (if (= (cand-count cands) 4)
               unit
-              (panic "five review PRs plus the kept ready issue expected"))
+              (panic
+                "three non-draft review PRs plus the kept ready issue expected"))
             (if (cand-list-has-kind? cands kind-ready)
               unit
-              (panic "two draft PRs must not push three open PRs over the cap"))))]
+              (panic "two draft PRs must not push three open PRs over the cap"))
+            (if (= (struct-get (cand-nth cands 3) number) 50)
+              unit
+              (panic "ready issue should sit right after the non-draft PRs"))))]
       [(ErrJson _) (panic "test JSON should parse")])))
 
 (test

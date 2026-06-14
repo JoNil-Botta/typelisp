@@ -3225,6 +3225,9 @@
 
 (define (lower-reach-struct-field-cleanup-roots
   [all-functions : StringI64Map]
+  [entry-path : String]
+  [decl-path : String]
+  [module : String]
   [names : LowerNameCache]
   [state : LowerReachState]
   [fields : AstFieldDefList]) : LowerReachState
@@ -3238,17 +3241,33 @@
             [(AstFieldDef _ _ cleanup)
               (match cleanup
                 [(AstFieldCleanupFn cleanup-name)
-                  (lower-reach-add-source
-                    all-functions
-                    names
-                    state
-                    (intern-str cleanup-name))]
+                  (let
+                    [cleanup-str : String (intern-str cleanup-name)]
+                    [logical-name : String
+                      (if (tc-name-qualified? cleanup-str)
+                        (lower-name-cache-resolve-hygiene names cleanup-str)
+                        (lower-decl-logical-name
+                          entry-path
+                          decl-path
+                          module
+                          cleanup-str))]
+                    (lower-reach-add-logical all-functions state logical-name))]
                 [_ state])])]
-        (lower-reach-struct-field-cleanup-roots all-functions names next rest))]))
+        (lower-reach-struct-field-cleanup-roots
+          all-functions
+          entry-path
+          decl-path
+          module
+          names
+          next
+          rest))]))
 
 (define (lower-reach-cleanup-metadata-roots-in-module
   [all-functions : StringI64Map]
   [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [entry-path : String]
+  [module : String]
   [names : LowerNameCache]
   [state : LowerReachState]) : LowerReachState
   (match decls
@@ -3256,12 +3275,23 @@
     [(AstDeclCons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
+        [decl-path : String
+          (match paths
+            [(AstDeclPathCons path _) path]
+            [(AstDeclPathNil) entry-path])]
+        [rest-paths : AstDeclPathList
+          (match paths
+            [(AstDeclPathCons _ path-rest) (box-get path-rest)]
+            [(AstDeclPathNil) AstDeclPathNil])]
         [next : LowerReachState
           (match decl
             [(AstDeclDefStruct _ _ cleanup fields)
               (if (ast-struct-cleanup? cleanup)
                 (lower-reach-struct-field-cleanup-roots
                   all-functions
+                  entry-path
+                  decl-path
+                  module
                   names
                   state
                   fields)
@@ -3270,16 +3300,34 @@
               (if (ast-struct-cleanup? cleanup)
                 (lower-reach-struct-field-cleanup-roots
                   all-functions
+                  entry-path
+                  decl-path
+                  module
                   names
                   state
                   fields)
                 state)]
+            [(AstDeclModule next-module)
+              (lower-reach-cleanup-metadata-roots-in-module
+                all-functions
+                rest
+                rest-paths
+                entry-path
+                (intern-str next-module)
+                names
+                state)]
             [_ state])]
-        (lower-reach-cleanup-metadata-roots-in-module
-          all-functions
-          rest
-          names
-          next))]))
+        (match decl
+          [(AstDeclModule _) next]
+          [_
+            (lower-reach-cleanup-metadata-roots-in-module
+              all-functions
+              rest
+              rest-paths
+              entry-path
+              module
+              names
+              next)]))]))
 
 (define (lower-function-body-index-empty [count : i64]) : LowerFunctionBodyIndex
   (LowerFunctionBodyIndex
@@ -3949,6 +3997,9 @@
                   (lower-reach-cleanup-metadata-roots-in-module
                     all-functions
                     decls
+                    paths
+                    entry-path
+                    ""
                     name-cache
                     (lower-reach-add-export-roots-in-module
                       decls

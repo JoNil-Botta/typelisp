@@ -196,6 +196,11 @@
           (set! b (+ b 1))))
       unit)))
 
+;: Small chunks are cheaper to copy inline while walking a render batch than to
+;: enter the generic word-copy helper for each individual node.
+(define (text-buf-render-small-chunk-limit) : i64
+  16)
+
 ;: Fill the reversed `chunks` into `dst`, ending at byte offset `pos`. The first
 ;: node is the last-appended (rightmost) chunk, so it lands at the end and we walk
 ;: leftward, reproducing append order.
@@ -203,14 +208,57 @@
   [chunks : TextBufChunkList]
   [dst : (MutPtr u8)]
   [pos : i64]) : unit
-  (match chunks
-    [(TextBufChunkNil) unit]
-    [(TextBufChunkCons chunk rest)
-      (let
-        [start : i64 (- pos (string-length (& chunk)))]
-        (begin
-          (text-buf-copy-chunk-into (& chunk) dst start)
-          (text-buf-fill-rev-into (box-get rest) dst start)))]))
+  (let
+    [cursor : TextBufChunkList chunks]
+    [out-pos : i64 pos]
+    [done : bool false]
+    [small-limit : i64 (text-buf-render-small-chunk-limit)]
+    (begin
+      (while (not done)
+        (match cursor
+          [(TextBufChunkNil) (set! done true)]
+          [(TextBufChunkCons chunk rest)
+            (let
+              [clen : i64 (string-length (& chunk))]
+              (if (<= clen small-limit)
+                (let
+                  [small-run : bool true]
+                  (begin
+                    (while small-run
+                      (match cursor
+                        [(TextBufChunkNil)
+                          (begin
+                            (set! done true)
+                            (set! small-run false))]
+                        [(TextBufChunkCons small-chunk small-rest)
+                          (let
+                            [small-len : i64 (string-length (& small-chunk))]
+                            (if (<= small-len small-limit)
+                              (let
+                                [small-start : i64 (- out-pos small-len)]
+                                [src : (Ptr u8)
+                                  (unsafe
+                                    (string-data (& small-chunk)))]
+                                [b : i64 0]
+                                (begin
+                                  (while (< b small-len)
+                                    (begin
+                                      (unsafe
+                                        (ptr-write!
+                                          (ptr-offset dst (+ small-start b))
+                                          (ptr-read (ptr-offset src b))))
+                                      (set! b (+ b 1))))
+                                  (set! out-pos small-start)
+                                  (set! cursor (box-get small-rest))))
+                              (set! small-run false)))]))
+                    unit))
+                (let
+                  [start : i64 (- out-pos clen)]
+                  (begin
+                    (text-buf-copy-chunk-into (& chunk) dst start)
+                    (set! out-pos start)
+                    (set! cursor (box-get rest))))))]))
+      unit)))
 
 ;: Render the buffer in O(total length): allocate the exact byte count once and
 ;: copy each chunk into place (the cached length makes this a single allocation

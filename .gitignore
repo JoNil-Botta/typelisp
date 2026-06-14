@@ -46,3 +46,6 @@ src/compiler_backend_runtime_fixture
 
 # Claude Code agent workspace
 .claude/
+
+# Local editor settings (machine-specific LSP paths, etc.)
+.vscode/

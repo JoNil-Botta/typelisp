@@ -79,6 +79,11 @@
   (OkJsonNumberF32 f32)
   (ErrJsonNumberF32 String))
 
+;: Result for converting valid JSON integer number text into an i64.
+(defenum JsonNumberI64Result
+  (OkJsonNumberI64 i64)
+  (ErrJsonNumberI64 String))
+
 ;: Result for rendering a finite float as valid JSON number text.
 (defenum JsonNumberTextResult
   (OkJsonNumberText String)
@@ -215,6 +220,34 @@
         (JsonFound value)
         (json-member-list-get (box-get rest) key))]))
 
+;: Compare two owned strings with only safe character indexing.
+(define (json-string-eq-safe? [left : String] [right : String]) : bool
+  (let
+    [left-len : i64 (string-length left)]
+    [right-len : i64 (string-length right)]
+    (if (!= left-len right-len)
+      false
+      (let
+        [i : i64 0]
+        [same : bool true]
+        (begin
+          (while (and same (< i left-len))
+            (if (=
+              (json-char-code (string-ref left i))
+              (json-char-code (string-ref right i)))
+              (set! i (+ i 1))
+              (set! same false)))
+          same)))))
+
+;: Look up owned `key` in an object member list without unsafe helpers.
+(define (json-member-list-get-owned [items : JsonMemberList] [key : String]) : JsonLookup
+  (match items
+    [(JsonMemberListNil) JsonMissing]
+    [(JsonMemberListCons item-key value rest)
+      (if (json-string-eq-safe? item-key key)
+        (JsonFound value)
+        (json-member-list-get-owned (box-get rest) key))]))
+
 ;: Look up borrowed `key` in `value` when it is a JSON object.
 ;:
 ;: Non-object values return `JsonMissing`.
@@ -236,6 +269,14 @@
 (define (json-object-get [value : Json] [key : (& key str)]) : JsonLookup
   (match value
     [(JsonObject members) (json-member-list-get (box-get members) key)]
+    [_ JsonMissing]))
+
+;: Look up owned `key` in `value` without unsafe helpers.
+;:
+;: This is useful for generated declarations, whose templates are purity-checked.
+(define (json-object-get-owned [value : Json] [key : String]) : JsonLookup
+  (match value
+    [(JsonObject members) (json-member-list-get-owned (box-get members) key)]
     [_ JsonMissing]))
 
 ;: Decode a hexadecimal digit char, or return -1 when it is not a hex digit.
@@ -413,6 +454,10 @@
     [(JsonArray items) (str-cat "[" (json-stringify-list (box-get items)) "]")]
     [(JsonObject members)
       (str-cat "{" (json-stringify-members (box-get members)) "}")]))
+
+;: Render an i64 as a JSON number value.
+(define (json-i64->number [value : i64]) : Json
+  (JsonNumber (int->string value)))
 
 ;: Convert a supported Unicode scalar codepoint into a TypeLisp String.
 ;:
@@ -735,6 +780,96 @@
           (OkJsonNumberText (substring-borrowed text 0 n))
           (ErrJsonNumberText "json: trailing characters after number"))]
       [(ErrJsonParseValue message) (ErrJsonNumberText message)])))
+
+;: Return true when validated JSON number text is an integer spelling.
+(define (json-number-integer-text? [text : String]) : bool
+  (let
+    [n : i64 (string-length text)]
+    [i : i64 0]
+    (begin
+      (when (and (> n 0) (= (string-ref text 0) #-')) (set! i 1))
+      (if (>= i n)
+        false
+        (let
+          [first : i64 (json-char-code (string-ref text i))]
+          [ok : bool true]
+          (cond
+            (= first 48)
+            (= (+ i 1) n)
+            (and (>= first 49) (<= first 57))
+            (begin
+              (set! i (+ i 1))
+              (while (and ok (< i n))
+                (let
+                  [code : i64 (json-char-code (string-ref text i))]
+                  (if (json-digit-code? code)
+                    (set! i (+ i 1))
+                    (set! ok false))))
+              ok)
+            false))))))
+
+;: Return true when `text[start..]` is lexicographically greater than `limit`.
+(define (json-number-digits-gt-limit?
+  [text : String]
+  [start : i64]
+  [limit : String]) : bool
+  (let
+    [digits-len : i64 (- (string-length text) start)]
+    [limit-len : i64 (string-length limit)]
+    [i : i64 0]
+    [greater : bool false]
+    [done : bool false]
+    (cond
+      (> digits-len limit-len)
+      true
+      (< digits-len limit-len)
+      false
+      (begin
+        (while (and (not done) (< i limit-len))
+          (let
+            [actual : i64 (json-char-code (string-ref text (+ start i)))]
+            [expected : i64 (json-char-code (string-ref limit i))]
+            (cond
+              (> actual expected)
+              (begin
+                (set! greater true)
+                (set! done true))
+              (< actual expected)
+              (set! done true)
+              (set! i (+ i 1)))))
+        greater))))
+
+;: Return true when validated integer JSON number text is in i64 range.
+(define (json-number-i64-range? [text : String]) : bool
+  (let
+    [negative : bool
+      (and (> (string-length text) 0) (= (string-ref text 0) #-'))]
+    [start : i64
+      (if negative
+        1
+        0)]
+    [limit : String
+      (if negative
+        "9223372036854775808"
+        "9223372036854775807")]
+    (not (json-number-digits-gt-limit? text start limit))))
+
+;: Parse owned JSON integer number text into an i64 with recoverable errors.
+(define (json-number-owned->i64 [owned : String]) : JsonNumberI64Result
+  (if (not (json-number-integer-text? owned))
+    (ErrJsonNumberI64 "json: expected integer number")
+    (if (not (json-number-i64-range? owned))
+      (ErrJsonNumberI64 "json: integer outside i64 range")
+      (OkJsonNumberI64 (string->int owned)))))
+
+;: Parse borrowed JSON integer number text into an i64 with recoverable errors.
+;:
+;: The text must be exactly one JSON integer number. Decimal fractions,
+;: exponents, malformed numbers, and i64 overflow reject.
+(define (json-number->i64 [text : (& text str)]) : JsonNumberI64Result
+  (match (json-number-validated-text text)
+    [(OkJsonNumberText owned) (json-number-owned->i64 owned)]
+    [(ErrJsonNumberText message) (ErrJsonNumberI64 message)]))
 
 ;: Convert validated JSON number text into a finite f64 result.
 (define (json-number-decimal-f64-result

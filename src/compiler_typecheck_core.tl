@@ -79,6 +79,10 @@
   (OkTcExpr AstExpr)
   (ErrTcExpr String))
 
+(defenum ResultTcExprId
+  (OkTcExprId i64)
+  (ErrTcExprId String))
+
 (defenum TcBorrowPlace
   (TcBorrowPlace String AstType))
 
@@ -4579,6 +4583,74 @@
   (if (<= first-dot 0)
     false
     (tc-source-name-bound-exact? env (substring name 0 first-dot))))
+
+(define (tc-dotted-field-index-message [name : String]) : String
+  (str-cat
+    "typecheck: dotted field access "
+    name
+    " cannot use numeric field segments; use tuple-ref or array-ref"))
+
+(define (tc-dotted-field-empty-message) : String
+  "typecheck: malformed dotted field access; field name cannot be empty")
+
+(define (tc-dotted-field-index-like? [name : String] [start : i64] [len : i64]) : bool
+  (and
+    (> len 0)
+    (>= (string-ref name start) #0')
+    (<= (string-ref name start) #9')))
+
+(define (tc-dotted-local-field-name? [env : TcTypeEnv] [name : String]) : bool
+  (let
+    [first-dot : i64 (tc-name-first-dot name)]
+    (if (< first-dot 0)
+      false
+      (if (tc-source-name-bound-exact? env name)
+        false
+        (tc-source-leading-segment-bound? env name first-dot)))))
+
+(define (tc-dotted-local-field-expr-id-tail
+  [name : String]
+  [start : i64]
+  [current : i64]) : ResultTcExprId
+  (let
+    [n : i64 (string-length name)]
+    [i : i64 start]
+    (begin
+      (while (and (< i n) (not (char-eq (string-ref name i) #.')))
+        (set! i (+ i 1)))
+      (let
+        [len : i64 (- i start)]
+        (if (<= len 0)
+          (ErrTcExprId (tc-dotted-field-empty-message))
+          (if (tc-dotted-field-index-like? name start len)
+            (ErrTcExprId (tc-dotted-field-index-message name))
+            (let
+              [field : String (substring name start len)]
+              [next : i64 (ast-expr-struct-get current field)]
+              (if (< i n)
+                (tc-dotted-local-field-expr-id-tail name (+ i 1) next)
+                (OkTcExprId next)))))))))
+
+(define (tc-dotted-local-field-expr-id [env : TcTypeEnv] [name : String]) : ResultTcExprId
+  (if (tc-dotted-local-field-name? env name)
+    (let
+      [first-dot : i64 (tc-name-first-dot name)]
+      [root-name : String (substring name 0 first-dot)]
+      [root : i64 (ast-node-push (AstExprVar (intern root-name)))]
+      (tc-dotted-local-field-expr-id-tail name (+ first-dot 1) root))
+    (ErrTcExprId "")))
+
+(define (tc-dotted-local-field-set-expr-id
+  [env : TcTypeEnv]
+  [name : String]
+  [value : i64]) : ResultTcExprId
+  (match (tc-dotted-local-field-expr-id env name)
+    [(OkTcExprId get-id)
+      (match (ast-expr-unspan (ast-node-get get-id))
+        [(AstExprStructGet receiver-box field)
+          (OkTcExprId (ast-expr-struct-set-id receiver-box field value))]
+        [_ (ErrTcExprId "typecheck: internal dotted field target mismatch")])]
+    [(ErrTcExprId message) (ErrTcExprId message)]))
 
 (define (tc-imported-module-identity-ids?
   [decls : AstDeclList]
@@ -9499,10 +9571,19 @@
   (if (tc-call-immutable-ref-formal? ctx want)
     (match (ast-expr-unspan arg)
       [(AstExprVar name)
-        (match (tc-lookup-visible-id ctx env name)
-          [(OkTcType got)
-            (tc-call-effective-var-arg-type ctx (intern-str name) got)]
-          [(ErrTcType message) (ErrTcType message)])]
+        (let
+          [name-text : String (intern-str name)]
+          (if (tc-dotted-local-field-name? env name-text)
+            (match (tc-expr ctx env arg)
+              [(OkTcType got)
+                (if (tc-call-actual-reference? ctx got)
+                  (OkTcType got)
+                  (tc-call-auto-borrow-type ctx env arg))]
+              [(ErrTcType message) (ErrTcType message)])
+            (match (tc-lookup-visible-id ctx env name)
+              [(OkTcType got)
+                (tc-call-effective-var-arg-type ctx name-text got)]
+              [(ErrTcType message) (ErrTcType message)])))]
       [_
         (match (tc-expr ctx env arg)
           [(OkTcType got)
@@ -9533,10 +9614,21 @@
       (OkTcExpr arg)
       (match (ast-expr-unspan arg)
         [(AstExprVar name)
-          (match (tc-lookup-visible-id ctx env name)
-            [(OkTcType got)
-              (tc-call-effective-var-arg-expr ctx (intern-str name) got arg)]
-            [(ErrTcType message) (ErrTcExpr message)])]
+          (let
+            [name-text : String (intern-str name)]
+            (if (tc-dotted-local-field-name? env name-text)
+              (match (tc-expr ctx env arg)
+                [(OkTcType got)
+                  (if (tc-call-actual-reference? ctx got)
+                    (OkTcExpr arg)
+                    (match (tc-call-auto-borrow-type ctx env arg)
+                      [(OkTcType _) (OkTcExpr (tc-call-auto-borrow-expr arg))]
+                      [(ErrTcType message) (ErrTcExpr message)]))]
+                [(ErrTcType message) (ErrTcExpr message)])
+              (match (tc-lookup-visible-id ctx env name)
+                [(OkTcType got)
+                  (tc-call-effective-var-arg-expr ctx name-text got arg)]
+                [(ErrTcType message) (ErrTcExpr message)])))]
         [_
           (match (tc-expr ctx env arg)
             [(OkTcType got)
@@ -12491,11 +12583,18 @@
     [(AstExprLiteral _)
       (tc-spmd-reduce-class-finish ctx env spmd-env expr TcSpmdUniform)]
     [(AstExprVar name)
-      (match (tc-spmd-env-lookup spmd-env (intern-str name))
-        [(TcSpmdFound _ class _ _)
-          (tc-spmd-reduce-class-finish ctx env spmd-env expr class)]
-        [(TcSpmdMissing)
-          (tc-spmd-reduce-class-finish ctx env spmd-env expr TcSpmdUniform)])]
+      (let
+        [name-text : String (intern-str name)]
+        (if (tc-dotted-local-field-name? env name-text)
+          (match (tc-dotted-local-field-expr-id env name-text)
+            [(OkTcExprId virtual-id)
+              (tc-spmd-reduce-class ctx env spmd-env (ast-node-get virtual-id))]
+            [(ErrTcExprId message) (ErrTcSpmdExprInfo message)])
+          (match (tc-spmd-env-lookup spmd-env name-text)
+            [(TcSpmdFound _ class _ _)
+              (tc-spmd-reduce-class-finish ctx env spmd-env expr class)]
+            [(TcSpmdMissing)
+              (tc-spmd-reduce-class-finish ctx env spmd-env expr TcSpmdUniform)])))]
     [(AstExprBinary _ left-box right-box)
       (let
         [left : AstExpr (ast-node-get left-box)]
@@ -12650,9 +12749,21 @@
         (tc-spmd-expr-typed ctx env spmd-env inner expr-ty))]
     [(AstExprLiteral _) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)]
     [(AstExprVar name)
-      (match (tc-spmd-env-lookup spmd-env (intern-str name))
-        [(TcSpmdFound _ class _ _) (tc-spmd-finish expr-ty class spmd-env)]
-        [(TcSpmdMissing) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)])]
+      (let
+        [name-text : String (intern-str name)]
+        (if (tc-dotted-local-field-name? env name-text)
+          (match (tc-dotted-local-field-expr-id env name-text)
+            [(OkTcExprId virtual-id)
+              (tc-spmd-expr-typed
+                ctx
+                env
+                spmd-env
+                (ast-node-get virtual-id)
+                expr-ty)]
+            [(ErrTcExprId message) (ErrTcSpmdExprInfo message)])
+          (match (tc-spmd-env-lookup spmd-env name-text)
+            [(TcSpmdFound _ class _ _) (tc-spmd-finish expr-ty class spmd-env)]
+            [(TcSpmdMissing) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)])))]
     [(AstExprTypeLiteral _) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)]
     [(AstExprInit _) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)]
     [(AstExprAnn inner-box _)
@@ -13003,23 +13114,34 @@
     [(AstExprSet name value-box)
       (let
         [value : AstExpr (ast-node-get value-box)]
-        (match (tc-spmd-expr ctx env spmd-env value)
-          [(OkTcSpmdExprInfo value-info)
-            (match value-info
-              [(TcSpmdExprInfo _ value-class value-env)
-                (if (tc-spmd-env-has-local? value-env (intern-str name))
-                  (tc-spmd-finish
-                    expr-ty
-                    TcSpmdUniform
-                    (tc-spmd-env-set-local-class
-                      value-env
-                      (intern-str name)
-                      value-class))
-                  (if (tc-spmd-env-has-outer? value-env (intern-str name))
-                    (ErrTcSpmdExprInfo
-                      "typecheck: foreach cannot set binding declared outside foreach")
-                    (tc-spmd-finish expr-ty TcSpmdUniform value-env)))])]
-          [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]
+        [name-text : String (intern-str name)]
+        (if (tc-dotted-local-field-name? env name-text)
+          (match (tc-dotted-local-field-set-expr-id env name-text value-box)
+            [(OkTcExprId virtual-id)
+              (tc-spmd-expr-typed
+                ctx
+                env
+                spmd-env
+                (ast-node-get virtual-id)
+                expr-ty)]
+            [(ErrTcExprId message) (ErrTcSpmdExprInfo message)])
+          (match (tc-spmd-expr ctx env spmd-env value)
+            [(OkTcSpmdExprInfo value-info)
+              (match value-info
+                [(TcSpmdExprInfo _ value-class value-env)
+                  (if (tc-spmd-env-has-local? value-env name-text)
+                    (tc-spmd-finish
+                      expr-ty
+                      TcSpmdUniform
+                      (tc-spmd-env-set-local-class
+                        value-env
+                        name-text
+                        value-class))
+                    (if (tc-spmd-env-has-outer? value-env name-text)
+                      (ErrTcSpmdExprInfo
+                        "typecheck: foreach cannot set binding declared outside foreach")
+                      (tc-spmd-finish expr-ty TcSpmdUniform value-env)))])]
+            [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])))]
     [(AstExprMatch scrutinee-box arms)
       (let
         [scrutinee : AstExpr (ast-node-get scrutinee-box)]
@@ -16724,9 +16846,16 @@
 (define (tc-borrow-place [ctx : TcContext] [env : TcTypeEnv] [expr : AstExpr]) : ResultTcBorrowPlace
   (match (ast-expr-unspan expr)
     [(AstExprVar name)
-      (match (tc-lookup-visible-id ctx env name)
-        [(OkTcType ty) (tc-borrow-place-var (intern-str name) ty)]
-        [(ErrTcType message) (ErrTcBorrowPlace message)])]
+      (let
+        [name-text : String (intern-str name)]
+        (if (tc-dotted-local-field-name? env name-text)
+          (match (tc-dotted-local-field-expr-id env name-text)
+            [(OkTcExprId virtual-id)
+              (tc-borrow-place ctx env (ast-node-get virtual-id))]
+            [(ErrTcExprId message) (ErrTcBorrowPlace message)])
+          (match (tc-lookup-visible-id ctx env name)
+            [(OkTcType ty) (tc-borrow-place-var name-text ty)]
+            [(ErrTcType message) (ErrTcBorrowPlace message)])))]
     [(AstExprStructGet receiver-box field)
       (let
         [receiver : AstExpr (ast-node-get receiver-box)]
@@ -16769,9 +16898,16 @@
   [expr : AstExpr]) : ResultTcString
   (match (ast-expr-unspan expr)
     [(AstExprVar name)
-      (match (tc-lookup-visible-id ctx env name)
-        [(OkTcType ty) (tc-store-place-lifetime-var (intern-str name) ty)]
-        [(ErrTcType message) (ErrTcString message)])]
+      (let
+        [name-text : String (intern-str name)]
+        (if (tc-dotted-local-field-name? env name-text)
+          (match (tc-dotted-local-field-expr-id env name-text)
+            [(OkTcExprId virtual-id)
+              (tc-store-place-lifetime ctx env (ast-node-get virtual-id))]
+            [(ErrTcExprId message) (ErrTcString message)])
+          (match (tc-lookup-visible-id ctx env name)
+            [(OkTcType ty) (tc-store-place-lifetime-var name-text ty)]
+            [(ErrTcType message) (ErrTcString message)])))]
     [(AstExprStructGet receiver-box _)
       (let
         [receiver : AstExpr (ast-node-get receiver-box)]
@@ -18816,41 +18952,50 @@
     [(AstExprLiteral lit) (OkTcType (tc-literal-type lit))]
     [(AstExprBinaryData _) (OkTcType (ast-ty-dyn-array (AstTyU8)))]
     [(AstExprVar name)
-      (if (tc-hygiene-global-name? (intern-str name))
-        (match (tc-hygiene-global-decode (intern-str name))
-          [(TcHygieneLegacyGlobal global-name)
-            (let
-              [global-id : i64 (tc-name-id global-name)]
-              (if (tc-hygiene-global-binding-unsafe? env global-name)
-                (match (tc-require-unsafe env global-name)
-                  [(OkTcUnit)
-                    (tc-lookup-hygiene-global-visible-id ctx env global-id)]
-                  [(ErrTcUnit message) (ErrTcType message)])
-                (tc-lookup-hygiene-global-visible-id ctx env global-id)))]
-          [(TcHygieneContextGlobal module global-name)
-            (tc-lookup-hygiene-context-global-visible-id
-              ctx
-              env
-              module
-              (tc-name-id global-name))])
-        (match (tc-source-name-lookup-key ctx env (intern-str name))
-          [(OkTcString lookup-name)
-            (let
-              [lookup-id : i64 (tc-name-id lookup-name)]
-              (match (tc-lookup-unsafe-id env lookup-id)
-                [(OkTcTypeUnsafe ty unsafe)
-                  (if unsafe
-                    (match (tc-require-unsafe env lookup-name)
+      (let
+        [name-text : String (intern-str name)]
+        (if (tc-dotted-local-field-name? env name-text)
+          (match (tc-dotted-local-field-expr-id env name-text)
+            [(OkTcExprId virtual-id)
+              (tc-expr ctx env (ast-node-get virtual-id))]
+            [(ErrTcExprId message) (ErrTcType message)])
+          (if (tc-hygiene-global-name? name-text)
+            (match (tc-hygiene-global-decode name-text)
+              [(TcHygieneLegacyGlobal global-name)
+                (let
+                  [global-id : i64 (tc-name-id global-name)]
+                  (if (tc-hygiene-global-binding-unsafe? env global-name)
+                    (match (tc-require-unsafe env global-name)
                       [(OkTcUnit)
+                        (tc-lookup-hygiene-global-visible-id ctx env global-id)]
+                      [(ErrTcUnit message) (ErrTcType message)])
+                    (tc-lookup-hygiene-global-visible-id ctx env global-id)))]
+              [(TcHygieneContextGlobal module global-name)
+                (tc-lookup-hygiene-context-global-visible-id
+                  ctx
+                  env
+                  module
+                  (tc-name-id global-name))])
+            (match (tc-source-name-lookup-key ctx env name-text)
+              [(OkTcString lookup-name)
+                (let
+                  [lookup-id : i64 (tc-name-id lookup-name)]
+                  (match (tc-lookup-unsafe-id env lookup-id)
+                    [(OkTcTypeUnsafe ty unsafe)
+                      (if unsafe
+                        (match (tc-require-unsafe env lookup-name)
+                          [(OkTcUnit)
+                            (match (tc-qualified-value-visible-ok
+                              ctx
+                              lookup-name)
+                              [(OkTcUnit) (OkTcType ty)]
+                              [(ErrTcUnit message) (ErrTcType message)])]
+                          [(ErrTcUnit message) (ErrTcType message)])
                         (match (tc-qualified-value-visible-ok ctx lookup-name)
                           [(OkTcUnit) (OkTcType ty)]
-                          [(ErrTcUnit message) (ErrTcType message)])]
-                      [(ErrTcUnit message) (ErrTcType message)])
-                    (match (tc-qualified-value-visible-ok ctx lookup-name)
-                      [(OkTcUnit) (OkTcType ty)]
-                      [(ErrTcUnit message) (ErrTcType message)]))]
-                [(ErrTcTypeUnsafe message) (ErrTcType message)]))]
-          [(ErrTcString message) (ErrTcType message)]))]
+                          [(ErrTcUnit message) (ErrTcType message)]))]
+                    [(ErrTcTypeUnsafe message) (ErrTcType message)]))]
+              [(ErrTcString message) (ErrTcType message)]))))]
     [(AstExprTypeLiteral ty)
       (ErrTcType
         (string-append
@@ -19069,34 +19214,40 @@
     [(AstExprSet name value-box)
       (let
         [value : AstExpr (ast-node-get value-box)]
-        (match (tc-lookup-visible-id ctx env name)
-          [(OkTcType var-ty)
-            (match (tc-expr-with-expected-or-actual ctx env value var-ty)
-              [(OkTcType value-ty)
-                (match (tc-expect
-                  value-ty
-                  var-ty
-                  "typecheck: assignment type mismatch")
-                  [(OkTcUnit)
-                    (match (tc-ensure-cleanup-resource-not-assigned env value)
-                      [(OkTcUnit)
-                        (match (tc-ensure-region-value-can-flow-into
-                          env
-                          var-ty
-                          value-ty
-                          "assignment")
-                          [(OkTcUnit)
-                            (match (tc-ensure-reference-value-can-assign
-                              env
-                              (intern-str name)
-                              value-ty)
-                              [(OkTcUnit) (OkTcType (AstTyUnit))]
-                              [(ErrTcUnit message) (ErrTcType message)])]
-                          [(ErrTcUnit message) (ErrTcType message)])]
-                      [(ErrTcUnit message) (ErrTcType message)])]
-                  [(ErrTcUnit message) (ErrTcType message)])]
-              [(ErrTcType message) (ErrTcType message)])]
-          [(ErrTcType message) (ErrTcType message)]))]
+        [name-text : String (intern-str name)]
+        (if (tc-dotted-local-field-name? env name-text)
+          (match (tc-dotted-local-field-set-expr-id env name-text value-box)
+            [(OkTcExprId virtual-id)
+              (tc-expr ctx env (ast-node-get virtual-id))]
+            [(ErrTcExprId message) (ErrTcType message)])
+          (match (tc-lookup-visible-id ctx env name)
+            [(OkTcType var-ty)
+              (match (tc-expr-with-expected-or-actual ctx env value var-ty)
+                [(OkTcType value-ty)
+                  (match (tc-expect
+                    value-ty
+                    var-ty
+                    "typecheck: assignment type mismatch")
+                    [(OkTcUnit)
+                      (match (tc-ensure-cleanup-resource-not-assigned env value)
+                        [(OkTcUnit)
+                          (match (tc-ensure-region-value-can-flow-into
+                            env
+                            var-ty
+                            value-ty
+                            "assignment")
+                            [(OkTcUnit)
+                              (match (tc-ensure-reference-value-can-assign
+                                env
+                                name-text
+                                value-ty)
+                                [(OkTcUnit) (OkTcType (AstTyUnit))]
+                                [(ErrTcUnit message) (ErrTcType message)])]
+                            [(ErrTcUnit message) (ErrTcType message)])]
+                        [(ErrTcUnit message) (ErrTcType message)])]
+                    [(ErrTcUnit message) (ErrTcType message)])]
+                [(ErrTcType message) (ErrTcType message)])]
+            [(ErrTcType message) (ErrTcType message)])))]
     [(AstExprCast inner-box ty)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
@@ -22112,9 +22263,22 @@
         (tc-move-check-expr ctx env locals loop-carried moved inner))]
     [(AstExprLiteral _) (OkTcMove moved)]
     [(AstExprVar name)
-      (if (tc-moved-contains? moved (intern-str name))
-        (ErrTcMove (tc-move-use-message (intern-str name)))
-        (OkTcMove moved))]
+      (let
+        [name-text : String (intern-str name)]
+        (if (tc-dotted-local-field-name? env name-text)
+          (match (tc-dotted-local-field-expr-id env name-text)
+            [(OkTcExprId virtual-id)
+              (tc-move-check-expr
+                ctx
+                env
+                locals
+                loop-carried
+                moved
+                (ast-node-get virtual-id))]
+            [(ErrTcExprId message) (ErrTcMove message)])
+          (if (tc-moved-contains? moved name-text)
+            (ErrTcMove (tc-move-use-message name-text))
+            (OkTcMove moved))))]
     [(AstExprBinary _ left-box right-box)
       (let
         [left : AstExpr (ast-node-get left-box)]
@@ -22379,13 +22543,25 @@
     [(AstExprSet name rhs-box)
       (let
         [rhs : AstExpr (ast-node-get rhs-box)]
-        (match (tc-move-check-expr ctx env locals loop-carried moved rhs)
-          [(OkTcMove moved1)
-            (match (tc-move-after-bind ctx env locals loop-carried moved1 rhs)
-              [(OkTcMove moved2)
-                (OkTcMove (tc-moved-remove-root-state moved2 (intern-str name)))]
-              [(ErrTcMove message) (ErrTcMove message)])]
-          [(ErrTcMove message) (ErrTcMove message)]))]
+        [name-text : String (intern-str name)]
+        (if (tc-dotted-local-field-name? env name-text)
+          (match (tc-dotted-local-field-set-expr-id env name-text rhs-box)
+            [(OkTcExprId virtual-id)
+              (tc-move-check-expr
+                ctx
+                env
+                locals
+                loop-carried
+                moved
+                (ast-node-get virtual-id))]
+            [(ErrTcExprId message) (ErrTcMove message)])
+          (match (tc-move-check-expr ctx env locals loop-carried moved rhs)
+            [(OkTcMove moved1)
+              (match (tc-move-after-bind ctx env locals loop-carried moved1 rhs)
+                [(OkTcMove moved2)
+                  (OkTcMove (tc-moved-remove-root-state moved2 name-text))]
+                [(ErrTcMove message) (ErrTcMove message)])]
+            [(ErrTcMove message) (ErrTcMove message)])))]
     [(AstExprAnn inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
@@ -23439,7 +23615,20 @@
         [inner : AstExpr (ast-node-get inner-box)]
         (tc-borrow-check-expr ctx env locals borrowed inner))]
     [(AstExprLiteral _) (OkTcBorrowCheck borrowed)]
-    [(AstExprVar _) (OkTcBorrowCheck borrowed)]
+    [(AstExprVar name)
+      (let
+        [name-text : String (intern-str name)]
+        (if (tc-dotted-local-field-name? env name-text)
+          (match (tc-dotted-local-field-expr-id env name-text)
+            [(OkTcExprId virtual-id)
+              (tc-borrow-check-expr
+                ctx
+                env
+                locals
+                borrowed
+                (ast-node-get virtual-id))]
+            [(ErrTcExprId message) (ErrTcBorrowCheck message)])
+          (OkTcBorrowCheck borrowed)))]
     [(AstExprBinary _ left-box right-box)
       (let
         [left : AstExpr (ast-node-get left-box)]
@@ -23702,18 +23891,26 @@
     [(AstExprSet name rhs-box)
       (let
         [rhs : AstExpr (ast-node-get rhs-box)]
-        (match (tc-borrow-check-expr ctx env locals borrowed rhs)
-          [(OkTcBorrowCheck borrowed1)
-            (match (tc-borrow-check-after-bind ctx env locals borrowed1 rhs)
-              [(OkTcBorrowCheck borrowed2)
-                (match (tc-borrow-check-assignment
-                  locals
-                  borrowed2
-                  (intern-str name))
-                  [(OkTcUnit) (OkTcBorrowCheck borrowed2)]
-                  [(ErrTcUnit message) (ErrTcBorrowCheck message)])]
-              [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
-          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+        [name-text : String (intern-str name)]
+        (if (tc-dotted-local-field-name? env name-text)
+          (match (tc-dotted-local-field-set-expr-id env name-text rhs-box)
+            [(OkTcExprId virtual-id)
+              (tc-borrow-check-expr
+                ctx
+                env
+                locals
+                borrowed
+                (ast-node-get virtual-id))]
+            [(ErrTcExprId message) (ErrTcBorrowCheck message)])
+          (match (tc-borrow-check-expr ctx env locals borrowed rhs)
+            [(OkTcBorrowCheck borrowed1)
+              (match (tc-borrow-check-after-bind ctx env locals borrowed1 rhs)
+                [(OkTcBorrowCheck borrowed2)
+                  (match (tc-borrow-check-assignment locals borrowed2 name-text)
+                    [(OkTcUnit) (OkTcBorrowCheck borrowed2)]
+                    [(ErrTcUnit message) (ErrTcBorrowCheck message)])]
+                [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
+            [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])))]
     [(AstExprAnn inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]

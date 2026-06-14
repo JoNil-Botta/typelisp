@@ -244,6 +244,7 @@
   (LowerCAbiNoAggregate)
   (LowerCAbiIntegerAggregate AstType i64)
   (LowerCAbiRegisterAggregate LowerCAbiSlotList i64)
+  (LowerCAbiMemoryAggregate i64)
   (LowerCAbiByRefAggregate i64)
   (LowerCAbiSretAggregate i64)
   (LowerCAbiUnsupportedAggregate String))
@@ -14951,9 +14952,13 @@
   [fields : TcInlineFieldLayoutList]
   [allow-return? : bool]) : LowerCAbiAggregate
   (cond
-    (or (<= size 0) (> size 16))
+    (<= size 0)
     (LowerCAbiUnsupportedAggregate
       (lower-c-abi-unsupported-message mode resolved))
+    (> size 16)
+    (if allow-return?
+      (LowerCAbiSretAggregate size)
+      (LowerCAbiMemoryAggregate size))
     (and
       (lower-c-abi-register-aggregate-size? mode size)
       (lower-c-abi-register-aggregate-fields-ok? ctx mode fields))
@@ -15206,6 +15211,30 @@
                                       rest-values))]
                                 [(ErrLowerArgs message) (ErrLowerArgs message)])]
                             [(ErrLowerArgs message) (ErrLowerArgs message)])]
+                        [(LowerCAbiMemoryAggregate size)
+                          ;; SysV MEMORY aggregate args are passed by value in
+                          ;; the outgoing stack area. Keep the aggregate pointer
+                          ;; plus size/unit markers in the call args; the C-ABI
+                          ;; backend consumes the marker pair and copies exactly
+                          ;; `size` bytes to %rsp before the call.
+                          (match (lower-c-abi-args-as
+                            ctx
+                            arg-state
+                            env
+                            type-env
+                            rest-args
+                            rest-types)
+                            [(OkLowerArgs rest-state rest-values)
+                              (OkLowerArgs
+                                rest-state
+                                (compiler-ir-value-cons
+                                  value
+                                  (compiler-ir-value-cons
+                                    (IrValueI64 size)
+                                    (compiler-ir-value-cons
+                                      (IrValueUnit)
+                                      rest-values))))]
+                            [(ErrLowerArgs message) (ErrLowerArgs message)])]
                         [(LowerCAbiByRefAggregate _)
                           ;; The ABI argument is the address of the copied
                           ;; object, not the aggregate itself. Type the value as
@@ -15355,6 +15384,11 @@
         (lower-diagnostic-at-expr
           origin
           (lower-c-abi-unsupported-message (lower-state-mode state) result-ty)))]
+    [(LowerCAbiMemoryAggregate _)
+      (ErrLowerExpr
+        (lower-diagnostic-at-expr
+          origin
+          (lower-c-abi-unsupported-message (lower-state-mode state) result-ty)))]
     [(LowerCAbiSretAggregate _)
       ;; #2386: the C callee wrote the >8B result into the caller-provided sret
       ;; buffer, so `call-value` is the buffer pointer. A register-resident result
@@ -15457,6 +15491,13 @@
                     (lower-state-mode args-state)
                     result-ty)))])]
         [(LowerCAbiByRefAggregate _)
+          (ErrLowerExpr
+            (lower-diagnostic-at-expr
+              origin
+              (lower-c-abi-unsupported-message
+                (lower-state-mode args-state)
+                result-ty)))]
+        [(LowerCAbiMemoryAggregate _)
           (ErrLowerExpr
             (lower-diagnostic-at-expr
               origin
@@ -15576,6 +15617,11 @@
                 (lower-state-mode state)
                 result-ty)))])]
     [(LowerCAbiByRefAggregate _)
+      (ErrLowerExpr
+        (lower-diagnostic-at-expr
+          origin
+          (lower-c-abi-unsupported-message (lower-state-mode state) result-ty)))]
+    [(LowerCAbiMemoryAggregate _)
       (ErrLowerExpr
         (lower-diagnostic-at-expr
           origin
@@ -33119,6 +33165,67 @@
             (= (lower-test-function-call-count functions "main" "tl_alloc") 0))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-c-abi-linux-memory-aggregate-source) : String
+  "(defstruct WideMem
+  (:repr c)
+  (a u64)
+  (b u64)
+  (c u64))
+(defstruct InnerMem
+  (:repr c)
+  (lo u64)
+  (hi u64))
+(defstruct NestedMem
+  (:repr c)
+  (inner InnerMem)
+  (tail u64))
+(extern (wide-mem-score [arg0 : WideMem] [salt : u64]) : i64 (:symbol \"tl_cabi_wide_mem_score\"))
+(extern wide-mem-scorer (:symbol \"tl_cabi_wide_mem_score_ptr\") : (->
+  WideMem
+  u64
+  i64))
+(extern (wide-mem-make [seed : u64]) : WideMem (:symbol \"tl_cabi_wide_mem_make\"))
+(extern (nested-mem-score [arg0 : NestedMem]) : i64 (:symbol \"tl_cabi_nested_mem_score\"))
+(define (main) : i64
+  (let
+    [wide : WideMem
+      (WideMem (cast 1 : u64) (cast 2 : u64) (cast 3 : u64))]
+    [nested : NestedMem
+      (NestedMem
+        (InnerMem (cast 4 : u64) (cast 5 : u64))
+        (cast 6 : u64))]
+    [score-copy : (-> WideMem u64 i64) wide-mem-scorer]
+    [direct : i64 (wide-mem-score wide (cast 7 : u64))]
+    [via-ptr : i64 (score-copy wide (cast 8 : u64))]
+    [made : WideMem (wide-mem-make (cast 9 : u64))]
+    (+ direct
+      (+ via-ptr
+        (+ (nested-mem-score nested) (cast (struct-get made a) : i64))))))")
+
+(define (compiler-lower-c-abi-linux-memory-aggregate-shape-ok?) : bool
+  (match (lower-compiler-source-with-mode
+    (compiler-lower-c-abi-linux-memory-aggregate-source)
+    (CompilerLowerLinuxScalar))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (=
+              (lower-test-function-call-count functions "main" "wide-mem-score")
+              1)
+            (= (lower-test-function-indirect-c-call-count functions "main") 1)
+            (=
+              (lower-test-function-call-count functions "main" "wide-mem-make")
+              1)
+            (=
+              (lower-test-function-call-count
+                functions
+                "main"
+                "nested-mem-score")
+              1)
+            (> (lower-test-function-call-count functions "main" "tl_alloc") 0))])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-global-source) : String
   "(extern (print-i64 [arg0 : i64]) : unit)
 (define answer : i64 40)
@@ -36401,6 +36508,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-c-abi-linux-tag-only-enum-shape-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-c-abi-linux-memory-aggregate-shape-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-c-abi-windows-byref-aggregate-shape-ok?)

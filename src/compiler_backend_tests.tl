@@ -1445,6 +1445,90 @@
                 (compiler-backend-todo-marker))))))]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-c-abi-sysv-memory-aggregate-source) : String
+  "(defstruct WideMem
+  (:repr c)
+  (a u64)
+  (b u64)
+  (c u64))
+(defstruct InnerMem
+  (:repr c)
+  (lo u64)
+  (hi u64))
+(defstruct NestedMem
+  (:repr c)
+  (inner InnerMem)
+  (tail u64))
+(extern (wide-mem-score [arg0 : WideMem] [salt : u64]) : i64 (:symbol \"tl_cabi_wide_mem_score\"))
+(extern wide-mem-scorer (:symbol \"tl_cabi_wide_mem_score_ptr\") : (->
+  WideMem
+  u64
+  i64))
+(extern (wide-mem-make [seed : u64]) : WideMem (:symbol \"tl_cabi_wide_mem_make\"))
+(extern (nested-mem-score [arg0 : NestedMem]) : i64 (:symbol \"tl_cabi_nested_mem_score\"))
+(define (main) : i64
+  (let
+    [wide : WideMem
+      (WideMem (cast 1 : u64) (cast 2 : u64) (cast 3 : u64))]
+    [nested : NestedMem
+      (NestedMem
+        (InnerMem (cast 4 : u64) (cast 5 : u64))
+        (cast 6 : u64))]
+    [score-copy : (-> WideMem u64 i64) wide-mem-scorer]
+    [direct : i64 (wide-mem-score wide (cast 7 : u64))]
+    [via-ptr : i64 (score-copy wide (cast 8 : u64))]
+    [made : WideMem (wide-mem-make (cast 9 : u64))]
+    (+ direct
+      (+ via-ptr
+        (+ (nested-mem-score nested) (cast (struct-get made a) : i64))))))")
+
+(define (compiler-backend-c-abi-sysv-memory-aggregate-arg-linux-ok?) : bool
+  (match (compiler-backend-emit-source-for-target
+    (compiler-backend-c-abi-sysv-memory-aggregate-source)
+    (BackendTargetLinux))
+    [(OkCompilerBackend asm)
+      (backend-and8
+        (compiler-backend-string-contains?
+          asm
+          ".extern tl_cabi_wide_mem_score\n")
+        (compiler-backend-string-contains?
+          asm
+          ".extern tl_cabi_wide_mem_score_ptr\n")
+        (compiler-backend-string-contains?
+          asm
+          ".extern tl_cabi_wide_mem_make\n")
+        (compiler-backend-string-contains?
+          asm
+          ".extern tl_cabi_nested_mem_score\n")
+        (compiler-backend-string-contains?
+          asm
+          "    call tl_cabi_wide_mem_score\n")
+        (compiler-backend-string-contains? asm "    call *%rax\n")
+        (compiler-backend-string-contains?
+          asm
+          "    call tl_cabi_wide_mem_make\n")
+        (backend-and8
+          (compiler-backend-string-contains?
+            asm
+            "    call tl_cabi_nested_mem_score\n")
+          (compiler-backend-string-contains? asm "    leaq 0(%rsp), %r10\n")
+          (compiler-backend-string-contains? asm "    movups ")
+          (not
+            (compiler-backend-string-contains?
+              asm
+              "unsupported linux-x86_64 C aggregate ABI"))
+          (not
+            (compiler-backend-string-contains?
+              asm
+              "two-register aggregate return ABI"))
+          (not
+            (compiler-backend-string-contains?
+              asm
+              (compiler-backend-todo-marker)))
+          true
+          true))]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-c-abi-sysv-two-register-return-source) : String
   "(defstruct Big (lo i64) (hi i64))
 (extern (big-make) : Big (:symbol \"tl_cabi_big_make\"))
@@ -2123,6 +2207,7 @@
       CompilerRegAssignmentNil
       (IrCallArgsOne (IrValueI64 7))
       (ast-type-cons ty AstTypeNil)
+      false
       0
       0
       0
@@ -6825,6 +6910,7 @@
     (compiler-backend-c-abi-sret-aggregate-windows-ok?)
     (compiler-backend-c-abi-byref-aggregate-arg-windows-ok?)
     (compiler-backend-c-abi-sysv-register-aggregate-arg-linux-ok?)
+    (compiler-backend-c-abi-sysv-memory-aggregate-arg-linux-ok?)
     (compiler-backend-c-abi-sysv-two-register-return-error-ok?)
     (backend-and4
       (compiler-backend-string-ref-shape-ok?)

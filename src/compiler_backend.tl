@@ -6399,6 +6399,7 @@
                 target
                 (IrCallArgsNil)
                 AstTypeNil
+                false
                 program-index)]
             [ok-symbol : String (compiler-backend-asm-label function ok-label)]
             (OkCompilerBackend
@@ -6688,6 +6689,30 @@
                   src-asm
                   (compiler-backend-emit-copy-bytes-chunks 0 size))))]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+      [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
+
+(define (compiler-backend-emit-c-memory-stack-arg
+  [target : CompilerBackendTarget]
+  [assignments : CompilerRegAssignmentList]
+  [value : CompilerIrValue]
+  [stack-idx : i64]
+  [size : i64]) : ResultCompilerBackend
+  (if (<= size 0)
+    (OkCompilerBackend "")
+    (match (compiler-backend-emit-load-value-with-plan assignments value "%r11")
+      [(OkCompilerBackend src-asm)
+        (OkCompilerBackend
+          (string-append
+            src-asm
+            (string-append
+              (backend-cat5
+                "    leaq "
+                (int->string
+                  (compiler-backend-outgoing-stack-arg-offset target stack-idx))
+                "(%rsp), %r10\n"
+                ""
+                "")
+              (compiler-backend-emit-copy-bytes-chunks 0 size))))]
       [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
 
 (define (compiler-backend-emit-load-from-gep
@@ -8365,6 +8390,112 @@
     0
     0))
 
+(define (compiler-backend-call-actual-param-type-at
+  [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
+  [args : CompilerIrCallArgs]
+  [index : i64]) : AstType
+  (if (< index (compiler-backend-call-args-count args))
+    (compiler-backend-call-actual-type
+      types
+      global-types
+      (compiler-backend-call-arg-at args index))
+    (AstTyI64)))
+
+(define (compiler-backend-call-c-abi-param-types-from
+  [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
+  [args : CompilerIrCallArgs]
+  [declared-types : AstTypeList]
+  [arg-index : i64]
+  [program-index : CompilerBackendProgramIndex]) : AstTypeList
+  (if (>= arg-index (compiler-backend-call-args-count args))
+    AstTypeNil
+    (match declared-types
+      [(AstTypeCons declared rest)
+        (let
+          [declared-ty : AstType (ty-node-get declared)]
+          [rest-declared : AstTypeList (box-get rest)]
+          [memory-size : i64
+            (compiler-backend-c-memory-aggregate-marker-size
+              args
+              (+ arg-index 1))]
+          [aggregate? : bool
+            (not
+              (string-eq (compiler-backend-aggregate-type-name declared-ty) ""))]
+          (if (and (> memory-size 0) aggregate?)
+            (ast-type-cons
+              declared-ty
+              (ast-type-cons
+                (AstTyI64)
+                (ast-type-cons
+                  (AstTyUnit)
+                  (compiler-backend-call-c-abi-param-types-from
+                    types
+                    global-types
+                    args
+                    rest-declared
+                    (+ arg-index 3)
+                    program-index))))
+            (if (and
+              aggregate?
+              (compiler-backend-group-type? program-index declared-ty)
+              (< (+ arg-index 1) (compiler-backend-call-args-count args)))
+              (ast-type-cons
+                (compiler-backend-call-actual-param-type-at
+                  types
+                  global-types
+                  args
+                  arg-index)
+                (ast-type-cons
+                  (compiler-backend-call-actual-param-type-at
+                    types
+                    global-types
+                    args
+                    (+ arg-index 1))
+                  (compiler-backend-call-c-abi-param-types-from
+                    types
+                    global-types
+                    args
+                    rest-declared
+                    (+ arg-index 2)
+                    program-index)))
+              (ast-type-cons
+                (compiler-backend-call-actual-param-type-at
+                  types
+                  global-types
+                  args
+                  arg-index)
+                (compiler-backend-call-c-abi-param-types-from
+                  types
+                  global-types
+                  args
+                  rest-declared
+                  (+ arg-index 1)
+                  program-index)))))]
+      [(AstTypeNil)
+        (compiler-backend-call-actual-param-types-from
+          types
+          global-types
+          args
+          AstTypeNil
+          0
+          arg-index)])))
+
+(define (compiler-backend-call-c-abi-param-types
+  [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
+  [args : CompilerIrCallArgs]
+  [declared-types : AstTypeList]
+  [program-index : CompilerBackendProgramIndex]) : AstTypeList
+  (compiler-backend-call-c-abi-param-types-from
+    types
+    global-types
+    args
+    declared-types
+    0
+    program-index))
+
 (define (compiler-backend-type-list-has-aggregate? [types : AstTypeList]) : bool
   (match types
     [(AstTypeNil) false]
@@ -8404,7 +8535,12 @@
     [fixed-count : i64
       (compiler-backend-extern-varargs-fixed-param-count externs name)]
     (if (compiler-backend-c-aggregate-extern-call? externs name)
-      (compiler-backend-call-actual-param-types types global-types args)
+      (compiler-backend-call-c-abi-param-types
+        types
+        global-types
+        args
+        param-types
+        index)
       (if (< fixed-count 0)
         (if (=
           (compiler-backend-call-args-count args)
@@ -8436,6 +8572,40 @@
   [stack-idx : i64]) : i64
   (+ (+ 16 (compiler-backend-outgoing-shadow-space target)) (* stack-idx 8)))
 
+(define (compiler-backend-stack-slots-for-size [size : i64]) : i64
+  (if (<= size 0)
+    0
+    (/ (+ size 7) 8)))
+
+(define (compiler-backend-c-memory-aggregate-type?
+  [target : CompilerBackendTarget]
+  [c-abi? : bool]
+  [ty : AstType]) : bool
+  (and
+    c-abi?
+    (compiler-backend-target-linux? target)
+    (not (string-eq (compiler-backend-aggregate-type-name ty) ""))))
+
+(define (compiler-backend-c-memory-aggregate-marker-size
+  [args : CompilerIrCallArgs]
+  [index : i64]) : i64
+  (if (< (+ index 1) (compiler-backend-call-args-count args))
+    (match (compiler-backend-call-arg-at args index)
+      [(IrValueI64 size)
+        (match (compiler-backend-call-arg-at args (+ index 1))
+          [(IrValueUnit) size]
+          [_ 0])]
+      [_ 0])
+    0))
+
+(define (compiler-backend-skip-c-memory-marker-types [types : AstTypeList]) : AstTypeList
+  (match types
+    [(AstTypeCons _ rest-size)
+      (match (box-get rest-size)
+        [(AstTypeCons _ rest-sentinel) (box-get rest-sentinel)]
+        [(AstTypeNil) AstTypeNil])]
+    [(AstTypeNil) AstTypeNil]))
+
 ;; Count the OUTGOING arguments that must be passed on the stack (#750). Walks
 ;; the args in order, tracking the integer/float/position banks exactly as
 ;; `compiler-backend-emit-call-args` does, and counts every arg whose bank is
@@ -8444,6 +8614,7 @@
   [target : CompilerBackendTarget]
   [args : CompilerIrCallArgs]
   [types : AstTypeList]
+  [c-abi? : bool]
   [arg-index : i64]
   [int-idx : i64]
   [float-idx : i64]
@@ -8465,84 +8636,102 @@
               tail)]
           [(AstTypeNil) AstTypeNil])]
       [is-float : bool (compiler-backend-float-type? arg-ty)]
+      [memory-size : i64
+        (compiler-backend-c-memory-aggregate-marker-size args (+ arg-index 1))]
       ;; #2386: a register-group arg occupies two integer slots and, when it does
       ;; not fit in the remaining arg registers, two stack slots -- mirror exactly
       ;; what emit-call-args does so the reserved frame space matches. That
       ;; includes Windows: emit-call-args groups on BOTH targets (indexing by
       ;; `position` there), so counting a Windows group arg as one scalar slot
       ;; made tail-call stack accounting diverge from emission.
-      (if (compiler-backend-group-type? program-index arg-ty)
-        (let
-          [w0-sse : bool
-            (compiler-backend-group-word-sse? program-index arg-ty 0)]
-          [w0-stack : bool
-            (compiler-backend-stack-call-arg-for-banks?
+      (if (and
+        (> memory-size 0)
+        (compiler-backend-c-memory-aggregate-type? target c-abi? arg-ty))
+        (compiler-backend-call-stack-arg-count
+          target
+          args
+          (compiler-backend-skip-c-memory-marker-types rest-types)
+          c-abi?
+          (+ arg-index 3)
+          int-idx
+          float-idx
+          (+ position 1)
+          (+ stack-count (compiler-backend-stack-slots-for-size memory-size))
+          program-index)
+        (if (compiler-backend-group-type? program-index arg-ty)
+          (let
+            [w0-sse : bool
+              (compiler-backend-group-word-sse? program-index arg-ty 0)]
+            [w0-stack : bool
+              (compiler-backend-stack-call-arg-for-banks?
+                target
+                w0-sse
+                int-idx
+                float-idx
+                position)]
+            [int1 : i64
+              (if w0-sse
+                int-idx
+                (+ int-idx 1))]
+            [float1 : i64
+              (if w0-sse
+                (+ float-idx 1)
+                float-idx)]
+            [pos1 : i64 (+ position 1)]
+            [w1-sse : bool
+              (compiler-backend-group-word-sse? program-index arg-ty 1)]
+            [w1-stack : bool
+              (compiler-backend-stack-call-arg-for-banks?
+                target
+                w1-sse
+                int1
+                float1
+                pos1)]
+            (compiler-backend-call-stack-arg-count
               target
-              w0-sse
-              int-idx
-              float-idx
-              position)]
-          [int1 : i64
-            (if w0-sse
-              int-idx
-              (+ int-idx 1))]
-          [float1 : i64
-            (if w0-sse
-              (+ float-idx 1)
-              float-idx)]
-          [pos1 : i64 (+ position 1)]
-          [w1-sse : bool
-            (compiler-backend-group-word-sse? program-index arg-ty 1)]
-          [w1-stack : bool
-            (compiler-backend-stack-call-arg-for-banks?
-              target
-              w1-sse
-              int1
-              float1
-              pos1)]
+              args
+              rest-types
+              c-abi?
+              (+ arg-index 1)
+              (if w1-sse
+                int1
+                (+ int1 1))
+              (if w1-sse
+                (+ float1 1)
+                float1)
+              (+ position 2)
+              (+
+                stack-count
+                (+
+                  (if w0-stack
+                    1
+                    0)
+                  (if w1-stack
+                    1
+                    0)))
+              program-index))
           (compiler-backend-call-stack-arg-count
             target
             args
             rest-types
+            c-abi?
             (+ arg-index 1)
-            (if w1-sse
-              int1
-              (+ int1 1))
-            (if w1-sse
-              (+ float1 1)
-              float1)
-            (+ position 2)
-            (+
-              stack-count
-              (+
-                (if w0-stack
-                  1
-                  0)
-                (if w1-stack
-                  1
-                  0)))
-            program-index))
-        (compiler-backend-call-stack-arg-count
-          target
-          args
-          rest-types
-          (+ arg-index 1)
-          (if is-float
-            int-idx
-            (+ int-idx 1))
-          (if is-float
-            (+ float-idx 1)
-            float-idx)
-          (+ position 1)
-          (if (compiler-backend-stack-call-arg-for-banks?
-            target
-            is-float
-            int-idx
-            float-idx
-            position)
-            (+ stack-count 1)
-            stack-count)
-          program-index)))))
+            (if is-float
+              int-idx
+              (+ int-idx 1))
+            (if is-float
+              (+ float-idx 1)
+              float-idx)
+            (+ position 1)
+            (if (compiler-backend-stack-call-arg-for-banks?
+              target
+              is-float
+              int-idx
+              float-idx
+              position)
+              (+ stack-count 1)
+              stack-count)
+            program-index))))))
 
 (define (compiler-backend-type-list-stack-arg-count
   [target : CompilerBackendTarget]
@@ -8668,6 +8857,7 @@
         target
         args
         types
+        false
         0
         0
         0
@@ -8697,13 +8887,24 @@
   [target : CompilerBackendTarget]
   [args : CompilerIrCallArgs]
   [types : AstTypeList]
+  [c-abi? : bool]
   [program-index : CompilerBackendProgramIndex]) : i64
-  (compiler-backend-call-arg-space-from target args types 0 0 0 0 program-index))
+  (compiler-backend-call-arg-space-from
+    target
+    args
+    types
+    c-abi?
+    0
+    0
+    0
+    0
+    program-index))
 
 (define (compiler-backend-call-arg-space-from
   [target : CompilerBackendTarget]
   [args : CompilerIrCallArgs]
   [types : AstTypeList]
+  [c-abi? : bool]
   [arg-index : i64]
   [int-idx : i64]
   [float-idx : i64]
@@ -8715,6 +8916,7 @@
         target
         args
         types
+        c-abi?
         arg-index
         int-idx
         float-idx
@@ -8733,7 +8935,16 @@
   [args : CompilerIrCallArgs]
   [types : AstTypeList]
   [program-index : CompilerBackendProgramIndex]) : i64
-  (compiler-backend-call-arg-space-from target args types 0 1 0 1 program-index))
+  (compiler-backend-call-arg-space-from
+    target
+    args
+    types
+    false
+    0
+    1
+    0
+    1
+    program-index))
 
 ;; #2386: number of 8-byte STACK slots a Windows call's args occupy, mirroring
 ;; emit-call-args exactly. A register-group value takes two consecutive arg slots:
@@ -8931,6 +9142,7 @@
   [assignments : CompilerRegAssignmentList]
   [args : CompilerIrCallArgs]
   [types : AstTypeList]
+  [c-abi? : bool]
   [arg-index : i64]
   [int-idx : i64]
   [float-idx : i64]
@@ -8963,12 +9175,43 @@
         (if is-float
           (+ float-idx 1)
           float-idx)]
+      [memory-size : i64
+        (compiler-backend-c-memory-aggregate-marker-size args (+ arg-index 1))]
       ;; #2386: a register-group argument occupies TWO consecutive integer arg
       ;; registers. Linux SysV indexes them by `int-idx`; Windows by the unified
       ;; `position`. The selfhost only passes register-group values between its own
       ;; functions (never to an `(:abi c)` boundary), so a 2-register/2-stack-slot
       ;; convention with a %rax:%rdx return is self-consistent on both targets.
-      (if (compiler-backend-group-type? program-index arg-ty)
+      (cond
+        (and
+          (> memory-size 0)
+          (compiler-backend-c-memory-aggregate-type? target c-abi? arg-ty))
+        (match (compiler-backend-emit-c-memory-stack-arg
+          target
+          assignments
+          value
+          stack-idx
+          memory-size)
+          [(OkCompilerBackend head)
+            (match (compiler-backend-emit-call-args
+              target
+              assignments
+              args
+              (compiler-backend-skip-c-memory-marker-types rest-types)
+              c-abi?
+              (+ arg-index 3)
+              int-idx
+              float-idx
+              (+ position 1)
+              (+ stack-idx (compiler-backend-stack-slots-for-size memory-size))
+              func-diag
+              program-index
+              vars)
+              [(OkCompilerBackend tail)
+                (OkCompilerBackend (string-append head tail))]
+              [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+        (compiler-backend-group-type? program-index arg-ty)
         (let
           [w0-sse : bool
             (compiler-backend-group-word-sse? program-index arg-ty 0)]
@@ -9033,6 +9276,7 @@
                     assignments
                     args
                     rest-types
+                    c-abi?
                     (+ arg-index 1)
                     (if w1-sse
                       int1
@@ -9053,102 +9297,98 @@
                     [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
                 [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
             [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
-        (if (compiler-backend-stack-call-arg-for-banks?
+        (compiler-backend-stack-call-arg-for-banks?
           target
           is-float
           int-idx
           float-idx
           position)
-          ;; Stack-passed arg: load into a scratch register that no other
-          ;; call arg uses (%xmm15 / %r11, matching the legacy backend) so an
-          ;; earlier register arg in xmm0/%rax is never clobbered, then
-          ;; store it at its %rsp offset.
-          (match (if is-float
-            (compiler-backend-emit-load-float-value-with-plan
+        ;; Stack-passed arg: load into a scratch register that no other
+        ;; call arg uses (%xmm15 / %r11, matching the legacy backend) so an
+        ;; earlier register arg in xmm0/%rax is never clobbered, then
+        ;; store it at its %rsp offset.
+        (match (if is-float
+          (compiler-backend-emit-load-float-value-with-plan
+            assignments
+            value
+            arg-ty
+            "%xmm15")
+          (compiler-backend-emit-load-value-with-plan assignments value "%r11"))
+          [(OkCompilerBackend head)
+            (match (compiler-backend-emit-call-args
+              target
               assignments
-              value
-              arg-ty
-              "%xmm15")
-            (compiler-backend-emit-load-value-with-plan
-              assignments
-              value
-              "%r11"))
-            [(OkCompilerBackend head)
-              (match (compiler-backend-emit-call-args
-                target
+              args
+              rest-types
+              c-abi?
+              (+ arg-index 1)
+              next-int
+              next-float
+              (+ position 1)
+              (+ stack-idx 1)
+              func-diag
+              program-index
+              vars)
+              [(OkCompilerBackend tail)
+                (OkCompilerBackend
+                  (backend-cat5
+                    head
+                    (if is-float
+                      (backend-cat4
+                        "    "
+                        (compiler-backend-float-move arg-ty)
+                        " %xmm15, "
+                        "")
+                      "    movq %r11, ")
+                    (int->string
+                      (compiler-backend-outgoing-stack-arg-offset
+                        target
+                        stack-idx))
+                    "(%rsp)\n"
+                    tail))]
+              [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+        (match (if is-float
+          (compiler-backend-target-float-arg-reg
+            target
+            (if (compiler-backend-target-windows? target)
+              position
+              float-idx))
+          (compiler-backend-target-arg-reg
+            target
+            (if (compiler-backend-target-windows? target)
+              position
+              int-idx)))
+          [(OkBackendReg reg)
+            (match (if is-float
+              (compiler-backend-emit-load-float-value-with-plan
                 assignments
-                args
-                rest-types
-                (+ arg-index 1)
-                next-int
-                next-float
-                (+ position 1)
-                (+ stack-idx 1)
-                func-diag
-                program-index
-                vars)
-                [(OkCompilerBackend tail)
-                  (OkCompilerBackend
-                    (backend-cat5
-                      head
-                      (if is-float
-                        (backend-cat4
-                          "    "
-                          (compiler-backend-float-move arg-ty)
-                          " %xmm15, "
-                          "")
-                        "    movq %r11, ")
-                      (int->string
-                        (compiler-backend-outgoing-stack-arg-offset
-                          target
-                          stack-idx))
-                      "(%rsp)\n"
-                      tail))]
-                [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-            [(ErrCompilerBackend message) (ErrCompilerBackend message)])
-          (match (if is-float
-            (compiler-backend-target-float-arg-reg
-              target
-              (if (compiler-backend-target-windows? target)
-                position
-                float-idx))
-            (compiler-backend-target-arg-reg
-              target
-              (if (compiler-backend-target-windows? target)
-                position
-                int-idx)))
-            [(OkBackendReg reg)
-              (match (if is-float
-                (compiler-backend-emit-load-float-value-with-plan
+                value
+                arg-ty
+                reg)
+              (compiler-backend-emit-load-value-with-plan assignments value reg))
+              [(OkCompilerBackend head)
+                (match (compiler-backend-emit-call-args
+                  target
                   assignments
-                  value
-                  arg-ty
-                  reg)
-                (compiler-backend-emit-load-value-with-plan
-                  assignments
-                  value
-                  reg))
-                [(OkCompilerBackend head)
-                  (match (compiler-backend-emit-call-args
-                    target
-                    assignments
-                    args
-                    rest-types
-                    (+ arg-index 1)
-                    next-int
-                    next-float
-                    (+ position 1)
-                    stack-idx
-                    func-diag
-                    program-index
-                    vars)
-                    [(OkCompilerBackend tail)
-                      (OkCompilerBackend (string-append head tail))]
-                    [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-                [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-            [(ErrBackendReg message)
-              (ErrCompilerBackend
-                (compiler-diagnostic-with-message func-diag message))]))))))
+                  args
+                  rest-types
+                  c-abi?
+                  (+ arg-index 1)
+                  next-int
+                  next-float
+                  (+ position 1)
+                  stack-idx
+                  func-diag
+                  program-index
+                  vars)
+                  [(OkCompilerBackend tail)
+                    (OkCompilerBackend (string-append head tail))]
+                  [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+              [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+          [(ErrBackendReg message)
+            (ErrCompilerBackend
+              (compiler-diagnostic-with-message func-diag message))])))))
 
 (define (compiler-backend-tail-stage-slot-offset
   [arg-count : i64]
@@ -10340,13 +10580,20 @@
         global-types
         externs
         program-index)]
+    [c-abi? : bool (compiler-backend-c-aggregate-extern-call? externs name)]
     [call-space : i64
-      (compiler-backend-call-arg-space target args param-types program-index)]
+      (compiler-backend-call-arg-space
+        target
+        args
+        param-types
+        c-abi?
+        program-index)]
     [tail-stack-count : i64
       (compiler-backend-call-stack-arg-count
         target
         args
         param-types
+        c-abi?
         0
         0
         0
@@ -10368,6 +10615,7 @@
           assignments
           args
           param-types
+          c-abi?
           0
           0
           0
@@ -10393,6 +10641,7 @@
         assignments
         args
         param-types
+        c-abi?
         0
         0
         0
@@ -11233,17 +11482,21 @@
                   global-types
                   externs
                   program-index)]
+              [c-abi? : bool
+                (compiler-backend-c-aggregate-extern-call? externs name)]
               [call-space : i64
                 (compiler-backend-call-arg-space
                   target
                   args
                   param-types
+                  c-abi?
                   program-index)]
               (match (compiler-backend-emit-call-args
                 target
                 assignments
                 args
                 param-types
+                c-abi?
                 0
                 0
                 0
@@ -12322,13 +12575,20 @@
         global-types
         externs
         program-index)]
+    [c-abi? : bool (compiler-backend-c-aggregate-extern-call? externs name)]
     [call-space : i64
-      (compiler-backend-call-arg-space target args param-types program-index)]
+      (compiler-backend-call-arg-space
+        target
+        args
+        param-types
+        c-abi?
+        program-index)]
     (match (compiler-backend-emit-call-args
       target
       assignments
       args
       param-types
+      c-abi?
       0
       0
       0
@@ -12397,6 +12657,7 @@
       target
       args
       types
+      false
       0
       1
       0
@@ -12437,6 +12698,7 @@
       assignments
       args
       param-types
+      false
       0
       1
       0
@@ -12533,6 +12795,7 @@
       assignments
       args
       param-types
+      false
       0
       1
       0
@@ -12619,10 +12882,12 @@
         program-index)]
     [param-types : AstTypeList
       (if (compiler-backend-type-list-has-aggregate? declared-param-types)
-        (compiler-backend-call-actual-param-types
+        (compiler-backend-call-c-abi-param-types
           types
           (CompilerBackendGlobalTypeNil)
-          args)
+          args
+          declared-param-types
+          program-index)
         (if (=
           (compiler-backend-call-args-count args)
           (compiler-backend-type-list-count declared-param-types))
@@ -12632,12 +12897,18 @@
             (CompilerBackendGlobalTypeNil)
             args)))]
     [call-space : i64
-      (compiler-backend-call-arg-space target args param-types program-index)]
+      (compiler-backend-call-arg-space
+        target
+        args
+        param-types
+        true
+        program-index)]
     (match (compiler-backend-emit-call-args
       target
       assignments
       args
       param-types
+      true
       0
       0
       0
@@ -15444,7 +15715,12 @@
             (compiler-backend-type-list-has-group? param-types program-index)))
         (compiler-backend-closure-adapter-outgoing-frame-space target args))]
     [call-space : i64
-      (compiler-backend-call-arg-space target args param-types program-index)]
+      (compiler-backend-call-arg-space
+        target
+        args
+        param-types
+        false
+        program-index)]
     [diag : CompilerDiagnostic (compiler-diagnostic-at-start "" "")]
     (match (compiler-backend-emit-param-spills
       target
@@ -15462,6 +15738,7 @@
           CompilerRegAssignmentNil
           args
           param-types
+          false
           0
           0
           0

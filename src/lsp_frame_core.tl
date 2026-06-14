@@ -3,9 +3,9 @@
 ;; This driver owns JSON-RPC/LSP Content-Length framing over stdin/stdout plus
 ;; the first selfhost protocol loop: initialize/shutdown, document tracking, and
 ;; diagnostics for full-document open/change notifications.
-(import "stdlib/io.tl")
+(import "../stdlib/io.tl")
 
-(import "stdlib/json.tl")
+(import "../stdlib/json.tl")
 
 (import "compiler_check_core.tl")
 
@@ -860,11 +860,10 @@
 ;;
 ;; Top-level AST declarations do not yet carry source spans (compiler_ast_types
 ;; defers them), so definitions are resolved by scanning the document text for
-;; the defining form. The scan skips string literals and `;` comments so that
-;; fixture sources that embed TypeLisp inside string literals never produce a
-;; false match.
+;; the defining form. The scan skips string literals, character literals, and
+;; `;` comments so fixture sources that embed TypeLisp inside literals never
+;; produce a false match.
 ;; --------------------------------------------------------------------------
-
 (define (lsp-ident-char? [c : char]) : bool
   (or
     (and (>= c #a') (<= c #z'))
@@ -886,7 +885,7 @@
     (= c #%')))
 
 (define (lsp-ws? [c : char]) : bool
-  (or (= c #\space') (= c #\tab') (or (= c #\newline') (= c #\return'))))
+  (or (= c #\space') (= c #\tab') (= c #\newline') (= c #\return')))
 
 (define (lsp-skip-space [text : String] [i : i64] [n : i64]) : i64
   (let
@@ -932,6 +931,24 @@
             (set! j (+ j 1)))))
       j)))
 
+(define (lsp-skip-char-literal [text : String] [i : i64] [n : i64]) : i64
+  (let
+    [j : i64 (+ i 1)]
+    [seen-payload : bool false]
+    [done : bool false]
+    (begin
+      (while (and (< j n) (not done))
+        (let
+          [c : char (string-ref text j)]
+          (if (and seen-payload (= c #''))
+            (begin
+              (set! done true)
+              (set! j (+ j 1)))
+            (begin
+              (set! seen-payload true)
+              (set! j (+ j 1))))))
+      j)))
+
 ;; Maximal identifier token covering `off`, or "" when `off` is not on one.
 (define (lsp-symbol-at-offset [text : String] [off : i64]) : String
   (let
@@ -944,11 +961,14 @@
           [start : i64 off]
           [end : i64 (lsp-scan-ident text off n)]
           (begin
-            (while (and (> start 0) (lsp-ident-char? (string-ref text (- start 1))))
+            (while (and
+              (> start 0)
+              (lsp-ident-char? (string-ref text (- start 1))))
               (set! start (- start 1)))
             (substring text start (- end start))))))))
 
-;; Base name of a possibly module-qualified symbol (`core/cond` -> `cond`).
+;; Base name of a possibly module-qualified symbol (`core/cond` -> `cond`,
+;; `core.cond` -> `cond`).
 (define (lsp-symbol-base [s : String]) : String
   (let
     [n : i64 (string-length s)]
@@ -957,7 +977,7 @@
     (begin
       (while (< i n)
         (begin
-          (if (= (string-ref s i) #/')
+          (if (or (= (string-ref s i) #/') (= (string-ref s i) #.'))
             (set! k i)
             unit)
           (set! i (+ i 1))))
@@ -979,7 +999,10 @@
             (set! ln (+ ln 1))
             unit)
           (set! i (+ i 1))))
-      (while (and (< i n) (and (< col char0) (not (= (string-ref text i) #\newline'))))
+      (while (and
+        (< i n)
+        (< col char0)
+        (not (= (string-ref text i) #\newline')))
         (begin
           (set! i (+ i 1))
           (set! col (+ col 1))))
@@ -1006,13 +1029,11 @@
 (define (lsp-def-keyword? [kw : String]) : bool
   (or
     (string-eq kw "define")
-    (or
-      (string-eq kw "defmacro")
-      (or
-        (string-eq kw "defstruct")
-        (or
-          (string-eq kw "defenum")
-          (or (string-eq kw "defdispatch") (string-eq kw "extern")))))))
+    (string-eq kw "defmacro")
+    (string-eq kw "defstruct")
+    (string-eq kw "defenum")
+    (string-eq kw "defdispatch")
+    (string-eq kw "extern")))
 
 ;; When `text[i]` opens a top-level definition form, return the byte offset of
 ;; the defined name (skipping an optional `(` for function/extern forms);
@@ -1039,8 +1060,9 @@
               -1))
           -1)))))
 
-;; Byte offset of the definition of `needle` in `text`, or -1. Strings and `;`
-;; comments are skipped so embedded source never matches.
+;; Byte offset of the definition of `needle` in `text`, or -1. Strings,
+;; character literals, and `;` comments are skipped so embedded source never
+;; matches.
 (define (lsp-find-def-offset-in [text : String] [needle : String]) : i64
   (let
     [n : i64 (string-length text)]
@@ -1053,6 +1075,8 @@
           (cond
             (= c #;')
             (set! i (lsp-skip-line text i n))
+            (= c ##')
+            (set! i (lsp-skip-char-literal text i n))
             (= c #"')
             (set! i (lsp-skip-string text i n))
             (= c #(')
@@ -1073,7 +1097,11 @@
   [needle : String]) : LspDefLocation
   (let
     [lc : LspLineCol (lsp-line-col-at-offset text off)]
-    (FoundDefLoc uri (struct-get lc line) (struct-get lc col) (string-length needle))))
+    (FoundDefLoc
+      uri
+      (struct-get lc line)
+      (struct-get lc col)
+      (string-length needle))))
 
 (define (lsp-find-definition-in-docs
   [docs : LspDocuments]
@@ -1089,7 +1117,11 @@
         (let
           [off : i64 (lsp-find-def-offset-in (struct-get doc text) needle)]
           (if (>= off 0)
-            (lsp-def-loc-from (struct-get doc uri) (struct-get doc text) off needle)
+            (lsp-def-loc-from
+              (struct-get doc uri)
+              (struct-get doc text)
+              off
+              needle)
             (lsp-find-definition-in-docs docs current-uri needle (+ idx 1))))))))
 
 ;; Resolve `needle` to a definition: the current document first, then any other
@@ -1169,39 +1201,63 @@
             (let
               [pos-key : String "position"]
               (match (json-object-get params (& pos-key))
-                [(JsonFound position) (lsp-definition-respond id uri position docs)]
+                [(JsonFound position)
+                  (lsp-definition-respond id uri position docs)]
                 [(JsonMissing) (lsp-write-response id JsonNull)]))]
           [(MissingLspJsonText) (lsp-write-response id JsonNull)])]
       [(JsonMissing) (lsp-write-response id JsonNull)])))
 
 (define (lsp-definition-smoke-basic?) : bool
   (let
-    [src : String "(define (foo [x : i64]) : i64 x)\n(define (bar) : i64 (foo 1))\n"]
+    [src : String
+      "(define (foo [x : i64]) : i64 x)\n(define (bar) : i64 (foo 1))\n"]
     [off : i64 (lsp-offset-at-position src 1 22)]
     [sym : String (lsp-symbol-at-offset src off)]
     (if (not (string-eq sym "foo"))
       false
-      (match
-        (lsp-find-definition
-          (lsp-documents-new)
-          "file:///smoke.tl"
-          src
-          (lsp-symbol-base sym))
-        [(FoundDefLoc _ line col len)
-          (and (= line 1) (and (= col 10) (= len 3)))]
+      (match (lsp-find-definition
+        (lsp-documents-new)
+        "file:///smoke.tl"
+        src
+        (lsp-symbol-base sym))
+        [(FoundDefLoc _ line col len) (and (= line 1) (= col 10) (= len 3))]
         [(MissingDefLoc) false]))))
 
 (define (lsp-definition-smoke-skips-strings?) : bool
   (let
     [src : String
       "(define greeting : String \"(define decoy 1)\")\n(define (use) : i64 0)\n"]
-    (match
-      (lsp-find-definition (lsp-documents-new) "file:///smoke.tl" src "decoy")
+    (match (lsp-find-definition
+      (lsp-documents-new)
+      "file:///smoke.tl"
+      src
+      "decoy")
       [(FoundDefLoc _ _ _ _) false]
       [(MissingDefLoc) true])))
 
+(define (lsp-definition-smoke-skips-char-literals?) : bool
+  (let
+    [src : String
+      "(define (quote-char) : char #\"')\n(define (target) : i64 1)\n(define (use) : i64 (target))\n"]
+    (match (lsp-find-definition
+      (lsp-documents-new)
+      "file:///smoke.tl"
+      src
+      "target")
+      [(FoundDefLoc _ line col len) (and (= line 2) (= col 10) (= len 6))]
+      [(MissingDefLoc) false])))
+
+(define (lsp-definition-smoke-qualified-base?) : bool
+  (and
+    (string-eq (lsp-symbol-base "core/cond") "cond")
+    (string-eq (lsp-symbol-base "core.cond") "cond")))
+
 (define (lsp-definition-smoke-ok?) : bool
-  (and (lsp-definition-smoke-basic?) (lsp-definition-smoke-skips-strings?)))
+  (and
+    (lsp-definition-smoke-basic?)
+    (lsp-definition-smoke-skips-strings?)
+    (lsp-definition-smoke-skips-char-literals?)
+    (lsp-definition-smoke-qualified-base?)))
 
 (define (lsp-maybe-write-method-not-found [message : Json]) : unit
   (let

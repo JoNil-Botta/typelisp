@@ -63,12 +63,12 @@ assert_contains() {
 }
 
 echo "[compile-profile] compile profile-enabled CLI"
-if ! "$COMPILER" compile selfhost/cli.tl \
+if ! "$COMPILER" compile src/main.tl \
     -o "$PROFILE_ASM" \
     --target "$NL_BOOTSTRAP_TARGET" \
     $(native_target_cfg_args) \
     --stdlib-root stdlib \
-    --stdlib-root selfhost \
+    --stdlib-root src \
     --cfg compile-profile \
     > "$BUILD_STDOUT" 2> "$BUILD_STDERR"; then
     show_failure_logs "$BUILD_STDOUT" "$BUILD_STDERR"

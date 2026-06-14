@@ -3934,6 +3934,14 @@ lowering. Typechecking returns the body result type with source-region tags
 stripped, matching the clone semantics of moving the result back to the
 enclosing arena.
 
+**First-class arena target:** `(in-arena arena-expr body ...)` is the safe
+dynamic allocation-target form for first-class arena handles. `arena-expr` must
+typecheck as `i64`. The body is a non-empty expression sequence evaluated with
+that arena as the active allocation target; the previous active arena is restored
+on normal exit and function-local early exit. The form does not mark, rewind,
+destroy, or clone. Its result type is the body result type unchanged, so owned
+values allocated in the target arena remain owned by that arena.
+
 ### 5.17 Comptime type reflection (specified, selfhost v1 implemented)
 
 Type reflection is the compile-time-only surface that lets generators inspect
@@ -4945,6 +4953,9 @@ The standard scratch workflows are:
   `arena-make`, then wrap each transient build in `(with-escape scratch ...)`.
   The result is cloned into the enclosing active arena before the scratch arena
   is rewound.
+- **Keep results in a first-class arena:** allocate or receive an arena handle
+  and wrap the build in `(in-arena arena ...)`. The saved active arena is
+  restored afterward, and the returned owned value remains in the target arena.
 - **Manual unsafe arena:** use `arena-set!`, `arena-rewind`, or
   `arena-destroy` only inside `(unsafe ...)` when the caller can prove all
   invalidated heap handles are dead. This is for compiler/tool internals that
@@ -5002,8 +5013,8 @@ not as an independently quantified region. The specified owner classes are:
 - **Ordinary first-class arena owners:** handles returned by `arena-make`
   name single-thread allocation homes. They are not lexical binders and v1
   source code cannot write a lifetime name for them directly. Safe code may use
-  them through `with-escape`, and through the planned `(in-arena ...)` form
-  (#2625), but concurrent allocation into one ordinary arena is not defined.
+  them through `with-escape` and `in-arena`, but concurrent allocation into one
+  ordinary arena is not defined.
 - **Atomic first-class arena owners:** handles returned by the planned
   `arena-make-atomic` wrapper over `tl_arena_make_atomic` name allocation homes
   whose lifetime may span multiple threads. Multiple threads may make the same
@@ -5098,6 +5109,28 @@ used before. The form is intended for first-class scratch arenas; it is not a
 lexical lifetime binder, and lexical region cleanup remains the job of
 `with-arena`.
 
+#### First-class arena allocation target - `in-arena`
+
+Use `(in-arena arena-expr body ...)` when a result should stay owned by a
+first-class arena rather than being cloned back to the caller's active arena:
+
+```lisp test=check name=in-arena-example
+(import "stdlib/arena.tl")
+(import "stdlib/string.tl")
+
+(define (build-in-level [level : i64]) : String
+  (in-arena level (int->string 42)))
+```
+
+`in-arena` evaluates `arena-expr` in the current arena, records the enclosing
+active arena, switches to the target, evaluates the non-empty body sequence, and
+restores the saved arena on normal completion, `(return ...)`, or recoverable
+`try` propagation. It does not call `arena-mark`, `arena-rewind`, or
+`arena-destroy`, and it does not clone the body result. The body result type is
+returned unchanged. Nested lexical `with-arena` escape rules still apply:
+`(in-arena scratch (with-arena inner (int->string 1)))` is rejected because the
+inner scoped region would escape.
+
 #### Atomic arena allocation target
 
 The planned source wrapper for `tl_arena_make_atomic` is:
@@ -5113,14 +5146,13 @@ The planned source wrapper for `tl_arena_make_atomic` is:
 
 `arena-make-atomic` returns a first-class arena handle and does not make that
 arena current. A thread allocates into an atomic arena by making it the active
-allocation target for a dynamic extent. The safe spelling is the planned
-`(in-arena arena-expr body ...)` form from #2625: it evaluates `arena-expr`,
-saves the calling thread's current arena, installs the target for `body`, then
-restores the saved arena without marking, rewinding, destroying, or cloning.
-With #2591, "current arena" is thread-local, so selecting an atomic arena in one
-thread does not change another thread's default arena. Before `in-arena` and the
-atomic-arena runtime land, threaded allocation through `arena-set!` remains an
-unsafe manual operation because ordinary first-class arenas are still
+allocation target for a dynamic extent. The safe spelling is `in-arena`: it
+evaluates `arena-expr`, saves the calling thread's current arena, installs the
+target for `body`, then restores the saved arena without marking, rewinding,
+destroying, or cloning. With #2591, "current arena" is thread-local, so selecting
+an atomic arena in one thread does not change another thread's default arena.
+Before the atomic-arena runtime lands, threaded allocation through `arena-set!`
+remains an unsafe manual operation because ordinary first-class arenas are still
 single-threaded allocation targets.
 
 Values allocated while an atomic arena is current are owned by that atomic arena
@@ -5317,7 +5349,9 @@ not the future safe reference/borrow model (#182), not a replacement for
   definitions, not implicit compiler builtins.
 - First-class arena helpers in `stdlib/arena.tl`: `arena-make`,
   `arena-current`, `arena-mark`, `arena-set!`, `arena-destroy`, and
-  `arena-rewind`; invalidating helpers require `(unsafe ...)`.
+  `arena-rewind`; invalidating helpers require `(unsafe ...)`. The safe
+  `in-arena` form switches to a first-class arena for one body without exposing
+  `arena-set!` to safe code.
 - `extern` declarations, including unsafe declaration metadata for externs and
   top-level functions.
 - Multi-file modules via `import`.
@@ -5344,6 +5378,7 @@ not the future safe reference/borrow model (#182), not a replacement for
 | Garbage collection / general `free` | Not implemented; allocation is process-lifetime by default with unsafe explicit region reset for tool-owned phase boundaries |
 | Move-only aggregate handle checking | Implemented: the selfhost checker enforces move-only aggregates with use-after-move, path-move, and move-while-borrowed diagnostics (#805/#1048/#1049/#1050) |
 | `(with ...)` scoped non-memory resource cleanup | Implemented (#907): parser/typechecker/lowering with LIFO cleanup order |
+| `(in-arena ...)` first-class arena target | Implemented (#2625): safe dynamic active-arena switch with restoration on normal and early exits, no mark/rewind/destroy/clone |
 | Cleanup-owning aggregate declarations | Implemented for structs (#907); cleanup-owning enums remain reserved |
 | SPMD / SIMD `foreach` and `spmd-reduce` | Scalar reference lowering implemented; AVX2/AVX-512 support a first contiguous `foreach` map/zip subset over `i32`, `i64`, `f32`, and `f64`, eligible `spmd-reduce` folds, and direct array-value `spmd-broadcast` maps; masked varying `if` is in flight (#2131/#2205/#2207) |
 | Public cross-lane ops beyond `spmd-reduce`/`spmd-broadcast` | Scans/prefix reductions, shuffles, public lane indices/counts, gathers/scatters, atomics, and public vector/mask values remain deferred; split across #2761, #2762, #2764, #2765, and #2766 |
@@ -5933,6 +5968,7 @@ expr          ::= literal
                 | "(" "return" expr ")"
                 | "(" "with-arena" ident expr+ ")"
                 | "(" "with-escape" expr expr+ ")"
+                | "(" "in-arena" expr expr+ ")"
                 | "(" "with" "(" resource-binding* ")" expr+ ")"
                 | borrow-expr                 ; specified, not implemented
                 | "(" "unsafe" expr+ ")"

@@ -1101,6 +1101,10 @@
         (tltest-reach-mark-expr-list
           body
           (tltest-reach-mark-expr scratch names)))]
+    [(AstExprInArena arena-box body)
+      (let
+        [arena : AstExpr (ast-node-get arena-box)]
+        (tltest-reach-mark-expr-list body (tltest-reach-mark-expr arena names)))]
     [(AstExprWithResource bindings body)
       (tltest-reach-mark-expr-list
         body

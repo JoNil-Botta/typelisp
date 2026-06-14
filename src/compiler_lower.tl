@@ -3086,6 +3086,16 @@
           [(OkTcType result-ty)
             (lower-clone-root-add-type ctx decls able walked result-ty)]
           [(ErrTcType _) walked]))]
+    [(AstExprInArena arena-box exprs)
+      (let
+        [arena : AstExpr (ast-node-get arena-box)]
+        (lower-clone-roots-expr-list
+          ctx
+          env
+          decls
+          able
+          (lower-clone-roots-expr ctx env decls able roots arena)
+          exprs))]
     [(AstExprWithResource bindings body)
       (let
         [binding-roots : CloneNameList
@@ -3630,6 +3640,14 @@
           all-functions
           names
           (lower-reach-expr all-functions names state scratch)
+          exprs))]
+    [(AstExprInArena arena-box exprs)
+      (let
+        [arena : AstExpr (ast-node-get arena-box)]
+        (lower-reach-expr-list
+          all-functions
+          names
+          (lower-reach-expr all-functions names state arena)
           exprs))]
     [(AstExprWithResource bindings body)
       (lower-reach-expr-list
@@ -9640,6 +9658,9 @@
 (define (lower-region-hidden-name [var-id : i64]) : String
   (string-append "__tl_region_mark." (int->string var-id)))
 
+(define (lower-arena-restore-hidden-name [var-id : i64]) : String
+  (string-append "__tl_arena_restore." (int->string var-id)))
+
 (define (lower-cleanup-metadata-type
   [hidden-name : String]
   [cleanup-name : String]) : AstType
@@ -9650,6 +9671,9 @@
 
 (define (lower-region-reset-metadata-type [hidden-name : String]) : AstType
   (AstTyVar (intern hidden-name)))
+
+(define (lower-arena-restore-metadata-type [hidden-name : String]) : AstType
+  (AstTyTuple (ast-type-cons (AstTyVar (intern hidden-name)) AstTypeNil)))
 
 (define (lower-type-env-push-cleanup
   [type-env : TcTypeEnv]
@@ -9667,6 +9691,14 @@
     type-env
     (lower-region-reset-marker-id)
     (lower-region-reset-metadata-type hidden-name)))
+
+(define (lower-type-env-push-arena-restore
+  [type-env : TcTypeEnv]
+  [hidden-name : String]) : TcTypeEnv
+  (tc-bind-id
+    type-env
+    (lower-region-reset-marker-id)
+    (lower-arena-restore-metadata-type hidden-name)))
 
 (define (lower-cleanup-name-from-expr [cleanup : AstExpr]) : ResultTcString
   (match (ast-expr-unspan cleanup)
@@ -9712,6 +9744,25 @@
                 (AstTyUnit))))])]
     [(NoneI64)
       (ErrLowerState (lower-diagnostic "lower: missing region reset binding"))]))
+
+(define (lower-emit-arena-restore
+  [state : LowerState]
+  [env : SymI64Env]
+  [hidden-name : String]) : ResultLowerState
+  (match (sym-i64-lookup env hidden-name)
+    [(SomeI64 arena-var)
+      (match (lower-state-alloc-var state)
+        [(LowerAlloc allocated restore-var)
+          (OkLowerState
+            (lower-state-emit
+              allocated
+              (IrInstrCall
+                restore-var
+                "tl_arena_set"
+                (IrCallArgsOne (IrValueVar arena-var))
+                (AstTyUnit))))])]
+    [(NoneI64)
+      (ErrLowerState (lower-diagnostic "lower: missing arena restore binding"))]))
 
 (define (lower-emit-cleanup-list
   [state : LowerState]
@@ -9759,7 +9810,8 @@
           [(TcTypeCache _ _ _ _ _ _ _ rest _) (set! cur-env (box-get rest))]
           [(TcTypeBind key ty rest)
             (begin
-              (if (= key cleanup-marker-id)
+              (cond
+                (= key cleanup-marker-id)
                 (match ty
                   [(AstTyTuple types)
                     (match types
@@ -9798,20 +9850,43 @@
                             [_ unit]))]
                       [_ unit])]
                   [_ unit])
-                (if (= key region-reset-marker-id)
-                  (match ty
-                    [(AstTyVar hidden-name)
-                      (match (lower-emit-region-reset
-                        cur-state
-                        env
-                        (intern-str hidden-name))
-                        [(OkLowerState next-state) (set! cur-state next-state)]
-                        [(ErrLowerState message)
-                          (begin
-                            (set! result (ErrLowerState message))
-                            (set! done true))])]
-                    [_ unit])
-                  unit))
+                (= key region-reset-marker-id)
+                (match ty
+                  [(AstTyVar hidden-name)
+                    (match (lower-emit-region-reset
+                      cur-state
+                      env
+                      (intern-str hidden-name))
+                      [(OkLowerState next-state) (set! cur-state next-state)]
+                      [(ErrLowerState message)
+                        (begin
+                          (set! result (ErrLowerState message))
+                          (set! done true))])]
+                  [(AstTyTuple types)
+                    (match types
+                      [(AstTypeCons hidden-ty end)
+                        (let
+                          [hidden-ty : AstType (ty-node-get hidden-ty)]
+                          [end : AstTypeList (box-get end)]
+                          (match hidden-ty
+                            [(AstTyVar hidden-name)
+                              (match end
+                                [(AstTypeNil)
+                                  (match (lower-emit-arena-restore
+                                    cur-state
+                                    env
+                                    (intern-str hidden-name))
+                                    [(OkLowerState next-state)
+                                      (set! cur-state next-state)]
+                                    [(ErrLowerState message)
+                                      (begin
+                                        (set! result (ErrLowerState message))
+                                        (set! done true))])]
+                                [_ unit])]
+                            [_ unit]))]
+                      [_ unit])]
+                  [_ unit])
+                unit)
               (if done
                 unit
                 (set! cur-env (box-get rest))))]))
@@ -13392,6 +13467,10 @@
       (let
         [scratch : AstExpr (ast-node-get scratch-box)]
         (lower-with-escape ctx state env type-env scratch body))]
+    [(AstExprInArena arena-box body)
+      (let
+        [arena : AstExpr (ast-node-get arena-box)]
+        (lower-in-arena ctx state env type-env arena body))]
     [(AstExprWithResource bindings body)
       (lower-with-resource ctx state env type-env bindings body)]
     [(AstExprBox inner-box)
@@ -20121,6 +20200,81 @@
                               (AstTyUnit)))
                           value
                           body-ty))]))])]
+          [(ErrLowerExpr message) (ErrLowerExpr message)]))]))
+
+(define (lower-in-arena
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [arena : AstExpr]
+  [body : AstExprList]) : ResultLowerExpr
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc saved-allocated saved-var)
+      (let
+        [saved-state : LowerState
+          (lower-state-emit
+            saved-allocated
+            (IrInstrCall saved-var "tl_arena_current" IrCallArgsNil (AstTyI64)))]
+        (match (lower-expr-expected
+          ctx
+          saved-state
+          env
+          type-env
+          arena
+          (AstTyI64)
+          arena)
+          [(OkLowerExpr arena-lowered)
+            (match arena-lowered
+              [(LowerExpr arena-state arena-value _)
+                (match (lower-runtime-call-values
+                  arena-state
+                  "tl_arena_set"
+                  (compiler-ir-value-cons arena-value IrValueNil)
+                  (AstTyUnit))
+                  [(OkLowerExpr set-lowered)
+                    (match set-lowered
+                      [(LowerExpr set-state _ _)
+                        (let
+                          [hidden-name : String
+                            (lower-arena-restore-hidden-name saved-var)]
+                          [body-env : SymI64Env
+                            (sym-i64-bind env hidden-name saved-var)]
+                          [body-type-env : TcTypeEnv
+                            (lower-type-env-push-arena-restore
+                              type-env
+                              hidden-name)]
+                          (match (lower-begin
+                            ctx
+                            set-state
+                            body-env
+                            body-type-env
+                            body)
+                            [(OkLowerExpr body-lowered)
+                              (match body-lowered
+                                [(LowerExpr body-state value body-ty)
+                                  (if (tc-never-type? body-ty)
+                                    (OkLowerExpr
+                                      (LowerExpr body-state value body-ty))
+                                    (match (lower-runtime-call-values
+                                      body-state
+                                      "tl_arena_set"
+                                      (compiler-ir-value-cons
+                                        (IrValueVar saved-var)
+                                        IrValueNil)
+                                      (AstTyUnit))
+                                      [(OkLowerExpr restore-lowered)
+                                        (match restore-lowered
+                                          [(LowerExpr restore-state _ _)
+                                            (OkLowerExpr
+                                              (LowerExpr
+                                                restore-state
+                                                value
+                                                body-ty))])]
+                                      [(ErrLowerExpr message)
+                                        (ErrLowerExpr message)]))])]
+                            [(ErrLowerExpr message) (ErrLowerExpr message)]))])]
+                  [(ErrLowerExpr message) (ErrLowerExpr message)])])]
           [(ErrLowerExpr message) (ErrLowerExpr message)]))]))
 
 (define (lower-with-escape-final
@@ -35221,6 +35375,58 @@
         (set! ok false))
       ok)))
 
+(define (compiler-lower-in-arena-source) : String
+  (compiler-lower-with-arena-source
+    "(define (main) : String
+  (let
+    [scratch : i64 (arena-make)]
+    (in-arena scratch (int->string 42))))"))
+
+(define (compiler-lower-in-arena-return-source) : String
+  (compiler-lower-with-arena-source
+    "(define (main [flag : bool]) : i64
+  (let
+    [scratch : i64 (arena-make)]
+    (in-arena scratch
+      (begin
+        (if flag (return 7) unit)
+        42))))"))
+
+(define (compiler-lower-in-arena-shape-ok?) : bool
+  (let
+    [ok : bool true]
+    (begin
+      (if (match (lower-compiler-source (compiler-lower-in-arena-source))
+        [(OkCompilerLower program _)
+          (match program
+            [(IrProgram _ functions _)
+              (and
+                (>=
+                  (lower-test-functions-call-count functions "tl_arena_current")
+                  1)
+                (>=
+                  (lower-test-functions-call-count functions "tl_arena_set")
+                  2))])]
+        [(ErrCompilerLower _) false])
+        unit
+        (set! ok false))
+      (if (match (lower-compiler-source (compiler-lower-in-arena-return-source))
+        [(OkCompilerLower program _)
+          (match program
+            [(IrProgram _ functions _)
+              (and
+                (>=
+                  (lower-test-functions-call-count functions "tl_arena_current")
+                  1)
+                (>=
+                  (lower-test-functions-call-count functions "tl_arena_set")
+                  3)
+                (> (lower-test-function-return-count functions "main") 1))])]
+        [(ErrCompilerLower _) false])
+        unit
+        (set! ok false))
+      ok)))
+
 (define (compiler-lower-repr-c-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-repr-c-source))
     [(OkCompilerLower program _)
@@ -36827,6 +37033,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-with-escape-shape-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-in-arena-shape-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-repr-c-shape-ok?)

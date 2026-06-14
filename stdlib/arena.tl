@@ -39,6 +39,20 @@
 ;#       (string-append-borrowed (& prefix) (& suffix)))))
 ;# ```
 ;#
+;# To keep results owned by the target arena itself, use `in-arena`. It switches
+;# the active allocation target for the dynamic extent and restores the previous
+;# active arena without marking, rewinding, destroying, or cloning:
+;#
+;# ```typelisp
+;# (import "stdlib/arena.tl")
+;# (import "stdlib/string.tl")
+;#
+;# (define (build-in-level [level : i64] [n : i64]) : String
+;#   (in-arena
+;#     level
+;#     (string-append "level:" (int->string n))))
+;# ```
+;#
 ;# Manual arena switching, rewinding, and destruction remain explicit unsafe
 ;# operations for code that can prove all invalidated handles are dead:
 ;#

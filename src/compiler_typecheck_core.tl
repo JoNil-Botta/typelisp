@@ -12387,9 +12387,16 @@
         TcSpmdVarying
         TcSpmdLocal
         TcSpmdForeachIndex)]
-    (match (tc-spmd-expr ctx body-env body-spmd-env body)
-      [(OkTcSpmdExprInfo _) OkTcUnit]
-      [(ErrTcSpmdExprInfo message) (ErrTcUnit message)])))
+    [result : ResultTcUnit OkTcUnit]
+    (begin
+      (tc-spmd-inline-helper-stack-reset!)
+      (set!
+        result
+        (match (tc-spmd-expr ctx body-env body-spmd-env body)
+          [(OkTcSpmdExprInfo _) OkTcUnit]
+          [(ErrTcSpmdExprInfo message) (ErrTcUnit message)]))
+      (tc-spmd-inline-helper-stack-reset!)
+      result)))
 
 (define (tc-spmd-check-foreach-body
   [ctx : TcContext]

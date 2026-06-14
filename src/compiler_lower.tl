@@ -109,6 +109,12 @@
   (LowerNoAstExpr)
   (LowerSomeAstExpr AstExpr))
 
+(defenum LowerSpmdInlineLetBindings
+  (LowerSpmdInlineLetBindings
+    AstLetBindingList
+    LowerSpmdInlineSubst
+    LowerStringSet))
+
 (defenum LowerVectorMapValue
   (LowerVectorMapArray i64)
   (LowerVectorMapUniform CompilerIrValue)
@@ -179,9 +185,9 @@
   (OkLowerAstExprList AstExprList)
   (ErrLowerAstExprList CompilerDiagnostic))
 
-(defenum ResultLowerAstLetBindingList
-  (OkLowerAstLetBindingList AstLetBindingList)
-  (ErrLowerAstLetBindingList CompilerDiagnostic))
+(defenum ResultLowerSpmdInlineLetBindings
+  (OkLowerSpmdInlineLetBindings LowerSpmdInlineLetBindings)
+  (ErrLowerSpmdInlineLetBindings CompilerDiagnostic))
 
 (defenum ResultLowerSpmdInlineSubst
   (OkLowerSpmdInlineSubst LowerSpmdInlineSubst)
@@ -1768,8 +1774,18 @@
 (define lower-spmd-inline-helper-stack : LowerStringSet
   (lower-spmd-inline-empty-helper-stack))
 
+(define lower-spmd-inline-next-temp : i64
+  0)
+
 (define (lower-spmd-inline-recursive-message) : String
   "lower: recursive SPMD inline helper call is not supported")
+
+(define (lower-spmd-inline-fresh-local [name : String]) : String
+  (let
+    [next : i64 lower-spmd-inline-next-temp]
+    (begin
+      (set! lower-spmd-inline-next-temp (+ lower-spmd-inline-next-temp 1))
+      (str-cat "__tl_spmd_inline_local$" (int->string next) "$" name))))
 
 (define (lower-spmd-inline-subst-lookup
   [subs : LowerSpmdInlineSubst]
@@ -1974,9 +1990,11 @@
   [type-env : TcTypeEnv]
   [bindings : AstLetBindingList]
   [subst : LowerSpmdInlineSubst]
-  [shadowed : LowerStringSet]) : ResultLowerAstLetBindingList
+  [shadowed : LowerStringSet]) : ResultLowerSpmdInlineLetBindings
   (match bindings
-    [(AstLetBindingNil) (OkLowerAstLetBindingList AstLetBindingNil)]
+    [(AstLetBindingNil)
+      (OkLowerSpmdInlineLetBindings
+        (LowerSpmdInlineLetBindings AstLetBindingNil subst shadowed))]
     [(AstLetBindingCons binding rest)
       (let
         [rest : AstLetBindingList (box-get rest)]
@@ -1985,6 +2003,15 @@
             (let
               [init : AstExpr (ast-node-get init-box)]
               [name-text : String (intern-str name)]
+              [renamed : bool
+                (match subst
+                  [(LowerSpmdInlineSubstNil) false]
+                  [_ true])]
+              [bind-name : String
+                (if renamed
+                  (lower-spmd-inline-fresh-local name-text)
+                  name-text)]
+              [bind-id : i64 (intern bind-name)]
               (match (lower-spmd-inline-expr
                 ctx
                 env
@@ -1998,19 +2025,32 @@
                     env
                     type-env
                     rest
-                    (lower-spmd-inline-subst-remove subst name-text)
+                    (if renamed
+                      (lower-spmd-inline-subst-cons
+                        name-text
+                        (AstExprVar bind-id)
+                        (lower-spmd-inline-subst-remove subst name-text))
+                      (lower-spmd-inline-subst-remove subst name-text))
                     (lower-string-set-insert shadowed name-text))
-                    [(OkLowerAstLetBindingList rewritten-rest)
-                      (OkLowerAstLetBindingList
-                        (ast-let-binding-cons
-                          (ast-let-binding-id
-                            name
-                            maybe-ty
-                            (ast-node-push rewritten-init))
-                          rewritten-rest))]
-                    [(ErrLowerAstLetBindingList diag)
-                      (ErrLowerAstLetBindingList diag)])]
-                [(ErrLowerAstExpr diag) (ErrLowerAstLetBindingList diag)]))]))]))
+                    [(OkLowerSpmdInlineLetBindings rewritten)
+                      (match rewritten
+                        [(LowerSpmdInlineLetBindings
+                            rewritten-rest
+                            body-subst
+                            body-shadowed)
+                          (OkLowerSpmdInlineLetBindings
+                            (LowerSpmdInlineLetBindings
+                              (ast-let-binding-cons
+                                (ast-let-binding-id
+                                  bind-id
+                                  maybe-ty
+                                  (ast-node-push rewritten-init))
+                                rewritten-rest)
+                              body-subst
+                              body-shadowed))])]
+                    [(ErrLowerSpmdInlineLetBindings diag)
+                      (ErrLowerSpmdInlineLetBindings diag)])]
+                [(ErrLowerAstExpr diag) (ErrLowerSpmdInlineLetBindings diag)]))]))]))
 
 (define (lower-spmd-inline-helper-body
   [ctx : TcContext]
@@ -2185,22 +2225,27 @@
           bindings
           subst
           shadowed)
-          [(OkLowerAstLetBindingList rewritten-bindings)
-            (match (lower-spmd-inline-expr
-              ctx
-              env
-              type-env
-              body
-              (lower-spmd-inline-subst-remove-let-binding-names subst bindings)
-              (lower-spmd-inline-let-binding-shadowed shadowed bindings))
-              [(OkLowerAstExpr rewritten-body)
-                (OkLowerAstExpr
-                  (ast-node-get
-                    (ast-expr-let
-                      rewritten-bindings
-                      (ast-node-push rewritten-body))))]
-              [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)])]
-          [(ErrLowerAstLetBindingList diag) (ErrLowerAstExpr diag)]))]
+          [(OkLowerSpmdInlineLetBindings rewritten)
+            (match rewritten
+              [(LowerSpmdInlineLetBindings
+                  rewritten-bindings
+                  body-subst
+                  body-shadowed)
+                (match (lower-spmd-inline-expr
+                  ctx
+                  env
+                  type-env
+                  body
+                  body-subst
+                  body-shadowed)
+                  [(OkLowerAstExpr rewritten-body)
+                    (OkLowerAstExpr
+                      (ast-node-get
+                        (ast-expr-let
+                          rewritten-bindings
+                          (ast-node-push rewritten-body))))]
+                  [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)])])]
+          [(ErrLowerSpmdInlineLetBindings diag) (ErrLowerAstExpr diag)]))]
     [(AstExprBegin exprs)
       (match (lower-spmd-inline-expr-list ctx env type-env exprs subst shadowed)
         [(OkLowerAstExprList rewritten)

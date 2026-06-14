@@ -18,12 +18,15 @@
 (define (bump [x : i64]) : i64
   (+ x 5))
 
+(define (non-negative? [x : i64]) : bool
+  (>= x 0))
+
 (define (fill-inline [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (if (< (array-ref xs i) 0)
-      (array-set! out i 0)
-      (array-set! out i (bump (array-ref xs i))))))
+    (if (non-negative? (array-ref xs i))
+      (array-set! out i (bump (array-ref xs i)))
+      (array-set! out i 0))))
 
 (define (sum-array [xs : (Array i64)] [n : i64]) : i64
   (let

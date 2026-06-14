@@ -28,6 +28,12 @@ falling back to scalar code.
   uniform scalar broadcast, and tail handling.
 - `inline_helper_i64.tl` - `foreach` over `n = 1` i64 lane through a direct
   source-known helper with a varying scalar argument. Exit 42.
+- `inline_helper_shadow_i64.tl` - `foreach` over `n = 13` i64 lanes through a
+  helper whose local binding would capture a naively substituted argument. Exit
+  42 in scalar mode; SIMD modes reject this non-map helper-local `let` shape.
+- `inline_helper_f64.tl` - `foreach` over `n = 13` f64 lanes through a direct
+  source-known helper with a varying floating-point argument and result. Exit
+  42.
 - `masked_if_i64.tl` — AVX-512-only masked varying `if` over `n = 13` i64
   lanes, with direct-index predicated reads/writes and a masked tail. Exit 42.
 - `masked_if_offset_i64.tl` - AVX-512-only masked varying `if` over `n = 12`
@@ -36,8 +42,9 @@ falling back to scalar code.
   `n = 13` i64 lanes whose condition and stores use the foreach index as a
   varying value. Exit 42.
 - `inline_helper_masked_if_i64.tl` - AVX-512-only masked varying `if` whose
-  taken branch calls a direct source-known helper with a varying scalar
-  argument. Exit 42.
+  condition calls a direct helper returning a varying bool and whose taken
+  branch calls a direct source-known helper with a varying scalar argument.
+  Exit 42.
 - `../integration/spmd_foreach.tl` — `foreach` add over i64, i32, f64, and
   f32 arrays, self-checked against scalar loops across empty, sub-lane,
   exact-lane, and tail lengths. Exit 42.
@@ -66,7 +73,8 @@ Coverage map:
   foreach-index-as-value coverage lives in `masked_if_i64.tl`,
   `masked_if_offset_i64.tl`, and `masked_if_index_value_i64.tl`.
 - Direct inline-helper coverage for varying scalar lane values lives in
-  `inline_helper_i64.tl` and `inline_helper_masked_if_i64.tl`.
+  `inline_helper_i64.tl`, `inline_helper_shadow_i64.tl`,
+  `inline_helper_f64.tl`, and `inline_helper_masked_if_i64.tl`.
 - `spmd-reduce` scalar coverage for the documented operator/type surface lives
   in `../integration/spmd_reduce_scalar.tl`.
 - `spmd-broadcast` executable coverage lives in `broadcast_lane0_i64.tl` and

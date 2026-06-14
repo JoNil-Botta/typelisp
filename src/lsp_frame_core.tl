@@ -13,6 +13,8 @@
 
 (import "format_rules.tl")
 
+(import "lint_driver_core.tl")
+
 (import "../stdlib/string.tl")
 
 (import "../stdlib/str_cat.tl")
@@ -758,27 +760,95 @@
           (lsp-publish-diagnostics old-diagnostic-uri JsonListNil)))]
     [(MissingLspDocument) (lsp-publish-diagnostics uri JsonListNil)]))
 
+;; --------------------------------------------------------------------------
+;; Lint findings as diagnostics (Warning severity), published for the open
+;; document alongside the compiler error diagnostics. Findings carry the rule
+;; id as the diagnostic code; `;; lint-allow: <rule-id>` suppressions and
+;; derived-origin (macro-expanded) filtering match the `typelisp lint` CLI.
+;; --------------------------------------------------------------------------
+(define (lsp-lint-diagnostic
+  [line : i64]
+  [col : i64]
+  [message : String]
+  [code : String]) : Json
+  (lsp-json-object
+    (lsp-json-member
+      "range"
+      (lsp-range line col)
+      (lsp-json-member
+        "severity"
+        (lsp-json-number 2)
+        (lsp-json-member
+          "source"
+          (JsonString "typelisp-lint")
+          (lsp-json-member
+            "code"
+            (JsonString code)
+            (lsp-json-member "message" (JsonString message) JsonMemberListNil)))))))
+
+(define (lsp-lint-finding-diagnostic [finding : LintFinding]) : Json
+  (let
+    [span : AstSourceSpan (struct-get finding span)]
+    (lsp-lint-diagnostic
+      (struct-get span start-line)
+      (struct-get span start-col)
+      (struct-get finding message)
+      (struct-get finding rule-id))))
+
+(define (lsp-lint-findings-to-json
+  [text : String]
+  [findings : LintFindings]
+  [i : i64]
+  [acc : JsonList]) : JsonList
+  (if (>= i (lint-findings-count findings))
+    acc
+    (let
+      [finding : LintFinding (array-ref (lint-findings-slots findings) i)]
+      (if (selfhost-lint-suppressed? text finding)
+        (lsp-lint-findings-to-json text findings (+ i 1) acc)
+        (lsp-lint-findings-to-json
+          text
+          findings
+          (+ i 1)
+          (lsp-json-list-cons (lsp-lint-finding-diagnostic finding) acc))))))
+
+(define (lsp-lint-diagnostics
+  [path : String]
+  [text : String]
+  [stdlib-roots : StringVec]) : JsonList
+  (lsp-lint-findings-to-json
+    text
+    (selfhost-lint-source-with-roots path text stdlib-roots)
+    0
+    JsonListNil))
+
 (define (lsp-analyze-document
   [uri : String]
   [path : String]
   [text : String]
   [stdlib-roots : StringVec]) : String
-  (match (compiler-check-source-with-roots path text stdlib-roots)
-    [(OkCompilerCheck _)
-      (begin
-        (lsp-publish-diagnostics uri JsonListNil)
-        "")]
-    [(ErrCompilerCheck diag)
-      (let
-        [diag-uri : String (lsp-diagnostic-uri uri path diag)]
+  (let
+    [lint-diags : JsonList (lsp-lint-diagnostics path text stdlib-roots)]
+    (match (compiler-check-source-with-roots path text stdlib-roots)
+      [(OkCompilerCheck _)
         (begin
+          (lsp-publish-diagnostics uri lint-diags)
+          "")]
+      [(ErrCompilerCheck diag)
+        (let
+          [diag-uri : String (lsp-diagnostic-uri uri path diag)]
           (if (string-eq diag-uri uri)
-            unit
-            (lsp-publish-diagnostics uri JsonListNil))
-          (lsp-publish-diagnostics
-            diag-uri
-            (lsp-json-list-cons (lsp-compiler-diagnostic diag) JsonListNil))
-          diag-uri))]))
+            (begin
+              (lsp-publish-diagnostics
+                uri
+                (lsp-json-list-cons (lsp-compiler-diagnostic diag) lint-diags))
+              uri)
+            (begin
+              (lsp-publish-diagnostics uri lint-diags)
+              (lsp-publish-diagnostics
+                diag-uri
+                (lsp-json-list-cons (lsp-compiler-diagnostic diag) JsonListNil))
+              diag-uri)))])))
 
 (define (lsp-first-change-text [params : Json]) : LspJsonText
   (let

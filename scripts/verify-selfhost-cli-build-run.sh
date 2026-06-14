@@ -96,6 +96,17 @@ assert_contains() {
     fi
 }
 
+assert_not_contains() {
+    label=$1
+    file=$2
+    text=$3
+    if grep -F -- "$text" "$file" >/dev/null; then
+        echo "file contents:" >&2
+        sed 's/^/  /' "$file" >&2 || true
+        fail "$label contained unexpected text: $text"
+    fi
+}
+
 assert_occurrences() {
     label=$1
     file=$2
@@ -322,8 +333,17 @@ EOF
   (kind "lib")
   (entry "src/lib.tl"))
 EOF
-    printf '%s' '(define (surface-inspect-value) : i64
-  42)' > "$CLI_SURFACE_INSPECT_PKG/src/lib.tl"
+    cat > "$CLI_SURFACE_INSPECT_PKG/src/lib.tl" <<'EOF'
+(define surface-inspect-value : i64 42)
+(defstruct SurfaceInspectPoint
+  (x i64)
+  (y i64))
+(defmacro (surface-inspect-macro [expr : Expr]) : Expr expr)
+(export
+  (value surface-inspect-value)
+  (type SurfaceInspectPoint)
+  (macro surface-inspect-macro))
+EOF
 }
 
 assert_active_cli_surface_command() {
@@ -412,6 +432,11 @@ assert_active_cli_surface_command() {
             assert_contains "$label" "$WORKDIR/$label.out" "package-name: surface_inspect"
             assert_contains "$label" "$WORKDIR/$label.out" "metadata-version: v1"
             assert_contains "$label" "$WORKDIR/$label.out" "code: offset=0 bytes=0"
+            assert_contains "$label" "$WORKDIR/$label.out" "exports:"
+            assert_contains "$label" "$WORKDIR/$label.out" "  value surface-inspect-value signature=i64"
+            assert_contains "$label" "$WORKDIR/$label.out" "  type SurfaceInspectPoint layout=size=16 align=8"
+            assert_contains "$label" "$WORKDIR/$label.out" "  macro surface-inspect-macro signature=(macro (Expr) -> Expr)"
+            assert_not_contains "$label" "$WORKDIR/$label.out" "  (none)"
             bad_tlci="$CLI_SURFACE_DIR/bad.tlci"
             printf 'bad' > "$bad_tlci"
             bad_label="${label}-bad"

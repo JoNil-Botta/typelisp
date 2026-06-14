@@ -2279,7 +2279,16 @@ cat > "$PKG/src/main.tl" <<'EOF'
 (define (main) : i64 (add-one (inc 40)))
 EOF
 cat > "$PKG/src/math.tl" <<'EOF'
+(define public-tool-value : i64 42)
+(defstruct PublicToolPoint
+  (x i64)
+  (y i64))
+(defmacro (public-tool-macro [expr : Expr]) : Expr expr)
 (define (inc [x : i64]) : i64 (+ x 1))
+(export
+  (value public-tool-value)
+  (type PublicToolPoint)
+  (macro public-tool-macro))
 EOF
 cat > "$PKG/vendor/math/src/lib.tl" <<'EOF'
 (define (add-one [x : i64]) : i64 (+ x 1))
@@ -2310,7 +2319,11 @@ if [ "$HAS_INSPECT_COMMAND" -eq 1 ]; then
     assert_contains "$out" "package-name: public_tool_pkg"
     assert_contains "$out" "metadata-version: v1"
     assert_contains "$out" "code: offset=0 bytes=0"
-    assert_contains "$out" "  (none)"
+    assert_contains "$out" "exports:"
+    assert_contains "$out" "  value public-tool-value signature=i64"
+    assert_contains "$out" "  type PublicToolPoint layout=size=16 align=8"
+    assert_contains "$out" "  macro public-tool-macro signature=(macro (Expr) -> Expr)"
+    assert_not_contains "$out" "  (none)"
     BAD_TLCI="$WORKDIR/bad.tlci"
     printf 'bad' > "$BAD_TLCI"
     run_cmd package-inspect-bad-tlci "$COMPILER" inspect "$BAD_TLCI"

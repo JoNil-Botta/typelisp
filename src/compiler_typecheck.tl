@@ -38,6 +38,28 @@
             [(ErrMacroExpand diag) (ErrCompilerTypecheck diag)])]
         [(ErrGenProgramWithPaths diag) (ErrCompilerTypecheck diag)]))))
 
+(define (typecheck-compiler-program-with-paths-checked
+  [program : AstProgram]
+  [paths : AstDeclPathList]) : ResultCompilerTypecheckChecked
+  (begin
+    (tc-spmd-inline-helper-stack-reset!)
+    (match (gen-normalize-program-with-paths program paths "")
+      [(OkGenProgramWithPaths generated generated-paths)
+        (match (macro-expand-program generated)
+          [(OkMacroExpand expanded)
+            (if (compiler-specialize-needed? expanded)
+              (match (compiler-specialize-program expanded)
+                [(OkSpecProgram specialized)
+                  (typecheck-compiler-specialized-program-with-paths-checked
+                    specialized
+                    AstDeclPathNil)]
+                [(ErrSpecProgram diag) (ErrCompilerTypecheckChecked diag)])
+              (typecheck-compiler-specialized-program-with-paths-checked
+                expanded
+                generated-paths))]
+          [(ErrMacroExpand diag) (ErrCompilerTypecheckChecked diag)])]
+      [(ErrGenProgramWithPaths diag) (ErrCompilerTypecheckChecked diag)])))
+
 (define (typecheck-compiler-program [program : AstProgram]) : ResultCompilerTypecheck
   (typecheck-compiler-program-with-paths program AstDeclPathNil))
 

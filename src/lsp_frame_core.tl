@@ -11,8 +11,6 @@
 
 (import "compiler_load.tl")
 
-(import "format_rules.tl")
-
 (import "../stdlib/string.tl")
 
 (import "../stdlib/str_cat.tl")
@@ -331,27 +329,19 @@
 (define (lsp-initialize-result) : Json
   (lsp-json-object2
     "capabilities"
-    (lsp-json-object
-      (lsp-json-member
-        "textDocumentSync"
-        (lsp-json-object2
-          "openClose"
-          (JsonBool true)
-          "change"
-          (lsp-json-number 1))
-        (lsp-json-member
-          "definitionProvider"
-          (JsonBool true)
-          (lsp-json-member
-            "completionProvider"
-            (lsp-json-object1 "resolveProvider" (JsonBool false))
-            (lsp-json-member
-              "inlayHintProvider"
-              (JsonBool true)
-              (lsp-json-member
-                "documentFormattingProvider"
-                (JsonBool true)
-                JsonMemberListNil))))))
+    (lsp-json-object4
+      "textDocumentSync"
+      (lsp-json-object2
+        "openClose"
+        (JsonBool true)
+        "change"
+        (lsp-json-number 1))
+      "definitionProvider"
+      (JsonBool true)
+      "completionProvider"
+      (lsp-json-object1 "resolveProvider" (JsonBool false))
+      "inlayHintProvider"
+      (JsonBool true))
     "serverInfo"
     (lsp-json-object2
       "name"
@@ -1450,8 +1440,7 @@
           [line0 : i64 (- line1 1)]
           (begin
             (if (and
-              (>= line0 start-line)
-              (<= line0 end-line)
+              (and (>= line0 start-line) (<= line0 end-line))
               (lsp-inlay-valid-binding?
                 text
                 (lsp-offset-at-position text line0 (- col1 1))))
@@ -1505,58 +1494,6 @@
                   (lsp-inlay-respond id uri range docs stdlib-roots)]
                 [(JsonMissing)
                   (lsp-write-response id (lsp-json-array JsonListNil))]))]
-          [(MissingLspJsonText)
-            (lsp-write-response id (lsp-json-array JsonListNil))])]
-      [(JsonMissing) (lsp-write-response id (lsp-json-array JsonListNil))])))
-
-;; --------------------------------------------------------------------------
-;; Document formatting (textDocument/formatting), enabling format-on-save.
-;;
-;; Reuses the `typelisp fmt` formatter (format-rules, width 80). On a parse
-;; error the document is left untouched (empty edit list) so saving never
-;; mangles in-progress code.
-;; --------------------------------------------------------------------------
-(define (lsp-formatting-edit [text : String] [formatted : String]) : Json
-  (let
-    [end : LspLineCol (lsp-line-col-at-offset text (string-length text))]
-    (lsp-json-object2
-      "range"
-      (lsp-json-object2
-        "start"
-        (lsp-position 1 1)
-        "end"
-        (lsp-position (struct-get end line) (struct-get end col)))
-      "newText"
-      (JsonString formatted))))
-
-(define (lsp-formatting-respond
-  [id : Json]
-  [uri : String]
-  [docs : LspDocuments]) : unit
-  (match (lsp-documents-lookup docs uri)
-    [(FoundLspDocument _ text _)
-      (match (format-rules-render-source-width-result text 80)
-        [(OkFormatString formatted)
-          (lsp-write-response
-            id
-            (lsp-json-array
-              (lsp-json-list-cons
-                (lsp-formatting-edit text formatted)
-                JsonListNil)))]
-        [(ErrFormatString _)
-          (lsp-write-response id (lsp-json-array JsonListNil))])]
-    [(MissingLspDocument) (lsp-write-response id (lsp-json-array JsonListNil))]))
-
-(define (lsp-handle-formatting
-  [id : Json]
-  [params : Json]
-  [docs : LspDocuments]) : unit
-  (let
-    [td-key : String "textDocument"]
-    (match (json-object-get params (& td-key))
-      [(JsonFound document)
-        (match (lsp-json-string-field document "uri")
-          [(OkLspJsonText uri) (lsp-formatting-respond id uri docs)]
           [(MissingLspJsonText)
             (lsp-write-response id (lsp-json-array JsonListNil))])]
       [(JsonMissing) (lsp-write-response id (lsp-json-array JsonListNil))])))
@@ -1645,20 +1582,6 @@
                   (match (json-object-get message (& params-key))
                     [(JsonFound params)
                       (lsp-handle-inlay id params docs stdlib-roots)]
-                    [(JsonMissing)
-                      (lsp-write-response id (lsp-json-array JsonListNil))]))]
-              [(JsonMissing) unit]))
-          (LspContinue docs))
-        (string-eq method "textDocument/formatting")
-        (begin
-          (let
-            [id-key : String "id"]
-            (match (json-object-get message (& id-key))
-              [(JsonFound id)
-                (let
-                  [params-key : String "params"]
-                  (match (json-object-get message (& params-key))
-                    [(JsonFound params) (lsp-handle-formatting id params docs)]
                     [(JsonMissing)
                       (lsp-write-response id (lsp-json-array JsonListNil))]))]
               [(JsonMissing) unit]))

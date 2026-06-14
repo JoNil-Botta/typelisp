@@ -641,15 +641,28 @@
   [image : CompilerObjectImage]) : bool
   (and
     (compiler-object-elf-image-supported? image)
-    (compiler-object-symbol-list-contains?
-      (struct-get image symbols)
-      "_tl_start"
-      (ObjectSymbolExport)
-      (ObjectSymbolFunction))
+    (or
+      (compiler-object-symbol-list-contains?
+        (struct-get image symbols)
+        "_tl_start"
+        (ObjectSymbolExport)
+        (ObjectSymbolFunction))
+      (compiler-object-symbol-list-contains?
+        (struct-get image symbols)
+        "main"
+        (ObjectSymbolExport)
+        (ObjectSymbolFunction)))
     (> (compiler-object-elf-section-raw-size image (ObjectSectionText)) 0)))
 
+(define (source-tool-linux-direct-object-archivable?
+  [image : CompilerObjectImage]) : bool
+  (compiler-object-elf-image-supported? image))
+
 (define (source-tool-linux-direct-object-unavailable-message) : String
-  "linux direct object unavailable: object image lacks encoded .text or _tl_start")
+  "linux direct object unavailable: object image lacks encoded .text or entry symbol")
+
+(define (source-tool-linux-direct-object-archive-unavailable-message) : String
+  "linux direct object unavailable: object image has unsupported ELF records")
 
 (define (source-tool-render-linkable-linux-elf-object
   [image : CompilerObjectImage]) : ResultSourceToolString
@@ -658,6 +671,15 @@
       [(OkCompilerObjectElf obj) (OkSourceToolString obj)]
       [(ErrCompilerObjectElf message) (ErrSourceToolString message)])
     (ErrSourceToolString (source-tool-linux-direct-object-unavailable-message))))
+
+(define (source-tool-render-archivable-linux-elf-object
+  [image : CompilerObjectImage]) : ResultSourceToolString
+  (if (source-tool-linux-direct-object-archivable? image)
+    (match (compiler-object-elf-render image)
+      [(OkCompilerObjectElf obj) (OkSourceToolString obj)]
+      [(ErrCompilerObjectElf message) (ErrSourceToolString message)])
+    (ErrSourceToolString
+      (source-tool-linux-direct-object-archive-unavailable-message))))
 
 (define (source-tool-emit-linux-elf-object
   [source : String]
@@ -1297,6 +1319,19 @@
     [(SourceToolCommandErr message) (SourceToolDirectObjectErr message)]
     [(SourceToolCommandOk)
       (match (source-tool-link target obj-path bin-path link-inputs)
+        [(SourceToolCommandOk) SourceToolDirectObjectOk]
+        [(SourceToolCommandErr message) (SourceToolDirectObjectErr message)])]))
+
+(define (source-tool-write-direct-object-and-archive
+  [obj-path : String]
+  [archive-path : String]
+  [target : CompilerBackendTarget]
+  [obj : String]
+  [context : String]) : SourceToolDirectObjectStatus
+  (match (source-tool-write-file obj-path obj context)
+    [(SourceToolCommandErr message) (SourceToolDirectObjectErr message)]
+    [(SourceToolCommandOk)
+      (match (source-tool-archive target obj-path archive-path)
         [(SourceToolCommandOk) SourceToolDirectObjectOk]
         [(SourceToolCommandErr message) (SourceToolDirectObjectErr message)])]))
 

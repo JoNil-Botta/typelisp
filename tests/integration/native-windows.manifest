@@ -167,3 +167,4 @@ register_resident_enum16|tests/integration/register_resident_enum16.tl|42|-|-|-
 register_resident_reference|tests/integration/register_resident_reference.tl|95|-|-|-
 register_float_aggregate_f64|tests/integration/register_float_aggregate_f64.tl|42|-|-|-
 sync_channel_thread_runtime|tests/integration/sync_channel_thread_runtime.tl|42|-|-|stdlib/sync.tl stdlib/thread.tl
+sync_mutex_thread_runtime|tests/integration/sync_mutex_thread_runtime.tl|42|-|-|stdlib/sync.tl stdlib/thread.tl

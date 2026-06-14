@@ -1,9 +1,10 @@
 ;# stdlib/sync.tl - Safe synchronization helpers over the raw thread substrate.
 ;#
-;# Provides a first concrete bounded channel surface for copyable scalar
-;# ownership transfer between native threads. The channel object is a small
-;# copyable handle; queued `i64` messages live in runtime-owned OS memory, and
-;# all ring-buffer mutation is serialized with semaphore-backed synchronization.
+;# Provides first concrete synchronization surfaces for native threads:
+;# `ChannelI64` for copyable scalar ownership transfer and `MutexI64` for shared
+;# scalar mutation through a lexical cleanup guard. Handles are small copyable
+;# values; shared state lives in runtime-owned OS memory and is serialized with
+;# semaphore-backed synchronization.
 ;#
 ;# Usage: `(import "stdlib/sync.tl")`
 ;#
@@ -28,6 +29,15 @@
 (define channel-i64-raw-field-count : i64
   7)
 
+;: Number of raw `i64` fields needed to serialize a `MutexI64` handle.
+(define mutex-i64-raw-field-count : i64
+  2)
+
+;: Runtime-owned mutex-protected `i64` slot.
+(defstruct MutexI64
+  (value-addr i64)
+  (mutex-handle i64))
+
 ;: Runtime-owned bounded channel handle for `i64` messages.
 (defstruct ChannelI64
   (slots-addr i64)
@@ -42,6 +52,11 @@
 (defenum ChannelI64CreateResult
   (ChannelI64CreateOk ChannelI64)
   (ChannelI64CreateErr String))
+
+;: Result returned by `mutex-i64-create`.
+(defenum MutexI64CreateResult
+  (MutexI64CreateOk MutexI64)
+  (MutexI64CreateErr String))
 
 ;: Result returned by `channel-i64-send`.
 (defenum ChannelI64SendResult
@@ -69,6 +84,21 @@
     [address : i64]
     [size : i64]
     [free-type : i32]) : i32 (:symbol "VirtualFree")))
+
+;: Windows process exit for unrecoverable synchronization misuse.
+(cfg
+  windows
+  (extern (sync-windows-exit-process [code : i32]) : never (:symbol "ExitProcess")))
+
+;: Abort the process on impossible safe-surface lock failures.
+(define (sync-abort [code : i64]) : never
+  (cfg
+    windows
+    (sync-windows-exit-process (cast code : i32))
+    (begin
+      (unsafe
+        (syscall 231 code))
+      (sync-abort code))))
 
 ;: Allocate runtime-owned memory that is independent of TypeLisp arenas.
 (define (sync-runtime-alloc [bytes : i64]) : i64
@@ -129,6 +159,82 @@
 ;: Close one channel semaphore handle.
 (define (sync-semaphore-close [handle : i64]) : bool
   (thread-semaphore-close (sync-semaphore handle)))
+
+;: Unlock a mutex guard field during cleanup.
+(define (mutex-i64-unlock-handle [handle : i64]) : unit
+  (begin
+    (sync-semaphore-post handle)
+    unit))
+
+;: Lexical guard returned by `mutex-i64-lock`.
+(defstruct MutexI64Guard
+  (:cleanup mutex-i64-unlock)
+  (mutex-handle i64 (:cleanup mutex-i64-unlock-handle))
+  (value-addr i64))
+
+;: Finish mutex creation after storage allocation.
+(define (mutex-i64-create-semaphore [value-addr : i64]) : MutexI64CreateResult
+  (match (thread-semaphore-create 1)
+    [(ThreadSemaphoreErr message)
+      (begin
+        (sync-runtime-free value-addr 8)
+        (MutexI64CreateErr message))]
+    [(ThreadSemaphoreOk mutex)
+      (MutexI64CreateOk (MutexI64 value-addr (struct-get mutex handle)))]))
+
+;: Create a mutex-protected `i64` initialized to `initial`.
+(define (mutex-i64-create [initial : i64]) : MutexI64CreateResult
+  (let
+    [value-addr : i64 (sync-runtime-alloc 8)]
+    (if (= value-addr 0)
+      (MutexI64CreateErr "sync: mutex allocation failed")
+      (begin
+        (sync-write-i64! value-addr 0 initial)
+        (mutex-i64-create-semaphore value-addr)))))
+
+;: Lock `mutex`, blocking until the protected value is available.
+(define (mutex-i64-lock [mutex : MutexI64]) : MutexI64Guard
+  (if (sync-semaphore-wait (struct-get mutex mutex-handle))
+    (MutexI64Guard
+      (struct-get mutex mutex-handle)
+      (struct-get mutex value-addr))
+    (sync-abort 134)))
+
+;: Read the protected value while holding `guard`.
+(define (mutex-i64-get [guard : (& guard MutexI64Guard)]) : i64
+  (sync-read-i64 (struct-get guard value-addr) 0))
+
+;: Write the protected value while holding `guard`.
+(define (mutex-i64-set! [guard : (& guard MutexI64Guard)] [value : i64]) : unit
+  (sync-write-i64! (struct-get guard value-addr) 0 value))
+
+;: Add `delta` to the protected value and return the new value.
+(define (mutex-i64-add! [guard : (& guard MutexI64Guard)] [delta : i64]) : i64
+  (let
+    [next : i64 (+ (mutex-i64-get guard) delta)]
+    (begin
+      (mutex-i64-set! guard next)
+      next)))
+
+;: Close mutex resources after all users and guards are done.
+(define (mutex-i64-close [mutex : MutexI64]) : bool
+  (let
+    [mutex-ok : bool (sync-semaphore-close (struct-get mutex mutex-handle))]
+    [value-ok : bool (sync-runtime-free (struct-get mutex value-addr) 8)]
+    (and mutex-ok value-ok)))
+
+;: Store a mutex handle into a raw `i64` array at `offset`.
+(define (mutex-i64-store-raw!
+  [mutex : MutexI64]
+  [dst : (Array i64)]
+  [offset : i64]) : unit
+  (begin
+    (array-set! dst offset (struct-get mutex value-addr))
+    (array-set! dst (+ offset 1) (struct-get mutex mutex-handle))))
+
+;: Rebuild a mutex handle from a raw `i64` array at `offset`.
+(define (mutex-i64-load-raw [src : (Array i64)] [offset : i64]) : MutexI64
+  (MutexI64 (array-ref src offset) (array-ref src (+ offset 1))))
 
 ;: Return the next ring index for `channel`.
 (define (channel-i64-next-index [channel : ChannelI64] [index : i64]) : i64

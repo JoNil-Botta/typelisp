@@ -52,9 +52,38 @@
           42
           2)))))
 
+(define (sync-api-run-mutex [mutex : MutexI64]) : i64
+  (let
+    [packed : (Array i64) (make-array i64 mutex-i64-raw-field-count)]
+    (begin
+      (mutex-i64-store-raw! mutex packed 0)
+      (let
+        [loaded : MutexI64 (mutex-i64-load-raw packed 0)]
+        [first : i64
+          (with
+            ([guard (mutex-i64-lock loaded) mutex-i64-unlock])
+            (begin
+              (mutex-i64-set! guard 17)
+              (mutex-i64-add! guard 25)))]
+        [second : i64
+          (with
+            ([guard (mutex-i64-lock loaded) mutex-i64-unlock])
+            (mutex-i64-get guard))]
+        [closed : bool (mutex-i64-close loaded)]
+        (if (and closed (= first 42) (= second 42))
+          42
+          4)))))
+
 (define (main) : i64
   (if (not (sync-api-create-rejects-invalid?))
     1
     (match (channel-i64-create 2)
       [(ChannelI64CreateErr _) 3]
-      [(ChannelI64CreateOk channel) (sync-api-run-channel channel)])))
+      [(ChannelI64CreateOk channel)
+        (let
+          [channel-code : i64 (sync-api-run-channel channel)]
+          (if (not (= channel-code 42))
+            channel-code
+            (match (mutex-i64-create 5)
+              [(MutexI64CreateErr _) 5]
+              [(MutexI64CreateOk mutex) (sync-api-run-mutex mutex)])))])))

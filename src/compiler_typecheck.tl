@@ -2558,6 +2558,15 @@
     (let ([copy h])
       copy)))")
 
+(define (compiler-typecheck-resource-fresh-let-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(define (main) : i64
+  (let ([h : FileHandle (FileHandle 1)])
+    0))")
+
 (define (compiler-typecheck-resource-with-escape-source) : String
   "(define (close [h : i64]) : unit unit)
 (define (main) : i64
@@ -2637,6 +2646,9 @@
       "typecheck: with cleanup must be a direct function name")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-resource-with-let-source)
+      "typecheck: ordinary let cannot own cleanup-required resource; use with")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-resource-fresh-let-source)
       "typecheck: ordinary let cannot own cleanup-required resource; use with")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-resource-with-escape-source)
@@ -6632,7 +6644,7 @@
   (Closed))
 (define (take-ticket [ticket : Ticket]) : unit unit)
 (define (bad-cleanup-enum-match-local-reuse [n : i64]) : unit
-  (let [ticket : Ticket (Open n)]
+  (with ([ticket (Open n) cleanup-ticket])
     (begin
       (match ticket [(Open code) unit] [(Closed) unit])
       (take-ticket ticket))))")
@@ -6717,8 +6729,10 @@
   (:cleanup cleanup-holder)
   (handle FileHandle (:owned))
   (size i64))
+(define (take-holder [holder : Holder]) : unit unit)
 (define (bad-owner-constructor [h : FileHandle]) : i64
-  (let [holder : Holder (Holder h 1)]
+  (begin
+    (take-holder (Holder h 1))
     (struct-get h fd)))")
 
 (define (compiler-typecheck-move-owner-return-reuse-source) : String
@@ -6779,7 +6793,7 @@
   (handle FileHandle (:owned))
   (size i64))
 (define (owner-projection-bind-other-field [p : Holder]) : i64
-  (let [h : FileHandle (struct-get p handle)]
+  (with ([h (struct-get p handle) cleanup-file-handle])
     (struct-get p size)))")
 
 (define (compiler-typecheck-move-owner-projection-nested-source) : String
@@ -6933,11 +6947,13 @@
   (size i64))
 (define (take-handle [h : FileHandle]) : unit unit)
 (define (owner-projection-nested-shadow-reset [p : Holder]) : unit
-  (let [q : Holder p]
+  (with ([q p cleanup-holder])
     (begin
-      (take-handle (struct-get (struct-get q inner) handle))
-      (let [q : Holder (Holder (Inner (FileHandle 20) 21) 22)]
-        (take-handle (struct-get (struct-get q inner) handle))))))")
+      (struct-get (struct-get (struct-get q inner) handle) fd)
+      (with ([q (Holder (Inner (FileHandle 20) 21) 22) cleanup-holder])
+        (begin
+          (struct-get (struct-get (struct-get q inner) handle) fd)
+          unit)))))")
 
 (define (compiler-typecheck-move-owner-projection-repeat-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
@@ -7869,7 +7885,7 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-move-owner-dyn-array-ref-bind-source)
-        "typecheck: cannot move owner-consuming value out of dynamic array element")
+        "typecheck: ordinary let cannot own cleanup-required resource; use with")
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
@@ -7883,7 +7899,7 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-move-owner-box-get-bind-source)
-        "typecheck: cannot move owner-consuming value out of box")
+        "typecheck: ordinary let cannot own cleanup-required resource; use with")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?

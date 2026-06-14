@@ -100,7 +100,8 @@ Coverage notes:
   cases.
 - `sync_api.tl` covers `stdlib/sync.tl` bounded `ChannelI64` creation
   failures, blocking send/recv success paths in a single thread, FIFO
-  wraparound, raw handle packing, and resource close.
+  wraparound, raw handle packing, and resource close. It also covers `MutexI64`
+  guard locking, guarded get/set/add, raw handle packing, and resource close.
 - `msvc_api.tl` covers pure MSVC discovery helpers with fake temp-directory
   toolset and SDK trees, including newest-usable candidate selection through
   the vector-backed scanners.

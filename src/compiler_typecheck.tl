@@ -2337,6 +2337,66 @@
         (set! ok false))
       ok)))
 
+(define (compiler-typecheck-in-arena-string-source) : String
+  (compiler-typecheck-with-arena-source
+    "(define (main) : String
+  (let
+    [scratch : i64 (arena-make)]
+    (in-arena scratch (int->string 42))))"))
+
+(define (compiler-typecheck-in-arena-array-result-source) : String
+  (compiler-typecheck-with-arena-source
+    "(define (main) : (Array i64)
+  (let
+    [scratch : i64 (arena-make)]
+    (in-arena scratch (make-array i64 4))))"))
+
+(define (compiler-typecheck-in-arena-box-result-source) : String
+  (compiler-typecheck-with-arena-source
+    "(define (main) : (Box String)
+  (let
+    [scratch : i64 (arena-make)]
+    (in-arena scratch (box (int->string 4)))))"))
+
+(define (compiler-typecheck-in-arena-bad-arena-source) : String
+  "(define (main) : i64
+  (in-arena true 1))")
+
+(define (compiler-typecheck-in-arena-inner-region-escape-source) : String
+  (compiler-typecheck-with-arena-source
+    "(define (main) : String
+  (let
+    [scratch : i64 (arena-make)]
+    (in-arena scratch
+      (with-arena inner (int->string 1)))))"))
+
+(define (compiler-typecheck-in-arena-tests-ok?) : bool
+  (let
+    [ok : bool true]
+    (begin
+      (if (compiler-typecheck-ok? (compiler-typecheck-in-arena-string-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-in-arena-array-result-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-in-arena-box-result-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-in-arena-bad-arena-source)
+        "typecheck: in-arena arena must be i64")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-in-arena-inner-region-escape-source)
+        "typecheck: region-tagged value cannot escape with-arena 'inner'")
+        unit
+        (set! ok false))
+      ok)))
+
 (define (compiler-typecheck-box-source) : String
   "(define (main) : i64
   (let
@@ -8283,6 +8343,9 @@
     (if (compiler-typecheck-with-escape-tests-ok?)
       unit
       (panic "typecheck: with-escape tests failed"))
+    (if (compiler-typecheck-in-arena-tests-ok?)
+      unit
+      (panic "typecheck: in-arena tests failed"))
     (if (compiler-typecheck-owner-model-tests-ok?)
       unit
       (panic "typecheck: lifetime owner model tests failed"))

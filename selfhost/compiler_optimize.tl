@@ -18,7 +18,7 @@
 ;; - Tracking is block-local (reset per block), so no value is folded across a
 ;;   control-flow edge.
 ;;
-;; Out of scope: aggregate/String/array IR optimization.
+;; Out of scope: broad aggregate/String/array IR optimization.
 (import "../stdlib/io.tl")
 
 (import "../stdlib/arena.tl")
@@ -13553,9 +13553,11 @@
 ;; The block-local bounds pass can only remove a repeated check in the same
 ;; block. This function pass handles the lowered dynamic-array loop shape:
 ;; a dominating fat-handle length store, a while header guarding `i < n`, and a
-;; body bounds check against the same array length. It runs before stack
-;; promotion so the direct fat-handle stores/loads are still visible; later DCE
-;; removes the now-dead length load/cast scaffolding.
+;; body bounds check against the same array length. It also handles the lowered
+;; String shape where a header `string-length` load and a body `string-ref`
+;; length load read the same handle. It runs before stack promotion so the
+;; direct fat-handle stores/loads are still visible; later DCE removes the
+;; now-dead length load/cast scaffolding.
 (defenum OptLoopBceExpr
   (OptLoopBceUnknown)
   (OptLoopBceValue CompilerIrValue)
@@ -13633,6 +13635,9 @@
   (OptLoopBceIndexZero)
   (OptLoopBceIndexIncrement)
   (OptLoopBceIndexOther))
+
+(defenum OptLoopBceHeaderEdges
+  (OptLoopBceHeaderEdges bool bool bool))
 
 (defenum OptLoopBceBlockResult
   (OptLoopBceNoBlock)
@@ -14188,6 +14193,35 @@
             [(IrInstrJump label) (string-eq label target)]
             [_ false])))]))
 
+(define (opt-loop-bce-header-edge-shape
+  [blocks : CompilerIrBlockList]
+  [preds : OptLabelSet]
+  [header-label : String]
+  [index-var : i64]
+  [seen-init : bool]
+  [seen-latch : bool]) : OptLoopBceHeaderEdges
+  (match preds
+    [(OptLabelNil) (OptLoopBceHeaderEdges true seen-init seen-latch)]
+    [(OptLabelCons pred rest)
+      (match (opt-cfg-find-block blocks pred)
+        [(OptSomeBlock block)
+          (let
+            [init? : bool (opt-loop-bce-block-last-def-zero? block index-var)]
+            [latch? : bool
+              (and
+                (opt-loop-bce-block-last-def-increment? block index-var)
+                (opt-loop-bce-block-jumps-to? block header-label))]
+            (if (or init? latch?)
+              (opt-loop-bce-header-edge-shape
+                blocks
+                (box-get rest)
+                header-label
+                index-var
+                (or seen-init init?)
+                (or seen-latch latch?))
+              (OptLoopBceHeaderEdges false seen-init seen-latch)))]
+        [(OptNoBlock) (OptLoopBceHeaderEdges false seen-init seen-latch)])]))
+
 (define (opt-loop-bce-guard-nonnegative?
   [blocks : CompilerIrBlockList]
   [index : OptCfgIndex]
@@ -14204,21 +14238,34 @@
         (if (and
           (= (opt-label-count body-preds) 1)
           (opt-label-contains body-preds header-label)
-          (= (opt-label-count header-preds) 2)
-          (opt-label-contains header-preds body-label))
-          (match (opt-loop-bce-label-set-other-than header-preds body-label)
-            [(OptLoopBceSomeLabel preheader-label)
-              (match (opt-cfg-find-block blocks preheader-label)
-                [(OptSomeBlock preheader)
-                  (match (opt-cfg-find-block blocks body-label)
-                    [(OptSomeBlock body)
-                      (and
-                        (opt-loop-bce-block-last-def-zero? preheader index-var)
-                        (opt-loop-bce-block-last-def-increment? body index-var)
-                        (opt-loop-bce-block-jumps-to? body header-label))]
-                    [(OptNoBlock) false])]
-                [(OptNoBlock) false])]
-            [(OptLoopBceNoLabel) false])
+          (= (opt-label-count header-preds) 2))
+          (if (opt-label-contains header-preds body-label)
+            (match (opt-loop-bce-label-set-other-than header-preds body-label)
+              [(OptLoopBceSomeLabel preheader-label)
+                (match (opt-cfg-find-block blocks preheader-label)
+                  [(OptSomeBlock preheader)
+                    (match (opt-cfg-find-block blocks body-label)
+                      [(OptSomeBlock body)
+                        (and
+                          (opt-loop-bce-block-last-def-zero?
+                            preheader
+                            index-var)
+                          (opt-loop-bce-block-last-def-increment?
+                            body
+                            index-var)
+                          (opt-loop-bce-block-jumps-to? body header-label))]
+                      [(OptNoBlock) false])]
+                  [(OptNoBlock) false])]
+              [(OptLoopBceNoLabel) false])
+            (match (opt-loop-bce-header-edge-shape
+              blocks
+              header-preds
+              header-label
+              index-var
+              false
+              false)
+              [(OptLoopBceHeaderEdges ok seen-init seen-latch)
+                (and ok seen-init seen-latch)]))
           false))]))
 
 (define (opt-loop-bce-branch-state
@@ -14296,11 +14343,20 @@
         [_ (OptLoopBcePtrUnknown)])]
     (match ptr-kind
       [(OptLoopBceLengthSlot object)
-        (opt-loop-bce-state-bind-expr
-          invalid
-          sources
-          dst
-          (opt-loop-bce-length-lookup (struct-get invalid lengths) object))]
+        (let
+          [known : OptLoopBceExpr
+            (opt-loop-bce-length-lookup (struct-get invalid lengths) object)]
+          (match known
+            [(OptLoopBceUnknown)
+              (if (opt-gvn-stable-var? sources dst)
+                (let
+                  [loaded : OptLoopBceExpr (OptLoopBceValue (IrValueVar dst))]
+                  (opt-loop-bce-state-bind-length
+                    (opt-loop-bce-state-bind-expr invalid sources dst loaded)
+                    object
+                    loaded))
+                invalid)]
+            [_ (opt-loop-bce-state-bind-expr invalid sources dst known)]))]
       [(OptLoopBceDataSlot object)
         (opt-loop-bce-state-bind-ptr
           (opt-loop-bce-state-bind-expr invalid sources dst (OptLoopBceUnknown))
@@ -14627,6 +14683,100 @@
         (compiler-ir-block-seq-to-list seq)
         ptrs)]))
 
+(define (opt-loop-bce-length-load-shape-instrs
+  [slots : (Array CompilerIrInstr)]
+  [index : i64]
+  [count : i64]
+  [ptrs : OptI64List]) : bool
+  (if (>= index count)
+    false
+    (let
+      [instr : CompilerIrInstr (array-ref slots index)]
+      [dst : i64 (opt-gvn-instr-dst instr)]
+      [removed : OptI64List
+        (if (= dst (- 0 1))
+          ptrs
+          (opt-loop-bce-i64-list-remove ptrs dst))]
+      [next-ptrs : OptI64List
+        (match instr
+          [(IrInstrGep gep-dst _ offset ty)
+            (if (opt-bounds-object-length-slot? offset ty)
+              (opt-i64-list-add removed gep-dst)
+              removed)]
+          [_ removed])]
+      (match instr
+        [(IrInstrLoad _ ptr _)
+          (match ptr
+            [(IrValueVar ptr-var)
+              (if (opt-i64-list-contains? ptrs ptr-var)
+                true
+                (opt-loop-bce-length-load-shape-instrs
+                  slots
+                  (+ index 1)
+                  count
+                  next-ptrs))]
+            [_
+              (opt-loop-bce-length-load-shape-instrs
+                slots
+                (+ index 1)
+                count
+                next-ptrs)])]
+        [_
+          (opt-loop-bce-length-load-shape-instrs
+            slots
+            (+ index 1)
+            count
+            next-ptrs)]))))
+
+(define (opt-loop-bce-length-load-shape-blocks
+  [blocks : CompilerIrBlockList]
+  [ptrs : OptI64List]) : bool
+  (match blocks
+    [(IrBlockNil) false]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (if (opt-loop-bce-length-load-shape-instrs
+            (struct-get instrs slots)
+            0
+            (struct-get instrs len)
+            ptrs)
+            true
+            (opt-loop-bce-length-load-shape-blocks (box-get rest) ptrs))])]
+    [(IrBlockArray seq)
+      (opt-loop-bce-length-load-shape-blocks
+        (compiler-ir-block-seq-to-list seq)
+        ptrs)]))
+
+(define (opt-loop-bce-string-byte-shape-instrs
+  [slots : (Array CompilerIrInstr)]
+  [index : i64]
+  [count : i64]) : bool
+  (if (>= index count)
+    false
+    (match (array-ref slots index)
+      [(IrInstrGep _ _ _ ty)
+        (if (opt-type-eq ty (AstTyChar))
+          true
+          (opt-loop-bce-string-byte-shape-instrs slots (+ index 1) count))]
+      [_ (opt-loop-bce-string-byte-shape-instrs slots (+ index 1) count)])))
+
+(define (opt-loop-bce-string-byte-shape-blocks [blocks : CompilerIrBlockList]) : bool
+  (match blocks
+    [(IrBlockNil) false]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (if (opt-loop-bce-string-byte-shape-instrs
+            (struct-get instrs slots)
+            0
+            (struct-get instrs len))
+            true
+            (opt-loop-bce-string-byte-shape-blocks (box-get rest)))])]
+    [(IrBlockArray seq)
+      (opt-loop-bce-string-byte-shape-blocks
+        (compiler-ir-block-seq-to-list seq))]))
+
 (define (opt-loop-bce-argc-call-shape-instrs
   [summaries : OptLoopBceSummaries]
   [slots : (Array CompilerIrInstr)]
@@ -14672,10 +14822,15 @@
   [summaries : OptLoopBceSummaries]
   [blocks : CompilerIrBlockList]) : bool
   (and
-    (opt-loop-bce-argc-call-shape-blocks summaries blocks)
     (<= (compiler-ir-block-list-count blocks) 64)
     (> (opt-count-bounds-blocks blocks) 0)
-    (opt-loop-bce-length-store-shape-blocks blocks (OptI64Nil))))
+    (or
+      (and
+        (opt-loop-bce-argc-call-shape-blocks summaries blocks)
+        (opt-loop-bce-length-store-shape-blocks blocks (OptI64Nil)))
+      (and
+        (opt-loop-bce-length-load-shape-blocks blocks (OptI64Nil))
+        (opt-loop-bce-string-byte-shape-blocks blocks)))))
 
 (define (opt-loop-bce-initial-state) : OptLoopBceState
   (OptLoopBceState
@@ -14771,21 +14926,28 @@
   (let
     [offsets : (Array i64) (struct-get children offsets)]
     [edges : (Array i64) (struct-get children edges)]
+    [labels : (Array String) (struct-get cfg-index labels)]
+    [parent-label : String (array-ref labels parent-id)]
     [edge : i64 (array-ref offsets parent-id)]
     [end : i64 (array-ref offsets (+ parent-id 1))]
     (begin
       (while (< edge end)
-        (begin
-          (opt-loop-bce-rewrite-id
-            summaries
-            sources
-            blocks
-            cfg-index
-            children
-            out
-            (array-ref edges edge)
-            state)
-          (set! edge (+ edge 1))))
+        (let
+          [child-id : i64 (array-ref edges edge)]
+          [child-label : String (array-ref labels child-id)]
+          [child-state : OptLoopBceState
+            (opt-loop-bce-state-propagate-guard state parent-label child-label)]
+          (begin
+            (opt-loop-bce-rewrite-id
+              summaries
+              sources
+              blocks
+              cfg-index
+              children
+              out
+              child-id
+              child-state)
+            (set! edge (+ edge 1)))))
       unit)))
 
 (define (opt-loop-bce-blocks
@@ -14827,6 +14989,18 @@
               unit)]
           [(OptNoI64) unit])
         (opt-loop-bce-materialize-blocks doms out blocks)))))
+
+(define (opt-loop-bce-state-propagate-guard
+  [state : OptLoopBceState]
+  [parent-label : String]
+  [child-label : String]) : OptLoopBceState
+  (match (opt-loop-bce-guard-lookup (struct-get state guards) child-label)
+    [(OptLoopBceGuardCons _ _ _ _) state]
+    [(OptLoopBceGuardNil)
+      (match (opt-loop-bce-guard-lookup (struct-get state guards) parent-label)
+        [(OptLoopBceGuardCons _ index length _)
+          (opt-loop-bce-state-bind-guard state child-label index length)]
+        [(OptLoopBceGuardNil) state])]))
 
 (define (opt-loop-bce-function
   [summaries : OptLoopBceSummaries]
@@ -21271,10 +21445,255 @@
         (opt-loop-bce-test-body)
         (compiler-ir-block-cons (opt-loop-bce-test-exit) (IrBlockNil))))))
 
+(define (opt-loop-bce-test-nested-entry) : CompilerIrBlock
+  (compiler-ir-block
+    "entry"
+    (compiler-ir-instr-cons
+      (IrInstrCall 10 "argc" (IrCallArgsNil) (AstTyI64))
+      (compiler-ir-instr-cons
+        (IrInstrMov 1 (IrValueI64 10) (AstTyI64))
+        (compiler-ir-instr-cons
+          (IrInstrAlloc 2 (AstTyU8))
+          (compiler-ir-instr-cons
+            (IrInstrGep 3 (IrValueVar 2) (IrValueI64 8) (AstTyU8))
+            (compiler-ir-instr-cons
+              (IrInstrStorePtr (IrValueVar 3) (IrValueVar 1) (AstTyI64))
+              (compiler-ir-instr-cons
+                (IrInstrMov 30 (IrValueI64 0) (AstTyI64))
+                (compiler-ir-instr-cons
+                  (IrInstrMov 31 (IrValueI64 3) (AstTyI64))
+                  (compiler-ir-instr-cons
+                    (IrInstrJump "outer_header")
+                    (IrInstrNil)))))))))))
+
+(define (opt-loop-bce-test-outer-header) : CompilerIrBlock
+  (compiler-ir-block
+    "outer_header"
+    (compiler-ir-instr-cons
+      (IrInstrBinOp 32 (IrBinLt) (IrValueVar 30) (IrValueVar 31) (AstTyBool))
+      (compiler-ir-instr-cons
+        (IrInstrBranch (IrValueVar 32) "outer_body" "exit")
+        (IrInstrNil)))))
+
+(define (opt-loop-bce-test-outer-body) : CompilerIrBlock
+  (compiler-ir-block
+    "outer_body"
+    (compiler-ir-instr-cons
+      (IrInstrMov 0 (IrValueI64 0) (AstTyI64))
+      (compiler-ir-instr-cons (IrInstrJump "header") (IrInstrNil)))))
+
+(define (opt-loop-bce-test-inner-header) : CompilerIrBlock
+  (compiler-ir-block
+    "header"
+    (compiler-ir-instr-cons
+      (IrInstrBinOp 4 (IrBinLt) (IrValueVar 0) (IrValueVar 1) (AstTyBool))
+      (compiler-ir-instr-cons
+        (IrInstrBranch (IrValueVar 4) "body" "after_inner")
+        (IrInstrNil)))))
+
+(define (opt-loop-bce-test-after-inner) : CompilerIrBlock
+  (compiler-ir-block
+    "after_inner"
+    (compiler-ir-instr-cons
+      (IrInstrBinOp 33 (IrBinAdd) (IrValueVar 30) (IrValueI64 1) (AstTyI64))
+      (compiler-ir-instr-cons
+        (IrInstrMov 30 (IrValueVar 33) (AstTyI64))
+        (compiler-ir-instr-cons (IrInstrJump "outer_header") (IrInstrNil))))))
+
+(define (opt-loop-bce-test-nested-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (opt-loop-bce-test-nested-entry)
+    (compiler-ir-block-cons
+      (opt-loop-bce-test-outer-header)
+      (compiler-ir-block-cons
+        (opt-loop-bce-test-outer-body)
+        (compiler-ir-block-cons
+          (opt-loop-bce-test-inner-header)
+          (compiler-ir-block-cons
+            (opt-loop-bce-test-body)
+            (compiler-ir-block-cons
+              (opt-loop-bce-test-after-inner)
+              (compiler-ir-block-cons (opt-loop-bce-test-exit) (IrBlockNil)))))))))
+
+(define (opt-loop-bce-string-test-params) : CompilerIrParamList
+  (compiler-ir-param-cons
+    (IrParam "text" (AstTyString) 2)
+    (compiler-ir-param-cons
+      (IrParam "other" (AstTyString) 20)
+      (compiler-ir-param-cons (IrParam "unknown" (AstTyU64) 30) (IrParamNil)))))
+
+(define (opt-loop-bce-string-test-entry [init : i64]) : CompilerIrBlock
+  (compiler-ir-block
+    "entry"
+    (compiler-ir-instr-cons
+      (IrInstrGep 3 (IrValueVar 2) (IrValueI64 1) (AstTyI64))
+      (compiler-ir-instr-cons
+        (IrInstrLoad 1 (IrValueVar 3) (AstTyI64))
+        (compiler-ir-instr-cons
+          (IrInstrMov 0 (IrValueI64 init) (AstTyI64))
+          (compiler-ir-instr-cons (IrInstrJump "header") (IrInstrNil)))))))
+
+(define (opt-loop-bce-string-test-header [off-by-one : bool]) : CompilerIrBlock
+  (compiler-ir-block
+    "header"
+    (if off-by-one
+      (compiler-ir-instr-cons
+        (IrInstrBinOp 14 (IrBinAdd) (IrValueVar 1) (IrValueI64 1) (AstTyI64))
+        (compiler-ir-instr-cons
+          (IrInstrBinOp 4 (IrBinLt) (IrValueVar 0) (IrValueVar 14) (AstTyBool))
+          (compiler-ir-instr-cons
+            (IrInstrBranch (IrValueVar 4) "body" "exit")
+            (IrInstrNil))))
+      (compiler-ir-instr-cons
+        (IrInstrBinOp 4 (IrBinLt) (IrValueVar 0) (IrValueVar 1) (AstTyBool))
+        (compiler-ir-instr-cons
+          (IrInstrBranch (IrValueVar 4) "body" "exit")
+          (IrInstrNil))))))
+
+(define (opt-loop-bce-string-test-body-instrs [object-var : i64]) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (IrInstrGep 5 (IrValueVar object-var) (IrValueI64 0) (AstTyU8))
+    (compiler-ir-instr-cons
+      (IrInstrLoad 6 (IrValueVar 5) (AstTyU64))
+      (compiler-ir-instr-cons
+        (IrInstrGep 7 (IrValueVar object-var) (IrValueI64 8) (AstTyU8))
+        (compiler-ir-instr-cons
+          (IrInstrLoad 8 (IrValueVar 7) (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrCast 9 (IrValueVar 8) (AstTyI64) (AstTyU64))
+            (compiler-ir-instr-cons
+              (IrInstrCast 10 (IrValueVar 0) (AstTyI64) (AstTyU64))
+              (compiler-ir-instr-cons
+                (IrInstrBoundsCheck
+                  (IrValueVar 10)
+                  (IrValueVar 9)
+                  "str_bounds_ok")
+                (compiler-ir-instr-cons
+                  (IrInstrGep 11 (IrValueVar 6) (IrValueVar 0) (AstTyChar))
+                  (compiler-ir-instr-cons
+                    (IrInstrLoad 12 (IrValueVar 11) (AstTyChar))
+                    (compiler-ir-instr-cons
+                      (IrInstrBinOp
+                        13
+                        (IrBinAdd)
+                        (IrValueVar 0)
+                        (IrValueI64 1)
+                        (AstTyI64))
+                      (compiler-ir-instr-cons
+                        (IrInstrMov 0 (IrValueVar 13) (AstTyI64))
+                        (compiler-ir-instr-cons
+                          (IrInstrJump "header")
+                          (IrInstrNil))))))))))))))
+
+(define (opt-loop-bce-string-test-ref-instrs
+  [object-var : i64]
+  [base : i64]
+  [tail : CompilerIrInstrList]) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (IrInstrGep base (IrValueVar object-var) (IrValueI64 0) (AstTyU8))
+    (compiler-ir-instr-cons
+      (IrInstrLoad (+ base 1) (IrValueVar base) (AstTyU64))
+      (compiler-ir-instr-cons
+        (IrInstrGep (+ base 2) (IrValueVar object-var) (IrValueI64 8) (AstTyU8))
+        (compiler-ir-instr-cons
+          (IrInstrLoad (+ base 3) (IrValueVar (+ base 2)) (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrCast
+              (+ base 4)
+              (IrValueVar (+ base 3))
+              (AstTyI64)
+              (AstTyU64))
+            (compiler-ir-instr-cons
+              (IrInstrCast (+ base 5) (IrValueVar 0) (AstTyI64) (AstTyU64))
+              (compiler-ir-instr-cons
+                (IrInstrBoundsCheck
+                  (IrValueVar (+ base 5))
+                  (IrValueVar (+ base 4))
+                  "str_bounds_ok")
+                (compiler-ir-instr-cons
+                  (IrInstrGep
+                    (+ base 6)
+                    (IrValueVar (+ base 1))
+                    (IrValueVar 0)
+                    (AstTyChar))
+                  (compiler-ir-instr-cons
+                    (IrInstrLoad (+ base 7) (IrValueVar (+ base 6)) (AstTyChar))
+                    tail))))))))))
+
+(define (opt-loop-bce-string-test-body [object-var : i64]) : CompilerIrBlock
+  (compiler-ir-block "body" (opt-loop-bce-string-test-body-instrs object-var)))
+
+(define (opt-loop-bce-string-test-call-body [object-var : i64]) : CompilerIrBlock
+  (compiler-ir-block
+    "body"
+    (compiler-ir-instr-cons
+      (IrInstrCall
+        21
+        "touch"
+        (IrCallArgsOne (IrValueVar object-var))
+        (AstTyUnit))
+      (opt-loop-bce-string-test-body-instrs object-var))))
+
+(define (opt-loop-bce-string-test-store-body [object-var : i64]) : CompilerIrBlock
+  (compiler-ir-block
+    "body"
+    (compiler-ir-instr-cons
+      (IrInstrStorePtr (IrValueVar 30) (IrValueI64 1) (AstTyI64))
+      (opt-loop-bce-string-test-body-instrs object-var))))
+
+(define (opt-loop-bce-string-test-reassign-body) : CompilerIrBlock
+  (compiler-ir-block
+    "body"
+    (compiler-ir-instr-cons
+      (IrInstrMov 2 (IrValueVar 20) (AstTyString))
+      (opt-loop-bce-string-test-body-instrs 2))))
+
+(define (opt-loop-bce-string-test-blocks
+  [init : i64]
+  [body : CompilerIrBlock]
+  [off-by-one : bool]) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (opt-loop-bce-string-test-entry init)
+    (compiler-ir-block-cons
+      (opt-loop-bce-string-test-header off-by-one)
+      (compiler-ir-block-cons
+        body
+        (compiler-ir-block-cons (opt-loop-bce-test-exit) (IrBlockNil))))))
+
+(define (opt-loop-bce-string-test-split-body) : CompilerIrBlock
+  (compiler-ir-block
+    "body"
+    (opt-loop-bce-string-test-ref-instrs
+      2
+      30
+      (compiler-ir-instr-cons
+        (IrInstrBranch (IrValueBool true) "tail" "exit")
+        (IrInstrNil)))))
+
+(define (opt-loop-bce-string-test-split-tail) : CompilerIrBlock
+  (compiler-ir-block "tail" (opt-loop-bce-string-test-body-instrs 2)))
+
+(define (opt-loop-bce-string-test-split-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (opt-loop-bce-string-test-entry 0)
+    (compiler-ir-block-cons
+      (opt-loop-bce-string-test-header false)
+      (compiler-ir-block-cons
+        (opt-loop-bce-string-test-split-body)
+        (compiler-ir-block-cons
+          (opt-loop-bce-string-test-split-tail)
+          (compiler-ir-block-cons (opt-loop-bce-test-exit) (IrBlockNil)))))))
+
 (define (opt-loop-bce-test-count
   [blocks : CompilerIrBlockList]
   [summaries : OptLoopBceSummaries]) : i64
   (opt-count-bounds-blocks (opt-loop-bce-blocks summaries (IrParamNil) blocks)))
+
+(define (opt-loop-bce-string-test-count
+  [blocks : CompilerIrBlockList]
+  [summaries : OptLoopBceSummaries]) : i64
+  (opt-count-bounds-blocks
+    (opt-loop-bce-blocks summaries (opt-loop-bce-string-test-params) blocks)))
 
 (define (compiler-optimize-bounds-self-test) : i64
   (let
@@ -21320,6 +21739,63 @@
       (opt-loop-bce-test-count
         (opt-loop-bce-test-argc-blocks 0 false)
         (opt-loop-bce-test-summaries false true))]
+    [loop-nested : i64
+      (opt-loop-bce-test-count
+        (opt-loop-bce-test-nested-blocks)
+        (opt-loop-bce-test-summaries false true))]
+    [string-positive : i64
+      (opt-loop-bce-string-test-count
+        (opt-loop-bce-string-test-blocks
+          0
+          (opt-loop-bce-string-test-body 2)
+          false)
+        (opt-loop-bce-test-summaries false false))]
+    [string-mismatch : i64
+      (opt-loop-bce-string-test-count
+        (opt-loop-bce-string-test-blocks
+          0
+          (opt-loop-bce-string-test-body 20)
+          false)
+        (opt-loop-bce-test-summaries false false))]
+    [string-call : i64
+      (opt-loop-bce-string-test-count
+        (opt-loop-bce-string-test-blocks
+          0
+          (opt-loop-bce-string-test-call-body 2)
+          false)
+        (opt-loop-bce-test-summaries false false))]
+    [string-store : i64
+      (opt-loop-bce-string-test-count
+        (opt-loop-bce-string-test-blocks
+          0
+          (opt-loop-bce-string-test-store-body 2)
+          false)
+        (opt-loop-bce-test-summaries false false))]
+    [string-negative-init : i64
+      (opt-loop-bce-string-test-count
+        (opt-loop-bce-string-test-blocks
+          (- 0 1)
+          (opt-loop-bce-string-test-body 2)
+          false)
+        (opt-loop-bce-test-summaries false false))]
+    [string-off-by-one : i64
+      (opt-loop-bce-string-test-count
+        (opt-loop-bce-string-test-blocks
+          0
+          (opt-loop-bce-string-test-body 2)
+          true)
+        (opt-loop-bce-test-summaries false false))]
+    [string-reassign : i64
+      (opt-loop-bce-string-test-count
+        (opt-loop-bce-string-test-blocks
+          0
+          (opt-loop-bce-string-test-reassign-body)
+          false)
+        (opt-loop-bce-test-summaries false false))]
+    [string-split : i64
+      (opt-loop-bce-string-test-count
+        (opt-loop-bce-string-test-split-blocks)
+        (opt-loop-bce-test-summaries false false))]
     (cond
       (not (= (opt-count-bounds-instrs duplicate) 1))
       1
@@ -21347,6 +21823,24 @@
       12
       (not (= loop-argc 0))
       13
+      (not (= loop-nested 0))
+      14
+      (not (= string-positive 0))
+      15
+      (not (= string-mismatch 1))
+      16
+      (not (= string-call 1))
+      17
+      (not (= string-store 1))
+      18
+      (not (= string-negative-init 1))
+      19
+      (not (= string-off-by-one 1))
+      20
+      (not (= string-reassign 1))
+      21
+      (not (= string-split 0))
+      22
       42)))
 
 ;; Copy propagation can expose a repeated expression only after CSE has already

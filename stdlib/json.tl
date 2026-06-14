@@ -821,6 +821,7 @@
                   (set! i (+ i 1))))))
           greater)))))
 
+;: Return true when integer number text fits in the signed i64 range.
 (define (json-number-i64-range? [text : String]) : bool
   (let
     [negative : bool

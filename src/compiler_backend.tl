@@ -3468,15 +3468,23 @@
     (AstTyF64)
     reg))
 
-;; #2997: zero a register with the compact `xorl r32,r32` (2 bytes) instead of
-;; `xorq r64,r64` (3 bytes). Writing a 32-bit register zero-extends into the
-;; full 64-bit register, so the 64-bit value is exactly 0. Non-zero immediates
-;; keep the full-width `movq $n` (the assembler widens it to movabs as needed).
+;; #2997: prefer compact 32-bit encodings for small non-negative immediates.
+;; Writing a 32-bit register zero-extends into the full 64-bit register, so for
+;; 0 <= n < 2^31 the 64-bit value is exactly n: `xorl r32,r32` (2 bytes) clears
+;; the register, and `movl $n,r32` (5-6 bytes) beats `movq $n,r64` (7 bytes, or
+;; a 10-byte movabs once n no longer fits a signed-32 immediate). Negative or
+;; >= 2^31 values keep the full-width `movq $n` (sign extension / 64-bit
+;; immediate), which the assembler widens to movabs as needed.
 (define (compiler-backend-emit-load-i64-immediate [n : i64] [reg : String]) : String
-  (if (= n 0)
+  (cond
+    (= n 0)
     (let
       [reg32 : String (compiler-backend-reg-part reg 4)]
       (backend-cat5 "    xorl " reg32 ", " reg32 "\n"))
+    (and (> n 0) (< n 2147483648))
+    (let
+      [reg32 : String (compiler-backend-reg-part reg 4)]
+      (backend-cat5 "    movl $" (int->string n) ", " reg32 "\n"))
     (backend-cat5 "    movq $" (int->string n) ", " reg "\n")))
 
 (define (compiler-backend-emit-load-value-with-plan

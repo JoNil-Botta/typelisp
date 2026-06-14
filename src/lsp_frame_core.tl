@@ -2213,6 +2213,82 @@
         (FoundVariant enum-name variant-form)
         MissingVariant))))
 
+(define (lsp-resolve-variant-in-docs
+  [docs : LspDocuments]
+  [current-uri : String]
+  [needle : String]
+  [idx : i64]) : LspVariantHit
+  (if (>= idx (lsp-documents-len docs))
+    MissingVariant
+    (let
+      [doc : LspDocument (array-ref (lsp-documents-slots docs) idx)]
+      (if (string-eq (struct-get doc uri) current-uri)
+        (lsp-resolve-variant-in-docs docs current-uri needle (+ idx 1))
+        (match (lsp-enum-of-variant (struct-get doc text) needle)
+          [(FoundVariant enum-name variant-form)
+            (FoundVariant enum-name variant-form)]
+          [(MissingVariant)
+            (lsp-resolve-variant-in-docs docs current-uri needle (+ idx 1))])))))
+
+(define (lsp-resolve-variant-in-imports
+  [current-path : String]
+  [stdlib-roots : StringVec]
+  [needle : String]
+  [imports : StringVec]
+  [idx : i64]) : LspVariantHit
+  (if (>= idx (string-vec-len imports))
+    MissingVariant
+    (let
+      [resolved : String
+        (compiler-load-resolve-import-with-roots
+          current-path
+          (string-vec-get imports idx "")
+          stdlib-roots)]
+      [src : String (read-file-or (& resolved) "")]
+      (if (string-eq src "")
+        (lsp-resolve-variant-in-imports
+          current-path
+          stdlib-roots
+          needle
+          imports
+          (+ idx 1))
+        (match (lsp-enum-of-variant src needle)
+          [(FoundVariant enum-name variant-form)
+            (FoundVariant enum-name variant-form)]
+          [(MissingVariant)
+            (lsp-resolve-variant-in-imports
+              current-path
+              stdlib-roots
+              needle
+              imports
+              (+ idx 1))])))))
+
+;; Find the enum/variant in the current document, other open documents, then
+;; imported modules (same reach as go-to-definition).
+(define (lsp-resolve-variant
+  [docs : LspDocuments]
+  [current-uri : String]
+  [current-path : String]
+  [current-text : String]
+  [stdlib-roots : StringVec]
+  [needle : String]) : LspVariantHit
+  (match (lsp-enum-of-variant current-text needle)
+    [(FoundVariant enum-name variant-form)
+      (FoundVariant enum-name variant-form)]
+    [(MissingVariant)
+      (match (lsp-resolve-variant-in-docs docs current-uri needle 0)
+        [(FoundVariant enum-name variant-form)
+          (FoundVariant enum-name variant-form)]
+        [(MissingVariant)
+          (lsp-resolve-variant-in-imports
+            current-path
+            stdlib-roots
+            needle
+            (lsp-collect-imports
+              current-text
+              (string-vec-push (string-vec-new) "stdlib/core_macros.tl"))
+            0)])]))
+
 ;; Curated hover for builtins, operators, and special forms (no source
 ;; (define ...) exists for these). Returns markdown, or "" when unknown.
 (define (lsp-builtin-hover [name : String]) : String
@@ -2404,7 +2480,13 @@
                       char0
                       (string-length sym)))]
                 [(MissingDefSource)
-                  (match (lsp-enum-of-variant text needle)
+                  (match (lsp-resolve-variant
+                    docs
+                    uri
+                    path
+                    text
+                    stdlib-roots
+                    needle)
                     [(FoundVariant enum-name variant-form)
                       (lsp-write-response
                         id

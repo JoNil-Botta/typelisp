@@ -11,6 +11,12 @@
 ;#   implement issue #N: Title
 ;#   research/triage issue #N: Title
 ;#
+;# When the snapshot already holds more than 3 open non-draft PRs the review
+;# queue is saturated, so ready-for-implementation issues are dropped from the
+;# candidate pool and only review/research-triage actions stay eligible. This
+;# bakes the orchestrator's "don't start new implementations while PRs pile up"
+;# rule into the chooser instead of leaving it to the caller to re-roll.
+;#
 ;# Selection uses host entropy through `stdlib/random.tl`; JSON parsing uses
 ;# `stdlib/json.tl`.
 ;#
@@ -47,6 +53,12 @@
   50)
 
 (define p1-priority-bonus : i64
+  3)
+
+;: When the snapshot holds more than this many open non-draft PRs, the review
+;: queue is saturated: ready-for-implementation issues are dropped so the chooser
+;: only yields review and research/triage actions. Draft PRs do not count.
+(define implement-pr-cap : i64
   3)
 
 ;: A classified work-queue candidate carrying its display fields and weight.
@@ -147,6 +159,18 @@
           [(JsonString text) text]
           [_ ""])]
       [(JsonMissing) ""])))
+
+;: Extract a bool from a JSON boolean field, defaulting to false when absent so
+;: a PR with no `isDraft` key is treated as a non-draft (open) PR.
+(define (json-field-bool [item : Json] [field : String]) : bool
+  (let
+    [key : String field]
+    (match (json-object-get item (& key))
+      [(JsonFound found)
+        (match found
+          [(JsonBool value) value]
+          [_ false])]
+      [(JsonMissing) false])))
 
 ;: True when any object in `labels` has a `name` equal to `needle`.
 (define (label-list-has? [labels : JsonList] [needle : String]) : bool
@@ -252,6 +276,11 @@
 (define (issue-blocked? [item : Json]) : bool
   (label-list-has? (issue-label-list item) "blocked"))
 
+;: Return true when an issue carries the ready-for-implementation label, i.e. it
+;: would classify as an implement candidate.
+(define (issue-ready? [item : Json]) : bool
+  (label-list-has? (issue-label-list item) "ready-for-implementation"))
+
 ;: Map a JSON array of PR objects to candidates, preserving source order.
 (define (pr-candidates [items : JsonList]) : CandList
   (match items
@@ -264,13 +293,17 @@
           tail))]))
 
 ;: Map a JSON array of issue objects to candidates, preserving source order.
-(define (issue-candidates [items : JsonList]) : CandList
+;: Blocked issues are always skipped; ready-for-implementation issues are also
+;: skipped when `implement-allowed?` is false (the review queue is saturated).
+(define (issue-candidates [items : JsonList] [implement-allowed? : bool]) : CandList
   (match items
     [(JsonListNil) (CandNil)]
     [(JsonListCons head rest)
       (let
-        [tail : CandList (issue-candidates (box-get rest))]
-        (if (issue-blocked? head)
+        [tail : CandList (issue-candidates (box-get rest) implement-allowed?)]
+        (if (or
+          (issue-blocked? head)
+          (and (not implement-allowed?) (issue-ready? head)))
           tail
           (CandCons (issue-candidate head) (box tail))))]))
 
@@ -292,11 +325,30 @@
           [_ (JsonListNil)])]
       [(JsonMissing) (JsonListNil)])))
 
+;: Count open non-draft PRs in the raw `prs` array. Draft PRs and a missing
+;: `isDraft` field are handled by `json-field-bool` (missing => non-draft).
+(define (count-open-nondraft-prs [items : JsonList]) : i64
+  (match items
+    [(JsonListNil) 0]
+    [(JsonListCons head rest)
+      (let
+        [tail : i64 (count-open-nondraft-prs (box-get rest))]
+        (if (json-field-bool head "isDraft")
+          tail
+          (+ 1 tail)))]))
+
 ;: Build the full candidate list: PR candidates first, then issue candidates.
+;: Ready-for-implementation issues are dropped once more than `implement-pr-cap`
+;: open non-draft PRs are present, leaving only review and research/triage work.
 (define (build-candidates [root : Json]) : CandList
-  (cand-append
-    (pr-candidates (json-field-array root "prs"))
-    (issue-candidates (json-field-array root "issues"))))
+  (let
+    [prs : JsonList (json-field-array root "prs")]
+    [issues : JsonList (json-field-array root "issues")]
+    [implement-allowed? : bool
+      (<= (count-open-nondraft-prs prs) implement-pr-cap)]
+    (cand-append
+      (pr-candidates prs)
+      (issue-candidates issues implement-allowed?))))
 
 ;: Build the weight list from candidates, preserving order so a chosen weight
 ;: index maps back to the candidate at the same position.
@@ -323,6 +375,15 @@
   (match cands
     [(CandNil) 0]
     [(CandCons _ rest) (+ 1 (cand-count (box-get rest)))]))
+
+;: True when any candidate in the list has the given kind tag.
+(define (cand-list-has-kind? [cands : CandList] [target-kind : i64]) : bool
+  (match cands
+    [(CandNil) false]
+    [(CandCons head rest)
+      (if (= (struct-get head kind) target-kind)
+        true
+        (cand-list-has-kind? (box-get rest) target-kind))]))
 
 (test
   chooser-skips-incomplete-pr-checks
@@ -416,6 +477,88 @@
             (if (= (struct-get (cand-nth cands 0) weight) 45)
               unit
               (panic "PR review weight should be 45"))))]
+      [(ErrJson _) (panic "test JSON should parse")])))
+
+(test
+  chooser-caps-implement-when-many-open-prs
+  (let
+    [text : String
+      "{\"prs\":[{\"number\":40,\"title\":\"PR A\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":41,\"title\":\"PR B\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":42,\"title\":\"PR C\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":43,\"title\":\"PR D\",\"isDraft\":false,\"statusCheckRollup\":[]}],\"issues\":[{\"number\":50,\"title\":\"Ready issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]},{\"number\":51,\"title\":\"Triage issue\",\"labels\":[]}]}"]
+    (match (json-parse (& text))
+      [(OkJson root)
+        (let
+          [cands : CandList (build-candidates root)]
+          (begin
+            (if (= (cand-count cands) 5)
+              unit
+              (panic "four review PRs plus the surviving triage issue expected"))
+            (if (cand-list-has-kind? cands kind-ready)
+              (panic
+                "ready-for-implementation issues must drop above the PR cap")
+              unit)
+            (if (cand-list-has-kind? cands kind-pr)
+              unit
+              (panic "review candidates must stay eligible above the PR cap"))
+            (if (cand-list-has-kind? cands kind-triage)
+              unit
+              (panic
+                "research/triage issues must stay eligible above the PR cap"))
+            (if (= (struct-get (cand-nth cands 4) number) 51)
+              unit
+              (panic "triage issue should remain after the four review PRs"))))]
+      [(ErrJson _) (panic "test JSON should parse")])))
+
+(test
+  chooser-allows-implement-at-pr-cap-boundary
+  (let
+    [text : String
+      "{\"prs\":[{\"number\":40,\"title\":\"PR A\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":41,\"title\":\"PR B\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":42,\"title\":\"PR C\",\"isDraft\":false,\"statusCheckRollup\":[]}],\"issues\":[{\"number\":50,\"title\":\"Ready issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]},{\"number\":51,\"title\":\"Triage issue\",\"labels\":[]}]}"]
+    (match (json-parse (& text))
+      [(OkJson root)
+        (let
+          [cands : CandList (build-candidates root)]
+          (begin
+            (if (= (cand-count cands) 5)
+              unit
+              (panic "three review PRs plus both issues expected at the cap"))
+            (if (cand-list-has-kind? cands kind-ready)
+              unit
+              (panic "exactly three open PRs is at the cap, not above it"))
+            (if (= (struct-get (cand-nth cands 3) number) 50)
+              unit
+              (panic "ready issue should remain right at the PR cap"))))]
+      [(ErrJson _) (panic "test JSON should parse")])))
+
+(test
+  chooser-draft-prs-do-not-count-toward-pr-cap
+  (let
+    [text : String
+      "{\"prs\":[{\"number\":40,\"title\":\"PR A\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":41,\"title\":\"PR B\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":42,\"title\":\"PR C\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":43,\"title\":\"Draft D\",\"isDraft\":true,\"statusCheckRollup\":[]},{\"number\":44,\"title\":\"Draft E\",\"isDraft\":true,\"statusCheckRollup\":[]}],\"issues\":[{\"number\":50,\"title\":\"Ready issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]}]}"]
+    (match (json-parse (& text))
+      [(OkJson root)
+        (let
+          [cands : CandList (build-candidates root)]
+          (begin
+            (if (= (cand-count cands) 6)
+              unit
+              (panic "five review PRs plus the kept ready issue expected"))
+            (if (cand-list-has-kind? cands kind-ready)
+              unit
+              (panic "two draft PRs must not push three open PRs over the cap"))))]
+      [(ErrJson _) (panic "test JSON should parse")])))
+
+(test
+  chooser-implement-cap-can-empty-queue-when-only-ready-issues
+  (let
+    [text : String
+      "{\"prs\":[{\"number\":40,\"title\":\"PR A\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":41,\"title\":\"PR B\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":42,\"title\":\"PR C\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":43,\"title\":\"PR D\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]}],\"issues\":[{\"number\":50,\"title\":\"Ready issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]},{\"number\":51,\"title\":\"Another ready\",\"labels\":[{\"name\":\"ready-for-implementation\"},{\"name\":\"p1\"}]}]}"]
+    (match (json-parse (& text))
+      [(OkJson root)
+        (let
+          [cands : CandList (build-candidates root)]
+          (if (= (cand-count cands) 0)
+            unit
+            (panic "saturated PRs with only ready issues should leave no work")))]
       [(ErrJson _) (panic "test JSON should parse")])))
 
 ;: The action verb for a candidate kind.

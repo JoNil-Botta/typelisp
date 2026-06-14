@@ -369,20 +369,17 @@
           [code : i64 (json-char-code-at text i)]
           (if (or (= code 34) (= code 92) (< code 32))
             (begin
-              (set!
+              (text-buf-append!
                 out
-                (text-buf-append
-                  (text-buf-append
-                    out
-                    (substring-borrowed text segment-start (- i segment-start)))
-                  (json-escape-char code)))
+                (substring-borrowed text segment-start (- i segment-start)))
+              (text-buf-append! out (json-escape-char code))
               (set! i (+ i 1))
               (set! segment-start i))
             (set! i (+ i 1)))))
-      (text-buf-render
-        (text-buf-append
-          out
-          (substring-borrowed text segment-start (- n segment-start)))))))
+      (text-buf-append!
+        out
+        (substring-borrowed text segment-start (- n segment-start)))
+      (text-buf-render out))))
 
 ;: Append serialized array elements to `buf`.
 (define (json-stringify-list-into [items : JsonList] [buf : TextBuf]) : TextBuf
@@ -556,30 +553,20 @@
               (cond
                 (= code 34)
                 (begin
-                  (set!
+                  (text-buf-append!
                     out
-                    (text-buf-append
-                      out
-                      (substring-borrowed
-                        text
-                        segment-start
-                        (- i segment-start))))
+                    (substring-borrowed text segment-start (- i segment-start)))
                   (set! i (+ i 1))
                   (set! done true))
                 (= code 92)
                 (begin
-                  (set!
+                  (text-buf-append!
                     out
-                    (text-buf-append
-                      out
-                      (substring-borrowed
-                        text
-                        segment-start
-                        (- i segment-start))))
+                    (substring-borrowed text segment-start (- i segment-start)))
                   (match (json-parse-escape text (+ i 1))
                     [(OkJsonParseEscape decoded next)
                       (begin
-                        (set! out (text-buf-append out decoded))
+                        (text-buf-append! out decoded)
                         (set! i next)
                         (set! segment-start next))]
                     [(ErrJsonParseEscape err)

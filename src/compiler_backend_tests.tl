@@ -5514,6 +5514,27 @@
         true)]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-i64-immediate-load-shape-ok?) : bool
+  (backend-and8
+    (string-eq
+      (compiler-backend-emit-load-i64-immediate 0 "%rax")
+      "    xorl %eax, %eax\n")
+    (string-eq
+      (compiler-backend-emit-load-i64-immediate 1 "%rax")
+      "    movl $1, %eax\n")
+    (string-eq
+      (compiler-backend-emit-load-i64-immediate 2147483647 "%r11")
+      "    movl $2147483647, %r11d\n")
+    (string-eq
+      (compiler-backend-emit-load-i64-immediate -1 "%rax")
+      "    movq $-1, %rax\n")
+    (string-eq
+      (compiler-backend-emit-load-i64-immediate 2147483648 "%rax")
+      "    movq $2147483648, %rax\n")
+    true
+    true
+    true))
+
 (define (compiler-backend-scalar-div-mod-source) : String
   "(define (div64 [a : i64] [b : i64]) : i64 (/ a b))
 (define (mod64 [a : i64] [b : i64]) : i64 (% a b))
@@ -6973,6 +6994,7 @@
         (compiler-backend-scalar-div-mod-ok?)
         (compiler-backend-constant-divisor-strength-ok?))
       (and
+        (compiler-backend-i64-immediate-load-shape-ok?)
         (compiler-backend-narrow-scalar-instr-ok?)
         (compiler-backend-global-compare-width-ok?))
       (and

@@ -67,6 +67,10 @@
   (FoundDefLoc String i64 i64 i64)
   (MissingDefLoc))
 
+(defenum LspDefSource
+  (FoundDefSource String i64)
+  (MissingDefSource))
+
 (define (lsp-frame-space? [c : char]) : bool
   (or (= c #\space') (= c #\tab')))
 
@@ -353,7 +357,10 @@
               (lsp-json-member
                 "documentFormattingProvider"
                 (JsonBool true)
-                JsonMemberListNil))))))
+                (lsp-json-member
+                  "hoverProvider"
+                  (JsonBool true)
+                  JsonMemberListNil)))))))
     "serverInfo"
     (lsp-json-object2
       "name"
@@ -1735,6 +1742,367 @@
             (lsp-write-response id (lsp-json-array JsonListNil))])]
       [(JsonMissing) (lsp-write-response id (lsp-json-array JsonListNil))])))
 
+;; --------------------------------------------------------------------------
+;; Hover (textDocument/hover).
+;;
+;; Entirely text-based: parameter/let-binding types come from the [name : type]
+;; declaration, function signatures from the (define ...) header, and docs from
+;; the ;: / ;# comment lines directly above the definition (current document,
+;; other open documents, or imported modules).
+;; --------------------------------------------------------------------------
+;; Offset just past a balanced ( ... ) group starting at `i`.
+(define (lsp-skip-paren-group [text : String] [i : i64] [n : i64]) : i64
+  (let
+    [j : i64 i]
+    [depth : i64 0]
+    [done : bool false]
+    (begin
+      (while (and (< j n) (not done))
+        (let
+          [c : char (string-ref text j)]
+          (cond
+            (= c #;')
+            (set! j (lsp-skip-line text j n))
+            (= c ##')
+            (set! j (lsp-skip-char-literal text j n))
+            (= c #"')
+            (set! j (lsp-skip-string text j n))
+            (= c #(')
+            (begin
+              (set! depth (+ depth 1))
+              (set! j (+ j 1)))
+            (= c #)')
+            (begin
+              (set! depth (- depth 1))
+              (set! j (+ j 1))
+              (if (<= depth 0)
+                (set! done true)
+                unit))
+            (set! j (+ j 1)))))
+      j)))
+
+;; End offset of one type expression (a ( ... ) group or a single token).
+(define (lsp-scan-type [text : String] [i : i64] [n : i64]) : i64
+  (if (and (< i n) (= (string-ref text i) #('))
+    (lsp-skip-paren-group text i n)
+    (lsp-scan-ident text i n)))
+
+;; Declared type of the nearest [sym : TYPE] binding whose name starts at or
+;; before `limit`, or "" if none (function params and let bindings).
+(define (lsp-binding-type [text : String] [sym : String] [limit : i64]) : String
+  (let
+    [n : i64 (string-length text)]
+    [i : i64 0]
+    [result : String ""]
+    (begin
+      (while (< i n)
+        (let
+          [c : char (string-ref text i)]
+          (cond
+            (= c #;')
+            (set! i (lsp-skip-line text i n))
+            (= c ##')
+            (set! i (lsp-skip-char-literal text i n))
+            (= c #"')
+            (set! i (lsp-skip-string text i n))
+            (= c #[')
+            (let
+              [name-start : i64 (lsp-skip-space text (+ i 1) n)]
+              [name-end : i64 (lsp-scan-ident text name-start n)]
+              (begin
+                (if (and
+                  (> name-end name-start)
+                  (<= name-start limit)
+                  (string-eq
+                    (substring text name-start (- name-end name-start))
+                    sym))
+                  (let
+                    [after : i64 (lsp-skip-space text name-end n)]
+                    (if (and (< after n) (= (string-ref text after) #:'))
+                      (let
+                        [ty-start : i64 (lsp-skip-space text (+ after 1) n)]
+                        [ty-end : i64 (lsp-scan-type text ty-start n)]
+                        (set!
+                          result
+                          (substring text ty-start (- ty-end ty-start))))
+                      unit))
+                  unit)
+                (set! i (+ i 1))))
+            (set! i (+ i 1)))))
+      result)))
+
+;; Offset of the ( that opens the definition form whose name is `needle`, or -1.
+(define (lsp-find-def-form-in [text : String] [needle : String]) : i64
+  (let
+    [n : i64 (string-length text)]
+    [i : i64 0]
+    [found : i64 -1]
+    (begin
+      (while (and (< i n) (< found 0))
+        (let
+          [c : char (string-ref text i)]
+          (cond
+            (= c #;')
+            (set! i (lsp-skip-line text i n))
+            (= c ##')
+            (set! i (lsp-skip-char-literal text i n))
+            (= c #"')
+            (set! i (lsp-skip-string text i n))
+            (= c #(')
+            (let
+              [name-off : i64 (lsp-def-name-offset-at text i n)]
+              (if (>= name-off 0)
+                (if (string-eq (lsp-symbol-at-offset text name-off) needle)
+                  (set! found i)
+                  (set! i (+ i 1)))
+                (set! i (+ i 1))))
+            (set! i (+ i 1)))))
+      found)))
+
+(define (lsp-hover-resolve-in-docs
+  [docs : LspDocuments]
+  [current-uri : String]
+  [needle : String]
+  [idx : i64]) : LspDefSource
+  (if (>= idx (lsp-documents-len docs))
+    MissingDefSource
+    (let
+      [doc : LspDocument (array-ref (lsp-documents-slots docs) idx)]
+      (if (string-eq (struct-get doc uri) current-uri)
+        (lsp-hover-resolve-in-docs docs current-uri needle (+ idx 1))
+        (let
+          [doc-text : String (struct-get doc text)]
+          [off : i64 (lsp-find-def-form-in doc-text needle)]
+          (if (>= off 0)
+            (FoundDefSource doc-text off)
+            (lsp-hover-resolve-in-docs docs current-uri needle (+ idx 1))))))))
+
+(define (lsp-hover-resolve-in-imports
+  [current-path : String]
+  [stdlib-roots : StringVec]
+  [needle : String]
+  [imports : StringVec]
+  [idx : i64]) : LspDefSource
+  (if (>= idx (string-vec-len imports))
+    MissingDefSource
+    (let
+      [resolved : String
+        (compiler-load-resolve-import-with-roots
+          current-path
+          (string-vec-get imports idx "")
+          stdlib-roots)]
+      [src : String (read-file-or (& resolved) "")]
+      (if (string-eq src "")
+        (lsp-hover-resolve-in-imports
+          current-path
+          stdlib-roots
+          needle
+          imports
+          (+ idx 1))
+        (let
+          [off : i64 (lsp-find-def-form-in src needle)]
+          (if (>= off 0)
+            (FoundDefSource src off)
+            (lsp-hover-resolve-in-imports
+              current-path
+              stdlib-roots
+              needle
+              imports
+              (+ idx 1))))))))
+
+(define (lsp-hover-resolve
+  [docs : LspDocuments]
+  [current-uri : String]
+  [current-path : String]
+  [current-text : String]
+  [stdlib-roots : StringVec]
+  [needle : String]) : LspDefSource
+  (let
+    [off : i64 (lsp-find-def-form-in current-text needle)]
+    (if (>= off 0)
+      (FoundDefSource current-text off)
+      (match (lsp-hover-resolve-in-docs docs current-uri needle 0)
+        [(FoundDefSource src form-off) (FoundDefSource src form-off)]
+        [(MissingDefSource)
+          (lsp-hover-resolve-in-imports
+            current-path
+            stdlib-roots
+            needle
+            (lsp-collect-imports current-text (string-vec-new))
+            0)]))))
+
+;; The (define ...) header up to and including the return type, e.g.
+;; "(define (foo [a : i64]) : bool".
+(define (lsp-define-header [text : String] [form-off : i64]) : String
+  (let
+    [n : i64 (string-length text)]
+    [after-open : i64 (lsp-skip-space text (+ form-off 1) n)]
+    [kw-end : i64 (lsp-scan-ident text after-open n)]
+    [j : i64 (lsp-skip-space text kw-end n)]
+    (begin
+      (if (and (< j n) (= (string-ref text j) #('))
+        (set! j (lsp-skip-paren-group text j n))
+        (set! j (lsp-scan-ident text j n)))
+      (let
+        [k : i64 (lsp-skip-space text j n)]
+        (if (and (< k n) (= (string-ref text k) #:'))
+          (set! j (lsp-scan-type text (lsp-skip-space text (+ k 1) n) n))
+          unit))
+      (substring text form-off (- j form-off)))))
+
+;; Start index of the line containing `pos`.
+(define (lsp-line-start-before [text : String] [pos : i64]) : i64
+  (let
+    [i : i64 pos]
+    (begin
+      (while (and (> i 0) (not (= (string-ref text (- i 1)) #\newline')))
+        (set! i (- i 1)))
+      i)))
+
+;; True when the line at `line-start` is a ;: or ;# documentation comment.
+(define (lsp-doc-comment-line? [text : String] [line-start : i64] [n : i64]) : bool
+  (let
+    [i : i64 line-start]
+    (begin
+      (while (and
+        (< i n)
+        (or (= (string-ref text i) #\space') (= (string-ref text i) #\tab')))
+        (set! i (+ i 1)))
+      (and
+        (< (+ i 1) n)
+        (= (string-ref text i) #;')
+        (or (= (string-ref text (+ i 1)) #:') (= (string-ref text (+ i 1)) ##'))))))
+
+;; Text of a ;: / ;# doc-comment line (prefix and one space stripped).
+(define (lsp-doc-comment-text [text : String] [line-start : i64] [n : i64]) : String
+  (let
+    [i : i64 line-start]
+    (begin
+      (while (and
+        (< i n)
+        (or (= (string-ref text i) #\space') (= (string-ref text i) #\tab')))
+        (set! i (+ i 1)))
+      (set! i (+ i 2))
+      (if (and (< i n) (= (string-ref text i) #\space'))
+        (set! i (+ i 1))
+        unit)
+      (let
+        [end : i64 i]
+        (begin
+          (while (and (< end n) (not (= (string-ref text end) #\newline')))
+            (set! end (+ end 1)))
+          (substring text i (- end i)))))))
+
+;; Contiguous doc-comment lines immediately above the definition form, joined.
+(define (lsp-doc-comments-above [text : String] [form-off : i64]) : String
+  (let
+    [n : i64 (string-length text)]
+    [line-start : i64 (lsp-line-start-before text form-off)]
+    [acc : String ""]
+    [done : bool false]
+    (begin
+      (while (and (> line-start 0) (not done))
+        (let
+          [prev-line-start : i64 (lsp-line-start-before text (- line-start 1))]
+          (if (lsp-doc-comment-line? text prev-line-start n)
+            (begin
+              (set!
+                acc
+                (string-append
+                  (lsp-doc-comment-text text prev-line-start n)
+                  (string-append "\n" acc)))
+              (set! line-start prev-line-start))
+            (set! done true))))
+      acc)))
+
+(define (lsp-hover-markdown [body : String] [docs : String]) : String
+  (if (string-eq docs "")
+    (string-append "```typelisp\n" (string-append body "\n```"))
+    (string-append
+      "```typelisp\n"
+      (string-append body (string-append "\n```\n\n" docs)))))
+
+(define (lsp-hover-result
+  [markdown : String]
+  [line : i64]
+  [col : i64]
+  [len : i64]) : Json
+  (lsp-json-object2
+    "contents"
+    (lsp-json-object2
+      "kind"
+      (JsonString "markdown")
+      "value"
+      (JsonString markdown))
+    "range"
+    (lsp-json-object2
+      "start"
+      (lsp-position line col)
+      "end"
+      (lsp-position line (+ col len)))))
+
+(define (lsp-hover-respond
+  [id : Json]
+  [uri : String]
+  [position : Json]
+  [docs : LspDocuments]
+  [stdlib-roots : StringVec]) : unit
+  (match (lsp-documents-lookup docs uri)
+    [(FoundLspDocument path text _)
+      (let
+        [line0 : i64 (lsp-json-int-field-default position "line" 0)]
+        [char0 : i64 (lsp-json-int-field-default position "character" 0)]
+        [off : i64 (lsp-offset-at-position text line0 char0)]
+        [sym : String (lsp-symbol-at-offset text off)]
+        (if (string-eq sym "")
+          (lsp-write-response id JsonNull)
+          (let
+            [needle : String (lsp-symbol-base sym)]
+            [bind-type : String (lsp-binding-type text needle off)]
+            (if (not (string-eq bind-type ""))
+              (lsp-write-response
+                id
+                (lsp-hover-result
+                  (lsp-hover-markdown
+                    (string-append needle (string-append " : " bind-type))
+                    "")
+                  line0
+                  char0
+                  (string-length sym)))
+              (match (lsp-hover-resolve docs uri path text stdlib-roots needle)
+                [(FoundDefSource def-text form-off)
+                  (lsp-write-response
+                    id
+                    (lsp-hover-result
+                      (lsp-hover-markdown
+                        (lsp-define-header def-text form-off)
+                        (lsp-doc-comments-above def-text form-off))
+                      line0
+                      char0
+                      (string-length sym)))]
+                [(MissingDefSource) (lsp-write-response id JsonNull)])))))]
+    [(MissingLspDocument) (lsp-write-response id JsonNull)]))
+
+(define (lsp-handle-hover
+  [id : Json]
+  [params : Json]
+  [docs : LspDocuments]
+  [stdlib-roots : StringVec]) : unit
+  (let
+    [td-key : String "textDocument"]
+    (match (json-object-get params (& td-key))
+      [(JsonFound document)
+        (match (lsp-json-string-field document "uri")
+          [(OkLspJsonText uri)
+            (let
+              [pos-key : String "position"]
+              (match (json-object-get params (& pos-key))
+                [(JsonFound position)
+                  (lsp-hover-respond id uri position docs stdlib-roots)]
+                [(JsonMissing) (lsp-write-response id JsonNull)]))]
+          [(MissingLspJsonText) (lsp-write-response id JsonNull)])]
+      [(JsonMissing) (lsp-write-response id JsonNull)])))
+
 (define (lsp-maybe-write-method-not-found [message : Json]) : unit
   (let
     [key : String "id"]
@@ -1836,6 +2204,20 @@
                     [(JsonFound params) (lsp-handle-formatting id params docs)]
                     [(JsonMissing)
                       (lsp-write-response id (lsp-json-array JsonListNil))]))]
+              [(JsonMissing) unit]))
+          (LspContinue docs))
+        (string-eq method "textDocument/hover")
+        (begin
+          (let
+            [id-key : String "id"]
+            (match (json-object-get message (& id-key))
+              [(JsonFound id)
+                (let
+                  [params-key : String "params"]
+                  (match (json-object-get message (& params-key))
+                    [(JsonFound params)
+                      (lsp-handle-hover id params docs stdlib-roots)]
+                    [(JsonMissing) (lsp-write-response id JsonNull)]))]
               [(JsonMissing) unit]))
           (LspContinue docs))
         (begin

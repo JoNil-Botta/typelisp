@@ -45,8 +45,11 @@ falling back to scalar code.
   condition calls a direct helper returning a varying bool and whose taken
   branch calls a direct source-known helper with a varying scalar argument.
   Exit 42.
-- `../integration/spmd_foreach.tl` — `foreach` add over i64, i32, f64, and
-  f32 arrays, self-checked against scalar loops across empty, sub-lane,
+- `i8_mul_reject.tl` - scalar `foreach` byte multiplication fixture that
+  compiles and exits 42 in scalar mode; explicit SIMD modes reject it with the
+  documented 8-bit lane multiplication diagnostic.
+- `../integration/spmd_foreach.tl` - `foreach` add over i64, i32, i8, u8, f64,
+  and f32 arrays, self-checked against scalar loops across empty, sub-lane,
   exact-lane, and tail lengths. Exit 42.
 - `../integration/spmd_reduce_scalar.tl` — `spmd-reduce` `sum`/`max`/`min` over
   i64/i32/f64 plus `all`/`any` bool reductions across empty, sub-lane,
@@ -66,9 +69,10 @@ lane/tail behavior from `SPEC.md` section 5.15.
 
 Coverage map:
 
-- `foreach` scalar and SIMD map/zip coverage for `i64`, `i32`, `f64`, and
-  `f32` lives in `../integration/spmd_foreach.tl`, the two tail fixtures, and
-  `uniform_zip_i64.tl`.
+- `foreach` scalar and SIMD map/zip coverage for `i64`, `i32`, `i8`, `u8`,
+  `f64`, and `f32` lives in `../integration/spmd_foreach.tl`, the two tail
+  fixtures, and `uniform_zip_i64.tl`. The intentionally unsupported byte
+  multiply policy is covered by `i8_mul_reject.tl`.
 - AVX-512 masked varying `if` direct-index, shifted-contiguous-index, and
   foreach-index-as-value coverage lives in `masked_if_i64.tl`,
   `masked_if_offset_i64.tl`, and `masked_if_index_value_i64.tl`.
@@ -105,9 +109,11 @@ TYPELISP_BIN=./target/stage0/typelisp sh scripts/verify-spmd-broadcast.sh
 SIMD modes are gated by `scripts/detect-simd-isa.sh` (real CPUID capability, not
 host OS), so explicit SIMD modes are skipped cleanly when their ISA is absent.
 The runtime-dispatch harness never skips the dispatch path; it expects scalar,
-AVX2, or AVX-512 based on the same capability probe. **AVX-512 only runs on the
-fleet's AVX-512 Windows box** (the only AVX-512 machine): from Git Bash / MSYS
-with `clang` on `PATH`, both scripts exercise AVX-512 there. Linux and
+AVX2, or AVX-512 based on the same capability probe. AVX-512 execution is gated
+on the `avx512bw` detector token because byte-lane lowering uses BW
+instructions. **AVX-512 only runs on the fleet's AVX-512 Windows box** (the only
+AVX-512 machine): from Git Bash / MSYS with `clang` on `PATH`, both scripts
+exercise AVX-512 there. Linux and
 `windows-latest` CI run the best variant available on those hosts.
 
 To make a new SPMD reference program (e.g. for #1011/#1012/#1013/#1014)

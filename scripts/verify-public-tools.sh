@@ -955,7 +955,7 @@ assert_stderr_empty
 # tools when that lane is active, so execution is gated only by host ISA support.
 SIMD_ISAS=$(sh "$ROOT/scripts/detect-simd-isa.sh" 2>/dev/null || true)
 run_backend_mode_exec() {
-    # $1 = backend mode (avx2|avx512); $2 = required ISA token (avx2|avx512f)
+    # $1 = backend mode (avx2|avx512); $2 = required ISA token (avx2|avx512bw)
     if [ "$IS_STAGE1_WRAPPER" -eq 1 ]; then
         run_cmd "run-backend-$1-rejected" "$COMPILER" run "$CLI_MATRIX/main.tl" --backend-mode "$1" -- arg
         assert_failure
@@ -973,7 +973,7 @@ run_backend_mode_exec() {
     fi
 }
 run_backend_mode_exec avx2 avx2
-run_backend_mode_exec avx512 avx512f
+run_backend_mode_exec avx512 avx512bw
 
 # The scalar SPMD source remains an always-run reference. Non-scalar modes now
 # execute through public `run` when the host CPU advertises the required ISA.
@@ -1017,7 +1017,7 @@ run_spmd_exec_mode() {
 }
 run_spmd_exec_mode scalar -
 run_spmd_exec_mode avx2 avx2
-run_spmd_exec_mode avx512 avx512f
+run_spmd_exec_mode avx512 avx512bw
 else
     fail "extended run-execution coverage requires host-action drivers"
 fi

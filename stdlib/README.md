@@ -50,13 +50,14 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   with `(import "stdlib/env.tl")`.
 - `cpu.tl`: host CPU SIMD ISA detection via stdlib-owned `cpuid`/`xgetbv`
   wrappers over backend runtime symbols (#1167). `cpu-runs-avx2?` /
-  `cpu-runs-avx512f?` report an ISA as runnable only
+  `cpu-runs-avx512f?` / `cpu-runs-avx512bw?` report an ISA as runnable only
   when both the CPUID feature bit and OS XSAVE state (XCR0) are present, plus the
   underlying `cpu-osxsave?` / `cpu-xcr0` / `cpu-max-leaf` / `cpu-has-avx2?` /
-  `cpu-has-avx512f?` accessors. Backs `scripts/detect_simd_isa.tl`, which
-  replaced the C cpuid probe (#1168). The `defdispatch` runtime SIMD dispatch
-  design in `SPEC.md` uses the same capability model internally; ordinary
-  dispatched calls should not require user code to import this module. Import it
+  `cpu-has-avx512f?` / `cpu-has-avx512bw?` accessors. Backs
+  `scripts/detect_simd_isa.tl`, which replaced the C cpuid probe (#1168). The
+  `defdispatch` runtime SIMD dispatch design in `SPEC.md` uses the same
+  capability model internally; ordinary dispatched calls should not require user
+  code to import this module. Import it
   with `(import "stdlib/cpu.tl")` when code needs explicit host capability
   checks.
 - `core_macros.tl`: typed expression macros for core guard and boolean forms.

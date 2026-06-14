@@ -20972,6 +20972,8 @@
         [(AstTyF32) 8]
         [(AstTyI32) 8]
         [(AstTyU32) 8]
+        [(AstTyI8) 32]
+        [(AstTyU8) 32]
         [_ 0])]
     [(CompilerLowerLinuxAvx2)
       (match (tc-type-without-regions ty)
@@ -20981,6 +20983,8 @@
         [(AstTyF32) 8]
         [(AstTyI32) 8]
         [(AstTyU32) 8]
+        [(AstTyI8) 32]
+        [(AstTyU8) 32]
         [_ 0])]
     [(CompilerLowerWindowsAvx2)
       (match (tc-type-without-regions ty)
@@ -20990,6 +20994,8 @@
         [(AstTyF32) 8]
         [(AstTyI32) 8]
         [(AstTyU32) 8]
+        [(AstTyI8) 32]
+        [(AstTyU8) 32]
         [_ 0])]
     [(CompilerLowerAvx512)
       (match (tc-type-without-regions ty)
@@ -20999,6 +21005,8 @@
         [(AstTyF32) 16]
         [(AstTyI32) 16]
         [(AstTyU32) 16]
+        [(AstTyI8) 64]
+        [(AstTyU8) 64]
         [_ 0])]
     [(CompilerLowerLinuxAvx512)
       (match (tc-type-without-regions ty)
@@ -21008,6 +21016,8 @@
         [(AstTyF32) 16]
         [(AstTyI32) 16]
         [(AstTyU32) 16]
+        [(AstTyI8) 64]
+        [(AstTyU8) 64]
         [_ 0])]
     [(CompilerLowerWindowsAvx512)
       (match (tc-type-without-regions ty)
@@ -21017,6 +21027,8 @@
         [(AstTyF32) 16]
         [(AstTyI32) 16]
         [(AstTyU32) 16]
+        [(AstTyI8) 64]
+        [(AstTyU8) 64]
         [_ 0])]
     [_ 0]))
 
@@ -21795,7 +21807,107 @@
   [op : AstBinOp]) : bool
   (match op
     [(AstBinAdd) true]
-    [(AstBinMul) (> (lower-simd-lanes-for-elem mode elem-ty) 0)]
+    [(AstBinMul)
+      (and
+        (> (lower-simd-lanes-for-elem mode elem-ty) 0)
+        (not (lower-spmd-byte-lane-type? elem-ty)))]
+    [_ false]))
+
+(define (lower-spmd-byte-lane-type? [ty : AstType]) : bool
+  (match (tc-type-without-regions ty)
+    [(AstTyI8) true]
+    [(AstTyU8) true]
+    [_ false]))
+
+(define (lower-spmd-byte-mul-diagnostic) : String
+  "lower: SPMD foreach SIMD lowering does not support 8-bit lane multiplication; use scalar or widen before multiplying")
+
+(define (lower-spmd-expr-has-mul? [expr : AstExpr]) : bool
+  (match expr
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lower-spmd-expr-has-mul? inner))]
+    [(AstExprAnn inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lower-spmd-expr-has-mul? inner))]
+    [(AstExprCast inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lower-spmd-expr-has-mul? inner))]
+    [(AstExprBinary op lhs-box rhs-box)
+      (match op
+        [(AstBinMul) true]
+        [_
+          (or
+            (lower-spmd-expr-has-mul? (ast-node-get lhs-box))
+            (lower-spmd-expr-has-mul? (ast-node-get rhs-box)))])]
+    [(AstExprArraySet arr-box index-box value-box)
+      (or
+        (lower-spmd-expr-has-mul? (ast-node-get arr-box))
+        (lower-spmd-expr-has-mul? (ast-node-get index-box))
+        (lower-spmd-expr-has-mul? (ast-node-get value-box)))]
+    [(AstExprBegin exprs) (lower-spmd-expr-list-has-mul? exprs)]
+    [(AstExprLet bindings body-box)
+      (or
+        (lower-spmd-let-bindings-have-mul? bindings)
+        (lower-spmd-expr-has-mul? (ast-node-get body-box)))]
+    [(AstExprIf cond-box then-box else-box)
+      (or
+        (lower-spmd-expr-has-mul? (ast-node-get cond-box))
+        (lower-spmd-expr-has-mul? (ast-node-get then-box))
+        (lower-spmd-expr-has-mul? (ast-node-get else-box)))]
+    [_ false]))
+
+(define (lower-spmd-expr-list-has-mul? [exprs : AstExprList]) : bool
+  (match exprs
+    [(AstExprNil) false]
+    [(AstExprCons expr rest)
+      (or
+        (lower-spmd-expr-has-mul? (ast-node-get expr))
+        (lower-spmd-expr-list-has-mul? (box-get rest)))]))
+
+(define (lower-spmd-let-bindings-have-mul? [bindings : AstLetBindingList]) : bool
+  (match bindings
+    [(AstLetBindingNil) false]
+    [(AstLetBindingCons binding rest)
+      (match binding
+        [(AstLetBinding _ _ init-box)
+          (or
+            (lower-spmd-expr-has-mul? (ast-node-get init-box))
+            (lower-spmd-let-bindings-have-mul? (box-get rest)))])]))
+
+(define (lower-simple-vector-map-has-unsupported-byte-mul?
+  [mode : CompilerLowerMode]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [body : AstExpr]) : bool
+  (match body
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lower-simple-vector-map-has-unsupported-byte-mul?
+          mode
+          env
+          type-env
+          index
+          inner))]
+    [(AstExprArraySet arr-box set-index-box value-box)
+      (let
+        [arr : AstExpr (ast-node-get arr-box)]
+        [set-index : AstExpr (ast-node-get set-index-box)]
+        [value : AstExpr (ast-node-get value-box)]
+        (if (lower-expr-is-var? set-index index)
+          (match (lower-dynamic-array-var env type-env arr)
+            [(LowerSomeArrayVar _ dst-elem)
+              (and
+                (> (lower-simd-lanes-for-elem mode dst-elem) 0)
+                (lower-spmd-byte-lane-type? dst-elem)
+                (lower-spmd-expr-has-mul? value))]
+            [LowerNoArrayVar false])
+          false))]
     [_ false]))
 
 (define (lower-simple-vector-map-value
@@ -24845,10 +24957,20 @@
                     (lower-avx2-masked-if-diagnostic)
                     "lower: SPMD masked if AVX-512 lowering is not available for this backend mode or branch shape")))
               (if (lower-vector-body-has-array-read? body)
-                (ErrLowerExpr
-                  (lower-diagnostic-at-expr
-                    body
-                    (lower-simd-foreach-fallback-diagnostic)))
+                (if (lower-simple-vector-map-has-unsupported-byte-mul?
+                  (lower-state-mode state)
+                  env
+                  type-env
+                  index
+                  body)
+                  (ErrLowerExpr
+                    (lower-diagnostic-at-expr
+                      body
+                      (lower-spmd-byte-mul-diagnostic)))
+                  (ErrLowerExpr
+                    (lower-diagnostic-at-expr
+                      body
+                      (lower-simd-foreach-fallback-diagnostic))))
                 (lower-scalar-foreach-lowered
                   ctx
                   state
@@ -27788,9 +27910,9 @@
                   (compiler-ir-instr-cons
                     (IrInstrBinOp
                       feature-ok-var
-                      IrBinNe
+                      IrBinEq
                       (IrValueVar feature-mask-var)
-                      (IrValueI64 0)
+                      (IrValueI64 feature-mask)
                       (AstTyBool))
                     (compiler-ir-instr-cons
                       (IrInstrBranch
@@ -27882,7 +28004,7 @@
         (lower-dispatch-feature-blocks
           "check_avx512"
           230
-          65536
+          1073807360
           "select_avx512"
           (match maybe-avx2
             [(TcSomeString _) "check_avx2"]
@@ -35475,6 +35597,18 @@
     ([i : i64 0 n])
     (array-set! out i (+ (array-ref a i) (array-ref b i)))))")
 
+(define (compiler-lower-avx2-foreach-map-i8-source) : String
+  "(define (fill [a : (Array i8)] [b : (Array i8)] [out : (Array i8)] [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (array-set! out i (+ (array-ref a i) (array-ref b i)))))")
+
+(define (compiler-lower-avx2-foreach-map-u8-source) : String
+  "(define (fill [a : (Array u8)] [b : (Array u8)] [out : (Array u8)] [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (array-set! out i (+ (array-ref a i) (array-ref b i)))))")
+
 (define (compiler-lower-avx2-foreach-map-uniform-source) : String
   "(define (fill [a : (Array i64)] [b : (Array i64)] [out : (Array i64)] [n : i64] [r : i64]) : unit
   (foreach
@@ -35495,6 +35629,18 @@
 
 (define (compiler-lower-avx2-foreach-map-uniform-f32-source) : String
   "(define (fill [a : (Array f32)] [b : (Array f32)] [out : (Array f32)] [n : i64] [r : f32]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (array-set! out i (+ (+ (array-ref a i) (array-ref b i)) r))))")
+
+(define (compiler-lower-avx2-foreach-map-uniform-i8-source) : String
+  "(define (fill [a : (Array i8)] [b : (Array i8)] [out : (Array i8)] [n : i64] [r : i8]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (array-set! out i (+ (+ (array-ref a i) (array-ref b i)) r))))")
+
+(define (compiler-lower-avx2-foreach-map-uniform-u8-source) : String
+  "(define (fill [a : (Array u8)] [b : (Array u8)] [out : (Array u8)] [n : i64] [r : u8]) : unit
   (foreach
     ([i : i64 0 n])
     (array-set! out i (+ (+ (array-ref a i) (array-ref b i)) r))))")
@@ -35565,7 +35711,15 @@
     (compiler-lower-avx2-foreach-map-source-shape-ok?
       (compiler-lower-avx2-foreach-map-f32-source)
       (AstTyF32)
-      8)))
+      8)
+    (compiler-lower-avx2-foreach-map-source-shape-ok?
+      (compiler-lower-avx2-foreach-map-i8-source)
+      (AstTyI8)
+      32)
+    (compiler-lower-avx2-foreach-map-source-shape-ok?
+      (compiler-lower-avx2-foreach-map-u8-source)
+      (AstTyU8)
+      32)))
 
 (define (compiler-lower-avx2-foreach-uniform-source-shape-ok?
   [src : String]
@@ -35628,6 +35782,20 @@
       (compiler-lower-avx2-foreach-map-uniform-f32-source)
       (AstTyF32)
       8
+      2
+      2
+      6)
+    (compiler-lower-avx2-foreach-uniform-source-shape-ok?
+      (compiler-lower-avx2-foreach-map-uniform-i8-source)
+      (AstTyI8)
+      32
+      2
+      2
+      6)
+    (compiler-lower-avx2-foreach-uniform-source-shape-ok?
+      (compiler-lower-avx2-foreach-map-uniform-u8-source)
+      (AstTyU8)
+      32
       2
       2
       6)
@@ -35727,7 +35895,15 @@
     (compiler-lower-avx512-foreach-map-source-shape-ok?
       (compiler-lower-avx2-foreach-map-f32-source)
       (AstTyF32)
-      16)))
+      16)
+    (compiler-lower-avx512-foreach-map-source-shape-ok?
+      (compiler-lower-avx2-foreach-map-i8-source)
+      (AstTyI8)
+      64)
+    (compiler-lower-avx512-foreach-map-source-shape-ok?
+      (compiler-lower-avx2-foreach-map-u8-source)
+      (AstTyU8)
+      64)))
 
 (define (compiler-lower-avx512-foreach-uniform-source-shape-ok?
   [src : String]
@@ -35803,6 +35979,22 @@
       (compiler-lower-avx2-foreach-map-uniform-f32-source)
       (AstTyF32)
       16
+      2
+      2
+      4
+      12)
+    (compiler-lower-avx512-foreach-uniform-source-shape-ok?
+      (compiler-lower-avx2-foreach-map-uniform-i8-source)
+      (AstTyI8)
+      64
+      2
+      2
+      4
+      12)
+    (compiler-lower-avx512-foreach-uniform-source-shape-ok?
+      (compiler-lower-avx2-foreach-map-uniform-u8-source)
+      (AstTyU8)
+      64
       2
       2
       4

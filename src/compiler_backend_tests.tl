@@ -3442,7 +3442,9 @@
     (compiler-backend-avx2-map-asm-contains? "i64" "    vmovdqu " "    vpaddq ")
     (compiler-backend-avx2-map-asm-contains? "i32" "    vmovdqu " "    vpaddd ")
     (compiler-backend-avx2-map-asm-contains? "f64" "    vmovupd " "    vaddpd ")
-    (compiler-backend-avx2-map-asm-contains? "f32" "    vmovups " "    vaddps ")))
+    (compiler-backend-avx2-map-asm-contains? "f32" "    vmovups " "    vaddps ")
+    (compiler-backend-avx2-map-asm-contains? "i8" "    vmovdqu " "    vpaddb ")
+    (compiler-backend-avx2-map-asm-contains? "u8" "    vmovdqu " "    vpaddb ")))
 
 (define (compiler-backend-avx2-uniform-map-asm-contains?
   [elem : String]
@@ -3528,6 +3530,16 @@
       "    vmovups "
       "    vaddps "
       "    vbroadcastss %xmm0, ")
+    (compiler-backend-avx2-uniform-map-asm-contains?
+      "i8"
+      "    vmovdqu "
+      "    vpaddb "
+      "    vpbroadcastb %xmm0, ")
+    (compiler-backend-avx2-uniform-map-asm-contains?
+      "u8"
+      "    vmovdqu "
+      "    vpaddb "
+      "    vpbroadcastb %xmm0, ")
     (compiler-backend-avx2-uniform-zip-ok?)))
 
 (define (compiler-backend-avx512-masked-if-source) : String
@@ -3557,7 +3569,9 @@
 (define (compiler-backend-avx512-map-asm-contains?
   [elem : String]
   [move : String]
-  [op : String]) : bool
+  [op : String]
+  [mask-move : String]
+  [mask-shift : String]) : bool
   (match (lower-compiler-source-with-mode
     (compiler-backend-avx2-map-source elem)
     (CompilerLowerAvx512))
@@ -3577,8 +3591,8 @@
               (compiler-backend-string-contains? asm "%k")
               (compiler-backend-string-contains? asm "tail_mask_")
               (compiler-backend-string-contains? asm "}{z}")
-              (compiler-backend-string-contains? asm "kmovw")
-              (compiler-backend-string-contains? asm "shll %cl, %eax"))
+              (compiler-backend-string-contains? asm mask-move)
+              (compiler-backend-string-contains? asm mask-shift))
             (not
               (compiler-backend-string-contains?
                 asm
@@ -3655,19 +3669,39 @@
     (compiler-backend-avx512-map-asm-contains?
       "i64"
       "    vmovdqu64 "
-      "    vpaddq ")
+      "    vpaddq "
+      "kmovw"
+      "shll %cl, %eax")
     (compiler-backend-avx512-map-asm-contains?
       "i32"
       "    vmovdqu32 "
-      "    vpaddd ")
+      "    vpaddd "
+      "kmovw"
+      "shll %cl, %eax")
     (compiler-backend-avx512-map-asm-contains?
       "f64"
       "    vmovupd "
-      "    vaddpd ")
+      "    vaddpd "
+      "kmovw"
+      "shll %cl, %eax")
     (compiler-backend-avx512-map-asm-contains?
       "f32"
       "    vmovups "
-      "    vaddps ")))
+      "    vaddps "
+      "kmovw"
+      "shll %cl, %eax")
+    (compiler-backend-avx512-map-asm-contains?
+      "i8"
+      "    vmovdqu8 "
+      "    vpaddb "
+      "kmovq"
+      "shlq %cl, %rax")
+    (compiler-backend-avx512-map-asm-contains?
+      "u8"
+      "    vmovdqu8 "
+      "    vpaddb "
+      "kmovq"
+      "shlq %cl, %rax")))
 
 (define (compiler-backend-avx512-uniform-map-asm-contains?
   [elem : String]
@@ -3753,6 +3787,16 @@
       "    vmovups "
       "    vaddps "
       "    vbroadcastss %xmm0, ")
+    (compiler-backend-avx512-uniform-map-asm-contains?
+      "i8"
+      "    vmovdqu8 "
+      "    vpaddb "
+      "    vpbroadcastb %xmm0, ")
+    (compiler-backend-avx512-uniform-map-asm-contains?
+      "u8"
+      "    vmovdqu8 "
+      "    vpaddb "
+      "    vpbroadcastb %xmm0, ")
     (compiler-backend-avx512-uniform-zip-ok?)))
 
 (define (compiler-backend-avx2-reduce-asm-contains?

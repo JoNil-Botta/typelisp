@@ -733,6 +733,8 @@
     [(AstTyF32) (= lanes 8)]
     [(AstTyI32) (= lanes 8)]
     [(AstTyU32) (= lanes 8)]
+    [(AstTyI8) (= lanes 32)]
+    [(AstTyU8) (= lanes 32)]
     [_ false]))
 
 (define (compiler-backend-avx2-shape-diagnostic
@@ -897,6 +899,8 @@
         [(AstTyU64) "vpaddq"]
         [(AstTyI32) "vpaddd"]
         [(AstTyU32) "vpaddd"]
+        [(AstTyI8) "vpaddb"]
+        [(AstTyU8) "vpaddb"]
         [(AstTyF64) "vaddpd"]
         [(AstTyF32) "vaddps"]
         [_ ""])]
@@ -1039,6 +1043,28 @@
             (string-append
               asm
               "    vmovd %eax, %xmm0\n    vpbroadcastd %xmm0, "))]
+        [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
+    [(AstTyI8)
+      (match (compiler-backend-emit-load-value-with-plan
+        assignments
+        value
+        "%rax")
+        [(OkCompilerBackend asm)
+          (OkCompilerBackend
+            (string-append
+              asm
+              "    vmovd %eax, %xmm0\n    vpbroadcastb %xmm0, "))]
+        [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
+    [(AstTyU8)
+      (match (compiler-backend-emit-load-value-with-plan
+        assignments
+        value
+        "%rax")
+        [(OkCompilerBackend asm)
+          (OkCompilerBackend
+            (string-append
+              asm
+              "    vmovd %eax, %xmm0\n    vpbroadcastb %xmm0, "))]
         [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
     [_
       (match (compiler-backend-emit-load-value-with-plan
@@ -1232,6 +1258,8 @@
     [(AstTyF32) (= lanes 16)]
     [(AstTyI32) (= lanes 16)]
     [(AstTyU32) (= lanes 16)]
+    [(AstTyI8) (= lanes 64)]
+    [(AstTyU8) (= lanes 64)]
     [_ false]))
 
 (define (compiler-backend-avx512-shape-diagnostic
@@ -1276,6 +1304,8 @@
     [(AstTyU64) "vmovdqu64"]
     [(AstTyI32) "vmovdqu32"]
     [(AstTyU32) "vmovdqu32"]
+    [(AstTyI8) "vmovdqu8"]
+    [(AstTyU8) "vmovdqu8"]
     [_ ""]))
 
 (define (compiler-backend-avx512-vector-binop-mnemonic
@@ -1288,6 +1318,8 @@
         [(AstTyU64) "vpaddq"]
         [(AstTyI32) "vpaddd"]
         [(AstTyU32) "vpaddd"]
+        [(AstTyI8) "vpaddb"]
+        [(AstTyU8) "vpaddb"]
         [(AstTyF64) "vaddpd"]
         [(AstTyF32) "vaddps"]
         [_ ""])]
@@ -1308,6 +1340,8 @@
     [(AstTyU64) "vpcmpuq"]
     [(AstTyI32) "vpcmpd"]
     [(AstTyU32) "vpcmpud"]
+    [(AstTyI8) "vpcmpb"]
+    [(AstTyU8) "vpcmpub"]
     [(AstTyF64) "vcmppd"]
     [(AstTyF32) "vcmpps"]
     [_ ""]))
@@ -1361,6 +1395,28 @@
         [(OkCompilerBackend asm)
           (OkCompilerBackend (string-append asm "    vpbroadcastd %eax, "))]
         [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
+    [(AstTyI8)
+      (match (compiler-backend-emit-load-value-with-plan
+        assignments
+        value
+        "%rax")
+        [(OkCompilerBackend asm)
+          (OkCompilerBackend
+            (string-append
+              asm
+              "    vmovd %eax, %xmm0\n    vpbroadcastb %xmm0, "))]
+        [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
+    [(AstTyU8)
+      (match (compiler-backend-emit-load-value-with-plan
+        assignments
+        value
+        "%rax")
+        [(OkCompilerBackend asm)
+          (OkCompilerBackend
+            (string-append
+              asm
+              "    vmovd %eax, %xmm0\n    vpbroadcastb %xmm0, "))]
+        [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
     [_
       (match (compiler-backend-emit-load-value-with-plan
         assignments
@@ -1385,7 +1441,48 @@
     [_ (compiler-backend-avx2-vector-reduce-op-mnemonic op elem-ty)]))
 
 (define (compiler-backend-avx512-lane-mask [lanes : i64]) : i64
-  (cond (= lanes 8) 0xff (= lanes 16) 0xffff 0))
+  (cond (= lanes 8) 0xff (= lanes 16) 0xffff (= lanes 32) -1 (= lanes 64) -1 0))
+
+(define (compiler-backend-avx512-mask-op-suffix [lanes : i64]) : String
+  (if (> lanes 32)
+    "q"
+    (if (> lanes 16)
+      "d"
+      "w")))
+
+(define (compiler-backend-avx512-mask-int-suffix [lanes : i64]) : String
+  (if (> lanes 32)
+    "q"
+    "l"))
+
+(define (compiler-backend-avx512-mask-move-mnemonic [lanes : i64]) : String
+  (string-append "kmov" (compiler-backend-avx512-mask-op-suffix lanes)))
+
+(define (compiler-backend-avx512-mask-gpr [lanes : i64]) : String
+  (if (> lanes 32)
+    "%rax"
+    "%eax"))
+
+(define (compiler-backend-avx512-mask-mov-imm-mnemonic [lanes : i64]) : String
+  (string-append "mov" (compiler-backend-avx512-mask-int-suffix lanes)))
+
+(define (compiler-backend-avx512-mask-shl-mnemonic [lanes : i64]) : String
+  (string-append "shl" (compiler-backend-avx512-mask-int-suffix lanes)))
+
+(define (compiler-backend-avx512-mask-sub-mnemonic [lanes : i64]) : String
+  (string-append "sub" (compiler-backend-avx512-mask-int-suffix lanes)))
+
+(define (compiler-backend-avx512-mask-xor-mnemonic [lanes : i64]) : String
+  (string-append "xor" (compiler-backend-avx512-mask-int-suffix lanes)))
+
+(define (compiler-backend-avx512-mask-test-mnemonic [lanes : i64]) : String
+  (string-append "test" (compiler-backend-avx512-mask-int-suffix lanes)))
+
+(define (compiler-backend-avx512-mask-and-mnemonic [lanes : i64]) : String
+  (string-append "and" (compiler-backend-avx512-mask-int-suffix lanes)))
+
+(define (compiler-backend-avx512-mask-cmp-mnemonic [lanes : i64]) : String
+  (string-append "cmp" (compiler-backend-avx512-mask-int-suffix lanes)))
 
 (define (compiler-backend-avx512-mask-label
   [function : String]
@@ -1822,6 +1919,17 @@
                         current-label
                         dst
                         "_done")]
+                    [mask-gpr : String (compiler-backend-avx512-mask-gpr lanes)]
+                    [mask-move : String
+                      (compiler-backend-avx512-mask-move-mnemonic lanes)]
+                    [mov-imm : String
+                      (compiler-backend-avx512-mask-mov-imm-mnemonic lanes)]
+                    [shift : String
+                      (compiler-backend-avx512-mask-shl-mnemonic lanes)]
+                    [sub : String
+                      (compiler-backend-avx512-mask-sub-mnemonic lanes)]
+                    [xor : String
+                      (compiler-backend-avx512-mask-xor-mnemonic lanes)]
                     [body-asm : String
                       (string-append
                         (backend-cat5
@@ -1831,38 +1939,77 @@
                           full-label
                           "\n")
                         (string-append
-                          (backend-cat4
-                            "    testq %rcx, %rcx\n    jle "
-                            zero-label
-                            "\n    movl $1, %eax\n    shll %cl, %eax\n"
-                            "")
                           (string-append
                             (backend-cat5
-                              "    subl $1, %eax\n    kmovw %eax, "
-                              dst-reg
-                              "\n    jmp "
-                              done-label
-                              "\n")
-                            (string-append
+                              "    testq %rcx, %rcx\n    jle "
+                              zero-label
+                              "\n    "
+                              mov-imm
+                              " $1, ")
+                            (backend-cat5
+                              mask-gpr
+                              "\n    "
+                              shift
+                              " %cl, "
+                              (string-append mask-gpr "\n")))
+                          (string-append
+                            (backend-cat5
+                              "    "
+                              sub
+                              " $1, "
+                              mask-gpr
                               (backend-cat5
-                                full-label
-                                ":\n    movl $"
-                                (int->string full-mask)
-                                ", %eax\n    kmovw %eax, "
-                                dst-reg)
-                              (string-append
+                                "\n    "
+                                mask-move
+                                " "
+                                mask-gpr
                                 (backend-cat5
+                                  ", "
+                                  dst-reg
                                   "\n    jmp "
                                   done-label
-                                  "\n"
-                                  zero-label
-                                  ":\n")
+                                  "\n")))
+                            (string-append
+                              (string-append
                                 (backend-cat5
-                                  "    xorl %eax, %eax\n    kmovw %eax, "
-                                  dst-reg
-                                  "\n"
-                                  done-label
-                                  ":\n"))))))]
+                                  full-label
+                                  ":\n    "
+                                  mov-imm
+                                  " $"
+                                  (int->string full-mask))
+                                (backend-cat5
+                                  ", "
+                                  mask-gpr
+                                  "\n    "
+                                  mask-move
+                                  (backend-cat3 " " mask-gpr ", ")))
+                              (string-append
+                                (string-append
+                                  (backend-cat5
+                                    dst-reg
+                                    "\n    jmp "
+                                    done-label
+                                    "\n"
+                                    zero-label)
+                                  ":\n")
+                                (string-append
+                                  (backend-cat5
+                                    "    "
+                                    xor
+                                    " "
+                                    mask-gpr
+                                    (backend-cat5
+                                      ", "
+                                      mask-gpr
+                                      "\n    "
+                                      mask-move
+                                      (backend-cat3 " " mask-gpr ", ")))
+                                  (backend-cat5
+                                    dst-reg
+                                    "\n"
+                                    done-label
+                                    ":\n"
+                                    "")))))))]
                     (OkCompilerBackend
                       (string-append index-asm (string-append end-asm body-asm))))]
                 [(ErrCompilerBackend message)
@@ -1973,10 +2120,14 @@
           (compiler-diagnostic-with-message instr-diag message))])
     (compiler-backend-avx512-shape-diagnostic instr-diag elem-ty lanes)))
 
-(define (compiler-backend-mask-binop-mnemonic [op : CompilerIrMaskBinOp]) : String
+(define (compiler-backend-mask-binop-mnemonic
+  [op : CompilerIrMaskBinOp]
+  [lanes : i64]) : String
   (match op
-    [(IrMaskAnd) "kandw"]
-    [(IrMaskOr) "korw"]))
+    [(IrMaskAnd)
+      (string-append "kand" (compiler-backend-avx512-mask-op-suffix lanes))]
+    [(IrMaskOr)
+      (string-append "kor" (compiler-backend-avx512-mask-op-suffix lanes))]))
 
 (define (compiler-backend-emit-avx512-mask-binop
   [assignments : CompilerRegAssignmentList]
@@ -2000,7 +2151,7 @@
                 (OkCompilerBackend
                   (backend-cat5
                     "    "
-                    (compiler-backend-mask-binop-mnemonic op)
+                    (compiler-backend-mask-binop-mnemonic op lanes)
                     " "
                     rhs-reg
                     (backend-cat5 ", " lhs-reg ", " dst-reg "\n")))]
@@ -2022,6 +2173,10 @@
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (let
     [full-mask : i64 (compiler-backend-avx512-lane-mask lanes)]
+    [mask-suffix : String (compiler-backend-avx512-mask-op-suffix lanes)]
+    [mask-move : String (compiler-backend-avx512-mask-move-mnemonic lanes)]
+    [mask-gpr : String (compiler-backend-avx512-mask-gpr lanes)]
+    [mov-imm : String (compiler-backend-avx512-mask-mov-imm-mnemonic lanes)]
     (if (= full-mask 0)
       (compiler-backend-avx512-shape-diagnostic instr-diag (AstTyI64) lanes)
       (match (compiler-backend-avx512-mask-value-reg
@@ -2033,13 +2188,28 @@
             [(OkBackendReg dst-reg)
               (OkCompilerBackend
                 (string-append
-                  (backend-cat5 "    knotw " src-reg ", " dst-reg "\n")
                   (backend-cat5
-                    "    movl $"
+                    "    "
+                    (string-append "knot" mask-suffix)
+                    " "
+                    src-reg
+                    (backend-cat3 ", " dst-reg "\n"))
+                  (backend-cat5
+                    "    "
+                    mov-imm
+                    " $"
                     (int->string full-mask)
-                    ", %eax\n    kmovw %eax, %k7\n    kandw %k7, "
-                    dst-reg
-                    (backend-cat3 ", " dst-reg "\n"))))]
+                    (backend-cat5
+                      ", "
+                      mask-gpr
+                      "\n    "
+                      mask-move
+                      (backend-cat5
+                        " "
+                        mask-gpr
+                        ", %k7\n    "
+                        (string-append "kand" mask-suffix)
+                        (backend-cat5 " %k7, " dst-reg ", " dst-reg "\n"))))))]
             [(ErrBackendReg message)
               (ErrCompilerBackend
                 (compiler-diagnostic-with-message instr-diag message))])]
@@ -2056,6 +2226,11 @@
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (let
     [full-mask : i64 (compiler-backend-avx512-lane-mask lanes)]
+    [mask-move : String (compiler-backend-avx512-mask-move-mnemonic lanes)]
+    [mask-gpr : String (compiler-backend-avx512-mask-gpr lanes)]
+    [test-op : String (compiler-backend-avx512-mask-test-mnemonic lanes)]
+    [and-op : String (compiler-backend-avx512-mask-and-mnemonic lanes)]
+    [cmp-op : String (compiler-backend-avx512-mask-cmp-mnemonic lanes)]
     (if (= full-mask 0)
       (compiler-backend-avx512-shape-diagnostic instr-diag (AstTyI64) lanes)
       (match (compiler-backend-avx512-mask-value-reg
@@ -2065,19 +2240,39 @@
         [(OkBackendReg src-reg)
           (OkCompilerBackend
             (string-append
-              (backend-cat5
-                "    kmovw "
-                src-reg
-                ", %eax\n"
-                (match op
-                  [(IrMaskReduceAny) "    testl %eax, %eax\n    setne %al\n"]
-                  [(IrMaskReduceAll)
-                    (backend-cat5
-                      "    andl $"
-                      (int->string full-mask)
-                      ", %eax\n    cmpl $"
-                      (int->string full-mask)
-                      ", %eax\n    sete %al\n")])
+              (string-append
+                (string-append
+                  (backend-cat5
+                    "    "
+                    mask-move
+                    " "
+                    src-reg
+                    (backend-cat3 ", " mask-gpr "\n"))
+                  (match op
+                    [(IrMaskReduceAny)
+                      (backend-cat5
+                        "    "
+                        test-op
+                        " "
+                        mask-gpr
+                        (backend-cat3 ", " mask-gpr "\n    setne %al\n"))]
+                    [(IrMaskReduceAll)
+                      (backend-cat5
+                        "    "
+                        and-op
+                        " $"
+                        (int->string full-mask)
+                        (backend-cat5
+                          ", "
+                          mask-gpr
+                          "\n    "
+                          cmp-op
+                          (backend-cat5
+                            " $"
+                            (int->string full-mask)
+                            ", "
+                            mask-gpr
+                            "\n    sete %al\n")))]))
                 "    movzbq %al, %rax\n")
               (compiler-backend-emit-store-var-with-plan assignments dst "%rax")))]
         [(ErrBackendReg message)

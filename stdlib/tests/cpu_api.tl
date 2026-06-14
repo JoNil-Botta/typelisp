@@ -3,7 +3,7 @@
 (import "stdlib/cpu.tl")
 
 ;; Host-independent invariants for the cpuid/xgetbv-based SIMD detector. The
-;; concrete avx2/avx512f answers depend on the running CPU, so this fixture only
+;; concrete avx2/avx512f/avx512bw answers depend on the running CPU, so this fixture only
 ;; asserts relationships that hold on every x86-64 host (vacuously on hosts
 ;; without the feature) while exercising the whole detection path so a broken
 ;; cpuid/xgetbv lowering shows up as a build/run failure.
@@ -22,6 +22,16 @@
         (cpu-has-avx512f?)
         true)
       "runs-avx512f implies has-avx512f")
+    (assert-true
+      (if (cpu-runs-avx512bw?)
+        (cpu-has-avx512bw?)
+        true)
+      "runs-avx512bw implies has-avx512bw")
+    (assert-true
+      (if (cpu-runs-avx512bw?)
+        (cpu-runs-avx512f?)
+        true)
+      "runs-avx512bw implies runs-avx512f")
     ;; XCR0 ZMM enablement (0xe6) is a superset of YMM enablement (0x6).
     (assert-true
       (if (cpu-zmm-enabled?)

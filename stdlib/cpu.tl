@@ -50,7 +50,7 @@
     0))
 
 ;: Highest standard CPUID leaf (CPUID.0:EAX). Leaf 7 carries the AVX2/AVX512F
-;: feature bits, so it must be available before they are queried.
+;: and AVX512BW feature bits, so it must be available before they are queried.
 (define (cpu-max-leaf) : i64
   (let
     [r0 : (Tuple i32 i32 i32 i32) (cpuid 0 0)]
@@ -80,6 +80,14 @@
       (= (bit-and (shr (cast (tuple-ref r7 1) : i64) 16) 1) 1))
     false))
 
+;: CPUID.7.0:EBX bit 30 = AVX512BW.
+(define (cpu-has-avx512bw?) : bool
+  (if (>= (cpu-max-leaf) 7)
+    (let
+      [r7 : (Tuple i32 i32 i32 i32) (cpuid 7 0)]
+      (= (bit-and (shr (cast (tuple-ref r7 1) : i64) 30) 1) 1))
+    false))
+
 ;: AVX2 is runnable when the CPU advertises it and the OS has enabled YMM state.
 (define (cpu-runs-avx2?) : bool
   (and (cpu-has-avx2?) (cpu-ymm-enabled?)))
@@ -87,3 +95,7 @@
 ;: AVX-512 Foundation is runnable when advertised and ZMM/opmask state is enabled.
 (define (cpu-runs-avx512f?) : bool
   (and (cpu-has-avx512f?) (cpu-zmm-enabled?)))
+
+;: AVX-512BW is runnable when Foundation, BW, and ZMM/opmask state are enabled.
+(define (cpu-runs-avx512bw?) : bool
+  (and (cpu-runs-avx512f?) (cpu-has-avx512bw?)))

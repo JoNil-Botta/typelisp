@@ -5866,7 +5866,7 @@
 (define (compiler-backend-unop-asm [op : CompilerIrUnOp]) : String
   (match op
     [(IrUnNeg) "    negq %rax\n"]
-    [(IrUnNot) "    testq %rax, %rax\n    sete %al\n    movzbl %al, %eax\n"]
+    [(IrUnNot) "    xorq $1, %rax\n"]
     [(IrUnBitNot) "    notq %rax\n"]))
 
 ;; Scalar floating-point binary ops. `fty` selects single (`ss`, f32) vs double

@@ -1286,7 +1286,11 @@
         (let
           [off : i64 (lsp-find-def-offset-in src needle)]
           (if (>= off 0)
-            (lsp-def-loc-from (lsp-path-to-file-uri resolved) src off needle)
+            (lsp-def-loc-from
+              (lsp-path-to-file-uri (compiler-load-normalize-path resolved))
+              src
+              off
+              needle)
             (lsp-find-definition-in-import-list
               current-path
               stdlib-roots

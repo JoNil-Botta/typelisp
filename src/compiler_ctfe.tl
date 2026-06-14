@@ -38,6 +38,10 @@
   (CtfeExprClause AstExprClause)
   (CtfeExprClauseList AstExprClauseList))
 
+(defenum CtfeValueList
+  (CtfeValueNil)
+  (CtfeValueCons CompilerCtfeValue (Box CtfeValueList)))
+
 ;; CTFE-owned type layout metadata. The typechecker/lowerer build this from
 ;; their `TcContext` without making CTFE import typecheck.
 (defenum CtfeLayoutField
@@ -487,6 +491,10 @@
 (defenum ResultCtfe
   (OkCtfe CompilerCtfeValue i64)
   (ErrCtfe CompilerDiagnostic))
+
+(defenum CtfePatternMatch
+  (CtfeNoPatternMatch)
+  (CtfePatternMatched CtfeEnv))
 
 (defenum ResultCtfeQuoteExpr
   (OkCtfeQuoteExpr i64 AstType i64)
@@ -1527,6 +1535,10 @@
         (ctfe-eval-let bindings body env fuel))]
     [(AstExprBegin exprs) (ctfe-eval-begin exprs env fuel)]
     [(AstExprUnsafe exprs) (ctfe-eval-begin exprs env fuel)]
+    [(AstExprMatch scrutinee-box arms)
+      (let
+        [scrutinee : AstExpr (ast-node-get scrutinee-box)]
+        (ctfe-eval-match scrutinee arms expr env fuel))]
     [(AstExprCall func-box args)
       (let
         [func : AstExpr (ast-node-get func-box)]
@@ -3363,6 +3375,233 @@
               [(AstExprNil) (OkCtfe value head-fuel)]
               [_ (ctfe-eval-begin rest env head-fuel)])]
           [(ErrCtfe diag) (ErrCtfe diag)]))]))
+
+;; Evaluate a small CTFE-owned `match` subset. Runtime enum/struct values still
+;; have no CTFE representation; this covers scalar values and the public
+;; stdlib.comptime syntax pseudo-values backed by CtfeExpr/CtfeExprList.
+(define (ctfe-value-list-cons [head : CompilerCtfeValue] [tail : CtfeValueList]) : CtfeValueList
+  (CtfeValueCons head (box tail)))
+
+(define (ctfe-value-list1 [a : CompilerCtfeValue]) : CtfeValueList
+  (ctfe-value-list-cons a CtfeValueNil))
+
+(define (ctfe-value-list2 [a : CompilerCtfeValue] [b : CompilerCtfeValue]) : CtfeValueList
+  (ctfe-value-list-cons a (ctfe-value-list1 b)))
+
+(define (ctfe-value-list3
+  [a : CompilerCtfeValue]
+  [b : CompilerCtfeValue]
+  [c : CompilerCtfeValue]) : CtfeValueList
+  (ctfe-value-list-cons a (ctfe-value-list2 b c)))
+
+(define (ctfe-string-suffix? [text : String] [suffix : String]) : bool
+  (let
+    [text-len : i64 (string-length text)]
+    [suffix-len : i64 (string-length suffix)]
+    (if (< text-len suffix-len)
+      false
+      (string-eq (substring text (- text-len suffix-len) suffix-len) suffix))))
+
+(define (ctfe-pattern-variant-name? [name : i64] [expected : String]) : bool
+  (let
+    [actual : String (intern-str name)]
+    (or
+      (string-eq actual expected)
+      (ctfe-string-suffix? actual (string-append "." expected))
+      (ctfe-string-suffix? actual (string-append "/" expected)))))
+
+(define (ctfe-literal-matches-value?
+  [lit : AstLiteral]
+  [value : CompilerCtfeValue]) : bool
+  (match lit
+    [(AstLitInt n)
+      (match value
+        [(CtfeI64 actual) (= actual n)]
+        [_ false])]
+    [(AstLitBool b)
+      (match value
+        [(CtfeBool actual) (= actual b)]
+        [_ false])]
+    [(AstLitChar c)
+      (match value
+        [(CtfeChar actual) (= actual c)]
+        [_ false])]
+    [(AstLitUnit)
+      (match value
+        [(CtfeUnit) true]
+        [_ false])]
+    [(AstLitFloat text)
+      (match (compiler-float-parse-f64 text)
+        [(CompilerFloatSomeF64 want)
+          (match value
+            [(CtfeF64 actual) (= actual want)]
+            [(CtfeF32 actual) (= actual want)]
+            [_ false])]
+        [(CompilerFloatNoF64) false])]
+    [(AstLitString text)
+      (match value
+        [(CtfeString actual) (string-eq actual text)]
+        [_ false])]))
+
+(define (ctfe-match-pattern-list
+  [patterns : AstPatternList]
+  [values : CtfeValueList]
+  [env : CtfeEnv]) : CtfePatternMatch
+  (match patterns
+    [(AstPatternNil)
+      (match values
+        [(CtfeValueNil) (CtfePatternMatched env)]
+        [_ (CtfeNoPatternMatch)])]
+    [(AstPatternCons pattern rest-patterns)
+      (let
+        [pattern : AstPattern (box-get pattern)]
+        [rest-patterns : AstPatternList (box-get rest-patterns)]
+        (match values
+          [(CtfeValueCons value rest-values)
+            (match (ctfe-match-pattern pattern value env)
+              [(CtfePatternMatched next-env)
+                (ctfe-match-pattern-list
+                  rest-patterns
+                  (box-get rest-values)
+                  next-env)]
+              [(CtfeNoPatternMatch) (CtfeNoPatternMatch)])]
+          [(CtfeValueNil) (CtfeNoPatternMatch)]))]))
+
+(define (ctfe-match-expr-variant
+  [variant : i64]
+  [args : AstPatternList]
+  [node : i64]
+  [ty : AstType]
+  [env : CtfeEnv]) : CtfePatternMatch
+  (match (ast-expr-unspan (ast-node-get node))
+    [(AstExprLiteral lit)
+      (match lit
+        [(AstLitBool b)
+          (if (ctfe-pattern-variant-name? variant "ExprBool")
+            (ctfe-match-pattern-list args (ctfe-value-list1 (CtfeBool b)) env)
+            (CtfeNoPatternMatch))]
+        [(AstLitInt n)
+          (if (ctfe-pattern-variant-name? variant "ExprInt")
+            (ctfe-match-pattern-list args (ctfe-value-list1 (CtfeI64 n)) env)
+            (CtfeNoPatternMatch))]
+        [_ (CtfeNoPatternMatch)])]
+    [(AstExprVar name)
+      (if (ctfe-pattern-variant-name? variant "ExprVar")
+        (ctfe-match-pattern-list
+          args
+          (ctfe-value-list1 (CtfeString (intern-str name)))
+          env)
+        (CtfeNoPatternMatch))]
+    [(AstExprIf cond then-branch else-branch)
+      (if (ctfe-pattern-variant-name? variant "ExprIf")
+        (ctfe-match-pattern-list
+          args
+          (ctfe-value-list3
+            (CtfeExpr cond (AstTyBool))
+            (CtfeExpr then-branch ty)
+            (CtfeExpr else-branch ty))
+          env)
+        (CtfeNoPatternMatch))]
+    [(AstExprCall callee args-list)
+      (if (ctfe-pattern-variant-name? variant "ExprCall")
+        (ctfe-match-pattern-list
+          args
+          (ctfe-value-list2
+            (CtfeExpr callee (AstTyExpr))
+            (CtfeExprList args-list))
+          env)
+        (CtfeNoPatternMatch))]
+    [(AstExprBegin exprs)
+      (if (ctfe-pattern-variant-name? variant "ExprBegin")
+        (ctfe-match-pattern-list
+          args
+          (ctfe-value-list1 (CtfeExprList exprs))
+          env)
+        (CtfeNoPatternMatch))]
+    [(AstExprQuote inner)
+      (if (ctfe-pattern-variant-name? variant "ExprQuote")
+        (ctfe-match-pattern-list
+          args
+          (ctfe-value-list1 (CtfeExpr inner (AstTyExpr)))
+          env)
+        (CtfeNoPatternMatch))]
+    [(AstExprQuasiquote inner)
+      (if (ctfe-pattern-variant-name? variant "ExprQuasiquote")
+        (ctfe-match-pattern-list
+          args
+          (ctfe-value-list1 (CtfeExpr inner (AstTyExpr)))
+          env)
+        (CtfeNoPatternMatch))]
+    [(AstExprUnquote inner)
+      (if (ctfe-pattern-variant-name? variant "ExprUnquote")
+        (ctfe-match-pattern-list
+          args
+          (ctfe-value-list1 (CtfeExpr inner (AstTyExpr)))
+          env)
+        (CtfeNoPatternMatch))]
+    [(AstExprUnquoteSplicing inner)
+      (if (ctfe-pattern-variant-name? variant "ExprUnquoteSplicing")
+        (ctfe-match-pattern-list
+          args
+          (ctfe-value-list1 (CtfeExpr inner (AstTyExpr)))
+          env)
+        (CtfeNoPatternMatch))]
+    [_ (CtfeNoPatternMatch)]))
+
+(define (ctfe-match-pattern
+  [pattern : AstPattern]
+  [value : CompilerCtfeValue]
+  [env : CtfeEnv]) : CtfePatternMatch
+  (match pattern
+    [(AstPatWildcard) (CtfePatternMatched env)]
+    [(AstPatBinding name)
+      (CtfePatternMatched (ctfe-env-extend env (intern-str name) value))]
+    [(AstPatVar name _)
+      (CtfePatternMatched (ctfe-env-extend env (intern-str name) value))]
+    [(AstPatLiteral lit)
+      (if (ctfe-literal-matches-value? lit value)
+        (CtfePatternMatched env)
+        (CtfeNoPatternMatch))]
+    [(AstPatVariant variant args-box)
+      (let
+        [args : AstPatternList (box-get args-box)]
+        (match value
+          [(CtfeExpr node ty)
+            (ctfe-match-expr-variant variant args node ty env)]
+          [_ (CtfeNoPatternMatch)]))]
+    [(AstPatTuple _) (CtfeNoPatternMatch)]))
+
+(define (ctfe-eval-match-arms
+  [value : CompilerCtfeValue]
+  [arms : AstMatchArmList]
+  [origin : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match arms
+    [(AstMatchArmNil)
+      (ErrCtfe
+        (ctfe-diagnostic-at-expr origin "comptime: no matching match arm"))]
+    [(AstMatchArmCons arm rest)
+      (let
+        [rest : AstMatchArmList (box-get rest)]
+        (match arm
+          [(AstMatchArm pattern body-box)
+            (match (ctfe-match-pattern pattern value env)
+              [(CtfePatternMatched arm-env)
+                (compiler-ctfe-eval (ast-node-get body-box) arm-env fuel)]
+              [(CtfeNoPatternMatch)
+                (ctfe-eval-match-arms value rest origin env fuel)])]))]))
+
+(define (ctfe-eval-match
+  [scrutinee : AstExpr]
+  [arms : AstMatchArmList]
+  [origin : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match (compiler-ctfe-eval scrutinee env fuel)
+    [(OkCtfe value scrutinee-fuel)
+      (ctfe-eval-match-arms value arms origin env scrutinee-fuel)]
+    [(ErrCtfe diag) (ErrCtfe diag)]))
 
 ;; --- quote / quasiquote -----------------------------------------------------
 (define (ctfe-quote-literal-type [lit : AstLiteral]) : AstType
@@ -6401,6 +6640,77 @@
             [_ false])]
         [(ErrCtfe _) false]))))
 
+(define (compiler-ctfe-expr-pattern-match-int-ok?) : bool
+  (let
+    [subject-node : i64 (ast-node-push (AstExprLiteral (AstLitInt 7)))]
+    [subject : CompilerCtfeValue (CtfeExpr subject-node (AstTyI64))]
+    [env : CtfeEnv (ctfe-env-extend (ctfe-env-empty) "subject" subject)]
+    [scrutinee : i64 (ast-node-push (AstExprVar (intern "subject")))]
+    [int-pattern : AstPattern
+      (ast-pat-variant
+        "ExprInt"
+        (ast-pattern-cons (ast-pat-binding "n") AstPatternNil))]
+    [int-arm : AstMatchArm
+      (ast-match-arm int-pattern (ast-node-push (AstExprVar (intern "n"))))]
+    [fallback-arm : AstMatchArm
+      (ast-match-arm
+        AstPatWildcard
+        (ast-node-push (AstExprLiteral (AstLitInt 0))))]
+    [match-expr : i64
+      (ast-expr-match
+        scrutinee
+        (ast-match-arm-cons
+          int-arm
+          (ast-match-arm-cons fallback-arm AstMatchArmNil)))]
+    (compiler-ctfe-eval-i64-ok? match-expr env 7)))
+
+(define (compiler-ctfe-expr-pattern-match-if-ok?) : bool
+  (let
+    [flag : i64 (ast-node-push (AstExprVar (intern "flag")))]
+    [true-lit : i64 (ast-node-push (AstExprLiteral (AstLitBool true)))]
+    [false-lit : i64 (ast-node-push (AstExprLiteral (AstLitBool false)))]
+    [if-node : i64 (ast-expr-if flag true-lit false-lit)]
+    [subject : CompilerCtfeValue (CtfeExpr if-node (AstTyBool))]
+    [env : CtfeEnv (ctfe-env-extend (ctfe-env-empty) "subject" subject)]
+    [scrutinee : i64 (ast-node-push (AstExprVar (intern "subject")))]
+    [if-pattern : AstPattern
+      (ast-pat-variant
+        "ExprIf"
+        (ast-pattern-cons
+          (ast-pat-binding "c")
+          (ast-pattern-cons
+            (ast-pat-binding "t")
+            (ast-pattern-cons (ast-pat-binding "e") AstPatternNil))))]
+    [swapped : i64
+      (compiler-ctfe-call3
+        "expr-if"
+        (ast-node-push (AstExprVar (intern "c")))
+        (ast-node-push (AstExprVar (intern "e")))
+        (ast-node-push (AstExprVar (intern "t"))))]
+    [if-arm : AstMatchArm (ast-match-arm if-pattern swapped)]
+    [fallback-arm : AstMatchArm (ast-match-arm AstPatWildcard scrutinee)]
+    [match-expr : i64
+      (ast-expr-match
+        scrutinee
+        (ast-match-arm-cons
+          if-arm
+          (ast-match-arm-cons fallback-arm AstMatchArmNil)))]
+    [expected : i64 (ast-expr-if flag false-lit true-lit)]
+    (match (compiler-ctfe-eval (ast-node-get match-expr) env (ctfe-fuel-limit))
+      [(OkCtfe value _)
+        (match value
+          [(CtfeExpr node ty)
+            (and
+              (ctfe-type-eq ty (AstTyBool))
+              (ctfe-test-expr-eq node expected))]
+          [_ false])]
+      [(ErrCtfe _) false])))
+
+(define (compiler-ctfe-expr-pattern-match-ok?) : bool
+  (and
+    (compiler-ctfe-expr-pattern-match-int-ok?)
+    (compiler-ctfe-expr-pattern-match-if-ok?)))
+
 (define (compiler-ctfe-self-test) : i64
   (begin
     (unless (compiler-ctfe-type-literal-ok?) (return 1))
@@ -6416,4 +6726,5 @@
     (unless (compiler-ctfe-checked-expr-inspectors-ok?) (return 1))
     (unless (compiler-ctfe-checked-expr-rejects-non-bool-cond-ok?) (return 1))
     (unless (compiler-ctfe-quote-syntax-ok?) (return 1))
+    (unless (compiler-ctfe-expr-pattern-match-ok?) (return 1))
     42))

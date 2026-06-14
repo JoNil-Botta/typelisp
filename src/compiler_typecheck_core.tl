@@ -16644,6 +16644,8 @@
         (let
           [args : AstPatternList (box-get args-box)]
           (match (tc-type-strip-region ty)
+            [(AstTyExpr)
+              (tc-bind-expr-variant-pattern ctx env (intern-str name) args)]
             [(AstTyEnum enum-name)
               (tc-bind-variant-pattern
                 ctx
@@ -16923,6 +16925,7 @@
               args
               (tc-type-outer-region scrut-ty)))]
         [_ (ErrTcEnv "typecheck: unsupported enum match pattern")])]
+    [(AstTyExpr) (tc-bind-expr-match-pattern ctx env pattern)]
     [_
       (match pattern
         [(AstPatWildcard) (OkTcEnv env)]
@@ -17087,6 +17090,69 @@
             [(SomeI64 candidate-handle) (= pattern-handle candidate-handle)]
             [(NoneI64) false])]
         [(NoneI64) false]))))
+
+(define (tc-expr-pattern-enum-name) : String
+  (tc-stdlib-comptime-type-key "Expr"))
+
+(define (tc-expr-variant-pattern-name?
+  [ctx : TcContext]
+  [pattern-name : String]
+  [variant-name : String]) : bool
+  (tc-variant-name-matches?
+    ctx
+    (tc-expr-pattern-enum-name)
+    pattern-name
+    variant-name))
+
+(define (tc-expr-variant-payload-types
+  [ctx : TcContext]
+  [variant-name : String]) : ResultTcTypeList
+  (cond
+    (tc-expr-variant-pattern-name? ctx variant-name "ExprBool")
+    (OkTcTypeList (tc-type-list1 (AstTyBool)))
+    (tc-expr-variant-pattern-name? ctx variant-name "ExprInt")
+    (OkTcTypeList (tc-type-list1 (AstTyI64)))
+    (tc-expr-variant-pattern-name? ctx variant-name "ExprVar")
+    (OkTcTypeList (tc-type-list1 (AstTyString)))
+    (tc-expr-variant-pattern-name? ctx variant-name "ExprSplice")
+    (OkTcTypeList (tc-type-list1 (AstTyExpr)))
+    (tc-expr-variant-pattern-name? ctx variant-name "ExprIf")
+    (OkTcTypeList (tc-type-list3 (AstTyExpr) (AstTyExpr) (AstTyExpr)))
+    (tc-expr-variant-pattern-name? ctx variant-name "ExprCall")
+    (OkTcTypeList (tc-type-list2 (AstTyExpr) (AstTyExprList)))
+    (tc-expr-variant-pattern-name? ctx variant-name "ExprBegin")
+    (OkTcTypeList (tc-type-list1 (AstTyExprList)))
+    (tc-expr-variant-pattern-name? ctx variant-name "ExprQuote")
+    (OkTcTypeList (tc-type-list1 (AstTyExpr)))
+    (tc-expr-variant-pattern-name? ctx variant-name "ExprQuasiquote")
+    (OkTcTypeList (tc-type-list1 (AstTyExpr)))
+    (tc-expr-variant-pattern-name? ctx variant-name "ExprUnquote")
+    (OkTcTypeList (tc-type-list1 (AstTyExpr)))
+    (tc-expr-variant-pattern-name? ctx variant-name "ExprUnquoteSplicing")
+    (OkTcTypeList (tc-type-list1 (AstTyExpr)))
+    (ErrTcTypeList (str-cat "typecheck: unknown Expr variant " variant-name))))
+
+(define (tc-bind-expr-variant-pattern
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [variant-name : String]
+  [args : AstPatternList]) : ResultTcEnv
+  (match (tc-expr-variant-payload-types ctx variant-name)
+    [(OkTcTypeList payloads) (tc-bind-sub-pattern-list ctx env args payloads)]
+    [(ErrTcTypeList message) (ErrTcEnv message)]))
+
+(define (tc-bind-expr-match-pattern
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [pattern : AstPattern]) : ResultTcEnv
+  (match pattern
+    [(AstPatWildcard) (OkTcEnv env)]
+    [(AstPatBinding name) (OkTcEnv (tc-bind-id env name (AstTyExpr)))]
+    [(AstPatVariant variant-name args-box)
+      (let
+        [args : AstPatternList (box-get args-box)]
+        (tc-bind-expr-variant-pattern ctx env (intern-str variant-name) args))]
+    [_ (ErrTcEnv "typecheck: unsupported Expr match pattern")]))
 
 (define (tc-enum-has-single-variant?
   [ctx : TcContext]

@@ -5322,11 +5322,24 @@
   "typecheck: mutable references to str are reserved; use immutable (& lifetime str)")
 
 (define (tc-source-type-policy-message [name : String]) : String
-  (string-append
-    "typecheck: unknown type "
+  (cond
+    (string-eq name "varying")
+    "typecheck: public SPMD varying source types are deferred; varying is inferred inside foreach (#2764)"
+    (string-eq name "Varying")
+    "typecheck: public SPMD varying source types are deferred; varying is inferred inside foreach (#2764)"
+    (string-eq name "Vector")
+    "typecheck: public SPMD vector source types are deferred; vector values remain compiler-internal (#2764)"
+    (string-eq name "vector")
+    "typecheck: public SPMD vector source types are deferred; vector values remain compiler-internal (#2764)"
+    (string-eq name "Mask")
+    "typecheck: public SPMD mask source types are deferred; masks remain compiler-internal (#2764)"
+    (string-eq name "mask")
+    "typecheck: public SPMD mask source types are deferred; masks remain compiler-internal (#2764)"
     (string-append
-      name
-      "; TypeLisp has no source-level type parameters; use comptime-generated concrete declarations instead (#893/#913/#970/#902)")))
+      "typecheck: unknown type "
+      (string-append
+        name
+        "; TypeLisp has no source-level type parameters; use comptime-generated concrete declarations instead (#893/#913/#970/#902)"))))
 
 (define (tc-nominal-lifetimes-from-decl [decl : AstDecl]) : ResultTcLifetimeList
   (match decl

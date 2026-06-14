@@ -4490,35 +4490,40 @@
                     (string-append " " (string-append field-access ")")))))]
             [(SpecNoString) (gen-json-field-unsupported field-name type-key)])))]))
 
+(define (gen-json-to-members-source-from
+  [fields : CtfeReflectFieldList]
+  [infos : CtfeReflectInfoList]
+  [index : i64]) : ResultGenJsonSource
+  (if (>= index (ctfe-reflect-field-list-count fields))
+    (OkGenJsonSource "JsonMemberListNil")
+    (match (ctfe-reflect-field-list-ref fields index)
+      [(CtfeReflectField field-name ty)
+        (match (gen-json-field-to-json-source field-name infos ty)
+          [(ErrGenJsonSource diag) (ErrGenJsonSource diag)]
+          [(OkGenJsonSource value-source)
+            (match (gen-json-to-members-source-from fields infos (+ index 1))
+              [(ErrGenJsonSource diag) (ErrGenJsonSource diag)]
+              [(OkGenJsonSource rest-source)
+                (let
+                  [buf : TextBuf (text-buf-empty)]
+                  (begin
+                    (set!
+                      buf
+                      (gen-tb5
+                        buf
+                        "(JsonMemberListCons \""
+                        field-name
+                        "\" "
+                        value-source
+                        " (box "))
+                    (set! buf (text-buf-append buf rest-source))
+                    (set! buf (text-buf-append buf "))"))
+                    (OkGenJsonSource (text-buf-render buf))))])])])))
+
 (define (gen-json-to-members-source
   [fields : CtfeReflectFieldList]
   [infos : CtfeReflectInfoList]) : ResultGenJsonSource
-  (match fields
-    [(CtfeReflectFieldNil) (OkGenJsonSource "JsonMemberListNil")]
-    [(CtfeReflectFieldCons field rest-box)
-      (match field
-        [(CtfeReflectField field-name ty)
-          (match (gen-json-field-to-json-source field-name infos ty)
-            [(ErrGenJsonSource diag) (ErrGenJsonSource diag)]
-            [(OkGenJsonSource value-source)
-              (match (gen-json-to-members-source (box-get rest-box) infos)
-                [(ErrGenJsonSource diag) (ErrGenJsonSource diag)]
-                [(OkGenJsonSource rest-source)
-                  (let
-                    [buf : TextBuf (text-buf-empty)]
-                    (begin
-                      (set!
-                        buf
-                        (gen-tb5
-                          buf
-                          "(JsonMemberListCons \""
-                          field-name
-                          "\" "
-                          value-source
-                          " (box "))
-                      (set! buf (text-buf-append buf rest-source))
-                      (set! buf (text-buf-append buf "))"))
-                      (OkGenJsonSource (text-buf-render buf))))])])])]))
+  (gen-json-to-members-source-from fields infos 0))
 
 (define (gen-json-local-name [index : i64]) : String
   (string-append "json-field-" (int->string index)))
@@ -4533,39 +4538,35 @@
   [fields : CtfeReflectFieldList]
   [infos : CtfeReflectInfoList]
   [index : i64]) : ResultGenJsonSource
-  (match fields
-    [(CtfeReflectFieldNil) (OkGenJsonSource "")]
-    [(CtfeReflectFieldCons field rest-box)
-      (match field
-        [(CtfeReflectField field-name ty)
-          (match (gen-json-field-type-source field-name infos ty)
-            [(ErrGenJsonSource diag) (ErrGenJsonSource diag)]
-            [(OkGenJsonSource type-source)
-              (match (gen-json-field-init-source field-name infos ty)
-                [(ErrGenJsonSource diag) (ErrGenJsonSource diag)]
-                [(OkGenJsonSource init-source)
-                  (match (gen-json-let-bindings-source
-                    (box-get rest-box)
-                    infos
-                    (+ index 1))
-                    [(ErrGenJsonSource diag) (ErrGenJsonSource diag)]
-                    [(OkGenJsonSource rest-source)
-                      (let
-                        [buf : TextBuf (text-buf-empty)]
-                        (begin
-                          (set!
+  (if (>= index (ctfe-reflect-field-list-count fields))
+    (OkGenJsonSource "")
+    (match (ctfe-reflect-field-list-ref fields index)
+      [(CtfeReflectField field-name ty)
+        (match (gen-json-field-type-source field-name infos ty)
+          [(ErrGenJsonSource diag) (ErrGenJsonSource diag)]
+          [(OkGenJsonSource type-source)
+            (match (gen-json-field-init-source field-name infos ty)
+              [(ErrGenJsonSource diag) (ErrGenJsonSource diag)]
+              [(OkGenJsonSource init-source)
+                (match (gen-json-let-bindings-source fields infos (+ index 1))
+                  [(ErrGenJsonSource diag) (ErrGenJsonSource diag)]
+                  [(OkGenJsonSource rest-source)
+                    (let
+                      [buf : TextBuf (text-buf-empty)]
+                      (begin
+                        (set!
+                          buf
+                          (gen-tb7
                             buf
-                            (gen-tb7
-                              buf
-                              "        ["
-                              (gen-json-local-name index)
-                              " : "
-                              type-source
-                              " "
-                              init-source
-                              "]\n"))
-                          (set! buf (text-buf-append buf rest-source))
-                          (OkGenJsonSource (text-buf-render buf))))])])])])]))
+                            "        ["
+                            (gen-json-local-name index)
+                            " : "
+                            type-source
+                            " "
+                            init-source
+                            "]\n"))
+                        (set! buf (text-buf-append buf rest-source))
+                        (OkGenJsonSource (text-buf-render buf))))])])])])))
 
 (define (gen-json-kind-error-source
   [err-name : String]
@@ -4841,27 +4842,26 @@
   [infos : CtfeReflectInfoList]
   [index : i64]
   [err-name : String]) : ResultGenJsonSource
-  (match fields
-    [(CtfeReflectFieldNil) (OkGenJsonSource "")]
-    [(CtfeReflectFieldCons field rest-box)
-      (match field
-        [(CtfeReflectField field-name ty)
-          (match (gen-json-from-field-statement-source
-            field-name
-            infos
-            ty
-            index
-            err-name)
-            [(ErrGenJsonSource diag) (ErrGenJsonSource diag)]
-            [(OkGenJsonSource head-source)
-              (match (gen-json-from-statements-source
-                (box-get rest-box)
-                infos
-                (+ index 1)
-                err-name)
-                [(ErrGenJsonSource diag) (ErrGenJsonSource diag)]
-                [(OkGenJsonSource rest-source)
-                  (OkGenJsonSource (string-append head-source rest-source))])])])]))
+  (if (>= index (ctfe-reflect-field-list-count fields))
+    (OkGenJsonSource "")
+    (match (ctfe-reflect-field-list-ref fields index)
+      [(CtfeReflectField field-name ty)
+        (match (gen-json-from-field-statement-source
+          field-name
+          infos
+          ty
+          index
+          err-name)
+          [(ErrGenJsonSource diag) (ErrGenJsonSource diag)]
+          [(OkGenJsonSource head-source)
+            (match (gen-json-from-statements-source
+              fields
+              infos
+              (+ index 1)
+              err-name)
+              [(ErrGenJsonSource diag) (ErrGenJsonSource diag)]
+              [(OkGenJsonSource rest-source)
+                (OkGenJsonSource (string-append head-source rest-source))])])])))
 
 (define (gen-json-constructor-args-from [index : i64] [count : i64]) : String
   (if (>= index count)

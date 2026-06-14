@@ -1762,18 +1762,18 @@
 (defstruct CtfeLayoutField
   (name String)
   (offset i64))
-(defenum CtfeLayoutFieldList
-  (CtfeLayoutFieldNil)
-  (CtfeLayoutFieldCons CtfeLayoutField (Box CtfeLayoutFieldList)))
+(defstruct CtfeLayoutFieldList
+  (slots (Array CtfeLayoutField))
+  (len i64))
 (defstruct CtfeLayoutInfo
   (name String)
   (is-struct bool)
   (size i64)
   (align i64)
   (fields CtfeLayoutFieldList))
-(defenum CtfeLayoutInfoList
-  (CtfeLayoutInfoNil)
-  (CtfeLayoutInfoCons CtfeLayoutInfo (Box CtfeLayoutInfoList)))
+(defstruct CtfeLayoutInfoList
+  (slots (Array CtfeLayoutInfo))
+  (len i64))
 (defenum AstType
   (AstTyI64))
 (defenum AstTypeList
@@ -1782,21 +1782,21 @@
 (defstruct CtfeReflectField
   (name String)
   (ty AstType))
-(defenum CtfeReflectFieldList
-  (CtfeReflectFieldNil)
-  (CtfeReflectFieldCons CtfeReflectField (Box CtfeReflectFieldList)))
+(defstruct CtfeReflectFieldList
+  (slots (Array CtfeReflectField))
+  (len i64))
 (defstruct CtfeReflectVariant
   (name String)
   (payloads AstTypeList))
-(defenum CtfeReflectVariantList
-  (CtfeReflectVariantNil)
-  (CtfeReflectVariantCons CtfeReflectVariant (Box CtfeReflectVariantList)))
+(defstruct CtfeReflectVariantList
+  (slots (Array CtfeReflectVariant))
+  (len i64))
 (defenum CtfeReflectInfo
   (CtfeReflectStruct String String String CtfeReflectFieldList)
   (CtfeReflectEnum String String String CtfeReflectVariantList))
-(defenum CtfeReflectInfoList
-  (CtfeReflectInfoNil)
-  (CtfeReflectInfoCons CtfeReflectInfo (Box CtfeReflectInfoList)))
+(defstruct CtfeReflectInfoList
+  (slots (Array CtfeReflectInfo))
+  (len i64))
 (defenum CtfeEnv
   (CtfeEnvNil CtfeLayoutInfoList CtfeReflectInfoList)
   (CtfeEnvCons String CompilerCtfeValue (Box CtfeEnv)))")

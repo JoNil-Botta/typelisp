@@ -1339,47 +1339,115 @@
             (set! i (+ i 1)))))
       out)))
 
-;; Search the document's directly-imported module files for the definition,
-;; resolving each import spec to a path the same way the compiler loader does.
-(define (lsp-find-definition-in-import-list
-  [current-path : String]
+(defstruct LspModuleSet
+  (paths StringVec)
+  (texts StringVec))
+
+(define (lsp-string-vec-contains? [v : StringVec] [s : String]) : bool
+  (let
+    [n : i64 (string-vec-len v)]
+    [i : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (< i n) (not found))
+        (if (string-eq (string-vec-get v i "") s)
+          (set! found true)
+          (set! i (+ i 1))))
+      found)))
+
+;; Add a resolved module path (and its source) to the set if new and under cap.
+(define (lsp-module-set-add-path [set : LspModuleSet] [resolved : String]) : LspModuleSet
+  (let
+    [paths : StringVec (struct-get set paths)]
+    [texts : StringVec (struct-get set texts)]
+    (if (and
+      (< (string-vec-len paths) 512)
+      (not (lsp-string-vec-contains? paths resolved)))
+      (LspModuleSet
+        (string-vec-push paths resolved)
+        (string-vec-push texts (read-file-or (& resolved) "")))
+      set)))
+
+;; Add every module `text` imports (resolved like the loader) to the set.
+(define (lsp-module-set-add-imports
+  [importer-path : String]
+  [text : String]
   [stdlib-roots : StringVec]
+  [set : LspModuleSet]) : LspModuleSet
+  (let
+    [specs : StringVec (lsp-collect-imports text (string-vec-new))]
+    [out : LspModuleSet set]
+    [j : i64 0]
+    (begin
+      (while (< j (string-vec-len specs))
+        (begin
+          (set!
+            out
+            (lsp-module-set-add-path
+              out
+              (compiler-load-normalize-path
+                (compiler-load-resolve-import-with-roots
+                  importer-path
+                  (string-vec-get specs j "")
+                  stdlib-roots))))
+          (set! j (+ j 1))))
+      out)))
+
+;; Every module transitively reachable from the document (plus the core
+;; prelude), each read once. Shared by go-to-definition and hover.
+(define (lsp-transitive-modules
+  [start-path : String]
+  [start-text : String]
+  [stdlib-roots : StringVec]) : LspModuleSet
+  (let
+    [seeded : LspModuleSet
+      (lsp-module-set-add-path
+        (LspModuleSet (string-vec-new) (string-vec-new))
+        (compiler-load-normalize-path
+          (compiler-load-resolve-import-with-roots
+            start-path
+            "stdlib/core_macros.tl"
+            stdlib-roots)))]
+    [set : LspModuleSet
+      (lsp-module-set-add-imports start-path start-text stdlib-roots seeded)]
+    [i : i64 0]
+    (begin
+      (while (< i (string-vec-len (struct-get set paths)))
+        (let
+          [src : String (string-vec-get (struct-get set texts) i "")]
+          (begin
+            (if (string-eq src "")
+              unit
+              (set!
+                set
+                (lsp-module-set-add-imports
+                  (string-vec-get (struct-get set paths) i "")
+                  src
+                  stdlib-roots
+                  set)))
+            (set! i (+ i 1)))))
+      set)))
+
+;; Search the transitively reachable modules for the definition.
+(define (lsp-find-definition-in-modules
+  [set : LspModuleSet]
   [needle : String]
-  [imports : StringVec]
   [idx : i64]) : LspDefLocation
-  (if (>= idx (string-vec-len imports))
+  (if (>= idx (string-vec-len (struct-get set paths)))
     MissingDefLoc
     (let
-      [resolved : String
-        (compiler-load-resolve-import-with-roots
-          current-path
-          (string-vec-get imports idx "")
-          stdlib-roots)]
-      [src : String (read-file-or (& resolved) "")]
-      (if (string-eq src "")
-        (lsp-find-definition-in-import-list
-          current-path
-          stdlib-roots
-          needle
-          imports
-          (+ idx 1))
-        (let
-          [off : i64 (lsp-find-def-or-variant-offset-in src needle)]
-          (if (>= off 0)
-            (lsp-def-loc-from
-              (lsp-path-to-file-uri (compiler-load-normalize-path resolved))
-              src
-              off
-              needle)
-            (lsp-find-definition-in-import-list
-              current-path
-              stdlib-roots
-              needle
-              imports
-              (+ idx 1))))))))
+      [src : String (string-vec-get (struct-get set texts) idx "")]
+      [off : i64 (lsp-find-def-or-variant-offset-in src needle)]
+      (if (>= off 0)
+        (lsp-def-loc-from
+          (lsp-path-to-file-uri (string-vec-get (struct-get set paths) idx ""))
+          src
+          off
+          needle)
+        (lsp-find-definition-in-modules set needle (+ idx 1))))))
 
 ;; Resolve `needle`: current document, then any other open document, then the
-;; files this document directly imports.
+;; modules transitively reachable from this document.
 (define (lsp-find-definition
   [docs : LspDocuments]
   [current-uri : String]
@@ -1395,13 +1463,9 @@
         [(FoundDefLoc def-uri def-line def-col def-len)
           (FoundDefLoc def-uri def-line def-col def-len)]
         [(MissingDefLoc)
-          (lsp-find-definition-in-import-list
-            current-path
-            stdlib-roots
+          (lsp-find-definition-in-modules
+            (lsp-transitive-modules current-path current-text stdlib-roots)
             needle
-            (lsp-collect-imports
-              current-text
-              (string-vec-push (string-vec-new) "stdlib/core_macros.tl"))
             0)]))))
 
 (define (lsp-json-int-field-default
@@ -1963,38 +2027,18 @@
             (FoundDefSource doc-text off)
             (lsp-hover-resolve-in-docs docs current-uri needle (+ idx 1))))))))
 
-(define (lsp-hover-resolve-in-imports
-  [current-path : String]
-  [stdlib-roots : StringVec]
+(define (lsp-hover-resolve-in-modules
+  [set : LspModuleSet]
   [needle : String]
-  [imports : StringVec]
   [idx : i64]) : LspDefSource
-  (if (>= idx (string-vec-len imports))
+  (if (>= idx (string-vec-len (struct-get set paths)))
     MissingDefSource
     (let
-      [resolved : String
-        (compiler-load-resolve-import-with-roots
-          current-path
-          (string-vec-get imports idx "")
-          stdlib-roots)]
-      [src : String (read-file-or (& resolved) "")]
-      (if (string-eq src "")
-        (lsp-hover-resolve-in-imports
-          current-path
-          stdlib-roots
-          needle
-          imports
-          (+ idx 1))
-        (let
-          [off : i64 (lsp-find-def-form-in src needle)]
-          (if (>= off 0)
-            (FoundDefSource src off)
-            (lsp-hover-resolve-in-imports
-              current-path
-              stdlib-roots
-              needle
-              imports
-              (+ idx 1))))))))
+      [src : String (string-vec-get (struct-get set texts) idx "")]
+      [off : i64 (lsp-find-def-form-in src needle)]
+      (if (>= off 0)
+        (FoundDefSource src off)
+        (lsp-hover-resolve-in-modules set needle (+ idx 1))))))
 
 (define (lsp-hover-resolve
   [docs : LspDocuments]
@@ -2010,13 +2054,9 @@
       (match (lsp-hover-resolve-in-docs docs current-uri needle 0)
         [(FoundDefSource src form-off) (FoundDefSource src form-off)]
         [(MissingDefSource)
-          (lsp-hover-resolve-in-imports
-            current-path
-            stdlib-roots
+          (lsp-hover-resolve-in-modules
+            (lsp-transitive-modules current-path current-text stdlib-roots)
             needle
-            (lsp-collect-imports
-              current-text
-              (string-vec-push (string-vec-new) "stdlib/core_macros.tl"))
             0)]))))
 
 ;; The (define ...) header up to and including the return type, e.g.
@@ -2230,38 +2270,18 @@
           [(MissingVariant)
             (lsp-resolve-variant-in-docs docs current-uri needle (+ idx 1))])))))
 
-(define (lsp-resolve-variant-in-imports
-  [current-path : String]
-  [stdlib-roots : StringVec]
+(define (lsp-resolve-variant-in-modules
+  [set : LspModuleSet]
   [needle : String]
-  [imports : StringVec]
   [idx : i64]) : LspVariantHit
-  (if (>= idx (string-vec-len imports))
+  (if (>= idx (string-vec-len (struct-get set paths)))
     MissingVariant
-    (let
-      [resolved : String
-        (compiler-load-resolve-import-with-roots
-          current-path
-          (string-vec-get imports idx "")
-          stdlib-roots)]
-      [src : String (read-file-or (& resolved) "")]
-      (if (string-eq src "")
-        (lsp-resolve-variant-in-imports
-          current-path
-          stdlib-roots
-          needle
-          imports
-          (+ idx 1))
-        (match (lsp-enum-of-variant src needle)
-          [(FoundVariant enum-name variant-form)
-            (FoundVariant enum-name variant-form)]
-          [(MissingVariant)
-            (lsp-resolve-variant-in-imports
-              current-path
-              stdlib-roots
-              needle
-              imports
-              (+ idx 1))])))))
+    (match (lsp-enum-of-variant
+      (string-vec-get (struct-get set texts) idx "")
+      needle)
+      [(FoundVariant enum-name variant-form)
+        (FoundVariant enum-name variant-form)]
+      [(MissingVariant) (lsp-resolve-variant-in-modules set needle (+ idx 1))])))
 
 ;; Find the enum/variant in the current document, other open documents, then
 ;; imported modules (same reach as go-to-definition).
@@ -2280,13 +2300,9 @@
         [(FoundVariant enum-name variant-form)
           (FoundVariant enum-name variant-form)]
         [(MissingVariant)
-          (lsp-resolve-variant-in-imports
-            current-path
-            stdlib-roots
+          (lsp-resolve-variant-in-modules
+            (lsp-transitive-modules current-path current-text stdlib-roots)
             needle
-            (lsp-collect-imports
-              current-text
-              (string-vec-push (string-vec-new) "stdlib/core_macros.tl"))
             0)])]))
 
 ;; Curated hover for builtins, operators, and special forms (no source

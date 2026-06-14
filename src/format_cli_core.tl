@@ -5,7 +5,7 @@
 ;; can run the `fmt` command without duplicating a `main`.
 (import "../stdlib/io.tl")
 
-(import "../stdlib/list.tl")
+(import "../stdlib/vector.tl")
 
 (import "format_rules.tl")
 
@@ -14,7 +14,7 @@
 (import "../stdlib/string.tl")
 
 (defenum FmtConfig
-  (FmtFileConfig bool StringList)
+  (FmtFileConfig bool StringVec)
   (FmtPackageConfig bool String bool))
 
 (defenum ResultFmtConfig
@@ -83,23 +83,12 @@
 (define (fmt-flag? [value : String]) : bool
   (and (> (string-length value) 0) (= (string-ref value 0) #-')))
 
-(define (fmt-path-list-empty? [paths : StringList]) : bool
-  (match paths
-    [(StringNil) true]
-    [(StringCons _ _) false]))
-
-(define (fmt-path-list-append [paths : StringList] [path : String]) : StringList
-  (match paths
-    [(StringNil) (StringCons path (box StringNil))]
-    [(StringCons head rest)
-      (StringCons head (box (fmt-path-list-append (box-get rest) path)))]))
-
 (define (fmt-config-finish
   [check : bool]
-  [paths : StringList]
+  [paths : StringVec]
   [manifest-path : String]
   [has-manifest : bool]) : ResultFmtConfig
-  (if (fmt-path-list-empty? paths)
+  (if (string-vec-is-empty? paths)
     (OkFmtConfig (FmtPackageConfig check manifest-path has-manifest))
     (if has-manifest
       (ErrFmtConfig "fmt: cannot combine input paths with --manifest-path")
@@ -109,7 +98,7 @@
   [idx : i64]
   [count : i64]
   [check : bool]
-  [paths : StringList]
+  [paths : StringVec]
   [manifest-path : String]
   [has-manifest : bool]) : ResultFmtConfig
   (if (>= idx count)
@@ -141,12 +130,12 @@
           (+ idx 1)
           count
           check
-          (fmt-path-list-append paths current)
+          (string-vec-push paths current)
           manifest-path
           has-manifest)))))
 
 (define (fmt-config-from [start : i64] [count : i64]) : ResultFmtConfig
-  (fmt-parse-args start count false StringNil "" false))
+  (fmt-parse-args start count false (string-vec-new) "" false))
 
 (define (fmt-format-file [check : bool] [path : String]) : i64
   (let
@@ -168,18 +157,26 @@
           (print-error (string-append (fmt-source-error-message path err) "\n"))
           1)])))
 
-(define (fmt-files [check : bool] [paths : StringList] [status : i64]) : i64
-  (match paths
-    [(StringNil) status]
-    [(StringCons path rest)
-      (let
-        [file-status : i64 (fmt-format-file check path)]
-        (fmt-files
-          check
-          (box-get rest)
-          (if (= status 0)
-            file-status
-            status)))]))
+(define (fmt-files-from
+  [check : bool]
+  [paths : StringVec]
+  [index : i64]
+  [status : i64]) : i64
+  (if (>= index (string-vec-len paths))
+    status
+    (let
+      [path : String (string-vec-get paths index "")]
+      [file-status : i64 (fmt-format-file check path)]
+      (fmt-files-from
+        check
+        paths
+        (+ index 1)
+        (if (= status 0)
+          file-status
+          status)))))
+
+(define (fmt-files [check : bool] [paths : StringVec] [status : i64]) : i64
+  (fmt-files-from check paths 0 status))
 
 (define (fmt-package
   [check : bool]

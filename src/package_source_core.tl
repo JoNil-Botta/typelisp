@@ -12,6 +12,8 @@
 
 (import "../stdlib/list.tl")
 
+(import "../stdlib/vector.tl")
+
 (import "../stdlib/string.tl")
 
 (import "../stdlib/str_cat.tl")
@@ -24,14 +26,14 @@
   (manifest-path String)
   (manifest-dir String)
   (manifest CompilerPkgManifest)
-  (sources StringList))
+  (sources StringVec))
 
 (defenum ResultPackageSourceSet
   (OkPackageSourceSet PackageSourceSet)
   (ErrPackageSourceSet String))
 
 (defenum ResultPackageSourceList
-  (OkPackageSourceList StringList)
+  (OkPackageSourceList StringVec)
   (ErrPackageSourceList String))
 
 (define (package-source-char-code-at [text : String] [idx : i64]) : i64
@@ -62,17 +64,42 @@
         less
         (< left-len right-len)))))
 
-(define (package-source-list-insert [items : StringList] [value : String]) : StringList
-  (match items
-    [(StringNil) (StringCons value (box StringNil))]
-    [(StringCons head rest)
+(define (package-source-vec-insert-slot-from
+  [items : StringVec]
+  [value : String]
+  [index : i64]) : i64
+  (if (>= index (string-vec-len items))
+    index
+    (let
+      [head : String (string-vec-get items index "")]
       (if (string-eq head value)
-        items
+        -1
         (if (package-source-string-less? value head)
-          (StringCons value (box items))
-          (StringCons
-            head
-            (box (package-source-list-insert (box-get rest) value)))))]))
+          index
+          (package-source-vec-insert-slot-from items value (+ index 1)))))))
+
+(define (package-source-vec-insert-at
+  [items : StringVec]
+  [value : String]
+  [slot : i64]) : StringVec
+  (let
+    [out : StringVec (string-vec-push items value)]
+    [slots : (Array String) (string-vec-slots out)]
+    [i : i64 (- (string-vec-len out) 1)]
+    (begin
+      (while (> i slot)
+        (begin
+          (array-set! slots i (array-ref slots (- i 1)))
+          (set! i (- i 1))))
+      (array-set! slots slot value)
+      out)))
+
+(define (package-source-vec-insert [items : StringVec] [value : String]) : StringVec
+  (let
+    [slot : i64 (package-source-vec-insert-slot-from items value 0)]
+    (if (< slot 0)
+      items
+      (package-source-vec-insert-at items value slot))))
 
 (define (package-source-manifest-dir [manifest-path : String]) : String
   (let
@@ -109,7 +136,7 @@
             path
             (package-source-manifest-dir path)
             manifest
-            (StringNil)))])
+            (string-vec-new)))])
     (ErrPackageSourceSet (str-cat "cannot read package manifest '" path "'"))))
 
 (define (package-source-resolve-manifest
@@ -167,6 +194,28 @@
     unit
     (panic "package-source: skip-dir self-test mismatch")))
 
+(define (package-source-vec-insert-self-test?) : bool
+  (let
+    [items : StringVec
+      (package-source-vec-insert
+        (package-source-vec-insert
+          (package-source-vec-insert
+            (package-source-vec-insert (string-vec-new) "src/z.tl")
+            "src/a.tl")
+          "src/m.tl")
+        "src/a.tl")]
+    (and
+      (= (string-vec-len items) 3)
+      (string-eq (string-vec-get items 0 "") "src/a.tl")
+      (string-eq (string-vec-get items 1 "") "src/m.tl")
+      (string-eq (string-vec-get items 2 "") "src/z.tl"))))
+
+(test
+  package-source-vector-insert-sorts-and-dedups
+  (if (package-source-vec-insert-self-test?)
+    unit
+    (panic "package-source: vector insert self-test mismatch")))
+
 (define (package-source-dir-has-manifest? [dir : String]) : bool
   (file-exists? (compiler-load-join-root-path dir "typelisp.pkg")))
 
@@ -198,7 +247,7 @@
       path
       (string-append "': " (io-error-message error)))))
 
-(define (package-source-entry-list [source-set : PackageSourceSet]) : StringList
+(define (package-source-entry-vec [source-set : PackageSourceSet]) : StringVec
   (let
     [manifest : CompilerPkgManifest (struct-get source-set manifest)]
     [entry : String
@@ -206,13 +255,13 @@
         (package-source-root-join
           (struct-get source-set manifest-dir)
           (struct-get manifest entry)))]
-    (StringCons entry (box StringNil))))
+    (string-vec-push (string-vec-new) entry)))
 
 (define (package-source-scan-dir
   [command : String]
   [root : String]
   [relative : String]
-  [acc : StringList]) : ResultPackageSourceList
+  [acc : StringVec]) : ResultPackageSourceList
   (let
     [dir : String (package-source-root-join root relative)]
     (match (try-read-dir (& dir))
@@ -225,7 +274,7 @@
   [command : String]
   [root : String]
   [relative : String]
-  [acc : StringList]) : ResultPackageSourceList
+  [acc : StringVec]) : ResultPackageSourceList
   (let
     [dir : String (package-source-root-join root relative)]
     (match (try-read-dir (& dir))
@@ -244,17 +293,17 @@
     (match (try-read-dir (& root))
       [(ErrIoStringList error)
         (if (io-error-unsupported? error)
-          (OkPackageSourceList (package-source-entry-list source-set))
+          (OkPackageSourceList (package-source-entry-vec source-set))
           (package-source-read-dir-error command root error))]
       [(OkIoStringList entries)
-        (package-source-scan-entries command root "" entries StringNil)])))
+        (package-source-scan-entries command root "" entries (string-vec-new))])))
 
 (define (package-source-scan-one
   [command : String]
   [root : String]
   [relative : String]
   [name : String]
-  [acc : StringList]) : ResultPackageSourceList
+  [acc : StringVec]) : ResultPackageSourceList
   (if (package-source-skip-dir? name)
     (OkPackageSourceList acc)
     (let
@@ -273,7 +322,7 @@
                 (package-source-scan-dir command root child-relative acc))
               (package-source-include-file? child-path metadata)
               (OkPackageSourceList
-                (package-source-list-insert
+                (package-source-vec-insert
                   acc
                   (compiler-load-normalize-path child-path)))
               (OkPackageSourceList acc)))]))))
@@ -283,7 +332,7 @@
   [root : String]
   [relative : String]
   [entries : StringList]
-  [acc : StringList]) : ResultPackageSourceList
+  [acc : StringVec]) : ResultPackageSourceList
   (match entries
     [(StringNil) (OkPackageSourceList acc)]
     [(StringCons name rest)
@@ -307,7 +356,7 @@
       (match (package-source-scan-root command base)
         [(ErrPackageSourceList message) (ErrPackageSourceSet message)]
         [(OkPackageSourceList sources)
-          (if (= (string-list-count sources) 0)
+          (if (= (string-vec-len sources) 0)
             (ErrPackageSourceSet
               (str-cat
                 (string-append
@@ -327,7 +376,7 @@
   [source-set : PackageSourceSet]) : ResultPackageSourceList
   (let
     [root : String (struct-get source-set manifest-dir)]
-    (package-source-scan-optional-dir command root "tests" StringNil)))
+    (package-source-scan-optional-dir command root "tests" (string-vec-new))))
 
 (define (package-source-discover [manifest-path : String] [has-manifest : bool]) : ResultPackageSourceSet
   (package-source-discover-for "check" manifest-path has-manifest))

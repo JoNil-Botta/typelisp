@@ -465,37 +465,55 @@
     print-headers
     status))
 
-(define (selfhost-lint-package-files
-  [input-paths : StringList]
+(define (selfhost-lint-package-files-from
+  [input-paths : StringVec]
+  [index : i64]
   [stdlib-roots : StringVec]
   [enforcing : bool]
   [deprecated-string-concat : bool]
   [print-headers : bool]
   [status : i64]) : i64
-  (match input-paths
-    [(StringNil) status]
-    [(StringCons input-path rest)
-      (let
-        [file-status : i64
-          (begin
-            (if print-headers
-              (print-string
-                (string-append "--- " (string-append input-path "\n")))
-              unit)
-            (selfhost-lint-file
-              input-path
-              stdlib-roots
-              enforcing
-              deprecated-string-concat))]
-        (selfhost-lint-package-files
-          (box-get rest)
-          stdlib-roots
-          enforcing
-          deprecated-string-concat
-          print-headers
-          (if (= status 0)
-            file-status
-            status)))]))
+  (if (>= index (string-vec-len input-paths))
+    status
+    (let
+      [input-path : String (string-vec-get input-paths index "")]
+      [file-status : i64
+        (begin
+          (if print-headers
+            (print-string
+              (string-append "--- " (string-append input-path "\n")))
+            unit)
+          (selfhost-lint-file
+            input-path
+            stdlib-roots
+            enforcing
+            deprecated-string-concat))]
+      (selfhost-lint-package-files-from
+        input-paths
+        (+ index 1)
+        stdlib-roots
+        enforcing
+        deprecated-string-concat
+        print-headers
+        (if (= status 0)
+          file-status
+          status)))))
+
+(define (selfhost-lint-package-files
+  [input-paths : StringVec]
+  [stdlib-roots : StringVec]
+  [enforcing : bool]
+  [deprecated-string-concat : bool]
+  [print-headers : bool]
+  [status : i64]) : i64
+  (selfhost-lint-package-files-from
+    input-paths
+    0
+    stdlib-roots
+    enforcing
+    deprecated-string-concat
+    print-headers
+    status))
 
 (define (selfhost-lint-package
   [manifest-path : String]
@@ -514,7 +532,7 @@
         stdlib-roots
         enforcing
         deprecated-string-concat
-        (> (string-list-count (struct-get source-set sources)) 1)
+        (> (string-vec-len (struct-get source-set sources)) 1)
         0)]))
 
 ;; Run the `lint` command over arguments starting at `start`.

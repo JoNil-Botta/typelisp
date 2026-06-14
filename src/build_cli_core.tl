@@ -3300,28 +3300,42 @@
       manifest-dir
       deps)))
 
-(define (build-doctest-typecheck-package-sources
-  [sources : StringList]
+(define (build-doctest-typecheck-package-sources-from
+  [sources : StringVec]
+  [index : i64]
   [stdlib-roots : StringVec]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : i64
-  (match sources
-    [(StringNil) 0]
-    [(StringCons source rest)
-      (let
-        [status : i64
-          (build-doctest-typecheck-package-source
-            source
-            stdlib-roots
-            manifest-dir
-            deps)]
-        (if (= status 0)
-          (build-doctest-typecheck-package-sources
-            (box-get rest)
-            stdlib-roots
-            manifest-dir
-            deps)
-          status))]))
+  (if (>= index (string-vec-len sources))
+    0
+    (let
+      [source : String (string-vec-get sources index "")]
+      [status : i64
+        (build-doctest-typecheck-package-source
+          source
+          stdlib-roots
+          manifest-dir
+          deps)]
+      (if (= status 0)
+        (build-doctest-typecheck-package-sources-from
+          sources
+          (+ index 1)
+          stdlib-roots
+          manifest-dir
+          deps)
+        status))))
+
+(define (build-doctest-typecheck-package-sources
+  [sources : StringVec]
+  [stdlib-roots : StringVec]
+  [manifest-dir : String]
+  [deps : CompilerPkgDeps]) : i64
+  (build-doctest-typecheck-package-sources-from
+    sources
+    0
+    stdlib-roots
+    manifest-dir
+    deps))
 
 (define (build-doctest-typecheck-package
   [manifest-path : String]

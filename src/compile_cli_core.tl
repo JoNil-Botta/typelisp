@@ -30,10 +30,8 @@
 
 (import "../stdlib/str_cat.tl")
 
-(defenum CompileCliCfgNameList
-  (CompileCliCfgNameNil)
-  (CompileCliCfgNameCons String (Box CompileCliCfgNameList)))
-
+;; Pair-shaped batch entries stay as a list until aggregate-element vector
+;; support makes a generated entry vector cleaner than parallel StringVecs.
 (defenum CompileCliBatchEntryList
   (CompileCliBatchEntryNil)
   (CompileCliBatchEntryCons String String (Box CompileCliBatchEntryList)))
@@ -42,19 +40,11 @@
   (OkCompileCliBatchEntryList CompileCliBatchEntryList)
   (ErrCompileCliBatchEntryList i64))
 
-(define (compile-cli-cfg-name-cons
-  [name : String]
-  [rest : CompileCliCfgNameList]) : CompileCliCfgNameList
-  (CompileCliCfgNameCons name (box rest)))
-
 (define (compile-cli-batch-entry-cons
   [input-path : String]
   [output-path : String]
   [rest : CompileCliBatchEntryList]) : CompileCliBatchEntryList
   (CompileCliBatchEntryCons input-path output-path (box rest)))
-
-(define (compile-cli-cfg-name-list-empty) : CompileCliCfgNameList
-  CompileCliCfgNameNil)
 
 (defenum CompileCliConfig
   (CompileCliConfig
@@ -65,7 +55,7 @@
     bool
     CompilerBackendTarget
     StringVec
-    CompileCliCfgNameList
+    StringVec
     CompilerBackendMode
     i64))
 
@@ -75,7 +65,7 @@
     bool
     CompilerBackendTarget
     StringVec
-    CompileCliCfgNameList
+    StringVec
     CompilerBackendMode
     i64))
 
@@ -190,7 +180,7 @@
   [has-target : bool]
   [target : CompilerBackendTarget]
   [stdlib-roots : StringVec]
-  [cfg-names : CompileCliCfgNameList]
+  [cfg-names : StringVec]
   [emit-ir : bool]
   [pic : bool]
   [has-opt-level : bool]
@@ -266,7 +256,7 @@
             has-target
             target
             stdlib-roots
-            (compile-cli-cfg-name-cons (arg (+ idx 1)) cfg-names)
+            (string-vec-push cfg-names (arg (+ idx 1)))
             emit-ir
             pic
             has-opt-level
@@ -388,7 +378,7 @@
   [has-target : bool]
   [target : CompilerBackendTarget]
   [stdlib-roots : StringVec]
-  [cfg-names : CompileCliCfgNameList]
+  [cfg-names : StringVec]
   [has-opt-level : bool]
   [opt-level : i64]
   [backend-mode : CompilerBackendMode]) : ResultCompileCliBatchConfig
@@ -436,7 +426,7 @@
             has-target
             target
             stdlib-roots
-            (compile-cli-cfg-name-cons (arg (+ idx 1)) cfg-names)
+            (string-vec-push cfg-names (arg (+ idx 1)))
             has-opt-level
             opt-level
             backend-mode))
@@ -524,7 +514,7 @@
           false
           (BackendTargetLinux)
           (string-vec-new)
-          (compile-cli-cfg-name-list-empty)
+          (string-vec-new)
           false
           false
           false
@@ -548,7 +538,7 @@
           false
           (BackendTargetLinux)
           (string-vec-new)
-          (compile-cli-cfg-name-list-empty)
+          (string-vec-new)
           false
           (compiler-optimize-default-level)
           (BackendModeScalar))))))
@@ -628,11 +618,19 @@
           (compile-cli-message-with-usage
             (string-append "Unknown command: " command)))))))
 
-(define (compile-cli-cfg-names-to-env [cfg-names : CompileCliCfgNameList]) : SymI64Env
-  (match cfg-names
-    [(CompileCliCfgNameNil) (compiler-cfg-empty)]
-    [(CompileCliCfgNameCons name rest)
-      (compiler-cfg-enable (compile-cli-cfg-names-to-env (box-get rest)) name)]))
+(define (compile-cli-cfg-names-to-env-from
+  [cfg-names : StringVec]
+  [index : i64]
+  [env : SymI64Env]) : SymI64Env
+  (if (>= index (string-vec-len cfg-names))
+    env
+    (compile-cli-cfg-names-to-env-from
+      cfg-names
+      (+ index 1)
+      (compiler-cfg-enable env (string-vec-get cfg-names index "")))))
+
+(define (compile-cli-cfg-names-to-env [cfg-names : StringVec]) : SymI64Env
+  (compile-cli-cfg-names-to-env-from cfg-names 0 (compiler-cfg-empty)))
 
 (define (compile-cli-typecheck-doctests
   [input-path : String]
@@ -657,7 +655,7 @@
   [has-target : bool]
   [target : CompilerBackendTarget]
   [stdlib-roots : StringVec]
-  [cfg-names : CompileCliCfgNameList]
+  [cfg-names : StringVec]
   [backend-mode : CompilerBackendMode]
   [opt-level : i64]) : i64
   (let
@@ -804,7 +802,7 @@
   [has-target : bool]
   [target : CompilerBackendTarget]
   [stdlib-roots : StringVec]
-  [cfg-names : CompileCliCfgNameList]
+  [cfg-names : StringVec]
   [backend-mode : CompilerBackendMode]
   [opt-level : i64]) : i64
   (let
@@ -839,7 +837,7 @@
   [has-target : bool]
   [target : CompilerBackendTarget]
   [stdlib-roots : StringVec]
-  [cfg-names : CompileCliCfgNameList]
+  [cfg-names : StringVec]
   [backend-mode : CompilerBackendMode]
   [opt-level : i64]) : i64
   (match entries
@@ -881,7 +879,7 @@
   [has-target : bool]
   [target : CompilerBackendTarget]
   [stdlib-roots : StringVec]
-  [cfg-names : CompileCliCfgNameList]
+  [cfg-names : StringVec]
   [backend-mode : CompilerBackendMode]
   [opt-level : i64]) : i64
   (match (compile-cli-batch-parse-entries-from

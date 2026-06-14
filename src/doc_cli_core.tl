@@ -10,7 +10,7 @@
 ;;   typelisp run selfhost/cli.tl -- doc --load input.tl output.md [--stdlib-root <dir>...]
 (import "../stdlib/io.tl")
 
-(import "../stdlib/list.tl")
+(import "../stdlib/vector.tl")
 
 (import "doc_render.tl")
 
@@ -75,13 +75,17 @@
     [(DocModuleNil) 0]
     [(DocModuleCons _ rest) (+ 1 (doc-module-list-count (box-get rest)))]))
 
-(define (doc-modules-from-string-list [paths : StringList]) : DocModuleList
-  (match paths
-    [(StringNil) DocModuleNil]
-    [(StringCons path rest)
+(define (doc-modules-from-string-vec-from [paths : StringVec] [index : i64]) : DocModuleList
+  (if (>= index (string-vec-len paths))
+    DocModuleNil
+    (let
+      [path : String (string-vec-get paths index "")]
       (doc-cli-module-cons
         (DocModule path (doc-extract-file path))
-        (doc-modules-from-string-list (box-get rest)))]))
+        (doc-modules-from-string-vec-from paths (+ index 1))))))
+
+(define (doc-modules-from-string-vec [paths : StringVec]) : DocModuleList
+  (doc-modules-from-string-vec-from paths 0))
 
 (define (doc-modules-from-paths [paths : AstDeclPathList] [seen : SymI64Env]) : DocModuleList
   (match paths
@@ -139,7 +143,7 @@
         (write-file
           output-path
           (doc-render-module-graph-markdown
-            (doc-modules-from-string-list (struct-get source-set sources))))
+            (doc-modules-from-string-vec (struct-get source-set sources))))
         (doc-print-wrote output-path)
         0)]))
 
@@ -408,25 +412,32 @@
   [status : i64]) : i64
   (doc-test-files-from input-paths 0 stdlib-roots print-headers status))
 
-(define (doc-test-package-files
-  [input-paths : StringList]
+(define (doc-test-package-files-from
+  [input-paths : StringVec]
+  [index : i64]
   [stdlib-roots : StringVec]
   [status : i64]) : i64
-  (match input-paths
-    [(StringNil) status]
-    [(StringCons input-path rest)
-      (let
-        [file-status : i64
-          (begin
-            (print-string
-              (string-append "--- " (string-append input-path "\n")))
-            (doc-test-file input-path stdlib-roots))]
-        (doc-test-package-files
-          (box-get rest)
-          stdlib-roots
-          (if (= status 0)
-            file-status
-            status)))]))
+  (if (>= index (string-vec-len input-paths))
+    status
+    (let
+      [input-path : String (string-vec-get input-paths index "")]
+      [file-status : i64
+        (begin
+          (print-string (string-append "--- " (string-append input-path "\n")))
+          (doc-test-file input-path stdlib-roots))]
+      (doc-test-package-files-from
+        input-paths
+        (+ index 1)
+        stdlib-roots
+        (if (= status 0)
+          file-status
+          status)))))
+
+(define (doc-test-package-files
+  [input-paths : StringVec]
+  [stdlib-roots : StringVec]
+  [status : i64]) : i64
+  (doc-test-package-files-from input-paths 0 stdlib-roots status))
 
 (define (doc-test-package
   [manifest-path : String]

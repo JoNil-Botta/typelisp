@@ -30,13 +30,9 @@
   (TestModeRun)
   (TestModeCheck))
 
-(defenum TestBatchPathList
-  (TestBatchPathNil)
-  (TestBatchPathCons String (Box TestBatchPathList)))
-
 (defenum TestConfig
   (TestFileConfig String String String StringVec i64 TestMode)
-  (TestBatchConfig TestBatchPathList String String StringVec i64 TestMode)
+  (TestBatchConfig StringVec String String StringVec i64 TestMode)
   (TestPackageConfig String bool String String StringVec i64 TestMode))
 
 (defenum ResultTestConfig
@@ -48,16 +44,8 @@
   (TestSomeString String))
 
 (defenum ResultTestBatchPaths
-  (OkTestBatchPaths TestBatchPathList)
+  (OkTestBatchPaths StringVec)
   (ErrTestBatchPaths String))
-
-(define (tltest-batch-path-cons [path : String] [rest : TestBatchPathList]) : TestBatchPathList
-  (TestBatchPathCons path (box rest)))
-
-(define (tltest-batch-path-list-empty? [paths : TestBatchPathList]) : bool
-  (match paths
-    [(TestBatchPathNil) true]
-    [(TestBatchPathCons _ _) false]))
 
 (defenum InlineTest
   (InlineTest String String i64 i64 String))
@@ -124,20 +112,42 @@
 (define (tltest-batch-paths-from-text-from
   [text : String]
   [start : i64]
-  [n : i64]) : TestBatchPathList
+  [n : i64]
+  [paths : StringVec]) : StringVec
   (if (>= start n)
-    TestBatchPathNil
+    paths
     (let
       [line-end : i64 (tltest-batch-line-end text start n)]
       [next-start : i64 (tltest-batch-next-line-start text line-end n)]
       (if (= start line-end)
-        (tltest-batch-paths-from-text-from text next-start n)
-        (tltest-batch-path-cons
-          (substring text start (- line-end start))
-          (tltest-batch-paths-from-text-from text next-start n))))))
+        (tltest-batch-paths-from-text-from text next-start n paths)
+        (tltest-batch-paths-from-text-from
+          text
+          next-start
+          n
+          (string-vec-push paths (substring text start (- line-end start))))))))
 
-(define (tltest-batch-paths-from-text [text : String]) : TestBatchPathList
-  (tltest-batch-paths-from-text-from text 0 (string-length text)))
+(define (tltest-batch-paths-from-text [text : String]) : StringVec
+  (tltest-batch-paths-from-text-from
+    text
+    0
+    (string-length text)
+    (string-vec-new)))
+
+(define (tltest-batch-paths-from-text-self-test?) : bool
+  (let
+    [paths : StringVec (tltest-batch-paths-from-text "a.tl\n\nb.tl\r\nc.tl")]
+    (and
+      (= (string-vec-len paths) 3)
+      (string-eq (string-vec-get paths 0 "") "a.tl")
+      (string-eq (string-vec-get paths 1 "") "b.tl")
+      (string-eq (string-vec-get paths 2 "") "c.tl"))))
+
+(test
+  test-batch-paths-vector-preserves-order
+  (if (tltest-batch-paths-from-text-self-test?)
+    unit
+    (panic "test: batch path vector self-test mismatch")))
 
 (define (tltest-batch-paths [list-path : String]) : ResultTestBatchPaths
   (match (try-read-file (& list-path))
@@ -170,7 +180,7 @@
             [(TestModeCheck)
               (match (tltest-batch-paths list-path)
                 [(OkTestBatchPaths paths)
-                  (if (tltest-batch-path-list-empty? paths)
+                  (if (string-vec-is-empty? paths)
                     (ErrTestConfig "test: --batch list is empty")
                     (OkTestConfig
                       (TestBatchConfig
@@ -2283,8 +2293,9 @@
           (ErrTestPackageTotals 1))])
     (OkTestPackageTotals 0 0)))
 
-(define (tltest-package-run-sources
-  [sources : StringList]
+(define (tltest-package-run-sources-from
+  [sources : StringVec]
+  [index : i64]
   [tests-prefix : String]
   [target : String]
   [roots : StringVec]
@@ -2296,12 +2307,14 @@
   [deps : CompilerPkgDeps]
   [file-count : i64]
   [test-count : i64]) : ResultTestPackageTotals
-  (match sources
-    [(StringNil) (OkTestPackageTotals file-count test-count)]
-    [(StringCons source rest)
+  (if (>= index (string-vec-len sources))
+    (OkTestPackageTotals file-count test-count)
+    (let
+      [source : String (string-vec-get sources index "")]
       (if (tltest-package-test-source? source tests-prefix)
-        (tltest-package-run-sources
-          (box-get rest)
+        (tltest-package-run-sources-from
+          sources
+          (+ index 1)
           tests-prefix
           target
           roots
@@ -2325,8 +2338,9 @@
           deps)
           [(ErrTestPackageTotals status) (ErrTestPackageTotals status)]
           [(OkTestPackageTotals source-files source-tests)
-            (tltest-package-run-sources
-              (box-get rest)
+            (tltest-package-run-sources-from
+              sources
+              (+ index 1)
               tests-prefix
               target
               roots
@@ -2337,10 +2351,10 @@
               package-owner
               deps
               (+ file-count source-files)
-              (+ test-count source-tests))]))]))
+              (+ test-count source-tests))])))))
 
-(define (tltest-package-run-integration-sources
-  [sources : StringList]
+(define (tltest-package-run-sources
+  [sources : StringVec]
   [tests-prefix : String]
   [target : String]
   [roots : StringVec]
@@ -2352,9 +2366,39 @@
   [deps : CompilerPkgDeps]
   [file-count : i64]
   [test-count : i64]) : ResultTestPackageTotals
-  (match sources
-    [(StringNil) (OkTestPackageTotals file-count test-count)]
-    [(StringCons source rest)
+  (tltest-package-run-sources-from
+    sources
+    0
+    tests-prefix
+    target
+    roots
+    opt-level
+    test-mode
+    backend-target
+    manifest-dir
+    package-owner
+    deps
+    file-count
+    test-count))
+
+(define (tltest-package-run-integration-sources-from
+  [sources : StringVec]
+  [index : i64]
+  [tests-prefix : String]
+  [target : String]
+  [roots : StringVec]
+  [opt-level : i64]
+  [test-mode : TestMode]
+  [backend-target : CompilerBackendTarget]
+  [manifest-dir : String]
+  [package-owner : String]
+  [deps : CompilerPkgDeps]
+  [file-count : i64]
+  [test-count : i64]) : ResultTestPackageTotals
+  (if (>= index (string-vec-len sources))
+    (OkTestPackageTotals file-count test-count)
+    (let
+      [source : String (string-vec-get sources index "")]
       (if (tltest-package-integration-source? source tests-prefix)
         (match (tltest-package-run-integration-source
           source
@@ -2368,8 +2412,9 @@
           deps)
           [(ErrTestPackageTotals status) (ErrTestPackageTotals status)]
           [(OkTestPackageTotals source-files source-tests)
-            (tltest-package-run-integration-sources
-              (box-get rest)
+            (tltest-package-run-integration-sources-from
+              sources
+              (+ index 1)
               tests-prefix
               target
               roots
@@ -2381,8 +2426,9 @@
               deps
               (+ file-count source-files)
               (+ test-count source-tests))])
-        (tltest-package-run-integration-sources
-          (box-get rest)
+        (tltest-package-run-integration-sources-from
+          sources
+          (+ index 1)
           tests-prefix
           target
           roots
@@ -2393,7 +2439,35 @@
           package-owner
           deps
           file-count
-          test-count))]))
+          test-count)))))
+
+(define (tltest-package-run-integration-sources
+  [sources : StringVec]
+  [tests-prefix : String]
+  [target : String]
+  [roots : StringVec]
+  [opt-level : i64]
+  [test-mode : TestMode]
+  [backend-target : CompilerBackendTarget]
+  [manifest-dir : String]
+  [package-owner : String]
+  [deps : CompilerPkgDeps]
+  [file-count : i64]
+  [test-count : i64]) : ResultTestPackageTotals
+  (tltest-package-run-integration-sources-from
+    sources
+    0
+    tests-prefix
+    target
+    roots
+    opt-level
+    test-mode
+    backend-target
+    manifest-dir
+    package-owner
+    deps
+    file-count
+    test-count))
 
 (define (tltest-run-package
   [manifest-path : String]
@@ -2532,39 +2606,54 @@
             (arena-destroy scratch-head))
           entry-result)))))
 
-(define (tltest-run-batch-check-paths
-  [paths : TestBatchPathList]
+(define (tltest-run-batch-check-paths-from
+  [paths : StringVec]
+  [index : i64]
   [roots : StringVec]
   [backend-target : CompilerBackendTarget]
   [file-count : i64]
   [test-count : i64]) : i64
-  (match paths
-    [(TestBatchPathNil)
-      (begin
-        (print-string (tltest-batch-summary-line file-count test-count))
-        0)]
-    [(TestBatchPathCons source rest)
-      (let
-        ;; Match compile --batch: isolate each entry in a destroyable scratch
-        ;; arena. Lexical arena rewind keeps overflow chunks retired until the
-        ;; owning arena is destroyed (#2441), so destroying the entry arena is
-        ;; required for long one-process batches to stay bounded.
-        [entry-result : i64
-          (tltest-run-batch-check-path source roots backend-target)]
-        (if (< entry-result 0)
-          (begin
-            (print-error (string-append "test: batch source failed: " source))
-            (print-error "\n")
-            (- 0 entry-result))
-          (tltest-run-batch-check-paths
-            (box-get rest)
-            roots
-            backend-target
-            (+ file-count 1)
-            (+ test-count entry-result))))]))
+  (if (>= index (string-vec-len paths))
+    (begin
+      (print-string (tltest-batch-summary-line file-count test-count))
+      0)
+    (let
+      [source : String (string-vec-get paths index "")]
+      ;; Match compile --batch: isolate each entry in a destroyable scratch
+      ;; arena. Lexical arena rewind keeps overflow chunks retired until the
+      ;; owning arena is destroyed (#2441), so destroying the entry arena is
+      ;; required for long one-process batches to stay bounded.
+      [entry-result : i64
+        (tltest-run-batch-check-path source roots backend-target)]
+      (if (< entry-result 0)
+        (begin
+          (print-error (string-append "test: batch source failed: " source))
+          (print-error "\n")
+          (- 0 entry-result))
+        (tltest-run-batch-check-paths-from
+          paths
+          (+ index 1)
+          roots
+          backend-target
+          (+ file-count 1)
+          (+ test-count entry-result))))))
+
+(define (tltest-run-batch-check-paths
+  [paths : StringVec]
+  [roots : StringVec]
+  [backend-target : CompilerBackendTarget]
+  [file-count : i64]
+  [test-count : i64]) : i64
+  (tltest-run-batch-check-paths-from
+    paths
+    0
+    roots
+    backend-target
+    file-count
+    test-count))
 
 (define (tltest-run-batch-check
-  [paths : TestBatchPathList]
+  [paths : StringVec]
   [target : String]
   [roots : StringVec]) : i64
   (begin

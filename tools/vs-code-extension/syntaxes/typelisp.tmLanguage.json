@@ -13,7 +13,9 @@
     { "include": "#constants" },
     { "include": "#types" },
     { "include": "#definition-name" },
-    { "include": "#user-types" }
+    { "include": "#bindings" },
+    { "include": "#user-types" },
+    { "include": "#function-call" }
   ],
   "repository": {
     "comments": {
@@ -97,11 +99,13 @@
           "match": "(?<=\\()->(?=[\\s)])"
         },
         {
-          "name": "keyword.operator.arithmetic.typelisp",
+          "comment": "Arithmetic/comparison operators are builtin operations applied in head position; scope as builtin functions so themes that don't color keyword.operator still render them.",
+          "name": "support.function.builtin.typelisp",
           "match": "(?<=\\()(!=|<=|>=|\\+|\\-|\\*|/|%|=|<|>)(?=[\\s)])"
         },
         {
-          "name": "keyword.operator.word.typelisp",
+          "comment": "Bitwise/logical word operators, scoped as builtin functions for the same reason.",
+          "name": "support.function.builtin.typelisp",
           "match": "(?<=\\()(bit-and|bit-or|bit-xor|bit-not|shl|shr|not|neg)(?=[\\s)])"
         },
         {
@@ -162,10 +166,24 @@
         }
       ]
     },
+    "bindings": {
+      "comment": "Binding/parameter name: the first identifier inside [ ... ] (function params and let bindings).",
+      "match": "(?<=\\[)\\s*([A-Za-z_][A-Za-z0-9_!?*/<>=+-]*)",
+      "captures": {
+        "1": { "name": "variable.parameter.typelisp" }
+      }
+    },
     "user-types": {
       "comment": "PascalCase identifiers (user types and enum constructors).",
       "name": "entity.name.type.typelisp",
       "match": "(?<![\\w-])[A-Z][A-Za-z0-9_]*(?![\\w-])"
+    },
+    "function-call": {
+      "comment": "Identifier applied in head position = a function or macro call. Runs last, so special forms, builtins, operators, and types are already claimed; this colors the remaining user/library calls.",
+      "match": "(?<=\\()([A-Za-z_][A-Za-z0-9_!?*/<>=+-]*)(?=[\\s)])",
+      "captures": {
+        "1": { "name": "entity.name.function.typelisp" }
+      }
     }
   }
 }

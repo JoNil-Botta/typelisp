@@ -83,7 +83,7 @@ _tl_stdlib_runtime_runtime_os_write:
     movq -16(%rbp), %rdi
     call _tl_stdlib_runtime_runtime_ptr_arg
     movq %rax, -40(%rbp)
-    movq $1, %rax
+    movl $1, %eax
     pushq %rax
     movq -8(%rbp), %rax
     pushq %rax
@@ -107,7 +107,7 @@ _tl_stdlib_runtime_runtime_os_exit:
     subq $32, %rsp
     movq %rdi, -8(%rbp)
 .Lf2_entry:
-    movq $231, %rax
+    movl $231, %eax
     pushq %rax
     movq -8(%rbp), %rax
     pushq %rax
@@ -132,7 +132,7 @@ _tl_stdlib_runtime_runtime_abort_write:
     movq -8(%rbp), %r10
     movq (%r10), %rax
     movq %rax, -48(%rbp)
-    movq $2, %rdi
+    movl $2, %edi
     movq -48(%rbp), %rsi
     movq -24(%rbp), %rdx
     call _tl_stdlib_runtime_runtime_os_write
@@ -151,7 +151,7 @@ tl_oob_abort:
     movq -8(%rbp), %rdi
     call _tl_stdlib_runtime_runtime_abort_write
     movq %rax, -16(%rbp)
-    movq $134, %rdi
+    movl $134, %edi
     leave
     jmp _tl_stdlib_runtime_runtime_os_exit
 
@@ -166,7 +166,7 @@ tl_div_abort:
     movq -8(%rbp), %rdi
     call _tl_stdlib_runtime_runtime_abort_write
     movq %rax, -16(%rbp)
-    movq $135, %rdi
+    movl $135, %edi
     leave
     jmp _tl_stdlib_runtime_runtime_os_exit
 
@@ -181,7 +181,7 @@ tl_shift_abort:
     movq -8(%rbp), %rdi
     call _tl_stdlib_runtime_runtime_abort_write
     movq %rax, -16(%rbp)
-    movq $129, %rdi
+    movl $129, %edi
     leave
     jmp _tl_stdlib_runtime_runtime_os_exit
 
@@ -195,7 +195,7 @@ tl_abort_string:
     movq -8(%rbp), %rdi
     call _tl_stdlib_runtime_runtime_abort_write
     movq %rax, -16(%rbp)
-    movq $134, %rdi
+    movl $134, %edi
     leave
     jmp _tl_stdlib_runtime_runtime_os_exit
 
@@ -268,7 +268,7 @@ tl_region_abort:
     movq -8(%rbp), %rdi
     call _tl_stdlib_runtime_runtime_abort_write
     movq %rax, -16(%rbp)
-    movq $134, %rdi
+    movl $134, %edi
     leave
     jmp _tl_stdlib_runtime_runtime_os_exit
 
@@ -283,7 +283,7 @@ tl_oom_abort:
     movq -8(%rbp), %rdi
     call _tl_stdlib_runtime_runtime_abort_write
     movq %rax, -16(%rbp)
-    movq $134, %rdi
+    movl $134, %edi
     leave
     jmp _tl_stdlib_runtime_runtime_os_exit
 
@@ -293,7 +293,7 @@ _tl_helper_helper:
     movq %rsp, %rbp
     subq $16, %rsp
 .Lf12_entry:
-    movq $38, %rax
+    movl $38, %eax
     movq _tl_shared_shared(%rip), %r8
     addq %r8, %rax
     movq %rax, -16(%rbp)

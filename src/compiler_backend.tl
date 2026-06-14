@@ -3936,48 +3936,53 @@
     [(IrValueCons w0 rest0)
       (match (box-get rest0)
         [(IrValueCons w1 _)
-          (match (compiler-reg-assignment-lookup assignments dst)
-            [(CompilerRegSomeLocation location)
-              (match location
-                [(CompilerRegRegisterPair reg-a reg-b)
-                  (compiler-backend-emit-pack-words
-                    assignments
-                    w0
-                    w1
-                    reg-a
-                    reg-b
-                    (compiler-backend-group-word-sse? program-index ty 0)
-                    (compiler-backend-group-word-sse? program-index ty 1)
-                    instr-diag)]
-                [(CompilerRegSpill offset)
-                  ;; spilled group: words at [offset] and [offset-8].
-                  (compiler-backend-emit-pack-words
-                    assignments
-                    w0
-                    w1
-                    (compiler-backend-frame-offset offset)
-                    (compiler-backend-frame-offset (- offset 8))
-                    (compiler-backend-group-word-sse? program-index ty 0)
-                    (compiler-backend-group-word-sse? program-index ty 1)
-                    instr-diag)]
-                [_
-                  (ErrCompilerBackend
-                    (compiler-diagnostic-with-message
-                      instr-diag
-                      "backend: IrInstrPack dst is not a register-group location"))])]
-            [(CompilerRegNoLocation)
-              ;; stack-only: the group var lives in two stack slots.
-              (compiler-backend-emit-pack-words
-                assignments
-                w0
-                w1
-                (compiler-backend-frame-offset
-                  (compiler-backend-group-word0-slot dst))
-                (compiler-backend-frame-offset
-                  (compiler-backend-group-word1-slot dst vars assignments))
-                (compiler-backend-group-word-sse? program-index ty 0)
-                (compiler-backend-group-word-sse? program-index ty 1)
-                instr-diag)])]
+          (let
+            [w0-sse : bool
+              (compiler-backend-group-word-sse? program-index ty 0)]
+            [w1-sse : bool
+              (compiler-backend-group-word-sse? program-index ty 1)]
+            (match (compiler-reg-assignment-lookup assignments dst)
+              [(CompilerRegSomeLocation location)
+                (match location
+                  [(CompilerRegRegisterPair reg-a reg-b)
+                    (compiler-backend-emit-pack-words
+                      assignments
+                      w0
+                      w1
+                      reg-a
+                      reg-b
+                      w0-sse
+                      w1-sse
+                      instr-diag)]
+                  [(CompilerRegSpill offset)
+                    ;; spilled group: words at [offset] and [offset-8].
+                    (compiler-backend-emit-pack-words
+                      assignments
+                      w0
+                      w1
+                      (compiler-backend-frame-offset offset)
+                      (compiler-backend-frame-offset (- offset 8))
+                      w0-sse
+                      w1-sse
+                      instr-diag)]
+                  [_
+                    (ErrCompilerBackend
+                      (compiler-diagnostic-with-message
+                        instr-diag
+                        "backend: IrInstrPack dst is not a register-group location"))])]
+              [(CompilerRegNoLocation)
+                ;; stack-only: the group var lives in two stack slots.
+                (compiler-backend-emit-pack-words
+                  assignments
+                  w0
+                  w1
+                  (compiler-backend-frame-offset
+                    (compiler-backend-group-word0-slot dst))
+                  (compiler-backend-frame-offset
+                    (compiler-backend-group-word1-slot dst vars assignments))
+                  w0-sse
+                  w1-sse
+                  instr-diag)]))]
         [(IrValueNil)
           (ErrCompilerBackend
             (compiler-diagnostic-with-message

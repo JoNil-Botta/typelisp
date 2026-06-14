@@ -58,6 +58,22 @@
     [(OkJsonNumberText text) (string-eq text "0.125")]
     [(ErrJsonNumberText _) false]))
 
+(define (json-test-i64-parse) : bool
+  (let
+    [ok-text : String "-42"]
+    [frac-text : String "1.5"]
+    [range-text : String "9223372036854775808"]
+    (and
+      (match (json-number->i64 (& ok-text))
+        [(OkJsonNumberI64 value) (= value -42)]
+        [(ErrJsonNumberI64 _) false])
+      (match (json-number->i64 (& frac-text))
+        [(OkJsonNumberI64 _) false]
+        [(ErrJsonNumberI64 _) true])
+      (match (json-number->i64 (& range-text))
+        [(OkJsonNumberI64 _) false]
+        [(ErrJsonNumberI64 _) true]))))
+
 (define (json-test-f64-from-bits [bits : u64]) : f64
   (let
     [buf : (Array u64) (make-array u64 1)]
@@ -109,4 +125,5 @@
       (unless (json-test-float-parse) (return 14))
       (unless (json-test-float-render) (return 15))
       (unless (json-test-nonfinite-render) (return 16))
+      (unless (json-test-i64-parse) (return 17))
       42)))

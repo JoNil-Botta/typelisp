@@ -978,6 +978,21 @@
   (OkGenSetSource String)
   (ErrGenSetSource CompilerDiagnostic))
 
+(defenum ResultGenJsonType
+  (OkGenJsonType AstType)
+  (ErrGenJsonType CompilerDiagnostic))
+
+(defenum GenJsonDeriveArgs
+  (GenJsonDeriveArgs AstType))
+
+(defenum ResultGenJsonDeriveArgs
+  (OkGenJsonDeriveArgs GenJsonDeriveArgs)
+  (ErrGenJsonDeriveArgs CompilerDiagnostic))
+
+(defenum ResultGenJsonSource
+  (OkGenJsonSource String)
+  (ErrGenJsonSource CompilerDiagnostic))
+
 (define (gen-tb2 [buf : TextBuf] [a : String] [b : String]) : TextBuf
   (text-buf-append (text-buf-append buf a) b))
 
@@ -1127,6 +1142,70 @@
         (gen-set-diag
           "set-family: expected key type and key descriptor arguments"))]))
 
+(define (gen-json-diag [message : String]) : CompilerDiagnostic
+  (compiler-diagnostic-at-start "" message))
+
+(define (gen-json-type-from-key [type-key : String]) : ResultGenJsonType
+  (cond
+    (string-eq type-key "i64")
+    (OkGenJsonType AstTyI64)
+    (string-eq type-key "i32")
+    (OkGenJsonType AstTyI32)
+    (string-eq type-key "i16")
+    (OkGenJsonType AstTyI16)
+    (string-eq type-key "i8")
+    (OkGenJsonType AstTyI8)
+    (string-eq type-key "u64")
+    (OkGenJsonType AstTyU64)
+    (string-eq type-key "u32")
+    (OkGenJsonType AstTyU32)
+    (string-eq type-key "u16")
+    (OkGenJsonType AstTyU16)
+    (string-eq type-key "u8")
+    (OkGenJsonType AstTyU8)
+    (string-eq type-key "bool")
+    (OkGenJsonType AstTyBool)
+    (string-eq type-key "String")
+    (OkGenJsonType AstTyString)
+    (match (gen-hashmap-nominal-name type-key "struct_")
+      [(SpecSomeString name) (OkGenJsonType (AstTyStruct (intern name)))]
+      [(SpecNoString)
+        (ErrGenJsonType
+          (gen-json-diag
+            (string-append "json-derive: unsupported type-key " type-key)))])))
+
+(define (gen-json-eval-type [expr : AstExpr] [env : CtfeEnv]) : ResultGenJsonType
+  (match (compiler-ctfe-eval expr env (ctfe-fuel-limit))
+    [(OkCtfe value _)
+      (match value
+        [(CtfeType ty)
+          (OkGenJsonType
+            (ctfe-reflect-resolve-type (ctfe-env-reflections env) ty))]
+        [(CtfeString type-key) (gen-json-type-from-key type-key)]
+        [_
+          (ErrGenJsonType
+            (spec-diagnostic-at-expr
+              expr
+              "json-derive: argument must evaluate to a type or type-key String"))])]
+    [(ErrCtfe diag) (ErrGenJsonType diag)]))
+
+(define (gen-json-args [args : AstExprList] [env : CtfeEnv]) : ResultGenJsonDeriveArgs
+  (match args
+    [(AstExprCons type-expr-box rest-box)
+      (match (box-get rest-box)
+        [(AstExprNil)
+          (let
+            [type-expr : AstExpr (ast-node-get type-expr-box)]
+            (match (gen-json-eval-type type-expr env)
+              [(OkGenJsonType ty) (OkGenJsonDeriveArgs (GenJsonDeriveArgs ty))]
+              [(ErrGenJsonType diag) (ErrGenJsonDeriveArgs diag)]))]
+        [_
+          (ErrGenJsonDeriveArgs
+            (gen-json-diag "json-derive: expected one struct type argument"))])]
+    [_
+      (ErrGenJsonDeriveArgs
+        (gen-json-diag "json-derive: expected one struct type argument"))]))
+
 (define (gen-hashmap-one-byte-string [code : i64]) : String
   (let
     [buf : (Array u8) (make-array u8 1)]
@@ -1261,6 +1340,36 @@
           (match cleanup
             [(AstStructNoCleanup)
               (if (gen-set-family-marker-fields? fields)
+                (SpecSomeString (intern-str name))
+                (SpecNoString))]
+            [_ (SpecNoString)])]
+        [_ (SpecNoString)])]
+    [_ (SpecNoString)]))
+
+(define (gen-json-derive-marker-fields? [fields : AstFieldDefList]) : bool
+  (match fields
+    [(AstFieldDefCons field rest-box)
+      (match field
+        [(AstFieldDef name ty cleanup)
+          (and
+            (string-eq (intern-str name) "__json_derive_request")
+            (ctfe-type-eq ty (AstTyI64))
+            (match cleanup
+              [(AstFieldNoCleanup) true]
+              [_ false])
+            (match (box-get rest-box)
+              [(AstFieldDefNil) true]
+              [_ false]))])]
+    [_ false]))
+
+(define (gen-json-derive-marker-name [decl : AstDecl]) : SpecMaybeString
+  (match decl
+    [(AstDeclDefStruct name repr cleanup fields)
+      (match repr
+        [(AstStructReprDefault)
+          (match cleanup
+            [(AstStructNoCleanup)
+              (if (gen-json-derive-marker-fields? fields)
                 (SpecSomeString (intern-str name))
                 (SpecNoString))]
             [_ (SpecNoString)])]
@@ -4268,6 +4377,645 @@
       (gen-set-source-for-info set-name key-type-key descriptor key-info)]
     [(ErrGenHashmapTypeInfo diag) (ErrGenSetSource diag)]))
 
+(define (gen-json-result-name [type-name : String]) : String
+  (string-append type-name "JsonResult"))
+
+(define (gen-json-ok-name [type-name : String]) : String
+  (string-append "Ok" (string-append type-name "Json")))
+
+(define (gen-json-err-name [type-name : String]) : String
+  (string-append "Err" (string-append type-name "Json")))
+
+(define (gen-json-to-name [type-name : String]) : String
+  (string-append (gen-hashmap-name-prefix type-name) "-to-json"))
+
+(define (gen-json-from-name [type-name : String]) : String
+  (string-append (gen-hashmap-name-prefix type-name) "-from-json"))
+
+(define (gen-json-supported-int? [type-key : String]) : bool
+  (or
+    (string-eq type-key "i64")
+    (string-eq type-key "i32")
+    (string-eq type-key "i16")
+    (string-eq type-key "i8")
+    (string-eq type-key "u32")
+    (string-eq type-key "u16")
+    (string-eq type-key "u8")))
+
+(define (gen-json-field-unsupported [field-name : String] [type-key : String]) : ResultGenJsonSource
+  (ErrGenJsonSource
+    (gen-json-diag
+      (string-append
+        "json-derive: unsupported field "
+        (string-append field-name (string-append " type " type-key))))))
+
+(define (gen-json-field-type-source
+  [field-name : String]
+  [infos : CtfeReflectInfoList]
+  [ty : AstType]) : ResultGenJsonSource
+  (let
+    [resolved : AstType (ctfe-reflect-resolve-type infos ty)]
+    [type-key : String (ctfe-type-key-with-reflections infos resolved)]
+    (match resolved
+      [(AstTyBool) (OkGenJsonSource "bool")]
+      [(AstTyString) (OkGenJsonSource "String")]
+      [(AstTyI64) (OkGenJsonSource "i64")]
+      [(AstTyI32) (OkGenJsonSource "i32")]
+      [(AstTyI16) (OkGenJsonSource "i16")]
+      [(AstTyI8) (OkGenJsonSource "i8")]
+      [(AstTyU32) (OkGenJsonSource "u32")]
+      [(AstTyU16) (OkGenJsonSource "u16")]
+      [(AstTyU8) (OkGenJsonSource "u8")]
+      [(AstTyStruct name) (OkGenJsonSource (intern-str name))]
+      [_ (gen-json-field-unsupported field-name type-key)])))
+
+(define (gen-json-field-init-source
+  [field-name : String]
+  [infos : CtfeReflectInfoList]
+  [ty : AstType]) : ResultGenJsonSource
+  (match (gen-json-field-type-source field-name infos ty)
+    [(ErrGenJsonSource diag) (ErrGenJsonSource diag)]
+    [(OkGenJsonSource type-source)
+      (let
+        [type-key : String (ctfe-type-key-with-reflections infos ty)]
+        (cond
+          (string-eq type-source "bool")
+          (OkGenJsonSource "false")
+          (string-eq type-source "String")
+          (OkGenJsonSource "\"\"")
+          (string-eq type-source "i64")
+          (OkGenJsonSource "0")
+          (gen-json-supported-int? type-key)
+          (OkGenJsonSource
+            (string-append "(cast 0 : " (string-append type-source ")")))
+          (OkGenJsonSource
+            (string-append "(init : " (string-append type-source ")")))))]))
+
+(define (gen-json-field-access [field-name : String]) : String
+  (string-append "(struct-get value " (string-append field-name ")")))
+
+(define (gen-json-field-to-json-source
+  [field-name : String]
+  [infos : CtfeReflectInfoList]
+  [ty : AstType]) : ResultGenJsonSource
+  (match (gen-json-field-type-source field-name infos ty)
+    [(ErrGenJsonSource diag) (ErrGenJsonSource diag)]
+    [(OkGenJsonSource type-source)
+      (let
+        [type-key : String (ctfe-type-key-with-reflections infos ty)]
+        [field-access : String (gen-json-field-access field-name)]
+        (cond
+          (string-eq type-source "bool")
+          (OkGenJsonSource
+            (string-append "(JsonBool " (string-append field-access ")")))
+          (string-eq type-source "String")
+          (OkGenJsonSource
+            (string-append "(JsonString " (string-append field-access ")")))
+          (gen-json-supported-int? type-key)
+          (OkGenJsonSource
+            (if (string-eq type-key "i64")
+              (string-append
+                "(json-i64->number "
+                (string-append field-access ")"))
+              (string-append
+                "(json-i64->number (cast "
+                (string-append field-access " : i64))"))))
+          (match (gen-hashmap-nominal-name type-key "struct_")
+            [(SpecSomeString name)
+              (OkGenJsonSource
+                (string-append
+                  "("
+                  (string-append
+                    (gen-json-to-name name)
+                    (string-append " " (string-append field-access ")")))))]
+            [(SpecNoString) (gen-json-field-unsupported field-name type-key)])))]))
+
+(define (gen-json-to-members-source
+  [fields : CtfeReflectFieldList]
+  [infos : CtfeReflectInfoList]) : ResultGenJsonSource
+  (match fields
+    [(CtfeReflectFieldNil) (OkGenJsonSource "JsonMemberListNil")]
+    [(CtfeReflectFieldCons field rest-box)
+      (match field
+        [(CtfeReflectField field-name ty)
+          (match (gen-json-field-to-json-source field-name infos ty)
+            [(ErrGenJsonSource diag) (ErrGenJsonSource diag)]
+            [(OkGenJsonSource value-source)
+              (match (gen-json-to-members-source (box-get rest-box) infos)
+                [(ErrGenJsonSource diag) (ErrGenJsonSource diag)]
+                [(OkGenJsonSource rest-source)
+                  (let
+                    [buf : TextBuf (text-buf-empty)]
+                    (begin
+                      (set!
+                        buf
+                        (gen-tb5
+                          buf
+                          "(JsonMemberListCons \""
+                          field-name
+                          "\" "
+                          value-source
+                          " (box "))
+                      (set! buf (text-buf-append buf rest-source))
+                      (set! buf (text-buf-append buf "))"))
+                      (OkGenJsonSource (text-buf-render buf))))])])])]))
+
+(define (gen-json-local-name [index : i64]) : String
+  (string-append "json-field-" (int->string index)))
+
+(define (gen-json-key-name [index : i64]) : String
+  (string-append "json-key-" (int->string index)))
+
+(define (gen-json-value-name [index : i64]) : String
+  (string-append "json-value-" (int->string index)))
+
+(define (gen-json-let-bindings-source
+  [fields : CtfeReflectFieldList]
+  [infos : CtfeReflectInfoList]
+  [index : i64]) : ResultGenJsonSource
+  (match fields
+    [(CtfeReflectFieldNil) (OkGenJsonSource "")]
+    [(CtfeReflectFieldCons field rest-box)
+      (match field
+        [(CtfeReflectField field-name ty)
+          (match (gen-json-field-type-source field-name infos ty)
+            [(ErrGenJsonSource diag) (ErrGenJsonSource diag)]
+            [(OkGenJsonSource type-source)
+              (match (gen-json-field-init-source field-name infos ty)
+                [(ErrGenJsonSource diag) (ErrGenJsonSource diag)]
+                [(OkGenJsonSource init-source)
+                  (match (gen-json-let-bindings-source
+                    (box-get rest-box)
+                    infos
+                    (+ index 1))
+                    [(ErrGenJsonSource diag) (ErrGenJsonSource diag)]
+                    [(OkGenJsonSource rest-source)
+                      (let
+                        [buf : TextBuf (text-buf-empty)]
+                        (begin
+                          (set!
+                            buf
+                            (gen-tb7
+                              buf
+                              "        ["
+                              (gen-json-local-name index)
+                              " : "
+                              type-source
+                              " "
+                              init-source
+                              "]\n"))
+                          (set! buf (text-buf-append buf rest-source))
+                          (OkGenJsonSource (text-buf-render buf))))])])])])]))
+
+(define (gen-json-kind-error-source
+  [err-name : String]
+  [field-name : String]
+  [expected : String]) : String
+  (text-buf-render
+    (gen-tb7
+      (text-buf-empty)
+      "(return ("
+      err-name
+      " \"json-derive: field "
+      field-name
+      " expected "
+      expected
+      "\"))")))
+
+(define (gen-json-int-min-expr [type-key : String]) : String
+  (cond
+    (string-eq type-key "i32")
+    "(- 0 2147483648)"
+    (string-eq type-key "i16")
+    "(- 0 32768)"
+    (string-eq type-key "i8")
+    "(- 0 128)"
+    "0"))
+
+(define (gen-json-int-max-expr [type-key : String]) : String
+  (cond
+    (string-eq type-key "i32")
+    "2147483647"
+    (string-eq type-key "i16")
+    "32767"
+    (string-eq type-key "i8")
+    "127"
+    (string-eq type-key "u32")
+    "4294967295"
+    (string-eq type-key "u16")
+    "65535"
+    (string-eq type-key "u8")
+    "255"
+    "9223372036854775807"))
+
+(define (gen-json-int-set-source
+  [local-name : String]
+  [field-name : String]
+  [type-source : String]
+  [type-key : String]
+  [err-name : String]) : String
+  (if (string-eq type-key "i64")
+    (string-append "(set! " (string-append local-name " parsed)"))
+    (let
+      [min-expr : String (gen-json-int-min-expr type-key)]
+      [max-expr : String (gen-json-int-max-expr type-key)]
+      [buf : TextBuf (text-buf-empty)]
+      (begin
+        (set!
+          buf
+          (gen-tb5
+            buf
+            "(if (if (< parsed "
+            min-expr
+            ") true (> parsed "
+            max-expr
+            "))\n        "))
+        (set!
+          buf
+          (gen-tb7
+            buf
+            "(return ("
+            err-name
+            " \"json-derive: field "
+            field-name
+            " outside "
+            type-source
+            " range\"))\n        "))
+        (set!
+          buf
+          (gen-tb5 buf "(set! " local-name " (cast parsed : " type-source ")))"))
+        (text-buf-render buf)))))
+
+(define (gen-json-field-invalid-source
+  [err-name : String]
+  [field-name : String]
+  [type-source : String]) : String
+  (text-buf-render
+    (gen-tb7
+      (text-buf-empty)
+      "(return ("
+      err-name
+      " (string-append \"json-derive: field "
+      field-name
+      " invalid "
+      type-source
+      ": \" err)))")))
+
+(define (gen-json-from-value-source
+  [field-name : String]
+  [infos : CtfeReflectInfoList]
+  [ty : AstType]
+  [local-name : String]
+  [value-name : String]
+  [err-name : String]) : ResultGenJsonSource
+  (match (gen-json-field-type-source field-name infos ty)
+    [(ErrGenJsonSource diag) (ErrGenJsonSource diag)]
+    [(OkGenJsonSource type-source)
+      (let
+        [type-key : String (ctfe-type-key-with-reflections infos ty)]
+        (cond
+          (string-eq type-source "bool")
+          (OkGenJsonSource
+            (string-append
+              "(match "
+              (string-append
+                value-name
+                (string-append
+                  "\n        [(JsonBool parsed) (set! "
+                  (string-append
+                    local-name
+                    (string-append
+                      " parsed)]\n        [_ "
+                      (string-append
+                        (gen-json-kind-error-source err-name field-name "bool")
+                        "])")))))))
+          (string-eq type-source "String")
+          (OkGenJsonSource
+            (string-append
+              "(match "
+              (string-append
+                value-name
+                (string-append
+                  "\n        [(JsonString parsed) (set! "
+                  (string-append
+                    local-name
+                    (string-append
+                      " parsed)]\n        [_ "
+                      (string-append
+                        (gen-json-kind-error-source
+                          err-name
+                          field-name
+                          "String")
+                        "])")))))))
+          (gen-json-supported-int? type-key)
+          (let
+            [set-source : String
+              (gen-json-int-set-source
+                local-name
+                field-name
+                type-source
+                type-key
+                err-name)]
+            [buf : TextBuf (text-buf-empty)]
+            (begin
+              (set! buf (gen-tb3 buf "(match " value-name "\n"))
+              (set!
+                buf
+                (text-buf-append
+                  buf
+                  "        [(JsonNumber text)\n          (match (json-number-owned->i64 text)\n            [(OkJsonNumberI64 parsed) "))
+              (set! buf (text-buf-append buf set-source))
+              (set!
+                buf
+                (text-buf-append buf "]\n            [(ErrJsonNumberI64 err) "))
+              (set!
+                buf
+                (text-buf-append
+                  buf
+                  (gen-json-field-invalid-source
+                    err-name
+                    field-name
+                    type-source)))
+              (set! buf (text-buf-append buf "])]\n        [_ "))
+              (set!
+                buf
+                (text-buf-append
+                  buf
+                  (gen-json-kind-error-source err-name field-name type-source)))
+              (set! buf (text-buf-append buf "])"))
+              (OkGenJsonSource (text-buf-render buf))))
+          (match (gen-hashmap-nominal-name type-key "struct_")
+            [(SpecSomeString nested-name)
+              (let
+                [nested-from : String (gen-json-from-name nested-name)]
+                [nested-ok : String (gen-json-ok-name nested-name)]
+                [nested-err : String (gen-json-err-name nested-name)]
+                [buf : TextBuf (text-buf-empty)]
+                (begin
+                  (set!
+                    buf
+                    (gen-tb5
+                      buf
+                      "(match ("
+                      nested-from
+                      " "
+                      value-name
+                      ")\n        [("))
+                  (set!
+                    buf
+                    (gen-tb6
+                      buf
+                      nested-ok
+                      " parsed) (set! "
+                      local-name
+                      " parsed)]\n        [("
+                      nested-err
+                      " err) "))
+                  (set!
+                    buf
+                    (text-buf-append
+                      buf
+                      (gen-json-field-invalid-source
+                        err-name
+                        field-name
+                        type-source)))
+                  (set! buf (text-buf-append buf "])"))
+                  (OkGenJsonSource (text-buf-render buf))))]
+            [(SpecNoString) (gen-json-field-unsupported field-name type-key)])))]))
+
+(define (gen-json-from-field-statement-source
+  [field-name : String]
+  [infos : CtfeReflectInfoList]
+  [ty : AstType]
+  [index : i64]
+  [err-name : String]) : ResultGenJsonSource
+  (let
+    [local-name : String (gen-json-local-name index)]
+    [key-name : String (gen-json-key-name index)]
+    [value-name : String (gen-json-value-name index)]
+    (match (gen-json-from-value-source
+      field-name
+      infos
+      ty
+      local-name
+      value-name
+      err-name)
+      [(ErrGenJsonSource diag) (ErrGenJsonSource diag)]
+      [(OkGenJsonSource value-source)
+        (let
+          [buf : TextBuf (text-buf-empty)]
+          (begin
+            (set!
+              buf
+              (gen-tb6
+                buf
+                "          (let\n            ["
+                key-name
+                " : String \""
+                field-name
+                "\"]\n            (match (json-object-get-owned value "
+                key-name))
+            (set!
+              buf
+              (gen-tb3
+                buf
+                ")\n              [(JsonFound "
+                value-name
+                ")\n                "))
+            (set! buf (text-buf-append buf value-source))
+            (set!
+              buf
+              (gen-tb7
+                buf
+                "]\n              [(JsonMissing) (return ("
+                err-name
+                " \"json-derive: missing field "
+                field-name
+                "\"))]))\n"
+                ""
+                ""))
+            (OkGenJsonSource (text-buf-render buf))))])))
+
+(define (gen-json-from-statements-source
+  [fields : CtfeReflectFieldList]
+  [infos : CtfeReflectInfoList]
+  [index : i64]
+  [err-name : String]) : ResultGenJsonSource
+  (match fields
+    [(CtfeReflectFieldNil) (OkGenJsonSource "")]
+    [(CtfeReflectFieldCons field rest-box)
+      (match field
+        [(CtfeReflectField field-name ty)
+          (match (gen-json-from-field-statement-source
+            field-name
+            infos
+            ty
+            index
+            err-name)
+            [(ErrGenJsonSource diag) (ErrGenJsonSource diag)]
+            [(OkGenJsonSource head-source)
+              (match (gen-json-from-statements-source
+                (box-get rest-box)
+                infos
+                (+ index 1)
+                err-name)
+                [(ErrGenJsonSource diag) (ErrGenJsonSource diag)]
+                [(OkGenJsonSource rest-source)
+                  (OkGenJsonSource (string-append head-source rest-source))])])])]))
+
+(define (gen-json-constructor-args-from [index : i64] [count : i64]) : String
+  (if (>= index count)
+    ""
+    (string-append
+      " "
+      (string-append
+        (gen-json-local-name index)
+        (gen-json-constructor-args-from (+ index 1) count)))))
+
+(define (gen-json-from-body-source
+  [type-name : String]
+  [fields : CtfeReflectFieldList]
+  [infos : CtfeReflectInfoList]) : ResultGenJsonSource
+  (let
+    [field-count : i64 (ctfe-reflect-field-list-count fields)]
+    [ok-name : String (gen-json-ok-name type-name)]
+    [err-name : String (gen-json-err-name type-name)]
+    [args : String (gen-json-constructor-args-from 0 field-count)]
+    (if (= field-count 0)
+      (OkGenJsonSource
+        (string-append
+          "("
+          (string-append
+            ok-name
+            (string-append " (" (string-append type-name "))")))))
+      (match (gen-json-let-bindings-source fields infos 0)
+        [(ErrGenJsonSource diag) (ErrGenJsonSource diag)]
+        [(OkGenJsonSource bindings-source)
+          (match (gen-json-from-statements-source fields infos 0 err-name)
+            [(ErrGenJsonSource diag) (ErrGenJsonSource diag)]
+            [(OkGenJsonSource statements-source)
+              (let
+                [buf : TextBuf (text-buf-empty)]
+                (begin
+                  (set! buf (text-buf-append buf "(let\n"))
+                  (set! buf (text-buf-append buf bindings-source))
+                  (set! buf (text-buf-append buf "        (begin\n"))
+                  (set! buf (text-buf-append buf statements-source))
+                  (set!
+                    buf
+                    (gen-tb7
+                      buf
+                      "          ("
+                      ok-name
+                      " ("
+                      type-name
+                      args
+                      "))))"
+                      ""))
+                  (OkGenJsonSource (text-buf-render buf))))])]))))
+
+(define (gen-json-source-for-fields
+  [type-name : String]
+  [fields : CtfeReflectFieldList]
+  [infos : CtfeReflectInfoList]) : ResultGenJsonSource
+  (let
+    [result-name : String (gen-json-result-name type-name)]
+    [ok-name : String (gen-json-ok-name type-name)]
+    [err-name : String (gen-json-err-name type-name)]
+    [to-name : String (gen-json-to-name type-name)]
+    [from-name : String (gen-json-from-name type-name)]
+    (match (gen-json-to-members-source fields infos)
+      [(ErrGenJsonSource diag) (ErrGenJsonSource diag)]
+      [(OkGenJsonSource members-source)
+        (match (gen-json-from-body-source type-name fields infos)
+          [(ErrGenJsonSource diag) (ErrGenJsonSource diag)]
+          [(OkGenJsonSource from-body)
+            (let
+              [buf : TextBuf (text-buf-empty)]
+              (begin
+                (set!
+                  buf
+                  (gen-tb7
+                    buf
+                    "(defenum "
+                    result-name
+                    "\n  ("
+                    ok-name
+                    " "
+                    type-name
+                    ")\n  ("))
+                (set!
+                  buf
+                  (gen-tb6
+                    buf
+                    err-name
+                    " String))\n(define ("
+                    to-name
+                    " [value : "
+                    type-name
+                    "]) : Json\n  "))
+                (set! buf (text-buf-append buf "(JsonObject\n    (box\n      "))
+                (set! buf (text-buf-append buf members-source))
+                (set! buf (text-buf-append buf ")))\n(define ("))
+                (set! buf (text-buf-append buf from-name))
+                (set! buf (text-buf-append buf " [value : Json]) : "))
+                (set! buf (text-buf-append buf result-name))
+                (set!
+                  buf
+                  (text-buf-append
+                    buf
+                    "\n  (match value\n    [(JsonObject _)\n      "))
+                (set! buf (text-buf-append buf from-body))
+                (set!
+                  buf
+                  (gen-tb5
+                    buf
+                    "]\n    [_ ("
+                    err-name
+                    " \"json-derive: expected object for "
+                    type-name
+                    "\")]))\n"))
+                (OkGenJsonSource (text-buf-render buf))))])])))
+
+(define (gen-json-source-for
+  [request-name : String]
+  [ty : AstType]
+  [env : CtfeEnv]) : ResultGenJsonSource
+  (let
+    [infos : CtfeReflectInfoList (ctfe-env-reflections env)]
+    [resolved : AstType (ctfe-reflect-resolve-type infos ty)]
+    [type-key : String (ctfe-type-key-with-reflections infos resolved)]
+    (match resolved
+      [(AstTyStruct name)
+        (let
+          [type-name : String (intern-str name)]
+          [expected-request : String (string-append type-name "Json")]
+          (if (not (string-eq request-name expected-request))
+            (ErrGenJsonSource
+              (gen-json-diag
+                (string-append
+                  "json-derive: marker item "
+                  (string-append
+                    request-name
+                    (string-append
+                      " does not match generated request "
+                      expected-request)))))
+            (match (ctfe-reflect-info-lookup
+              infos
+              (ctfe-type-nominal-key resolved))
+              [(CtfeSomeReflectInfo info)
+                (match info
+                  [(CtfeReflectStruct _ _ _ fields)
+                    (gen-json-source-for-fields type-name fields infos)]
+                  [_ (gen-json-field-unsupported request-name type-key)])]
+              [(CtfeNoReflectInfo)
+                (ErrGenJsonSource
+                  (gen-json-diag
+                    (string-append
+                      "json-derive: no reflection metadata for "
+                      type-key)))])))]
+      [_ (gen-json-field-unsupported request-name type-key)])))
+
 (define (gen-register-generated-decl
   [template : AstDecl]
   [module : String]
@@ -4304,9 +5052,25 @@
     [(AstDeclCons decl rest-box)
       (match (gen-decl-visible-name decl)
         [(SpecNoString)
-          (ErrGenDecl
-            (gen-hashmap-diag
-              "hashmap-family: generated payload must declare a visible item"))]
+          (match decl
+            [(AstDeclImport _)
+              (match (gen-register-generated-decls
+                (box-get rest-box)
+                module
+                generator
+                args
+                arg-key
+                registry)
+                [(OkGenDecl rewritten-rest rest-registry rest-module)
+                  (OkGenDecl
+                    (ast-decl-cons decl rewritten-rest)
+                    rest-registry
+                    rest-module)]
+                [(ErrGenDecl diag) (ErrGenDecl diag)])]
+            [_
+              (ErrGenDecl
+                (gen-hashmap-diag
+                  "hashmap-family: generated payload must declare a visible item"))])]
         [(SpecSomeString item)
           (match (gen-register-generated-decl
             decl
@@ -4322,6 +5086,81 @@
                 module
                 generator
                 args
+                arg-key
+                head-registry)
+                [(OkGenDecl rewritten-rest rest-registry rest-module)
+                  (OkGenDecl
+                    (spec-decl-list-append rewritten-head rewritten-rest)
+                    rest-registry
+                    rest-module)]
+                [(ErrGenDecl diag) (ErrGenDecl diag)])]
+            [(ErrGenDecl diag) (ErrGenDecl diag)])])]))
+
+(define (gen-register-generated-decl-raw
+  [template : AstDecl]
+  [module : String]
+  [generator : String]
+  [item : String]
+  [arg-key : String]
+  [registry : GenRegistry]) : ResultGenDecl
+  (let
+    [key : String (gen-full-key module generator item arg-key)]
+    (match (gen-registry-lookup registry key)
+      [(GenNoEntry)
+        (OkGenDecl
+          (gen-single-decl-list template)
+          (gen-registry-cons key template registry)
+          module)]
+      [(GenSomeEntry existing)
+        (if (gen-decl-eq? existing template)
+          (OkGenDecl AstDeclNil registry module)
+          (ErrGenDecl (gen-incompatible-diag item key)))])))
+
+;; JSON derive emits runtime helpers that call imported stdlib functions. Keep
+;; the registry key for dedup, but leave declarations raw so the run pipeline
+;; resolves them like ordinary request-site declarations.
+(define (gen-register-generated-decls-raw
+  [decls : AstDeclList]
+  [module : String]
+  [generator : String]
+  [arg-key : String]
+  [registry : GenRegistry]) : ResultGenDecl
+  (match decls
+    [(AstDeclNil) (OkGenDecl AstDeclNil registry module)]
+    [(AstDeclCons decl rest-box)
+      (match (gen-decl-visible-name decl)
+        [(SpecNoString)
+          (match decl
+            [(AstDeclImport _)
+              (match (gen-register-generated-decls-raw
+                (box-get rest-box)
+                module
+                generator
+                arg-key
+                registry)
+                [(OkGenDecl rewritten-rest rest-registry rest-module)
+                  (OkGenDecl
+                    (ast-decl-cons decl rewritten-rest)
+                    rest-registry
+                    rest-module)]
+                [(ErrGenDecl diag) (ErrGenDecl diag)])]
+            [_
+              (ErrGenDecl
+                (gen-json-diag
+                  "json-derive: generated payload must declare a visible item"))])]
+        [(SpecSomeString item)
+          (match (gen-register-generated-decl-raw
+            decl
+            module
+            generator
+            item
+            arg-key
+            registry)
+            [(OkGenDecl rewritten-head head-registry _)
+              (match (gen-register-generated-decls-raw
+                (box-get rest-box)
+                module
+                generator
                 arg-key
                 head-registry)
                 [(OkGenDecl rewritten-rest rest-registry rest-module)
@@ -4400,6 +5239,37 @@
             [(ErrGenSetSource diag) (ErrGenDecl diag)])])]
     [(ErrGenSetArgs diag) (ErrGenDecl diag)]))
 
+(define (gen-json-expand-family
+  [request-name : String]
+  [module : String]
+  [generator : String]
+  [args : AstExprList]
+  [arg-key : String]
+  [registry : GenRegistry]
+  [env : CtfeEnv]) : ResultGenDecl
+  (match (gen-json-args args env)
+    [(OkGenJsonDeriveArgs parsed-args)
+      (match parsed-args
+        [(GenJsonDeriveArgs ty)
+          (match (gen-json-source-for request-name ty env)
+            [(OkGenJsonSource source)
+              (match (parse-ast-source source)
+                [(OkAstProgram (AstProgram decls-box))
+                  (gen-register-generated-decls-raw
+                    (box-get decls-box)
+                    module
+                    generator
+                    arg-key
+                    registry)]
+                [(ErrAstProgram message)
+                  (ErrGenDecl
+                    (gen-json-diag
+                      (string-append
+                        "json-derive: generated source did not parse: "
+                        message)))])]
+            [(ErrGenJsonSource diag) (ErrGenDecl diag)])])]
+    [(ErrGenJsonDeriveArgs diag) (ErrGenDecl diag)]))
+
 (define (gen-rewrite-decl
   [decl : AstDecl]
   [module : String]
@@ -4426,7 +5296,8 @@
                   (ErrGenDecl (gen-item-mismatch-diag item actual))
                   (match (gen-key-exprs args env (ctfe-fuel-limit))
                     [(OkGenKey arg-key _)
-                      (if (string-eq generator "stdlib/hashmap-family")
+                      (cond
+                        (string-eq generator "stdlib/hashmap-family")
                         (match (gen-hashmap-family-marker-name template)
                           [(SpecSomeString map-name)
                             (gen-hashmap-expand-family
@@ -4446,34 +5317,54 @@
                               args
                               arg-key
                               registry)])
-                        (if (string-eq generator "stdlib/set-family")
-                          (match (gen-set-family-marker-name template)
-                            [(SpecSomeString set-name)
-                              (gen-set-expand-family
-                                set-name
-                                module
-                                generator
-                                args
-                                arg-key
-                                registry
-                                env)]
-                            [(SpecNoString)
-                              (gen-register-generated-decl
-                                template
-                                module
-                                generator
-                                item
-                                args
-                                arg-key
-                                registry)])
-                          (gen-register-generated-decl
-                            template
-                            module
-                            generator
-                            item
-                            args
-                            arg-key
-                            registry)))]
+                        (string-eq generator "stdlib/set-family")
+                        (match (gen-set-family-marker-name template)
+                          [(SpecSomeString set-name)
+                            (gen-set-expand-family
+                              set-name
+                              module
+                              generator
+                              args
+                              arg-key
+                              registry
+                              env)]
+                          [(SpecNoString)
+                            (gen-register-generated-decl
+                              template
+                              module
+                              generator
+                              item
+                              args
+                              arg-key
+                              registry)])
+                        (string-eq generator "stdlib/json-derive")
+                        (match (gen-json-derive-marker-name template)
+                          [(SpecSomeString request-name)
+                            (gen-json-expand-family
+                              request-name
+                              module
+                              generator
+                              args
+                              arg-key
+                              registry
+                              env)]
+                          [(SpecNoString)
+                            (gen-register-generated-decl
+                              template
+                              module
+                              generator
+                              item
+                              args
+                              arg-key
+                              registry)])
+                        (gen-register-generated-decl
+                          template
+                          module
+                          generator
+                          item
+                          args
+                          arg-key
+                          registry))]
                     [(ErrGenKey diag) (ErrGenDecl diag)]))])]))]
     [_ (OkGenDecl (gen-single-decl-list decl) registry module)]))
 
@@ -7872,6 +8763,21 @@
   "(comptime-decl (:generated stdlib/set-family BoolSet (type-key (type bool)) \"stdlib/hashmap/i64-key-v1\")
   (defstruct BoolSet (__set_family_request i64)))")
 
+(define (compiler-generated-json-derive-bundle-source) : String
+  "(defstruct Address (zip i64) (city String))
+(comptime-decl (:generated stdlib/json-derive AddressJson (type-key (type Address)))
+  (defstruct AddressJson (__json_derive_request i64)))
+(defstruct Person (name String) (age i32) (active bool) (home Address))
+(comptime-decl (:generated stdlib/json-derive PersonJson (type-key (type Person)))
+  (defstruct PersonJson (__json_derive_request i64)))
+(comptime-decl (:generated stdlib/json-derive PersonJson (type-key (type Person)))
+  (defstruct PersonJson (__json_derive_request i64)))")
+
+(define (compiler-generated-json-derive-unsupported-source) : String
+  "(defstruct BadPayload (score f64))
+(comptime-decl (:generated stdlib/json-derive BadPayloadJson (type-key (type BadPayload)))
+  (defstruct BadPayloadJson (__json_derive_request i64)))")
+
 (define (compiler-generated-decl-visible-count
   [source : String]
   [name : String]) : i64
@@ -8462,6 +9368,62 @@
             "set-family: unsupported key type bool")])]
     [(ErrAstProgram _) false]))
 
+(define (compiler-generated-json-derive-bundle-ok?) : bool
+  (match (parse-ast-source (compiler-generated-json-derive-bundle-source))
+    [(OkAstProgram program)
+      (and
+        (compiler-specialize-needed? program)
+        (match (compiler-specialize-program program)
+          [(OkSpecProgram normalized)
+            (match normalized
+              [(AstProgram decls-box)
+                (let
+                  [decls : AstDeclList (box-get decls-box)]
+                  (and
+                    (=
+                      (compiler-specialize-decl-list-count-visible
+                        decls
+                        "AddressJsonResult")
+                      1)
+                    (=
+                      (compiler-specialize-decl-list-count-defs
+                        decls
+                        "address-to-json")
+                      1)
+                    (=
+                      (compiler-specialize-decl-list-count-defs
+                        decls
+                        "address-from-json")
+                      1)
+                    (=
+                      (compiler-specialize-decl-list-count-visible
+                        decls
+                        "PersonJsonResult")
+                      1)
+                    (=
+                      (compiler-specialize-decl-list-count-defs
+                        decls
+                        "person-to-json")
+                      1)
+                    (=
+                      (compiler-specialize-decl-list-count-defs
+                        decls
+                        "person-from-json")
+                      1)))])]
+          [(ErrSpecProgram _) false]))]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-generated-json-derive-unsupported-rejected?) : bool
+  (match (parse-ast-source (compiler-generated-json-derive-unsupported-source))
+    [(OkAstProgram program)
+      (match (compiler-specialize-program program)
+        [(OkSpecProgram _) false]
+        [(ErrSpecProgram diag)
+          (string-eq
+            (compiler-diagnostic-message diag)
+            "json-derive: unsupported field score type f64")])]
+    [(ErrAstProgram _) false]))
+
 (define (compiler-generated-decl-origin-preserved-ok?) : bool
   (match (parse-ast-source (compiler-generated-decl-reuse-source))
     [(OkAstProgram program)
@@ -8537,5 +9499,7 @@
     (unless
       (compiler-generated-set-family-unsupported-key-rejected?)
       (return 0))
+    (unless (compiler-generated-json-derive-bundle-ok?) (return 0))
+    (unless (compiler-generated-json-derive-unsupported-rejected?) (return 0))
     (unless (compiler-generated-decl-origin-preserved-ok?) (return 0))
     1))

@@ -3223,6 +3223,64 @@
                 rest))]
           [_ (lower-reach-global-decls all-functions names state rest)]))]))
 
+(define (lower-reach-struct-field-cleanup-roots
+  [all-functions : StringI64Map]
+  [names : LowerNameCache]
+  [state : LowerReachState]
+  [fields : AstFieldDefList]) : LowerReachState
+  (match fields
+    [(AstFieldDefNil) state]
+    [(AstFieldDefCons field rest)
+      (let
+        [rest : AstFieldDefList (box-get rest)]
+        [next : LowerReachState
+          (match field
+            [(AstFieldDef _ _ cleanup)
+              (match cleanup
+                [(AstFieldCleanupFn cleanup-name)
+                  (lower-reach-add-source
+                    all-functions
+                    names
+                    state
+                    (intern-str cleanup-name))]
+                [_ state])])]
+        (lower-reach-struct-field-cleanup-roots all-functions names next rest))]))
+
+(define (lower-reach-cleanup-metadata-roots-in-module
+  [all-functions : StringI64Map]
+  [decls : AstDeclList]
+  [names : LowerNameCache]
+  [state : LowerReachState]) : LowerReachState
+  (match decls
+    [(AstDeclNil) state]
+    [(AstDeclCons decl rest)
+      (let
+        [rest : AstDeclList (box-get rest)]
+        [next : LowerReachState
+          (match decl
+            [(AstDeclDefStruct _ _ cleanup fields)
+              (if (ast-struct-cleanup? cleanup)
+                (lower-reach-struct-field-cleanup-roots
+                  all-functions
+                  names
+                  state
+                  fields)
+                state)]
+            [(AstDeclDefStructLifetimes _ _ _ cleanup fields)
+              (if (ast-struct-cleanup? cleanup)
+                (lower-reach-struct-field-cleanup-roots
+                  all-functions
+                  names
+                  state
+                  fields)
+                state)]
+            [_ state])]
+        (lower-reach-cleanup-metadata-roots-in-module
+          all-functions
+          rest
+          names
+          next))]))
+
 (define (lower-function-body-index-empty [count : i64]) : LowerFunctionBodyIndex
   (LowerFunctionBodyIndex
     (string-i64-map-with-capacity 8192)
@@ -3888,18 +3946,22 @@
                   all-functions
                   name-cache
                   clone-roots
-                  (lower-reach-add-export-roots-in-module
-                    decls
-                    paths
-                    entry-path
-                    ""
+                  (lower-reach-cleanup-metadata-roots-in-module
                     all-functions
-                    (lower-reach-add-logical
+                    decls
+                    name-cache
+                    (lower-reach-add-export-roots-in-module
+                      decls
+                      paths
+                      entry-path
+                      ""
                       all-functions
-                      (LowerReachState
-                        (string-i64-map-with-capacity 8192)
-                        LowerStringNil)
-                      "main"))))
+                      (lower-reach-add-logical
+                        all-functions
+                        (LowerReachState
+                          (string-i64-map-with-capacity 8192)
+                          LowerStringNil)
+                        "main")))))
               decls))
             [(LowerReachState reachable _)
               (LowerPrunedProgram

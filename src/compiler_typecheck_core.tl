@@ -10763,8 +10763,10 @@
                           "typecheck: let binding type mismatch")
                           [(OkTcUnit)
                             (match (tc-ensure-cleanup-resource-not-let-bound
+                              ctx
                               env
-                              init)
+                              init
+                              init-ty)
                               [(OkTcUnit)
                                 (match (tc-ensure-reference-value-can-bind
                                   env
@@ -10792,7 +10794,11 @@
                 [(AstNoType)
                   (match (tc-expr ctx env init)
                     [(OkTcType init-ty)
-                      (match (tc-ensure-cleanup-resource-not-let-bound env init)
+                      (match (tc-ensure-cleanup-resource-not-let-bound
+                        ctx
+                        env
+                        init
+                        init-ty)
                         [(OkTcUnit)
                           (match (tc-ensure-reference-value-can-bind
                             env
@@ -11388,8 +11394,10 @@
                           "typecheck: let binding type mismatch")
                           [(OkTcUnit)
                             (match (tc-ensure-cleanup-resource-not-let-bound
+                              ctx
                               env
-                              init)
+                              init
+                              init-ty)
                               [(OkTcUnit)
                                 (match (tc-ensure-reference-value-can-bind
                                   env
@@ -11415,7 +11423,11 @@
                               [(ErrTcUnit message) (ErrTcEnv message)])]
                           [(ErrTcUnit message) (ErrTcEnv message)]))]
                     [(AstNoType)
-                      (match (tc-ensure-cleanup-resource-not-let-bound env init)
+                      (match (tc-ensure-cleanup-resource-not-let-bound
+                        ctx
+                        env
+                        init
+                        init-ty)
                         [(OkTcUnit)
                           (match (tc-ensure-reference-value-can-bind
                             env
@@ -14044,9 +14056,13 @@
     TcStringNil))
 
 (define (tc-ensure-cleanup-resource-not-let-bound
+  [ctx : TcContext]
   [env : TcTypeEnv]
-  [expr : AstExpr]) : ResultTcUnit
-  (if (tc-expr-result-uses-active-cleanup-owner? env expr)
+  [expr : AstExpr]
+  [ty : AstType]) : ResultTcUnit
+  (if (or
+    (tc-expr-result-uses-active-cleanup-owner? env expr)
+    (tc-cleanup-owning-aggregate-type? ctx ty))
     (ErrTcUnit
       "typecheck: ordinary let cannot own cleanup-required resource; use with")
     OkTcUnit))
@@ -26503,6 +26519,18 @@
       field-name
       (str-cat " cleanup function " cleanup-name " type mismatch"))))
 
+(define (tc-cleanup-field-helper-name
+  [owner-name : String]
+  [cleanup-name : i64]) : i64
+  (let
+    [cleanup-str : String (intern-str cleanup-name)]
+    (if (tc-name-qualified? cleanup-str)
+      cleanup-name
+      (intern
+        (compiler-symbol-module-key
+          (tc-qualified-name-module owner-name)
+          cleanup-str)))))
+
 (define (tc-check-struct-field-cleanup-fn
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -26510,16 +26538,18 @@
   [field-name : String]
   [cleanup-name : i64]
   [field-ty : AstType]) : ResultTcUnit
-  (match (tc-lookup-visible-id ctx env cleanup-name)
-    [(OkTcType cleanup-ty)
-      (tc-expect
-        cleanup-ty
-        (tc-fn1 (tc-type-without-regions field-ty) (AstTyUnit))
-        (tc-struct-field-cleanup-fn-mismatch-message
-          struct-name
-          field-name
-          (intern-str cleanup-name)))]
-    [(ErrTcType message) (ErrTcUnit message)]))
+  (let
+    [lookup-name : i64 (tc-cleanup-field-helper-name struct-name cleanup-name)]
+    (match (tc-lookup-visible-id ctx env lookup-name)
+      [(OkTcType cleanup-ty)
+        (tc-expect
+          cleanup-ty
+          (tc-fn1 (tc-type-without-regions field-ty) (AstTyUnit))
+          (tc-struct-field-cleanup-fn-mismatch-message
+            struct-name
+            field-name
+            (intern-str cleanup-name)))]
+      [(ErrTcType message) (ErrTcUnit message)])))
 
 (define (tc-check-cleanup-struct-field
   [ctx : TcContext]
@@ -26696,16 +26726,18 @@
   [variant-name : String]
   [cleanup-name : i64]
   [payload-ty : AstType]) : ResultTcUnit
-  (match (tc-lookup-visible-id ctx env cleanup-name)
-    [(OkTcType cleanup-ty)
-      (tc-expect
-        cleanup-ty
-        (tc-fn1 (tc-type-without-regions payload-ty) (AstTyUnit))
-        (tc-enum-payload-cleanup-fn-mismatch-message
-          enum-name
-          variant-name
-          (intern-str cleanup-name)))]
-    [(ErrTcType message) (ErrTcUnit message)]))
+  (let
+    [lookup-name : i64 (tc-cleanup-field-helper-name enum-name cleanup-name)]
+    (match (tc-lookup-visible-id ctx env lookup-name)
+      [(OkTcType cleanup-ty)
+        (tc-expect
+          cleanup-ty
+          (tc-fn1 (tc-type-without-regions payload-ty) (AstTyUnit))
+          (tc-enum-payload-cleanup-fn-mismatch-message
+            enum-name
+            variant-name
+            (intern-str cleanup-name)))]
+      [(ErrTcType message) (ErrTcUnit message)])))
 
 (define (tc-check-cleanup-enum-payloads
   [ctx : TcContext]
@@ -27003,7 +27035,7 @@
       (tc-check-cleanup-enum-decl
         ctx
         top-env
-        (intern-str name)
+        (compiler-symbol-module-key (tc-context-module ctx) (intern-str name))
         AstLifetimeNil
         cleanup
         variants)]
@@ -27011,7 +27043,7 @@
       (tc-check-cleanup-enum-decl
         ctx
         top-env
-        (intern-str name)
+        (compiler-symbol-module-key (tc-context-module ctx) (intern-str name))
         lifetimes
         cleanup
         variants)]
@@ -27019,7 +27051,7 @@
       (tc-check-cleanup-struct-decl
         ctx
         top-env
-        (intern-str name)
+        (compiler-symbol-module-key (tc-context-module ctx) (intern-str name))
         repr
         cleanup
         fields)]
@@ -27027,7 +27059,7 @@
       (tc-check-cleanup-struct-decl
         ctx
         top-env
-        (intern-str name)
+        (compiler-symbol-module-key (tc-context-module ctx) (intern-str name))
         repr
         cleanup
         fields)]

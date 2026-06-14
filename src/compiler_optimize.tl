@@ -15026,6 +15026,10 @@
       ;; Fold scalar constants, reduce algebraic identities, eliminate repeated
       ;; pure expressions, propagate the resulting copies, then remove duplicate
       ;; proven bounds checks; function-level DCE drops dead copies.
+      ;; Fold runs ONCE: it is a single forward pass that binds every folded
+      ;; result into its env, so over the block it already reaches a fixpoint --
+      ;; a second `opt-fold-instrs` over the result only re-walked and rebuilt the
+      ;; list without changing it (byte-identical output, ~0.9% of self-compile).
       (compiler-ir-block
         label
         (opt-bounds-instrs
@@ -15038,9 +15042,7 @@
                 (OptExprNil)
                 (opt-strength-instrs
                   (OptConstNil)
-                  (opt-fold-instrs
-                    (OptConstNil)
-                    (opt-fold-instr-seq (OptConstNil) instrs))))))))]))
+                  (opt-fold-instr-seq (OptConstNil) instrs)))))))]))
 
 (define (optimize-block-fast [block : CompilerIrBlock]) : CompilerIrBlock
   (match block

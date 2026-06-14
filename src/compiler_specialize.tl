@@ -6780,12 +6780,14 @@
             (OkSpecSubExpr (ast-expr-spanned rewritten span))]
           [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
     [(AstExprVar name)
-      (match (spec-value-subst-lookup subs (intern-str name))
-        [(SpecSomeString _)
-          (spec-ctfe-value-to-expr
-            (spec-value-subst-value subs (intern-str name))
-            expr)]
-        [(SpecNoString) (OkSpecSubExpr (ast-node-push expr))])]
+      (let
+        [name-str : String (intern-str name)]
+        (match (spec-value-subst-lookup subs name-str)
+          [(SpecSomeString _)
+            (spec-ctfe-value-to-expr
+              (spec-value-subst-value subs name-str)
+              expr)]
+          [(SpecNoString) (OkSpecSubExpr (ast-node-push expr))]))]
     [(AstExprLiteral _) (OkSpecSubExpr (ast-node-push expr))]
     [(AstExprTypeLiteral _) (OkSpecSubExpr (ast-node-push expr))]
     [(AstExprInit _) (OkSpecSubExpr (ast-node-push expr))]

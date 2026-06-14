@@ -7245,7 +7245,7 @@
     [(AstExprVar name)
       (let
         [name-text : String (intern-str name)]
-        (if (tc-dotted-local-field-name? type-env name-text)
+        (if (tc-dotted-local-field-name-id? type-env name)
           (match (tc-dotted-local-field-expr-id type-env name-text)
             [(OkTcExprId virtual-id)
               (lower-borrow-place-address
@@ -12860,7 +12860,7 @@
     [(AstExprVar name)
       (let
         [name-text : String (intern-str name)]
-        (if (tc-dotted-local-field-name? type-env name-text)
+        (if (tc-dotted-local-field-name-id? type-env name)
           (match (tc-dotted-local-field-expr-id type-env name-text)
             [(OkTcExprId virtual-id)
               (lower-expr-origin
@@ -13024,7 +13024,7 @@
     [(AstExprVar name)
       (let
         [name-text : String (intern-str name)]
-        (if (tc-dotted-local-field-name? type-env name-text)
+        (if (tc-dotted-local-field-name-id? type-env name)
           (match (tc-dotted-local-field-expr-id type-env name-text)
             [(OkTcExprId virtual-id)
               (lower-expr-with-type
@@ -13199,7 +13199,7 @@
         [name-id : i64 name]
         [value : AstExpr (ast-node-get value-box)]
         [name-text : String (intern-str name)]
-        (if (tc-dotted-local-field-name? type-env name-text)
+        (if (tc-dotted-local-field-name-id? type-env name)
           (match (tc-dotted-local-field-set-expr-id
             type-env
             name-text
@@ -19002,7 +19002,7 @@
     [(AstExprVar name)
       (let
         [name-text : String (intern-str name)]
-        (if (tc-dotted-local-field-name? type-env name-text)
+        (if (tc-dotted-local-field-name-id? type-env name)
           (match (tc-dotted-local-field-expr-id type-env name-text)
             [(OkTcExprId virtual-id)
               (lower-mutable-place-address

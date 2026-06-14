@@ -41,6 +41,8 @@ falling back to scalar code.
 - `masked_if_index_value_i64.tl` - AVX-512-only masked varying `if` over
   `n = 13` i64 lanes whose condition and stores use the foreach index as a
   varying value. Exit 42.
+- `masked_if_i16_u16.tl` - AVX-512-only masked varying `if` over i16 and u16
+  lanes, including signed and unsigned comparisons. Exit 42.
 - `inline_helper_masked_if_i64.tl` - AVX-512-only masked varying `if` whose
   condition calls a direct helper returning a varying bool and whose taken
   branch calls a direct source-known helper with a varying scalar argument.
@@ -48,9 +50,9 @@ falling back to scalar code.
 - `i8_mul_reject.tl` - scalar `foreach` byte multiplication fixture that
   compiles and exits 42 in scalar mode; explicit SIMD modes reject it with the
   documented 8-bit lane multiplication diagnostic.
-- `../integration/spmd_foreach.tl` - `foreach` add over i64, i32, i8, u8, f64,
-  and f32 arrays, self-checked against scalar loops across empty, sub-lane,
-  exact-lane, and tail lengths. Exit 42.
+- `../integration/spmd_foreach.tl` - `foreach` add/mul maps over i64, i32,
+  i16, u16, i8, u8, f64, and f32 arrays, self-checked against scalar loops
+  across empty, sub-lane, exact-lane, and tail lengths. Exit 42.
 - `../integration/spmd_reduce_scalar.tl` — `spmd-reduce` `sum`/`max`/`min` over
   i64/i32/f64 plus `all`/`any` bool reductions across empty, sub-lane,
   exact-lane, and tail lengths. Exit 42.
@@ -69,13 +71,14 @@ lane/tail behavior from `SPEC.md` section 5.15.
 
 Coverage map:
 
-- `foreach` scalar and SIMD map/zip coverage for `i64`, `i32`, `i8`, `u8`,
-  `f64`, and `f32` lives in `../integration/spmd_foreach.tl`, the two tail
-  fixtures, and `uniform_zip_i64.tl`. The intentionally unsupported byte
-  multiply policy is covered by `i8_mul_reject.tl`.
+- `foreach` scalar and SIMD map/zip coverage for `i64`, `i32`, `i16`, `u16`,
+  `i8`, `u8`, `f64`, and `f32` lives in `../integration/spmd_foreach.tl`, the
+  two tail fixtures, and `uniform_zip_i64.tl`. The intentionally unsupported
+  byte multiply policy is covered by `i8_mul_reject.tl`.
 - AVX-512 masked varying `if` direct-index, shifted-contiguous-index, and
   foreach-index-as-value coverage lives in `masked_if_i64.tl`,
-  `masked_if_offset_i64.tl`, and `masked_if_index_value_i64.tl`.
+  `masked_if_offset_i64.tl`, `masked_if_index_value_i64.tl`, and
+  `masked_if_i16_u16.tl`.
 - Direct inline-helper coverage for varying scalar lane values lives in
   `inline_helper_i64.tl`, `inline_helper_shadow_i64.tl`,
   `inline_helper_f64.tl`, and `inline_helper_masked_if_i64.tl`.

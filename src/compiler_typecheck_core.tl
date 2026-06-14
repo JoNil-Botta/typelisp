@@ -7055,6 +7055,8 @@
   (match (tc-type-strip-region ty)
     [(AstTyI64) true]
     [(AstTyI32) true]
+    [(AstTyI16) true]
+    [(AstTyU16) true]
     [(AstTyI8) true]
     [(AstTyU8) true]
     [(AstTyF64) true]
@@ -7066,6 +7068,8 @@
   (match (tc-type-strip-region ty)
     [(AstTyI64) true]
     [(AstTyI32) true]
+    [(AstTyI16) true]
+    [(AstTyU16) true]
     [(AstTyI8) true]
     [(AstTyU8) true]
     [(AstTyF64) true]

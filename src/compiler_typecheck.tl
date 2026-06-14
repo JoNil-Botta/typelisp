@@ -567,6 +567,14 @@
         [sum : f32 (+ (array-ref a i) (array-ref b i))]
         (array-set! out i sum)))))")
 
+(define (compiler-typecheck-foreach-spmd-i16-u16-ok-source) : String
+  "(define (fill-i16 [a : (Array i16)] [b : (Array i16)] [out : (Array i16)] [n : i64]) : unit
+  (foreach ([i : i64 0 n])
+    (array-set! out i (+ (array-ref a i) (array-ref b i)))))
+(define (fill-u16 [a : (Array u16)] [b : (Array u16)] [out : (Array u16)] [n : i64]) : unit
+  (foreach ([i : i64 0 n])
+    (array-set! out i (+ (array-ref a i) (array-ref b i)))))")
+
 (define (compiler-typecheck-foreach-varying-if-source) : String
   "(define (main [xs : (Array i64)] [n : i64]) : unit
   (foreach ([i : i64 0 n])
@@ -671,6 +679,7 @@
   (and
     (compiler-typecheck-ok? (compiler-typecheck-foreach-spmd-ok-source))
     (compiler-typecheck-ok? (compiler-typecheck-foreach-spmd-f32-ok-source))
+    (compiler-typecheck-ok? (compiler-typecheck-foreach-spmd-i16-u16-ok-source))
     (compiler-typecheck-ok? (compiler-typecheck-foreach-varying-if-source))
     (compiler-typecheck-ok? (compiler-typecheck-foreach-inline-call-source))
     (compiler-typecheck-error-ok?

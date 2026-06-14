@@ -572,7 +572,7 @@ captures, and mutation of captured names is rejected (#2552).
 SPMD/SIMD `foreach` is documented in [SPEC.md section 5.15](SPEC.md). The
 compiler parses and type-checks the first source form and lowers it to scalar
 reference loops; `--backend-mode avx2|avx512` supports a first contiguous
-map/zip subset over `i8`, `u8`, `i32`, `i64`, `f32`, and `f64` lanes. Runtime-dispatched
+map/zip subset over `i8`, `u8`, `i16`, `u16`, `i32`, `i64`, `f32`, and `f64` lanes. Runtime-dispatched
 SIMD variants are specified with `defdispatch`:
 ordinary calls resolve once per process to AVX-512, AVX2, or scalar fallback
 using the same CPUID/XGETBV capability checks exposed by `stdlib/cpu.tl`;
@@ -851,7 +851,7 @@ through the TypeLisp-owned build/run path.
 
 `compile`, `run`, and `build` accept `--backend-mode scalar|avx2|avx512`.
 `scalar` is the default. `avx2` and `avx512` support a first contiguous SPMD
-`foreach` map/zip subset over `i8`, `u8`, `i32`, `i64`, `f32`, and `f64` lanes, plus
+`foreach` map/zip subset over `i8`, `u8`, `i16`, `u16`, `i32`, `i64`, `f32`, and `f64` lanes, plus
 eligible `spmd-reduce` array folds. Scalar `spmd-reduce` lowering supports
 `sum`, `min`, `max`, `all`, and `any` over the SPEC.md supported types.
 For `i8`/`u8` lanes, `+` is vectorized and `*` is rejected in explicit SIMD

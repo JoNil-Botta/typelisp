@@ -2,8 +2,9 @@
 ;#
 ;# `TextBuf` is a byte-oriented text builder backed by active-arena chunk
 ;# nodes. Appending records owned chunks without concatenating the accumulated
-;# prefix on every step; `text-buf-render` is the single operation that
-;# materializes an owned `String` in the active arena.
+;# prefix on every step; mutable `text-buf-append!` helpers update a builder
+;# in place, and `text-buf-render` is the single operation that materializes an
+;# owned `String` in the active arena.
 ;#
 ;# The borrowed-chunk companion surface lives in
 ;# `stdlib/text_buf_borrowed.tl` while `TextBuf` keeps the owned chunk API.
@@ -29,8 +30,9 @@
   (TextBufChunkCons String (Box TextBufChunkList)))
 
 ;: Text buffer value with reversed chunks and cached byte length.
-(defenum TextBuf
-  (TextBuf TextBufChunkList i64))
+(defstruct TextBuf
+  (chunks TextBufChunkList)
+  (len i64))
 
 ;: Printable ASCII lookup table used by `text-buf-append-char`.
 (define text-buf-ascii-printable-table : String
@@ -42,13 +44,28 @@
 
 ;: Return true when `buf` contains no bytes.
 (define (text-buf-empty? [buf : TextBuf]) : bool
-  (match buf
-    [(TextBuf _ len) (= len 0)]))
+  (= (struct-get buf len) 0))
 
 ;: Return the byte length currently represented by `buf`.
 (define (text-buf-length [buf : TextBuf]) : i64
-  (match buf
-    [(TextBuf _ len) len]))
+  (struct-get buf len))
+
+;: Mutably append `chunk` to the owned `buf` place without rendering its prefix.
+(defmacro (text-buf-append! [buf : Expr] [chunk : String]) : unit
+  `(let
+    [text-buf-append-chunk : String ,chunk]
+    [text-buf-append-chunk-len : i64 (string-length text-buf-append-chunk)]
+    (if (= text-buf-append-chunk-len 0)
+      unit
+      (begin
+        (set!
+          (struct-get ,buf chunks)
+          (TextBufChunkCons
+            text-buf-append-chunk
+            (box (struct-get ,buf chunks))))
+        (set!
+          (struct-get ,buf len)
+          (+ (struct-get ,buf len) text-buf-append-chunk-len))))))
 
 ;: Append `chunk` to `buf` without rendering the existing prefix.
 (define (text-buf-append [buf : TextBuf] [chunk : String]) : TextBuf
@@ -56,9 +73,9 @@
     [chunk-len : i64 (string-length chunk)]
     (if (= chunk-len 0)
       buf
-      (match buf
-        [(TextBuf chunks len)
-          (TextBuf (TextBufChunkCons chunk (box chunks)) (+ len chunk-len))]))))
+      (TextBuf
+        (TextBufChunkCons chunk (box (struct-get buf chunks)))
+        (+ (struct-get buf len) chunk-len)))))
 
 ;: Convert a supported byte-sized char to a one-byte String.
 (define (text-buf-char-string [c : char]) : String
@@ -79,9 +96,17 @@
 (define (text-buf-append-char [buf : TextBuf] [c : char]) : TextBuf
   (text-buf-append buf (text-buf-char-string c)))
 
+;: Mutably append one char byte to `buf`.
+(defmacro (text-buf-append-char! [buf : Expr] [c : char]) : unit
+  `(text-buf-append! ,buf (text-buf-char-string ,c)))
+
 ;: Append the decimal text for `value` to `buf`.
 (define (text-buf-append-int [buf : TextBuf] [value : i64]) : TextBuf
   (text-buf-append buf (int->string value)))
+
+;: Mutably append the decimal text for `value` to `buf`.
+(defmacro (text-buf-append-int! [buf : Expr] [value : i64]) : unit
+  `(text-buf-append! ,buf (int->string ,value)))
 
 ;: Concatenate chunk lists while preserving their current order.
 (define (text-buf-chunk-list-concat
@@ -96,17 +121,18 @@
 
 ;: Append all chunks from `right` after `left`.
 (define (text-buf-append-buffer [left : TextBuf] [right : TextBuf]) : TextBuf
-  (match left
-    [(TextBuf left-chunks left-len)
-      (match right
-        [(TextBuf right-chunks right-len)
-          (if (= right-len 0)
-            left
-            (if (= left-len 0)
-              right
-              (TextBuf
-                (text-buf-chunk-list-concat right-chunks left-chunks)
-                (+ left-len right-len))))])]))
+  (let
+    [left-len : i64 (struct-get left len)]
+    [right-len : i64 (struct-get right len)]
+    (if (= right-len 0)
+      left
+      (if (= left-len 0)
+        right
+        (TextBuf
+          (text-buf-chunk-list-concat
+            (struct-get right chunks)
+            (struct-get left chunks))
+          (+ left-len right-len))))))
 
 ;: Render reversed chunks into `out`.
 (define (text-buf-chunks-render-rev [chunks : TextBufChunkList] [out : String]) : String
@@ -264,19 +290,19 @@
 ;: copy each chunk into place (the cached length makes this a single allocation
 ;: plus linear copies, vs the O(n^2) prefix concatenation of the fallbacks).
 (define (text-buf-render [buf : TextBuf]) : String
-  (match buf
-    [(TextBuf chunks len)
-      (if (= len 0)
-        ""
-        (let
-          [out : (Array u8) (make-array u8 len)]
-          [dst : (MutPtr u8)
-            (unsafe
-              (array-data out))]
-          (begin
-            (text-buf-fill-rev-into chunks dst len)
-            (unsafe
-              (string-from-bytes (ptr-cast dst : (Ptr u8)) len)))))]))
+  (let
+    [len : i64 (struct-get buf len)]
+    (if (= len 0)
+      ""
+      (let
+        [out : (Array u8) (make-array u8 len)]
+        [dst : (MutPtr u8)
+          (unsafe
+            (array-data out))]
+        (begin
+          (text-buf-fill-rev-into (struct-get buf chunks) dst len)
+          (unsafe
+            (string-from-bytes (ptr-cast dst : (Ptr u8)) len)))))))
 
 ;: Write chunks in insertion order to an open raw file handle.
 (define (text-buf-write-chunks-rev [raw : i64] [chunks : TextBufChunkList]) : i64
@@ -344,25 +370,39 @@
 
 ;: Write the rendered buffer contents to `path`, replacing any existing file.
 (define (text-buf-write-file [path : String] [buf : TextBuf]) : i64
-  (match buf
-    [(TextBuf chunks len)
-      (match (file-open (& path) (OpenWriteTruncate))
-        [(OkIoFile handle)
-          (let
-            [write-status : i64
-              (if (> len (text-buf-batched-write-threshold))
-                (text-buf-write-chunks-batched (struct-get handle id) chunks)
-                (text-buf-write-chunks-rev (struct-get handle id) chunks))]
-            [close-result : ResultIoUnit (file-close handle)]
-            (match close-result
-              [(OkIoUnit) write-status]
-              [(ErrIoUnit _) 1]))]
-        [(ErrIoFile _) 1])]))
+  (let
+    [chunks : TextBufChunkList (struct-get buf chunks)]
+    [len : i64 (struct-get buf len)]
+    (match (file-open (& path) (OpenWriteTruncate))
+      [(OkIoFile handle)
+        (let
+          [write-status : i64
+            (if (> len (text-buf-batched-write-threshold))
+              (text-buf-write-chunks-batched (struct-get handle id) chunks)
+              (text-buf-write-chunks-rev (struct-get handle id) chunks))]
+          [close-result : ResultIoUnit (file-close handle)]
+          (match close-result
+            [(OkIoUnit) write-status]
+            [(ErrIoUnit _) 1]))]
+      [(ErrIoFile _) 1])))
+
+;: Mutably clear `buf`, leaving it ready for reuse.
+(define (text-buf-clear-ref! [buf : (&mut buf TextBuf)]) : unit
+  (begin
+    (set! (struct-get buf chunks) TextBufChunkNil)
+    (set! (struct-get buf len) 0)))
+
+;: Mutably clear the owned `buf` place, leaving it ready for reuse.
+(defmacro (text-buf-clear! [buf : Expr]) : unit
+  `(text-buf-clear-ref! (&mut ,buf)))
 
 ;: Return an empty buffer, leaving the old immutable `buf` value unchanged.
 (define (text-buf-clear [buf : TextBuf]) : TextBuf
-  (match buf
-    [(TextBuf _ _) (text-buf-empty)]))
+  (text-buf-empty))
+
+;: Mutably reset `buf`, leaving it ready for reuse.
+(defmacro (text-buf-reset! [buf : Expr]) : unit
+  `(text-buf-clear-ref! (&mut ,buf)))
 
 ;: Alias for `text-buf-clear` for call sites that model builder reuse as reset.
 (define (text-buf-reset [buf : TextBuf]) : TextBuf

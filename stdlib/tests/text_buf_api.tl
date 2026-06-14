@@ -25,6 +25,15 @@
       "append order")
     (let
       [buf : TextBuf (text-buf-empty)]
+      (begin
+        (text-buf-append! buf "")
+        (assert-text-buf buf "" "mutable empty append leaves buffer empty")
+        (text-buf-append! buf "alpha")
+        (text-buf-append! buf "")
+        (text-buf-append! buf " beta")
+        (assert-text-buf buf "alpha beta" "mutable append order")))
+    (let
+      [buf : TextBuf (text-buf-empty)]
       [i : i64 0]
       (begin
         (while (< i 6)
@@ -32,6 +41,15 @@
             (set! buf (text-buf-append buf "ha"))
             (set! i (+ i 1))))
         (assert-text-buf buf "hahahahahaha" "repeated append")))
+    (let
+      [buf : TextBuf (text-buf-empty)]
+      [i : i64 0]
+      (begin
+        (while (< i 6)
+          (begin
+            (text-buf-append! buf "ha")
+            (set! i (+ i 1))))
+        (assert-text-buf buf "hahahahahaha" "mutable repeated append")))
     (let
       [buf : TextBuf (text-buf-empty)]
       [i : i64 0]
@@ -65,6 +83,14 @@
       "A\n\t-12"
       "char and int append")
     (let
+      [buf : TextBuf (text-buf-empty)]
+      (begin
+        (text-buf-append! buf "A")
+        (text-buf-append-char! buf #\newline')
+        (text-buf-append-char! buf #\tab')
+        (text-buf-append-int! buf -12)
+        (assert-text-buf buf "A\n\t-12" "mutable char and int append")))
+    (let
       [left : TextBuf
         (text-buf-append (text-buf-append (text-buf-empty) "left") "-")]
       [right : TextBuf
@@ -79,4 +105,13 @@
         (assert-text-buf (text-buf-clear original) "" "clear returns empty")
         (assert-text-buf (text-buf-reset original) "" "reset returns empty")
         (assert-text-buf original "keep" "clear leaves original value")))
+    (let
+      [buf : TextBuf (text-buf-append (text-buf-empty) "drop")]
+      (begin
+        (text-buf-clear! buf)
+        (assert-text-buf buf "" "mutable clear empties buffer")
+        (text-buf-append! buf "again")
+        (assert-text-buf buf "again" "mutable append after clear")
+        (text-buf-reset! buf)
+        (assert-text-buf buf "" "mutable reset empties buffer")))
     42))

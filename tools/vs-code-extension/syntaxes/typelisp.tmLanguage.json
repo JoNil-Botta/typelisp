@@ -7,11 +7,13 @@
     { "include": "#strings" },
     { "include": "#char-literals" },
     { "include": "#numbers" },
-    { "include": "#special-forms" },
+    { "include": "#keywords" },
+    { "include": "#builtins" },
+    { "include": "#operators" },
     { "include": "#constants" },
     { "include": "#types" },
-    { "include": "#operators" },
-    { "include": "#definition-name" }
+    { "include": "#definition-name" },
+    { "include": "#user-types" }
   ],
   "repository": {
     "comments": {
@@ -42,18 +44,31 @@
       "patterns": [
         {
           "name": "constant.character.named.typelisp",
-          "comment": "Named/escaped char literal, e.g. #\\space' or #\\a'.",
-          "match": "#\\\\[A-Za-z]+'"
+          "comment": "Named char literal: #\\space' #\\newline' #\\tab' #\\return' #\\nul'.",
+          "match": "#\\\\[A-Za-z]{2,}'"
+        },
+        {
+          "name": "constant.character.escape.typelisp",
+          "comment": "Escaped char literal: #\\n' #\\t' #\\0' #\\a'.",
+          "match": "#\\\\.'"
         },
         {
           "name": "constant.character.typelisp",
-          "comment": "Single-character literal, e.g. #a' #(' #0' # '.",
+          "comment": "Single-character literal: #a' #0' #(' # '.",
           "match": "#.'"
         }
       ]
     },
     "numbers": {
       "patterns": [
+        {
+          "name": "constant.numeric.hex.typelisp",
+          "match": "(?<![\\w-])-?0x[0-9A-Fa-f]+"
+        },
+        {
+          "name": "constant.numeric.binary.typelisp",
+          "match": "(?<![\\w-])-?0b[01]+"
+        },
         {
           "name": "constant.numeric.float.typelisp",
           "match": "(?<![\\w-])-?[0-9]+\\.[0-9]+([eE][+-]?[0-9]+)?"
@@ -64,31 +79,30 @@
         }
       ]
     },
-    "special-forms": {
+    "keywords": {
+      "comment": "Special forms, declarations, and core macros, recognised only in head position.",
       "name": "keyword.control.typelisp",
-      "match": "(?<=\\()(define|lambda|if|let|begin|while|set!|return|match|foreach|with-arena|with-arena|with|unsafe|ann|cast|extern|import|module|test|defenum|defstruct|comptime|spmd-reduce)(?=[\\s)])"
+      "match": "(?<=\\()(comptime-decls|comptime-decl|comptime|defdispatch|defstruct|defmacro|defenum|define|include-str|include-bin|spmd-broadcast|spmd-reduce|with-arena|with-escape|with|unquote-splicing|unquote|quasiquote|quote|foreach|unsafe|return|export|extern|import|module|lambda|begin|while|match|unless|when|cond|cast|test|try|set!|type|init|ann|let|and|or|if)(?=[\\s)])"
     },
-    "constants": {
-      "patterns": [
-        {
-          "name": "constant.language.boolean.typelisp",
-          "match": "(?<![\\w-])(true|false)(?![\\w-])"
-        },
-        {
-          "name": "constant.language.typelisp",
-          "match": "(?<![\\w-])(unit)(?![\\w-])"
-        }
-      ]
-    },
-    "types": {
-      "name": "storage.type.typelisp",
-      "match": "(?<![\\w-])(i64|i32|i16|i8|u64|u32|u16|u8|f64|f32|bool|char|String|str|unit|never|Array|Tuple)(?![\\w-])"
+    "builtins": {
+      "comment": "Built-in intrinsic operations and constructors, recognised in head position.",
+      "name": "support.function.builtin.typelisp",
+      "match": "(?<=\\()(ptr-addr-of|ptr-offset|ptr-write!|ptr-null\\?|ptr-null|ptr-read|ptr-cast|ptr->int|int->ptr|array-push!|array-set!|array-data|array-ref|make-array|tuple-ref|struct-get|string-from-bytes|string-data|program-argc|program-argv|program-envp|cpuid-eax|cpuid-ebx|cpuid-ecx|cpuid-edx|xgetbv|syscall|box-get|box|array|tuple)(?=[\\s)])"
     },
     "operators": {
       "patterns": [
         {
           "name": "keyword.operator.arrow.typelisp",
-          "match": "->"
+          "comment": "Function-type arrow, only in head position so it never matches inside names like string->int.",
+          "match": "(?<=\\()->(?=[\\s)])"
+        },
+        {
+          "name": "keyword.operator.arithmetic.typelisp",
+          "match": "(?<=\\()(!=|<=|>=|\\+|\\-|\\*|/|%|=|<|>)(?=[\\s)])"
+        },
+        {
+          "name": "keyword.operator.word.typelisp",
+          "match": "(?<=\\()(bit-and|bit-or|bit-xor|bit-not|shl|shr|not|neg)(?=[\\s)])"
         },
         {
           "name": "keyword.operator.reference.typelisp",
@@ -96,16 +110,62 @@
         }
       ]
     },
-    "definition-name": {
-      "comment": "Highlight the name introduced by a (define ...) form.",
+    "constants": {
       "patterns": [
         {
-          "match": "(?<=\\(define\\s)\\s*\\(?\\s*([A-Za-z_][A-Za-z0-9_!?*+/<>=-]*)",
+          "name": "constant.language.boolean.typelisp",
+          "match": "(?<![\\w-])(true|false)(?![\\w-])"
+        }
+      ]
+    },
+    "types": {
+      "comment": "Built-in primitive and constructor types.",
+      "name": "storage.type.typelisp",
+      "match": "(?<![\\w-])(i64|i32|i16|i8|u64|u32|u16|u8|f64|f32|bool|char|String|str|unit|never|Array|Tuple|Box|MutPtr|Ptr)(?![\\w-])"
+    },
+    "definition-name": {
+      "patterns": [
+        {
+          "comment": "Function/value name introduced by (define ...).",
+          "match": "(?<=\\(define\\s)\\s*\\(?\\s*([A-Za-z_][A-Za-z0-9_!?*/<>=+-]*)",
           "captures": {
             "1": { "name": "entity.name.function.typelisp" }
           }
+        },
+        {
+          "comment": "Macro name introduced by (defmacro ...).",
+          "match": "(?<=\\(defmacro\\s)\\s*\\(?\\s*([A-Za-z_][A-Za-z0-9_!?*/<>=+-]*)",
+          "captures": {
+            "1": { "name": "entity.name.function.typelisp" }
+          }
+        },
+        {
+          "comment": "Dispatch name introduced by (defdispatch ...).",
+          "match": "(?<=\\(defdispatch\\s)\\s*\\(?\\s*([A-Za-z_][A-Za-z0-9_!?*/<>=+-]*)",
+          "captures": {
+            "1": { "name": "entity.name.function.typelisp" }
+          }
+        },
+        {
+          "comment": "Struct type name introduced by (defstruct ...).",
+          "match": "(?<=\\(defstruct\\s)\\s*\\(?\\s*([A-Za-z_][A-Za-z0-9_-]*)",
+          "captures": {
+            "1": { "name": "entity.name.type.typelisp" }
+          }
+        },
+        {
+          "comment": "Enum type name introduced by (defenum ...).",
+          "match": "(?<=\\(defenum\\s)\\s*\\(?\\s*([A-Za-z_][A-Za-z0-9_-]*)",
+          "captures": {
+            "1": { "name": "entity.name.type.typelisp" }
+          }
         }
       ]
+    },
+    "user-types": {
+      "comment": "PascalCase identifiers (user types and enum constructors).",
+      "name": "entity.name.type.typelisp",
+      "match": "(?<![\\w-])[A-Z][A-Za-z0-9_]*(?![\\w-])"
     }
   }
 }

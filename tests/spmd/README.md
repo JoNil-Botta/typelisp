@@ -26,6 +26,8 @@ falling back to scalar code.
 - `uniform_zip_i64.tl` - `foreach` zip over `n = 13` i64 lanes with
   `a[i] * b[i] + c[i] + r`: exercises vector multiply, a third array operand,
   uniform scalar broadcast, and tail handling.
+- `inline_helper_i64.tl` - `foreach` over `n = 1` i64 lane through a direct
+  source-known helper with a varying scalar argument. Exit 42.
 - `masked_if_i64.tl` — AVX-512-only masked varying `if` over `n = 13` i64
   lanes, with direct-index predicated reads/writes and a masked tail. Exit 42.
 - `masked_if_offset_i64.tl` - AVX-512-only masked varying `if` over `n = 12`
@@ -33,6 +35,9 @@ falling back to scalar code.
 - `masked_if_index_value_i64.tl` - AVX-512-only masked varying `if` over
   `n = 13` i64 lanes whose condition and stores use the foreach index as a
   varying value. Exit 42.
+- `inline_helper_masked_if_i64.tl` - AVX-512-only masked varying `if` whose
+  taken branch calls a direct source-known helper with a varying scalar
+  argument. Exit 42.
 - `../integration/spmd_foreach.tl` — `foreach` add over i64, i32, f64, and
   f32 arrays, self-checked against scalar loops across empty, sub-lane,
   exact-lane, and tail lengths. Exit 42.
@@ -60,6 +65,8 @@ Coverage map:
 - AVX-512 masked varying `if` direct-index, shifted-contiguous-index, and
   foreach-index-as-value coverage lives in `masked_if_i64.tl`,
   `masked_if_offset_i64.tl`, and `masked_if_index_value_i64.tl`.
+- Direct inline-helper coverage for varying scalar lane values lives in
+  `inline_helper_i64.tl` and `inline_helper_masked_if_i64.tl`.
 - `spmd-reduce` scalar coverage for the documented operator/type surface lives
   in `../integration/spmd_reduce_scalar.tl`.
 - `spmd-broadcast` executable coverage lives in `broadcast_lane0_i64.tl` and
@@ -69,8 +76,8 @@ Coverage map:
   and `src/compiler_backend_tests.tl`; this corpus runs the executable
   scalar/SIMD comparison for the same reduction fixture.
 - Unsupported SPMD diagnostics are covered by `tests/safety/manifest.txt`,
-  including outer mutation, unsupported `f64` min reduction, and calls with
-  varying arguments.
+  including outer mutation, unsupported `f64` min reduction, and indirect calls
+  with varying arguments.
 - Future lane identity diagnostics should cover use outside SPMD scope, use in
   `foreach` start/end or `spmd-reduce` start/end/init expressions, and nested
   SPMD scope behavior once nested SPMD is designed.

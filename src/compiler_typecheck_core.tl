@@ -227,6 +227,21 @@
   (OkTcSpmdExprListInfo TcSpmdExprListInfo)
   (ErrTcSpmdExprListInfo String))
 
+(defenum TcSpmdInlineHelper
+  (TcSpmdNoInlineHelper)
+  (TcSpmdSomeInlineHelper String AstParamList AstType AstExpr))
+
+(defenum ResultTcSpmdInlineHelper
+  (OkTcSpmdInlineHelper TcSpmdInlineHelper)
+  (ErrTcSpmdInlineHelper String))
+
+(defenum TcSpmdInlineCallState
+  (TcSpmdInlineCallState TcSpmdEnv TcTypeEnv TcSpmdEnv TcSpmdClass))
+
+(defenum ResultTcSpmdInlineCallState
+  (OkTcSpmdInlineCallState TcSpmdInlineCallState)
+  (ErrTcSpmdInlineCallState String))
+
 (defenum TcStructDecl
   (TcStructDecl AstStructRepr AstStructCleanup AstFieldDefList))
 
@@ -11509,6 +11524,310 @@
     (ErrTcUnit message)
     OkTcUnit))
 
+(define (tc-spmd-inline-helper-empty-stack) : TcStringList
+  TcStringNil)
+
+(define tc-spmd-inline-helper-stack : TcStringList
+  (tc-spmd-inline-helper-empty-stack))
+
+(define (tc-spmd-inline-helper-stack-reset!) : unit
+  (set! tc-spmd-inline-helper-stack (tc-spmd-inline-helper-empty-stack)))
+
+(define (tc-spmd-inline-helper-recursive-message) : String
+  "typecheck: recursive SPMD inline helper call is not supported")
+
+(define (tc-spmd-inline-helper-resolve-name
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [func : AstExpr]) : ResultTcString
+  (match (ast-expr-unspan func)
+    [(AstExprVar raw-name)
+      (let
+        [raw-text : String (intern-str raw-name)]
+        (cond
+          (tc-spmd-env-has-local? spmd-env raw-text)
+          (ErrTcString "")
+          (tc-hygiene-global-name? raw-text)
+          (OkTcString (tc-hygiene-global-call-name raw-text))
+          (tc-name-qualified? raw-text)
+          (OkTcString raw-text)
+          (tc-source-name-lookup-key ctx env raw-text)))]
+    [_ (ErrTcString "")]))
+
+(define (tc-spmd-inline-helper-from-decl [name : String] [decl : AstDecl]) : ResultTcSpmdInlineHelper
+  (match decl
+    [(AstDeclDefFn _ params ret body-box _)
+      (let
+        [body : AstExpr (ast-node-get body-box)]
+        (OkTcSpmdInlineHelper (TcSpmdSomeInlineHelper name params ret body)))]
+    [(AstDeclUnsafe inner-box)
+      (let
+        [inner : AstDecl (box-get inner-box)]
+        (tc-spmd-inline-helper-from-decl name inner))]
+    [(AstDeclComptimeDecl _ template-box)
+      (let
+        [template : AstDecl (box-get template-box)]
+        (tc-spmd-inline-helper-from-decl name template))]
+    [_ (OkTcSpmdInlineHelper (TcSpmdNoInlineHelper))]))
+
+(define (tc-spmd-inline-helper-lookup
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [func : AstExpr]) : ResultTcSpmdInlineHelper
+  (match (tc-spmd-inline-helper-resolve-name ctx env spmd-env func)
+    [(OkTcString lookup-name)
+      (if (string-eq lookup-name "")
+        (OkTcSpmdInlineHelper (TcSpmdNoInlineHelper))
+        (if (tc-string-list-contains tc-spmd-inline-helper-stack lookup-name)
+          (ErrTcSpmdInlineHelper (tc-spmd-inline-helper-recursive-message))
+          (match (compiler-symbols-lookup-value
+            (tc-context-symbols ctx)
+            lookup-name)
+            [(SomeI64 handle)
+              (if (=
+                (compiler-symbol-handle-kind handle)
+                (compiler-symbol-kind-function-define))
+                (match (compiler-symbols-decl-at-index
+                  (tc-context-symbols ctx)
+                  (compiler-symbol-handle-index handle))
+                  [(OkAstDecl decl)
+                    (tc-spmd-inline-helper-from-decl lookup-name decl)]
+                  [(ErrAstDecl message) (ErrTcSpmdInlineHelper message)])
+                (OkTcSpmdInlineHelper (TcSpmdNoInlineHelper)))]
+            [(NoneI64) (OkTcSpmdInlineHelper (TcSpmdNoInlineHelper))])))]
+    [(ErrTcString message)
+      (if (string-eq message "")
+        (OkTcSpmdInlineHelper (TcSpmdNoInlineHelper))
+        (ErrTcSpmdInlineHelper message))]))
+
+(define (tc-spmd-inline-helper-module [ctx : TcContext] [name : String]) : String
+  (if (tc-name-qualified? name)
+    (tc-qualified-name-module name)
+    (tc-context-module ctx)))
+
+(define (tc-spmd-inline-helper-env
+  [ctx : TcContext]
+  [fallback : TcTypeEnv]
+  [module : String]) : TcTypeEnv
+  (match (tc-hygiene-definition-env ctx module)
+    [(OkTcEnv helper-env) helper-env]
+    [(ErrTcEnv _) fallback]))
+
+(define (tc-spmd-inline-helper-bind-args
+  [ctx : TcContext]
+  [caller-env : TcTypeEnv]
+  [caller-spmd-env : TcSpmdEnv]
+  [helper-ctx : TcContext]
+  [helper-env : TcTypeEnv]
+  [helper-spmd-env : TcSpmdEnv]
+  [params : AstParamList]
+  [args : AstExprList]
+  [seen-class : TcSpmdClass]) : ResultTcSpmdInlineCallState
+  (match params
+    [(AstParamNil)
+      (match args
+        [(AstExprNil)
+          (OkTcSpmdInlineCallState
+            (TcSpmdInlineCallState
+              caller-spmd-env
+              helper-env
+              helper-spmd-env
+              seen-class))]
+        [_ (ErrTcSpmdInlineCallState "typecheck: arity mismatch")])]
+    [(AstParamCons param rest-params)
+      (let
+        [rest-params : AstParamList (box-get rest-params)]
+        (match args
+          [(AstExprCons arg rest-args)
+            (let
+              [arg : AstExpr (ast-node-get arg)]
+              [rest-args : AstExprList (box-get rest-args)]
+              (match (tc-spmd-expr ctx caller-env caller-spmd-env arg)
+                [(OkTcSpmdExprInfo arg-info)
+                  (match arg-info
+                    [(TcSpmdExprInfo _ arg-class next-caller-spmd-env)
+                      (match param
+                        [(AstParam param-name param-ty _)
+                          (let
+                            [bound-ty : AstType
+                              (tc-resolve-type helper-ctx param-ty)]
+                            (if (and
+                              (tc-spmd-varying? arg-class)
+                              (not
+                                (tc-spmd-varying-value-type-supported? bound-ty)))
+                              (ErrTcSpmdInlineCallState
+                                (string-append
+                                  "typecheck: SPMD inline helper varying parameter type is not supported: "
+                                  (tc-type-render
+                                    (tc-type-strip-region bound-ty))))
+                              (tc-spmd-inline-helper-bind-args
+                                ctx
+                                caller-env
+                                next-caller-spmd-env
+                                helper-ctx
+                                (tc-bind-id helper-env param-name bound-ty)
+                                (tc-spmd-env-bind
+                                  helper-spmd-env
+                                  (intern-str param-name)
+                                  bound-ty
+                                  arg-class
+                                  TcSpmdLocal)
+                                rest-params
+                                rest-args
+                                (tc-spmd-merge-class seen-class arg-class))))])])]
+                [(ErrTcSpmdExprInfo message) (ErrTcSpmdInlineCallState message)]))]
+          [(AstExprNil) (ErrTcSpmdInlineCallState "typecheck: arity mismatch")]))]))
+
+(define (tc-spmd-inline-helper-body
+  [ctx : TcContext]
+  [helper-env : TcTypeEnv]
+  [helper-spmd-env : TcSpmdEnv]
+  [name : String]
+  [body : AstExpr]) : ResultTcSpmdExprInfo
+  (let
+    [previous : TcStringList tc-spmd-inline-helper-stack]
+    [result : ResultTcSpmdExprInfo
+      (ErrTcSpmdExprInfo (tc-spmd-inline-helper-recursive-message))]
+    (begin
+      (set! tc-spmd-inline-helper-stack (tc-string-list-add previous name))
+      (set! result (tc-spmd-expr ctx helper-env helper-spmd-env body))
+      (set! tc-spmd-inline-helper-stack previous)
+      result)))
+
+(define (tc-spmd-call-uniform-only
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [expr-ty : AstType]
+  [func : AstExpr]
+  [args : AstExprList]) : ResultTcSpmdExprInfo
+  (match (tc-spmd-expr ctx env spmd-env func)
+    [(OkTcSpmdExprInfo func-info)
+      (match func-info
+        [(TcSpmdExprInfo _ _ func-env)
+          (match (tc-spmd-expr-list ctx env func-env args)
+            [(OkTcSpmdExprListInfo args-info)
+              (match args-info
+                [(TcSpmdExprListInfo args-class args-env)
+                  (match (tc-spmd-require-uniform
+                    args-class
+                    "typecheck: foreach calls with varying arguments are not supported")
+                    [(OkTcUnit) (tc-spmd-finish expr-ty TcSpmdUniform args-env)]
+                    [(ErrTcUnit message) (ErrTcSpmdExprInfo message)])])]
+            [(ErrTcSpmdExprListInfo message) (ErrTcSpmdExprInfo message)])])]
+    [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))
+
+(define (tc-spmd-inline-call
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [expr-ty : AstType]
+  [func : AstExpr]
+  [args : AstExprList]) : ResultTcSpmdExprInfo
+  (match (tc-spmd-inline-helper-lookup ctx env spmd-env func)
+    [(OkTcSpmdInlineHelper helper)
+      (match helper
+        [(TcSpmdSomeInlineHelper name params _ body)
+          (let
+            [module : String (tc-spmd-inline-helper-module ctx name)]
+            [helper-ctx : TcContext (tc-context-with-module ctx module)]
+            [base-env : TcTypeEnv (tc-spmd-inline-helper-env ctx env module)]
+            [base-spmd-env : TcSpmdEnv
+              (tc-spmd-env-mark-outer (tc-spmd-env-from-type-env base-env))]
+            (match (tc-spmd-inline-helper-bind-args
+              ctx
+              env
+              spmd-env
+              helper-ctx
+              base-env
+              base-spmd-env
+              params
+              args
+              TcSpmdUniform)
+              [(OkTcSpmdInlineCallState call-state)
+                (match call-state
+                  [(TcSpmdInlineCallState
+                      caller-next
+                      helper-env
+                      helper-spmd-env
+                      args-class)
+                    (if (tc-spmd-varying? args-class)
+                      (match (tc-spmd-inline-helper-body
+                        helper-ctx
+                        helper-env
+                        helper-spmd-env
+                        name
+                        body)
+                        [(OkTcSpmdExprInfo body-info)
+                          (match body-info
+                            [(TcSpmdExprInfo _ body-class _)
+                              (tc-spmd-finish expr-ty body-class caller-next)])]
+                        [(ErrTcSpmdExprInfo message)
+                          (ErrTcSpmdExprInfo message)])
+                      (tc-spmd-finish expr-ty TcSpmdUniform caller-next))])]
+              [(ErrTcSpmdInlineCallState message) (ErrTcSpmdExprInfo message)]))]
+        [(TcSpmdNoInlineHelper)
+          (tc-spmd-call-uniform-only ctx env spmd-env expr-ty func args)])]
+    [(ErrTcSpmdInlineHelper message) (ErrTcSpmdExprInfo message)]))
+
+(define (tc-spmd-masked-if-inline-helper-body
+  [ctx : TcContext]
+  [helper-env : TcTypeEnv]
+  [helper-spmd-env : TcSpmdEnv]
+  [name : String]
+  [body : AstExpr]) : ResultTcUnit
+  (let
+    [previous : TcStringList tc-spmd-inline-helper-stack]
+    [result : ResultTcUnit
+      (ErrTcUnit (tc-spmd-inline-helper-recursive-message))]
+    (begin
+      (set! tc-spmd-inline-helper-stack (tc-string-list-add previous name))
+      (set! result (tc-spmd-masked-if-expr ctx helper-env helper-spmd-env body))
+      (set! tc-spmd-inline-helper-stack previous)
+      result)))
+
+(define (tc-spmd-masked-if-inline-call
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [func : AstExpr]
+  [args : AstExprList]) : ResultTcUnit
+  (match (tc-spmd-inline-helper-lookup ctx env spmd-env func)
+    [(OkTcSpmdInlineHelper helper)
+      (match helper
+        [(TcSpmdSomeInlineHelper name params _ body)
+          (let
+            [module : String (tc-spmd-inline-helper-module ctx name)]
+            [helper-ctx : TcContext (tc-context-with-module ctx module)]
+            [base-env : TcTypeEnv (tc-spmd-inline-helper-env ctx env module)]
+            [base-spmd-env : TcSpmdEnv
+              (tc-spmd-env-mark-outer (tc-spmd-env-from-type-env base-env))]
+            (match (tc-spmd-inline-helper-bind-args
+              ctx
+              env
+              spmd-env
+              helper-ctx
+              base-env
+              base-spmd-env
+              params
+              args
+              TcSpmdUniform)
+              [(OkTcSpmdInlineCallState call-state)
+                (match call-state
+                  [(TcSpmdInlineCallState _ helper-env helper-spmd-env _)
+                    (tc-spmd-masked-if-inline-helper-body
+                      helper-ctx
+                      helper-env
+                      helper-spmd-env
+                      name
+                      body)])]
+              [(ErrTcSpmdInlineCallState message) (ErrTcUnit message)]))]
+        [(TcSpmdNoInlineHelper)
+          (tc-spmd-masked-if-unsupported "varying calls inside masked branches")])]
+    [(ErrTcSpmdInlineHelper message) (ErrTcUnit message)]))
+
 (define (tc-spmd-masked-if-unsupported [detail : String]) : ResultTcUnit
   (ErrTcUnit
     (string-append "typecheck: SPMD masked if does not support " detail)))
@@ -11851,8 +12170,10 @@
                   [(ErrTcType message) (ErrTcUnit message)])]
               [(ErrTcUnit message) (ErrTcUnit message)])]
           [(ErrTcUnit message) (ErrTcUnit message)]))]
-    [(AstExprCall _ _)
-      (tc-spmd-masked-if-unsupported "varying calls inside masked branches")]
+    [(AstExprCall func-box args)
+      (let
+        [func : AstExpr (ast-node-get func-box)]
+        (tc-spmd-masked-if-inline-call ctx env spmd-env func args))]
     [(AstExprSyscall _)
       (tc-spmd-masked-if-unsupported "varying calls inside masked branches")]
     [(AstExprWhile _ _)
@@ -12363,22 +12684,7 @@
     [(AstExprCall func-box args)
       (let
         [func : AstExpr (ast-node-get func-box)]
-        (match (tc-spmd-expr ctx env spmd-env func)
-          [(OkTcSpmdExprInfo func-info)
-            (match func-info
-              [(TcSpmdExprInfo _ _ func-env)
-                (match (tc-spmd-expr-list ctx env func-env args)
-                  [(OkTcSpmdExprListInfo args-info)
-                    (match args-info
-                      [(TcSpmdExprListInfo args-class args-env)
-                        (match (tc-spmd-require-uniform
-                          args-class
-                          "typecheck: foreach calls with varying arguments are not supported")
-                          [(OkTcUnit)
-                            (tc-spmd-finish expr-ty TcSpmdUniform args-env)]
-                          [(ErrTcUnit message) (ErrTcSpmdExprInfo message)])])]
-                  [(ErrTcSpmdExprListInfo message) (ErrTcSpmdExprInfo message)])])]
-          [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]
+        (tc-spmd-inline-call ctx env spmd-env expr-ty func args))]
     [(AstExprBracketClause items)
       (match (tc-spmd-expr-list ctx env spmd-env items)
         [(OkTcSpmdExprListInfo info)

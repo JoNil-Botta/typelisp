@@ -3788,7 +3788,11 @@ Unsupported in the current SPMD implementation:
 - Reduction-by-mutation through `set!` to an outer accumulator.
 - Varying `if` until the v2 masked-control-flow implementation lands; varying
   `while`, varying `match`, early exits, `break`, and `continue`.
-- User-defined function calls with varying arguments or varying returns.
+- Non-inlineable user-defined function calls with varying arguments or varying
+  returns. Direct source-known, non-dispatch helper calls may be inlined when
+  their varying scalar arguments and result are `i32`, `i64`, `f32`, `f64`, or
+  `bool`, and the helper body uses only the same SPMD-safe expression surface as
+  the containing `foreach`/masked branch.
 - Struct, enum, tuple, string, function, and nested array lane values.
 - Task parallelism, multicore scheduling, and public AVX-specific intrinsics.
 
@@ -3832,12 +3836,14 @@ Negative examples for later parser/typechecker tests:
   (spmd-reduce shuffle ([i : i64 0 n]) 0 (array-ref xs i)))
 ```
 
-```lisp test=ignore name=spmd-reject-varying-call reason="covered by tests/safety/spmd_varying_call_reject.tl"
+```lisp test=ignore name=spmd-reject-indirect-varying-call reason="covered by tests/safety/spmd_varying_call_reject.tl"
 (define (inc [x : i64]) : i64 (+ x 1))
 
 (define (map-inc [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
-  (foreach ([i : i64 0 n])
-    (array-set! out i (inc (array-ref xs i)))))
+  (let
+    [f : (-> i64 i64) inc]
+    (foreach ([i : i64 0 n])
+      (array-set! out i (f (array-ref xs i))))))
 ```
 
 ```lisp test=ignore name=spmd-reject-program-index-outside-scope reason="future lane identity negative example"

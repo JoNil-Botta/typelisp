@@ -15145,6 +15145,23 @@
         (LowerCAbiUnsupportedAggregate
           (lower-c-abi-unsupported-message mode resolved))])))
 
+(define (lower-c-abi-win64-aggregate-class
+  [mode : CompilerLowerMode]
+  [resolved : AstType]
+  [size : i64]
+  [register-ok? : bool]
+  [allow-sret? : bool]
+  [allow-byref? : bool]) : LowerCAbiAggregate
+  (cond
+    (and (lower-c-abi-register-aggregate-size? mode size) register-ok?)
+    (LowerCAbiIntegerAggregate (lower-c-abi-integer-scalar-type size) size)
+    (and allow-sret? (> size 8))
+    (LowerCAbiSretAggregate size)
+    (and allow-byref? (not (lower-c-abi-register-aggregate-size? mode size)))
+    (LowerCAbiByRefAggregate size)
+    (LowerCAbiUnsupportedAggregate
+      (lower-c-abi-unsupported-message mode resolved))))
+
 (define (lower-c-abi-aggregate-class-from-layout
   [ctx : TcContext]
   [mode : CompilerLowerMode]
@@ -15155,21 +15172,13 @@
   (match layout
     [(TcInlineStructLayout size _ fields)
       (if (lower-mode-windows-c-abi? mode)
-        (cond
-          (and
-            (lower-c-abi-register-aggregate-size? mode size)
-            (lower-c-abi-register-aggregate-fields-ok? ctx mode fields))
-          (LowerCAbiIntegerAggregate
-            (lower-c-abi-integer-scalar-type size)
-            size)
-          (and allow-sret? (> size 8))
-          (LowerCAbiSretAggregate size)
-          (and
-            allow-byref?
-            (not (lower-c-abi-register-aggregate-size? mode size)))
-          (LowerCAbiByRefAggregate size)
-          (LowerCAbiUnsupportedAggregate
-            (lower-c-abi-unsupported-message mode resolved)))
+        (lower-c-abi-win64-aggregate-class
+          mode
+          resolved
+          size
+          (lower-c-abi-register-aggregate-fields-ok? ctx mode fields)
+          allow-sret?
+          allow-byref?)
         (lower-c-abi-sysv-register-aggregate
           ctx
           mode
@@ -15178,9 +15187,20 @@
           fields
           allow-sret?))]
     [(TcInlineEnumLayout size _ variants)
-      (if (and
-        (lower-mode-linux-c-abi? mode)
-        (tc-inline-enum-layout-tag-only? size variants))
+      (cond
+        (lower-mode-windows-c-abi? mode)
+        ;; Model the default enum layout as a synthetic C aggregate:
+        ;; int64 tag at offset 0 plus the max-sized payload union at offset 8.
+        (lower-c-abi-win64-aggregate-class
+          mode
+          resolved
+          size
+          (tc-inline-enum-layout-tag-only? size variants)
+          allow-sret?
+          allow-byref?)
+        (and
+          (lower-mode-linux-c-abi? mode)
+          (tc-inline-enum-layout-tag-only? size variants))
         (LowerCAbiIntegerAggregate (lower-c-abi-integer-scalar-type size) size)
         (LowerCAbiUnsupportedAggregate
           (lower-c-abi-unsupported-message mode resolved)))]))
@@ -33572,6 +33592,90 @@
             (= (lower-test-function-call-count functions "main" "tl_alloc") 0))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-c-abi-payload-enum-source) : String
+  "(defenum SmallChoice (SmallNone) (SmallSome i64))
+(extern (small-score [arg : SmallChoice]) : i64 (:symbol \"tl_cabi_small_score\"))
+(define (main) : i64
+  (small-score (SmallSome 11)))")
+
+(define (compiler-lower-c-abi-windows-enum-aggregate-source) : String
+  "(defenum Status (Ready) (Done) (Failed))
+(defenum SmallChoice (SmallNone) (SmallSome i64))
+(defenum WideChoice (WideNone) (WideSome u64 f64))
+(defenum ReturnChoice (ReturnNone) (ReturnPair u64 u64))
+(extern (status-pick [arg0 : Status] [arg1 : Status] [choose-second : i64]) : Status (:symbol \"tl_win64_status_pick\"))
+(extern status-pick-ptr (:symbol \"tl_win64_status_pick_ptr\") : (->
+  Status
+  Status
+  i64
+  Status))
+(extern (small-score [arg : SmallChoice] [bias : i64]) : i64 (:symbol \"tl_win64_small_score\"))
+(extern small-scorer (:symbol \"tl_win64_small_score_ptr\") : (->
+  SmallChoice
+  i64
+  i64))
+(extern (wide-score [arg : WideChoice] [tag : u64]) : i64 (:symbol \"tl_win64_wide_score\"))
+(extern wide-scorer (:symbol \"tl_win64_wide_score_ptr\") : (->
+  WideChoice
+  u64
+  i64))
+(extern (return-choice-make [a : u32] [b : u32] [tag : u64]) : ReturnChoice (:symbol \"tl_win64_return_choice_make\"))
+(extern return-choice-maker (:symbol \"tl_win64_return_choice_make_ptr\") : (->
+  u32
+  u32
+  u64
+  ReturnChoice))
+(define (return-score [r : ReturnChoice]) : i64
+  (match r
+    [ReturnNone 0]
+    [(ReturnPair lo hi) (+ (cast lo : i64) (cast hi : i64))]))
+(define (main) : i64
+  (let
+    [status-copy : (-> Status Status i64 Status) status-pick-ptr]
+    [small-copy : (-> SmallChoice i64 i64) small-scorer]
+    [wide-copy : (-> WideChoice u64 i64) wide-scorer]
+    [return-copy : (-> u32 u32 u64 ReturnChoice) return-choice-maker]
+    [picked : Status (status-pick (Ready) (Done) 1)]
+    [picked-via-ptr : Status (status-copy (Ready) (Failed) 1)]
+    [small-direct : i64 (small-score (SmallSome 11) 5)]
+    [small-via-ptr : i64 (small-copy (SmallNone) 7)]
+    [wide-direct : i64 (wide-score (WideSome (cast 20 : u64) 2.5) (cast 3 : u64))]
+    [wide-via-ptr : i64 (wide-copy (WideNone) (cast 4 : u64))]
+    [made : ReturnChoice
+      (return-choice-make (cast 3 : u32) (cast 4 : u32) (cast 10 : u64))]
+    [made-via-ptr : ReturnChoice
+      (return-copy (cast 5 : u32) (cast 6 : u32) (cast 2 : u64))]
+    (+ small-direct
+      (+ small-via-ptr
+        (+ wide-direct
+          (+ wide-via-ptr
+            (+ (return-score made) (return-score made-via-ptr))))))))")
+
+(define (compiler-lower-c-abi-windows-enum-aggregate-shape-ok?) : bool
+  (match (lower-compiler-source-with-mode
+    (compiler-lower-c-abi-windows-enum-aggregate-source)
+    (CompilerLowerWindowsScalar))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (=
+              (lower-test-function-call-count functions "main" "status-pick")
+              1)
+            (=
+              (lower-test-function-call-count functions "main" "small-score")
+              1)
+            (= (lower-test-function-call-count functions "main" "wide-score") 1)
+            (=
+              (lower-test-function-call-count
+                functions
+                "main"
+                "return-choice-make")
+              1)
+            (= (lower-test-function-indirect-c-call-count functions "main") 4)
+            (>= (lower-test-function-call-count functions "main" "tl_alloc") 3))])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-global-source) : String
   "(extern (print-i64 [arg0 : i64]) : unit)
 (define answer : i64 40)
@@ -37046,6 +37150,14 @@
         unit
         (set! ok false))
       (if (compiler-lower-c-abi-linux-tag-only-enum-shape-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-c-abi-windows-enum-aggregate-shape-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-linux-error-ok?
+        (compiler-lower-c-abi-payload-enum-source)
+        "lower: unsupported linux-x86_64 C aggregate ABI for SmallChoice; this slice supports System V register-class structs up to 16 bytes, plus tag-only enums")
         unit
         (set! ok false))
       (if (compiler-lower-c-abi-windows-byref-aggregate-shape-ok?)

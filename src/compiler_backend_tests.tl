@@ -1395,6 +1395,99 @@
           (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-c-abi-win64-enum-aggregate-source) : String
+  "(defenum Status (Ready) (Done) (Failed))
+(defenum SmallChoice (SmallNone) (SmallSome i64))
+(defenum WideChoice (WideNone) (WideSome u64 f64))
+(defenum ReturnChoice (ReturnNone) (ReturnPair u64 u64))
+(extern (status-pick [arg0 : Status] [arg1 : Status] [choose-second : i64]) : Status (:symbol \"tl_win64_status_pick\"))
+(extern status-pick-ptr (:symbol \"tl_win64_status_pick_ptr\") : (->
+  Status
+  Status
+  i64
+  Status))
+(extern (small-score [arg : SmallChoice] [bias : i64]) : i64 (:symbol \"tl_win64_small_score\"))
+(extern small-scorer (:symbol \"tl_win64_small_score_ptr\") : (->
+  SmallChoice
+  i64
+  i64))
+(extern (wide-score [arg : WideChoice] [tag : u64]) : i64 (:symbol \"tl_win64_wide_score\"))
+(extern wide-scorer (:symbol \"tl_win64_wide_score_ptr\") : (->
+  WideChoice
+  u64
+  i64))
+(extern (return-choice-make [a : u32] [b : u32] [tag : u64]) : ReturnChoice (:symbol \"tl_win64_return_choice_make\"))
+(extern return-choice-maker (:symbol \"tl_win64_return_choice_make_ptr\") : (->
+  u32
+  u32
+  u64
+  ReturnChoice))
+(define (return-score [r : ReturnChoice]) : i64
+  (match r
+    [ReturnNone 0]
+    [(ReturnPair lo hi) (+ (cast lo : i64) (cast hi : i64))]))
+(define (main) : i64
+  (let
+    [status-copy : (-> Status Status i64 Status) status-pick-ptr]
+    [small-copy : (-> SmallChoice i64 i64) small-scorer]
+    [wide-copy : (-> WideChoice u64 i64) wide-scorer]
+    [return-copy : (-> u32 u32 u64 ReturnChoice) return-choice-maker]
+    [picked : Status (status-pick (Ready) (Done) 1)]
+    [picked-via-ptr : Status (status-copy (Ready) (Failed) 1)]
+    [small-direct : i64 (small-score (SmallSome 11) 5)]
+    [small-via-ptr : i64 (small-copy (SmallNone) 7)]
+    [wide-direct : i64 (wide-score (WideSome (cast 20 : u64) 2.5) (cast 3 : u64))]
+    [wide-via-ptr : i64 (wide-copy (WideNone) (cast 4 : u64))]
+    [made : ReturnChoice
+      (return-choice-make (cast 3 : u32) (cast 4 : u32) (cast 10 : u64))]
+    [made-via-ptr : ReturnChoice
+      (return-copy (cast 5 : u32) (cast 6 : u32) (cast 2 : u64))]
+    (+ small-direct
+      (+ small-via-ptr
+        (+ wide-direct
+          (+ wide-via-ptr
+            (+ (return-score made) (return-score made-via-ptr))))))))")
+
+(define (compiler-backend-c-abi-win64-enum-aggregate-ok?) : bool
+  (match (compiler-backend-emit-source-for-target
+    (compiler-backend-c-abi-win64-enum-aggregate-source)
+    (BackendTargetWindows))
+    [(OkCompilerBackend asm)
+      (backend-and8
+        (compiler-backend-string-contains? asm ".extern tl_win64_status_pick\n")
+        (compiler-backend-string-contains? asm ".extern tl_win64_small_score\n")
+        (compiler-backend-string-contains? asm ".extern tl_win64_wide_score\n")
+        (compiler-backend-string-contains?
+          asm
+          ".extern tl_win64_return_choice_make\n")
+        (compiler-backend-string-contains?
+          asm
+          "    call tl_win64_status_pick\n")
+        (compiler-backend-string-contains?
+          asm
+          "    call tl_win64_small_score\n")
+        (backend-and8
+          (compiler-backend-string-contains?
+            asm
+            "    call tl_win64_wide_score\n")
+          (compiler-backend-string-contains?
+            asm
+            "    call tl_win64_return_choice_make\n")
+          (compiler-backend-string-contains? asm "    call *%rax\n")
+          (compiler-backend-string-contains-alloc-size? asm 16)
+          (compiler-backend-string-contains-alloc-size? asm 24)
+          (not
+            (compiler-backend-string-contains?
+              asm
+              "unsupported windows-x86_64 C aggregate ABI"))
+          (not
+            (compiler-backend-string-contains?
+              asm
+              (compiler-backend-todo-marker)))
+          true)
+        true)]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-c-abi-sysv-register-aggregate-arg-source) : String
   "(defstruct Inner (lo i64))
 (defstruct Outer (inner Inner) (hi i64))
@@ -6987,6 +7080,7 @@
     (compiler-backend-c-abi-aggregate-ok?)
     (compiler-backend-c-abi-sret-aggregate-windows-ok?)
     (compiler-backend-c-abi-byref-aggregate-arg-windows-ok?)
+    (compiler-backend-c-abi-win64-enum-aggregate-ok?)
     (compiler-backend-c-abi-sysv-register-aggregate-arg-linux-ok?)
     (compiler-backend-c-abi-sysv-memory-aggregate-arg-linux-ok?)
     (compiler-backend-c-abi-sysv-two-register-return-error-ok?)

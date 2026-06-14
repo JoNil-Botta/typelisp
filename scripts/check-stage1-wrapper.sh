@@ -385,11 +385,15 @@ EOF
     PKG_OUT_DIR="$PKG/target/release"
     PKG_BIN="$PKG_OUT_DIR/stage1_pkg"
     PKG_ASM="$PKG_OUT_DIR/stage1_pkg.s"
+    PKG_TLCI="$PKG_OUT_DIR/stage1_pkg.tlci"
     MATH_ARCHIVE="$PKG/vendor/math/target/release/libstage1_math.a"
+    MATH_TLCI="$PKG/vendor/math/target/release/stage1_math.tlci"
     PKG_DEV_OUT_DIR="$PKG/target/dev"
     PKG_DEV_BIN="$PKG_DEV_OUT_DIR/stage1_pkg"
     PKG_DEV_ASM="$PKG_DEV_OUT_DIR/stage1_pkg.s"
+    PKG_DEV_TLCI="$PKG_DEV_OUT_DIR/stage1_pkg.tlci"
     MATH_DEV_ARCHIVE="$PKG/vendor/math/target/dev/libstage1_math.a"
+    MATH_DEV_TLCI="$PKG/vendor/math/target/dev/stage1_math.tlci"
     run_capture build-package "$COMPILER" build --manifest-path "$PKG/typelisp.pkg" --opt-level 0
     [ -x "$PKG_BIN" ] || {
         echo "package build did not write executable $PKG_BIN" >&2
@@ -403,11 +407,39 @@ EOF
         echo "package build did not write dependency archive $MATH_ARCHIVE" >&2
         exit 1
     }
+    [ -s "$PKG_TLCI" ] || {
+        echo "package build did not write tlci image $PKG_TLCI" >&2
+        exit 1
+    }
+    [ -s "$MATH_TLCI" ] || {
+        echo "package build did not write dependency tlci image $MATH_TLCI" >&2
+        exit 1
+    }
     assert_contains "$WORKDIR/build-package.stdout" "Built $MATH_ARCHIVE"
     assert_contains "$WORKDIR/build-package.stdout" "Built $PKG_BIN"
+    assert_contains "$WORKDIR/build-package.stdout" "Built $MATH_TLCI"
+    assert_contains "$WORKDIR/build-package.stdout" "Built $PKG_TLCI"
     assert_contains "$PKG_ASM" "main:"
     assert_contains "$PKG_ASM" ".extern _tl_stage1_math_src_lib_add_one"
     assert_not_contains "$PKG_ASM" "_tl_stage1_math_src_lib_add_one:"
+    run_capture inspect-package-tlci "$COMPILER" inspect "$PKG_TLCI"
+    assert_empty "$WORKDIR/inspect-package-tlci.stderr"
+    assert_contains "$WORKDIR/inspect-package-tlci.stdout" "tlci image"
+    assert_contains "$WORKDIR/inspect-package-tlci.stdout" "package-name: stage1_pkg"
+    assert_contains "$WORKDIR/inspect-package-tlci.stdout" "code: offset=0 bytes=0"
+    assert_contains "$WORKDIR/inspect-package-tlci.stdout" "exports:"
+    assert_contains "$WORKDIR/inspect-package-tlci.stdout" "  (none)"
+    cp "$PKG_TLCI" "$WORKDIR/stage1_pkg.first.tlci"
+    run_capture build-package-repeat "$COMPILER" build --manifest-path "$PKG/typelisp.pkg" --opt-level 0
+    if ! cmp -s "$WORKDIR/stage1_pkg.first.tlci" "$PKG_TLCI"; then
+        echo "package build rewrote $PKG_TLCI nondeterministically" >&2
+        exit 1
+    fi
+    BAD_TLCI="$WORKDIR/bad.tlci"
+    printf 'bad' > "$BAD_TLCI"
+    run_expect_failure inspect-bad-tlci "$COMPILER" inspect "$BAD_TLCI"
+    assert_empty "$WORKDIR/inspect-bad-tlci.stdout"
+    assert_contains "$WORKDIR/inspect-bad-tlci.stderr" "inspect: tlci: truncated header"
     set +e
     "$PKG_BIN" > "$WORKDIR/build-package-bin.stdout" 2> "$WORKDIR/build-package-bin.stderr"
     pkg_bin_status=$?
@@ -431,8 +463,18 @@ EOF
         echo "package dev profile build did not write dependency archive $MATH_DEV_ARCHIVE" >&2
         exit 1
     }
+    [ -s "$PKG_DEV_TLCI" ] || {
+        echo "package dev profile build did not write tlci image $PKG_DEV_TLCI" >&2
+        exit 1
+    }
+    [ -s "$MATH_DEV_TLCI" ] || {
+        echo "package dev profile build did not write dependency tlci image $MATH_DEV_TLCI" >&2
+        exit 1
+    }
     assert_contains "$WORKDIR/build-package-dev.stdout" "Built $MATH_DEV_ARCHIVE"
     assert_contains "$WORKDIR/build-package-dev.stdout" "Built $PKG_DEV_BIN"
+    assert_contains "$WORKDIR/build-package-dev.stdout" "Built $MATH_DEV_TLCI"
+    assert_contains "$WORKDIR/build-package-dev.stdout" "Built $PKG_DEV_TLCI"
 
     rm -rf "$PKG/target"
     run_capture_cwd build-package-discover "$PKG/src/nested/deeper" "$COMPILER" build
@@ -459,12 +501,18 @@ EOF
 (define (add-two [x : i64]) : i64 (+ x 2))
 EOF
     LIB_ARCHIVE="$LIBPKG/target/release/libstage1_lib.a"
+    LIB_TLCI="$LIBPKG/target/release/stage1_lib.tlci"
     run_capture build-package-lib "$COMPILER" build --manifest-path "$LIBPKG/typelisp.pkg"
     [ -s "$LIB_ARCHIVE" ] || {
         echo "package lib build did not write static archive $LIB_ARCHIVE" >&2
         exit 1
     }
+    [ -s "$LIB_TLCI" ] || {
+        echo "package lib build did not write tlci image $LIB_TLCI" >&2
+        exit 1
+    }
     assert_contains "$WORKDIR/build-package-lib.stdout" "Built $LIB_ARCHIVE"
+    assert_contains "$WORKDIR/build-package-lib.stdout" "Built $LIB_TLCI"
 
 run_expect_failure build-package-missing "$COMPILER" build --manifest-path "$WORKDIR/missing.pkg"
 assert_empty "$WORKDIR/build-package-missing.stdout"

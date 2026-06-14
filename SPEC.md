@@ -2511,6 +2511,10 @@ Example:
   `<package-name>` on Linux and `<package-name>.exe` on Windows. `staticlib`
   packages produce `lib<package-name>.a` on Linux and `<package-name>.lib` on
   Windows. Assembly and object side artifacts use the same profile directory.
+  Package builds also produce a metadata-only comptime image named
+  `<package-name>.tlci` in the same profile directory. Dependency package DAG
+  builds produce the dependency package's tlci file next to its static archive
+  without changing runtime link behavior.
 - The optional top-level `(link ...)` section declares native link inputs for
   `bin` package builds, so a package that links system or vendored libraries
   does not need `(:link-lib ...)`/`(:link-search ...)`/`(:link-arg ...)`
@@ -4039,8 +4043,9 @@ A TypeLisp comptime image (`tlci`) is the package compile-time interface. Every
 package eventually emits one: metadata-only images carry signature/layout
 metadata, and packages with macros additionally carry compiled comptime code.
 The runtime archive (`lib<name>.a` / `<name>.lib`) remains separate. This
-section specifies the dormant v1 container and metadata schema implemented by
-`selfhost/tlci_core.tl`; build emission and loading are staged separately.
+section specifies the v1 container and metadata schema implemented by
+`src/tlci_core.tl`. Package builds emit metadata-only images; code-bearing image
+emission and loading are staged separately.
 
 The container is a custom little-endian binary format shared by Linux and
 Windows. It is not ELF or COFF. The first 160 bytes are a fixed header:
@@ -4134,6 +4139,11 @@ Metadata-only tlci files are valid: rodata, code, fixups, entries, and symbols
 are all empty. Code-bearing tlci files are valid with synthetic payload bytes
 before real PIC code generation lands; the emitted layout and content hash must
 round-trip byte-identically.
+
+`typelisp inspect <file.tlci>` parses a tlci image with the same validation
+path as loaders and prints a stable human-readable header, section table,
+package metadata, and export list. Malformed images surface the tlci parse
+diagnostic.
 
 ### 5.18 Layout queries (specified, selfhost metadata implemented)
 
@@ -5545,6 +5555,7 @@ Commands:
   typelisp doc            Generate documentation or run doc tests
   typelisp fmt            Format source files or a package
   typelisp init           Scaffold a package in the current directory
+  typelisp inspect        Inspect a TypeLisp comptime image
   typelisp lint           Lint source files or a package
   typelisp lsp            Start stdio LSP diagnostics server
   typelisp new            Scaffold a new package directory
@@ -5571,6 +5582,7 @@ Selected Command Forms:
   typelisp compile --batch <input-output-list>
   typelisp build <file.tl> [-o <exe>]
   typelisp build [--manifest-path <typelisp.pkg>] [--profile dev|release] [--locked|--update-lock]
+  typelisp inspect <file.tlci>
   typelisp run <file.tl> [-- <args>...]
   typelisp fmt [<file.tl>...] [--check]
   typelisp lint [<file.tl>...] [--check] [--deprecated-string-concat]
@@ -5597,7 +5609,9 @@ unless `--target <target>` is supplied.
 For source-file builds, the default executable path is the source path with the
 `.tl` extension removed on Linux and with `.exe` on Windows. Source-file
 `build` does not run the executable. The package build form writes the artifact
-selected by `typelisp.pkg`'s `kind` field.
+selected by `typelisp.pkg`'s `kind` field and a metadata-only
+`<package-name>.tlci` image in the same profile directory. `inspect` validates
+and renders `.tlci` files without executing or loading contained code.
 
 Linux native build/run uses `as` and `ld`. Windows native build/run uses
 `clang --target=x86_64-pc-windows-msvc` and `lld-link`, links against the CRT,

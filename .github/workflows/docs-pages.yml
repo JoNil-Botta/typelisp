@@ -4,7 +4,7 @@ name: Publish Docs
 # default branch (main). There is no PR-time docs-site validation gate yet
 # (#1327). Refs #874.
 #
-# The site is generated entirely by the selfhost builder selfhost/doc_site.tl,
+# The site is generated entirely by the selfhost builder tools/doc-site/doc_site.tl,
 # compiled with the published stage0 compiler fetched via scripts/fetch-stage0.sh
 # (no extra toolchain is involved in this workflow).
 #

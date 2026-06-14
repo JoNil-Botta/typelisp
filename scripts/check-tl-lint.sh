@@ -58,11 +58,9 @@ STDERR="$WORKDIR/lint.stderr"
 # Lint every git-tracked TypeLisp source that is expected to parse as a source
 # unit. The excluded paths are fixture harness inputs rather than direct source
 # units:
-#   - selfhost/tests/ contains external compiler corpus snippets and errors.
 #   - tests/format_golden/ intentionally preserves formatter fixture text.
 #   - tests/safety/ includes intentional check-fail/runtime-trap corpus inputs.
 git ls-files '*.tl' \
-    | grep -v '^selfhost/tests/' \
     | grep -v '^tests/format_golden/' \
     | grep -v '^tests/safety/' \
     | sort > "$FILES"

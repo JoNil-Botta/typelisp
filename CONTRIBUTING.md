@@ -61,7 +61,7 @@ the old form in the same change.**
 Keeping the old spelling working "for compatibility" leaves two ways to write
 the same thing and lets the old syntax linger indefinitely. A syntax change is
 complete only when the new spelling is the *sole* spelling: update `src/`,
-`selfhost/`, `stdlib/`, `examples/`, `tests/`, `SPEC.md`, `README.md`, the
+`src/`, `stdlib/`, `examples/`, `tests/`, `SPEC.md`, `README.md`, the
 editor grammar under `tools/`, and any verification scripts together, so that
 `git grep <old-spelling>` returns no production code or syntax. Land the rename
 as one converging change rather than an add-then-maybe-migrate-later sequence.
@@ -79,7 +79,7 @@ Set `TYPELISP_BIN=target/stage0/typelisp` (or `.exe` on Windows) after
 - `$TYPELISP_BIN fmt --check <files>` — format your TypeLisp source
 - `TYPELISP_BIN=$TYPELISP_BIN scripts/check-tl-lint.sh` — fix lint findings
 - `scripts/ci-verify.sh` — run the full verification gate CI uses
-- For selfhost compiler changes, follow [`selfhost/TESTING.md`](selfhost/TESTING.md)
+- For selfhost compiler changes, follow [`src/TESTING.md`](src/TESTING.md)
   when choosing module self-tests, smoke drivers, inline tests, and integration
   coverage.
 
@@ -99,18 +99,18 @@ Set `TYPELISP_BIN=target/stage0/typelisp` (or `.exe` on Windows) after
 
 ## Architecture Notes
 
-The compiler is written in TypeLisp under [`selfhost/`](selfhost). Key modules:
+The compiler is written in TypeLisp under [`src/`](selfhost). Key modules:
 
-- `selfhost/lexer.tl` — tokenizes source code
-- `selfhost/compiler_parse_core.tl` — builds the AST from tokens
-- `selfhost/compiler_typecheck.tl` — type inference and checking
-- `selfhost/compiler_lower.tl` — lowering to the 3-address IR
-- `selfhost/compiler_optimize.tl` — IR optimization passes
-- `selfhost/compiler_backend.tl` — x86_64 code generation
-- `selfhost/cli.tl` — the unified toolchain CLI (the published stage0 binary)
-- `selfhost/compile.tl` — the minimal compile entry point used by the bootstrap
+- `src/lexer.tl` — tokenizes source code
+- `src/compiler_parse_core.tl` — builds the AST from tokens
+- `src/compiler_typecheck.tl` — type inference and checking
+- `src/compiler_lower.tl` — lowering to the 3-address IR
+- `src/compiler_optimize.tl` — IR optimization passes
+- `src/compiler_backend.tl` — x86_64 code generation
+- `src/main.tl` — the unified toolchain CLI (the published stage0 binary)
+- `src/compile.tl` — the minimal compile entry point used by the bootstrap
 
-See [`selfhost/TESTING.md`](selfhost/TESTING.md) for the testing conventions.
+See [`src/TESTING.md`](src/TESTING.md) for the testing conventions.
 
 ## Questions?
 

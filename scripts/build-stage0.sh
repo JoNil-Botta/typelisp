@@ -4,7 +4,7 @@ set -eu
 # build-stage0.sh - build the published self-hosted stage0 binary from a seed.
 #
 # Given a seed compiler (the previously published stage0, fetched via
-# scripts/fetch-stage0.sh), compile selfhost/cli.tl to assembly and assemble +
+# scripts/fetch-stage0.sh), compile src/main.tl to assembly and assemble +
 # link it into the next stage0 binary using the host toolchain (as/ld on Linux,
 # clang + MSVC link.exe on Windows). This is the self-perpetuation step
 # used by .github/workflows/bootstrap-stage0.yml: each published stage0 builds
@@ -46,13 +46,13 @@ OBJ="$WORKDIR/cli.$NL_OBJ_EXT"
 COMPILE_STDOUT="$WORKDIR/compile.stdout"
 COMPILE_STDERR="$WORKDIR/compile.stderr"
 
-echo "[build-stage0] compile selfhost/cli.tl with seed ($NL_BOOTSTRAP_TARGET)"
+echo "[build-stage0] compile src/main.tl with seed ($NL_BOOTSTRAP_TARGET)"
 if ! run_with_heartbeat_capture "compile cli.tl" "$COMPILE_STDOUT" "$COMPILE_STDERR" \
-    "$SEED" compile selfhost/cli.tl -o "$ASM" \
+    "$SEED" compile src/main.tl -o "$ASM" \
     --target "$NL_BOOTSTRAP_TARGET" \
     $(native_target_cfg_args) \
-    --stdlib-root stdlib --stdlib-root selfhost --opt-level 1; then
-    echo "[build-stage0] seed compiler failed while compiling selfhost/cli.tl" >&2
+    --stdlib-root stdlib --stdlib-root src --opt-level 1; then
+    echo "[build-stage0] seed compiler failed while compiling src/main.tl" >&2
     echo "[build-stage0] compiler stdout:" >&2
     sed 's/^/  /' "$COMPILE_STDOUT" >&2 || true
     echo "[build-stage0] compiler stderr:" >&2
@@ -62,7 +62,7 @@ fi
 cat "$COMPILE_STDOUT"
 cat "$COMPILE_STDERR" >&2
 [ -s "$ASM" ] || {
-    echo "[build-stage0] seed did not emit assembly for selfhost/cli.tl" >&2
+    echo "[build-stage0] seed did not emit assembly for src/main.tl" >&2
     exit 1
 }
 

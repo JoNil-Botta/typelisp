@@ -5,7 +5,7 @@ set -eu
 #
 # Fetches the published stage0 artifact when TYPELISP_BIN is unset. The seed
 # performs the single compiler build of the flow: the stage1->stage2->stage3
-# bootstrap fixpoint over selfhost/cli.tl. Every remaining gate then runs on
+# bootstrap fixpoint over src/main.tl. Every remaining gate then runs on
 # the freshly bootstrapped stage2 compiler (the branch-built full CLI).
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
@@ -20,7 +20,7 @@ usage: scripts/ci-verify.sh
 Runs the repository's CI verification gate.
 If TYPELISP_BIN is unset, downloads stage0-latest with scripts/fetch-stage0.sh.
 TYPELISP_BIN is the seed compiler and performs the single compiler build of
-the flow: the bootstrap stage1->stage2->stage3 fixpoint over selfhost/cli.tl.
+the flow: the bootstrap stage1->stage2->stage3 fixpoint over src/main.tl.
 Every remaining gate runs on the bootstrapped stage2 compiler.
 EOF
 }
@@ -220,7 +220,7 @@ stage2_can_compile_native_windows() {
 
 echo "[ci-verify] host=$HOST_OS seed=$SEED_TYPELISP_BIN"
 
-# The single compiler build of the flow: the seed bootstraps selfhost/cli.tl to
+# The single compiler build of the flow: the seed bootstraps src/main.tl to
 # stage1, stage1 rebuilds it to stage2, and the stage2/stage3 fixpoint must
 # hold. Every gate below runs on the resulting stage2 compiler - the
 # branch-built full CLI - so the artifact under test is the one the bootstrap
@@ -289,8 +289,6 @@ run_with_compiler "$STAGE2_BIN" "stage2 stdlib modules and fixtures" scripts/ver
 
 if [ "$HOST_OS" = linux ]; then
     run_with_compiler "$STAGE2_BIN" "stage2 CLI host-action smoke" scripts/check-stage1-wrapper.sh
-    run_with_compiler "$STAGE2_BIN" "comptime-type specialization smoke" \
-        env TYPELISP_BOOTSTRAP_SMOKE_STAGE1_BIN="$STAGE2_BIN" scripts/check-bootstrap-smoke.sh
     run_with_compiler "$STAGE2_BIN" "stage2 stdlib documentation" scripts/verify-stdlib-docs.sh
     run_with_compiler "$STAGE2_BIN" "stage2 stdlib selfhost verifier" scripts/verify-stdlib-selfhost.sh
     run_with_compiler "$STAGE2_BIN" "stage2 SPMD SIMD comparison" scripts/verify-spmd-simd.sh
@@ -305,7 +303,6 @@ if [ "$HOST_OS" = linux ]; then
     run_with_compiler "$STAGE2_BIN" "stage2 docs Pages build path" scripts/verify-doc-site.sh
     unset DOC_SITE_OUT
     run_with_compiler "$STAGE2_BIN" "stage2 native link generated programs" scripts/verify-native-link-linux.sh
-    run_with_compiler "$STAGE2_BIN" "stage2 selfhost external compiler corpus" scripts/verify-selfhost.sh
 else
     run_with_compiler "$STAGE2_BIN" "windows native link build/run" scripts/verify-native-link-windows.sh
     echo

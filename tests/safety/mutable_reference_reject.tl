@@ -1,7 +1,7 @@
 ;: SPEC safe-code contract: safe code rejects overlapping mutable borrows.
-(define (main [n : i64]) : unit
+(define (main [items : (Array i64)]) : unit
   (let
-    [r : (&mut n i64) (&mut n)]
+    [r : (&mut items i64) (&mut (array-ref items 0))]
     (let
-      [s : (&mut n i64) (&mut n)]
+      [s : (&mut items i64) (&mut (array-ref items 0))]
       unit)))

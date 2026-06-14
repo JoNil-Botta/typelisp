@@ -28,6 +28,8 @@ unsupported_cast_reject|check-fail|tests/safety/unsupported_cast_reject.tl|-|cas
 unbound_variable_reject|check-fail|tests/safety/unbound_variable_reject.tl|-|unbound name missing
 region_escape_reject|check-fail|tests/safety/region_escape_reject.tl|-|cannot escape with-arena
 mutable_reference_reject|check-fail|tests/safety/mutable_reference_reject.tl|-|cannot mutably borrow borrowed place
+mutable_reference_by_value_binding_reject|check-fail|tests/safety/mutable_reference_by_value_binding_reject.tl|-|mutable borrow of by-value place is only supported as an immediate call argument
+mutable_reference_scalar_binding_reject|check-fail|tests/safety/mutable_reference_scalar_binding_reject.tl|-|mutable borrow of by-value place is only supported as an immediate call argument
 auto_borrow_temporary_reject|check-fail|tests/safety/auto_borrow_temporary_reject.tl|-|borrow requires a local, parameter, or aggregate place
 auto_borrow_shared_lifetime_reject|check-fail|tests/safety/auto_borrow_shared_lifetime_reject.tl|-|typecheck: constructor lifetime mismatch
 auto_borrow_mutable_param_reject|check-fail|tests/safety/auto_borrow_mutable_param_reject.tl|-|typecheck: argument type mismatch

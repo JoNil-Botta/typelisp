@@ -5552,7 +5552,7 @@
     state
     (if (> size lower-inline-copy-threshold)
       (lower-emit-memcpy state dst dst-offset src src-offset size)
-      (if (> size 16)
+      (if (>= size 16)
         (match (lower-offset-addr state dst dst-offset)
           [(LowerExpr dst-state dst-addr _)
             (match (lower-offset-addr dst-state src src-offset)
@@ -31474,6 +31474,12 @@
 (define (main) : i64
   (struct-get (id-pair (Pair 20 22)) b))")
 
+(define (compiler-lower-inline-mixed16-copy-source) : String
+  "(defstruct Mixed16 (tag u32) (value f32) (tail i64))
+(define (id-mixed [p : Mixed16]) : Mixed16 p)
+(define (main) : i64
+  (struct-get (id-mixed (Mixed16 (cast 1 : u32) 2.0 40)) tail))")
+
 (define (compiler-lower-inline-sret-struct-constructor-source) : String
   "(defstruct Wide (a i64) (b i64) (c i64))
 (define (make-wide [x : i64]) : Wide
@@ -31617,18 +31623,38 @@
 ;; register-resident -- it is carried in a register pair end-to-end, so the
 ;; passthrough needs NO memory traffic at all: zero byte-copies and zero stores
 ;; (before register-residency this copied the 16 bytes through a slot). The
-;; non-register-resident memory copy path (byte-copies / stores for >16 B or
-;; float-containing aggregates) is covered by the C-ABI byref shape test below.
+;; A mixed int/float 16-byte aggregate stays memory-backed, so its identity
+;; return exercises the lower-copy-bytes 16-byte CopyBytes threshold.
 (define (compiler-lower-inline-aggregate-copy-shape-ok?) : bool
   (match (lower-compiler-source-with-mode
     (compiler-lower-inline-aggregate-copy-source)
     (CompilerLowerInlineAggregates))
-    [(OkCompilerLower program _)
-      (match program
-        [(IrProgram _ functions _)
-          (and
-            (= (lower-test-function-copy-bytes-count functions "id-pair") 0)
-            (= (lower-test-function-store-ptr-count functions "id-pair") 0))])]
+    [(OkCompilerLower pair-program _)
+      (match pair-program
+        [(IrProgram _ pair-functions _)
+          (match (lower-compiler-source-with-mode
+            (compiler-lower-inline-mixed16-copy-source)
+            (CompilerLowerInlineAggregates))
+            [(OkCompilerLower mixed-program _)
+              (match mixed-program
+                [(IrProgram _ mixed-functions _)
+                  (and
+                    (=
+                      (lower-test-function-copy-bytes-count
+                        pair-functions
+                        "id-pair")
+                      0)
+                    (=
+                      (lower-test-function-store-ptr-count
+                        pair-functions
+                        "id-pair")
+                      0)
+                    (=
+                      (lower-test-function-copy-bytes-count
+                        mixed-functions
+                        "id-mixed")
+                      1))])]
+            [(ErrCompilerLower _) false])])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-inline-sret-constructor-copy-shape-ok?) : bool

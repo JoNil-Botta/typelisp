@@ -1,9 +1,9 @@
 name	ir_count
 benchmark/arith_loop	15000000087
 benchmark/array_sum	32431834862
-benchmark/hashmap_churn	32264139
-benchmark/hashmap_get	1988917275
-benchmark/hashmap_grow	20540146
-benchmark/hashmap_insert	398781587
+benchmark/hashmap_churn	32217273
+benchmark/hashmap_get	1976616987
+benchmark/hashmap_grow	20515957
+benchmark/hashmap_insert	398123921
 benchmark/spmd_reduce	36871235086
-self_compile/compile_cli_opt1	79691149053
+self_compile/compile_cli_opt1	78710560410

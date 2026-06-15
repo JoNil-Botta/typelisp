@@ -4374,10 +4374,10 @@
 ;; the word-marshalling here). Until then they are never emitted, so reaching this
 ;; path means a lowering/backend representation mismatch -- surface it loudly
 ;; rather than emit silently wrong code.
-;; #2386: build the two words into the destination group's homes. The words are
-;; loaded into the caller-saved scratch %rax/%rdx first and only then moved into
-;; the group's (callee-saved) home registers, so a word that lives in the other
-;; home register is read before it is overwritten.
+;; #2386: build the two words into the destination group's homes. Non-immediate
+;; words are loaded into caller-saved scratch %rax/%rdx first and only then moved
+;; into the group's homes; immediate words are stored directly after those loads.
+;; That keeps reads from the source homes ahead of any destination overwrite.
 (define (compiler-backend-emit-group-word-move
   [src : String]
   [dst : String]
@@ -4406,6 +4406,40 @@
       reg)
     (compiler-backend-emit-load-value-with-plan assignments word reg)))
 
+(define (compiler-backend-pack-word-dst-register? [dst : String]) : bool
+  (and (> (string-length dst) 0) (= (string-ref dst 0) #%')))
+
+(define (compiler-backend-emit-pack-word-immediate-store
+  [word : CompilerIrValue]
+  [dst : String]
+  [sse? : bool]) : CompilerBackendMaybeAsm
+  (if sse?
+    (CompilerBackendNoAsm)
+    (if (compiler-backend-pack-word-dst-register? dst)
+      (compiler-backend-emit-load-immediate-to-reg word dst)
+      (compiler-backend-emit-store-immediate-to-memory word dst (AstTyI64)))))
+
+(define (compiler-backend-emit-load-pack-word-unless-immediate
+  [assignments : CompilerRegAssignmentList]
+  [word : CompilerIrValue]
+  [sse? : bool]
+  [reg : String]
+  [immediate-store : CompilerBackendMaybeAsm]) : ResultCompilerBackend
+  (match immediate-store
+    [(CompilerBackendSomeAsm _) (OkCompilerBackend "")]
+    [(CompilerBackendNoAsm)
+      (compiler-backend-emit-load-pack-word assignments word sse? reg)]))
+
+(define (compiler-backend-emit-pack-word-store
+  [scratch : String]
+  [dst : String]
+  [sse? : bool]
+  [immediate-store : CompilerBackendMaybeAsm]) : String
+  (match immediate-store
+    [(CompilerBackendSomeAsm asm) asm]
+    [(CompilerBackendNoAsm)
+      (compiler-backend-emit-group-word-move scratch dst sse?)]))
+
 (define (compiler-backend-emit-pack-words
   [assignments : CompilerRegAssignmentList]
   [w0 : CompilerIrValue]
@@ -4415,40 +4449,49 @@
   [sse0? : bool]
   [sse1? : bool]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
-  (match (compiler-backend-emit-load-pack-word
-    assignments
-    w0
-    sse0?
-    (if sse0?
-      "%xmm0"
-      "%rax"))
-    [(OkCompilerBackend a0)
-      (match (compiler-backend-emit-load-pack-word
-        assignments
-        w1
-        sse1?
-        (if sse1?
-          "%xmm1"
-          "%rdx"))
-        [(OkCompilerBackend a1)
-          (OkCompilerBackend
-            (string-append
-              (string-append a0 a1)
+  (let
+    [scratch0 : String
+      (if sse0?
+        "%xmm0"
+        "%rax")]
+    [scratch1 : String
+      (if sse1?
+        "%xmm1"
+        "%rdx")]
+    [store0 : CompilerBackendMaybeAsm
+      (compiler-backend-emit-pack-word-immediate-store w0 dst0 sse0?)]
+    [store1 : CompilerBackendMaybeAsm
+      (compiler-backend-emit-pack-word-immediate-store w1 dst1 sse1?)]
+    (match (compiler-backend-emit-load-pack-word-unless-immediate
+      assignments
+      w0
+      sse0?
+      scratch0
+      store0)
+      [(OkCompilerBackend a0)
+        (match (compiler-backend-emit-load-pack-word-unless-immediate
+          assignments
+          w1
+          sse1?
+          scratch1
+          store1)
+          [(OkCompilerBackend a1)
+            (OkCompilerBackend
               (string-append
-                (compiler-backend-emit-group-word-move
-                  (if sse0?
-                    "%xmm0"
-                    "%rax")
-                  dst0
-                  sse0?)
-                (compiler-backend-emit-group-word-move
-                  (if sse1?
-                    "%xmm1"
-                    "%rdx")
-                  dst1
-                  sse1?))))]
-        [(ErrCompilerBackend m) (ErrCompilerBackend m)])]
-    [(ErrCompilerBackend m) (ErrCompilerBackend m)]))
+                (string-append a0 a1)
+                (string-append
+                  (compiler-backend-emit-pack-word-store
+                    scratch0
+                    dst0
+                    sse0?
+                    store0)
+                  (compiler-backend-emit-pack-word-store
+                    scratch1
+                    dst1
+                    sse1?
+                    store1))))]
+          [(ErrCompilerBackend m) (ErrCompilerBackend m)])]
+      [(ErrCompilerBackend m) (ErrCompilerBackend m)])))
 
 ;; #2386: stack-slot offsets for a group var's two words when it has no register
 ;; home (stack-only/opt-level<2). word0 reuses the var's ordinary 8-byte slot;

@@ -2225,9 +2225,22 @@
   (tc-env-with-partial-local-cache env))
 
 (define (tc-bind-alias-if-free [env : TcTypeEnv] [name : String] [ty : AstType]) : TcTypeEnv
-  (if (tc-name-bound? env name)
+  (if (tc-name-bound-id? env (tc-name-id name))
     env
     (tc-bind env name ty)))
+
+(define (tc-bind-alias-id-if-free
+  [env : TcTypeEnv]
+  [name-id : i64]
+  [ty : AstType]) : TcTypeEnv
+  (if (tc-name-bound-id? env name-id)
+    env
+    (tc-bind-id env name-id ty)))
+
+(define (tc-module-name-id [module : String] [name-id : i64]) : i64
+  (if (= (string-length module) 0)
+    name-id
+    (tc-name-id (compiler-symbol-module-key module (intern-str name-id)))))
 
 (define (tc-bind-module-name
   [env : TcTypeEnv]
@@ -3491,6 +3504,21 @@
 (define (tc-lookup [env : TcTypeEnv] [name : String]) : ResultTcType
   (tc-lookup-id env (tc-name-id name)))
 
+(define (tc-name-bound-id? [env : TcTypeEnv] [name-id : i64]) : bool
+  (match env
+    [(TcTypeNil) false]
+    [(TcTypeCache ids _ _ _ _ _ partial _ below)
+      (match (i64-i64-map-get ids name-id)
+        [(I64I64MapFound _) true]
+        [(I64I64MapMissing)
+          (if partial
+            (tc-name-bound-id? (box-get below) name-id)
+            false)])]
+    [(TcTypeBind key _ rest)
+      (if (= key name-id)
+        true
+        (tc-name-bound-id? (box-get rest) name-id))]))
+
 (define (tc-lookup-unsafe-id [env : TcTypeEnv] [name-id : i64]) : ResultTcTypeUnsafe
   (match env
     [(TcTypeNil)
@@ -4724,9 +4752,7 @@
     false))
 
 (define (tc-source-name-bound-exact-id? [env : TcTypeEnv] [name-id : i64]) : bool
-  (match (tc-lookup-id env name-id)
-    [(OkTcType _) true]
-    [(ErrTcType _) false]))
+  (tc-name-bound-id? env name-id))
 
 (define (tc-source-name-bound-exact? [env : TcTypeEnv] [name : String]) : bool
   (tc-source-name-bound-exact-id? env (tc-name-id name)))
@@ -4738,6 +4764,60 @@
   (if (<= first-dot 0)
     false
     (tc-source-name-bound-exact? env (substring name 0 first-dot))))
+
+(define (tc-source-leading-segment-wins-over-exact-id?
+  [env : TcTypeEnv]
+  [name-id : i64]
+  [prefix-id : i64]) : bool
+  (match env
+    [(TcTypeNil) false]
+    [(TcTypeBind key _ rest)
+      (if (= key name-id)
+        false
+        (if (= key prefix-id)
+          true
+          (tc-source-leading-segment-wins-over-exact-id?
+            (box-get rest)
+            name-id
+            prefix-id)))]
+    [(TcTypeCache ids _ _ _ _ _ partial _ below)
+      (match (i64-i64-map-get ids prefix-id)
+        [(I64I64MapFound prefix-index)
+          (match (i64-i64-map-get ids name-id)
+            [(I64I64MapFound name-index) (< prefix-index name-index)]
+            [(I64I64MapMissing) true])]
+        [(I64I64MapMissing)
+          (match (i64-i64-map-get ids name-id)
+            [(I64I64MapFound _) false]
+            [(I64I64MapMissing)
+              (if partial
+                (tc-source-leading-segment-wins-over-exact-id?
+                  (box-get below)
+                  name-id
+                  prefix-id)
+                false)])])]))
+
+(define (tc-source-leading-segment-wins-over-exact-id-from-dot?
+  [env : TcTypeEnv]
+  [name-id : i64]
+  [first-dot : i64]) : bool
+  (if (<= first-dot 0)
+    false
+    (tc-source-leading-segment-wins-over-exact-id?
+      env
+      name-id
+      (intern-slice (intern-str name-id) 0 first-dot))))
+
+(define (tc-source-leading-segment-wins-over-exact?
+  [env : TcTypeEnv]
+  [name : String]
+  [first-dot : i64]) : bool
+  (if (<= first-dot 0)
+    false
+    (let
+      [name-id : i64 (tc-name-id name)]
+      [prefix-id : i64 (intern-slice name 0 first-dot)]
+      (tc-source-leading-segment-wins-over-exact-id? env name-id prefix-id))))
 
 (define (tc-dotted-field-index-message [name : String]) : String
   (str-cat
@@ -4759,18 +4839,17 @@
     [first-dot : i64 (tc-name-first-dot name)]
     (if (< first-dot 0)
       false
-      (if (tc-source-name-bound-exact? env name)
-        false
-        (tc-source-leading-segment-bound? env name first-dot)))))
+      (tc-source-leading-segment-wins-over-exact? env name first-dot))))
 
 (define (tc-dotted-local-field-name-id? [env : TcTypeEnv] [name-id : i64]) : bool
   (let
     [first-dot : i64 (intern-first-dot name-id)]
     (if (< first-dot 0)
       false
-      (if (tc-source-name-bound-exact-id? env name-id)
-        false
-        (tc-source-leading-segment-bound? env (intern-str name-id) first-dot)))))
+      (tc-source-leading-segment-wins-over-exact-id-from-dot?
+        env
+        name-id
+        first-dot))))
 
 (define (tc-dotted-local-field-expr-id-tail
   [name : String]
@@ -4948,19 +5027,41 @@
     (ErrTcString (tc-source-slash-qualified-message name))
     (tc-dotted-type-name-lookup-key ctx name)))
 
-(define (tc-source-name-lookup-key
+(define (tc-enum-qualified-variant-lookup-name? [name : String]) : bool
+  (>= (tc-name-first-dot (tc-qualified-name-base name)) 0))
+
+(define (tc-enum-qualified-variant-lookup-key [ctx : TcContext] [name : String]) : ResultTcString
+  (if (tc-enum-qualified-variant-lookup-name? name)
+    (match ctx
+      [(TcContext _ _ registries module)
+        (if (and (> (string-length module) 0) (not (tc-name-qualified? name)))
+          (let
+            [module-key : String (compiler-symbol-module-key module name)]
+            (match (compiler-registries-lookup-variant registries module-key)
+              [(SomeI64 _) (OkTcString module-key)]
+              [(NoneI64)
+                (match (compiler-registries-lookup-variant registries name)
+                  [(SomeI64 _) (OkTcString name)]
+                  [(NoneI64) (ErrTcString "")])]))
+          (match (compiler-registries-lookup-variant registries name)
+            [(SomeI64 _) (OkTcString name)]
+            [(NoneI64) (ErrTcString "")]))])
+    (ErrTcString "")))
+
+(define (tc-source-name-lookup-key-with-field-check
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [name : String]) : ResultTcString
+  [name : String]
+  [check-local-field : bool]) : ResultTcString
   (if (tc-source-slash-qualified? name)
     (ErrTcString (tc-source-slash-qualified-message name))
     (let
       [first-dot : i64 (tc-name-first-dot name)]
       (if (< first-dot 0)
         (OkTcString name)
-        (if (or
-          (tc-source-name-bound-exact? env name)
-          (tc-source-leading-segment-bound? env name first-dot))
+        (if (and
+          check-local-field
+          (tc-source-leading-segment-wins-over-exact? env name first-dot))
           (OkTcString name)
           (match (tc-source-dotted-alias-key ctx name first-dot)
             [(TcSomeString key) (OkTcString key)]
@@ -4968,7 +5069,24 @@
               (match (tc-source-dotted-full-path-key ctx name)
                 [(TcSomeString key) (OkTcString key)]
                 [(TcNoString)
-                  (ErrTcString (tc-unresolved-dotted-name-message name))])]))))))
+                  (if (tc-source-name-bound-exact? env name)
+                    (OkTcString name)
+                    (match (tc-enum-qualified-variant-lookup-key ctx name)
+                      [(OkTcString key) (OkTcString key)]
+                      [(ErrTcString _)
+                        (ErrTcString (tc-unresolved-dotted-name-message name))]))])]))))))
+
+(define (tc-source-name-lookup-key
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : String]) : ResultTcString
+  (tc-source-name-lookup-key-with-field-check ctx env name true))
+
+(define (tc-source-name-lookup-key-after-local-field-check
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : String]) : ResultTcString
+  (tc-source-name-lookup-key-with-field-check ctx env name false))
 
 (define (tc-qualified-access-target-module
   [ctx : TcContext]
@@ -8082,17 +8200,18 @@
             (let
               [scoped-enum : String
                 (compiler-symbol-module-key module enum-name)]
+              [constructor-ty : AstType
+                (tc-enum-variant-constructor-type
+                  ctx
+                  scoped-enum
+                  lifetimes
+                  fields)]
               (tc-bind-enum-variants-in-module
                 ctx
-                (tc-bind-module-name-id
+                (tc-bind-alias-id-if-free
                   env
-                  module
-                  name
-                  (tc-enum-variant-constructor-type
-                    ctx
-                    scoped-enum
-                    lifetimes
-                    fields))
+                  (tc-module-name-id module name)
+                  constructor-ty)
                 module
                 enum-name
                 lifetimes
@@ -8296,20 +8415,23 @@
         [rest : AstVariantDefList (box-get rest)]
         (match variant
           [(AstVariantDef name fields _)
-            (tc-bind-enum-variant-aliases
-              ctx
-              (tc-bind
-                env
-                (compiler-symbol-module-key alias (intern-str name))
+            (let
+              [constructor-ty : AstType
                 (tc-enum-variant-constructor-type
                   ctx
                   enum-name
                   lifetimes
-                  fields))
-              alias
-              enum-name
-              lifetimes
-              rest)]))]))
+                  fields)]
+              (tc-bind-enum-variant-aliases
+                ctx
+                (tc-bind-alias-id-if-free
+                  env
+                  (tc-module-name-id alias name)
+                  constructor-ty)
+                alias
+                enum-name
+                lifetimes
+                rest))]))]))
 
 (define (tc-bind-import-alias-decl-in-module
   [ctx : TcContext]
@@ -8620,20 +8742,20 @@
         [rest : AstVariantDefList (box-get rest)]
         (match variant
           [(AstVariantDef name fields _)
-            (tc-bind-enum-variants-local
-              ctx
-              (tc-bind
-                env
-                (intern-str name)
+            (let
+              [constructor-ty : AstType
                 (tc-enum-variant-constructor-type
                   ctx
                   scoped-enum
                   lifetimes
-                  fields))
-              enum-name
-              scoped-enum
-              lifetimes
-              rest)]))]))
+                  fields)]
+              (tc-bind-enum-variants-local
+                ctx
+                (tc-bind-alias-id-if-free env name constructor-ty)
+                enum-name
+                scoped-enum
+                lifetimes
+                rest))]))]))
 
 (define (tc-module-local-env-add-decl
   [ctx : TcContext]
@@ -10848,9 +10970,7 @@
 ;; builtin (unbound) or as an ordinary direct call to a shadowing user
 ;; definition (bound). Mirrors the host compiler's shadowing check (#677).
 (define (tc-name-bound? [env : TcTypeEnv] [name : String]) : bool
-  (match (tc-lookup env name)
-    [(OkTcType _) true]
-    [(ErrTcType _) false]))
+  (tc-name-bound-id? env (tc-name-id name)))
 
 (define (tc-str-ref-type? [ty : AstType]) : bool
   (match (tc-type-strip-region ty)
@@ -17460,6 +17580,39 @@
                 [_ (ErrTcString "typecheck: variant owner is not enum")])
               (tc-variant-owner-name-list rest target (+ index 1) module))]))]))
 
+(define (tc-variant-constructor-type-for-lookup-or
+  [ctx : TcContext]
+  [lookup-name : String]
+  [not-found-message : String]) : ResultTcType
+  (match (tc-enum-qualified-variant-lookup-key ctx lookup-name)
+    [(OkTcString variant-key)
+      (match (compiler-registries-lookup-variant
+        (tc-context-registries ctx)
+        variant-key)
+        [(SomeI64 handle)
+          (match (tc-qualified-variant-visible-ok ctx variant-key)
+            [(OkTcUnit)
+              (match (tc-variant-owner-name ctx handle)
+                [(OkTcString owner)
+                  (match (compiler-registries-variant-fields-indexed
+                    (tc-context-symbols ctx)
+                    handle)
+                    [(OkAstTypeList fields)
+                      (match (tc-nominal-lifetimes ctx owner)
+                        [(OkTcLifetimeList lifetimes)
+                          (OkTcType
+                            (tc-enum-variant-constructor-type
+                              ctx
+                              owner
+                              lifetimes
+                              fields))]
+                        [(ErrTcLifetimeList message) (ErrTcType message)])]
+                    [(ErrAstTypeList message) (ErrTcType message)])]
+                [(ErrTcString message) (ErrTcType message)])]
+            [(ErrTcUnit message) (ErrTcType message)])]
+        [(NoneI64) (ErrTcType not-found-message)])]
+    [(ErrTcString _) (ErrTcType not-found-message)]))
+
 (define (tc-struct-field-type
   [ctx : TcContext]
   [struct-name : String]
@@ -19979,7 +20132,10 @@
                   env
                   module
                   (tc-name-id global-name))])
-            (match (tc-source-name-lookup-key ctx env name-text)
+            (match (tc-source-name-lookup-key-after-local-field-check
+              ctx
+              env
+              name-text)
               [(OkTcString lookup-name)
                 (let
                   [lookup-id : i64 (tc-name-id lookup-name)]
@@ -19997,7 +20153,11 @@
                         (match (tc-qualified-value-visible-ok ctx lookup-name)
                           [(OkTcUnit) (OkTcType ty)]
                           [(ErrTcUnit message) (ErrTcType message)]))]
-                    [(ErrTcTypeUnsafe message) (ErrTcType message)]))]
+                    [(ErrTcTypeUnsafe message)
+                      (tc-variant-constructor-type-for-lookup-or
+                        ctx
+                        lookup-name
+                        message)]))]
               [(ErrTcString message) (ErrTcType message)]))))]
     [(AstExprTypeLiteral ty)
       (ErrTcType

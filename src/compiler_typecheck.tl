@@ -984,9 +984,30 @@
 (define (main) : i64 (head (ListCons 1 (box ListNil))))")
 
 (define (compiler-typecheck-duplicate-variant-source) : String
-  "(defenum Left (Same))
-(defenum Right (Same))
+  "(defenum Left (Same) (Same))
 (define (main) : i64 0)")
+
+(define (compiler-typecheck-cross-enum-qualified-variant-source) : String
+  "(defenum Left (Same) (Other))
+(defenum Right (Same))
+(define left : Left Left.Same)
+(define right : Right Right.Same)
+(define (main) : i64
+  (+ (match left [Left.Same 1] [_ 0])
+     (match right [Right.Same 2] [_ 0])))")
+
+(define (compiler-typecheck-enum-qualified-variant-source) : String
+  "(defenum Json (Null) (Bool bool))
+(defstruct Holder (Null i64))
+(define value : Json Json.Null)
+(define flag : Json (Json.Bool true))
+(define (score [item : Json]) : i64
+  (match item
+    [Json.Null 0]
+    [(Json.Bool b) (if b 1 2)]))
+(define (main) : i64
+  (let [Json : Holder (Holder 41)]
+    (+ Json.Null (+ (score value) (score flag)))))")
 
 (define (compiler-typecheck-variant-function-collision-source) : String
   "(defenum A (Foo))
@@ -1051,9 +1072,9 @@
       (+
         (let ([p : right.Point (right.Point 7)])
           (struct-get p x))
-        (match (right.Some 1)
-          [(right.Some v) v]
-          [right.None 0])))))")
+        (match (right.Maybe.Some 1)
+          [(right.Maybe.Some v) v]
+          [right.Maybe.None 0])))))")
 
 (define (compiler-typecheck-module-unqualified-import-source) : String
   "(module left)
@@ -1082,9 +1103,9 @@
     (+
       (let ([p : d.Point (d.Point 7)])
         (struct-get p x))
-      (match (d.Some 3)
-        [(d.Some v) v]
-        [d.None 0]))))")
+      (match (d.Maybe.Some 3)
+        [(d.Maybe.Some v) v]
+        [d.Maybe.None 0]))))")
 
 (define (compiler-typecheck-dotted-import-default-alias-source) : String
   "(module pkg.data)
@@ -1107,9 +1128,9 @@
     (+
       (let ([p : data.Point (data.Point 7)])
         (struct-get p x))
-      (match (data.Some 3)
-        [(data.Some v) v]
-        [data.None 0]))))")
+      (match (data.Maybe.Some 3)
+        [(data.Maybe.Some v) v]
+        [data.Maybe.None 0]))))")
 
 (define (compiler-typecheck-dot-field-source) : String
   "(defstruct Pair (x i64) (y i64))
@@ -1231,9 +1252,9 @@
     (+
       (let ([p : d.Point (d.Point 7 9)])
         (struct-get p x))
-      (match (d.Some 3)
-        [(d.Some v) v]
-        [d.None 0]))))")
+      (match (d.Maybe.Some 3)
+        [(d.Maybe.Some v) v]
+        [d.Maybe.None 0]))))")
 
 (define (compiler-typecheck-export-private-alias-value-source) : String
   "(module data)
@@ -1318,9 +1339,9 @@
     (+
       (let ([p : data.Point (data.Point 1)])
         (struct-get p x))
-      (match (data.Some 2)
-        [(data.Some v) v]
-        [data.None 0]))))")
+      (match (data.Maybe.Some 2)
+        [(data.Maybe.Some v) v]
+        [data.Maybe.None 0]))))")
 
 (define (compiler-typecheck-export-visibility-tests-ok?) : bool
   (let
@@ -2175,7 +2196,15 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-duplicate-variant-source)
-        "symbols: duplicate enum variant Same")
+        "symbols: duplicate enum variant Left.Same")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-cross-enum-qualified-variant-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-enum-qualified-variant-source))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok? (compiler-typecheck-module-qualified-source))

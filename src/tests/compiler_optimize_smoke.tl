@@ -247,6 +247,18 @@
         (IrInstrReturn (IrSomeValue (IrValueVar 37)))
         (IrInstrNil)))))
 
+(define (smoke-range-bce-redefined-body) : CompilerIrBlock
+  (compiler-ir-block
+    "body"
+    (compiler-ir-instr-cons
+      (IrInstrMov 0 (IrValueI64 (- 0 1)) (AstTyI64))
+      (opt-loop-bce-string-test-ref-instrs
+        2
+        30
+        (compiler-ir-instr-cons
+          (IrInstrReturn (IrSomeValue (IrValueVar 37)))
+          (IrInstrNil))))))
+
 (define (smoke-range-bce-blocks
   [with-nonnegative : bool]
   [op : CompilerIrBinOp]
@@ -259,6 +271,15 @@
         (smoke-range-bce-body)
         (compiler-ir-block-cons (opt-loop-bce-test-exit) (IrBlockNil))))))
 
+(define (smoke-range-bce-redefined-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (smoke-range-bce-entry true)
+    (compiler-ir-block-cons
+      (smoke-range-bce-lt (IrBinLt) 1)
+      (compiler-ir-block-cons
+        (smoke-range-bce-redefined-body)
+        (compiler-ir-block-cons (opt-loop-bce-test-exit) (IrBlockNil))))))
+
 (define (smoke-range-bce-count
   [with-nonnegative : bool]
   [op : CompilerIrBinOp]
@@ -269,17 +290,26 @@
       (opt-loop-bce-string-test-params)
       (smoke-range-bce-blocks with-nonnegative op length-var))))
 
+(define (smoke-range-bce-redefined-count) : i64
+  (opt-count-bounds-blocks
+    (opt-loop-bce-blocks
+      (opt-loop-bce-test-summaries false false)
+      (opt-loop-bce-string-test-params)
+      (smoke-range-bce-redefined-blocks))))
+
 (define (smoke-range-bce-self-test) : i64
   (let
     [positive : i64 (smoke-range-bce-count true (IrBinLt) 1)]
     [missing-nonnegative : i64 (smoke-range-bce-count false (IrBinLt) 1)]
     [off-by-one : i64 (smoke-range-bce-count true (IrBinLe) 1)]
     [mismatched-length : i64 (smoke-range-bce-count true (IrBinLt) 20)]
+    [redefined-index : i64 (smoke-range-bce-redefined-count)]
     (cond
       [(not (= positive 0)) 1]
       [(not (= missing-nonnegative 1)) 2]
       [(not (= off-by-one 1)) 3]
       [(not (= mismatched-length 1)) 4]
+      [(not (= redefined-index 1)) 5]
       [else 42])))
 
 (define (main) : i64

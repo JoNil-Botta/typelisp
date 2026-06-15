@@ -2187,6 +2187,12 @@
         (compiler-reg-assignment-cons
           (CompilerRegAssignment 2 (CompilerRegRegister "%r12"))
           CompilerRegAssignmentNil))]
+    [casted : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 0 (CompilerRegRegister "%r12"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment 2 (CompilerRegRegister "%r13"))
+          CompilerRegAssignmentNil))]
     (and
       (string-eq
         (compiler-backend-emit-load-var-with-plan assignments 0 "%r12")
@@ -2219,6 +2225,31 @@
         (AstTyI64)
         (compiler-backend-program-index-build IrFunctionNil IrExternNil))
         [(OkCompilerBackend asm) (string-eq asm "")]
+        [(ErrCompilerBackend _) false])
+      (match (compiler-backend-emit-cast
+        "_tl_test"
+        "entry"
+        casted
+        2
+        (IrValueVar 0)
+        (AstTyI64)
+        (AstTyU64)
+        (compiler-backend-program-index-build IrFunctionNil IrExternNil))
+        [(OkCompilerBackend asm) (string-eq asm "    movq %r12, %r13\n")]
+        [(ErrCompilerBackend _) false])
+      (match (compiler-backend-emit-cast
+        "_tl_test"
+        "entry"
+        casted
+        2
+        (IrValueVar 0)
+        (AstTyI32)
+        (AstTyI64)
+        (compiler-backend-program-index-build IrFunctionNil IrExternNil))
+        [(OkCompilerBackend asm)
+          (compiler-backend-string-contains?
+            asm
+            "    movslq %r12d, %rax\n    movq %rax, %r13\n")]
         [(ErrCompilerBackend _) false]))))
 
 (define (compiler-backend-direct-immediate-mov-ok?) : bool

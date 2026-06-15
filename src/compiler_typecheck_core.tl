@@ -28138,7 +28138,9 @@
 ;; need no macro or guard-compatibility expansion are returned unchanged without
 ;; rebuilding the AST, so the expansion phase adds no allocation for the common
 ;; case.
-(define (macro-expand-program [program : AstProgram]) : ResultMacroExpand
+(define (macro-expand-program-with-paths
+  [program : AstProgram]
+  [paths : AstDeclPathList]) : ResultMacroExpand
   (match program
     [(AstProgram decls-box)
       (let
@@ -28163,7 +28165,7 @@
           (if (or has-defmacro (macro-program-needs-expansion? decls))
             (begin
               (cfg compile-profile (compiler-tc-profile-start))
-              (match (build-compiler-symbols program)
+              (match (build-compiler-symbols-with-paths program paths)
                 [(OkCompilerSymbols symbols)
                   (match (build-compiler-registries-with-symbols
                     program
@@ -28245,6 +28247,9 @@
                 [(ErrCompilerSymbols message)
                   (ErrMacroExpand (tc-diag-at-start message))]))
             (OkMacroExpand program))))]))
+
+(define (macro-expand-program [program : AstProgram]) : ResultMacroExpand
+  (macro-expand-program-with-paths program AstDeclPathNil))
 
 (define (tc-cleanup-owning-struct-type? [ctx : TcContext] [ty : AstType]) : bool
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
@@ -29362,7 +29367,7 @@
 (define (typecheck-compiler-specialized-program-with-paths-checked-inner
   [program : AstProgram]
   [paths : AstDeclPathList]) : ResultCompilerTypecheckChecked
-  (match (build-compiler-symbols program)
+  (match (build-compiler-symbols-with-paths program paths)
     [(OkCompilerSymbols symbols)
       (match (build-compiler-registries-with-symbols program symbols)
         [(OkCompilerRegistries registries)

@@ -25,15 +25,21 @@
     (tc-typecheck-result-with-pool-check
       (match (gen-normalize-program-with-paths program paths "")
         [(OkGenProgramWithPaths generated generated-paths)
-          (match (macro-expand-program generated)
+          (match (macro-expand-program-with-paths generated generated-paths)
             [(OkMacroExpand expanded)
               (if (compiler-specialize-needed? expanded)
-                (match (compiler-specialize-program expanded)
-                  [(OkSpecProgram specialized)
-                    (typecheck-compiler-specialized-program-with-paths
-                      specialized
-                      AstDeclPathNil)]
-                  [(ErrSpecProgram diag) (ErrCompilerTypecheck diag)])
+                (match (build-compiler-symbols-with-paths
+                  expanded
+                  generated-paths)
+                  [(OkCompilerSymbols _)
+                    (match (compiler-specialize-program expanded)
+                      [(OkSpecProgram specialized)
+                        (typecheck-compiler-specialized-program-with-paths
+                          specialized
+                          AstDeclPathNil)]
+                      [(ErrSpecProgram diag) (ErrCompilerTypecheck diag)])]
+                  [(ErrCompilerSymbols message)
+                    (ErrCompilerTypecheck (tc-diag-at-start message))])
                 (typecheck-compiler-specialized-program-with-paths
                   expanded
                   generated-paths))]
@@ -47,15 +53,21 @@
     (tc-spmd-inline-helper-stack-reset!)
     (match (gen-normalize-program-with-paths program paths "")
       [(OkGenProgramWithPaths generated generated-paths)
-        (match (macro-expand-program generated)
+        (match (macro-expand-program-with-paths generated generated-paths)
           [(OkMacroExpand expanded)
             (if (compiler-specialize-needed? expanded)
-              (match (compiler-specialize-program expanded)
-                [(OkSpecProgram specialized)
-                  (typecheck-compiler-specialized-program-with-paths-checked
-                    specialized
-                    AstDeclPathNil)]
-                [(ErrSpecProgram diag) (ErrCompilerTypecheckChecked diag)])
+              (match (build-compiler-symbols-with-paths
+                expanded
+                generated-paths)
+                [(OkCompilerSymbols _)
+                  (match (compiler-specialize-program expanded)
+                    [(OkSpecProgram specialized)
+                      (typecheck-compiler-specialized-program-with-paths-checked
+                        specialized
+                        AstDeclPathNil)]
+                    [(ErrSpecProgram diag) (ErrCompilerTypecheckChecked diag)])]
+                [(ErrCompilerSymbols message)
+                  (ErrCompilerTypecheckChecked (tc-diag-at-start message))])
               (typecheck-compiler-specialized-program-with-paths-checked
                 expanded
                 generated-paths))]
@@ -8359,6 +8371,32 @@
 (extern (f [arg0 : i64]) : i64)
 (define (main) : i64 0)")
 
+(define (compiler-typecheck-dup-extern-paths) : AstDeclPathList
+  (ast-decl-path-cons
+    "src/main.tl"
+    (ast-decl-path-cons
+      "src/assets.tl"
+      (ast-decl-path-cons "src/main.tl" AstDeclPathNil))))
+
+(define (compiler-typecheck-dup-extern-paths-ok?) : bool
+  (match (parse-ast-source (compiler-typecheck-dup-extern-source))
+    [(OkAstProgram program)
+      (match (typecheck-compiler-program-with-paths
+        program
+        (compiler-typecheck-dup-extern-paths))
+        [(ErrCompilerTypecheck diag)
+          (let
+            [message : String (compiler-diagnostic-message diag)]
+            [duplicate-needle : String "symbols: duplicate value declaration f"]
+            [main-path : String "src/main.tl"]
+            [assets-path : String "src/assets.tl"]
+            (and
+              (string-contains (& message) (& duplicate-needle))
+              (string-contains (& message) (& main-path))
+              (string-contains (& message) (& assets-path))))]
+        [(OkCompilerTypecheck _) false])]
+    [(ErrAstProgram _) false]))
+
 (define (compiler-typecheck-cross-module-mismatch-source) : String
   "(module left)
 (define (helper [x : i64]) : i64 x)
@@ -8389,6 +8427,7 @@
     (compiler-typecheck-error-ok?
       (compiler-typecheck-dup-extern-source)
       "symbols: duplicate value declaration f")
+    (compiler-typecheck-dup-extern-paths-ok?)
     (compiler-typecheck-error-ok?
       (compiler-typecheck-variant-function-collision-source)
       "symbols: duplicate value declaration Foo")

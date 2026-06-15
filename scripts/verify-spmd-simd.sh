@@ -94,6 +94,7 @@ tests/spmd/masked_if_index_value_i64.tl
 tests/spmd/masked_if_value_i64.tl
 tests/spmd/masked_if_i16_u16.tl
 tests/spmd/inline_helper_masked_if_i64.tl
+tests/spmd/bool_lanes.tl
 tests/integration/spmd_foreach.tl
 tests/integration/spmd_reduce_scalar.tl
 EOF
@@ -130,6 +131,9 @@ spmd_mode_expected_compile_diagnostic() {
             ;;
         tests/spmd/inline_helper_masked_if_i64.tl:avx2)
             printf '%s\n' "lower: SPMD masked if is not supported in AVX2 backend mode; use scalar or avx512"
+            ;;
+        tests/spmd/bool_lanes.tl:avx2)
+            printf '%s\n' "lower: SPMD foreach bool dynamic-array lanes require AVX-512 backend mode; use scalar or avx512"
             ;;
         *) return 1 ;;
     esac

@@ -55,6 +55,10 @@ falling back to scalar code.
 - `../integration/spmd_foreach.tl` - `foreach` add/mul maps over i64, i32,
   i16, u16, i8, u8, f64, and f32 arrays, self-checked against scalar loops
   across empty, sub-lane, exact-lane, and tail lengths. Exit 42.
+- `bool_lanes.tl` - AVX-512-only bool dynamic-array lane fixture covering
+  bool array copies and i64 comparison results stored to bool arrays across
+  empty, sub-lane, exact-lane, and tail lengths. Scalar exits 42; AVX2 reports
+  the staged bool-lane diagnostic.
 - `../integration/spmd_reduce_scalar.tl` — `spmd-reduce` `sum`/`max`/`min` over
   i64/i32/f64 plus `all`/`any` bool reductions across empty, sub-lane,
   exact-lane, and tail lengths. Exit 42.
@@ -77,6 +81,8 @@ Coverage map:
   `i8`, `u8`, `f64`, and `f32` lives in `../integration/spmd_foreach.tl`, the
   two tail fixtures, and `uniform_zip_i64.tl`. The intentionally unsupported
   byte multiply policy is covered by `i8_mul_reject.tl`.
+- AVX-512 bool dynamic-array lane coverage lives in `bool_lanes.tl`; AVX2 keeps
+  an explicit staged diagnostic for the same source shape.
 - AVX-512 masked varying `if` direct-index, shifted-contiguous-index, and
   foreach-index-as-value coverage lives in `masked_if_i64.tl`,
   `masked_if_offset_i64.tl`, `masked_if_index_value_i64.tl`,

@@ -3,6 +3,8 @@
 
 (import "compiler_typecheck_core.tl")
 
+(import "compiler_load.tl")
+
 (import "compiler_specialize.tl")
 
 (import "../stdlib/string.tl")
@@ -301,6 +303,59 @@
         (begin
           (ty-node-pool-reset!)
           ok)))))
+
+(define (compiler-typecheck-prefix-cache-paths [entry-path : String]) : AstDeclPathList
+  (ast-decl-path-cons
+    "stdlib/tc_prefix_shared.tl"
+    (ast-decl-path-cons entry-path AstDeclPathNil)))
+
+(define (compiler-typecheck-prefix-cache-source-a) : String
+  "(define (shared-helper [x : i64]) : i64 (+ x 1))
+(define (main) : i64 (shared-helper 1))")
+
+(define (compiler-typecheck-prefix-cache-source-b) : String
+  "(define (shared-helper [x : i64]) : i64 (+ x 1))
+(define (main) : i64 (shared-helper 2))")
+
+(define (compiler-typecheck-prefix-cache-check
+  [src : String]
+  [entry-path : String]) : bool
+  (match (parse-ast-source-diagnostic entry-path src)
+    [(OkAstProgramDiagnostic program)
+      (match (typecheck-compiler-program-with-paths
+        program
+        (compiler-typecheck-prefix-cache-paths entry-path))
+        [(OkCompilerTypecheck _) true]
+        [(ErrCompilerTypecheck _) false])]
+    [(ErrAstProgramDiagnostic _) false]))
+
+(define (compiler-typecheck-prefix-cache-smoke-ok?) : bool
+  (let
+    [ok : bool true]
+    (begin
+      (compiler-load-session-cache-enable!)
+      (tc-prefix-snapshot-cache-clear!)
+      (if (compiler-typecheck-prefix-cache-check
+        (compiler-typecheck-prefix-cache-source-a)
+        "target/tc_prefix_entry_a.tl")
+        unit
+        (set! ok false))
+      (compiler-load-session-reset-pools!)
+      (compiler-load-session-reset-interns!)
+      (if (compiler-typecheck-prefix-cache-check
+        (compiler-typecheck-prefix-cache-source-b)
+        "target/tc_prefix_entry_b.tl")
+        unit
+        (set! ok false))
+      (if (> tc-prefix-snapshot-cache-hit-count 0)
+        unit
+        (set! ok false))
+      (if (> tc-prefix-snapshot-cache-store-count 0)
+        unit
+        (set! ok false))
+      (compiler-load-session-cache-disable-for-test!)
+      (tc-prefix-snapshot-cache-clear!)
+      ok)))
 
 (define (compiler-typecheck-ok-score? [src : String] [want : i64]) : bool
   (match (typecheck-compiler-source src)
@@ -8383,6 +8438,9 @@
     (if (compiler-typecheck-pool-exhaustion-diagnostic-ok?)
       unit
       (panic "typecheck: pool exhaustion diagnostic test failed"))
+    (if (compiler-typecheck-prefix-cache-smoke-ok?)
+      unit
+      (panic "typecheck: prefix snapshot cache smoke test failed"))
     (if (compiler-typecheck-error-ok?
       (compiler-typecheck-unbound-source)
       "typecheck: unbound name missing")

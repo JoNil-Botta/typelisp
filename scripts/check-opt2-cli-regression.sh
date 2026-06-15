@@ -60,6 +60,21 @@ print_log_pair() {
     sed 's/^/  /' "$stderr" >&2 || true
 }
 
+print_asm_fingerprint() {
+    label=$1
+    file=$2
+    bytes=$(wc -c < "$file" | tr -d ' ')
+    lines=$(wc -l < "$file" | tr -d ' ')
+    if command -v sha256sum >/dev/null 2>&1; then
+        hash=$(sha256sum "$file" | sed 's/[[:space:]].*//')
+    elif command -v shasum >/dev/null 2>&1; then
+        hash=$(shasum -a 256 "$file" | sed 's/[[:space:]].*//')
+    else
+        hash=unavailable
+    fi
+    echo "[opt2-cli-gate]   $label sha256=$hash bytes=$bytes lines=$lines path=$file" >&2
+}
+
 rm -f "$GENERATED"
 
 echo "[opt2-cli-gate] build release opt2 compiler ($NL_BOOTSTRAP_TARGET)"
@@ -171,9 +186,14 @@ if ! cmp -s "$REF_OPT1" "$CROSS_OPT1"; then
     echo "[opt2-cli-gate] CROSS-FIXPOINT MISMATCH: the opt2-built compiler emits" >&2
     echo "[opt2-cli-gate] different opt1 assembly than the opt1-built compiler it" >&2
     echo "[opt2-cli-gate] was built from - an opt2 self-build miscompile (#2921 class)." >&2
-    echo "[opt2-cli-gate]   reference (opt1-built @opt1): $REF_OPT1" >&2
-    echo "[opt2-cli-gate]   cross     (opt2-built @opt1): $CROSS_OPT1" >&2
-    diff "$REF_OPT1" "$CROSS_OPT1" | head -n 40 >&2 || true
+    echo "[opt2-cli-gate] fingerprints:" >&2
+    print_asm_fingerprint "reference (opt1-built @opt1)" "$REF_OPT1"
+    print_asm_fingerprint "cross     (opt2-built @opt1)" "$CROSS_OPT1"
+    if command -v diff >/dev/null 2>&1; then
+        diff -u "$REF_OPT1" "$CROSS_OPT1" | sed -n '1,120p' >&2 || true
+    else
+        cmp -l "$REF_OPT1" "$CROSS_OPT1" | sed -n '1,80p' >&2 || true
+    fi
     exit 1
 fi
 echo "[opt2-cli-gate] cross-fixpoint holds (opt2-built @opt1 == opt1-built @opt1)"

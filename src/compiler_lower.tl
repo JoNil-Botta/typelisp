@@ -22294,6 +22294,20 @@
         (IrValueVar v)
         (AstTyBool))]))
 
+(define (lower-emit-select
+  [state : LowerState]
+  [mask : CompilerIrValue]
+  [on-true : CompilerIrValue]
+  [on-false : CompilerIrValue]
+  [lanes : i64]
+  [ty : AstType]) : LowerExpr
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc s v)
+      (LowerExpr
+        (lower-state-emit s (IrInstrSelect v mask on-true on-false lanes ty))
+        (IrValueVar v)
+        ty)]))
+
 (define (lower-emit-vector-reduce
   [state : LowerState]
   [op : CompilerIrVectorReduceOp]
@@ -23733,6 +23747,16 @@
                       rest)])])]
           [(ErrLowerExpr message) (ErrLowerExpr message)]))]))
 
+(define (lower-avx512-masked-select-result-supported?
+  [state : LowerState]
+  [lanes : i64]
+  [ty : AstType]) : bool
+  (=
+    (lower-simd-lanes-for-elem
+      (lower-state-mode state)
+      (tc-type-without-regions ty))
+    lanes))
+
 (define (lower-avx512-masked-if
   [ctx : TcContext]
   [state : LowerState]
@@ -23813,9 +23837,23 @@
                                               IrValueUnit
                                               (AstTyUnit)))]
                                         [_
-                                          (lower-avx512-masked-unsupported
-                                            expr
-                                            "value-producing masked if results in this AVX-512 slice")])])]
+                                          (if (and
+                                            (ast-type-eq? then-ty else-ty)
+                                            (lower-avx512-masked-select-result-supported?
+                                              else-state
+                                              lanes
+                                              then-ty))
+                                            (OkLowerExpr
+                                              (lower-emit-select
+                                                else-state
+                                                then-mask
+                                                then-value
+                                                else-value
+                                                lanes
+                                                then-ty))
+                                            (lower-avx512-masked-unsupported
+                                              expr
+                                              "this value-producing masked if result type"))])])]
                                 [(ErrLowerExpr message) (ErrLowerExpr message)])])]
                         [(ErrLowerExpr message) (ErrLowerExpr message)])])])])])]
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
@@ -30880,6 +30918,11 @@
     [(IrInstrPredicatedStore _ _ _ _ _ _) 1]
     [_ 0]))
 
+(define (lower-test-instr-select-count [instr : CompilerIrInstr]) : i64
+  (match instr
+    [(IrInstrSelect _ _ _ _ _ _) 1]
+    [_ 0]))
+
 (define (lower-test-instr-tail-mask-count [instr : CompilerIrInstr]) : i64
   (match instr
     [(IrInstrTailMask _ _ _ _) 1]
@@ -30918,6 +30961,10 @@
         1
         0)]
     [(IrInstrPredicatedStore _ _ _ _ actual-lanes actual-ty)
+      (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
+        1
+        0)]
+    [(IrInstrSelect _ _ _ _ actual-lanes actual-ty)
       (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
         1
         0)]
@@ -31286,6 +31333,14 @@
       (+
         (lower-test-instr-predicated-store-count instr)
         (lower-test-instrs-predicated-store-count (box-get rest)))]))
+
+(define (lower-test-instrs-select-count [instrs : CompilerIrInstrList]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (lower-test-instr-select-count instr)
+        (lower-test-instrs-select-count (box-get rest)))]))
 
 (define (lower-test-instrs-tail-mask-count [instrs : CompilerIrInstrList]) : i64
   (match instrs
@@ -31807,6 +31862,21 @@
           (set! index (+ index 1))))
       acc)))
 
+(define (lower-test-instr-seq-select-count [instrs : CompilerIrInstrSeq]) : i64
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+ acc (lower-test-instr-select-count (array-ref slots index))))
+          (set! index (+ index 1))))
+      acc)))
+
 (define (lower-test-instr-seq-tail-mask-count [instrs : CompilerIrInstrSeq]) : i64
   (let
     [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
@@ -32281,6 +32351,18 @@
     [(IrBlockArray seq)
       (lower-test-blocks-predicated-store-count
         (compiler-ir-block-seq-to-list seq))]))
+
+(define (lower-test-blocks-select-count [blocks : CompilerIrBlockList]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (+
+            (lower-test-instr-seq-select-count instrs)
+            (lower-test-blocks-select-count (box-get rest)))])]
+    [(IrBlockArray seq)
+      (lower-test-blocks-select-count (compiler-ir-block-seq-to-list seq))]))
 
 (define (lower-test-blocks-tail-mask-count [blocks : CompilerIrBlockList]) : i64
   (match blocks
@@ -32881,6 +32963,22 @@
             (lower-test-function-predicated-store-count (box-get rest) name))])]
     [(IrFunctionArray seq)
       (lower-test-function-predicated-store-count
+        (compiler-ir-function-seq-to-list seq)
+        name)]))
+
+(define (lower-test-function-select-count
+  [funcs : CompilerIrFunctionList]
+  [name : String]) : i64
+  (match funcs
+    [(IrFunctionNil) (- 0 1)]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction fname _ _ _ blocks)
+          (if (string-eq fname name)
+            (lower-test-blocks-select-count blocks)
+            (lower-test-function-select-count (box-get rest) name))])]
+    [(IrFunctionArray seq)
+      (lower-test-function-select-count
         (compiler-ir-function-seq-to-list seq)
         name)]))
 
@@ -36249,6 +36347,15 @@
       (array-set! out i i)
       (array-set! out i (+ i 1)))))")
 
+(define (compiler-lower-avx512-masked-if-value-source) : String
+  "(define (fill [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (array-set! out i
+      (if (< (array-ref xs i) 0)
+        0
+        (+ (array-ref xs i) 1)))))")
+
 (define (compiler-lower-avx512-masked-if-source-shape-ok? [src : String]) : bool
   (match (lower-compiler-source-with-mode src (CompilerLowerAvx512))
     [(OkCompilerLower program _)
@@ -36327,6 +36434,47 @@
               (> tail-store-count 0)))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-avx512-masked-if-value-shape-ok?) : bool
+  (match (lower-compiler-source-with-mode
+    (compiler-lower-avx512-masked-if-value-source)
+    (CompilerLowerAvx512))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (let
+            [load-count : i64
+              (lower-test-function-vector-load-count functions "fill")]
+            [store-count : i64
+              (lower-test-function-vector-store-count functions "fill")]
+            [binop-count : i64
+              (lower-test-function-vector-binop-count functions "fill")]
+            [pred-load-count : i64
+              (lower-test-function-predicated-load-count functions "fill")]
+            [pred-store-count : i64
+              (lower-test-function-predicated-store-count functions "fill")]
+            [select-count : i64
+              (lower-test-function-select-count functions "fill")]
+            [tail-mask-count : i64
+              (lower-test-function-tail-mask-count functions "fill")]
+            [shape-count : i64
+              (lower-test-function-vector-shape-count
+                functions
+                "fill"
+                8
+                (AstTyI64))]
+            [tail-store-count : i64
+              (lower-test-function-store-ptr-count functions "fill")]
+            (compiler-lower-and8
+              (= load-count 0)
+              (= store-count 0)
+              (>= binop-count 2)
+              (>= pred-load-count 4)
+              (= pred-store-count 2)
+              (= select-count 2)
+              (= tail-mask-count 2)
+              (and (>= shape-count 8) (> tail-store-count 0))))])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-avx2-masked-if-diagnostic-ok?) : bool
   (and
     (compiler-lower-mode-error-ok?
@@ -36339,6 +36487,10 @@
       (lower-avx2-masked-if-diagnostic))
     (compiler-lower-mode-error-ok?
       (compiler-lower-avx512-masked-if-index-value-source)
+      (CompilerLowerAvx2)
+      (lower-avx2-masked-if-diagnostic))
+    (compiler-lower-mode-error-ok?
+      (compiler-lower-avx512-masked-if-value-source)
       (CompilerLowerAvx2)
       (lower-avx2-masked-if-diagnostic))))
 
@@ -36385,6 +36537,7 @@
     (compiler-lower-avx512-masked-if-shape-ok?)
     (compiler-lower-avx512-masked-if-offset-shape-ok?)
     (compiler-lower-avx512-masked-if-index-value-shape-ok?)
+    (compiler-lower-avx512-masked-if-value-shape-ok?)
     (compiler-lower-avx2-masked-if-diagnostic-ok?)))
 
 (define (compiler-lower-avx2-spmd-reduce-shape-ok?

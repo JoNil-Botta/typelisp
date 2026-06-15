@@ -2345,6 +2345,72 @@
           (ErrCompilerBackend
             (compiler-diagnostic-with-message instr-diag message))]))))
 
+(define (compiler-backend-emit-avx512-select
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [mask : CompilerIrValue]
+  [on-true : CompilerIrValue]
+  [on-false : CompilerIrValue]
+  [lanes : i64]
+  [elem-ty : AstType]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
+    (let
+      [move : String (compiler-backend-avx512-vector-move elem-ty)]
+      (if (= (string-length move) 0)
+        (ErrCompilerBackend
+          (compiler-diagnostic-with-message
+            instr-diag
+            "backend: unsupported AVX-512 select type"))
+        (match (compiler-backend-avx512-vector-value-reg
+          assignments
+          on-false
+          "select false")
+          [(OkBackendReg false-reg)
+            (match (compiler-backend-avx512-vector-value-reg
+              assignments
+              on-true
+              "select true")
+              [(OkBackendReg true-reg)
+                (match (compiler-backend-avx512-mask-value-reg
+                  assignments
+                  mask
+                  "select mask")
+                  [(OkBackendReg mask-reg)
+                    (match (compiler-backend-vector-var-reg
+                      assignments
+                      dst
+                      "select dst"
+                      "zmm")
+                      [(OkBackendReg dst-reg)
+                        (OkCompilerBackend
+                          (string-append
+                            (backend-cat5
+                              "    "
+                              move
+                              " "
+                              false-reg
+                              (backend-cat3 ", " dst-reg "\n"))
+                            (backend-cat5
+                              "    "
+                              move
+                              " "
+                              true-reg
+                              (backend-cat5 ", " dst-reg "{" mask-reg "}\n"))))]
+                      [(ErrBackendReg message)
+                        (ErrCompilerBackend
+                          (compiler-diagnostic-with-message instr-diag message))])]
+                  [(ErrBackendReg message)
+                    (ErrCompilerBackend
+                      (compiler-diagnostic-with-message instr-diag message))])]
+              [(ErrBackendReg message)
+                (ErrCompilerBackend
+                  (compiler-diagnostic-with-message instr-diag message))])]
+          [(ErrBackendReg message)
+            (ErrCompilerBackend
+              (compiler-diagnostic-with-message instr-diag message))])))
+    (compiler-backend-avx512-shape-diagnostic instr-diag elem-ty lanes)))
+
 (define (compiler-backend-round-up-16 [n : i64]) : i64
   (if (= n 0)
     0
@@ -11674,8 +11740,16 @@
           src
           lanes
           instr-diag)]
-      [(IrInstrSelect _ _ _ _ _ _)
-        (compiler-backend-vector-mask-unimplemented instr-diag)]
+      [(IrInstrSelect dst mask on-true on-false lanes elem-ty)
+        (compiler-backend-emit-avx512-select
+          assignments
+          dst
+          mask
+          on-true
+          on-false
+          lanes
+          elem-ty
+          instr-diag)]
       [(IrInstrVectorLoad dst base index lanes elem-ty)
         (compiler-backend-emit-vector-load
           assignments

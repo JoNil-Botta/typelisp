@@ -4347,6 +4347,49 @@
     [(OkCompilerBackend asm) (compiler-backend-string-contains? asm needle)]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-emit-test-instrs
+  [instrs : CompilerIrInstrList]
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]) : ResultCompilerBackend
+  (let
+    [blocks : CompilerIrBlockList
+      (compiler-ir-block-cons (compiler-ir-block "entry" instrs) IrBlockNil)]
+    [use-counts : (Array i64)
+      (compiler-backend-function-use-counts vars blocks)]
+    [_addr-forward : unit
+      (compiler-backend-addr-of-forwarding-enable! vars blocks use-counts)]
+    (match (compiler-backend-emit-instrs
+      (BackendTargetLinux)
+      "_tl_test"
+      "test"
+      blocks
+      "entry"
+      (CompilerBackendNoLabel)
+      instrs
+      assignments
+      vars
+      CompilerRegVarTypeNil
+      (CompilerBackendGlobalTypeNil)
+      (AstTyI64)
+      (compiler-backend-runtime-helper-full-plan)
+      IrFunctionNil
+      IrExternNil
+      (compiler-backend-program-index-build IrFunctionNil IrExternNil)
+      (compiler-source-spans-empty)
+      (compiler-diagnostic-at-start "" "")
+      use-counts
+      (text-buf-empty))
+      [(OkCompilerBackend asm)
+        (let
+          [_addr-forward-done : unit
+            (compiler-backend-addr-of-forwarding-disable!)]
+          (OkCompilerBackend asm))]
+      [(ErrCompilerBackend message)
+        (let
+          [_addr-forward-done : unit
+            (compiler-backend-addr-of-forwarding-disable!)]
+          (ErrCompilerBackend message))])))
+
 (define (compiler-backend-runtime-helper-full-plan) : CompilerBackendRuntimePlan
   (BackendRuntimePlan
     true
@@ -4820,6 +4863,221 @@
     (compiler-backend-instr-contains?
       (IrInstrBoundsCheck (IrValueVar 1) (IrValueVar 2) "bounds_ok")
       "    jb .L_tl_test_bounds_ok\n")))
+
+(define (compiler-backend-addr-of-forwarding-shape-ok?) : bool
+  (match (compiler-backend-emit-test-instrs
+    (compiler-ir-instr-cons
+      (IrInstrAddrOf 2 1)
+      (compiler-ir-instr-cons
+        (IrInstrStorePtr (IrValueVar 2) (IrValueI64 7) (AstTyI64))
+        IrInstrNil))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment 2 (CompilerRegRegister "%r12"))
+      CompilerRegAssignmentNil)
+    4)
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "    leaq -16(%rbp), %r10\n")
+        (compiler-backend-string-contains? asm "    movq $7, (%r10)\n")
+        (not (compiler-backend-string-contains? asm "%r12"))
+        (not
+          (compiler-backend-string-contains? asm "    movq %rax, -24(%rbp)\n"))
+        (not
+          (compiler-backend-string-contains? asm "    movq -24(%rbp), %r10\n")))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-addr-of-register-home-shape-ok?) : bool
+  (let
+    [assignments : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 2 (CompilerRegRegister "%r12"))
+        CompilerRegAssignmentNil)]
+    (match (compiler-backend-emit-addr-of assignments 2 1)
+      [(OkCompilerBackend asm) (string-eq asm "    leaq -16(%rbp), %r12\n")]
+      [(ErrCompilerBackend _) false])))
+
+(define (compiler-backend-gep-copy-bytes-const-shape-ok?) : bool
+  (match (compiler-backend-emit-test-instrs
+    (compiler-ir-instr-cons
+      (IrInstrGep 2 (IrValueVar 0) (IrValueI64 1) (AstTyU64))
+      (compiler-ir-instr-cons
+        (IrInstrCopyBytes (IrValueVar 2) (IrValueVar 1) 24)
+        IrInstrNil))
+    CompilerRegAssignmentNil
+    5)
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "    movq -8(%rbp), %r10\n")
+        (compiler-backend-string-contains? asm "    addq $8, %r10\n")
+        (compiler-backend-string-contains? asm "    movq -16(%rbp), %r11\n")
+        (compiler-backend-string-contains? asm "    movups (%r11), %xmm15\n")
+        (not
+          (compiler-backend-string-contains? asm "    movq %rax, -24(%rbp)\n"))
+        (not
+          (compiler-backend-string-contains? asm "    movq -24(%rbp), %r10\n")))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-gep-copy-bytes-index-shape-ok?) : bool
+  (match (compiler-backend-emit-test-instrs
+    (compiler-ir-instr-cons
+      (IrInstrGep 3 (IrValueVar 0) (IrValueVar 2) (AstTyU64))
+      (compiler-ir-instr-cons
+        (IrInstrCopyBytes (IrValueVar 3) (IrValueVar 1) 16)
+        IrInstrNil))
+    CompilerRegAssignmentNil
+    6)
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "    movq -8(%rbp), %r10\n")
+        (compiler-backend-string-contains? asm "    movq -24(%rbp), %r8\n")
+        (compiler-backend-string-contains? asm "    leaq (%r10,%r8,8), %r10\n")
+        (compiler-backend-string-contains? asm "    movq -16(%rbp), %r11\n")
+        (not
+          (compiler-backend-string-contains? asm "    movq %rax, -32(%rbp)\n"))
+        (not
+          (compiler-backend-string-contains? asm "    movq -32(%rbp), %r10\n")))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-gep-load-r10-reuse-shape-ok?) : bool
+  (match (compiler-backend-emit-test-instrs
+    (compiler-ir-instr-cons
+      (IrInstrGep 2 (IrValueVar 0) (IrValueI64 0) (AstTyU64))
+      (compiler-ir-instr-cons
+        (IrInstrLoad 3 (IrValueVar 2) (AstTyU64))
+        (compiler-ir-instr-cons
+          (IrInstrGep 4 (IrValueVar 0) (IrValueI64 1) (AstTyU64))
+          (compiler-ir-instr-cons
+            (IrInstrLoad 5 (IrValueVar 4) (AstTyU64))
+            IrInstrNil))))
+    CompilerRegAssignmentNil
+    7)
+    [(OkCompilerBackend asm)
+      (and
+        (= (compiler-backend-string-count asm "    movq -8(%rbp), %r10\n") 1)
+        (compiler-backend-string-contains? asm "    movq (%r10), %rax\n")
+        (compiler-backend-string-contains? asm "    movq 8(%r10), %rax\n")
+        (not
+          (compiler-backend-string-contains? asm "    movq -40(%rbp), %r10\n")))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-gep-load-compare-priority-shape-ok?) : bool
+  (match (compiler-backend-emit-test-instrs
+    (compiler-ir-instr-cons
+      (IrInstrGep 2 (IrValueVar 0) (IrValueI64 0) (AstTyU64))
+      (compiler-ir-instr-cons
+        (IrInstrLoad 3 (IrValueVar 2) (AstTyU64))
+        (compiler-ir-instr-cons
+          (IrInstrGep 4 (IrValueVar 0) (IrValueI64 1) (AstTyU64))
+          (compiler-ir-instr-cons
+            (IrInstrLoad 5 (IrValueVar 4) (AstTyU64))
+            (compiler-ir-instr-cons
+              (IrInstrBinOp
+                7
+                (IrBinEq)
+                (IrValueVar 5)
+                (IrValueVar 6)
+                (AstTyI64))
+              (compiler-ir-instr-cons
+                (IrInstrBranch (IrValueVar 7) "eq" "ne")
+                IrInstrNil))))))
+    CompilerRegAssignmentNil
+    9)
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "    cmpq %r8, 8(%r10)\n")
+        (not (compiler-backend-string-contains? asm "    movq 8(%r10), %rax\n"))
+        (not
+          (compiler-backend-string-contains? asm "    movq %rax, -48(%rbp)\n")))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-load-load-pointer-chase-shape-ok?) : bool
+  (match (compiler-backend-emit-test-instrs
+    (compiler-ir-instr-cons
+      (IrInstrLoad 1 (IrValueVar 0) (ast-ty-mut-ptr (AstTyU8)))
+      (compiler-ir-instr-cons
+        (IrInstrLoad 2 (IrValueVar 1) (AstTyI64))
+        IrInstrNil))
+    CompilerRegAssignmentNil
+    4)
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "    movq -8(%rbp), %r10\n")
+        (compiler-backend-string-contains? asm "    movq (%r10), %r10\n")
+        (compiler-backend-string-contains? asm "    movq (%r10), %rax\n")
+        (not
+          (compiler-backend-string-contains? asm "    movq %rax, -16(%rbp)\n"))
+        (not
+          (compiler-backend-string-contains? asm "    movq -16(%rbp), %r10\n")))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-store-ptr-pair-shape-ok?) : bool
+  (match (compiler-backend-emit-test-instrs
+    (compiler-ir-instr-cons
+      (IrInstrStorePtr (IrValueVar 0) (IrValueI64 1) (AstTyI64))
+      (compiler-ir-instr-cons
+        (IrInstrGep 2 (IrValueVar 0) (IrValueI64 1) (AstTyU64))
+        (compiler-ir-instr-cons
+          (IrInstrStorePtr (IrValueVar 2) (IrValueI64 2) (AstTyI64))
+          IrInstrNil)))
+    CompilerRegAssignmentNil
+    4)
+    [(OkCompilerBackend asm)
+      (and
+        (= (compiler-backend-string-count asm "    movq -8(%rbp), %r10\n") 1)
+        (compiler-backend-string-contains? asm "    movq $1, (%r10)\n")
+        (compiler-backend-string-contains? asm "    movq $2, 8(%r10)\n")
+        (not
+          (compiler-backend-string-contains? asm "    movq %rax, -24(%rbp)\n"))
+        (not
+          (compiler-backend-string-contains? asm "    movq -24(%rbp), %r10\n")))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-store-home-base-shape-ok?) : bool
+  (let
+    [assignments : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 0 (CompilerRegRegister "%r12"))
+        CompilerRegAssignmentNil)]
+    [index : CompilerBackendProgramIndex
+      (compiler-backend-program-index-build IrFunctionNil IrExternNil)]
+    (and
+      (match (compiler-backend-emit-store-ptr
+        assignments
+        (IrValueVar 0)
+        (IrValueI64 7)
+        (AstTyI64)
+        index)
+        [(OkCompilerBackend asm)
+          (and
+            (string-eq asm "    movq $7, (%r12)\n")
+            (not (compiler-backend-string-contains? asm "%r10")))]
+        [(ErrCompilerBackend _) false])
+      (match (compiler-backend-emit-store-to-gep
+        assignments
+        (IrValueVar 0)
+        (IrValueI64 1)
+        (AstTyU64)
+        (IrValueI64 9)
+        (AstTyI64)
+        index)
+        [(OkCompilerBackend asm)
+          (and
+            (string-eq asm "    movq $9, 8(%r12)\n")
+            (not (compiler-backend-string-contains? asm "%r10")))]
+        [(ErrCompilerBackend _) false]))))
+
+(define (compiler-backend-address-mode-fusion-ok?) : bool
+  (and
+    (backend-and8
+      (compiler-backend-addr-of-forwarding-shape-ok?)
+      (compiler-backend-addr-of-register-home-shape-ok?)
+      (compiler-backend-gep-copy-bytes-const-shape-ok?)
+      (compiler-backend-gep-copy-bytes-index-shape-ok?)
+      (compiler-backend-gep-load-r10-reuse-shape-ok?)
+      (compiler-backend-load-load-pointer-chase-shape-ok?)
+      (compiler-backend-store-ptr-pair-shape-ok?)
+      (compiler-backend-store-home-base-shape-ok?))
+    (compiler-backend-gep-load-compare-priority-shape-ok?)))
 
 (define (compiler-backend-full-syscall-instr) : CompilerIrInstr
   (IrInstrSyscall
@@ -7261,6 +7519,7 @@
       (compiler-backend-string-ok?)
       (and
         (compiler-backend-memory-op-ok?)
+        (compiler-backend-address-mode-fusion-ok?)
         (compiler-backend-low-level-instr-ok?)
         (compiler-backend-syscall-source-ok?)
         (compiler-backend-numeric-cast-shape-ok?)

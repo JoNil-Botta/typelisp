@@ -86,6 +86,10 @@ check_optimizer_target_free() {
     fi
 }
 
+check_target_dispatch_allowlist() {
+    scripts/check-codegen-target-dispatch.sh
+}
+
 check_emit_ir_target_honored() {
     probe_dir="$WORKDIR/target-cfg-probe"
     rm -rf "$probe_dir"
@@ -178,6 +182,7 @@ compare_outputs() {
 }
 
 check_optimizer_target_free
+check_target_dispatch_allowlist
 check_emit_ir_target_honored
 
 rm -rf "$LINUX_DIR" "$WINDOWS_DIR"

@@ -134,7 +134,14 @@ small non-target-cfg corpus with `compile --emit-ir` for `linux-x86_64` and
 summaries. It also fails if target-specific tokens appear in
 `src/compiler_optimize.tl`, keeping the optimizer target-independent. A
 separate target-cfg probe confirms that `compile --emit-ir --target` is actually
-honoring the requested target.
+honoring the requested target. The same gate runs
+[`../scripts/check-codegen-target-dispatch.sh`](../scripts/check-codegen-target-dispatch.sh),
+which checks the lowerer/backend target-dispatch inventory in
+[`../scripts/codegen-target-dispatch-allowlist.tsv`](../scripts/codegen-target-dispatch-allowlist.tsv).
+New Linux/Windows dispatch sites in `src/compiler_lower.tl` or
+`src/compiler_backend.tl` must be classified there as `abi`, `runtime`,
+`target-cfg`, `backend-mode`, `entry`, `object-format`, `test-only`, or
+`transitional`; otherwise the parity gate fails.
 
 ```sh
 TYPELISP_BIN=target/stage0/typelisp scripts/check-codegen-target-parity.sh

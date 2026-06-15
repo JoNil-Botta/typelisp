@@ -4587,6 +4587,42 @@
     false
     (tc-source-name-bound-exact? env (substring name 0 first-dot))))
 
+(define (tc-source-leading-segment-wins-over-exact-id?
+  [env : TcTypeEnv]
+  [name-id : i64]
+  [prefix-id : i64]) : bool
+  (match env
+    [(TcTypeNil) false]
+    [(TcTypeBind key _ rest)
+      (if (= key name-id)
+        false
+        (if (= key prefix-id)
+          true
+          (tc-source-leading-segment-wins-over-exact-id?
+            (box-get rest)
+            name-id
+            prefix-id)))]
+    [(TcTypeCache _ _ _ _ _ _ _ rest _)
+      (tc-source-leading-segment-wins-over-exact-id?
+        (box-get rest)
+        name-id
+        prefix-id)]))
+
+(define (tc-source-leading-segment-wins-over-exact?
+  [env : TcTypeEnv]
+  [name : String]
+  [first-dot : i64]) : bool
+  (if (<= first-dot 0)
+    false
+    (let
+      [name-id : i64 (tc-name-id name)]
+      [prefix-id : i64 (tc-name-id (substring name 0 first-dot))]
+      (if (tc-source-name-bound-exact-id? env prefix-id)
+        (if (tc-source-name-bound-exact-id? env name-id)
+          (tc-source-leading-segment-wins-over-exact-id? env name-id prefix-id)
+          true)
+        false))))
+
 (define (tc-dotted-field-index-message [name : String]) : String
   (str-cat
     "typecheck: dotted field access "
@@ -4607,18 +4643,17 @@
     [first-dot : i64 (tc-name-first-dot name)]
     (if (< first-dot 0)
       false
-      (if (tc-source-name-bound-exact? env name)
-        false
-        (tc-source-leading-segment-bound? env name first-dot)))))
+      (tc-source-leading-segment-wins-over-exact? env name first-dot))))
 
 (define (tc-dotted-local-field-name-id? [env : TcTypeEnv] [name-id : i64]) : bool
   (let
     [first-dot : i64 (intern-first-dot name-id)]
     (if (< first-dot 0)
       false
-      (if (tc-source-name-bound-exact-id? env name-id)
-        false
-        (tc-source-leading-segment-bound? env (intern-str name-id) first-dot)))))
+      (tc-source-leading-segment-wins-over-exact?
+        env
+        (intern-str name-id)
+        first-dot))))
 
 (define (tc-dotted-local-field-expr-id-tail
   [name : String]
@@ -4806,9 +4841,7 @@
       [first-dot : i64 (tc-name-first-dot name)]
       (if (< first-dot 0)
         (OkTcString name)
-        (if (or
-          (tc-source-name-bound-exact? env name)
-          (tc-source-leading-segment-bound? env name first-dot))
+        (if (tc-source-leading-segment-wins-over-exact? env name first-dot)
           (OkTcString name)
           (match (tc-source-dotted-alias-key ctx name first-dot)
             [(TcSomeString key) (OkTcString key)]
@@ -4816,7 +4849,9 @@
               (match (tc-source-dotted-full-path-key ctx name)
                 [(TcSomeString key) (OkTcString key)]
                 [(TcNoString)
-                  (ErrTcString (tc-unresolved-dotted-name-message name))])]))))))
+                  (if (tc-source-name-bound-exact? env name)
+                    (OkTcString name)
+                    (ErrTcString (tc-unresolved-dotted-name-message name)))])]))))))
 
 (define (tc-qualified-access-target-module
   [ctx : TcContext]
@@ -7927,19 +7962,23 @@
         (match variant
           [(AstVariantDef name fields _)
             (let
+              [variant-name : String (intern-str name)]
+              [qualified-name : String
+                (compiler-enum-qualified-variant-name enum-name variant-name)]
               [scoped-enum : String
                 (compiler-symbol-module-key module enum-name)]
+              [constructor-ty : AstType
+                (tc-enum-variant-constructor-type
+                  ctx
+                  scoped-enum
+                  lifetimes
+                  fields)]
               (tc-bind-enum-variants-in-module
                 ctx
-                (tc-bind-module-name-id
-                  env
-                  module
-                  name
-                  (tc-enum-variant-constructor-type
-                    ctx
-                    scoped-enum
-                    lifetimes
-                    fields))
+                (tc-bind-alias-if-free
+                  (tc-bind-module-name env module qualified-name constructor-ty)
+                  (compiler-symbol-module-key module variant-name)
+                  constructor-ty)
                 module
                 enum-name
                 lifetimes
@@ -8143,20 +8182,31 @@
         [rest : AstVariantDefList (box-get rest)]
         (match variant
           [(AstVariantDef name fields _)
-            (tc-bind-enum-variant-aliases
-              ctx
-              (tc-bind
-                env
-                (compiler-symbol-module-key alias (intern-str name))
+            (let
+              [variant-name : String (intern-str name)]
+              [qualified-name : String
+                (compiler-enum-qualified-variant-name
+                  (intern-name-base enum-name)
+                  variant-name)]
+              [constructor-ty : AstType
                 (tc-enum-variant-constructor-type
                   ctx
                   enum-name
                   lifetimes
-                  fields))
-              alias
-              enum-name
-              lifetimes
-              rest)]))]))
+                  fields)]
+              (tc-bind-enum-variant-aliases
+                ctx
+                (tc-bind
+                  (tc-bind-alias-if-free
+                    env
+                    (compiler-symbol-module-key alias variant-name)
+                    constructor-ty)
+                  (compiler-symbol-module-key alias qualified-name)
+                  constructor-ty)
+                alias
+                enum-name
+                lifetimes
+                rest))]))]))
 
 (define (tc-bind-import-alias-decl-in-module
   [ctx : TcContext]
@@ -8467,20 +8517,26 @@
         [rest : AstVariantDefList (box-get rest)]
         (match variant
           [(AstVariantDef name fields _)
-            (tc-bind-enum-variants-local
-              ctx
-              (tc-bind
-                env
-                (intern-str name)
+            (let
+              [variant-name : String (intern-str name)]
+              [qualified-name : String
+                (compiler-enum-qualified-variant-name enum-name variant-name)]
+              [constructor-ty : AstType
                 (tc-enum-variant-constructor-type
                   ctx
                   scoped-enum
                   lifetimes
-                  fields))
-              enum-name
-              scoped-enum
-              lifetimes
-              rest)]))]))
+                  fields)]
+              (tc-bind-enum-variants-local
+                ctx
+                (tc-bind
+                  (tc-bind-alias-if-free env variant-name constructor-ty)
+                  qualified-name
+                  constructor-ty)
+                enum-name
+                scoped-enum
+                lifetimes
+                rest))]))]))
 
 (define (tc-module-local-env-add-decl
   [ctx : TcContext]

@@ -353,6 +353,11 @@
     name
     (string-append module (string-append "/" name))))
 
+(define (compiler-enum-qualified-variant-name
+  [enum-name : String]
+  [variant-name : String]) : String
+  (string-append enum-name (string-append "." variant-name)))
+
 (define (compiler-qualified-name [module : String] [name : String]) : CompilerQualifiedName
   (CompilerQualifiedName (intern module) (intern name)))
 
@@ -599,6 +604,33 @@
                 decls
                 owner-names)))])]))
 
+(define (compiler-symbols-add-variant-flat-value-alias-id
+  [symbols : CompilerSymbols]
+  [name-id : i64]
+  [display-name : String]
+  [handle : i64]) : ResultCompilerSymbols
+  (match symbols
+    [(CompilerSymbols values types macros decls owner-names)
+      (match (compiler-symbol-map-lookup-id values name-id)
+        [(SomeI64 existing)
+          (if (=
+            (compiler-symbol-handle-kind existing)
+            (compiler-symbol-kind-enum-variant))
+            (OkCompilerSymbols symbols)
+            (ErrCompilerSymbols
+              (compiler-symbols-duplicate-value-message display-name)))]
+        [(NoneI64)
+          (if (compiler-symbol-map-contains-id? macros name-id)
+            (ErrCompilerSymbols
+              (compiler-symbols-duplicate-macro-value-message display-name))
+            (OkCompilerSymbols
+              (CompilerSymbols
+                (compiler-symbol-map-bind-id values name-id handle)
+                types
+                macros
+                decls
+                owner-names)))])]))
+
 (define (compiler-symbols-add-type
   [symbols : CompilerSymbols]
   [name : String]
@@ -687,12 +719,19 @@
 (define (compiler-symbols-add-variant-value-in-module
   [symbols : CompilerSymbols]
   [module : String]
+  [enum-name : String]
   [name : String]
   [enum-index : i64]
   [variant-index : i64]) : ResultCompilerSymbols
   (let
-    [key-id : i64 (compiler-symbol-module-key-id module name)]
-    [display-name : String (compiler-symbol-module-key module name)]
+    [qualified-name : String
+      (compiler-enum-qualified-variant-name enum-name name)]
+    [qualified-key-id : i64
+      (compiler-symbol-module-key-id module qualified-name)]
+    [qualified-display-name : String
+      (compiler-symbol-module-key module qualified-name)]
+    [flat-key-id : i64 (compiler-symbol-module-key-id module name)]
+    [flat-display-name : String (compiler-symbol-module-key module name)]
     [handle : i64
       (compiler-registry-make-handle
         (compiler-symbol-kind-enum-variant)
@@ -700,16 +739,25 @@
         variant-index)]
     (match (compiler-symbols-add-variant-value-id
       symbols
-      key-id
-      display-name
+      qualified-key-id
+      qualified-display-name
       handle)
       [(OkCompilerSymbols next)
-        (OkCompilerSymbols (compiler-symbols-add-value-alias next name handle))]
+        (match (compiler-symbols-add-variant-flat-value-alias-id
+          next
+          flat-key-id
+          flat-display-name
+          handle)
+          [(OkCompilerSymbols with-flat)
+            (OkCompilerSymbols
+              (compiler-symbols-add-value-alias with-flat name handle))]
+          [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])]
       [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])))
 
 (define (compiler-symbols-add-variant-values-in-module
   [symbols : CompilerSymbols]
   [module : String]
+  [enum-name : String]
   [variants : AstVariantDefList]
   [enum-index : i64]
   [variant-index : i64]) : ResultCompilerSymbols
@@ -723,6 +771,7 @@
             (match (compiler-symbols-add-variant-value-in-module
               symbols
               module
+              enum-name
               (intern-str name)
               enum-index
               variant-index)
@@ -730,6 +779,7 @@
                 (compiler-symbols-add-variant-values-in-module
                   next
                   module
+                  enum-name
                   rest
                   enum-index
                   (+ variant-index 1))]
@@ -1010,20 +1060,61 @@
             module
             name)))]))
 
+(define (compiler-exports-variant-qualified-name
+  [symbols : CompilerSymbols]
+  [handle : i64]
+  [variant-name : String]) : CompilerMaybeString
+  (match (compiler-symbols-owner-name-at-index
+    symbols
+    (compiler-registry-handle-owner-index handle))
+    [(CompilerSomeString owner)
+      (CompilerSomeString
+        (compiler-enum-qualified-variant-name
+          (intern-name-base owner)
+          variant-name))]
+    [(CompilerNoString) (CompilerNoString)]))
+
+(define (compiler-exports-add-qualified-variant-alias
+  [exports : CompilerExports]
+  [symbols : CompilerSymbols]
+  [module : String]
+  [name : String]
+  [handle : i64]) : ResultCompilerExports
+  (if (intern-name-dotted? name)
+    (OkCompilerExports exports)
+    (match (compiler-exports-variant-qualified-name symbols handle name)
+      [(CompilerSomeString qualified-name)
+        (compiler-exports-add
+          exports
+          (compiler-export-kind-variant)
+          module
+          qualified-name
+          handle)]
+      [(CompilerNoString) (OkCompilerExports exports)])))
+
 (define (compiler-exports-add-variant-item
   [exports : CompilerExports]
   [symbols : CompilerSymbols]
+  [owner-symbols : CompilerSymbols]
   [module : String]
   [name : String]) : ResultCompilerExports
   (match (compiler-symbols-lookup-value-in-module symbols module name)
     [(SomeI64 handle)
       (if (compiler-export-variant-handle? handle)
-        (compiler-exports-add
+        (match (compiler-exports-add
           exports
           (compiler-export-kind-variant)
           module
           name
           handle)
+          [(OkCompilerExports next)
+            (compiler-exports-add-qualified-variant-alias
+              next
+              owner-symbols
+              module
+              name
+              handle)]
+          [(ErrCompilerExports message) (ErrCompilerExports message)])
         (ErrCompilerExports
           (compiler-export-namespace-message
             (compiler-export-kind-variant)
@@ -1189,6 +1280,7 @@
           (match (compiler-symbols-add-variant-values-in-module
             next
             module
+            (intern-str name)
             variants
             index
             0)
@@ -1210,6 +1302,7 @@
           (match (compiler-symbols-add-variant-values-in-module
             next
             module
+            (intern-str name)
             variants
             index
             0)
@@ -1534,6 +1627,7 @@
 (define (compiler-symbols-add-variant-value-aliases
   [symbols : CompilerSymbols]
   [alias : String]
+  [enum-name : String]
   [variants : AstVariantDefList]
   [enum-index : i64]
   [variant-index : i64]) : CompilerSymbols
@@ -1544,18 +1638,28 @@
         [rest : AstVariantDefList (box-get rest)]
         (match variant
           [(AstVariantDef name _ _)
-            (compiler-symbols-add-variant-value-aliases
-              (compiler-symbols-add-value-alias
-                symbols
-                (compiler-symbol-module-key alias (intern-str name))
+            (let
+              [variant-name : String (intern-str name)]
+              [qualified-name : String
+                (compiler-enum-qualified-variant-name enum-name variant-name)]
+              [handle : i64
                 (compiler-registry-make-handle
                   (compiler-symbol-kind-enum-variant)
                   enum-index
-                  variant-index))
-              alias
-              rest
-              enum-index
-              (+ variant-index 1))]))]))
+                  variant-index)]
+              (compiler-symbols-add-variant-value-aliases
+                (compiler-symbols-add-value-alias
+                  (compiler-symbols-add-value-alias
+                    symbols
+                    (compiler-symbol-module-key alias variant-name)
+                    handle)
+                  (compiler-symbol-module-key alias qualified-name)
+                  handle)
+                alias
+                enum-name
+                rest
+                enum-index
+                (+ variant-index 1)))]))]))
 
 (define (compiler-symbols-add-struct-cleanup-alias
   [symbols : CompilerSymbols]
@@ -1624,6 +1728,7 @@
             (compiler-symbol-module-key alias (intern-str name))
             (compiler-symbol-make-handle (compiler-symbol-kind-defenum) index))
           alias
+          (intern-str name)
           variants
           index
           0)
@@ -1638,6 +1743,7 @@
             (compiler-symbol-module-key alias (intern-str name))
             (compiler-symbol-make-handle (compiler-symbol-kind-defenum) index))
           alias
+          (intern-str name)
           variants
           index
           0)
@@ -2147,12 +2253,17 @@
 (define (compiler-registries-add-variant-in-module
   [registries : CompilerRegistries]
   [module : String]
+  [enum-name : String]
   [name : String]
   [enum-index : i64]
   [variant-index : i64]) : ResultCompilerRegistries
   (let
-    [key-id : i64 (compiler-symbol-module-key-id module name)]
-    [display-name : String (compiler-symbol-module-key module name)]
+    [qualified-name : String
+      (compiler-enum-qualified-variant-name enum-name name)]
+    [qualified-key-id : i64
+      (compiler-symbol-module-key-id module qualified-name)]
+    [qualified-display-name : String
+      (compiler-symbol-module-key module qualified-name)]
     [handle : i64
       (compiler-registry-make-handle
         (compiler-symbol-kind-enum-variant)
@@ -2160,14 +2271,18 @@
         variant-index)]
     (match registries
       [(CompilerRegistries variants fields)
-        (if (compiler-symbol-map-contains-id? variants key-id)
+        (if (compiler-symbol-map-contains-id? variants qualified-key-id)
           (ErrCompilerRegistries
-            (compiler-registries-duplicate-variant-message display-name))
+            (compiler-registries-duplicate-variant-message
+              qualified-display-name))
           (OkCompilerRegistries
             (compiler-registries-add-variant-alias
-              (CompilerRegistries
-                (compiler-symbol-map-bind-id variants key-id handle)
-                fields)
+              (compiler-registries-add-variant-alias
+                (CompilerRegistries
+                  (compiler-symbol-map-bind-id variants qualified-key-id handle)
+                  fields)
+                (compiler-symbol-module-key module name)
+                handle)
               name
               handle)))])))
 
@@ -2231,6 +2346,7 @@
 (define (compiler-registries-add-variant-aliases-list
   [registries : CompilerRegistries]
   [alias : String]
+  [enum-name : String]
   [variants : AstVariantDefList]
   [enum-index : i64]
   [variant-index : i64]) : CompilerRegistries
@@ -2241,18 +2357,28 @@
         [rest : AstVariantDefList (box-get rest)]
         (match variant
           [(AstVariantDef name _ _)
-            (compiler-registries-add-variant-aliases-list
-              (compiler-registries-add-variant-alias
-                registries
-                (compiler-symbol-module-key alias (intern-str name))
+            (let
+              [variant-name : String (intern-str name)]
+              [qualified-name : String
+                (compiler-enum-qualified-variant-name enum-name variant-name)]
+              [handle : i64
                 (compiler-registry-make-handle
                   (compiler-symbol-kind-enum-variant)
                   enum-index
-                  variant-index))
-              alias
-              rest
-              enum-index
-              (+ variant-index 1))]))]))
+                  variant-index)]
+              (compiler-registries-add-variant-aliases-list
+                (compiler-registries-add-variant-alias
+                  (compiler-registries-add-variant-alias
+                    registries
+                    (compiler-symbol-module-key alias variant-name)
+                    handle)
+                  (compiler-symbol-module-key alias qualified-name)
+                  handle)
+                alias
+                enum-name
+                rest
+                enum-index
+                (+ variant-index 1)))]))]))
 
 (define (compiler-registries-add-field-aliases-list
   [registries : CompilerRegistries]
@@ -2287,17 +2413,19 @@
   [decl : AstDecl]
   [index : i64]) : CompilerRegistries
   (match decl
-    [(AstDeclDefEnum _ _ variants)
+    [(AstDeclDefEnum name _ variants)
       (compiler-registries-add-variant-aliases-list
         registries
         alias
+        (intern-str name)
         variants
         index
         0)]
-    [(AstDeclDefEnumLifetimes _ _ _ variants)
+    [(AstDeclDefEnumLifetimes name _ _ variants)
       (compiler-registries-add-variant-aliases-list
         registries
         alias
+        (intern-str name)
         variants
         index
         0)]
@@ -2445,12 +2573,14 @@
 (define (build-compiler-variant-registry-list
   [variants : AstVariantDefList]
   [registries : CompilerRegistries]
+  [enum-name : String]
   [enum-index : i64]
   [variant-index : i64]) : ResultCompilerRegistries
   (build-compiler-variant-registry-list-in-module
     variants
     registries
     ""
+    enum-name
     enum-index
     variant-index))
 
@@ -2458,6 +2588,7 @@
   [variants : AstVariantDefList]
   [registries : CompilerRegistries]
   [module : String]
+  [enum-name : String]
   [enum-index : i64]
   [variant-index : i64]) : ResultCompilerRegistries
   (match variants
@@ -2470,6 +2601,7 @@
             (match (compiler-registries-add-variant-in-module
               registries
               module
+              enum-name
               (intern-str name)
               enum-index
               variant-index)
@@ -2478,6 +2610,7 @@
                   rest
                   next-registries
                   module
+                  enum-name
                   enum-index
                   (+ variant-index 1))]
               [(ErrCompilerRegistries message) (ErrCompilerRegistries message)])]))]))
@@ -2571,11 +2704,12 @@
               registries
               index
               module)]
-          [(AstDeclDefEnum _ _ variants)
+          [(AstDeclDefEnum name _ variants)
             (match (build-compiler-variant-registry-list-in-module
               variants
               registries
               module
+              (intern-str name)
               index
               0)
               [(OkCompilerRegistries next-registries)
@@ -2585,11 +2719,12 @@
                   (+ index 1)
                   module)]
               [(ErrCompilerRegistries message) (ErrCompilerRegistries message)])]
-          [(AstDeclDefEnumLifetimes _ _ _ variants)
+          [(AstDeclDefEnumLifetimes name _ _ variants)
             (match (build-compiler-variant-registry-list-in-module
               variants
               registries
               module
+              (intern-str name)
               index
               0)
               [(OkCompilerRegistries next-registries)
@@ -2633,11 +2768,12 @@
             (let
               [template : AstDecl (box-get template-box)]
               (match template
-                [(AstDeclDefEnum _ _ variants)
+                [(AstDeclDefEnum name _ variants)
                   (match (build-compiler-variant-registry-list-in-module
                     variants
                     registries
                     module
+                    (intern-str name)
                     index
                     0)
                     [(OkCompilerRegistries next-registries)
@@ -2648,11 +2784,12 @@
                         module)]
                     [(ErrCompilerRegistries message)
                       (ErrCompilerRegistries message)])]
-                [(AstDeclDefEnumLifetimes _ _ _ variants)
+                [(AstDeclDefEnumLifetimes name _ _ variants)
                   (match (build-compiler-variant-registry-list-in-module
                     variants
                     registries
                     module
+                    (intern-str name)
                     index
                     0)
                     [(OkCompilerRegistries next-registries)
@@ -2738,6 +2875,7 @@
 (define (build-compiler-export-item
   [exports : CompilerExports]
   [symbols : CompilerSymbols]
+  [owner-symbols : CompilerSymbols]
   [registries : CompilerRegistries]
   [module : String]
   [item : AstExportItem]) : ResultCompilerExports
@@ -2759,11 +2897,17 @@
         type-name
         field-name)]
     [(AstExportVariant name)
-      (compiler-exports-add-variant-item exports symbols module name)]))
+      (compiler-exports-add-variant-item
+        exports
+        symbols
+        owner-symbols
+        module
+        name)]))
 
 (define (build-compiler-export-items
   [exports : CompilerExports]
   [symbols : CompilerSymbols]
+  [owner-symbols : CompilerSymbols]
   [registries : CompilerRegistries]
   [module : String]
   [items : AstExportItemList]) : ResultCompilerExports
@@ -2775,6 +2919,7 @@
         (match (build-compiler-export-item
           exports
           symbols
+          owner-symbols
           registries
           module
           item)
@@ -2782,6 +2927,7 @@
             (build-compiler-export-items
               next-exports
               symbols
+              owner-symbols
               registries
               module
               rest)]
@@ -2790,6 +2936,7 @@
 (define (build-compiler-export-list-in-module
   [decls : AstDeclList]
   [symbols : CompilerSymbols]
+  [owner-symbols : CompilerSymbols]
   [registries : CompilerRegistries]
   [exports : CompilerExports]
   [module : String]) : ResultCompilerExports
@@ -2803,6 +2950,7 @@
             (build-compiler-export-list-in-module
               rest
               symbols
+              owner-symbols
               registries
               exports
               (intern-str next-module))]
@@ -2810,6 +2958,7 @@
             (match (build-compiler-export-items
               exports
               symbols
+              owner-symbols
               registries
               module
               items)
@@ -2817,6 +2966,7 @@
                 (build-compiler-export-list-in-module
                   rest
                   symbols
+                  owner-symbols
                   registries
                   next-exports
                   module)]
@@ -2829,6 +2979,7 @@
                   (match (build-compiler-export-items
                     exports
                     symbols
+                    owner-symbols
                     registries
                     module
                     items)
@@ -2836,6 +2987,7 @@
                       (build-compiler-export-list-in-module
                         rest
                         symbols
+                        owner-symbols
                         registries
                         next-exports
                         module)]
@@ -2844,6 +2996,7 @@
                   (build-compiler-export-list-in-module
                     rest
                     symbols
+                    owner-symbols
                     registries
                     exports
                     module)]))]
@@ -2851,6 +3004,7 @@
             (build-compiler-export-list-in-module
               rest
               symbols
+              owner-symbols
               registries
               exports
               module)]))]))
@@ -2892,6 +3046,7 @@
               (build-compiler-export-list-in-module
                 decls
                 local-symbols
+                symbols
                 registries
                 (compiler-exports-empty)
                 ""))])]
@@ -3267,6 +3422,9 @@
 (defenum Point (PointVariant))")
 
 (define (compiler-registries-duplicate-variant-source) : String
+  "(defenum Left (Same) (Same))")
+
+(define (compiler-registries-cross-enum-variant-source) : String
   "(defenum Left (Same))
 (defenum Right (Same))")
 
@@ -3362,8 +3520,31 @@
   (match (build-compiler-registries-from-source
     (compiler-registries-duplicate-variant-source))
     [(ErrCompilerRegistries message)
-      (string-eq message (compiler-registries-duplicate-variant-message "Same"))]
+      (string-eq
+        message
+        (compiler-registries-duplicate-variant-message "Left.Same"))]
     [(OkCompilerRegistries _) false]))
+
+(define (compiler-registries-cross-enum-variant-ok?) : bool
+  (match (build-compiler-registries-from-source
+    (compiler-registries-cross-enum-variant-source))
+    [(OkCompilerRegistries registries)
+      (and
+        (=
+          (compiler-registry-lookup-score
+            (compiler-registries-lookup-variant registries "Left.Same")
+            (compiler-symbol-kind-enum-variant)
+            0
+            0)
+          1)
+        (=
+          (compiler-registry-lookup-score
+            (compiler-registries-lookup-variant registries "Right.Same")
+            (compiler-symbol-kind-enum-variant)
+            1
+            0)
+          1))]
+    [(ErrCompilerRegistries _) false]))
 
 (define (compiler-registries-duplicate-field-ok?) : bool
   (match (build-compiler-registries-from-source
@@ -3562,6 +3743,18 @@
                           (compiler-export-kind-variant)
                           "data"
                           "Some"
+                          (compiler-symbol-kind-enum-variant)
+                          4
+                          1)
+                        1)
+                        unit
+                        (set! ok false))
+                      (if (=
+                        (compiler-export-registry-score
+                          exports
+                          (compiler-export-kind-variant)
+                          "data"
+                          "Maybe.Some"
                           (compiler-symbol-kind-enum-variant)
                           4
                           1)
@@ -3984,6 +4177,9 @@
                     unit
                     (set! ok false))
                   (if (compiler-registries-duplicate-variant-ok?)
+                    unit
+                    (set! ok false))
+                  (if (compiler-registries-cross-enum-variant-ok?)
                     unit
                     (set! ok false))
                   (if (compiler-registries-duplicate-field-ok?)

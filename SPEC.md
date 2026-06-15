@@ -480,12 +480,16 @@ Examples:
 - Each variant has a numeric **tag** (0-based index).
 - Layout: `(tag : u64, payload ...)` — tag word + maximum payload size across all variants.
 - Nullary variants have no payload; they occupy only the tag word.
-- Variant constructor and pattern names are global, unqualified value names.
-  Reusing the same variant name in another enum is rejected.
+- Variant constructors and patterns may be written either as compatibility
+  unqualified names (`Red`, `(Some x)`) or as enum-qualified names
+  (`Color.Red`, `(Option.Some x)`). Duplicate variant base names are allowed
+  across different enums when uses are enum-qualified; duplicate variant names
+  within the same enum are rejected.
 - Pattern matching via `match` (§5.13) is exhaustive and type-checked.
 - Enum values are heap-allocated when returned from functions (to avoid variable-sized stack slots).
-- Module-qualified or enum-qualified variant names are future work; write `Red`
-  or `(Some x)` today, not `Color.Red` or `Color::Red`.
+- Module-qualified imported variants use the same dotted member form, for
+  example `json.Json.Null` through an alias or `pkg.json.Json.Null` through a
+  visible full module path. `Color::Red` is not TypeLisp syntax.
 
 #### 3.5.2 Structs (product types)
 
@@ -964,10 +968,9 @@ names such as `expr-list-head` during migration.
 The public enum variant policy follows the dotted qualified variant direction:
 stdlib declarations should use short variant names such as `Var`, `Call`,
 `Struct`, or `Enum`, and source code should refer to them through enum-qualified
-names such as `Expr.Var` and `TypeInfo.Struct` once enum-qualified variants land.
-Until that feature is available, implementation code may keep prefixed variant
-names or compatibility constructors, but those prefixed spellings are not the
-final public API.
+names such as `Expr.Var` and `TypeInfo.Struct`. Implementation code may keep
+prefixed variant names or compatibility constructors during migration, but those
+prefixed spellings are not the final public API.
 
 Spans, lexical context, expansion scopes, and provenance are compiler metadata
 attached to syntax values, not ordinary public fields on every `Expr` variant.
@@ -3327,7 +3330,8 @@ specified.
 
 ### 5.13 `(match scrutinee [pattern expr] ...)` — pattern matching
 
-- Enum scrutinees support variant patterns such as `Red` and `(Some value)`.
+- Enum scrutinees support variant patterns such as `Red`, `Color.Red`,
+  `(Some value)`, and `(Option.Some value)`.
 - Borrowed enum scrutinees written as `(& place)` or `(& lifetime place)` use
   the same variant, wildcard, literal payload, and nested variant pattern forms,
   but inspect the enum without moving the owner. Payload bindings are immutable

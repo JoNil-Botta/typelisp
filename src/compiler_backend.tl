@@ -4610,13 +4610,22 @@
           vars)
           [(OkCompilerBackend operand)
             (OkCompilerBackend
-              (string-append
-                (compiler-backend-emit-group-word-move operand scratch is-float)
+              (if (compiler-backend-peephole-register-operand? operand)
                 (compiler-backend-emit-store-typed-var-with-plan
                   assignments
                   dst
-                  scratch
-                  ty)))]
+                  operand
+                  ty)
+                (string-append
+                  (compiler-backend-emit-group-word-move
+                    operand
+                    scratch
+                    is-float)
+                  (compiler-backend-emit-store-typed-var-with-plan
+                    assignments
+                    dst
+                    scratch
+                    ty))))]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
               (compiler-diagnostic-with-message
@@ -6226,6 +6235,12 @@
     [(IrUnNot) "    xorq $1, %rax\n"]
     [(IrUnBitNot) "    notq %rax\n"]))
 
+(define (compiler-backend-unop-reg-asm [op : CompilerIrUnOp] [reg : String]) : String
+  (match op
+    [(IrUnNeg) (backend-cat3 "    negq " reg "\n")]
+    [(IrUnNot) (backend-cat3 "    xorq $1, " reg "\n")]
+    [(IrUnBitNot) (backend-cat3 "    notq " reg "\n")]))
+
 ;; Scalar floating-point binary ops. `fty` selects single (`ss`, f32) vs double
 ;; (`sd`, f64) precision; comparisons use ucomiss/ucomisd accordingly. Operands
 ;; are in %xmm0 (lhs) and %xmm1 (rhs); arithmetic leaves the result in %xmm0,
@@ -7096,15 +7111,34 @@
                     "%xmm0"))))]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
       [(ErrCompilerBackend message) (ErrCompilerBackend message)])
-    (match (compiler-backend-emit-load-value-with-plan assignments src "%rax")
-      [(OkCompilerBackend src-asm)
-        (OkCompilerBackend
-          (string-append
-            src-asm
-            (string-append
-              (compiler-backend-unop-asm op)
-              (compiler-backend-emit-store-var-with-plan assignments dst "%rax"))))]
-      [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
+    (let
+      [dst-home : String (compiler-backend-var-register-home assignments dst)]
+      (if (string-eq dst-home "")
+        (match (compiler-backend-emit-load-value-with-plan
+          assignments
+          src
+          "%rax")
+          [(OkCompilerBackend src-asm)
+            (OkCompilerBackend
+              (string-append
+                src-asm
+                (string-append
+                  (compiler-backend-unop-asm op)
+                  (compiler-backend-emit-store-var-with-plan
+                    assignments
+                    dst
+                    "%rax"))))]
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+        (match (compiler-backend-emit-load-value-with-plan
+          assignments
+          src
+          dst-home)
+          [(OkCompilerBackend src-asm)
+            (OkCompilerBackend
+              (string-append
+                src-asm
+                (compiler-backend-unop-reg-asm op dst-home)))]
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)])))))
 
 (define (compiler-backend-emit-addr-of
   [assignments : CompilerRegAssignmentList]

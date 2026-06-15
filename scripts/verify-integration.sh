@@ -185,6 +185,13 @@ should_skip_staged() {
     return 1
 }
 
+should_skip_staged_diagnostic() {
+    _diagnostic=$1
+    _stderr=$2
+    [ -n "$_diagnostic" ] || return 1
+    grep -qF "$_diagnostic" "$_stderr"
+}
+
 dep_source_path() {
     _dep=$1
     _source_dir=$2
@@ -415,9 +422,13 @@ EOF
                 ;;
         esac
         case "${_extra:-}" in
-            "" | requires-stage0-symbol:?* | expected-stderr:?*) ;;
+            "" | requires-stage0-symbol:?* | requires-stage0-diagnostic:?* | expected-stderr:?*) ;;
             requires-stage0-symbol:)
                 echo "manifest line $_line_no has empty staged symbol for $_name" >&2
+                exit 1
+                ;;
+            requires-stage0-diagnostic:)
+                echo "manifest line $_line_no has empty staged diagnostic for $_name" >&2
                 exit 1
                 ;;
             expected-stderr:)
@@ -1192,10 +1203,12 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
     esac
 
     requires_symbol=
+    requires_diagnostic=
     expected_stderr_spec=-
     case "${extra:-}" in
         "") ;;
         requires-stage0-symbol:*) requires_symbol=${extra#requires-stage0-symbol:} ;;
+        requires-stage0-diagnostic:*) requires_diagnostic=${extra#requires-stage0-diagnostic:} ;;
         expected-stderr:*) expected_stderr_spec=${extra#expected-stderr:} ;;
     esac
 
@@ -1242,6 +1255,12 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
             > "$build_stdout" 2> "$build_stderr"; then
             if should_skip_staged "$requires_symbol" "$build_stderr"; then
                 echo "[integration] SKIP $name (awaiting stage0 compiler support for '$requires_symbol')"
+                skipped=$((skipped + 1))
+                ran=$((ran + 1))
+                continue
+            fi
+            if should_skip_staged_diagnostic "$requires_diagnostic" "$build_stderr"; then
+                echo "[integration] SKIP $name (awaiting stage0 compiler support for diagnostic '$requires_diagnostic')"
                 skipped=$((skipped + 1))
                 ran=$((ran + 1))
                 continue
@@ -1298,6 +1317,12 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
         if ! "$COMPILER" compile "$work_src" -o "$asm" > "$build_stdout" 2> "$build_stderr"; then
             if should_skip_staged "$requires_symbol" "$build_stderr"; then
                 echo "[integration] SKIP $name (awaiting stage0 compiler support for '$requires_symbol')"
+                skipped=$((skipped + 1))
+                ran=$((ran + 1))
+                continue
+            fi
+            if should_skip_staged_diagnostic "$requires_diagnostic" "$build_stderr"; then
+                echo "[integration] SKIP $name (awaiting stage0 compiler support for diagnostic '$requires_diagnostic')"
                 skipped=$((skipped + 1))
                 ran=$((ran + 1))
                 continue
@@ -1367,6 +1392,9 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
 
     if [ -n "$requires_symbol" ]; then
         echo "[integration] NOTE: $name built with the current compiler; once the stage0 compiler path provides '$requires_symbol', drop the requires-stage0-symbol marker" >&2
+    fi
+    if [ -n "$requires_diagnostic" ]; then
+        echo "[integration] NOTE: $name built with the current compiler; once the stage0 compiler path accepts this source, drop the requires-stage0-diagnostic marker" >&2
     fi
 
     write_expected_stream "$stdout_spec" "$expected_stdout"

@@ -5387,9 +5387,9 @@
       (and
         (compiler-live-set-contains? ineligible 0)
         (compiler-live-set-contains? ineligible 3)
-        (not (compiler-live-set-contains? ineligible 6))
         (not (compiler-live-set-contains? ineligible 2))
-        (not (compiler-live-set-contains? ineligible 4)))]))
+        (not (compiler-live-set-contains? ineligible 4))
+        (not (compiler-live-set-contains? ineligible 6)))]))
 
 (define (compiler-reg-scalar-function-intervals-ok?) : bool
   (match (compiler-reg-plan-function-scalar

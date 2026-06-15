@@ -11,6 +11,22 @@
   (HashFailed)
   (HashPaused i64))
 
+(defstruct HashPoint
+  (x i64)
+  (enabled bool)
+  (label String)
+  (code char))
+
+(defenum HashTag
+  (HashTagNone)
+  (HashTagNumber i64)
+  (HashTagOtherNumber i64)
+  (HashTagText bool String char))
+
+(defstruct HashNestedKey
+  (point HashPoint)
+  (tag HashTag))
+
 (comptime-decl
   (:generated stdlib/hashmap-family I64StringMap (type-key (type i64)) (type-key
     (type String)) "stdlib/hashmap/i64-key-v1")
@@ -28,6 +44,32 @@
     (type HashState)) "stdlib/hashmap/i64-key-v1")
   (defstruct I64HashStateMap
     (__hashmap_family_request i64)))
+
+(comptime-decl
+  (:generated stdlib/hashmap-family HashNestedKeyI64Map (type-key
+    (type HashNestedKey)) (type-key (type i64)) "stdlib/hashmap/aggregate-key-v1")
+  (defstruct HashNestedKeyI64Map
+    (__hashmap_family_request i64)))
+
+(define (hash-key-alpha) : HashNestedKey
+  (HashNestedKey (HashPoint 1 true "alpha" #A') (HashTagNumber 7)))
+
+(define (hash-key-alpha-copy) : HashNestedKey
+  (HashNestedKey (HashPoint 1 true "alpha" #A') (HashTagNumber 7)))
+
+(define (hash-key-beta) : HashNestedKey
+  (HashNestedKey (HashPoint 1 true "alpha" #A') (HashTagOtherNumber 7)))
+
+(define (hash-key-gamma) : HashNestedKey
+  (HashNestedKey
+    (HashPoint 3 false "gamma" #G')
+    (HashTagText true "payload" #P')))
+
+(define (hash-key-delta) : HashNestedKey
+  (HashNestedKey (HashPoint 4 true "delta" #D') (HashTagNone)))
+
+(define (hash-key-missing) : HashNestedKey
+  (HashNestedKey (HashPoint 99 false "missing" #M') (HashTagNumber 7)))
 
 (define (assert-owned-string-eq
   [actual : String]
@@ -278,6 +320,73 @@
     [(I64I64MapEntrySome _ v) v]
     [(I64I64MapEntryNone) fallback]))
 
+;; Generated aggregate-key `HashNestedKey -> i64` map helpers.
+(define (hash-nested-key-i64-lookup-value-or
+  [l : HashNestedKeyI64MapLookup]
+  [fallback : i64]) : i64
+  (match l
+    [(HashNestedKeyI64MapFound v) v]
+    [(HashNestedKeyI64MapMissing) fallback]))
+
+(define (hash-nested-key-i64-borrowed-value-found?
+  [l : (HashNestedKeyI64MapBorrowedValueLookup map)]) : bool
+  (match l
+    [(HashNestedKeyI64MapBorrowedValueFound _) true]
+    [(HashNestedKeyI64MapBorrowedValueMissing) false]))
+
+(define (hash-nested-key-i64-insert-full? [r : HashNestedKeyI64MapInsertResult]) : bool
+  (match r
+    [(HashNestedKeyI64MapInsertOk _) false]
+    [(HashNestedKeyI64MapInsertFull _) true]))
+
+(define (hash-nested-key-i64-remove-ok? [r : HashNestedKeyI64MapRemoveResult]) : bool
+  (match r
+    [(HashNestedKeyI64MapRemoveOk _) true]
+    [(HashNestedKeyI64MapRemoveMissing _) false]))
+
+(define (hash-nested-key-i64-remove-result-map
+  [r : HashNestedKeyI64MapRemoveResult]) : HashNestedKeyI64Map
+  (match r
+    [(HashNestedKeyI64MapRemoveOk m) m]
+    [(HashNestedKeyI64MapRemoveMissing m) m]))
+
+(define (hash-nested-key-i64-update-ok? [r : HashNestedKeyI64MapUpdateResult]) : bool
+  (match r
+    [(HashNestedKeyI64MapUpdateOk _) true]
+    [(HashNestedKeyI64MapUpdateMissing _) false]))
+
+(define (hash-nested-key-i64-update-result-map
+  [r : HashNestedKeyI64MapUpdateResult]) : HashNestedKeyI64Map
+  (match r
+    [(HashNestedKeyI64MapUpdateOk m) m]
+    [(HashNestedKeyI64MapUpdateMissing m) m]))
+
+(define (hash-nested-key-i64-entry-or-insert-inserted?
+  [r : HashNestedKeyI64MapEntryOrInsertResult]) : bool
+  (match r
+    [(HashNestedKeyI64MapEntryOrInsertInserted _ _) true]
+    [(HashNestedKeyI64MapEntryOrInsertFound _ _) false]))
+
+(define (hash-nested-key-i64-entry-or-insert-result-map
+  [r : HashNestedKeyI64MapEntryOrInsertResult]) : HashNestedKeyI64Map
+  (match r
+    [(HashNestedKeyI64MapEntryOrInsertFound m _) m]
+    [(HashNestedKeyI64MapEntryOrInsertInserted m _) m]))
+
+(define (hash-nested-key-i64-entry-or-insert-value-or
+  [r : HashNestedKeyI64MapEntryOrInsertResult]
+  [fallback : i64]) : i64
+  (match r
+    [(HashNestedKeyI64MapEntryOrInsertFound _ v) v]
+    [(HashNestedKeyI64MapEntryOrInsertInserted _ v) v]))
+
+(define (hash-nested-key-i64-entry-value-or
+  [e : HashNestedKeyI64MapEntry]
+  [fallback : i64]) : i64
+  (match e
+    [(HashNestedKeyI64MapEntrySome _ v) v]
+    [(HashNestedKeyI64MapEntryNone) fallback]))
+
 ;; Generated `String -> HashPayload` aggregate-value map helpers.
 (define (hash-payload-score [value : HashPayload]) : i64
   (+ (struct-get value score) (struct-get value weight)))
@@ -450,6 +559,43 @@
       (i64-i64-map-next-occupied m (+ i 1))
       (+ acc (i64-i64-entry-value-or (i64-i64-map-entry-at m i) 0)))))
 
+(define (hash-nested-key-i64-iter-count
+  [m : HashNestedKeyI64Map]
+  [i : i64]
+  [acc : i64]) : i64
+  (if (>= i (hash-nested-key-i64-map-capacity m))
+    acc
+    (hash-nested-key-i64-iter-count
+      m
+      (hash-nested-key-i64-map-next-occupied m (+ i 1))
+      (+ acc 1))))
+
+(define (hash-nested-key-i64-iter-value-sum
+  [m : HashNestedKeyI64Map]
+  [i : i64]
+  [acc : i64]) : i64
+  (if (>= i (hash-nested-key-i64-map-capacity m))
+    acc
+    (hash-nested-key-i64-iter-value-sum
+      m
+      (hash-nested-key-i64-map-next-occupied m (+ i 1))
+      (+
+        acc
+        (hash-nested-key-i64-entry-value-or
+          (hash-nested-key-i64-map-entry-at m i)
+          0)))))
+
+(define (hash-nested-key-i64-iter-monotonic?
+  [m : HashNestedKeyI64Map]
+  [i : i64]) : bool
+  (if (>= i (hash-nested-key-i64-map-capacity m))
+    true
+    (let
+      [nxt : i64 (hash-nested-key-i64-map-next-occupied m (+ i 1))]
+      (if (> nxt i)
+        (hash-nested-key-i64-iter-monotonic? m nxt)
+        false))))
+
 (define (string-hash-payload-iter-count
   [m : StringHashPayloadMap]
   [i : i64]
@@ -508,6 +654,176 @@
       (hashmap-i64-key-descriptor-key)
       "stdlib/hashmap/i64-key-v1"
       "i64 key descriptor identity")
+    (assert-owned-string-eq
+      (hashmap-aggregate-key-descriptor-key)
+      "stdlib/hashmap/aggregate-key-v1"
+      "aggregate key descriptor identity")
+    ;; --- hashmap-family aggregate key fixtures (#2729) ---
+    (let
+      [c0 : HashNestedKeyI64Map (hash-nested-key-i64-map-with-capacity 1)]
+      [c1r : HashNestedKeyI64MapInsertResult
+        (hash-nested-key-i64-map-insert c0 (hash-key-alpha) 1)]
+      [c1 : HashNestedKeyI64Map
+        (match c1r
+          [(HashNestedKeyI64MapInsertOk m) m]
+          [(HashNestedKeyI64MapInsertFull m) m])]
+      [c2r : HashNestedKeyI64MapInsertResult
+        (hash-nested-key-i64-map-insert c1 (hash-key-beta) 2)]
+      (begin
+        (assert-true
+          (hash-nested-key-i64-insert-full? c2r)
+          "aggregate key fixed-capacity insert reports full collision")))
+    (let
+      [ak0 : HashNestedKeyI64Map (hash-nested-key-i64-map-with-capacity 2)]
+      [ak1 : HashNestedKeyI64Map
+        (hash-nested-key-i64-map-put ak0 (hash-key-alpha) 10)]
+      [ak2 : HashNestedKeyI64Map
+        (hash-nested-key-i64-map-put ak1 (hash-key-beta) 20)]
+      [ak3 : HashNestedKeyI64Map
+        (hash-nested-key-i64-map-put ak2 (hash-key-gamma) 30)]
+      [ak4 : HashNestedKeyI64Map
+        (hash-nested-key-i64-map-put ak3 (hash-key-alpha-copy) 15)]
+      (begin
+        (assert-i64-eq
+          (hash-nested-key-i64-map-len ak4)
+          3
+          "aggregate key equal copy updates existing entry")
+        (assert-true
+          (> (hash-nested-key-i64-map-capacity ak4) 2)
+          "aggregate key map grows and rehashes")
+        (assert-i64-eq
+          (hash-nested-key-i64-lookup-value-or
+            (hash-nested-key-i64-map-get ak4 (hash-key-alpha))
+            -1)
+          15
+          "aggregate key get finds updated struct key")
+        (assert-i64-eq
+          (hash-nested-key-i64-lookup-value-or
+            (hash-nested-key-i64-map-get ak4 (hash-key-beta))
+            -1)
+          20
+          "aggregate key enum tag participates in equality")
+        (assert-i64-eq
+          (hash-nested-key-i64-lookup-value-or
+            (hash-nested-key-i64-map-get ak4 (hash-key-missing))
+            -1)
+          -1
+          "aggregate key missing lookup")
+        (assert-true
+          (hash-nested-key-i64-map-contains? ak4 (hash-key-gamma))
+          "aggregate key contains nested enum payload")
+        (assert-false
+          (hash-nested-key-i64-map-contains? ak4 (hash-key-missing))
+          "aggregate key contains rejects missing")
+        (assert-true
+          (hash-nested-key-i64-borrowed-value-found?
+            (hash-nested-key-i64-map-get-value-borrowed (& ak4) (hash-key-beta)))
+          "aggregate key borrowed value lookup finds beta")
+        (let
+          [removed : HashNestedKeyI64MapRemoveResult
+            (hash-nested-key-i64-map-remove ak4 (hash-key-beta))]
+          (begin
+            (assert-true
+              (hash-nested-key-i64-remove-ok? removed)
+              "aggregate key remove finds beta")
+            (let
+              [ak5 : HashNestedKeyI64Map
+                (hash-nested-key-i64-remove-result-map removed)]
+              [ak5-len : i64 (hash-nested-key-i64-map-len ak5)]
+              [ak5-deleted : i64 (hash-nested-key-i64-map-deleted ak5)]
+              [ak6 : HashNestedKeyI64Map
+                (hash-nested-key-i64-map-put ak5 (hash-key-delta) 40)]
+              [ak6-delta-value : i64
+                (hash-nested-key-i64-lookup-value-or
+                  (hash-nested-key-i64-map-get ak6 (hash-key-delta))
+                  -1)]
+              [hit : HashNestedKeyI64MapUpdateResult
+                (hash-nested-key-i64-map-update-if-present
+                  ak6
+                  (hash-key-gamma)
+                  31)]
+              [ak7 : HashNestedKeyI64Map
+                (hash-nested-key-i64-update-result-map hit)]
+              [miss : HashNestedKeyI64MapUpdateResult
+                (hash-nested-key-i64-map-update-if-present
+                  ak7
+                  (hash-key-missing)
+                  99)]
+              [ak8 : HashNestedKeyI64Map
+                (hash-nested-key-i64-update-result-map miss)]
+              [removed-delta : HashNestedKeyI64MapRemoveResult
+                (hash-nested-key-i64-map-remove ak8 (hash-key-delta))]
+              [ak9 : HashNestedKeyI64Map
+                (hash-nested-key-i64-remove-result-map removed-delta)]
+              [inserted : HashNestedKeyI64MapEntryOrInsertResult
+                (hash-nested-key-i64-map-entry-or-insert
+                  ak9
+                  (hash-key-delta)
+                  44)]
+              [ak10 : HashNestedKeyI64Map
+                (hash-nested-key-i64-entry-or-insert-result-map inserted)]
+              [found : HashNestedKeyI64MapEntryOrInsertResult
+                (hash-nested-key-i64-map-entry-or-insert
+                  ak10
+                  (hash-key-alpha)
+                  99)]
+              [ak11 : HashNestedKeyI64Map
+                (hash-nested-key-i64-entry-or-insert-result-map found)]
+              (begin
+                (assert-i64-eq ak5-len 2 "aggregate key len after remove")
+                (assert-i64-eq
+                  ak5-deleted
+                  1
+                  "aggregate key tombstone after remove")
+                (assert-i64-eq
+                  ak6-delta-value
+                  40
+                  "aggregate key put reuses or clears tombstone")
+                (assert-true
+                  (hash-nested-key-i64-update-ok? hit)
+                  "aggregate key update hit")
+                (assert-false
+                  (hash-nested-key-i64-update-ok? miss)
+                  "aggregate key update miss")
+                (assert-i64-eq
+                  (hash-nested-key-i64-lookup-value-or
+                    (hash-nested-key-i64-map-get ak8 (hash-key-gamma))
+                    -1)
+                  31
+                  "aggregate key update writes value")
+                (assert-true
+                  (hash-nested-key-i64-entry-or-insert-inserted? inserted)
+                  "aggregate key entry-or-insert inserts removed key")
+                (assert-i64-eq
+                  (hash-nested-key-i64-entry-or-insert-value-or inserted -1)
+                  44
+                  "aggregate key entry-or-insert returns inserted value")
+                (assert-false
+                  (hash-nested-key-i64-entry-or-insert-inserted? found)
+                  "aggregate key entry-or-insert finds existing key")
+                (assert-i64-eq
+                  (hash-nested-key-i64-entry-or-insert-value-or found -1)
+                  15
+                  "aggregate key entry-or-insert returns existing value")
+                (assert-i64-eq
+                  (hash-nested-key-i64-iter-count
+                    ak11
+                    (hash-nested-key-i64-map-next-occupied ak11 0)
+                    0)
+                  (hash-nested-key-i64-map-len ak11)
+                  "aggregate key iteration count matches len")
+                (assert-i64-eq
+                  (hash-nested-key-i64-iter-value-sum
+                    ak11
+                    (hash-nested-key-i64-map-next-occupied ak11 0)
+                    0)
+                  90
+                  "aggregate key iteration sums live values")
+                (assert-true
+                  (hash-nested-key-i64-iter-monotonic?
+                    ak11
+                    (hash-nested-key-i64-map-next-occupied ak11 0))
+                  "aggregate key iteration order is deterministic")))))))
     ;; --- hashmap-family marker request fixture beyond shipped families ---
     (let
       [fixture0 : I64StringMap (i64-string-map-with-capacity 2)]

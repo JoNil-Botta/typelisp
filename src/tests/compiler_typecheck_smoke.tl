@@ -366,6 +366,149 @@
       (= (macro-alias-cache-get 1 262144) 11)
       (= (macro-alias-cache-get 2 0) 22))))
 
+(define (compiler-typecheck-smoke-prefix-cache-cfg-source) : String
+  "(cfg feature (define (shared-helper [x : i64]) : i64 (+ x 2)))
+(cfg (not feature) (define (shared-helper [x : i64]) : i64 (+ x 1)))
+(define (main) : i64 (shared-helper 2))")
+
+(define (compiler-typecheck-smoke-prefix-cache-root-paths
+  [root : String]
+  [entry-path : String]) : AstDeclPathList
+  (ast-decl-path-cons
+    (compiler-load-join-root-path root "tc_prefix_shared.tl")
+    (ast-decl-path-cons entry-path AstDeclPathNil)))
+
+(define (compiler-typecheck-smoke-prefix-cache-roots [root : String]) : StringVec
+  (string-vec-push (string-vec-new) root))
+
+(define (compiler-typecheck-smoke-prefix-cache-check-cfg
+  [src : String]
+  [entry-path : String]
+  [paths : AstDeclPathList]
+  [stdlib-roots : StringVec]
+  [cfgs : SymI64Env]) : bool
+  (match (parse-ast-source-diagnostic-with-cfg entry-path src cfgs)
+    [(OkAstProgramDiagnostic program)
+      (match (typecheck-compiler-program-with-paths-cache
+        program
+        paths
+        stdlib-roots
+        (compiler-typecheck-prefix-cache-scope
+          "typecheck-prefix-smoke"
+          stdlib-roots
+          cfgs))
+        [(OkCompilerTypecheck _) true]
+        [(ErrCompilerTypecheck _) false])]
+    [(ErrAstProgramDiagnostic _) false]))
+
+(define (compiler-typecheck-smoke-prefix-cache-root-isolation-ok?) : bool
+  (let
+    [root-a : String "target/tc_prefix_root_a"]
+    [root-b : String "target/tc_prefix_root_b"]
+    [entry-a : String "target/tc_prefix_root_entry_a.tl"]
+    [entry-b : String "target/tc_prefix_root_entry_b.tl"]
+    [roots-a : StringVec (compiler-typecheck-smoke-prefix-cache-roots root-a)]
+    [roots-b : StringVec (compiler-typecheck-smoke-prefix-cache-roots root-b)]
+    [ok : bool true]
+    (begin
+      (compiler-load-session-cache-enable!)
+      (tc-prefix-snapshot-cache-clear!)
+      (if (compiler-typecheck-smoke-prefix-cache-check-cfg
+        (compiler-typecheck-prefix-cache-source-a)
+        entry-a
+        (compiler-typecheck-smoke-prefix-cache-root-paths root-a entry-a)
+        roots-a
+        (compiler-cfg-empty))
+        unit
+        (set! ok false))
+      (compiler-load-session-reset-pools!)
+      (compiler-load-session-reset-interns!)
+      (if (compiler-typecheck-smoke-prefix-cache-check-cfg
+        (compiler-typecheck-prefix-cache-source-b)
+        entry-b
+        (compiler-typecheck-smoke-prefix-cache-root-paths root-b entry-b)
+        roots-b
+        (compiler-cfg-empty))
+        unit
+        (set! ok false))
+      (if (= tc-prefix-snapshot-cache-hit-count 0)
+        unit
+        (set! ok false))
+      (if (>= tc-prefix-snapshot-cache-store-count 2)
+        unit
+        (set! ok false))
+      (compiler-load-session-reset-pools!)
+      (compiler-load-session-reset-interns!)
+      (if (compiler-typecheck-smoke-prefix-cache-check-cfg
+        (compiler-typecheck-prefix-cache-source-b)
+        "target/tc_prefix_root_entry_c.tl"
+        (compiler-typecheck-smoke-prefix-cache-root-paths
+          root-b
+          "target/tc_prefix_root_entry_c.tl")
+        roots-b
+        (compiler-cfg-empty))
+        unit
+        (set! ok false))
+      (if (> tc-prefix-snapshot-cache-hit-count 0)
+        unit
+        (set! ok false))
+      (compiler-load-session-cache-disable-for-test!)
+      (tc-prefix-snapshot-cache-clear!)
+      ok)))
+
+(define (compiler-typecheck-smoke-prefix-cache-cfg-isolation-ok?) : bool
+  (let
+    [root : String "target/tc_prefix_cfg_root"]
+    [entry-empty : String "target/tc_prefix_cfg_entry_empty.tl"]
+    [entry-feature : String "target/tc_prefix_cfg_entry_feature.tl"]
+    [roots : StringVec (compiler-typecheck-smoke-prefix-cache-roots root)]
+    [ok : bool true]
+    (begin
+      (compiler-load-session-cache-enable!)
+      (tc-prefix-snapshot-cache-clear!)
+      (if (compiler-typecheck-smoke-prefix-cache-check-cfg
+        (compiler-typecheck-smoke-prefix-cache-cfg-source)
+        entry-empty
+        (compiler-typecheck-smoke-prefix-cache-root-paths root entry-empty)
+        roots
+        (compiler-cfg-empty))
+        unit
+        (set! ok false))
+      (compiler-load-session-reset-pools!)
+      (compiler-load-session-reset-interns!)
+      (if (compiler-typecheck-smoke-prefix-cache-check-cfg
+        (compiler-typecheck-smoke-prefix-cache-cfg-source)
+        entry-feature
+        (compiler-typecheck-smoke-prefix-cache-root-paths root entry-feature)
+        roots
+        (compiler-cfg-enable (compiler-cfg-empty) "feature"))
+        unit
+        (set! ok false))
+      (if (= tc-prefix-snapshot-cache-hit-count 0)
+        unit
+        (set! ok false))
+      (if (>= tc-prefix-snapshot-cache-store-count 2)
+        unit
+        (set! ok false))
+      (compiler-load-session-reset-pools!)
+      (compiler-load-session-reset-interns!)
+      (if (compiler-typecheck-smoke-prefix-cache-check-cfg
+        (compiler-typecheck-smoke-prefix-cache-cfg-source)
+        "target/tc_prefix_cfg_entry_feature_b.tl"
+        (compiler-typecheck-smoke-prefix-cache-root-paths
+          root
+          "target/tc_prefix_cfg_entry_feature_b.tl")
+        roots
+        (compiler-cfg-enable (compiler-cfg-empty) "feature"))
+        unit
+        (set! ok false))
+      (if (> tc-prefix-snapshot-cache-hit-count 0)
+        unit
+        (set! ok false))
+      (compiler-load-session-cache-disable-for-test!)
+      (tc-prefix-snapshot-cache-clear!)
+      ok)))
+
 (define (main) : i64
   (begin
     (compiler-typecheck-self-test)
@@ -378,5 +521,11 @@
     (unless
       (compiler-typecheck-macro-alias-cache-collision-ok?)
       (panic "typecheck: macro alias cache collision test failed"))
+    (unless
+      (compiler-typecheck-smoke-prefix-cache-root-isolation-ok?)
+      (panic "typecheck: prefix cache root smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-prefix-cache-cfg-isolation-ok?)
+      (panic "typecheck: prefix cache cfg smoke failed"))
     (macro-alias-cache-reset!)
     42))

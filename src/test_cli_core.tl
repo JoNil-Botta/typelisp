@@ -1651,14 +1651,25 @@
     unit
     (panic "test CLI inline harness dropped macro quasiquote dependency")))
 
+(define (tltest-typecheck-cache-scope
+  [roots : StringVec]
+  [backend-target : CompilerBackendTarget]) : String
+  (compiler-typecheck-prefix-cache-scope
+    "typecheck-prefix-test-cli"
+    roots
+    (compiler-driver-target-cfgs backend-target (compiler-cfg-empty))))
+
 (define (tltest-check-only
   [program : AstProgram]
   [paths : AstDeclPathList]
   [count : i64]
-  [target : CompilerBackendTarget]) : i64
-  (match (typecheck-compiler-program-with-paths
+  [target : CompilerBackendTarget]
+  [roots : StringVec]) : i64
+  (match (typecheck-compiler-program-with-paths-cache
     (tltest-program-with-print-runtime program target)
-    (tltest-paths-with-print-runtime target paths))
+    (tltest-paths-with-print-runtime target paths)
+    roots
+    (tltest-typecheck-cache-scope roots target))
     [(OkCompilerTypecheck _)
       (begin
         (print-string
@@ -1873,8 +1884,16 @@
   [opt-level : i64]) : i64
   (tltest-run-direct-with-entry source source program paths target opt-level))
 
-(define (tltest-no-tests-check [decls : AstDeclList] [paths : AstDeclPathList]) : i64
-  (match (typecheck-compiler-program-with-paths (ast-program decls) paths)
+(define (tltest-no-tests-check
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [roots : StringVec]
+  [target : CompilerBackendTarget]) : i64
+  (match (typecheck-compiler-program-with-paths-cache
+    (ast-program decls)
+    paths
+    roots
+    (tltest-typecheck-cache-scope roots target))
     [(OkCompilerTypecheck _)
       (begin
         (print-string "TypeLisp test typecheck passed: 0 test(s)\n")
@@ -2153,6 +2172,7 @@
 (define (tltest-package-run-one
   [source : String]
   [target : String]
+  [roots : StringVec]
   [opt-level : i64]
   [test-mode : TestMode]
   [backend-target : CompilerBackendTarget]
@@ -2173,7 +2193,12 @@
             [status : i64
               (match test-mode
                 [(TestModeCheck)
-                  (tltest-check-only program harness-paths count backend-target)]
+                  (tltest-check-only
+                    program
+                    harness-paths
+                    count
+                    backend-target
+                    roots)]
                 [(TestModeRun)
                   (tltest-run-direct
                     source
@@ -2196,11 +2221,17 @@
 (define (tltest-package-integration-check
   [source : String]
   [decls : AstDeclList]
-  [paths : AstDeclPathList]) : ResultTestPackageTotals
+  [paths : AstDeclPathList]
+  [roots : StringVec]
+  [target : CompilerBackendTarget]) : ResultTestPackageTotals
   (begin
     (print-string (tltest-package-integration-line source))
     (if (tltest-decls-have-main? decls)
-      (match (typecheck-compiler-program-with-paths (ast-program decls) paths)
+      (match (typecheck-compiler-program-with-paths-cache
+        (ast-program decls)
+        paths
+        roots
+        (tltest-typecheck-cache-scope roots target))
         [(OkCompilerTypecheck _) (OkTestPackageTotals 1 1)]
         [(ErrCompilerTypecheck diag)
           (begin
@@ -2255,7 +2286,13 @@
     true)
     [(OkCompilerLoadWithPaths decls paths _ _)
       (match test-mode
-        [(TestModeCheck) (tltest-package-integration-check source decls paths)]
+        [(TestModeCheck)
+          (tltest-package-integration-check
+            source
+            decls
+            paths
+            roots
+            backend-target)]
         [(TestModeRun)
           (tltest-package-integration-run source target opt-level decls paths)])]
     [(ErrCompilerLoadWithPaths diag)
@@ -2295,6 +2332,7 @@
           (tltest-package-run-one
             owned-source
             target
+            roots
             opt-level
             test-mode
             backend-target
@@ -2557,7 +2595,8 @@
   [source : String]
   [decls : AstDeclList]
   [paths : AstDeclPathList]
-  [backend-target : CompilerBackendTarget]) : ResultTestFileCheck
+  [backend-target : CompilerBackendTarget]
+  [roots : StringVec]) : ResultTestFileCheck
   (match (tltest-build-harness source decls paths)
     [(InlineHarness program harness-paths count)
       (begin
@@ -2565,8 +2604,13 @@
         (let
           [status : i64
             (if (= count 0)
-              (tltest-no-tests-check decls paths)
-              (tltest-check-only program harness-paths count backend-target))]
+              (tltest-no-tests-check decls paths roots backend-target)
+              (tltest-check-only
+                program
+                harness-paths
+                count
+                backend-target
+                roots))]
           (if (= status 0)
             (OkTestFileCheck count)
             (ErrTestFileCheck status))))]))
@@ -2580,7 +2624,7 @@
     roots
     (compiler-driver-target-cfgs backend-target (compiler-cfg-empty)))
     [(OkCompilerLoadWithPaths decls paths _ _)
-      (tltest-check-file-loaded source decls paths backend-target)]
+      (tltest-check-file-loaded source decls paths backend-target roots)]
     [(ErrCompilerLoadWithPaths diag)
       (begin
         (print-error (compiler-diagnostic-render diag))
@@ -2698,7 +2742,8 @@
                 [(InlineHarness program harness-paths count)
                   (if (= count 0)
                     (match test-mode
-                      [(TestModeCheck) (tltest-no-tests-check decls paths)]
+                      [(TestModeCheck)
+                        (tltest-no-tests-check decls paths roots backend-target)]
                       [(TestModeRun)
                         (tltest-no-tests-run source target mode opt-level)])
                     (match test-mode
@@ -2707,7 +2752,8 @@
                           program
                           harness-paths
                           count
-                          backend-target)]
+                          backend-target
+                          roots)]
                       [(TestModeRun)
                         (tltest-run-direct
                           source

@@ -11,9 +11,17 @@
 
 (import "../stdlib/str_cat.tl")
 
-(define (typecheck-compiler-program-with-paths
+(define (compiler-typecheck-prefix-cache-scope
+  [kind : String]
+  [stdlib-roots : StringVec]
+  [cfgs : SymI64Env]) : String
+  (compiler-load-prelude-cache-key kind stdlib-roots cfgs))
+
+(define (typecheck-compiler-program-with-paths-cache
   [program : AstProgram]
-  [paths : AstDeclPathList]) : ResultCompilerTypecheck
+  [paths : AstDeclPathList]
+  [stdlib-roots : StringVec]
+  [cache-scope : String]) : ResultCompilerTypecheck
   ;; Generate declaration families (e.g. hashmap) before macro expansion. Macro
   ;; expansion type-directs some sub-expressions (let-init / match-scrutinee
   ;; typing), which must be able to see generated functions; the later template
@@ -34,21 +42,36 @@
                   [(OkCompilerSymbols _)
                     (match (compiler-specialize-program expanded)
                       [(OkSpecProgram specialized)
-                        (typecheck-compiler-specialized-program-with-paths
+                        (typecheck-compiler-specialized-program-with-paths-cache
                           specialized
-                          AstDeclPathNil)]
+                          AstDeclPathNil
+                          stdlib-roots
+                          cache-scope)]
                       [(ErrSpecProgram diag) (ErrCompilerTypecheck diag)])]
                   [(ErrCompilerSymbols message)
                     (ErrCompilerTypecheck (tc-diag-at-start message))])
-                (typecheck-compiler-specialized-program-with-paths
+                (typecheck-compiler-specialized-program-with-paths-cache
                   expanded
-                  generated-paths))]
+                  generated-paths
+                  stdlib-roots
+                  cache-scope))]
             [(ErrMacroExpand diag) (ErrCompilerTypecheck diag)])]
         [(ErrGenProgramWithPaths diag) (ErrCompilerTypecheck diag)]))))
 
-(define (typecheck-compiler-program-with-paths-checked
+(define (typecheck-compiler-program-with-paths
   [program : AstProgram]
-  [paths : AstDeclPathList]) : ResultCompilerTypecheckChecked
+  [paths : AstDeclPathList]) : ResultCompilerTypecheck
+  (typecheck-compiler-program-with-paths-cache
+    program
+    paths
+    (string-vec-new)
+    (tc-prefix-default-cache-scope)))
+
+(define (typecheck-compiler-program-with-paths-checked-cache
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [stdlib-roots : StringVec]
+  [cache-scope : String]) : ResultCompilerTypecheckChecked
   (begin
     (tc-spmd-inline-helper-stack-reset!)
     (match (gen-normalize-program-with-paths program paths "")
@@ -62,17 +85,30 @@
                 [(OkCompilerSymbols _)
                   (match (compiler-specialize-program expanded)
                     [(OkSpecProgram specialized)
-                      (typecheck-compiler-specialized-program-with-paths-checked
+                      (typecheck-compiler-specialized-program-with-paths-checked-cache
                         specialized
-                        AstDeclPathNil)]
+                        AstDeclPathNil
+                        stdlib-roots
+                        cache-scope)]
                     [(ErrSpecProgram diag) (ErrCompilerTypecheckChecked diag)])]
                 [(ErrCompilerSymbols message)
                   (ErrCompilerTypecheckChecked (tc-diag-at-start message))])
-              (typecheck-compiler-specialized-program-with-paths-checked
+              (typecheck-compiler-specialized-program-with-paths-checked-cache
                 expanded
-                generated-paths))]
+                generated-paths
+                stdlib-roots
+                cache-scope))]
           [(ErrMacroExpand diag) (ErrCompilerTypecheckChecked diag)])]
       [(ErrGenProgramWithPaths diag) (ErrCompilerTypecheckChecked diag)])))
+
+(define (typecheck-compiler-program-with-paths-checked
+  [program : AstProgram]
+  [paths : AstDeclPathList]) : ResultCompilerTypecheckChecked
+  (typecheck-compiler-program-with-paths-checked-cache
+    program
+    paths
+    (string-vec-new)
+    (tc-prefix-default-cache-scope)))
 
 (define (typecheck-compiler-program [program : AstProgram]) : ResultCompilerTypecheck
   (typecheck-compiler-program-with-paths program AstDeclPathNil))

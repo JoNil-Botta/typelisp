@@ -29151,14 +29151,29 @@
     (tc-prefix-decl-key decl)
     ";"))
 
-(define (tc-prefix-cache-safe-path? [path : String]) : bool
-  (let
-    [needle : String "stdlib/"]
-    (string-contains (& path) (& needle))))
+(define (tc-prefix-key-start [scope : String]) : String
+  (str-cat "tc-prefix-v2;" (int->string (string-length scope)) ":" scope ";"))
+
+(define (tc-prefix-default-cache-scope) : String
+  "direct")
+
+(define (tc-prefix-cache-safe-path? [path : String] [stdlib-roots : StringVec]) : bool
+  (if (compiler-load-stdlib-import? path)
+    true
+    (let
+      [normalized : String (compiler-load-normalize-path path)]
+      (if (compiler-load-stdlib-import? normalized)
+        true
+        (compiler-load-path-under-roots-from?
+          normalized
+          stdlib-roots
+          0
+          (string-vec-len stdlib-roots))))))
 
 (define (tc-prefix-candidate-from
   [decls : AstDeclList]
   [paths : AstDeclPathList]
+  [stdlib-roots : StringVec]
   [entry-path : String]
   [count : i64]
   [module : String]
@@ -29183,7 +29198,7 @@
           (if (> count 0)
             (TcSomePrefixCandidate key count module)
             (TcNoPrefixCandidate))
-          (if (tc-prefix-cache-safe-path? decl-path)
+          (if (tc-prefix-cache-safe-path? decl-path stdlib-roots)
             (let
               [next-module : String
                 (match decl
@@ -29192,6 +29207,7 @@
               (tc-prefix-candidate-from
                 rest
                 rest-paths
+                stdlib-roots
                 entry-path
                 (+ count 1)
                 next-module
@@ -29200,12 +29216,24 @@
               (TcSomePrefixCandidate key count module)
               (TcNoPrefixCandidate)))))]))
 
-(define (tc-prefix-candidate [decls : AstDeclList] [paths : AstDeclPathList]) : TcPrefixCandidate
+(define (tc-prefix-candidate
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [stdlib-roots : StringVec]
+  [cache-scope : String]) : TcPrefixCandidate
   (let
     [entry-path : String (tc-decl-path-list-last paths "")]
+    [effective-roots : StringVec (compiler-load-roots-with-env stdlib-roots)]
     (if (string-eq entry-path "")
       (TcNoPrefixCandidate)
-      (tc-prefix-candidate-from decls paths entry-path 0 "" "tc-prefix-v1;"))))
+      (tc-prefix-candidate-from
+        decls
+        paths
+        effective-roots
+        entry-path
+        0
+        ""
+        (tc-prefix-key-start cache-scope)))))
 
 (define (tc-decl-list-take [decls : AstDeclList] [count : i64]) : AstDeclList
   (if (<= count 0)
@@ -29326,9 +29354,11 @@
   [top-env : TcTypeEnv]
   [decls : AstDeclList]
   [paths : AstDeclPathList]
-  [summary : CompilerTypecheckSummary]) : ResultCompilerTypecheck
+  [summary : CompilerTypecheckSummary]
+  [stdlib-roots : StringVec]
+  [cache-scope : String]) : ResultCompilerTypecheck
   (if (compiler-load-session-cache-enabled?)
-    (match (tc-prefix-candidate decls paths)
+    (match (tc-prefix-candidate decls paths stdlib-roots cache-scope)
       [(TcSomePrefixCandidate key count module)
         (match (tc-prefix-snapshot-cache-lookup key)
           [(TcPrefixSnapshotHit cached-count cached-module cached-summary)
@@ -29526,7 +29556,9 @@
 
 (define (typecheck-compiler-specialized-program-with-paths-checked-inner
   [program : AstProgram]
-  [paths : AstDeclPathList]) : ResultCompilerTypecheckChecked
+  [paths : AstDeclPathList]
+  [stdlib-roots : StringVec]
+  [cache-scope : String]) : ResultCompilerTypecheckChecked
   (match (build-compiler-symbols-with-paths program paths)
     [(OkCompilerSymbols symbols)
       (match (build-compiler-registries-with-symbols program symbols)
@@ -29553,7 +29585,9 @@
                                       top-env
                                       decls
                                       paths
-                                      (CompilerTypecheckSummary 0 0 0))
+                                      (CompilerTypecheckSummary 0 0 0)
+                                      stdlib-roots
+                                      cache-scope)
                                       [(OkCompilerTypecheck summary)
                                         (OkCompilerTypecheckChecked
                                           summary
@@ -29575,19 +29609,45 @@
     [(ErrCompilerSymbols message)
       (ErrCompilerTypecheckChecked (tc-diag-at-start message))]))
 
-(define (typecheck-compiler-specialized-program-with-paths-checked
+(define (typecheck-compiler-specialized-program-with-paths-checked-cache
   [program : AstProgram]
-  [paths : AstDeclPathList]) : ResultCompilerTypecheckChecked
+  [paths : AstDeclPathList]
+  [stdlib-roots : StringVec]
+  [cache-scope : String]) : ResultCompilerTypecheckChecked
   (tc-typecheck-checked-result-with-pool-check
     (typecheck-compiler-specialized-program-with-paths-checked-inner
       program
-      paths)))
+      paths
+      stdlib-roots
+      cache-scope)))
+
+(define (typecheck-compiler-specialized-program-with-paths-checked
+  [program : AstProgram]
+  [paths : AstDeclPathList]) : ResultCompilerTypecheckChecked
+  (typecheck-compiler-specialized-program-with-paths-checked-cache
+    program
+    paths
+    (string-vec-new)
+    (tc-prefix-default-cache-scope)))
+
+(define (typecheck-compiler-specialized-program-with-paths-cache
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [stdlib-roots : StringVec]
+  [cache-scope : String]) : ResultCompilerTypecheck
+  (match (typecheck-compiler-specialized-program-with-paths-checked-cache
+    program
+    paths
+    stdlib-roots
+    cache-scope)
+    [(OkCompilerTypecheckChecked summary _ _) (OkCompilerTypecheck summary)]
+    [(ErrCompilerTypecheckChecked diag) (ErrCompilerTypecheck diag)]))
 
 (define (typecheck-compiler-specialized-program-with-paths
   [program : AstProgram]
   [paths : AstDeclPathList]) : ResultCompilerTypecheck
-  (match (typecheck-compiler-specialized-program-with-paths-checked
+  (typecheck-compiler-specialized-program-with-paths-cache
     program
-    paths)
-    [(OkCompilerTypecheckChecked summary _ _) (OkCompilerTypecheck summary)]
-    [(ErrCompilerTypecheckChecked diag) (ErrCompilerTypecheck diag)]))
+    paths
+    (string-vec-new)
+    (tc-prefix-default-cache-scope)))

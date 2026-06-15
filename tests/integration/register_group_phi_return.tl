@@ -22,17 +22,33 @@
     [(CondA) p]
     [(CondB) q]))
 
+(define (pick-address-taken [c : Cond] [p : Pair] [q : Pair]) : Pair
+  (match c
+    [(CondA) p]
+    [(CondB) q]))
+
 (define (apply-fn [f : (-> Pair i64)] [p : Pair]) : i64
   (f p))
+
+(define (apply-pick
+  [f : (-> Cond Pair Pair Pair)]
+  [c : Cond]
+  [p : Pair]
+  [q : Pair]) : Pair
+  (f c p q))
 
 (define (main) : i64
   (+
     (struct-get (pick (CondA) (Pair 1 2) (Pair 3 4)) y)
     (+
-      (apply-fn
-        (lambda ([p : Pair]) : i64
-          (struct-get p y))
-        (Pair 5 9))
-      (if (= (EA 1) (EA 2))
-        100
-        31))))
+      (struct-get
+        (apply-pick pick-address-taken (CondB) (Pair 99 100) (Pair 0 0))
+        y)
+      (+
+        (apply-fn
+          (lambda ([p : Pair]) : i64
+            (struct-get p y))
+          (Pair 5 9))
+        (if (= (EA 1) (EA 2))
+          100
+          31)))))

@@ -129,7 +129,6 @@ _tl_stdlib_runtime_runtime_abort_write:
     movq -8(%rbp), %r10
     movq 8(%r10), %rax
     movq %rax, -24(%rbp)
-    movq -8(%rbp), %r10
     movq (%r10), %rax
     movq %rax, -48(%rbp)
     movl $2, %edi

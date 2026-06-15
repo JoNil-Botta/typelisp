@@ -3,9 +3,9 @@
 ;; Factored out of `check.tl` so the unified `cli.tl` dispatcher and the
 ;; retained check compatibility/coverage driver share the command without a
 ;; duplicate `main`.
-(import "../stdlib/io.tl")
+(import stdlib.io as io_mod)
 
-(import "../stdlib/vector.tl")
+(import stdlib.vector as vector_mod)
 
 (import "compiler_check_core.tl")
 
@@ -13,11 +13,11 @@
 
 (import "package_source_core.tl")
 
-(import "../stdlib/string.tl")
+(import stdlib.string as string_mod)
 
 (defenum SelfhostCheckConfig
-  (SelfhostCheckFileConfig String StringVec)
-  (SelfhostCheckPackageConfig String bool StringVec))
+  (SelfhostCheckFileConfig String vector_mod.StringVec)
+  (SelfhostCheckPackageConfig String bool vector_mod.StringVec))
 
 (defenum ResultSelfhostCheckConfig
   (OkSelfhostCheckConfig SelfhostCheckConfig)
@@ -31,7 +31,7 @@
   [has-input : bool]
   [manifest-path : String]
   [has-manifest : bool]
-  [stdlib-roots : StringVec]) : ResultSelfhostCheckConfig
+  [stdlib-roots : vector_mod.StringVec]) : ResultSelfhostCheckConfig
   (if has-input
     (if has-manifest
       (ErrSelfhostCheckConfig
@@ -47,7 +47,7 @@
   [has-input : bool]
   [manifest-path : String]
   [has-manifest : bool]
-  [stdlib-roots : StringVec]) : ResultSelfhostCheckConfig
+  [stdlib-roots : vector_mod.StringVec]) : ResultSelfhostCheckConfig
   (if (>= idx count)
     (selfhost-check-config-finish
       input-path
@@ -56,8 +56,8 @@
       has-manifest
       stdlib-roots)
     (let
-      [current : String (arg idx)]
-      (if (string-eq current "--stdlib-root")
+      [current : String (io_mod.arg idx)]
+      (if (string_mod.string-eq current "--stdlib-root")
         (if (>= (+ idx 1) count)
           (ErrSelfhostCheckConfig
             "selfhost-check: --stdlib-root requires a value")
@@ -68,8 +68,8 @@
             has-input
             manifest-path
             has-manifest
-            (string-vec-push stdlib-roots (arg (+ idx 1)))))
-        (if (string-eq current "--manifest-path")
+            (vector_mod.string-vec-push stdlib-roots (io_mod.arg (+ idx 1)))))
+        (if (string_mod.string-eq current "--manifest-path")
           (if (>= (+ idx 1) count)
             (ErrSelfhostCheckConfig
               "selfhost-check: --manifest-path requires a value")
@@ -81,15 +81,17 @@
                 count
                 input-path
                 has-input
-                (arg (+ idx 1))
+                (io_mod.arg (+ idx 1))
                 true
                 stdlib-roots)))
           (if (selfhost-check-flag? current)
             (ErrSelfhostCheckConfig
-              (string-append "selfhost-check: unknown flag " current))
+              (string_mod.string-append "selfhost-check: unknown flag " current))
             (if has-input
               (ErrSelfhostCheckConfig
-                (string-append "selfhost-check: unexpected argument " current))
+                (string_mod.string-append
+                  "selfhost-check: unexpected argument "
+                  current))
               (selfhost-check-parse-args
                 (+ idx 1)
                 count
@@ -102,24 +104,31 @@
 ;; Parse the `check` config from arguments starting at `start`. `count` is
 ;; `(arg-count)`.
 (define (selfhost-check-config-from [start : i64] [count : i64]) : ResultSelfhostCheckConfig
-  (selfhost-check-parse-args start count "" false "" false (string-vec-new)))
+  (selfhost-check-parse-args
+    start
+    count
+    ""
+    false
+    ""
+    false
+    (vector_mod.string-vec-new)))
 
 (define (selfhost-check-doctest-report [report : DocTestRunReport]) : i64
   (if (doc-test-run-report-ok? report)
     0
     (begin
-      (print-error (doc-test-run-report-render report))
+      (io_mod.print-error (doc-test-run-report-render report))
       1)))
 
 (define (selfhost-check-file-doctests
   [input-path : String]
-  [stdlib-roots : StringVec]) : i64
+  [stdlib-roots : vector_mod.StringVec]) : i64
   (selfhost-check-doctest-report
     (doc-test-typecheck-file-with-roots input-path stdlib-roots)))
 
 (define (selfhost-check-package-source-doctests
   [input-path : String]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : i64
   (selfhost-check-doctest-report
@@ -129,7 +138,9 @@
       manifest-dir
       deps)))
 
-(define (selfhost-check-file [input-path : String] [stdlib-roots : StringVec]) : i64
+(define (selfhost-check-file
+  [input-path : String]
+  [stdlib-roots : vector_mod.StringVec]) : i64
   (match (compiler-check-file-with-roots input-path stdlib-roots)
     [(OkCompilerCheck _)
       (let
@@ -137,17 +148,17 @@
           (selfhost-check-file-doctests input-path stdlib-roots)]
         (if (= doctest-status 0)
           (begin
-            (print-string "Type checking passed!\n")
+            (io_mod.print-string "Type checking passed!\n")
             0)
           doctest-status))]
     [(ErrCompilerCheck diag)
       (begin
-        (print-error (compiler-diagnostic-render diag))
+        (io_mod.print-error (compiler-diagnostic-render diag))
         1)]))
 
 (define (selfhost-check-package-source
   [input-path : String]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : i64
   (match (compiler-check-package-file-with-roots
@@ -158,20 +169,20 @@
     [(OkCompilerCheck _) 0]
     [(ErrCompilerCheck diag)
       (begin
-        (print-error "check: package source failed:\n")
-        (print-error (compiler-diagnostic-render diag))
+        (io_mod.print-error "check: package source failed:\n")
+        (io_mod.print-error (compiler-diagnostic-render diag))
         1)]))
 
 (define (selfhost-check-package-sources-from
-  [sources : StringVec]
+  [sources : vector_mod.StringVec]
   [index : i64]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : i64
-  (if (>= index (string-vec-len sources))
+  (if (>= index (vector_mod.string-vec-len sources))
     0
     (let
-      [source : String (string-vec-get sources index "")]
+      [source : String (vector_mod.string-vec-get sources index "")]
       [status : i64
         (selfhost-check-package-source source stdlib-roots manifest-dir deps)]
       (if (= status 0)
@@ -193,8 +204,8 @@
         status))))
 
 (define (selfhost-check-package-sources
-  [sources : StringVec]
-  [stdlib-roots : StringVec]
+  [sources : vector_mod.StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : i64
   (selfhost-check-package-sources-from sources 0 stdlib-roots manifest-dir deps))
@@ -202,11 +213,11 @@
 (define (selfhost-check-package
   [manifest-path : String]
   [has-manifest : bool]
-  [stdlib-roots : StringVec]) : i64
+  [stdlib-roots : vector_mod.StringVec]) : i64
   (match (package-source-discover manifest-path has-manifest)
     [(ErrPackageSourceSet message)
       (begin
-        (print-error message)
+        (io_mod.print-error message)
         1)]
     [(OkPackageSourceSet source-set)
       (let
@@ -219,7 +230,7 @@
             (struct-get manifest deps))]
         (if (= status 0)
           (begin
-            (print-string "Type checking passed!\n")
+            (io_mod.print-string "Type checking passed!\n")
             0)
           status))]))
 
@@ -234,5 +245,5 @@
           (selfhost-check-package manifest-path has-manifest stdlib-roots)])]
     [(ErrSelfhostCheckConfig message)
       (begin
-        (print-error message)
+        (io_mod.print-error message)
         1)]))

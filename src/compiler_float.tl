@@ -1,26 +1,26 @@
 ;; compiler_float.tl - Compiler-facing wrappers for deterministic float helpers.
-(import "../stdlib/io.tl")
+(import stdlib.io as io_mod)
 
 (defenum CompilerFloatMaybeF64
   (CompilerFloatNoF64)
   (CompilerFloatSomeF64 f64))
 
 (define (compiler-float-parse-f64 [text : String]) : CompilerFloatMaybeF64
-  (match (io-float-parse-f64 text)
-    [(IoFloatSomeF64 value) (CompilerFloatSomeF64 value)]
-    [(IoFloatNoF64) (CompilerFloatNoF64)]))
+  (match (io_mod.io-float-parse-f64 text)
+    [(io_mod.IoFloatSomeF64 value) (CompilerFloatSomeF64 value)]
+    [(io_mod.IoFloatNoF64) (CompilerFloatNoF64)]))
 
 (define (compiler-float-f64-bits [value : f64]) : u64
-  (io-float-f64-bits value))
+  (io_mod.io-float-f64-bits value))
 
 (define (compiler-float-f64-finite? [value : f64]) : bool
-  (io-float-f64-finite? value))
+  (io_mod.io-float-f64-finite? value))
 
 (define (compiler-float-round-f32-as-f64 [value : f64]) : f64
-  (io-float-round-f32-as-f64 value))
+  (io_mod.io-float-round-f32-as-f64 value))
 
 (define (compiler-float-format-f64 [value : f64]) : String
-  (io-format-float-core value))
+  (io_mod.io-format-float-core value))
 
 (define (compiler-float-parse-bits-eq? [text : String] [want : u64]) : bool
   (match (compiler-float-parse-f64 text)

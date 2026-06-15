@@ -1,7 +1,7 @@
 ;; compiler_backend_stack_args_fixture.tl - emit the #750 stack-passed call
 ;; argument witness program's assembly for a target so the integration suite can
 ;; assemble, link, and RUN it, proving each spilled argument arrives correctly.
-(import "../../stdlib/io.tl")
+(import stdlib.io as io_mod)
 
 (import "../compiler_backend_tests.tl")
 
@@ -16,21 +16,21 @@
           "compiler-backend-stack-args-fixture: unknown target")))))
 
 (define (main) : i64
-  (if (< (arg-count) 2)
+  (if (< (io_mod.arg-count) 2)
     (begin
-      (print-error "compiler-backend-stack-args-fixture: expected output path")
+      (io_mod.print-error "compiler-backend-stack-args-fixture: expected output path")
       1)
     (let
       [target-name : String
-        (if (< (arg-count) 3)
+        (if (< (io_mod.arg-count) 3)
           "linux-x86_64"
-          (arg 2))]
+          (io_mod.arg 2))]
       (match (compiler-backend-stack-args-fixture-for-name target-name)
         [(OkCompilerBackend asm)
           (begin
-            (write-file (arg 1) asm)
+            (io_mod.write-file (io_mod.arg 1) asm)
             0)]
         [(ErrCompilerBackend diag)
           (begin
-            (print-error (compiler-diagnostic-render diag))
+            (io_mod.print-error (compiler-diagnostic-render diag))
             1)]))))

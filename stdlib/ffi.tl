@@ -5,14 +5,14 @@
 ;# allocating. `ffi-c-string-alloc` and `ffi-cstr` allocate a NUL-terminated byte
 ;# buffer in the active arena and return its `(Ptr u8)`.
 ;#
-;# Usage: `(import "stdlib/ffi.tl")`
+;# Usage: `(import stdlib.ffi)`
 ;#
 ;# ```typelisp run
 ;# ;; doctest-exit: 0
-;# (import "stdlib/ffi.tl")
+;# (import stdlib.ffi)
 ;# (define (main) : i64
 ;#   (let
-;#     [ptr : (Ptr u8) (ffi-cstr "abc")]
+;#     [ptr : (Ptr u8) (ffi.ffi-cstr "abc")]
 ;#     (if (or
 ;#       (ptr-null? ptr)
 ;#       (not (= (cast (unsafe (ptr-read (ptr-offset ptr 3))) : i64) 0)))
@@ -20,6 +20,8 @@
 ;#       0)))
 ;# ```
 ;: Result type for copying a TypeLisp string into caller-owned C string storage.
+(module stdlib.ffi)
+
 (defenum FfiCStringCopyResult
   (FfiCStringCopyOk i64)
   (FfiCStringInteriorNul)
@@ -68,15 +70,15 @@
   [dst : (MutPtr u8)]
   [capacity : i64]) : FfiCStringCopyResult
   (let
-    [needed : i64 (ffi-c-string-required-bytes text)]
-    (if (ffi-c-string-interior-nul? text)
-      (FfiCStringInteriorNul)
+    [needed : i64 (stdlib.ffi.ffi-c-string-required-bytes text)]
+    (if (stdlib.ffi.ffi-c-string-interior-nul? text)
+      stdlib.ffi.FfiCStringInteriorNul
       (if (< capacity needed)
         (FfiCStringBufferTooSmall needed)
         (let
           [n : i64 (string-length text)]
           (begin
-            (ffi-c-string-copy-bytes! text dst n)
+            (stdlib.ffi.ffi-c-string-copy-bytes! text dst n)
             (unsafe
               (ptr-write! (ptr-offset dst n) (cast #\nul' : u8)))
             (FfiCStringCopyOk needed)))))))
@@ -88,17 +90,17 @@
 ;: destroyed; callers must not free it and must not use it after the owning arena
 ;: is invalidated.
 (define (ffi-c-string-alloc [text : String]) : (Ptr u8)
-  (if (ffi-c-string-interior-nul? text)
+  (if (stdlib.ffi.ffi-c-string-interior-nul? text)
     (ptr-null : (Ptr u8))
     (let
-      [needed : i64 (ffi-c-string-required-bytes text)]
+      [needed : i64 (stdlib.ffi.ffi-c-string-required-bytes text)]
       [n : i64 (string-length text)]
       [buf : (Array u8) (make-array u8 needed)]
       [dst : (MutPtr u8)
         (unsafe
           (array-data buf))]
       (begin
-        (ffi-c-string-copy-bytes! text dst n)
+        (stdlib.ffi.ffi-c-string-copy-bytes! text dst n)
         (unsafe
           (ptr-write! (ptr-offset dst n) (cast #\nul' : u8)))
         (unsafe
@@ -106,4 +108,17 @@
 
 ;: Short alias for `ffi-c-string-alloc`.
 (define (ffi-cstr [text : String]) : (Ptr u8)
-  (ffi-c-string-alloc text))
+  (stdlib.ffi.ffi-c-string-alloc text))
+
+;# Dotted-module migration: preserve the pre-module flat stdlib surface.
+(export
+  (value ffi-c-string-required-bytes)
+  (value ffi-c-string-interior-nul?)
+  (value ffi-c-string-copy-bytes!)
+  (value ffi-c-string-copy!)
+  (value ffi-c-string-alloc)
+  (value ffi-cstr)
+  (type FfiCStringCopyResult)
+  (variant FfiCStringCopyOk)
+  (variant FfiCStringInteriorNul)
+  (variant FfiCStringBufferTooSmall))

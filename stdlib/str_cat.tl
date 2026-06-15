@@ -5,19 +5,53 @@
 ;# which would shadow the parser's built-in `when`/`and`/`or`/`unless` forms in
 ;# files that use them.
 ;#
-;# Usage: `(import "stdlib/str_cat.tl")` then `(str-cat a b c)`. The macro owns
+;# Usage: `(import stdlib.str_cat)` then `(str-cat a b c)`. The macro owns
 ;# its concat helper dependency, so callers do not need to import
 ;# `stdlib/string.tl` unless they use string helpers directly.
 ;#
 ;# ```typelisp
-;# (import "stdlib/str_cat.tl")
+;# (import stdlib.str_cat)
 ;#
 ;# (define (greet [name : String]) : String
-;#   (str-cat "hello, " name "!"))
+;#   (str_cat.str-cat "hello, " name "!"))
 ;# ```
-(import "string.tl")
+(module stdlib.str_cat)
 
-(module stdlib.str-cat)
+(import stdlib.string as string_mod)
+
+;: Wrapper helpers used by exported `str-cat` macro expansions.
+;:
+;: Keeping these in this module lets callers import only `stdlib.str_cat`; the
+;: macro expansion does not leak the private `stdlib.string` import alias.
+(define (str-cat-string-append [a : String] [b : String]) : String
+  (string_mod.string-append a b))
+
+(define (str-cat-string-concat3 [a : String] [b : String] [c : String]) : String
+  (string_mod.string-concat3 a b c))
+
+(define (str-cat-string-concat4
+  [a : String]
+  [b : String]
+  [c : String]
+  [d : String]) : String
+  (string_mod.string-concat4 a b c d))
+
+(define (str-cat-string-concat5
+  [a : String]
+  [b : String]
+  [c : String]
+  [d : String]
+  [e : String]) : String
+  (string_mod.string-concat5 a b c d e))
+
+(define (str-cat-string-concat-all [parts : (Array String)]) : String
+  (string_mod.string-concat-all parts))
+
+(define (str-cat-string-concat-all-pack-part
+  [parts : (Array String)]
+  [index : i64]
+  [part : String]) : (Array String)
+  (string_mod.string-concat-all-pack-part parts index part))
 
 ;: Internal recursive pack step used by `str-cat` expansion.
 ;:
@@ -28,7 +62,7 @@
   (if (expr-list-empty? args)
     parts
     `(str-cat-pack
-      (string-concat-all-pack-part ,parts ,index ,(expr-list-head args))
+      (str-cat-string-concat-all-pack-part ,parts ,index ,(expr-list-head args))
       (+ ,index 1)
       ,@(expr-list-tail args))))
 
@@ -50,23 +84,23 @@
           [b : Expr (expr-list-head rest1)]
           [rest2 : ExprList (expr-list-tail rest1)]
           (if (expr-list-empty? rest2)
-            `(string-append ,a ,b)
+            `(str-cat-string-append ,a ,b)
             (let
               [c : Expr (expr-list-head rest2)]
               [rest3 : ExprList (expr-list-tail rest2)]
               (if (expr-list-empty? rest3)
-                `(string-concat3 ,a ,b ,c)
+                `(str-cat-string-concat3 ,a ,b ,c)
                 (let
                   [d : Expr (expr-list-head rest3)]
                   [rest4 : ExprList (expr-list-tail rest3)]
                   (if (expr-list-empty? rest4)
-                    `(string-concat4 ,a ,b ,c ,d)
+                    `(str-cat-string-concat4 ,a ,b ,c ,d)
                     (let
                       [e : Expr (expr-list-head rest4)]
                       [rest5 : ExprList (expr-list-tail rest4)]
                       (if (expr-list-empty? rest5)
-                        `(string-concat5 ,a ,b ,c ,d ,e)
-                        `(string-concat-all
+                        `(str-cat-string-concat5 ,a ,b ,c ,d ,e)
+                        `(str-cat-string-concat-all
                           (str-cat-pack
                             (make-array
                               String
@@ -76,6 +110,12 @@
 
 ;: Exported only so imported `str-cat` expansions can finish their internal
 ;: recursive pack step.
-(export (macro str-cat-pack))
-
-(export (macro str-cat))
+(export
+  (value str-cat-string-append)
+  (value str-cat-string-concat3)
+  (value str-cat-string-concat4)
+  (value str-cat-string-concat5)
+  (value str-cat-string-concat-all)
+  (value str-cat-string-concat-all-pack-part)
+  (macro str-cat-pack)
+  (macro str-cat))

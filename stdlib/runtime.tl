@@ -7,9 +7,9 @@
 ;#
 ;# It is implicitly imported into every executable (the compile driver injects
 ;# it for the entry program) and its abort handlers are kept as reachability
-;# roots, so a program that can fault always links them — replacing the former
+;# roots, so a program that can fault always links them â€” replacing the former
 ;# `tl_oob_abort`/`tl_div_abort`/`tl_shift_abort` assembly shims. Per-target
-;# bodies are selected with `(cfg windows …)`; the Linux side issues raw
+;# bodies are selected with `(cfg windows â€¦)`; the Linux side issues raw
 ;# syscalls (the freestanding target has no libc), the Windows side calls
 ;# kernel32 directly.
 ;#
@@ -21,6 +21,8 @@
 ;# double-load when the entry program is given by an absolute path (its stdlib
 ;# imports would resolve to different path keys than a relative prelude load).
 ;: Windows kernel32 `GetStdHandle` binding for mapping fds 0/1/2 to handles.
+(module stdlib.runtime)
+
 (cfg
   windows
   (extern (runtime-windows-get-std-handle [arg0 : i32]) : i64 (:symbol "GetStdHandle")))
@@ -146,7 +148,7 @@
     (runtime-os-exit 129)))
 
 ;: General panic abort: write the supplied message to stderr and exit 134.
-;: Exported as the fixed `tl_abort_string` symbol so `(panic …)` call sites and
+;: Exported as the fixed `tl_abort_string` symbol so `(panic â€¦)` call sites and
 ;: the runtime's own error paths reach it unchanged (replaces the former
 ;: hand-written Linux/Windows `tl_abort_string` asm).
 (define (tl-runtime-abort-string [message : String])
@@ -205,3 +207,28 @@
   (begin
     (runtime-abort-write "tl: allocation failed\n")
     (runtime-os-exit 134)))
+
+;# Dotted-module migration: preserve the pre-module flat runtime prelude surface.
+(export
+  (value runtime-ptr-arg)
+  (value runtime-os-write)
+  (value runtime-os-exit)
+  (value runtime-abort-write)
+  (value tl-runtime-oob-abort)
+  (value tl-runtime-div-abort)
+  (value tl-runtime-shift-abort)
+  (value tl-runtime-abort-string)
+  (value tl-runtime-array-fill8)
+  (value tl-runtime-array-zero)
+  (value tl-runtime-region-abort)
+  (value tl-runtime-oom-abort))
+
+(cfg
+  windows
+  (export
+    (value runtime-windows-get-std-handle)
+    (value runtime-windows-write-file)
+    (value runtime-windows-exit-process)
+    (value runtime-windows-fd-handle)))
+
+(cfg (all windows (not feature-ptr-addr-of)) (export (value runtime-alloc)))

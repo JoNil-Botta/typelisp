@@ -5,9 +5,9 @@
 ;# syntax internally as `AstTyExpr` / `CtfeExpr`; it verifies these declarations
 ;# and treats the syntax types as aliases for that internal representation while
 ;# the CTFE value migration lands.
+;: Syntax value passed to and returned from expression macros.
 (module stdlib.comptime)
 
-;: Syntax value passed to and returned from expression macros.
 (comptime-decl
   (:generated stdlib/comptime-well-known Expr "v0")
   (defenum Expr

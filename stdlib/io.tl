@@ -11,29 +11,31 @@
 ;# The `try-*` helpers return explicit monomorphic result enums. Host errors
 ;# are reported through status-code primitives and mapped into `IoError`.
 ;#
-;# Usage: `(import "stdlib/io.tl")`
+;# Usage: `(import stdlib.io)`
 ;#
 ;# ```typelisp
-;# (import "stdlib/io.tl")
+;# (import stdlib.io)
 ;# (define fallback : ResultIoString
-;#   (let [path : String "missing-file-for-docs.txt"] (try-read-file (& path))))
+;#   (let [path : String "missing-file-for-docs.txt"] (io.try-read-file (& path))))
 ;# ```
 ;#
 ;# ```typelisp
-;# (import "stdlib/io.tl")
-;# (define empty-read : StdinRead (stdin-read-bytes 0))
+;# (import stdlib.io)
+;# (define empty-read : io.StdinRead (io.stdin-read-bytes 0))
 ;# ```
 ;#
 ;# ```typelisp run
 ;# ;; doctest-exit: 0
 ;# ;; doctest-stdout: literal:hello from io\n
-;# (import "stdlib/io.tl")
+;# (import stdlib.io)
 ;# (define (main) : i64
 ;#   (begin
-;#     (let [text : String "hello from io\n"] (stdout-write (& text)))
+;#     (let [text : String "hello from io\n"] (io.stdout-write (& text)))
 ;#     0))
 ;# ```
-(import "string.tl")
+(module stdlib.io)
+
+(import stdlib.string as string_mod)
 
 ;: Private errno-style status slot used by stdlib IO/FS helpers. This is not
 ;: libc errno; it preserves the previous backend-owned slot semantics in TL.
@@ -107,11 +109,11 @@
   windows
   (define (io-windows-fd-handle [fd : i32]) : i64
     (if (= fd (cast 0 : i32))
-      (io-win-get-std-handle (cast -10 : i32))
+      (stdlib.io.io-win-get-std-handle (cast -10 : i32))
       (if (= fd (cast 1 : i32))
-        (io-win-get-std-handle (cast -11 : i32))
+        (stdlib.io.io-win-get-std-handle (cast -11 : i32))
         (if (= fd (cast 2 : i32))
-          (io-win-get-std-handle (cast -12 : i32))
+          (stdlib.io.io-win-get-std-handle (cast -12 : i32))
           (cast fd : i64))))))
 
 ;: Windows `_write` replacement via WriteFile; returns bytes written or -1.
@@ -119,10 +121,10 @@
   windows
   (define (io-windows-write [fd : i32] [buf : (Ptr u8)] [count : i32]) : i32
     (let
-      [handle : i64 (io-windows-fd-handle fd)]
+      [handle : i64 (stdlib.io.io-windows-fd-handle fd)]
       [written : (Array i32) (make-array i32 1)]
       [ok : i32
-        (io-win-write-file
+        (stdlib.io.io-win-write-file
           handle
           buf
           count
@@ -138,10 +140,10 @@
   windows
   (define (io-windows-read [fd : i32] [buf : (MutPtr u8)] [count : i32]) : i32
     (let
-      [handle : i64 (io-windows-fd-handle fd)]
+      [handle : i64 (stdlib.io.io-windows-fd-handle fd)]
       [nread : (Array i32) (make-array i32 1)]
       [ok : i32
-        (io-win-read-file
+        (stdlib.io.io-win-read-file
           handle
           buf
           count
@@ -149,7 +151,7 @@
             (ptr-cast (array-data nread) : (MutPtr i32)))
           0)]
       (if (= ok (cast 0 : i32))
-        (if (= (io-win-get-last-error) (cast 109 : i32))
+        (if (= (stdlib.io.io-win-get-last-error) (cast 109 : i32))
           (cast 0 : i32)
           (cast -1 : i32))
         (array-ref nread 0)))))
@@ -162,7 +164,7 @@
     (if (<= fd (cast 2 : i32))
       (cast 0 : i32)
       (begin
-        (io-win-close-handle (cast fd : i64))
+        (stdlib.io.io-win-close-handle (cast fd : i64))
         (cast 0 : i32)))))
 
 ;: Windows `_lseeki64` replacement via SetFilePointerEx; returns offset or -1.
@@ -170,10 +172,10 @@
   windows
   (define (io-windows-lseek [fd : i32] [offset : i64] [whence : i32]) : i64
     (let
-      [handle : i64 (io-windows-fd-handle fd)]
+      [handle : i64 (stdlib.io.io-windows-fd-handle fd)]
       [newpos : (Array i64) (make-array i64 1)]
       [ok : i32
-        (io-win-set-file-pointer-ex
+        (stdlib.io.io-win-set-file-pointer-ex
           handle
           offset
           (unsafe
@@ -209,10 +211,11 @@
           (if (= (bit-and f 0x200) 0)
             4
             2))]
-      [handle : i64 (io-win-create-file path access 0x3 0 disp 0x80 0)]
+      [handle : i64
+        (stdlib.io.io-win-create-file path access 0x3 0 disp 0x80 0)]
       (if (= handle -1)
         (begin
-          (io-set-error-code 2)
+          (stdlib.io.io-set-error-code 2)
           (cast -1 : i32))
         (cast handle : i32)))))
 
@@ -222,9 +225,9 @@
   (define (io-windows-access [path : (Ptr u8)] [mode : i32]) : i32
     (let
       [ignore-mode : i32 mode]
-      (if (= (io-win-get-file-attributes path) (cast -1 : i32))
+      (if (= (stdlib.io.io-win-get-file-attributes path) (cast -1 : i32))
         (begin
-          (io-set-error-code 2)
+          (stdlib.io.io-set-error-code 2)
           (cast -1 : i32))
         (cast 0 : i32)))))
 
@@ -237,7 +240,7 @@
 (cfg
   windows
   (define (io-windows-exit [code : i32]) : never
-    (io-win-exit-process code)))
+    (stdlib.io.io-win-exit-process code)))
 
 ;: Runtime allocator binding used to allocate raw handle tables.
 (extern (io-runtime-alloc [arg0 : i64]) : (MutPtr u8) (:symbol "tl_alloc"))
@@ -286,32 +289,32 @@
 ;: Return the raw file descriptor table pointer.
 (define (io-file-fds-ptr) : (MutPtr i64)
   (unsafe
-    (int->ptr io-file-fds-addr : (MutPtr i64))))
+    (int->ptr stdlib.io.io-file-fds-addr : (MutPtr i64))))
 
 ;: Return the raw file mode table pointer.
 (define (io-file-modes-ptr) : (MutPtr i64)
   (unsafe
-    (int->ptr io-file-modes-addr : (MutPtr i64))))
+    (int->ptr stdlib.io.io-file-modes-addr : (MutPtr i64))))
 
 ;: Return the raw file handle state table pointer.
 (define (io-file-states-ptr) : (MutPtr i64)
   (unsafe
-    (int->ptr io-file-states-addr : (MutPtr i64))))
+    (int->ptr stdlib.io.io-file-states-addr : (MutPtr i64))))
 
 ;: Return the raw file EOF state table pointer.
 (define (io-file-eofs-ptr) : (MutPtr bool)
   (unsafe
-    (int->ptr io-file-eofs-addr : (MutPtr bool))))
+    (int->ptr stdlib.io.io-file-eofs-addr : (MutPtr bool))))
 
 ;: Return the raw cached-read readiness table pointer.
 (define (io-file-last-ready-ptr) : (MutPtr bool)
   (unsafe
-    (int->ptr io-file-last-ready-addr : (MutPtr bool))))
+    (int->ptr stdlib.io.io-file-last-ready-addr : (MutPtr bool))))
 
 ;: Return the raw cached-read byte table pointer.
 (define (io-file-last-bytes-ptr) : (MutPtr String)
   (unsafe
-    (int->ptr io-file-last-bytes-addr : (MutPtr String))))
+    (int->ptr stdlib.io.io-file-last-bytes-addr : (MutPtr String))))
 
 ;: Convert a mutable byte pointer into an integer address for global storage.
 (define (io-file-ptr-addr [ptr : (MutPtr u8)]) : u64
@@ -354,12 +357,15 @@
 ;: Clear all per-handle table state for a closed or reusable handle slot.
 (define (io-file-handle-clear! [handle : i64]) : unit
   (begin
-    (io-file-i64-set! (io-file-fds-ptr) handle 0)
-    (io-file-i64-set! (io-file-modes-ptr) handle 0)
-    (io-file-i64-set! (io-file-states-ptr) handle 0)
-    (io-file-bool-set! (io-file-eofs-ptr) handle false)
-    (io-file-bool-set! (io-file-last-ready-ptr) handle false)
-    (io-file-string-set! (io-file-last-bytes-ptr) handle "")
+    (stdlib.io.io-file-i64-set! (stdlib.io.io-file-fds-ptr) handle 0)
+    (stdlib.io.io-file-i64-set! (stdlib.io.io-file-modes-ptr) handle 0)
+    (stdlib.io.io-file-i64-set! (stdlib.io.io-file-states-ptr) handle 0)
+    (stdlib.io.io-file-bool-set! (stdlib.io.io-file-eofs-ptr) handle false)
+    (stdlib.io.io-file-bool-set!
+      (stdlib.io.io-file-last-ready-ptr)
+      handle
+      false)
+    (stdlib.io.io-file-string-set! (stdlib.io.io-file-last-bytes-ptr) handle "")
     unit))
 
 ;: Return the first currently closed file-handle slot at or after `start`.
@@ -367,27 +373,30 @@
   (let
     [i : i64 start]
     (begin
-      (while (< i io-file-handle-cap)
+      (while (< i stdlib.io.io-file-handle-cap)
         (begin
-          (when (= (io-file-i64-ref (io-file-states-ptr) i) 0) (return i))
+          (when
+            (= (stdlib.io.io-file-i64-ref (stdlib.io.io-file-states-ptr) i) 0)
+            (return i))
           (set! i (+ i 1))))
       -1)))
 
 ;: Reserve a stdlib file-handle slot, reusing closed slots before failing.
 (define (io-file-alloc-handle!) : i64
   (begin
-    (io-file-table-init!)
+    (stdlib.io.io-file-table-init!)
     (let
-      [handle : i64 (io-file-find-free-handle-from io-file-handle-next)]
+      [handle : i64
+        (stdlib.io.io-file-find-free-handle-from stdlib.io.io-file-handle-next)]
       [fallback : i64
         (if (< handle 0)
-          (io-file-find-free-handle-from 1)
+          (stdlib.io.io-file-find-free-handle-from 1)
           handle)]
       (if (< fallback 0)
         -1
         (begin
           (set! io-file-handle-next (+ fallback 1))
-          (if (>= io-file-handle-next io-file-handle-cap)
+          (if (>= stdlib.io.io-file-handle-next stdlib.io.io-file-handle-cap)
             (set! io-file-handle-next 1)
             unit)
           fallback)))))
@@ -399,73 +408,76 @@
 ;; active arena is restored before returning.
 ;: Lazily allocate and zero the raw file-handle tables in a persistent arena.
 (define (io-file-table-init!) : unit
-  (if (= io-file-fds-addr (cast 0 : u64))
+  (if (= stdlib.io.io-file-fds-addr (cast 0 : u64))
     (let
-      [table-arena : i64 (io-arena-make)]
-      [prev-arena : i64 (io-arena-current)]
+      [table-arena : i64 (stdlib.io.io-arena-make)]
+      [prev-arena : i64 (stdlib.io.io-arena-current)]
       [switched : unit
         (unsafe
-          (io-arena-set table-arena))]
+          (stdlib.io.io-arena-set table-arena))]
       [fds : (MutPtr i64)
         (unsafe
-          (ptr-cast (io-runtime-alloc 8192) : (MutPtr i64)))]
+          (ptr-cast (stdlib.io.io-runtime-alloc 8192) : (MutPtr i64)))]
       [modes : (MutPtr i64)
         (unsafe
-          (ptr-cast (io-runtime-alloc 8192) : (MutPtr i64)))]
+          (ptr-cast (stdlib.io.io-runtime-alloc 8192) : (MutPtr i64)))]
       [states : (MutPtr i64)
         (unsafe
-          (ptr-cast (io-runtime-alloc 8192) : (MutPtr i64)))]
+          (ptr-cast (stdlib.io.io-runtime-alloc 8192) : (MutPtr i64)))]
       [eofs : (MutPtr bool)
         (unsafe
-          (ptr-cast (io-runtime-alloc 1024) : (MutPtr bool)))]
+          (ptr-cast (stdlib.io.io-runtime-alloc 1024) : (MutPtr bool)))]
       [last-ready : (MutPtr bool)
         (unsafe
-          (ptr-cast (io-runtime-alloc 1024) : (MutPtr bool)))]
+          (ptr-cast (stdlib.io.io-runtime-alloc 1024) : (MutPtr bool)))]
       [last-bytes : (MutPtr String)
         (unsafe
-          (ptr-cast (io-runtime-alloc 16384) : (MutPtr String)))]
+          (ptr-cast (stdlib.io.io-runtime-alloc 16384) : (MutPtr String)))]
       [restored : unit
         (unsafe
-          (io-arena-set prev-arena))]
+          (stdlib.io.io-arena-set prev-arena))]
       [i : i64 0]
       (begin
         (set!
           io-file-fds-addr
-          (io-file-ptr-addr
+          (stdlib.io.io-file-ptr-addr
             (unsafe
               (ptr-cast fds : (MutPtr u8)))))
         (set!
           io-file-modes-addr
-          (io-file-ptr-addr
+          (stdlib.io.io-file-ptr-addr
             (unsafe
               (ptr-cast modes : (MutPtr u8)))))
         (set!
           io-file-states-addr
-          (io-file-ptr-addr
+          (stdlib.io.io-file-ptr-addr
             (unsafe
               (ptr-cast states : (MutPtr u8)))))
         (set!
           io-file-eofs-addr
-          (io-file-ptr-addr
+          (stdlib.io.io-file-ptr-addr
             (unsafe
               (ptr-cast eofs : (MutPtr u8)))))
         (set!
           io-file-last-ready-addr
-          (io-file-ptr-addr
+          (stdlib.io.io-file-ptr-addr
             (unsafe
               (ptr-cast last-ready : (MutPtr u8)))))
         (set!
           io-file-last-bytes-addr
-          (io-file-ptr-addr
+          (stdlib.io.io-file-ptr-addr
             (unsafe
               (ptr-cast last-bytes : (MutPtr u8)))))
-        (while (< i io-file-handle-cap)
+        (while (< i stdlib.io.io-file-handle-cap)
           (begin
-            (io-file-i64-set! (io-file-fds-ptr) i 0)
-            (io-file-i64-set! (io-file-modes-ptr) i 0)
-            (io-file-i64-set! (io-file-states-ptr) i 0)
-            (io-file-bool-set! (io-file-eofs-ptr) i false)
-            (io-file-bool-set! (io-file-last-ready-ptr) i false)
+            (stdlib.io.io-file-i64-set! (stdlib.io.io-file-fds-ptr) i 0)
+            (stdlib.io.io-file-i64-set! (stdlib.io.io-file-modes-ptr) i 0)
+            (stdlib.io.io-file-i64-set! (stdlib.io.io-file-states-ptr) i 0)
+            (stdlib.io.io-file-bool-set! (stdlib.io.io-file-eofs-ptr) i false)
+            (stdlib.io.io-file-bool-set!
+              (stdlib.io.io-file-last-ready-ptr)
+              i
+              false)
             (set! i (+ i 1))))
         unit))
     unit))
@@ -506,7 +518,7 @@
 ;: Copy a NUL-terminated C string into an owned TypeLisp String.
 (define (io-copy-c-string [ptr : (Ptr u8)]) : String
   (let
-    [n : i64 (io-c-string-length ptr)]
+    [n : i64 (stdlib.io.io-c-string-length ptr)]
     [buf : (Array u8) (make-array u8 n)]
     [i : i64 0]
     (begin
@@ -519,7 +531,7 @@
               (ptr-read (ptr-offset ptr i))))
           (set! i (+ i 1))))
       (unsafe
-        (string-from-bytes (io-array-const-ptr buf) n)))))
+        (string-from-bytes (stdlib.io.io-array-const-ptr buf) n)))))
 
 ;: Return the byte length of a NUL-terminated C string.
 (define (io-c-string-length [ptr : (Ptr u8)]) : i64
@@ -540,7 +552,7 @@
 
 ;: Return the current private errno-style status value as an i64.
 (define (io-last-error-code) : i64
-  io-private-error-code)
+  stdlib.io.io-private-error-code)
 
 ;: Translate a raw Linux syscall return into libc `-1` + `errno` semantics.
 ;: Syscalls report errors as a small negative `-errno` in `[-4095, -1]`; the
@@ -550,7 +562,7 @@
 (define (io-linux-syscall-status [result : i64]) : i64
   (if (and (>= result -4095) (< result 0))
     (begin
-      (io-set-error-code (- 0 result))
+      (stdlib.io.io-set-error-code (- 0 result))
       -1)
     result))
 
@@ -564,21 +576,21 @@
   (cfg
     windows
     -1
-    (io-linux-syscall-status
+    (stdlib.io.io-linux-syscall-status
       (unsafe
-        (syscall 2 (io-linux-ptr-arg path) flags mode)))))
+        (syscall 2 (stdlib.io.io-linux-ptr-arg path) flags mode)))))
 
 ;: Linux `read` via the `read` syscall (number 0).
 (define (io-linux-syscall-read [fd : i64] [buf : (MutPtr u8)] [count : i64]) : i64
   (cfg
     windows
     -1
-    (io-linux-syscall-status
+    (stdlib.io.io-linux-syscall-status
       (unsafe
         (syscall
           0
           fd
-          (io-linux-ptr-arg
+          (stdlib.io.io-linux-ptr-arg
             (unsafe
               (ptr-cast buf : (Ptr u8))))
           count)))))
@@ -588,16 +600,16 @@
   (cfg
     windows
     -1
-    (io-linux-syscall-status
+    (stdlib.io.io-linux-syscall-status
       (unsafe
-        (syscall 1 fd (io-linux-ptr-arg buf) count)))))
+        (syscall 1 fd (stdlib.io.io-linux-ptr-arg buf) count)))))
 
 ;: Linux `close` via the `close` syscall (number 3).
 (define (io-linux-syscall-close [fd : i64]) : i64
   (cfg
     windows
     -1
-    (io-linux-syscall-status
+    (stdlib.io.io-linux-syscall-status
       (unsafe
         (syscall 3 fd)))))
 
@@ -606,7 +618,7 @@
   (cfg
     windows
     -1
-    (io-linux-syscall-status
+    (stdlib.io.io-linux-syscall-status
       (unsafe
         (syscall 8 fd offset whence)))))
 
@@ -615,9 +627,9 @@
   (cfg
     windows
     -1
-    (io-linux-syscall-status
+    (stdlib.io.io-linux-syscall-status
       (unsafe
-        (syscall 21 (io-linux-ptr-arg path) mode)))))
+        (syscall 21 (stdlib.io.io-linux-ptr-arg path) mode)))))
 
 ;: Linux process exit via the `exit_group` syscall (number 231); never returns.
 ;: The tail call is unreachable at runtime (the syscall terminates the process)
@@ -625,57 +637,66 @@
 (define (io-linux-exit [code : i64]) : never
   (cfg
     windows
-    (io-windows-exit (cast code : i32))
+    (stdlib.io.io-windows-exit (cast code : i32))
     (begin
       (unsafe
         (syscall 231 code))
-      (io-linux-exit code))))
+      (stdlib.io.io-linux-exit code))))
 
 ;: Dispatch a platform process exit; never returns.
 (define (io-platform-exit [code : i64]) : never
-  (cfg windows (io-windows-exit (cast code : i32)) (io-linux-exit code)))
+  (cfg
+    windows
+    (stdlib.io.io-windows-exit (cast code : i32))
+    (stdlib.io.io-linux-exit code)))
 
 ;: Dispatch a platform `open` call and return its file descriptor or negative status.
 (define (io-platform-open [path : (Ptr u8)] [flags : i64] [mode : i64]) : i64
   (cfg
     windows
-    (cast (io-windows-open path (cast flags : i32) (cast mode : i32)) : i64)
-    (io-linux-syscall-open path flags mode)))
+    (cast
+      (stdlib.io.io-windows-open path (cast flags : i32) (cast mode : i32))
+      : i64)
+    (stdlib.io.io-linux-syscall-open path flags mode)))
 
 ;: Dispatch a platform `read` call and return its byte count or negative status.
 (define (io-platform-read [fd : i64] [buf : (MutPtr u8)] [count : i64]) : i64
   (cfg
     windows
-    (cast (io-windows-read (cast fd : i32) buf (cast count : i32)) : i64)
-    (io-linux-syscall-read fd buf count)))
+    (cast
+      (stdlib.io.io-windows-read (cast fd : i32) buf (cast count : i32))
+      : i64)
+    (stdlib.io.io-linux-syscall-read fd buf count)))
 
 ;: Dispatch a platform `write` call and return its byte count or negative status.
 (define (io-platform-write [fd : i64] [buf : (Ptr u8)] [count : i64]) : i64
   (cfg
     windows
-    (cast (io-windows-write (cast fd : i32) buf (cast count : i32)) : i64)
-    (io-linux-syscall-write fd buf count)))
+    (cast
+      (stdlib.io.io-windows-write (cast fd : i32) buf (cast count : i32))
+      : i64)
+    (stdlib.io.io-linux-syscall-write fd buf count)))
 
 ;: Dispatch a platform `close` call and return zero or negative status.
 (define (io-platform-close [fd : i64]) : i64
   (cfg
     windows
-    (cast (io-windows-close (cast fd : i32)) : i64)
-    (io-linux-syscall-close fd)))
+    (cast (stdlib.io.io-windows-close (cast fd : i32)) : i64)
+    (stdlib.io.io-linux-syscall-close fd)))
 
 ;: Dispatch a platform seek call and return the resulting offset or negative status.
 (define (io-platform-lseek [fd : i64] [offset : i64] [whence : i64]) : i64
   (cfg
     windows
-    (io-windows-lseek (cast fd : i32) offset (cast whence : i32))
-    (io-linux-syscall-lseek fd offset whence)))
+    (stdlib.io.io-windows-lseek (cast fd : i32) offset (cast whence : i32))
+    (stdlib.io.io-linux-syscall-lseek fd offset whence)))
 
 ;: Dispatch a platform existence/access probe and return zero or negative status.
 (define (io-platform-access [path : (Ptr u8)] [mode : i64]) : i64
   (cfg
     windows
-    (cast (io-windows-access path (cast mode : i32)) : i64)
-    (io-linux-syscall-access path mode)))
+    (cast (stdlib.io.io-windows-access path (cast mode : i32)) : i64)
+    (stdlib.io.io-linux-syscall-access path mode)))
 
 ;: Return platform flags for opening a path read-only.
 (define (io-open-read-flags) : i64
@@ -696,10 +717,10 @@
 ;: Return platform open flags for stdlib file mode `mode`.
 (define (io-open-flags-for-mode [mode : i64]) : i64
   (if (= mode 0)
-    (io-open-read-flags)
+    (stdlib.io.io-open-read-flags)
     (if (= mode 1)
-      (io-open-write-truncate-flags)
-      (io-open-write-append-flags))))
+      (stdlib.io.io-open-write-truncate-flags)
+      (stdlib.io.io-open-write-append-flags))))
 
 ;: Return `code` as a negative status value.
 (define (io-neg-status [code : i64]) : i64
@@ -714,13 +735,13 @@
       (while (and (= status 0) (< offset len))
         (let
           [written : i64
-            (io-platform-write
+            (stdlib.io.io-platform-write
               fd
               (unsafe
                 (ptr-offset data offset))
               (- len offset))]
           (if (< written 0)
-            (set! status (io-last-error-code))
+            (set! status (stdlib.io.io-last-error-code))
             (if (= written 0)
               (set! status 5)
               (set! offset (+ offset written))))))
@@ -728,35 +749,38 @@
 
 ;: Write a whole String to `fd`, returning a host status code.
 (define (io-write-string-fd-status [fd : i64] [text : String]) : i64
-  (io-write-all-fd-status fd (io-string-data text) (string-length text)))
+  (stdlib.io.io-write-all-fd-status
+    fd
+    (stdlib.io.io-string-data text)
+    (string-length text)))
 
 ;: Write a string to stdout without adding a newline.
 (define (print-string [text : String]) : unit
   (let
-    [status : i64 (io-write-string-fd-status 1 text)]
+    [status : i64 (stdlib.io.io-write-string-fd-status 1 text)]
     (if (= status 0)
       unit
-      (io-platform-exit 134))))
+      (stdlib.io.io-platform-exit 134))))
 
 ;: Compatibility alias for `print-string`.
 (define (print-str [text : String]) : unit
-  (print-string text))
+  (stdlib.io.print-string text))
 
 ;: Write a trailing newline to stdout.
 (define (print-newline) : unit
-  (print-string "\n"))
+  (stdlib.io.print-string "\n"))
 
 ;: Write an integer followed by a newline.
 (define (print [value : i64]) : unit
   (begin
-    (print-string (int->string value))
-    (print-newline)))
+    (stdlib.io.print-string (string_mod.int->string value))
+    (stdlib.io.print-newline)))
 
 ;: Write a boolean followed by a newline.
 (define (print-bool [value : bool]) : unit
   (if value
-    (print-string "true\n")
-    (print-string "false\n")))
+    (stdlib.io.print-string "true\n")
+    (stdlib.io.print-string "false\n")))
 
 ;: Write one character byte to stdout without adding a newline.
 (define (print-char [ch : char]) : unit
@@ -764,9 +788,14 @@
     [buf : (Array u8) (make-array u8 1)]
     (begin
       (array-set! buf 0 (cast ch : u8))
-      (if (= (io-write-all-fd-status 1 (io-array-const-ptr buf) 1) 0)
+      (if (=
+        (stdlib.io.io-write-all-fd-status
+          1
+          (stdlib.io.io-array-const-ptr buf)
+          1)
+        0)
         unit
-        (io-platform-exit 134)))))
+        (stdlib.io.io-platform-exit 134)))))
 
 ;: Fixed-capacity base-2^32 bignum backing the pure-TL f64 formatter.
 (defstruct BigNum
@@ -783,13 +812,13 @@
 
 ;: A zero-valued BigNum.
 (define (bn-zero) : BigNum
-  (BigNum (make-array u64 ftoa-cap) 0))
+  (BigNum (make-array u64 stdlib.io.ftoa-cap) 0))
 
 ;: BigNum holding the u64 value x.
 (define (bn-from-u64 [x : u64]) : BigNum
   (let
-    [r : BigNum (bn-zero)]
-    [lo : u64 (bit-and x ftoa-mask32)]
+    [r : BigNum (stdlib.io.bn-zero)]
+    [lo : u64 (bit-and x stdlib.io.ftoa-mask32)]
     [hi : u64 (shr x 32)]
     (begin
       (array-set! (struct-get r limbs) 0 lo)
@@ -843,7 +872,7 @@
 ;: Sum of BigNums a and b.
 (define (bn-add [a : BigNum] [b : BigNum]) : BigNum
   (let
-    [r : (Array u64) (make-array u64 ftoa-cap)]
+    [r : (Array u64) (make-array u64 stdlib.io.ftoa-cap)]
     [la : i64 (struct-get a len)]
     [lb : i64 (struct-get b len)]
     [n : i64
@@ -865,7 +894,7 @@
               (cast 0 : u64))]
           [s : u64 (+ (+ av bv) carry)]
           (begin
-            (array-set! r i (bit-and s ftoa-mask32))
+            (array-set! r i (bit-and s stdlib.io.ftoa-mask32))
             (set! carry (shr s 32))
             (set! i (+ i 1)))))
       (when
@@ -873,12 +902,12 @@
         (begin
           (array-set! r i carry)
           (set! n (+ n 1))))
-      (BigNum r (bn-norm-len r n)))))
+      (BigNum r (stdlib.io.bn-norm-len r n)))))
 
 ;: Product of BigNum a and a value m that fits in 32 bits.
 (define (bn-mul-u32 [a : BigNum] [m : u64]) : BigNum
   (let
-    [r : (Array u64) (make-array u64 ftoa-cap)]
+    [r : (Array u64) (make-array u64 stdlib.io.ftoa-cap)]
     [la : i64 (struct-get a len)]
     [carry : u64 (cast 0 : u64)]
     [i : i64 0]
@@ -887,15 +916,15 @@
         (let
           [p : u64 (+ (* (array-ref (struct-get a limbs) i) m) carry)]
           (begin
-            (array-set! r i (bit-and p ftoa-mask32))
+            (array-set! r i (bit-and p stdlib.io.ftoa-mask32))
             (set! carry (shr p 32))
             (set! i (+ i 1)))))
       (while (> carry (cast 0 : u64))
         (begin
-          (array-set! r i (bit-and carry ftoa-mask32))
+          (array-set! r i (bit-and carry stdlib.io.ftoa-mask32))
           (set! carry (shr carry 32))
           (set! i (+ i 1))))
-      (BigNum r (bn-norm-len r i)))))
+      (BigNum r (stdlib.io.bn-norm-len r i)))))
 
 ;: BigNum a shifted left by n bits.
 (define (bn-shl-bits [a : BigNum] [n : i64]) : BigNum
@@ -904,7 +933,7 @@
     (let
       [limb-shift : i64 (/ n 32)]
       [bit-shift : i64 (% n 32)]
-      [r : (Array u64) (make-array u64 ftoa-cap)]
+      [r : (Array u64) (make-array u64 stdlib.io.ftoa-cap)]
       [la : i64 (struct-get a len)]
       [carry : u64 (cast 0 : u64)]
       [i : i64 0]
@@ -918,7 +947,7 @@
             (let
               [v : u64 (array-ref (struct-get a limbs) i)]
               [shifted : u64
-                (bit-or (bit-and (shl v bit-shift) ftoa-mask32) carry)]
+                (bit-or (bit-and (shl v bit-shift) stdlib.io.ftoa-mask32) carry)]
               (begin
                 (array-set! r (+ i limb-shift) shifted)
                 (set! carry (shr v (- 32 bit-shift)))
@@ -926,17 +955,19 @@
         (when
           (and (not (= bit-shift 0)) (> carry (cast 0 : u64)))
           (array-set! r (+ la limb-shift) carry))
-        (BigNum r (bn-norm-len r (+ la (+ limb-shift 1))))))))
+        (BigNum r (stdlib.io.bn-norm-len r (+ la (+ limb-shift 1))))))))
 
 ;: Product of BigNum a and the 64-bit value m.
 (define (bn-mul-u64 [a : BigNum] [m : u64]) : BigNum
   (let
-    [lo : u64 (bit-and m ftoa-mask32)]
+    [lo : u64 (bit-and m stdlib.io.ftoa-mask32)]
     [hi : u64 (shr m 32)]
-    [low : BigNum (bn-mul-u32 a lo)]
+    [low : BigNum (stdlib.io.bn-mul-u32 a lo)]
     (if (= hi (cast 0 : u64))
       low
-      (bn-add low (bn-shl-bits (bn-mul-u32 a hi) 32)))))
+      (stdlib.io.bn-add
+        low
+        (stdlib.io.bn-shl-bits (stdlib.io.bn-mul-u32 a hi) 32)))))
 
 ;: BigNum a multiplied by ten raised to p.
 (define (bn-mul-pow10 [a : BigNum] [p : i64]) : BigNum
@@ -946,7 +977,7 @@
     (begin
       (while (< i p)
         (begin
-          (set! r (bn-mul-u32 r (cast 10 : u64)))
+          (set! r (stdlib.io.bn-mul-u32 r (cast 10 : u64)))
           (set! i (+ i 1))))
       r)))
 
@@ -959,9 +990,9 @@
       (while (>= bit 0)
         (let
           [cand : u64 (+ q (shl (cast 1 : u64) bit))]
-          [prod : BigNum (bn-mul-u64 den cand)]
+          [prod : BigNum (stdlib.io.bn-mul-u64 den cand)]
           (begin
-            (when (<= (bn-cmp prod num) 0) (set! q cand))
+            (when (<= (stdlib.io.bn-cmp prod num) 0) (set! q cand))
             (set! bit (- bit 1)))))
       q)))
 
@@ -989,7 +1020,9 @@
 
 ;: Append one decimal digit to an exact bignum significand.
 (define (io-float-bn-append-digit [value : BigNum] [digit : i64]) : BigNum
-  (bn-add (bn-mul-u32 value (cast 10 : u64)) (bn-from-u64 (cast digit : u64))))
+  (stdlib.io.bn-add
+    (stdlib.io.bn-mul-u32 value (cast 10 : u64))
+    (stdlib.io.bn-from-u64 (cast digit : u64))))
 
 ;: Parse decimal text into exact sign, significand, and decimal exponent.
 (define (io-float-parse-decimal [text : String]) : IoFloatMaybeDecimal
@@ -997,14 +1030,14 @@
     [n : i64 (string-length text)]
     [index : i64 0]
     [negative : bool false]
-    [significand : BigNum (bn-zero)]
+    [significand : BigNum (stdlib.io.bn-zero)]
     [int-digits : i64 0]
     [frac-digits : i64 0]
     [exp-negative : bool false]
     [exp-value : i64 0]
     [exp-digits : i64 0]
     (if (= n 0)
-      (IoFloatNoDecimal)
+      stdlib.io.IoFloatNoDecimal
       (begin
         (if (= (string-ref text 0) #-')
           (begin
@@ -1013,15 +1046,18 @@
           unit)
         (while (and
           (< index n)
-          (io-float-decimal-digit? (string-ref text index)))
+          (stdlib.io.io-float-decimal-digit? (string-ref text index)))
           (let
-            [digit : i64 (io-float-decimal-digit-value (string-ref text index))]
+            [digit : i64
+              (stdlib.io.io-float-decimal-digit-value (string-ref text index))]
             (begin
-              (set! significand (io-float-bn-append-digit significand digit))
+              (set!
+                significand
+                (stdlib.io.io-float-bn-append-digit significand digit))
               (set! int-digits (+ int-digits 1))
               (set! index (+ index 1)))))
         (if (= (+ int-digits frac-digits) 0)
-          (IoFloatNoDecimal)
+          stdlib.io.IoFloatNoDecimal
           (if (= index n)
             (IoFloatSomeDecimal negative significand 0)
             (if (= (string-ref text index) #.')
@@ -1029,22 +1065,24 @@
                 (set! index (+ index 1))
                 (while (and
                   (< index n)
-                  (io-float-decimal-digit? (string-ref text index)))
+                  (stdlib.io.io-float-decimal-digit? (string-ref text index)))
                   (let
                     [digit : i64
-                      (io-float-decimal-digit-value (string-ref text index))]
+                      (stdlib.io.io-float-decimal-digit-value
+                        (string-ref text index))]
                     (begin
                       (set!
                         significand
-                        (io-float-bn-append-digit significand digit))
+                        (stdlib.io.io-float-bn-append-digit significand digit))
                       (set! frac-digits (+ frac-digits 1))
                       (set! index (+ index 1)))))
                 (if (= frac-digits 0)
-                  (IoFloatNoDecimal)
+                  stdlib.io.IoFloatNoDecimal
                   (begin
                     (if (and
                       (< index n)
-                      (io-float-exponent-char? (string-ref text index)))
+                      (stdlib.io.io-float-exponent-char?
+                        (string-ref text index)))
                       (begin
                         (set! index (+ index 1))
                         (if (and (< index n) (= (string-ref text index) #-'))
@@ -1056,10 +1094,11 @@
                             unit))
                         (while (and
                           (< index n)
-                          (io-float-decimal-digit? (string-ref text index)))
+                          (stdlib.io.io-float-decimal-digit?
+                            (string-ref text index)))
                           (let
                             [digit : i64
-                              (io-float-decimal-digit-value
+                              (stdlib.io.io-float-decimal-digit-value
                                 (string-ref text index))]
                             (begin
                               (when
@@ -1070,7 +1109,7 @@
                         (when (= exp-digits 0) (set! index (+ n 1))))
                       unit)
                     (if (!= index n)
-                      (IoFloatNoDecimal)
+                      stdlib.io.IoFloatNoDecimal
                       (IoFloatSomeDecimal
                         negative
                         significand
@@ -1079,7 +1118,7 @@
                             (- 0 exp-value)
                             exp-value)
                           frac-digits))))))
-              (if (io-float-exponent-char? (string-ref text index))
+              (if (stdlib.io.io-float-exponent-char? (string-ref text index))
                 (begin
                   (set! index (+ index 1))
                   (if (and (< index n) (= (string-ref text index) #-'))
@@ -1091,10 +1130,11 @@
                       unit))
                   (while (and
                     (< index n)
-                    (io-float-decimal-digit? (string-ref text index)))
+                    (stdlib.io.io-float-decimal-digit? (string-ref text index)))
                     (let
                       [digit : i64
-                        (io-float-decimal-digit-value (string-ref text index))]
+                        (stdlib.io.io-float-decimal-digit-value
+                          (string-ref text index))]
                       (begin
                         (when
                           (< exp-value 4000)
@@ -1102,14 +1142,14 @@
                         (set! exp-digits (+ exp-digits 1))
                         (set! index (+ index 1)))))
                   (if (or (= exp-digits 0) (!= index n))
-                    (IoFloatNoDecimal)
+                    stdlib.io.IoFloatNoDecimal
                     (IoFloatSomeDecimal
                       negative
                       significand
                       (if exp-negative
                         (- 0 exp-value)
                         exp-value))))
-                (IoFloatNoDecimal)))))))))
+                stdlib.io.IoFloatNoDecimal))))))))
 
 ;: floor(a / b) for b > 0 (TL `/` truncates toward zero).
 (define (ftoa-floor-div [a : i64] [b : i64]) : i64
@@ -1137,17 +1177,22 @@
       0
       (+
         (* (- len 1) 32)
-        (+ (ftoa-msb-index (array-ref (struct-get value limbs) (- len 1))) 1)))))
+        (+
+          (stdlib.io.ftoa-msb-index
+            (array-ref (struct-get value limbs) (- len 1)))
+          1)))))
 
 ;: Floor log2 of the positive rational `num / den`.
 (define (io-float-ratio-floor-log2 [num : BigNum] [den : BigNum]) : i64
   (let
     [estimate : i64
-      (- (io-float-bn-bit-length num) (io-float-bn-bit-length den))]
+      (-
+        (stdlib.io.io-float-bn-bit-length num)
+        (stdlib.io.io-float-bn-bit-length den))]
     [ok : bool
       (if (>= estimate 0)
-        (>= (bn-cmp num (bn-shl-bits den estimate)) 0)
-        (>= (bn-cmp (bn-shl-bits num (- 0 estimate)) den) 0))]
+        (>= (stdlib.io.bn-cmp num (stdlib.io.bn-shl-bits den estimate)) 0)
+        (>= (stdlib.io.bn-cmp (stdlib.io.bn-shl-bits num (- 0 estimate)) den) 0))]
     (if ok
       estimate
       (- estimate 1))))
@@ -1155,10 +1200,11 @@
 ;: Rounded quotient of `num / den`, ties to even.
 (define (io-float-round-div-u64 [num : BigNum] [den : BigNum]) : u64
   (let
-    [q : u64 (bn-div-floor-u64 num den)]
-    [twice-num : BigNum (bn-shl-bits num 1)]
-    [mid : BigNum (bn-mul-u64 den (+ (* (cast 2 : u64) q) (cast 1 : u64)))]
-    [cmp : i64 (bn-cmp twice-num mid)]
+    [q : u64 (stdlib.io.bn-div-floor-u64 num den)]
+    [twice-num : BigNum (stdlib.io.bn-shl-bits num 1)]
+    [mid : BigNum
+      (stdlib.io.bn-mul-u64 den (+ (* (cast 2 : u64) q) (cast 1 : u64)))]
+    [cmp : i64 (stdlib.io.bn-cmp twice-num mid)]
     (if (> cmp 0)
       (+ q (cast 1 : u64))
       (if (= cmp 0)
@@ -1170,8 +1216,10 @@
 ;: Rounded quotient of `num * 2^shift / den`, ties to even.
 (define (io-float-round-scaled-u64 [num : BigNum] [den : BigNum] [shift : i64]) : u64
   (if (>= shift 0)
-    (io-float-round-div-u64 (bn-shl-bits num shift) den)
-    (io-float-round-div-u64 num (bn-shl-bits den (- 0 shift)))))
+    (stdlib.io.io-float-round-div-u64 (stdlib.io.bn-shl-bits num shift) den)
+    (stdlib.io.io-float-round-div-u64
+      num
+      (stdlib.io.bn-shl-bits den (- 0 shift)))))
 
 ;: Reinterpret IEEE-754 binary64 bits as f64.
 (define (io-float-f64-from-bits [bits : u64]) : f64
@@ -1211,26 +1259,30 @@
 ;: Return true when an f64 is neither NaN nor infinity.
 (define (io-float-f64-finite? [value : f64]) : bool
   (let
-    [bits : u64 (io-float-f64-bits value)]
+    [bits : u64 (stdlib.io.io-float-f64-bits value)]
     [expf : u64 (bit-and (shr bits 52) (cast 0x7ff : u64))]
     (not (= expf (cast 0x7ff : u64)))))
 
 ;: Return true when an f32 is neither NaN nor infinity.
 (define (io-float-f32-finite? [value : f32]) : bool
   (let
-    [bits : u32 (io-float-f32-bits value)]
+    [bits : u32 (stdlib.io.io-float-f32-bits value)]
     [expf : u32 (bit-and (shr bits 23) (cast 0xff : u32))]
     (not (= expf (cast 0xff : u32)))))
 
 ;: Return true when the f64 magnitude bits are zero.
 (define (io-float-f64-zero-magnitude? [value : f64]) : bool
   (=
-    (bit-and (io-float-f64-bits value) (cast 0x7fffffffffffffff : u64))
+    (bit-and
+      (stdlib.io.io-float-f64-bits value)
+      (cast 0x7fffffffffffffff : u64))
     (cast 0 : u64)))
 
 ;: Return true when the f32 magnitude bits are zero.
 (define (io-float-f32-zero-magnitude? [value : f32]) : bool
-  (= (bit-and (io-float-f32-bits value) (cast 0x7fffffff : u32)) (cast 0 : u32)))
+  (=
+    (bit-and (stdlib.io.io-float-f32-bits value) (cast 0x7fffffff : u32))
+    (cast 0 : u32)))
 
 ;: Convert exact decimal components to an IEEE-754 binary64 value.
 (define (io-float-decimal-to-f64
@@ -1243,22 +1295,23 @@
         (cast 0x8000000000000000 : u64)
         (cast 0 : u64))]
     [num : BigNum significand]
-    [den : BigNum (bn-from-u64 (cast 1 : u64))]
+    [den : BigNum (stdlib.io.bn-from-u64 (cast 1 : u64))]
     (if (= (struct-get num len) 0)
-      (IoFloatSomeF64 (io-float-f64-from-bits sign-bit))
+      (IoFloatSomeF64 (stdlib.io.io-float-f64-from-bits sign-bit))
       (begin
         (if (>= decimal-exp 0)
-          (set! num (bn-mul-pow10 num decimal-exp))
-          (set! den (bn-mul-pow10 den (- 0 decimal-exp))))
+          (set! num (stdlib.io.bn-mul-pow10 num decimal-exp))
+          (set! den (stdlib.io.bn-mul-pow10 den (- 0 decimal-exp))))
         (let
-          [e : i64 (io-float-ratio-floor-log2 num den)]
+          [e : i64 (stdlib.io.io-float-ratio-floor-log2 num den)]
           [two52 : u64 (cast 0x10000000000000 : u64)]
           [two53 : u64 (cast 0x20000000000000 : u64)]
           (if (> e 1023)
-            (IoFloatNoF64)
+            stdlib.io.IoFloatNoF64
             (if (>= e -1022)
               (let
-                [m0 : u64 (io-float-round-scaled-u64 num den (- 52 e))]
+                [m0 : u64
+                  (stdlib.io.io-float-round-scaled-u64 num den (- 52 e))]
                 [m : u64 m0]
                 [exp : i64 e]
                 (begin
@@ -1268,31 +1321,31 @@
                       (set! m two52)
                       (set! exp (+ exp 1))))
                   (if (> exp 1023)
-                    (IoFloatNoF64)
+                    stdlib.io.IoFloatNoF64
                     (IoFloatSomeF64
-                      (io-float-f64-from-bits
+                      (stdlib.io.io-float-f64-from-bits
                         (bit-or
                           sign-bit
                           (bit-or
                             (shl (cast (+ exp 1023) : u64) 52)
                             (- m two52))))))))
               (let
-                [m : u64 (io-float-round-scaled-u64 num den 1074)]
+                [m : u64 (stdlib.io.io-float-round-scaled-u64 num den 1074)]
                 (if (= m (cast 0 : u64))
-                  (IoFloatSomeF64 (io-float-f64-from-bits sign-bit))
+                  (IoFloatSomeF64 (stdlib.io.io-float-f64-from-bits sign-bit))
                   (if (>= m two52)
                     (IoFloatSomeF64
-                      (io-float-f64-from-bits
+                      (stdlib.io.io-float-f64-from-bits
                         (bit-or sign-bit (shl (cast 1 : u64) 52))))
                     (IoFloatSomeF64
-                      (io-float-f64-from-bits (bit-or sign-bit m)))))))))))))
+                      (stdlib.io.io-float-f64-from-bits (bit-or sign-bit m)))))))))))))
 
 ;: Parse finite decimal text into an IEEE-754 binary64 value.
 (define (io-float-parse-f64 [text : String]) : IoFloatMaybeF64
-  (match (io-float-parse-decimal text)
+  (match (stdlib.io.io-float-parse-decimal text)
     [(IoFloatSomeDecimal negative significand decimal-exp)
-      (io-float-decimal-to-f64 negative significand decimal-exp)]
-    [(IoFloatNoDecimal) (IoFloatNoF64)]))
+      (stdlib.io.io-float-decimal-to-f64 negative significand decimal-exp)]
+    [(IoFloatNoDecimal) stdlib.io.IoFloatNoF64]))
 
 ;: Return `value` rounded to f32 precision and widened back to f64.
 (define (io-float-round-f32-as-f64 [value : f64]) : f64
@@ -1305,7 +1358,7 @@
     (begin
       (while (and (> dd 9) (= (% dd 10) 0))
         (set! dd (/ dd 10)))
-      (int->string dd))))
+      (string_mod.int->string dd))))
 
 ;: Exponent k formatted with sign and at least two digits.
 (define (ftoa-pad-exp [k : i64]) : String
@@ -1314,15 +1367,15 @@
       (if (< k 0)
         (- 0 k)
         k)]
-    [digits : String (int->string mag)]
+    [digits : String (string_mod.int->string mag)]
     [sign : String
       (if (< k 0)
         "-"
         "+")]
-    (string-append
+    (string_mod.string-append
       sign
       (if (< (string-length digits) 2)
-        (string-append "0" digits)
+        (string_mod.string-append "0" digits)
         digits))))
 
 ;: A string of n zero characters.
@@ -1333,7 +1386,7 @@
     (begin
       (while (< i n)
         (begin
-          (set! s (string-append s "0"))
+          (set! s (string_mod.string-append s "0"))
           (set! i (+ i 1))))
       s)))
 
@@ -1347,26 +1400,36 @@
       (if (or (< k -4) (>= k 17))
         (set!
           body
-          (string-append
-            (substring s 0 1)
-            (string-append
+          (string_mod.string-append
+            (string_mod.substring s 0 1)
+            (string_mod.string-append
               (if (> ndig 1)
-                (string-append "." (substring s 1 (- ndig 1)))
+                (string_mod.string-append
+                  "."
+                  (string_mod.substring s 1 (- ndig 1)))
                 "")
-              (string-append "e" (ftoa-pad-exp k)))))
+              (string_mod.string-append "e" (stdlib.io.ftoa-pad-exp k)))))
         (if (< k 0)
           (set!
             body
-            (string-append "0." (string-append (ftoa-zeros (- (- 0 k) 1)) s)))
+            (string_mod.string-append
+              "0."
+              (string_mod.string-append (stdlib.io.ftoa-zeros (- (- 0 k) 1)) s)))
           (if (>= (+ k 1) ndig)
-            (set! body (string-append s (ftoa-zeros (- (+ k 1) ndig))))
             (set!
               body
-              (string-append
-                (substring s 0 (+ k 1))
-                (string-append "." (substring s (+ k 1) (- ndig (+ k 1)))))))))
+              (string_mod.string-append
+                s
+                (stdlib.io.ftoa-zeros (- (+ k 1) ndig))))
+            (set!
+              body
+              (string_mod.string-append
+                (string_mod.substring s 0 (+ k 1))
+                (string_mod.string-append
+                  "."
+                  (string_mod.substring s (+ k 1) (- ndig (+ k 1)))))))))
       (if neg
-        (string-append "-" body)
+        (string_mod.string-append "-" body)
         body))))
 
 ;: Render value as a shortest round-tripping decimal string (printf %.17g style).
@@ -1410,8 +1473,8 @@
               (if (= expf (cast 0 : u64))
                 -1074
                 (- (cast expf : i64) 1075))]
-            [msb : i64 (ftoa-msb-index m)]
-            [kest : i64 (ftoa-floor-div (* (+ msb e2) 30103) 100000)]
+            [msb : i64 (stdlib.io.ftoa-msb-index m)]
+            [kest : i64 (stdlib.io.ftoa-floor-div (* (+ msb e2) 30103) 100000)]
             [d : u64 (cast 0 : u64)]
             [iters : i64 0]
             [settled : bool false]
@@ -1419,21 +1482,23 @@
               (while (and (not settled) (< iters 6))
                 (let
                   [p : i64 (- 16 kest)]
-                  [num : BigNum (bn-from-u64 m)]
-                  [den : BigNum (bn-from-u64 (cast 1 : u64))]
+                  [num : BigNum (stdlib.io.bn-from-u64 m)]
+                  [den : BigNum (stdlib.io.bn-from-u64 (cast 1 : u64))]
                   (begin
                     (if (>= e2 0)
-                      (set! num (bn-shl-bits num e2))
-                      (set! den (bn-shl-bits den (- 0 e2))))
+                      (set! num (stdlib.io.bn-shl-bits num e2))
+                      (set! den (stdlib.io.bn-shl-bits den (- 0 e2))))
                     (if (>= p 0)
-                      (set! num (bn-mul-pow10 num p))
-                      (set! den (bn-mul-pow10 den (- 0 p))))
+                      (set! num (stdlib.io.bn-mul-pow10 num p))
+                      (set! den (stdlib.io.bn-mul-pow10 den (- 0 p))))
                     (let
-                      [q : u64 (bn-div-floor-u64 num den)]
-                      [two-num : BigNum (bn-shl-bits num 1)]
+                      [q : u64 (stdlib.io.bn-div-floor-u64 num den)]
+                      [two-num : BigNum (stdlib.io.bn-shl-bits num 1)]
                       [t : BigNum
-                        (bn-mul-u64 den (+ (* (cast 2 : u64) q) (cast 1 : u64)))]
-                      [c : i64 (bn-cmp two-num t)]
+                        (stdlib.io.bn-mul-u64
+                          den
+                          (+ (* (cast 2 : u64) q) (cast 1 : u64)))]
+                      [c : i64 (stdlib.io.bn-cmp two-num t)]
                       (begin
                         (set! d q)
                         (if (> c 0)
@@ -1450,35 +1515,38 @@
                             (set! settled true)))
                         (set! iters (+ iters 1)))))))
               (let
-                [s0 : String (int->string (cast d : i64))]
+                [s0 : String (string_mod.int->string (cast d : i64))]
                 [k : i64 (+ (- (string-length s0) 17) kest)]
-                (ftoa-render neg (ftoa-strip-zeros (cast d : i64)) k)))))))))
+                (stdlib.io.ftoa-render
+                  neg
+                  (stdlib.io.ftoa-strip-zeros (cast d : i64))
+                  k)))))))))
 
 ;: Format an f64 with `%.17g` and a trailing newline.
 (define (io-format-float [value : f64]) : String
-  (string-append (io-format-float-core value) "\n"))
+  (string_mod.string-append (stdlib.io.io-format-float-core value) "\n"))
 
 ;: Write a floating-point value to stdout using `%.17g` plus a newline.
 (define (print-float [value : f64]) : unit
-  (print-string (io-format-float value)))
+  (stdlib.io.print-string (stdlib.io.io-format-float value)))
 
 ;: Write a string to stderr without adding a newline.
 (define (print-error [text : String]) : unit
   (let
-    [status : i64 (io-write-string-fd-status 2 text)]
+    [status : i64 (stdlib.io.io-write-string-fd-status 2 text)]
     (if (= status 0)
       unit
-      (io-platform-exit 134))))
+      (stdlib.io.io-platform-exit 134))))
 
 ;: Abort the process after writing `message` to stderr.
 (define (panic [message : String]) : never
   (begin
-    (print-error message)
-    (io-platform-exit 134)))
+    (stdlib.io.print-error message)
+    (stdlib.io.io-platform-exit 134)))
 
 ;: Alias for `panic`.
 (define (error [message : String]) : never
-  (panic message))
+  (stdlib.io.panic message))
 
 ;: Return the number of process argv entries.
 (define (arg-count) : i64
@@ -1487,9 +1555,9 @@
 ;: Return argv entry `index`, aborting on out-of-range indices.
 (define (arg [index : i64]) : String
   (if (< index 0)
-    (panic "tl: argv index out of bounds\n")
-    (if (>= index (arg-count))
-      (panic "tl: argv index out of bounds\n")
+    (stdlib.io.panic "tl: argv index out of bounds\n")
+    (if (>= index (stdlib.io.arg-count))
+      (stdlib.io.panic "tl: argv index out of bounds\n")
       (let
         [argv : (Ptr (Ptr u8))
           (unsafe
@@ -1497,17 +1565,17 @@
         [raw : (Ptr u8)
           (unsafe
             (ptr-read (ptr-offset argv index)))]
-        (io-copy-c-string raw)))))
+        (stdlib.io.io-copy-c-string raw)))))
 
 ;: Read the entire seekable descriptor `fd` into a String.
 (define (io-read-fd-to-string [fd : i64]) : String
   (let
-    [end : i64 (io-platform-lseek fd 0 2)]
+    [end : i64 (stdlib.io.io-platform-lseek fd 0 2)]
     (if (< end 0)
-      (panic "tl: read-file failed\n")
+      (stdlib.io.panic "tl: read-file failed\n")
       (begin
-        (if (< (io-platform-lseek fd 0 0) 0)
-          (panic "tl: read-file failed\n")
+        (if (< (stdlib.io.io-platform-lseek fd 0 0) 0)
+          (stdlib.io.panic "tl: read-file failed\n")
           unit)
         (let
           [buf : (Array u8) (make-array u8 end)]
@@ -1517,233 +1585,283 @@
             (while (and (not done) (< offset end))
               (let
                 [read-count : i64
-                  (io-platform-read
+                  (stdlib.io.io-platform-read
                     fd
                     (unsafe
-                      (ptr-offset (io-array-ptr buf) offset))
+                      (ptr-offset (stdlib.io.io-array-ptr buf) offset))
                     (- end offset))]
                 (if (< read-count 0)
-                  (panic "tl: read-file failed\n")
+                  (stdlib.io.panic "tl: read-file failed\n")
                   (if (= read-count 0)
                     (set! done true)
                     (set! offset (+ offset read-count))))))
             (unsafe
-              (string-from-bytes (io-array-const-ptr buf) offset))))))))
+              (string-from-bytes (stdlib.io.io-array-const-ptr buf) offset))))))))
 
 ;: Return the host status code for reading `path`.
 (define (read-file-status [path : String]) : i64
   (let
-    [path-bytes : (Array u8) (io-c-string path)]
+    [path-bytes : (Array u8) (stdlib.io.io-c-string path)]
     [fd : i64
-      (io-platform-open (io-array-const-ptr path-bytes) (io-open-read-flags) 0)]
+      (stdlib.io.io-platform-open
+        (stdlib.io.io-array-const-ptr path-bytes)
+        (stdlib.io.io-open-read-flags)
+        0)]
     (if (< fd 0)
-      (io-last-error-code)
+      (stdlib.io.io-last-error-code)
       (let
         [probe : (Array u8) (make-array u8 1)]
-        [read-count : i64 (io-platform-read fd (io-array-ptr probe) 1)]
+        [read-count : i64
+          (stdlib.io.io-platform-read fd (stdlib.io.io-array-ptr probe) 1)]
         [status : i64
           (if (< read-count 0)
-            (io-last-error-code)
+            (stdlib.io.io-last-error-code)
             0)]
         (begin
-          (io-platform-close fd)
+          (stdlib.io.io-platform-close fd)
           status)))))
 
 ;: Read a whole file, aborting on host read failure.
 (define (read-file [path : String]) : String
   (let
-    [path-bytes : (Array u8) (io-c-string path)]
+    [path-bytes : (Array u8) (stdlib.io.io-c-string path)]
     [fd : i64
-      (io-platform-open (io-array-const-ptr path-bytes) (io-open-read-flags) 0)]
+      (stdlib.io.io-platform-open
+        (stdlib.io.io-array-const-ptr path-bytes)
+        (stdlib.io.io-open-read-flags)
+        0)]
     (if (< fd 0)
-      (panic "tl: read-file failed\n")
+      (stdlib.io.panic "tl: read-file failed\n")
       (let
-        [contents : String (io-read-fd-to-string fd)]
+        [contents : String (stdlib.io.io-read-fd-to-string fd)]
         (begin
-          (io-platform-close fd)
+          (stdlib.io.io-platform-close fd)
           contents)))))
 
 ;: Write `contents` to `path` using platform `flags`, returning a host status code.
 (define (io-write-path-status [path : String] [contents : String] [flags : i64]) : i64
   (let
-    [path-bytes : (Array u8) (io-c-string path)]
+    [path-bytes : (Array u8) (stdlib.io.io-c-string path)]
     [fd : i64
-      (io-platform-open (io-array-const-ptr path-bytes) flags (io-open-mode))]
+      (stdlib.io.io-platform-open
+        (stdlib.io.io-array-const-ptr path-bytes)
+        flags
+        (stdlib.io.io-open-mode))]
     (if (< fd 0)
-      (io-last-error-code)
+      (stdlib.io.io-last-error-code)
       (let
-        [status : i64 (io-write-string-fd-status fd contents)]
-        [close-status : i64 (io-platform-close fd)]
+        [status : i64 (stdlib.io.io-write-string-fd-status fd contents)]
+        [close-status : i64 (stdlib.io.io-platform-close fd)]
         (if (= status 0)
           (if (< close-status 0)
-            (io-last-error-code)
+            (stdlib.io.io-last-error-code)
             0)
           status)))))
 
 ;: Return the host status code for writing `contents` to `path`.
 (define (write-file-status [path : String] [contents : String]) : i64
-  (io-write-path-status path contents (io-open-write-truncate-flags)))
+  (stdlib.io.io-write-path-status
+    path
+    contents
+    (stdlib.io.io-open-write-truncate-flags)))
 
 ;: Render the raw `write-file` panic payload with path and host status.
 (define (write-file-failure-message [path : String] [status : i64]) : String
-  (string-append
+  (string_mod.string-append
     "tl: write-file failed: "
-    (string-append
-      (io-error-message (io-error-from-owned-status path status))
+    (string_mod.string-append
+      (stdlib.io.io-error-message
+        (stdlib.io.io-error-from-owned-status path status))
       "\n")))
 
 ;: Write a whole file, aborting on host write failure.
 (define (write-file [path : String] [contents : String]) : unit
   (let
-    [status : i64 (write-file-status path contents)]
+    [status : i64 (stdlib.io.write-file-status path contents)]
     (if (= status 0)
       unit
-      (panic (write-file-failure-message path status)))))
+      (stdlib.io.panic (stdlib.io.write-file-failure-message path status)))))
 
 ;: Return the host status code for appending `contents` to `path`.
 (define (append-file-status [path : String] [contents : String]) : i64
-  (io-write-path-status path contents (io-open-write-append-flags)))
+  (stdlib.io.io-write-path-status
+    path
+    contents
+    (stdlib.io.io-open-write-append-flags)))
 
 ;: Return the host status code for probing `path`.
 (define (file-exists-status [path : String]) : i64
   (let
-    [path-bytes : (Array u8) (io-c-string path)]
-    [status : i64 (io-platform-access (io-array-const-ptr path-bytes) 0)]
+    [path-bytes : (Array u8) (stdlib.io.io-c-string path)]
+    [status : i64
+      (stdlib.io.io-platform-access (stdlib.io.io-array-const-ptr path-bytes) 0)]
     (if (= status 0)
       0
-      (io-last-error-code))))
+      (stdlib.io.io-last-error-code))))
 
 ;: Return true when `path` exists, aborting on hard host probe failure.
 (define (file-exists? [path : String]) : bool
   (let
-    [status : i64 (file-exists-status path)]
+    [status : i64 (stdlib.io.file-exists-status path)]
     (if (= status 0)
       true
       (if (or (= status 2) (= status 20))
         false
         (begin
-          (panic "tl: file-exists? failed\n")
+          (stdlib.io.panic "tl: file-exists? failed\n")
           false)))))
 
 ;: Return true when `raw` names an open stdlib file handle.
 (define (io-valid-handle? [raw : i64]) : bool
   (begin
-    (io-file-table-init!)
+    (stdlib.io.io-file-table-init!)
     (and
       (> raw 0)
-      (< raw io-file-handle-cap)
-      (= (io-file-i64-ref (io-file-states-ptr) raw) 1))))
+      (< raw stdlib.io.io-file-handle-cap)
+      (= (stdlib.io.io-file-i64-ref (stdlib.io.io-file-states-ptr) raw) 1))))
 
 ;: Return a stdlib file handle id or negative status for opening `path`.
 (define (file-open-status [path : String] [mode : i64]) : i64
   (begin
-    (io-file-table-init!)
+    (stdlib.io.io-file-table-init!)
     (let
-      [path-bytes : (Array u8) (io-c-string path)]
+      [path-bytes : (Array u8) (stdlib.io.io-c-string path)]
       [fd : i64
-        (io-platform-open
-          (io-array-const-ptr path-bytes)
-          (io-open-flags-for-mode mode)
-          (io-open-mode))]
+        (stdlib.io.io-platform-open
+          (stdlib.io.io-array-const-ptr path-bytes)
+          (stdlib.io.io-open-flags-for-mode mode)
+          (stdlib.io.io-open-mode))]
       (if (< fd 0)
-        (io-neg-status (io-last-error-code))
+        (stdlib.io.io-neg-status (stdlib.io.io-last-error-code))
         (let
-          [handle : i64 (io-file-alloc-handle!)]
+          [handle : i64 (stdlib.io.io-file-alloc-handle!)]
           (if (< handle 0)
             (begin
-              (io-platform-close fd)
-              (io-neg-status 38))
+              (stdlib.io.io-platform-close fd)
+              (stdlib.io.io-neg-status 38))
             (begin
-              (io-file-i64-set! (io-file-fds-ptr) handle fd)
-              (io-file-i64-set! (io-file-modes-ptr) handle mode)
-              (io-file-i64-set! (io-file-states-ptr) handle 1)
-              (io-file-bool-set! (io-file-eofs-ptr) handle false)
-              (io-file-bool-set! (io-file-last-ready-ptr) handle false)
+              (stdlib.io.io-file-i64-set! (stdlib.io.io-file-fds-ptr) handle fd)
+              (stdlib.io.io-file-i64-set!
+                (stdlib.io.io-file-modes-ptr)
+                handle
+                mode)
+              (stdlib.io.io-file-i64-set!
+                (stdlib.io.io-file-states-ptr)
+                handle
+                1)
+              (stdlib.io.io-file-bool-set!
+                (stdlib.io.io-file-eofs-ptr)
+                handle
+                false)
+              (stdlib.io.io-file-bool-set!
+                (stdlib.io.io-file-last-ready-ptr)
+                handle
+                false)
               handle)))))))
 
 ;: Return the host status code for closing a stdlib file handle id.
 (define (file-close-status [raw : i64]) : i64
-  (if (io-valid-handle? raw)
+  (if (stdlib.io.io-valid-handle? raw)
     (let
-      [fd : i64 (io-file-i64-ref (io-file-fds-ptr) raw)]
-      [status : i64 (io-platform-close fd)]
+      [fd : i64 (stdlib.io.io-file-i64-ref (stdlib.io.io-file-fds-ptr) raw)]
+      [status : i64 (stdlib.io.io-platform-close fd)]
       (begin
-        (io-file-handle-clear! raw)
-        (if (< raw io-file-handle-next)
+        (stdlib.io.io-file-handle-clear! raw)
+        (if (< raw stdlib.io.io-file-handle-next)
           (set! io-file-handle-next raw)
           unit)
         (if (< status 0)
-          (io-last-error-code)
+          (stdlib.io.io-last-error-code)
           0)))
     38))
 
 ;: Return the host status code for reading a chunk into the stdlib handle cache.
 (define (file-read-chunk-status [raw : i64] [count : i64]) : i64
-  (if (not (io-valid-handle? raw))
+  (if (not (stdlib.io.io-valid-handle? raw))
     38
-    (if (not (= (io-file-i64-ref (io-file-modes-ptr) raw) 0))
+    (if (not
+      (= (stdlib.io.io-file-i64-ref (stdlib.io.io-file-modes-ptr) raw) 0))
       38
       (if (< count 0)
         22
         (if (= count 0)
           (begin
-            (io-file-string-set! (io-file-last-bytes-ptr) raw "")
-            (io-file-bool-set! (io-file-last-ready-ptr) raw true)
+            (stdlib.io.io-file-string-set!
+              (stdlib.io.io-file-last-bytes-ptr)
+              raw
+              "")
+            (stdlib.io.io-file-bool-set!
+              (stdlib.io.io-file-last-ready-ptr)
+              raw
+              true)
             0)
           (let
             [buf : (Array u8) (make-array u8 count)]
-            [fd : i64 (io-file-i64-ref (io-file-fds-ptr) raw)]
-            [read-count : i64 (io-platform-read fd (io-array-ptr buf) count)]
+            [fd : i64
+              (stdlib.io.io-file-i64-ref (stdlib.io.io-file-fds-ptr) raw)]
+            [read-count : i64
+              (stdlib.io.io-platform-read fd (stdlib.io.io-array-ptr buf) count)]
             (if (< read-count 0)
-              (io-last-error-code)
+              (stdlib.io.io-last-error-code)
               (begin
                 (if (= read-count 0)
-                  (io-file-bool-set! (io-file-eofs-ptr) raw true)
-                  (io-file-bool-set! (io-file-eofs-ptr) raw false))
-                (io-file-string-set!
-                  (io-file-last-bytes-ptr)
+                  (stdlib.io.io-file-bool-set!
+                    (stdlib.io.io-file-eofs-ptr)
+                    raw
+                    true)
+                  (stdlib.io.io-file-bool-set!
+                    (stdlib.io.io-file-eofs-ptr)
+                    raw
+                    false))
+                (stdlib.io.io-file-string-set!
+                  (stdlib.io.io-file-last-bytes-ptr)
                   raw
                   (unsafe
-                    (string-from-bytes (io-array-const-ptr buf) read-count)))
-                (io-file-bool-set! (io-file-last-ready-ptr) raw true)
+                    (string-from-bytes
+                      (stdlib.io.io-array-const-ptr buf)
+                      read-count)))
+                (stdlib.io.io-file-bool-set!
+                  (stdlib.io.io-file-last-ready-ptr)
+                  raw
+                  true)
                 0))))))))
 
 ;: Return the host status code for writing `contents` through a stdlib handle.
 (define (file-write-status [raw : i64] [contents : String]) : i64
-  (if (not (io-valid-handle? raw))
+  (if (not (stdlib.io.io-valid-handle? raw))
     38
-    (if (= (io-file-i64-ref (io-file-modes-ptr) raw) 0)
+    (if (= (stdlib.io.io-file-i64-ref (stdlib.io.io-file-modes-ptr) raw) 0)
       38
-      (io-write-string-fd-status
-        (io-file-i64-ref (io-file-fds-ptr) raw)
+      (stdlib.io.io-write-string-fd-status
+        (stdlib.io.io-file-i64-ref (stdlib.io.io-file-fds-ptr) raw)
         contents))))
 
 ;: Return the host status code for flushing a stdlib handle.
 (define (file-flush-status [raw : i64]) : i64
-  (if (not (io-valid-handle? raw))
+  (if (not (stdlib.io.io-valid-handle? raw))
     38
-    (if (= (io-file-i64-ref (io-file-modes-ptr) raw) 0)
+    (if (= (stdlib.io.io-file-i64-ref (stdlib.io.io-file-modes-ptr) raw) 0)
       38
       0)))
 
 ;: Return bytes from the last successful stdlib file chunk read.
 (define (file-read-chunk-bytes [raw : i64]) : String
   (if (and
-    (io-valid-handle? raw)
-    (io-file-bool-ref (io-file-last-ready-ptr) raw))
-    (io-file-string-ref (io-file-last-bytes-ptr) raw)
+    (stdlib.io.io-valid-handle? raw)
+    (stdlib.io.io-file-bool-ref (stdlib.io.io-file-last-ready-ptr) raw))
+    (stdlib.io.io-file-string-ref (stdlib.io.io-file-last-bytes-ptr) raw)
     ""))
 
 ;: Return the sticky EOF bit from the last successful stdlib file chunk read.
 (define (file-read-chunk-eof? [raw : i64]) : bool
-  (if (io-valid-handle? raw)
-    (io-file-bool-ref (io-file-eofs-ptr) raw)
+  (if (stdlib.io.io-valid-handle? raw)
+    (stdlib.io.io-file-bool-ref (stdlib.io.io-file-eofs-ptr) raw)
     true))
 
 ;: Read up to `count` bytes from stdin, continuing across positive short reads.
 (define (read-stdin-bytes [count : i64]) : String
   (if (< count 0)
-    (panic "tl: stdin failed\n")
+    (stdlib.io.panic "tl: stdin failed\n")
     (if (= count 0)
       ""
       (let
@@ -1758,20 +1876,20 @@
                 (set! done true))
               (let
                 [read-count : i64
-                  (io-platform-read
+                  (stdlib.io.io-platform-read
                     0
                     (unsafe
-                      (ptr-offset (io-array-ptr buf) offset))
+                      (ptr-offset (stdlib.io.io-array-ptr buf) offset))
                     (- count offset))]
                 (if (< read-count 0)
-                  (panic "tl: stdin failed\n")
+                  (stdlib.io.panic "tl: stdin failed\n")
                   (if (= read-count 0)
                     (begin
                       (set! io-stdin-eof-state true)
                       (set! done true))
                     (set! offset (+ offset read-count)))))))
           (unsafe
-            (string-from-bytes (io-array-const-ptr buf) offset)))))))
+            (string-from-bytes (stdlib.io.io-array-const-ptr buf) offset)))))))
 
 ;: Read one stdin line without the trailing newline.
 (define (read-stdin-line) : String
@@ -1782,9 +1900,10 @@
     (begin
       (while (not done)
         (let
-          [read-count : i64 (io-platform-read 0 (io-array-ptr one) 1)]
+          [read-count : i64
+            (stdlib.io.io-platform-read 0 (stdlib.io.io-array-ptr one) 1)]
           (if (< read-count 0)
-            (panic "tl: stdin failed\n")
+            (stdlib.io.panic "tl: stdin failed\n")
             (if (= read-count 0)
               (begin
                 (set! io-stdin-eof-state true)
@@ -1797,15 +1916,17 @@
                     (array-push! bytes byte)
                     (set! done false))))))))
       (unsafe
-        (string-from-bytes (io-array-const-ptr bytes) (array-length bytes))))))
+        (string-from-bytes
+          (stdlib.io.io-array-const-ptr bytes)
+          (array-length bytes))))))
 
 ;: Return the sticky stdin EOF state.
 (define (stdin-eof?) : bool
-  io-stdin-eof-state)
+  stdlib.io.io-stdin-eof-state)
 
 ;: Flush stdout. The freestanding runtime writes stdout through direct,
 ;: unbuffered OS calls (the Linux `write` syscall, Windows `WriteFile`), so there
-;: is no userspace buffer to flush — this is a genuine no-op. (Replaces the former
+;: is no userspace buffer to flush â€” this is a genuine no-op. (Replaces the former
 ;: `fflush` libc shim, which was itself a no-op stub.)
 (define (flush-stdout) : unit
   unit)
@@ -1919,7 +2040,7 @@
 
 ;: Copy a borrowed path into an owned String for public diagnostics.
 (define (io-copy-path [path : (& path str)]) : String
-  (string-copy-borrowed path))
+  (string_mod.string-copy-borrowed path))
 
 ;: Return true when `path` is syntactically empty.
 (define (io-empty-path? [path : (& path str)]) : bool
@@ -1928,16 +2049,20 @@
 ;: Render an I/O error into a human-readable diagnostic string.
 (define (io-error-message [error : IoError]) : String
   (match error
-    [(IoNotFound path) (string-append "io: not found: " path)]
-    [(IoPermissionDenied path) (string-append "io: permission denied: " path)]
-    [(IoInvalidPath path) (string-append "io: invalid path: " path)]
-    [(IoUnsupported message) (string-append "io: unsupported: " message)]
-    [(IoInterrupted path) (string-append "io: interrupted: " path)]
+    [(IoNotFound path) (string_mod.string-append "io: not found: " path)]
+    [(IoPermissionDenied path)
+      (string_mod.string-append "io: permission denied: " path)]
+    [(IoInvalidPath path) (string_mod.string-append "io: invalid path: " path)]
+    [(IoUnsupported message)
+      (string_mod.string-append "io: unsupported: " message)]
+    [(IoInterrupted path) (string_mod.string-append "io: interrupted: " path)]
     [(IoSystemCode code path)
-      (string-append
-        (string-append "io: system error " (int->string code))
-        (string-append ": " path))]
-    [(IoUnknown path) (string-append "io: unknown failure: " path)]))
+      (string_mod.string-append
+        (string_mod.string-append
+          "io: system error "
+          (string_mod.int->string code))
+        (string_mod.string-append ": " path))]
+    [(IoUnknown path) (string_mod.string-append "io: unknown failure: " path)]))
 
 ;: Return true when `error` is a not-found diagnostic.
 (define (io-error-not-found? [error : IoError]) : bool
@@ -1959,53 +2084,53 @@
 
 ;: Return true when `code` means a path is absent rather than a hard probe error.
 (define (io-status-expected-absence? [code : i64]) : bool
-  (if (= code io-status-not-found)
+  (if (= code stdlib.io.io-status-not-found)
     true
-    (= code io-status-not-directory)))
+    (= code stdlib.io.io-status-not-directory)))
 
 ;: Construct an invalid-path diagnostic from a borrowed path.
 (define (io-invalid-path-error [path : (& path str)]) : IoError
-  (IoInvalidPath (io-copy-path path)))
+  (IoInvalidPath (stdlib.io.io-copy-path path)))
 
 ;: Convert a runtime status code into the public structured error model.
 (define (io-error-from-status [path : (& path str)] [code : i64]) : IoError
   (let
-    [owned-path : String (io-copy-path path)]
-    (if (io-status-expected-absence? code)
+    [owned-path : String (stdlib.io.io-copy-path path)]
+    (if (stdlib.io.io-status-expected-absence? code)
       (IoNotFound owned-path)
-      (if (= code io-status-permission-denied)
+      (if (= code stdlib.io.io-status-permission-denied)
         (IoPermissionDenied owned-path)
-        (if (= code io-status-invalid)
+        (if (= code stdlib.io.io-status-invalid)
           (IoInvalidPath owned-path)
-          (if (= code io-status-name-too-long)
+          (if (= code stdlib.io.io-status-name-too-long)
             (IoInvalidPath owned-path)
-            (if (= code io-status-interrupted)
+            (if (= code stdlib.io.io-status-interrupted)
               (IoInterrupted owned-path)
-              (if (= code io-status-is-directory)
+              (if (= code stdlib.io.io-status-is-directory)
                 (IoUnsupported owned-path)
-                (if (= code io-status-unsupported)
+                (if (= code stdlib.io.io-status-unsupported)
                   (IoUnsupported owned-path)
-                  (if (= code io-status-ok)
+                  (if (= code stdlib.io.io-status-ok)
                     (IoUnknown owned-path)
                     (IoSystemCode code owned-path)))))))))))
 
 ;: Convert a runtime status code for an already-owned path.
 (define (io-error-from-owned-status [path : String] [code : i64]) : IoError
-  (if (io-status-expected-absence? code)
+  (if (stdlib.io.io-status-expected-absence? code)
     (IoNotFound path)
-    (if (= code io-status-permission-denied)
+    (if (= code stdlib.io.io-status-permission-denied)
       (IoPermissionDenied path)
-      (if (= code io-status-invalid)
+      (if (= code stdlib.io.io-status-invalid)
         (IoInvalidPath path)
-        (if (= code io-status-name-too-long)
+        (if (= code stdlib.io.io-status-name-too-long)
           (IoInvalidPath path)
-          (if (= code io-status-interrupted)
+          (if (= code stdlib.io.io-status-interrupted)
             (IoInterrupted path)
-            (if (= code io-status-is-directory)
+            (if (= code stdlib.io.io-status-is-directory)
               (IoUnsupported path)
-              (if (= code io-status-unsupported)
+              (if (= code stdlib.io.io-status-unsupported)
                 (IoUnsupported path)
-                (if (= code io-status-ok)
+                (if (= code stdlib.io.io-status-ok)
                   (IoUnknown path)
                   (IoSystemCode code path))))))))))
 
@@ -2013,7 +2138,7 @@
 (define (io-error-from-label [label : String] [code : i64]) : IoError
   (let
     [path : String label]
-    (io-error-from-status (& path) code)))
+    (stdlib.io.io-error-from-status (& path) code)))
 
 ;: Convert an open mode into the stdlib helper's compact mode code.
 (define (open-mode-code [mode : OpenMode]) : i64
@@ -2049,13 +2174,14 @@
 ;: structured `IoError` values.
 (define (file-open [path : (& path str)] [mode : OpenMode]) : ResultIoFile
   (let
-    [path-text : String (string-copy-borrowed path)]
-    (if (io-empty-path? path)
-      (ErrIoFile (io-invalid-path-error path))
+    [path-text : String (string_mod.string-copy-borrowed path)]
+    (if (stdlib.io.io-empty-path? path)
+      (ErrIoFile (stdlib.io.io-invalid-path-error path))
       (let
-        [raw : i64 (file-open-status path-text (open-mode-code mode))]
+        [raw : i64
+          (stdlib.io.file-open-status path-text (stdlib.io.open-mode-code mode))]
         (if (< raw 0)
-          (ErrIoFile (io-error-from-status path (- 0 raw)))
+          (ErrIoFile (stdlib.io.io-error-from-status path (- 0 raw)))
           (OkIoFile (FileHandle raw)))))))
 
 ;: Close a stdlib-managed file handle.
@@ -2064,12 +2190,12 @@
 ;: closed handle returns `ErrIoUnit (IoUnsupported ...)` and never panics.
 (define (file-close [handle : FileHandle]) : ResultIoUnit
   (let
-    [status : i64 (file-close-status (struct-get handle id))]
-    (if (= status io-status-ok)
-      OkIoUnit
-      (if (= status io-status-unsupported)
-        (ErrIoUnit (IoUnsupported (file-handle-invalid-message)))
-        (ErrIoUnit (io-error-from-label "file-close" status))))))
+    [status : i64 (stdlib.io.file-close-status (struct-get handle id))]
+    (if (= status stdlib.io.io-status-ok)
+      stdlib.io.OkIoUnit
+      (if (= status stdlib.io.io-status-unsupported)
+        (ErrIoUnit (IoUnsupported (stdlib.io.file-handle-invalid-message)))
+        (ErrIoUnit (stdlib.io.io-error-from-label "file-close" status))))))
 
 ;: Return the bytes captured by a streaming file read.
 (define (file-read-bytes [read : FileRead]) : String
@@ -2086,16 +2212,18 @@
 ;: only after the stdlib receives a zero-byte host read.
 (define (file-read-chunk [handle : FileHandle] [count : i64]) : ResultIoRead
   (if (< count 0)
-    (ErrIoRead (IoInvalidPath (file-read-invalid-count-message)))
+    (ErrIoRead (IoInvalidPath (stdlib.io.file-read-invalid-count-message)))
     (let
       [raw : i64 (struct-get handle id)]
-      [status : i64 (file-read-chunk-status raw count)]
-      (if (= status io-status-ok)
+      [status : i64 (stdlib.io.file-read-chunk-status raw count)]
+      (if (= status stdlib.io.io-status-ok)
         (OkIoRead
-          (FileRead (file-read-chunk-bytes raw) (file-read-chunk-eof? raw)))
-        (if (= status io-status-unsupported)
-          (ErrIoRead (IoUnsupported (file-read-unsupported-message)))
-          (ErrIoRead (io-error-from-label "file-read-chunk" status)))))))
+          (FileRead
+            (stdlib.io.file-read-chunk-bytes raw)
+            (stdlib.io.file-read-chunk-eof? raw)))
+        (if (= status stdlib.io.io-status-unsupported)
+          (ErrIoRead (IoUnsupported (stdlib.io.file-read-unsupported-message)))
+          (ErrIoRead (stdlib.io.io-error-from-label "file-read-chunk" status)))))))
 
 ;: Write `contents` to a stdlib-managed write-mode file handle.
 ;:
@@ -2104,13 +2232,14 @@
 ;: return `IoUnsupported`.
 (define (file-write [handle : FileHandle] [contents : (& contents str)]) : ResultIoUnit
   (let
-    [contents-text : String (string-copy-borrowed contents)]
-    [status : i64 (file-write-status (struct-get handle id) contents-text)]
-    (if (= status io-status-ok)
-      OkIoUnit
-      (if (= status io-status-unsupported)
-        (ErrIoUnit (IoUnsupported (file-write-unsupported-message)))
-        (ErrIoUnit (io-error-from-label "file-write" status))))))
+    [contents-text : String (string_mod.string-copy-borrowed contents)]
+    [status : i64
+      (stdlib.io.file-write-status (struct-get handle id) contents-text)]
+    (if (= status stdlib.io.io-status-ok)
+      stdlib.io.OkIoUnit
+      (if (= status stdlib.io.io-status-unsupported)
+        (ErrIoUnit (IoUnsupported (stdlib.io.file-write-unsupported-message)))
+        (ErrIoUnit (stdlib.io.io-error-from-label "file-write" status))))))
 
 ;: Flush a stdlib-managed write-mode file handle.
 ;:
@@ -2118,41 +2247,41 @@
 ;: `IoUnsupported`; host flush failures are mapped through `io-error-from-status`.
 (define (file-flush [handle : FileHandle]) : ResultIoUnit
   (let
-    [status : i64 (file-flush-status (struct-get handle id))]
-    (if (= status io-status-ok)
-      OkIoUnit
-      (if (= status io-status-unsupported)
-        (ErrIoUnit (IoUnsupported (file-flush-unsupported-message)))
-        (ErrIoUnit (io-error-from-label "file-flush" status))))))
+    [status : i64 (stdlib.io.file-flush-status (struct-get handle id))]
+    (if (= status stdlib.io.io-status-ok)
+      stdlib.io.OkIoUnit
+      (if (= status stdlib.io.io-status-unsupported)
+        (ErrIoUnit (IoUnsupported (stdlib.io.file-flush-unsupported-message)))
+        (ErrIoUnit (stdlib.io.io-error-from-label "file-flush" status))))))
 
 ;: Read `path` and return either its contents or a structured I/O error.
 ;:
 ;: Missing paths return `IoNotFound`. Empty paths return `IoInvalidPath`.
 (define (try-read-file [path : (& path str)]) : ResultIoString
   (let
-    [path-text : String (string-copy-borrowed path)]
-    (if (io-empty-path? path)
-      (ErrIoString (io-invalid-path-error path))
+    [path-text : String (string_mod.string-copy-borrowed path)]
+    (if (stdlib.io.io-empty-path? path)
+      (ErrIoString (stdlib.io.io-invalid-path-error path))
       (let
-        [status : i64 (read-file-status path-text)]
-        (if (= status io-status-ok)
-          (OkIoString (read-file path-text))
-          (ErrIoString (io-error-from-status path status)))))))
+        [status : i64 (stdlib.io.read-file-status path-text)]
+        (if (= status stdlib.io.io-status-ok)
+          (OkIoString (stdlib.io.read-file path-text))
+          (ErrIoString (stdlib.io.io-error-from-status path status)))))))
 
 ;: Write `contents` to `path`, returning a structured result.
 ;:
 ;: Empty paths return `IoInvalidPath`.
 (define (try-write-file [path : (& path str)] [contents : (& contents str)]) : ResultIoUnit
   (let
-    [path-text : String (string-copy-borrowed path)]
-    [contents-text : String (string-copy-borrowed contents)]
-    (if (io-empty-path? path)
-      (ErrIoUnit (io-invalid-path-error path))
+    [path-text : String (string_mod.string-copy-borrowed path)]
+    [contents-text : String (string_mod.string-copy-borrowed contents)]
+    (if (stdlib.io.io-empty-path? path)
+      (ErrIoUnit (stdlib.io.io-invalid-path-error path))
       (let
-        [status : i64 (write-file-status path-text contents-text)]
-        (if (= status io-status-ok)
-          OkIoUnit
-          (ErrIoUnit (io-error-from-status path status)))))))
+        [status : i64 (stdlib.io.write-file-status path-text contents-text)]
+        (if (= status stdlib.io.io-status-ok)
+          stdlib.io.OkIoUnit
+          (ErrIoUnit (stdlib.io.io-error-from-status path status)))))))
 
 ;: Probe whether `path` exists, returning a structured result.
 ;:
@@ -2160,16 +2289,16 @@
 ;: expected result of an existence probe. Empty paths return `IoInvalidPath`.
 (define (try-file-exists? [path : (& path str)]) : ResultIoBool
   (let
-    [path-text : String (string-copy-borrowed path)]
-    (if (io-empty-path? path)
-      (ErrIoBool (io-invalid-path-error path))
+    [path-text : String (string_mod.string-copy-borrowed path)]
+    (if (stdlib.io.io-empty-path? path)
+      (ErrIoBool (stdlib.io.io-invalid-path-error path))
       (let
-        [status : i64 (file-exists-status path-text)]
-        (if (= status io-status-ok)
+        [status : i64 (stdlib.io.file-exists-status path-text)]
+        (if (= status stdlib.io.io-status-ok)
           (OkIoBool true)
-          (if (io-status-expected-absence? status)
+          (if (stdlib.io.io-status-expected-absence? status)
             (OkIoBool false)
-            (ErrIoBool (io-error-from-status path status))))))))
+            (ErrIoBool (stdlib.io.io-error-from-status path status))))))))
 
 ;: Append `contents` to `path`, returning a structured result.
 ;:
@@ -2178,22 +2307,22 @@
 ;: `IoInvalidPath`.
 (define (try-append-file [path : (& path str)] [contents : (& contents str)]) : ResultIoUnit
   (let
-    [path-text : String (string-copy-borrowed path)]
-    [contents-text : String (string-copy-borrowed contents)]
-    (if (io-empty-path? path)
-      (ErrIoUnit (io-invalid-path-error path))
+    [path-text : String (string_mod.string-copy-borrowed path)]
+    [contents-text : String (string_mod.string-copy-borrowed contents)]
+    (if (stdlib.io.io-empty-path? path)
+      (ErrIoUnit (stdlib.io.io-invalid-path-error path))
       (let
-        [status : i64 (append-file-status path-text contents-text)]
-        (if (= status io-status-ok)
-          OkIoUnit
-          (ErrIoUnit (io-error-from-status path status)))))))
+        [status : i64 (stdlib.io.append-file-status path-text contents-text)]
+        (if (= status stdlib.io.io-status-ok)
+          stdlib.io.OkIoUnit
+          (ErrIoUnit (stdlib.io.io-error-from-status path status)))))))
 
 ;: Read the contents of `path` if it exists, otherwise return `fallback`.
 ;:
 ;: This is a convenience wrapper over `try-read-file`. It returns `fallback`
 ;: for every structured error, preserving the historical optional-file API.
 (define (read-file-or [path : (& path str)] [fallback : String]) : String
-  (match (try-read-file path)
+  (match (stdlib.io.try-read-file path)
     [(OkIoString contents) contents]
     [(ErrIoString _) fallback]))
 
@@ -2202,18 +2331,18 @@
 ;: Uses the platform append status path: non-truncating, create-if-missing,
 ;: and best-effort host append semantics.
 (define (append-file [path : (& path str)] [contents : (& contents str)]) : unit
-  (match (try-append-file path contents)
+  (match (stdlib.io.try-append-file path contents)
     [(OkIoUnit) unit]
     [(ErrIoUnit error)
       (begin
-        (panic (io-error-message error))
+        (stdlib.io.panic (stdlib.io.io-error-message error))
         unit)]))
 
 ;: Return true when `path` exists and its contents are non-empty.
 ;:
 ;: Structured errors return false.
 (define (file-nonempty? [path : (& path str)]) : bool
-  (match (try-read-file path)
+  (match (stdlib.io.try-read-file path)
     [(OkIoString contents) (> (string-length contents) 0)]
     [(ErrIoString _) false]))
 
@@ -2227,7 +2356,7 @@
 
 ;: Return the current sticky stdin EOF state without performing a read.
 (define (stdin-at-eof?) : bool
-  (stdin-eof?))
+  (stdlib.io.stdin-eof?))
 
 ;: Read one stdin line without the trailing newline and report post-read EOF.
 ;:
@@ -2236,8 +2365,8 @@
 ;: unterminated line returns that line with `eof` true.
 (define (stdin-read-line) : StdinRead
   (let
-    [text : String (read-stdin-line)]
-    (StdinRead text (stdin-eof?))))
+    [text : String (stdlib.io.read-stdin-line)]
+    (StdinRead text (stdlib.io.stdin-eof?))))
 
 ;: Read up to `count` bytes from stdin and report post-read EOF.
 ;:
@@ -2245,12 +2374,12 @@
 ;: byte-string/slice type.
 (define (stdin-read-bytes [count : i64]) : StdinRead
   (let
-    [text : String (read-stdin-bytes count)]
-    (StdinRead text (stdin-eof?))))
+    [text : String (stdlib.io.read-stdin-bytes count)]
+    (StdinRead text (stdlib.io.stdin-eof?))))
 
 ;: Write `text` to stdout without adding a newline.
 (define (stdout-write [text : (& text str)]) : unit
-  (print-string (string-copy-borrowed text)))
+  (stdlib.io.print-string (string_mod.string-copy-borrowed text)))
 
 ;: Write `text` and a trailing newline to stdout.
 ;:
@@ -2258,15 +2387,16 @@
 (define (stdout-write-line [text : (& text str)]) : unit
   (let
     [newline : String "\n"]
-    (print-string (string-append-borrowed text (& newline)))))
+    (stdlib.io.print-string
+      (string_mod.string-append-borrowed text (& newline)))))
 
 ;: Flush stdout.
 (define (stdout-flush) : unit
-  (flush-stdout))
+  (stdlib.io.flush-stdout))
 
 ;: Write `text` to stderr without adding a newline.
 (define (stderr-write [text : (& text str)]) : unit
-  (print-error (string-copy-borrowed text)))
+  (stdlib.io.print-error (string_mod.string-copy-borrowed text)))
 
 ;: Write `text` and a trailing newline to stderr.
 ;:
@@ -2274,4 +2404,263 @@
 (define (stderr-write-line [text : (& text str)]) : unit
   (let
     [newline : String "\n"]
-    (print-error (string-append-borrowed text (& newline)))))
+    (stdlib.io.print-error (string_mod.string-append-borrowed text (& newline)))))
+
+;# Dotted-module migration: preserve the pre-module flat stdlib surface.
+(export
+  (value io-private-error-code)
+  (value io-set-error-code)
+  (value io-runtime-alloc)
+  (value io-arena-make)
+  (value io-arena-current)
+  (value io-arena-set)
+  (value io-file-handle-cap)
+  (value io-file-handle-next)
+  (value io-file-fds-addr)
+  (value io-file-modes-addr)
+  (value io-file-states-addr)
+  (value io-file-eofs-addr)
+  (value io-file-last-ready-addr)
+  (value io-file-last-bytes-addr)
+  (value io-file-fds-ptr)
+  (value io-file-modes-ptr)
+  (value io-file-states-ptr)
+  (value io-file-eofs-ptr)
+  (value io-file-last-ready-ptr)
+  (value io-file-last-bytes-ptr)
+  (value io-file-ptr-addr)
+  (value io-file-i64-ref)
+  (value io-file-i64-set!)
+  (value io-file-bool-ref)
+  (value io-file-bool-set!)
+  (value io-file-string-ref)
+  (value io-file-string-set!)
+  (value io-file-handle-clear!)
+  (value io-file-find-free-handle-from)
+  (value io-file-alloc-handle!)
+  (value io-file-table-init!)
+  (value io-stdin-eof-state)
+  (value io-c-string)
+  (value io-array-ptr)
+  (value io-array-const-ptr)
+  (value io-string-data)
+  (value io-copy-c-string)
+  (value io-c-string-length)
+  (value io-last-error-code)
+  (value io-linux-syscall-status)
+  (value io-linux-ptr-arg)
+  (value io-linux-syscall-open)
+  (value io-linux-syscall-read)
+  (value io-linux-syscall-write)
+  (value io-linux-syscall-close)
+  (value io-linux-syscall-lseek)
+  (value io-linux-syscall-access)
+  (value io-linux-exit)
+  (value io-platform-exit)
+  (value io-platform-open)
+  (value io-platform-read)
+  (value io-platform-write)
+  (value io-platform-close)
+  (value io-platform-lseek)
+  (value io-platform-access)
+  (value io-open-read-flags)
+  (value io-open-write-truncate-flags)
+  (value io-open-write-append-flags)
+  (value io-open-mode)
+  (value io-open-flags-for-mode)
+  (value io-neg-status)
+  (value io-write-all-fd-status)
+  (value io-write-string-fd-status)
+  (value print-string)
+  (value print-str)
+  (value print-newline)
+  (value print)
+  (value print-bool)
+  (value print-char)
+  (value ftoa-cap)
+  (value ftoa-mask32)
+  (value bn-zero)
+  (value bn-from-u64)
+  (value bn-cmp)
+  (value bn-norm-len)
+  (value bn-add)
+  (value bn-mul-u32)
+  (value bn-shl-bits)
+  (value bn-mul-u64)
+  (value bn-mul-pow10)
+  (value bn-div-floor-u64)
+  (value io-float-decimal-digit?)
+  (value io-float-decimal-digit-value)
+  (value io-float-exponent-char?)
+  (value io-float-bn-append-digit)
+  (value io-float-parse-decimal)
+  (value ftoa-floor-div)
+  (value ftoa-msb-index)
+  (value io-float-bn-bit-length)
+  (value io-float-ratio-floor-log2)
+  (value io-float-round-div-u64)
+  (value io-float-round-scaled-u64)
+  (value io-float-f64-from-bits)
+  (value io-float-f64-bits)
+  (value io-float-f32-bits)
+  (value io-float-f64-finite?)
+  (value io-float-f32-finite?)
+  (value io-float-f64-zero-magnitude?)
+  (value io-float-f32-zero-magnitude?)
+  (value io-float-decimal-to-f64)
+  (value io-float-parse-f64)
+  (value io-float-round-f32-as-f64)
+  (value ftoa-strip-zeros)
+  (value ftoa-pad-exp)
+  (value ftoa-zeros)
+  (value ftoa-render)
+  (value io-format-float-core)
+  (value io-format-float)
+  (value print-float)
+  (value print-error)
+  (value panic)
+  (value error)
+  (value arg-count)
+  (value arg)
+  (value io-read-fd-to-string)
+  (value read-file-status)
+  (value read-file)
+  (value io-write-path-status)
+  (value write-file-status)
+  (value write-file-failure-message)
+  (value write-file)
+  (value append-file-status)
+  (value file-exists-status)
+  (value file-exists?)
+  (value io-valid-handle?)
+  (value file-open-status)
+  (value file-close-status)
+  (value file-read-chunk-status)
+  (value file-write-status)
+  (value file-flush-status)
+  (value file-read-chunk-bytes)
+  (value file-read-chunk-eof?)
+  (value read-stdin-bytes)
+  (value read-stdin-line)
+  (value stdin-eof?)
+  (value flush-stdout)
+  (value io-status-ok)
+  (value io-status-interrupted)
+  (value io-status-io-error)
+  (value io-status-permission-denied)
+  (value io-status-not-found)
+  (value io-status-not-directory)
+  (value io-status-is-directory)
+  (value io-status-unsupported)
+  (value io-status-invalid)
+  (value io-status-name-too-long)
+  (value io-copy-path)
+  (value io-empty-path?)
+  (value io-error-message)
+  (value io-error-not-found?)
+  (value io-error-invalid-path?)
+  (value io-error-unsupported?)
+  (value io-status-expected-absence?)
+  (value io-invalid-path-error)
+  (value io-error-from-status)
+  (value io-error-from-owned-status)
+  (value io-error-from-label)
+  (value open-mode-code)
+  (value file-handle-invalid-message)
+  (value file-read-unsupported-message)
+  (value file-write-unsupported-message)
+  (value file-flush-unsupported-message)
+  (value file-read-invalid-count-message)
+  (value file-open)
+  (value file-close)
+  (value file-read-bytes)
+  (value file-read-eof?)
+  (value file-read-chunk)
+  (value file-write)
+  (value file-flush)
+  (value try-read-file)
+  (value try-write-file)
+  (value try-file-exists?)
+  (value try-append-file)
+  (value read-file-or)
+  (value append-file)
+  (value file-nonempty?)
+  (value stdin-read-text)
+  (value stdin-read-eof?)
+  (value stdin-at-eof?)
+  (value stdin-read-line)
+  (value stdin-read-bytes)
+  (value stdout-write)
+  (value stdout-write-line)
+  (value stdout-flush)
+  (value stderr-write)
+  (value stderr-write-line)
+  (type BigNum)
+  (type IoFloatMaybeF64)
+  (type IoFloatMaybeDecimal)
+  (type IoError)
+  (type ResultIoString)
+  (type ResultIoUnit)
+  (type ResultIoBool)
+  (type FileHandle)
+  (type OpenMode)
+  (type ResultIoFile)
+  (type FileRead)
+  (type ResultIoRead)
+  (type StdinRead)
+  (constructor BigNum)
+  (constructor FileHandle)
+  (constructor FileRead)
+  (constructor StdinRead)
+  (field BigNum limbs)
+  (field BigNum len)
+  (field FileHandle id)
+  (field FileRead bytes)
+  (field FileRead eof)
+  (field StdinRead text)
+  (field StdinRead eof)
+  (variant IoFloatNoF64)
+  (variant IoFloatSomeF64)
+  (variant IoFloatNoDecimal)
+  (variant IoFloatSomeDecimal)
+  (variant IoNotFound)
+  (variant IoPermissionDenied)
+  (variant IoInvalidPath)
+  (variant IoUnsupported)
+  (variant IoInterrupted)
+  (variant IoSystemCode)
+  (variant IoUnknown)
+  (variant OkIoString)
+  (variant ErrIoString)
+  (variant OkIoUnit)
+  (variant ErrIoUnit)
+  (variant OkIoBool)
+  (variant ErrIoBool)
+  (variant OpenRead)
+  (variant OpenWriteTruncate)
+  (variant OpenWriteAppend)
+  (variant OkIoFile)
+  (variant ErrIoFile)
+  (variant OkIoRead)
+  (variant ErrIoRead))
+
+(cfg
+  windows
+  (export
+    (value io-win-get-std-handle)
+    (value io-win-write-file)
+    (value io-win-read-file)
+    (value io-win-create-file)
+    (value io-win-close-handle)
+    (value io-win-set-file-pointer-ex)
+    (value io-win-get-file-attributes)
+    (value io-win-get-last-error)
+    (value io-win-exit-process)
+    (value io-windows-fd-handle)
+    (value io-windows-write)
+    (value io-windows-read)
+    (value io-windows-close)
+    (value io-windows-lseek)
+    (value io-windows-open)
+    (value io-windows-access)
+    (value io-windows-exit)))

@@ -1,11 +1,11 @@
 ;; compiler_diagnostic.tl - Shared selfhost compiler diagnostic payloads.
-(import "../stdlib/str_cat.tl")
+(import stdlib.str_cat)
 
 (import "token.tl")
 
 (import "compiler_ast_types.tl")
 
-(import "../stdlib/string.tl")
+(import stdlib.string as string_mod)
 
 (defenum CompilerDiagnosticLevel
   (CompilerDiagnosticError)
@@ -319,23 +319,25 @@
   (match notes
     [(CompilerDiagnosticNoteNil) ""]
     [(CompilerDiagnosticNoteCons note rest)
-      (string-append
+      (string_mod.string-append
         "\nnote: "
-        (string-append note (compiler-diagnostic-render-notes (box-get rest))))]))
+        (string_mod.string-append
+          note
+          (compiler-diagnostic-render-notes (box-get rest))))]))
 
 (define (compiler-diagnostic-render [diag : CompilerDiagnostic]) : String
-  (string-append
-    (string-append
+  (string_mod.string-append
+    (string_mod.string-append
       (compiler-diagnostic-path diag)
-      (string-append
+      (string_mod.string-append
         ":"
-        (string-append
-          (int->string (compiler-diagnostic-line diag))
-          (string-append
+        (string_mod.string-append
+          (string_mod.int->string (compiler-diagnostic-line diag))
+          (string_mod.string-append
             ":"
-            (string-append
-              (int->string (compiler-diagnostic-col diag))
-              (string-append ": " (compiler-diagnostic-message diag)))))))
+            (string_mod.string-append
+              (string_mod.int->string (compiler-diagnostic-col diag))
+              (string_mod.string-append ": " (compiler-diagnostic-message diag)))))))
     (compiler-diagnostic-render-notes (compiler-diagnostic-notes diag))))
 
 (define (compiler-diagnostic-level-render [level : CompilerDiagnosticLevel]) : String
@@ -351,15 +353,15 @@
     (begin
       (while (< idx count)
         (begin
-          (set! out (string-append out chunk))
+          (set! out (string_mod.string-append out chunk))
           (set! idx (+ idx 1))))
       out)))
 
 (define (compiler-diagnostic-line-gutter [line : i64]) : String
   (let
-    [line-text : String (int->string line)]
+    [line-text : String (string_mod.int->string line)]
     (if (< line 10)
-      (string-append " " line-text)
+      (string_mod.string-append " " line-text)
       line-text)))
 
 (define (compiler-diagnostic-blank-gutter [line : i64]) : String
@@ -406,7 +408,7 @@
             (if (= line target-line)
               (if (= (string-ref source idx) #\newline')
                 (begin
-                  (set! out (substring source start (- idx start)))
+                  (set! out (string_mod.substring source start (- idx start)))
                   (set! done true))
                 unit)
               unit)
@@ -419,7 +421,8 @@
         (if done
           (CompilerDiagnosticSomeString out)
           (if (= line target-line)
-            (CompilerDiagnosticSomeString (substring source start (- n start)))
+            (CompilerDiagnosticSomeString
+              (string_mod.substring source start (- n start)))
             CompilerDiagnosticNoString))))))
 
 (define (compiler-diagnostic-render-header
@@ -430,27 +433,30 @@
     [level-text : String (compiler-diagnostic-level-render level)]
     (match code
       [(CompilerDiagnosticSomeString code-text)
-        (str-cat
+        (str_cat.str-cat
           level-text
           "["
-          (str-cat
+          (str_cat.str-cat
             code-text
             "]: "
-            (string-append (compiler-diagnostic-message diag) "\n")))]
+            (string_mod.string-append (compiler-diagnostic-message diag) "\n")))]
       [CompilerDiagnosticNoString
-        (str-cat
+        (str_cat.str-cat
           level-text
           ": "
-          (string-append (compiler-diagnostic-message diag) "\n"))])))
+          (string_mod.string-append (compiler-diagnostic-message diag) "\n"))])))
 
 (define (compiler-diagnostic-render-location [diag : CompilerDiagnostic]) : String
-  (str-cat
+  (str_cat.str-cat
     "  --> "
     (compiler-diagnostic-path diag)
-    (str-cat
+    (str_cat.str-cat
       ":"
-      (int->string (compiler-diagnostic-line diag))
-      (str-cat ":" (int->string (compiler-diagnostic-col diag)) "\n"))))
+      (string_mod.int->string (compiler-diagnostic-line diag))
+      (str_cat.str-cat
+        ":"
+        (string_mod.int->string (compiler-diagnostic-col diag))
+        "\n"))))
 
 (define (compiler-diagnostic-render-source-snippet
   [diag : CompilerDiagnostic]
@@ -467,14 +473,18 @@
           (compiler-diagnostic-repeat
             " "
             (compiler-diagnostic-column-padding (compiler-diagnostic-col diag)))]
-        (string-append
-          (str-cat gutter " | " (string-append line-text "\n"))
-          (str-cat blank " | " (str-cat padding "^" "\n"))))]
+        (string_mod.string-append
+          (str_cat.str-cat
+            gutter
+            " | "
+            (string_mod.string-append line-text "\n"))
+          (str_cat.str-cat blank " | " (str_cat.str-cat padding "^" "\n"))))]
     [CompilerDiagnosticNoString ""]))
 
 (define (compiler-diagnostic-render-help [help : CompilerDiagnosticMaybeString]) : String
   (match help
-    [(CompilerDiagnosticSomeString text) (str-cat "   = help: " text "\n")]
+    [(CompilerDiagnosticSomeString text)
+      (str_cat.str-cat "   = help: " text "\n")]
     [CompilerDiagnosticNoString ""]))
 
 (define (compiler-diagnostic-render-source-notes
@@ -482,10 +492,10 @@
   (match notes
     [(CompilerDiagnosticNoteNil) ""]
     [(CompilerDiagnosticNoteCons note rest)
-      (str-cat
+      (str_cat.str-cat
         "   = note: "
         note
-        (string-append
+        (string_mod.string-append
           "\n"
           (compiler-diagnostic-render-source-notes (box-get rest))))]))
 
@@ -495,15 +505,15 @@
   [level : CompilerDiagnosticLevel]
   [code : CompilerDiagnosticMaybeString]
   [help : CompilerDiagnosticMaybeString]) : String
-  (string-append
+  (string_mod.string-append
     (compiler-diagnostic-render-header diag level code)
-    (string-append
+    (string_mod.string-append
       (compiler-diagnostic-render-location diag)
-      (string-append
+      (string_mod.string-append
         "   |\n"
-        (string-append
+        (string_mod.string-append
           (compiler-diagnostic-render-source-snippet diag source)
-          (string-append
+          (string_mod.string-append
             (compiler-diagnostic-render-help help)
             (compiler-diagnostic-render-source-notes
               (compiler-diagnostic-notes diag))))))))
@@ -519,7 +529,7 @@
     (compiler-diagnostic-help diag)))
 
 (define (compiler-diagnostic-render-ok?) : bool
-  (string-eq
+  (string_mod.string-eq
     (compiler-diagnostic-render
       (compiler-diagnostic-simple "demo.tl" 3 7 "parse: malformed define"))
     "demo.tl:3:7: parse: malformed define"))
@@ -531,10 +541,10 @@
     [diag : CompilerDiagnostic
       (compiler-diagnostic-from-source-error "input.tl" err)]
     (and
-      (string-eq (compiler-diagnostic-path diag) "input.tl")
+      (string_mod.string-eq (compiler-diagnostic-path diag) "input.tl")
       (= (compiler-diagnostic-line diag) 4)
       (= (compiler-diagnostic-col diag) 5)
-      (string-eq
+      (string_mod.string-eq
         (compiler-diagnostic-message diag)
         "lexer: unexpected character"))))
 
@@ -545,10 +555,12 @@
     [rewritten : CompilerDiagnostic
       (compiler-diagnostic-with-message moved "new message")]
     (and
-      (string-eq (compiler-diagnostic-path rewritten) "new.tl")
+      (string_mod.string-eq (compiler-diagnostic-path rewritten) "new.tl")
       (= (compiler-diagnostic-line rewritten) 1)
       (= (compiler-diagnostic-col rewritten) 2)
-      (string-eq (compiler-diagnostic-message rewritten) "new message"))))
+      (string_mod.string-eq
+        (compiler-diagnostic-message rewritten)
+        "new message"))))
 
 (define (compiler-diagnostic-source-render-ok?) : bool
   (let
@@ -583,7 +595,7 @@
         "generated identity: generated:demo")]
     [source-out : String (compiler-diagnostic-render-source diag "a\nb\n")]
     (and
-      (string-eq
+      (string_mod.string-eq
         (compiler-diagnostic-render diag)
         "note.tl:2:3: has note\nnote: generated identity: generated:demo")
       (compiler-diagnostic-string-eq?
@@ -601,7 +613,7 @@
     (and
       (= (compiler-diagnostic-end-line moved) 2)
       (= (compiler-diagnostic-end-col moved) 9)
-      (string-eq (compiler-diagnostic-path moved) "moved.tl"))))
+      (string_mod.string-eq (compiler-diagnostic-path moved) "moved.tl"))))
 
 (define (compiler-diagnostic-metadata-ok?) : bool
   (let
@@ -630,19 +642,20 @@
                 (box-get rest-labels-box)]
               [rest-notes : CompilerDiagnosticNoteList (box-get rest-notes-box)]
               (and
-                (string-eq note "second note")
+                (string_mod.string-eq note "second note")
                 (match rest-notes
                   [(CompilerDiagnosticNoteCons tail-note _)
-                    (string-eq tail-note "first note")]
+                    (string_mod.string-eq tail-note "first note")]
                   [CompilerDiagnosticNoteNil false])
                 (match rest-labels
                   [(CompilerDiagnosticLabelCons _ _)
-                    (string-eq
+                    (string_mod.string-eq
                       (compiler-diagnostic-span-path (struct-get label span))
                       "other.tl")]
                   [CompilerDiagnosticLabelNil false])
                 (match (compiler-diagnostic-code diag)
-                  [(CompilerDiagnosticSomeString code) (string-eq code "E1234")]
+                  [(CompilerDiagnosticSomeString code)
+                    (string_mod.string-eq code "E1234")]
                   [CompilerDiagnosticNoString false])))]
           [CompilerDiagnosticNoteNil false])]
       [CompilerDiagnosticLabelNil false])))
@@ -653,8 +666,8 @@
       (compiler-diagnostic-simple "none.tl" 1 1 "none")]
     [coded : CompilerDiagnostic (compiler-diagnostic-with-code uncoded "E1234")]
     (and
-      (string-eq (compiler-diagnostic-code-or-empty uncoded) "")
-      (string-eq (compiler-diagnostic-code-or-empty coded) "E1234"))))
+      (string_mod.string-eq (compiler-diagnostic-code-or-empty uncoded) "")
+      (string_mod.string-eq (compiler-diagnostic-code-or-empty coded) "E1234"))))
 
 (define (compiler-diagnostic-self-test) : i64
   (begin

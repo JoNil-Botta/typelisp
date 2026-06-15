@@ -8,9 +8,9 @@
 ;;   typelisp run selfhost/cli.tl -- doc --test input.tl
 ;;   typelisp run selfhost/cli.tl -- doc --test --batch inputs.txt
 ;;   typelisp run selfhost/cli.tl -- doc --load input.tl output.md [--stdlib-root <dir>...]
-(import "../stdlib/io.tl")
+(import stdlib.io as io_mod)
 
-(import "../stdlib/vector.tl")
+(import stdlib.vector as vector_mod)
 
 (import "doc_render.tl")
 
@@ -22,18 +22,18 @@
 
 (import "package_source_core.tl")
 
-(import "../stdlib/string.tl")
+(import stdlib.string as string_mod)
 
 (defenum DocMaybeString
   (DocNoString)
   (DocSomeString String))
 
 (defenum DocTestCliConfig
-  (DocTestCliFileConfig StringVec StringVec)
-  (DocTestCliPackageConfig String bool StringVec))
+  (DocTestCliFileConfig vector_mod.StringVec vector_mod.StringVec)
+  (DocTestCliPackageConfig String bool vector_mod.StringVec))
 
 (defenum ResultDocTestBatchPaths
-  (OkDocTestBatchPaths StringVec)
+  (OkDocTestBatchPaths vector_mod.StringVec)
   (ErrDocTestBatchPaths String))
 
 (defenum ResultDocTestCliConfig
@@ -41,7 +41,10 @@
   (ErrDocTestCliConfig String))
 
 (defenum DocDefaultCliConfig
-  (DocDefaultCliExplicitConfig StringVec DocMaybeString StringVec)
+  (DocDefaultCliExplicitConfig
+    vector_mod.StringVec
+    DocMaybeString
+    vector_mod.StringVec)
   (DocDefaultCliPackageConfig String bool String))
 
 (defenum ResultDocDefaultCliConfig
@@ -49,14 +52,17 @@
   (ErrDocDefaultCliConfig String))
 
 (define (doc-print-wrote [output-path : String]) : unit
-  (print-string (string-append "Wrote " (string-append output-path "\n"))))
+  (io_mod.print-string
+    (string_mod.string-append
+      "Wrote "
+      (string_mod.string-append output-path "\n"))))
 
 (define (doc-generate-file [input-path : String] [output-path : String]) : i64
   (let
-    [source : String (read-file input-path)]
+    [source : String (io_mod.read-file input-path)]
     [markdown : String (doc-render-markdown (doc-extract-source source))]
     (begin
-      (write-file output-path markdown)
+      (io_mod.write-file output-path markdown)
       (doc-print-wrote output-path)
       0)))
 
@@ -67,7 +73,7 @@
   (if (>= idx end)
     DocModuleNil
     (doc-cli-module-cons
-      (DocModule (arg idx) (doc-extract-file (arg idx)))
+      (DocModule (io_mod.arg idx) (doc-extract-file (io_mod.arg idx)))
       (doc-read-modules (+ idx 1) end))))
 
 (define (doc-module-list-count [modules : DocModuleList]) : i64
@@ -75,16 +81,18 @@
     [(DocModuleNil) 0]
     [(DocModuleCons _ rest) (+ 1 (doc-module-list-count (box-get rest)))]))
 
-(define (doc-modules-from-string-vec-from [paths : StringVec] [index : i64]) : DocModuleList
-  (if (>= index (string-vec-len paths))
+(define (doc-modules-from-string-vec-from
+  [paths : vector_mod.StringVec]
+  [index : i64]) : DocModuleList
+  (if (>= index (vector_mod.string-vec-len paths))
     DocModuleNil
     (let
-      [path : String (string-vec-get paths index "")]
+      [path : String (vector_mod.string-vec-get paths index "")]
       (doc-cli-module-cons
         (DocModule path (doc-extract-file path))
         (doc-modules-from-string-vec-from paths (+ index 1))))))
 
-(define (doc-modules-from-string-vec [paths : StringVec]) : DocModuleList
+(define (doc-modules-from-string-vec [paths : vector_mod.StringVec]) : DocModuleList
   (doc-modules-from-string-vec-from paths 0))
 
 (define (doc-modules-from-paths [paths : AstDeclPathList] [seen : SymI64Env]) : DocModuleList
@@ -114,19 +122,21 @@
 (define (doc-generate-loaded-file
   [input-path : String]
   [output-path : String]
-  [stdlib-roots : StringVec]) : i64
+  [stdlib-roots : vector_mod.StringVec]) : i64
   (match (compiler-load-file-with-paths-and-roots
     input-path
     (sym-i64-empty)
     stdlib-roots)
     [(OkCompilerLoadWithPaths _ paths _ _)
       (begin
-        (write-file output-path (doc-render-loaded-markdown input-path paths))
+        (io_mod.write-file
+          output-path
+          (doc-render-loaded-markdown input-path paths))
         (doc-print-wrote output-path)
         0)]
     [(ErrCompilerLoadWithPaths diag)
       (begin
-        (print-error (compiler-diagnostic-render diag))
+        (io_mod.print-error (compiler-diagnostic-render diag))
         1)]))
 
 (define (doc-generate-package
@@ -136,11 +146,11 @@
   (match (package-source-discover-for "doc" manifest-path has-manifest)
     [(ErrPackageSourceSet message)
       (begin
-        (print-error (string-append message "\n"))
+        (io_mod.print-error (string_mod.string-append message "\n"))
         1)]
     [(OkPackageSourceSet source-set)
       (begin
-        (write-file
+        (io_mod.write-file
           output-path
           (doc-render-module-graph-markdown
             (doc-modules-from-string-vec (struct-get source-set sources))))
@@ -149,72 +159,78 @@
 
 (define (doc-generate-html-file [input-path : String] [output-path : String]) : i64
   (let
-    [source : String (read-file input-path)]
+    [source : String (io_mod.read-file input-path)]
     [html : String (doc-html-render-source input-path source)]
     (begin
-      (write-file output-path html)
+      (io_mod.write-file output-path html)
       (doc-print-wrote output-path)
       0)))
 
 (define (doc-generate-html-module-graph [output-path : String]) : i64
   (let
-    [modules : DocModuleList (doc-read-modules 2 (- (arg-count) 1))]
+    [modules : DocModuleList (doc-read-modules 2 (- (io_mod.arg-count) 1))]
     (begin
-      (write-file output-path (doc-html-render-module-graph modules))
+      (io_mod.write-file output-path (doc-html-render-module-graph modules))
       (doc-print-wrote output-path)
       0)))
 
-(define (doc-test-file [input-path : String] [stdlib-roots : StringVec]) : i64
+(define (doc-test-file
+  [input-path : String]
+  [stdlib-roots : vector_mod.StringVec]) : i64
   (let
     [report : DocTestRunReport
       (doc-test-run-file-with-roots input-path stdlib-roots)]
     (begin
       (if (doc-test-run-report-ok? report)
-        (print-string (string-append (doc-test-run-report-render report) "\n"))
-        (print-error (doc-test-run-report-render report)))
+        (io_mod.print-string
+          (string_mod.string-append (doc-test-run-report-render report) "\n"))
+        (io_mod.print-error (doc-test-run-report-render report)))
       (doc-test-run-report-status report))))
 
 (define (doc-flag? [value : String]) : bool
   (and (> (string-length value) 0) (= (string-ref value 0) #-')))
 
-(define (doc-stdlib-roots [idx : i64]) : StringVec
+(define (doc-stdlib-roots [idx : i64]) : vector_mod.StringVec
   (let
     [i : i64 idx]
-    [n : i64 (arg-count)]
-    [roots : StringVec (string-vec-new)]
+    [n : i64 (io_mod.arg-count)]
+    [roots : vector_mod.StringVec (vector_mod.string-vec-new)]
     (begin
       (while (< i n)
-        (if (string-eq (arg i) "--stdlib-root")
+        (if (string_mod.string-eq (io_mod.arg i) "--stdlib-root")
           (if (< (+ i 1) n)
             (begin
-              (set! roots (string-vec-push roots (arg (+ i 1))))
+              (set!
+                roots
+                (vector_mod.string-vec-push roots (io_mod.arg (+ i 1))))
               (set! i (+ i 2)))
             (set! i n))
           (set! i (+ i 1))))
       roots)))
 
 (define (doc-modules-from-input-paths-before-last
-  [paths : StringVec]
+  [paths : vector_mod.StringVec]
   [index : i64]
   [last-index : i64]) : DocModuleList
   (if (>= index last-index)
     DocModuleNil
     (let
-      [path : String (string-vec-get paths index "")]
+      [path : String (vector_mod.string-vec-get paths index "")]
       (doc-cli-module-cons
         (DocModule path (doc-extract-file path))
         (doc-modules-from-input-paths-before-last paths (+ index 1) last-index)))))
 
-(define (doc-generate-module-graph-from-input-paths [paths : StringVec]) : i64
+(define (doc-generate-module-graph-from-input-paths
+  [paths : vector_mod.StringVec]) : i64
   (let
-    [output-path : String (string-vec-last paths "")]
+    [output-path : String (vector_mod.string-vec-last paths "")]
     [modules : DocModuleList
       (doc-modules-from-input-paths-before-last
         paths
         0
-        (- (string-vec-len paths) 1))]
+        (- (vector_mod.string-vec-len paths) 1))]
     (begin
-      (write-file output-path (doc-render-module-graph-markdown modules))
+      (io_mod.write-file output-path (doc-render-module-graph-markdown modules))
       (doc-print-wrote output-path)
       0)))
 
@@ -248,53 +264,53 @@
           (+ line-end 2)
           (+ line-end 1))))))
 
-(define (doc-test-batch-paths-from-text [text : String]) : StringVec
+(define (doc-test-batch-paths-from-text [text : String]) : vector_mod.StringVec
   (let
     [n : i64 (string-length text)]
     [i : i64 0]
-    [paths : StringVec (string-vec-new)]
+    [paths : vector_mod.StringVec (vector_mod.string-vec-new)]
     (begin
       (while (< i n)
         (let
           [line-end : i64 (doc-test-batch-line-end text i n)]
-          [line : String (substring text i (- line-end i))]
+          [line : String (string_mod.substring text i (- line-end i))]
           (begin
             (if (> (string-length line) 0)
-              (set! paths (string-vec-push paths line))
+              (set! paths (vector_mod.string-vec-push paths line))
               unit)
             (set! i (doc-test-batch-next-line-start text line-end n)))))
       paths)))
 
 (define (doc-test-batch-paths [list-path : String]) : ResultDocTestBatchPaths
-  (match (try-read-file (& list-path))
-    [(OkIoString text)
+  (match (io_mod.try-read-file (& list-path))
+    [(io_mod.OkIoString text)
       (OkDocTestBatchPaths (doc-test-batch-paths-from-text text))]
-    [(ErrIoString error)
+    [(io_mod.ErrIoString error)
       (ErrDocTestBatchPaths
-        (string-append
+        (string_mod.string-append
           "doc: failed to read --batch list file: "
-          (io-error-message error)))]))
+          (io_mod.io-error-message error)))]))
 
 (define (doc-test-config-finish
-  [input-paths : StringVec]
+  [input-paths : vector_mod.StringVec]
   [manifest-path : String]
   [has-manifest : bool]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [batch-list : DocMaybeString]) : ResultDocTestCliConfig
   (match batch-list
     [(DocSomeString list-path)
       (if has-manifest
         (ErrDocTestCliConfig "doc: cannot combine --batch with --manifest-path")
-        (if (not (string-vec-is-empty? input-paths))
+        (if (not (vector_mod.string-vec-is-empty? input-paths))
           (ErrDocTestCliConfig "doc: cannot combine input paths with --batch")
           (match (doc-test-batch-paths list-path)
             [(OkDocTestBatchPaths paths)
-              (if (string-vec-is-empty? paths)
+              (if (vector_mod.string-vec-is-empty? paths)
                 (ErrDocTestCliConfig "doc: --batch list is empty")
                 (OkDocTestCliConfig (DocTestCliFileConfig paths stdlib-roots)))]
             [(ErrDocTestBatchPaths message) (ErrDocTestCliConfig message)])))]
     [(DocNoString)
-      (if (string-vec-is-empty? input-paths)
+      (if (vector_mod.string-vec-is-empty? input-paths)
         (OkDocTestCliConfig
           (DocTestCliPackageConfig manifest-path has-manifest stdlib-roots))
         (if has-manifest
@@ -305,10 +321,10 @@
 (define (doc-test-parse-options
   [idx : i64]
   [count : i64]
-  [input-paths : StringVec]
+  [input-paths : vector_mod.StringVec]
   [manifest-path : String]
   [has-manifest : bool]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [batch-list : DocMaybeString]) : ResultDocTestCliConfig
   (if (>= idx count)
     (doc-test-config-finish
@@ -318,8 +334,8 @@
       stdlib-roots
       batch-list)
     (let
-      [current : String (arg idx)]
-      (if (string-eq current "--stdlib-root")
+      [current : String (io_mod.arg idx)]
+      (if (string_mod.string-eq current "--stdlib-root")
         (if (>= (+ idx 1) count)
           (ErrDocTestCliConfig "doc: --stdlib-root requires a value")
           (doc-test-parse-options
@@ -328,9 +344,9 @@
             input-paths
             manifest-path
             has-manifest
-            (string-vec-push stdlib-roots (arg (+ idx 1)))
+            (vector_mod.string-vec-push stdlib-roots (io_mod.arg (+ idx 1)))
             batch-list))
-        (if (string-eq current "--manifest-path")
+        (if (string_mod.string-eq current "--manifest-path")
           (if (>= (+ idx 1) count)
             (ErrDocTestCliConfig "doc: --manifest-path requires a value")
             (if has-manifest
@@ -339,11 +355,11 @@
                 (+ idx 2)
                 count
                 input-paths
-                (arg (+ idx 1))
+                (io_mod.arg (+ idx 1))
                 true
                 stdlib-roots
                 batch-list)))
-          (if (string-eq current "--batch")
+          (if (string_mod.string-eq current "--batch")
             (if (>= (+ idx 1) count)
               (ErrDocTestCliConfig "doc: --batch requires a value")
               (match batch-list
@@ -357,13 +373,14 @@
                     manifest-path
                     has-manifest
                     stdlib-roots
-                    (DocSomeString (arg (+ idx 1))))]))
+                    (DocSomeString (io_mod.arg (+ idx 1))))]))
             (if (doc-flag? current)
-              (ErrDocTestCliConfig (string-append "doc: unknown flag " current))
+              (ErrDocTestCliConfig
+                (string_mod.string-append "doc: unknown flag " current))
               (doc-test-parse-options
                 (+ idx 1)
                 count
-                (string-vec-push input-paths current)
+                (vector_mod.string-vec-push input-paths current)
                 manifest-path
                 has-manifest
                 stdlib-roots
@@ -373,27 +390,29 @@
   (doc-test-parse-options
     (+ base 1)
     count
-    (string-vec-new)
+    (vector_mod.string-vec-new)
     ""
     false
-    (string-vec-new)
+    (vector_mod.string-vec-new)
     (DocNoString)))
 
 (define (doc-test-files-from
-  [input-paths : StringVec]
+  [input-paths : vector_mod.StringVec]
   [index : i64]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [print-headers : bool]
   [status : i64]) : i64
-  (if (>= index (string-vec-len input-paths))
+  (if (>= index (vector_mod.string-vec-len input-paths))
     status
     (let
-      [input-path : String (string-vec-get input-paths index "")]
+      [input-path : String (vector_mod.string-vec-get input-paths index "")]
       [file-status : i64
         (begin
           (if print-headers
-            (print-string
-              (string-append "--- " (string-append input-path "\n")))
+            (io_mod.print-string
+              (string_mod.string-append
+                "--- "
+                (string_mod.string-append input-path "\n")))
             unit)
           (doc-test-file input-path stdlib-roots))]
       (doc-test-files-from
@@ -406,24 +425,27 @@
           status)))))
 
 (define (doc-test-files
-  [input-paths : StringVec]
-  [stdlib-roots : StringVec]
+  [input-paths : vector_mod.StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [print-headers : bool]
   [status : i64]) : i64
   (doc-test-files-from input-paths 0 stdlib-roots print-headers status))
 
 (define (doc-test-package-files-from
-  [input-paths : StringVec]
+  [input-paths : vector_mod.StringVec]
   [index : i64]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [status : i64]) : i64
-  (if (>= index (string-vec-len input-paths))
+  (if (>= index (vector_mod.string-vec-len input-paths))
     status
     (let
-      [input-path : String (string-vec-get input-paths index "")]
+      [input-path : String (vector_mod.string-vec-get input-paths index "")]
       [file-status : i64
         (begin
-          (print-string (string-append "--- " (string-append input-path "\n")))
+          (io_mod.print-string
+            (string_mod.string-append
+              "--- "
+              (string_mod.string-append input-path "\n")))
           (doc-test-file input-path stdlib-roots))]
       (doc-test-package-files-from
         input-paths
@@ -434,30 +456,30 @@
           status)))))
 
 (define (doc-test-package-files
-  [input-paths : StringVec]
-  [stdlib-roots : StringVec]
+  [input-paths : vector_mod.StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [status : i64]) : i64
   (doc-test-package-files-from input-paths 0 stdlib-roots status))
 
 (define (doc-test-package
   [manifest-path : String]
   [has-manifest : bool]
-  [stdlib-roots : StringVec]) : i64
+  [stdlib-roots : vector_mod.StringVec]) : i64
   (match (package-source-discover-for "doc" manifest-path has-manifest)
     [(ErrPackageSourceSet message)
       (begin
-        (print-error (string-append message "\n"))
+        (io_mod.print-error (string_mod.string-append message "\n"))
         1)]
     [(OkPackageSourceSet source-set)
       (doc-test-package-files (struct-get source-set sources) stdlib-roots 0)]))
 
 (define (doc-default-config-finish
-  [input-paths : StringVec]
+  [input-paths : vector_mod.StringVec]
   [output-path : DocMaybeString]
   [manifest-path : String]
   [has-manifest : bool]
-  [stdlib-roots : StringVec]) : ResultDocDefaultCliConfig
-  (if (string-vec-is-empty? input-paths)
+  [stdlib-roots : vector_mod.StringVec]) : ResultDocDefaultCliConfig
+  (if (vector_mod.string-vec-is-empty? input-paths)
     (match output-path
       [(DocSomeString out)
         (OkDocDefaultCliConfig
@@ -476,12 +498,12 @@
 (define (doc-default-parse-options
   [idx : i64]
   [count : i64]
-  [input-paths : StringVec]
+  [input-paths : vector_mod.StringVec]
   [output-path : DocMaybeString]
   [has-output : bool]
   [manifest-path : String]
   [has-manifest : bool]
-  [stdlib-roots : StringVec]) : ResultDocDefaultCliConfig
+  [stdlib-roots : vector_mod.StringVec]) : ResultDocDefaultCliConfig
   (if (>= idx count)
     (doc-default-config-finish
       input-paths
@@ -490,8 +512,8 @@
       has-manifest
       stdlib-roots)
     (let
-      [current : String (arg idx)]
-      (if (string-eq current "-o")
+      [current : String (io_mod.arg idx)]
+      (if (string_mod.string-eq current "-o")
         (if (>= (+ idx 1) count)
           (ErrDocDefaultCliConfig "doc: -o requires a value")
           (if has-output
@@ -500,12 +522,12 @@
               (+ idx 2)
               count
               input-paths
-              (DocSomeString (arg (+ idx 1)))
+              (DocSomeString (io_mod.arg (+ idx 1)))
               true
               manifest-path
               has-manifest
               stdlib-roots)))
-        (if (string-eq current "--stdlib-root")
+        (if (string_mod.string-eq current "--stdlib-root")
           (if (>= (+ idx 1) count)
             (ErrDocDefaultCliConfig "doc: --stdlib-root requires a value")
             (doc-default-parse-options
@@ -516,8 +538,8 @@
               has-output
               manifest-path
               has-manifest
-              (string-vec-push stdlib-roots (arg (+ idx 1)))))
-          (if (string-eq current "--manifest-path")
+              (vector_mod.string-vec-push stdlib-roots (io_mod.arg (+ idx 1)))))
+          (if (string_mod.string-eq current "--manifest-path")
             (if (>= (+ idx 1) count)
               (ErrDocDefaultCliConfig "doc: --manifest-path requires a value")
               (if has-manifest
@@ -528,16 +550,16 @@
                   input-paths
                   output-path
                   has-output
-                  (arg (+ idx 1))
+                  (io_mod.arg (+ idx 1))
                   true
                   stdlib-roots)))
             (if (doc-flag? current)
               (ErrDocDefaultCliConfig
-                (string-append "doc: unknown flag " current))
+                (string_mod.string-append "doc: unknown flag " current))
               (doc-default-parse-options
                 (+ idx 1)
                 count
-                (string-vec-push input-paths current)
+                (vector_mod.string-vec-push input-paths current)
                 output-path
                 has-output
                 manifest-path
@@ -548,63 +570,69 @@
   (doc-default-parse-options
     base
     count
-    (string-vec-new)
+    (vector_mod.string-vec-new)
     (DocNoString)
     false
     ""
     false
-    (string-vec-new)))
+    (vector_mod.string-vec-new)))
 
 (define (doc-invalid-args) : i64
   (begin
-    (print-error "doc: expected input and output paths")
+    (io_mod.print-error "doc: expected input and output paths")
     1))
 
 (define (doc-invalid-load-args) : i64
   (begin
-    (print-error "doc: expected --load input and output paths")
+    (io_mod.print-error "doc: expected --load input and output paths")
     1))
 
 (define (doc-invalid-html-args) : i64
   (begin
-    (print-error "doc: expected --html input and output paths")
+    (io_mod.print-error "doc: expected --html input and output paths")
     1))
 
 (define (doc-run-explicit-default
-  [input-paths : StringVec]
+  [input-paths : vector_mod.StringVec]
   [output-path : DocMaybeString]
-  [stdlib-roots : StringVec]) : i64
+  [stdlib-roots : vector_mod.StringVec]) : i64
   (match output-path
     [(DocSomeString out)
-      (if (string-vec-is-empty? input-paths)
+      (if (vector_mod.string-vec-is-empty? input-paths)
         (doc-invalid-args)
         (doc-generate-loaded-file
-          (string-vec-get input-paths 0 "")
+          (vector_mod.string-vec-get input-paths 0 "")
           out
           stdlib-roots))]
     [(DocNoString)
       (let
-        [path-count : i64 (string-vec-len input-paths)]
+        [path-count : i64 (vector_mod.string-vec-len input-paths)]
         (if (= path-count 2)
           (doc-generate-file
-            (string-vec-get input-paths 0 "")
-            (string-vec-get input-paths 1 ""))
+            (vector_mod.string-vec-get input-paths 0 "")
+            (vector_mod.string-vec-get input-paths 1 ""))
           (if (> path-count 2)
             (doc-generate-module-graph-from-input-paths input-paths)
             (doc-invalid-args))))]))
 
 (define (doc-command-kind-load [value : String]) : i64
-  (if (or (string-eq value "--load") (string-eq value "load"))
+  (if (or
+    (string_mod.string-eq value "--load")
+    (string_mod.string-eq value "load"))
     3
     0))
 
 (define (doc-command-kind-html [value : String]) : i64
-  (if (or (string-eq value "--html") (string-eq value "html"))
+  (if (or
+    (string_mod.string-eq value "--html")
+    (string_mod.string-eq value "html"))
     2
     (doc-command-kind-load value)))
 
 (define (doc-command-kind [value : String]) : i64
-  (if (or (string-eq value "--test") (string-eq value "test"))
+  (if (or
+    (string_mod.string-eq value "--test")
+    (string_mod.string-eq value "test"))
     1
     (doc-command-kind-html value)))
 
@@ -615,39 +643,39 @@
 (define (doc-main-test [base : i64]) : i64
   (begin
     (compiler-load-session-cache-enable!)
-    (match (doc-test-config-from base (arg-count))
+    (match (doc-test-config-from base (io_mod.arg-count))
       [(OkDocTestCliConfig config)
         (match config
           [(DocTestCliFileConfig input-paths stdlib-roots)
             (doc-test-files
               input-paths
               stdlib-roots
-              (> (string-vec-len input-paths) 1)
+              (> (vector_mod.string-vec-len input-paths) 1)
               0)]
           [(DocTestCliPackageConfig manifest-path has-manifest stdlib-roots)
             (doc-test-package manifest-path has-manifest stdlib-roots)])]
       [(ErrDocTestCliConfig message)
         (begin
-          (print-error message)
+          (io_mod.print-error message)
           1)])))
 
 (define (doc-main-html [base : i64]) : i64
-  (if (= (arg-count) (+ base 3))
-    (doc-generate-html-file (arg (+ base 1)) (arg (+ base 2)))
-    (if (> (arg-count) (+ base 3))
-      (doc-generate-html-module-graph (arg (- (arg-count) 1)))
+  (if (= (io_mod.arg-count) (+ base 3))
+    (doc-generate-html-file (io_mod.arg (+ base 1)) (io_mod.arg (+ base 2)))
+    (if (> (io_mod.arg-count) (+ base 3))
+      (doc-generate-html-module-graph (io_mod.arg (- (io_mod.arg-count) 1)))
       (doc-invalid-html-args))))
 
 (define (doc-main-load [base : i64]) : i64
-  (if (>= (arg-count) (+ base 3))
+  (if (>= (io_mod.arg-count) (+ base 3))
     (doc-generate-loaded-file
-      (arg (+ base 1))
-      (arg (+ base 2))
+      (io_mod.arg (+ base 1))
+      (io_mod.arg (+ base 2))
       (doc-stdlib-roots (+ base 3)))
     (doc-invalid-load-args)))
 
 (define (doc-main-default [base : i64]) : i64
-  (match (doc-default-config-from base (arg-count))
+  (match (doc-default-config-from base (io_mod.arg-count))
     [(OkDocDefaultCliConfig config)
       (match config
         [(DocDefaultCliExplicitConfig input-paths output-path stdlib-roots)
@@ -656,7 +684,7 @@
           (doc-generate-package manifest-path has-manifest output-path)])]
     [(ErrDocDefaultCliConfig message)
       (begin
-        (print-error message)
+        (io_mod.print-error message)
         1)]))
 
 (define (doc-main-dispatch [kind : i64] [base : i64]) : i64
@@ -670,4 +698,4 @@
 (define (doc-run-from [start : i64] [count : i64]) : i64
   (if (< count (+ start 1))
     (doc-main-default start)
-    (doc-main-dispatch (doc-command-kind (arg start)) start)))
+    (doc-main-dispatch (doc-command-kind (io_mod.arg start)) start)))

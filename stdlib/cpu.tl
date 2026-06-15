@@ -11,8 +11,10 @@
 ;# i64 before bit testing; single-bit tests use `(bit-and (shr v n) 1)` so the
 ;# sign of the widening cast is irrelevant.
 ;#
-;# Usage: `(import "stdlib/cpu.tl")`
+;# Usage: `(import stdlib.cpu)`
 ;: Return CPUID EAX for `leaf` and `subleaf`.
+(module stdlib.cpu)
+
 (define (cpu-cpuid-eax [leaf : i64] [subleaf : i64]) : i32
   (cast (cpuid-eax leaf subleaf) : i32))
 
@@ -31,21 +33,21 @@
 ;: Return CPUID registers for `leaf` and `subleaf` as (eax ebx ecx edx).
 (define (cpuid [leaf : i64] [subleaf : i64]) : (Tuple i32 i32 i32 i32)
   (tuple
-    (cpu-cpuid-eax leaf subleaf)
-    (cpu-cpuid-ebx leaf subleaf)
-    (cpu-cpuid-ecx leaf subleaf)
-    (cpu-cpuid-edx leaf subleaf)))
+    (stdlib.cpu.cpu-cpuid-eax leaf subleaf)
+    (stdlib.cpu.cpu-cpuid-ebx leaf subleaf)
+    (stdlib.cpu.cpu-cpuid-ecx leaf subleaf)
+    (stdlib.cpu.cpu-cpuid-edx leaf subleaf)))
 
 ;: CPUID.1:ECX bit 27 = OSXSAVE: the OS enabled XSAVE and the XGETBV instruction.
 (define (cpu-osxsave?) : bool
   (let
-    [r1 : (Tuple i32 i32 i32 i32) (cpuid 1 0)]
+    [r1 : (Tuple i32 i32 i32 i32) (stdlib.cpu.cpuid 1 0)]
     (= (bit-and (shr (cast (tuple-ref r1 2) : i64) 27) 1) 1)))
 
 ;: XCR0 (XGETBV index 0). Reading XCR0 is only valid once OSXSAVE is set, so
 ;: return 0 otherwise (matching the C probe's `osxsave ? xgetbv0() : 0`).
 (define (cpu-xcr0) : i64
-  (if (cpu-osxsave?)
+  (if (stdlib.cpu.cpu-osxsave?)
     (xgetbv 0)
     0))
 
@@ -53,49 +55,68 @@
 ;: and AVX512BW feature bits, so it must be available before they are queried.
 (define (cpu-max-leaf) : i64
   (let
-    [r0 : (Tuple i32 i32 i32 i32) (cpuid 0 0)]
+    [r0 : (Tuple i32 i32 i32 i32) (stdlib.cpu.cpuid 0 0)]
     (cast (tuple-ref r0 0) : i64)))
 
 ;: XCR0 bit1 = SSE/XMM, bit2 = AVX/YMM. 0x6 means YMM state is enabled.
 (define (cpu-ymm-enabled?) : bool
-  (= (bit-and (cpu-xcr0) 0x6) 0x6))
+  (= (bit-and (stdlib.cpu.cpu-xcr0) 0x6) 0x6))
 
 ;: XCR0 0xe6 = SSE | AVX | opmask | ZMM_Hi256 | Hi16_ZMM: ZMM state is enabled.
 (define (cpu-zmm-enabled?) : bool
-  (= (bit-and (cpu-xcr0) 0xe6) 0xe6))
+  (= (bit-and (stdlib.cpu.cpu-xcr0) 0xe6) 0xe6))
 
 ;: CPUID.7.0:EBX bit 5 = AVX2.
 (define (cpu-has-avx2?) : bool
-  (if (>= (cpu-max-leaf) 7)
+  (if (>= (stdlib.cpu.cpu-max-leaf) 7)
     (let
-      [r7 : (Tuple i32 i32 i32 i32) (cpuid 7 0)]
+      [r7 : (Tuple i32 i32 i32 i32) (stdlib.cpu.cpuid 7 0)]
       (= (bit-and (shr (cast (tuple-ref r7 1) : i64) 5) 1) 1))
     false))
 
 ;: CPUID.7.0:EBX bit 16 = AVX512F.
 (define (cpu-has-avx512f?) : bool
-  (if (>= (cpu-max-leaf) 7)
+  (if (>= (stdlib.cpu.cpu-max-leaf) 7)
     (let
-      [r7 : (Tuple i32 i32 i32 i32) (cpuid 7 0)]
+      [r7 : (Tuple i32 i32 i32 i32) (stdlib.cpu.cpuid 7 0)]
       (= (bit-and (shr (cast (tuple-ref r7 1) : i64) 16) 1) 1))
     false))
 
 ;: CPUID.7.0:EBX bit 30 = AVX512BW.
 (define (cpu-has-avx512bw?) : bool
-  (if (>= (cpu-max-leaf) 7)
+  (if (>= (stdlib.cpu.cpu-max-leaf) 7)
     (let
-      [r7 : (Tuple i32 i32 i32 i32) (cpuid 7 0)]
+      [r7 : (Tuple i32 i32 i32 i32) (stdlib.cpu.cpuid 7 0)]
       (= (bit-and (shr (cast (tuple-ref r7 1) : i64) 30) 1) 1))
     false))
 
 ;: AVX2 is runnable when the CPU advertises it and the OS has enabled YMM state.
 (define (cpu-runs-avx2?) : bool
-  (and (cpu-has-avx2?) (cpu-ymm-enabled?)))
+  (and (stdlib.cpu.cpu-has-avx2?) (stdlib.cpu.cpu-ymm-enabled?)))
 
 ;: AVX-512 Foundation is runnable when advertised and ZMM/opmask state is enabled.
 (define (cpu-runs-avx512f?) : bool
-  (and (cpu-has-avx512f?) (cpu-zmm-enabled?)))
+  (and (stdlib.cpu.cpu-has-avx512f?) (stdlib.cpu.cpu-zmm-enabled?)))
 
 ;: AVX-512BW is runnable when Foundation, BW, and ZMM/opmask state are enabled.
 (define (cpu-runs-avx512bw?) : bool
-  (and (cpu-runs-avx512f?) (cpu-has-avx512bw?)))
+  (and (stdlib.cpu.cpu-runs-avx512f?) (stdlib.cpu.cpu-has-avx512bw?)))
+
+;# Dotted-module migration: preserve the pre-module flat stdlib surface.
+(export
+  (value cpu-cpuid-eax)
+  (value cpu-cpuid-ebx)
+  (value cpu-cpuid-ecx)
+  (value cpu-cpuid-edx)
+  (value cpuid)
+  (value cpu-osxsave?)
+  (value cpu-xcr0)
+  (value cpu-max-leaf)
+  (value cpu-ymm-enabled?)
+  (value cpu-zmm-enabled?)
+  (value cpu-has-avx2?)
+  (value cpu-has-avx512f?)
+  (value cpu-has-avx512bw?)
+  (value cpu-runs-avx2?)
+  (value cpu-runs-avx512f?)
+  (value cpu-runs-avx512bw?))

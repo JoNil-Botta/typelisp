@@ -1,7 +1,7 @@
 ;; compiler_specialize.tl - Selfhost comptime function specialization (#832).
-(import "../stdlib/io.tl")
+(import stdlib.io as io_mod)
 
-(import "../stdlib/text_buf.tl")
+(import stdlib.text_buf as text_buf_mod)
 
 (import "compiler_ctfe.tl")
 
@@ -11,9 +11,9 @@
 
 (import "compiler_parse_core.tl")
 
-(import "../stdlib/string.tl")
+(import stdlib.string as string_mod)
 
-(import "../stdlib/hashmap.tl")
+(import stdlib.hashmap as hashmap_mod)
 
 (defenum SpecTemplate
   (SpecTemplate String AstParamList AstType AstExpr))
@@ -31,7 +31,7 @@
   (SpecSomeTemplate SpecTemplate))
 
 (defstruct SpecTemplateEnv
-  (index StringI64Map)
+  (index hashmap_mod.StringI64Map)
   (values (Array SpecMaybeTemplate))
   (shadowed SpecTemplateShadowList))
 
@@ -39,7 +39,7 @@
 ;; generated StringStringMap; the former SpecCache linked list made every
 ;; lookup a linear scan.
 (defenum SpecState
-  (SpecState AstDeclList StringStringMap CtfeEnv))
+  (SpecState AstDeclList hashmap_mod.StringStringMap CtfeEnv))
 
 (defenum SpecValueList
   (SpecValueNil)
@@ -210,7 +210,7 @@
   (match shadowed
     [(SpecTemplateShadowNil) false]
     [(SpecTemplateShadowCons shadow-name rest)
-      (if (string-eq shadow-name name)
+      (if (string_mod.string-eq shadow-name name)
         true
         (spec-template-shadow-contains? (box-get rest) name))]))
 
@@ -231,21 +231,21 @@
 
 (define (spec-template-index-build
   [templates : SpecTemplateList]
-  [index : StringI64Map]
+  [index : hashmap_mod.StringI64Map]
   [values : (Array SpecMaybeTemplate)]
-  [slot : i64]) : StringI64Map
+  [slot : i64]) : hashmap_mod.StringI64Map
   (match templates
     [(SpecTemplateNil) index]
     [(SpecTemplateCons template rest)
       (match template
         [(SpecTemplate name _ _ _)
-          (if (string-i64-map-contains? index name)
+          (if (hashmap_mod.string-i64-map-contains? index name)
             (spec-template-index-build (box-get rest) index values slot)
             (begin
               (array-set! values slot (SpecSomeTemplate template))
               (spec-template-index-build
                 (box-get rest)
-                (string-i64-map-put index name slot)
+                (hashmap_mod.string-i64-map-put index name slot)
                 values
                 (+ slot 1))))])]))
 
@@ -258,7 +258,7 @@
       (SpecTemplateEnv
         (spec-template-index-build
           templates
-          (string-i64-map-with-capacity (+ (* count 2) 16))
+          (hashmap_mod.string-i64-map-with-capacity (+ (* count 2) 16))
           values
           0)
         values
@@ -267,9 +267,10 @@
 (define (spec-template-lookup [templates : SpecTemplateEnv] [name : String]) : SpecMaybeTemplate
   (if (spec-template-shadow-contains? (struct-get templates shadowed) name)
     (SpecNoTemplate)
-    (match (string-i64-map-get (struct-get templates index) name)
-      [(StringI64MapFound slot) (array-ref (struct-get templates values) slot)]
-      [(StringI64MapMissing) (SpecNoTemplate)])))
+    (match (hashmap_mod.string-i64-map-get (struct-get templates index) name)
+      [(hashmap_mod.StringI64MapFound slot)
+        (array-ref (struct-get templates values) slot)]
+      [(hashmap_mod.StringI64MapMissing) (SpecNoTemplate)])))
 
 (define (spec-template-env-shadow-name
   [templates : SpecTemplateEnv]
@@ -367,10 +368,10 @@
                 (spec-collect-templates rest)))]
           [_ (spec-collect-templates rest)]))]))
 
-(define (spec-cache-lookup [cache : StringStringMap] [key : String]) : SpecMaybeString
-  (match (string-string-map-get cache key)
-    [(StringStringMapFound name) (SpecSomeString name)]
-    [(StringStringMapMissing) (SpecNoString)]))
+(define (spec-cache-lookup [cache : hashmap_mod.StringStringMap] [key : String]) : SpecMaybeString
+  (match (hashmap_mod.string-string-map-get cache key)
+    [(hashmap_mod.StringStringMapFound name) (SpecSomeString name)]
+    [(hashmap_mod.StringStringMapMissing) (SpecNoString)]))
 
 (define (spec-decl-list-append-one [decls : AstDeclList] [decl : AstDecl]) : AstDeclList
   (match decls
@@ -393,24 +394,26 @@
 
 (define (spec-int-key [n : i64]) : String
   (if (< n 0)
-    (string-append "m" (int->string (- 0 n)))
-    (int->string n)))
+    (string_mod.string-append "m" (string_mod.int->string (- 0 n)))
+    (string_mod.int->string n)))
 
 (define (spec-string-key-from [text : String] [idx : i64] [n : i64]) : String
   (if (>= idx n)
     ""
-    (string-append
+    (string_mod.string-append
       "_"
-      (string-append
-        (int->string (cast (string-ref text idx) : i64))
+      (string_mod.string-append
+        (string_mod.int->string (cast (string-ref text idx) : i64))
         (spec-string-key-from text (+ idx 1) n)))))
 
 (define (spec-string-key [text : String]) : String
   (let
     [n : i64 (string-length text)]
-    (string-append
+    (string_mod.string-append
       "string_"
-      (string-append (int->string n) (spec-string-key-from text 0 n)))))
+      (string_mod.string-append
+        (string_mod.int->string n)
+        (spec-string-key-from text 0 n)))))
 
 (define (spec-type-list-key [types : AstTypeList]) : String
   (match types
@@ -419,9 +422,9 @@
       (let
         [head : AstType (ty-node-get head)]
         [rest : AstTypeList (box-get rest)]
-        (string-append
+        (string_mod.string-append
           (spec-type-key head)
-          (string-append "_" (spec-type-list-key rest))))]))
+          (string_mod.string-append "_" (spec-type-list-key rest))))]))
 
 (define (spec-lifetime-list-key [lifetimes : AstLifetimeList]) : String
   (match lifetimes
@@ -429,7 +432,9 @@
     [(AstLifetimeCons head rest)
       (let
         [rest : AstLifetimeList (box-get rest)]
-        (string-append head (string-append "_" (spec-lifetime-list-key rest))))]))
+        (string_mod.string-append
+          head
+          (string_mod.string-append "_" (spec-lifetime-list-key rest))))]))
 
 (define (spec-type-key [ty : AstType]) : String
   (match ty
@@ -452,71 +457,76 @@
     [(AstTyExpr) "Expr"]
     [(AstTyExprList) "ExprList"]
     [(AstTyFunc args ret)
-      (string-append
+      (string_mod.string-append
         "fn_"
-        (string-append
+        (string_mod.string-append
           (spec-type-list-key args)
-          (string-append "_to_" (spec-type-key (ty-node-get ret)))))]
-    [(AstTyTuple elems) (string-append "tuple_" (spec-type-list-key elems))]
+          (string_mod.string-append "_to_" (spec-type-key (ty-node-get ret)))))]
+    [(AstTyTuple elems)
+      (string_mod.string-append "tuple_" (spec-type-list-key elems))]
     [(AstTyArray elem count)
-      (string-append
+      (string_mod.string-append
         "array_"
-        (string-append
+        (string_mod.string-append
           (spec-type-key (ty-node-get elem))
-          (string-append "_" (spec-int-key count))))]
+          (string_mod.string-append "_" (spec-int-key count))))]
     [(AstTyDynArray elem)
-      (string-append "dynarray_" (spec-type-key (ty-node-get elem)))]
-    [(AstTyBox elem) (string-append "box_" (spec-type-key (ty-node-get elem)))]
-    [(AstTyPtr elem) (string-append "ptr_" (spec-type-key (ty-node-get elem)))]
+      (string_mod.string-append "dynarray_" (spec-type-key (ty-node-get elem)))]
+    [(AstTyBox elem)
+      (string_mod.string-append "box_" (spec-type-key (ty-node-get elem)))]
+    [(AstTyPtr elem)
+      (string_mod.string-append "ptr_" (spec-type-key (ty-node-get elem)))]
     [(AstTyMutPtr elem)
-      (string-append "mutptr_" (spec-type-key (ty-node-get elem)))]
+      (string_mod.string-append "mutptr_" (spec-type-key (ty-node-get elem)))]
     [(AstTyRef region inner)
-      (string-append
+      (string_mod.string-append
         "ref_"
-        (string-append
+        (string_mod.string-append
           region
-          (string-append "_" (spec-type-key (ty-node-get inner)))))]
+          (string_mod.string-append "_" (spec-type-key (ty-node-get inner)))))]
     [(AstTyMutRef region inner)
-      (string-append
+      (string_mod.string-append
         "mutref_"
-        (string-append
+        (string_mod.string-append
           region
-          (string-append "_" (spec-type-key (ty-node-get inner)))))]
+          (string_mod.string-append "_" (spec-type-key (ty-node-get inner)))))]
     [(AstTyRegion region inner)
-      (string-append
+      (string_mod.string-append
         "region_"
-        (string-append
+        (string_mod.string-append
           region
-          (string-append "_" (spec-type-key (ty-node-get inner)))))]
-    [(AstTyEnum name) (string-append "enum_" (intern-str name))]
+          (string_mod.string-append "_" (spec-type-key (ty-node-get inner)))))]
+    [(AstTyEnum name) (string_mod.string-append "enum_" (intern-str name))]
     [(AstTyEnumArgs name lifetimes)
-      (string-append
+      (string_mod.string-append
         "enumargs_"
-        (string-append
+        (string_mod.string-append
           (intern-str name)
-          (string-append "_" (spec-lifetime-list-key lifetimes))))]
-    [(AstTyStruct name) (string-append "struct_" (intern-str name))]
+          (string_mod.string-append "_" (spec-lifetime-list-key lifetimes))))]
+    [(AstTyStruct name) (string_mod.string-append "struct_" (intern-str name))]
     [(AstTyStructArgs name lifetimes)
-      (string-append
+      (string_mod.string-append
         "structargs_"
-        (string-append
+        (string_mod.string-append
           (intern-str name)
-          (string-append "_" (spec-lifetime-list-key lifetimes))))]
-    [(AstTyVar name) (string-append "var_" (intern-str name))]
+          (string_mod.string-append "_" (spec-lifetime-list-key lifetimes))))]
+    [(AstTyVar name) (string_mod.string-append "var_" (intern-str name))]
     [(AstTyVarArgs name lifetimes)
-      (string-append
+      (string_mod.string-append
         "varargs_"
-        (string-append
+        (string_mod.string-append
           (intern-str name)
-          (string-append "_" (spec-lifetime-list-key lifetimes))))]))
+          (string_mod.string-append "_" (spec-lifetime-list-key lifetimes))))]))
 
 (define (spec-value-key [value : CompilerCtfeValue]) : String
   (match value
-    [(CtfeI64 n) (string-append "i64_" (spec-int-key n))]
+    [(CtfeI64 n) (string_mod.string-append "i64_" (spec-int-key n))]
     [(CtfeF64 n)
-      (string-append "f64_" (spec-string-key (compiler-float-format-f64 n)))]
+      (string_mod.string-append
+        "f64_"
+        (spec-string-key (compiler-float-format-f64 n)))]
     [(CtfeF32 n)
-      (string-append
+      (string_mod.string-append
         "f32_"
         (spec-string-key
           (compiler-float-format-f64 (compiler-float-round-f32-as-f64 n))))]
@@ -524,10 +534,11 @@
       (if b
         "bool_1"
         "bool_0")]
-    [(CtfeChar c) (string-append "char_" (int->string (cast c : i64)))]
+    [(CtfeChar c)
+      (string_mod.string-append "char_" (string_mod.int->string (cast c : i64)))]
     [(CtfeString text) (spec-string-key text)]
     [(CtfeUnit) "unit"]
-    [(CtfeType ty) (string-append "type_" (spec-type-key ty))]
+    [(CtfeType ty) (string_mod.string-append "type_" (spec-type-key ty))]
     [(CtfeExpr _ _) "Expr"]
     [(CtfeExprList _) "expr-list"]
     [(CtfeExprClause _) "expr-clause"]
@@ -537,17 +548,21 @@
   (match values
     [(SpecValueNil) "none"]
     [(SpecValueCons head rest)
-      (string-append
+      (string_mod.string-append
         (spec-value-key head)
-        (string-append "_" (spec-values-key (box-get rest))))]))
+        (string_mod.string-append "_" (spec-values-key (box-get rest))))]))
 
 (define (spec-specialization-key [name : String] [values : SpecValueList]) : String
-  (string-append name (string-append ":" (spec-values-key values))))
+  (string_mod.string-append
+    name
+    (string_mod.string-append ":" (spec-values-key values))))
 
 (define (spec-specialized-name [name : String] [values : SpecValueList]) : String
-  (string-append
+  (string_mod.string-append
     "__tl_specialized_"
-    (string-append name (string-append "_" (spec-values-key values)))))
+    (string_mod.string-append
+      name
+      (string_mod.string-append "_" (spec-values-key values)))))
 
 (define (gen-registry-cons [key : String] [decl : AstDecl] [rest : GenRegistry]) : GenRegistry
   (GenRegistryCons key decl (box rest)))
@@ -556,7 +571,7 @@
   (match registry
     [(GenRegistryNil) (GenNoEntry)]
     [(GenRegistryCons cached-key decl rest)
-      (if (string-eq cached-key key)
+      (if (string_mod.string-eq cached-key key)
         (GenSomeEntry decl)
         (gen-registry-lookup (box-get rest) key))]))
 
@@ -902,9 +917,9 @@
                 (match (gen-key-exprs (box-get rest) env head-fuel)
                   [(OkGenKey tail tail-fuel)
                     (OkGenKey
-                      (string-append
+                      (string_mod.string-append
                         (spec-string-key text)
-                        (string-append "_" tail))
+                        (string_mod.string-append "_" tail))
                       tail-fuel)]
                   [(ErrGenKey diag) (ErrGenKey diag)])]
               [_
@@ -919,35 +934,39 @@
   [generator : String]
   [item : String]
   [arg-key : String]) : String
-  (string-append
+  (string_mod.string-append
     "generated:"
-    (string-append
+    (string_mod.string-append
       (spec-string-key module)
-      (string-append
+      (string_mod.string-append
         ":"
-        (string-append
+        (string_mod.string-append
           (spec-string-key generator)
-          (string-append
+          (string_mod.string-append
             ":"
-            (string-append (spec-string-key item) (string-append ":" arg-key))))))))
+            (string_mod.string-append
+              (spec-string-key item)
+              (string_mod.string-append ":" arg-key))))))))
 
 (define (gen-item-mismatch-diag [expected : String] [actual : String]) : CompilerDiagnostic
   (compiler-diagnostic-at-start
     ""
-    (string-append
+    (string_mod.string-append
       "generated-decl: metadata item "
-      (string-append expected (string-append " does not match payload " actual)))))
+      (string_mod.string-append
+        expected
+        (string_mod.string-append " does not match payload " actual)))))
 
 (define (gen-incompatible-diag [item : String] [key : String]) : CompilerDiagnostic
   (compiler-diagnostic-with-note
     (compiler-diagnostic-with-note
       (compiler-diagnostic-at-start
         ""
-        (string-append
+        (string_mod.string-append
           "generated-decl: duplicate generated key for "
-          (string-append item " has incompatible payload")))
-      (string-append "conflicting generated item: " item))
-    (string-append "generated identity: " key)))
+          (string_mod.string-append item " has incompatible payload")))
+      (string_mod.string-append "conflicting generated item: " item))
+    (string_mod.string-append "generated identity: " key)))
 
 (defenum GenHashmapTypeInfo
   (GenHashmapTypeInfo String String String))
@@ -993,49 +1012,53 @@
   (OkGenJsonSource String)
   (ErrGenJsonSource CompilerDiagnostic))
 
-(define (gen-tb2 [buf : TextBuf] [a : String] [b : String]) : TextBuf
-  (text-buf-append (text-buf-append buf a) b))
+(define (gen-tb2 [buf : text_buf_mod.TextBuf] [a : String] [b : String]) : text_buf_mod.TextBuf
+  (text_buf_mod.text-buf-append (text_buf_mod.text-buf-append buf a) b))
 
-(define (gen-tb3 [buf : TextBuf] [a : String] [b : String] [c : String]) : TextBuf
-  (text-buf-append (gen-tb2 buf a b) c))
+(define (gen-tb3
+  [buf : text_buf_mod.TextBuf]
+  [a : String]
+  [b : String]
+  [c : String]) : text_buf_mod.TextBuf
+  (text_buf_mod.text-buf-append (gen-tb2 buf a b) c))
 
 (define (gen-tb4
-  [buf : TextBuf]
+  [buf : text_buf_mod.TextBuf]
   [a : String]
   [b : String]
   [c : String]
-  [d : String]) : TextBuf
-  (text-buf-append (gen-tb3 buf a b c) d))
+  [d : String]) : text_buf_mod.TextBuf
+  (text_buf_mod.text-buf-append (gen-tb3 buf a b c) d))
 
 (define (gen-tb5
-  [buf : TextBuf]
+  [buf : text_buf_mod.TextBuf]
   [a : String]
   [b : String]
   [c : String]
   [d : String]
-  [e : String]) : TextBuf
-  (text-buf-append (gen-tb4 buf a b c d) e))
+  [e : String]) : text_buf_mod.TextBuf
+  (text_buf_mod.text-buf-append (gen-tb4 buf a b c d) e))
 
 (define (gen-tb6
-  [buf : TextBuf]
+  [buf : text_buf_mod.TextBuf]
   [a : String]
   [b : String]
   [c : String]
   [d : String]
   [e : String]
-  [f : String]) : TextBuf
-  (text-buf-append (gen-tb5 buf a b c d e) f))
+  [f : String]) : text_buf_mod.TextBuf
+  (text_buf_mod.text-buf-append (gen-tb5 buf a b c d e) f))
 
 (define (gen-tb7
-  [buf : TextBuf]
+  [buf : text_buf_mod.TextBuf]
   [a : String]
   [b : String]
   [c : String]
   [d : String]
   [e : String]
   [f : String]
-  [g : String]) : TextBuf
-  (text-buf-append (gen-tb6 buf a b c d e f) g))
+  [g : String]) : text_buf_mod.TextBuf
+  (text_buf_mod.text-buf-append (gen-tb6 buf a b c d e f) g))
 
 (define (gen-hashmap-diag [message : String]) : CompilerDiagnostic
   (compiler-diagnostic-at-start "" message))
@@ -1146,25 +1169,25 @@
   (compiler-diagnostic-at-start "" message))
 
 (define (gen-json-type-from-key [type-key : String]) : ResultGenJsonType
-  (if (string-eq type-key "i64")
+  (if (string_mod.string-eq type-key "i64")
     (OkGenJsonType AstTyI64)
-    (if (string-eq type-key "i32")
+    (if (string_mod.string-eq type-key "i32")
       (OkGenJsonType AstTyI32)
-      (if (string-eq type-key "i16")
+      (if (string_mod.string-eq type-key "i16")
         (OkGenJsonType AstTyI16)
-        (if (string-eq type-key "i8")
+        (if (string_mod.string-eq type-key "i8")
           (OkGenJsonType AstTyI8)
-          (if (string-eq type-key "u64")
+          (if (string_mod.string-eq type-key "u64")
             (OkGenJsonType AstTyU64)
-            (if (string-eq type-key "u32")
+            (if (string_mod.string-eq type-key "u32")
               (OkGenJsonType AstTyU32)
-              (if (string-eq type-key "u16")
+              (if (string_mod.string-eq type-key "u16")
                 (OkGenJsonType AstTyU16)
-                (if (string-eq type-key "u8")
+                (if (string_mod.string-eq type-key "u8")
                   (OkGenJsonType AstTyU8)
-                  (if (string-eq type-key "bool")
+                  (if (string_mod.string-eq type-key "bool")
                     (OkGenJsonType AstTyBool)
-                    (if (string-eq type-key "String")
+                    (if (string_mod.string-eq type-key "String")
                       (OkGenJsonType AstTyString)
                       (match (gen-hashmap-nominal-name type-key "struct_")
                         [(SpecSomeString name)
@@ -1172,7 +1195,7 @@
                         [(SpecNoString)
                           (ErrGenJsonType
                             (gen-json-diag
-                              (string-append
+                              (string_mod.string-append
                                 "json-derive: unsupported type-key "
                                 type-key)))]))))))))))))
 
@@ -1221,19 +1244,19 @@
     [c : char (string-ref name index)]
     [code : i64 (cast c : i64)]
     (if (and (>= code 65) (<= code 90))
-      (string-append
+      (string_mod.string-append
         (if (> index 0)
           "-"
           "")
         (gen-hashmap-one-byte-string (+ code 32)))
       (if (= code 95)
         "-"
-        (substring name index 1)))))
+        (string_mod.substring name index 1)))))
 
 (define (gen-hashmap-name-prefix-from [name : String] [index : i64] [n : i64]) : String
   (if (>= index n)
     ""
-    (string-append
+    (string_mod.string-append
       (gen-hashmap-name-prefix-char name index)
       (gen-hashmap-name-prefix-from name (+ index 1) n))))
 
@@ -1246,21 +1269,23 @@
     [type-key-len : i64 (string-length type-key)]
     (if (and
       (> type-key-len prefix-len)
-      (is-string-prefix-at (& type-key) (& prefix) 0))
+      (string_mod.is-string-prefix-at (& type-key) (& prefix) 0))
       (SpecSomeString
-        (substring type-key prefix-len (- type-key-len prefix-len)))
+        (string_mod.substring type-key prefix-len (- type-key-len prefix-len)))
       (SpecNoString))))
 
 (define (gen-hashmap-scalar-type-info [type-key : String] [role : String]) : ResultGenHashmapTypeInfo
-  (if (string-eq type-key "String")
+  (if (string_mod.string-eq type-key "String")
     (OkGenHashmapTypeInfo (GenHashmapTypeInfo "String" "String" "string"))
-    (if (string-eq type-key "i64")
+    (if (string_mod.string-eq type-key "i64")
       (OkGenHashmapTypeInfo (GenHashmapTypeInfo "i64" "I64" "i64"))
       (ErrGenHashmapTypeInfo
         (gen-hashmap-diag
-          (string-append
+          (string_mod.string-append
             "hashmap-family: unsupported "
-            (string-append role (string-append " type " type-key))))))))
+            (string_mod.string-append
+              role
+              (string_mod.string-append " type " type-key))))))))
 
 (define (gen-hashmap-value-type-info [type-key : String]) : ResultGenHashmapTypeInfo
   (match (gen-hashmap-scalar-type-info type-key "value")
@@ -1278,12 +1303,12 @@
             [(SpecNoString)
               (ErrGenHashmapTypeInfo
                 (gen-hashmap-diag
-                  (string-append
+                  (string_mod.string-append
                     "hashmap-family: unsupported value type "
                     type-key)))])])]))
 
 (define (gen-hashmap-borrowed-value-type [value-type : String]) : String
-  (if (string-eq value-type "String")
+  (if (string_mod.string-eq value-type "String")
     "str"
     value-type))
 
@@ -1293,7 +1318,7 @@
       (match field
         [(AstFieldDef name ty cleanup)
           (and
-            (string-eq (intern-str name) "__hashmap_family_request")
+            (string_mod.string-eq (intern-str name) "__hashmap_family_request")
             (ctfe-type-eq ty (AstTyI64))
             (match cleanup
               [(AstFieldNoCleanup) true]
@@ -1323,7 +1348,7 @@
       (match field
         [(AstFieldDef name ty cleanup)
           (and
-            (string-eq (intern-str name) "__set_family_request")
+            (string_mod.string-eq (intern-str name) "__set_family_request")
             (ctfe-type-eq ty (AstTyI64))
             (match cleanup
               [(AstFieldNoCleanup) true]
@@ -1353,7 +1378,7 @@
       (match field
         [(AstFieldDef name ty cleanup)
           (and
-            (string-eq (intern-str name) "__json_derive_request")
+            (string_mod.string-eq (intern-str name) "__json_derive_request")
             (ctfe-type-eq ty (AstTyI64))
             (match cleanup
               [(AstFieldNoCleanup) true]
@@ -1382,45 +1407,47 @@
   [prefix : String]
   [value-type : String]) : String
   (let
-    [slot : String (string-append map-name "Slot")]
-    [empty : String (string-append map-name "Empty")]
-    [tombstone : String (string-append map-name "Tombstone")]
-    [occupied : String (string-append map-name "Occupied")]
-    [probe : String (string-append map-name "Probe")]
-    [probe-found : String (string-append map-name "ProbeFound")]
-    [probe-absent : String (string-append map-name "ProbeAbsent")]
-    [probe-full : String (string-append map-name "ProbeFull")]
-    [lookup : String (string-append map-name "Lookup")]
-    [missing : String (string-append map-name "Missing")]
-    [found : String (string-append map-name "Found")]
+    [slot : String (string_mod.string-append map-name "Slot")]
+    [empty : String (string_mod.string-append map-name "Empty")]
+    [tombstone : String (string_mod.string-append map-name "Tombstone")]
+    [occupied : String (string_mod.string-append map-name "Occupied")]
+    [probe : String (string_mod.string-append map-name "Probe")]
+    [probe-found : String (string_mod.string-append map-name "ProbeFound")]
+    [probe-absent : String (string_mod.string-append map-name "ProbeAbsent")]
+    [probe-full : String (string_mod.string-append map-name "ProbeFull")]
+    [lookup : String (string_mod.string-append map-name "Lookup")]
+    [missing : String (string_mod.string-append map-name "Missing")]
+    [found : String (string_mod.string-append map-name "Found")]
     [borrowed-value-lookup : String
-      (string-append map-name "BorrowedValueLookup")]
+      (string_mod.string-append map-name "BorrowedValueLookup")]
     [borrowed-value-missing : String
-      (string-append map-name "BorrowedValueMissing")]
+      (string_mod.string-append map-name "BorrowedValueMissing")]
     [borrowed-value-found : String
-      (string-append map-name "BorrowedValueFound")]
+      (string_mod.string-append map-name "BorrowedValueFound")]
     [borrowed-value-type : String (gen-hashmap-borrowed-value-type value-type)]
-    [insert-result : String (string-append map-name "InsertResult")]
-    [insert-ok : String (string-append map-name "InsertOk")]
-    [insert-full : String (string-append map-name "InsertFull")]
-    [remove-result : String (string-append map-name "RemoveResult")]
-    [remove-ok : String (string-append map-name "RemoveOk")]
-    [remove-missing : String (string-append map-name "RemoveMissing")]
-    [update-result : String (string-append map-name "UpdateResult")]
-    [update-ok : String (string-append map-name "UpdateOk")]
-    [update-missing : String (string-append map-name "UpdateMissing")]
+    [insert-result : String (string_mod.string-append map-name "InsertResult")]
+    [insert-ok : String (string_mod.string-append map-name "InsertOk")]
+    [insert-full : String (string_mod.string-append map-name "InsertFull")]
+    [remove-result : String (string_mod.string-append map-name "RemoveResult")]
+    [remove-ok : String (string_mod.string-append map-name "RemoveOk")]
+    [remove-missing : String
+      (string_mod.string-append map-name "RemoveMissing")]
+    [update-result : String (string_mod.string-append map-name "UpdateResult")]
+    [update-ok : String (string_mod.string-append map-name "UpdateOk")]
+    [update-missing : String
+      (string_mod.string-append map-name "UpdateMissing")]
     [entry-or-insert-result : String
-      (string-append map-name "EntryOrInsertResult")]
+      (string_mod.string-append map-name "EntryOrInsertResult")]
     [entry-or-insert-found : String
-      (string-append map-name "EntryOrInsertFound")]
+      (string_mod.string-append map-name "EntryOrInsertFound")]
     [entry-or-insert-inserted : String
-      (string-append map-name "EntryOrInsertInserted")]
-    [mut-entry-info : String (string-append map-name "MutEntryInfo")]
-    [mut-entry : String (string-append map-name "MutEntry")]
-    [entry : String (string-append map-name "Entry")]
-    [entry-none : String (string-append map-name "EntryNone")]
-    [entry-some : String (string-append map-name "EntrySome")]
-    [buf : TextBuf (text-buf-empty)]
+      (string_mod.string-append map-name "EntryOrInsertInserted")]
+    [mut-entry-info : String (string_mod.string-append map-name "MutEntryInfo")]
+    [mut-entry : String (string_mod.string-append map-name "MutEntry")]
+    [entry : String (string_mod.string-append map-name "Entry")]
+    [entry-none : String (string_mod.string-append map-name "EntryNone")]
+    [entry-some : String (string_mod.string-append map-name "EntrySome")]
+    [buf : text_buf_mod.TextBuf (text_buf_mod.text-buf-empty)]
     (begin
       (set! buf (gen-tb5 buf "(defenum " slot "\n  (" empty ")\n  ("))
       (set! buf (gen-tb5 buf tombstone ")\n  (" occupied " String " value-type))
@@ -2740,52 +2767,54 @@
           ") ("
           entry-none
           ")])))\n"))
-      (text-buf-render buf))))
+      (text_buf_mod.text-buf-render buf))))
 
 (define (gen-hashmap-source-i64-key
   [map-name : String]
   [prefix : String]
   [value-type : String]) : String
   (let
-    [slot : String (string-append map-name "Slot")]
-    [empty : String (string-append map-name "Empty")]
-    [tombstone : String (string-append map-name "Tombstone")]
-    [occupied : String (string-append map-name "Occupied")]
-    [probe : String (string-append map-name "Probe")]
-    [probe-found : String (string-append map-name "ProbeFound")]
-    [probe-absent : String (string-append map-name "ProbeAbsent")]
-    [probe-full : String (string-append map-name "ProbeFull")]
-    [lookup : String (string-append map-name "Lookup")]
-    [missing : String (string-append map-name "Missing")]
-    [found : String (string-append map-name "Found")]
+    [slot : String (string_mod.string-append map-name "Slot")]
+    [empty : String (string_mod.string-append map-name "Empty")]
+    [tombstone : String (string_mod.string-append map-name "Tombstone")]
+    [occupied : String (string_mod.string-append map-name "Occupied")]
+    [probe : String (string_mod.string-append map-name "Probe")]
+    [probe-found : String (string_mod.string-append map-name "ProbeFound")]
+    [probe-absent : String (string_mod.string-append map-name "ProbeAbsent")]
+    [probe-full : String (string_mod.string-append map-name "ProbeFull")]
+    [lookup : String (string_mod.string-append map-name "Lookup")]
+    [missing : String (string_mod.string-append map-name "Missing")]
+    [found : String (string_mod.string-append map-name "Found")]
     [borrowed-value-lookup : String
-      (string-append map-name "BorrowedValueLookup")]
+      (string_mod.string-append map-name "BorrowedValueLookup")]
     [borrowed-value-missing : String
-      (string-append map-name "BorrowedValueMissing")]
+      (string_mod.string-append map-name "BorrowedValueMissing")]
     [borrowed-value-found : String
-      (string-append map-name "BorrowedValueFound")]
+      (string_mod.string-append map-name "BorrowedValueFound")]
     [borrowed-value-type : String (gen-hashmap-borrowed-value-type value-type)]
-    [insert-result : String (string-append map-name "InsertResult")]
-    [insert-ok : String (string-append map-name "InsertOk")]
-    [insert-full : String (string-append map-name "InsertFull")]
-    [remove-result : String (string-append map-name "RemoveResult")]
-    [remove-ok : String (string-append map-name "RemoveOk")]
-    [remove-missing : String (string-append map-name "RemoveMissing")]
-    [update-result : String (string-append map-name "UpdateResult")]
-    [update-ok : String (string-append map-name "UpdateOk")]
-    [update-missing : String (string-append map-name "UpdateMissing")]
+    [insert-result : String (string_mod.string-append map-name "InsertResult")]
+    [insert-ok : String (string_mod.string-append map-name "InsertOk")]
+    [insert-full : String (string_mod.string-append map-name "InsertFull")]
+    [remove-result : String (string_mod.string-append map-name "RemoveResult")]
+    [remove-ok : String (string_mod.string-append map-name "RemoveOk")]
+    [remove-missing : String
+      (string_mod.string-append map-name "RemoveMissing")]
+    [update-result : String (string_mod.string-append map-name "UpdateResult")]
+    [update-ok : String (string_mod.string-append map-name "UpdateOk")]
+    [update-missing : String
+      (string_mod.string-append map-name "UpdateMissing")]
     [entry-or-insert-result : String
-      (string-append map-name "EntryOrInsertResult")]
+      (string_mod.string-append map-name "EntryOrInsertResult")]
     [entry-or-insert-found : String
-      (string-append map-name "EntryOrInsertFound")]
+      (string_mod.string-append map-name "EntryOrInsertFound")]
     [entry-or-insert-inserted : String
-      (string-append map-name "EntryOrInsertInserted")]
-    [mut-entry-info : String (string-append map-name "MutEntryInfo")]
-    [mut-entry : String (string-append map-name "MutEntry")]
-    [entry : String (string-append map-name "Entry")]
-    [entry-none : String (string-append map-name "EntryNone")]
-    [entry-some : String (string-append map-name "EntrySome")]
-    [buf : TextBuf (text-buf-empty)]
+      (string_mod.string-append map-name "EntryOrInsertInserted")]
+    [mut-entry-info : String (string_mod.string-append map-name "MutEntryInfo")]
+    [mut-entry : String (string_mod.string-append map-name "MutEntry")]
+    [entry : String (string_mod.string-append map-name "Entry")]
+    [entry-none : String (string_mod.string-append map-name "EntryNone")]
+    [entry-some : String (string_mod.string-append map-name "EntrySome")]
+    [buf : text_buf_mod.TextBuf (text_buf_mod.text-buf-empty)]
     (begin
       (set! buf (gen-tb5 buf "(defenum " slot "\n  (" empty ")\n  ("))
       (set! buf (gen-tb5 buf tombstone ")\n  (" occupied " i64 " value-type))
@@ -4013,18 +4042,18 @@
           ") ("
           entry-none
           ")])))\n"))
-      (text-buf-render buf))))
+      (text_buf_mod.text-buf-render buf))))
 
 (define (gen-hashmap-descriptor-mismatch
   [descriptor : String]
   [key-type-key : String]) : ResultGenHashmapSource
   (ErrGenHashmapSource
     (gen-hashmap-diag
-      (string-append
+      (string_mod.string-append
         "hashmap-family: descriptor "
-        (string-append
+        (string_mod.string-append
           descriptor
-          (string-append " does not support key type " key-type-key))))))
+          (string_mod.string-append " does not support key type " key-type-key))))))
 
 (define (gen-hashmap-type-info-source [info : GenHashmapTypeInfo]) : String
   (match info
@@ -4052,32 +4081,38 @@
     [value-name : String (gen-hashmap-type-info-name value-info)]
     [value-prefix : String (gen-hashmap-type-info-prefix value-info)]
     [expected-map : String
-      (string-append key-name (string-append value-name "Map"))]
+      (string_mod.string-append
+        key-name
+        (string_mod.string-append value-name "Map"))]
     [prefix : String
-      (string-append
+      (string_mod.string-append
         key-prefix
-        (string-append "-" (string-append value-prefix "-map")))]
-    (if (not (string-eq map-name expected-map))
+        (string_mod.string-append
+          "-"
+          (string_mod.string-append value-prefix "-map")))]
+    (if (not (string_mod.string-eq map-name expected-map))
       (ErrGenHashmapSource
         (gen-hashmap-diag
-          (string-append
+          (string_mod.string-append
             "hashmap-family: marker item "
-            (string-append
+            (string_mod.string-append
               map-name
-              (string-append " does not match generated map " expected-map)))))
-      (if (string-eq descriptor "stdlib/hashmap/string-key-v1")
-        (if (string-eq key-type-key "String")
+              (string_mod.string-append
+                " does not match generated map "
+                expected-map)))))
+      (if (string_mod.string-eq descriptor "stdlib/hashmap/string-key-v1")
+        (if (string_mod.string-eq key-type-key "String")
           (OkGenHashmapSource
             (gen-hashmap-source-string-key map-name prefix value-type))
           (gen-hashmap-descriptor-mismatch descriptor key-type-key))
-        (if (string-eq descriptor "stdlib/hashmap/i64-key-v1")
-          (if (string-eq key-type-key "i64")
+        (if (string_mod.string-eq descriptor "stdlib/hashmap/i64-key-v1")
+          (if (string_mod.string-eq key-type-key "i64")
             (OkGenHashmapSource
               (gen-hashmap-source-i64-key map-name prefix value-type))
             (gen-hashmap-descriptor-mismatch descriptor key-type-key))
           (ErrGenHashmapSource
             (gen-hashmap-diag
-              (string-append
+              (string_mod.string-append
                 "hashmap-family: unsupported key descriptor "
                 descriptor))))))))
 
@@ -4101,31 +4136,33 @@
     [(ErrGenHashmapTypeInfo _)
       (ErrGenHashmapSource
         (gen-hashmap-diag
-          (string-append
+          (string_mod.string-append
             "hashmap-family: unsupported key descriptor "
-            (string-append
+            (string_mod.string-append
               descriptor
-              (string-append " for key type " key-type-key)))))]))
+              (string_mod.string-append " for key type " key-type-key)))))]))
 
 (define (gen-set-descriptor-mismatch
   [descriptor : String]
   [key-type-key : String]) : ResultGenSetSource
   (ErrGenSetSource
     (gen-set-diag
-      (string-append
+      (string_mod.string-append
         "set-family: descriptor "
-        (string-append
+        (string_mod.string-append
           descriptor
-          (string-append " does not support key type " key-type-key))))))
+          (string_mod.string-append " does not support key type " key-type-key))))))
 
 (define (gen-set-key-type-info [type-key : String]) : ResultGenHashmapTypeInfo
-  (if (string-eq type-key "String")
+  (if (string_mod.string-eq type-key "String")
     (OkGenHashmapTypeInfo (GenHashmapTypeInfo "String" "String" "string"))
-    (if (string-eq type-key "i64")
+    (if (string_mod.string-eq type-key "i64")
       (OkGenHashmapTypeInfo (GenHashmapTypeInfo "i64" "I64" "i64"))
       (ErrGenHashmapTypeInfo
         (gen-set-diag
-          (string-append "set-family: unsupported key type " type-key))))))
+          (string_mod.string-append
+            "set-family: unsupported key type "
+            type-key))))))
 
 (define (gen-set-source
   [set-name : String]
@@ -4136,189 +4173,228 @@
   [dummy-value : String]
   [borrowed-key? : bool]) : String
   (let
-    [entry : String (string-append set-name "Entry")]
-    [entry-none : String (string-append set-name "EntryNone")]
-    [entry-some : String (string-append set-name "EntrySome")]
-    [map-entry-none : String (string-append map-name "EntryNone")]
-    [map-entry-some : String (string-append map-name "EntrySome")]
-    [map-remove-ok : String (string-append map-name "RemoveOk")]
-    [map-remove-missing : String (string-append map-name "RemoveMissing")]
-    [buf : TextBuf (text-buf-empty)]
+    [entry : String (string_mod.string-append set-name "Entry")]
+    [entry-none : String (string_mod.string-append set-name "EntryNone")]
+    [entry-some : String (string_mod.string-append set-name "EntrySome")]
+    [map-entry-none : String (string_mod.string-append map-name "EntryNone")]
+    [map-entry-some : String (string_mod.string-append map-name "EntrySome")]
+    [map-remove-ok : String (string_mod.string-append map-name "RemoveOk")]
+    [map-remove-missing : String
+      (string_mod.string-append map-name "RemoveMissing")]
+    [buf : text_buf_mod.TextBuf (text_buf_mod.text-buf-empty)]
     (begin
-      (set! buf (text-buf-append buf "(defstruct "))
-      (set! buf (text-buf-append buf set-name))
-      (set! buf (text-buf-append buf "\n  (map "))
-      (set! buf (text-buf-append buf map-name))
-      (set! buf (text-buf-append buf "))\n(defenum "))
-      (set! buf (text-buf-append buf entry))
-      (set! buf (text-buf-append buf "\n  ("))
-      (set! buf (text-buf-append buf entry-none))
-      (set! buf (text-buf-append buf ")\n  ("))
-      (set! buf (text-buf-append buf entry-some))
-      (set! buf (text-buf-append buf " "))
-      (set! buf (text-buf-append buf key-type))
-      (set! buf (text-buf-append buf "))\n(define ("))
-      (set! buf (text-buf-append buf prefix))
-      (set! buf (text-buf-append buf "-with-capacity [capacity : i64]) : "))
-      (set! buf (text-buf-append buf set-name))
-      (set! buf (text-buf-append buf "\n  ("))
-      (set! buf (text-buf-append buf set-name))
-      (set! buf (text-buf-append buf " ("))
-      (set! buf (text-buf-append buf map-prefix))
-      (set! buf (text-buf-append buf "-with-capacity capacity)))\n(define ("))
-      (set! buf (text-buf-append buf prefix))
-      (set! buf (text-buf-append buf "-new) : "))
-      (set! buf (text-buf-append buf set-name))
-      (set! buf (text-buf-append buf "\n  ("))
-      (set! buf (text-buf-append buf prefix))
-      (set! buf (text-buf-append buf "-with-capacity 8))\n(define ("))
-      (set! buf (text-buf-append buf prefix))
-      (set! buf (text-buf-append buf "-len [set : "))
-      (set! buf (text-buf-append buf set-name))
-      (set! buf (text-buf-append buf "]) : i64\n  ("))
-      (set! buf (text-buf-append buf map-prefix))
-      (set! buf (text-buf-append buf "-len (struct-get set map)))\n(define ("))
-      (set! buf (text-buf-append buf prefix))
-      (set! buf (text-buf-append buf "-capacity [set : "))
-      (set! buf (text-buf-append buf set-name))
-      (set! buf (text-buf-append buf "]) : i64\n  ("))
-      (set! buf (text-buf-append buf map-prefix))
-      (set! buf (text-buf-append buf "-capacity (struct-get set map)))\n"))
+      (set! buf (text_buf_mod.text-buf-append buf "(defstruct "))
+      (set! buf (text_buf_mod.text-buf-append buf set-name))
+      (set! buf (text_buf_mod.text-buf-append buf "\n  (map "))
+      (set! buf (text_buf_mod.text-buf-append buf map-name))
+      (set! buf (text_buf_mod.text-buf-append buf "))\n(defenum "))
+      (set! buf (text_buf_mod.text-buf-append buf entry))
+      (set! buf (text_buf_mod.text-buf-append buf "\n  ("))
+      (set! buf (text_buf_mod.text-buf-append buf entry-none))
+      (set! buf (text_buf_mod.text-buf-append buf ")\n  ("))
+      (set! buf (text_buf_mod.text-buf-append buf entry-some))
+      (set! buf (text_buf_mod.text-buf-append buf " "))
+      (set! buf (text_buf_mod.text-buf-append buf key-type))
+      (set! buf (text_buf_mod.text-buf-append buf "))\n(define ("))
+      (set! buf (text_buf_mod.text-buf-append buf prefix))
+      (set!
+        buf
+        (text_buf_mod.text-buf-append buf "-with-capacity [capacity : i64]) : "))
+      (set! buf (text_buf_mod.text-buf-append buf set-name))
+      (set! buf (text_buf_mod.text-buf-append buf "\n  ("))
+      (set! buf (text_buf_mod.text-buf-append buf set-name))
+      (set! buf (text_buf_mod.text-buf-append buf " ("))
+      (set! buf (text_buf_mod.text-buf-append buf map-prefix))
+      (set!
+        buf
+        (text_buf_mod.text-buf-append
+          buf
+          "-with-capacity capacity)))\n(define ("))
+      (set! buf (text_buf_mod.text-buf-append buf prefix))
+      (set! buf (text_buf_mod.text-buf-append buf "-new) : "))
+      (set! buf (text_buf_mod.text-buf-append buf set-name))
+      (set! buf (text_buf_mod.text-buf-append buf "\n  ("))
+      (set! buf (text_buf_mod.text-buf-append buf prefix))
+      (set!
+        buf
+        (text_buf_mod.text-buf-append buf "-with-capacity 8))\n(define ("))
+      (set! buf (text_buf_mod.text-buf-append buf prefix))
+      (set! buf (text_buf_mod.text-buf-append buf "-len [set : "))
+      (set! buf (text_buf_mod.text-buf-append buf set-name))
+      (set! buf (text_buf_mod.text-buf-append buf "]) : i64\n  ("))
+      (set! buf (text_buf_mod.text-buf-append buf map-prefix))
+      (set!
+        buf
+        (text_buf_mod.text-buf-append
+          buf
+          "-len (struct-get set map)))\n(define ("))
+      (set! buf (text_buf_mod.text-buf-append buf prefix))
+      (set! buf (text_buf_mod.text-buf-append buf "-capacity [set : "))
+      (set! buf (text_buf_mod.text-buf-append buf set-name))
+      (set! buf (text_buf_mod.text-buf-append buf "]) : i64\n  ("))
+      (set! buf (text_buf_mod.text-buf-append buf map-prefix))
+      (set!
+        buf
+        (text_buf_mod.text-buf-append buf "-capacity (struct-get set map)))\n"))
       (if borrowed-key?
         (begin
-          (set! buf (text-buf-append buf "(define ("))
-          (set! buf (text-buf-append buf prefix))
-          (set! buf (text-buf-append buf "-contains-borrowed?\n  [set : "))
-          (set! buf (text-buf-append buf set-name))
+          (set! buf (text_buf_mod.text-buf-append buf "(define ("))
+          (set! buf (text_buf_mod.text-buf-append buf prefix))
           (set!
             buf
-            (text-buf-append buf "]\n  [key : (& key str)]) : bool\n  ("))
-          (set! buf (text-buf-append buf map-prefix))
+            (text_buf_mod.text-buf-append buf "-contains-borrowed?\n  [set : "))
+          (set! buf (text_buf_mod.text-buf-append buf set-name))
           (set!
             buf
-            (text-buf-append
+            (text_buf_mod.text-buf-append
+              buf
+              "]\n  [key : (& key str)]) : bool\n  ("))
+          (set! buf (text_buf_mod.text-buf-append buf map-prefix))
+          (set!
+            buf
+            (text_buf_mod.text-buf-append
               buf
               "-contains-borrowed? (struct-get set map) key))\n(define ("))
-          (set! buf (text-buf-append buf prefix))
-          (set! buf (text-buf-append buf "-contains? [set : "))
-          (set! buf (text-buf-append buf set-name))
-          (set! buf (text-buf-append buf "] [key : "))
-          (set! buf (text-buf-append buf key-type))
-          (set! buf (text-buf-append buf "]) : bool\n  ("))
-          (set! buf (text-buf-append buf prefix))
-          (set! buf (text-buf-append buf "-contains-borrowed? set (& key)))\n")))
-        (begin
-          (set! buf (text-buf-append buf "(define ("))
-          (set! buf (text-buf-append buf prefix))
-          (set! buf (text-buf-append buf "-contains? [set : "))
-          (set! buf (text-buf-append buf set-name))
-          (set! buf (text-buf-append buf "] [key : "))
-          (set! buf (text-buf-append buf key-type))
-          (set! buf (text-buf-append buf "]) : bool\n  ("))
-          (set! buf (text-buf-append buf map-prefix))
+          (set! buf (text_buf_mod.text-buf-append buf prefix))
+          (set! buf (text_buf_mod.text-buf-append buf "-contains? [set : "))
+          (set! buf (text_buf_mod.text-buf-append buf set-name))
+          (set! buf (text_buf_mod.text-buf-append buf "] [key : "))
+          (set! buf (text_buf_mod.text-buf-append buf key-type))
+          (set! buf (text_buf_mod.text-buf-append buf "]) : bool\n  ("))
+          (set! buf (text_buf_mod.text-buf-append buf prefix))
           (set!
             buf
-            (text-buf-append buf "-contains? (struct-get set map) key))\n"))))
-      (set! buf (text-buf-append buf "(define ("))
-      (set! buf (text-buf-append buf prefix))
-      (set! buf (text-buf-append buf "-insert [set : "))
-      (set! buf (text-buf-append buf set-name))
-      (set! buf (text-buf-append buf "] [key : "))
-      (set! buf (text-buf-append buf key-type))
-      (set! buf (text-buf-append buf "]) : "))
-      (set! buf (text-buf-append buf set-name))
-      (set! buf (text-buf-append buf "\n  ("))
-      (set! buf (text-buf-append buf set-name))
-      (set! buf (text-buf-append buf " ("))
-      (set! buf (text-buf-append buf map-prefix))
-      (set! buf (text-buf-append buf "-put (struct-get set map) key "))
-      (set! buf (text-buf-append buf dummy-value))
-      (set! buf (text-buf-append buf ")))\n"))
+            (text_buf_mod.text-buf-append
+              buf
+              "-contains-borrowed? set (& key)))\n")))
+        (begin
+          (set! buf (text_buf_mod.text-buf-append buf "(define ("))
+          (set! buf (text_buf_mod.text-buf-append buf prefix))
+          (set! buf (text_buf_mod.text-buf-append buf "-contains? [set : "))
+          (set! buf (text_buf_mod.text-buf-append buf set-name))
+          (set! buf (text_buf_mod.text-buf-append buf "] [key : "))
+          (set! buf (text_buf_mod.text-buf-append buf key-type))
+          (set! buf (text_buf_mod.text-buf-append buf "]) : bool\n  ("))
+          (set! buf (text_buf_mod.text-buf-append buf map-prefix))
+          (set!
+            buf
+            (text_buf_mod.text-buf-append
+              buf
+              "-contains? (struct-get set map) key))\n"))))
+      (set! buf (text_buf_mod.text-buf-append buf "(define ("))
+      (set! buf (text_buf_mod.text-buf-append buf prefix))
+      (set! buf (text_buf_mod.text-buf-append buf "-insert [set : "))
+      (set! buf (text_buf_mod.text-buf-append buf set-name))
+      (set! buf (text_buf_mod.text-buf-append buf "] [key : "))
+      (set! buf (text_buf_mod.text-buf-append buf key-type))
+      (set! buf (text_buf_mod.text-buf-append buf "]) : "))
+      (set! buf (text_buf_mod.text-buf-append buf set-name))
+      (set! buf (text_buf_mod.text-buf-append buf "\n  ("))
+      (set! buf (text_buf_mod.text-buf-append buf set-name))
+      (set! buf (text_buf_mod.text-buf-append buf " ("))
+      (set! buf (text_buf_mod.text-buf-append buf map-prefix))
+      (set!
+        buf
+        (text_buf_mod.text-buf-append buf "-put (struct-get set map) key "))
+      (set! buf (text_buf_mod.text-buf-append buf dummy-value))
+      (set! buf (text_buf_mod.text-buf-append buf ")))\n"))
       (if borrowed-key?
         (begin
-          (set! buf (text-buf-append buf "(define ("))
-          (set! buf (text-buf-append buf prefix))
-          (set! buf (text-buf-append buf "-remove-borrowed\n  [set : "))
-          (set! buf (text-buf-append buf set-name))
-          (set! buf (text-buf-append buf "]\n  [key : (& key str)]) : "))
-          (set! buf (text-buf-append buf set-name))
-          (set! buf (text-buf-append buf "\n  (match ("))
-          (set! buf (text-buf-append buf map-prefix))
+          (set! buf (text_buf_mod.text-buf-append buf "(define ("))
+          (set! buf (text_buf_mod.text-buf-append buf prefix))
           (set!
             buf
-            (text-buf-append
+            (text_buf_mod.text-buf-append buf "-remove-borrowed\n  [set : "))
+          (set! buf (text_buf_mod.text-buf-append buf set-name))
+          (set!
+            buf
+            (text_buf_mod.text-buf-append buf "]\n  [key : (& key str)]) : "))
+          (set! buf (text_buf_mod.text-buf-append buf set-name))
+          (set! buf (text_buf_mod.text-buf-append buf "\n  (match ("))
+          (set! buf (text_buf_mod.text-buf-append buf map-prefix))
+          (set!
+            buf
+            (text_buf_mod.text-buf-append
               buf
               "-remove-borrowed (struct-get set map) key)\n    [("))
-          (set! buf (text-buf-append buf map-remove-ok))
-          (set! buf (text-buf-append buf " map)\n      ("))
-          (set! buf (text-buf-append buf set-name))
-          (set! buf (text-buf-append buf " map)]\n    [("))
-          (set! buf (text-buf-append buf map-remove-missing))
-          (set! buf (text-buf-append buf " map)\n      ("))
-          (set! buf (text-buf-append buf set-name))
-          (set! buf (text-buf-append buf " map)]))\n(define ("))
-          (set! buf (text-buf-append buf prefix))
-          (set! buf (text-buf-append buf "-remove [set : "))
-          (set! buf (text-buf-append buf set-name))
-          (set! buf (text-buf-append buf "] [key : "))
-          (set! buf (text-buf-append buf key-type))
-          (set! buf (text-buf-append buf "]) : "))
-          (set! buf (text-buf-append buf set-name))
-          (set! buf (text-buf-append buf "\n  ("))
-          (set! buf (text-buf-append buf prefix))
-          (set! buf (text-buf-append buf "-remove-borrowed set (& key)))\n")))
-        (begin
-          (set! buf (text-buf-append buf "(define ("))
-          (set! buf (text-buf-append buf prefix))
-          (set! buf (text-buf-append buf "-remove [set : "))
-          (set! buf (text-buf-append buf set-name))
-          (set! buf (text-buf-append buf "] [key : "))
-          (set! buf (text-buf-append buf key-type))
-          (set! buf (text-buf-append buf "]) : "))
-          (set! buf (text-buf-append buf set-name))
-          (set! buf (text-buf-append buf "\n  (match ("))
-          (set! buf (text-buf-append buf map-prefix))
+          (set! buf (text_buf_mod.text-buf-append buf map-remove-ok))
+          (set! buf (text_buf_mod.text-buf-append buf " map)\n      ("))
+          (set! buf (text_buf_mod.text-buf-append buf set-name))
+          (set! buf (text_buf_mod.text-buf-append buf " map)]\n    [("))
+          (set! buf (text_buf_mod.text-buf-append buf map-remove-missing))
+          (set! buf (text_buf_mod.text-buf-append buf " map)\n      ("))
+          (set! buf (text_buf_mod.text-buf-append buf set-name))
+          (set! buf (text_buf_mod.text-buf-append buf " map)]))\n(define ("))
+          (set! buf (text_buf_mod.text-buf-append buf prefix))
+          (set! buf (text_buf_mod.text-buf-append buf "-remove [set : "))
+          (set! buf (text_buf_mod.text-buf-append buf set-name))
+          (set! buf (text_buf_mod.text-buf-append buf "] [key : "))
+          (set! buf (text_buf_mod.text-buf-append buf key-type))
+          (set! buf (text_buf_mod.text-buf-append buf "]) : "))
+          (set! buf (text_buf_mod.text-buf-append buf set-name))
+          (set! buf (text_buf_mod.text-buf-append buf "\n  ("))
+          (set! buf (text_buf_mod.text-buf-append buf prefix))
           (set!
             buf
-            (text-buf-append buf "-remove (struct-get set map) key)\n    [("))
-          (set! buf (text-buf-append buf map-remove-ok))
-          (set! buf (text-buf-append buf " map)\n      ("))
-          (set! buf (text-buf-append buf set-name))
-          (set! buf (text-buf-append buf " map)]\n    [("))
-          (set! buf (text-buf-append buf map-remove-missing))
-          (set! buf (text-buf-append buf " map)\n      ("))
-          (set! buf (text-buf-append buf set-name))
-          (set! buf (text-buf-append buf " map)]))\n"))))
-      (set! buf (text-buf-append buf "(define ("))
-      (set! buf (text-buf-append buf prefix))
-      (set! buf (text-buf-append buf "-next-occupied [set : "))
-      (set! buf (text-buf-append buf set-name))
-      (set! buf (text-buf-append buf "] [from : i64]) : i64\n  ("))
-      (set! buf (text-buf-append buf map-prefix))
+            (text_buf_mod.text-buf-append
+              buf
+              "-remove-borrowed set (& key)))\n")))
+        (begin
+          (set! buf (text_buf_mod.text-buf-append buf "(define ("))
+          (set! buf (text_buf_mod.text-buf-append buf prefix))
+          (set! buf (text_buf_mod.text-buf-append buf "-remove [set : "))
+          (set! buf (text_buf_mod.text-buf-append buf set-name))
+          (set! buf (text_buf_mod.text-buf-append buf "] [key : "))
+          (set! buf (text_buf_mod.text-buf-append buf key-type))
+          (set! buf (text_buf_mod.text-buf-append buf "]) : "))
+          (set! buf (text_buf_mod.text-buf-append buf set-name))
+          (set! buf (text_buf_mod.text-buf-append buf "\n  (match ("))
+          (set! buf (text_buf_mod.text-buf-append buf map-prefix))
+          (set!
+            buf
+            (text_buf_mod.text-buf-append
+              buf
+              "-remove (struct-get set map) key)\n    [("))
+          (set! buf (text_buf_mod.text-buf-append buf map-remove-ok))
+          (set! buf (text_buf_mod.text-buf-append buf " map)\n      ("))
+          (set! buf (text_buf_mod.text-buf-append buf set-name))
+          (set! buf (text_buf_mod.text-buf-append buf " map)]\n    [("))
+          (set! buf (text_buf_mod.text-buf-append buf map-remove-missing))
+          (set! buf (text_buf_mod.text-buf-append buf " map)\n      ("))
+          (set! buf (text_buf_mod.text-buf-append buf set-name))
+          (set! buf (text_buf_mod.text-buf-append buf " map)]))\n"))))
+      (set! buf (text_buf_mod.text-buf-append buf "(define ("))
+      (set! buf (text_buf_mod.text-buf-append buf prefix))
+      (set! buf (text_buf_mod.text-buf-append buf "-next-occupied [set : "))
+      (set! buf (text_buf_mod.text-buf-append buf set-name))
+      (set! buf (text_buf_mod.text-buf-append buf "] [from : i64]) : i64\n  ("))
+      (set! buf (text_buf_mod.text-buf-append buf map-prefix))
       (set!
         buf
-        (text-buf-append
+        (text_buf_mod.text-buf-append
           buf
           "-next-occupied (struct-get set map) from))\n(define ("))
-      (set! buf (text-buf-append buf prefix))
-      (set! buf (text-buf-append buf "-entry-at [set : "))
-      (set! buf (text-buf-append buf set-name))
-      (set! buf (text-buf-append buf "] [index : i64]) : "))
-      (set! buf (text-buf-append buf entry))
-      (set! buf (text-buf-append buf "\n  (match ("))
-      (set! buf (text-buf-append buf map-prefix))
+      (set! buf (text_buf_mod.text-buf-append buf prefix))
+      (set! buf (text_buf_mod.text-buf-append buf "-entry-at [set : "))
+      (set! buf (text_buf_mod.text-buf-append buf set-name))
+      (set! buf (text_buf_mod.text-buf-append buf "] [index : i64]) : "))
+      (set! buf (text_buf_mod.text-buf-append buf entry))
+      (set! buf (text_buf_mod.text-buf-append buf "\n  (match ("))
+      (set! buf (text_buf_mod.text-buf-append buf map-prefix))
       (set!
         buf
-        (text-buf-append buf "-entry-at (struct-get set map) index)\n    [("))
-      (set! buf (text-buf-append buf map-entry-some))
-      (set! buf (text-buf-append buf " key _) ("))
-      (set! buf (text-buf-append buf entry-some))
-      (set! buf (text-buf-append buf " key)]\n    [("))
-      (set! buf (text-buf-append buf map-entry-none))
-      (set! buf (text-buf-append buf ") ("))
-      (set! buf (text-buf-append buf entry-none))
-      (set! buf (text-buf-append buf ")]))\n"))
-      (text-buf-render buf))))
+        (text_buf_mod.text-buf-append
+          buf
+          "-entry-at (struct-get set map) index)\n    [("))
+      (set! buf (text_buf_mod.text-buf-append buf map-entry-some))
+      (set! buf (text_buf_mod.text-buf-append buf " key _) ("))
+      (set! buf (text_buf_mod.text-buf-append buf entry-some))
+      (set! buf (text_buf_mod.text-buf-append buf " key)]\n    [("))
+      (set! buf (text_buf_mod.text-buf-append buf map-entry-none))
+      (set! buf (text_buf_mod.text-buf-append buf ") ("))
+      (set! buf (text_buf_mod.text-buf-append buf entry-none))
+      (set! buf (text_buf_mod.text-buf-append buf ")]))\n"))
+      (text_buf_mod.text-buf-render buf))))
 
 (define (gen-set-source-for-info
   [set-name : String]
@@ -4329,18 +4405,20 @@
     [key-source : String (gen-hashmap-type-info-source key-info)]
     [key-name : String (gen-hashmap-type-info-name key-info)]
     [key-prefix : String (gen-hashmap-type-info-prefix key-info)]
-    [expected-set : String (string-append key-name "Set")]
-    [prefix : String (string-append key-prefix "-set")]
-    (if (not (string-eq set-name expected-set))
+    [expected-set : String (string_mod.string-append key-name "Set")]
+    [prefix : String (string_mod.string-append key-prefix "-set")]
+    (if (not (string_mod.string-eq set-name expected-set))
       (ErrGenSetSource
         (gen-set-diag
-          (string-append
+          (string_mod.string-append
             "set-family: marker item "
-            (string-append
+            (string_mod.string-append
               set-name
-              (string-append " does not match generated set " expected-set)))))
-      (if (string-eq descriptor "stdlib/hashmap/string-key-v1")
-        (if (string-eq key-type-key "String")
+              (string_mod.string-append
+                " does not match generated set "
+                expected-set)))))
+      (if (string_mod.string-eq descriptor "stdlib/hashmap/string-key-v1")
+        (if (string_mod.string-eq key-type-key "String")
           (OkGenSetSource
             (gen-set-source
               set-name
@@ -4351,8 +4429,8 @@
               "(init : String)"
               true))
           (gen-set-descriptor-mismatch descriptor key-type-key))
-        (if (string-eq descriptor "stdlib/hashmap/i64-key-v1")
-          (if (string-eq key-type-key "i64")
+        (if (string_mod.string-eq descriptor "stdlib/hashmap/i64-key-v1")
+          (if (string_mod.string-eq key-type-key "i64")
             (OkGenSetSource
               (gen-set-source
                 set-name
@@ -4365,7 +4443,7 @@
             (gen-set-descriptor-mismatch descriptor key-type-key))
           (ErrGenSetSource
             (gen-set-diag
-              (string-append
+              (string_mod.string-append
                 "set-family: unsupported key descriptor "
                 descriptor))))))))
 
@@ -4379,36 +4457,38 @@
     [(ErrGenHashmapTypeInfo diag) (ErrGenSetSource diag)]))
 
 (define (gen-json-result-name [type-name : String]) : String
-  (string-append type-name "JsonResult"))
+  (string_mod.string-append type-name "JsonResult"))
 
 (define (gen-json-ok-name [type-name : String]) : String
-  (string-append "Ok" (string-append type-name "Json")))
+  (string_mod.string-append "Ok" (string_mod.string-append type-name "Json")))
 
 (define (gen-json-err-name [type-name : String]) : String
-  (string-append "Err" (string-append type-name "Json")))
+  (string_mod.string-append "Err" (string_mod.string-append type-name "Json")))
 
 (define (gen-json-to-name [type-name : String]) : String
-  (string-append (gen-hashmap-name-prefix type-name) "-to-json"))
+  (string_mod.string-append (gen-hashmap-name-prefix type-name) "-to-json"))
 
 (define (gen-json-from-name [type-name : String]) : String
-  (string-append (gen-hashmap-name-prefix type-name) "-from-json"))
+  (string_mod.string-append (gen-hashmap-name-prefix type-name) "-from-json"))
 
 (define (gen-json-supported-int? [type-key : String]) : bool
   (or
-    (string-eq type-key "i64")
-    (string-eq type-key "i32")
-    (string-eq type-key "i16")
-    (string-eq type-key "i8")
-    (string-eq type-key "u32")
-    (string-eq type-key "u16")
-    (string-eq type-key "u8")))
+    (string_mod.string-eq type-key "i64")
+    (string_mod.string-eq type-key "i32")
+    (string_mod.string-eq type-key "i16")
+    (string_mod.string-eq type-key "i8")
+    (string_mod.string-eq type-key "u32")
+    (string_mod.string-eq type-key "u16")
+    (string_mod.string-eq type-key "u8")))
 
 (define (gen-json-field-unsupported [field-name : String] [type-key : String]) : ResultGenJsonSource
   (ErrGenJsonSource
     (gen-json-diag
-      (string-append
+      (string_mod.string-append
         "json-derive: unsupported field "
-        (string-append field-name (string-append " type " type-key))))))
+        (string_mod.string-append
+          field-name
+          (string_mod.string-append " type " type-key))))))
 
 (define (gen-json-field-type-source
   [field-name : String]
@@ -4439,20 +4519,26 @@
     [(OkGenJsonSource type-source)
       (let
         [type-key : String (ctfe-type-key-with-reflections infos ty)]
-        (if (string-eq type-source "bool")
+        (if (string_mod.string-eq type-source "bool")
           (OkGenJsonSource "false")
-          (if (string-eq type-source "String")
+          (if (string_mod.string-eq type-source "String")
             (OkGenJsonSource "\"\"")
-            (if (string-eq type-source "i64")
+            (if (string_mod.string-eq type-source "i64")
               (OkGenJsonSource "0")
               (if (gen-json-supported-int? type-key)
                 (OkGenJsonSource
-                  (string-append "(cast 0 : " (string-append type-source ")")))
+                  (string_mod.string-append
+                    "(cast 0 : "
+                    (string_mod.string-append type-source ")")))
                 (OkGenJsonSource
-                  (string-append "(init : " (string-append type-source ")"))))))))]))
+                  (string_mod.string-append
+                    "(init : "
+                    (string_mod.string-append type-source ")"))))))))]))
 
 (define (gen-json-field-access [field-name : String]) : String
-  (string-append "(struct-get value " (string-append field-name ")")))
+  (string_mod.string-append
+    "(struct-get value "
+    (string_mod.string-append field-name ")")))
 
 (define (gen-json-field-to-json-source
   [field-name : String]
@@ -4464,29 +4550,35 @@
       (let
         [type-key : String (ctfe-type-key-with-reflections infos ty)]
         [field-access : String (gen-json-field-access field-name)]
-        (if (string-eq type-source "bool")
+        (if (string_mod.string-eq type-source "bool")
           (OkGenJsonSource
-            (string-append "(JsonBool " (string-append field-access ")")))
-          (if (string-eq type-source "String")
+            (string_mod.string-append
+              "(JsonBool "
+              (string_mod.string-append field-access ")")))
+          (if (string_mod.string-eq type-source "String")
             (OkGenJsonSource
-              (string-append "(JsonString " (string-append field-access ")")))
+              (string_mod.string-append
+                "(JsonString "
+                (string_mod.string-append field-access ")")))
             (if (gen-json-supported-int? type-key)
               (OkGenJsonSource
-                (if (string-eq type-key "i64")
-                  (string-append
+                (if (string_mod.string-eq type-key "i64")
+                  (string_mod.string-append
                     "(json-i64->number "
-                    (string-append field-access ")"))
-                  (string-append
+                    (string_mod.string-append field-access ")"))
+                  (string_mod.string-append
                     "(json-i64->number (cast "
-                    (string-append field-access " : i64))"))))
+                    (string_mod.string-append field-access " : i64))"))))
               (match (gen-hashmap-nominal-name type-key "struct_")
                 [(SpecSomeString name)
                   (OkGenJsonSource
-                    (string-append
+                    (string_mod.string-append
                       "("
-                      (string-append
+                      (string_mod.string-append
                         (gen-json-to-name name)
-                        (string-append " " (string-append field-access ")")))))]
+                        (string_mod.string-append
+                          " "
+                          (string_mod.string-append field-access ")")))))]
                 [(SpecNoString)
                   (gen-json-field-unsupported field-name type-key)])))))]))
 
@@ -4505,7 +4597,7 @@
               [(ErrGenJsonSource diag) (ErrGenJsonSource diag)]
               [(OkGenJsonSource rest-source)
                 (let
-                  [buf : TextBuf (text-buf-empty)]
+                  [buf : text_buf_mod.TextBuf (text_buf_mod.text-buf-empty)]
                   (begin
                     (set!
                       buf
@@ -4516,9 +4608,9 @@
                         "\" "
                         value-source
                         " (box "))
-                    (set! buf (text-buf-append buf rest-source))
-                    (set! buf (text-buf-append buf "))"))
-                    (OkGenJsonSource (text-buf-render buf))))])])])))
+                    (set! buf (text_buf_mod.text-buf-append buf rest-source))
+                    (set! buf (text_buf_mod.text-buf-append buf "))"))
+                    (OkGenJsonSource (text_buf_mod.text-buf-render buf))))])])])))
 
 (define (gen-json-to-members-source
   [fields : CtfeReflectFieldList]
@@ -4526,13 +4618,13 @@
   (gen-json-to-members-source-from fields infos 0))
 
 (define (gen-json-local-name [index : i64]) : String
-  (string-append "json-field-" (int->string index)))
+  (string_mod.string-append "json-field-" (string_mod.int->string index)))
 
 (define (gen-json-key-name [index : i64]) : String
-  (string-append "json-key-" (int->string index)))
+  (string_mod.string-append "json-key-" (string_mod.int->string index)))
 
 (define (gen-json-value-name [index : i64]) : String
-  (string-append "json-value-" (int->string index)))
+  (string_mod.string-append "json-value-" (string_mod.int->string index)))
 
 (define (gen-json-let-bindings-source
   [fields : CtfeReflectFieldList]
@@ -4552,7 +4644,7 @@
                   [(ErrGenJsonSource diag) (ErrGenJsonSource diag)]
                   [(OkGenJsonSource rest-source)
                     (let
-                      [buf : TextBuf (text-buf-empty)]
+                      [buf : text_buf_mod.TextBuf (text_buf_mod.text-buf-empty)]
                       (begin
                         (set!
                           buf
@@ -4565,16 +4657,18 @@
                             " "
                             init-source
                             "]\n"))
-                        (set! buf (text-buf-append buf rest-source))
-                        (OkGenJsonSource (text-buf-render buf))))])])])])))
+                        (set!
+                          buf
+                          (text_buf_mod.text-buf-append buf rest-source))
+                        (OkGenJsonSource (text_buf_mod.text-buf-render buf))))])])])])))
 
 (define (gen-json-kind-error-source
   [err-name : String]
   [field-name : String]
   [expected : String]) : String
-  (text-buf-render
+  (text_buf_mod.text-buf-render
     (gen-tb7
-      (text-buf-empty)
+      (text_buf_mod.text-buf-empty)
       "(return ("
       err-name
       " \"json-derive: field "
@@ -4584,26 +4678,26 @@
       "\"))")))
 
 (define (gen-json-int-min-expr [type-key : String]) : String
-  (if (string-eq type-key "i32")
+  (if (string_mod.string-eq type-key "i32")
     "(- 0 2147483648)"
-    (if (string-eq type-key "i16")
+    (if (string_mod.string-eq type-key "i16")
       "(- 0 32768)"
-      (if (string-eq type-key "i8")
+      (if (string_mod.string-eq type-key "i8")
         "(- 0 128)"
         "0"))))
 
 (define (gen-json-int-max-expr [type-key : String]) : String
-  (if (string-eq type-key "i32")
+  (if (string_mod.string-eq type-key "i32")
     "2147483647"
-    (if (string-eq type-key "i16")
+    (if (string_mod.string-eq type-key "i16")
       "32767"
-      (if (string-eq type-key "i8")
+      (if (string_mod.string-eq type-key "i8")
         "127"
-        (if (string-eq type-key "u32")
+        (if (string_mod.string-eq type-key "u32")
           "4294967295"
-          (if (string-eq type-key "u16")
+          (if (string_mod.string-eq type-key "u16")
             "65535"
-            (if (string-eq type-key "u8")
+            (if (string_mod.string-eq type-key "u8")
               "255"
               "9223372036854775807")))))))
 
@@ -4613,12 +4707,14 @@
   [type-source : String]
   [type-key : String]
   [err-name : String]) : String
-  (if (string-eq type-key "i64")
-    (string-append "(set! " (string-append local-name " parsed)"))
+  (if (string_mod.string-eq type-key "i64")
+    (string_mod.string-append
+      "(set! "
+      (string_mod.string-append local-name " parsed)"))
     (let
       [min-expr : String (gen-json-int-min-expr type-key)]
       [max-expr : String (gen-json-int-max-expr type-key)]
-      [buf : TextBuf (text-buf-empty)]
+      [buf : text_buf_mod.TextBuf (text_buf_mod.text-buf-empty)]
       (begin
         (set!
           buf
@@ -4643,15 +4739,15 @@
         (set!
           buf
           (gen-tb5 buf "(set! " local-name " (cast parsed : " type-source ")))"))
-        (text-buf-render buf)))))
+        (text_buf_mod.text-buf-render buf)))))
 
 (define (gen-json-field-invalid-source
   [err-name : String]
   [field-name : String]
   [type-source : String]) : String
-  (text-buf-render
+  (text_buf_mod.text-buf-render
     (gen-tb7
-      (text-buf-empty)
+      (text_buf_mod.text-buf-empty)
       "(return ("
       err-name
       " (string-append \"json-derive: field "
@@ -4672,34 +4768,34 @@
     [(OkGenJsonSource type-source)
       (let
         [type-key : String (ctfe-type-key-with-reflections infos ty)]
-        (if (string-eq type-source "bool")
+        (if (string_mod.string-eq type-source "bool")
           (OkGenJsonSource
-            (string-append
+            (string_mod.string-append
               "(match "
-              (string-append
+              (string_mod.string-append
                 value-name
-                (string-append
+                (string_mod.string-append
                   "\n        [(JsonBool parsed) (set! "
-                  (string-append
+                  (string_mod.string-append
                     local-name
-                    (string-append
+                    (string_mod.string-append
                       " parsed)]\n        [_ "
-                      (string-append
+                      (string_mod.string-append
                         (gen-json-kind-error-source err-name field-name "bool")
                         "])")))))))
-          (if (string-eq type-source "String")
+          (if (string_mod.string-eq type-source "String")
             (OkGenJsonSource
-              (string-append
+              (string_mod.string-append
                 "(match "
-                (string-append
+                (string_mod.string-append
                   value-name
-                  (string-append
+                  (string_mod.string-append
                     "\n        [(JsonString parsed) (set! "
-                    (string-append
+                    (string_mod.string-append
                       local-name
-                      (string-append
+                      (string_mod.string-append
                         " parsed)]\n        [_ "
-                        (string-append
+                        (string_mod.string-append
                           (gen-json-kind-error-source
                             err-name
                             field-name
@@ -4714,46 +4810,48 @@
                     type-source
                     type-key
                     err-name)]
-                [buf : TextBuf (text-buf-empty)]
+                [buf : text_buf_mod.TextBuf (text_buf_mod.text-buf-empty)]
                 (begin
                   (set! buf (gen-tb3 buf "(match " value-name "\n"))
                   (set!
                     buf
-                    (text-buf-append
+                    (text_buf_mod.text-buf-append
                       buf
                       "        [(JsonNumber text)\n          (match (json-number-owned->i64 text)\n            [(OkJsonNumberI64 parsed) "))
-                  (set! buf (text-buf-append buf set-source))
+                  (set! buf (text_buf_mod.text-buf-append buf set-source))
                   (set!
                     buf
-                    (text-buf-append
+                    (text_buf_mod.text-buf-append
                       buf
                       "]\n            [(ErrJsonNumberI64 err) "))
                   (set!
                     buf
-                    (text-buf-append
+                    (text_buf_mod.text-buf-append
                       buf
                       (gen-json-field-invalid-source
                         err-name
                         field-name
                         type-source)))
-                  (set! buf (text-buf-append buf "])]\n        [_ "))
                   (set!
                     buf
-                    (text-buf-append
+                    (text_buf_mod.text-buf-append buf "])]\n        [_ "))
+                  (set!
+                    buf
+                    (text_buf_mod.text-buf-append
                       buf
                       (gen-json-kind-error-source
                         err-name
                         field-name
                         type-source)))
-                  (set! buf (text-buf-append buf "])"))
-                  (OkGenJsonSource (text-buf-render buf))))
+                  (set! buf (text_buf_mod.text-buf-append buf "])"))
+                  (OkGenJsonSource (text_buf_mod.text-buf-render buf))))
               (match (gen-hashmap-nominal-name type-key "struct_")
                 [(SpecSomeString nested-name)
                   (let
                     [nested-from : String (gen-json-from-name nested-name)]
                     [nested-ok : String (gen-json-ok-name nested-name)]
                     [nested-err : String (gen-json-err-name nested-name)]
-                    [buf : TextBuf (text-buf-empty)]
+                    [buf : text_buf_mod.TextBuf (text_buf_mod.text-buf-empty)]
                     (begin
                       (set!
                         buf
@@ -4776,14 +4874,14 @@
                           " err) "))
                       (set!
                         buf
-                        (text-buf-append
+                        (text_buf_mod.text-buf-append
                           buf
                           (gen-json-field-invalid-source
                             err-name
                             field-name
                             type-source)))
-                      (set! buf (text-buf-append buf "])"))
-                      (OkGenJsonSource (text-buf-render buf))))]
+                      (set! buf (text_buf_mod.text-buf-append buf "])"))
+                      (OkGenJsonSource (text_buf_mod.text-buf-render buf))))]
                 [(SpecNoString)
                   (gen-json-field-unsupported field-name type-key)])))))]))
 
@@ -4807,7 +4905,7 @@
       [(ErrGenJsonSource diag) (ErrGenJsonSource diag)]
       [(OkGenJsonSource value-source)
         (let
-          [buf : TextBuf (text-buf-empty)]
+          [buf : text_buf_mod.TextBuf (text_buf_mod.text-buf-empty)]
           (begin
             (set!
               buf
@@ -4826,7 +4924,7 @@
                 ")\n              [(JsonFound "
                 value-name
                 ")\n                "))
-            (set! buf (text-buf-append buf value-source))
+            (set! buf (text_buf_mod.text-buf-append buf value-source))
             (set!
               buf
               (gen-tb7
@@ -4838,7 +4936,7 @@
                 "\"))]))\n"
                 ""
                 ""))
-            (OkGenJsonSource (text-buf-render buf))))])))
+            (OkGenJsonSource (text_buf_mod.text-buf-render buf))))])))
 
 (define (gen-json-from-statements-source
   [fields : CtfeReflectFieldList]
@@ -4864,14 +4962,15 @@
               err-name)
               [(ErrGenJsonSource diag) (ErrGenJsonSource diag)]
               [(OkGenJsonSource rest-source)
-                (OkGenJsonSource (string-append head-source rest-source))])])])))
+                (OkGenJsonSource
+                  (string_mod.string-append head-source rest-source))])])])))
 
 (define (gen-json-constructor-args-from [index : i64] [count : i64]) : String
   (if (>= index count)
     ""
-    (string-append
+    (string_mod.string-append
       " "
-      (string-append
+      (string_mod.string-append
         (gen-json-local-name index)
         (gen-json-constructor-args-from (+ index 1) count)))))
 
@@ -4886,11 +4985,13 @@
     [args : String (gen-json-constructor-args-from 0 field-count)]
     (if (= field-count 0)
       (OkGenJsonSource
-        (string-append
+        (string_mod.string-append
           "("
-          (string-append
+          (string_mod.string-append
             ok-name
-            (string-append " (" (string-append type-name "))")))))
+            (string_mod.string-append
+              " ("
+              (string_mod.string-append type-name "))")))))
       (match (gen-json-let-bindings-source fields infos 0)
         [(ErrGenJsonSource diag) (ErrGenJsonSource diag)]
         [(OkGenJsonSource bindings-source)
@@ -4898,12 +4999,16 @@
             [(ErrGenJsonSource diag) (ErrGenJsonSource diag)]
             [(OkGenJsonSource statements-source)
               (let
-                [buf : TextBuf (text-buf-empty)]
+                [buf : text_buf_mod.TextBuf (text_buf_mod.text-buf-empty)]
                 (begin
-                  (set! buf (text-buf-append buf "(let\n"))
-                  (set! buf (text-buf-append buf bindings-source))
-                  (set! buf (text-buf-append buf "        (begin\n"))
-                  (set! buf (text-buf-append buf statements-source))
+                  (set! buf (text_buf_mod.text-buf-append buf "(let\n"))
+                  (set! buf (text_buf_mod.text-buf-append buf bindings-source))
+                  (set!
+                    buf
+                    (text_buf_mod.text-buf-append buf "        (begin\n"))
+                  (set!
+                    buf
+                    (text_buf_mod.text-buf-append buf statements-source))
                   (set!
                     buf
                     (gen-tb7
@@ -4915,7 +5020,7 @@
                       args
                       "))))"
                       ""))
-                  (OkGenJsonSource (text-buf-render buf))))])]))))
+                  (OkGenJsonSource (text_buf_mod.text-buf-render buf))))])]))))
 
 (define (gen-json-source-for-fields
   [type-name : String]
@@ -4934,7 +5039,7 @@
           [(ErrGenJsonSource diag) (ErrGenJsonSource diag)]
           [(OkGenJsonSource from-body)
             (let
-              [buf : TextBuf (text-buf-empty)]
+              [buf : text_buf_mod.TextBuf (text_buf_mod.text-buf-empty)]
               (begin
                 (set!
                   buf
@@ -4957,18 +5062,24 @@
                     " [value : "
                     type-name
                     "]) : Json\n  "))
-                (set! buf (text-buf-append buf "(JsonObject\n    (box\n      "))
-                (set! buf (text-buf-append buf members-source))
-                (set! buf (text-buf-append buf ")))\n(define ("))
-                (set! buf (text-buf-append buf from-name))
-                (set! buf (text-buf-append buf " [value : Json]) : "))
-                (set! buf (text-buf-append buf result-name))
                 (set!
                   buf
-                  (text-buf-append
+                  (text_buf_mod.text-buf-append
+                    buf
+                    "(JsonObject\n    (box\n      "))
+                (set! buf (text_buf_mod.text-buf-append buf members-source))
+                (set! buf (text_buf_mod.text-buf-append buf ")))\n(define ("))
+                (set! buf (text_buf_mod.text-buf-append buf from-name))
+                (set!
+                  buf
+                  (text_buf_mod.text-buf-append buf " [value : Json]) : "))
+                (set! buf (text_buf_mod.text-buf-append buf result-name))
+                (set!
+                  buf
+                  (text_buf_mod.text-buf-append
                     buf
                     "\n  (match value\n    [(JsonObject _)\n      "))
-                (set! buf (text-buf-append buf from-body))
+                (set! buf (text_buf_mod.text-buf-append buf from-body))
                 (set!
                   buf
                   (gen-tb5
@@ -4978,7 +5089,7 @@
                     " \"json-derive: expected object for "
                     type-name
                     "\")]))\n"))
-                (OkGenJsonSource (text-buf-render buf))))])])))
+                (OkGenJsonSource (text_buf_mod.text-buf-render buf))))])])))
 
 (define (gen-json-source-for
   [request-name : String]
@@ -4992,15 +5103,16 @@
       [(AstTyStruct name)
         (let
           [type-name : String (intern-str name)]
-          [expected-request : String (string-append type-name "Json")]
-          (if (not (string-eq request-name expected-request))
+          [expected-request : String
+            (string_mod.string-append type-name "Json")]
+          (if (not (string_mod.string-eq request-name expected-request))
             (ErrGenJsonSource
               (gen-json-diag
-                (string-append
+                (string_mod.string-append
                   "json-derive: marker item "
-                  (string-append
+                  (string_mod.string-append
                     request-name
-                    (string-append
+                    (string_mod.string-append
                       " does not match generated request "
                       expected-request)))))
             (match (ctfe-reflect-info-lookup
@@ -5014,7 +5126,7 @@
               [(CtfeNoReflectInfo)
                 (ErrGenJsonSource
                   (gen-json-diag
-                    (string-append
+                    (string_mod.string-append
                       "json-derive: no reflection metadata for "
                       type-key)))])))]
       [_ (gen-json-field-unsupported request-name type-key)])))
@@ -5204,7 +5316,7 @@
                 [(ErrAstProgram message)
                   (ErrGenDecl
                     (gen-hashmap-diag
-                      (string-append
+                      (string_mod.string-append
                         "hashmap-family: generated source did not parse: "
                         message)))])]
             [(ErrGenHashmapSource diag) (ErrGenDecl diag)])])]
@@ -5236,7 +5348,7 @@
                 [(ErrAstProgram message)
                   (ErrGenDecl
                     (gen-set-diag
-                      (string-append
+                      (string_mod.string-append
                         "set-family: generated source did not parse: "
                         message)))])]
             [(ErrGenSetSource diag) (ErrGenDecl diag)])])]
@@ -5267,7 +5379,7 @@
                 [(ErrAstProgram message)
                   (ErrGenDecl
                     (gen-json-diag
-                      (string-append
+                      (string_mod.string-append
                         "json-derive: generated source did not parse: "
                         message)))])]
             [(ErrGenJsonSource diag) (ErrGenDecl diag)])])]
@@ -5295,11 +5407,13 @@
                     ""
                     "generated-decl: generated payload must declare a visible item"))]
               [(SpecSomeString actual)
-                (if (not (string-eq item actual))
+                (if (not (string_mod.string-eq item actual))
                   (ErrGenDecl (gen-item-mismatch-diag item actual))
                   (match (gen-key-exprs args env (ctfe-fuel-limit))
                     [(OkGenKey arg-key _)
-                      (if (string-eq generator "stdlib/hashmap-family")
+                      (if (string_mod.string-eq
+                        generator
+                        "stdlib/hashmap-family")
                         (match (gen-hashmap-family-marker-name template)
                           [(SpecSomeString map-name)
                             (gen-hashmap-expand-family
@@ -5319,7 +5433,7 @@
                               args
                               arg-key
                               registry)])
-                        (if (string-eq generator "stdlib/set-family")
+                        (if (string_mod.string-eq generator "stdlib/set-family")
                           (match (gen-set-family-marker-name template)
                             [(SpecSomeString set-name)
                               (gen-set-expand-family
@@ -5339,7 +5453,9 @@
                                 args
                                 arg-key
                                 registry)])
-                          (if (string-eq generator "stdlib/json-derive")
+                          (if (string_mod.string-eq
+                            generator
+                            "stdlib/json-derive")
                             (match (gen-json-derive-marker-name template)
                               [(SpecSomeString request-name)
                                 (gen-json-expand-family
@@ -5540,7 +5656,7 @@
   (match subs
     [(SpecTypeSubstNil) (SpecNoString)]
     [(SpecTypeSubstCons key _ rest)
-      (if (string-eq key name)
+      (if (string_mod.string-eq key name)
         (SpecSomeString key)
         (spec-type-subst-lookup (box-get rest) name))]))
 
@@ -5548,7 +5664,7 @@
   (match subs
     [(SpecTypeSubstNil) (AstTyVar (intern name))]
     [(SpecTypeSubstCons key ty rest)
-      (if (string-eq key name)
+      (if (string_mod.string-eq key name)
         ty
         (spec-type-subst-type (box-get rest) name))]))
 
@@ -5556,7 +5672,7 @@
   (match subs
     [(SpecValueSubstNil) (SpecNoString)]
     [(SpecValueSubstCons key _ rest)
-      (if (string-eq key name)
+      (if (string_mod.string-eq key name)
         (SpecSomeString key)
         (spec-value-subst-lookup (box-get rest) name))]))
 
@@ -5564,7 +5680,7 @@
   (match subs
     [(SpecValueSubstNil) (CtfeUnit)]
     [(SpecValueSubstCons key value rest)
-      (if (string-eq key name)
+      (if (string_mod.string-eq key name)
         value
         (spec-value-subst-value (box-get rest) name))]))
 
@@ -5572,7 +5688,7 @@
   (match subs
     [(SpecValueSubstNil) SpecValueSubstNil]
     [(SpecValueSubstCons key value rest)
-      (if (string-eq key name)
+      (if (string_mod.string-eq key name)
         (spec-value-subst-remove-name (box-get rest) name)
         (spec-value-subst-cons
           key
@@ -5639,7 +5755,7 @@
   (match subs
     [(SpecTypeSubstNil) SpecTypeSubstNil]
     [(SpecTypeSubstCons key ty rest)
-      (if (string-eq key name)
+      (if (string_mod.string-eq key name)
         (spec-type-subst-remove-name (box-get rest) name)
         (spec-type-subst-cons
           key
@@ -5796,9 +5912,11 @@
       (ErrSpecSubExpr
         (spec-diagnostic-at-expr
           origin
-          (string-append
+          (string_mod.string-append
             "cannot substitute compile-time type value "
-            (string-append (spec-type-key ty) " into runtime expression"))))]
+            (string_mod.string-append
+              (spec-type-key ty)
+              " into runtime expression"))))]
     [(CtfeExpr _ _)
       (ErrSpecSubExpr
         (spec-diagnostic-at-expr
@@ -5977,13 +6095,13 @@
                               (ErrSpecArgs
                                 (spec-diagnostic-at-expr
                                   arg
-                                  (string-append
+                                  (string_mod.string-append
                                     "comptime argument '"
-                                    (string-append
+                                    (string_mod.string-append
                                       (intern-str param-name)
-                                      (string-append
+                                      (string_mod.string-append
                                         "' for function '"
-                                        (string-append
+                                        (string_mod.string-append
                                           fn-name
                                           "' must be a type value such as `(type i64)`"))))))])
                           (if (spec-value-runtime-type-matches? value param-ty)
@@ -6002,19 +6120,19 @@
                             (ErrSpecArgs
                               (spec-diagnostic-at-expr
                                 arg
-                                (string-append
+                                (string_mod.string-append
                                   "comptime argument '"
-                                  (string-append
+                                  (string_mod.string-append
                                     (intern-str param-name)
-                                    (string-append
+                                    (string_mod.string-append
                                       "' for function '"
-                                      (string-append
+                                      (string_mod.string-append
                                         fn-name
-                                        (string-append
+                                        (string_mod.string-append
                                           "' has type "
-                                          (string-append
+                                          (string_mod.string-append
                                             (spec-value-type-label value)
-                                            (string-append
+                                            (string_mod.string-append
                                               ", expected "
                                               (spec-type-key param-ty))))))))))))]
                       [(ErrCtfe diag) (ErrSpecArgs diag)])
@@ -6125,7 +6243,7 @@
                                 [cached-state : SpecState
                                   (SpecState
                                     generated
-                                    (string-string-map-put
+                                    (hashmap_mod.string-string-map-put
                                       cache
                                       key
                                       generated-name)
@@ -6967,9 +7085,9 @@
             (ErrSpecSubExpr
               (spec-diagnostic-at-expr
                 expr
-                (string-append
+                (string_mod.string-append
                   "cannot assign to comptime parameter '"
-                  (string-append (intern-str name) "'"))))]
+                  (string_mod.string-append (intern-str name) "'"))))]
           [(SpecNoString)
             (match (spec-substitute-values-expr value subs)
               [(OkSpecSubExpr rewritten)
@@ -7162,9 +7280,9 @@
           (ErrSpecSubExpr
             (spec-diagnostic-at-expr
               expr
-              (string-append
+              (string_mod.string-append
                 "cannot take address of comptime value parameter '"
-                (string-append (intern-str name) "'"))))]
+                (string_mod.string-append (intern-str name) "'"))))]
         [(SpecNoString) (OkSpecSubExpr (ast-expr-ptr-addr-of-id name))])]
     [(AstExprPtrRead ptr-box)
       (let
@@ -7428,9 +7546,9 @@
           (ErrSpecSubExpr
             (spec-diagnostic-at-expr
               expr
-              (string-append
+              (string_mod.string-append
                 "type-valued comptime parameter '"
-                (string-append
+                (string_mod.string-append
                   (intern-str name)
                   "' cannot be used as a runtime value"))))]
         [(SpecNoString) (OkSpecSubExpr (ast-node-push expr))])]
@@ -7702,9 +7820,11 @@
             (ErrSpecSubExpr
               (spec-diagnostic-at-expr
                 expr
-                (string-append
+                (string_mod.string-append
                   "type-valued comptime parameter '"
-                  (string-append (intern-str name) "' cannot be assigned"))))]
+                  (string_mod.string-append
+                    (intern-str name)
+                    "' cannot be assigned"))))]
           [(SpecNoString)
             (match (spec-substitute-types-expr value subs)
               [(OkSpecSubExpr rewritten)
@@ -7821,9 +7941,9 @@
           (ErrSpecSubExpr
             (spec-diagnostic-at-expr
               expr
-              (string-append
+              (string_mod.string-append
                 "type-valued comptime parameter '"
-                (string-append
+                (string_mod.string-append
                   (intern-str name)
                   "' cannot be used as a runtime value"))))]
         [(SpecNoString) (OkSpecSubExpr (ast-expr-ptr-addr-of-id name))])]
@@ -8167,7 +8287,7 @@
                   (spec-template-env-from-list templates)
                   (SpecState
                     AstDeclNil
-                    (string-string-map-with-capacity 64)
+                    (hashmap_mod.string-string-map-with-capacity 64)
                     (ctfe-env-with-reflections
                       (ctfe-reflections-from-program normalized))))
                   [(OkSpecDecls rewritten state)
@@ -8204,7 +8324,7 @@
               [inner : AstDecl (box-get inner-box)]
               (match inner
                 [(AstDeclDefFn fn-name _ _ _ _)
-                  (if (string-eq (intern-str fn-name) name)
+                  (if (string_mod.string-eq (intern-str fn-name) name)
                     true
                     (compiler-specialize-decl-list-defines? rest name))]
                 [(AstDeclComptimeDecl _ template-box)
@@ -8212,13 +8332,13 @@
                     [template : AstDecl (box-get template-box)]
                     (match template
                       [(AstDeclDefFn fn-name _ _ _ _)
-                        (if (string-eq (intern-str fn-name) name)
+                        (if (string_mod.string-eq (intern-str fn-name) name)
                           true
                           (compiler-specialize-decl-list-defines? rest name))]
                       [_ (compiler-specialize-decl-list-defines? rest name)]))]
                 [_ (compiler-specialize-decl-list-defines? rest name)]))]
           [(AstDeclDefFn fn-name _ _ _ _)
-            (if (string-eq (intern-str fn-name) name)
+            (if (string_mod.string-eq (intern-str fn-name) name)
               true
               (compiler-specialize-decl-list-defines? rest name))]
           [(AstDeclComptimeDecl _ template-box)
@@ -8226,7 +8346,7 @@
               [template : AstDecl (box-get template-box)]
               (match template
                 [(AstDeclDefFn fn-name _ _ _ _)
-                  (if (string-eq (intern-str fn-name) name)
+                  (if (string_mod.string-eq (intern-str fn-name) name)
                     true
                     (compiler-specialize-decl-list-defines? rest name))]
                 [_ (compiler-specialize-decl-list-defines? rest name)]))]
@@ -8328,8 +8448,8 @@
     [subs : SpecTypeSubst
       (spec-type-subst-cons "T" (AstTyI64) SpecTypeSubstNil)]
     (and
-      (string-eq (spec-type-key (ast-ty-ptr (AstTyI64))) "ptr_i64")
-      (string-eq
+      (string_mod.string-eq (spec-type-key (ast-ty-ptr (AstTyI64))) "ptr_i64")
+      (string_mod.string-eq
         (spec-type-key (ast-ty-mut-ptr (ast-ty-ptr (AstTyU8))))
         "mutptr_ptr_u8")
       (ctfe-type-eq
@@ -8355,24 +8475,24 @@
     [vals-string : SpecValueList
       (spec-value-cons (CtfeString "a b") (SpecValueNil))]
     (and
-      (string-eq
+      (string_mod.string-eq
         (spec-specialized-name "alloc" vals-i64)
         "__tl_specialized_alloc_type_i64_none")
-      (string-eq
+      (string_mod.string-eq
         (spec-specialized-name "alloc" vals-i64)
         (spec-specialized-name "alloc" vals-i64))
-      (string-eq
+      (string_mod.string-eq
         (spec-specialization-key "alloc" vals-i64)
         "alloc:type_i64_none")
       (not
-        (string-eq
+        (string_mod.string-eq
           (spec-specialized-name "alloc" vals-i64)
           (spec-specialized-name "alloc" vals-bool)))
-      (string-eq
+      (string_mod.string-eq
         (spec-specialized-name "pair" vals-multi)
         "__tl_specialized_pair_type_i64_i64_5_none")
-      (string-eq (spec-value-key (CtfeI64 (- 0 3))) "i64_m3")
-      (string-eq
+      (string_mod.string-eq (spec-value-key (CtfeI64 (- 0 3))) "i64_m3")
+      (string_mod.string-eq
         (spec-specialized-name "name" vals-string)
         "__tl_specialized_name_string_3_97_32_98_none"))))
 
@@ -8392,7 +8512,7 @@
               [inner : AstDecl (box-get inner-box)]
               (match inner
                 [(AstDeclDefFn fn-name _ _ _ _)
-                  (if (string-eq (intern-str fn-name) name)
+                  (if (string_mod.string-eq (intern-str fn-name) name)
                     (+ 1 (compiler-specialize-decl-list-count-defs rest name))
                     (compiler-specialize-decl-list-count-defs rest name))]
                 [(AstDeclComptimeDecl _ template-box)
@@ -8400,7 +8520,7 @@
                     [template : AstDecl (box-get template-box)]
                     (match template
                       [(AstDeclDefFn fn-name _ _ _ _)
-                        (if (string-eq (intern-str fn-name) name)
+                        (if (string_mod.string-eq (intern-str fn-name) name)
                           (+
                             1
                             (compiler-specialize-decl-list-count-defs rest name))
@@ -8408,7 +8528,7 @@
                       [_ (compiler-specialize-decl-list-count-defs rest name)]))]
                 [_ (compiler-specialize-decl-list-count-defs rest name)]))]
           [(AstDeclDefFn fn-name _ _ _ _)
-            (if (string-eq (intern-str fn-name) name)
+            (if (string_mod.string-eq (intern-str fn-name) name)
               (+ 1 (compiler-specialize-decl-list-count-defs rest name))
               (compiler-specialize-decl-list-count-defs rest name))]
           [(AstDeclComptimeDecl _ inner-box)
@@ -8416,7 +8536,7 @@
               [inner : AstDecl (box-get inner-box)]
               (match inner
                 [(AstDeclDefFn fn-name _ _ _ _)
-                  (if (string-eq (intern-str fn-name) name)
+                  (if (string_mod.string-eq (intern-str fn-name) name)
                     (+ 1 (compiler-specialize-decl-list-count-defs rest name))
                     (compiler-specialize-decl-list-count-defs rest name))]
                 [_ (compiler-specialize-decl-list-count-defs rest name)]))]
@@ -8434,7 +8554,7 @@
           (compiler-specialize-decl-list-count-visible rest name)]
         (match (gen-decl-visible-name decl)
           [(SpecSomeString found)
-            (if (string-eq found name)
+            (if (string_mod.string-eq found name)
               (+ 1 tail-count)
               tail-count)]
           [(SpecNoString) tail-count]))]))
@@ -8480,18 +8600,18 @@
     [subs : SpecTypeSubst
       (spec-type-subst-cons "T" (AstTyI64) SpecTypeSubstNil)]
     (and
-      (string-eq
+      (string_mod.string-eq
         (spec-type-key (spec-substitute-type (AstTyVar (intern "T")) subs))
         "i64")
-      (string-eq
+      (string_mod.string-eq
         (spec-type-key
           (spec-substitute-type (ast-ty-ptr (AstTyVar (intern "T"))) subs))
         "ptr_i64")
-      (string-eq
+      (string_mod.string-eq
         (spec-type-key
           (spec-substitute-type (ast-ty-dyn-array (AstTyVar (intern "T"))) subs))
         "dynarray_i64")
-      (string-eq
+      (string_mod.string-eq
         (spec-type-key
           (spec-substitute-type
             (ast-ty-func
@@ -8499,7 +8619,7 @@
               (AstTyVar (intern "T")))
             subs))
         "fn_i64_nil_to_i64")
-      (string-eq
+      (string_mod.string-eq
         (spec-type-key (spec-substitute-type (AstTyVar (intern "U")) subs))
         "var_U"))))
 
@@ -8526,7 +8646,7 @@
       (match (spec-substitute-values-expr (AstExprVar (intern "y")) subs)
         [(OkSpecSubExpr e)
           (match (ast-node-get e)
-            [(AstExprVar name) (string-eq (intern-str name) "y")]
+            [(AstExprVar name) (string_mod.string-eq (intern-str name) "y")]
             [_ false])]
         [(ErrSpecSubExpr _) false])
       ;; recursion through `if`: x in the condition becomes 5, unmapped y stays
@@ -8550,7 +8670,8 @@
                         [_ false])]
                     [_ false])
                   (match else-branch
-                    [(AstExprVar name) (string-eq (intern-str name) "y")]
+                    [(AstExprVar name)
+                      (string_mod.string-eq (intern-str name) "y")]
                     [_ false])))]
             [_ false])]
         [(ErrSpecSubExpr _) false]))))
@@ -8572,10 +8693,10 @@
             (AstExprLiteral (AstLitBool true)))
           SpecTemplateNil))]
     [template-env : SpecTemplateEnv (spec-template-env-from-list templates)]
-    [cache : StringStringMap
-      (string-string-map-put
-        (string-string-map-put
-          (string-string-map-with-capacity 8)
+    [cache : hashmap_mod.StringStringMap
+      (hashmap_mod.string-string-map-put
+        (hashmap_mod.string-string-map-put
+          (hashmap_mod.string-string-map-with-capacity 8)
           "two"
           "generated-two")
         "one"
@@ -8598,12 +8719,12 @@
       (match (spec-template-lookup template-env "second")
         [(SpecSomeTemplate template)
           (match template
-            [(SpecTemplate name _ _ _) (string-eq name "second")])]
+            [(SpecTemplate name _ _ _) (string_mod.string-eq name "second")])]
         [(SpecNoTemplate) false])
       (match (spec-cache-lookup cache "two")
-        [(SpecSomeString name) (string-eq name "generated-two")]
+        [(SpecSomeString name) (string_mod.string-eq name "generated-two")]
         [(SpecNoString) false])
-      (string-eq (spec-values-key values) "i64_1_bool_1_none")
+      (string_mod.string-eq (spec-values-key values) "i64_1_bool_1_none")
       (match (spec-value-subst-value value-subs "flag")
         [(CtfeBool flag) flag]
         [_ false])
@@ -8738,7 +8859,7 @@
     ""
     "option-family"
     "Option_String"
-    (string-append (spec-string-key "String") "_none")))
+    (string_mod.string-append (spec-string-key "String") "_none")))
 
 (define (compiler-generated-decl-cross-module-reuse-source) : String
   "(module option.family)
@@ -8883,9 +9004,9 @@
         [(ErrSpecProgram diag)
           (match (compiler-diagnostic-notes diag)
             [(CompilerDiagnosticNoteCons note _)
-              (string-eq
+              (string_mod.string-eq
                 note
-                (string-append
+                (string_mod.string-append
                   "generated identity: "
                   (compiler-generated-decl-expected-string-key)))]
             [(CompilerDiagnosticNoteNil) false])])]
@@ -9051,16 +9172,18 @@
     [i64-mut-entry-needle : String "I64I64MapMutEntry"]
     [i64-mut-entry-macro-needle : String "i64-i64-map-get-mut-entry"]
     (and
-      (string-contains (& string-source) (& string-round-needle))
-      (string-contains (& i64-source) (& i64-round-needle))
-      (string-contains (& string-source) (& mask-needle))
-      (string-contains (& i64-source) (& mask-needle))
-      (not (string-contains (& string-source) (& modulo-needle)))
-      (not (string-contains (& i64-source) (& modulo-needle)))
-      (string-contains (& string-source) (& string-mut-entry-needle))
-      (string-contains (& string-source) (& string-mut-entry-macro-needle))
-      (string-contains (& i64-source) (& i64-mut-entry-needle))
-      (string-contains (& i64-source) (& i64-mut-entry-macro-needle)))))
+      (string_mod.string-contains (& string-source) (& string-round-needle))
+      (string_mod.string-contains (& i64-source) (& i64-round-needle))
+      (string_mod.string-contains (& string-source) (& mask-needle))
+      (string_mod.string-contains (& i64-source) (& mask-needle))
+      (not (string_mod.string-contains (& string-source) (& modulo-needle)))
+      (not (string_mod.string-contains (& i64-source) (& modulo-needle)))
+      (string_mod.string-contains (& string-source) (& string-mut-entry-needle))
+      (string_mod.string-contains
+        (& string-source)
+        (& string-mut-entry-macro-needle))
+      (string_mod.string-contains (& i64-source) (& i64-mut-entry-needle))
+      (string_mod.string-contains (& i64-source) (& i64-mut-entry-macro-needle)))))
 
 (define (compiler-generated-hashmap-family-bundle-ok?) : bool
   (match (parse-ast-source (compiler-generated-hashmap-family-bundle-source))
@@ -9324,7 +9447,7 @@
       (match (compiler-specialize-program program)
         [(OkSpecProgram _) false]
         [(ErrSpecProgram diag)
-          (string-eq
+          (string_mod.string-eq
             (compiler-diagnostic-message diag)
             "hashmap-family: unsupported key descriptor stdlib/hashmap/i64-key-v1 for key type bool")])]
     [(ErrAstProgram _) false]))
@@ -9336,7 +9459,7 @@
       (match (compiler-specialize-program program)
         [(OkSpecProgram _) false]
         [(ErrSpecProgram diag)
-          (string-eq
+          (string_mod.string-eq
             (compiler-diagnostic-message diag)
             "hashmap-family: unsupported value type bool")])]
     [(ErrAstProgram _) false]))
@@ -9401,7 +9524,7 @@
       (match (compiler-specialize-program program)
         [(OkSpecProgram _) false]
         [(ErrSpecProgram diag)
-          (string-eq
+          (string_mod.string-eq
             (compiler-diagnostic-message diag)
             "set-family: unsupported key type bool")])]
     [(ErrAstProgram _) false]))
@@ -9457,7 +9580,7 @@
       (match (compiler-specialize-program program)
         [(OkSpecProgram _) false]
         [(ErrSpecProgram diag)
-          (string-eq
+          (string_mod.string-eq
             (compiler-diagnostic-message diag)
             "json-derive: unsupported field score type f64")])]
     [(ErrAstProgram _) false]))
@@ -9477,15 +9600,17 @@
                         (match meta
                           [(AstSomeGeneratedDeclMeta generator item _ key)
                             (and
-                              (string-eq generator "option-family")
-                              (string-eq item "Option_String")
-                              (string-eq
+                              (string_mod.string-eq generator "option-family")
+                              (string_mod.string-eq item "Option_String")
+                              (string_mod.string-eq
                                 key
                                 (compiler-generated-decl-expected-string-key)))]
                           [(AstNoGeneratedDeclMeta) false])
                         (match (box-get template-box)
                           [(AstDeclDefStruct name _ _ _)
-                            (string-eq (intern-str name) "Option_String")]
+                            (string_mod.string-eq
+                              (intern-str name)
+                              "Option_String")]
                           [_ false]))]
                     [_ false])]
                 [(AstDeclNil) false])])]

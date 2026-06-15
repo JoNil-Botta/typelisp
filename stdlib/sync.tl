@@ -6,20 +6,22 @@
 ;# values; shared state lives in runtime-owned OS memory and is serialized with
 ;# semaphore-backed synchronization.
 ;#
-;# Usage: `(import "stdlib/sync.tl")`
+;# Usage: `(import stdlib.sync)`
 ;#
 ;# ```typelisp
-;# (import "stdlib/sync.tl")
+;# (import stdlib.sync)
 ;#
 ;# (define ok : bool
-;#   (match (channel-i64-create 2)
-;#     [(ChannelI64CreateErr _) false]
-;#     [(ChannelI64CreateOk ch)
+;#   (match (sync.channel-i64-create 2)
+;#     [(sync.ChannelI64CreateErr _) false]
+;#     [(sync.ChannelI64CreateOk ch)
 ;#       (begin
-;#         (channel-i64-close ch)
+;#         (sync.channel-i64-close ch)
 ;#         true)]))
 ;# ```
-(import "thread.tl")
+(module stdlib.sync)
+
+(import stdlib.thread as thread_mod)
 
 ;: Maximum supported channel capacity for this first concrete channel surface.
 (define channel-i64-max-capacity : i64
@@ -94,11 +96,11 @@
 (define (sync-abort [code : i64]) : never
   (cfg
     windows
-    (sync-windows-exit-process (cast code : i32))
+    (stdlib.sync.sync-windows-exit-process (cast code : i32))
     (begin
       (unsafe
         (syscall 231 code))
-      (sync-abort code))))
+      (stdlib.sync.sync-abort code))))
 
 ;: Allocate runtime-owned memory that is independent of TypeLisp arenas.
 (define (sync-runtime-alloc [bytes : i64]) : i64
@@ -106,7 +108,11 @@
     0
     (cfg
       windows
-      (sync-windows-virtual-alloc 0 bytes (cast 12288 : i32) (cast 4 : i32))
+      (stdlib.sync.sync-windows-virtual-alloc
+        0
+        bytes
+        (cast 12288 : i32)
+        (cast 4 : i32))
       (let
         [addr : i64
           (unsafe
@@ -122,7 +128,9 @@
     (cfg
       windows
       (not
-        (= (sync-windows-virtual-free addr 0 (cast 32768 : i32)) (cast 0 : i32)))
+        (=
+          (stdlib.sync.sync-windows-virtual-free addr 0 (cast 32768 : i32))
+          (cast 0 : i32)))
       (=
         (unsafe
           (syscall 11 addr bytes))
@@ -137,33 +145,35 @@
 (define (sync-read-i64 [addr : i64] [slot : i64]) : i64
   (unsafe
     (ptr-read
-      (ptr-cast (ptr-offset (sync-addr->mut-i64 addr) slot) : (Ptr i64)))))
+      (ptr-cast
+        (ptr-offset (stdlib.sync.sync-addr->mut-i64 addr) slot)
+        : (Ptr i64)))))
 
 ;: Write one `i64` slot into runtime-owned storage.
 (define (sync-write-i64! [addr : i64] [slot : i64] [value : i64]) : unit
   (unsafe
-    (ptr-write! (ptr-offset (sync-addr->mut-i64 addr) slot) value)))
+    (ptr-write! (ptr-offset (stdlib.sync.sync-addr->mut-i64 addr) slot) value)))
 
 ;: Wrap a raw semaphore handle for calls into `thread.tl`.
-(define (sync-semaphore [handle : i64]) : ThreadSemaphore
-  (ThreadSemaphore handle))
+(define (sync-semaphore [handle : i64]) : thread_mod.ThreadSemaphore
+  (thread_mod.ThreadSemaphore handle))
 
 ;: Wait for a channel semaphore token.
 (define (sync-semaphore-wait [handle : i64]) : bool
-  (thread-semaphore-wait (sync-semaphore handle)))
+  (thread_mod.thread-semaphore-wait (stdlib.sync.sync-semaphore handle)))
 
 ;: Post one channel semaphore token.
 (define (sync-semaphore-post [handle : i64]) : bool
-  (thread-semaphore-post (sync-semaphore handle)))
+  (thread_mod.thread-semaphore-post (stdlib.sync.sync-semaphore handle)))
 
 ;: Close one channel semaphore handle.
 (define (sync-semaphore-close [handle : i64]) : bool
-  (thread-semaphore-close (sync-semaphore handle)))
+  (thread_mod.thread-semaphore-close (stdlib.sync.sync-semaphore handle)))
 
 ;: Unlock a mutex guard field during cleanup.
 (define (mutex-i64-unlock-handle [handle : i64]) : unit
   (begin
-    (sync-semaphore-post handle)
+    (stdlib.sync.sync-semaphore-post handle)
     unit))
 
 ;: Lexical guard returned by `mutex-i64-lock`.
@@ -174,53 +184,55 @@
 
 ;: Finish mutex creation after storage allocation.
 (define (mutex-i64-create-semaphore [value-addr : i64]) : MutexI64CreateResult
-  (match (thread-semaphore-create 1)
-    [(ThreadSemaphoreErr message)
+  (match (thread_mod.thread-semaphore-create 1)
+    [(thread_mod.ThreadSemaphoreErr message)
       (begin
-        (sync-runtime-free value-addr 8)
+        (stdlib.sync.sync-runtime-free value-addr 8)
         (MutexI64CreateErr message))]
-    [(ThreadSemaphoreOk mutex)
+    [(thread_mod.ThreadSemaphoreOk mutex)
       (MutexI64CreateOk (MutexI64 value-addr (struct-get mutex handle)))]))
 
 ;: Create a mutex-protected `i64` initialized to `initial`.
 (define (mutex-i64-create [initial : i64]) : MutexI64CreateResult
   (let
-    [value-addr : i64 (sync-runtime-alloc 8)]
+    [value-addr : i64 (stdlib.sync.sync-runtime-alloc 8)]
     (if (= value-addr 0)
       (MutexI64CreateErr "sync: mutex allocation failed")
       (begin
-        (sync-write-i64! value-addr 0 initial)
-        (mutex-i64-create-semaphore value-addr)))))
+        (stdlib.sync.sync-write-i64! value-addr 0 initial)
+        (stdlib.sync.mutex-i64-create-semaphore value-addr)))))
 
 ;: Lock `mutex`, blocking until the protected value is available.
 (define (mutex-i64-lock [mutex : MutexI64]) : MutexI64Guard
-  (if (sync-semaphore-wait (struct-get mutex mutex-handle))
+  (if (stdlib.sync.sync-semaphore-wait (struct-get mutex mutex-handle))
     (MutexI64Guard
       (struct-get mutex mutex-handle)
       (struct-get mutex value-addr))
-    (sync-abort 134)))
+    (stdlib.sync.sync-abort 134)))
 
 ;: Read the protected value while holding `guard`.
 (define (mutex-i64-get [guard : (& guard MutexI64Guard)]) : i64
-  (sync-read-i64 (struct-get guard value-addr) 0))
+  (stdlib.sync.sync-read-i64 (struct-get guard value-addr) 0))
 
 ;: Write the protected value while holding `guard`.
 (define (mutex-i64-set! [guard : (& guard MutexI64Guard)] [value : i64]) : unit
-  (sync-write-i64! (struct-get guard value-addr) 0 value))
+  (stdlib.sync.sync-write-i64! (struct-get guard value-addr) 0 value))
 
 ;: Add `delta` to the protected value and return the new value.
 (define (mutex-i64-add! [guard : (& guard MutexI64Guard)] [delta : i64]) : i64
   (let
-    [next : i64 (+ (mutex-i64-get guard) delta)]
+    [next : i64 (+ (stdlib.sync.mutex-i64-get guard) delta)]
     (begin
-      (mutex-i64-set! guard next)
+      (stdlib.sync.mutex-i64-set! guard next)
       next)))
 
 ;: Close mutex resources after all users and guards are done.
 (define (mutex-i64-close [mutex : MutexI64]) : bool
   (let
-    [mutex-ok : bool (sync-semaphore-close (struct-get mutex mutex-handle))]
-    [value-ok : bool (sync-runtime-free (struct-get mutex value-addr) 8)]
+    [mutex-ok : bool
+      (stdlib.sync.sync-semaphore-close (struct-get mutex mutex-handle))]
+    [value-ok : bool
+      (stdlib.sync.sync-runtime-free (struct-get mutex value-addr) 8)]
     (and mutex-ok value-ok)))
 
 ;: Store a mutex handle into a raw `i64` array at `offset`.
@@ -250,9 +262,9 @@
   [state-addr : i64]
   [capacity : i64]
   [slots-bytes : i64]
-  [mutex : ThreadSemaphore]
-  [items : ThreadSemaphore]
-  [spaces : ThreadSemaphore]) : ChannelI64
+  [mutex : thread_mod.ThreadSemaphore]
+  [items : thread_mod.ThreadSemaphore]
+  [spaces : thread_mod.ThreadSemaphore]) : ChannelI64
   (ChannelI64
     slots-addr
     state-addr
@@ -268,35 +280,35 @@
   [state-addr : i64]
   [capacity : i64]
   [slots-bytes : i64]) : ChannelI64CreateResult
-  (match (thread-semaphore-create 1)
-    [(ThreadSemaphoreErr message)
+  (match (thread_mod.thread-semaphore-create 1)
+    [(thread_mod.ThreadSemaphoreErr message)
       (begin
-        (sync-runtime-free slots-addr slots-bytes)
-        (sync-runtime-free state-addr 16)
+        (stdlib.sync.sync-runtime-free slots-addr slots-bytes)
+        (stdlib.sync.sync-runtime-free state-addr 16)
         (ChannelI64CreateErr message))]
-    [(ThreadSemaphoreOk mutex)
-      (match (thread-semaphore-create 0)
-        [(ThreadSemaphoreErr message)
+    [(thread_mod.ThreadSemaphoreOk mutex)
+      (match (thread_mod.thread-semaphore-create 0)
+        [(thread_mod.ThreadSemaphoreErr message)
           (begin
-            (sync-semaphore-close (struct-get mutex handle))
-            (sync-runtime-free slots-addr slots-bytes)
-            (sync-runtime-free state-addr 16)
+            (stdlib.sync.sync-semaphore-close (struct-get mutex handle))
+            (stdlib.sync.sync-runtime-free slots-addr slots-bytes)
+            (stdlib.sync.sync-runtime-free state-addr 16)
             (ChannelI64CreateErr message))]
-        [(ThreadSemaphoreOk items)
-          (match (thread-semaphore-create capacity)
-            [(ThreadSemaphoreErr message)
+        [(thread_mod.ThreadSemaphoreOk items)
+          (match (thread_mod.thread-semaphore-create capacity)
+            [(thread_mod.ThreadSemaphoreErr message)
               (begin
-                (sync-semaphore-close (struct-get mutex handle))
-                (sync-semaphore-close (struct-get items handle))
-                (sync-runtime-free slots-addr slots-bytes)
-                (sync-runtime-free state-addr 16)
+                (stdlib.sync.sync-semaphore-close (struct-get mutex handle))
+                (stdlib.sync.sync-semaphore-close (struct-get items handle))
+                (stdlib.sync.sync-runtime-free slots-addr slots-bytes)
+                (stdlib.sync.sync-runtime-free state-addr 16)
                 (ChannelI64CreateErr message))]
-            [(ThreadSemaphoreOk spaces)
+            [(thread_mod.ThreadSemaphoreOk spaces)
               (begin
-                (sync-write-i64! state-addr 0 0)
-                (sync-write-i64! state-addr 1 0)
+                (stdlib.sync.sync-write-i64! state-addr 0 0)
+                (stdlib.sync.sync-write-i64! state-addr 1 0)
                 (ChannelI64CreateOk
-                  (channel-i64-handle
+                  (stdlib.sync.channel-i64-handle
                     slots-addr
                     state-addr
                     capacity
@@ -309,20 +321,20 @@
 (define (channel-i64-create [capacity : i64]) : ChannelI64CreateResult
   (if (<= capacity 0)
     (ChannelI64CreateErr "sync: channel capacity must be positive")
-    (if (> capacity channel-i64-max-capacity)
+    (if (> capacity stdlib.sync.channel-i64-max-capacity)
       (ChannelI64CreateErr "sync: channel capacity exceeds maximum")
       (let
         [slots-bytes : i64 (* capacity 8)]
-        [slots-addr : i64 (sync-runtime-alloc slots-bytes)]
+        [slots-addr : i64 (stdlib.sync.sync-runtime-alloc slots-bytes)]
         (if (= slots-addr 0)
           (ChannelI64CreateErr "sync: channel allocation failed")
           (let
-            [state-addr : i64 (sync-runtime-alloc 16)]
+            [state-addr : i64 (stdlib.sync.sync-runtime-alloc 16)]
             (if (= state-addr 0)
               (begin
-                (sync-runtime-free slots-addr slots-bytes)
+                (stdlib.sync.sync-runtime-free slots-addr slots-bytes)
                 (ChannelI64CreateErr "sync: channel allocation failed"))
-              (channel-i64-create-semaphores
+              (stdlib.sync.channel-i64-create-semaphores
                 slots-addr
                 state-addr
                 capacity
@@ -330,59 +342,75 @@
 
 ;: Send `value`, blocking until one slot is available.
 (define (channel-i64-send [channel : ChannelI64] [value : i64]) : ChannelI64SendResult
-  (if (not (sync-semaphore-wait (struct-get channel spaces-handle)))
+  (if (not (stdlib.sync.sync-semaphore-wait (struct-get channel spaces-handle)))
     (ChannelI64SendErr "sync: channel send wait failed")
-    (if (not (sync-semaphore-wait (struct-get channel mutex-handle)))
+    (if (not
+      (stdlib.sync.sync-semaphore-wait (struct-get channel mutex-handle)))
       (begin
-        (sync-semaphore-post (struct-get channel spaces-handle))
+        (stdlib.sync.sync-semaphore-post (struct-get channel spaces-handle))
         (ChannelI64SendErr "sync: channel lock failed"))
       (let
-        [tail : i64 (sync-read-i64 (struct-get channel state-addr) 1)]
+        [tail : i64
+          (stdlib.sync.sync-read-i64 (struct-get channel state-addr) 1)]
         (begin
-          (sync-write-i64! (struct-get channel slots-addr) tail value)
-          (sync-write-i64!
+          (stdlib.sync.sync-write-i64!
+            (struct-get channel slots-addr)
+            tail
+            value)
+          (stdlib.sync.sync-write-i64!
             (struct-get channel state-addr)
             1
-            (channel-i64-next-index channel tail))
-          (if (not (sync-semaphore-post (struct-get channel mutex-handle)))
+            (stdlib.sync.channel-i64-next-index channel tail))
+          (if (not
+            (stdlib.sync.sync-semaphore-post (struct-get channel mutex-handle)))
             (ChannelI64SendErr "sync: channel unlock failed")
-            (if (sync-semaphore-post (struct-get channel items-handle))
-              (ChannelI64SendOk)
+            (if (stdlib.sync.sync-semaphore-post
+              (struct-get channel items-handle))
+              stdlib.sync.ChannelI64SendOk
               (ChannelI64SendErr "sync: channel send signal failed"))))))))
 
 ;: Receive one value, blocking until one queued message is available.
 (define (channel-i64-recv [channel : ChannelI64]) : ChannelI64RecvResult
-  (if (not (sync-semaphore-wait (struct-get channel items-handle)))
+  (if (not (stdlib.sync.sync-semaphore-wait (struct-get channel items-handle)))
     (ChannelI64RecvErr "sync: channel recv wait failed")
-    (if (not (sync-semaphore-wait (struct-get channel mutex-handle)))
+    (if (not
+      (stdlib.sync.sync-semaphore-wait (struct-get channel mutex-handle)))
       (begin
-        (sync-semaphore-post (struct-get channel items-handle))
+        (stdlib.sync.sync-semaphore-post (struct-get channel items-handle))
         (ChannelI64RecvErr "sync: channel lock failed"))
       (let
-        [head : i64 (sync-read-i64 (struct-get channel state-addr) 0)]
-        [value : i64 (sync-read-i64 (struct-get channel slots-addr) head)]
+        [head : i64
+          (stdlib.sync.sync-read-i64 (struct-get channel state-addr) 0)]
+        [value : i64
+          (stdlib.sync.sync-read-i64 (struct-get channel slots-addr) head)]
         (begin
-          (sync-write-i64!
+          (stdlib.sync.sync-write-i64!
             (struct-get channel state-addr)
             0
-            (channel-i64-next-index channel head))
-          (if (not (sync-semaphore-post (struct-get channel mutex-handle)))
+            (stdlib.sync.channel-i64-next-index channel head))
+          (if (not
+            (stdlib.sync.sync-semaphore-post (struct-get channel mutex-handle)))
             (ChannelI64RecvErr "sync: channel unlock failed")
-            (if (sync-semaphore-post (struct-get channel spaces-handle))
+            (if (stdlib.sync.sync-semaphore-post
+              (struct-get channel spaces-handle))
               (ChannelI64RecvOk value)
               (ChannelI64RecvErr "sync: channel recv signal failed"))))))))
 
 ;: Close channel resources after all senders/receivers are done.
 (define (channel-i64-close [channel : ChannelI64]) : bool
   (let
-    [mutex-ok : bool (sync-semaphore-close (struct-get channel mutex-handle))]
-    [items-ok : bool (sync-semaphore-close (struct-get channel items-handle))]
-    [spaces-ok : bool (sync-semaphore-close (struct-get channel spaces-handle))]
+    [mutex-ok : bool
+      (stdlib.sync.sync-semaphore-close (struct-get channel mutex-handle))]
+    [items-ok : bool
+      (stdlib.sync.sync-semaphore-close (struct-get channel items-handle))]
+    [spaces-ok : bool
+      (stdlib.sync.sync-semaphore-close (struct-get channel spaces-handle))]
     [slots-ok : bool
-      (sync-runtime-free
+      (stdlib.sync.sync-runtime-free
         (struct-get channel slots-addr)
         (struct-get channel slots-bytes))]
-    [state-ok : bool (sync-runtime-free (struct-get channel state-addr) 16)]
+    [state-ok : bool
+      (stdlib.sync.sync-runtime-free (struct-get channel state-addr) 16)]
     (and mutex-ok items-ok spaces-ok slots-ok state-ok)))
 
 ;: Store a channel handle into a raw `i64` array at `offset`.
@@ -409,3 +437,67 @@
     (array-ref src (+ offset 4))
     (array-ref src (+ offset 5))
     (array-ref src (+ offset 6))))
+
+;# Dotted-module migration: preserve the pre-module flat stdlib surface.
+(export
+  (value channel-i64-max-capacity)
+  (value channel-i64-raw-field-count)
+  (value mutex-i64-raw-field-count)
+  (value sync-abort)
+  (value sync-runtime-alloc)
+  (value sync-runtime-free)
+  (value sync-addr->mut-i64)
+  (value sync-read-i64)
+  (value sync-write-i64!)
+  (value sync-semaphore)
+  (value sync-semaphore-wait)
+  (value sync-semaphore-post)
+  (value sync-semaphore-close)
+  (value mutex-i64-unlock-handle)
+  (value mutex-i64-create-semaphore)
+  (value mutex-i64-create)
+  (value mutex-i64-lock)
+  (value mutex-i64-get)
+  (value mutex-i64-set!)
+  (value mutex-i64-add!)
+  (value mutex-i64-close)
+  (value mutex-i64-store-raw!)
+  (value mutex-i64-load-raw)
+  (value channel-i64-next-index)
+  (value channel-i64-handle)
+  (value channel-i64-create-semaphores)
+  (value channel-i64-create)
+  (value channel-i64-send)
+  (value channel-i64-recv)
+  (value channel-i64-close)
+  (value channel-i64-store-raw!)
+  (value channel-i64-load-raw)
+  (type MutexI64)
+  (type ChannelI64)
+  (type ChannelI64CreateResult)
+  (type MutexI64CreateResult)
+  (type ChannelI64SendResult)
+  (type ChannelI64RecvResult)
+  (type MutexI64Guard)
+  (constructor MutexI64)
+  (constructor ChannelI64)
+  (constructor MutexI64Guard)
+  (field MutexI64 value-addr)
+  (field MutexI64 mutex-handle)
+  (field ChannelI64 slots-addr)
+  (field ChannelI64 state-addr)
+  (field ChannelI64 capacity)
+  (field ChannelI64 slots-bytes)
+  (field ChannelI64 mutex-handle)
+  (field ChannelI64 items-handle)
+  (field ChannelI64 spaces-handle)
+  (field MutexI64Guard mutex-handle)
+  (field MutexI64Guard value-addr)
+  (variant ChannelI64CreateOk)
+  (variant ChannelI64CreateErr)
+  (variant MutexI64CreateOk)
+  (variant MutexI64CreateErr)
+  (variant ChannelI64SendOk)
+  (variant ChannelI64SendErr)
+  (variant ChannelI64RecvOk)
+  (variant ChannelI64RecvErr))

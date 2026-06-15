@@ -10,22 +10,24 @@
 ;# code. Both use stable insertion sort and mutate only the live prefix
 ;# `[0, len)` of the existing backing array.
 ;#
-;# Usage: `(import "stdlib/sort.tl")`
+;# Usage: `(import stdlib.sort)`
 ;#
 ;# ```typelisp
-;# (import "stdlib/vector.tl")
-;# (import "stdlib/sort.tl")
+;# (import stdlib.vector)
+;# (import stdlib.sort)
 ;#
 ;# (define (main) : i64
 ;#   (let
-;#     [v : I64Vec
-;#       (i64-vec-push
-;#         (i64-vec-push (i64-vec-push (i64-vec-new) 3) 1)
+;#     [v : vector.I64Vec
+;#       (vector.i64-vec-push
+;#         (vector.i64-vec-push (vector.i64-vec-push (vector.i64-vec-new) 3) 1)
 ;#         2)]
-;#     [sorted : I64Vec (i64-vec-sort! v)]
-;#     (+ (i64-vec-get sorted 0 0) (i64-vec-get sorted 2 0))))
+;#     [sorted : vector.I64Vec (sort.i64-vec-sort! v)]
+;#     (+ (vector.i64-vec-get sorted 0 0) (vector.i64-vec-get sorted 2 0))))
 ;# ```
-(import "vector.tl")
+(module stdlib.sort)
+
+(import stdlib.vector as vector_mod)
 
 ;: Return the character code at `idx` in borrowed text.
 (define (sort-char-code-at [text : (& text str)] [idx : i64]) : i64
@@ -49,8 +51,8 @@
     (begin
       (while (and (not done) (< idx limit))
         (let
-          [lc : i64 (sort-char-code-at left idx)]
-          [rc : i64 (sort-char-code-at right idx)]
+          [lc : i64 (stdlib.sort.sort-char-code-at left idx)]
+          [rc : i64 (stdlib.sort.sort-char-code-at right idx)]
           (if (= lc rc)
             (set! idx (+ idx 1))
             (begin
@@ -62,14 +64,14 @@
 
 ;: Owned-string wrapper for `sort-string-less-borrowed?`.
 (define (sort-string-less? [left : String] [right : String]) : bool
-  (sort-string-less-borrowed? (& left) (& right)))
+  (stdlib.sort.sort-string-less-borrowed? (& left) (& right)))
 
 ;: Stable in-place ascending insertion sort for an `I64Vec`. Mutates the
 ;: vector's existing backing array and returns the same threaded vector value.
-(define (i64-vec-sort! [v : I64Vec]) : I64Vec
+(define (i64-vec-sort! [v : vector_mod.I64Vec]) : vector_mod.I64Vec
   (let
-    [slots : (Array i64) (i64-vec-slots v)]
-    [n : i64 (i64-vec-len v)]
+    [slots : (Array i64) (vector_mod.i64-vec-slots v)]
+    [n : i64 (vector_mod.i64-vec-len v)]
     [i : i64 1]
     (begin
       (while (< i n)
@@ -88,10 +90,10 @@
 ;: Stable in-place ascending insertion sort for a `StringVec`, using
 ;: lexicographic character-code ordering. Mutates the vector's existing backing
 ;: array and returns the same threaded vector value.
-(define (string-vec-sort! [v : StringVec]) : StringVec
+(define (string-vec-sort! [v : vector_mod.StringVec]) : vector_mod.StringVec
   (let
-    [slots : (Array String) (string-vec-slots v)]
-    [n : i64 (string-vec-len v)]
+    [slots : (Array String) (vector_mod.string-vec-slots v)]
+    [n : i64 (vector_mod.string-vec-len v)]
     [i : i64 1]
     (begin
       (while (< i n)
@@ -101,10 +103,18 @@
           (begin
             (while (and
               (> j 0)
-              (sort-string-less? value (array-ref slots (- j 1))))
+              (stdlib.sort.sort-string-less? value (array-ref slots (- j 1))))
               (begin
                 (array-set! slots j (array-ref slots (- j 1)))
                 (set! j (- j 1))))
             (array-set! slots j value)
             (set! i (+ i 1)))))
       v)))
+
+;# Dotted-module migration: preserve the pre-module flat stdlib surface.
+(export
+  (value sort-char-code-at)
+  (value sort-string-less-borrowed?)
+  (value sort-string-less?)
+  (value i64-vec-sort!)
+  (value string-vec-sort!))

@@ -1,23 +1,23 @@
-(import "stdlib/text_buf_borrowed.tl")
+(import stdlib.text_buf_borrowed)
 
 (define (text-buf-borrowed-check-render [text : String] [chunk : String]) : String
   (let
-    [left : (TextBufBorrowed text)
-      (text-buf-borrowed-append-owned (text-buf-borrowed-single (& text)) "-")]
-    [right : (TextBufBorrowed text)
-      (text-buf-borrowed-append
-        (text-buf-borrowed-empty-like (& text))
+    [left : (text_buf_borrowed.TextBufBorrowed text)
+      (text_buf_borrowed.text-buf-borrowed-append-owned (text_buf_borrowed.text-buf-borrowed-single (& text)) "-")]
+    [right : (text_buf_borrowed.TextBufBorrowed text)
+      (text_buf_borrowed.text-buf-borrowed-append
+        (text_buf_borrowed.text-buf-borrowed-empty-like (& text))
         (& text))]
-    [joined : (TextBufBorrowed text)
-      (text-buf-borrowed-append-buffer left right)]
-    [copied : (TextBufBorrowed text)
-      (text-buf-borrowed-append-copy joined (& chunk))]
-    (text-buf-borrowed-render copied)))
+    [joined : (text_buf_borrowed.TextBufBorrowed text)
+      (text_buf_borrowed.text-buf-borrowed-append-buffer left right)]
+    [copied : (text_buf_borrowed.TextBufBorrowed text)
+      (text_buf_borrowed.text-buf-borrowed-append-copy joined (& chunk))]
+    (text_buf_borrowed.text-buf-borrowed-render copied)))
 
 (define (main [text : String] [chunk : String]) : unit
   (let
-    [empty : (TextBufBorrowed text) (text-buf-borrowed-empty-like (& text))]
+    [empty : (text_buf_borrowed.TextBufBorrowed text) (text_buf_borrowed.text-buf-borrowed-empty-like (& text))]
     [rendered : String (text-buf-borrowed-check-render text chunk)]
-    [empty? : bool (text-buf-borrowed-empty? empty)]
-    [len : i64 (text-buf-borrowed-length empty)]
+    [empty? : bool (text_buf_borrowed.text-buf-borrowed-empty? empty)]
+    [len : i64 (text_buf_borrowed.text-buf-borrowed-length empty)]
     unit))

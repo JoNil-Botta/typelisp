@@ -3,15 +3,15 @@
 ;; Removes deterministic TypeLisp build artifacts without walking arbitrary
 ;; directories. Source-file cleanup targets default source-adjacent outputs;
 ;; package cleanup targets the manifest's package output directory.
-(import "../stdlib/fs.tl")
+(import stdlib.fs as fs_mod)
 
-(import "../stdlib/io.tl")
+(import stdlib.io as io_mod)
 
 (import "build_cli_core.tl")
 
-(import "../stdlib/string.tl")
+(import stdlib.string as string_mod)
 
-(import "../stdlib/str_cat.tl")
+(import stdlib.str_cat)
 
 (defenum CleanConfig
   (CleanSourceConfig String bool)
@@ -72,11 +72,13 @@
     [suffix-len : i64 (string-length suffix)]
     (if (> suffix-len text-len)
       false
-      (string-eq (substring text (- text-len suffix-len) suffix-len) suffix))))
+      (string_mod.string-eq
+        (string_mod.substring text (- text-len suffix-len) suffix-len)
+        suffix))))
 
 (define (clean-vcs-metadata-path? [path : String]) : bool
   (or
-    (string-eq path ".git")
+    (string_mod.string-eq path ".git")
     (clean-string-prefix? path ".git/")
     (clean-string-prefix? path ".git\\")
     (clean-string-contains? path "/.git/")
@@ -87,24 +89,24 @@
 (define (clean-dangerous-path? [path : String]) : bool
   (or
     (= (string-length path) 0)
-    (string-eq path ".")
-    (string-eq path "..")
-    (string-eq path "/")
-    (string-eq path "\\")
+    (string_mod.string-eq path ".")
+    (string_mod.string-eq path "..")
+    (string_mod.string-eq path "/")
+    (string_mod.string-eq path "\\")
     (clean-vcs-metadata-path? path)))
 
 (define (clean-file-exists? [path : String]) : bool
   (match (source-tool-try-file-exists? path)
-    [(OkIoBool exists) exists]
-    [(ErrIoBool _) false]))
+    [(io_mod.OkIoBool exists) exists]
+    [(io_mod.ErrIoBool _) false]))
 
 (define (clean-report [dry-run : bool] [path : String]) : unit
-  (print-string
-    (string-append
+  (io_mod.print-string
+    (string_mod.string-append
       (if dry-run
         "Would remove: "
         "Removed: ")
-      (string-append path "\n"))))
+      (string_mod.string-append path "\n"))))
 
 (define (clean-remove-file [dry-run : bool] [path : String]) : i64
   (if (clean-file-exists? path)
@@ -113,17 +115,17 @@
         (clean-report true path)
         0)
       (match (source-tool-try-remove-file-if-exists path)
-        [(OkIoUnit)
+        [(io_mod.OkIoUnit)
           (begin
             (clean-report false path)
             0)]
-        [(ErrIoUnit error)
+        [(io_mod.ErrIoUnit error)
           (begin
-            (print-error
-              (str-cat
+            (io_mod.print-error
+              (str_cat.str-cat
                 "clean: failed to remove file "
                 path
-                (string-append ": " (io-error-message error))))
+                (string_mod.string-append ": " (io_mod.io-error-message error))))
             1)]))
     0))
 
@@ -134,17 +136,17 @@
         (clean-report true path)
         0)
       (match (source-tool-try-remove-dir-if-exists path)
-        [(OkIoUnit)
+        [(io_mod.OkIoUnit)
           (begin
             (clean-report false path)
             0)]
-        [(ErrIoUnit error)
+        [(io_mod.ErrIoUnit error)
           (begin
-            (print-error
-              (str-cat
+            (io_mod.print-error
+              (str_cat.str-cat
                 "clean: failed to remove directory "
                 path
-                (string-append ": " (io-error-message error))))
+                (string_mod.string-append ": " (io_mod.io-error-message error))))
             1)]))
     0))
 
@@ -156,7 +158,7 @@
 (define (clean-source-artifact-safe? [source : String] [path : String]) : bool
   (and
     (not (clean-dangerous-path? path))
-    (not (string-eq source path))
+    (not (string_mod.string-eq source path))
     (not (clean-string-suffix? path ".tl"))))
 
 (define (clean-remove-source-artifact
@@ -233,10 +235,12 @@
   [path : String]) : bool
   (let
     [output-dir : String (build-package-output-dir manifest-dir name)]
-    [output-prefix : String (string-append output-dir "/")]
+    [output-prefix : String (string_mod.string-append output-dir "/")]
     (and
       (not (clean-dangerous-path? path))
-      (or (string-eq path output-dir) (clean-string-prefix? path output-prefix)))))
+      (or
+        (string_mod.string-eq path output-dir)
+        (clean-string-prefix? path output-prefix)))))
 
 (define (clean-remove-package-file
   [manifest-dir : String]
@@ -246,7 +250,8 @@
   (if (clean-package-artifact-safe? manifest-dir name path)
     (clean-remove-file dry-run path)
     (begin
-      (print-error (str-cat "clean: refusing unsafe artifact path " path ""))
+      (io_mod.print-error
+        (str_cat.str-cat "clean: refusing unsafe artifact path " path ""))
       1)))
 
 (define (clean-remove-package-dir
@@ -257,14 +262,15 @@
   (if (clean-package-artifact-safe? manifest-dir name path)
     (clean-remove-dir dry-run path)
     (begin
-      (print-error (str-cat "clean: refusing unsafe artifact path " path ""))
+      (io_mod.print-error
+        (str_cat.str-cat "clean: refusing unsafe artifact path " path ""))
       1)))
 
 (define (clean-package-from-path [manifest-path : String] [dry-run : bool]) : i64
   (match (build-load-manifest manifest-path)
     [(ErrBuildManifest message)
       (begin
-        (print-error (string-append "Error: " message))
+        (io_mod.print-error (string_mod.string-append "Error: " message))
         1)]
     [(OkBuildManifest manifest)
       (let
@@ -273,8 +279,8 @@
         [status : i64 0]
         (if (not (clean-package-name-safe? name))
           (begin
-            (print-error
-              (str-cat "clean: refusing unsafe package name " name ""))
+            (io_mod.print-error
+              (str_cat.str-cat "clean: refusing unsafe package name " name ""))
             1)
           (begin
             (set!
@@ -390,7 +396,7 @@
     (match resolved-manifest
       [(CompilerLoadNoPath)
         (begin
-          (print-error
+          (io_mod.print-error
             "clean: could not find typelisp.pkg from '.' or any parent directory")
           1)]
       [(CompilerLoadSomePath path) (clean-package-from-path path dry-run)])))
@@ -414,8 +420,8 @@
         (OkCleanConfig (CleanSourceConfig source dry-run))
         (OkCleanConfig (CleanPackageConfig manifest has-manifest dry-run))))
     (let
-      [current : String (arg idx)]
-      (if (string-eq current "--dry-run")
+      [current : String (io_mod.arg idx)]
+      (if (string_mod.string-eq current "--dry-run")
         (clean-parse-options
           (+ idx 1)
           count
@@ -424,7 +430,7 @@
           manifest
           has-manifest
           true)
-        (if (string-eq current "--manifest-path")
+        (if (string_mod.string-eq current "--manifest-path")
           (if (>= (+ idx 1) count)
             (ErrCleanConfig "clean: --manifest-path requires a value")
             (if has-manifest
@@ -435,11 +441,12 @@
                 count
                 source
                 has-source
-                (arg (+ idx 1))
+                (io_mod.arg (+ idx 1))
                 true
                 dry-run)))
           (if (clean-flag? current)
-            (ErrCleanConfig (string-append "clean: unknown flag " current))
+            (ErrCleanConfig
+              (string_mod.string-append "clean: unknown flag " current))
             (if has-source
               (ErrCleanConfig "clean: accepts only one source file")
               (clean-parse-options
@@ -463,5 +470,5 @@
           (clean-package manifest has-manifest dry-run)])]
     [(ErrCleanConfig message)
       (begin
-        (print-error message)
+        (io_mod.print-error message)
         1)]))

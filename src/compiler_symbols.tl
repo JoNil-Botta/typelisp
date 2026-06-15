@@ -3,18 +3,23 @@
 ;; Handles are packed as kind * stride + declaration index, where index is the
 ;; source-order position among supported declarations. Import declarations have
 ;; no top-level symbol name here and do not consume an index.
-(import "../stdlib/io.tl")
+(import stdlib.io as io_mod)
 
 (import "compiler_parse_core.tl")
 
 (import "sym_i64_env.tl")
 
-(import "../stdlib/hashmap.tl")
+(import stdlib.hashmap as hashmap_mod)
 
-(import "../stdlib/string.tl")
+(import stdlib.string as string_mod)
 
 (defenum CompilerSymbols
-  (CompilerSymbols I64I64Map I64I64Map I64I64Map (Array AstDecl) (Array String)))
+  (CompilerSymbols
+    hashmap_mod.I64I64Map
+    hashmap_mod.I64I64Map
+    hashmap_mod.I64I64Map
+    (Array AstDecl)
+    (Array String)))
 
 (defenum ResultCompilerSymbols
   (OkCompilerSymbols CompilerSymbols)
@@ -28,14 +33,14 @@
   (CompilerQualifiedName i64 i64))
 
 (defenum CompilerRegistries
-  (CompilerRegistries I64I64Map I64I64Map))
+  (CompilerRegistries hashmap_mod.I64I64Map hashmap_mod.I64I64Map))
 
 (defenum ResultCompilerRegistries
   (OkCompilerRegistries CompilerRegistries)
   (ErrCompilerRegistries String))
 
 (defenum CompilerExports
-  (CompilerExports I64I64Map))
+  (CompilerExports hashmap_mod.I64I64Map))
 
 (defenum ResultCompilerExports
   (OkCompilerExports CompilerExports)
@@ -110,35 +115,43 @@
     (compiler-symbol-kind-defstruct)
     (compiler-registry-handle-owner-index handle)))
 
-(define (compiler-symbol-map-empty) : I64I64Map
-  (i64-i64-map-with-capacity 256))
+(define (compiler-symbol-map-empty) : hashmap_mod.I64I64Map
+  (hashmap_mod.i64-i64-map-with-capacity 256))
 
-(define (compiler-symbol-map-lookup-id [map : I64I64Map] [name-id : i64]) : MaybeI64
-  (match (i64-i64-map-get map name-id)
-    [(I64I64MapFound value) (SomeI64 value)]
-    [(I64I64MapMissing) NoneI64]))
+(define (compiler-symbol-map-lookup-id
+  [map : hashmap_mod.I64I64Map]
+  [name-id : i64]) : MaybeI64
+  (match (hashmap_mod.i64-i64-map-get map name-id)
+    [(hashmap_mod.I64I64MapFound value) (SomeI64 value)]
+    [(hashmap_mod.I64I64MapMissing) NoneI64]))
 
-(define (compiler-symbol-map-lookup [map : I64I64Map] [name : String]) : MaybeI64
+(define (compiler-symbol-map-lookup
+  [map : hashmap_mod.I64I64Map]
+  [name : String]) : MaybeI64
   (compiler-symbol-map-lookup-id map (compiler-symbol-name-key-id name)))
 
-(define (compiler-symbol-map-contains-id? [map : I64I64Map] [name-id : i64]) : bool
+(define (compiler-symbol-map-contains-id?
+  [map : hashmap_mod.I64I64Map]
+  [name-id : i64]) : bool
   (match (compiler-symbol-map-lookup-id map name-id)
     [(SomeI64 _) true]
     [(NoneI64) false]))
 
-(define (compiler-symbol-map-contains? [map : I64I64Map] [name : String]) : bool
+(define (compiler-symbol-map-contains?
+  [map : hashmap_mod.I64I64Map]
+  [name : String]) : bool
   (compiler-symbol-map-contains-id? map (compiler-symbol-name-key-id name)))
 
 (define (compiler-symbol-map-bind-id
-  [map : I64I64Map]
+  [map : hashmap_mod.I64I64Map]
   [name-id : i64]
-  [handle : i64]) : I64I64Map
-  (i64-i64-map-put map name-id handle))
+  [handle : i64]) : hashmap_mod.I64I64Map
+  (hashmap_mod.i64-i64-map-put map name-id handle))
 
 (define (compiler-symbol-map-bind
-  [map : I64I64Map]
+  [map : hashmap_mod.I64I64Map]
   [name : String]
-  [handle : i64]) : I64I64Map
+  [handle : i64]) : hashmap_mod.I64I64Map
   (compiler-symbol-map-bind-id map (compiler-symbol-name-key-id name) handle))
 
 (define (compiler-decl-list-index-count [decls : AstDeclList]) : i64
@@ -285,24 +298,26 @@
     [(CompilerSymbols _ _ _ _ owner-names) owner-names]))
 
 (define (compiler-symbols-duplicate-value-message [name : String]) : String
-  (string-append "symbols: duplicate value declaration " name))
+  (string_mod.string-append "symbols: duplicate value declaration " name))
 
 (define (compiler-symbols-duplicate-type-message [name : String]) : String
-  (string-append "symbols: duplicate type declaration " name))
+  (string_mod.string-append "symbols: duplicate type declaration " name))
 
 (define (compiler-symbols-duplicate-macro-message [name : String]) : String
-  (string-append "symbols: duplicate macro declaration " name))
+  (string_mod.string-append "symbols: duplicate macro declaration " name))
 
 (define (compiler-symbols-duplicate-macro-value-message [name : String]) : String
-  (string-append "symbols: duplicate macro/value declaration " name))
+  (string_mod.string-append "symbols: duplicate macro/value declaration " name))
 
 (define (compiler-registries-duplicate-variant-message [name : String]) : String
-  (string-append "symbols: duplicate enum variant " name))
+  (string_mod.string-append "symbols: duplicate enum variant " name))
 
 (define (compiler-struct-field-key [struct-name : String] [field-name : String]) : String
   ;; Flat field registry key. Field names may repeat across structs because the
   ;; struct name is part of the key.
-  (string-append (string-append struct-name ".") field-name))
+  (string_mod.string-append
+    (string_mod.string-append struct-name ".")
+    field-name))
 
 (define (compiler-composite-pair-key-id [left-id : i64] [right-id : i64]) : i64
   (+ (intern-capacity) (+ (* left-id (intern-capacity)) right-id)))
@@ -344,14 +359,14 @@
 (define (compiler-registries-duplicate-field-message
   [struct-name : String]
   [field-name : String]) : String
-  (string-append
+  (string_mod.string-append
     "symbols: duplicate field "
     (compiler-struct-field-key struct-name field-name)))
 
 (define (compiler-symbol-module-key [module : String] [name : String]) : String
   (if (= (string-length module) 0)
     name
-    (string-append module (string-append "/" name))))
+    (string_mod.string-append module (string_mod.string-append "/" name))))
 
 (define (compiler-qualified-name [module : String] [name : String]) : CompilerQualifiedName
   (CompilerQualifiedName (intern module) (intern name)))
@@ -405,7 +420,7 @@
 (define (compiler-export-key [module : String] [kind : String] [name : String]) : String
   (compiler-symbol-module-key
     module
-    (string-append kind (string-append ":" name))))
+    (string_mod.string-append kind (string_mod.string-append ":" name))))
 
 (define (compiler-export-key-id-by-id
   [module-id : i64]
@@ -429,31 +444,31 @@
   [kind : String]
   [module : String]
   [name : String]) : String
-  (string-append
+  (string_mod.string-append
     "symbols: cannot export unknown "
-    (string-append
+    (string_mod.string-append
       kind
-      (string-append " " (compiler-export-display-name module name)))))
+      (string_mod.string-append " " (compiler-export-display-name module name)))))
 
 (define (compiler-export-namespace-message
   [kind : String]
   [module : String]
   [name : String]) : String
-  (string-append
+  (string_mod.string-append
     "symbols: export namespace mismatch for "
-    (string-append
+    (string_mod.string-append
       kind
-      (string-append " " (compiler-export-display-name module name)))))
+      (string_mod.string-append " " (compiler-export-display-name module name)))))
 
 (define (compiler-export-duplicate-message
   [kind : String]
   [module : String]
   [name : String]) : String
-  (string-append
+  (string_mod.string-append
     "symbols: duplicate export "
-    (string-append
+    (string_mod.string-append
       kind
-      (string-append " " (compiler-export-display-name module name)))))
+      (string_mod.string-append " " (compiler-export-display-name module name)))))
 
 (define (compiler-symbols-add-value-alias
   [symbols : CompilerSymbols]
@@ -509,12 +524,12 @@
       (match (compiler-symbol-map-lookup macros name)
         [(SomeI64 existing)
           (if (= existing handle)
-            (match (i64-i64-map-remove
+            (match (hashmap_mod.i64-i64-map-remove
               macros
               (compiler-symbol-name-key-id name))
-              [(I64I64MapRemoveOk next-macros)
+              [(hashmap_mod.I64I64MapRemoveOk next-macros)
                 (CompilerSymbols values types next-macros decls owner-names)]
-              [(I64I64MapRemoveMissing _) symbols])
+              [(hashmap_mod.I64I64MapRemoveMissing _) symbols])
             symbols)]
         [(NoneI64) symbols])]))
 
@@ -1100,18 +1115,24 @@
   (match meta
     [(AstSomeGeneratedDeclMeta generator item _ key)
       (if (> (string-length key) 0)
-        (string-append " (generated identity: " (string-append key ")"))
-        (string-append
+        (string_mod.string-append
+          " (generated identity: "
+          (string_mod.string-append key ")"))
+        (string_mod.string-append
           " (generated declaration: "
-          (string-append
+          (string_mod.string-append
             item
-            (string-append " from " (string-append generator ")")))))]
+            (string_mod.string-append
+              " from "
+              (string_mod.string-append generator ")")))))]
     [(AstNoGeneratedDeclMeta) ""]))
 
 (define (compiler-symbols-with-generated-context
   [message : String]
   [meta : AstGeneratedDeclMeta]) : String
-  (string-append message (compiler-symbols-generated-meta-suffix meta)))
+  (string_mod.string-append
+    message
+    (compiler-symbols-generated-meta-suffix meta)))
 
 (define (compiler-symbols-add-struct-cleanup-in-module
   [symbols : CompilerSymbols]
@@ -1757,7 +1778,7 @@
           [_
             (let
               [next-symbols : CompilerSymbols
-                (if (string-eq module target-module)
+                (if (string_mod.string-eq module target-module)
                   (compiler-symbols-remove-decl-macro-alias symbols decl index)
                   symbols)]
               (compiler-symbols-remove-module-macro-aliases-list
@@ -1842,7 +1863,7 @@
           [_
             (let
               [next-symbols : CompilerSymbols
-                (if (string-eq module target-module)
+                (if (string_mod.string-eq module target-module)
                   (compiler-symbols-add-decl-alias-in-module
                     symbols
                     alias
@@ -2389,7 +2410,7 @@
           [_
             (let
               [next-registries : CompilerRegistries
-                (if (string-eq module target-module)
+                (if (string_mod.string-eq module target-module)
                   (compiler-registries-add-decl-alias-in-module
                     registries
                     alias
@@ -3313,14 +3334,18 @@
   (match (build-compiler-symbols-from-source
     (compiler-symbols-duplicate-value-source))
     [(ErrCompilerSymbols message)
-      (string-eq message (compiler-symbols-duplicate-value-message "answer"))]
+      (string_mod.string-eq
+        message
+        (compiler-symbols-duplicate-value-message "answer"))]
     [(OkCompilerSymbols _) false]))
 
 (define (compiler-symbols-duplicate-type-ok?) : bool
   (match (build-compiler-symbols-from-source
     (compiler-symbols-duplicate-type-source))
     [(ErrCompilerSymbols message)
-      (string-eq message (compiler-symbols-duplicate-type-message "Point"))]
+      (string_mod.string-eq
+        message
+        (compiler-symbols-duplicate-type-message "Point"))]
     [(OkCompilerSymbols _) false]))
 
 (define (compiler-symbols-duplicate-value-error-ok?
@@ -3328,7 +3353,9 @@
   [name : String]) : bool
   (match (build-compiler-symbols-from-source src)
     [(ErrCompilerSymbols message)
-      (string-eq message (compiler-symbols-duplicate-value-message name))]
+      (string_mod.string-eq
+        message
+        (compiler-symbols-duplicate-value-message name))]
     [(OkCompilerSymbols _) false]))
 
 (define (compiler-symbols-variant-value-collisions-ok?) : bool
@@ -3362,14 +3389,16 @@
   (match (build-compiler-registries-from-source
     (compiler-registries-duplicate-variant-source))
     [(ErrCompilerRegistries message)
-      (string-eq message (compiler-registries-duplicate-variant-message "Same"))]
+      (string_mod.string-eq
+        message
+        (compiler-registries-duplicate-variant-message "Same"))]
     [(OkCompilerRegistries _) false]))
 
 (define (compiler-registries-duplicate-field-ok?) : bool
   (match (build-compiler-registries-from-source
     (compiler-registries-duplicate-field-source))
     [(ErrCompilerRegistries message)
-      (string-eq
+      (string_mod.string-eq
         message
         (compiler-registries-duplicate-field-message "Pair" "x"))]
     [(OkCompilerRegistries _) false]))
@@ -3400,7 +3429,7 @@
   (match (build-compiler-symbols-from-source
     (compiler-symbols-duplicate-macro-value-source))
     [(ErrCompilerSymbols message)
-      (string-eq
+      (string_mod.string-eq
         message
         (compiler-symbols-duplicate-macro-value-message "same"))]
     [(OkCompilerSymbols _) false]))
@@ -3613,7 +3642,7 @@
 
 (define (compiler-exports-error-ok? [src : String] [want : String]) : bool
   (match (build-compiler-exports-from-source src)
-    [(ErrCompilerExports message) (string-eq message want)]
+    [(ErrCompilerExports message) (string_mod.string-eq message want)]
     [(OkCompilerExports _) false]))
 
 (define (compiler-exports-unknown-value-ok?) : bool
@@ -4019,17 +4048,17 @@
                   (if ok
                     42
                     (begin
-                      (panic "symbols: smoke score mismatch")
+                      (io_mod.panic "symbols: smoke score mismatch")
                       0))))]
             [(ErrCompilerRegistries message)
               (begin
-                (panic message)
+                (io_mod.panic message)
                 0)])]
         [(ErrCompilerSymbols message)
           (begin
-            (panic message)
+            (io_mod.panic message)
             0)])]
     [(ErrAstProgram message)
       (begin
-        (panic message)
+        (io_mod.panic message)
         0)]))

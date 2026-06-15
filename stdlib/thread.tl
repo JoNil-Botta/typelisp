@@ -9,15 +9,17 @@
 ;# does not transfer ownership; callers that smuggle addresses through those
 ;# integers remain responsible for synchronization in unsafe code.
 ;#
-;# Usage: `(import "stdlib/thread.tl")`
+;# Usage: `(import stdlib.thread)`
 ;#
 ;# ```typelisp run
 ;# ;; doctest-exit: 42
-;# (import "stdlib/thread.tl")
+;# (import stdlib.thread)
 ;# (define (main) : i64
-;#   (if (>= (thread-default-worker-count) 1) 42 1))
+;#   (if (>= (thread.thread-default-worker-count) 1) 42 1))
 ;# ```
 ;: Opaque native thread handle plus runtime-owned join state.
+(module stdlib.thread)
+
 (defstruct Thread
   (handle i64)
   (clear-tid-addr i64)
@@ -75,7 +77,7 @@
     [entry : (-> i64 i64)]
     [context : i64]
     [flags : i32]
-    [thread-id : i64]) : i64 (:symbol "CreateThread")))
+    [thread-id : i64]) : i64 (:abi c) (:symbol "CreateThread")))
 
 ;: Windows kernel32 `WaitForSingleObject`.
 (cfg
@@ -155,22 +157,22 @@
 ;: Read an i32 from `addr`.
 (define (thread-read-i32 [addr : i64]) : i32
   (unsafe
-    (ptr-read (ptr-cast (thread-addr->mut-i32 addr) : (Ptr i32)))))
+    (ptr-read (ptr-cast (stdlib.thread.thread-addr->mut-i32 addr) : (Ptr i32)))))
 
 ;: Write an i32 to `addr`.
 (define (thread-write-i32! [addr : i64] [value : i32]) : unit
   (unsafe
-    (ptr-write! (thread-addr->mut-i32 addr) value)))
+    (ptr-write! (stdlib.thread.thread-addr->mut-i32 addr) value)))
 
 ;: Read an i64 from `addr`.
 (define (thread-read-i64 [addr : i64]) : i64
   (unsafe
-    (ptr-read (ptr-cast (thread-addr->mut-i64 addr) : (Ptr i64)))))
+    (ptr-read (ptr-cast (stdlib.thread.thread-addr->mut-i64 addr) : (Ptr i64)))))
 
 ;: Write an i64 to `addr`.
 (define (thread-write-i64! [addr : i64] [value : i64]) : unit
   (unsafe
-    (ptr-write! (thread-addr->mut-i64 addr) value)))
+    (ptr-write! (stdlib.thread.thread-addr->mut-i64 addr) value)))
 
 ;: Linux raw clone flags for same-process worker threads.
 (define (thread-linux-clone-flags) : i64
@@ -191,7 +193,7 @@
   (begin
     (unsafe
       (syscall 60 code))
-    (thread-linux-exit-current code)))
+    (stdlib.thread.thread-linux-exit-current code)))
 
 ;: Linux child path entered immediately after raw `clone` returns zero.
 (define (thread-linux-child-main
@@ -200,55 +202,71 @@
   [result-addr : i64]
   [started-addr : i64]) : never
   (begin
-    (cfg linux (thread-linux-runtime-init) unit)
-    (thread-write-i32! started-addr (cast 1 : i32))
-    (thread-linux-futex-wake started-addr)
+    (cfg linux (stdlib.thread.thread-linux-runtime-init) unit)
+    (stdlib.thread.thread-write-i32! started-addr (cast 1 : i32))
+    (stdlib.thread.thread-linux-futex-wake started-addr)
     (let
       [result : i64 (entry arg)]
       (begin
-        (thread-write-i64! result-addr result)
-        (thread-linux-exit-current result)))))
+        (stdlib.thread.thread-write-i64! result-addr result)
+        (stdlib.thread.thread-linux-exit-current result)))))
 
 ;: Wait until the i32 at `addr` no longer equals `expected`.
 (define (thread-linux-wait-i32-change [addr : i64] [expected : i32]) : unit
-  (while (= (thread-read-i32 addr) expected)
+  (while (= (stdlib.thread.thread-read-i32 addr) expected)
     (begin
-      (thread-linux-futex-wait addr (cast expected : i64))
+      (stdlib.thread.thread-linux-futex-wait addr (cast expected : i64))
       unit)))
 
 ;: Linux implementation of `thread-spawn`.
 (define (thread-linux-spawn [entry : (-> i64 i64)] [arg : i64]) : ThreadSpawnResult
   (let
-    [stack : (Array u8) (make-array u8 thread-default-stack-size)]
+    [stack : (Array u8) (make-array u8 stdlib.thread.thread-default-stack-size)]
     [clear-cell : (Array i32) (make-array i32 1)]
     [started-cell : (Array i32) (make-array i32 1)]
     [result-cell : (Array i64) (make-array i64 1)]
-    [clear-addr : i64 (thread-array-i32-addr clear-cell)]
-    [started-addr : i64 (thread-array-i32-addr started-cell)]
-    [result-addr : i64 (thread-array-i64-addr result-cell)]
+    [clear-addr : i64 (stdlib.thread.thread-array-i32-addr clear-cell)]
+    [started-addr : i64 (stdlib.thread.thread-array-i32-addr started-cell)]
+    [result-addr : i64 (stdlib.thread.thread-array-i64-addr result-cell)]
     [stack-top : i64
-      (bit-and (+ (thread-array-u8-addr stack) thread-default-stack-size) -16)]
+      (bit-and
+        (+
+          (stdlib.thread.thread-array-u8-addr stack)
+          stdlib.thread.thread-default-stack-size)
+        -16)]
     (begin
       (array-set! clear-cell 0 (cast 1 : i32))
       (let
         [tid : i64
           (unsafe
-            (syscall 56 (thread-linux-clone-flags) stack-top 0 clear-addr 0))]
+            (syscall
+              56
+              (stdlib.thread.thread-linux-clone-flags)
+              stack-top
+              0
+              clear-addr
+              0))]
         (if (< tid 0)
           (ThreadSpawnErr "thread: spawn failed")
           (if (= tid 0)
-            (thread-linux-child-main entry arg result-addr started-addr)
+            (stdlib.thread.thread-linux-child-main
+              entry
+              arg
+              result-addr
+              started-addr)
             (begin
-              (thread-linux-wait-i32-change started-addr (cast 0 : i32))
+              (stdlib.thread.thread-linux-wait-i32-change
+                started-addr
+                (cast 0 : i32))
               (ThreadSpawnOk (Thread tid clear-addr result-addr)))))))))
 
 ;: Windows spin-wait until the backend trampoline copies its start context.
 (cfg
   windows
   (define (thread-windows-wait-started [started-addr : i64]) : unit
-    (while (= (thread-read-i32 started-addr) (cast 0 : i32))
+    (while (= (stdlib.thread.thread-read-i32 started-addr) (cast 0 : i32))
       (begin
-        (thread-windows-switch-to-thread)
+        (stdlib.thread.thread-windows-switch-to-thread)
         unit))))
 
 ;: Windows implementation of `thread-spawn`.
@@ -259,9 +277,9 @@
       [context : (Array u64) (make-array u64 4)]
       [started-cell : (Array i32) (make-array i32 1)]
       [result-cell : (Array i64) (make-array i64 1)]
-      [context-addr : i64 (thread-array-u64-addr context)]
-      [started-addr : i64 (thread-array-i32-addr started-cell)]
-      [result-addr : i64 (thread-array-i64-addr result-cell)]
+      [context-addr : i64 (stdlib.thread.thread-array-u64-addr context)]
+      [started-addr : i64 (stdlib.thread.thread-array-i32-addr started-cell)]
+      [result-addr : i64 (stdlib.thread.thread-array-i64-addr result-cell)]
       (begin
         (array-set!
           context
@@ -283,19 +301,22 @@
           (if (= handle 0)
             (ThreadSpawnErr "thread: spawn failed")
             (begin
-              (thread-windows-wait-started started-addr)
+              (stdlib.thread.thread-windows-wait-started started-addr)
               (ThreadSpawnOk (Thread handle 0 result-addr)))))))))
 
 ;: Spawn `entry`, passing `arg`; the result can be joined exactly once.
 (define (thread-spawn [entry : (-> i64 i64)] [arg : i64]) : ThreadSpawnResult
-  (cfg windows (thread-windows-spawn entry arg) (thread-linux-spawn entry arg)))
+  (cfg
+    windows
+    (stdlib.thread.thread-windows-spawn entry arg)
+    (stdlib.thread.thread-linux-spawn entry arg)))
 
 ;: Spawn a compiler-checked direct nullary closure returning `i64`.
 ;:
 ;: Safe calls must pass a direct lambda. The typechecker rejects captures that
 ;: are not copyable scalar values and rejects calls from scoped arenas.
 (define (thread-spawn-i64 [task : (-> i64)]) : ThreadI64SpawnResult
-  (match (thread-spawn
+  (match (stdlib.thread.thread-spawn
     (lambda ([ignored : i64]) : i64
       (task))
     0)
@@ -307,11 +328,12 @@
   (let
     [clear-addr : i64 (struct-get thread clear-tid-addr)]
     (begin
-      (while (not (= (thread-read-i32 clear-addr) (cast 0 : i32)))
+      (while (not (= (stdlib.thread.thread-read-i32 clear-addr) (cast 0 : i32)))
         (begin
-          (thread-linux-futex-wait clear-addr (cast 1 : i64))
+          (stdlib.thread.thread-linux-futex-wait clear-addr (cast 1 : i64))
           unit))
-      (ThreadJoinOk (thread-read-i64 (struct-get thread result-addr))))))
+      (ThreadJoinOk
+        (stdlib.thread.thread-read-i64 (struct-get thread result-addr))))))
 
 ;: Windows implementation of `thread-join`.
 (cfg
@@ -319,20 +341,26 @@
   (define (thread-windows-join [thread : Thread]) : ThreadJoinResult
     (let
       [waited : i32
-        (thread-windows-wait-single (struct-get thread handle) (cast -1 : i32))]
+        (stdlib.thread.thread-windows-wait-single
+          (struct-get thread handle)
+          (cast -1 : i32))]
       (if (not (= waited (cast 0 : i32)))
         (ThreadJoinErr "thread: join failed")
         (begin
-          (thread-windows-close-handle (struct-get thread handle))
-          (ThreadJoinOk (thread-read-i64 (struct-get thread result-addr))))))))
+          (stdlib.thread.thread-windows-close-handle (struct-get thread handle))
+          (ThreadJoinOk
+            (stdlib.thread.thread-read-i64 (struct-get thread result-addr))))))))
 
 ;: Join a thread and return the entry function's i64 result.
 (define (thread-join [thread : Thread]) : ThreadJoinResult
-  (cfg windows (thread-windows-join thread) (thread-linux-join thread)))
+  (cfg
+    windows
+    (stdlib.thread.thread-windows-join thread)
+    (stdlib.thread.thread-linux-join thread)))
 
 ;: Join a typed `i64` thread and return its closure result.
 (define (thread-join-i64 [thread : ThreadI64]) : ThreadI64JoinResult
-  (match (thread-join (struct-get thread raw))
+  (match (stdlib.thread.thread-join (struct-get thread raw))
     [(ThreadJoinOk value) (ThreadI64JoinOk value)]
     [(ThreadJoinErr message) (ThreadI64JoinErr message)]))
 
@@ -360,7 +388,10 @@
         (begin
           (set!
             count
-            (+ count (thread-count-byte-bits (cast (array-ref mask i) : i64))))
+            (+
+              count
+              (stdlib.thread.thread-count-byte-bits
+                (cast (array-ref mask i) : i64))))
           (set! i (+ i 1))))
       count)))
 
@@ -370,11 +401,11 @@
     [mask : (Array u8) (make-array u8 128)]
     [rc : i64
       (unsafe
-        (syscall 204 0 128 (thread-array-u8-addr mask)))]
+        (syscall 204 0 128 (stdlib.thread.thread-array-u8-addr mask)))]
     (if (< rc 0)
       1
       (let
-        [count : i64 (thread-count-affinity-bytes mask)]
+        [count : i64 (stdlib.thread.thread-count-affinity-bytes mask)]
         (if (< count 1)
           1
           count)))))
@@ -385,7 +416,10 @@
   (define (thread-windows-default-worker-count) : i64
     (let
       [count : i64
-        (cast (thread-windows-active-processor-count (cast 0xffff : u16)) : i64)]
+        (cast
+          (stdlib.thread.thread-windows-active-processor-count
+            (cast 0xffff : u16))
+          : i64)]
       (if (< count 1)
         1
         count))))
@@ -394,23 +428,23 @@
 (define (thread-default-worker-count) : i64
   (cfg
     windows
-    (thread-windows-default-worker-count)
-    (thread-linux-default-worker-count)))
+    (stdlib.thread.thread-windows-default-worker-count)
+    (stdlib.thread.thread-linux-default-worker-count)))
 
 ;: Create a counting semaphore.
 (define (thread-semaphore-create [initial : i64]) : ThreadSemaphoreResult
   (if (< initial 0)
     (ThreadSemaphoreErr "thread: semaphore initial count must be non-negative")
-    (if (> initial (cast thread-semaphore-max-count : i64))
+    (if (> initial (cast stdlib.thread.thread-semaphore-max-count : i64))
       (ThreadSemaphoreErr "thread: semaphore initial count exceeds maximum")
       (cfg
         windows
         (let
           [handle : i64
-            (thread-windows-create-semaphore
+            (stdlib.thread.thread-windows-create-semaphore
               0
               (cast initial : i32)
-              thread-semaphore-max-count
+              stdlib.thread.thread-semaphore-max-count
               0)]
           (if (= handle 0)
             (ThreadSemaphoreErr "thread: semaphore create failed")
@@ -428,7 +462,9 @@
   (cfg
     windows
     (=
-      (thread-windows-wait-single (struct-get sem handle) (cast -1 : i32))
+      (stdlib.thread.thread-windows-wait-single
+        (struct-get sem handle)
+        (cast -1 : i32))
       (cast 0 : i32))
     (let
       [buf : (Array u64) (make-array u64 1)]
@@ -442,7 +478,7 @@
                 (syscall
                   0
                   (struct-get sem handle)
-                  (thread-array-u64-addr buf)
+                  (stdlib.thread.thread-array-u64-addr buf)
                   8))]
             (if (= n 8)
               (begin
@@ -459,7 +495,7 @@
     windows
     (not
       (=
-        (thread-windows-release-semaphore
+        (stdlib.thread.thread-windows-release-semaphore
           (struct-get sem handle)
           (cast 1 : i32)
           0)
@@ -470,7 +506,11 @@
         (array-set! buf 0 (cast 1 : u64))
         (=
           (unsafe
-            (syscall 1 (struct-get sem handle) (thread-array-u64-addr buf) 8))
+            (syscall
+              1
+              (struct-get sem handle)
+              (stdlib.thread.thread-array-u64-addr buf)
+              8))
           8)))))
 
 ;: Close a semaphore handle.
@@ -478,8 +518,89 @@
   (cfg
     windows
     (not
-      (= (thread-windows-close-handle (struct-get sem handle)) (cast 0 : i32)))
+      (=
+        (stdlib.thread.thread-windows-close-handle (struct-get sem handle))
+        (cast 0 : i32)))
     (=
       (unsafe
         (syscall 3 (struct-get sem handle)))
       0)))
+
+;# Dotted-module migration: preserve the pre-module flat stdlib surface.
+(export
+  (value thread-default-stack-size)
+  (value thread-semaphore-max-count)
+  (value thread-array-u8-addr)
+  (value thread-array-u64-addr)
+  (value thread-array-i64-addr)
+  (value thread-array-i32-addr)
+  (value thread-addr->mut-i32)
+  (value thread-addr->mut-i64)
+  (value thread-read-i32)
+  (value thread-write-i32!)
+  (value thread-read-i64)
+  (value thread-write-i64!)
+  (value thread-linux-clone-flags)
+  (value thread-linux-futex-wait)
+  (value thread-linux-futex-wake)
+  (value thread-linux-exit-current)
+  (value thread-linux-child-main)
+  (value thread-linux-wait-i32-change)
+  (value thread-linux-spawn)
+  (value thread-spawn)
+  (value thread-spawn-i64)
+  (value thread-linux-join)
+  (value thread-join)
+  (value thread-join-i64)
+  (value thread-count-byte-bits)
+  (value thread-count-affinity-bytes)
+  (value thread-linux-default-worker-count)
+  (value thread-default-worker-count)
+  (value thread-semaphore-create)
+  (value thread-semaphore-wait)
+  (value thread-semaphore-post)
+  (value thread-semaphore-close)
+  (type Thread)
+  (type ThreadSpawnResult)
+  (type ThreadJoinResult)
+  (type ThreadI64)
+  (type ThreadI64SpawnResult)
+  (type ThreadI64JoinResult)
+  (type ThreadSemaphore)
+  (type ThreadSemaphoreResult)
+  (constructor Thread)
+  (constructor ThreadI64)
+  (constructor ThreadSemaphore)
+  (field Thread handle)
+  (field Thread clear-tid-addr)
+  (field Thread result-addr)
+  (field ThreadI64 raw)
+  (field ThreadSemaphore handle)
+  (variant ThreadSpawnOk)
+  (variant ThreadSpawnErr)
+  (variant ThreadJoinOk)
+  (variant ThreadJoinErr)
+  (variant ThreadI64SpawnOk)
+  (variant ThreadI64SpawnErr)
+  (variant ThreadI64JoinOk)
+  (variant ThreadI64JoinErr)
+  (variant ThreadSemaphoreOk)
+  (variant ThreadSemaphoreErr))
+
+(cfg linux (export (value thread-linux-runtime-init)))
+
+(cfg
+  windows
+  (export
+    (value thread-windows-entry)
+    (value thread-windows-create-thread)
+    (value thread-windows-wait-single)
+    (value thread-windows-close-handle)
+    (value thread-windows-switch-to-thread)
+    (value thread-windows-active-processor-count)
+    (value thread-windows-create-semaphore)
+    (value thread-windows-release-semaphore)
+    (value thread-windows-wait-started)
+    (value thread-windows-spawn)
+    (value thread-windows-join)
+    (value thread-windows-default-worker-count)))

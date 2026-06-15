@@ -3,9 +3,9 @@
 ;; The formatter front end and rule traversal are separate issues. This module
 ;; owns the reusable layout engine: callers build `Doc` values, then render them
 ;; with deterministic width-aware grouping and indentation.
-(import "../stdlib/text_buf.tl")
+(import stdlib.text_buf as text_buf_mod)
 
-(import "../stdlib/string.tl")
+(import stdlib.string as string_mod)
 
 (defstruct DocSeq
   (items (Array Doc))
@@ -26,7 +26,7 @@
   (Rendered String i64))
 
 (defenum RenderState
-  (RenderState TextBuf i64))
+  (RenderState text_buf_mod.TextBuf i64))
 
 (define (format-width) : i64
   80)
@@ -180,7 +180,7 @@
     (begin
       (while (< i count)
         (begin
-          (set! out (string-append out " "))
+          (set! out (string_mod.string-append out " "))
           (set! i (+ i 1))))
       out)))
 
@@ -219,9 +219,9 @@
     [(Rendered _ col) col]))
 
 (define (render-newline [indent : i64]) : RenderedDoc
-  (Rendered (string-append "\n" (spaces indent)) indent))
+  (Rendered (string_mod.string-append "\n" (spaces indent)) indent))
 
-(define (render-state-buf [state : RenderState]) : TextBuf
+(define (render-state-buf [state : RenderState]) : text_buf_mod.TextBuf
   (match state
     [(RenderState buf _) buf]))
 
@@ -229,8 +229,10 @@
   (match state
     [(RenderState _ col) col]))
 
-(define (render-newline-into [buf : TextBuf] [indent : i64]) : TextBuf
-  (text-buf-append (text-buf-append buf "\n") (spaces indent)))
+(define (render-newline-into [buf : text_buf_mod.TextBuf] [indent : i64]) : text_buf_mod.TextBuf
+  (text_buf_mod.text-buf-append
+    (text_buf_mod.text-buf-append buf "\n")
+    (spaces indent)))
 
 (define (render-doc-seq-into
   [seq : DocSeq]
@@ -238,7 +240,7 @@
   [indent : i64]
   [col : i64]
   [flat : bool]
-  [buf : TextBuf]) : RenderState
+  [buf : text_buf_mod.TextBuf]) : RenderState
   (let
     [i : i64 0]
     [state : RenderState (RenderState buf col)]
@@ -265,14 +267,16 @@
   [indent : i64]
   [col : i64]
   [flat : bool]
-  [buf : TextBuf]) : RenderState
+  [buf : text_buf_mod.TextBuf]) : RenderState
   (match doc
     [(DEmpty) (RenderState buf col)]
     [(DText text)
-      (RenderState (text-buf-append buf text) (+ col (string-length text)))]
+      (RenderState
+        (text_buf_mod.text-buf-append buf text)
+        (+ col (string-length text)))]
     [(DSoftLine)
       (if flat
-        (RenderState (text-buf-append buf " ") (+ col 1))
+        (RenderState (text_buf_mod.text-buf-append buf " ") (+ col 1))
         (RenderState (render-newline-into buf indent) indent))]
     [(DHardLine) (RenderState (render-newline-into buf indent) indent)]
     [(DConcat left right)
@@ -313,7 +317,9 @@
         [(Rendered left-text left-col)
           (match (render-doc-in (box-get right) width indent left-col flat)
             [(Rendered right-text right-col)
-              (Rendered (string-append left-text right-text) right-col)])])]
+              (Rendered
+                (string_mod.string-append left-text right-text)
+                right-col)])])]
     [(DSeq seq)
       (let
         [i : i64 0]
@@ -333,7 +339,7 @@
                       (set!
                         result
                         (Rendered
-                          (string-append left-text right-text)
+                          (string_mod.string-append left-text right-text)
                           right-col))])])
               (set! i (+ i 1))))
           result))]
@@ -345,8 +351,8 @@
         (render-doc-in (box-get inner) width indent col false))]))
 
 (define (render-doc-width [doc : Doc] [width : i64]) : String
-  (match (render-doc-into doc width 0 0 false (text-buf-empty))
-    [(RenderState buf _) (text-buf-render buf)]))
+  (match (render-doc-into doc width 0 0 false (text_buf_mod.text-buf-empty))
+    [(RenderState buf _) (text_buf_mod.text-buf-render buf)]))
 
 (define (render-doc [doc : Doc]) : String
   (render-doc-width doc (format-width)))
@@ -379,8 +385,8 @@
     [flat : String (render-doc-width doc 80)]
     [broken : String (render-doc-width doc 4)]
     (and
-      (string-eq flat "a b c")
-      (string-eq broken "a\n    b\n    c")
+      (string_mod.string-eq flat "a b c")
+      (string_mod.string-eq broken "a\n    b\n    c")
       (= (flat-width doc) 5))))
 
 (define (format-doc-repeat-text [count : i64]) : Doc
@@ -425,7 +431,7 @@
     (begin
       (while (< i count)
         (begin
-          (set! out (string-append out " x"))
+          (set! out (string_mod.string-append out " x"))
           (set! i (+ i 1))))
       out)))
 
@@ -436,7 +442,7 @@
     (begin
       (while (< i count)
         (begin
-          (set! out (string-append out "\n  x"))
+          (set! out (string_mod.string-append out "\n  x"))
           (set! i (+ i 1))))
       out)))
 
@@ -462,12 +468,14 @@
         (= (flat-width doc) 64))]
     [flow-ok : bool
       (and
-        (string-eq flat-flow (format-doc-repeat-soft-flat 16))
-        (string-eq broken-flow (format-doc-repeat-soft-broken 16)))]
+        (string_mod.string-eq flat-flow (format-doc-repeat-soft-flat 16))
+        (string_mod.string-eq broken-flow (format-doc-repeat-soft-broken 16)))]
     [right-ok : bool
       (and
         (= (format-doc-seq-len-or-negative right-doc) 31)
-        (string-eq right-broken-flow (format-doc-repeat-soft-broken 16)))]
+        (string_mod.string-eq
+          right-broken-flow
+          (format-doc-repeat-soft-broken 16)))]
     (and plain-ok flow-ok right-ok)))
 
 (define (format-doc-seq-branching-ok?) : bool
@@ -480,11 +488,11 @@
     [with-a : Doc (doc-append (doc-text "a") tail)]
     [with-z : Doc (doc-append (doc-text "z") tail)]
     (and
-      (string-eq (render-doc-width base 80) "ab")
-      (string-eq (render-doc-width with-c 80) "abc")
-      (string-eq (render-doc-width with-d 80) "abd")
-      (string-eq (render-doc-width with-a 80) "abcd")
-      (string-eq (render-doc-width with-z 80) "zbcd"))))
+      (string_mod.string-eq (render-doc-width base 80) "ab")
+      (string_mod.string-eq (render-doc-width with-c 80) "abc")
+      (string_mod.string-eq (render-doc-width with-d 80) "abd")
+      (string_mod.string-eq (render-doc-width with-a 80) "abcd")
+      (string_mod.string-eq (render-doc-width with-z 80) "zbcd"))))
 
 (define (format-doc-self-test) : i64
   (let
@@ -493,10 +501,10 @@
     [hard : String (render-doc-width (sample-hard-line-doc) 80)]
     [empty : String (render-doc (doc-append (doc-empty) (doc-text "x")))]
     (begin
-      (unless (string-eq flat "alpha beta") (return 1))
-      (unless (string-eq broken "alpha\n  beta") (return 2))
-      (unless (string-eq hard "a\nb") (return 3))
-      (unless (string-eq empty "x") (return 4))
+      (unless (string_mod.string-eq flat "alpha beta") (return 1))
+      (unless (string_mod.string-eq broken "alpha\n  beta") (return 2))
+      (unless (string_mod.string-eq hard "a\nb") (return 3))
+      (unless (string_mod.string-eq empty "x") (return 4))
       (unless (format-doc-boxed-algebra-ok?) (return 5))
       (unless (format-doc-long-sequence-ok?) (return 6))
       (unless (format-doc-seq-branching-ok?) (return 7))

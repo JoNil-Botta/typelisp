@@ -15,7 +15,7 @@
 ;# at most `capacity` slots, so a full table terminates instead of looping
 ;# forever.
 ;#
-;# Usage: `(import "stdlib/hashmap.tl")`
+;# Usage: `(import stdlib.hashmap)`
 ;#
 ;# Generic source syntax such as `HashMap<K,V>` is intentionally not exposed
 ;# yet; TypeLisp still uses `comptime-decl` generator requests instead of
@@ -36,16 +36,18 @@
 ;# path instead of falling back to a trait or implicit `Hash`/`Eq` bound.
 ;#
 ;# ```typelisp
-;# (import "stdlib/hashmap.tl")
+;# (import stdlib.hashmap)
 ;# (define (main) : i64
-;#   (match (string-i64-map-probe (make-array StringI64MapSlot 4) 4 "k" 0)
-;#     [(StringI64MapProbeAbsent slot) slot]
-;#     [(StringI64MapProbeFound slot) slot]
-;#     [(StringI64MapProbeFull) -1]))
+;#   (match (hashmap.string-i64-map-probe (make-array hashmap.StringI64MapSlot 4) 4 "k" 0)
+;#     [(hashmap.StringI64MapProbeAbsent slot) slot]
+;#     [(hashmap.StringI64MapProbeFound slot) slot]
+;#     [(hashmap.StringI64MapProbeFull) -1]))
 ;# ```
-(import "hash.tl")
+(module stdlib.hashmap)
 
-(import "string.tl")
+(import stdlib.hash as hash_mod)
+
+(import stdlib.string as string_mod)
 
 ;: Stable descriptor identity for generated `String`-key hashmap families.
 (define (hashmap-string-key-descriptor-key) : String
@@ -95,7 +97,9 @@
 ;: Return the start bucket for `hash` in a table of `capacity` slots.
 ;: `capacity` must be positive; the result is in `[0, capacity)`.
 (define (string-i64-map-bucket-index [hash : i64] [capacity : i64]) : i64
-  (string-i64-map-normalized-bucket-index (hash-normalize hash) capacity))
+  (stdlib.hashmap.string-i64-map-normalized-bucket-index
+    (hash_mod.hash-normalize hash)
+    capacity))
 
 ;: Advance a bucket index by one slot, wrapping around the table.
 (define (string-i64-map-next-index [index : i64] [capacity : i64]) : i64
@@ -140,7 +144,7 @@
     [first : i64 first-tombstone]
     (begin
       (while (< walked capacity)
-        (match (string-i64-map-slot-at slots cursor)
+        (match (stdlib.hashmap.string-i64-map-slot-at slots cursor)
           [(StringI64MapEmpty)
             (return
               (StringI64MapProbeAbsent
@@ -162,7 +166,7 @@
                 (set! walked (+ walked 1))))]
           [(StringI64MapOccupied slot-key _ slot-hash)
             (if (if (= slot-hash hash)
-              (hash-key-string-eq? (& slot-key) (& key))
+              (hash_mod.hash-key-string-eq? (& slot-key) (& key))
               false)
               (return (StringI64MapProbeFound cursor))
               (let
@@ -176,7 +180,7 @@
                   (set! walked (+ walked 1)))))]))
       (if (>= first 0)
         (StringI64MapProbeAbsent first)
-        (StringI64MapProbeFull)))))
+        stdlib.hashmap.StringI64MapProbeFull))))
 
 ;: Probe `slots` (a `capacity`-length open-addressing table) for `key` with the
 ;: precomputed `hash`. Returns where the key lives (`Found`), where it could be
@@ -186,7 +190,7 @@
   [capacity : i64]
   [key : String]
   [hash : i64]) : StringI64MapProbe
-  (string-i64-map-probe-borrowed slots capacity (& key) hash))
+  (stdlib.hashmap.string-i64-map-probe-borrowed slots capacity (& key) hash))
 
 ;: Borrowed-key probing for the compatibility `String -> i64` map. This keeps
 ;: old owned-key probe callers working while exposing the generated-family lookup
@@ -205,11 +209,11 @@
     [first : i64 first-tombstone]
     (begin
       (while (< walked capacity)
-        (match (string-i64-map-slot-at slots cursor)
+        (match (stdlib.hashmap.string-i64-map-slot-at slots cursor)
           [(StringI64MapEmpty)
             (return
               (StringI64MapProbeAbsent
-                (string-i64-map-insert-slot first cursor)))]
+                (stdlib.hashmap.string-i64-map-insert-slot first cursor)))]
           [(StringI64MapTombstone)
             (let
               [next : i64 (+ cursor 1)]
@@ -225,7 +229,7 @@
                 (set! walked (+ walked 1))))]
           [(StringI64MapOccupied slot-key _ slot-hash)
             (if (if (= slot-hash hash)
-              (hash-key-string-eq? (& slot-key) key)
+              (hash_mod.hash-key-string-eq? (& slot-key) key)
               false)
               (return (StringI64MapProbeFound cursor))
               (let
@@ -239,7 +243,7 @@
                   (set! walked (+ walked 1)))))]))
       (if (>= first 0)
         (StringI64MapProbeAbsent first)
-        (StringI64MapProbeFull)))))
+        stdlib.hashmap.StringI64MapProbeFull))))
 
 ;: Probe `slots` for a borrowed string key with a precomputed `hash`.
 (define (string-i64-map-probe-borrowed
@@ -248,13 +252,13 @@
   [key : (& key str)]
   [hash : i64]) : StringI64MapProbe
   (if (<= capacity 0)
-    (StringI64MapProbeFull)
-    (string-i64-map-probe-borrowed-from
+    stdlib.hashmap.StringI64MapProbeFull
+    (stdlib.hashmap.string-i64-map-probe-borrowed-from
       slots
       capacity
       key
       hash
-      (string-i64-map-bucket-index hash capacity)
+      (stdlib.hashmap.string-i64-map-bucket-index hash capacity)
       0
       -1)))
 
@@ -266,13 +270,13 @@
   [key : String]
   [hash : i64]) : StringI64MapProbe
   (if (<= capacity 0)
-    (StringI64MapProbeFull)
-    (string-i64-map-probe-from
+    stdlib.hashmap.StringI64MapProbeFull
+    (stdlib.hashmap.string-i64-map-probe-from
       slots
       capacity
       key
       hash
-      (string-i64-map-normalized-bucket-index hash capacity)
+      (stdlib.hashmap.string-i64-map-normalized-bucket-index hash capacity)
       0
       -1)))
 
@@ -369,23 +373,24 @@
   (if (>= index count)
     unit
     (begin
-      (array-set! slots index (StringI64MapEmpty))
-      (string-i64-map-fill-empty slots (+ index 1) count))))
+      (array-set! slots index stdlib.hashmap.StringI64MapEmpty)
+      (stdlib.hashmap.string-i64-map-fill-empty slots (+ index 1) count))))
 
 ;: Create an empty map with `capacity` rounded up to a positive power of two.
 (define (string-i64-map-with-capacity [capacity : i64]) : StringI64Map
   (let
-    [rounded-capacity : i64 (string-i64-map-round-capacity capacity)]
+    [rounded-capacity : i64
+      (stdlib.hashmap.string-i64-map-round-capacity capacity)]
     [slots : (Array StringI64MapSlot)
       (make-array StringI64MapSlot rounded-capacity)]
     (begin
-      (string-i64-map-fill-empty slots 0 rounded-capacity)
+      (stdlib.hashmap.string-i64-map-fill-empty slots 0 rounded-capacity)
       (StringI64Map slots 0 0))))
 
 ;: Construct a missing borrowed-value lookup result tied to `map`.
 (define (string-i64-map-borrowed-value-missing [map : (& map StringI64Map)]) : (StringI64MapBorrowedValueLookup
     map)
-  (StringI64MapBorrowedValueMissing))
+  stdlib.hashmap.StringI64MapBorrowedValueMissing)
 
 ;: Construct a found borrowed-value lookup result tied to `map`.
 (define (string-i64-map-borrowed-value-found [value : (& map i64)]) : (StringI64MapBorrowedValueLookup
@@ -395,18 +400,19 @@
 ;: Look up borrowed `key`, returning its copied `i64` value or `Missing`.
 (define (string-i64-map-get-borrowed [map : StringI64Map] [key : (& key str)]) : StringI64MapLookup
   (let
-    [slots : (Array StringI64MapSlot) (string-i64-map-slots map)]
+    [slots : (Array StringI64MapSlot) (stdlib.hashmap.string-i64-map-slots map)]
     [capacity : i64 (array-length slots)]
     (if (<= capacity 0)
-      (StringI64MapMissing)
+      stdlib.hashmap.StringI64MapMissing
       (let
-        [hash : i64 (hash-string key)]
-        [cursor : i64 (string-i64-map-normalized-bucket-index hash capacity)]
+        [hash : i64 (hash_mod.hash-string key)]
+        [cursor : i64
+          (stdlib.hashmap.string-i64-map-normalized-bucket-index hash capacity)]
         [walked : i64 0]
         (begin
           (while (< walked capacity)
-            (match (string-i64-map-slot-at slots cursor)
-              [(StringI64MapEmpty) (return (StringI64MapMissing))]
+            (match (stdlib.hashmap.string-i64-map-slot-at slots cursor)
+              [(StringI64MapEmpty) (return stdlib.hashmap.StringI64MapMissing)]
               [(StringI64MapTombstone)
                 (let
                   [next : i64 (+ cursor 1)]
@@ -419,7 +425,7 @@
                     (set! walked (+ walked 1))))]
               [(StringI64MapOccupied slot-key value slot-hash)
                 (if (if (= slot-hash hash)
-                  (hash-key-string-eq? (& slot-key) key)
+                  (hash_mod.hash-key-string-eq? (& slot-key) key)
                   false)
                   (return (StringI64MapFound value))
                   (let
@@ -431,11 +437,11 @@
                           0
                           next))
                       (set! walked (+ walked 1)))))]))
-          (StringI64MapMissing))))))
+          stdlib.hashmap.StringI64MapMissing)))))
 
 ;: Compatibility owned-key lookup wrapper for existing callers.
 (define (string-i64-map-get [map : StringI64Map] [key : String]) : StringI64MapLookup
-  (string-i64-map-get-borrowed map (& key)))
+  (stdlib.hashmap.string-i64-map-get-borrowed map (& key)))
 
 ;: Look up borrowed `key`, returning a reference to the map-owned `i64` value
 ;: or `Missing`. The reference is invalidated by any map mutation/resizing.
@@ -445,16 +451,18 @@
   (let
     [capacity : i64 (array-length (struct-get map slots))]
     (if (<= capacity 0)
-      (string-i64-map-borrowed-value-missing map)
+      (stdlib.hashmap.string-i64-map-borrowed-value-missing map)
       (let
-        [hash : i64 (hash-string key)]
-        [cursor : i64 (string-i64-map-normalized-bucket-index hash capacity)]
+        [hash : i64 (hash_mod.hash-string key)]
+        [cursor : i64
+          (stdlib.hashmap.string-i64-map-normalized-bucket-index hash capacity)]
         [walked : i64 0]
         (begin
           (while (< walked capacity)
             (match (array-ref (struct-get map slots) cursor)
               [(StringI64MapEmpty)
-                (return (string-i64-map-borrowed-value-missing map))]
+                (return
+                  (stdlib.hashmap.string-i64-map-borrowed-value-missing map))]
               [(StringI64MapTombstone)
                 (let
                   [next : i64 (+ cursor 1)]
@@ -467,15 +475,21 @@
                     (set! walked (+ walked 1))))]
               [(StringI64MapOccupied slot-key _ slot-hash)
                 (if (if (= slot-hash hash)
-                  (hash-key-string-eq? (& slot-key) key)
+                  (hash_mod.hash-key-string-eq? (& slot-key) key)
                   false)
                   (match (& (array-ref (struct-get map slots) cursor))
                     [(StringI64MapOccupied _ value _)
-                      (return (string-i64-map-borrowed-value-found value))]
+                      (return
+                        (stdlib.hashmap.string-i64-map-borrowed-value-found
+                          value))]
                     [(StringI64MapEmpty)
-                      (return (string-i64-map-borrowed-value-missing map))]
+                      (return
+                        (stdlib.hashmap.string-i64-map-borrowed-value-missing
+                          map))]
                     [(StringI64MapTombstone)
-                      (return (string-i64-map-borrowed-value-missing map))])
+                      (return
+                        (stdlib.hashmap.string-i64-map-borrowed-value-missing
+                          map))])
                   (let
                     [next : i64 (+ cursor 1)]
                     (begin
@@ -485,24 +499,25 @@
                           0
                           next))
                       (set! walked (+ walked 1)))))]))
-          (string-i64-map-borrowed-value-missing map))))))
+          (stdlib.hashmap.string-i64-map-borrowed-value-missing map))))))
 
 ;: True when borrowed `key` has a live value in `map`.
 (define (string-i64-map-contains-borrowed?
   [map : StringI64Map]
   [key : (& key str)]) : bool
   (let
-    [slots : (Array StringI64MapSlot) (string-i64-map-slots map)]
+    [slots : (Array StringI64MapSlot) (stdlib.hashmap.string-i64-map-slots map)]
     [capacity : i64 (array-length slots)]
     (if (<= capacity 0)
       false
       (let
-        [hash : i64 (hash-string key)]
-        [cursor : i64 (string-i64-map-normalized-bucket-index hash capacity)]
+        [hash : i64 (hash_mod.hash-string key)]
+        [cursor : i64
+          (stdlib.hashmap.string-i64-map-normalized-bucket-index hash capacity)]
         [walked : i64 0]
         (begin
           (while (< walked capacity)
-            (match (string-i64-map-slot-at slots cursor)
+            (match (stdlib.hashmap.string-i64-map-slot-at slots cursor)
               [(StringI64MapEmpty) (return false)]
               [(StringI64MapTombstone)
                 (let
@@ -516,7 +531,7 @@
                     (set! walked (+ walked 1))))]
               [(StringI64MapOccupied slot-key _ slot-hash)
                 (if (if (= slot-hash hash)
-                  (hash-key-string-eq? (& slot-key) key)
+                  (hash_mod.hash-key-string-eq? (& slot-key) key)
                   false)
                   (return true)
                   (let
@@ -532,7 +547,7 @@
 
 ;: Compatibility owned-key containment wrapper for existing callers.
 (define (string-i64-map-contains? [map : StringI64Map] [key : String]) : bool
-  (string-i64-map-contains-borrowed? map (& key)))
+  (stdlib.hashmap.string-i64-map-contains-borrowed? map (& key)))
 
 ;: True when `slot` is a reusable tombstone.
 (define (string-i64-map-slot-tombstone? [slot : StringI64MapSlot]) : bool
@@ -550,18 +565,19 @@
   [key : String]
   [value : i64]) : StringI64MapInsertResult
   (let
-    [slots : (Array StringI64MapSlot) (string-i64-map-slots map)]
+    [slots : (Array StringI64MapSlot) (stdlib.hashmap.string-i64-map-slots map)]
     [capacity : i64 (array-length slots)]
-    [hash : i64 (hash-string (& key))]
+    [hash : i64 (hash_mod.hash-string (& key))]
     (if (<= capacity 0)
       (StringI64MapInsertFull map)
       (let
-        [cursor : i64 (string-i64-map-normalized-bucket-index hash capacity)]
+        [cursor : i64
+          (stdlib.hashmap.string-i64-map-normalized-bucket-index hash capacity)]
         [walked : i64 0]
         [first : i64 -1]
         (begin
           (while (< walked capacity)
-            (match (string-i64-map-slot-at slots cursor)
+            (match (stdlib.hashmap.string-i64-map-slot-at slots cursor)
               [(StringI64MapEmpty)
                 (let
                   [index : i64
@@ -569,7 +585,7 @@
                       first
                       cursor)]
                   [reused-tombstone : bool (>= first 0)]
-                  [deleted : i64 (string-i64-map-deleted map)]
+                  [deleted : i64 (stdlib.hashmap.string-i64-map-deleted map)]
                   (begin
                     (array-set!
                       slots
@@ -579,7 +595,7 @@
                       (StringI64MapInsertOk
                         (StringI64Map
                           slots
-                          (+ (string-i64-map-len map) 1)
+                          (+ (stdlib.hashmap.string-i64-map-len map) 1)
                           (if reused-tombstone
                             (- deleted 1)
                             deleted))))))]
@@ -598,7 +614,7 @@
                     (set! walked (+ walked 1))))]
               [(StringI64MapOccupied slot-key _ slot-hash)
                 (if (if (= slot-hash hash)
-                  (hash-key-string-eq? (& slot-key) (& key))
+                  (hash_mod.hash-key-string-eq? (& slot-key) (& key))
                   false)
                   (begin
                     (array-set!
@@ -617,13 +633,13 @@
                       (set! walked (+ walked 1)))))]))
           (if (>= first 0)
             (let
-              [deleted : i64 (string-i64-map-deleted map)]
+              [deleted : i64 (stdlib.hashmap.string-i64-map-deleted map)]
               (begin
                 (array-set! slots first (StringI64MapOccupied key value hash))
                 (StringI64MapInsertOk
                   (StringI64Map
                     slots
-                    (+ (string-i64-map-len map) 1)
+                    (+ (stdlib.hashmap.string-i64-map-len map) 1)
                     (- deleted 1)))))
             (StringI64MapInsertFull map)))))))
 
@@ -637,17 +653,18 @@
   [map : StringI64Map]
   [key : (& key str)]) : StringI64MapRemoveResult
   (let
-    [slots : (Array StringI64MapSlot) (string-i64-map-slots map)]
+    [slots : (Array StringI64MapSlot) (stdlib.hashmap.string-i64-map-slots map)]
     [capacity : i64 (array-length slots)]
     (if (<= capacity 0)
       (StringI64MapRemoveMissing map)
       (let
-        [hash : i64 (hash-string key)]
-        [cursor : i64 (string-i64-map-normalized-bucket-index hash capacity)]
+        [hash : i64 (hash_mod.hash-string key)]
+        [cursor : i64
+          (stdlib.hashmap.string-i64-map-normalized-bucket-index hash capacity)]
         [walked : i64 0]
         (begin
           (while (< walked capacity)
-            (match (string-i64-map-slot-at slots cursor)
+            (match (stdlib.hashmap.string-i64-map-slot-at slots cursor)
               [(StringI64MapEmpty) (return (StringI64MapRemoveMissing map))]
               [(StringI64MapTombstone)
                 (let
@@ -661,16 +678,19 @@
                     (set! walked (+ walked 1))))]
               [(StringI64MapOccupied slot-key _ slot-hash)
                 (if (if (= slot-hash hash)
-                  (hash-key-string-eq? (& slot-key) key)
+                  (hash_mod.hash-key-string-eq? (& slot-key) key)
                   false)
                   (begin
-                    (array-set! slots cursor (StringI64MapTombstone))
+                    (array-set!
+                      slots
+                      cursor
+                      stdlib.hashmap.StringI64MapTombstone)
                     (return
                       (StringI64MapRemoveOk
                         (StringI64Map
                           slots
-                          (- (string-i64-map-len map) 1)
-                          (+ (string-i64-map-deleted map) 1)))))
+                          (- (stdlib.hashmap.string-i64-map-len map) 1)
+                          (+ (stdlib.hashmap.string-i64-map-deleted map) 1)))))
                   (let
                     [next : i64 (+ cursor 1)]
                     (begin
@@ -684,7 +704,7 @@
 
 ;: Compatibility owned-key remove wrapper for existing callers.
 (define (string-i64-map-remove [map : StringI64Map] [key : String]) : StringI64MapRemoveResult
-  (string-i64-map-remove-borrowed map (& key)))
+  (stdlib.hashmap.string-i64-map-remove-borrowed map (& key)))
 
 ;: Update borrowed `key` only when it is already present. This preserves the
 ;: stored key object and hash, mutating only the occupied slot value.
@@ -693,11 +713,11 @@
   [key : (& key str)]
   [value : i64]) : StringI64MapUpdateResult
   (let
-    [slots : (Array StringI64MapSlot) (string-i64-map-slots map)]
-    [hash : i64 (hash-string key)]
-    (match (string-i64-map-probe-borrowed
+    [slots : (Array StringI64MapSlot) (stdlib.hashmap.string-i64-map-slots map)]
+    [hash : i64 (hash_mod.hash-string key)]
+    (match (stdlib.hashmap.string-i64-map-probe-borrowed
       slots
-      (string-i64-map-capacity map)
+      (stdlib.hashmap.string-i64-map-capacity map)
       key
       hash)
       [(StringI64MapProbeFound index)
@@ -719,7 +739,7 @@
   [map : StringI64Map]
   [key : String]
   [value : i64]) : StringI64MapUpdateResult
-  (string-i64-map-update-borrowed-if-present map (& key) value))
+  (stdlib.hashmap.string-i64-map-update-borrowed-if-present map (& key) value))
 
 ;: Insert into a fresh destination table during rehash. Source entries are
 ;: unique, and the destination has no tombstones, so only the first empty slot
@@ -733,21 +753,24 @@
   (if (<= capacity 0)
     unit
     (let
-      [cursor : i64 (string-i64-map-normalized-bucket-index hash capacity)]
+      [cursor : i64
+        (stdlib.hashmap.string-i64-map-normalized-bucket-index hash capacity)]
       [walked : i64 0]
       [done : bool false]
       (begin
         (while (if done
           false
           (< walked capacity))
-          (match (string-i64-map-slot-at slots cursor)
+          (match (stdlib.hashmap.string-i64-map-slot-at slots cursor)
             [(StringI64MapEmpty)
               (begin
                 (array-set! slots cursor (StringI64MapOccupied key value hash))
                 (set! done true))]
             [_
               (begin
-                (set! cursor (string-i64-map-next-index cursor capacity))
+                (set!
+                  cursor
+                  (stdlib.hashmap.string-i64-map-next-index cursor capacity))
                 (set! walked (+ walked 1)))]))
         unit))))
 
@@ -762,54 +785,73 @@
   (if (>= index count)
     unit
     (begin
-      (match (string-i64-map-slot-at src index)
+      (match (stdlib.hashmap.string-i64-map-slot-at src index)
         [(StringI64MapOccupied key value hash)
-          (string-i64-map-insert-into-empty dst dst-capacity key value hash)]
+          (stdlib.hashmap.string-i64-map-insert-into-empty
+            dst
+            dst-capacity
+            key
+            value
+            hash)]
         [(StringI64MapEmpty) unit]
         [(StringI64MapTombstone) unit])
-      (string-i64-map-rehash-from src dst dst-capacity (+ index 1) count))))
+      (stdlib.hashmap.string-i64-map-rehash-from
+        src
+        dst
+        dst-capacity
+        (+ index 1)
+        count))))
 
 ;: Rebuild `map` as a fresh power-of-two table holding only its live entries
 ;: (tombstones dropped, so the deleted count resets to 0). The backing array is
 ;: newly allocated; the old one is reclaimed when the arena resets.
 (define (string-i64-map-resized [map : StringI64Map] [new-capacity : i64]) : StringI64Map
   (let
-    [src : (Array StringI64MapSlot) (string-i64-map-slots map)]
+    [src : (Array StringI64MapSlot) (stdlib.hashmap.string-i64-map-slots map)]
     [old-capacity : i64 (array-length src)]
     [requested-capacity : i64
-      (if (> (string-i64-map-len map) new-capacity)
-        (string-i64-map-len map)
+      (if (> (stdlib.hashmap.string-i64-map-len map) new-capacity)
+        (stdlib.hashmap.string-i64-map-len map)
         new-capacity)]
-    [rounded-capacity : i64 (string-i64-map-round-capacity requested-capacity)]
+    [rounded-capacity : i64
+      (stdlib.hashmap.string-i64-map-round-capacity requested-capacity)]
     [dst : (Array StringI64MapSlot)
       (make-array StringI64MapSlot rounded-capacity)]
     (begin
-      (string-i64-map-fill-empty dst 0 rounded-capacity)
-      (string-i64-map-rehash-from src dst rounded-capacity 0 old-capacity)
-      (StringI64Map dst (string-i64-map-len map) 0))))
+      (stdlib.hashmap.string-i64-map-fill-empty dst 0 rounded-capacity)
+      (stdlib.hashmap.string-i64-map-rehash-from
+        src
+        dst
+        rounded-capacity
+        0
+        old-capacity)
+      (StringI64Map dst (stdlib.hashmap.string-i64-map-len map) 0))))
 
 ;: Next capacity when growing: double, with a small floor so a tiny or empty
 ;: table grows to a useful size in one step.
 (define (string-i64-map-grow-capacity [capacity : i64]) : i64
   (if (< capacity 4)
     8
-    (* (string-i64-map-round-capacity capacity) 2)))
+    (* (stdlib.hashmap.string-i64-map-round-capacity capacity) 2)))
 
 ;: Grow `map` to the next capacity, rehashing its live entries.
 (define (string-i64-map-grow [map : StringI64Map]) : StringI64Map
   (let
-    [slots : (Array StringI64MapSlot) (string-i64-map-slots map)]
-    (string-i64-map-resized
+    [slots : (Array StringI64MapSlot) (stdlib.hashmap.string-i64-map-slots map)]
+    (stdlib.hashmap.string-i64-map-resized
       map
-      (string-i64-map-grow-capacity (array-length slots)))))
+      (stdlib.hashmap.string-i64-map-grow-capacity (array-length slots)))))
 
 ;: True when the table has reached the 3/4 load threshold, counting both live
 ;: entries and tombstones (both consume probe positions). A non-positive
 ;: capacity always needs to grow before it can hold anything.
 (define (string-i64-map-needs-grow? [map : StringI64Map]) : bool
   (let
-    [capacity : i64 (array-length (string-i64-map-slots map))]
-    [used : i64 (+ (string-i64-map-len map) (string-i64-map-deleted map))]
+    [capacity : i64 (array-length (stdlib.hashmap.string-i64-map-slots map))]
+    [used : i64
+      (+
+        (stdlib.hashmap.string-i64-map-len map)
+        (stdlib.hashmap.string-i64-map-deleted map))]
     (if (<= capacity 0)
       true
       (>= (* used 4) (* capacity 3)))))
@@ -821,15 +863,18 @@
 (define (string-i64-map-put [map : StringI64Map] [key : String] [value : i64]) : StringI64Map
   (let
     [grown : StringI64Map
-      (if (string-i64-map-needs-grow? map)
-        (string-i64-map-grow map)
+      (if (stdlib.hashmap.string-i64-map-needs-grow? map)
+        (stdlib.hashmap.string-i64-map-grow map)
         map)]
-    (match (string-i64-map-insert grown key value)
+    (match (stdlib.hashmap.string-i64-map-insert grown key value)
       [(StringI64MapInsertOk updated) updated]
       [(StringI64MapInsertFull full)
         ;; `needs-grow?` keeps a positive-capacity table below full; a leftover
         ;; `Full` (e.g. a capacity-0 seed) is handled by one more grow + retry.
-        (match (string-i64-map-insert (string-i64-map-grow full) key value)
+        (match (stdlib.hashmap.string-i64-map-insert
+          (stdlib.hashmap.string-i64-map-grow full)
+          key
+          value)
           [(StringI64MapInsertOk u) u]
           [(StringI64MapInsertFull u) u])])))
 
@@ -838,7 +883,7 @@
   [map : StringI64Map]
   [key : String]
   [value : i64]) : StringI64Map
-  (string-i64-map-put map key value))
+  (stdlib.hashmap.string-i64-map-put map key value))
 
 ;: Return the existing value for `key`, or insert `default-value` and return it.
 ;: This does not expose a live bucket handle; callers thread the returned map.
@@ -847,11 +892,11 @@
   [key : String]
   [default-value : i64]) : StringI64MapEntryOrInsertResult
   (let
-    [slots : (Array StringI64MapSlot) (string-i64-map-slots map)]
-    [hash : i64 (hash-string (& key))]
-    (match (string-i64-map-probe-borrowed
+    [slots : (Array StringI64MapSlot) (stdlib.hashmap.string-i64-map-slots map)]
+    [hash : i64 (hash_mod.hash-string (& key))]
+    (match (stdlib.hashmap.string-i64-map-probe-borrowed
       slots
-      (string-i64-map-capacity map)
+      (stdlib.hashmap.string-i64-map-capacity map)
       (& key)
       hash)
       [(StringI64MapProbeFound index)
@@ -861,20 +906,22 @@
           [(StringI64MapEmpty)
             (let
               [updated : StringI64Map
-                (string-i64-map-put map key default-value)]
+                (stdlib.hashmap.string-i64-map-put map key default-value)]
               (StringI64MapEntryOrInsertInserted updated default-value))]
           [(StringI64MapTombstone)
             (let
               [updated : StringI64Map
-                (string-i64-map-put map key default-value)]
+                (stdlib.hashmap.string-i64-map-put map key default-value)]
               (StringI64MapEntryOrInsertInserted updated default-value))])]
       [(StringI64MapProbeAbsent _)
         (let
-          [updated : StringI64Map (string-i64-map-put map key default-value)]
+          [updated : StringI64Map
+            (stdlib.hashmap.string-i64-map-put map key default-value)]
           (StringI64MapEntryOrInsertInserted updated default-value))]
       [(StringI64MapProbeFull)
         (let
-          [updated : StringI64Map (string-i64-map-put map key default-value)]
+          [updated : StringI64Map
+            (stdlib.hashmap.string-i64-map-put map key default-value)]
           (StringI64MapEntryOrInsertInserted updated default-value))])))
 
 ;: Probe for a borrowed key and return the immutable information needed to
@@ -886,8 +933,8 @@
   (if (<= capacity 0)
     (StringI64MapMutEntryInfo -1 false "" 0)
     (let
-      [hash : i64 (hash-string key)]
-      [cursor : i64 (string-i64-map-bucket-index hash capacity)]
+      [hash : i64 (hash_mod.hash-string key)]
+      [cursor : i64 (stdlib.hashmap.string-i64-map-bucket-index hash capacity)]
       [walked : i64 0]
       [found : i64 -1]
       [present : bool false]
@@ -896,10 +943,10 @@
       [done : bool false]
       (begin
         (while (and (< walked capacity) (not done))
-          (match (string-i64-map-slot-at slots cursor)
+          (match (stdlib.hashmap.string-i64-map-slot-at slots cursor)
             [(StringI64MapOccupied slot-key _ slot-hash)
               (if (if (= slot-hash hash)
-                (hash-key-string-eq? (& slot-key) key)
+                (hash_mod.hash-key-string-eq? (& slot-key) key)
                 false)
                 (begin
                   (set! found cursor)
@@ -908,12 +955,16 @@
                   (set! entry-hash slot-hash)
                   (set! done true))
                 (begin
-                  (set! cursor (string-i64-map-next-index cursor capacity))
+                  (set!
+                    cursor
+                    (stdlib.hashmap.string-i64-map-next-index cursor capacity))
                   (set! walked (+ walked 1))))]
             [(StringI64MapEmpty) (set! done true)]
             [(StringI64MapTombstone)
               (begin
-                (set! cursor (string-i64-map-next-index cursor capacity))
+                (set!
+                  cursor
+                  (stdlib.hashmap.string-i64-map-next-index cursor capacity))
                 (set! walked (+ walked 1)))]))
         (StringI64MapMutEntryInfo found present entry-key entry-hash)))))
 
@@ -935,10 +986,10 @@
 ;: The handle can update an existing entry in place; missing entries are
 ;: reported as absent and are not inserted by the handle API.
 (defmacro (string-i64-map-get-mut-entry-borrowed [map : Expr] [key : Expr]) : Expr
-  `(string-i64-map-mut-entry-from-info
+  `(stdlib.hashmap.string-i64-map-mut-entry-from-info
     (struct-get ,map slots)
     (&mut (struct-get ,map slots))
-    (string-i64-map-mut-entry-info
+    (stdlib.hashmap.string-i64-map-mut-entry-info
       (struct-get ,map slots)
       (array-length (struct-get ,map slots))
       ,key)))
@@ -951,7 +1002,7 @@
 (define (string-i64-map-mut-entry-value-or
   [entry : (StringI64MapMutEntry map)]
   [fallback : i64]) : i64
-  (if (string-i64-map-mut-entry-present? entry)
+  (if (stdlib.hashmap.string-i64-map-mut-entry-present? entry)
     (match (array-ref (struct-get entry slots) (struct-get entry index))
       [(StringI64MapOccupied _ value _) value]
       [(StringI64MapEmpty) fallback]
@@ -962,7 +1013,7 @@
 (define (string-i64-map-mut-entry-set!
   [entry : (StringI64MapMutEntry map)]
   [value : i64]) : unit
-  (if (string-i64-map-mut-entry-present? entry)
+  (if (stdlib.hashmap.string-i64-map-mut-entry-present? entry)
     (array-set!
       (struct-get entry slots)
       (struct-get entry index)
@@ -988,18 +1039,24 @@
   [capacity : i64]) : i64
   (if (>= index capacity)
     capacity
-    (match (string-i64-map-slot-at slots index)
+    (match (stdlib.hashmap.string-i64-map-slot-at slots index)
       [(StringI64MapOccupied _ _ _) index]
       [(StringI64MapEmpty)
-        (string-i64-map-next-occupied-from slots (+ index 1) capacity)]
+        (stdlib.hashmap.string-i64-map-next-occupied-from
+          slots
+          (+ index 1)
+          capacity)]
       [(StringI64MapTombstone)
-        (string-i64-map-next-occupied-from slots (+ index 1) capacity)])))
+        (stdlib.hashmap.string-i64-map-next-occupied-from
+          slots
+          (+ index 1)
+          capacity)])))
 
 ;: Iteration cursor: the index of the first occupied slot at or after `from`
 ;: (in ascending bucket order), or the capacity when no live entry remains.
 ;: A negative `from` is clamped to 0.
 ;:
-;: v1 iterates in *bucket order* — ascending slot index, skipping empty and
+;: v1 iterates in *bucket order* â€” ascending slot index, skipping empty and
 ;: tombstone slots. This order is deterministic for a fixed table state but is
 ;: NOT insertion order, and it can change across a resize/rehash (#827). Walk
 ;: live entries by starting at `(string-i64-map-next-occupied map 0)` and
@@ -1010,25 +1067,25 @@
 ;: (Borrow-rule enforcement of this is revisited under #806.)
 ;:
 ;: ```typelisp
-;: (import "stdlib/hashmap.tl")
-;: (define (sum-values [m : StringI64Map] [i : i64] [acc : i64]) : i64
-;:   (if (>= i (string-i64-map-capacity m))
+;: (import stdlib.hashmap)
+;: (define (sum-values [m : hashmap.StringI64Map] [i : i64] [acc : i64]) : i64
+;:   (if (>= i (hashmap.string-i64-map-capacity m))
 ;:     acc
 ;:     (sum-values
 ;:       m
-;:       (string-i64-map-next-occupied m (+ i 1))
-;:       (match (string-i64-map-entry-at m i)
-;:         [(StringI64MapEntrySome _ v) (+ acc v)]
-;:         [(StringI64MapEntryNone) acc]))))
+;:       (hashmap.string-i64-map-next-occupied m (+ i 1))
+;:       (match (hashmap.string-i64-map-entry-at m i)
+;:         [(hashmap.StringI64MapEntrySome _ v) (+ acc v)]
+;:         [(hashmap.StringI64MapEntryNone) acc]))))
 ;: (define (main) : i64
 ;:   (let
-;:     [m : StringI64Map (string-i64-map-put (string-i64-map-with-capacity 8) "k" 42)]
-;:     (sum-values m (string-i64-map-next-occupied m 0) 0)))
+;:     [m : hashmap.StringI64Map (hashmap.string-i64-map-put (hashmap.string-i64-map-with-capacity 8) "k" 42)]
+;:     (sum-values m (hashmap.string-i64-map-next-occupied m 0) 0)))
 ;: ```
 (define (string-i64-map-next-occupied [map : StringI64Map] [from : i64]) : i64
   (let
-    [slots : (Array StringI64MapSlot) (string-i64-map-slots map)]
-    (string-i64-map-next-occupied-from
+    [slots : (Array StringI64MapSlot) (stdlib.hashmap.string-i64-map-slots map)]
+    (stdlib.hashmap.string-i64-map-next-occupied-from
       slots
       (if (< from 0)
         0
@@ -1041,15 +1098,15 @@
 ;: yet enforce that the borrow outlives the map (revisited under #806).
 (define (string-i64-map-entry-at [map : StringI64Map] [index : i64]) : StringI64MapEntry
   (let
-    [slots : (Array StringI64MapSlot) (string-i64-map-slots map)]
+    [slots : (Array StringI64MapSlot) (stdlib.hashmap.string-i64-map-slots map)]
     (if (if (< index 0)
       true
       (>= index (array-length slots)))
-      (StringI64MapEntryNone)
-      (match (string-i64-map-slot-at slots index)
+      stdlib.hashmap.StringI64MapEntryNone
+      (match (stdlib.hashmap.string-i64-map-slot-at slots index)
         [(StringI64MapOccupied key value _) (StringI64MapEntrySome key value)]
-        [(StringI64MapEmpty) (StringI64MapEntryNone)]
-        [(StringI64MapTombstone) (StringI64MapEntryNone)]))))
+        [(StringI64MapEmpty) stdlib.hashmap.StringI64MapEntryNone]
+        [(StringI64MapTombstone) stdlib.hashmap.StringI64MapEntryNone]))))
 
 ;: Generated `HashMap<String,String>` family request. The full public API is
 ;: produced by the `stdlib/hashmap-family` declaration generator.
@@ -1066,3 +1123,293 @@
     (type i64)) "stdlib/hashmap/i64-key-v1")
   (defstruct I64I64Map
     (__hashmap_family_request i64)))
+
+;# Dotted-module migration: preserve the pre-module flat stdlib surface.
+(export
+  (value hashmap-string-key-descriptor-key)
+  (value hashmap-i64-key-descriptor-key)
+  (value string-i64-map-power-two-capacity?)
+  (value string-i64-map-round-capacity)
+  (value string-i64-map-normalized-bucket-index)
+  (value string-i64-map-bucket-index)
+  (value string-i64-map-next-index)
+  (value string-i64-map-slot-at)
+  (value string-i64-map-insert-slot)
+  (value string-i64-map-probe-from)
+  (value string-i64-map-probe)
+  (value string-i64-map-probe-borrowed-from)
+  (value string-i64-map-probe-borrowed)
+  (value string-i64-map-probe-normalized)
+  (value string-i64-map-slots)
+  (value string-i64-map-len)
+  (value string-i64-map-capacity)
+  (value string-i64-map-deleted)
+  (value string-i64-map-fill-empty)
+  (value string-i64-map-with-capacity)
+  (value string-i64-map-borrowed-value-missing)
+  (value string-i64-map-borrowed-value-found)
+  (value string-i64-map-get-borrowed)
+  (value string-i64-map-get)
+  (value string-i64-map-get-value-borrowed)
+  (value string-i64-map-contains-borrowed?)
+  (value string-i64-map-contains?)
+  (value string-i64-map-slot-tombstone?)
+  (value string-i64-map-insert)
+  (value string-i64-map-remove-borrowed)
+  (value string-i64-map-remove)
+  (value string-i64-map-update-borrowed-if-present)
+  (value string-i64-map-update-if-present)
+  (value string-i64-map-insert-into-empty)
+  (value string-i64-map-rehash-from)
+  (value string-i64-map-resized)
+  (value string-i64-map-grow-capacity)
+  (value string-i64-map-grow)
+  (value string-i64-map-needs-grow?)
+  (value string-i64-map-put)
+  (value string-i64-map-insert-or-update)
+  (value string-i64-map-entry-or-insert)
+  (value string-i64-map-mut-entry-info)
+  (value string-i64-map-mut-entry-from-info)
+  (value string-i64-map-mut-entry-present?)
+  (value string-i64-map-mut-entry-value-or)
+  (value string-i64-map-mut-entry-set!)
+  (value string-i64-map-next-occupied-from)
+  (value string-i64-map-next-occupied)
+  (value string-i64-map-entry-at)
+  (value string-string-map-hash-normalize)
+  (value string-string-map-hash-key)
+  (value string-string-map-power-two-capacity?)
+  (value string-string-map-round-capacity)
+  (value string-string-map-normalized-bucket-index)
+  (value string-string-map-bucket-index)
+  (value string-string-map-next-index)
+  (value string-string-map-insert-slot)
+  (value string-string-map-key-eq?)
+  (value string-string-map-probe-borrowed-from)
+  (value string-string-map-probe-borrowed)
+  (value string-string-map-probe)
+  (value string-string-map-slots)
+  (value string-string-map-len)
+  (value string-string-map-capacity)
+  (value string-string-map-deleted)
+  (value string-string-map-fill-empty)
+  (value string-string-map-with-capacity)
+  (value string-string-map-borrowed-value-missing)
+  (value string-string-map-borrowed-value-found)
+  (value string-string-map-get-borrowed)
+  (value string-string-map-get)
+  (value string-string-map-get-value-borrowed)
+  (value string-string-map-contains-borrowed?)
+  (value string-string-map-contains?)
+  (value string-string-map-slot-tombstone?)
+  (value string-string-map-insert)
+  (value string-string-map-remove-borrowed)
+  (value string-string-map-remove)
+  (value string-string-map-update-borrowed-if-present)
+  (value string-string-map-update-if-present)
+  (value string-string-map-insert-into-empty)
+  (value string-string-map-rehash-from)
+  (value string-string-map-resized)
+  (value string-string-map-grow-capacity)
+  (value string-string-map-grow)
+  (value string-string-map-needs-grow?)
+  (value string-string-map-put)
+  (value string-string-map-insert-or-update)
+  (value string-string-map-entry-or-insert)
+  (value string-string-map-mut-entry-info)
+  (value string-string-map-mut-entry-from-info)
+  (value string-string-map-mut-entry-present?)
+  (value string-string-map-mut-entry-value-or)
+  (value string-string-map-mut-entry-set!)
+  (value string-string-map-next-occupied-from)
+  (value string-string-map-next-occupied)
+  (value string-string-map-entry-at)
+  (value i64-i64-map-hash-normalize)
+  (value i64-i64-map-hash-key)
+  (value i64-i64-map-power-two-capacity?)
+  (value i64-i64-map-round-capacity)
+  (value i64-i64-map-normalized-bucket-index)
+  (value i64-i64-map-bucket-index)
+  (value i64-i64-map-next-index)
+  (value i64-i64-map-insert-slot)
+  (value i64-i64-map-probe-from)
+  (value i64-i64-map-probe)
+  (value i64-i64-map-slots)
+  (value i64-i64-map-len)
+  (value i64-i64-map-capacity)
+  (value i64-i64-map-deleted)
+  (value i64-i64-map-fill-empty)
+  (value i64-i64-map-with-capacity)
+  (value i64-i64-map-borrowed-value-missing)
+  (value i64-i64-map-borrowed-value-found)
+  (value i64-i64-map-get)
+  (value i64-i64-map-get-value-borrowed)
+  (value i64-i64-map-contains?)
+  (value i64-i64-map-slot-tombstone?)
+  (value i64-i64-map-insert)
+  (value i64-i64-map-remove)
+  (value i64-i64-map-update-if-present)
+  (value i64-i64-map-insert-into-empty)
+  (value i64-i64-map-rehash-from)
+  (value i64-i64-map-resized)
+  (value i64-i64-map-grow-capacity)
+  (value i64-i64-map-grow)
+  (value i64-i64-map-needs-grow?)
+  (value i64-i64-map-put)
+  (value i64-i64-map-insert-or-update)
+  (value i64-i64-map-entry-or-insert)
+  (value i64-i64-map-mut-entry-info)
+  (value i64-i64-map-mut-entry-from-info)
+  (value i64-i64-map-mut-entry-present?)
+  (value i64-i64-map-mut-entry-value-or)
+  (value i64-i64-map-mut-entry-set!)
+  (value i64-i64-map-next-occupied-from)
+  (value i64-i64-map-next-occupied)
+  (value i64-i64-map-entry-at)
+  (type StringI64MapSlot)
+  (type StringI64MapProbe)
+  (type StringI64Map)
+  (type StringI64MapLookup)
+  (type StringI64MapBorrowedValueLookup)
+  (type StringI64MapInsertResult)
+  (type StringI64MapRemoveResult)
+  (type StringI64MapUpdateResult)
+  (type StringI64MapEntryOrInsertResult)
+  (type StringI64MapMutEntryInfo)
+  (type StringI64MapMutEntry)
+  (type StringI64MapEntry)
+  (type StringStringMapSlot)
+  (type StringStringMapProbe)
+  (type StringStringMap)
+  (type StringStringMapLookup)
+  (type StringStringMapBorrowedValueLookup)
+  (type StringStringMapInsertResult)
+  (type StringStringMapRemoveResult)
+  (type StringStringMapUpdateResult)
+  (type StringStringMapEntryOrInsertResult)
+  (type StringStringMapMutEntryInfo)
+  (type StringStringMapMutEntry)
+  (type StringStringMapEntry)
+  (type I64I64MapSlot)
+  (type I64I64MapProbe)
+  (type I64I64Map)
+  (type I64I64MapLookup)
+  (type I64I64MapBorrowedValueLookup)
+  (type I64I64MapInsertResult)
+  (type I64I64MapRemoveResult)
+  (type I64I64MapUpdateResult)
+  (type I64I64MapEntryOrInsertResult)
+  (type I64I64MapMutEntryInfo)
+  (type I64I64MapMutEntry)
+  (type I64I64MapEntry)
+  (constructor StringI64Map)
+  (constructor StringI64MapMutEntryInfo)
+  (constructor StringI64MapMutEntry)
+  (constructor StringStringMap)
+  (constructor StringStringMapMutEntryInfo)
+  (constructor StringStringMapMutEntry)
+  (constructor I64I64Map)
+  (constructor I64I64MapMutEntryInfo)
+  (constructor I64I64MapMutEntry)
+  (field StringI64Map slots)
+  (field StringI64Map len)
+  (field StringI64Map deleted)
+  (field StringI64MapMutEntryInfo index)
+  (field StringI64MapMutEntryInfo present)
+  (field StringI64MapMutEntryInfo key)
+  (field StringI64MapMutEntryInfo hash)
+  (field StringI64MapMutEntry slots)
+  (field StringI64MapMutEntry borrow)
+  (field StringI64MapMutEntry index)
+  (field StringI64MapMutEntry present)
+  (field StringI64MapMutEntry key)
+  (field StringI64MapMutEntry hash)
+  (field StringStringMap slots)
+  (field StringStringMap len)
+  (field StringStringMap deleted)
+  (field StringStringMapMutEntryInfo index)
+  (field StringStringMapMutEntryInfo present)
+  (field StringStringMapMutEntryInfo key)
+  (field StringStringMapMutEntryInfo hash)
+  (field StringStringMapMutEntry slots)
+  (field StringStringMapMutEntry borrow)
+  (field StringStringMapMutEntry index)
+  (field StringStringMapMutEntry present)
+  (field StringStringMapMutEntry key)
+  (field StringStringMapMutEntry hash)
+  (field I64I64Map slots)
+  (field I64I64Map len)
+  (field I64I64Map deleted)
+  (field I64I64MapMutEntryInfo index)
+  (field I64I64MapMutEntryInfo present)
+  (field I64I64MapMutEntryInfo key)
+  (field I64I64MapMutEntryInfo hash)
+  (field I64I64MapMutEntry slots)
+  (field I64I64MapMutEntry borrow)
+  (field I64I64MapMutEntry index)
+  (field I64I64MapMutEntry present)
+  (field I64I64MapMutEntry key)
+  (field I64I64MapMutEntry hash)
+  (variant StringI64MapEmpty)
+  (variant StringI64MapTombstone)
+  (variant StringI64MapOccupied)
+  (variant StringI64MapProbeFound)
+  (variant StringI64MapProbeAbsent)
+  (variant StringI64MapProbeFull)
+  (variant StringI64MapMissing)
+  (variant StringI64MapFound)
+  (variant StringI64MapBorrowedValueMissing)
+  (variant StringI64MapBorrowedValueFound)
+  (variant StringI64MapInsertOk)
+  (variant StringI64MapInsertFull)
+  (variant StringI64MapRemoveOk)
+  (variant StringI64MapRemoveMissing)
+  (variant StringI64MapUpdateOk)
+  (variant StringI64MapUpdateMissing)
+  (variant StringI64MapEntryOrInsertFound)
+  (variant StringI64MapEntryOrInsertInserted)
+  (variant StringI64MapEntryNone)
+  (variant StringI64MapEntrySome)
+  (variant StringStringMapEmpty)
+  (variant StringStringMapTombstone)
+  (variant StringStringMapOccupied)
+  (variant StringStringMapProbeFound)
+  (variant StringStringMapProbeAbsent)
+  (variant StringStringMapProbeFull)
+  (variant StringStringMapMissing)
+  (variant StringStringMapFound)
+  (variant StringStringMapBorrowedValueMissing)
+  (variant StringStringMapBorrowedValueFound)
+  (variant StringStringMapInsertOk)
+  (variant StringStringMapInsertFull)
+  (variant StringStringMapRemoveOk)
+  (variant StringStringMapRemoveMissing)
+  (variant StringStringMapUpdateOk)
+  (variant StringStringMapUpdateMissing)
+  (variant StringStringMapEntryOrInsertFound)
+  (variant StringStringMapEntryOrInsertInserted)
+  (variant StringStringMapEntryNone)
+  (variant StringStringMapEntrySome)
+  (variant I64I64MapEmpty)
+  (variant I64I64MapTombstone)
+  (variant I64I64MapOccupied)
+  (variant I64I64MapProbeFound)
+  (variant I64I64MapProbeAbsent)
+  (variant I64I64MapProbeFull)
+  (variant I64I64MapMissing)
+  (variant I64I64MapFound)
+  (variant I64I64MapBorrowedValueMissing)
+  (variant I64I64MapBorrowedValueFound)
+  (variant I64I64MapInsertOk)
+  (variant I64I64MapInsertFull)
+  (variant I64I64MapRemoveOk)
+  (variant I64I64MapRemoveMissing)
+  (variant I64I64MapUpdateOk)
+  (variant I64I64MapUpdateMissing)
+  (variant I64I64MapEntryOrInsertFound)
+  (variant I64I64MapEntryOrInsertInserted)
+  (variant I64I64MapEntryNone)
+  (variant I64I64MapEntrySome)
+  (macro string-i64-map-get-mut-entry-borrowed)
+  (macro string-string-map-get-mut-entry-borrowed)
+  (macro i64-i64-map-get-mut-entry))

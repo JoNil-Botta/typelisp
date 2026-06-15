@@ -9,7 +9,9 @@
 ;# for suppression (`;; lint-allow: <rule-id>`). This module owns stable rule
 ;# metadata and the lint core verified by `compiler-lint-self-test` (driver:
 ;# `selfhost/lint_smoke.tl`).
-(import "../stdlib/io.tl")
+(import stdlib.io as io_mod)
+
+(import stdlib.string as string_mod)
 
 (import "compiler_ast_types.tl")
 
@@ -157,7 +159,7 @@
   (match rules
     [(LintRuleNil) LintRuleNotFound]
     [(LintRuleCons rule rest)
-      (if (string-eq (struct-get rule rule-id) rule-id)
+      (if (string_mod.string-eq (struct-get rule rule-id) rule-id)
         (LintRuleFound rule)
         (lint-rule-find-in (box-get rest) rule-id))]))
 
@@ -311,7 +313,7 @@
         (match func
           [(AstExprVar name)
             (and
-              (string-eq (intern-str name) "not")
+              (string_mod.string-eq (intern-str name) "not")
               (lint-single-arg-call? args))]
           [_ false]))]
     [(AstExprUnary (AstUnNot) _) true]
@@ -411,17 +413,17 @@
 
 (define (lint-deprecated-string-concat-name? [name : String]) : bool
   (or
-    (string-eq name "string-append")
-    (string-eq name "string-concat")
-    (string-eq name "string-concat3")
-    (string-eq name "string-concat4")
-    (string-eq name "string-concat5")))
+    (string_mod.string-eq name "string-append")
+    (string_mod.string-eq name "string-concat")
+    (string_mod.string-eq name "string-concat3")
+    (string_mod.string-eq name "string-concat4")
+    (string_mod.string-eq name "string-concat5")))
 
 (define (lint-deprecated-string-concat-loop-form? [name : String]) : bool
   (or
-    (string-eq name "while")
-    (string-eq name "foreach")
-    (string-eq name "spmd-reduce")))
+    (string_mod.string-eq name "while")
+    (string_mod.string-eq name "foreach")
+    (string_mod.string-eq name "spmd-reduce")))
 
 (define (lint-token-name [tok : Token]) : String
   (if (= (token-tag tok) (tag-sym))
@@ -450,9 +452,13 @@
     span))
 
 (define (lint-and-or-op-name [name : String]) : String
-  (if (or (string-eq name "and") (string-eq name "core/and"))
+  (if (or
+    (string_mod.string-eq name "and")
+    (string_mod.string-eq name "core/and"))
     "and"
-    (if (or (string-eq name "or") (string-eq name "core/or"))
+    (if (or
+      (string_mod.string-eq name "or")
+      (string_mod.string-eq name "core/or"))
       "or"
       "")))
 
@@ -467,13 +473,14 @@
 
 (define (lint-literal-render [lit : AstLiteral]) : String
   (match lit
-    [(AstLitInt value) (int->string value)]
+    [(AstLitInt value) (string_mod.int->string value)]
     [(AstLitFloat value) value]
     [(AstLitBool value)
       (if value
         "true"
         "false")]
-    [(AstLitString value) (string-append "\"" (string-append value "\""))]
+    [(AstLitString value)
+      (string_mod.string-append "\"" (string_mod.string-append value "\""))]
     [(AstLitUnit) "unit"]
     [_ "<expr>"]))
 
@@ -505,9 +512,9 @@
     [(AstUnBitNot) "bit-not"]))
 
 (define (lint-render-args-join [head : String] [tail : String]) : String
-  (if (string-eq tail "")
+  (if (string_mod.string-eq tail "")
     head
-    (string-append head (string-append " " tail))))
+    (string_mod.string-append head (string_mod.string-append " " tail))))
 
 (define (lint-expr-list-render [exprs : AstExprList]) : String
   (match exprs
@@ -521,11 +528,13 @@
           (lint-expr-list-render rest)))]))
 
 (define (lint-parenthesized-call-render [callee : String] [args : String]) : String
-  (if (string-eq args "")
-    (string-append "(" (string-append callee ")"))
-    (string-append
+  (if (string_mod.string-eq args "")
+    (string_mod.string-append "(" (string_mod.string-append callee ")"))
+    (string_mod.string-append
       "("
-      (string-append callee (string-append " " (string-append args ")"))))))
+      (string_mod.string-append
+        callee
+        (string_mod.string-append " " (string_mod.string-append args ")"))))))
 
 (define (lint-expr-render [expr : AstExpr]) : String
   (match expr
@@ -567,7 +576,7 @@
     [(AstExprCall func-box _)
       (let
         [func : AstExpr (ast-node-get func-box)]
-        (string-eq (lint-and-or-func-op func) op))]
+        (string_mod.string-eq (lint-and-or-func-op func) op))]
     [_ false]))
 
 (define (lint-and-or-args-have-kind? [op : String] [args : AstExprList]) : bool
@@ -590,7 +599,7 @@
     [(AstExprCall func-box args)
       (let
         [func : AstExpr (ast-node-get func-box)]
-        (if (string-eq (lint-and-or-func-op func) op)
+        (if (string_mod.string-eq (lint-and-or-func-op func) op)
           (lint-cascading-and-or-flat-args-render op args)
           (lint-expr-render expr)))]
     [_ (lint-expr-render expr)]))
@@ -617,7 +626,7 @@
     [(AstExprCall func-box args)
       (let
         [func : AstExpr (ast-node-get func-box)]
-        (if (string-eq (lint-and-or-func-op func) op)
+        (if (string_mod.string-eq (lint-and-or-func-op func) op)
           (lint-cascading-and-or-flat-arg-count-list op args)
           1))]
     [_ 1]))
@@ -649,11 +658,11 @@
   [args : AstExprList]
   [span : AstSourceSpan]) : LintFinding
   (LintFinding
-    (string-append
+    (string_mod.string-append
       "cascading "
-      (string-append
+      (string_mod.string-append
         op
-        (string-append
+        (string_mod.string-append
           ": prefer flat n-ary form "
           (lint-cascading-and-or-flat-call callee op args))))
     (lint-rule-cascading-and-or-id)
@@ -1190,7 +1199,7 @@
     [(AstExprCall func-box args)
       (let
         [func : AstExpr (ast-node-get func-box)]
-        (if (string-eq (lint-and-or-func-op func) op)
+        (if (string_mod.string-eq (lint-and-or-func-op func) op)
           (lint-walk-and-or-skip-args op args threshold acc)
           (lint-walk-expr expr threshold acc)))]
     [_ (lint-walk-expr expr threshold acc)]))
@@ -1220,7 +1229,9 @@
   [acc : LintFindings]) : LintFindings
   (let
     [op : String (lint-and-or-func-op func)]
-    (if (and (not (string-eq op "")) (lint-and-or-args-have-kind? op args))
+    (if (and
+      (not (string_mod.string-eq op ""))
+      (lint-and-or-args-have-kind? op args))
       (lint-walk-and-or-skip-args
         op
         args
@@ -1702,13 +1713,13 @@
       ;; ladder length math
       (if (= (lint-test-ladder-length ladder3) 3)
         unit
-        (panic "lint: ladder3 length should be 3"))
+        (io_mod.panic "lint: ladder3 length should be 3"))
       (if (= (lint-test-ladder-length ladder2) 2)
         unit
-        (panic "lint: ladder2 length should be 2"))
+        (io_mod.panic "lint: ladder2 length should be 2"))
       (if (= (lint-test-ladder-length vx) 0)
         unit
-        (panic "lint: non-if ladder length should be 0"))
+        (io_mod.panic "lint: non-if ladder length should be 0"))
       ;; The nested-if-ladder rule remains registered, but #2579 keeps it
       ;; dormant while bootstrap source must use nested `if` instead of bracket
       ;; `cond`, so ladders are traversed without emitting findings.
@@ -1720,7 +1731,7 @@
             (lint-findings-empty)))
         0)
         unit
-        (panic "lint: dormant 3-deep ladder should not be flagged"))
+        (io_mod.panic "lint: dormant 3-deep ladder should not be flagged"))
       ;; a 2-deep ladder is NOT flagged at threshold 3
       (if (=
         (lint-findings-count
@@ -1730,13 +1741,14 @@
             (lint-findings-empty)))
         0)
         unit
-        (panic "lint: 2-deep ladder should not be flagged at threshold 3"))
+        (io_mod.panic
+          "lint: 2-deep ladder should not be flagged at threshold 3"))
       ;; ... and is still not flagged at threshold 2 while dormant.
       (if (=
         (lint-findings-count (lint-test-walk ladder2 2 (lint-findings-empty)))
         0)
         unit
-        (panic "lint: dormant 2-deep ladder should not be flagged"))
+        (io_mod.panic "lint: dormant 2-deep ladder should not be flagged"))
       ;; return-path chains are only reported in tail contexts, where replacing
       ;; nested failure values with `(return ...)` preserves semantics.
       (if (=
@@ -1747,7 +1759,8 @@
             (lint-findings-empty)))
         0)
         unit
-        (panic "lint: return-path chain should not flag in a value context"))
+        (io_mod.panic
+          "lint: return-path chain should not flag in a value context"))
       (if (=
         (lint-findings-count
           (lint-test-walk-tail
@@ -1756,7 +1769,7 @@
             (lint-findings-empty)))
         1)
         unit
-        (panic "lint: return-path chain should be flagged once"))
+        (io_mod.panic "lint: return-path chain should be flagged once"))
       (match (lint-findings-get
         (lint-test-walk-tail
           return-chain3
@@ -1764,13 +1777,13 @@
           (lint-findings-empty))
         0)
         [(LintSomeFinding finding)
-          (if (string-eq
+          (if (string_mod.string-eq
             (struct-get finding rule-id)
             (lint-rule-return-path-chain-id))
             unit
-            (panic "lint: return-path chain should report its rule id"))]
+            (io_mod.panic "lint: return-path chain should report its rule id"))]
         [(LintNoFinding)
-          (panic "lint: return-path chain should produce a finding")])
+          (io_mod.panic "lint: return-path chain should produce a finding")])
       (if (=
         (lint-findings-count
           (lint-test-walk
@@ -1779,7 +1792,7 @@
             (lint-findings-empty)))
         1)
         unit
-        (panic "lint: unit then-branch should be flagged once"))
+        (io_mod.panic "lint: unit then-branch should be flagged once"))
       (match (lint-findings-get
         (lint-test-walk
           unit-else-guard
@@ -1787,12 +1800,13 @@
           (lint-findings-empty))
         0)
         [(LintSomeFinding finding)
-          (if (string-eq
+          (if (string_mod.string-eq
             (struct-get finding rule-id)
             (lint-rule-unit-if-guard-id))
             unit
-            (panic "lint: unit-if guard should report its rule id"))]
-        [(LintNoFinding) (panic "lint: unit-if guard should produce a finding")])
+            (io_mod.panic "lint: unit-if guard should report its rule id"))]
+        [(LintNoFinding)
+          (io_mod.panic "lint: unit-if guard should produce a finding")])
       (if (=
         (lint-findings-count
           (lint-test-walk
@@ -1801,7 +1815,7 @@
             (lint-findings-empty)))
         0)
         unit
-        (panic "lint: unit-if guard should skip value branches"))
+        (io_mod.panic "lint: unit-if guard should skip value branches"))
       (if (=
         (lint-findings-count
           (lint-test-walk
@@ -1810,7 +1824,7 @@
             (lint-findings-empty)))
         1)
         unit
-        (panic "lint: inverted unit set! guard should be flagged"))
+        (io_mod.panic "lint: inverted unit set! guard should be flagged"))
       (if (=
         (lint-findings-count
           (lint-test-walk
@@ -1819,7 +1833,8 @@
             (lint-findings-empty)))
         0)
         unit
-        (panic "lint: dormant ladder nested in begin should not be flagged"))
+        (io_mod.panic
+          "lint: dormant ladder nested in begin should not be flagged"))
       ;; ... and into let-binding initializers
       (if (=
         (lint-findings-count
@@ -1829,7 +1844,8 @@
             (lint-findings-empty)))
         0)
         unit
-        (panic "lint: dormant ladder in a let binding should not be flagged"))
+        (io_mod.panic
+          "lint: dormant ladder in a let binding should not be flagged"))
       ;; Longer ladders are also traversed without findings while dormant.
       (if (=
         (lint-findings-count
@@ -1839,7 +1855,7 @@
             (lint-findings-empty)))
         0)
         unit
-        (panic "lint: dormant 4-deep ladder should not be flagged"))
+        (io_mod.panic "lint: dormant 4-deep ladder should not be flagged"))
       (if (=
         (lint-findings-count
           (lint-test-walk
@@ -1848,7 +1864,7 @@
             (lint-findings-empty)))
         0)
         unit
-        (panic "lint: dormant spanned ladder should not be flagged"))
+        (io_mod.panic "lint: dormant spanned ladder should not be flagged"))
       (if (=
         (lint-findings-count
           (lint-test-walk
@@ -1857,7 +1873,7 @@
             (lint-findings-empty)))
         1)
         unit
-        (panic "lint: body-only nested let should be flagged once"))
+        (io_mod.panic "lint: body-only nested let should be flagged once"))
       (if (=
         (lint-findings-count
           (lint-test-walk
@@ -1866,7 +1882,7 @@
             (lint-findings-empty)))
         0)
         unit
-        (panic "lint: shadowing nested let should not be flagged"))
+        (io_mod.panic "lint: shadowing nested let should not be flagged"))
       (if (=
         (lint-findings-count
           (lint-test-walk
@@ -1875,7 +1891,8 @@
             (lint-findings-empty)))
         0)
         unit
-        (panic "lint: let with nontrivial begin body should not be flagged"))
+        (io_mod.panic
+          "lint: let with nontrivial begin body should not be flagged"))
       (match (lint-findings-get
         (lint-test-walk
           spanned-nested-let
@@ -1887,11 +1904,14 @@
             [fspan : AstSourceSpan (struct-get finding span)]
             (if (and
               (= (struct-get fspan start-line) 11)
-              (string-eq (struct-get finding rule-id) (lint-rule-nested-let-id)))
+              (string_mod.string-eq
+                (struct-get finding rule-id)
+                (lint-rule-nested-let-id)))
               unit
-              (panic "lint: nested-let finding should carry rule id and span")))]
+              (io_mod.panic
+                "lint: nested-let finding should carry rule id and span")))]
         [(LintNoFinding)
-          (panic "lint: spanned nested let should produce a finding")])
+          (io_mod.panic "lint: spanned nested let should produce a finding")])
       (if (=
         (lint-findings-count
           (lint-test-walk
@@ -1900,7 +1920,7 @@
             (lint-findings-empty)))
         1)
         unit
-        (panic "lint: nested and should be flagged once"))
+        (io_mod.panic "lint: nested and should be flagged once"))
       (if (=
         (lint-findings-count
           (lint-test-walk
@@ -1909,7 +1929,7 @@
             (lint-findings-empty)))
         1)
         unit
-        (panic "lint: nested or should be flagged once"))
+        (io_mod.panic "lint: nested or should be flagged once"))
       (if (=
         (lint-findings-count
           (lint-test-walk
@@ -1918,7 +1938,7 @@
             (lint-findings-empty)))
         0)
         unit
-        (panic "lint: flat and should not be flagged"))
+        (io_mod.panic "lint: flat and should not be flagged"))
       (if (=
         (lint-findings-count
           (lint-test-walk
@@ -1927,7 +1947,7 @@
             (lint-findings-empty)))
         0)
         unit
-        (panic "lint: mixed and/or should not be flagged"))
+        (io_mod.panic "lint: mixed and/or should not be flagged"))
       (if (=
         (lint-findings-count
           (lint-test-walk
@@ -1936,7 +1956,8 @@
             (lint-findings-empty)))
         1)
         unit
-        (panic "lint: one maximal and cascade should produce one finding"))
+        (io_mod.panic
+          "lint: one maximal and cascade should produce one finding"))
       (match (lint-findings-get
         (lint-test-walk
           spanned-and-cascade
@@ -1949,16 +1970,16 @@
             (if (and
               (= (struct-get fspan start-line) 21)
               (= (struct-get finding depth) 3)
-              (string-eq
+              (string_mod.string-eq
                 (struct-get finding rule-id)
                 (lint-rule-cascading-and-or-id))
-              (string-eq
+              (string_mod.string-eq
                 (struct-get finding message)
                 "cascading and: prefer flat n-ary form (and x y z)"))
               unit
-              (panic "lint: cascading-and-or finding metadata mismatch")))]
+              (io_mod.panic "lint: cascading-and-or finding metadata mismatch")))]
         [(LintNoFinding)
-          (panic "lint: spanned and cascade should produce a finding")])
+          (io_mod.panic "lint: spanned and cascade should produce a finding")])
       (match (lint-findings-get
         (lint-test-walk
           core-and-cascade
@@ -1966,74 +1987,77 @@
           (lint-findings-empty))
         0)
         [(LintSomeFinding finding)
-          (if (string-eq
+          (if (string_mod.string-eq
             (struct-get finding message)
-            (string-append
+            (string_mod.string-append
               "cascading and: prefer flat n-ary form ("
-              (string-append "core/and" " x y z)")))
+              (string_mod.string-append "core/and" " x y z)")))
             unit
-            (panic "lint: core/and cascade should preserve callee spelling"))]
+            (io_mod.panic
+              "lint: core/and cascade should preserve callee spelling"))]
         [(LintNoFinding)
-          (panic "lint: core/and cascade should produce a finding")])
-      (if (string-eq
+          (io_mod.panic "lint: core/and cascade should produce a finding")])
+      (if (string_mod.string-eq
         (lint-rule-suggestion (lint-rule-nested-if-ladder-id))
         "prefer cond (value/guard ladders) or match (variant dispatch)")
         unit
-        (panic "lint: nested-if-ladder suggestion should be registered"))
-      (if (string-eq
+        (io_mod.panic "lint: nested-if-ladder suggestion should be registered"))
+      (if (string_mod.string-eq
         (lint-rule-message (lint-rule-nested-if-ladder-id))
         "nested if-ladder: chain of if/else-if; prefer cond (value/guard ladders) or match (variant dispatch)")
         unit
-        (panic "lint: nested-if-ladder message should be registered"))
+        (io_mod.panic "lint: nested-if-ladder message should be registered"))
       (match (lint-rule-find (lint-rule-nested-if-ladder-id))
         [(LintRuleFound rule)
           (if (and
-            (string-eq
+            (string_mod.string-eq
               (struct-get rule rule-id)
               (lint-rule-nested-if-ladder-id))
-            (string-eq
+            (string_mod.string-eq
               (struct-get rule message)
               (lint-rule-nested-if-ladder-message))
-            (string-eq
+            (string_mod.string-eq
               (struct-get rule suggestion)
               (lint-rule-nested-if-ladder-suggestion)))
             unit
-            (panic
+            (io_mod.panic
               "lint: nested-if-ladder registry entry should match metadata"))]
         [(LintRuleNotFound)
-          (panic "lint: nested-if-ladder should be registered")])
-      (if (string-eq
+          (io_mod.panic "lint: nested-if-ladder should be registered")])
+      (if (string_mod.string-eq
         (lint-rule-suggestion (lint-rule-nested-let-id))
         "merge the nested let bindings into one sequential let")
         unit
-        (panic "lint: nested-let suggestion should be registered"))
-      (if (string-eq
+        (io_mod.panic "lint: nested-let suggestion should be registered"))
+      (if (string_mod.string-eq
         (lint-rule-suggestion (lint-rule-return-path-chain-id))
         "prefer early return guards with (return ...)")
         unit
-        (panic "lint: return-path-chain suggestion should be registered"))
-      (if (string-eq
+        (io_mod.panic "lint: return-path-chain suggestion should be registered"))
+      (if (string_mod.string-eq
         (lint-rule-suggestion (lint-rule-unit-if-guard-id))
         "prefer when/unless for unit guard branches")
         unit
-        (panic "lint: unit-if-guard suggestion should be registered"))
-      (if (string-eq
+        (io_mod.panic "lint: unit-if-guard suggestion should be registered"))
+      (if (string_mod.string-eq
         (lint-rule-suggestion (lint-rule-deprecated-string-concat-id))
         "import stdlib/str_cat.tl and use str-cat, or use stdlib/text_buf.tl in accumulation loops")
         unit
-        (panic "lint: deprecated-string-concat suggestion should be registered"))
-      (if (string-eq
+        (io_mod.panic
+          "lint: deprecated-string-concat suggestion should be registered"))
+      (if (string_mod.string-eq
         (lint-rule-suggestion (lint-rule-cascading-and-or-id))
         "flatten same-operator and/or operands, e.g. (and a b c)")
         unit
-        (panic "lint: cascading-and-or suggestion should be registered"))
-      (if (string-eq (lint-rule-suggestion "unknown-rule") "")
+        (io_mod.panic "lint: cascading-and-or suggestion should be registered"))
+      (if (string_mod.string-eq (lint-rule-suggestion "unknown-rule") "")
         unit
-        (panic "lint: unknown rule should have no suggestion"))
-      (if (string-eq (lint-rule-message "unknown-rule") "")
+        (io_mod.panic "lint: unknown rule should have no suggestion"))
+      (if (string_mod.string-eq (lint-rule-message "unknown-rule") "")
         unit
-        (panic "lint: unknown rule should have no message"))
+        (io_mod.panic "lint: unknown rule should have no message"))
       (match (lint-rule-find "unknown-rule")
         [(LintRuleNotFound) unit]
-        [(LintRuleFound _) (panic "lint: unknown rule should not be found")])
+        [(LintRuleFound _)
+          (io_mod.panic "lint: unknown rule should not be found")])
       42)))

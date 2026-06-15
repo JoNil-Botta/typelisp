@@ -1,14 +1,14 @@
-(import "stdlib/env.tl")
+(import stdlib.env)
 
-(import "stdlib/process_borrowed.tl")
+(import stdlib.process_borrowed)
 
-(import "stdlib/test.tl")
+(import stdlib.test)
 
 (define (assert-owned-string-eq
   [actual : String]
   [expected : String]
   [message : String]) : unit
-  (assert-string-eq (& actual) (& expected) message))
+  (test.assert-string-eq (& actual) (& expected) message))
 
 (define (assert-process-ok
   [result : ResultProcessOutput]
@@ -19,7 +19,7 @@
   (match result
     [(OkProcessOutput output)
       (begin
-        (assert-i64-eq (process-output-status output) expected-status message)
+        (test.assert-i64-eq (process-output-status output) expected-status message)
         (assert-owned-string-eq
           (process-output-stdout output)
           expected-stdout
@@ -37,9 +37,9 @@
   (match result
     [(OkProcessOutput output)
       (begin
-        (assert-i64-eq (process-output-status output) expected-status message)
+        (test.assert-i64-eq (process-output-status output) expected-status message)
         (assert-owned-string-eq (process-output-stdout output) "" message)
-        (assert-false (string-eq (process-output-stderr output) "") message))]
+        (test.assert-false (string-eq (process-output-stderr output) "") message))]
     [(ErrProcessOutput _) (panic message)]))
 
 (define (assert-process-spawn-failed
@@ -48,7 +48,7 @@
   (match result
     [(ErrProcessOutput error)
       (begin
-        (assert-true (process-error-spawn-failed? error) message)
+        (test.assert-true (process-error-spawn-failed? error) message)
         (assert-owned-string-eq
           (process-error-message error)
           "process: spawn failed"
@@ -69,7 +69,7 @@
   (match result
     [(ErrProcessChild error)
       (begin
-        (assert-true (process-error-spawn-failed? error) message)
+        (test.assert-true (process-error-spawn-failed? error) message)
         (assert-owned-string-eq
           (process-error-message error)
           "process: spawn failed"
@@ -82,7 +82,7 @@
   (match result
     [(ErrProcessOutput error)
       (begin
-        (assert-true (process-error-unsupported? error) message)
+        (test.assert-true (process-error-unsupported? error) message)
         (assert-owned-string-eq (process-error-message error) message message))]
     [(OkProcessOutput _) (panic message)]))
 
@@ -92,7 +92,7 @@
   (match result
     [(ErrProcessChild error)
       (begin
-        (assert-true (process-error-unsupported? error) message)
+        (test.assert-true (process-error-unsupported? error) message)
         (assert-owned-string-eq (process-error-message error) message message))]
     [(OkProcessChild _) (panic message)]))
 
@@ -105,34 +105,34 @@
   (process-command "/usr/bin/printf" (process-args-single text)))
 
 (define (process-runtime-borrowed-output [exe : String] [text : String]) : ResultProcessOutput
-  (process-borrowed-output
-    (process-borrowed-command (& exe) (process-borrowed-args-single (& text)))))
+  (process_borrowed.process-borrowed-output
+    (process_borrowed.process-borrowed-command (& exe) (process_borrowed.process-borrowed-args-single (& text)))))
 
 (define (process-runtime-borrowed-start [exe : String] [text : String]) : ResultProcessChild
-  (process-borrowed-start
-    (process-borrowed-command (& exe) (process-borrowed-args-single (& text)))))
+  (process_borrowed.process-borrowed-start
+    (process_borrowed.process-borrowed-command (& exe) (process_borrowed.process-borrowed-args-single (& text)))))
 
 (define (process-runtime-borrowed-cwd-output [exe : String] [cwd : String]) : ResultProcessOutput
-  (process-borrowed-output
-    (process-borrowed-command-with-cwd
-      (process-borrowed-command-empty (& exe))
+  (process_borrowed.process-borrowed-output
+    (process_borrowed.process-borrowed-command-with-cwd
+      (process_borrowed.process-borrowed-command-empty (& exe))
       (& cwd))))
 
 (define (process-runtime-borrowed-env-output [exe : String] [env-name : String]) : ResultProcessOutput
-  (process-borrowed-output
-    (process-borrowed-command-with-env-list
-      (process-borrowed-command
+  (process_borrowed.process-borrowed-output
+    (process_borrowed.process-borrowed-command-with-env-list
+      (process_borrowed.process-borrowed-command
         (& exe)
-        (process-borrowed-args-single (& env-name)))
-      (process-borrowed-env-cons
+        (process_borrowed.process-borrowed-args-single (& env-name)))
+      (process_borrowed.process-borrowed-env-cons
         (& env-name)
         (& env-name)
-        (process-borrowed-env-empty-like (& env-name))))))
+        (process_borrowed.process-borrowed-env-empty-like (& env-name))))))
 
 (define (process-runtime-borrowed-stdin-output [exe : String] [text : String]) : ResultProcessOutput
-  (process-borrowed-output
-    (process-borrowed-command-with-stdin
-      (process-borrowed-command-empty (& exe))
+  (process_borrowed.process-borrowed-output
+    (process_borrowed.process-borrowed-command-with-stdin
+      (process_borrowed.process-borrowed-command-empty (& exe))
       (& text))))
 
 (define (process-runtime-cwd-command) : ProcessCommand
@@ -194,7 +194,7 @@
     (process-args-empty)))
 
 (define (main) : i64
-  (if (string-eq (env-path-list-separator) ";")
+  (if (string-eq (env.env-path-list-separator) ";")
     (begin
       (assert-process-ok
         (process-output (process-runtime-windows-command))

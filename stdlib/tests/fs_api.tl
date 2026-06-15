@@ -1,307 +1,307 @@
-(import "stdlib/fs.tl")
+(import stdlib.fs)
 
-(import "stdlib/io.tl")
+(import stdlib.io)
 
-(import "stdlib/list.tl")
+(import stdlib.list)
 
-(import "stdlib/test.tl")
+(import stdlib.test)
 
-(import "stdlib/vector.tl")
+(import stdlib.vector)
 
 (define (assert-owned-string-eq
   [actual : String]
   [expected : String]
   [message : String]) : unit
-  (assert-string-eq (& actual) (& expected) message))
+  (test.assert-string-eq (& actual) (& expected) message))
 
-(define (assert-ok-unit [result : ResultIoUnit] [message : String]) : unit
+(define (assert-ok-unit [result : io.ResultIoUnit] [message : String]) : unit
   (match result
-    [(OkIoUnit) unit]
-    [(ErrIoUnit error) (panic (string-append message (io-error-message error)))]))
+    [(io.OkIoUnit) unit]
+    [(io.ErrIoUnit error) (io.panic (string-append message (io.io-error-message error)))]))
 
-(define (assert-not-found-unit [result : ResultIoUnit] [message : String]) : unit
+(define (assert-not-found-unit [result : io.ResultIoUnit] [message : String]) : unit
   (match result
-    [(OkIoUnit) (panic (string-append message "unexpected success"))]
-    [(ErrIoUnit error) (assert-true (io-error-not-found? error) message)]))
+    [(io.OkIoUnit) (io.panic (string-append message "unexpected success"))]
+    [(io.ErrIoUnit error) (test.assert-true (io.io-error-not-found? error) message)]))
 
-(define (assert-invalid-unit [result : ResultIoUnit] [message : String]) : unit
+(define (assert-invalid-unit [result : io.ResultIoUnit] [message : String]) : unit
   (match result
-    [(OkIoUnit) (panic (string-append message "unexpected success"))]
-    [(ErrIoUnit error) (assert-true (io-error-invalid-path? error) message)]))
+    [(io.OkIoUnit) (io.panic (string-append message "unexpected success"))]
+    [(io.ErrIoUnit error) (test.assert-true (io.io-error-invalid-path? error) message)]))
 
-(define (assert-unsupported-unit [result : ResultIoUnit] [message : String]) : unit
+(define (assert-unsupported-unit [result : io.ResultIoUnit] [message : String]) : unit
   (match result
-    [(OkIoUnit) (panic (string-append message "unexpected success"))]
-    [(ErrIoUnit error) (assert-true (io-error-unsupported? error) message)]))
+    [(io.OkIoUnit) (io.panic (string-append message "unexpected success"))]
+    [(io.ErrIoUnit error) (test.assert-true (io.io-error-unsupported? error) message)]))
 
-(define (expect-ok-string [result : ResultIoString] [message : String]) : String
+(define (expect-ok-string [result : io.ResultIoString] [message : String]) : String
   (match result
-    [(OkIoString value) value]
-    [(ErrIoString error)
-      (panic (string-append message (io-error-message error)))]))
+    [(io.OkIoString value) value]
+    [(io.ErrIoString error)
+      (io.panic (string-append message (io.io-error-message error)))]))
 
-(define (expect-ok-string-list [result : ResultIoStringList] [message : String]) : StringList
+(define (expect-ok-string-list [result : fs.ResultIoStringList] [message : String]) : list.StringList
   (match result
-    [(OkIoStringList value) value]
-    [(ErrIoStringList error)
-      (panic (string-append message (io-error-message error)))]))
+    [(fs.OkIoStringList value) value]
+    [(fs.ErrIoStringList error)
+      (io.panic (string-append message (io.io-error-message error)))]))
 
-(define (expect-ok-string-vec [result : ResultIoStringVec] [message : String]) : StringVec
+(define (expect-ok-string-vec [result : fs.ResultIoStringVec] [message : String]) : vector.StringVec
   (match result
-    [(OkIoStringVec value) value]
-    [(ErrIoStringVec error)
-      (panic (string-append message (io-error-message error)))]))
+    [(fs.OkIoStringVec value) value]
+    [(fs.ErrIoStringVec error)
+      (io.panic (string-append message (io.io-error-message error)))]))
 
 (define (assert-unsupported-string-list
-  [result : ResultIoStringList]
+  [result : fs.ResultIoStringList]
   [message : String]) : unit
   (match result
-    [(OkIoStringList _) (panic (string-append message "unexpected success"))]
-    [(ErrIoStringList error)
-      (assert-true (io-error-unsupported? error) message)]))
+    [(fs.OkIoStringList _) (io.panic (string-append message "unexpected success"))]
+    [(fs.ErrIoStringList error)
+      (test.assert-true (io.io-error-unsupported? error) message)]))
 
 (define (assert-not-found-string-list
-  [result : ResultIoStringList]
+  [result : fs.ResultIoStringList]
   [message : String]) : unit
   (match result
-    [(OkIoStringList _) (panic (string-append message "unexpected success"))]
-    [(ErrIoStringList error) (assert-true (io-error-not-found? error) message)]))
+    [(fs.OkIoStringList _) (io.panic (string-append message "unexpected success"))]
+    [(fs.ErrIoStringList error) (test.assert-true (io.io-error-not-found? error) message)]))
 
 (define (assert-invalid-string-list
-  [result : ResultIoStringList]
+  [result : fs.ResultIoStringList]
   [message : String]) : unit
   (match result
-    [(OkIoStringList _) (panic (string-append message "unexpected success"))]
-    [(ErrIoStringList error)
-      (assert-true (io-error-invalid-path? error) message)]))
+    [(fs.OkIoStringList _) (io.panic (string-append message "unexpected success"))]
+    [(fs.ErrIoStringList error)
+      (test.assert-true (io.io-error-invalid-path? error) message)]))
 
 (define (assert-error-string-list
-  [result : ResultIoStringList]
+  [result : fs.ResultIoStringList]
   [message : String]) : unit
   (match result
-    [(OkIoStringList _) (panic (string-append message "unexpected success"))]
-    [(ErrIoStringList _) unit]))
+    [(fs.OkIoStringList _) (io.panic (string-append message "unexpected success"))]
+    [(fs.ErrIoStringList _) unit]))
 
-(define (test-try-file-exists? [path : String]) : ResultIoBool
-  (try-file-exists? (& path)))
+(define (test-try-file-exists? [path : String]) : io.ResultIoBool
+  (io.try-file-exists? (& path)))
 
-(define (test-try-read-file [path : String]) : ResultIoString
-  (try-read-file (& path)))
+(define (test-try-read-file [path : String]) : io.ResultIoString
+  (io.try-read-file (& path)))
 
-(define (test-try-write-file [path : String] [contents : String]) : ResultIoUnit
-  (try-write-file (& path) (& contents)))
+(define (test-try-write-file [path : String] [contents : String]) : io.ResultIoUnit
+  (io.try-write-file (& path) (& contents)))
 
 (define (test-fs-path-join [left : String] [right : String]) : String
-  (fs-path-join (& left) (& right)))
+  (fs.fs-path-join (& left) (& right)))
 
 (define (test-fs-path-join-many0) : String
-  (fs-path-join-many))
+  (fs.fs-path-join-many))
 
 (define (test-fs-path-join-many1 [a : String]) : String
-  (fs-path-join-many a))
+  (fs.fs-path-join-many a))
 
 (define (test-fs-path-join-many2 [a : String] [b : String]) : String
-  (fs-path-join-many a b))
+  (fs.fs-path-join-many a b))
 
 (define (test-fs-path-join-many3 [a : String] [b : String] [c : String]) : String
-  (fs-path-join-many a b c))
+  (fs.fs-path-join-many a b c))
 
 (define (test-fs-path-join-many4
   [a : String]
   [b : String]
   [c : String]
   [d : String]) : String
-  (fs-path-join-many a b c d))
+  (fs.fs-path-join-many a b c d))
 
 (define (test-fs-path-starts-separator? [path : String]) : bool
-  (fs-path-starts-separator? (& path)))
+  (fs.fs-path-starts-separator? (& path)))
 
 (define (test-fs-dirname [path : String]) : String
-  (fs-dirname (& path)))
+  (fs.fs-dirname (& path)))
 
 (define (test-fs-basename [path : String]) : String
-  (fs-basename (& path)))
+  (fs.fs-basename (& path)))
 
 (define (test-fs-extension [path : String]) : String
-  (fs-extension (& path)))
+  (fs.fs-extension (& path)))
 
 (define (test-fs-path-normalize [path : String]) : String
-  (fs-path-normalize (& path)))
+  (fs.fs-path-normalize (& path)))
 
 (define (test-fs-path-absolute? [path : String]) : bool
-  (fs-path-absolute? (& path)))
+  (fs.fs-path-absolute? (& path)))
 
 (define (test-fs-path-safe-relative? [path : String]) : bool
-  (fs-path-safe-relative? (& path)))
+  (fs.fs-path-safe-relative? (& path)))
 
-(define (test-try-mkdir [path : String]) : ResultIoUnit
-  (try-mkdir (& path)))
+(define (test-try-mkdir [path : String]) : io.ResultIoUnit
+  (fs.try-mkdir (& path)))
 
-(define (test-try-mkdir-if-missing [path : String]) : ResultIoUnit
-  (try-mkdir-if-missing (& path)))
+(define (test-try-mkdir-if-missing [path : String]) : io.ResultIoUnit
+  (fs.try-mkdir-if-missing (& path)))
 
-(define (test-try-remove-file [path : String]) : ResultIoUnit
-  (try-remove-file (& path)))
+(define (test-try-remove-file [path : String]) : io.ResultIoUnit
+  (fs.try-remove-file (& path)))
 
-(define (test-try-remove-dir [path : String]) : ResultIoUnit
-  (try-remove-dir (& path)))
+(define (test-try-remove-dir [path : String]) : io.ResultIoUnit
+  (fs.try-remove-dir (& path)))
 
-(define (test-try-rename [source : String] [destination : String]) : ResultIoUnit
-  (try-rename (& source) (& destination)))
+(define (test-try-rename [source : String] [destination : String]) : io.ResultIoUnit
+  (fs.try-rename (& source) (& destination)))
 
-(define (test-try-read-dir [path : String]) : ResultIoStringList
-  (try-read-dir (& path)))
+(define (test-try-read-dir [path : String]) : fs.ResultIoStringList
+  (fs.try-read-dir (& path)))
 
-(define (test-try-read-dir-vec [path : String]) : ResultIoStringVec
-  (try-read-dir-vec (& path)))
+(define (test-try-read-dir-vec [path : String]) : fs.ResultIoStringVec
+  (fs.try-read-dir-vec (& path)))
 
-(define (test-try-file-kind [path : String]) : ResultFsFileKind
-  (try-file-kind (& path)))
+(define (test-try-file-kind [path : String]) : fs.ResultFsFileKind
+  (fs.try-file-kind (& path)))
 
-(define (test-try-file-metadata [path : String]) : ResultFsMetadata
-  (try-file-metadata (& path)))
+(define (test-try-file-metadata [path : String]) : fs.ResultFsMetadata
+  (fs.try-file-metadata (& path)))
 
 (define (test-fs-file-kind-status [path : String]) : i64
-  (fs-file-kind-status path))
+  (fs.fs-file-kind-status path))
 
 (define (test-fs-file-size-status [path : String]) : i64
-  (fs-file-size-status path))
+  (fs.fs-file-size-status path))
 
 (define (test-fs-file-size [path : String]) : i64
-  (fs-file-size path))
+  (fs.fs-file-size path))
 
-(define (test-try-remove-file-if-exists [path : String]) : ResultIoUnit
-  (try-remove-file-if-exists (& path)))
+(define (test-try-remove-file-if-exists [path : String]) : io.ResultIoUnit
+  (fs.try-remove-file-if-exists (& path)))
 
-(define (test-try-remove-dir-if-exists [path : String]) : ResultIoUnit
-  (try-remove-dir-if-exists (& path)))
+(define (test-try-remove-dir-if-exists [path : String]) : io.ResultIoUnit
+  (fs.try-remove-dir-if-exists (& path)))
 
-(define (test-try-create-temp-dir [prefix : String]) : ResultIoString
-  (try-create-temp-dir (& prefix)))
+(define (test-try-create-temp-dir [prefix : String]) : io.ResultIoString
+  (fs.try-create-temp-dir (& prefix)))
 
 (define (assert-exists [path : String] [expected : bool] [message : String]) : unit
   (match (test-try-file-exists? path)
-    [(OkIoBool exists) (assert-bool-eq exists expected message)]
-    [(ErrIoBool error) (panic (string-append message (io-error-message error)))]))
+    [(io.OkIoBool exists) (test.assert-bool-eq exists expected message)]
+    [(io.ErrIoBool error) (io.panic (string-append message (io.io-error-message error)))]))
 
-(define (expect-file-kind [result : ResultFsFileKind] [message : String]) : FsFileKind
+(define (expect-file-kind [result : fs.ResultFsFileKind] [message : String]) : fs.FsFileKind
   (match result
-    [(OkFsFileKind kind) kind]
-    [(ErrFsFileKind error)
-      (panic (string-append message (io-error-message error)))]))
+    [(fs.OkFsFileKind kind) kind]
+    [(fs.ErrFsFileKind error)
+      (io.panic (string-append message (io.io-error-message error)))]))
 
-(define (expect-file-metadata [result : ResultFsMetadata] [message : String]) : FsMetadata
+(define (expect-file-metadata [result : fs.ResultFsMetadata] [message : String]) : fs.FsMetadata
   (match result
-    [(OkFsMetadata metadata) metadata]
-    [(ErrFsMetadata error)
-      (panic (string-append message (io-error-message error)))]))
+    [(fs.OkFsMetadata metadata) metadata]
+    [(fs.ErrFsMetadata error)
+      (io.panic (string-append message (io.io-error-message error)))]))
 
 (define (assert-file-kind-regular [path : String] [message : String]) : unit
   (match (expect-file-kind (test-try-file-kind path) message)
-    [(FsFileRegular) unit]
-    [_ (panic message)]))
+    [(fs.FsFileRegular) unit]
+    [_ (io.panic message)]))
 
 (define (assert-file-kind-directory [path : String] [message : String]) : unit
   (match (expect-file-kind (test-try-file-kind path) message)
-    [(FsFileDirectory) unit]
-    [_ (panic message)]))
+    [(fs.FsFileDirectory) unit]
+    [_ (io.panic message)]))
 
 (define (assert-file-kind-not-found [path : String] [message : String]) : unit
   (match (test-try-file-kind path)
-    [(ErrFsFileKind error) (assert-true (io-error-not-found? error) message)]
-    [(OkFsFileKind _) (panic message)]))
+    [(fs.ErrFsFileKind error) (test.assert-true (io.io-error-not-found? error) message)]
+    [(fs.OkFsFileKind _) (io.panic message)]))
 
 (define (assert-file-kind-invalid [path : String] [message : String]) : unit
   (match (test-try-file-kind path)
-    [(ErrFsFileKind error) (assert-true (io-error-invalid-path? error) message)]
-    [(OkFsFileKind _) (panic message)]))
+    [(fs.ErrFsFileKind error) (test.assert-true (io.io-error-invalid-path? error) message)]
+    [(fs.OkFsFileKind _) (io.panic message)]))
 
 (define (assert-file-kind-unsupported [path : String] [message : String]) : unit
   (match (test-try-file-kind path)
-    [(ErrFsFileKind error) (assert-true (io-error-unsupported? error) message)]
-    [(OkFsFileKind _) (panic message)]))
+    [(fs.ErrFsFileKind error) (test.assert-true (io.io-error-unsupported? error) message)]
+    [(fs.OkFsFileKind _) (io.panic message)]))
 
 (define (assert-file-metadata-regular-size
   [path : String]
   [expected-size : i64]
   [message : String]) : unit
   (let
-    [metadata : FsMetadata
+    [metadata : fs.FsMetadata
       (expect-file-metadata (test-try-file-metadata path) message)]
     (begin
-      (match (fs-metadata-kind metadata)
-        [(FsFileRegular) unit]
-        [_ (panic message)])
-      (assert-i64-eq (fs-metadata-size metadata) expected-size message))))
+      (match (fs.fs-metadata-kind metadata)
+        [(fs.FsFileRegular) unit]
+        [_ (io.panic message)])
+      (test.assert-i64-eq (fs.fs-metadata-size metadata) expected-size message))))
 
 (define (assert-file-metadata-directory [path : String] [message : String]) : unit
-  (match (fs-metadata-kind
+  (match (fs.fs-metadata-kind
     (expect-file-metadata (test-try-file-metadata path) message))
-    [(FsFileDirectory) unit]
-    [_ (panic message)]))
+    [(fs.FsFileDirectory) unit]
+    [_ (io.panic message)]))
 
 (define (assert-file-metadata-not-found [path : String] [message : String]) : unit
   (match (test-try-file-metadata path)
-    [(ErrFsMetadata error) (assert-true (io-error-not-found? error) message)]
-    [(OkFsMetadata _) (panic message)]))
+    [(fs.ErrFsMetadata error) (test.assert-true (io.io-error-not-found? error) message)]
+    [(fs.OkFsMetadata _) (io.panic message)]))
 
 (define (assert-file-metadata-invalid [path : String] [message : String]) : unit
   (match (test-try-file-metadata path)
-    [(ErrFsMetadata error) (assert-true (io-error-invalid-path? error) message)]
-    [(OkFsMetadata _) (panic message)]))
+    [(fs.ErrFsMetadata error) (test.assert-true (io.io-error-invalid-path? error) message)]
+    [(fs.OkFsMetadata _) (io.panic message)]))
 
 (define (assert-file-metadata-unsupported [path : String] [message : String]) : unit
   (match (test-try-file-metadata path)
-    [(ErrFsMetadata error) (assert-true (io-error-unsupported? error) message)]
-    [(OkFsMetadata _) (panic message)]))
+    [(fs.ErrFsMetadata error) (test.assert-true (io.io-error-unsupported? error) message)]
+    [(fs.OkFsMetadata _) (io.panic message)]))
 
 (define (assert-runtime-metadata-regular
   [path : String]
   [expected-size : i64]
   [message : String]) : unit
   (begin
-    (assert-i64-eq
+    (test.assert-i64-eq
       (test-fs-file-kind-status path)
-      fs-file-kind-regular-code
+      fs.fs-file-kind-regular-code
       message)
-    (assert-i64-eq (test-fs-file-size-status path) io-status-ok message)
-    (assert-i64-eq (test-fs-file-size path) expected-size message)))
+    (test.assert-i64-eq (test-fs-file-size-status path) io.io-status-ok message)
+    (test.assert-i64-eq (test-fs-file-size path) expected-size message)))
 
 (define (assert-runtime-metadata-directory [path : String] [message : String]) : unit
   (begin
-    (assert-i64-eq
+    (test.assert-i64-eq
       (test-fs-file-kind-status path)
-      fs-file-kind-directory-code
+      fs.fs-file-kind-directory-code
       message)
-    (assert-i64-eq (test-fs-file-size-status path) io-status-ok message)
-    (assert-i64-eq (test-fs-file-size path) 0 message)))
+    (test.assert-i64-eq (test-fs-file-size-status path) io.io-status-ok message)
+    (test.assert-i64-eq (test-fs-file-size path) 0 message)))
 
 (define (assert-runtime-metadata-not-found [path : String] [message : String]) : unit
   (begin
-    (assert-i64-eq (test-fs-file-kind-status path) io-status-not-found message)
-    (assert-i64-eq (test-fs-file-size-status path) io-status-not-found message)
-    (assert-i64-eq (test-fs-file-size path) 0 message)))
+    (test.assert-i64-eq (test-fs-file-kind-status path) io.io-status-not-found message)
+    (test.assert-i64-eq (test-fs-file-size-status path) io.io-status-not-found message)
+    (test.assert-i64-eq (test-fs-file-size path) 0 message)))
 
 (define (assert-string-vec3
-  [items : StringVec]
+  [items : vector.StringVec]
   [first : String]
   [second : String]
   [third : String]
   [message : String]) : unit
   (begin
-    (assert-i64-eq (string-vec-len items) 3 message)
-    (assert-owned-string-eq (string-vec-get items 0 "missing") first message)
-    (assert-owned-string-eq (string-vec-get items 1 "missing") second message)
-    (assert-owned-string-eq (string-vec-get items 2 "missing") third message)))
+    (test.assert-i64-eq (vector.string-vec-len items) 3 message)
+    (assert-owned-string-eq (vector.string-vec-get items 0 "missing") first message)
+    (assert-owned-string-eq (vector.string-vec-get items 1 "missing") second message)
+    (assert-owned-string-eq (vector.string-vec-get items 2 "missing") third message)))
 
 (define (assert-file-contents
   [path : String]
   [expected : String]
   [message : String]) : unit
   (match (test-try-read-file path)
-    [(OkIoString contents) (assert-owned-string-eq contents expected message)]
-    [(ErrIoString error)
-      (panic (string-append message (io-error-message error)))]))
+    [(io.OkIoString contents) (assert-owned-string-eq contents expected message)]
+    [(io.ErrIoString error)
+      (io.panic (string-append message (io.io-error-message error)))]))
 
 ;; Windows and Linux both support temp-dir creation; the broad lifecycle checks
 ;; below cover cleanup where the test owns all generated children.
@@ -316,15 +316,15 @@
         (test-try-create-temp-dir "typelisp fs test")
         "create temp dir b: ")]
     (begin
-      (assert-true (not (string-eq dir-a dir-b)) "temp directories are unique")
+      (test.assert-true (not (string-eq dir-a dir-b)) "temp directories are unique")
       (assert-exists dir-a true "temp dir a exists")
       (assert-exists dir-b true "temp dir b exists"))))
 
 (define (assert-invalid-temp-dir) : unit
   (match (test-try-create-temp-dir "")
-    [(ErrIoString error)
-      (assert-true (io-error-invalid-path? error) "empty temp prefix invalid")]
-    [(OkIoString _) (panic "empty temp prefix unexpectedly succeeded")]))
+    [(io.ErrIoString error)
+      (test.assert-true (io.io-error-invalid-path? error) "empty temp prefix invalid")]
+    [(io.OkIoString _) (io.panic "empty temp prefix unexpectedly succeeded")]))
 
 (define (assert-mkdir-if-missing [parent : String] [cleanup : bool]) : unit
   (let
@@ -436,40 +436,40 @@
       (assert-ok-unit (test-try-write-file file-b "beta") "read-dir file b: ")
       (assert-ok-unit (test-try-mkdir child-dir) "read-dir child dir: ")
       (let
-        [entries : StringList
+        [entries : list.StringList
           (expect-ok-string-list (test-try-read-dir root) "read dir: ")]
-        [entries-vec : StringVec
+        [entries-vec : vector.StringVec
           (expect-ok-string-vec (test-try-read-dir-vec root) "read dir vec: ")]
         (begin
-          (assert-true
-            (string-list-contains? entries "alpha.txt")
+          (test.assert-true
+            (list.string-list-contains? entries "alpha.txt")
             "read-dir includes first file name")
-          (assert-true
-            (string-list-contains? entries "beta data.txt")
+          (test.assert-true
+            (list.string-list-contains? entries "beta data.txt")
             "read-dir includes second file name")
-          (assert-true
-            (string-list-contains? entries "child-dir")
+          (test.assert-true
+            (list.string-list-contains? entries "child-dir")
             "read-dir includes subdirectory name")
-          (assert-false
-            (string-list-contains? entries ".")
+          (test.assert-false
+            (list.string-list-contains? entries ".")
             "read-dir filters dot")
-          (assert-false
-            (string-list-contains? entries "..")
+          (test.assert-false
+            (list.string-list-contains? entries "..")
             "read-dir filters dotdot")
-          (assert-true
-            (string-vec-contains? entries-vec "alpha.txt")
+          (test.assert-true
+            (vector.string-vec-contains? entries-vec "alpha.txt")
             "read-dir vec includes first file name")
-          (assert-true
-            (string-vec-contains? entries-vec "beta data.txt")
+          (test.assert-true
+            (vector.string-vec-contains? entries-vec "beta data.txt")
             "read-dir vec includes second file name")
-          (assert-true
-            (string-vec-contains? entries-vec "child-dir")
+          (test.assert-true
+            (vector.string-vec-contains? entries-vec "child-dir")
             "read-dir vec includes subdirectory name")
-          (assert-false
-            (string-vec-contains? entries-vec ".")
+          (test.assert-false
+            (vector.string-vec-contains? entries-vec ".")
             "read-dir vec filters dot")
-          (assert-false
-            (string-vec-contains? entries-vec "..")
+          (test.assert-false
+            (vector.string-vec-contains? entries-vec "..")
             "read-dir vec filters dotdot")
           (assert-not-found-string-list
             (test-try-read-dir missing)
@@ -494,40 +494,40 @@
   (and
     (> (string-length path) 2)
     (= (string-ref path 1) #:')
-    (fs-path-separator? (string-ref path 2))))
+    (fs.fs-path-separator? (string-ref path 2))))
 
 (define (assert-current-dir-api) : unit
   (begin
-    (assert-i64-eq (fs-current-dir-status) io-status-ok "current dir status ok")
+    (test.assert-i64-eq (fs.fs-current-dir-status) io.io-status-ok "current dir status ok")
     (let
-      [direct-cwd : String (fs-current-dir)]
-      (assert-true
+      [direct-cwd : String (fs.fs-current-dir)]
+      (test.assert-true
         (> (string-length direct-cwd) 0)
         "direct current dir is non-empty"))
-    (match (try-current-dir)
-      [(OkIoString cwd)
+    (match (fs.try-current-dir)
+      [(io.OkIoString cwd)
         (begin
-          (assert-true (> (string-length cwd) 0) "current dir is non-empty")
-          (assert-true
-            (if (fs-windows?)
+          (test.assert-true (> (string-length cwd) 0) "current dir is non-empty")
+          (test.assert-true
+            (if (fs.fs-windows?)
               (or
                 (test-fs-path-starts-separator? cwd)
                 (fs-test-drive-absolute? cwd))
               (test-fs-path-starts-separator? cwd))
             "current dir has rooted shape"))]
-      [(ErrIoString error)
-        (assert-true
+      [(io.ErrIoString error)
+        (test.assert-true
           false
           (string-append
             "current dir unexpectedly failed: "
-            (io-error-message error)))])))
+            (io.io-error-message error)))])))
 
 (define (main) : i64
   (let
     [joined : String (test-fs-path-join "left path" "right file")]
     [expected-join : String
       (string-append
-        (string-append "left path" (fs-path-separator))
+        (string-append "left path" (fs.fs-path-separator))
         "right file")]
     (begin
       (assert-owned-string-eq
@@ -553,23 +553,23 @@
       (assert-owned-string-eq
         (test-fs-path-join-many3 "left" "middle" "right")
         (string-append
-          (string-append (string-append "left" (fs-path-separator)) "middle")
-          (string-append (fs-path-separator) "right"))
+          (string-append (string-append "left" (fs.fs-path-separator)) "middle")
+          (string-append (fs.fs-path-separator) "right"))
         "path join many three segments")
       (assert-owned-string-eq
         (test-fs-path-join-many4 "left" "middle" "right" "leaf")
         (string-append
           (string-append
-            (string-append (string-append "left" (fs-path-separator)) "middle")
-            (string-append (fs-path-separator) "right"))
-          (string-append (fs-path-separator) "leaf"))
+            (string-append (string-append "left" (fs.fs-path-separator)) "middle")
+            (string-append (fs.fs-path-separator) "right"))
+          (string-append (fs.fs-path-separator) "leaf"))
         "path join many four segments")
       (assert-owned-string-eq
         (test-fs-path-join-many3 "left/" "/right" "leaf")
-        (string-append "left/right" (string-append (fs-path-separator) "leaf"))
+        (string-append "left/right" (string-append (fs.fs-path-separator) "leaf"))
         "path join many avoids duplicate separator")
       (assert-string-vec3
-        (fs-read-dir-split-vec "first\nsecond\nthird\n")
+        (fs.fs-read-dir-split-vec "first\nsecond\nthird\n")
         "first"
         "second"
         "third"
@@ -648,72 +648,72 @@
         (test-fs-path-normalize "C:\\tmp\\..\\file.tl")
         "C:/file.tl"
         "normalize drive absolute path")
-      (assert-bool-eq
+      (test.assert-bool-eq
         (test-fs-path-absolute? "/root")
         true
         "slash-rooted path is absolute")
-      (assert-bool-eq
+      (test.assert-bool-eq
         (test-fs-path-absolute? "\\root")
         true
         "backslash-rooted path is absolute")
-      (assert-bool-eq
+      (test.assert-bool-eq
         (test-fs-path-absolute? "C:/root")
         true
         "drive slash path is absolute")
-      (assert-bool-eq
+      (test.assert-bool-eq
         (test-fs-path-absolute? "C:\\root")
         true
         "drive backslash path is absolute")
-      (assert-bool-eq
+      (test.assert-bool-eq
         (test-fs-path-absolute? "C:root")
         false
         "drive-relative path is not absolute")
-      (assert-bool-eq
+      (test.assert-bool-eq
         (test-fs-path-absolute? "src/main.tl")
         false
         "relative path is not absolute")
-      (assert-bool-eq
+      (test.assert-bool-eq
         (test-fs-path-safe-relative? "src/main.tl")
         true
         "normal relative path is safe")
-      (assert-bool-eq
+      (test.assert-bool-eq
         (test-fs-path-safe-relative? "src//./lib/../main.tl")
         true
         "normalizing relative path below root is safe")
-      (assert-bool-eq
+      (test.assert-bool-eq
         (test-fs-path-safe-relative? "")
         false
         "empty path is not a safe suffix")
-      (assert-bool-eq
+      (test.assert-bool-eq
         (test-fs-path-safe-relative? ".")
         false
         "dot path is not a safe suffix")
-      (assert-bool-eq
+      (test.assert-bool-eq
         (test-fs-path-safe-relative? "..")
         false
         "parent path is not a safe suffix")
-      (assert-bool-eq
+      (test.assert-bool-eq
         (test-fs-path-safe-relative? "../escape.tl")
         false
         "leading parent traversal is not safe")
-      (assert-bool-eq
+      (test.assert-bool-eq
         (test-fs-path-safe-relative? "a/../../escape.tl")
         false
         "normalized parent traversal is not safe")
-      (assert-bool-eq
+      (test.assert-bool-eq
         (test-fs-path-safe-relative? "/abs.tl")
         false
         "rooted path is not a safe suffix")
-      (assert-bool-eq
+      (test.assert-bool-eq
         (test-fs-path-safe-relative? "C:/abs.tl")
         false
         "drive absolute path is not a safe suffix")
-      (assert-bool-eq
+      (test.assert-bool-eq
         (test-fs-path-safe-relative? "C:relative.tl")
         false
         "drive-relative path is not a safe suffix")
       (assert-current-dir-api)
-      (if (fs-windows?)
+      (if (fs.fs-windows?)
         (begin
           (assert-created-temp-dir)
           (let
@@ -794,7 +794,7 @@
           [file-a : String (test-fs-path-join dir-a "artifact with space.s")]
           [file-b : String (test-fs-path-join dir-b "cleanup.obj")]
           (begin
-            (assert-true
+            (test.assert-true
               (not (string-eq dir-a dir-b))
               "temp directories are unique")
             (assert-exists dir-a true "temp dir a exists")

@@ -1,14 +1,14 @@
-(import "stdlib/fs.tl")
+(import stdlib.fs)
 
-(import "stdlib/io.tl")
+(import stdlib.io)
 
-(import "stdlib/test.tl")
+(import stdlib.test)
 
 (define (assert-owned-string-eq
   [actual : String]
   [expected : String]
   [message : String]) : unit
-  (assert-string-eq (& actual) (& expected) message))
+  (test.assert-string-eq (& actual) (& expected) message))
 
 (define handle-read-file : String
   "target/stdlib-verify/io_file_handle_read.txt")
@@ -25,191 +25,191 @@
 (define handle-missing-file : String
   "target/stdlib-verify/io_file_handle_missing.txt")
 
-(define (assert-ok-unit [result : ResultIoUnit] [message : String]) : unit
+(define (assert-ok-unit [result : io.ResultIoUnit] [message : String]) : unit
   (match result
-    [(OkIoUnit) unit]
-    [(ErrIoUnit error) (panic (string-append message (io-error-message error)))]))
+    [(io.OkIoUnit) unit]
+    [(io.ErrIoUnit error) (io.panic (string-append message (io.io-error-message error)))]))
 
-(define (expect-open-ok [result : ResultIoFile] [message : String]) : FileHandle
+(define (expect-open-ok [result : io.ResultIoFile] [message : String]) : io.FileHandle
   (match result
-    [(OkIoFile handle) handle]
-    [(ErrIoFile error) (panic (string-append message (io-error-message error)))]))
+    [(io.OkIoFile handle) handle]
+    [(io.ErrIoFile error) (io.panic (string-append message (io.io-error-message error)))]))
 
-(define (assert-close-unsupported [result : ResultIoUnit] [message : String]) : unit
+(define (assert-close-unsupported [result : io.ResultIoUnit] [message : String]) : unit
   (match result
-    [(OkIoUnit) (panic (string-append message "close unexpectedly succeeded"))]
-    [(ErrIoUnit error) (assert-true (io-error-unsupported? error) message)]))
+    [(io.OkIoUnit) (io.panic (string-append message "close unexpectedly succeeded"))]
+    [(io.ErrIoUnit error) (test.assert-true (io.io-error-unsupported? error) message)]))
 
 (define (assert-unit-unsupported
-  [result : ResultIoUnit]
+  [result : io.ResultIoUnit]
   [operation : String]
   [message : String]) : unit
   (match result
-    [(OkIoUnit)
-      (panic
+    [(io.OkIoUnit)
+      (io.panic
         (string-append
           message
           (string-append operation " unexpectedly succeeded")))]
-    [(ErrIoUnit error) (assert-true (io-error-unsupported? error) message)]))
+    [(io.ErrIoUnit error) (test.assert-true (io.io-error-unsupported? error) message)]))
 
-(define (assert-open-unsupported [result : ResultIoFile] [message : String]) : unit
+(define (assert-open-unsupported [result : io.ResultIoFile] [message : String]) : unit
   (match result
-    [(OkIoFile _) (panic (string-append message "open unexpectedly succeeded"))]
-    [(ErrIoFile error) (assert-true (io-error-unsupported? error) message)]))
+    [(io.OkIoFile _) (io.panic (string-append message "open unexpectedly succeeded"))]
+    [(io.ErrIoFile error) (test.assert-true (io.io-error-unsupported? error) message)]))
 
-(define (assert-open-invalid [result : ResultIoFile] [message : String]) : unit
+(define (assert-open-invalid [result : io.ResultIoFile] [message : String]) : unit
   (match result
-    [(OkIoFile _) (panic (string-append message "open unexpectedly succeeded"))]
-    [(ErrIoFile error) (assert-true (io-error-invalid-path? error) message)]))
+    [(io.OkIoFile _) (io.panic (string-append message "open unexpectedly succeeded"))]
+    [(io.ErrIoFile error) (test.assert-true (io.io-error-invalid-path? error) message)]))
 
-(define (assert-open-not-found [result : ResultIoFile] [message : String]) : unit
+(define (assert-open-not-found [result : io.ResultIoFile] [message : String]) : unit
   (match result
-    [(OkIoFile _) (panic (string-append message "open unexpectedly succeeded"))]
-    [(ErrIoFile error) (assert-true (io-error-not-found? error) message)]))
+    [(io.OkIoFile _) (io.panic (string-append message "open unexpectedly succeeded"))]
+    [(io.ErrIoFile error) (test.assert-true (io.io-error-not-found? error) message)]))
 
 (define (assert-read-ok
-  [result : ResultIoRead]
+  [result : io.ResultIoRead]
   [expected-bytes : String]
   [expected-eof : bool]
   [message : String]) : unit
   (match result
-    [(OkIoRead read)
+    [(io.OkIoRead read)
       (begin
         (assert-owned-string-eq
-          (file-read-bytes read)
+          (io.file-read-bytes read)
           expected-bytes
           (string-append message " bytes"))
-        (assert-bool-eq
-          (file-read-eof? read)
+        (test.assert-bool-eq
+          (io.file-read-eof? read)
           expected-eof
           (string-append message " eof")))]
-    [(ErrIoRead error) (panic (string-append message (io-error-message error)))]))
+    [(io.ErrIoRead error) (io.panic (string-append message (io.io-error-message error)))]))
 
-(define (assert-read-unsupported [result : ResultIoRead] [message : String]) : unit
+(define (assert-read-unsupported [result : io.ResultIoRead] [message : String]) : unit
   (match result
-    [(OkIoRead _) (panic (string-append message "read unexpectedly succeeded"))]
-    [(ErrIoRead error) (assert-true (io-error-unsupported? error) message)]))
+    [(io.OkIoRead _) (io.panic (string-append message "read unexpectedly succeeded"))]
+    [(io.ErrIoRead error) (test.assert-true (io.io-error-unsupported? error) message)]))
 
-(define (assert-read-invalid [result : ResultIoRead] [message : String]) : unit
+(define (assert-read-invalid [result : io.ResultIoRead] [message : String]) : unit
   (match result
-    [(OkIoRead _) (panic (string-append message "read unexpectedly succeeded"))]
-    [(ErrIoRead error) (assert-true (io-error-invalid-path? error) message)]))
+    [(io.OkIoRead _) (io.panic (string-append message "read unexpectedly succeeded"))]
+    [(io.ErrIoRead error) (test.assert-true (io.io-error-invalid-path? error) message)]))
 
-(define (test-try-read-file [path : String]) : ResultIoString
-  (try-read-file (& path)))
+(define (test-try-read-file [path : String]) : io.ResultIoString
+  (io.try-read-file (& path)))
 
-(define (test-try-file-exists? [path : String]) : ResultIoBool
-  (try-file-exists? (& path)))
+(define (test-try-file-exists? [path : String]) : io.ResultIoBool
+  (io.try-file-exists? (& path)))
 
-(define (test-try-write-file [path : String] [contents : String]) : ResultIoUnit
-  (try-write-file (& path) (& contents)))
+(define (test-try-write-file [path : String] [contents : String]) : io.ResultIoUnit
+  (io.try-write-file (& path) (& contents)))
 
-(define (test-try-remove-file-if-exists [path : String]) : ResultIoUnit
-  (try-remove-file-if-exists (& path)))
+(define (test-try-remove-file-if-exists [path : String]) : io.ResultIoUnit
+  (fs.try-remove-file-if-exists (& path)))
 
-(define (test-file-open [path : String] [mode : OpenMode]) : ResultIoFile
-  (file-open (& path) mode))
+(define (test-file-open [path : String] [mode : io.OpenMode]) : io.ResultIoFile
+  (io.file-open (& path) mode))
 
-(define (test-file-write [handle : FileHandle] [contents : String]) : ResultIoUnit
-  (file-write handle (& contents)))
+(define (test-file-write [handle : io.FileHandle] [contents : String]) : io.ResultIoUnit
+  (io.file-write handle (& contents)))
 
 (define (assert-file-contents
   [path : String]
   [expected : String]
   [message : String]) : unit
   (match (test-try-read-file path)
-    [(OkIoString contents) (assert-owned-string-eq contents expected message)]
-    [(ErrIoString error)
-      (panic (string-append message (io-error-message error)))]))
+    [(io.OkIoString contents) (assert-owned-string-eq contents expected message)]
+    [(io.ErrIoString error)
+      (io.panic (string-append message (io.io-error-message error)))]))
 
 (define (assert-file-exists
   [path : String]
   [expected : bool]
   [message : String]) : unit
   (match (test-try-file-exists? path)
-    [(OkIoBool exists) (assert-bool-eq exists expected message)]
-    [(ErrIoBool error) (panic (string-append message (io-error-message error)))]))
+    [(io.OkIoBool exists) (test.assert-bool-eq exists expected message)]
+    [(io.ErrIoBool error) (io.panic (string-append message (io.io-error-message error)))]))
 
 (define (exercise-linux-file-handles) : unit
   (let
-    [read-handle : FileHandle
+    [read-handle : io.FileHandle
       (begin
         (assert-ok-unit
           (test-try-write-file handle-read-file "abcdef")
           "seed read handle file: ")
         (expect-open-ok
-          (test-file-open handle-read-file OpenRead)
+          (test-file-open handle-read-file io.OpenRead)
           "open read: "))]
     (begin
       (assert-read-invalid
-        (file-read-chunk read-handle -1)
+        (io.file-read-chunk read-handle -1)
         "negative read count returns invalid path")
       (assert-read-ok
-        (file-read-chunk read-handle 0)
+        (io.file-read-chunk read-handle 0)
         ""
         false
         "zero read keeps current eof")
       (assert-read-ok
-        (file-read-chunk read-handle 2)
+        (io.file-read-chunk read-handle 2)
         "ab"
         false
         "first fixed chunk")
       (assert-read-ok
-        (file-read-chunk read-handle 3)
+        (io.file-read-chunk read-handle 3)
         "cde"
         false
         "second fixed chunk")
       (assert-read-ok
-        (file-read-chunk read-handle 10)
+        (io.file-read-chunk read-handle 10)
         "f"
         false
         "short read before eof")
       (assert-read-ok
-        (file-read-chunk read-handle 10)
+        (io.file-read-chunk read-handle 10)
         ""
         true
         "empty read observes eof")
       (assert-read-ok
-        (file-read-chunk read-handle 10)
+        (io.file-read-chunk read-handle 10)
         ""
         true
         "eof remains sticky")
-      (assert-ok-unit (file-close read-handle) "close read handle: ")
+      (assert-ok-unit (io.file-close read-handle) "close read handle: ")
       (assert-read-unsupported
-        (file-read-chunk read-handle 1)
+        (io.file-read-chunk read-handle 1)
         "read after close returns unsupported")
       (assert-close-unsupported
-        (file-close read-handle)
+        (io.file-close read-handle)
         "double close returns unsupported")
       (assert-read-unsupported
-        (file-read-chunk (FileHandle 999) 1)
+        (io.file-read-chunk (io.FileHandle 999) 1)
         "invalid read handle returns unsupported")
       (assert-close-unsupported
-        (file-close (FileHandle 999))
+        (io.file-close (io.FileHandle 999))
         "invalid handle returns unsupported")
       (assert-unit-unsupported
-        (test-file-write (FileHandle 999) "x")
+        (test-file-write (io.FileHandle 999) "x")
         "write"
         "invalid write handle returns unsupported")
       (assert-unit-unsupported
-        (file-flush (FileHandle 999))
+        (io.file-flush (io.FileHandle 999))
         "flush"
         "invalid flush handle returns unsupported")
       (assert-open-not-found
-        (test-file-open handle-missing-file OpenRead)
+        (test-file-open handle-missing-file io.OpenRead)
         "missing read open")
-      (assert-open-invalid (test-file-open "" OpenRead) "empty path open")
+      (assert-open-invalid (test-file-open "" io.OpenRead) "empty path open")
       (assert-ok-unit
         (test-try-write-file handle-truncate-file "payload")
         "seed truncate file: ")
       (let
-        [truncate-handle : FileHandle
+        [truncate-handle : io.FileHandle
           (expect-open-ok
-            (test-file-open handle-truncate-file OpenWriteTruncate)
+            (test-file-open handle-truncate-file io.OpenWriteTruncate)
             "open truncate: ")]
         (begin
           (assert-read-unsupported
-            (file-read-chunk truncate-handle 1)
+            (io.file-read-chunk truncate-handle 1)
             "write-only handle read returns unsupported")
           (assert-ok-unit
             (test-file-write truncate-handle "alpha")
@@ -221,10 +221,10 @@
             (test-file-write truncate-handle "-beta")
             "write truncate beta: ")
           (assert-ok-unit
-            (file-flush truncate-handle)
+            (io.file-flush truncate-handle)
             "flush truncate handle: ")
           (assert-ok-unit
-            (file-close truncate-handle)
+            (io.file-close truncate-handle)
             "close truncate handle: ")
           (assert-file-contents
             handle-truncate-file
@@ -235,16 +235,16 @@
             "write"
             "write after close returns unsupported")
           (assert-unit-unsupported
-            (file-flush truncate-handle)
+            (io.file-flush truncate-handle)
             "flush"
             "flush after close returns unsupported")))
       (assert-ok-unit
         (test-try-write-file handle-truncate-file "readonly")
         "seed read-only write test file: ")
       (let
-        [read-only-handle : FileHandle
+        [read-only-handle : io.FileHandle
           (expect-open-ok
-            (test-file-open handle-truncate-file OpenRead)
+            (test-file-open handle-truncate-file io.OpenRead)
             "open read-only for write test: ")]
         (begin
           (assert-unit-unsupported
@@ -252,26 +252,26 @@
             "write"
             "read-only handle write returns unsupported")
           (assert-unit-unsupported
-            (file-flush read-only-handle)
+            (io.file-flush read-only-handle)
             "flush"
             "read-only handle flush returns unsupported")
           (assert-ok-unit
-            (file-close read-only-handle)
+            (io.file-close read-only-handle)
             "close read-only handle: ")))
       (assert-ok-unit
         (test-try-write-file handle-append-file "seed")
         "seed append file: ")
       (let
-        [append-handle : FileHandle
+        [append-handle : io.FileHandle
           (expect-open-ok
-            (test-file-open handle-append-file OpenWriteAppend)
+            (test-file-open handle-append-file io.OpenWriteAppend)
             "open append existing: ")]
         (begin
           (assert-ok-unit
             (test-file-write append-handle "-tail")
             "write append tail: ")
-          (assert-ok-unit (file-flush append-handle) "flush append handle: ")
-          (assert-ok-unit (file-close append-handle) "close append handle: ")
+          (assert-ok-unit (io.file-flush append-handle) "flush append handle: ")
+          (assert-ok-unit (io.file-close append-handle) "close append handle: ")
           (assert-file-contents
             handle-append-file
             "seed-tail"
@@ -280,16 +280,16 @@
         (test-try-remove-file-if-exists handle-created-file)
         "clean append-created file: ")
       (let
-        [created-handle : FileHandle
+        [created-handle : io.FileHandle
           (expect-open-ok
-            (test-file-open handle-created-file OpenWriteAppend)
+            (test-file-open handle-created-file io.OpenWriteAppend)
             "open append create: ")]
         (begin
           (assert-ok-unit
             (test-file-write created-handle "created")
             "write append-created file: ")
-          (assert-ok-unit (file-flush created-handle) "flush created handle: ")
-          (assert-ok-unit (file-close created-handle) "close created handle: ")
+          (assert-ok-unit (io.file-flush created-handle) "flush created handle: ")
+          (assert-ok-unit (io.file-close created-handle) "close created handle: ")
           (assert-file-exists
             handle-created-file
             true
@@ -308,31 +308,31 @@
         "seed reusable handle file: ")
       (while (< i 1100)
         (let
-          [handle : FileHandle
+          [handle : io.FileHandle
             (expect-open-ok
-              (test-file-open handle-read-file OpenRead)
+              (test-file-open handle-read-file io.OpenRead)
               "reopen reusable read handle: ")]
           (begin
-            (assert-ok-unit (file-close handle) "close reusable handle: ")
+            (assert-ok-unit (io.file-close handle) "close reusable handle: ")
             (set! i (+ i 1)))))
       unit)))
 
 (define (main) : i64
   (begin
-    (if (fs-windows?)
+    (if (fs.fs-windows?)
       (begin
         (assert-open-not-found
-          (test-file-open handle-read-file OpenRead)
+          (test-file-open handle-read-file io.OpenRead)
           "windows missing read handle reports not found")
         (assert-read-unsupported
-          (file-read-chunk (FileHandle 1) 1)
+          (io.file-read-chunk (io.FileHandle 1) 1)
           "windows file reads are unsupported")
         (assert-unit-unsupported
-          (test-file-write (FileHandle 1) "x")
+          (test-file-write (io.FileHandle 1) "x")
           "write"
           "windows file writes are unsupported")
         (assert-unit-unsupported
-          (file-flush (FileHandle 1))
+          (io.file-flush (io.FileHandle 1))
           "flush"
           "windows file flush is unsupported"))
       (begin

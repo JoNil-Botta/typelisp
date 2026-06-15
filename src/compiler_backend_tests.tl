@@ -1,5 +1,9 @@
 ;; compiler_backend_tests.tl - Selfhost backend test helpers split from production backend.
-(import "../stdlib/io.tl")
+(import stdlib.io as io_mod)
+
+(import stdlib.arena as arena_mod)
+
+(import stdlib.hashmap as hashmap_mod)
 
 (import "compiler_backend.tl")
 
@@ -11,7 +15,7 @@
 
 (import "compiler_object_elf.tl")
 
-(import "../stdlib/string.tl")
+(import stdlib.string as string_mod)
 
 (define (compiler-backend-smoke-source) : String
   "(define answer : i64 40)
@@ -420,12 +424,12 @@
 (define (compiler-backend-alloc-generic-call-text [size : i64] [reg : String]) : String
   (backend-cat4
     "    movq $"
-    (int->string size)
+    (string_mod.int->string size)
     (backend-cat3 ", " reg "\n    call tl_alloc\n")
     ""))
 
 (define (compiler-backend-alloc-fixed-call-text [size : i64]) : String
-  (backend-cat3 "    call .L_tl_alloc" (int->string size) "\n"))
+  (backend-cat3 "    call .L_tl_alloc" (string_mod.int->string size) "\n"))
 
 (define (compiler-backend-string-contains-inline-alloc-size?
   [asm : String]
@@ -666,8 +670,12 @@
         (ObjectDataSymbolRva32 ".L_target")
         8)
       12)
-    (string-eq (compiler-backend-pic-section-name (ObjectSectionPdata)) "pdata")
-    (string-eq (compiler-backend-pic-section-name (ObjectSectionXdata)) "xdata")))
+    (string_mod.string-eq
+      (compiler-backend-pic-section-name (ObjectSectionPdata))
+      "pdata")
+    (string_mod.string-eq
+      (compiler-backend-pic-section-name (ObjectSectionXdata))
+      "xdata")))
 
 (define (compiler-backend-pic-ok?) : bool
   (and
@@ -1633,7 +1641,7 @@
     (compiler-backend-c-abi-sysv-two-register-return-source)
     (BackendTargetLinux))
     [(ErrCompilerBackend message)
-      (string-eq
+      (string_mod.string-eq
         (compiler-diagnostic-message message)
         "lower: unsupported linux-x86_64 C two-register aggregate return ABI for Big; see #1995")]
     [(OkCompilerBackend _) false]))
@@ -1877,8 +1885,8 @@
   [asm : String]
   [name : String]) : bool
   (let
-    [symbol : String (string-append "_tl_" name)]
-    [init-symbol : String (string-append "_tl___global_init_" name)]
+    [symbol : String (string_mod.string-append "_tl_" name)]
+    [init-symbol : String (string_mod.string-append "_tl___global_init_" name)]
     (and
       (backend-and4
         ;; #2386: a register-group global (e.g. `pair`) reserves 16 inline bytes;
@@ -2165,13 +2173,13 @@
     [assignments : CompilerRegAssignmentList
       (compiler-backend-expanded-scalar-assignments)]
     (and
-      (string-eq
+      (string_mod.string-eq
         (compiler-backend-emit-load-var-with-plan assignments 0 "%rax")
         "    movq %r8, %rax\n")
-      (string-eq
+      (string_mod.string-eq
         (compiler-backend-emit-store-var-with-plan assignments 1 "%rax")
         "    movq %rax, %r9\n")
-      (string-eq
+      (string_mod.string-eq
         (compiler-backend-emit-load-register "%r8" (AstTyU32))
         "    movl %r8d, %eax\n")
       (not (compiler-backend-plan-uses-callee-regs? assignments))
@@ -2194,16 +2202,16 @@
           (CompilerRegAssignment 2 (CompilerRegRegister "%r13"))
           CompilerRegAssignmentNil))]
     (and
-      (string-eq
+      (string_mod.string-eq
         (compiler-backend-emit-load-var-with-plan assignments 0 "%r12")
         "")
-      (string-eq
+      (string_mod.string-eq
         (compiler-backend-emit-store-var-with-plan assignments 0 "%r12")
         "")
-      (string-eq
+      (string_mod.string-eq
         (compiler-backend-emit-load-f64-var-with-plan assignments 1 "%xmm0")
         "    movsd %xmm2, %xmm0\n")
-      (string-eq
+      (string_mod.string-eq
         (compiler-backend-emit-store-f64-var-with-plan assignments 1 "%xmm0")
         "    movsd %xmm0, %xmm2\n")
       (match (compiler-backend-emit-mov
@@ -2213,7 +2221,7 @@
         (AstTyI64)
         (compiler-backend-program-index-build IrFunctionNil IrExternNil)
         8)
-        [(OkCompilerBackend asm) (string-eq asm "")]
+        [(OkCompilerBackend asm) (string_mod.string-eq asm "")]
         [(ErrCompilerBackend _) false])
       (match (compiler-backend-emit-cast
         "_tl_test"
@@ -2224,7 +2232,7 @@
         (AstTyI64)
         (AstTyI64)
         (compiler-backend-program-index-build IrFunctionNil IrExternNil))
-        [(OkCompilerBackend asm) (string-eq asm "")]
+        [(OkCompilerBackend asm) (string_mod.string-eq asm "")]
         [(ErrCompilerBackend _) false])
       (match (compiler-backend-emit-cast
         "_tl_test"
@@ -2235,7 +2243,8 @@
         (AstTyI64)
         (AstTyU64)
         (compiler-backend-program-index-build IrFunctionNil IrExternNil))
-        [(OkCompilerBackend asm) (string-eq asm "    movq %r12, %r13\n")]
+        [(OkCompilerBackend asm)
+          (string_mod.string-eq asm "    movq %r12, %r13\n")]
         [(ErrCompilerBackend _) false])
       (match (compiler-backend-emit-cast
         "_tl_test"
@@ -2268,7 +2277,8 @@
         (AstTyI64)
         index
         8)
-        [(OkCompilerBackend asm) (string-eq asm "    xorl %r12d, %r12d\n")]
+        [(OkCompilerBackend asm)
+          (string_mod.string-eq asm "    xorl %r12d, %r12d\n")]
         [(ErrCompilerBackend _) false])
       (match (compiler-backend-emit-mov
         CompilerRegAssignmentNil
@@ -2277,7 +2287,8 @@
         (AstTyI64)
         index
         8)
-        [(OkCompilerBackend asm) (string-eq asm "    movq $7, -16(%rbp)\n")]
+        [(OkCompilerBackend asm)
+          (string_mod.string-eq asm "    movq $7, -16(%rbp)\n")]
         [(ErrCompilerBackend _) false]))))
 
 (define (compiler-backend-register-group-test-type) : AstType
@@ -2318,7 +2329,7 @@
       (compiler-backend-register-group-test-index)]
     (match (compiler-backend-emit-mov assignments 1 src ty index 4)
       [(ErrCompilerBackend diag)
-        (string-eq (compiler-diagnostic-message diag) want)]
+        (string_mod.string-eq (compiler-diagnostic-message diag) want)]
       [(OkCompilerBackend _) false])))
 
 (define (compiler-backend-register-group-call-arg-error-ok?) : bool
@@ -2341,7 +2352,7 @@
       index
       4)
       [(ErrCompilerBackend diag)
-        (string-eq
+        (string_mod.string-eq
           (compiler-diagnostic-message diag)
           "backend: register-group call argument requires var operand (#2386)")]
       [(OkCompilerBackend _) false])))
@@ -2541,21 +2552,21 @@
           (compiler-ir-function-cons
             (IrFunction "main" IrParamNil (AstTyI64) 1 blocks)
             IrFunctionNil)))]
-    [counts : StringI64Map
+    [counts : hashmap_mod.StringI64Map
       (compiler-backend-collect-group-counts-functions
-        (string-i64-map-with-capacity 4)
+        (hashmap_mod.string-i64-map-with-capacity 4)
         functions)]
-    [masks : StringI64Map
+    [masks : hashmap_mod.StringI64Map
       (compiler-backend-collect-group-class-masks-functions
-        (string-i64-map-with-capacity 4)
+        (hashmap_mod.string-i64-map-with-capacity 4)
         functions)]
     (and
-      (match (string-i64-map-get counts name)
-        [(StringI64MapFound count) (= count 2)]
-        [(StringI64MapMissing) false])
-      (match (string-i64-map-get masks name)
-        [(StringI64MapFound mask) (= mask 2)]
-        [(StringI64MapMissing) false]))))
+      (match (hashmap_mod.string-i64-map-get counts name)
+        [(hashmap_mod.StringI64MapFound count) (= count 2)]
+        [(hashmap_mod.StringI64MapMissing) false])
+      (match (hashmap_mod.string-i64-map-get masks name)
+        [(hashmap_mod.StringI64MapFound mask) (= mask 2)]
+        [(hashmap_mod.StringI64MapMissing) false]))))
 
 (define (compiler-backend-ir-walker-object-refs-with-plan
   [plan : CompilerBackendRuntimePlan]) : bool
@@ -2730,7 +2741,7 @@
     movq %r9, %r10
 "]
     [got : String (compiler-backend-peephole-asm input)]
-    (string-eq got want)))
+    (string_mod.string-eq got want)))
 
 (define (compiler-backend-peephole-ok?) : bool
   (and
@@ -2819,7 +2830,7 @@
     CompilerRegAssignmentNil
     (IrValueI64 0)
     "%rax")
-    [(OkCompilerBackend asm) (string-eq asm "    xorl %eax, %eax\n")]
+    [(OkCompilerBackend asm) (string_mod.string-eq asm "    xorl %eax, %eax\n")]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-zero-compare-ok?) : bool
@@ -3033,7 +3044,7 @@
         0)
         [(OkCompilerBackend cycle)
           (and
-            (string-eq same-home "")
+            (string_mod.string-eq same-home "")
             (compiler-backend-string-contains?
               cycle
               "    movq -8(%rbp), %r11\n")
@@ -3071,7 +3082,7 @@
 
 (define (compiler-backend-reg-is? [r : ResultBackendReg] [name : String]) : bool
   (match r
-    [(OkBackendReg reg) (string-eq reg name)]
+    [(OkBackendReg reg) (string_mod.string-eq reg name)]
     [(ErrBackendReg _) false]))
 
 (define (compiler-backend-reg-err? [r : ResultBackendReg]) : bool
@@ -3116,7 +3127,8 @@
   (match (compiler-backend-emit-source-for-target src (BackendTargetLinux))
     [(OkCompilerBackend linux-asm)
       (match (compiler-backend-emit-source src)
-        [(OkCompilerBackend default-asm) (string-eq linux-asm default-asm)]
+        [(OkCompilerBackend default-asm)
+          (string_mod.string-eq linux-asm default-asm)]
         [(ErrCompilerBackend _) false])]
     [(ErrCompilerBackend _) false]))
 
@@ -3384,7 +3396,7 @@
     (compiler-backend-syscall-source)
     (BackendTargetWindows))
     [(ErrCompilerBackend diag)
-      (string-eq
+      (string_mod.string-eq
         (compiler-diagnostic-message diag)
         "backend: syscall is only supported on the linux-x86_64 target")]
     [(OkCompilerBackend _) false]))
@@ -3398,14 +3410,14 @@
   (match (compiler-backend-emit-source src)
     [(OkCompilerBackend first)
       (match (compiler-backend-emit-source src)
-        [(OkCompilerBackend second) (string-eq first second)]
+        [(OkCompilerBackend second) (string_mod.string-eq first second)]
         [(ErrCompilerBackend _) false])]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-error-ok? [src : String] [want : String]) : bool
   (match (compiler-backend-emit-source src)
     [(ErrCompilerBackend message)
-      (string-eq (compiler-diagnostic-message message) want)]
+      (string_mod.string-eq (compiler-diagnostic-message message) want)]
     [(OkCompilerBackend _) false]))
 
 (define (compiler-backend-source-contains? [src : String] [needle : String]) : bool
@@ -3456,7 +3468,7 @@
     (match (compiler-backend-emit-program-with-spans program spans)
       [(ErrCompilerBackend diag)
         (and
-          (string-eq (compiler-diagnostic-message diag) want-message)
+          (string_mod.string-eq (compiler-diagnostic-message diag) want-message)
           (= (compiler-diagnostic-line diag) want-line)
           (= (compiler-diagnostic-col diag) want-col))]
       [(OkCompilerBackend _) false])))
@@ -4216,7 +4228,7 @@
     (compiler-source-spans-empty)
     true)
     [(ErrCompilerBackend diag)
-      (string-eq
+      (string_mod.string-eq
         (compiler-diagnostic-message diag)
         "backend: vector register home unavailable for load dst; unsupported spill, call, or ABI lifetime")]
     [(OkCompilerBackend _) false]))
@@ -4281,7 +4293,7 @@
           optimized-spans)
           [(ErrCompilerBackend diag)
             (and
-              (string-eq
+              (string_mod.string-eq
                 (compiler-diagnostic-message diag)
                 "backend: f64 values are not supported yet")
               (= (compiler-diagnostic-line diag) 55)
@@ -5681,7 +5693,7 @@
   "(define (f [a : bool]) : bool (not a))")
 
 (define (compiler-backend-todo-marker) : String
-  (string-append "# " "TODO"))
+  (string_mod.string-append "# " "TODO"))
 
 (define (compiler-backend-bool-control-flow-ok?) : bool
   (and
@@ -5748,19 +5760,19 @@
 
 (define (compiler-backend-i64-immediate-load-shape-ok?) : bool
   (backend-and8
-    (string-eq
+    (string_mod.string-eq
       (compiler-backend-emit-load-i64-immediate 0 "%rax")
       "    xorl %eax, %eax\n")
-    (string-eq
+    (string_mod.string-eq
       (compiler-backend-emit-load-i64-immediate 1 "%rax")
       "    movl $1, %eax\n")
-    (string-eq
+    (string_mod.string-eq
       (compiler-backend-emit-load-i64-immediate 2147483647 "%r11")
       "    movl $2147483647, %r11d\n")
-    (string-eq
+    (string_mod.string-eq
       (compiler-backend-emit-load-i64-immediate -1 "%rax")
       "    movq $-1, %rax\n")
-    (string-eq
+    (string_mod.string-eq
       (compiler-backend-emit-load-i64-immediate 2147483648 "%rax")
       "    movq $2147483648, %rax\n")
     true
@@ -6072,7 +6084,7 @@
     [(OkCompilerBackend asm)
       (and
         (compiler-backend-string-contains? asm needle)
-        (if (string-eq bad "")
+        (if (string_mod.string-eq bad "")
           true
           (not (compiler-backend-string-contains? asm bad)))
         (not
@@ -6740,7 +6752,7 @@
   (match (compiler-backend-emit-program
     (compiler-backend-clean-module-symbol-collision-program))
     [(ErrCompilerBackend diag)
-      (string-eq
+      (string_mod.string-eq
         (compiler-diagnostic-message diag)
         "backend: duplicate emitted function symbol _tl_pkg_a_helper")]
     [(OkCompilerBackend _) false]))
@@ -7094,16 +7106,51 @@
       [wrapper-symbol : String (compiler-backend-user-symbol path-name)]
       [count-after-wrapper : i64 (compiler-backend-user-symbol-cache-count)]
       (backend-and8
-        (string-eq path-symbol-first "_tl_pkg_nested_module_some_value")
-        (string-eq path-symbol-second path-symbol-first)
+        (string_mod.string-eq
+          path-symbol-first
+          "_tl_pkg_nested_module_some_value")
+        (string_mod.string-eq path-symbol-second path-symbol-first)
         (= count-after-path-first 1)
         (= count-after-path-second count-after-path-first)
-        (string-eq main-symbol-first "main")
-        (string-eq main-symbol-second "main")
+        (string_mod.string-eq main-symbol-first "main")
+        (string_mod.string-eq main-symbol-second "main")
         (= count-after-main-second count-after-main-first)
         (and
-          (string-eq wrapper-symbol path-symbol-first)
+          (string_mod.string-eq wrapper-symbol path-symbol-first)
           (= count-after-wrapper count-after-main-second))))))
+
+(define (compiler-backend-user-symbol-cache-scratch-arena-ok?) : bool
+  (begin
+    (intern-reset!)
+    (compiler-backend-user-symbol-cache-reset!)
+    (let
+      [home : i64 (arena_mod.arena-current)]
+      [scratch : i64 (arena_mod.arena-make)]
+      [name-id : i64 (intern "pkg/cache/test.tl::scratch-value")]
+      (begin
+        (unsafe
+          (arena_mod.arena-set! scratch))
+        (let
+          [symbol-before-destroy : String
+            (compiler-backend-user-symbol-id name-id)]
+          [count-after-first : i64 (compiler-backend-user-symbol-cache-count)]
+          (begin
+            (unsafe
+              (arena_mod.arena-set! home)
+              (arena_mod.arena-destroy scratch))
+            (let
+              [symbol-after-destroy : String
+                (compiler-backend-user-symbol-id name-id)]
+              [count-after-second : i64
+                (compiler-backend-user-symbol-cache-count)]
+              (and
+                (string_mod.string-eq
+                  symbol-before-destroy
+                  "_tl_pkg_cache_test_scratch_value")
+                (string_mod.string-eq
+                  symbol-after-destroy
+                  symbol-before-destroy)
+                (and (= count-after-first 1) (= count-after-second 1))))))))))
 
 (define (compiler-backend-program-index-id-maps-ok?) : bool
   (let
@@ -7130,10 +7177,12 @@
           (compiler-backend-index-function-signature-id index fn-id))
         (compiler-backend-signature-i64-to-i64?
           (compiler-backend-index-function-signature index fn-name))
-        (string-eq
+        (string_mod.string-eq
           (compiler-backend-function-symbol-index index fn-name)
           "_tl_f0")
-        (string-eq (compiler-backend-function-label-scope index fn-name) "f0")
+        (string_mod.string-eq
+          (compiler-backend-function-label-scope index fn-name)
+          "f0")
         (compiler-backend-signature-unit-to-i64?
           (compiler-backend-index-extern-signature-id index provided-id)))
       (backend-and8
@@ -7143,22 +7192,22 @@
           (compiler-backend-index-extern-provided-id? index provided-link-id))
         (compiler-backend-index-extern-references-id? index referenced-id)
         (compiler-backend-index-extern-references-id? index referenced-link-id)
-        (string-eq
+        (string_mod.string-eq
           (compiler-backend-index-extern-link-symbol-id index referenced-id)
           referenced-link)
-        (string-eq
+        (string_mod.string-eq
           (compiler-backend-index-extern-link-symbol-id
             index
             referenced-link-id)
           referenced-link)
-        (string-eq
+        (string_mod.string-eq
           (compiler-backend-index-extern-link-symbol-id index missing-id)
           "missing_backend_index_name"))
       (backend-and4
-        (string-eq
+        (string_mod.string-eq
           (compiler-backend-function-symbol-map-comment index fn-name)
           "#t _tl_f0 _tl_really_long_backend_index_function\n")
-        (string-eq
+        (string_mod.string-eq
           (compiler-backend-function-symbol-index index provided-name)
           "provided_link")
         true
@@ -7195,10 +7244,10 @@
           (compiler-backend-index-extern-signature-id index extern-id))
         (compiler-backend-index-extern-references-id? index extern-id)
         (compiler-backend-index-extern-references-id? index extern-link-id)
-        (string-eq
+        (string_mod.string-eq
           (compiler-backend-index-extern-link-symbol-id index extern-id)
           extern-link)
-        (string-eq
+        (string_mod.string-eq
           (compiler-backend-index-extern-link-symbol-id index extern-link-id)
           extern-link)
         (compiler-backend-index-extern-references? index extern-link)))))
@@ -7371,10 +7420,12 @@
         (compiler-backend-windows-runtime-guard-ok?)
         (compiler-backend-simd-vector-ok?)
         (compiler-backend-dispatch-variant-mode-ok?)
-        (compiler-backend-user-symbol-cache-ok?)
+        (and
+          (compiler-backend-user-symbol-cache-ok?)
+          (compiler-backend-user-symbol-cache-scratch-arena-ok?))
         (compiler-backend-program-index-id-maps-ok?)
         (compiler-backend-program-index-interns-bound-names-ok?))))
     42
     (begin
-      (panic "backend: smoke output mismatch")
+      (io_mod.panic "backend: smoke output mismatch")
       0)))

@@ -1,9 +1,9 @@
 ;; compiler_typecheck_smoke.tl - Runnable smoke for compiler_typecheck.tl (#426).
-(import "../stdlib/io.tl")
+(import stdlib.io as io_mod)
 
 (import "compiler_typecheck.tl")
 
-(import "../stdlib/string.tl")
+(import stdlib.string as string_mod)
 
 (define (compiler-typecheck-reference-nested-local-source) : String
   "(define (main [x : i64]) : unit
@@ -371,12 +371,12 @@
     (compiler-typecheck-self-test)
     (unless
       (compiler-typecheck-reference-escape-tests-ok?)
-      (panic "typecheck: reference escape tests failed"))
+      (io_mod.panic "typecheck: reference escape tests failed"))
     (unless
       (compiler-typecheck-auto-borrow-tests-ok?)
-      (panic "typecheck: auto-borrow tests failed"))
+      (io_mod.panic "typecheck: auto-borrow tests failed"))
     (unless
       (compiler-typecheck-macro-alias-cache-collision-ok?)
-      (panic "typecheck: macro alias cache collision test failed"))
+      (io_mod.panic "typecheck: macro alias cache collision test failed"))
     (macro-alias-cache-reset!)
     42))

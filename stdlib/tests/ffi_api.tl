@@ -1,6 +1,6 @@
-(import "stdlib/ffi.tl")
+(import stdlib.ffi)
 
-(import "stdlib/test.tl")
+(import stdlib.test)
 
 (extern (tl_alloc [arg0 : i64]) : (MutPtr u8))
 
@@ -20,30 +20,30 @@
   [actual : u8]
   [expected : i64]
   [message : String]) : unit
-  (assert-i64-eq (cast actual : i64) expected message))
+  (test.assert-i64-eq (cast actual : i64) expected message))
 
 (define (ffi-test-assert-copy-ok
-  [result : FfiCStringCopyResult]
+  [result : ffi.FfiCStringCopyResult]
   [expected : i64]
   [message : String]) : unit
   (match result
-    [(FfiCStringCopyOk written) (assert-i64-eq written expected message)]
+    [(ffi.FfiCStringCopyOk written) (test.assert-i64-eq written expected message)]
     [_ (panic message)]))
 
 (define (ffi-test-assert-too-small
-  [result : FfiCStringCopyResult]
+  [result : ffi.FfiCStringCopyResult]
   [expected : i64]
   [message : String]) : unit
   (match result
-    [(FfiCStringBufferTooSmall required)
-      (assert-i64-eq required expected message)]
+    [(ffi.FfiCStringBufferTooSmall required)
+      (test.assert-i64-eq required expected message)]
     [_ (panic message)]))
 
 (define (ffi-test-assert-interior-nul
-  [result : FfiCStringCopyResult]
+  [result : ffi.FfiCStringCopyResult]
   [message : String]) : unit
   (match result
-    [(FfiCStringInteriorNul) unit]
+    [(ffi.FfiCStringInteriorNul) unit]
     [_ (panic message)]))
 
 (define (ffi-test-string-with-nul) : String
@@ -65,22 +65,22 @@
 
 (define (main) : i64
   (begin
-    (assert-i64-eq
-      (ffi-c-string-required-bytes "")
+    (test.assert-i64-eq
+      (ffi.ffi-c-string-required-bytes "")
       1
       "empty c string needs only NUL")
-    (assert-i64-eq
-      (ffi-c-string-required-bytes "abc")
+    (test.assert-i64-eq
+      (ffi.ffi-c-string-required-bytes "abc")
       4
       "abc c string needs trailing NUL")
-    (assert-false
-      (ffi-c-string-interior-nul? "abc")
+    (test.assert-false
+      (ffi.ffi-c-string-interior-nul? "abc")
       "normal ASCII has no interior NUL")
     (let
       [empty-buf : (MutPtr u8) (tl_alloc 1)]
       (begin
         (ffi-test-assert-copy-ok
-          (ffi-c-string-copy! "" empty-buf 1)
+          (ffi.ffi-c-string-copy! "" empty-buf 1)
           1
           "empty copy succeeds")
         (ffi-test-assert-u8-eq
@@ -91,7 +91,7 @@
       [exact : (MutPtr u8) (tl_alloc 4)]
       (begin
         (ffi-test-assert-copy-ok
-          (ffi-c-string-copy! "abc" exact 4)
+          (ffi.ffi-c-string-copy! "abc" exact 4)
           4
           "exact-capacity copy succeeds")
         (ffi-test-assert-u8-eq (ffi-test-read-u8 exact 0) 97 "copied a")
@@ -106,7 +106,7 @@
       (begin
         (ffi-test-write-u8! small 0 77)
         (ffi-test-assert-too-small
-          (ffi-c-string-copy! "abc" small 3)
+          (ffi.ffi-c-string-copy! "abc" small 3)
           4
           "too-small reports required size")
         (ffi-test-assert-u8-eq
@@ -118,20 +118,20 @@
       [nul-buf : (MutPtr u8) (tl_alloc 4)]
       (begin
         (ffi-test-write-u8! nul-buf 0 88)
-        (assert-true
-          (ffi-c-string-interior-nul? with-nul)
+        (test.assert-true
+          (ffi.ffi-c-string-interior-nul? with-nul)
           "unsafe fixture contains interior NUL")
         (ffi-test-assert-interior-nul
-          (ffi-c-string-copy! with-nul nul-buf 4)
+          (ffi.ffi-c-string-copy! with-nul nul-buf 4)
           "interior NUL reports deterministic error")
         (ffi-test-assert-u8-eq
           (ffi-test-read-u8 nul-buf 0)
           88
           "interior NUL does not write prefix")))
     (let
-      [empty-ptr : (Ptr u8) (ffi-c-string-alloc "")]
+      [empty-ptr : (Ptr u8) (ffi.ffi-c-string-alloc "")]
       (begin
-        (assert-false
+        (test.assert-false
           (ptr-null? empty-ptr)
           "empty allocated c string returns non-null pointer")
         (ffi-test-assert-u8-eq
@@ -139,9 +139,9 @@
           0
           "empty allocated c string writes trailing NUL")))
     (let
-      [ptr : (Ptr u8) (ffi-c-string-alloc "abc")]
+      [ptr : (Ptr u8) (ffi.ffi-c-string-alloc "abc")]
       (begin
-        (assert-false
+        (test.assert-false
           (ptr-null? ptr)
           "allocated c string returns non-null pointer")
         (ffi-test-assert-u8-eq
@@ -161,9 +161,9 @@
           0
           "alloc writes trailing NUL")))
     (let
-      [alias-ptr : (Ptr u8) (ffi-cstr "xy")]
+      [alias-ptr : (Ptr u8) (ffi.ffi-cstr "xy")]
       (begin
-        (assert-false
+        (test.assert-false
           (ptr-null? alias-ptr)
           "ffi-cstr alias returns non-null pointer")
         (ffi-test-assert-u8-eq
@@ -180,7 +180,7 @@
           "ffi-cstr alias writes trailing NUL")))
     (let
       [with-nul : String (ffi-test-string-with-nul)]
-      (assert-true
-        (ptr-null? (ffi-c-string-alloc with-nul))
+      (test.assert-true
+        (ptr-null? (ffi.ffi-c-string-alloc with-nul))
         "alloc rejects interior NUL with null pointer"))
     42))

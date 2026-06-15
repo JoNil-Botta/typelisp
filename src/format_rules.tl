@@ -3,7 +3,7 @@
 ;; `format_core.tl` stays syntax-neutral. This module adds a deterministic
 ;; gofmt-like first pass for common TypeLisp special forms while still building
 ;; `Doc` values for width-aware rendering.
-(import "../stdlib/io.tl")
+(import stdlib.io as io_mod)
 
 (import "format_tokens.tl")
 
@@ -11,7 +11,7 @@
 
 (import "format_doc.tl")
 
-(import "../stdlib/string.tl")
+(import stdlib.string as string_mod)
 
 (defenum ResultFormatString
   (OkFormatString String)
@@ -21,7 +21,7 @@
   (match node
     [(FmtCstAtom tok)
       (match tok
-        [(FmtSymbol name) (string-eq name wanted)]
+        [(FmtSymbol name) (string_mod.string-eq name wanted)]
         [_ false])]
     [_ false]))
 
@@ -566,7 +566,9 @@
       (let
         [name : String (format-rules-node-symbol-name key)]
         (if (> (string-length name) 0)
-          (format-rules-inline-form-doc (string-append ":" name) (box-get tail))
+          (format-rules-inline-form-doc
+            (string_mod.string-append ":" name)
+            (box-get tail))
           (format-rules-delimited-doc
             "("
             (FmtCstCons (FmtCstAtom (FmtColon)) (box rest))
@@ -645,7 +647,7 @@
     [(OkFormatString formatted) formatted]
     [(ErrFormatString err)
       (begin
-        (panic (format-source-error-message err))
+        (io_mod.panic (format-source-error-message err))
         "")]))
 
 (define (format-rules-decls-source) : String
@@ -756,18 +758,30 @@
     [variadic : String
       (format-rules-render-source-width (format-rules-variadic-macro-source) 80)]
     (begin
-      (unless (string-eq decls (format-rules-decls-expected)) (return 1))
-      (unless (string-eq flow (format-rules-flow-expected)) (return 2))
-      (unless (string-eq comments (format-rules-comments-expected)) (return 3))
-      (unless (string-eq quote (format-rules-quote-expected)) (return 4))
-      (unless (string-eq unsafe (format-rules-unsafe-expected)) (return 5))
       (unless
-        (string-eq metadata (format-rules-define-metadata-expected))
+        (string_mod.string-eq decls (format-rules-decls-expected))
+        (return 1))
+      (unless
+        (string_mod.string-eq flow (format-rules-flow-expected))
+        (return 2))
+      (unless
+        (string_mod.string-eq comments (format-rules-comments-expected))
+        (return 3))
+      (unless
+        (string_mod.string-eq quote (format-rules-quote-expected))
+        (return 4))
+      (unless
+        (string_mod.string-eq unsafe (format-rules-unsafe-expected))
+        (return 5))
+      (unless
+        (string_mod.string-eq metadata (format-rules-define-metadata-expected))
         (return 6))
       (unless
-        (string-eq metadata-long (format-rules-define-metadata-long-expected))
+        (string_mod.string-eq
+          metadata-long
+          (format-rules-define-metadata-long-expected))
         (return 7))
       (unless
-        (string-eq variadic (format-rules-variadic-macro-expected))
+        (string_mod.string-eq variadic (format-rules-variadic-macro-expected))
         (return 8))
       42)))

@@ -8,18 +8,20 @@
 ;# List nodes, builder values, vectors, and arrays created by conversion helpers
 ;# allocate in the active arena.
 ;#
-;# Usage: `(import "stdlib/list.tl")`
+;# Usage: `(import stdlib.list)`
 ;#
 ;# ```typelisp
-;# (import "stdlib/list.tl")
+;# (import stdlib.list)
 ;# (define (main) : i64
-;#   (string-list-count
-;#     (string-list-builder-build
-;#       (string-list-builder-push
-;#         (string-list-builder-push (string-list-builder-empty) "first")
+;#   (list.string-list-count
+;#     (list.string-list-builder-build
+;#       (list.string-list-builder-push
+;#         (list.string-list-builder-push (list.string-list-builder-empty) "first")
 ;#         "second"))))
 ;# ```
-(import "vector.tl")
+(module stdlib.list)
+
+(import stdlib.vector as vector_mod)
 
 ;: Immutable list of strings.
 (defenum StringList
@@ -33,7 +35,7 @@
 
 ;: Return an empty string list.
 (define (string-list-empty) : StringList
-  (StringNil))
+  stdlib.list.StringNil)
 
 ;: Prepend `value` to `rest`.
 (define (string-list-cons [value : String] [rest : StringList]) : StringList
@@ -45,13 +47,13 @@
 
 ;: Return a one-element list.
 (define (string-list-single [value : String]) : StringList
-  (StringCons value (box (StringNil))))
+  (StringCons value (box stdlib.list.StringNil)))
 
 ;: Return the number of list nodes.
 (define (string-list-count [items : StringList]) : i64
   (match items
     [(StringNil) 0]
-    [(StringCons _ rest) (+ 1 (string-list-count (box-get rest)))]))
+    [(StringCons _ rest) (+ 1 (stdlib.list.string-list-count (box-get rest)))]))
 
 ;: Return true when `items` contains `value`.
 (define (string-list-contains? [items : StringList] [value : String]) : bool
@@ -60,18 +62,20 @@
     [(StringCons head rest)
       (if (string-eq head value)
         true
-        (string-list-contains? (box-get rest) value))]))
+        (stdlib.list.string-list-contains? (box-get rest) value))]))
 
 ;: Reverse `items` onto `acc`, allocating a fresh active-arena list spine.
 (define (string-list-reverse-onto [items : StringList] [acc : StringList]) : StringList
   (match items
     [(StringNil) acc]
     [(StringCons head rest)
-      (string-list-reverse-onto (box-get rest) (StringCons head (box acc)))]))
+      (stdlib.list.string-list-reverse-onto
+        (box-get rest)
+        (StringCons head (box acc)))]))
 
 ;: Return `items` in reverse order.
 (define (string-list-reverse [items : StringList]) : StringList
-  (string-list-reverse-onto items (StringNil)))
+  (stdlib.list.string-list-reverse-onto items stdlib.list.StringNil))
 
 ;: Concatenate two lists while preserving order, allocating a fresh spine for
 ;: `left` and sharing `right` as the tail.
@@ -79,7 +83,9 @@
   (match left
     [(StringNil) right]
     [(StringCons head rest)
-      (StringCons head (box (string-list-append (box-get rest) right)))]))
+      (StringCons
+        head
+        (box (stdlib.list.string-list-append (box-get rest) right)))]))
 
 ;: Copy the first `count` array items into `acc` in reverse order, clamping the
 ;: count to the source array length.
@@ -90,7 +96,7 @@
   [acc : StringList]) : StringList
   (if (>= index count)
     acc
-    (string-list-from-array-rev
+    (stdlib.list.string-list-from-array-rev
       src
       (+ index 1)
       count
@@ -107,7 +113,8 @@
         (if (> count len)
           len
           count))]
-    (string-list-reverse (string-list-from-array-rev src 0 n (StringNil)))))
+    (stdlib.list.string-list-reverse
+      (stdlib.list.string-list-from-array-rev src 0 n stdlib.list.StringNil))))
 
 ;: Fill `out` with `items` starting at `index`.
 (define (string-list-to-array-fill
@@ -119,49 +126,56 @@
     [(StringCons head rest)
       (begin
         (array-set! out index head)
-        (string-list-to-array-fill (box-get rest) out (+ index 1)))]))
+        (stdlib.list.string-list-to-array-fill (box-get rest) out (+ index 1)))]))
 
 ;: Return a fresh array containing exactly the list's items in order.
 (define (string-list-to-array [items : StringList]) : (Array String)
   (let
-    [n : i64 (string-list-count items)]
+    [n : i64 (stdlib.list.string-list-count items)]
     [out : (Array String) (make-array String n)]
     (begin
-      (string-list-to-array-fill items out 0)
+      (stdlib.list.string-list-to-array-fill items out 0)
       out)))
 
 ;: Build a list from `v`, preserving vector order.
 (define (string-list-from-vec-from
-  [v : StringVec]
+  [v : vector_mod.StringVec]
   [index : i64]
   [acc : StringList]) : StringList
   (if (< index 0)
     acc
-    (string-list-from-vec-from
+    (stdlib.list.string-list-from-vec-from
       v
       (- index 1)
-      (StringCons (string-vec-get v index "") (box acc)))))
+      (StringCons (vector_mod.string-vec-get v index "") (box acc)))))
 
 ;: Build a list from `v`, preserving vector order.
-(define (string-list-from-vec [v : StringVec]) : StringList
-  (string-list-from-vec-from v (- (string-vec-len v) 1) (StringNil)))
+(define (string-list-from-vec [v : vector_mod.StringVec]) : StringList
+  (stdlib.list.string-list-from-vec-from
+    v
+    (- (vector_mod.string-vec-len v) 1)
+    stdlib.list.StringNil))
 
 ;: Append `items` into `out` in order.
-(define (string-list-to-vec-into [items : StringList] [out : StringVec]) : StringVec
+(define (string-list-to-vec-into
+  [items : StringList]
+  [out : vector_mod.StringVec]) : vector_mod.StringVec
   (match items
     [(StringNil) out]
     [(StringCons head rest)
-      (string-list-to-vec-into (box-get rest) (string-vec-push out head))]))
+      (stdlib.list.string-list-to-vec-into
+        (box-get rest)
+        (vector_mod.string-vec-push out head))]))
 
 ;: Copy `items` into a fresh `StringVec`, preserving list order.
-(define (string-list-to-vec [items : StringList]) : StringVec
-  (string-list-to-vec-into
+(define (string-list-to-vec [items : StringList]) : vector_mod.StringVec
+  (stdlib.list.string-list-to-vec-into
     items
-    (string-vec-with-capacity (string-list-count items))))
+    (vector_mod.string-vec-with-capacity (stdlib.list.string-list-count items))))
 
 ;: Return an empty builder.
 (define (string-list-builder-empty) : StringListBuilder
-  (StringListBuilder (StringNil)))
+  (StringListBuilder stdlib.list.StringNil))
 
 ;: Push `value` at the logical end of the builder.
 (define (string-list-builder-push
@@ -171,14 +185,45 @@
 
 ;: Return the number of values currently in `builder`.
 (define (string-list-builder-count [builder : StringListBuilder]) : i64
-  (string-list-count (struct-get builder items)))
+  (stdlib.list.string-list-count (struct-get builder items)))
 
 ;: Build an ordered list from `builder`, followed by `tail`.
 (define (string-list-builder-build-onto
   [builder : StringListBuilder]
   [tail : StringList]) : StringList
-  (string-list-reverse-onto (struct-get builder items) tail))
+  (stdlib.list.string-list-reverse-onto (struct-get builder items) tail))
 
 ;: Build an ordered list from `builder`.
 (define (string-list-builder-build [builder : StringListBuilder]) : StringList
-  (string-list-builder-build-onto builder (StringNil)))
+  (stdlib.list.string-list-builder-build-onto builder stdlib.list.StringNil))
+
+;# Dotted-module migration: preserve the pre-module flat stdlib surface.
+(export
+  (value string-list-empty)
+  (value string-list-cons)
+  (value string-list-push-front)
+  (value string-list-single)
+  (value string-list-count)
+  (value string-list-contains?)
+  (value string-list-reverse-onto)
+  (value string-list-reverse)
+  (value string-list-append)
+  (value string-list-from-array-rev)
+  (value string-list-from-array)
+  (value string-list-to-array-fill)
+  (value string-list-to-array)
+  (value string-list-from-vec-from)
+  (value string-list-from-vec)
+  (value string-list-to-vec-into)
+  (value string-list-to-vec)
+  (value string-list-builder-empty)
+  (value string-list-builder-push)
+  (value string-list-builder-count)
+  (value string-list-builder-build-onto)
+  (value string-list-builder-build)
+  (type StringList)
+  (type StringListBuilder)
+  (constructor StringListBuilder)
+  (field StringListBuilder items)
+  (variant StringNil)
+  (variant StringCons))

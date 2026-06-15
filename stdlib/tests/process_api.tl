@@ -1,24 +1,24 @@
-(import "stdlib/process.tl")
+(import stdlib.process)
 
-(import "stdlib/test.tl")
+(import stdlib.test)
 
 (define (assert-owned-string-eq
   [actual : String]
   [expected : String]
   [message : String]) : unit
-  (assert-string-eq (& actual) (& expected) message))
+  (test.assert-string-eq (& actual) (& expected) message))
 
 (define (assert-process-string-list
-  [items : ProcessStringList]
+  [items : process.ProcessStringList]
   [first : String]
   [second : String]
   [message : String]) : unit
   (match items
-    [(ProcessStringCons a rest)
+    [(process.ProcessStringCons a rest)
       (match (box-get rest)
-        [(ProcessStringCons b tail)
+        [(process.ProcessStringCons b tail)
           (match (box-get tail)
-            [(ProcessStringNil)
+            [(process.ProcessStringNil)
               (begin
                 (assert-owned-string-eq a first message)
                 (assert-owned-string-eq b second message))]
@@ -27,19 +27,19 @@
     [_ (panic message)]))
 
 (define (assert-process-string-list3
-  [items : ProcessStringList]
+  [items : process.ProcessStringList]
   [first : String]
   [second : String]
   [third : String]
   [message : String]) : unit
   (match items
-    [(ProcessStringCons a rest)
+    [(process.ProcessStringCons a rest)
       (match (box-get rest)
-        [(ProcessStringCons b more)
+        [(process.ProcessStringCons b more)
           (match (box-get more)
-            [(ProcessStringCons c tail)
+            [(process.ProcessStringCons c tail)
               (match (box-get tail)
-                [(ProcessStringNil)
+                [(process.ProcessStringNil)
                   (begin
                     (assert-owned-string-eq a first message)
                     (assert-owned-string-eq b second message)
@@ -50,167 +50,167 @@
     [_ (panic message)]))
 
 (define (assert-process-some-string
-  [value : ProcessMaybeString]
+  [value : process.ProcessMaybeString]
   [expected : String]
   [message : String]) : unit
   (match value
-    [(ProcessSomeString actual)
+    [(process.ProcessSomeString actual)
       (assert-owned-string-eq actual expected message)]
-    [(ProcessNoString) (panic message)]))
+    [(process.ProcessNoString) (panic message)]))
 
 (define (assert-process-no-string
-  [value : ProcessMaybeString]
+  [value : process.ProcessMaybeString]
   [message : String]) : unit
   (match value
-    [(ProcessNoString) unit]
-    [(ProcessSomeString _) (panic message)]))
+    [(process.ProcessNoString) unit]
+    [(process.ProcessSomeString _) (panic message)]))
 
 (define (assert-process-env-head
-  [env : ProcessEnvList]
+  [env : process.ProcessEnvList]
   [expected-name : String]
   [expected-value : String]
   [message : String]) : unit
   (match env
-    [(ProcessEnvCons name value _)
+    [(process.ProcessEnvCons name value _)
       (begin
         (assert-owned-string-eq name expected-name message)
         (assert-owned-string-eq value expected-value message))]
-    [(ProcessEnvNil) (panic message)]))
+    [(process.ProcessEnvNil) (panic message)]))
 
 (define (assert-process-invalid-command
-  [result : ResultProcessOutput]
+  [result : process.ResultProcessOutput]
   [message : String]) : unit
   (match result
-    [(ErrProcessOutput error)
+    [(process.ErrProcessOutput error)
       (begin
-        (assert-true (process-error-invalid-command? error) message)
-        (assert-owned-string-eq (process-error-message error) message message))]
-    [(OkProcessOutput _) (panic message)]))
+        (test.assert-true (process.process-error-invalid-command? error) message)
+        (assert-owned-string-eq (process.process-error-message error) message message))]
+    [(process.OkProcessOutput _) (panic message)]))
 
 (define (assert-process-child-invalid-command
-  [result : ResultProcessChild]
+  [result : process.ResultProcessChild]
   [message : String]) : unit
   (match result
-    [(ErrProcessChild error)
+    [(process.ErrProcessChild error)
       (begin
-        (assert-true (process-error-invalid-command? error) message)
-        (assert-owned-string-eq (process-error-message error) message message))]
-    [(OkProcessChild _) (panic message)]))
+        (test.assert-true (process.process-error-invalid-command? error) message)
+        (assert-owned-string-eq (process.process-error-message error) message message))]
+    [(process.OkProcessChild _) (panic message)]))
 
 (define (main) : i64
   (let
-    [args : ProcessStringList
-      (process-args-cons
+    [args : process.ProcessStringList
+      (process.process-args-cons
         "hello"
-        (process-args-cons "world" (process-args-empty)))]
-    [command : ProcessCommand
-      (process-command-with-arg
-        (process-command-with-env
-          (process-command-with-stdin
-            (process-command-with-cwd (process-command "echo" args) "target")
+        (process.process-args-cons "world" (process.process-args-empty)))]
+    [command : process.ProcessCommand
+      (process.process-command-with-arg
+        (process.process-command-with-env
+          (process.process-command-with-stdin
+            (process.process-command-with-cwd (process.process-command "echo" args) "target")
             "stdin")
           "TL_TEST"
           "1")
         "!")]
     (begin
       (assert-owned-string-eq
-        (process-command-executable command)
+        (process.process-command-executable command)
         "echo"
         "process executable")
       (assert-process-string-list args "hello" "world" "process argv")
       (assert-process-string-list3
-        (process-command-argv command)
+        (process.process-command-argv command)
         "hello"
         "world"
         "!"
         "process argv append")
-      (assert-i64-eq
-        (process-args-count (process-command-argv command))
+      (test.assert-i64-eq
+        (process.process-args-count (process.process-command-argv command))
         3
         "process argv count")
       (assert-process-string-list3
-        (process-args-append args (process-args-single "again"))
+        (process.process-args-append args (process.process-args-single "again"))
         "hello"
         "world"
         "again"
         "process args append")
       (assert-process-some-string
-        (process-command-cwd command)
+        (process.process-command-cwd command)
         "target"
         "process cwd")
       (assert-process-some-string
-        (process-command-stdin command)
+        (process.process-command-stdin command)
         "stdin"
         "process stdin")
       (assert-process-env-head
-        (process-command-env command)
+        (process.process-command-env command)
         "TL_TEST"
         "1"
         "process env")
-      (assert-i64-eq
-        (process-env-count (process-command-env command))
+      (test.assert-i64-eq
+        (process.process-env-count (process.process-command-env command))
         1
         "process env count")
       (assert-process-env-head
-        (process-command-env
-          (process-command-with-env-list
+        (process.process-command-env
+          (process.process-command-with-env-list
             command
-            (process-env-cons "TL_REPLACED" "yes" (process-env-empty))))
+            (process.process-env-cons "TL_REPLACED" "yes" (process.process-env-empty))))
         "TL_REPLACED"
         "yes"
         "process env list")
       (assert-process-no-string
-        (process-command-cwd (process-command "echo" (process-args-empty)))
+        (process.process-command-cwd (process.process-command "echo" (process.process-args-empty)))
         "process default cwd")
       (assert-process-invalid-command
-        (process-output (process-command "" (process-args-empty)))
+        (process.process-output (process.process-command "" (process.process-args-empty)))
         "process: executable path is empty")
       (assert-process-invalid-command
-        (process-output (process-command-with-cwd command ""))
+        (process.process-output (process.process-command-with-cwd command ""))
         "process: cwd path is empty")
       (assert-process-invalid-command
-        (process-output (process-command-with-env command "" "1"))
+        (process.process-output (process.process-command-with-env command "" "1"))
         "process: environment variable name is empty")
       (assert-process-invalid-command
-        (process-output (process-command-with-env command "BAD=NAME" "1"))
+        (process.process-output (process.process-command-with-env command "BAD=NAME" "1"))
         "process: environment variable name contains '='")
       (assert-process-child-invalid-command
-        (process-start (process-command "" (process-args-empty)))
+        (process.process-start (process.process-command "" (process.process-args-empty)))
         "process: executable path is empty")
       (assert-process-child-invalid-command
-        (process-start (process-command-with-cwd command ""))
+        (process.process-start (process.process-command-with-cwd command ""))
         "process: cwd path is empty")
       (assert-process-child-invalid-command
-        (process-start (process-command-with-env command "" "1"))
+        (process.process-start (process.process-command-with-env command "" "1"))
         "process: environment variable name is empty")
       (assert-process-child-invalid-command
-        (process-start (process-command-with-env command "BAD=NAME" "1"))
+        (process.process-start (process.process-command-with-env command "BAD=NAME" "1"))
         "process: environment variable name contains '='")
-      (assert-true (process-command-valid? command) "process valid command")
-      (assert-false
-        (process-command-valid? (process-command "" (process-args-empty)))
+      (test.assert-true (process.process-command-valid? command) "process valid command")
+      (test.assert-false
+        (process.process-command-valid? (process.process-command "" (process.process-args-empty)))
         "process invalid empty executable")
-      (assert-true
-        (process-result-success? (OkProcessOutput (ProcessOutput 0 "" "")))
+      (test.assert-true
+        (process.process-result-success? (process.OkProcessOutput (process.ProcessOutput 0 "" "")))
         "process result success")
-      (assert-false
-        (process-result-success? (OkProcessOutput (ProcessOutput 7 "" "")))
+      (test.assert-false
+        (process.process-result-success? (process.OkProcessOutput (process.ProcessOutput 7 "" "")))
         "process result nonzero")
-      (assert-false
-        (process-result-success?
-          (ErrProcessOutput (ProcessSpawnFailed "spawn failed")))
+      (test.assert-false
+        (process.process-result-success?
+          (process.ErrProcessOutput (process.ProcessSpawnFailed "spawn failed")))
         "process result error")
-      (assert-true
-        (process-error-spawn-failed? (ProcessSpawnFailed "spawn failed"))
+      (test.assert-true
+        (process.process-error-spawn-failed? (process.ProcessSpawnFailed "spawn failed"))
         "process spawn predicate")
-      (assert-true
-        (process-error-wait-failed? (ProcessWaitFailed "wait failed"))
+      (test.assert-true
+        (process.process-error-wait-failed? (process.ProcessWaitFailed "wait failed"))
         "process wait predicate")
-      (assert-true
-        (process-child-started? (OkProcessChild (ProcessChild 1 2 3)))
+      (test.assert-true
+        (process.process-child-started? (process.OkProcessChild (process.ProcessChild 1 2 3)))
         "process child started predicate")
-      (assert-false
-        (process-child-started?
-          (ErrProcessChild (ProcessUnsupported "unsupported")))
+      (test.assert-false
+        (process.process-child-started?
+          (process.ErrProcessChild (process.ProcessUnsupported "unsupported")))
         "process child unsupported predicate")
       42)))

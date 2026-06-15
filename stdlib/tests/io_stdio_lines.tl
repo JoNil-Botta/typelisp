@@ -1,47 +1,47 @@
-(import "stdlib/io.tl")
+(import stdlib.io)
 
-(import "stdlib/test.tl")
+(import stdlib.test)
 
 (define (assert-owned-string-eq
   [actual : String]
   [expected : String]
   [message : String]) : unit
-  (assert-string-eq (& actual) (& expected) message))
+  (test.assert-string-eq (& actual) (& expected) message))
 
 (define (assert-stdin-read
-  [read : StdinRead]
+  [read : io.StdinRead]
   [expected-text : String]
   [expected-eof : bool]
   [message : String]) : unit
   (begin
     (assert-owned-string-eq
-      (stdin-read-text read)
+      (io.stdin-read-text read)
       expected-text
       (string-append message " text"))
-    (assert-bool-eq
-      (stdin-read-eof? read)
+    (test.assert-bool-eq
+      (io.stdin-read-eof? read)
       expected-eof
       (string-append message " eof"))))
 
 (define (main) : i64
   (begin
-    (assert-false (stdin-at-eof?) "stdin starts before EOF")
-    (assert-stdin-read (stdin-read-line) "alpha" false "first line")
-    (assert-false (stdin-at-eof?) "stdin not EOF after first line")
-    (assert-stdin-read (stdin-read-line) "" false "blank line")
-    (assert-stdin-read (stdin-read-line) "omega" true "final line")
-    (assert-true (stdin-at-eof?) "stdin EOF sticks after final line")
+    (test.assert-false (io.stdin-at-eof?) "stdin starts before EOF")
+    (assert-stdin-read (io.stdin-read-line) "alpha" false "first line")
+    (test.assert-false (io.stdin-at-eof?) "stdin not EOF after first line")
+    (assert-stdin-read (io.stdin-read-line) "" false "blank line")
+    (assert-stdin-read (io.stdin-read-line) "omega" true "final line")
+    (test.assert-true (io.stdin-at-eof?) "stdin EOF sticks after final line")
     (let
       [text : String "stdout"]
-      (stdout-write (& text)))
+      (io.stdout-write (& text)))
     (let
       [text : String "-line"]
-      (stdout-write-line (& text)))
+      (io.stdout-write-line (& text)))
     (let
       [text : String "stderr"]
-      (stderr-write (& text)))
+      (io.stderr-write (& text)))
     (let
       [text : String "-line"]
-      (stderr-write-line (& text)))
-    (stdout-flush)
+      (io.stderr-write-line (& text)))
+    (io.stdout-flush)
     42))

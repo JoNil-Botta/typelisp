@@ -1,4 +1,4 @@
-(import "stdlib/core_macros.tl" module stdlib.core_macros as core)
+(import stdlib.core_macros as core)
 
 (defenum Expr
   (ECoreMacroShadow i64))
@@ -7,33 +7,33 @@
   (let
     [value : i64 0]
     (begin
-      (core/and)
-      (core/and flag)
-      (core/and flag true true)
-      (core/or)
-      (core/or flag)
-      (core/or flag false false)
-      (core/when flag (set! value 1))
-      (core/unless flag (set! value 2))
+      (core.and)
+      (core.and flag)
+      (core.and flag true true)
+      (core.or)
+      (core.or flag)
+      (core.or flag false false)
+      (core.when flag (set! value 1))
+      (core.unless flag (set! value 2))
       unit)))
 
 (define (stdlib-core-cond-i64 [value : i64]) : i64
-  (core/cond [(< value 0) 0] [(= value 0) 1] [else (+ value 1)]))
+  (core.cond [(< value 0) 0] [(= value 0) 1] [else (+ value 1)]))
 
 (define (stdlib-core-cond-user-expr-shadow) : i64
-  (core/cond [true 42] [else 0]))
+  (core.cond [true 42] [else 0]))
 
 (define (stdlib-core-cond-string [flag : bool]) : String
-  (core/cond [flag "yes"] [else "no"]))
+  (core.cond [flag "yes"] [else "no"]))
 
 (define (stdlib-core-cond-unit [flag : bool]) : unit
-  (core/cond [flag unit] [else unit]))
+  (core.cond [flag unit] [else unit]))
 
 (define (stdlib-core-macros-short-circuit-value) : i64
   (let
     [value : i64 0]
     (begin
-      (if (core/and
+      (if (core.and
         true
         false
         (begin
@@ -41,7 +41,7 @@
           true))
         (set! value 1000)
         unit)
-      (if (core/or
+      (if (core.or
         true
         (begin
           (set! value 1000)

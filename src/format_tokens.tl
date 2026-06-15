@@ -3,9 +3,9 @@
 ;; This lexer is separate from lex.tl because a formatter must keep source
 ;; spelling and comments. Whitespace is skipped for now; comments are retained
 ;; as trivia tokens so later layout rules can place them deliberately.
-(import "../stdlib/io.tl")
+(import stdlib.io as io_mod)
 
-(import "../stdlib/string.tl")
+(import stdlib.string as string_mod)
 
 (defenum FormatToken
   (FmtLParen)
@@ -360,7 +360,7 @@
     [(OkFmtI64 end) end]
     [(ErrFmtI64 err)
       (begin
-        (panic (format-source-error-message err))
+        (io_mod.panic (format-source-error-message err))
         start)]))
 
 (define (fmt-scan-decimal-number-end [src : String] [start : i64] [n : i64]) : i64
@@ -396,7 +396,7 @@
     [(OkFmtI64 end) end]
     [(ErrFmtI64 err)
       (begin
-        (panic (format-source-error-message err))
+        (io_mod.panic (format-source-error-message err))
         start)]))
 
 (define (fmt-scan-symbol-end [src : String] [start : i64] [n : i64]) : i64
@@ -462,7 +462,7 @@
     [(OkFmtI64 end) end]
     [(ErrFmtI64 err)
       (begin
-        (panic (format-source-error-message err))
+        (io_mod.panic (format-source-error-message err))
         start)]))
 
 (define (fmt-scan-char-end-result [src : String] [start : i64] [n : i64]) : ResultFmtI64
@@ -498,7 +498,7 @@
     [(OkFmtI64 end) end]
     [(ErrFmtI64 err)
       (begin
-        (panic (format-source-error-message err))
+        (io_mod.panic (format-source-error-message err))
         start)]))
 
 (define (fmt-store-token
@@ -542,7 +542,7 @@
                     starts
                     count
                     i
-                    (FmtComment (substring src i (- end i))))
+                    (FmtComment (string_mod.substring src i (- end i))))
                   (set! count (+ count 1))
                   (set! i end)))
               (if (= c #(')
@@ -648,7 +648,10 @@
                                             count
                                             i
                                             (FmtString
-                                              (substring src i (- end i))))
+                                              (string_mod.substring
+                                                src
+                                                i
+                                                (- end i))))
                                           (set! count (+ count 1))
                                           (set! i end))]
                                       [(ErrFmtI64 err)
@@ -666,7 +669,10 @@
                                               count
                                               i
                                               (FmtChar
-                                                (substring src i (- end i))))
+                                                (string_mod.substring
+                                                  src
+                                                  i
+                                                  (- end i))))
                                             (set! count (+ count 1))
                                             (set! i end))]
                                         [(ErrFmtI64 err)
@@ -684,7 +690,10 @@
                                                 count
                                                 i
                                                 (FmtInt
-                                                  (substring src i (- end i))))
+                                                  (string_mod.substring
+                                                    src
+                                                    i
+                                                    (- end i))))
                                               (set! count (+ count 1))
                                               (set! i end))]
                                           [(ErrFmtI64 err)
@@ -700,7 +709,10 @@
                                                 count
                                                 i
                                                 (FmtSymbol
-                                                  (substring src i (- end i))))
+                                                  (string_mod.substring
+                                                    src
+                                                    i
+                                                    (- end i))))
                                               (set! count (+ count 1))
                                               (set! i end)))
                                           (return
@@ -717,5 +729,5 @@
     [(OkFormatTokenStream stream) stream]
     [(ErrFormatTokenStream err)
       (begin
-        (panic (format-source-error-message err))
+        (io_mod.panic (format-source-error-message err))
         (format-empty-token-stream))]))

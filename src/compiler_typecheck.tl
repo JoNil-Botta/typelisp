@@ -1,13 +1,13 @@
 ;; compiler_typecheck.tl - First scalar typechecker pass over compiler AstProgram (#426).
-(import "../stdlib/io.tl")
+(import stdlib.io as io_mod)
 
 (import "compiler_typecheck_core.tl")
 
 (import "compiler_specialize.tl")
 
-(import "../stdlib/string.tl")
+(import stdlib.string as string_mod)
 
-(import "../stdlib/str_cat.tl")
+(import stdlib.str_cat)
 
 (define (typecheck-compiler-program-with-paths
   [program : AstProgram]
@@ -106,7 +106,7 @@
     [(ErrAstProgramDiagnostic diag) (ErrCompilerTypecheck diag)]))
 
 (define (compiler-typecheck-with-io-source [src : String]) : String
-  (string-append
+  (string_mod.string-append
     "(extern (print [arg0 : i64]) : unit)
 (extern (print-bool [arg0 : bool]) : unit)
 (extern (print-float [arg0 : f64]) : unit)
@@ -141,7 +141,7 @@
     src))
 
 (define (compiler-typecheck-with-alloc-string-helper-source [src : String]) : String
-  (string-append
+  (string_mod.string-append
     "(define (int->string [value : i64]) : String
   (if (= value 0) \"0\" \"1\"))
 (define (substring [text : String] [start : i64] [len : i64]) : String
@@ -158,7 +158,7 @@
 (define (compiler-typecheck-with-fs-source [src : String]) : String
   (compiler-typecheck-with-io-source
     (compiler-typecheck-with-alloc-string-helper-source
-      (string-append
+      (string_mod.string-append
         "(extern (fs-mkdir-status [arg0 : String]) : i64)
 (extern (fs-remove-file-status [arg0 : String]) : i64)
 (extern (fs-remove-dir-status [arg0 : String]) : i64)
@@ -175,10 +175,10 @@
         src))))
 
 (define (compiler-typecheck-with-cpu-source [src : String]) : String
-  (string-append "(import \"stdlib/cpu.tl\")\n" src))
+  (string_mod.string-append "(import \"stdlib/cpu.tl\")\n" src))
 
 (define (compiler-typecheck-with-env-source [src : String]) : String
-  (string-append
+  (string_mod.string-append
     "(define (env-var-exists? [name : String]) : bool true)
 (define (env-var-value [name : String]) : String name)
 (define (env-path-separator) : String \":\")
@@ -186,7 +186,7 @@
     src))
 
 (define (compiler-typecheck-with-arena-source [src : String]) : String
-  (string-append
+  (string_mod.string-append
     "(extern (tl_arena_make) : i64)
 (extern (tl_arena_current) : i64)
 (extern (tl_region_mark) : i64)
@@ -221,7 +221,7 @@
 (define (compiler-typecheck-error-ok? [src : String] [want : String]) : bool
   (match (typecheck-compiler-source src)
     [(ErrCompilerTypecheck diag)
-      (string-eq (compiler-diagnostic-message diag) want)]
+      (string_mod.string-eq (compiler-diagnostic-message diag) want)]
     [(OkCompilerTypecheck _) false]))
 
 (define (compiler-typecheck-error-code-ok?
@@ -232,10 +232,10 @@
     [(ErrCompilerTypecheck diag)
       (match (compiler-diagnostic-code diag)
         [(CompilerDiagnosticSomeString code)
-          (if (string-eq code want-code)
+          (if (string_mod.string-eq code want-code)
             (match (compiler-diagnostic-category diag)
               [(CompilerDiagnosticSomeString category)
-                (string-eq category want-category)]
+                (string_mod.string-eq category want-category)]
               [CompilerDiagnosticNoString false])
             false)]
         [CompilerDiagnosticNoString false])]
@@ -262,7 +262,7 @@
   (match (typecheck-compiler-source src)
     [(ErrCompilerTypecheck diag)
       (and
-        (string-eq (compiler-diagnostic-message diag) want)
+        (string_mod.string-eq (compiler-diagnostic-message diag) want)
         (= (compiler-diagnostic-line diag) want-line)
         (= (compiler-diagnostic-col diag) want-col)
         (=
@@ -277,7 +277,7 @@
   [want : String]) : bool
   (match (typecheck-compiler-program program)
     [(ErrCompilerTypecheck diag)
-      (string-eq (compiler-diagnostic-message diag) want)]
+      (string_mod.string-eq (compiler-diagnostic-message diag) want)]
     [(OkCompilerTypecheck _) false]))
 
 ;; #2357: with the growing ty-node pool a compile that starts with the pool at
@@ -790,7 +790,11 @@
   [generator : String]
   [item : String]
   [arg : String]) : String
-  (gen-full-key "" generator item (string-append (spec-string-key arg) "_none")))
+  (gen-full-key
+    ""
+    generator
+    item
+    (string_mod.string-append (spec-string-key arg) "_none")))
 
 (define (compiler-typecheck-generated-notes-ok?
   [notes : CompilerDiagnosticNoteList]
@@ -799,12 +803,12 @@
   (match notes
     [(CompilerDiagnosticNoteCons identity-note rest)
       (and
-        (string-eq
+        (string_mod.string-eq
           identity-note
-          (string-append "generated identity: " want-key))
+          (string_mod.string-append "generated identity: " want-key))
         (match (box-get rest)
           [(CompilerDiagnosticNoteCons context-note _)
-            (string-eq context-note want-context)]
+            (string_mod.string-eq context-note want-context)]
           [(CompilerDiagnosticNoteNil) false]))]
     [(CompilerDiagnosticNoteNil) false]))
 
@@ -815,10 +819,11 @@
     [(ErrCompilerTypecheck diag)
       (let
         [message-ok : bool
-          (string-eq
+          (string_mod.string-eq
             (compiler-diagnostic-message diag)
             "typecheck: return type mismatch")]
-        [path-ok : bool (string-eq (compiler-diagnostic-path diag) "")]
+        [path-ok : bool
+          (string_mod.string-eq (compiler-diagnostic-path diag) "")]
         [line-ok : bool (= (compiler-diagnostic-line diag) 2)]
         [col-ok : bool (= (compiler-diagnostic-col diag) 33)]
         [notes-ok : bool
@@ -849,10 +854,10 @@
           AstFieldDefNil))]
     [diag : CompilerDiagnostic (tc-decl-diag decl "typecheck: policy fallback")]
     [message-ok : bool
-      (string-eq
+      (string_mod.string-eq
         (compiler-diagnostic-message diag)
         "typecheck: policy fallback")]
-    [path-ok : bool (string-eq (compiler-diagnostic-path diag) "")]
+    [path-ok : bool (string_mod.string-eq (compiler-diagnostic-path diag) "")]
     [line-ok : bool (= (compiler-diagnostic-line diag) 1)]
     [col-ok : bool (= (compiler-diagnostic-col diag) 1)]
     [notes-ok : bool
@@ -1043,6 +1048,29 @@
       (match (data.Some 3)
         [(data.Some v) v]
         [data.None 0]))))")
+
+(define (compiler-typecheck-dotted-import-variant-payload-owner-source) : String
+  "(module pkg.thread)
+(defstruct Semaphore (handle i64))
+(defenum SemaphoreResult
+  (SemaphoreOk Semaphore)
+  (SemaphoreErr String))
+(define (make) : SemaphoreResult
+  (SemaphoreOk (Semaphore 7)))
+(export
+  (value make)
+  (type Semaphore)
+  (constructor Semaphore)
+  (field Semaphore handle)
+  (type SemaphoreResult)
+  (variant SemaphoreOk)
+  (variant SemaphoreErr))
+(module main)
+(import pkg.thread)
+(define (main) : i64
+  (match (thread.make)
+    [(thread.SemaphoreErr _) 0]
+    [(thread.SemaphoreOk sem) (struct-get sem handle)]))")
 
 (define (compiler-typecheck-dot-field-source) : String
   "(defstruct Pair (x i64) (y i64))
@@ -1483,7 +1511,8 @@
                   [ctx : TcContext (TcContext program symbols registries "")]
                   (match (tc-repr-c-struct-layout ctx name)
                     [(OkTcReprCLayout _) false]
-                    [(ErrTcReprCLayout message) (string-eq message want)]))]
+                    [(ErrTcReprCLayout message)
+                      (string_mod.string-eq message want)]))]
               [(ErrCompilerRegistries _) false])]
           [(ErrCompilerSymbols _) false])]
       [(ErrAstProgram _) false])))
@@ -1572,7 +1601,7 @@
   [name : String]
   [want : String]) : bool
   (match (compiler-typecheck-inline-layout-result src name)
-    [(ErrTcUnit message) (string-eq message want)]
+    [(ErrTcUnit message) (string_mod.string-eq message want)]
     [(OkTcUnit) false]))
 
 (define (compiler-typecheck-inline-layout-query-source) : String
@@ -1946,7 +1975,7 @@
     [ok : bool true]
     (begin
       (if (compiler-typecheck-error-ok?
-        (str-cat
+        (str_cat.str-cat
           (compiler-typecheck-inline-unboxed-list-source)
           "\n"
           "(define (main [x : BadList]) : i64 0)")
@@ -2046,9 +2075,9 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-generated-decl-duplicate-visible-source)
-        (string-append
+        (string_mod.string-append
           "symbols: duplicate type declaration Point (generated identity: "
-          (string-append
+          (string_mod.string-append
             (compiler-typecheck-generated-key "point-family" "Point" "right")
             ")")))
         unit
@@ -2124,6 +2153,10 @@
         (set! ok false))
       (if (compiler-typecheck-ok?
         (compiler-typecheck-dotted-import-default-alias-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-dotted-import-variant-payload-owner-source))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok? (compiler-typecheck-dot-field-source))
@@ -2457,7 +2490,7 @@
 
 (define (compiler-typecheck-box-render-ok?) : bool
   (and
-    (string-eq (tc-type-render (ast-ty-box (AstTyI64))) "(Box i64)")
+    (string_mod.string-eq (tc-type-render (ast-ty-box (AstTyI64))) "(Box i64)")
     (tc-type-eq
       (ast-ty-box (ast-ty-region "r" (AstTyI64)))
       (ast-ty-box (AstTyI64)))
@@ -3112,8 +3145,8 @@
 
 (define (compiler-typecheck-raw-pointer-render-ok?) : bool
   (and
-    (string-eq (tc-type-render (ast-ty-ptr (AstTyI64))) "(Ptr i64)")
-    (string-eq
+    (string_mod.string-eq (tc-type-render (ast-ty-ptr (AstTyI64))) "(Ptr i64)")
+    (string_mod.string-eq
       (tc-type-render (ast-ty-mut-ptr (ast-ty-ptr (AstTyU8))))
       "(MutPtr (Ptr u8))")
     (tc-type-eq (ast-ty-ptr (AstTyI64)) (ast-ty-ptr (AstTyI64)))
@@ -3701,15 +3734,19 @@
 (define (compiler-typecheck-reference-render-ok?) : bool
   (let
     [string-ref-render-ok : bool
-      (string-eq (tc-type-render (ast-ty-ref "r" (AstTyString))) "(& r String)")]
+      (string_mod.string-eq
+        (tc-type-render (ast-ty-ref "r" (AstTyString)))
+        "(& r String)")]
     [str-ref-render-ok : bool
-      (string-eq (tc-type-render (ast-ty-ref "r" (AstTyStr))) "(& r str)")]
+      (string_mod.string-eq
+        (tc-type-render (ast-ty-ref "r" (AstTyStr)))
+        "(& r str)")]
     [mut-ref-render-ok : bool
-      (string-eq
+      (string_mod.string-eq
         (tc-type-render (ast-ty-mut-ref "phase" (ast-ty-dyn-array (AstTyI64))))
         "(&mut phase (Array i64))")]
     [nominal-lifetime-render-ok : bool
-      (string-eq
+      (string_mod.string-eq
         (tc-type-render
           (AstTyStructArgs
             (intern "RefBox")
@@ -4113,7 +4150,7 @@
     [(ErrCompilerTypecheck diag)
       (if (= (compiler-diagnostic-line diag) 2)
         (if (> (compiler-diagnostic-col diag) 0)
-          (string-eq
+          (string_mod.string-eq
             (compiler-diagnostic-message diag)
             "typecheck: unbound name missing")
           false)
@@ -4130,7 +4167,7 @@
       (compiler-typecheck-call-arity-located-source))
       [(ErrCompilerTypecheck diag)
         (and
-          (string-eq
+          (string_mod.string-eq
             (compiler-diagnostic-message diag)
             "typecheck: call arity mismatch: need3 expected 3 arguments, got 2 arguments")
           (= (compiler-diagnostic-line diag) 9)
@@ -5391,9 +5428,9 @@
 ;; stay rejected, and type-valued comptime parameters specialize through
 ;; reflection when called with a type literal.
 (define (compiler-typecheck-unknown-type-policy-message [name : String]) : String
-  (string-append
+  (string_mod.string-append
     "typecheck: unknown type "
-    (string-append
+    (string_mod.string-append
       name
       "; TypeLisp has no source-level type parameters; use comptime-generated concrete declarations instead (#893/#913/#970/#902)")))
 
@@ -5456,7 +5493,7 @@
     (ExprInt i64)))")
 
 (define (compiler-typecheck-stdlib-comptime-bad-expr-list-source) : String
-  (str-cat
+  (str_cat.str-cat
     "(module stdlib.comptime)\n"
     (compiler-typecheck-stdlib-comptime-expr-decl-source)
     "\n(comptime-decl (:generated stdlib/comptime-well-known ExprList \"v0\")
@@ -6387,7 +6424,7 @@
 ")
 
 (define (compiler-typecheck-macro-prelude-and-or-source) : String
-  (string-append
+  (string_mod.string-append
     (compiler-typecheck-macro-prelude-module-source)
     "(define (main [x : bool] [y : bool]) : i64
   (if (and x y)
@@ -6395,17 +6432,17 @@
     (if (or x y) 7 0)))"))
 
 (define (compiler-typecheck-macro-prelude-and-bad-source) : String
-  (string-append
+  (string_mod.string-append
     (compiler-typecheck-macro-prelude-module-source)
     "(define (main [a : bool]) : bool (and a 1))"))
 
 (define (compiler-typecheck-macro-prelude-or-bad-source) : String
-  (string-append
+  (string_mod.string-append
     (compiler-typecheck-macro-prelude-module-source)
     "(define (main [a : bool]) : bool (or 1 a))"))
 
 (define (compiler-typecheck-macro-forward-prelude-shadow-source) : String
-  (string-append
+  (string_mod.string-append
     (compiler-typecheck-macro-prelude-module-source)
     "(define (main) : i64 (and 1 41))
 (defmacro (and [lhs : i64] [rhs : i64]) : i64
@@ -6643,63 +6680,63 @@
   (begin
     (if (intern-qualified-metadata-tests-ok?)
       unit
-      (panic "typecheck: intern qualified metadata tests failed"))
+      (io_mod.panic "typecheck: intern qualified metadata tests failed"))
     (if (tc-type-env-box-smoke?)
       unit
-      (panic "typecheck: boxed type env smoke mismatch"))
+      (io_mod.panic "typecheck: boxed type env smoke mismatch"))
     (if (tc-type-env-local-cache-smoke?)
       unit
-      (panic "typecheck: local type env cache smoke mismatch"))
+      (io_mod.panic "typecheck: local type env cache smoke mismatch"))
     (if (tc-spmd-env-box-smoke?)
       unit
-      (panic "typecheck: boxed spmd env smoke mismatch"))
+      (io_mod.panic "typecheck: boxed spmd env smoke mismatch"))
     (if (compiler-typecheck-ptr-null-tests-ok?)
       unit
-      (panic "typecheck: ptr-null construction/check tests failed"))
+      (io_mod.panic "typecheck: ptr-null construction/check tests failed"))
     (if (compiler-typecheck-unsafe-tests-ok?)
       unit
-      (panic "typecheck: unsafe block tests failed"))
+      (io_mod.panic "typecheck: unsafe block tests failed"))
     (if (compiler-typecheck-unsafe-decl-tests-ok?)
       unit
-      (panic "typecheck: unsafe declaration tests failed"))
+      (io_mod.panic "typecheck: unsafe declaration tests failed"))
     (if (compiler-typecheck-arena-unsafe-tests-ok?)
       unit
-      (panic "typecheck: arena unsafe primitive tests failed"))
+      (io_mod.panic "typecheck: arena unsafe primitive tests failed"))
     (if (compiler-typecheck-raw-pointer-op-tests-ok?)
       unit
-      (panic "typecheck: raw pointer unsafe operation tests failed"))
+      (io_mod.panic "typecheck: raw pointer unsafe operation tests failed"))
     (if (compiler-typecheck-statement-tests-ok?)
       unit
-      (panic "typecheck: statement/control-flow tests failed"))
+      (io_mod.panic "typecheck: statement/control-flow tests failed"))
     (if (compiler-typecheck-operator-tests-ok?)
       unit
-      (panic "typecheck: operator/arity tests failed"))
+      (io_mod.panic "typecheck: operator/arity tests failed"))
     (if (compiler-typecheck-scalar-parity-tests-ok?)
       unit
-      (panic "typecheck: scalar bool/float/cast parity tests failed"))
+      (io_mod.panic "typecheck: scalar bool/float/cast parity tests failed"))
     (if (compiler-typecheck-match-tests-ok?)
       unit
-      (panic "typecheck: match/pattern tests failed"))
+      (io_mod.panic "typecheck: match/pattern tests failed"))
     (if (compiler-typecheck-spmd-reduce-op-tests-ok?)
       unit
-      (panic "typecheck: spmd-reduce operator/type tests failed"))
+      (io_mod.panic "typecheck: spmd-reduce operator/type tests failed"))
     (if (compiler-typecheck-spmd-reduce-purity-tests-ok?)
       unit
-      (panic "typecheck: spmd-reduce purity tests failed"))
+      (io_mod.panic "typecheck: spmd-reduce purity tests failed"))
     (if (compiler-typecheck-spmd-broadcast-tests-ok?)
       unit
-      (panic "typecheck: spmd-broadcast tests failed"))
+      (io_mod.panic "typecheck: spmd-broadcast tests failed"))
     (if (compiler-typecheck-array-builtin-tests-ok?)
       unit
-      (panic "typecheck: array-builtin signature tests failed"))
+      (io_mod.panic "typecheck: array-builtin signature tests failed"))
     (match (typecheck-compiler-source (compiler-typecheck-smoke-source))
       [(OkCompilerTypecheck summary)
         (if (= (compiler-typecheck-summary-score summary) 121)
           unit
-          (panic "typecheck: smoke score mismatch"))]
+          (io_mod.panic "typecheck: smoke score mismatch"))]
       [(ErrCompilerTypecheck diag)
         (begin
-          (panic (compiler-diagnostic-message diag))
+          (io_mod.panic (compiler-diagnostic-message diag))
           unit)])
     unit))
 
@@ -6791,7 +6828,7 @@
 ")
 
 (define (compiler-typecheck-move-cleanup-enum-owner-payload-one-shot-source) : String
-  (string-append
+  (string_mod.string-append
     (compiler-typecheck-move-cleanup-enum-payload-prefix)
     "(define (cleanup-enum-owner-payload-one-shot [m : MaybeHandle]) : unit
   (match m
@@ -6800,7 +6837,7 @@
     [(None) unit]))"))
 
 (define (compiler-typecheck-move-cleanup-enum-owner-payload-repeat-source) : String
-  (string-append
+  (string_mod.string-append
     (compiler-typecheck-move-cleanup-enum-payload-prefix)
     "(define (bad-cleanup-enum-owner-payload-repeat [m : MaybeHandle]) : unit
   (match m
@@ -6809,7 +6846,7 @@
     [(None) unit]))"))
 
 (define (compiler-typecheck-move-cleanup-enum-payload-copyable-source) : String
-  (string-append
+  (string_mod.string-append
     (compiler-typecheck-move-cleanup-enum-payload-prefix)
     "(define (cleanup-enum-payload-copyable [m : MaybeHandle]) : i64
   (match m
@@ -6818,7 +6855,7 @@
     [(None) 0]))"))
 
 (define (compiler-typecheck-move-cleanup-enum-payload-shadow-source) : String
-  (string-append
+  (string_mod.string-append
     (compiler-typecheck-move-cleanup-enum-payload-prefix)
     "(define (cleanup-enum-payload-shadow
   [h : FileHandle]
@@ -7469,7 +7506,7 @@
 ")
 
 (define (compiler-typecheck-live-borrow-holder-prefix) : String
-  (string-append
+  (string_mod.string-append
     (compiler-typecheck-live-borrow-owner-prefix)
     "(defstruct Holder
   (:cleanup cleanup-holder)
@@ -7487,7 +7524,7 @@
     n))")
 
 (define (compiler-typecheck-live-borrow-owner-post-scope-source) : String
-  (string-append
+  (string_mod.string-append
     (compiler-typecheck-live-borrow-owner-prefix)
     "(define (main [h : FileHandle]) : unit
   (begin
@@ -7503,7 +7540,7 @@
         n))))")
 
 (define (compiler-typecheck-live-borrow-whole-move-source) : String
-  (string-append
+  (string_mod.string-append
     (compiler-typecheck-live-borrow-owner-prefix)
     "(define (bad [h : FileHandle]) : unit
   (let [r : (& h FileHandle) (& h)]
@@ -7517,14 +7554,14 @@
       n)))")
 
 (define (compiler-typecheck-live-borrow-aggregate-root-move-source) : String
-  (string-append
+  (string_mod.string-append
     (compiler-typecheck-live-borrow-holder-prefix)
     "(define (bad [p : Holder]) : unit
   (let [r : (& p FileHandle) (& (struct-get p handle))]
     (take-holder p)))"))
 
 (define (compiler-typecheck-live-borrow-aggregate-child-move-source) : String
-  (string-append
+  (string_mod.string-append
     (compiler-typecheck-live-borrow-holder-prefix)
     "(define (bad [p : Holder]) : unit
   (let [r : (& p Holder) (& p)]
@@ -7569,7 +7606,7 @@
         n))))")
 
 (define (compiler-typecheck-live-borrow-resource-conflict-source) : String
-  (string-append
+  (string_mod.string-append
     (compiler-typecheck-live-borrow-owner-prefix)
     "(define (bad [fd : i64]) : i64
   (with ([h (FileHandle fd) cleanup-file-handle])
@@ -8312,107 +8349,107 @@
   (begin
     (if (compiler-typecheck-namespace-tests-ok?)
       unit
-      (panic "typecheck: declaration namespace tests failed"))
+      (io_mod.panic "typecheck: declaration namespace tests failed"))
     (if (compiler-typecheck-defdispatch-tests-ok?)
       unit
-      (panic "typecheck: defdispatch tests failed"))
+      (io_mod.panic "typecheck: defdispatch tests failed"))
     (if (compiler-typecheck-move-tests-ok?)
       unit
-      (panic "typecheck: move checker tests failed"))
+      (io_mod.panic "typecheck: move checker tests failed"))
     (if (compiler-typecheck-live-borrow-tests-ok?)
       unit
-      (panic "typecheck: live borrow checker tests failed"))
+      (io_mod.panic "typecheck: live borrow checker tests failed"))
     (if (compiler-typecheck-diagnostic-code-tests-ok?)
       unit
-      (panic "typecheck: diagnostic code tests failed"))
+      (io_mod.panic "typecheck: diagnostic code tests failed"))
     (if (compiler-typecheck-escape-diagnostic-tests-ok?)
       unit
-      (panic "typecheck: escape diagnostic tests failed"))
+      (io_mod.panic "typecheck: escape diagnostic tests failed"))
     (if (compiler-typecheck-pool-exhaustion-diagnostic-ok?)
       unit
-      (panic "typecheck: pool exhaustion diagnostic test failed"))
+      (io_mod.panic "typecheck: pool exhaustion diagnostic test failed"))
     (if (compiler-typecheck-error-ok?
       (compiler-typecheck-unbound-source)
       "typecheck: unbound name missing")
       unit
-      (panic "typecheck: unbound-name diagnostic test failed"))
+      (io_mod.panic "typecheck: unbound-name diagnostic test failed"))
     (if (compiler-typecheck-error-ok?
       (compiler-typecheck-bad-call-source)
       "typecheck: argument type mismatch")
       unit
-      (panic "typecheck: bad-call diagnostic test failed"))
+      (io_mod.panic "typecheck: bad-call diagnostic test failed"))
     (if (compiler-typecheck-error-ok?
       (compiler-typecheck-branch-mismatch-source)
       "typecheck: if branches must match")
       unit
-      (panic "typecheck: branch mismatch diagnostic test failed"))
+      (io_mod.panic "typecheck: branch mismatch diagnostic test failed"))
     unit))
 
 (define (compiler-typecheck-self-test-models) : unit
   (begin
     (if (compiler-typecheck-aggregate-tests-ok?)
       unit
-      (panic "typecheck: aggregate tests failed"))
+      (io_mod.panic "typecheck: aggregate tests failed"))
     (if (compiler-typecheck-clone-tests-ok?)
       unit
-      (panic "typecheck: clone tests failed"))
+      (io_mod.panic "typecheck: clone tests failed"))
     (if (compiler-typecheck-foreach-spmd-tests-ok?)
       unit
-      (panic "typecheck: foreach/spmd tests failed"))
+      (io_mod.panic "typecheck: foreach/spmd tests failed"))
     (if (compiler-typecheck-nominal-tests-ok?)
       unit
-      (panic "typecheck: nominal tests failed"))
+      (io_mod.panic "typecheck: nominal tests failed"))
     (if (compiler-typecheck-abstraction-policy-tests-ok?)
       unit
-      (panic "typecheck: abstraction policy tests failed"))
+      (io_mod.panic "typecheck: abstraction policy tests failed"))
     (if (compiler-typecheck-region-tests-ok?)
       unit
-      (panic "typecheck: region tests failed"))
+      (io_mod.panic "typecheck: region tests failed"))
     (if (compiler-typecheck-with-escape-tests-ok?)
       unit
-      (panic "typecheck: with-escape tests failed"))
+      (io_mod.panic "typecheck: with-escape tests failed"))
     (if (compiler-typecheck-in-arena-tests-ok?)
       unit
-      (panic "typecheck: in-arena tests failed"))
+      (io_mod.panic "typecheck: in-arena tests failed"))
     (if (compiler-typecheck-owner-model-tests-ok?)
       unit
-      (panic "typecheck: lifetime owner model tests failed"))
+      (io_mod.panic "typecheck: lifetime owner model tests failed"))
     (if (compiler-typecheck-box-tests-ok?)
       unit
-      (panic "typecheck: box tests failed"))
+      (io_mod.panic "typecheck: box tests failed"))
     (if (compiler-typecheck-init-tests-ok?)
       unit
-      (panic "typecheck: init tests failed"))
+      (io_mod.panic "typecheck: init tests failed"))
     (if (compiler-typecheck-result-try-tests-ok?)
       unit
-      (panic "typecheck: result try tests failed"))
+      (io_mod.panic "typecheck: result try tests failed"))
     (if (compiler-typecheck-move-kind-tests-ok?)
       unit
-      (panic "typecheck: move-kind classifier tests failed"))
+      (io_mod.panic "typecheck: move-kind classifier tests failed"))
     (if (compiler-typecheck-resource-with-tests-ok?)
       unit
-      (panic "typecheck: resource with tests failed"))
+      (io_mod.panic "typecheck: resource with tests failed"))
     (if (compiler-typecheck-cleanup-struct-tests-ok?)
       unit
-      (panic "typecheck: cleanup struct metadata tests failed"))
+      (io_mod.panic "typecheck: cleanup struct metadata tests failed"))
     (if (compiler-typecheck-cleanup-enum-tests-ok?)
       unit
-      (panic "typecheck: cleanup enum metadata tests failed"))
+      (io_mod.panic "typecheck: cleanup enum metadata tests failed"))
     (if (compiler-typecheck-raw-pointer-tests-ok?)
       unit
-      (panic "typecheck: raw pointer type tests failed"))
+      (io_mod.panic "typecheck: raw pointer type tests failed"))
     (if (compiler-typecheck-extern-abi-tests-ok?)
       unit
-      (panic "typecheck: extern ABI signature tests failed"))
+      (io_mod.panic "typecheck: extern ABI signature tests failed"))
     (if (compiler-typecheck-reference-tests-ok?)
       unit
-      (panic "typecheck: reference tests failed"))
+      (io_mod.panic "typecheck: reference tests failed"))
     (if (compiler-typecheck-located-ok?)
       unit
-      (panic "typecheck: located diagnostic test failed"))
+      (io_mod.panic "typecheck: located diagnostic test failed"))
     (if (compiler-typecheck-quote-tests-ok?)
       unit
-      (panic "typecheck: quote tests failed"))
+      (io_mod.panic "typecheck: quote tests failed"))
     unit))
 
 ;; Runtime stdlib signature + shadowing coverage (#1539, migrated from
@@ -8662,51 +8699,51 @@
   (begin
     (if (compiler-typecheck-runtime-builtin-tests-ok?)
       unit
-      (panic "typecheck: runtime builtin tests failed"))
+      (io_mod.panic "typecheck: runtime builtin tests failed"))
     (if (compiler-typecheck-profile-no-default-tests-ok?)
       unit
-      (panic "typecheck: profile helpers should require stdlib import"))
+      (io_mod.panic "typecheck: profile helpers should require stdlib import"))
     (if (compiler-typecheck-panic-error-never-tests-ok?)
       unit
-      (panic "typecheck: panic/error never-context tests failed"))
+      (io_mod.panic "typecheck: panic/error never-context tests failed"))
     (if (compiler-typecheck-string-builtin-tests-ok?)
       unit
-      (panic "typecheck: string builtin tests failed"))
+      (io_mod.panic "typecheck: string builtin tests failed"))
     (if (compiler-typecheck-argv-builtin-tests-ok?)
       unit
-      (panic "typecheck: argv builtin tests failed"))
+      (io_mod.panic "typecheck: argv builtin tests failed"))
     (if (compiler-typecheck-lambda-tests-ok?)
       unit
-      (panic "typecheck: lambda tests failed"))
+      (io_mod.panic "typecheck: lambda tests failed"))
     (if (compiler-typecheck-cast-tests-ok?)
       unit
-      (panic "typecheck: cast tests failed"))
+      (io_mod.panic "typecheck: cast tests failed"))
     (if (compiler-typecheck-comptime-tests-ok?)
       unit
-      (panic "typecheck: comptime tests failed"))
+      (io_mod.panic "typecheck: comptime tests failed"))
     (if (compiler-typecheck-type-literal-tests-ok?)
       unit
-      (panic "typecheck: type-literal tests failed"))
+      (io_mod.panic "typecheck: type-literal tests failed"))
     (if (compiler-typecheck-io-builtin-tests-ok?)
       unit
-      (panic "typecheck: io builtin tests failed"))
+      (io_mod.panic "typecheck: io builtin tests failed"))
     (if (compiler-typecheck-reflection-tests-ok?)
       unit
-      (panic "typecheck: comptime reflection tests failed"))
+      (io_mod.panic "typecheck: comptime reflection tests failed"))
     (if (compiler-typecheck-layout-query-tests-ok?)
       unit
       (begin
-        (panic "typecheck: layout query tests failed")
+        (io_mod.panic "typecheck: layout query tests failed")
         unit))
     (if (compiler-typecheck-defmacro-tests-ok?)
       unit
       (begin
-        (panic "typecheck: defmacro tests failed")
+        (io_mod.panic "typecheck: defmacro tests failed")
         unit))
     (if (compiler-typecheck-macro-expand-tests-ok?)
       unit
       (begin
-        (panic "typecheck: macro expansion tests failed")
+        (io_mod.panic "typecheck: macro expansion tests failed")
         unit))))
 
 (define (compiler-typecheck-self-test) : i64

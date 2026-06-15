@@ -4,14 +4,16 @@
 ;# `(Array i64)` live prefix. The backing array handle is stored directly for
 ;# indexed reads, while a borrowed owner witness ties the view to the caller's
 ;# source lifetime.
-(import "vector.tl")
+(module stdlib.vector_slice)
+
+(import stdlib.vector as vector_mod)
 
 ;: Lifetime witness for the source value that owns an `I64Slice` live range.
 (comptime-decl
   (:generated vector-family I64SliceSource "i64")
   (defenum I64SliceSource
     (:lifetimes source)
-    (I64SliceSourceVec (& source I64Vec))
+    (I64SliceSourceVec (& source vector_mod.I64Vec))
     (I64SliceSourceArray (& source (Array i64)))))
 
 ;: Lifetime-scoped borrowed view over a live `I64Vec` or `(Array i64)` prefix.
@@ -56,22 +58,34 @@
 ;: View the whole live prefix of `v`; callers should pass `(& v)` as `owner`.
 (comptime-decl
   (:generated vector-family i64-slice-all-vec "i64")
-  (define (i64-slice-all-vec [v : I64Vec] [owner : (& source I64Vec)]) : (I64Slice
-      source)
-    (I64Slice (I64SliceSourceVec owner) (i64-vec-slots v) 0 (i64-vec-len v))))
+  (define (i64-slice-all-vec
+    [v : vector_mod.I64Vec]
+    [owner : (& source vector_mod.I64Vec)]) : (I64Slice source)
+    (I64Slice
+      (I64SliceSourceVec owner)
+      (vector_mod.i64-vec-slots v)
+      0
+      (vector_mod.i64-vec-len v))))
 
 ;: Build a lifetime-scoped view over `v[start, start + len)`. Invalid ranges
 ;: return an empty view tied to `owner`; callers should pass `(& v)`.
 (comptime-decl
   (:generated vector-family i64-slice-from-vec "i64")
   (define (i64-slice-from-vec
-    [v : I64Vec]
-    [owner : (& source I64Vec)]
+    [v : vector_mod.I64Vec]
+    [owner : (& source vector_mod.I64Vec)]
     [start : i64]
     [len : i64]) : (I64Slice source)
-    (if (i64-slice-range-valid? (i64-vec-len v) start len)
-      (I64Slice (I64SliceSourceVec owner) (i64-vec-slots v) start len)
-      (I64Slice (I64SliceSourceVec owner) (i64-vec-slots v) 0 0))))
+    (if (stdlib.vector_slice.i64-slice-range-valid?
+      (vector_mod.i64-vec-len v)
+      start
+      len)
+      (I64Slice
+        (I64SliceSourceVec owner)
+        (vector_mod.i64-vec-slots v)
+        start
+        len)
+      (I64Slice (I64SliceSourceVec owner) (vector_mod.i64-vec-slots v) 0 0))))
 
 ;: Build a lifetime-scoped view over `items[start, start + len)` inside the
 ;: explicit live prefix `[0, count)`. Invalid counts/ranges return an empty
@@ -84,8 +98,8 @@
     [count : i64]
     [start : i64]
     [len : i64]) : (I64Slice source)
-    (if (i64-slice-live-count-valid? items count)
-      (if (i64-slice-range-valid? count start len)
+    (if (stdlib.vector_slice.i64-slice-live-count-valid? items count)
+      (if (stdlib.vector_slice.i64-slice-range-valid? count start len)
         (I64Slice (I64SliceSourceArray owner) items start len)
         (I64Slice (I64SliceSourceArray owner) items 0 0))
       (I64Slice (I64SliceSourceArray owner) items 0 0))))
@@ -100,7 +114,7 @@
 (comptime-decl
   (:generated vector-family i64-slice-is-empty? "i64")
   (define (i64-slice-is-empty? [slice : (I64Slice source)]) : bool
-    (<= (i64-slice-len slice) 0)))
+    (<= (stdlib.vector_slice.i64-slice-len slice) 0)))
 
 ;: Read element `index` from the slice, returning `fallback` when out of range.
 (comptime-decl
@@ -110,7 +124,7 @@
     [index : i64]
     [fallback : i64]) : i64
     (if (if (>= index 0)
-      (< index (i64-slice-len slice))
+      (< index (stdlib.vector_slice.i64-slice-len slice))
       false)
       (array-ref (struct-get slice slots) (+ (struct-get slice start) index))
       fallback)))
@@ -123,7 +137,10 @@
     [slice : (I64Slice source)]
     [start : i64]
     [len : i64]) : (I64Slice source)
-    (if (i64-slice-range-valid? (i64-slice-len slice) start len)
+    (if (stdlib.vector_slice.i64-slice-range-valid?
+      (stdlib.vector_slice.i64-slice-len slice)
+      start
+      len)
       (I64Slice
         (struct-get slice witness)
         (struct-get slice slots)
@@ -140,18 +157,43 @@
   (:generated vector-family i64-slice-to-array "i64")
   (define (i64-slice-to-array [slice : (I64Slice source)]) : (Array i64)
     (let
-      [n : i64 (i64-slice-len slice)]
+      [n : i64 (stdlib.vector_slice.i64-slice-len slice)]
       [out : (Array i64) (make-array i64 n)]
       [i : i64 0]
       (begin
         (while (< i n)
           (begin
-            (array-set! out i (i64-slice-get slice i 0))
+            (array-set! out i (stdlib.vector_slice.i64-slice-get slice i 0))
             (set! i (+ i 1))))
         out))))
 
 ;: Copy the slice into a fresh `I64Vec`.
 (comptime-decl
   (:generated vector-family i64-slice-to-vec "i64")
-  (define (i64-slice-to-vec [slice : (I64Slice source)]) : I64Vec
-    (i64-vec-from-array (i64-slice-to-array slice) (i64-slice-len slice))))
+  (define (i64-slice-to-vec [slice : (I64Slice source)]) : vector_mod.I64Vec
+    (vector_mod.i64-vec-from-array
+      (stdlib.vector_slice.i64-slice-to-array slice)
+      (stdlib.vector_slice.i64-slice-len slice))))
+
+;# Dotted-module migration: preserve the pre-module flat stdlib surface.
+(export
+  (value i64-slice-range-valid?)
+  (value i64-slice-live-count-valid?)
+  (value i64-slice-all-vec)
+  (value i64-slice-from-vec)
+  (value i64-slice-from-array)
+  (value i64-slice-len)
+  (value i64-slice-is-empty?)
+  (value i64-slice-get)
+  (value i64-slice-sub-slice)
+  (value i64-slice-to-array)
+  (value i64-slice-to-vec)
+  (type I64SliceSource)
+  (type I64Slice)
+  (constructor I64Slice)
+  (field I64Slice witness)
+  (field I64Slice slots)
+  (field I64Slice start)
+  (field I64Slice len)
+  (variant I64SliceSourceVec)
+  (variant I64SliceSourceArray))

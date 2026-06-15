@@ -9,61 +9,66 @@
 ;# `fs-file-kind-status`, `fs-file-size-status`, `fs-file-size`,
 ;# `fs-process-id`, `fs-current-dir-status`, and `fs-current-dir`.
 ;#
-;# Usage: `(import "stdlib/fs.tl")`
+;# Usage: `(import stdlib.fs)`
 ;#
 ;# ```typelisp
-;# (import "stdlib/fs.tl")
+;# (import stdlib.fs as fs)
 ;# (define joined : String
 ;#   (let
 ;#     [left : String "target"]
 ;#     [right : String "tool-output.s"]
-;#     (fs-path-join (& left) (& right))))
+;#     (fs.fs-path-join (& left) (& right))))
 ;# (define nested : String
-;#   (fs-path-join-many "target" "typelisp" "cache"))
+;#   (fs.fs-path-join-many "target" "typelisp" "cache"))
 ;# ```
-(import "env.tl")
+(module stdlib.fs)
 
-(import "io.tl")
+(import stdlib.env as env_mod)
 
-(import "list.tl")
+(import stdlib.io as io_mod)
 
-(import "string.tl")
+(import stdlib.list as list_mod)
 
-(import "vector.tl")
+(import stdlib.string as string_mod)
+
+(import stdlib.vector as vector_mod)
 
 ;: Result type for directory-listing APIs.
 (defenum ResultIoStringList
-  (OkIoStringList StringList)
-  (ErrIoStringList IoError))
+  (OkIoStringList list_mod.StringList)
+  (ErrIoStringList io_mod.IoError))
 
 ;: Result type for vector-backed directory-listing APIs.
 (defenum ResultIoStringVec
-  (OkIoStringVec StringVec)
-  (ErrIoStringVec IoError))
+  (OkIoStringVec vector_mod.StringVec)
+  (ErrIoStringVec io_mod.IoError))
 
 ;: Linux `mkdir` via the `mkdir` syscall (number 83).
 (define (fs-linux-syscall-mkdir [path : (Ptr u8)] [mode : i64]) : i64
-  (io-linux-syscall-status
+  (io_mod.io-linux-syscall-status
     (unsafe
-      (syscall 83 (io-linux-ptr-arg path) mode))))
+      (syscall 83 (io_mod.io-linux-ptr-arg path) mode))))
 
 ;: Linux `unlink` via the `unlink` syscall (number 87).
 (define (fs-linux-syscall-unlink [path : (Ptr u8)]) : i64
-  (io-linux-syscall-status
+  (io_mod.io-linux-syscall-status
     (unsafe
-      (syscall 87 (io-linux-ptr-arg path)))))
+      (syscall 87 (io_mod.io-linux-ptr-arg path)))))
 
 ;: Linux `rmdir` via the `rmdir` syscall (number 84).
 (define (fs-linux-syscall-rmdir [path : (Ptr u8)]) : i64
-  (io-linux-syscall-status
+  (io_mod.io-linux-syscall-status
     (unsafe
-      (syscall 84 (io-linux-ptr-arg path)))))
+      (syscall 84 (io_mod.io-linux-ptr-arg path)))))
 
 ;: Linux `rename` via the `rename` syscall (number 82).
 (define (fs-linux-syscall-rename [source : (Ptr u8)] [destination : (Ptr u8)]) : i64
-  (io-linux-syscall-status
+  (io_mod.io-linux-syscall-status
     (unsafe
-      (syscall 82 (io-linux-ptr-arg source) (io-linux-ptr-arg destination)))))
+      (syscall
+        82
+        (io_mod.io-linux-ptr-arg source)
+        (io_mod.io-linux-ptr-arg destination)))))
 
 ;: Linux `getpid` via the `getpid` syscall (number 39); never fails.
 (define (fs-linux-syscall-getpid) : i64
@@ -76,11 +81,11 @@
 (define (fs-linux-syscall-getcwd [buf : (MutPtr u8)] [size : i64]) : (Ptr u8)
   (let
     [ptr : i64
-      (io-linux-ptr-arg
+      (io_mod.io-linux-ptr-arg
         (unsafe
           (ptr-cast buf : (Ptr u8))))]
     [result : i64
-      (io-linux-syscall-status
+      (io_mod.io-linux-syscall-status
         (unsafe
           (syscall 79 ptr size)))]
     (if (< result 0)
@@ -95,21 +100,21 @@
   [path : (Ptr u8)]
   [flags : i64]
   [mode : i64]) : i64
-  (io-linux-syscall-status
+  (io_mod.io-linux-syscall-status
     (unsafe
-      (syscall 257 dirfd (io-linux-ptr-arg path) flags mode))))
+      (syscall 257 dirfd (io_mod.io-linux-ptr-arg path) flags mode))))
 
 ;: Linux `getdents64` syscall (number 217), returning bytes read or -1.
 (define (fs-linux-syscall-getdents64
   [fd : i64]
   [buf : (MutPtr u8)]
   [count : i64]) : i64
-  (io-linux-syscall-status
+  (io_mod.io-linux-syscall-status
     (unsafe
       (syscall
         217
         fd
-        (io-linux-ptr-arg
+        (io_mod.io-linux-ptr-arg
           (unsafe
             (ptr-cast buf : (Ptr u8))))
         count))))
@@ -155,10 +160,10 @@
 (cfg
   windows
   (define (fs-windows-mkdir [path : (Ptr u8)]) : i32
-    (if (= (fs-win-create-directory path 0) (cast 0 : i32))
+    (if (= (stdlib.fs.fs-win-create-directory path 0) (cast 0 : i32))
       (begin
-        (io-set-error-code
-          (if (= (fs-win-get-last-error) (cast 183 : i32))
+        (io_mod.io-set-error-code
+          (if (= (stdlib.fs.fs-win-get-last-error) (cast 183 : i32))
             17
             2))
         (cast -1 : i32))
@@ -168,9 +173,9 @@
 (cfg
   windows
   (define (fs-windows-unlink [path : (Ptr u8)]) : i32
-    (if (= (fs-win-delete-file path) (cast 0 : i32))
+    (if (= (stdlib.fs.fs-win-delete-file path) (cast 0 : i32))
       (begin
-        (io-set-error-code 2)
+        (io_mod.io-set-error-code 2)
         (cast -1 : i32))
       (cast 0 : i32))))
 
@@ -178,9 +183,9 @@
 (cfg
   windows
   (define (fs-windows-rmdir [path : (Ptr u8)]) : i32
-    (if (= (fs-win-remove-directory path) (cast 0 : i32))
+    (if (= (stdlib.fs.fs-win-remove-directory path) (cast 0 : i32))
       (begin
-        (io-set-error-code 2)
+        (io_mod.io-set-error-code 2)
         (cast -1 : i32))
       (cast 0 : i32))))
 
@@ -201,10 +206,10 @@
   windows
   (define (fs-windows-rename [source : (Ptr u8)] [destination : (Ptr u8)]) : i32
     (if (=
-      (fs-win-move-file-ex source destination (cast 1 : i32))
+      (stdlib.fs.fs-win-move-file-ex source destination (cast 1 : i32))
       (cast 0 : i32))
       (begin
-        (io-set-error-code 2)
+        (io_mod.io-set-error-code 2)
         (cast -1 : i32))
       (cast 0 : i32))))
 
@@ -212,91 +217,91 @@
 (define (fs-status-from-result [result : i64]) : i64
   (if (= result 0)
     0
-    (io-last-error-code)))
+    (io_mod.io-last-error-code)))
 
 ;: Create an owned path string as a directory and return a host status code.
 (define (fs-mkdir-status-owned [path : String]) : i64
   (let
-    [path-bytes : (Array u8) (io-c-string path)]
-    [path-ptr : (Ptr u8) (io-array-const-ptr path-bytes)]
-    (fs-status-from-result
+    [path-bytes : (Array u8) (io_mod.io-c-string path)]
+    [path-ptr : (Ptr u8) (io_mod.io-array-const-ptr path-bytes)]
+    (stdlib.fs.fs-status-from-result
       (cfg
         windows
-        (cast (fs-windows-mkdir path-ptr) : i64)
-        (fs-linux-syscall-mkdir path-ptr 448)))))
+        (cast (stdlib.fs.fs-windows-mkdir path-ptr) : i64)
+        (stdlib.fs.fs-linux-syscall-mkdir path-ptr 448)))))
 
 ;: Return the host status code for creating a directory.
 (define (fs-mkdir-status [path : (& path str)]) : i64
   (let
-    [path-text : String (string-copy-borrowed path)]
-    (fs-mkdir-status-owned path-text)))
+    [path-text : String (string_mod.string-copy-borrowed path)]
+    (stdlib.fs.fs-mkdir-status-owned path-text)))
 
 ;: Remove an owned path string as a file and return a host status code.
 (define (fs-remove-file-status-owned [path : String]) : i64
   (let
-    [path-bytes : (Array u8) (io-c-string path)]
-    [path-ptr : (Ptr u8) (io-array-const-ptr path-bytes)]
-    (fs-status-from-result
+    [path-bytes : (Array u8) (io_mod.io-c-string path)]
+    [path-ptr : (Ptr u8) (io_mod.io-array-const-ptr path-bytes)]
+    (stdlib.fs.fs-status-from-result
       (cfg
         windows
-        (cast (fs-windows-unlink path-ptr) : i64)
-        (fs-linux-syscall-unlink path-ptr)))))
+        (cast (stdlib.fs.fs-windows-unlink path-ptr) : i64)
+        (stdlib.fs.fs-linux-syscall-unlink path-ptr)))))
 
 ;: Return the host status code for removing a file.
 (define (fs-remove-file-status [path : (& path str)]) : i64
   (let
-    [path-text : String (string-copy-borrowed path)]
-    (fs-remove-file-status-owned path-text)))
+    [path-text : String (string_mod.string-copy-borrowed path)]
+    (stdlib.fs.fs-remove-file-status-owned path-text)))
 
 ;: Remove an owned path string as an empty directory and return a host status code.
 (define (fs-remove-dir-status-owned [path : String]) : i64
   (let
-    [path-bytes : (Array u8) (io-c-string path)]
-    [path-ptr : (Ptr u8) (io-array-const-ptr path-bytes)]
-    (fs-status-from-result
+    [path-bytes : (Array u8) (io_mod.io-c-string path)]
+    [path-ptr : (Ptr u8) (io_mod.io-array-const-ptr path-bytes)]
+    (stdlib.fs.fs-status-from-result
       (cfg
         windows
-        (cast (fs-windows-rmdir path-ptr) : i64)
-        (fs-linux-syscall-rmdir path-ptr)))))
+        (cast (stdlib.fs.fs-windows-rmdir path-ptr) : i64)
+        (stdlib.fs.fs-linux-syscall-rmdir path-ptr)))))
 
 ;: Return the host status code for removing an empty directory.
 (define (fs-remove-dir-status [path : (& path str)]) : i64
   (let
-    [path-text : String (string-copy-borrowed path)]
-    (fs-remove-dir-status-owned path-text)))
+    [path-text : String (string_mod.string-copy-borrowed path)]
+    (stdlib.fs.fs-remove-dir-status-owned path-text)))
 
 ;: Rename owned source and destination path strings and return a host status code.
 (define (fs-rename-status-owned [source : String] [destination : String]) : i64
   (let
-    [source-bytes : (Array u8) (io-c-string source)]
-    [destination-bytes : (Array u8) (io-c-string destination)]
-    (fs-status-from-result
+    [source-bytes : (Array u8) (io_mod.io-c-string source)]
+    [destination-bytes : (Array u8) (io_mod.io-c-string destination)]
+    (stdlib.fs.fs-status-from-result
       (cfg
         windows
         (cast
-          (fs-windows-rename
-            (io-array-const-ptr source-bytes)
-            (io-array-const-ptr destination-bytes))
+          (stdlib.fs.fs-windows-rename
+            (io_mod.io-array-const-ptr source-bytes)
+            (io_mod.io-array-const-ptr destination-bytes))
           : i64)
-        (fs-linux-syscall-rename
-          (io-array-const-ptr source-bytes)
-          (io-array-const-ptr destination-bytes))))))
+        (stdlib.fs.fs-linux-syscall-rename
+          (io_mod.io-array-const-ptr source-bytes)
+          (io_mod.io-array-const-ptr destination-bytes))))))
 
 ;: Return the host status code for renaming a path.
 (define (fs-rename-status
   [source : (& source str)]
   [destination : (& destination str)]) : i64
   (let
-    [source-text : String (string-copy-borrowed source)]
-    [destination-text : String (string-copy-borrowed destination)]
-    (fs-rename-status-owned source-text destination-text)))
+    [source-text : String (string_mod.string-copy-borrowed source)]
+    [destination-text : String (string_mod.string-copy-borrowed destination)]
+    (stdlib.fs.fs-rename-status-owned source-text destination-text)))
 
 ;: Return the host process id.
 (define (fs-process-id) : i64
   (cfg
     windows
-    (cast (fs-windows-get-current-process-id) : i64)
-    (fs-linux-syscall-getpid)))
+    (cast (stdlib.fs.fs-windows-get-current-process-id) : i64)
+    (stdlib.fs.fs-linux-syscall-getpid)))
 
 ;: Linux `AT_FDCWD` for path-relative `openat`.
 (define fs-linux-at-fdcwd : i64
@@ -327,17 +332,17 @@
 
 ;: Return true when a directory entry name is `.` or `..`.
 (define (fs-read-dir-dot-entry? [name : (Ptr u8)]) : bool
-  (if (!= (fs-c-string-byte name 0) 46)
+  (if (!= (stdlib.fs.fs-c-string-byte name 0) 46)
     false
     (let
-      [second : i64 (fs-c-string-byte name 1)]
+      [second : i64 (stdlib.fs.fs-c-string-byte name 1)]
       (if (= second 0)
         true
-        (and (= second 46) (= (fs-c-string-byte name 2) 0))))))
+        (and (= second 46) (= (stdlib.fs.fs-c-string-byte name 2) 0))))))
 
 ;: Append one non-dot entry name plus a newline to `out`.
 (define (fs-read-dir-append-entry! [out : (Array u8)] [name : (Ptr u8)]) : unit
-  (if (fs-read-dir-dot-entry? name)
+  (if (stdlib.fs.fs-read-dir-dot-entry? name)
     unit
     (let
       [i : i64 0]
@@ -358,7 +363,7 @@
 ;: Convert the accumulated newline-delimited bytes into a String.
 (define (fs-read-dir-bytes-string [out : (Array u8)]) : String
   (unsafe
-    (string-from-bytes (io-array-const-ptr out) (array-length out))))
+    (string-from-bytes (io_mod.io-array-const-ptr out) (array-length out))))
 
 ;: Read the Linux `d_reclen` field from a `linux_dirent64` record.
 (cfg
@@ -381,11 +386,11 @@
   (not windows)
   (define (fs-linux-open-dir-owned [path : String]) : i64
     (let
-      [path-bytes : (Array u8) (io-c-string path)]
-      (fs-linux-syscall-openat
-        fs-linux-at-fdcwd
-        (io-array-const-ptr path-bytes)
-        fs-linux-open-directory
+      [path-bytes : (Array u8) (io_mod.io-c-string path)]
+      (stdlib.fs.fs-linux-syscall-openat
+        stdlib.fs.fs-linux-at-fdcwd
+        (io_mod.io-array-const-ptr path-bytes)
+        stdlib.fs.fs-linux-open-directory
         0))))
 
 ;: Return the Linux host status code for opening and closing a directory.
@@ -393,10 +398,10 @@
   (not windows)
   (define (fs-linux-read-dir-status [path : String]) : i64
     (let
-      [fd : i64 (fs-linux-open-dir-owned path)]
+      [fd : i64 (stdlib.fs.fs-linux-open-dir-owned path)]
       (if (< fd 0)
-        (io-last-error-code)
-        (fs-status-from-result (io-linux-syscall-close fd))))))
+        (io_mod.io-last-error-code)
+        (stdlib.fs.fs-status-from-result (io_mod.io-linux-syscall-close fd))))))
 
 ;: Append entries from one Linux getdents64 buffer page.
 (cfg
@@ -406,20 +411,20 @@
     [read-count : i64]
     [out : (Array u8)]) : unit
     (let
-      [base : (Ptr u8) (io-array-const-ptr buf)]
+      [base : (Ptr u8) (io_mod.io-array-const-ptr buf)]
       [offset : i64 0]
       [done : bool false]
       (while (not done)
         (if (>= offset read-count)
           (set! done true)
           (let
-            [reclen : i64 (fs-linux-dirent-reclen base offset)]
+            [reclen : i64 (stdlib.fs.fs-linux-dirent-reclen base offset)]
             (if (<= reclen 0)
               (set! done true)
               (begin
-                (fs-read-dir-append-entry!
+                (stdlib.fs.fs-read-dir-append-entry!
                   out
-                  (fs-linux-dirent-name base offset))
+                  (stdlib.fs.fs-linux-dirent-name base offset))
                 (set! offset (+ offset reclen))))))))))
 
 ;: Return the newline-delimited Linux directory listing payload.
@@ -427,11 +432,11 @@
   (not windows)
   (define (fs-linux-read-dir [path : String]) : String
     (let
-      [fd : i64 (fs-linux-open-dir-owned path)]
+      [fd : i64 (stdlib.fs.fs-linux-open-dir-owned path)]
       (if (< fd 0)
         ""
         (let
-          [buf : (Array u8) (make-array u8 fs-read-dir-buffer-size)]
+          [buf : (Array u8) (make-array u8 stdlib.fs.fs-read-dir-buffer-size)]
           [out : (Array u8) (make-array u8 0)]
           [ok : bool true]
           [done : bool false]
@@ -439,20 +444,23 @@
             (while (not done)
               (let
                 [read-count : i64
-                  (fs-linux-syscall-getdents64
+                  (stdlib.fs.fs-linux-syscall-getdents64
                     fd
-                    (io-array-ptr buf)
-                    fs-read-dir-buffer-size)]
+                    (io_mod.io-array-ptr buf)
+                    stdlib.fs.fs-read-dir-buffer-size)]
                 (if (< read-count 0)
                   (begin
                     (set! ok false)
                     (set! done true))
                   (if (= read-count 0)
                     (set! done true)
-                    (fs-linux-read-dir-append-page! buf read-count out)))))
-            (io-linux-syscall-close fd)
+                    (stdlib.fs.fs-linux-read-dir-append-page!
+                      buf
+                      read-count
+                      out)))))
+            (io_mod.io-linux-syscall-close fd)
             (if ok
-              (fs-read-dir-bytes-string out)
+              (stdlib.fs.fs-read-dir-bytes-string out)
               "")))))))
 
 ;: Map Windows `GetLastError` values to errno-style stdlib statuses.
@@ -460,38 +468,38 @@
   windows
   (define (fs-windows-last-error-status) : i64
     (let
-      [code : i64 (cast (fs-win-get-last-error) : i64)]
+      [code : i64 (cast (stdlib.fs.fs-win-get-last-error) : i64)]
       (if (= code 2)
-        io-status-not-found
+        io_mod.io-status-not-found
         (if (= code 3)
-          io-status-not-directory
+          io_mod.io-status-not-directory
           (if (= code 5)
-            io-status-permission-denied
+            io_mod.io-status-permission-denied
             (if (= code 87)
-              io-status-invalid
+              io_mod.io-status-invalid
               (if (= code 123)
-                io-status-invalid
+                io_mod.io-status-invalid
                 (if (= code 161)
-                  io-status-invalid
+                  io_mod.io-status-invalid
                   (if (= code 206)
-                    io-status-name-too-long
+                    io_mod.io-status-name-too-long
                     (if (= code 267)
-                      io-status-not-directory
+                      io_mod.io-status-not-directory
                       code)))))))))))
 
 ;: Return an I/O error status when Windows reported no concrete code.
 (cfg
   windows
   (define (fs-windows-nonzero-status [status : i64]) : i64
-    (if (= status io-status-ok)
-      io-status-io-error
+    (if (= status io_mod.io-status-ok)
+      io_mod.io-status-io-error
       status)))
 
 ;: Build the `path\*` search pattern expected by FindFirstFileA.
 (cfg
   windows
   (define (fs-windows-read-dir-pattern [path : String]) : String
-    (string-append path "\\*")))
+    (string_mod.string-append path "\\*")))
 
 ;: Return a pointer to `WIN32_FIND_DATAA.cFileName`.
 (cfg
@@ -499,7 +507,9 @@
   (define (fs-windows-find-data-name [data : (Array u8)]) : (Ptr u8)
     (unsafe
       (ptr-cast
-        (ptr-offset (io-array-ptr data) fs-windows-find-data-name-offset)
+        (ptr-offset
+          (io_mod.io-array-ptr data)
+          stdlib.fs.fs-windows-find-data-name-offset)
         : (Ptr u8)))))
 
 ;: Return the Windows host status code for opening and closing a directory scan.
@@ -507,32 +517,34 @@
   windows
   (define (fs-windows-read-dir-status [path : String]) : i64
     (let
-      [pattern : String (fs-windows-read-dir-pattern path)]
-      [pattern-bytes : (Array u8) (io-c-string pattern)]
-      [data : (Array u8) (make-array u8 fs-windows-find-data-size)]
+      [pattern : String (stdlib.fs.fs-windows-read-dir-pattern path)]
+      [pattern-bytes : (Array u8) (io_mod.io-c-string pattern)]
+      [data : (Array u8) (make-array u8 stdlib.fs.fs-windows-find-data-size)]
       [handle : i64
-        (fs-win-find-first-file
-          (io-array-const-ptr pattern-bytes)
-          (io-array-ptr data))]
+        (stdlib.fs.fs-win-find-first-file
+          (io_mod.io-array-const-ptr pattern-bytes)
+          (io_mod.io-array-ptr data))]
       (if (= handle -1)
-        (fs-windows-nonzero-status (fs-windows-last-error-status))
-        (if (= (fs-win-find-close handle) (cast 0 : i32))
-          (fs-windows-nonzero-status (fs-windows-last-error-status))
-          io-status-ok)))))
+        (stdlib.fs.fs-windows-nonzero-status
+          (stdlib.fs.fs-windows-last-error-status))
+        (if (= (stdlib.fs.fs-win-find-close handle) (cast 0 : i32))
+          (stdlib.fs.fs-windows-nonzero-status
+            (stdlib.fs.fs-windows-last-error-status))
+          io_mod.io-status-ok)))))
 
 ;: Return the newline-delimited Windows directory listing payload.
 (cfg
   windows
   (define (fs-windows-read-dir [path : String]) : String
     (let
-      [pattern : String (fs-windows-read-dir-pattern path)]
-      [pattern-bytes : (Array u8) (io-c-string pattern)]
-      [data : (Array u8) (make-array u8 fs-windows-find-data-size)]
+      [pattern : String (stdlib.fs.fs-windows-read-dir-pattern path)]
+      [pattern-bytes : (Array u8) (io_mod.io-c-string pattern)]
+      [data : (Array u8) (make-array u8 stdlib.fs.fs-windows-find-data-size)]
       [out : (Array u8) (make-array u8 0)]
       [handle : i64
-        (fs-win-find-first-file
-          (io-array-const-ptr pattern-bytes)
-          (io-array-ptr data))]
+        (stdlib.fs.fs-win-find-first-file
+          (io_mod.io-array-const-ptr pattern-bytes)
+          (io_mod.io-array-ptr data))]
       (if (= handle -1)
         ""
         (let
@@ -540,25 +552,32 @@
           (begin
             (while (not done)
               (begin
-                (fs-read-dir-append-entry! out (fs-windows-find-data-name data))
+                (stdlib.fs.fs-read-dir-append-entry!
+                  out
+                  (stdlib.fs.fs-windows-find-data-name data))
                 (if (=
-                  (fs-win-find-next-file handle (io-array-ptr data))
+                  (stdlib.fs.fs-win-find-next-file
+                    handle
+                    (io_mod.io-array-ptr data))
                   (cast 0 : i32))
                   (set! done true)
                   unit)))
-            (fs-win-find-close handle)
-            (fs-read-dir-bytes-string out)))))))
+            (stdlib.fs.fs-win-find-close handle)
+            (stdlib.fs.fs-read-dir-bytes-string out)))))))
 
 ;: Return the host status code for reading a directory listing.
 (define (fs-read-dir-status [path : String]) : i64
   (cfg
     windows
-    (fs-windows-read-dir-status path)
-    (fs-linux-read-dir-status path)))
+    (stdlib.fs.fs-windows-read-dir-status path)
+    (stdlib.fs.fs-linux-read-dir-status path)))
 
 ;: Return the newline-delimited host directory listing payload.
 (define (fs-read-dir [path : String]) : String
-  (cfg windows (fs-windows-read-dir path) (fs-linux-read-dir path)))
+  (cfg
+    windows
+    (stdlib.fs.fs-windows-read-dir path)
+    (stdlib.fs.fs-linux-read-dir path)))
 
 ;: Status sentinel for regular files returned by `fs-file-kind-status`.
 (define fs-file-kind-regular-code : i64
@@ -614,13 +633,13 @@
   (define (fs-linux-syscall-newfstatat
     [path : (Ptr u8)]
     [statbuf : (MutPtr u8)]) : i64
-    (io-linux-syscall-status
+    (io_mod.io-linux-syscall-status
       (unsafe
         (syscall
           262
-          fs-linux-at-fdcwd
-          (io-linux-ptr-arg path)
-          (io-linux-ptr-arg
+          stdlib.fs.fs-linux-at-fdcwd
+          (io_mod.io-linux-ptr-arg path)
+          (io_mod.io-linux-ptr-arg
             (unsafe
               (ptr-cast statbuf : (Ptr u8))))
           0)))))
@@ -659,33 +678,38 @@
   (not windows)
   (define (fs-linux-file-kind-from-mode [mode : i64]) : i64
     (let
-      [kind : i64 (bit-and mode fs-linux-stat-mode-kind-mask)]
-      (if (= kind fs-linux-stat-regular-mode)
-        fs-file-kind-regular-code
-        (if (= kind fs-linux-stat-directory-mode)
-          fs-file-kind-directory-code
-          fs-file-kind-other-code)))))
+      [kind : i64 (bit-and mode stdlib.fs.fs-linux-stat-mode-kind-mask)]
+      (if (= kind stdlib.fs.fs-linux-stat-regular-mode)
+        stdlib.fs.fs-file-kind-regular-code
+        (if (= kind stdlib.fs.fs-linux-stat-directory-mode)
+          stdlib.fs.fs-file-kind-directory-code
+          stdlib.fs.fs-file-kind-other-code)))))
 
 (cfg
   (not windows)
   (define (fs-linux-file-metadata-probe [path : (Ptr u8)]) : FsFileMetadataProbe
     (let
-      [statbuf : (Array u8) (make-array u8 fs-linux-stat-buffer-size)]
-      [statptr : (MutPtr u8) (io-array-ptr statbuf)]
+      [statbuf : (Array u8) (make-array u8 stdlib.fs.fs-linux-stat-buffer-size)]
+      [statptr : (MutPtr u8) (io_mod.io-array-ptr statbuf)]
       [status : i64
-        (fs-status-from-result (fs-linux-syscall-newfstatat path statptr))]
-      (if (= status io-status-ok)
+        (stdlib.fs.fs-status-from-result
+          (stdlib.fs.fs-linux-syscall-newfstatat path statptr))]
+      (if (= status io_mod.io-status-ok)
         (let
           [kind : i64
-            (fs-linux-file-kind-from-mode
+            (stdlib.fs.fs-linux-file-kind-from-mode
               (cast
-                (fs-metadata-read-u32-at statptr fs-linux-stat-mode-offset)
+                (stdlib.fs.fs-metadata-read-u32-at
+                  statptr
+                  stdlib.fs.fs-linux-stat-mode-offset)
                 : i64))]
           (FsFileMetadataProbe
             status
             kind
-            (if (= kind fs-file-kind-regular-code)
-              (fs-metadata-read-i64-at statptr fs-linux-stat-size-offset)
+            (if (= kind stdlib.fs.fs-file-kind-regular-code)
+              (stdlib.fs.fs-metadata-read-i64-at
+                statptr
+                stdlib.fs.fs-linux-stat-size-offset)
               0)))
         (FsFileMetadataProbe status status 0)))))
 
@@ -694,17 +718,18 @@
   windows
   (define (fs-windows-metadata-error-status) : i64
     (let
-      [status : i64 (fs-windows-last-error-status)]
-      (if (= status io-status-ok)
+      [status : i64 (stdlib.fs.fs-windows-last-error-status)]
+      (if (= status io_mod.io-status-ok)
         1
         status))))
 
 (cfg
   windows
   (define (fs-windows-file-kind-from-attributes [attrs : i64]) : i64
-    (if (not (= (bit-and attrs fs-windows-file-attribute-directory) 0))
-      fs-file-kind-directory-code
-      fs-file-kind-regular-code)))
+    (if (not
+      (= (bit-and attrs stdlib.fs.fs-windows-file-attribute-directory) 0))
+      stdlib.fs.fs-file-kind-directory-code
+      stdlib.fs.fs-file-kind-regular-code)))
 
 (cfg
   windows
@@ -712,11 +737,15 @@
     (let
       [high : u64
         (cast
-          (fs-metadata-read-u32-at data fs-windows-file-size-high-offset)
+          (stdlib.fs.fs-metadata-read-u32-at
+            data
+            stdlib.fs.fs-windows-file-size-high-offset)
           : u64)]
       [low : u64
         (cast
-          (fs-metadata-read-u32-at data fs-windows-file-size-low-offset)
+          (stdlib.fs.fs-metadata-read-u32-at
+            data
+            stdlib.fs.fs-windows-file-size-low-offset)
           : u64)]
       (cast (bit-or low (shl high 32)) : i64))))
 
@@ -724,49 +753,51 @@
   windows
   (define (fs-windows-file-metadata-probe [path : (Ptr u8)]) : FsFileMetadataProbe
     (let
-      [data : (Array u8) (make-array u8 fs-windows-file-attribute-data-size)]
-      [dataptr : (MutPtr u8) (io-array-ptr data)]
-      [ok : i32 (fs-win-get-file-attributes-ex path (cast 0 : i32) dataptr)]
+      [data : (Array u8)
+        (make-array u8 stdlib.fs.fs-windows-file-attribute-data-size)]
+      [dataptr : (MutPtr u8) (io_mod.io-array-ptr data)]
+      [ok : i32
+        (stdlib.fs.fs-win-get-file-attributes-ex path (cast 0 : i32) dataptr)]
       (if (= ok (cast 0 : i32))
         (let
-          [status : i64 (fs-windows-metadata-error-status)]
+          [status : i64 (stdlib.fs.fs-windows-metadata-error-status)]
           (FsFileMetadataProbe status status 0))
         (let
           [kind : i64
-            (fs-windows-file-kind-from-attributes
+            (stdlib.fs.fs-windows-file-kind-from-attributes
               (cast
-                (fs-metadata-read-u32-at
+                (stdlib.fs.fs-metadata-read-u32-at
                   dataptr
-                  fs-windows-file-attributes-offset)
+                  stdlib.fs.fs-windows-file-attributes-offset)
                 : i64))]
           (FsFileMetadataProbe
-            io-status-ok
+            io_mod.io-status-ok
             kind
-            (if (= kind fs-file-kind-regular-code)
-              (fs-windows-file-size-from-data dataptr)
+            (if (= kind stdlib.fs.fs-file-kind-regular-code)
+              (stdlib.fs.fs-windows-file-size-from-data dataptr)
               0)))))))
 
 ;: Probe path metadata and return status, kind sentinel, and regular-file size.
 (define (fs-file-metadata-probe [path : String]) : FsFileMetadataProbe
   (let
-    [path-bytes : (Array u8) (io-c-string path)]
-    [path-ptr : (Ptr u8) (io-array-const-ptr path-bytes)]
+    [path-bytes : (Array u8) (io_mod.io-c-string path)]
+    [path-ptr : (Ptr u8) (io_mod.io-array-const-ptr path-bytes)]
     (cfg
       windows
-      (fs-windows-file-metadata-probe path-ptr)
-      (fs-linux-file-metadata-probe path-ptr))))
+      (stdlib.fs.fs-windows-file-metadata-probe path-ptr)
+      (stdlib.fs.fs-linux-file-metadata-probe path-ptr))))
 
 ;: Return the host status code or sentinel for a filesystem node kind.
 (define (fs-file-kind-status [path : String]) : i64
-  (struct-get (fs-file-metadata-probe path) kind))
+  (struct-get (stdlib.fs.fs-file-metadata-probe path) kind))
 
 ;: Return the host status code for retrieving a regular-file size.
 (define (fs-file-size-status [path : String]) : i64
-  (struct-get (fs-file-metadata-probe path) status))
+  (struct-get (stdlib.fs.fs-file-metadata-probe path) status))
 
 ;: Return the host-reported byte size for a regular file.
 (define (fs-file-size [path : String]) : i64
-  (struct-get (fs-file-metadata-probe path) size))
+  (struct-get (stdlib.fs.fs-file-metadata-probe path) size))
 
 ;: Linux `ERANGE` status returned when the current-dir buffer is too small.
 (define fs-status-range : i64
@@ -790,81 +821,82 @@
 (define (fs-current-dir-status-loop [capacity : i64]) : i64
   (cfg
     windows
-    (if (> capacity fs-current-dir-max-capacity)
-      io-status-name-too-long
+    (if (> capacity stdlib.fs.fs-current-dir-max-capacity)
+      io_mod.io-status-name-too-long
       (let
         [buf : (Array u8) (make-array u8 capacity)]
         [written : i64
           (cast
-            (fs-windows-get-current-directory
+            (stdlib.fs.fs-windows-get-current-directory
               (cast capacity : u32)
-              (io-array-ptr buf))
+              (io_mod.io-array-ptr buf))
             : i64)]
         (if (= written 0)
-          io-status-io-error
+          io_mod.io-status-io-error
           (if (< written capacity)
-            io-status-ok
-            (fs-current-dir-status-loop
-              (fs-current-dir-next-capacity capacity written))))))
-    (if (> capacity fs-current-dir-max-capacity)
-      io-status-name-too-long
+            io_mod.io-status-ok
+            (stdlib.fs.fs-current-dir-status-loop
+              (stdlib.fs.fs-current-dir-next-capacity capacity written))))))
+    (if (> capacity stdlib.fs.fs-current-dir-max-capacity)
+      io_mod.io-status-name-too-long
       (let
         [buf : (Array u8) (make-array u8 capacity)]
         [result : (Ptr u8)
-          (fs-linux-syscall-getcwd (io-array-ptr buf) capacity)]
+          (stdlib.fs.fs-linux-syscall-getcwd (io_mod.io-array-ptr buf) capacity)]
         (if (ptr-null? result)
           (let
-            [status : i64 (io-last-error-code)]
-            (if (= status fs-status-range)
-              (if (< capacity fs-current-dir-max-capacity)
-                (fs-current-dir-status-loop (* capacity 2))
-                io-status-name-too-long)
+            [status : i64 (io_mod.io-last-error-code)]
+            (if (= status stdlib.fs.fs-status-range)
+              (if (< capacity stdlib.fs.fs-current-dir-max-capacity)
+                (stdlib.fs.fs-current-dir-status-loop (* capacity 2))
+                io_mod.io-status-name-too-long)
               status))
-          io-status-ok)))))
+          io_mod.io-status-ok)))))
 
 ;: Read the current directory into an owned String.
 (define (fs-current-dir-loop [capacity : i64]) : String
   (cfg
     windows
-    (if (> capacity fs-current-dir-max-capacity)
+    (if (> capacity stdlib.fs.fs-current-dir-max-capacity)
       ""
       (let
         [buf : (Array u8) (make-array u8 capacity)]
         [written : i64
           (cast
-            (fs-windows-get-current-directory
+            (stdlib.fs.fs-windows-get-current-directory
               (cast capacity : u32)
-              (io-array-ptr buf))
+              (io_mod.io-array-ptr buf))
             : i64)]
         (if (= written 0)
           ""
           (if (< written capacity)
-            (io-copy-c-string (io-array-const-ptr buf))
-            (fs-current-dir-loop
-              (fs-current-dir-next-capacity capacity written))))))
-    (if (> capacity fs-current-dir-max-capacity)
+            (io_mod.io-copy-c-string (io_mod.io-array-const-ptr buf))
+            (stdlib.fs.fs-current-dir-loop
+              (stdlib.fs.fs-current-dir-next-capacity capacity written))))))
+    (if (> capacity stdlib.fs.fs-current-dir-max-capacity)
       ""
       (let
         [buf : (Array u8) (make-array u8 capacity)]
         [result : (Ptr u8)
-          (fs-linux-syscall-getcwd (io-array-ptr buf) capacity)]
+          (stdlib.fs.fs-linux-syscall-getcwd (io_mod.io-array-ptr buf) capacity)]
         (if (ptr-null? result)
           (let
-            [status : i64 (io-last-error-code)]
+            [status : i64 (io_mod.io-last-error-code)]
             (if (and
-              (= status fs-status-range)
-              (< capacity fs-current-dir-max-capacity))
-              (fs-current-dir-loop (* capacity 2))
+              (= status stdlib.fs.fs-status-range)
+              (< capacity stdlib.fs.fs-current-dir-max-capacity))
+              (stdlib.fs.fs-current-dir-loop (* capacity 2))
               ""))
-          (io-copy-c-string result))))))
+          (io_mod.io-copy-c-string result))))))
 
 ;: Return the host status code for retrieving the current working directory.
 (define (fs-current-dir-status) : i64
-  (fs-current-dir-status-loop fs-current-dir-initial-capacity))
+  (stdlib.fs.fs-current-dir-status-loop
+    stdlib.fs.fs-current-dir-initial-capacity))
 
 ;: Return the process current directory as an owned String.
 (define (fs-current-dir) : String
-  (fs-current-dir-loop fs-current-dir-initial-capacity))
+  (stdlib.fs.fs-current-dir-loop stdlib.fs.fs-current-dir-initial-capacity))
 
 ;: Common host status code for attempting to create an already-existing path.
 (define fs-status-already-exists : i64
@@ -888,49 +920,51 @@
 ;: Result type for file-kind probes.
 (defenum ResultFsFileKind
   (OkFsFileKind FsFileKind)
-  (ErrFsFileKind IoError))
+  (ErrFsFileKind io_mod.IoError))
 
 ;: Result type for filesystem metadata probes.
 (defenum ResultFsMetadata
   (OkFsMetadata FsMetadata)
-  (ErrFsMetadata IoError))
+  (ErrFsMetadata io_mod.IoError))
 
 ;: Return true on Windows-style hosts.
 (define (fs-windows?) : bool
-  (string-eq (env-path-list-separator) ";"))
+  (string_mod.string-eq (env_mod.env-path-list-separator) ";"))
 
 ;: Return the preferred path separator for the current host.
 (define (fs-path-separator) : String
-  (if (fs-windows?)
+  (if (stdlib.fs.fs-windows?)
     "\\"
     "/"))
 
 ;: Return the preferred path separator as a character.
 (define (fs-path-separator-char) : char
-  (if (fs-windows?)
+  (if (stdlib.fs.fs-windows?)
     #\\'
     #/'))
 
 ;: Return true when `c` is either Unix or Windows path separator syntax.
 (define (fs-path-separator? [c : char]) : bool
-  (or (char-eq c #/') (char-eq c #\\')))
+  (or (string_mod.char-eq c #/') (string_mod.char-eq c #\\')))
 
 ;: Return true when `path` starts with either supported separator character.
 (define (fs-path-starts-separator? [path : (& path str)]) : bool
-  (and (> (string-length path) 0) (fs-path-separator? (string-ref path 0))))
+  (and
+    (> (string-length path) 0)
+    (stdlib.fs.fs-path-separator? (string-ref path 0))))
 
 ;: Return true when `path` ends with either supported separator character.
 (define (fs-path-ends-separator? [path : (& path str)]) : bool
   (let
     [n : i64 (string-length path)]
-    (and (> n 0) (fs-path-separator? (string-ref path (- n 1))))))
+    (and (> n 0) (stdlib.fs.fs-path-separator? (string-ref path (- n 1))))))
 
 ;: Return true when `path` starts with a Windows drive designator like `C:`.
 ;:
 ;: `C:relative` is drive-qualified but not absolute. `fs-path-safe-relative?`
 ;: rejects drive-qualified strings because they are not portable root suffixes.
 (define (fs-path-drive-qualified? [path : (& path str)]) : bool
-  (and (> (string-length path) 1) (char-eq (string-ref path 1) #:')))
+  (and (> (string-length path) 1) (string_mod.char-eq (string-ref path 1) #:')))
 
 ;: Return true when `path` is rooted or drive-absolute.
 ;:
@@ -942,53 +976,60 @@
     [n : i64 (string-length path)]
     (if (= n 0)
       false
-      (if (fs-path-separator? (string-ref path 0))
+      (if (stdlib.fs.fs-path-separator? (string-ref path 0))
         true
         (and
           (> n 2)
-          (fs-path-drive-qualified? path)
-          (fs-path-separator? (string-ref path 2)))))))
+          (stdlib.fs.fs-path-drive-qualified? path)
+          (stdlib.fs.fs-path-separator? (string-ref path 2)))))))
 
 ;: Render normalized path segments using `/` separators.
 (define (fs-path-segment-vec-render-from
-  [segments : StringVec]
+  [segments : vector_mod.StringVec]
   [index : i64]
   [prefix : String]) : String
-  (if (>= index (string-vec-len segments))
+  (if (>= index (vector_mod.string-vec-len segments))
     prefix
     (let
-      [segment : String (string-vec-get segments index "")]
+      [segment : String (vector_mod.string-vec-get segments index "")]
       [next-prefix : String
         (if (= (string-length prefix) 0)
           segment
-          (string-append prefix (string-append "/" segment)))]
-      (fs-path-segment-vec-render-from segments (+ index 1) next-prefix))))
+          (string_mod.string-append
+            prefix
+            (string_mod.string-append "/" segment)))]
+      (stdlib.fs.fs-path-segment-vec-render-from
+        segments
+        (+ index 1)
+        next-prefix))))
 
 ;: Render normalized path segments using `/` separators.
-(define (fs-path-segment-vec-render [segments : StringVec]) : String
-  (fs-path-segment-vec-render-from segments 0 ""))
+(define (fs-path-segment-vec-render [segments : vector_mod.StringVec]) : String
+  (stdlib.fs.fs-path-segment-vec-render-from segments 0 ""))
 
 ;: Fold one lexical path segment into the normalized segment stack.
 (define (fs-path-normalize-segment
   [segment : String]
-  [segments : StringVec]
-  [rooted : bool]) : StringVec
+  [segments : vector_mod.StringVec]
+  [rooted : bool]) : vector_mod.StringVec
   (begin
-    (when (or (string-eq segment "") (string-eq segment ".")) (return segments))
     (when
-      (not (string-eq segment ".."))
-      (return (string-vec-push segments segment)))
-    (if (<= (string-vec-len segments) 0)
+      (or (string_mod.string-eq segment "") (string_mod.string-eq segment "."))
+      (return segments))
+    (when
+      (not (string_mod.string-eq segment ".."))
+      (return (vector_mod.string-vec-push segments segment)))
+    (if (<= (vector_mod.string-vec-len segments) 0)
       (if rooted
         segments
-        (string-vec-push segments segment))
+        (vector_mod.string-vec-push segments segment))
       (let
-        [top : String (string-vec-last segments "")]
-        (if (string-eq top "..")
-          (string-vec-push segments segment)
-          (match (string-vec-pop segments)
-            [(StringVecPopOk _ rest) rest]
-            [(StringVecPopEmpty) segments]))))))
+        [top : String (vector_mod.string-vec-last segments "")]
+        (if (string_mod.string-eq top "..")
+          (vector_mod.string-vec-push segments segment)
+          (vector_mod.StringVec
+            (vector_mod.string-vec-slots segments)
+            (- (vector_mod.string-vec-len segments) 1)))))))
 
 ;: Lexically normalize `path` without resolving symlinks or touching the host FS.
 ;:
@@ -1003,12 +1044,12 @@
     [drive-root : bool
       (and
         (> n 2)
-        (fs-path-drive-qualified? path)
-        (fs-path-separator? (string-ref path 2)))]
+        (stdlib.fs.fs-path-drive-qualified? path)
+        (stdlib.fs.fs-path-separator? (string-ref path 2)))]
     [rooted : bool
       (if drive-root
         true
-        (and (> n 0) (fs-path-separator? (string-ref path 0))))]
+        (and (> n 0) (stdlib.fs.fs-path-separator? (string-ref path 0))))]
     [i : i64
       (if drive-root
         3
@@ -1016,16 +1057,19 @@
           1
           0))]
     [segment-start : i64 i]
-    [segments : StringVec (string-vec-new)]
+    [segments : vector_mod.StringVec (vector_mod.string-vec-new)]
     (begin
       (while (< i n)
         (begin
-          (if (fs-path-separator? (string-ref path i))
+          (if (stdlib.fs.fs-path-separator? (string-ref path i))
             (begin
               (set!
                 segments
-                (fs-path-normalize-segment
-                  (substring-borrowed path segment-start (- i segment-start))
+                (stdlib.fs.fs-path-normalize-segment
+                  (string_mod.substring-borrowed
+                    path
+                    segment-start
+                    (- i segment-start))
                   segments
                   rooted))
               (set! segment-start (+ i 1)))
@@ -1033,22 +1077,24 @@
           (set! i (+ i 1))))
       (set!
         segments
-        (fs-path-normalize-segment
-          (substring-borrowed path segment-start (- n segment-start))
+        (stdlib.fs.fs-path-normalize-segment
+          (string_mod.substring-borrowed path segment-start (- n segment-start))
           segments
           rooted))
       (let
-        [body : String (fs-path-segment-vec-render segments)]
+        [body : String (stdlib.fs.fs-path-segment-vec-render segments)]
         (if (and drive-root (= (string-length body) 0))
-          (string-append (substring-borrowed path 0 2) "/")
+          (string_mod.string-append
+            (string_mod.substring-borrowed path 0 2)
+            "/")
           (if drive-root
-            (string-append
-              (substring-borrowed path 0 2)
-              (string-append "/" body))
+            (string_mod.string-append
+              (string_mod.substring-borrowed path 0 2)
+              (string_mod.string-append "/" body))
             (if (and rooted (= (string-length body) 0))
               "/"
               (if rooted
-                (string-append "/" body)
+                (string_mod.string-append "/" body)
                 (if (= (string-length body) 0)
                   "."
                   body)))))))))
@@ -1058,13 +1104,13 @@
   (let
     [n : i64 (string-length normalized)]
     [parent : String ".."]
-    (if (string-eq-borrowed normalized (& parent))
+    (if (string_mod.string-eq-borrowed normalized (& parent))
       true
       (and
         (> n 2)
-        (char-eq (string-ref normalized 0) #.')
-        (char-eq (string-ref normalized 1) #.')
-        (fs-path-separator? (string-ref normalized 2))))))
+        (string_mod.char-eq (string-ref normalized 0) #.')
+        (string_mod.char-eq (string-ref normalized 1) #.')
+        (stdlib.fs.fs-path-separator? (string-ref normalized 2))))))
 
 ;: Return true when `path` is a non-empty relative suffix that stays below root.
 ;:
@@ -1073,43 +1119,49 @@
 ;: and normalized paths whose first segment is `..`. It does not canonicalize
 ;: symlinks or query the filesystem.
 (define (fs-path-safe-relative? [path : (& path str)]) : bool
-  (if (or (fs-path-absolute? path) (fs-path-drive-qualified? path))
+  (if (or
+    (stdlib.fs.fs-path-absolute? path)
+    (stdlib.fs.fs-path-drive-qualified? path))
     false
     (let
-      [normalized : String (fs-path-normalize path)]
+      [normalized : String (stdlib.fs.fs-path-normalize path)]
       (and
-        (not (string-eq normalized "."))
-        (not (fs-path-normalized-escapes? (& normalized)))))))
+        (not (string_mod.string-eq normalized "."))
+        (not (stdlib.fs.fs-path-normalized-escapes? (& normalized)))))))
 
 ;: Join `left` and `right` with exactly one host path separator when needed.
 ;:
 ;: Empty sides are returned without allocating an extra separator.
 (define (fs-path-join [left : (& left str)] [right : (& right str)]) : String
   (if (= (string-length left) 0)
-    (string-copy-borrowed right)
+    (string_mod.string-copy-borrowed right)
     (if (= (string-length right) 0)
-      (string-copy-borrowed left)
-      (if (fs-path-separator? (string-ref left (- (string-length left) 1)))
-        (if (fs-path-separator? (string-ref right 0))
+      (string_mod.string-copy-borrowed left)
+      (if (stdlib.fs.fs-path-separator?
+        (string-ref left (- (string-length left) 1)))
+        (if (stdlib.fs.fs-path-separator? (string-ref right 0))
           (let
             [trimmed-right : String
-              (substring-borrowed right 1 (- (string-length right) 1))]
-            (string-append-borrowed left (& trimmed-right)))
-          (string-append-borrowed left right))
-        (if (fs-path-separator? (string-ref right 0))
-          (string-append-borrowed left right)
+              (string_mod.substring-borrowed
+                right
+                1
+                (- (string-length right) 1))]
+            (string_mod.string-append-borrowed left (& trimmed-right)))
+          (string_mod.string-append-borrowed left right))
+        (if (stdlib.fs.fs-path-separator? (string-ref right 0))
+          (string_mod.string-append-borrowed left right)
           (let
-            [separator : String (fs-path-separator)]
+            [separator : String (stdlib.fs.fs-path-separator)]
             [left-with-separator : String
-              (string-append-borrowed left (& separator))]
-            (string-append-borrowed (& left-with-separator) right)))))))
+              (string_mod.string-append-borrowed left (& separator))]
+            (string_mod.string-append-borrowed (& left-with-separator) right)))))))
 
 ;: Join two owned `String` path segments by delegating to `fs-path-join`.
 ;:
 ;: This helper is the fixed-arity expansion target for `fs-path-join-many`;
 ;: call `fs-path-join` directly when the caller already has borrowed text.
 (define (fs-path-join-owned-pair [left : String] [right : String]) : String
-  (fs-path-join (& left) (& right)))
+  (stdlib.fs.fs-path-join (& left) (& right)))
 
 ;: Join zero or more owned `String` path segments by chaining pairwise joins.
 ;:
@@ -1140,7 +1192,7 @@
     (begin
       (while (< i n)
         (begin
-          (if (fs-path-separator? (string-ref path i))
+          (if (stdlib.fs.fs-path-separator? (string-ref path i))
             (set! last i)
             (set! last last))
           (set! i (+ i 1))))
@@ -1152,12 +1204,12 @@
 ;: only separator is the leading one (a root child such as `/main.tl`).
 (define (fs-dirname [path : (& path str)]) : String
   (let
-    [last : i64 (fs-last-separator-index path)]
+    [last : i64 (stdlib.fs.fs-last-separator-index path)]
     (if (< last 0)
       "."
       (if (= last 0)
-        (fs-path-separator)
-        (substring-borrowed path 0 last)))))
+        (stdlib.fs.fs-path-separator)
+        (string_mod.substring-borrowed path 0 last)))))
 
 ;: Final component of `path` (the part after the last separator).
 ;:
@@ -1166,10 +1218,10 @@
 (define (fs-basename [path : (& path str)]) : String
   (let
     [n : i64 (string-length path)]
-    [last : i64 (fs-last-separator-index path)]
+    [last : i64 (stdlib.fs.fs-last-separator-index path)]
     (if (< last 0)
-      (string-copy-borrowed path)
-      (substring-borrowed path (+ last 1) (- n (+ last 1))))))
+      (string_mod.string-copy-borrowed path)
+      (string_mod.substring-borrowed path (+ last 1) (- n (+ last 1))))))
 
 ;: Extension of `path` without the leading dot (e.g. `"tl"` for `main.tl`).
 ;:
@@ -1178,76 +1230,84 @@
 ;: `.gitignore`, which has no extension).
 (define (fs-extension [path : (& path str)]) : String
   (let
-    [base : String (fs-basename path)]
+    [base : String (stdlib.fs.fs-basename path)]
     [bn : i64 (string-length base)]
     [i : i64 0]
     [dot : i64 -1]
     (begin
       (while (< i bn)
         (begin
-          (if (char-eq (string-ref base i) #.')
+          (if (string_mod.char-eq (string-ref base i) #.')
             (set! dot i)
             (set! dot dot))
           (set! i (+ i 1))))
       (if (<= dot 0)
         ""
-        (substring base (+ dot 1) (- bn (+ dot 1)))))))
+        (string_mod.substring base (+ dot 1) (- bn (+ dot 1)))))))
 
 ;: Convert a runtime filesystem status into a structured `ResultIoUnit`.
-(define (fs-status-result [path : (& path str)] [status : i64]) : ResultIoUnit
-  (if (= status io-status-ok)
-    OkIoUnit
-    (ErrIoUnit (io-error-from-status path status))))
+(define (fs-status-result [path : (& path str)] [status : i64]) : io_mod.ResultIoUnit
+  (if (= status io_mod.io-status-ok)
+    io_mod.OkIoUnit
+    (io_mod.ErrIoUnit (io_mod.io-error-from-status path status))))
 
 ;: Convert a runtime file-kind status into a structured result.
 (define (fs-file-kind-status-result [path : (& path str)] [status : i64]) : ResultFsFileKind
-  (if (= status fs-file-kind-regular-code)
-    (OkFsFileKind (FsFileRegular))
-    (if (= status fs-file-kind-directory-code)
-      (OkFsFileKind (FsFileDirectory))
-      (if (= status fs-file-kind-other-code)
+  (if (= status stdlib.fs.fs-file-kind-regular-code)
+    (OkFsFileKind stdlib.fs.FsFileRegular)
+    (if (= status stdlib.fs.fs-file-kind-directory-code)
+      (OkFsFileKind stdlib.fs.FsFileDirectory)
+      (if (= status stdlib.fs.fs-file-kind-other-code)
         (OkFsFileKind (FsFileOther))
-        (ErrFsFileKind (io-error-from-status path status))))))
+        (ErrFsFileKind (io_mod.io-error-from-status path status))))))
 
 ;: Create `path` as a directory, returning a structured status.
 ;:
 ;: Linux uses mode `0700`; Windows uses the CRT `_mkdir` function.
-(define (try-mkdir [path : (& path str)]) : ResultIoUnit
+(define (try-mkdir [path : (& path str)]) : io_mod.ResultIoUnit
   (let
-    [path-text : String (string-copy-borrowed path)]
-    (if (io-empty-path? path)
-      (ErrIoUnit (io-invalid-path-error path))
-      (fs-status-result path (fs-mkdir-status-owned path-text)))))
+    [path-text : String (string_mod.string-copy-borrowed path)]
+    (if (io_mod.io-empty-path? path)
+      (io_mod.ErrIoUnit (io_mod.io-invalid-path-error path))
+      (stdlib.fs.fs-status-result
+        path
+        (stdlib.fs.fs-mkdir-status-owned path-text)))))
 
 ;: Create `path` as a directory when it is missing.
 ;:
 ;: A pre-existing path reported by the host as already-created is accepted.
-(define (try-mkdir-if-missing [path : (& path str)]) : ResultIoUnit
-  (match (try-mkdir path)
-    [(OkIoUnit) OkIoUnit]
-    [(ErrIoUnit error)
-      (match error
-        [(IoSystemCode code _)
-          (if (= code fs-status-already-exists)
-            OkIoUnit
-            (ErrIoUnit error))]
-        [_ (ErrIoUnit error)])]))
+(define (try-mkdir-if-missing [path : (& path str)]) : io_mod.ResultIoUnit
+  (let
+    [path-text : String (string_mod.string-copy-borrowed path)]
+    (if (io_mod.io-empty-path? path)
+      (io_mod.ErrIoUnit (io_mod.io-invalid-path-error path))
+      (let
+        [status : i64 (stdlib.fs.fs-mkdir-status-owned path-text)]
+        (if (or
+          (= status io_mod.io-status-ok)
+          (= status stdlib.fs.fs-status-already-exists))
+          io_mod.OkIoUnit
+          (io_mod.ErrIoUnit (io_mod.io-error-from-status path status)))))))
 
 ;: Remove a file path, returning a structured status.
-(define (try-remove-file [path : (& path str)]) : ResultIoUnit
+(define (try-remove-file [path : (& path str)]) : io_mod.ResultIoUnit
   (let
-    [path-text : String (string-copy-borrowed path)]
-    (if (io-empty-path? path)
-      (ErrIoUnit (io-invalid-path-error path))
-      (fs-status-result path (fs-remove-file-status-owned path-text)))))
+    [path-text : String (string_mod.string-copy-borrowed path)]
+    (if (io_mod.io-empty-path? path)
+      (io_mod.ErrIoUnit (io_mod.io-invalid-path-error path))
+      (stdlib.fs.fs-status-result
+        path
+        (stdlib.fs.fs-remove-file-status-owned path-text)))))
 
 ;: Remove an empty directory path, returning a structured status.
-(define (try-remove-dir [path : (& path str)]) : ResultIoUnit
+(define (try-remove-dir [path : (& path str)]) : io_mod.ResultIoUnit
   (let
-    [path-text : String (string-copy-borrowed path)]
-    (if (io-empty-path? path)
-      (ErrIoUnit (io-invalid-path-error path))
-      (fs-status-result path (fs-remove-dir-status-owned path-text)))))
+    [path-text : String (string_mod.string-copy-borrowed path)]
+    (if (io_mod.io-empty-path? path)
+      (io_mod.ErrIoUnit (io_mod.io-invalid-path-error path))
+      (stdlib.fs.fs-status-result
+        path
+        (stdlib.fs.fs-remove-dir-status-owned path-text)))))
 
 ;: Rename `source` to `destination`, returning a structured status.
 ;:
@@ -1255,31 +1315,39 @@
 ;: Windows follows the CRT rename policy.
 (define (try-rename
   [source : (& source str)]
-  [destination : (& destination str)]) : ResultIoUnit
+  [destination : (& destination str)]) : io_mod.ResultIoUnit
   (if (= (string-length source) 0)
-    (ErrIoUnit (IoInvalidPath (string-copy-borrowed source)))
+    (io_mod.ErrIoUnit
+      (io_mod.IoInvalidPath (string_mod.string-copy-borrowed source)))
     (if (= (string-length destination) 0)
-      (ErrIoUnit (IoInvalidPath (string-copy-borrowed destination)))
+      (io_mod.ErrIoUnit
+        (io_mod.IoInvalidPath (string_mod.string-copy-borrowed destination)))
       (let
-        [source-text : String (string-copy-borrowed source)]
-        [destination-text : String (string-copy-borrowed destination)]
+        [source-text : String (string_mod.string-copy-borrowed source)]
+        [destination-text : String
+          (string_mod.string-copy-borrowed destination)]
         [arrow : String " -> "]
-        [source-arrow : String (string-append-borrowed source (& arrow))]
-        [path : String (string-append-borrowed (& source-arrow) destination)]
-        [status : i64 (fs-rename-status-owned source-text destination-text)]
-        (if (= status io-status-ok)
-          OkIoUnit
-          (ErrIoUnit (io-error-from-owned-status path status)))))))
+        [source-arrow : String
+          (string_mod.string-append-borrowed source (& arrow))]
+        [path : String
+          (string_mod.string-append-borrowed (& source-arrow) destination)]
+        [status : i64
+          (stdlib.fs.fs-rename-status-owned source-text destination-text)]
+        (if (= status io_mod.io-status-ok)
+          io_mod.OkIoUnit
+          (io_mod.ErrIoUnit (io_mod.io-error-from-owned-status path status)))))))
 
 ;: Probe the coarse filesystem kind of `path`.
 ;:
 ;: Linux and Windows report regular files, directories, and other node kinds.
 (define (try-file-kind [path : (& path str)]) : ResultFsFileKind
   (let
-    [path-text : String (string-copy-borrowed path)]
-    (if (io-empty-path? path)
-      (ErrFsFileKind (io-invalid-path-error path))
-      (fs-file-kind-status-result path (fs-file-kind-status path-text)))))
+    [path-text : String (string_mod.string-copy-borrowed path)]
+    (if (io_mod.io-empty-path? path)
+      (ErrFsFileKind (io_mod.io-invalid-path-error path))
+      (stdlib.fs.fs-file-kind-status-result
+        path
+        (stdlib.fs.fs-file-kind-status path-text)))))
 
 ;: Return true when `kind` is `FsFileRegular`.
 (define (fs-file-kind-regular? [kind : FsFileKind]) : bool
@@ -1314,46 +1382,51 @@
 ;: reported as zero.
 (define (try-file-metadata [path : (& path str)]) : ResultFsMetadata
   (let
-    [path-text : String (string-copy-borrowed path)]
-    (if (io-empty-path? path)
-      (ErrFsMetadata (io-invalid-path-error path))
-      (match (try-file-kind path)
+    [path-text : String (string_mod.string-copy-borrowed path)]
+    (if (io_mod.io-empty-path? path)
+      (ErrFsMetadata (io_mod.io-invalid-path-error path))
+      (match (stdlib.fs.try-file-kind path)
         [(ErrFsFileKind error) (ErrFsMetadata error)]
         [(OkFsFileKind kind)
-          (if (fs-file-kind-regular? kind)
+          (if (stdlib.fs.fs-file-kind-regular? kind)
             (let
-              [status : i64 (fs-file-size-status path-text)]
-              (if (= status io-status-ok)
-                (OkFsMetadata (FsMetadata kind (fs-file-size path-text)))
-                (ErrFsMetadata (io-error-from-status path status))))
+              [status : i64 (stdlib.fs.fs-file-size-status path-text)]
+              (if (= status io_mod.io-status-ok)
+                (OkFsMetadata
+                  (FsMetadata kind (stdlib.fs.fs-file-size path-text)))
+                (ErrFsMetadata (io_mod.io-error-from-status path status))))
             (OkFsMetadata (FsMetadata kind 0)))]))))
 
 ;: Split the runtime's newline-delimited directory payload into entry names.
-(define (fs-read-dir-split-vec [entries : String]) : StringVec
+(define (fs-read-dir-split-vec [entries : String]) : vector_mod.StringVec
   (let
     [n : i64 (string-length entries)]
-    [items : StringVec (string-vec-new)]
+    [items : vector_mod.StringVec (vector_mod.string-vec-new)]
     [start : i64 0]
     [i : i64 0]
     (begin
       (while (< i n)
-        (if (char-eq (string-ref entries i) #\newline')
+        (if (string_mod.char-eq (string-ref entries i) #\newline')
           (begin
             (if (> i start)
               (set!
                 items
-                (string-vec-push items (substring entries start (- i start))))
+                (vector_mod.string-vec-push
+                  items
+                  (string_mod.substring entries start (- i start))))
               unit)
             (set! start (+ i 1))
             (set! i (+ i 1)))
           (set! i (+ i 1))))
       (if (< start n)
-        (string-vec-push items (substring entries start (- n start)))
+        (vector_mod.string-vec-push
+          items
+          (string_mod.substring entries start (- n start)))
         items))))
 
 ;: Split the runtime's newline-delimited directory payload into entry names.
-(define (fs-read-dir-split [entries : String]) : StringList
-  (string-list-from-vec (fs-read-dir-split-vec entries)))
+(define (fs-read-dir-split [entries : String]) : list_mod.StringList
+  (list_mod.string-list-from-vec (stdlib.fs.fs-read-dir-split-vec entries)))
 
 ;: Read one directory and return entry names as a `StringVec`.
 ;:
@@ -1363,14 +1436,15 @@
 ;: vector storage and entry strings allocate in the active arena.
 (define (try-read-dir-vec [path : (& path str)]) : ResultIoStringVec
   (let
-    [path-text : String (string-copy-borrowed path)]
-    (if (io-empty-path? path)
-      (ErrIoStringVec (io-invalid-path-error path))
+    [path-text : String (string_mod.string-copy-borrowed path)]
+    (if (io_mod.io-empty-path? path)
+      (ErrIoStringVec (io_mod.io-invalid-path-error path))
       (let
-        [status : i64 (fs-read-dir-status path-text)]
-        (if (= status io-status-ok)
-          (OkIoStringVec (fs-read-dir-split-vec (fs-read-dir path-text)))
-          (ErrIoStringVec (io-error-from-status path status)))))))
+        [status : i64 (stdlib.fs.fs-read-dir-status path-text)]
+        (if (= status io_mod.io-status-ok)
+          (OkIoStringVec
+            (stdlib.fs.fs-read-dir-split-vec (stdlib.fs.fs-read-dir path-text)))
+          (ErrIoStringVec (io_mod.io-error-from-status path status)))))))
 
 ;: Read one directory and return entry names as a `StringList`.
 ;:
@@ -1379,105 +1453,124 @@
 ;: that need stable ordering should sort the returned list. The returned list
 ;: spine and entry strings allocate in the active arena.
 (define (try-read-dir [path : (& path str)]) : ResultIoStringList
-  (match (try-read-dir-vec path)
-    [(OkIoStringVec entries) (OkIoStringList (string-list-from-vec entries))]
+  (match (stdlib.fs.try-read-dir-vec path)
+    [(OkIoStringVec entries)
+      (OkIoStringList (list_mod.string-list-from-vec entries))]
     [(ErrIoStringVec error) (ErrIoStringList error)]))
 
 ;: Remove a file if present. Missing paths are considered already cleaned.
-(define (try-remove-file-if-exists [path : (& path str)]) : ResultIoUnit
-  (match (try-remove-file path)
-    [(OkIoUnit) OkIoUnit]
-    [(ErrIoUnit error)
-      (if (io-error-not-found? error)
-        OkIoUnit
-        (ErrIoUnit error))]))
+(define (try-remove-file-if-exists [path : (& path str)]) : io_mod.ResultIoUnit
+  (let
+    [path-text : String (string_mod.string-copy-borrowed path)]
+    (if (io_mod.io-empty-path? path)
+      (io_mod.ErrIoUnit (io_mod.io-invalid-path-error path))
+      (let
+        [status : i64 (stdlib.fs.fs-remove-file-status-owned path-text)]
+        (if (or
+          (= status io_mod.io-status-ok)
+          (io_mod.io-status-expected-absence? status))
+          io_mod.OkIoUnit
+          (io_mod.ErrIoUnit (io_mod.io-error-from-status path status)))))))
 
 ;: Remove an empty directory if present. Missing paths are considered cleaned.
-(define (try-remove-dir-if-exists [path : (& path str)]) : ResultIoUnit
-  (match (try-remove-dir path)
-    [(OkIoUnit) OkIoUnit]
-    [(ErrIoUnit error)
-      (if (io-error-not-found? error)
-        OkIoUnit
-        (ErrIoUnit error))]))
+(define (try-remove-dir-if-exists [path : (& path str)]) : io_mod.ResultIoUnit
+  (let
+    [path-text : String (string_mod.string-copy-borrowed path)]
+    (if (io_mod.io-empty-path? path)
+      (io_mod.ErrIoUnit (io_mod.io-invalid-path-error path))
+      (let
+        [status : i64 (stdlib.fs.fs-remove-dir-status-owned path-text)]
+        (if (or
+          (= status io_mod.io-status-ok)
+          (io_mod.io-status-expected-absence? status))
+          io_mod.OkIoUnit
+          (io_mod.ErrIoUnit (io_mod.io-error-from-status path status)))))))
 
 ;: Return the host temporary root used by `try-create-temp-dir`.
 (define (fs-temp-root) : String
-  (if (fs-windows?)
+  (if (stdlib.fs.fs-windows?)
     (let
       [name : String "TEMP"]
-      (match (env-get (& name))
-        [(EnvSomeString value) value]
-        [(EnvNoString)
+      (match (env_mod.env-get (& name))
+        [(env_mod.EnvSomeString value) value]
+        [(env_mod.EnvNoString)
           (let
             [name : String "TMP"]
-            (match (env-get (& name))
-              [(EnvSomeString value) value]
-              [(EnvNoString) "."]))]))
+            (match (env_mod.env-get (& name))
+              [(env_mod.EnvSomeString value) value]
+              [(env_mod.EnvNoString) "."]))]))
     (let
       [name : String "TMPDIR"]
-      (match (env-get (& name))
-        [(EnvSomeString value) value]
-        [(EnvNoString) "/tmp"]))))
+      (match (env_mod.env-get (& name))
+        [(env_mod.EnvSomeString value) value]
+        [(env_mod.EnvNoString) "/tmp"]))))
 
 ;: Return the process current directory as an owned active-arena String.
 ;:
 ;: The returned path is the host-reported cwd; it is not symlink-canonicalized.
 ;: Host lookup failures return `ErrIoString` with the mapped status.
-(define (try-current-dir) : ResultIoString
+(define (try-current-dir) : io_mod.ResultIoString
   (let
-    [status : i64 (fs-current-dir-status)]
-    (if (= status io-status-ok)
-      (OkIoString (fs-current-dir))
-      (ErrIoString (io-error-from-label "current directory" status)))))
+    [status : i64 (stdlib.fs.fs-current-dir-status)]
+    (if (= status io_mod.io-status-ok)
+      (io_mod.OkIoString (stdlib.fs.fs-current-dir))
+      (io_mod.ErrIoString
+        (io_mod.io-error-from-label "current directory" status)))))
 
 ;: Compose one candidate temporary directory basename from prefix, pid, and attempt.
 (define (fs-temp-name [prefix : (& prefix str)] [pid : i64] [attempt : i64]) : String
   (let
     [dash : String "-"]
-    [prefix-dash : String (string-append-borrowed prefix (& dash))]
-    [pid-text : String (int->string pid)]
-    [attempt-text : String (int->string attempt)]
-    [pid-dash : String (string-append pid-text dash)]
-    (string-append prefix-dash (string-append pid-dash attempt-text))))
+    [prefix-dash : String (string_mod.string-append-borrowed prefix (& dash))]
+    [pid-text : String (string_mod.int->string pid)]
+    [attempt-text : String (string_mod.int->string attempt)]
+    [pid-dash : String (string_mod.string-append pid-text dash)]
+    (string_mod.string-append
+      prefix-dash
+      (string_mod.string-append pid-dash attempt-text))))
 
 ;: Retry temporary directory creation until an unused candidate is found.
 (define (fs-create-temp-dir-loop
   [root : (& root str)]
   [prefix : (& prefix str)]
   [pid : i64]
-  [attempt : i64]) : ResultIoString
-  (if (>= attempt fs-temp-attempt-limit)
-    (ErrIoString
-      (IoSystemCode fs-status-already-exists (string-copy-borrowed prefix)))
+  [attempt : i64]) : io_mod.ResultIoString
+  (if (>= attempt stdlib.fs.fs-temp-attempt-limit)
+    (io_mod.ErrIoString
+      (io_mod.IoSystemCode
+        stdlib.fs.fs-status-already-exists
+        (string_mod.string-copy-borrowed prefix)))
     (let
-      [name : String (fs-temp-name prefix pid attempt)]
+      [name : String (stdlib.fs.fs-temp-name prefix pid attempt)]
       [path : String
         (if (= (string-length root) 0)
           name
           (if (= (string-length name) 0)
-            (string-copy-borrowed root)
-            (if (fs-path-separator?
+            (string_mod.string-copy-borrowed root)
+            (if (stdlib.fs.fs-path-separator?
               (string-ref root (- (string-length root) 1)))
-              (if (fs-path-separator? (string-ref name 0))
+              (if (stdlib.fs.fs-path-separator? (string-ref name 0))
                 (let
                   [trimmed-name : String
-                    (substring-borrowed (& name) 1 (- (string-length name) 1))]
-                  (string-append-borrowed root (& trimmed-name)))
-                (string-append-borrowed root (& name)))
-              (if (fs-path-separator? (string-ref name 0))
-                (string-append-borrowed root (& name))
+                    (string_mod.substring-borrowed
+                      (& name)
+                      1
+                      (- (string-length name) 1))]
+                  (string_mod.string-append-borrowed root (& trimmed-name)))
+                (string_mod.string-append-borrowed root (& name)))
+              (if (stdlib.fs.fs-path-separator? (string-ref name 0))
+                (string_mod.string-append-borrowed root (& name))
                 (let
-                  [separator : String (fs-path-separator)]
+                  [separator : String (stdlib.fs.fs-path-separator)]
                   [root-with-separator : String
-                    (string-append-borrowed root (& separator))]
-                  (string-append root-with-separator name))))))]
-      [status : i64 (fs-mkdir-status-owned path)]
-      (if (= status io-status-ok)
-        (OkIoString path)
-        (if (= status fs-status-already-exists)
-          (fs-create-temp-dir-loop root prefix pid (+ attempt 1))
-          (ErrIoString (io-error-from-owned-status path status)))))))
+                    (string_mod.string-append-borrowed root (& separator))]
+                  (string_mod.string-append root-with-separator name))))))]
+      [status : i64 (stdlib.fs.fs-mkdir-status-owned path)]
+      (if (= status io_mod.io-status-ok)
+        (io_mod.OkIoString path)
+        (if (= status stdlib.fs.fs-status-already-exists)
+          (stdlib.fs.fs-create-temp-dir-loop root prefix pid (+ attempt 1))
+          (io_mod.ErrIoString (io_mod.io-error-from-owned-status path status)))))))
 
 ;: Create a unique temporary directory for tool artifacts.
 ;:
@@ -1485,9 +1578,170 @@
 ;: missing), and below `%TEMP%`/`%TMP%` (or `.`) on Windows. The unique name is
 ;: seeded by the process id (`GetCurrentProcessId` on Windows, `getpid` on
 ;: Linux) and an attempt counter, retrying on collision.
-(define (try-create-temp-dir [prefix : (& prefix str)]) : ResultIoString
+(define (try-create-temp-dir [prefix : (& prefix str)]) : io_mod.ResultIoString
   (if (= (string-length prefix) 0)
-    (ErrIoString (IoInvalidPath (string-copy-borrowed prefix)))
+    (io_mod.ErrIoString
+      (io_mod.IoInvalidPath (string_mod.string-copy-borrowed prefix)))
     (let
-      [root : String (fs-temp-root)]
-      (fs-create-temp-dir-loop (& root) prefix (fs-process-id) 0))))
+      [root : String (stdlib.fs.fs-temp-root)]
+      (stdlib.fs.fs-create-temp-dir-loop
+        (& root)
+        prefix
+        (stdlib.fs.fs-process-id)
+        0))))
+
+;# Dotted-module migration: preserve the pre-module flat stdlib surface.
+(export
+  (value fs-linux-syscall-mkdir)
+  (value fs-linux-syscall-unlink)
+  (value fs-linux-syscall-rmdir)
+  (value fs-linux-syscall-rename)
+  (value fs-linux-syscall-getpid)
+  (value fs-linux-syscall-getcwd)
+  (value fs-linux-syscall-openat)
+  (value fs-linux-syscall-getdents64)
+  (value fs-windows-get-current-process-id)
+  (value fs-windows-get-current-directory)
+  (value fs-status-from-result)
+  (value fs-mkdir-status-owned)
+  (value fs-mkdir-status)
+  (value fs-remove-file-status-owned)
+  (value fs-remove-file-status)
+  (value fs-remove-dir-status-owned)
+  (value fs-remove-dir-status)
+  (value fs-rename-status-owned)
+  (value fs-rename-status)
+  (value fs-process-id)
+  (value fs-linux-at-fdcwd)
+  (value fs-linux-open-directory)
+  (value fs-read-dir-buffer-size)
+  (value fs-windows-find-data-size)
+  (value fs-windows-find-data-name-offset)
+  (value fs-c-string-byte)
+  (value fs-read-dir-dot-entry?)
+  (value fs-read-dir-append-entry!)
+  (value fs-read-dir-bytes-string)
+  (value fs-read-dir-status)
+  (value fs-read-dir)
+  (value fs-file-kind-regular-code)
+  (value fs-file-kind-directory-code)
+  (value fs-file-kind-other-code)
+  (value fs-windows-file-attribute-data-size)
+  (value fs-windows-file-attribute-directory)
+  (value fs-windows-file-attributes-offset)
+  (value fs-windows-file-size-high-offset)
+  (value fs-windows-file-size-low-offset)
+  (value fs-metadata-read-u32-at)
+  (value fs-metadata-read-i64-at)
+  (value fs-file-metadata-probe)
+  (value fs-file-kind-status)
+  (value fs-file-size-status)
+  (value fs-file-size)
+  (value fs-status-range)
+  (value fs-current-dir-initial-capacity)
+  (value fs-current-dir-max-capacity)
+  (value fs-current-dir-next-capacity)
+  (value fs-current-dir-status-loop)
+  (value fs-current-dir-loop)
+  (value fs-current-dir-status)
+  (value fs-current-dir)
+  (value fs-status-already-exists)
+  (value fs-temp-attempt-limit)
+  (value fs-windows?)
+  (value fs-path-separator)
+  (value fs-path-separator-char)
+  (value fs-path-separator?)
+  (value fs-path-starts-separator?)
+  (value fs-path-ends-separator?)
+  (value fs-path-drive-qualified?)
+  (value fs-path-absolute?)
+  (value fs-path-segment-vec-render-from)
+  (value fs-path-segment-vec-render)
+  (value fs-path-normalize-segment)
+  (value fs-path-normalize)
+  (value fs-path-normalized-escapes?)
+  (value fs-path-safe-relative?)
+  (value fs-path-join)
+  (value fs-path-join-owned-pair)
+  (value fs-last-separator-index)
+  (value fs-dirname)
+  (value fs-basename)
+  (value fs-extension)
+  (value fs-status-result)
+  (value fs-file-kind-status-result)
+  (value try-mkdir)
+  (value try-mkdir-if-missing)
+  (value try-remove-file)
+  (value try-remove-dir)
+  (value try-rename)
+  (value try-file-kind)
+  (value fs-file-kind-regular?)
+  (value fs-file-kind-directory?)
+  (value fs-file-kind-other?)
+  (value fs-metadata-kind)
+  (value fs-metadata-size)
+  (value try-file-metadata)
+  (value fs-read-dir-split-vec)
+  (value fs-read-dir-split)
+  (value try-read-dir-vec)
+  (value try-read-dir)
+  (value try-remove-file-if-exists)
+  (value try-remove-dir-if-exists)
+  (value fs-temp-root)
+  (value try-current-dir)
+  (value fs-temp-name)
+  (value fs-create-temp-dir-loop)
+  (value try-create-temp-dir)
+  (type ResultIoStringList)
+  (type ResultIoStringVec)
+  (type FsFileMetadataProbe)
+  (type FsFileKind)
+  (type FsMetadata)
+  (type ResultFsFileKind)
+  (type ResultFsMetadata)
+  (constructor FsFileMetadataProbe)
+  (constructor FsMetadata)
+  (field FsFileMetadataProbe status)
+  (field FsFileMetadataProbe kind)
+  (field FsFileMetadataProbe size)
+  (field FsMetadata kind)
+  (field FsMetadata size)
+  (variant OkIoStringList)
+  (variant ErrIoStringList)
+  (variant OkIoStringVec)
+  (variant ErrIoStringVec)
+  (variant FsFileRegular)
+  (variant FsFileDirectory)
+  (variant FsFileOther)
+  (variant OkFsFileKind)
+  (variant ErrFsFileKind)
+  (variant OkFsMetadata)
+  (variant ErrFsMetadata)
+  (macro fs-path-join-many))
+
+(cfg
+  windows
+  (export
+    (value fs-win-create-directory)
+    (value fs-win-remove-directory)
+    (value fs-win-delete-file)
+    (value fs-win-get-last-error)
+    (value fs-win-get-file-attributes-ex)
+    (value fs-win-find-first-file)
+    (value fs-win-find-next-file)
+    (value fs-win-find-close)
+    (value fs-win-move-file-ex)
+    (value fs-windows-mkdir)
+    (value fs-windows-unlink)
+    (value fs-windows-rmdir)
+    (value fs-windows-rename)
+    (value fs-windows-last-error-status)
+    (value fs-windows-nonzero-status)
+    (value fs-windows-read-dir-pattern)
+    (value fs-windows-find-data-name)
+    (value fs-windows-read-dir-status)
+    (value fs-windows-read-dir)
+    (value fs-windows-metadata-error-status)
+    (value fs-windows-file-kind-from-attributes)
+    (value fs-windows-file-size-from-data)
+    (value fs-windows-file-metadata-probe)))

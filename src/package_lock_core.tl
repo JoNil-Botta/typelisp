@@ -3,9 +3,11 @@
 ;; This module models the lockfile data needed after remote package pins are
 ;; resolved. It parses and emits `typelisp.lock` S-expressions only; build-time
 ;; fetch/replay behavior remains owned by the package build pipeline.
-(import "../stdlib/string.tl")
+(import stdlib.io as io_mod)
 
-(import "../stdlib/str_cat.tl")
+(import stdlib.string as string_mod)
+
+(import stdlib.str_cat)
 
 (import "read.tl")
 
@@ -125,7 +127,7 @@
   (match entries
     [(PackageLockEntryNil) (PackageLockNoEntry)]
     [(PackageLockEntryCons entry rest)
-      (if (string-eq (struct-get entry alias) alias)
+      (if (string_mod.string-eq (struct-get entry alias) alias)
         (PackageLockSomeEntry entry)
         (package-lock-entry-list-lookup (box-get rest) alias))]))
 
@@ -137,9 +139,11 @@
       (OkPackageLockEntryList
         (PackageLockEntryCons entry (box PackageLockEntryNil)))]
     [(PackageLockEntryCons head rest)
-      (if (string-eq (struct-get head alias) (struct-get entry alias))
+      (if (string_mod.string-eq
+        (struct-get head alias)
+        (struct-get entry alias))
         (ErrPackageLockEntryList
-          (str-cat
+          (str_cat.str-cat
             "package-lock: duplicate dependency alias `"
             (struct-get entry alias)
             "`"))
@@ -162,23 +166,29 @@
             [(SNil) (OkPackageLockString val)]
             [_
               (ErrPackageLockString
-                (str-cat
+                (str_cat.str-cat
                   "package-lock: field `"
                   fname
                   "` takes a single string value"))])]
         [_
           (ErrPackageLockString
-            (str-cat "package-lock: field `" fname "` must have a string value"))])]
+            (str_cat.str-cat
+              "package-lock: field `"
+              fname
+              "` must have a string value"))])]
     [_
       (ErrPackageLockString
-        (str-cat "package-lock: field `" fname "` must have a string value"))]))
+        (str_cat.str-cat
+          "package-lock: field `"
+          fname
+          "` must have a string value"))]))
 
 (define (package-lock-parse-pin-kind [value : String]) : ResultPackageLockPinKind
-  (if (string-eq value "rev")
+  (if (string_mod.string-eq value "rev")
     (OkPackageLockPinKind (PackageCachePinRev))
-    (if (string-eq value "tag")
+    (if (string_mod.string-eq value "tag")
       (OkPackageLockPinKind (PackageCachePinTag))
-      (if (string-eq value "branch")
+      (if (string_mod.string-eq value "branch")
         (OkPackageLockPinKind (PackageCachePinBranch))
         (ErrPackageLockPinKind
           "package-lock: pin kind must be `rev`, `tag`, or `branch`")))))
@@ -197,7 +207,7 @@
                 [(SNil)
                   (match (box-get value-node)
                     [(SStr pin-value)
-                      (if (string-eq pin-value "")
+                      (if (string_mod.string-eq pin-value "")
                         (ErrPackageLockPin
                           "package-lock: pin value must not be empty")
                         (match (package-lock-parse-pin-kind kind-name)
@@ -245,16 +255,16 @@
             (if (not has-commit)
               (ErrPackageLockEntry
                 "package-lock: dependency missing required field `commit`")
-              (if (string-eq alias "")
+              (if (string_mod.string-eq alias "")
                 (ErrPackageLockEntry
                   "package-lock: dependency alias must not be empty")
                 (if (not (package-lock-alias-token-valid? alias))
                   (ErrPackageLockEntry
                     "package-lock: dependency alias may only contain ASCII letters, digits, '-' and '_'")
-                  (if (string-eq url "")
+                  (if (string_mod.string-eq url "")
                     (ErrPackageLockEntry
                       "package-lock: dependency url must not be empty")
-                    (if (string-eq commit "")
+                    (if (string_mod.string-eq commit "")
                       (ErrPackageLockEntry
                         "package-lock: dependency commit must not be empty")
                       (OkPackageLockEntry
@@ -264,7 +274,7 @@
         [(SCons fhead ftail)
           (match (box-get fhead)
             [(SSym fname)
-              (if (string-eq fname "alias")
+              (if (string_mod.string-eq fname "alias")
                 (if has-alias
                   (ErrPackageLockEntry
                     "package-lock: duplicate dependency field `alias`")
@@ -283,7 +293,7 @@
                         has-pin
                         commit
                         has-commit)]))
-                (if (string-eq fname "url")
+                (if (string_mod.string-eq fname "url")
                   (if has-url
                     (ErrPackageLockEntry
                       "package-lock: duplicate dependency field `url`")
@@ -304,7 +314,7 @@
                           has-pin
                           commit
                           has-commit)]))
-                  (if (string-eq fname "pin")
+                  (if (string_mod.string-eq fname "pin")
                     (if has-pin
                       (ErrPackageLockEntry
                         "package-lock: duplicate dependency field `pin`")
@@ -323,7 +333,7 @@
                             true
                             commit
                             has-commit)]))
-                    (if (string-eq fname "commit")
+                    (if (string_mod.string-eq fname "commit")
                       (if has-commit
                         (ErrPackageLockEntry
                           "package-lock: duplicate dependency field `commit`")
@@ -345,7 +355,7 @@
                               value
                               true)]))
                       (ErrPackageLockEntry
-                        (str-cat
+                        (str_cat.str-cat
                           "package-lock: unknown dependency field `"
                           fname
                           "`"))))))]
@@ -361,7 +371,7 @@
     [(SCons head rest)
       (match (box-get head)
         [(SSym name)
-          (if (string-eq name "dependency")
+          (if (string_mod.string-eq name "dependency")
             (package-lock-entry-fields
               (box-get rest)
               ""
@@ -408,9 +418,9 @@
     [(SNil)
       (if (not has-version)
         (ErrPackageLockFile "package-lock: missing required field `version`")
-        (if (not (string-eq version package-lock-version))
+        (if (not (string_mod.string-eq version package-lock-version))
           (ErrPackageLockFile
-            (str-cat "package-lock: unsupported version `" version "`"))
+            (str_cat.str-cat "package-lock: unsupported version `" version "`"))
           (if (not has-deps)
             (ErrPackageLockFile
               "package-lock: missing required field `dependencies`")
@@ -420,7 +430,7 @@
         [(SCons fhead ftail)
           (match (box-get fhead)
             [(SSym fname)
-              (if (string-eq fname "version")
+              (if (string_mod.string-eq fname "version")
                 (if has-version
                   (ErrPackageLockFile "package-lock: duplicate field `version`")
                   (match (package-lock-field-string-value (box-get ftail) fname)
@@ -433,7 +443,7 @@
                         true
                         entries
                         has-deps)]))
-                (if (string-eq fname "dependencies")
+                (if (string_mod.string-eq fname "dependencies")
                   (if has-deps
                     (ErrPackageLockFile
                       "package-lock: duplicate field `dependencies`")
@@ -450,7 +460,7 @@
                           parsed
                           true)]))
                   (ErrPackageLockFile
-                    (str-cat "package-lock: unknown field `" fname "`"))))]
+                    (str_cat.str-cat "package-lock: unknown field `" fname "`"))))]
             [_
               (ErrPackageLockFile
                 "package-lock: fields must start with a field name")])]
@@ -462,7 +472,7 @@
     [(SCons head rest)
       (match (box-get head)
         [(SSym name)
-          (if (string-eq name "typelisp-lock")
+          (if (string_mod.string-eq name "typelisp-lock")
             (package-lock-fields
               (box-get rest)
               ""
@@ -470,7 +480,7 @@
               (PackageLockEntryNil)
               false)
             (ErrPackageLockFile
-              (str-cat "expected `typelisp-lock` form, got `" name "`")))]
+              (str_cat.str-cat "expected `typelisp-lock` form, got `" name "`")))]
         [_
           (ErrPackageLockFile
             "package-lock: lockfile must start with `typelisp-lock`")])]
@@ -481,7 +491,7 @@
 (define (package-lock-parse [source : String]) : ResultPackageLockFile
   (match (read-result (lex source))
     [(ErrSexpr message)
-      (ErrPackageLockFile (string-append "package-lock: " message))]
+      (ErrPackageLockFile (string_mod.string-append "package-lock: " message))]
     [(OkSexpr form) (package-lock-from-form form)]))
 
 (define (package-lock-quote-text) : String
@@ -503,62 +513,88 @@
           (let
             [code : i64 (package-lock-char-code-at text i)]
             (if (= code 34)
-              (set! out (string-append out (string-append slash quote)))
+              (set!
+                out
+                (string_mod.string-append
+                  out
+                  (string_mod.string-append slash quote)))
               (if (= code 92)
-                (set! out (string-append out (string-append slash slash)))
+                (set!
+                  out
+                  (string_mod.string-append
+                    out
+                    (string_mod.string-append slash slash)))
                 (if (= code 10)
-                  (set! out (string-append out (string-append slash "n")))
+                  (set!
+                    out
+                    (string_mod.string-append
+                      out
+                      (string_mod.string-append slash "n")))
                   (if (= code 9)
-                    (set! out (string-append out (string-append slash "t")))
+                    (set!
+                      out
+                      (string_mod.string-append
+                        out
+                        (string_mod.string-append slash "t")))
                     (if (= code 13)
-                      (set! out (string-append out (string-append slash "r")))
-                      (set! out (string-append out (substring text i 1)))))))))
+                      (set!
+                        out
+                        (string_mod.string-append
+                          out
+                          (string_mod.string-append slash "r")))
+                      (set!
+                        out
+                        (string_mod.string-append
+                          out
+                          (string_mod.substring text i 1)))))))))
           (set! i (+ i 1))))
       out)))
 
 (define (package-lock-quote-string [text : String]) : String
-  (string-append
+  (string_mod.string-append
     (package-lock-quote-text)
-    (string-append (package-lock-escape-string text) (package-lock-quote-text))))
+    (string_mod.string-append
+      (package-lock-escape-string text)
+      (package-lock-quote-text))))
 
 (define (package-lock-emit-string-field [field : String] [value : String]) : String
-  (string-append
+  (string_mod.string-append
     "      ("
-    (string-append
+    (string_mod.string-append
       field
-      (string-append
+      (string_mod.string-append
         " "
-        (string-append (package-lock-quote-string value) ")\n")))))
+        (string_mod.string-append (package-lock-quote-string value) ")\n")))))
 
 (define (package-lock-emit-final-string-field [field : String] [value : String]) : String
-  (string-append
+  (string_mod.string-append
     "      ("
-    (string-append
+    (string_mod.string-append
       field
-      (string-append
+      (string_mod.string-append
         " "
-        (string-append (package-lock-quote-string value) "))\n")))))
+        (string_mod.string-append (package-lock-quote-string value) "))\n")))))
 
 (define (package-lock-emit-pin-field [kind-name : String] [value : String]) : String
-  (string-append
+  (string_mod.string-append
     "      (pin ("
-    (string-append
+    (string_mod.string-append
       kind-name
-      (string-append
+      (string_mod.string-append
         " "
-        (string-append (package-lock-quote-string value) "))\n")))))
+        (string_mod.string-append (package-lock-quote-string value) "))\n")))))
 
 (define (package-lock-emit-entry [entry : PackageLockEntry]) : String
   (let
     [kind-name : String
       (package-cache-pin-kind-name (struct-get entry pin-kind))]
-    (string-append
+    (string_mod.string-append
       "    (dependency\n"
-      (string-append
+      (string_mod.string-append
         (package-lock-emit-string-field "alias" (struct-get entry alias))
-        (string-append
+        (string_mod.string-append
           (package-lock-emit-string-field "url" (struct-get entry url))
-          (string-append
+          (string_mod.string-append
             (package-lock-emit-pin-field kind-name (struct-get entry pin-value))
             (package-lock-emit-final-string-field
               "commit"
@@ -568,18 +604,18 @@
   (match entries
     [(PackageLockEntryNil) ""]
     [(PackageLockEntryCons entry rest)
-      (string-append
+      (string_mod.string-append
         (package-lock-emit-entry entry)
         (package-lock-emit-entries (box-get rest)))]))
 
 (define (package-lock-emit [lock : PackageLockFile]) : String
-  (string-append
+  (string_mod.string-append
     "(typelisp-lock\n"
-    (string-append
+    (string_mod.string-append
       "  (version \"v1\")\n"
-      (string-append
+      (string_mod.string-append
         "  (dependencies\n"
-        (string-append
+        (string_mod.string-append
           (package-lock-emit-entries (struct-get lock entries))
           "  ))\n")))))
 
@@ -587,15 +623,15 @@
   "(typelisp-lock (version \"v1\") (dependencies (dependency (alias \"zeta\") (url \"https://github.com/owner/zeta.git\") (pin (rev \"abcdef0123456789abcdef0123456789abcdef01\")) (commit \"abcdef0123456789abcdef0123456789abcdef01\")) (dependency (alias \"alpha\") (url \"https://github.com/owner/alpha.git\") (pin (branch \"main\")) (commit \"1111111111111111111111111111111111111111\"))))")
 
 (define (package-lock-expected-emitted) : String
-  (string-append
+  (string_mod.string-append
     "(typelisp-lock\n"
-    (string-append
+    (string_mod.string-append
       "  (version \"v1\")\n"
-      (string-append
+      (string_mod.string-append
         "  (dependencies\n"
-        (string-append
+        (string_mod.string-append
           "    (dependency\n      (alias \"alpha\")\n      (url \"https://github.com/owner/alpha.git\")\n      (pin (branch \"main\"))\n      (commit \"1111111111111111111111111111111111111111\"))\n"
-          (string-append
+          (string_mod.string-append
             "    (dependency\n      (alias \"zeta\")\n      (url \"https://github.com/owner/zeta.git\")\n      (pin (rev \"abcdef0123456789abcdef0123456789abcdef01\"))\n      (commit \"abcdef0123456789abcdef0123456789abcdef01\"))\n"
             "  ))\n"))))))
 
@@ -607,11 +643,11 @@
   [pin-value : String]
   [commit : String]) : bool
   (and
-    (string-eq (struct-get entry alias) alias)
-    (string-eq (struct-get entry url) url)
+    (string_mod.string-eq (struct-get entry alias) alias)
+    (string_mod.string-eq (struct-get entry url) url)
     (package-cache-pin-kind-eq? (struct-get entry pin-kind) kind)
-    (string-eq (struct-get entry pin-value) pin-value)
-    (string-eq (struct-get entry commit) commit)))
+    (string_mod.string-eq (struct-get entry pin-value) pin-value)
+    (string_mod.string-eq (struct-get entry commit) commit)))
 
 (define (package-lock-list-has-entry?
   [entries : PackageLockEntryList]
@@ -632,7 +668,7 @@
       (let
         [entries : PackageLockEntryList (struct-get lock entries)]
         (and
-          (string-eq (struct-get lock version) package-lock-version)
+          (string_mod.string-eq (struct-get lock version) package-lock-version)
           (= (package-lock-entry-list-count entries) 2)
           (package-lock-list-has-entry?
             entries
@@ -653,7 +689,9 @@
   (match (package-lock-parse (package-lock-valid-source))
     [(ErrPackageLockFile _) false]
     [(OkPackageLockFile lock)
-      (string-eq (package-lock-emit lock) (package-lock-expected-emitted))]))
+      (string_mod.string-eq
+        (package-lock-emit lock)
+        (package-lock-expected-emitted))]))
 
 (define (package-lock-round-trip-ok?) : bool
   (match (package-lock-parse (package-lock-valid-source))
@@ -683,7 +721,7 @@
 
 (define (package-lock-parse-rejects? [source : String] [expected : String]) : bool
   (match (package-lock-parse source)
-    [(ErrPackageLockFile message) (string-eq message expected)]
+    [(ErrPackageLockFile message) (string_mod.string-eq message expected)]
     [(OkPackageLockFile _) false]))
 
 (define (package-lock-rejections-ok?) : bool
@@ -715,11 +753,11 @@
   (if (package-lock-self-test-ok?)
     42
     (begin
-      (panic "package-lock: self-test mismatch")
+      (io_mod.panic "package-lock: self-test mismatch")
       1)))
 
 (test
   package-lock-parse-emit-round-trip
   (if (package-lock-self-test-ok?)
     unit
-    (panic "package-lock: inline self-test mismatch")))
+    (io_mod.panic "package-lock: inline self-test mismatch")))

@@ -7,16 +7,18 @@
 ;# list-returning PATH helpers remain for compatibility; vector-returning
 ;# variants avoid cons/reverse work for new internal callers.
 ;#
-;# Usage: `(import "stdlib/env.tl")`
+;# Usage: `(import stdlib.env)`
 ;#
 ;# ```typelisp
-;# (import "stdlib/env.tl")
-;# (define fallback : EnvMaybeString
-;#   (let [name : String "TYPELISP_DOC_TEST_MISSING_ENV"] (env-get (& name))))
+;# (import stdlib.env)
+;# (define fallback : env.EnvMaybeString
+;#   (let [name : String "TYPELISP_DOC_TEST_MISSING_ENV"] (env.env-get (& name))))
 ;# ```
-(import "string.tl")
+(module stdlib.env)
 
-(import "vector.tl")
+(import stdlib.string as string_mod)
+
+(import stdlib.vector as vector_mod)
 
 ;: Windows kernel32 `GetEnvironmentStringsA` binding (#2142 follow-up). Returns
 ;: the process environment block: NUL-separated `NAME=VALUE` entries terminated
@@ -49,7 +51,7 @@
     (let
       [n : i64
         (unsafe
-          (env-c-string-length ptr))]
+          (stdlib.env.env-c-string-length ptr))]
       [buf : (Array u8) (make-array u8 n)]
       [i : i64 0]
       (begin
@@ -89,7 +91,7 @@
                 (ptr-read (ptr-offset entry i)))]
             [nc : u8 (cast (string-ref name i) : u8)]
             (if (if fold
-              (= (env-ascii-fold ec) (env-ascii-fold nc))
+              (= (stdlib.env.env-ascii-fold ec) (stdlib.env.env-ascii-fold nc))
               (= ec nc))
               (set! i (+ i 1))
               (set! ok false))))
@@ -129,7 +131,7 @@
               (let
                 [value : (Ptr u8)
                   (unsafe
-                    (env-match-entry name entry false))]
+                    (stdlib.env.env-match-entry name entry false))]
                 (if (ptr-null? value)
                   (set! idx (+ idx 1))
                   (begin
@@ -147,7 +149,7 @@
       (let
         [p : (Ptr u8)
           (unsafe
-            (env-win-get-environment-strings))]
+            (stdlib.env.env-win-get-environment-strings))]
         [result : (Ptr u8) (ptr-null : (Ptr u8))]
         [stop : bool false]
         (begin
@@ -160,7 +162,7 @@
               (let
                 [value : (Ptr u8)
                   (unsafe
-                    (env-match-entry name p true))]
+                    (stdlib.env.env-match-entry name p true))]
                 (if (ptr-null? value)
                   (set!
                     p
@@ -169,7 +171,7 @@
                         p
                         (+
                           (unsafe
-                            (env-c-string-length p))
+                            (stdlib.env.env-c-string-length p))
                           1))))
                   (begin
                     (set! result value)
@@ -185,27 +187,27 @@
     (cfg
       windows
       (unsafe
-        (env-getenv-ptr-windows name))
+        (stdlib.env.env-getenv-ptr-windows name))
       (unsafe
-        (env-getenv-ptr-linux name)))))
+        (stdlib.env.env-getenv-ptr-linux name)))))
 
 ;: Return true when `name` is present in the process environment.
 (define (env-var-exists? [name : String]) : bool
   (not
     (ptr-null?
       (unsafe
-        (env-getenv-ptr name)))))
+        (stdlib.env.env-getenv-ptr name)))))
 
 ;: Return the value of `name`, or an empty string when the variable is missing.
 (define (env-var-value [name : String]) : String
   (let
     [value : (Ptr u8)
       (unsafe
-        (env-getenv-ptr name))]
+        (stdlib.env.env-getenv-ptr name))]
     (if (ptr-null? value)
       ""
       (unsafe
-        (env-copy-c-string value)))))
+        (stdlib.env.env-copy-c-string value)))))
 
 ;: Return the target platform PATH-list separator as a one-byte String.
 (define (env-path-separator) : String
@@ -231,11 +233,11 @@
 ;: present empty variables use `EnvSomeStringVec` with an empty `StringVec`.
 (defenum EnvMaybeStringVec
   (EnvNoStringVec)
-  (EnvSomeStringVec StringVec))
+  (EnvSomeStringVec vector_mod.StringVec))
 
 ;: Return an empty environment string list.
 (define (env-string-list-empty) : EnvStringList
-  (EnvStringNil))
+  stdlib.env.EnvStringNil)
 
 ;: Prepend an owned string to an environment string list.
 (define (env-string-list-cons [value : String] [rest : EnvStringList]) : EnvStringList
@@ -248,111 +250,119 @@
   (match items
     [(EnvStringNil) acc]
     [(EnvStringCons head rest)
-      (env-string-list-reverse-onto
+      (stdlib.env.env-string-list-reverse-onto
         (box-get rest)
         (EnvStringCons head (box acc)))]))
 
 ;: Return `items` in reverse order.
 (define (env-string-list-reverse [items : EnvStringList]) : EnvStringList
-  (env-string-list-reverse-onto items (EnvStringNil)))
+  (stdlib.env.env-string-list-reverse-onto items stdlib.env.EnvStringNil))
 
 ;: Build an environment string list from `items`, preserving vector order.
 (define (env-string-list-from-vec-from
-  [items : StringVec]
+  [items : vector_mod.StringVec]
   [index : i64]
   [acc : EnvStringList]) : EnvStringList
   (if (< index 0)
     acc
-    (env-string-list-from-vec-from
+    (stdlib.env.env-string-list-from-vec-from
       items
       (- index 1)
-      (EnvStringCons (string-vec-get items index "") (box acc)))))
+      (EnvStringCons (vector_mod.string-vec-get items index "") (box acc)))))
 
 ;: Build an environment string list from `items`, preserving vector order.
-(define (env-string-list-from-vec [items : StringVec]) : EnvStringList
-  (env-string-list-from-vec-from
+(define (env-string-list-from-vec [items : vector_mod.StringVec]) : EnvStringList
+  (stdlib.env.env-string-list-from-vec-from
     items
-    (- (string-vec-len items) 1)
-    (EnvStringNil)))
+    (- (vector_mod.string-vec-len items) 1)
+    stdlib.env.EnvStringNil))
 
 ;: Copy `items` into `out`, preserving list order.
-(define (env-string-list-to-vec-into [items : EnvStringList] [out : StringVec]) : StringVec
+(define (env-string-list-to-vec-into
+  [items : EnvStringList]
+  [out : vector_mod.StringVec]) : vector_mod.StringVec
   (match items
     [(EnvStringNil) out]
     [(EnvStringCons head rest)
-      (env-string-list-to-vec-into (box-get rest) (string-vec-push out head))]))
+      (stdlib.env.env-string-list-to-vec-into
+        (box-get rest)
+        (vector_mod.string-vec-push out head))]))
 
 ;: Copy `items` into a fresh `StringVec`, preserving list order.
-(define (env-string-list-to-vec [items : EnvStringList]) : StringVec
-  (env-string-list-to-vec-into items (string-vec-new)))
+(define (env-string-list-to-vec [items : EnvStringList]) : vector_mod.StringVec
+  (stdlib.env.env-string-list-to-vec-into items (vector_mod.string-vec-new)))
 
 ;: Return the current platform PATH-list separator as a one-byte String.
 (define (env-path-list-separator) : String
-  (env-path-separator))
+  (stdlib.env.env-path-separator))
 
 ;: Return the value of `name`, or `EnvNoString` when the variable is missing.
 (define (env-get [name : (& name str)]) : EnvMaybeString
   (let
-    [owned-name : String (string-copy-borrowed name)]
-    (if (env-var-exists? owned-name)
-      (EnvSomeString (env-var-value owned-name))
-      (EnvNoString))))
+    [owned-name : String (string_mod.string-copy-borrowed name)]
+    (if (stdlib.env.env-var-exists? owned-name)
+      (EnvSomeString (stdlib.env.env-var-value owned-name))
+      stdlib.env.EnvNoString)))
 
 ;: Split a PATH-style string using the supplied one-byte separator string.
 (define (env-path-split-with-separator-vec
   [value : (& value str)]
-  [separator : (& separator str)]) : StringVec
+  [separator : (& separator str)]) : vector_mod.StringVec
   (let
     [n : i64 (string-length value)]
     (if (= n 0)
-      (string-vec-new)
+      (vector_mod.string-vec-new)
       (let
         [sep : char (string-ref separator 0)]
-        [items : StringVec (string-vec-new)]
+        [items : vector_mod.StringVec (vector_mod.string-vec-new)]
         [start : i64 0]
         [i : i64 0]
         (begin
           (while (< i n)
-            (if (char-eq (string-ref value i) sep)
+            (if (string_mod.char-eq (string-ref value i) sep)
               (begin
                 (set!
                   items
-                  (string-vec-push
+                  (vector_mod.string-vec-push
                     items
-                    (substring-borrowed value start (- i start))))
+                    (string_mod.substring-borrowed value start (- i start))))
                 (set! start (+ i 1))
                 (set! i (+ i 1)))
               (set! i (+ i 1))))
-          (string-vec-push items (substring-borrowed value start (- n start))))))))
+          (vector_mod.string-vec-push
+            items
+            (string_mod.substring-borrowed value start (- n start))))))))
 
 ;: Split a PATH-style string using the supplied one-byte separator string.
 (define (env-path-split-with-separator
   [value : (& value str)]
   [separator : (& separator str)]) : EnvStringList
-  (env-string-list-from-vec (env-path-split-with-separator-vec value separator)))
+  (stdlib.env.env-string-list-from-vec
+    (stdlib.env.env-path-split-with-separator-vec value separator)))
 
 ;: Split a PATH-style string using the current platform separator.
-(define (env-path-split-vec [value : (& value str)]) : StringVec
+(define (env-path-split-vec [value : (& value str)]) : vector_mod.StringVec
   (let
-    [separator : String (env-path-list-separator)]
-    (env-path-split-with-separator-vec value (& separator))))
+    [separator : String (stdlib.env.env-path-list-separator)]
+    (stdlib.env.env-path-split-with-separator-vec value (& separator))))
 
 ;: Split a PATH-style string using the current platform separator.
 (define (env-path-split [value : (& value str)]) : EnvStringList
-  (env-string-list-from-vec (env-path-split-vec value)))
+  (stdlib.env.env-string-list-from-vec (stdlib.env.env-path-split-vec value)))
 
 ;: Read `name` and split it as a PATH-style list when present.
 (define (env-path-list-vec [name : (& name str)]) : EnvMaybeStringVec
-  (match (env-get name)
-    [(EnvSomeString value) (EnvSomeStringVec (env-path-split-vec (& value)))]
-    [(EnvNoString) (EnvNoStringVec)]))
+  (match (stdlib.env.env-get name)
+    [(EnvSomeString value)
+      (EnvSomeStringVec (stdlib.env.env-path-split-vec (& value)))]
+    [(EnvNoString) stdlib.env.EnvNoStringVec]))
 
 ;: Read `name` and split it as a PATH-style list when present.
 (define (env-path-list [name : (& name str)]) : EnvMaybeStringList
-  (match (env-path-list-vec name)
+  (match (stdlib.env.env-path-list-vec name)
     [(EnvSomeStringVec value)
-      (EnvSomeStringList (env-string-list-from-vec value))]
-    [(EnvNoStringVec) (EnvNoStringList)]))
+      (EnvSomeStringList (stdlib.env.env-string-list-from-vec value))]
+    [(EnvNoStringVec) stdlib.env.EnvNoStringList]))
 
 ;: Append PATH-style `items` to `acc`, allocating joined string segments.
 (define (env-path-join-tail
@@ -362,50 +372,111 @@
   (match items
     [(EnvStringNil) acc]
     [(EnvStringCons head rest)
-      (env-path-join-tail
+      (stdlib.env.env-path-join-tail
         (let
           [acc-with-separator : String
-            (string-append-borrowed (& acc) separator)]
-          (string-append acc-with-separator head))
+            (string_mod.string-append-borrowed (& acc) separator)]
+          (string_mod.string-append acc-with-separator head))
         (box-get rest)
         separator)]))
 
 ;: Join PATH-style items using the supplied separator.
 (define (env-path-join-vec-tail
   [acc : String]
-  [items : StringVec]
+  [items : vector_mod.StringVec]
   [index : i64]
   [separator : (& separator str)]) : String
-  (if (>= index (string-vec-len items))
+  (if (>= index (vector_mod.string-vec-len items))
     acc
-    (env-path-join-vec-tail
+    (stdlib.env.env-path-join-vec-tail
       (let
-        [acc-with-separator : String (string-append-borrowed (& acc) separator)]
-        (string-append acc-with-separator (string-vec-get items index "")))
+        [acc-with-separator : String
+          (string_mod.string-append-borrowed (& acc) separator)]
+        (string_mod.string-append
+          acc-with-separator
+          (vector_mod.string-vec-get items index "")))
       items
       (+ index 1)
       separator)))
 
 ;: Join PATH-style items using the supplied separator.
 (define (env-path-join-vec-with-separator
-  [items : StringVec]
+  [items : vector_mod.StringVec]
   [separator : (& separator str)]) : String
-  (if (<= (string-vec-len items) 0)
+  (if (<= (vector_mod.string-vec-len items) 0)
     ""
-    (env-path-join-vec-tail (string-vec-get items 0 "") items 1 separator)))
+    (stdlib.env.env-path-join-vec-tail
+      (vector_mod.string-vec-get items 0 "")
+      items
+      1
+      separator)))
 
 ;: Join PATH-style items using the current platform separator.
-(define (env-path-join-vec [items : StringVec]) : String
+(define (env-path-join-vec [items : vector_mod.StringVec]) : String
   (let
-    [separator : String (env-path-list-separator)]
-    (env-path-join-vec-with-separator items (& separator))))
+    [separator : String (stdlib.env.env-path-list-separator)]
+    (stdlib.env.env-path-join-vec-with-separator items (& separator))))
 
 ;: Join PATH-style items using the supplied separator.
 (define (env-path-join-with-separator
   [items : EnvStringList]
   [separator : (& separator str)]) : String
-  (env-path-join-vec-with-separator (env-string-list-to-vec items) separator))
+  (stdlib.env.env-path-join-vec-with-separator
+    (stdlib.env.env-string-list-to-vec items)
+    separator))
 
 ;: Join PATH-style items using the current platform separator.
 (define (env-path-join [items : EnvStringList]) : String
-  (env-path-join-vec (env-string-list-to-vec items)))
+  (stdlib.env.env-path-join-vec (stdlib.env.env-string-list-to-vec items)))
+
+;# Dotted-module migration: preserve the pre-module flat stdlib surface.
+(export
+  (value env-c-string-length)
+  (value env-copy-c-string)
+  (value env-ascii-fold)
+  (value env-match-entry)
+  (value env-getenv-ptr-linux)
+  (value env-getenv-ptr)
+  (value env-var-exists?)
+  (value env-var-value)
+  (value env-path-separator)
+  (value env-string-list-empty)
+  (value env-string-list-cons)
+  (value env-string-list-reverse-onto)
+  (value env-string-list-reverse)
+  (value env-string-list-from-vec-from)
+  (value env-string-list-from-vec)
+  (value env-string-list-to-vec-into)
+  (value env-string-list-to-vec)
+  (value env-path-list-separator)
+  (value env-get)
+  (value env-path-split-with-separator-vec)
+  (value env-path-split-with-separator)
+  (value env-path-split-vec)
+  (value env-path-split)
+  (value env-path-list-vec)
+  (value env-path-list)
+  (value env-path-join-tail)
+  (value env-path-join-vec-tail)
+  (value env-path-join-vec-with-separator)
+  (value env-path-join-vec)
+  (value env-path-join-with-separator)
+  (value env-path-join)
+  (type EnvMaybeString)
+  (type EnvStringList)
+  (type EnvMaybeStringList)
+  (type EnvMaybeStringVec)
+  (variant EnvNoString)
+  (variant EnvSomeString)
+  (variant EnvStringNil)
+  (variant EnvStringCons)
+  (variant EnvNoStringList)
+  (variant EnvSomeStringList)
+  (variant EnvNoStringVec)
+  (variant EnvSomeStringVec))
+
+(cfg
+  windows
+  (export
+    (value env-win-get-environment-strings)
+    (value env-getenv-ptr-windows)))

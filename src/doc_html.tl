@@ -3,13 +3,13 @@
 ;; The renderer stays in TypeLisp and consumes the same extracted documentation
 ;; model as the Markdown renderer. Anchors intentionally reuse `doc-render-anchor`
 ;; so standalone item links remain compatible with existing Markdown anchors.
-(import "../stdlib/io.tl")
+(import stdlib.io as io_mod)
 
 (import "doc_render.tl")
 
-(import "../stdlib/string.tl")
+(import stdlib.string as string_mod)
 
-(import "../stdlib/str_cat.tl")
+(import stdlib.str_cat)
 
 (define (doc-html-escape-one [text : String] [idx : i64]) : String
   (let
@@ -22,7 +22,7 @@
           "&gt;"
           (if (= c #"')
             "&quot;"
-            (substring text idx 1)))))))
+            (string_mod.substring text idx 1)))))))
 
 (define (doc-html-escape [text : String]) : String
   (let
@@ -32,7 +32,7 @@
     (begin
       (while (< i n)
         (begin
-          (set! out (string-append out (doc-html-escape-one text i)))
+          (set! out (string_mod.string-append out (doc-html-escape-one text i)))
           (set! i (+ i 1))))
       out)))
 
@@ -53,12 +53,14 @@
     (begin
       (while (< i n)
         (begin
-          (set! out (string-append out (doc-html-escape-text-one text i)))
+          (set!
+            out
+            (string_mod.string-append out (doc-html-escape-text-one text i)))
           (set! i (+ i 1))))
       out)))
 
 (define (doc-html-page-open [title : String]) : String
-  (str-cat
+  (str_cat.str-cat
     "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>"
     (doc-html-escape title)
     "</title>\n<link rel=\"stylesheet\" href=\"typelisp-docs.css\">\n</head>\n<body class=\"tl-docs\">\n"
@@ -69,7 +71,7 @@
   "</body>\n</html>\n")
 
 (define (doc-html-header [title : String] [subtitle : String]) : String
-  (str-cat
+  (str_cat.str-cat
     "<header class=\"tl-doc-header\">\n<h1>"
     (doc-html-escape title)
     "</h1>\n<p><code>"
@@ -81,8 +83,11 @@
   [doc-text : String]
   [empty-text : String]) : String
   (if (= (string-length doc-text) 0)
-    (str-cat "<p class=\"tl-doc-empty\">" (doc-html-escape empty-text) "</p>\n")
-    (str-cat
+    (str_cat.str-cat
+      "<p class=\"tl-doc-empty\">"
+      (doc-html-escape empty-text)
+      "</p>\n")
+    (str_cat.str-cat
       "<div class=\""
       class-name
       "\"><p>"
@@ -92,14 +97,14 @@
 (define (doc-html-code-block-meta-attr [meta : String]) : String
   (if (= (string-length meta) 0)
     ""
-    (str-cat " data-meta=\"" (doc-html-escape meta) "\"")))
+    (str_cat.str-cat " data-meta=\"" (doc-html-escape meta) "\"")))
 
 (define (doc-html-code-block-with-info
   [language : String]
   [meta : String]
   [source : String]) : String
-  (str-cat
-    (str-cat
+  (str_cat.str-cat
+    (str_cat.str-cat
       "<pre><code class=\"language-"
       (doc-html-escape language)
       "\""
@@ -115,7 +120,7 @@
   (let
     [name : String (doc-item-name item)]
     [anchor : String (doc-render-anchor (doc-item-name item))]
-    (str-cat
+    (str_cat.str-cat
       "<li><a href=\"#"
       anchor
       "\"><code>"
@@ -126,7 +131,7 @@
   (match items
     [(DocItemNil) ""]
     [(DocItemCons item rest)
-      (string-append
+      (string_mod.string-append
         (doc-html-item-nav-entry item)
         (doc-html-item-nav-entries (box-get rest)))]))
 
@@ -134,7 +139,7 @@
   (match items
     [(DocItemNil) ""]
     [_
-      (str-cat
+      (str_cat.str-cat
         "<nav class=\"tl-doc-item-nav\" aria-label=\"Declarations\">\n<h3>Declarations</h3>\n<ul>\n"
         (doc-html-item-nav-entries items)
         "</ul>\n</nav>\n")]))
@@ -144,17 +149,17 @@
     [name : String (doc-item-name item)]
     [anchor : String (doc-render-anchor (doc-item-name item))]
     [kind : String (doc-kind-name (doc-item-kind item))]
-    (str-cat
+    (str_cat.str-cat
       "<a id=\""
       anchor
       "\"></a>\n<section class=\"tl-doc-item\">\n<h3><a href=\"#"
       anchor
-      (str-cat
+      (str_cat.str-cat
         "\">"
         (doc-html-escape name)
         "</a></h3>\n<dl class=\"tl-doc-meta\"><dt>Kind</dt><dd>"
         (doc-html-escape kind)
-        (str-cat
+        (str_cat.str-cat
           "</dd></dl>\n"
           (doc-html-code-block (doc-item-signature item))
           (doc-html-doc-block
@@ -168,7 +173,9 @@
   (match items
     [(DocItemNil) ""]
     [(DocItemCons item rest)
-      (string-append (doc-html-item item) (doc-html-item-list (box-get rest)))]))
+      (string_mod.string-append
+        (doc-html-item item)
+        (doc-html-item-list (box-get rest)))]))
 
 (define (doc-html-items [items : DocItemList]) : String
   (match items
@@ -179,7 +186,7 @@
   (let
     [path : String (doc-module-path module)]
     [anchor : String (doc-render-anchor (doc-module-path module))]
-    (str-cat
+    (str_cat.str-cat
       "<li><a href=\"#"
       anchor
       "\">"
@@ -190,7 +197,7 @@
   (match modules
     [(DocModuleNil) ""]
     [(DocModuleCons module rest)
-      (string-append
+      (string_mod.string-append
         (doc-html-module-nav-entry module)
         (doc-html-module-nav-entries (box-get rest)))]))
 
@@ -198,7 +205,7 @@
   (match modules
     [(DocModuleNil) "<p class=\"tl-doc-empty\">No modules.</p>\n"]
     [_
-      (str-cat
+      (str_cat.str-cat
         "<nav class=\"tl-doc-module-nav\" aria-label=\"Modules\">\n<h2>Modules</h2>\n<ul>\n"
         (doc-html-module-nav-entries modules)
         "</ul>\n</nav>\n")]))
@@ -208,17 +215,17 @@
     [path : String (doc-module-path module)]
     [docs : DocExtraction (doc-module-docs module)]
     [anchor : String (doc-render-anchor (doc-module-path module))]
-    (str-cat
+    (str_cat.str-cat
       "<section class=\"tl-doc-module\" id=\""
       anchor
       "\">\n<h2><a href=\"#"
       anchor
-      (str-cat
+      (str_cat.str-cat
         "\">"
         (doc-html-escape path)
         "</a></h2>\n<p class=\"tl-doc-source\"><code>"
         (doc-html-escape path)
-        (str-cat
+        (str_cat.str-cat
           "</code></p>\n"
           (doc-html-doc-block
             "tl-doc-module-text"
@@ -232,30 +239,30 @@
   (match modules
     [(DocModuleNil) ""]
     [(DocModuleCons module rest)
-      (string-append
+      (string_mod.string-append
         (doc-html-module-section module)
         (doc-html-module-sections (box-get rest)))]))
 
 (define (doc-html-render-module-page [path : String] [docs : DocExtraction]) : String
   (let
-    [title : String (str-cat "TypeLisp API: " path "")]
-    (str-cat
+    [title : String (str_cat.str-cat "TypeLisp API: " path "")]
+    (str_cat.str-cat
       (doc-html-page-open title)
       (doc-html-header "TypeLisp API" path)
       "<main>\n"
       (doc-html-module-section (DocModule path docs))
-      (str-cat "</main>\n" (doc-html-page-close) ""))))
+      (str_cat.str-cat "</main>\n" (doc-html-page-close) ""))))
 
 (define (doc-html-render-source [path : String] [source : String]) : String
   (doc-html-render-module-page path (doc-extract-source source)))
 
 (define (doc-html-render-module-graph [modules : DocModuleList]) : String
-  (str-cat
+  (str_cat.str-cat
     (doc-html-page-open "TypeLisp API")
     (doc-html-header "TypeLisp API" "module index")
     (doc-html-module-nav modules)
     "<main>\n"
-    (str-cat
+    (str_cat.str-cat
       (doc-html-module-sections modules)
       "</main>\n"
       (doc-html-page-close))))
@@ -283,7 +290,7 @@
   (if (doc-string-contains? rendered needle)
     true
     (begin
-      (panic message)
+      (io_mod.panic message)
       false)))
 
 (define (doc-html-smoke) : i64

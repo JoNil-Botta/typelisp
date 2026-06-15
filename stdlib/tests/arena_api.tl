@@ -1,20 +1,20 @@
-(import "stdlib/arena.tl")
+(import stdlib.arena)
 
-(import "stdlib/test.tl")
+(import stdlib.test)
 
 (define (main) : i64
   (let
-    [home : i64 (arena-current)]
-    [scratch : i64 (arena-make)]
+    [home : i64 (arena.arena-current)]
+    [scratch : i64 (arena.arena-make)]
     (begin
       (unsafe
         (begin
           (arena-set! scratch)))
       (let
-        [scratch-current : i64 (arena-current)]
-        [scratch-mark : i64 (arena-mark)]
+        [scratch-current : i64 (arena.arena-current)]
+        [scratch-mark : i64 (arena.arena-mark)]
         (begin
-          (assert-i64-eq
+          (test.assert-i64-eq
             scratch-current
             scratch
             "arena-set! should switch the current arena")

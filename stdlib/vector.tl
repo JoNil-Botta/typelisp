@@ -21,17 +21,19 @@
 ;# language model, pattern matching is the main operation, or preserving a stable
 ;# checked-in recursive representation matters more than append throughput.
 ;#
-;# Usage: `(import "stdlib/vector.tl")`
+;# Usage: `(import stdlib.vector)`
 ;#
 ;# ```typelisp
-;# (import "stdlib/vector.tl")
+;# (import stdlib.vector)
 ;# (define (main) : i64
 ;#   (let
-;#     [v : I64Vec (i64-vec-push (i64-vec-push (i64-vec-new) 10) 32)]
-;#     (+ (i64-vec-get v 0 0) (i64-vec-get v 1 0))))
+;#     [v : vector.I64Vec (vector.i64-vec-push (vector.i64-vec-push (vector.i64-vec-new) 10) 32)]
+;#     (+ (vector.i64-vec-get v 0 0) (vector.i64-vec-get v 1 0))))
 ;# ```
 ;: A growable `i64` sequence: the backing array and the number of live
 ;: elements stored in its prefix `[0, len)`. Capacity is `(array-length slots)`.
+(module stdlib.vector)
+
 (comptime-decl
   (:generated vector-family I64Vec "i64")
   (defstruct I64Vec
@@ -68,7 +70,7 @@
 (comptime-decl
   (:generated vector-family i64-vec-is-empty? "i64")
   (define (i64-vec-is-empty? [v : I64Vec]) : bool
-    (<= (i64-vec-len v) 0)))
+    (<= (stdlib.vector.i64-vec-len v) 0)))
 
 ;: Create an empty vector with backing capacity `capacity`. A non-positive
 ;: capacity is clamped to 1 so the backing array can always grow by doubling.
@@ -86,7 +88,7 @@
 (comptime-decl
   (:generated vector-family i64-vec-new "i64")
   (define (i64-vec-new) : I64Vec
-    (i64-vec-with-capacity 4)))
+    (stdlib.vector.i64-vec-with-capacity 4)))
 
 ;: Read element `index`, returning `fallback` when `index` is out of the live
 ;: range `[0, len)`.
@@ -94,16 +96,16 @@
   (:generated vector-family i64-vec-get "i64")
   (define (i64-vec-get [v : I64Vec] [index : i64] [fallback : i64]) : i64
     (if (if (>= index 0)
-      (< index (i64-vec-len v))
+      (< index (stdlib.vector.i64-vec-len v))
       false)
-      (array-ref (i64-vec-slots v) index)
+      (array-ref (stdlib.vector.i64-vec-slots v) index)
       fallback)))
 
 ;: Read the last live element, or `fallback` when the vector is empty.
 (comptime-decl
   (:generated vector-family i64-vec-last "i64")
   (define (i64-vec-last [v : I64Vec] [fallback : i64]) : i64
-    (i64-vec-get v (- (i64-vec-len v) 1) fallback)))
+    (stdlib.vector.i64-vec-get v (- (stdlib.vector.i64-vec-len v) 1) fallback)))
 
 ;: Overwrite element `index` in place when it is within `[0, len)`; otherwise
 ;: leave the vector unchanged. Returns the same vector either way.
@@ -112,9 +114,9 @@
   (define (i64-vec-set! [v : I64Vec] [index : i64] [value : i64]) : I64Vec
     (begin
       (if (if (>= index 0)
-        (< index (i64-vec-len v))
+        (< index (stdlib.vector.i64-vec-len v))
         false)
-        (array-set! (i64-vec-slots v) index value)
+        (array-set! (stdlib.vector.i64-vec-slots v) index value)
         unit)
       v)))
 
@@ -130,7 +132,7 @@
       unit
       (begin
         (array-set! dst index (array-ref src index))
-        (i64-vec-copy-range dst src (+ index 1) count)))))
+        (stdlib.vector.i64-vec-copy-range dst src (+ index 1) count)))))
 
 ;: Return a copy of `v` whose backing array is twice as large, preserving the
 ;: live prefix. Capacity is always positive (see `i64-vec-with-capacity`), so
@@ -139,10 +141,15 @@
   (:generated vector-family i64-vec-grow "i64")
   (define (i64-vec-grow [v : I64Vec]) : I64Vec
     (let
-      [n : i64 (i64-vec-len v)]
-      [bigger : (Array i64) (make-array i64 (* (i64-vec-capacity v) 2))]
+      [n : i64 (stdlib.vector.i64-vec-len v)]
+      [bigger : (Array i64)
+        (make-array i64 (* (stdlib.vector.i64-vec-capacity v) 2))]
       (begin
-        (i64-vec-copy-range bigger (i64-vec-slots v) 0 n)
+        (stdlib.vector.i64-vec-copy-range
+          bigger
+          (stdlib.vector.i64-vec-slots v)
+          0
+          n)
         (I64Vec bigger n)))))
 
 ;: Append `value` to the end, growing the backing array first when it is full.
@@ -151,13 +158,13 @@
 (comptime-decl
   (:generated vector-family i64-vec-push "i64")
   (define (i64-vec-push [v : I64Vec] [value : i64]) : I64Vec
-    (if (< (i64-vec-len v) (i64-vec-capacity v))
+    (if (< (stdlib.vector.i64-vec-len v) (stdlib.vector.i64-vec-capacity v))
       (let
-        [slots : (Array i64) (i64-vec-slots v)]
+        [slots : (Array i64) (stdlib.vector.i64-vec-slots v)]
         (begin
-          (array-set! slots (i64-vec-len v) value)
-          (I64Vec slots (+ (i64-vec-len v) 1))))
-      (i64-vec-push (i64-vec-grow v) value))))
+          (array-set! slots (stdlib.vector.i64-vec-len v) value)
+          (I64Vec slots (+ (stdlib.vector.i64-vec-len v) 1))))
+      (stdlib.vector.i64-vec-push (stdlib.vector.i64-vec-grow v) value))))
 
 ;: Remove and return the last element together with the shrunk vector, or
 ;: `Empty` when the vector has no elements. The backing array is shared with the
@@ -165,13 +172,13 @@
 (comptime-decl
   (:generated vector-family i64-vec-pop "i64")
   (define (i64-vec-pop [v : I64Vec]) : I64VecPop
-    (if (<= (i64-vec-len v) 0)
-      (I64VecPopEmpty)
+    (if (<= (stdlib.vector.i64-vec-len v) 0)
+      stdlib.vector.I64VecPopEmpty
       (let
-        [last-index : i64 (- (i64-vec-len v) 1)]
+        [last-index : i64 (- (stdlib.vector.i64-vec-len v) 1)]
         (I64VecPopOk
-          (array-ref (i64-vec-slots v) last-index)
-          (I64Vec (i64-vec-slots v) last-index))))))
+          (array-ref (stdlib.vector.i64-vec-slots v) last-index)
+          (I64Vec (stdlib.vector.i64-vec-slots v) last-index))))))
 
 ;: Build a vector from the live prefix `[0, count)` of `src`, copied into a
 ;: fresh backing array. A non-positive `count` yields an empty vector; the
@@ -191,19 +198,23 @@
             1
             n))]
       (begin
-        (i64-vec-copy-range slots src 0 n)
+        (stdlib.vector.i64-vec-copy-range slots src 0 n)
         (I64Vec slots n)))))
 
-;: Return a fresh `(Array i64)` holding exactly the `len` live elements — a
+;: Return a fresh `(Array i64)` holding exactly the `len` live elements â€” a
 ;: caller-owned snapshot independent of the vector's backing array.
 (comptime-decl
   (:generated vector-family i64-vec-to-array "i64")
   (define (i64-vec-to-array [v : I64Vec]) : (Array i64)
     (let
-      [n : i64 (i64-vec-len v)]
+      [n : i64 (stdlib.vector.i64-vec-len v)]
       [out : (Array i64) (make-array i64 n)]
       (begin
-        (i64-vec-copy-range out (i64-vec-slots v) 0 n)
+        (stdlib.vector.i64-vec-copy-range
+          out
+          (stdlib.vector.i64-vec-slots v)
+          0
+          n)
         out))))
 
 ;: Push the first `count` elements of `src`, starting at `index`, onto `v`.
@@ -216,8 +227,8 @@
     [count : i64]) : I64Vec
     (if (>= index count)
       v
-      (i64-vec-extend-from
-        (i64-vec-push v (array-ref src index))
+      (stdlib.vector.i64-vec-extend-from
+        (stdlib.vector.i64-vec-push v (array-ref src index))
         src
         (+ index 1)
         count))))
@@ -227,7 +238,7 @@
 (comptime-decl
   (:generated vector-family i64-vec-extend "i64")
   (define (i64-vec-extend [v : I64Vec] [src : (Array i64)] [count : i64]) : I64Vec
-    (i64-vec-extend-from v src 0 count)))
+    (stdlib.vector.i64-vec-extend-from v src 0 count)))
 
 ;: Swap-reverse the slot range `[lo, hi]` in place.
 (comptime-decl
@@ -240,14 +251,17 @@
         (begin
           (array-set! slots lo (array-ref slots hi))
           (array-set! slots hi tmp)
-          (i64-vec-reverse-range! slots (+ lo 1) (- hi 1)))))))
+          (stdlib.vector.i64-vec-reverse-range! slots (+ lo 1) (- hi 1)))))))
 
 ;: Reverse the live prefix `[0, len)` in place; return the same vector.
 (comptime-decl
   (:generated vector-family i64-vec-reverse! "i64")
   (define (i64-vec-reverse! [v : I64Vec]) : I64Vec
     (begin
-      (i64-vec-reverse-range! (i64-vec-slots v) 0 (- (i64-vec-len v) 1))
+      (stdlib.vector.i64-vec-reverse-range!
+        (stdlib.vector.i64-vec-slots v)
+        0
+        (- (stdlib.vector.i64-vec-len v) 1))
       v)))
 
 ;: Fold live elements at or after `index`, passing the accumulator and current
@@ -259,19 +273,19 @@
     [index : i64]
     [acc : i64]
     [step : (-> i64 i64 i64)]) : i64
-    (if (>= index (i64-vec-len v))
+    (if (>= index (stdlib.vector.i64-vec-len v))
       acc
-      (i64-vec-fold-from
+      (stdlib.vector.i64-vec-fold-from
         v
         (+ index 1)
-        (step acc (array-ref (i64-vec-slots v) index))
+        (step acc (array-ref (stdlib.vector.i64-vec-slots v) index))
         step))))
 
 ;: Fold all live elements from left to right.
 (comptime-decl
   (:generated vector-family i64-vec-fold "i64")
   (define (i64-vec-fold [v : I64Vec] [acc : i64] [step : (-> i64 i64 i64)]) : i64
-    (i64-vec-fold-from v 0 acc step)))
+    (stdlib.vector.i64-vec-fold-from v 0 acc step)))
 
 ;: Build a mapped vector by pushing mapped elements from `index` onward onto
 ;: `out`. Kept separate so public map helpers reuse the normal growth path.
@@ -282,59 +296,65 @@
     [index : i64]
     [out : I64Vec]
     [mapper : (-> i64 i64)]) : I64Vec
-    (if (>= index (i64-vec-len v))
+    (if (>= index (stdlib.vector.i64-vec-len v))
       out
-      (i64-vec-map-build-from
+      (stdlib.vector.i64-vec-map-build-from
         v
         (+ index 1)
-        (i64-vec-push out (mapper (array-ref (i64-vec-slots v) index)))
+        (stdlib.vector.i64-vec-push
+          out
+          (mapper (array-ref (stdlib.vector.i64-vec-slots v) index)))
         mapper))))
 
 ;: Map live elements at or after `index` into a fresh vector, preserving order.
 (comptime-decl
   (:generated vector-family i64-vec-map-from "i64")
   (define (i64-vec-map-from [v : I64Vec] [index : i64] [mapper : (-> i64 i64)]) : I64Vec
-    (i64-vec-map-build-from v index (i64-vec-new) mapper)))
+    (stdlib.vector.i64-vec-map-build-from
+      v
+      index
+      (stdlib.vector.i64-vec-new)
+      mapper)))
 
 ;: Map all live elements into a fresh vector, preserving order.
 (comptime-decl
   (:generated vector-family i64-vec-map "i64")
   (define (i64-vec-map [v : I64Vec] [mapper : (-> i64 i64)]) : I64Vec
-    (i64-vec-map-from v 0 mapper)))
+    (stdlib.vector.i64-vec-map-from v 0 mapper)))
 
 ;: Sum of the live elements, accumulated from `index`.
 (comptime-decl
   (:generated vector-family i64-vec-sum-from "i64")
   (define (i64-vec-sum-from [v : I64Vec] [index : i64] [acc : i64]) : i64
-    (if (>= index (i64-vec-len v))
+    (if (>= index (stdlib.vector.i64-vec-len v))
       acc
-      (i64-vec-sum-from
+      (stdlib.vector.i64-vec-sum-from
         v
         (+ index 1)
-        (+ acc (array-ref (i64-vec-slots v) index))))))
+        (+ acc (array-ref (stdlib.vector.i64-vec-slots v) index))))))
 
 ;: Sum of the live elements (0 for an empty vector). A concrete monomorphic
 ;: convenience reduction retained alongside the higher-order fold helpers.
 (comptime-decl
   (:generated vector-family i64-vec-sum "i64")
   (define (i64-vec-sum [v : I64Vec]) : i64
-    (i64-vec-sum-from v 0 0)))
+    (stdlib.vector.i64-vec-sum-from v 0 0)))
 
 ;: True when `x` is among the live elements at or after `index`.
 (comptime-decl
   (:generated vector-family i64-vec-contains-from? "i64")
   (define (i64-vec-contains-from? [v : I64Vec] [x : i64] [index : i64]) : bool
-    (if (>= index (i64-vec-len v))
+    (if (>= index (stdlib.vector.i64-vec-len v))
       false
-      (if (= (array-ref (i64-vec-slots v) index) x)
+      (if (= (array-ref (stdlib.vector.i64-vec-slots v) index) x)
         true
-        (i64-vec-contains-from? v x (+ index 1))))))
+        (stdlib.vector.i64-vec-contains-from? v x (+ index 1))))))
 
 ;: True when `x` is among the live elements.
 (comptime-decl
   (:generated vector-family i64-vec-contains? "i64")
   (define (i64-vec-contains? [v : I64Vec] [x : i64]) : bool
-    (i64-vec-contains-from? v x 0)))
+    (stdlib.vector.i64-vec-contains-from? v x 0)))
 
 ;: A growable `String` sequence generated from the same vector template as
 ;: `I64Vec`.
@@ -374,7 +394,7 @@
 (comptime-decl
   (:generated vector-family string-vec-is-empty? "String")
   (define (string-vec-is-empty? [v : StringVec]) : bool
-    (<= (string-vec-len v) 0)))
+    (<= (stdlib.vector.string-vec-len v) 0)))
 
 ;: Create an empty string vector with backing capacity `capacity`.
 (comptime-decl
@@ -391,23 +411,26 @@
 (comptime-decl
   (:generated vector-family string-vec-new "String")
   (define (string-vec-new) : StringVec
-    (string-vec-with-capacity 4)))
+    (stdlib.vector.string-vec-with-capacity 4)))
 
 ;: Read element `index`, returning `fallback` when `index` is out of range.
 (comptime-decl
   (:generated vector-family string-vec-get "String")
   (define (string-vec-get [v : StringVec] [index : i64] [fallback : String]) : String
     (if (if (>= index 0)
-      (< index (string-vec-len v))
+      (< index (stdlib.vector.string-vec-len v))
       false)
-      (array-ref (string-vec-slots v) index)
+      (array-ref (stdlib.vector.string-vec-slots v) index)
       fallback)))
 
 ;: Read the last live string, or `fallback` when the vector is empty.
 (comptime-decl
   (:generated vector-family string-vec-last "String")
   (define (string-vec-last [v : StringVec] [fallback : String]) : String
-    (string-vec-get v (- (string-vec-len v) 1) fallback)))
+    (stdlib.vector.string-vec-get
+      v
+      (- (stdlib.vector.string-vec-len v) 1)
+      fallback)))
 
 ;: Overwrite element `index` in place when it is within `[0, len)`.
 (comptime-decl
@@ -415,9 +438,9 @@
   (define (string-vec-set! [v : StringVec] [index : i64] [value : String]) : StringVec
     (begin
       (if (if (>= index 0)
-        (< index (string-vec-len v))
+        (< index (stdlib.vector.string-vec-len v))
         false)
-        (array-set! (string-vec-slots v) index value)
+        (array-set! (stdlib.vector.string-vec-slots v) index value)
         unit)
       v)))
 
@@ -433,43 +456,49 @@
       unit
       (begin
         (array-set! dst index (array-ref src index))
-        (string-vec-copy-range dst src (+ index 1) count)))))
+        (stdlib.vector.string-vec-copy-range dst src (+ index 1) count)))))
 
 ;: Return a copy of `v` whose backing array is twice as large.
 (comptime-decl
   (:generated vector-family string-vec-grow "String")
   (define (string-vec-grow [v : StringVec]) : StringVec
     (let
-      [n : i64 (string-vec-len v)]
+      [n : i64 (stdlib.vector.string-vec-len v)]
       [bigger : (Array String)
-        (make-array String (* (string-vec-capacity v) 2))]
+        (make-array String (* (stdlib.vector.string-vec-capacity v) 2))]
       (begin
-        (string-vec-copy-range bigger (string-vec-slots v) 0 n)
+        (stdlib.vector.string-vec-copy-range
+          bigger
+          (stdlib.vector.string-vec-slots v)
+          0
+          n)
         (StringVec bigger n)))))
 
 ;: Append `value` to the end, growing the backing array first when it is full.
 (comptime-decl
   (:generated vector-family string-vec-push "String")
   (define (string-vec-push [v : StringVec] [value : String]) : StringVec
-    (if (< (string-vec-len v) (string-vec-capacity v))
+    (if (<
+      (stdlib.vector.string-vec-len v)
+      (stdlib.vector.string-vec-capacity v))
       (let
-        [slots : (Array String) (string-vec-slots v)]
+        [slots : (Array String) (stdlib.vector.string-vec-slots v)]
         (begin
-          (array-set! slots (string-vec-len v) value)
-          (StringVec slots (+ (string-vec-len v) 1))))
-      (string-vec-push (string-vec-grow v) value))))
+          (array-set! slots (stdlib.vector.string-vec-len v) value)
+          (StringVec slots (+ (stdlib.vector.string-vec-len v) 1))))
+      (stdlib.vector.string-vec-push (stdlib.vector.string-vec-grow v) value))))
 
 ;: Remove and return the last string together with the shrunk vector.
 (comptime-decl
   (:generated vector-family string-vec-pop "String")
   (define (string-vec-pop [v : StringVec]) : StringVecPop
-    (if (<= (string-vec-len v) 0)
-      (StringVecPopEmpty)
+    (if (<= (stdlib.vector.string-vec-len v) 0)
+      stdlib.vector.StringVecPopEmpty
       (let
-        [last-index : i64 (- (string-vec-len v) 1)]
+        [last-index : i64 (- (stdlib.vector.string-vec-len v) 1)]
         (StringVecPopOk
-          (array-ref (string-vec-slots v) last-index)
-          (StringVec (string-vec-slots v) last-index))))))
+          (array-ref (stdlib.vector.string-vec-slots v) last-index)
+          (StringVec (stdlib.vector.string-vec-slots v) last-index))))))
 
 ;: Build a string vector from the live prefix `[0, count)` of `src`.
 (comptime-decl
@@ -487,7 +516,7 @@
             1
             n))]
       (begin
-        (string-vec-copy-range slots src 0 n)
+        (stdlib.vector.string-vec-copy-range slots src 0 n)
         (StringVec slots n)))))
 
 ;: Return a fresh `(Array String)` snapshot of the live prefix.
@@ -495,10 +524,14 @@
   (:generated vector-family string-vec-to-array "String")
   (define (string-vec-to-array [v : StringVec]) : (Array String)
     (let
-      [n : i64 (string-vec-len v)]
+      [n : i64 (stdlib.vector.string-vec-len v)]
       [out : (Array String) (make-array String n)]
       (begin
-        (string-vec-copy-range out (string-vec-slots v) 0 n)
+        (stdlib.vector.string-vec-copy-range
+          out
+          (stdlib.vector.string-vec-slots v)
+          0
+          n)
         out))))
 
 ;: Push the first `count` elements of `src`, starting at `index`, onto `v`.
@@ -511,8 +544,8 @@
     [count : i64]) : StringVec
     (if (>= index count)
       v
-      (string-vec-extend-from
-        (string-vec-push v (array-ref src index))
+      (stdlib.vector.string-vec-extend-from
+        (stdlib.vector.string-vec-push v (array-ref src index))
         src
         (+ index 1)
         count))))
@@ -524,7 +557,7 @@
     [v : StringVec]
     [src : (Array String)]
     [count : i64]) : StringVec
-    (string-vec-extend-from v src 0 count)))
+    (stdlib.vector.string-vec-extend-from v src 0 count)))
 
 ;: Swap-reverse the slot range `[lo, hi]` in place.
 (comptime-decl
@@ -540,31 +573,97 @@
         (begin
           (array-set! slots lo (array-ref slots hi))
           (array-set! slots hi tmp)
-          (string-vec-reverse-range! slots (+ lo 1) (- hi 1)))))))
+          (stdlib.vector.string-vec-reverse-range! slots (+ lo 1) (- hi 1)))))))
 
 ;: Reverse the live prefix `[0, len)` in place; return the same vector.
 (comptime-decl
   (:generated vector-family string-vec-reverse! "String")
   (define (string-vec-reverse! [v : StringVec]) : StringVec
     (begin
-      (string-vec-reverse-range!
-        (string-vec-slots v)
+      (stdlib.vector.string-vec-reverse-range!
+        (stdlib.vector.string-vec-slots v)
         0
-        (- (string-vec-len v) 1))
+        (- (stdlib.vector.string-vec-len v) 1))
       v)))
 
 ;: True when `x` is among the live strings at or after `index`.
 (comptime-decl
   (:generated vector-family string-vec-contains-from? "String")
   (define (string-vec-contains-from? [v : StringVec] [x : String] [index : i64]) : bool
-    (if (>= index (string-vec-len v))
+    (if (>= index (stdlib.vector.string-vec-len v))
       false
-      (if (string-eq (array-ref (string-vec-slots v) index) x)
+      (if (string-eq (array-ref (stdlib.vector.string-vec-slots v) index) x)
         true
-        (string-vec-contains-from? v x (+ index 1))))))
+        (stdlib.vector.string-vec-contains-from? v x (+ index 1))))))
 
 ;: True when `x` is among the live strings.
 (comptime-decl
   (:generated vector-family string-vec-contains? "String")
   (define (string-vec-contains? [v : StringVec] [x : String]) : bool
-    (string-vec-contains-from? v x 0)))
+    (stdlib.vector.string-vec-contains-from? v x 0)))
+
+;# Dotted-module migration: preserve the pre-module flat stdlib surface.
+(export
+  (value i64-vec-slots)
+  (value i64-vec-len)
+  (value i64-vec-capacity)
+  (value i64-vec-is-empty?)
+  (value i64-vec-with-capacity)
+  (value i64-vec-new)
+  (value i64-vec-get)
+  (value i64-vec-last)
+  (value i64-vec-set!)
+  (value i64-vec-copy-range)
+  (value i64-vec-grow)
+  (value i64-vec-push)
+  (value i64-vec-pop)
+  (value i64-vec-from-array)
+  (value i64-vec-to-array)
+  (value i64-vec-extend-from)
+  (value i64-vec-extend)
+  (value i64-vec-reverse-range!)
+  (value i64-vec-reverse!)
+  (value i64-vec-fold-from)
+  (value i64-vec-fold)
+  (value i64-vec-map-build-from)
+  (value i64-vec-map-from)
+  (value i64-vec-map)
+  (value i64-vec-sum-from)
+  (value i64-vec-sum)
+  (value i64-vec-contains-from?)
+  (value i64-vec-contains?)
+  (value string-vec-slots)
+  (value string-vec-len)
+  (value string-vec-capacity)
+  (value string-vec-is-empty?)
+  (value string-vec-with-capacity)
+  (value string-vec-new)
+  (value string-vec-get)
+  (value string-vec-last)
+  (value string-vec-set!)
+  (value string-vec-copy-range)
+  (value string-vec-grow)
+  (value string-vec-push)
+  (value string-vec-pop)
+  (value string-vec-from-array)
+  (value string-vec-to-array)
+  (value string-vec-extend-from)
+  (value string-vec-extend)
+  (value string-vec-reverse-range!)
+  (value string-vec-reverse!)
+  (value string-vec-contains-from?)
+  (value string-vec-contains?)
+  (type I64Vec)
+  (type I64VecPop)
+  (type StringVec)
+  (type StringVecPop)
+  (constructor I64Vec)
+  (constructor StringVec)
+  (field I64Vec slots)
+  (field I64Vec len)
+  (field StringVec slots)
+  (field StringVec len)
+  (variant I64VecPopEmpty)
+  (variant I64VecPopOk)
+  (variant StringVecPopEmpty)
+  (variant StringVecPopOk))

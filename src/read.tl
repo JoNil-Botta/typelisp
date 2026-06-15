@@ -33,7 +33,7 @@
 ;; `token.tl` token model, so this single import transitively pulls in BOTH
 ;; the `lex` entry and the `Token` enum + token accessors/tag constants.
 ;; Resolved relative to this file, so it finds the co-located `lex.tl`.
-(import "../stdlib/io.tl")
+(import stdlib.io as io_mod)
 
 (import "lex.tl")
 
@@ -493,7 +493,7 @@
     [(OkSexpr form) form]
     [(ErrSexpr message)
       (begin
-        (panic message)
+        (io_mod.panic message)
         SNil)]))
 
 (define (read-list [toks : (Array Token)] [cur : (Array i64)]) : Sexpr
@@ -501,7 +501,7 @@
     [(OkSexpr list) list]
     [(ErrSexpr message)
       (begin
-        (panic message)
+        (io_mod.panic message)
         SNil)]))
 
 ;; read: the public entry point. Read a single top-level form from the front of
@@ -527,7 +527,7 @@
     [(OkSpannedSexpr form) form]
     [(ErrSpannedSexpr err)
       (begin
-        (panic (source-error-message err))
+        (io_mod.panic (source-error-message err))
         (SpSNil (source-error-span err)))]))
 
 (define (read [toks : (Array Token)]) : Sexpr
@@ -535,5 +535,5 @@
     [(OkSexpr form) form]
     [(ErrSexpr message)
       (begin
-        (panic message)
+        (io_mod.panic message)
         SNil)]))

@@ -13,16 +13,18 @@
 ;# `*-set-next-occupied set 0`, advancing with `(+ index 1)`, and reading each
 ;# key with `*-set-entry-at`.
 ;#
-;# Usage: `(import "stdlib/set.tl")`
-(import "hashmap.tl")
+;# Usage: `(import stdlib.set)`
+(module stdlib.set)
+
+(import stdlib.hashmap as hashmap_mod)
 
 ;: Stable descriptor identity for generated `String`-key set families.
 (define (set-string-key-descriptor-key) : String
-  (hashmap-string-key-descriptor-key))
+  (hashmap_mod.hashmap-string-key-descriptor-key))
 
 ;: Stable descriptor identity for generated `i64`-key set families.
 (define (set-i64-key-descriptor-key) : String
-  (hashmap-i64-key-descriptor-key))
+  (hashmap_mod.hashmap-i64-key-descriptor-key))
 
 ;: Generated `HashSet<String>` family request. The public API is produced by
 ;: the `stdlib/set-family` declaration generator.
@@ -37,3 +39,12 @@
   (:generated stdlib/set-family I64Set (type-key (type i64)) "stdlib/hashmap/i64-key-v1")
   (defstruct I64Set
     (__set_family_request i64)))
+
+;# Dotted-module migration: preserve the pre-module flat stdlib surface.
+(export
+  (value set-string-key-descriptor-key)
+  (value set-i64-key-descriptor-key)
+  (type StringSet)
+  (type I64Set)
+  (constructor StringSet)
+  (constructor I64Set))

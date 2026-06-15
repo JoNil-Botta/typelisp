@@ -1,9 +1,11 @@
 ;; compiler_driver_core.tl - Import-aware selfhost compiler driver helpers.
-(import "../stdlib/io.tl")
+(import stdlib.io as io_mod)
 
-(import "../stdlib/arena.tl")
+(import stdlib.arena as arena_mod)
 
-(import "../stdlib/string.tl")
+(import stdlib.string as string_mod)
+
+(import stdlib.vector as vector_mod)
 
 (cfg compile-profile (import "../stdlib/profile.tl"))
 
@@ -15,14 +17,14 @@
 
 (import "compiler_optimize.tl")
 
-(import "../stdlib/text_buf.tl")
+(import stdlib.text_buf as text_buf_mod)
 
 (defenum ResultCompilerDriver
   (OkCompilerDriver String)
   (ErrCompilerDriver CompilerDiagnostic))
 
 (defenum ResultCompilerDriverBuffer
-  (OkCompilerDriverBuffer TextBuf)
+  (OkCompilerDriverBuffer text_buf_mod.TextBuf)
   (ErrCompilerDriverBuffer CompilerDiagnostic))
 
 (defenum ResultCompilerDriverPic
@@ -72,7 +74,7 @@
     (match (array-ref compiler-driver-runtime-prelude-cache index)
       [(CompilerLoadPreludeCacheEmpty) (CompilerLoadPreludeCacheMiss)]
       [(CompilerLoadPreludeCacheFull slot-key decls paths modules seen)
-        (if (string-eq slot-key key)
+        (if (string_mod.string-eq slot-key key)
           (CompilerLoadPreludeCacheHit decls paths modules seen)
           (compiler-driver-runtime-prelude-cache-lookup-from key (+ index 1)))])))
 
@@ -97,7 +99,7 @@
           index
           (CompilerLoadPreludeCacheFull key decls paths modules seen))]
       [(CompilerLoadPreludeCacheFull slot-key _ _ _ _)
-        (if (string-eq slot-key key)
+        (if (string_mod.string-eq slot-key key)
           (array-set!
             compiler-driver-runtime-prelude-cache
             index
@@ -192,7 +194,7 @@
 (cfg
   compile-profile
   (define (compiler-driver-profile-field [value : i64]) : String
-    (string-append "|" (int->string value))))
+    (string_mod.string-append "|" (string_mod.int->string value))))
 
 (cfg
   compile-profile
@@ -202,17 +204,19 @@
     [alloc-delta : i64]
     [live-delta : i64]
     [peak-delta : i64]) : String
-    (string-append
+    (string_mod.string-append
       "compile-profile|"
-      (string-append
+      (string_mod.string-append
         phase
-        (string-append
+        (string_mod.string-append
           (compiler-driver-profile-field elapsed-ms)
-          (string-append
+          (string_mod.string-append
             (compiler-driver-profile-field alloc-delta)
-            (string-append
+            (string_mod.string-append
               (compiler-driver-profile-field live-delta)
-              (string-append (compiler-driver-profile-field peak-delta) "\n"))))))))
+              (string_mod.string-append
+                (compiler-driver-profile-field peak-delta)
+                "\n"))))))))
 
 (cfg
   compile-profile
@@ -239,7 +243,7 @@
           (compiler-driver-profile-max
             compiler-driver-profile-best-peak
             peak-delta))
-        (print-error
+        (io_mod.print-error
           (compiler-driver-profile-line
             phase
             (- end-ms compiler-driver-profile-phase-start-ms)
@@ -255,14 +259,14 @@
       (set! compiler-driver-profile-total-start-total (profile-alloc-total))
       (set! compiler-driver-profile-total-start-live (profile-alloc-live))
       (set! compiler-driver-profile-best-peak 0)
-      (print-error
+      (io_mod.print-error
         "compile-profile|phase|elapsed_ms|alloc_delta_bytes|live_delta_bytes|peak_live_delta_bytes\n")
       (compiler-driver-profile-start-phase))))
 
 (cfg
   compile-profile
   (define (compiler-driver-profile-finish-total) : unit
-    (print-error
+    (io_mod.print-error
       (compiler-driver-profile-line
         "total"
         (- (profile-now-ms) compiler-driver-profile-total-start-ms)
@@ -487,7 +491,7 @@
                     emit-entry))
                   [(OkCompilerBackendBuffer buf)
                     (let
-                      [peepholed : TextBuf
+                      [peepholed : text_buf_mod.TextBuf
                         (compiler-backend-peephole-text-buf buf)]
                       (begin
                         (cfg
@@ -627,7 +631,7 @@
 ;; Loading the prelude first lets the entry's own (possibly transitive) imports
 ;; dedup against it before the decls/paths/modules are concatenated.
 (define (compiler-driver-load-runtime-prelude-cold
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
   (match (compiler-load-file-with-paths-and-roots-cfg
     "stdlib/runtime.tl"
@@ -660,16 +664,16 @@
 
 (define (compiler-driver-load-runtime-prelude-cache-miss
   [key : String]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
   (let
-    [prev-arena : i64 (arena-current)]
+    [prev-arena : i64 (arena_mod.arena-current)]
     [loaded : ResultCompilerLoadWithPaths
       (begin
         (unsafe
-          (arena-set! node-pool-base-arena))
+          (arena_mod.arena-set! node-pool-base-arena))
         (let
-          [persistent-key : String (string-copy-borrowed (& key))]
+          [persistent-key : String (string_mod.string-copy-borrowed (& key))]
           [cold : ResultCompilerLoadWithPaths
             (compiler-driver-load-runtime-prelude-cold stdlib-roots cfgs)]
           (begin
@@ -683,12 +687,12 @@
                   seen)]
               [(ErrCompilerLoadWithPaths _) unit])
             (unsafe
-              (arena-set! prev-arena))
+              (arena_mod.arena-set! prev-arena))
             cold)))]
     loaded))
 
 (define (compiler-driver-load-runtime-prelude
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
   (if (compiler-load-session-cache-enabled?)
     (let
@@ -706,7 +710,7 @@
 
 (define (compiler-driver-load-file-with-runtime
   [input-path : String]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
   ;; Prepend the implicit prelude (runtime + core macros), then load the entry.
   (match (compiler-driver-load-runtime-prelude stdlib-roots cfgs)
@@ -734,7 +738,7 @@
 (define (compiler-driver-load-source-with-runtime
   [input-path : String]
   [source : String]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
   (match (compiler-driver-load-runtime-prelude stdlib-roots cfgs)
     [(OkCompilerLoadWithPaths
@@ -762,7 +766,7 @@
 (define (compiler-driver-load-and-lower-escaping
   [input-path : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [mode : CompilerBackendMode]
   [cfgs : SymI64Env]) : ResultCompilerDriverLowered
   (match (compiler-driver-load-file-with-runtime input-path stdlib-roots cfgs)
@@ -803,13 +807,13 @@
     input-path
     target
     has-target
-    (string-vec-new)))
+    (vector_mod.string-vec-new)))
 
 (define (compiler-driver-emit-file-with-target-and-roots
   [input-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : StringVec]) : ResultCompilerDriver
+  [stdlib-roots : vector_mod.StringVec]) : ResultCompilerDriver
   (compiler-driver-emit-file-with-target-roots-and-level
     input-path
     target
@@ -821,7 +825,7 @@
   [input-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [opt-level : i64]) : ResultCompilerDriver
   (compiler-driver-emit-file-with-target-roots-level-and-mode
     input-path
@@ -835,7 +839,7 @@
   [input-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]) : ResultCompilerDriver
   (compiler-driver-emit-file-with-target-roots-level-mode-cfg-and-crt
@@ -852,7 +856,7 @@
   [input-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [cfgs : SymI64Env]) : ResultCompilerDriver
@@ -870,7 +874,7 @@
   [input-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [crt-entry : bool]) : ResultCompilerDriver
@@ -888,7 +892,7 @@
   [input-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [cfgs : SymI64Env]
@@ -921,7 +925,7 @@
   [input-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [cfgs : SymI64Env]) : ResultCompilerDriverBuffer
@@ -949,7 +953,7 @@
   [input-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [cfgs : SymI64Env]
@@ -979,7 +983,7 @@
   [input-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [cfgs : SymI64Env]) : ResultCompilerDriverPic
@@ -1008,7 +1012,7 @@
   [input-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [opt-level : i64]
   [manifest-dir : String]
   [package-owner : String]
@@ -1030,7 +1034,7 @@
   [input-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [opt-level : i64]
   [manifest-dir : String]
   [package-owner : String]
@@ -1126,7 +1130,7 @@
   [input-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [manifest-dir : String]
@@ -1165,7 +1169,7 @@
 (define (compiler-driver-load-package-file-with-runtime
   [input-path : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]
   [emit-entry : bool]) : ResultCompilerLoadWithPaths
@@ -1262,7 +1266,7 @@
 (define (compiler-driver-load-package-file-with-runtime-owned
   [input-path : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [manifest-dir : String]
   [package-owner : String]
   [deps : CompilerPkgDeps]
@@ -1289,9 +1293,11 @@
     [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)]))
 
 (define (compiler-driver-ir-summary-line [name : String] [value : i64]) : String
-  (string-append
+  (string_mod.string-append
     name
-    (string-append " " (string-append (int->string value) "\n"))))
+    (string_mod.string-append
+      " "
+      (string_mod.string-append (string_mod.int->string value) "\n"))))
 
 (define (compiler-driver-ir-summary-render [summary : CompilerIrSummary]) : String
   (let
@@ -1299,82 +1305,82 @@
     (begin
       (set!
         out
-        (string-append
+        (string_mod.string-append
           out
           (compiler-driver-ir-summary-line
             "globals"
             (compiler-ir-summary-globals summary))))
       (set!
         out
-        (string-append
+        (string_mod.string-append
           out
           (compiler-driver-ir-summary-line
             "functions"
             (compiler-ir-summary-functions summary))))
       (set!
         out
-        (string-append
+        (string_mod.string-append
           out
           (compiler-driver-ir-summary-line
             "externs"
             (compiler-ir-summary-externs summary))))
       (set!
         out
-        (string-append
+        (string_mod.string-append
           out
           (compiler-driver-ir-summary-line
             "blocks"
             (compiler-ir-summary-blocks summary))))
       (set!
         out
-        (string-append
+        (string_mod.string-append
           out
           (compiler-driver-ir-summary-line
             "instructions"
             (compiler-ir-summary-instructions summary))))
       (set!
         out
-        (string-append
+        (string_mod.string-append
           out
           (compiler-driver-ir-summary-line
             "vars"
             (compiler-ir-summary-vars summary))))
       (set!
         out
-        (string-append
+        (string_mod.string-append
           out
           (compiler-driver-ir-summary-line
             "empty-blocks"
             (compiler-ir-summary-empty-blocks summary))))
       (set!
         out
-        (string-append
+        (string_mod.string-append
           out
           (compiler-driver-ir-summary-line
             "max-instructions-function"
             (compiler-ir-summary-max-instructions-function summary))))
       (set!
         out
-        (string-append
+        (string_mod.string-append
           out
           (compiler-driver-ir-summary-line
             "max-instructions-block"
             (compiler-ir-summary-max-instructions-block summary))))
       (set!
         out
-        (string-append
+        (string_mod.string-append
           out
           (compiler-driver-ir-summary-line
             "call-arg-entries"
             (compiler-ir-summary-call-arg-entries summary))))
       (set!
         out
-        (string-append
+        (string_mod.string-append
           out
           (compiler-driver-ir-summary-line
             "phi-input-entries"
             (compiler-ir-summary-phi-input-entries summary))))
-      (string-append
+      (string_mod.string-append
         out
         (compiler-driver-ir-summary-line
           "score"
@@ -1399,7 +1405,7 @@
 
 (define (compiler-driver-emit-ir-summary-file-with-roots-and-level
   [input-path : String]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [opt-level : i64]) : ResultCompilerDriver
   (compiler-driver-emit-ir-summary-file-with-roots-level-and-cfg
     input-path
@@ -1410,7 +1416,7 @@
 (define (compiler-driver-emit-ir-summary-file-with-target-roots-level-mode-and-cfg
   [input-path : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [cfgs : SymI64Env]) : ResultCompilerDriver
@@ -1435,7 +1441,7 @@
 
 (define (compiler-driver-emit-ir-summary-file-with-roots-level-and-cfg
   [input-path : String]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [opt-level : i64]
   [cfgs : SymI64Env]) : ResultCompilerDriver
   (compiler-driver-emit-ir-summary-file-with-target-roots-level-mode-and-cfg
@@ -1451,7 +1457,7 @@
 
 (define (compiler-driver-emit-file-with-roots
   [input-path : String]
-  [stdlib-roots : StringVec]) : ResultCompilerDriver
+  [stdlib-roots : vector_mod.StringVec]) : ResultCompilerDriver
   (compiler-driver-emit-file-with-target-and-roots
     input-path
     (BackendTargetLinux)
@@ -1460,7 +1466,7 @@
 
 (define (compiler-driver-emit-file-with-roots-and-level
   [input-path : String]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [opt-level : i64]) : ResultCompilerDriver
   (compiler-driver-emit-file-with-target-roots-and-level
     input-path
@@ -1477,7 +1483,7 @@
 (define (compiler-driver-emit-file-for-target-with-roots
   [input-path : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : StringVec]) : ResultCompilerDriver
+  [stdlib-roots : vector_mod.StringVec]) : ResultCompilerDriver
   (compiler-driver-emit-file-with-target-and-roots
     input-path
     target
@@ -1487,7 +1493,7 @@
 (define (compiler-driver-emit-file-for-target-with-roots-and-level
   [input-path : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [opt-level : i64]) : ResultCompilerDriver
   (compiler-driver-emit-file-with-target-roots-and-level
     input-path
@@ -1496,8 +1502,10 @@
     stdlib-roots
     opt-level))
 
-(define (compiler-driver-write-text-buf [output-path : String] [buf : TextBuf]) : i64
-  (text-buf-write-file output-path buf))
+(define (compiler-driver-write-text-buf
+  [output-path : String]
+  [buf : text_buf_mod.TextBuf]) : i64
+  (text_buf_mod.text-buf-write-file output-path buf))
 
 (define (compiler-driver-write-result
   [result : ResultCompilerDriver]
@@ -1506,15 +1514,18 @@
     [(OkCompilerDriver asm)
       (begin
         (cfg compile-profile (compiler-driver-profile-start-phase))
-        (write-file output-path asm)
+        (io_mod.write-file output-path asm)
         (cfg compile-profile (compiler-driver-profile-finish-phase "write"))
         (cfg compile-profile (compiler-driver-profile-finish-total))
-        (print-string (string-append "Wrote " (string-append output-path "\n")))
+        (io_mod.print-string
+          (string_mod.string-append
+            "Wrote "
+            (string_mod.string-append output-path "\n")))
         0)]
     [(ErrCompilerDriver diag)
       (begin
         (cfg compile-profile (compiler-driver-profile-finish-total))
-        (print-error (compiler-diagnostic-render diag))
+        (io_mod.print-error (compiler-diagnostic-render diag))
         1)]))
 
 (define (compiler-driver-write-buffer-result
@@ -1532,18 +1543,20 @@
           (cfg compile-profile (compiler-driver-profile-finish-total))
           (if (= status 0)
             (begin
-              (print-string
-                (string-append "Wrote " (string-append output-path "\n")))
+              (io_mod.print-string
+                (string_mod.string-append
+                  "Wrote "
+                  (string_mod.string-append output-path "\n")))
               0)
             status)))]
     [(ErrCompilerDriverBuffer diag)
       (begin
         (cfg compile-profile (compiler-driver-profile-finish-total))
-        (print-error (compiler-diagnostic-render diag))
+        (io_mod.print-error (compiler-diagnostic-render diag))
         1)]))
 
 (define (compiler-driver-pic-fixups-path [output-path : String]) : String
-  (string-append output-path ".fixups"))
+  (string_mod.string-append output-path ".fixups"))
 
 (define (compiler-driver-write-pic-result
   [result : ResultCompilerDriverPic]
@@ -1554,19 +1567,23 @@
         [fixups-path : String (compiler-driver-pic-fixups-path output-path)]
         (begin
           (cfg compile-profile (compiler-driver-profile-start-phase))
-          (write-file output-path (struct-get output asm))
-          (write-file fixups-path (struct-get output fixups))
+          (io_mod.write-file output-path (struct-get output asm))
+          (io_mod.write-file fixups-path (struct-get output fixups))
           (cfg compile-profile (compiler-driver-profile-finish-phase "write"))
           (cfg compile-profile (compiler-driver-profile-finish-total))
-          (print-string
-            (string-append "Wrote " (string-append output-path "\n")))
-          (print-string
-            (string-append "Wrote " (string-append fixups-path "\n")))
+          (io_mod.print-string
+            (string_mod.string-append
+              "Wrote "
+              (string_mod.string-append output-path "\n")))
+          (io_mod.print-string
+            (string_mod.string-append
+              "Wrote "
+              (string_mod.string-append fixups-path "\n")))
           0))]
     [(ErrCompilerDriverPic diag)
       (begin
         (cfg compile-profile (compiler-driver-profile-finish-total))
-        (print-error (compiler-diagnostic-render diag))
+        (io_mod.print-error (compiler-diagnostic-render diag))
         1)]))
 
 (define (compiler-driver-compile-file-with-target-roots-level-mode-cfg
@@ -1574,7 +1591,7 @@
   [output-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [cfgs : SymI64Env]) : i64
@@ -1594,7 +1611,7 @@
   [output-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [cfgs : SymI64Env]) : i64
@@ -1617,7 +1634,7 @@
     output-path
     (BackendTargetLinux)
     false
-    (string-vec-new)
+    (vector_mod.string-vec-new)
     (compiler-optimize-default-level)
     (BackendModeScalar)
     (compiler-cfg-empty)))
@@ -1625,7 +1642,7 @@
 (define (compiler-driver-compile-file-with-roots
   [input-path : String]
   [output-path : String]
-  [stdlib-roots : StringVec]) : i64
+  [stdlib-roots : vector_mod.StringVec]) : i64
   (compiler-driver-compile-file-with-target-roots-level-mode-cfg
     input-path
     output-path
@@ -1639,7 +1656,7 @@
 (define (compiler-driver-compile-file-with-roots-and-level
   [input-path : String]
   [output-path : String]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [opt-level : i64]) : i64
   (compiler-driver-compile-file-with-target-roots-level-mode-cfg
     input-path
@@ -1654,7 +1671,7 @@
 (define (compiler-driver-compile-file-with-roots-level-and-mode
   [input-path : String]
   [output-path : String]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]) : i64
   (compiler-driver-compile-file-with-target-roots-level-mode-cfg
@@ -1670,7 +1687,7 @@
 (define (compiler-driver-compile-file-with-roots-level-mode-and-cfg
   [input-path : String]
   [output-path : String]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [cfgs : SymI64Env]) : i64
@@ -1693,7 +1710,7 @@
     output-path
     target
     true
-    (string-vec-new)
+    (vector_mod.string-vec-new)
     (compiler-optimize-default-level)
     (BackendModeScalar)
     (compiler-cfg-empty)))
@@ -1702,7 +1719,7 @@
   [input-path : String]
   [output-path : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : StringVec]) : i64
+  [stdlib-roots : vector_mod.StringVec]) : i64
   (compiler-driver-compile-file-with-target-roots-level-mode-cfg
     input-path
     output-path
@@ -1717,7 +1734,7 @@
   [input-path : String]
   [output-path : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [opt-level : i64]) : i64
   (compiler-driver-compile-file-with-target-roots-level-mode-cfg
     input-path
@@ -1733,7 +1750,7 @@
   [input-path : String]
   [output-path : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]) : i64
   (compiler-driver-compile-file-with-target-roots-level-mode-cfg
@@ -1750,7 +1767,7 @@
   [input-path : String]
   [output-path : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [cfgs : SymI64Env]) : i64

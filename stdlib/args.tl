@@ -12,27 +12,29 @@
 ;# is involved; `args-parse-argv*` only reads the raw argv accessors from
 ;# `stdlib/io.tl`.
 ;#
-;# Usage: `(import "stdlib/args.tl")`
+;# Usage: `(import stdlib.args)`
 ;#
 ;# ```typelisp
-;# (import "stdlib/args.tl")
-;# (define specs : ArgsOptionSpecList
-;#   (args-option-spec-cons
-;#     (args-value-option "output" "output" "o")
-;#     (args-option-spec-cons
-;#       (args-flag-option "verbose" "verbose" "v")
-;#       (args-option-spec-empty))))
+;# (import stdlib.args)
+;# (define specs : args.ArgsOptionSpecList
+;#   (args.args-option-spec-cons
+;#     (args.args-value-option "output" "output" "o")
+;#     (args.args-option-spec-cons
+;#       (args.args-flag-option "verbose" "verbose" "v")
+;#       (args.args-option-spec-empty))))
 ;# (define (main) : i64
-;#   (match (args-parse-argv specs 1)
-;#     [(OkArgsParsed parsed)
-;#       (if (args-option-present? parsed "verbose") 1 0)]
-;#     [(ErrArgsParsed _) 2]))
+;#   (match (args.args-parse-argv specs 1)
+;#     [(args.OkArgsParsed parsed)
+;#       (if (args.args-option-present? parsed "verbose") 1 0)]
+;#     [(args.ErrArgsParsed _) 2]))
 ;# ```
-(import "io.tl")
+(module stdlib.args)
 
-(import "list.tl")
+(import stdlib.io as io_mod)
 
-(import "string.tl")
+(import stdlib.list as list_mod)
+
+(import stdlib.string as string_mod)
 
 ;: Option arity: a boolean flag consumes no value, while a value flag consumes
 ;: the following argv string.
@@ -69,7 +71,7 @@
 ;: Parsed argv result: ordered option occurrences and ordered positionals.
 (defstruct ArgsParsed
   (options ArgsOptionList)
-  (positionals StringList))
+  (positionals list_mod.StringList))
 
 ;: Structured parse errors.
 (defenum ArgsError
@@ -90,7 +92,7 @@
 ;: is produced.
 (defstruct ArgsParseState
   (options ArgsOptionList)
-  (positionals StringList)
+  (positionals list_mod.StringList)
   (stop-options bool))
 
 ;: Internal successful step result: next state plus next argv index.
@@ -105,7 +107,7 @@
 
 ;: Return an empty option spec list.
 (define (args-option-spec-empty) : ArgsOptionSpecList
-  (ArgsOptionSpecNil))
+  stdlib.args.ArgsOptionSpecNil)
 
 ;: Prepend `spec` to `rest`.
 (define (args-option-spec-cons
@@ -115,7 +117,7 @@
 
 ;: Construct a boolean flag spec.
 (define (args-flag-option [name : String] [long : String] [short : String]) : ArgsOptionSpec
-  (ArgsOptionSpec name long short (ArgsFlag)))
+  (ArgsOptionSpec name long short stdlib.args.ArgsFlag))
 
 ;: Construct a value-consuming flag spec.
 (define (args-value-option [name : String] [long : String] [short : String]) : ArgsOptionSpec
@@ -146,20 +148,20 @@
 ;: Return true when `spec` has the long spelling `name`.
 (define (args-option-spec-matches-long? [spec : ArgsOptionSpec] [name : String]) : bool
   (and
-    (not (string-eq (args-option-spec-long spec) ""))
-    (string-eq (args-option-spec-long spec) name)))
+    (not (string_mod.string-eq (stdlib.args.args-option-spec-long spec) ""))
+    (string_mod.string-eq (stdlib.args.args-option-spec-long spec) name)))
 
 ;: Return true when `spec` has the short spelling `name`.
 (define (args-option-spec-matches-short?
   [spec : ArgsOptionSpec]
   [name : String]) : bool
   (and
-    (not (string-eq (args-option-spec-short spec) ""))
-    (string-eq (args-option-spec-short spec) name)))
+    (not (string_mod.string-eq (stdlib.args.args-option-spec-short spec) ""))
+    (string_mod.string-eq (stdlib.args.args-option-spec-short spec) name)))
 
 ;: Return an empty parsed option list.
 (define (args-option-list-empty) : ArgsOptionList
-  (ArgsOptionNil))
+  stdlib.args.ArgsOptionNil)
 
 ;: Prepend one parsed option occurrence.
 (define (args-option-list-cons [option : ArgsOption] [rest : ArgsOptionList]) : ArgsOptionList
@@ -184,13 +186,13 @@
   (match items
     [(ArgsOptionNil) acc]
     [(ArgsOptionCons head rest)
-      (args-option-list-reverse-onto
+      (stdlib.args.args-option-list-reverse-onto
         (box-get rest)
         (ArgsOptionCons head (box acc)))]))
 
 ;: Return options in reverse order.
 (define (args-option-list-reverse [items : ArgsOptionList]) : ArgsOptionList
-  (args-option-list-reverse-onto items (ArgsOptionNil)))
+  (stdlib.args.args-option-list-reverse-onto items stdlib.args.ArgsOptionNil))
 
 ;: Count parsed option occurrences with the canonical `name`.
 (define (args-option-list-count [items : ArgsOptionList] [name : String]) : i64
@@ -198,14 +200,14 @@
     [(ArgsOptionNil) 0]
     [(ArgsOptionCons head rest)
       (+
-        (if (string-eq (args-option-name head) name)
+        (if (string_mod.string-eq (stdlib.args.args-option-name head) name)
           1
           0)
-        (args-option-list-count (box-get rest) name))]))
+        (stdlib.args.args-option-list-count (box-get rest) name))]))
 
 ;: Return true when `items` contains at least one option with `name`.
 (define (args-option-list-present? [items : ArgsOptionList] [name : String]) : bool
-  (> (args-option-list-count items name) 0))
+  (> (stdlib.args.args-option-list-count items name) 0))
 
 ;: Return the last value carried by option `name`, or `fallback` when absent or
 ;: when only boolean flag occurrences are present.
@@ -216,13 +218,13 @@
   (match items
     [(ArgsOptionNil) fallback]
     [(ArgsOptionCons head rest)
-      (args-option-list-value-or
+      (stdlib.args.args-option-list-value-or
         (box-get rest)
         name
         (if (and
-          (string-eq (args-option-name head) name)
-          (args-option-has-value? head))
-          (args-option-value head)
+          (string_mod.string-eq (stdlib.args.args-option-name head) name)
+          (stdlib.args.args-option-has-value? head))
+          (stdlib.args.args-option-value head)
           fallback))]))
 
 ;: Return the parsed option occurrence list.
@@ -230,30 +232,38 @@
   (struct-get parsed options))
 
 ;: Return the positional arguments in input order.
-(define (args-parsed-positionals [parsed : ArgsParsed]) : StringList
+(define (args-parsed-positionals [parsed : ArgsParsed]) : list_mod.StringList
   (struct-get parsed positionals))
 
 ;: Count option occurrences in a parsed result.
 (define (args-option-count [parsed : ArgsParsed] [name : String]) : i64
-  (args-option-list-count (args-parsed-options parsed) name))
+  (stdlib.args.args-option-list-count
+    (stdlib.args.args-parsed-options parsed)
+    name))
 
 ;: Return true when a parsed result contains option `name`.
 (define (args-option-present? [parsed : ArgsParsed] [name : String]) : bool
-  (args-option-list-present? (args-parsed-options parsed) name))
+  (stdlib.args.args-option-list-present?
+    (stdlib.args.args-parsed-options parsed)
+    name))
 
 ;: Return the last parsed value for option `name`, or `fallback`.
 (define (args-option-value-or
   [parsed : ArgsParsed]
   [name : String]
   [fallback : String]) : String
-  (args-option-list-value-or (args-parsed-options parsed) name fallback))
+  (stdlib.args.args-option-list-value-or
+    (stdlib.args.args-parsed-options parsed)
+    name
+    fallback))
 
 ;: Render a parse error as a diagnostic message.
 (define (args-error-message [error : ArgsError]) : String
   (match error
-    [(ArgsUnknownOption option) (string-append "args: unknown option " option)]
+    [(ArgsUnknownOption option)
+      (string_mod.string-append "args: unknown option " option)]
     [(ArgsMissingValue option)
-      (string-append "args: missing value for " option)]))
+      (string_mod.string-append "args: missing value for " option)]))
 
 ;: Return true for unknown-option errors.
 (define (args-error-unknown-option? [error : ArgsError]) : bool
@@ -275,60 +285,68 @@
 
 ;: Return true when `token` is exactly `--`.
 (define (args-end-of-options-token? [token : String]) : bool
-  (string-eq token "--"))
+  (string_mod.string-eq token "--"))
 
 ;: Return true when `token` looks like an option token rather than a positional.
 (define (args-option-looking-token? [token : String]) : bool
-  (and (> (string-length token) 1) (char-eq (string-ref token 0) #-')))
+  (and
+    (> (string-length token) 1)
+    (string_mod.char-eq (string-ref token 0) #-')))
 
 ;: Return true when `token` has the supported long spelling `--name`.
 (define (args-long-token? [token : String]) : bool
   (and
     (> (string-length token) 2)
-    (char-eq (string-ref token 0) #-')
-    (char-eq (string-ref token 1) #-')))
+    (string_mod.char-eq (string-ref token 0) #-')
+    (string_mod.char-eq (string-ref token 1) #-')))
 
 ;: Return true when `token` has the supported short spelling `-x`.
 (define (args-short-token? [token : String]) : bool
-  (and (= (string-length token) 2) (char-eq (string-ref token 0) #-')))
+  (and
+    (= (string-length token) 2)
+    (string_mod.char-eq (string-ref token 0) #-')))
 
 ;: Return the long name portion of a supported long token.
 (define (args-token-long-name [token : String]) : String
-  (substring token 2 (- (string-length token) 2)))
+  (string_mod.substring token 2 (- (string-length token) 2)))
 
 ;: Return the short name portion of a supported short token.
 (define (args-token-short-name [token : String]) : String
-  (substring token 1 1))
+  (string_mod.substring token 1 1))
 
 ;: Find a spec by long spelling.
 (define (args-find-spec-long [specs : ArgsOptionSpecList] [name : String]) : ArgsMaybeOptionSpec
   (match specs
-    [(ArgsOptionSpecNil) (ArgsNoOptionSpec)]
+    [(ArgsOptionSpecNil) stdlib.args.ArgsNoOptionSpec]
     [(ArgsOptionSpecCons spec rest)
-      (if (args-option-spec-matches-long? spec name)
+      (if (stdlib.args.args-option-spec-matches-long? spec name)
         (ArgsSomeOptionSpec spec)
-        (args-find-spec-long (box-get rest) name))]))
+        (stdlib.args.args-find-spec-long (box-get rest) name))]))
 
 ;: Find a spec by short spelling.
 (define (args-find-spec-short [specs : ArgsOptionSpecList] [name : String]) : ArgsMaybeOptionSpec
   (match specs
-    [(ArgsOptionSpecNil) (ArgsNoOptionSpec)]
+    [(ArgsOptionSpecNil) stdlib.args.ArgsNoOptionSpec]
     [(ArgsOptionSpecCons spec rest)
-      (if (args-option-spec-matches-short? spec name)
+      (if (stdlib.args.args-option-spec-matches-short? spec name)
         (ArgsSomeOptionSpec spec)
-        (args-find-spec-short (box-get rest) name))]))
+        (stdlib.args.args-find-spec-short (box-get rest) name))]))
 
 ;: Find a matching spec for a supported option token.
 (define (args-find-spec-token [specs : ArgsOptionSpecList] [token : String]) : ArgsMaybeOptionSpec
-  (if (args-long-token? token)
-    (args-find-spec-long specs (args-token-long-name token))
-    (if (args-short-token? token)
-      (args-find-spec-short specs (args-token-short-name token))
-      (ArgsNoOptionSpec))))
+  (if (stdlib.args.args-long-token? token)
+    (stdlib.args.args-find-spec-long
+      specs
+      (stdlib.args.args-token-long-name token))
+    (if (stdlib.args.args-short-token? token)
+      (stdlib.args.args-find-spec-short
+        specs
+        (stdlib.args.args-token-short-name token))
+      stdlib.args.ArgsNoOptionSpec)))
 
 ;: Return a fresh empty parse state.
 (define (args-parse-state-empty) : ArgsParseState
-  (ArgsParseState (ArgsOptionNil) (StringNil) false))
+  (ArgsParseState stdlib.args.ArgsOptionNil (list_mod.StringNil) false))
 
 ;: Add a positional token to a parse state.
 (define (args-parse-state-add-positional
@@ -336,7 +354,7 @@
   [value : String]) : ArgsParseState
   (ArgsParseState
     (struct-get state options)
-    (StringCons value (box (struct-get state positionals)))
+    (list_mod.StringCons value (box (struct-get state positionals)))
     (struct-get state stop-options)))
 
 ;: Add a parsed option occurrence to a parse state.
@@ -362,8 +380,8 @@
 ;: Convert the reversed parse state into the public ordered result.
 (define (args-parse-state-finish [state : ArgsParseState]) : ArgsParsed
   (ArgsParsed
-    (args-option-list-reverse (struct-get state options))
-    (string-list-reverse (struct-get state positionals))))
+    (stdlib.args.args-option-list-reverse (struct-get state options))
+    (list_mod.string-list-reverse (struct-get state positionals))))
 
 ;: Advance past one positional token.
 (define (args-advance-positional
@@ -372,13 +390,15 @@
   [index : i64]) : ResultArgsParseAdvance
   (OkArgsParseAdvance
     (ArgsParseAdvance
-      (args-parse-state-add-positional state current)
+      (stdlib.args.args-parse-state-add-positional state current)
       (+ index 1))))
 
 ;: Advance past `--`.
 (define (args-advance-end-of-options [state : ArgsParseState] [index : i64]) : ResultArgsParseAdvance
   (OkArgsParseAdvance
-    (ArgsParseAdvance (args-parse-state-stop-options state) (+ index 1))))
+    (ArgsParseAdvance
+      (stdlib.args.args-parse-state-stop-options state)
+      (+ index 1))))
 
 ;: Advance past a known option token, consuming a value when the spec requires
 ;: one.
@@ -389,22 +409,23 @@
   [next-value : String]
   [has-next : bool]
   [index : i64]) : ResultArgsParseAdvance
-  (if (args-option-arity-value? (args-option-spec-arity spec))
+  (if (stdlib.args.args-option-arity-value?
+    (stdlib.args.args-option-spec-arity spec))
     (if has-next
       (OkArgsParseAdvance
         (ArgsParseAdvance
-          (args-parse-state-add-option
+          (stdlib.args.args-parse-state-add-option
             state
-            (args-option-spec-name spec)
+            (stdlib.args.args-option-spec-name spec)
             next-value
             true)
           (+ index 2)))
       (ErrArgsParseAdvance (ArgsMissingValue current)))
     (OkArgsParseAdvance
       (ArgsParseAdvance
-        (args-parse-state-add-option
+        (stdlib.args.args-parse-state-add-option
           state
-          (args-option-spec-name spec)
+          (stdlib.args.args-option-spec-name spec)
           ""
           false)
         (+ index 1)))))
@@ -418,21 +439,21 @@
   [has-next : bool]
   [index : i64]) : ResultArgsParseAdvance
   (if (struct-get state stop-options)
-    (args-advance-positional state current index)
-    (if (args-end-of-options-token? current)
-      (args-advance-end-of-options state index)
-      (if (args-option-looking-token? current)
-        (match (args-find-spec-token specs current)
+    (stdlib.args.args-advance-positional state current index)
+    (if (stdlib.args.args-end-of-options-token? current)
+      (stdlib.args.args-advance-end-of-options state index)
+      (if (stdlib.args.args-option-looking-token? current)
+        (match (stdlib.args.args-find-spec-token specs current)
           [(ArgsNoOptionSpec) (ErrArgsParseAdvance (ArgsUnknownOption current))]
           [(ArgsSomeOptionSpec spec)
-            (args-advance-known-option
+            (stdlib.args.args-advance-known-option
               state
               spec
               current
               next-value
               has-next
               index)])
-        (args-advance-positional state current index)))))
+        (stdlib.args.args-advance-positional state current index)))))
 
 ;: Clamp a sequence start index to zero.
 (define (args-clamp-start [start : i64]) : i64
@@ -459,7 +480,7 @@
   [end : i64]
   [state : ArgsParseState]) : ResultArgsParsed
   (if (>= index end)
-    (OkArgsParsed (args-parse-state-finish state))
+    (OkArgsParsed (stdlib.args.args-parse-state-finish state))
     (let
       [current : String (array-ref argv index)]
       [has-next : bool (< (+ index 1) end)]
@@ -467,10 +488,16 @@
         (if has-next
           (array-ref argv (+ index 1))
           "")]
-      (match (args-parse-step specs state current next-value has-next index)
+      (match (stdlib.args.args-parse-step
+        specs
+        state
+        current
+        next-value
+        has-next
+        index)
         [(ErrArgsParseAdvance error) (ErrArgsParsed error)]
         [(OkArgsParseAdvance advance)
-          (args-parse-array-loop
+          (stdlib.args.args-parse-array-loop
             specs
             argv
             (struct-get advance next-index)
@@ -486,13 +513,18 @@
   [end : i64]) : ResultArgsParsed
   (let
     [limit : i64 (array-length argv)]
-    [first : i64 (args-clamp-start start)]
-    [last : i64 (args-clamp-end end limit)]
-    (args-parse-array-loop specs argv first last (args-parse-state-empty))))
+    [first : i64 (stdlib.args.args-clamp-start start)]
+    [last : i64 (stdlib.args.args-clamp-end end limit)]
+    (stdlib.args.args-parse-array-loop
+      specs
+      argv
+      first
+      last
+      (stdlib.args.args-parse-state-empty))))
 
 ;: Parse the full argv array.
 (define (args-parse-array [specs : ArgsOptionSpecList] [argv : (Array String)]) : ResultArgsParsed
-  (args-parse-array-range specs argv 0 (array-length argv)))
+  (stdlib.args.args-parse-array-range specs argv 0 (array-length argv)))
 
 ;: Parse process argv range `[index, end)` with `state`.
 (define (args-parse-argv-loop
@@ -501,18 +533,24 @@
   [end : i64]
   [state : ArgsParseState]) : ResultArgsParsed
   (if (>= index end)
-    (OkArgsParsed (args-parse-state-finish state))
+    (OkArgsParsed (stdlib.args.args-parse-state-finish state))
     (let
-      [current : String (arg index)]
+      [current : String (io_mod.arg index)]
       [has-next : bool (< (+ index 1) end)]
       [next-value : String
         (if has-next
-          (arg (+ index 1))
+          (io_mod.arg (+ index 1))
           "")]
-      (match (args-parse-step specs state current next-value has-next index)
+      (match (stdlib.args.args-parse-step
+        specs
+        state
+        current
+        next-value
+        has-next
+        index)
         [(ErrArgsParseAdvance error) (ErrArgsParsed error)]
         [(OkArgsParseAdvance advance)
-          (args-parse-argv-loop
+          (stdlib.args.args-parse-argv-loop
             specs
             (struct-get advance next-index)
             end
@@ -525,11 +563,119 @@
   [start : i64]
   [end : i64]) : ResultArgsParsed
   (let
-    [limit : i64 (arg-count)]
-    [first : i64 (args-clamp-start start)]
-    [last : i64 (args-clamp-end end limit)]
-    (args-parse-argv-loop specs first last (args-parse-state-empty))))
+    [limit : i64 (io_mod.arg-count)]
+    [first : i64 (stdlib.args.args-clamp-start start)]
+    [last : i64 (stdlib.args.args-clamp-end end limit)]
+    (stdlib.args.args-parse-argv-loop
+      specs
+      first
+      last
+      (stdlib.args.args-parse-state-empty))))
 
 ;: Parse process argv from `start` through `(arg-count)`.
 (define (args-parse-argv [specs : ArgsOptionSpecList] [start : i64]) : ResultArgsParsed
-  (args-parse-argv-range specs start (arg-count)))
+  (stdlib.args.args-parse-argv-range specs start (io_mod.arg-count)))
+
+;# Dotted-module migration: preserve the pre-module flat stdlib surface.
+(export
+  (value args-option-spec-empty)
+  (value args-option-spec-cons)
+  (value args-flag-option)
+  (value args-value-option)
+  (value args-option-spec-name)
+  (value args-option-spec-long)
+  (value args-option-spec-short)
+  (value args-option-spec-arity)
+  (value args-option-arity-value?)
+  (value args-option-spec-matches-long?)
+  (value args-option-spec-matches-short?)
+  (value args-option-list-empty)
+  (value args-option-list-cons)
+  (value args-option-name)
+  (value args-option-value)
+  (value args-option-has-value?)
+  (value args-option-list-reverse-onto)
+  (value args-option-list-reverse)
+  (value args-option-list-count)
+  (value args-option-list-present?)
+  (value args-option-list-value-or)
+  (value args-parsed-options)
+  (value args-parsed-positionals)
+  (value args-option-count)
+  (value args-option-present?)
+  (value args-option-value-or)
+  (value args-error-message)
+  (value args-error-unknown-option?)
+  (value args-error-missing-value?)
+  (value args-error-option)
+  (value args-end-of-options-token?)
+  (value args-option-looking-token?)
+  (value args-long-token?)
+  (value args-short-token?)
+  (value args-token-long-name)
+  (value args-token-short-name)
+  (value args-find-spec-long)
+  (value args-find-spec-short)
+  (value args-find-spec-token)
+  (value args-parse-state-empty)
+  (value args-parse-state-add-positional)
+  (value args-parse-state-add-option)
+  (value args-parse-state-stop-options)
+  (value args-parse-state-finish)
+  (value args-advance-positional)
+  (value args-advance-end-of-options)
+  (value args-advance-known-option)
+  (value args-parse-step)
+  (value args-clamp-start)
+  (value args-clamp-end)
+  (value args-parse-array-loop)
+  (value args-parse-array-range)
+  (value args-parse-array)
+  (value args-parse-argv-loop)
+  (value args-parse-argv-range)
+  (value args-parse-argv)
+  (type ArgsOptionArity)
+  (type ArgsOptionSpec)
+  (type ArgsOptionSpecList)
+  (type ArgsOption)
+  (type ArgsOptionList)
+  (type ArgsParsed)
+  (type ArgsError)
+  (type ResultArgsParsed)
+  (type ArgsMaybeOptionSpec)
+  (type ArgsParseState)
+  (type ArgsParseAdvance)
+  (type ResultArgsParseAdvance)
+  (constructor ArgsOptionSpec)
+  (constructor ArgsOption)
+  (constructor ArgsParsed)
+  (constructor ArgsParseState)
+  (constructor ArgsParseAdvance)
+  (field ArgsOptionSpec name)
+  (field ArgsOptionSpec long)
+  (field ArgsOptionSpec short)
+  (field ArgsOptionSpec arity)
+  (field ArgsOption name)
+  (field ArgsOption value)
+  (field ArgsOption has-value)
+  (field ArgsParsed options)
+  (field ArgsParsed positionals)
+  (field ArgsParseState options)
+  (field ArgsParseState positionals)
+  (field ArgsParseState stop-options)
+  (field ArgsParseAdvance state)
+  (field ArgsParseAdvance next-index)
+  (variant ArgsFlag)
+  (variant ArgsValue)
+  (variant ArgsOptionSpecNil)
+  (variant ArgsOptionSpecCons)
+  (variant ArgsOptionNil)
+  (variant ArgsOptionCons)
+  (variant ArgsUnknownOption)
+  (variant ArgsMissingValue)
+  (variant OkArgsParsed)
+  (variant ErrArgsParsed)
+  (variant ArgsNoOptionSpec)
+  (variant ArgsSomeOptionSpec)
+  (variant OkArgsParseAdvance)
+  (variant ErrArgsParseAdvance))

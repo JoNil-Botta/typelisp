@@ -1,107 +1,107 @@
-(import "stdlib/random.tl")
+(import stdlib.random)
 
-(import "stdlib/vector.tl")
+(import stdlib.vector)
 
-(import "stdlib/test.tl")
+(import stdlib.test)
 
 (define (assert-owned-string-eq
   [actual : String]
   [expected : String]
   [message : String]) : unit
-  (assert-string-eq (& actual) (& expected) message))
+  (test.assert-string-eq (& actual) (& expected) message))
 
-(define (assert-system-seed-ok [result : ResultSystemSeed]) : unit
+(define (assert-system-seed-ok [result : random.ResultSystemSeed]) : unit
   (match result
-    [(OkSystemSeed seed)
+    [(random.OkSystemSeed seed)
       (begin
-        (assert-true (> seed 0) "system seed positive")
-        (assert-true (< seed (random-modulus)) "system seed normalized"))]
-    [(ErrSystemSeed _) (panic "system seed should succeed on Linux")]))
+        (test.assert-true (> seed 0) "system seed positive")
+        (test.assert-true (< seed (random.random-modulus)) "system seed normalized"))]
+    [(random.ErrSystemSeed _) (panic "system seed should succeed on Linux")]))
 
-(define (assert-system-seed-error [result : ResultSystemSeed]) : unit
+(define (assert-system-seed-error [result : random.ResultSystemSeed]) : unit
   (match result
-    [(OkSystemSeed _) (panic "expected system seed error")]
-    [(ErrSystemSeed err)
+    [(random.OkSystemSeed _) (panic "expected system seed error")]
+    [(random.ErrSystemSeed err)
       (match err
-        [(RandomSystemSeedUnavailable message)
-          (assert-true (> (string-length message) 0) "error message non-empty")])]))
+        [(random.RandomSystemSeedUnavailable message)
+          (test.assert-true (> (string-length message) 0) "error message non-empty")])]))
 
 (define (assert-random-bounded-ok
-  [result : RandomBoundedResult]
+  [result : random.RandomBoundedResult]
   [want-state : i64]
   [want-value : i64]
   [message : String]) : unit
   (match result
-    [(OkRandomBounded state value)
+    [(random.OkRandomBounded state value)
       (begin
-        (assert-i64-eq (random-state-seed state) want-state message)
-        (assert-i64-eq value want-value message))]
-    [(ErrRandomBounded err) (panic err)]))
+        (test.assert-i64-eq (random.random-state-seed state) want-state message)
+        (test.assert-i64-eq value want-value message))]
+    [(random.ErrRandomBounded err) (panic err)]))
 
 (define (assert-random-bounded-error
-  [result : RandomBoundedResult]
+  [result : random.RandomBoundedResult]
   [want-message : String]) : unit
   (match result
-    [(OkRandomBounded _ _) (panic "expected bounded random error")]
-    [(ErrRandomBounded err)
+    [(random.OkRandomBounded _ _) (panic "expected bounded random error")]
+    [(random.ErrRandomBounded err)
       (assert-owned-string-eq err want-message want-message)]))
 
 (define (assert-weighted-ok
-  [result : RandomWeightedIndexResult]
+  [result : random.RandomWeightedIndexResult]
   [want-state : i64]
   [want-index : i64]
   [message : String]) : unit
   (match result
-    [(OkRandomWeightedIndex state index)
+    [(random.OkRandomWeightedIndex state index)
       (begin
-        (assert-i64-eq (random-state-seed state) want-state message)
-        (assert-i64-eq index want-index message))]
-    [(ErrRandomWeightedIndex err) (panic err)]))
+        (test.assert-i64-eq (random.random-state-seed state) want-state message)
+        (test.assert-i64-eq index want-index message))]
+    [(random.ErrRandomWeightedIndex err) (panic err)]))
 
 (define (assert-weighted-error
-  [result : RandomWeightedIndexResult]
+  [result : random.RandomWeightedIndexResult]
   [want-message : String]) : unit
   (match result
-    [(OkRandomWeightedIndex _ _) (panic "expected weighted random error")]
-    [(ErrRandomWeightedIndex err)
+    [(random.OkRandomWeightedIndex _ _) (panic "expected weighted random error")]
+    [(random.ErrRandomWeightedIndex err)
       (assert-owned-string-eq err want-message want-message)]))
 
 (define (assert-sequence-from-one) : unit
   (let
-    [draw1 : RandomDraw (random-next (random-seed 1))]
-    [draw2 : RandomDraw (random-next (random-draw-state draw1))]
-    [draw3 : RandomDraw (random-next (random-draw-state draw2))]
+    [draw1 : random.RandomDraw (random.random-next (random.random-seed 1))]
+    [draw2 : random.RandomDraw (random.random-next (random.random-draw-state draw1))]
+    [draw3 : random.RandomDraw (random.random-next (random.random-draw-state draw2))]
     (begin
-      (assert-i64-eq (random-draw-value draw1) 16807 "first MINSTD draw")
-      (assert-i64-eq
-        (random-state-seed (random-draw-state draw1))
+      (test.assert-i64-eq (random.random-draw-value draw1) 16807 "first MINSTD draw")
+      (test.assert-i64-eq
+        (random.random-state-seed (random.random-draw-state draw1))
         16807
         "first MINSTD state")
-      (assert-i64-eq (random-draw-value draw2) 282475249 "second MINSTD draw")
-      (assert-i64-eq (random-draw-value draw3) 1622650073 "third MINSTD draw"))))
+      (test.assert-i64-eq (random.random-draw-value draw2) 282475249 "second MINSTD draw")
+      (test.assert-i64-eq (random.random-draw-value draw3) 1622650073 "third MINSTD draw"))))
 
-(define (assert-bounded-range [state : RandomState] [upper : i64] [count : i64]) : unit
+(define (assert-bounded-range [state : random.RandomState] [upper : i64] [count : i64]) : unit
   (let
     [i : i64 0]
-    [current : RandomState state]
+    [current : random.RandomState state]
     (while (< i count)
-      (match (random-bounded current upper)
-        [(OkRandomBounded next value)
+      (match (random.random-bounded current upper)
+        [(random.OkRandomBounded next value)
           (begin
-            (assert-true (>= value 0) "bounded draw non-negative")
-            (assert-true (< value upper) "bounded draw below upper")
+            (test.assert-true (>= value 0) "bounded draw non-negative")
+            (test.assert-true (< value upper) "bounded draw below upper")
             (set! current next)
             (set! i (+ i 1)))]
-        [(ErrRandomBounded err) (panic err)]))))
+        [(random.ErrRandomBounded err) (panic err)]))))
 
-(define (weighted-fixture) : RandomWeightList
-  (random-weight-list-cons
+(define (weighted-fixture) : random.RandomWeightList
+  (random.random-weight-list-cons
     0
-    (random-weight-list-cons
+    (random.random-weight-list-cons
       10
-      (random-weight-list-cons
+      (random.random-weight-list-cons
         0
-        (random-weight-list-cons 5 (random-weight-list-empty))))))
+        (random.random-weight-list-cons 5 (random.random-weight-list-empty))))))
 
 (define (weighted-array-fixture) : (Array i64)
   (let
@@ -124,115 +124,115 @@
       (array-set! weights 1 -1)
       weights)))
 
-(define (weighted-vector-fixture) : I64Vec
-  (i64-vec-push
-    (i64-vec-push (i64-vec-push (i64-vec-push (i64-vec-new) 0) 10) 0)
+(define (weighted-vector-fixture) : vector.I64Vec
+  (vector.i64-vec-push
+    (vector.i64-vec-push (vector.i64-vec-push (vector.i64-vec-push (vector.i64-vec-new) 0) 10) 0)
     5))
 
-(define (weighted-zero-vector) : I64Vec
-  (i64-vec-push (i64-vec-push (i64-vec-new) 0) 0))
+(define (weighted-zero-vector) : vector.I64Vec
+  (vector.i64-vec-push (vector.i64-vec-push (vector.i64-vec-new) 0) 0))
 
-(define (weighted-negative-vector) : I64Vec
-  (i64-vec-push (i64-vec-push (i64-vec-new) 1) -1))
+(define (weighted-negative-vector) : vector.I64Vec
+  (vector.i64-vec-push (vector.i64-vec-push (vector.i64-vec-new) 1) -1))
 
 (define (main) : i64
   (begin
-    (assert-i64-eq (random-state-seed (random-seed 0)) 1 "zero seed normalizes")
-    (assert-i64-eq (random-state-seed (random-seed 1)) 1 "one seed stays one")
-    (assert-i64-eq
-      (random-state-seed (random-seed -1))
+    (test.assert-i64-eq (random.random-state-seed (random.random-seed 0)) 1 "zero seed normalizes")
+    (test.assert-i64-eq (random.random-state-seed (random.random-seed 1)) 1 "one seed stays one")
+    (test.assert-i64-eq
+      (random.random-state-seed (random.random-seed -1))
       2147483646
       "negative seed normalizes")
-    (assert-i64-eq
-      (random-state-seed (random-seed 2147483647))
+    (test.assert-i64-eq
+      (random.random-state-seed (random.random-seed 2147483647))
       1
       "modulus seed normalizes")
     (assert-sequence-from-one)
     (assert-random-bounded-ok
-      (random-bounded (random-seed 1) 10)
+      (random.random-bounded (random.random-seed 1) 10)
       16807
       7
       "bounded draw stable")
     (assert-random-bounded-error
-      (random-bounded (random-seed 1) 0)
+      (random.random-bounded (random.random-seed 1) 0)
       "random: upper bound must be positive")
-    (assert-bounded-range (random-seed 99) 3 12)
+    (assert-bounded-range (random.random-seed 99) 3 12)
     (assert-weighted-error
-      (random-weighted-index (random-seed 1) (random-weight-list-empty))
+      (random.random-weighted-index (random.random-seed 1) (random.random-weight-list-empty))
       "random: weight list must not be empty")
     (assert-weighted-error
-      (random-weighted-index
-        (random-seed 1)
-        (random-weight-list-cons
+      (random.random-weighted-index
+        (random.random-seed 1)
+        (random.random-weight-list-cons
           0
-          (random-weight-list-cons 0 (random-weight-list-empty))))
+          (random.random-weight-list-cons 0 (random.random-weight-list-empty))))
       "random: weight total must be positive")
     (assert-weighted-error
-      (random-weighted-index
-        (random-seed 1)
-        (random-weight-list-cons
+      (random.random-weighted-index
+        (random.random-seed 1)
+        (random.random-weight-list-cons
           1
-          (random-weight-list-cons -1 (random-weight-list-empty))))
+          (random.random-weight-list-cons -1 (random.random-weight-list-empty))))
       "random: weight must not be negative")
     (assert-weighted-error
-      (random-weighted-index-array (random-seed 1) (make-array i64 0))
+      (random.random-weighted-index-array (random.random-seed 1) (make-array i64 0))
       "random: weight array must not be empty")
     (assert-weighted-error
-      (random-weighted-index-array (random-seed 1) (weighted-zero-array))
+      (random.random-weighted-index-array (random.random-seed 1) (weighted-zero-array))
       "random: weight total must be positive")
     (assert-weighted-error
-      (random-weighted-index-array (random-seed 1) (weighted-negative-array))
+      (random.random-weighted-index-array (random.random-seed 1) (weighted-negative-array))
       "random: weight must not be negative")
     (assert-weighted-error
-      (random-weighted-index-vec (random-seed 1) (i64-vec-new))
+      (random.random-weighted-index-vec (random.random-seed 1) (vector.i64-vec-new))
       "random: weight vector must not be empty")
     (assert-weighted-error
-      (random-weighted-index-vec (random-seed 1) (weighted-zero-vector))
+      (random.random-weighted-index-vec (random.random-seed 1) (weighted-zero-vector))
       "random: weight total must be positive")
     (assert-weighted-error
-      (random-weighted-index-vec (random-seed 1) (weighted-negative-vector))
+      (random.random-weighted-index-vec (random.random-seed 1) (weighted-negative-vector))
       "random: weight must not be negative")
     (assert-weighted-ok
-      (random-weighted-index (random-seed 1) (weighted-fixture))
+      (random.random-weighted-index (random.random-seed 1) (weighted-fixture))
       16807
       1
       "weighted index skips leading zero and picks first positive bucket")
     (assert-weighted-ok
-      (random-weighted-index-array (random-seed 1) (weighted-array-fixture))
+      (random.random-weighted-index-array (random.random-seed 1) (weighted-array-fixture))
       16807
       1
       "array weighted index matches list first positive bucket")
     (assert-weighted-ok
-      (random-weighted-index-vec (random-seed 1) (weighted-vector-fixture))
+      (random.random-weighted-index-vec (random.random-seed 1) (weighted-vector-fixture))
       16807
       1
       "vector weighted index matches list first positive bucket")
     (assert-weighted-ok
-      (random-weighted-index (random-seed 2) (weighted-fixture))
+      (random.random-weighted-index (random.random-seed 2) (weighted-fixture))
       33614
       3
       "weighted index reaches later positive bucket")
     (assert-weighted-ok
-      (random-weighted-index-array (random-seed 2) (weighted-array-fixture))
+      (random.random-weighted-index-array (random.random-seed 2) (weighted-array-fixture))
       33614
       3
       "array weighted index reaches later positive bucket")
     (assert-weighted-ok
-      (random-weighted-index-vec (random-seed 2) (weighted-vector-fixture))
+      (random.random-weighted-index-vec (random.random-seed 2) (weighted-vector-fixture))
       33614
       3
       "vector weighted index reaches later positive bucket")
-    (assert-system-seed-ok (random-system-seed))
-    (assert-system-seed-ok (random-system-seed))
+    (assert-system-seed-ok (random.random-system-seed))
+    (assert-system-seed-ok (random.random-system-seed))
     (assert-system-seed-error
-      (ErrSystemSeed (RandomSystemSeedUnavailable "entropy unavailable")))
+      (random.ErrSystemSeed (random.RandomSystemSeedUnavailable "entropy unavailable")))
     (let
-      [state1 : RandomState (random-from-system)]
+      [state1 : random.RandomState (random.random-from-system)]
       (begin
-        (assert-true
-          (> (random-state-seed state1) 0)
+        (test.assert-true
+          (> (random.random-state-seed state1) 0)
           "random-from-system seed positive")
-        (assert-true
-          (< (random-state-seed state1) (random-modulus))
+        (test.assert-true
+          (< (random.random-state-seed state1) (random.random-modulus))
           "random-from-system seed normalized")))
     42))

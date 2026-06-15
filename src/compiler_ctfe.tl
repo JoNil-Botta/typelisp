@@ -8,9 +8,9 @@
 ;; Evaluation is purely functional: the environment is an immutable cons list
 ;; threaded through recursion, and the step budget ("fuel") is threaded through
 ;; results so the evaluator stays deterministic without a mutable counter.
-(import "../stdlib/io.tl")
+(import stdlib.io as io_mod)
 
-(import "../stdlib/hashmap.tl")
+(import stdlib.hashmap as hashmap_mod)
 
 (import "compiler_ast_types.tl")
 
@@ -18,7 +18,7 @@
 
 (import "compiler_float.tl")
 
-(import "../stdlib/string.tl")
+(import stdlib.string as string_mod)
 
 ;; A compile-time value. Scalar subset from #719; Expr / ExprList aggregates
 ;; from #1137 for macro transformers.
@@ -249,19 +249,19 @@
 ;; checking membership against the old linked list was O(types^2). This hashset
 ;; keeps each `add-if-missing` O(1), so the whole build is O(types). Reset at the
 ;; start of each build (layouts then reflections run sequentially in tc-ctfe-env).
-(define ctfe-build-seen-keys : StringI64Map
-  (string-i64-map-with-capacity 1))
+(define ctfe-build-seen-keys : hashmap_mod.StringI64Map
+  (hashmap_mod.string-i64-map-with-capacity 1))
 
 (define (ctfe-build-seen-reset!) : unit
-  (set! ctfe-build-seen-keys (string-i64-map-with-capacity 256)))
+  (set! ctfe-build-seen-keys (hashmap_mod.string-i64-map-with-capacity 256)))
 
 (define (ctfe-build-seen-add? [key : String]) : bool
-  (if (string-i64-map-contains? ctfe-build-seen-keys key)
+  (if (hashmap_mod.string-i64-map-contains? ctfe-build-seen-keys key)
     false
     (begin
       (set!
         ctfe-build-seen-keys
-        (string-i64-map-put ctfe-build-seen-keys key 1))
+        (hashmap_mod.string-i64-map-put ctfe-build-seen-keys key 1))
       true)))
 
 (define (ctfe-layout-info-list-add-if-missing
@@ -279,7 +279,7 @@
     (CtfeNoLayoutInfo)
     (let
       [info : CtfeLayoutInfo (ctfe-layout-info-list-ref layouts index)]
-      (if (string-eq (ctfe-layout-info-name info) name)
+      (if (string_mod.string-eq (ctfe-layout-info-name info) name)
         (CtfeSomeLayoutInfo info)
         (ctfe-layout-info-lookup-from layouts name (- index 1))))))
 
@@ -296,7 +296,7 @@
       [field : CtfeLayoutField (ctfe-layout-field-list-ref fields index)]
       (match field
         [(CtfeLayoutField field-name offset)
-          (if (string-eq field-name name)
+          (if (string_mod.string-eq field-name name)
             offset
             (ctfe-layout-field-offset-from fields name (+ index 1)))]))))
 
@@ -324,7 +324,7 @@
   (match env
     [(CtfeEnvNil _ _) (CtfeNoValue)]
     [(CtfeEnvCons key value rest)
-      (if (string-eq key name)
+      (if (string_mod.string-eq key name)
         (CtfeSomeValue value)
         (ctfe-env-lookup (box-get rest) name))]))
 
@@ -334,7 +334,7 @@
     [prefix-len : i64 (string-length prefix)]
     (if (< text-len prefix-len)
       false
-      (string-eq (substring text 0 prefix-len) prefix))))
+      (string_mod.string-eq (string_mod.substring text 0 prefix-len) prefix))))
 
 (define (ctfe-hygiene-enabled-name) : String
   "__tl_macro_hygiene_enabled")
@@ -353,7 +353,7 @@
 (define (ctfe-hygiene-template-name [name : String]) : String
   (if (ctfe-string-prefix? name (ctfe-hygiene-template-prefix))
     name
-    (string-append (ctfe-hygiene-template-prefix) name)))
+    (string_mod.string-append (ctfe-hygiene-template-prefix) name)))
 
 (define (ctfe-quote-name [env : CtfeEnv] [name : String]) : String
   (if (ctfe-hygiene-enabled? env)
@@ -383,7 +383,7 @@
     (CtfeNoReflectInfo)
     (let
       [info : CtfeReflectInfo (ctfe-reflect-info-list-ref infos index)]
-      (if (string-eq (ctfe-reflect-info-key info) key)
+      (if (string_mod.string-eq (ctfe-reflect-info-key info) key)
         (CtfeSomeReflectInfo info)
         (ctfe-reflect-info-lookup-from infos key (- index 1))))))
 
@@ -490,7 +490,9 @@
               [key : String
                 (if (= (string-length module) 0)
                   name-str
-                  (string-append module (string-append "/" name-str)))]
+                  (string_mod.string-append
+                    module
+                    (string_mod.string-append "/" name-str)))]
               [info : CtfeReflectInfo
                 (CtfeReflectStruct
                   key
@@ -507,7 +509,9 @@
               [key : String
                 (if (= (string-length module) 0)
                   name-str
-                  (string-append module (string-append "/" name-str)))]
+                  (string_mod.string-append
+                    module
+                    (string_mod.string-append "/" name-str)))]
               [info : CtfeReflectInfo
                 (CtfeReflectStruct
                   key
@@ -524,7 +528,9 @@
               [key : String
                 (if (= (string-length module) 0)
                   name-str
-                  (string-append module (string-append "/" name-str)))]
+                  (string_mod.string-append
+                    module
+                    (string_mod.string-append "/" name-str)))]
               [info : CtfeReflectInfo
                 (CtfeReflectEnum
                   key
@@ -541,7 +547,9 @@
               [key : String
                 (if (= (string-length module) 0)
                   name-str
-                  (string-append module (string-append "/" name-str)))]
+                  (string_mod.string-append
+                    module
+                    (string_mod.string-append "/" name-str)))]
               [info : CtfeReflectInfo
                 (CtfeReflectEnum
                   key
@@ -562,7 +570,9 @@
                     [key : String
                       (if (= (string-length module) 0)
                         name-str
-                        (string-append module (string-append "/" name-str)))]
+                        (string_mod.string-append
+                          module
+                          (string_mod.string-append "/" name-str)))]
                     [info : CtfeReflectInfo
                       (CtfeReflectStruct
                         key
@@ -579,7 +589,9 @@
                     [key : String
                       (if (= (string-length module) 0)
                         name-str
-                        (string-append module (string-append "/" name-str)))]
+                        (string_mod.string-append
+                          module
+                          (string_mod.string-append "/" name-str)))]
                     [info : CtfeReflectInfo
                       (CtfeReflectStruct
                         key
@@ -596,7 +608,9 @@
                     [key : String
                       (if (= (string-length module) 0)
                         name-str
-                        (string-append module (string-append "/" name-str)))]
+                        (string_mod.string-append
+                          module
+                          (string_mod.string-append "/" name-str)))]
                     [info : CtfeReflectInfo
                       (CtfeReflectEnum
                         key
@@ -613,7 +627,9 @@
                     [key : String
                       (if (= (string-length module) 0)
                         name-str
-                        (string-append module (string-append "/" name-str)))]
+                        (string_mod.string-append
+                          module
+                          (string_mod.string-append "/" name-str)))]
                     [info : CtfeReflectInfo
                       (CtfeReflectEnum
                         key
@@ -995,8 +1011,8 @@
   [expr : AstExpr]
   [fuel : i64]) : ResultCtfe
   (match op
-    [(AstBinEq) (OkCtfe (CtfeBool (string-eq a b)) fuel)]
-    [(AstBinNe) (OkCtfe (CtfeBool (not (string-eq a b))) fuel)]
+    [(AstBinEq) (OkCtfe (CtfeBool (string_mod.string-eq a b)) fuel)]
+    [(AstBinNe) (OkCtfe (CtfeBool (not (string_mod.string-eq a b))) fuel)]
     [_
       (ErrCtfe
         (ctfe-diagnostic-at-expr
@@ -1329,8 +1345,8 @@
 
 (define (ctfe-int-key [n : i64]) : String
   (if (< n 0)
-    (string-append "m" (int->string (- 0 n)))
-    (int->string n)))
+    (string_mod.string-append "m" (string_mod.int->string (- 0 n)))
+    (string_mod.int->string n)))
 
 (define (ctfe-type-list-key [infos : CtfeReflectInfoList] [types : AstTypeList]) : String
   (match types
@@ -1339,9 +1355,9 @@
       (let
         [head : AstType (ty-node-get head)]
         [rest : AstTypeList (box-get rest)]
-        (string-append
+        (string_mod.string-append
           (ctfe-type-key-with-reflections infos head)
-          (string-append "_" (ctfe-type-list-key infos rest))))]))
+          (string_mod.string-append "_" (ctfe-type-list-key infos rest))))]))
 
 (define (ctfe-lifetime-list-key [lifetimes : AstLifetimeList]) : String
   (match lifetimes
@@ -1349,7 +1365,9 @@
     [(AstLifetimeCons head rest)
       (let
         [rest : AstLifetimeList (box-get rest)]
-        (string-append head (string-append "_" (ctfe-lifetime-list-key rest))))]))
+        (string_mod.string-append
+          head
+          (string_mod.string-append "_" (ctfe-lifetime-list-key rest))))]))
 
 (define (ctfe-lifetime-list-eq [a : AstLifetimeList] [b : AstLifetimeList]) : bool
   (match a
@@ -1365,7 +1383,7 @@
             (let
               [b-rest : AstLifetimeList (box-get b-rest)]
               (and
-                (string-eq a-head b-head)
+                (string_mod.string-eq a-head b-head)
                 (ctfe-lifetime-list-eq a-rest b-rest)))]
           [_ false]))]))
 
@@ -1392,82 +1410,82 @@
     [(AstTyUnit) "unit"]
     [(AstTyNever) "never"]
     [(AstTyFunc args ret)
-      (string-append
+      (string_mod.string-append
         "fn_"
-        (string-append
+        (string_mod.string-append
           (ctfe-type-list-key infos args)
-          (string-append
+          (string_mod.string-append
             "_to_"
             (ctfe-type-key-with-reflections infos (ty-node-get ret)))))]
     [(AstTyTuple elems)
-      (string-append "tuple_" (ctfe-type-list-key infos elems))]
+      (string_mod.string-append "tuple_" (ctfe-type-list-key infos elems))]
     [(AstTyArray elem count)
-      (string-append
+      (string_mod.string-append
         "array_"
-        (string-append
+        (string_mod.string-append
           (ctfe-type-key-with-reflections infos (ty-node-get elem))
-          (string-append "_" (ctfe-int-key count))))]
+          (string_mod.string-append "_" (ctfe-int-key count))))]
     [(AstTyDynArray elem)
-      (string-append
+      (string_mod.string-append
         "dynarray_"
         (ctfe-type-key-with-reflections infos (ty-node-get elem)))]
     [(AstTyBox elem)
-      (string-append
+      (string_mod.string-append
         "box_"
         (ctfe-type-key-with-reflections infos (ty-node-get elem)))]
     [(AstTyPtr elem)
-      (string-append
+      (string_mod.string-append
         "ptr_"
         (ctfe-type-key-with-reflections infos (ty-node-get elem)))]
     [(AstTyMutPtr elem)
-      (string-append
+      (string_mod.string-append
         "mutptr_"
         (ctfe-type-key-with-reflections infos (ty-node-get elem)))]
     [(AstTyRef region inner)
-      (string-append
+      (string_mod.string-append
         "ref_"
-        (string-append
+        (string_mod.string-append
           region
-          (string-append
+          (string_mod.string-append
             "_"
             (ctfe-type-key-with-reflections infos (ty-node-get inner)))))]
     [(AstTyMutRef region inner)
-      (string-append
+      (string_mod.string-append
         "mutref_"
-        (string-append
+        (string_mod.string-append
           region
-          (string-append
+          (string_mod.string-append
             "_"
             (ctfe-type-key-with-reflections infos (ty-node-get inner)))))]
     [(AstTyRegion region inner)
-      (string-append
+      (string_mod.string-append
         "region_"
-        (string-append
+        (string_mod.string-append
           region
-          (string-append
+          (string_mod.string-append
             "_"
             (ctfe-type-key-with-reflections infos (ty-node-get inner)))))]
-    [(AstTyEnum name) (string-append "enum_" (intern-str name))]
+    [(AstTyEnum name) (string_mod.string-append "enum_" (intern-str name))]
     [(AstTyEnumArgs name lifetimes)
-      (string-append
+      (string_mod.string-append
         "enumargs_"
-        (string-append
+        (string_mod.string-append
           (intern-str name)
-          (string-append "_" (ctfe-lifetime-list-key lifetimes))))]
-    [(AstTyStruct name) (string-append "struct_" (intern-str name))]
+          (string_mod.string-append "_" (ctfe-lifetime-list-key lifetimes))))]
+    [(AstTyStruct name) (string_mod.string-append "struct_" (intern-str name))]
     [(AstTyStructArgs name lifetimes)
-      (string-append
+      (string_mod.string-append
         "structargs_"
-        (string-append
+        (string_mod.string-append
           (intern-str name)
-          (string-append "_" (ctfe-lifetime-list-key lifetimes))))]
-    [(AstTyVar name) (string-append "var_" (intern-str name))]
+          (string_mod.string-append "_" (ctfe-lifetime-list-key lifetimes))))]
+    [(AstTyVar name) (string_mod.string-append "var_" (intern-str name))]
     [(AstTyVarArgs name lifetimes)
-      (string-append
+      (string_mod.string-append
         "varargs_"
-        (string-append
+        (string_mod.string-append
           (intern-str name)
-          (string-append "_" (ctfe-lifetime-list-key lifetimes))))]))
+          (string_mod.string-append "_" (ctfe-lifetime-list-key lifetimes))))]))
 
 (define (ctfe-type-key [ty : AstType]) : String
   (ctfe-type-key-with-reflections (ctfe-reflect-info-list-empty) ty))
@@ -1529,7 +1547,7 @@
           (ErrCtfeTypeArg
             (ctfe-diagnostic-at-expr
               expr
-              (string-append name " expects a type argument")))])]))
+              (string_mod.string-append name " expects a type argument")))])]))
 
 (define (ctfe-eval-i64-arg
   [arg : AstExpr]
@@ -1546,7 +1564,7 @@
           (ErrCtfeI64Arg
             (ctfe-diagnostic-at-expr
               expr
-              (string-append name " expects an i64 index")))])]))
+              (string_mod.string-append name " expects an i64 index")))])]))
 
 (define (ctfe-eval-string-arg
   [arg : AstExpr]
@@ -1563,7 +1581,7 @@
           (ErrCtfeStringArg
             (ctfe-diagnostic-at-expr
               expr
-              (string-append name " expects a String argument")))])]))
+              (string_mod.string-append name " expects a String argument")))])]))
 
 (define (ctfe-reflect-field-list-count [fields : CtfeReflectFieldList]) : i64
   (struct-get fields len))
@@ -1725,9 +1743,9 @@
       (ErrCtfe
         (ctfe-diagnostic-at-expr
           expr
-          (string-append
+          (string_mod.string-append
             "'"
-            (string-append
+            (string_mod.string-append
               (ctfe-describe-expr expr)
               "' is not supported in compile-time evaluation"))))]))
 
@@ -1858,7 +1876,7 @@
   [name : String]
   [layouts : CtfeLayoutInfoList]
   [ty : AstType]) : i64
-  (if (string-eq name "size-of")
+  (if (string_mod.string-eq name "size-of")
     (ctfe-type-size layouts ty)
     (ctfe-type-align layouts ty)))
 
@@ -1888,7 +1906,7 @@
                         (ErrCtfe
                           (ctfe-diagnostic-at-expr
                             expr
-                            (string-append
+                            (string_mod.string-append
                               name
                               " expects a known type argument")))
                         (OkCtfe (CtfeI64 answer) arg-fuel)))]
@@ -1896,17 +1914,21 @@
                     (ErrCtfe
                       (ctfe-diagnostic-at-expr
                         expr
-                        (string-append name " expects a type argument")))])])]
+                        (string_mod.string-append
+                          name
+                          " expects a type argument")))])])]
           [_
             (ErrCtfe
               (ctfe-diagnostic-at-expr
                 expr
-                (string-append name " expects exactly one type argument")))]))]
+                (string_mod.string-append
+                  name
+                  " expects exactly one type argument")))]))]
     [_
       (ErrCtfe
         (ctfe-diagnostic-at-expr
           expr
-          (string-append name " expects exactly one type argument")))]))
+          (string_mod.string-append name " expects exactly one type argument")))]))
 
 (define (ctfe-offset-field-name [expr : AstExpr]) : CtfeMaybeFieldName
   (match expr
@@ -1948,7 +1970,7 @@
             (ErrCtfe
               (ctfe-diagnostic-at-expr
                 expr
-                (string-append "offset-of unknown field " field-name)))
+                (string_mod.string-append "offset-of unknown field " field-name)))
             (OkCtfe (CtfeI64 offset) fuel)))
         (ErrCtfe
           (ctfe-diagnostic-at-expr expr "offset-of requires struct layout type")))]))
@@ -2022,39 +2044,47 @@
           "offset-of expects exactly one type argument and one field name"))]))
 
 (define (ctfe-reflection-query-name? [name : String]) : bool
-  (if (string-eq name "type-kind")
+  (if (string_mod.string-eq name "type-kind")
     true
-    (if (string-eq name "type-key")
+    (if (string_mod.string-eq name "type-key")
       true
-      (if (string-eq name "type-nominal-module")
+      (if (string_mod.string-eq name "type-nominal-module")
         true
-        (if (string-eq name "type-nominal-name")
+        (if (string_mod.string-eq name "type-nominal-name")
           true
-          (if (string-eq name "struct-field-count")
+          (if (string_mod.string-eq name "struct-field-count")
             true
-            (if (string-eq name "struct-field-name")
+            (if (string_mod.string-eq name "struct-field-name")
               true
-              (if (string-eq name "struct-field-type")
+              (if (string_mod.string-eq name "struct-field-type")
                 true
-                (if (string-eq name "enum-variant-count")
+                (if (string_mod.string-eq name "enum-variant-count")
                   true
-                  (if (string-eq name "enum-variant-name")
+                  (if (string_mod.string-eq name "enum-variant-name")
                     true
-                    (if (string-eq name "enum-variant-payload-count")
+                    (if (string_mod.string-eq name "enum-variant-payload-count")
                       true
-                      (if (string-eq name "enum-variant-payload-type")
+                      (if (string_mod.string-eq
+                        name
+                        "enum-variant-payload-type")
                         true
-                        (if (string-eq name "array-element-type")
+                        (if (string_mod.string-eq name "array-element-type")
                           true
-                          (if (string-eq name "array-length")
+                          (if (string_mod.string-eq name "array-length")
                             true
-                            (if (string-eq name "array-dynamic?")
+                            (if (string_mod.string-eq name "array-dynamic?")
                               true
-                              (if (string-eq name "function-param-count")
+                              (if (string_mod.string-eq
+                                name
+                                "function-param-count")
                                 true
-                                (if (string-eq name "function-param-type")
+                                (if (string_mod.string-eq
+                                  name
+                                  "function-param-type")
                                   true
-                                  (string-eq name "function-return-type"))))))))))))))))))
+                                  (string_mod.string-eq
+                                    name
+                                    "function-return-type"))))))))))))))))))
 
 (define (ctfe-eval-one-type-reflection
   [name : String]
@@ -2074,15 +2104,15 @@
               [(OkCtfeTypeArg ty arg-fuel)
                 (let
                   [infos : CtfeReflectInfoList (ctfe-env-reflections env)]
-                  (if (string-eq name "type-kind")
+                  (if (string_mod.string-eq name "type-kind")
                     (OkCtfe
                       (CtfeString (ctfe-type-kind-with-reflections infos ty))
                       arg-fuel)
-                    (if (string-eq name "type-key")
+                    (if (string_mod.string-eq name "type-key")
                       (OkCtfe
                         (CtfeString (ctfe-type-key-with-reflections infos ty))
                         arg-fuel)
-                      (if (string-eq name "type-nominal-module")
+                      (if (string_mod.string-eq name "type-nominal-module")
                         (match (ctfe-reflect-info-lookup
                           infos
                           (ctfe-type-nominal-key ty))
@@ -2097,7 +2127,7 @@
                               (ctfe-diagnostic-at-expr
                                 expr
                                 "type-nominal-module requires struct or enum type"))])
-                        (if (string-eq name "type-nominal-name")
+                        (if (string_mod.string-eq name "type-nominal-name")
                           (match (ctfe-reflect-info-lookup
                             infos
                             (ctfe-type-nominal-key ty))
@@ -2112,7 +2142,7 @@
                                 (ctfe-diagnostic-at-expr
                                   expr
                                   "type-nominal-name requires struct or enum type"))])
-                          (if (string-eq name "struct-field-count")
+                          (if (string_mod.string-eq name "struct-field-count")
                             (match (ctfe-reflect-info-lookup
                               infos
                               (ctfe-type-nominal-key ty))
@@ -2133,7 +2163,7 @@
                                   (ctfe-diagnostic-at-expr
                                     expr
                                     "struct-field-count requires struct type"))])
-                            (if (string-eq name "enum-variant-count")
+                            (if (string_mod.string-eq name "enum-variant-count")
                               (match (ctfe-reflect-info-lookup
                                 infos
                                 (ctfe-type-nominal-key ty))
@@ -2155,7 +2185,9 @@
                                     (ctfe-diagnostic-at-expr
                                       expr
                                       "enum-variant-count requires enum type"))])
-                              (if (string-eq name "array-element-type")
+                              (if (string_mod.string-eq
+                                name
+                                "array-element-type")
                                 (match ty
                                   [(AstTyArray elem _)
                                     (OkCtfe
@@ -2170,7 +2202,7 @@
                                       (ctfe-diagnostic-at-expr
                                         expr
                                         "array-element-type requires array type"))])
-                                (if (string-eq name "array-length")
+                                (if (string_mod.string-eq name "array-length")
                                   (match ty
                                     [(AstTyArray _ count)
                                       (OkCtfe (CtfeI64 count) arg-fuel)]
@@ -2179,7 +2211,9 @@
                                         (ctfe-diagnostic-at-expr
                                           expr
                                           "array-length requires fixed array type"))])
-                                  (if (string-eq name "array-dynamic?")
+                                  (if (string_mod.string-eq
+                                    name
+                                    "array-dynamic?")
                                     (match ty
                                       [(AstTyArray _ _)
                                         (OkCtfe (CtfeBool false) arg-fuel)]
@@ -2190,7 +2224,9 @@
                                           (ctfe-diagnostic-at-expr
                                             expr
                                             "array-dynamic? requires array type"))])
-                                    (if (string-eq name "function-param-count")
+                                    (if (string_mod.string-eq
+                                      name
+                                      "function-param-count")
                                       (match ty
                                         [(AstTyFunc params _)
                                           (OkCtfe
@@ -2202,7 +2238,7 @@
                                             (ctfe-diagnostic-at-expr
                                               expr
                                               "function-param-count requires function type"))])
-                                      (if (string-eq
+                                      (if (string_mod.string-eq
                                         name
                                         "function-return-type")
                                         (match ty
@@ -2220,12 +2256,14 @@
             (ErrCtfe
               (ctfe-diagnostic-at-expr
                 expr
-                (string-append name " expects exactly one type argument")))]))]
+                (string_mod.string-append
+                  name
+                  " expects exactly one type argument")))]))]
     [_
       (ErrCtfe
         (ctfe-diagnostic-at-expr
           expr
-          (string-append name " expects exactly one type argument")))]))
+          (string_mod.string-append name " expects exactly one type argument")))]))
 
 (define (ctfe-type-nominal-key [ty : AstType]) : String
   (match ty
@@ -2241,11 +2279,15 @@
   (ErrCtfe
     (ctfe-diagnostic-at-expr
       expr
-      (string-append name " expects exactly one type argument and one index"))))
+      (string_mod.string-append
+        name
+        " expects exactly one type argument and one index"))))
 
 (define (ctfe-struct-field-kind-error [name : String] [expr : AstExpr]) : ResultCtfe
   (ErrCtfe
-    (ctfe-diagnostic-at-expr expr (string-append name " requires struct type"))))
+    (ctfe-diagnostic-at-expr
+      expr
+      (string_mod.string-append name " requires struct type"))))
 
 (define (ctfe-eval-struct-field-from-fields
   [name : String]
@@ -2254,21 +2296,25 @@
   [index : i64]
   [expr : AstExpr]
   [fuel : i64]) : ResultCtfe
-  (if (string-eq name "struct-field-name")
+  (if (string_mod.string-eq name "struct-field-name")
     (match (ctfe-reflect-field-name-at fields index)
       [(OkCtfeStringLookup field-name) (OkCtfe (CtfeString field-name) fuel)]
       [(ErrCtfeStringLookup message)
         (ErrCtfe
           (ctfe-diagnostic-at-expr
             expr
-            (string-append name (string-append " " message))))])
+            (string_mod.string-append
+              name
+              (string_mod.string-append " " message))))])
     (match (ctfe-reflect-field-type-at fields infos index)
       [(OkCtfeTypeLookup field-ty) (OkCtfe (CtfeType field-ty) fuel)]
       [(ErrCtfeTypeLookup message)
         (ErrCtfe
           (ctfe-diagnostic-at-expr
             expr
-            (string-append name (string-append " " message))))])))
+            (string_mod.string-append
+              name
+              (string_mod.string-append " " message))))])))
 
 (define (ctfe-eval-struct-field-from-type
   [name : String]
@@ -2337,11 +2383,15 @@
   (ErrCtfe
     (ctfe-diagnostic-at-expr
       expr
-      (string-append name " expects exactly one type argument and one index"))))
+      (string_mod.string-append
+        name
+        " expects exactly one type argument and one index"))))
 
 (define (ctfe-enum-variant-kind-error [name : String] [expr : AstExpr]) : ResultCtfe
   (ErrCtfe
-    (ctfe-diagnostic-at-expr expr (string-append name " requires enum type"))))
+    (ctfe-diagnostic-at-expr
+      expr
+      (string_mod.string-append name " requires enum type"))))
 
 (define (ctfe-eval-enum-variant-from-variants
   [name : String]
@@ -2349,7 +2399,7 @@
   [index : i64]
   [expr : AstExpr]
   [fuel : i64]) : ResultCtfe
-  (if (string-eq name "enum-variant-name")
+  (if (string_mod.string-eq name "enum-variant-name")
     (match (ctfe-reflect-variant-name-at variants index)
       [(OkCtfeStringLookup variant-name)
         (OkCtfe (CtfeString variant-name) fuel)]
@@ -2357,7 +2407,9 @@
         (ErrCtfe
           (ctfe-diagnostic-at-expr
             expr
-            (string-append name (string-append " " message))))])
+            (string_mod.string-append
+              name
+              (string_mod.string-append " " message))))])
     (match (ctfe-reflect-variant-payloads-at variants index)
       [(OkCtfeTypeListLookup payloads)
         (OkCtfe (CtfeI64 (ctfe-type-list-count payloads)) fuel)]
@@ -2365,7 +2417,9 @@
         (ErrCtfe
           (ctfe-diagnostic-at-expr
             expr
-            (string-append name (string-append " " message))))])))
+            (string_mod.string-append
+              name
+              (string_mod.string-append " " message))))])))
 
 (define (ctfe-eval-enum-variant-from-type
   [name : String]
@@ -2451,12 +2505,12 @@
           (ErrCtfe
             (ctfe-diagnostic-at-expr
               expr
-              (string-append "enum-variant-payload-type " message)))])]
+              (string_mod.string-append "enum-variant-payload-type " message)))])]
     [(ErrCtfeTypeListLookup message)
       (ErrCtfe
         (ctfe-diagnostic-at-expr
           expr
-          (string-append "enum-variant-payload-type " message)))]))
+          (string_mod.string-append "enum-variant-payload-type " message)))]))
 
 (define (ctfe-eval-enum-payload-type-from-type
   [ty : AstType]
@@ -2584,7 +2638,7 @@
                                   (ErrCtfe
                                     (ctfe-diagnostic-at-expr
                                       expr
-                                      (string-append
+                                      (string_mod.string-append
                                         "function-param-type "
                                         message)))])]
                             [_
@@ -2615,29 +2669,29 @@
   [env : CtfeEnv]
   [fuel : i64]) : ResultCtfe
   (if (or
-    (string-eq name "type-kind")
-    (string-eq name "type-key")
-    (string-eq name "type-nominal-module")
-    (string-eq name "type-nominal-name")
-    (string-eq name "struct-field-count")
-    (string-eq name "enum-variant-count")
-    (string-eq name "array-element-type")
-    (string-eq name "array-length")
-    (string-eq name "array-dynamic?")
-    (string-eq name "function-param-count")
-    (string-eq name "function-return-type"))
+    (string_mod.string-eq name "type-kind")
+    (string_mod.string-eq name "type-key")
+    (string_mod.string-eq name "type-nominal-module")
+    (string_mod.string-eq name "type-nominal-name")
+    (string_mod.string-eq name "struct-field-count")
+    (string_mod.string-eq name "enum-variant-count")
+    (string_mod.string-eq name "array-element-type")
+    (string_mod.string-eq name "array-length")
+    (string_mod.string-eq name "array-dynamic?")
+    (string_mod.string-eq name "function-param-count")
+    (string_mod.string-eq name "function-return-type"))
     (ctfe-eval-one-type-reflection name args expr env fuel)
     (if (or
-      (string-eq name "struct-field-name")
-      (string-eq name "struct-field-type"))
+      (string_mod.string-eq name "struct-field-name")
+      (string_mod.string-eq name "struct-field-type"))
       (ctfe-eval-struct-field-reflection name args expr env fuel)
       (if (or
-        (string-eq name "enum-variant-name")
-        (string-eq name "enum-variant-payload-count"))
+        (string_mod.string-eq name "enum-variant-name")
+        (string_mod.string-eq name "enum-variant-payload-count"))
         (ctfe-eval-enum-variant-reflection name args expr env fuel)
-        (if (string-eq name "enum-variant-payload-type")
+        (if (string_mod.string-eq name "enum-variant-payload-type")
           (ctfe-eval-enum-payload-type-reflection args expr env fuel)
-          (if (string-eq name "function-param-type")
+          (if (string_mod.string-eq name "function-param-type")
             (ctfe-eval-function-param-type-reflection args expr env fuel)
             (ctfe-unsupported-form expr)))))))
 
@@ -2670,7 +2724,9 @@
                         name)
                         [(ErrCtfeStringArg d) (ErrCtfe d)]
                         [(OkCtfeStringArg r right-fuel)
-                          (OkCtfe (CtfeBool (string-eq l r)) right-fuel)])])]
+                          (OkCtfe
+                            (CtfeBool (string_mod.string-eq l r))
+                            right-fuel)])])]
                 [_
                   (ErrCtfe
                     (ctfe-diagnostic-at-expr
@@ -2710,7 +2766,9 @@
                         name)
                         [(ErrCtfeStringArg d) (ErrCtfe d)]
                         [(OkCtfeStringArg r right-fuel)
-                          (OkCtfe (CtfeString (string-append l r)) right-fuel)])])]
+                          (OkCtfe
+                            (CtfeString (string_mod.string-append l r))
+                            right-fuel)])])]
                 [_
                   (ErrCtfe
                     (ctfe-diagnostic-at-expr
@@ -2762,7 +2820,7 @@
             (match (ctfe-eval-i64-arg arg expr env fuel "int->string")
               [(ErrCtfeI64Arg d) (ErrCtfe d)]
               [(OkCtfeI64Arg n arg-fuel)
-                (OkCtfe (CtfeString (int->string n)) arg-fuel)])]
+                (OkCtfe (CtfeString (string_mod.int->string n)) arg-fuel)])]
           [_
             (ErrCtfe
               (ctfe-diagnostic-at-expr expr "int->string expects one i64"))]))]
@@ -2900,34 +2958,34 @@
 
 (define (ctfe-expr-inspector-name? [name : String]) : bool
   (or
-    (string-eq name "expr-bool?")
-    (string-eq name "expr-bool-value")
-    (string-eq name "expr-if?")
-    (string-eq name "expr-if-cond")
-    (string-eq name "expr-if-then")
-    (string-eq name "expr-if-else")))
+    (string_mod.string-eq name "expr-bool?")
+    (string_mod.string-eq name "expr-bool-value")
+    (string_mod.string-eq name "expr-if?")
+    (string_mod.string-eq name "expr-if-cond")
+    (string_mod.string-eq name "expr-if-then")
+    (string_mod.string-eq name "expr-if-else")))
 
 (define (ctfe-expr-list-inspector-name? [name : String]) : bool
   (or
-    (string-eq name "expr-list-empty?")
-    (string-eq name "expr-list-length")
-    (string-eq name "expr-list-head")
-    (string-eq name "expr-list-tail")
-    (string-eq name "expr-list-nth")))
+    (string_mod.string-eq name "expr-list-empty?")
+    (string_mod.string-eq name "expr-list-length")
+    (string_mod.string-eq name "expr-list-head")
+    (string_mod.string-eq name "expr-list-tail")
+    (string_mod.string-eq name "expr-list-nth")))
 
 (define (ctfe-expr-clause-inspector-name? [name : String]) : bool
   (or
-    (string-eq name "expr-clause-first")
-    (string-eq name "expr-clause-second")))
+    (string_mod.string-eq name "expr-clause-first")
+    (string_mod.string-eq name "expr-clause-second")))
 
 (define (ctfe-expr-clause-list-inspector-name? [name : String]) : bool
   (or
-    (string-eq name "expr-clause-list-empty?")
-    (string-eq name "expr-clause-list-length")
-    (string-eq name "expr-clause-list-head")
-    (string-eq name "expr-clause-list-tail")
-    (string-eq name "expr-clause-list-nth")
-    (string-eq name "expr-clause-list->expr-list")))
+    (string_mod.string-eq name "expr-clause-list-empty?")
+    (string_mod.string-eq name "expr-clause-list-length")
+    (string_mod.string-eq name "expr-clause-list-head")
+    (string_mod.string-eq name "expr-clause-list-tail")
+    (string_mod.string-eq name "expr-clause-list-nth")
+    (string_mod.string-eq name "expr-clause-list->expr-list")))
 
 (define (ctfe-eval-expr-list-nth-call
   [list-arg : AstExpr]
@@ -2983,9 +3041,9 @@
               [(OkCtfe value arg-fuel)
                 (match value
                   [(CtfeExpr node ty)
-                    (if (string-eq name "expr-bool?")
+                    (if (string_mod.string-eq name "expr-bool?")
                       (OkCtfe (CtfeBool (ctfe-expr-bool? node)) arg-fuel)
-                      (if (string-eq name "expr-bool-value")
+                      (if (string_mod.string-eq name "expr-bool-value")
                         (if (ctfe-expr-bool? node)
                           (OkCtfe
                             (CtfeBool (ctfe-expr-bool-value node))
@@ -2994,18 +3052,18 @@
                             (ctfe-diagnostic-at-expr
                               expr
                               "expr-bool-value expects bool literal Expr")))
-                        (if (string-eq name "expr-if?")
+                        (if (string_mod.string-eq name "expr-if?")
                           (OkCtfe (CtfeBool (ctfe-expr-if? node)) arg-fuel)
                           (if (ctfe-expr-if? node)
-                            (if (string-eq name "expr-if-cond")
+                            (if (string_mod.string-eq name "expr-if-cond")
                               (OkCtfe
                                 (CtfeExpr (ctfe-expr-if-cond node) (AstTyBool))
                                 arg-fuel)
-                              (if (string-eq name "expr-if-then")
+                              (if (string_mod.string-eq name "expr-if-then")
                                 (OkCtfe
                                   (CtfeExpr (ctfe-expr-if-then node) ty)
                                   arg-fuel)
-                                (if (string-eq name "expr-if-else")
+                                (if (string_mod.string-eq name "expr-if-else")
                                   (OkCtfe
                                     (CtfeExpr (ctfe-expr-if-else node) ty)
                                     arg-fuel)
@@ -3013,23 +3071,25 @@
                             (ErrCtfe
                               (ctfe-diagnostic-at-expr
                                 expr
-                                (string-append name " expects if Expr")))))))]
+                                (string_mod.string-append
+                                  name
+                                  " expects if Expr")))))))]
                   [_
                     (ErrCtfe
                       (ctfe-diagnostic-at-expr
                         expr
-                        (string-append name " expects Expr")))])]
+                        (string_mod.string-append name " expects Expr")))])]
               [(ErrCtfe diag) (ErrCtfe diag)])]
           [_
             (ErrCtfe
               (ctfe-diagnostic-at-expr
                 expr
-                (string-append name " expects exactly one arg")))]))]
+                (string_mod.string-append name " expects exactly one arg")))]))]
     [_
       (ErrCtfe
         (ctfe-diagnostic-at-expr
           expr
-          (string-append name " expects exactly one arg")))]))
+          (string_mod.string-append name " expects exactly one arg")))]))
 
 (define (ctfe-eval-expr-list-inspector-call
   [name : String]
@@ -3042,7 +3102,7 @@
       (let
         [arg : AstExpr (ast-node-get arg)]
         [rest : AstExprList (box-get rest)]
-        (if (string-eq name "expr-list-nth")
+        (if (string_mod.string-eq name "expr-list-nth")
           (match rest
             [(AstExprCons index-arg nth-rest)
               (ctfe-eval-expr-list-nth-call
@@ -3063,11 +3123,11 @@
                 [(OkCtfe value arg-fuel)
                   (match value
                     [(CtfeExprList nodes)
-                      (if (string-eq name "expr-list-empty?")
+                      (if (string_mod.string-eq name "expr-list-empty?")
                         (OkCtfe
                           (CtfeBool (ctfe-expr-list-empty? nodes))
                           arg-fuel)
-                        (if (string-eq name "expr-list-length")
+                        (if (string_mod.string-eq name "expr-list-length")
                           (OkCtfe
                             (CtfeI64 (ctfe-expr-list-length nodes))
                             arg-fuel)
@@ -3075,16 +3135,16 @@
                             (ErrCtfe
                               (ctfe-diagnostic-at-expr
                                 expr
-                                (string-append
+                                (string_mod.string-append
                                   name
                                   " expects non-empty ExprList")))
-                            (if (string-eq name "expr-list-head")
+                            (if (string_mod.string-eq name "expr-list-head")
                               (OkCtfe
                                 (CtfeExpr
                                   (ctfe-expr-list-head nodes)
                                   (AstTyExpr))
                                 arg-fuel)
-                              (if (string-eq name "expr-list-tail")
+                              (if (string_mod.string-eq name "expr-list-tail")
                                 (OkCtfe
                                   (CtfeExprList (ctfe-expr-list-tail nodes))
                                   arg-fuel)
@@ -3093,18 +3153,18 @@
                       (ErrCtfe
                         (ctfe-diagnostic-at-expr
                           expr
-                          (string-append name " expects ExprList")))])]
+                          (string_mod.string-append name " expects ExprList")))])]
                 [(ErrCtfe diag) (ErrCtfe diag)])]
             [_
               (ErrCtfe
                 (ctfe-diagnostic-at-expr
                   expr
-                  (string-append name " expects exactly one arg")))])))]
+                  (string_mod.string-append name " expects exactly one arg")))])))]
     [_
       (ErrCtfe
         (ctfe-diagnostic-at-expr
           expr
-          (string-append name " expects exactly one arg")))]))
+          (string_mod.string-append name " expects exactly one arg")))]))
 
 (define (ctfe-eval-expr-clause-inspector-call
   [name : String]
@@ -3123,11 +3183,11 @@
               [(OkCtfe value arg-fuel)
                 (match value
                   [(CtfeExprClause clause)
-                    (if (string-eq name "expr-clause-first")
+                    (if (string_mod.string-eq name "expr-clause-first")
                       (OkCtfe
                         (CtfeExpr (ctfe-expr-clause-first clause) (AstTyExpr))
                         arg-fuel)
-                      (if (string-eq name "expr-clause-second")
+                      (if (string_mod.string-eq name "expr-clause-second")
                         (OkCtfe
                           (CtfeExpr
                             (ctfe-expr-clause-second clause)
@@ -3138,18 +3198,18 @@
                     (ErrCtfe
                       (ctfe-diagnostic-at-expr
                         expr
-                        (string-append name " expects ExprClause")))])]
+                        (string_mod.string-append name " expects ExprClause")))])]
               [(ErrCtfe diag) (ErrCtfe diag)])]
           [_
             (ErrCtfe
               (ctfe-diagnostic-at-expr
                 expr
-                (string-append name " expects exactly one arg")))]))]
+                (string_mod.string-append name " expects exactly one arg")))]))]
     [_
       (ErrCtfe
         (ctfe-diagnostic-at-expr
           expr
-          (string-append name " expects exactly one arg")))]))
+          (string_mod.string-append name " expects exactly one arg")))]))
 
 (define (ctfe-eval-expr-clause-list-nth-call
   [list-arg : AstExpr]
@@ -3205,7 +3265,7 @@
       (let
         [arg : AstExpr (ast-node-get arg)]
         [rest : AstExprList (box-get rest)]
-        (if (string-eq name "expr-clause-list-nth")
+        (if (string_mod.string-eq name "expr-clause-list-nth")
           (match rest
             [(AstExprCons index-arg nth-rest)
               (ctfe-eval-expr-clause-list-nth-call
@@ -3226,15 +3286,19 @@
                 [(OkCtfe value arg-fuel)
                   (match value
                     [(CtfeExprClauseList clauses)
-                      (if (string-eq name "expr-clause-list-empty?")
+                      (if (string_mod.string-eq name "expr-clause-list-empty?")
                         (OkCtfe
                           (CtfeBool (ctfe-expr-clause-list-empty? clauses))
                           arg-fuel)
-                        (if (string-eq name "expr-clause-list-length")
+                        (if (string_mod.string-eq
+                          name
+                          "expr-clause-list-length")
                           (OkCtfe
                             (CtfeI64 (ctfe-expr-clause-list-length clauses))
                             arg-fuel)
-                          (if (string-eq name "expr-clause-list->expr-list")
+                          (if (string_mod.string-eq
+                            name
+                            "expr-clause-list->expr-list")
                             (OkCtfe
                               (CtfeExprList
                                 (ctfe-expr-clause-list->expr-list clauses))
@@ -3243,15 +3307,19 @@
                               (ErrCtfe
                                 (ctfe-diagnostic-at-expr
                                   expr
-                                  (string-append
+                                  (string_mod.string-append
                                     name
                                     " expects non-empty ExprClauseList")))
-                              (if (string-eq name "expr-clause-list-head")
+                              (if (string_mod.string-eq
+                                name
+                                "expr-clause-list-head")
                                 (OkCtfe
                                   (CtfeExprClause
                                     (ctfe-expr-clause-list-head clauses))
                                   arg-fuel)
-                                (if (string-eq name "expr-clause-list-tail")
+                                (if (string_mod.string-eq
+                                  name
+                                  "expr-clause-list-tail")
                                   (OkCtfe
                                     (CtfeExprClauseList
                                       (ctfe-expr-clause-list-tail clauses))
@@ -3261,18 +3329,20 @@
                       (ErrCtfe
                         (ctfe-diagnostic-at-expr
                           expr
-                          (string-append name " expects ExprClauseList")))])]
+                          (string_mod.string-append
+                            name
+                            " expects ExprClauseList")))])]
                 [(ErrCtfe diag) (ErrCtfe diag)])]
             [_
               (ErrCtfe
                 (ctfe-diagnostic-at-expr
                   expr
-                  (string-append name " expects exactly one arg")))])))]
+                  (string_mod.string-append name " expects exactly one arg")))])))]
     [_
       (ErrCtfe
         (ctfe-diagnostic-at-expr
           expr
-          (string-append name " expects exactly one arg")))]))
+          (string_mod.string-append name " expects exactly one arg")))]))
 
 (define (ctfe-eval-expr-if-call
   [args : AstExprList]
@@ -3387,20 +3457,20 @@
         (ctfe-eval-call inner args expr env fuel))]
     [(AstExprVar name)
       (if (or
-        (string-eq (intern-str name) "size-of")
-        (string-eq (intern-str name) "align-of"))
+        (string_mod.string-eq (intern-str name) "size-of")
+        (string_mod.string-eq (intern-str name) "align-of"))
         (ctfe-eval-size-align-query (intern-str name) args expr env fuel)
-        (if (string-eq (intern-str name) "offset-of")
+        (if (string_mod.string-eq (intern-str name) "offset-of")
           (ctfe-eval-offset-query args expr env fuel)
           (if (ctfe-reflection-query-name? (intern-str name))
             (ctfe-eval-reflection-query (intern-str name) args expr env fuel)
             (if (or
-              (string-eq (intern-str name) "string-eq")
-              (string-eq (intern-str name) "string=?"))
+              (string_mod.string-eq (intern-str name) "string-eq")
+              (string_mod.string-eq (intern-str name) "string=?"))
               (ctfe-eval-string-eq-call (intern-str name) args expr env fuel)
               (if (or
-                (string-eq (intern-str name) "string-append")
-                (string-eq (intern-str name) "string-concat"))
+                (string_mod.string-eq (intern-str name) "string-append")
+                (string_mod.string-eq (intern-str name) "string-concat"))
                 (ctfe-eval-string-append-call
                   (intern-str name)
                   args
@@ -3408,25 +3478,29 @@
                   env
                   fuel)
                 (if (or
-                  (string-eq (intern-str name) "string-length")
-                  (string-eq (intern-str name) "length"))
+                  (string_mod.string-eq (intern-str name) "string-length")
+                  (string_mod.string-eq (intern-str name) "length"))
                   (ctfe-eval-string-length-call
                     (intern-str name)
                     args
                     expr
                     env
                     fuel)
-                  (if (string-eq (intern-str name) "int->string")
+                  (if (string_mod.string-eq (intern-str name) "int->string")
                     (ctfe-eval-int-to-string-call args expr env fuel)
-                    (if (string-eq (intern-str name) "expr-bool")
+                    (if (string_mod.string-eq (intern-str name) "expr-bool")
                       (ctfe-eval-expr-bool-call args expr env fuel)
-                      (if (string-eq (intern-str name) "expr-int")
+                      (if (string_mod.string-eq (intern-str name) "expr-int")
                         (ctfe-eval-expr-int-call args expr env fuel)
-                        (if (string-eq (intern-str name) "expr-var")
+                        (if (string_mod.string-eq (intern-str name) "expr-var")
                           (ctfe-eval-expr-var-call args expr env fuel)
-                          (if (string-eq (intern-str name) "expr-splice")
+                          (if (string_mod.string-eq
+                            (intern-str name)
+                            "expr-splice")
                             (ctfe-eval-expr-splice-call args expr env fuel)
-                            (if (string-eq (intern-str name) "expr-if")
+                            (if (string_mod.string-eq
+                              (intern-str name)
+                              "expr-if")
                               (ctfe-eval-expr-if-call args expr env fuel)
                               (if (ctfe-expr-inspector-name? (intern-str name))
                                 (ctfe-eval-expr-inspector-call
@@ -3467,9 +3541,9 @@
   (ErrCtfe
     (ctfe-diagnostic-at-expr
       expr
-      (string-append
+      (string_mod.string-append
         "'"
-        (string-append
+        (string_mod.string-append
           (ctfe-describe-expr expr)
           "' is not supported in compile-time evaluation")))))
 
@@ -3484,9 +3558,9 @@
       (ErrCtfe
         (ctfe-diagnostic-at-expr
           expr
-          (string-append
+          (string_mod.string-append
             "compile-time evaluation cannot reference runtime variable '"
-            (string-append name "'"))))]))
+            (string_mod.string-append name "'"))))]))
 
 (define (ctfe-eval-binary
   [op : AstBinOp]
@@ -3598,15 +3672,17 @@
     [suffix-len : i64 (string-length suffix)]
     (if (< text-len suffix-len)
       false
-      (string-eq (substring text (- text-len suffix-len) suffix-len) suffix))))
+      (string_mod.string-eq
+        (string_mod.substring text (- text-len suffix-len) suffix-len)
+        suffix))))
 
 (define (ctfe-pattern-variant-name? [name : i64] [expected : String]) : bool
   (let
     [actual : String (intern-str name)]
     (or
-      (string-eq actual expected)
-      (ctfe-string-suffix? actual (string-append "." expected))
-      (ctfe-string-suffix? actual (string-append "/" expected)))))
+      (string_mod.string-eq actual expected)
+      (ctfe-string-suffix? actual (string_mod.string-append "." expected))
+      (ctfe-string-suffix? actual (string_mod.string-append "/" expected)))))
 
 (define (ctfe-literal-matches-value?
   [lit : AstLiteral]
@@ -3638,7 +3714,7 @@
         [(CompilerFloatNoF64) false])]
     [(AstLitString text)
       (match value
-        [(CtfeString actual) (string-eq actual text)]
+        [(CtfeString actual) (string_mod.string-eq actual text)]
         [_ false])]))
 
 (define (ctfe-match-pattern-list
@@ -4742,11 +4818,11 @@
         [_ false])]
     [(AstLitFloat a-text)
       (match b
-        [(AstLitFloat b-text) (string-eq a-text b-text)]
+        [(AstLitFloat b-text) (string_mod.string-eq a-text b-text)]
         [_ false])]
     [(AstLitString a-text)
       (match b
-        [(AstLitString b-text) (string-eq a-text b-text)]
+        [(AstLitString b-text) (string_mod.string-eq a-text b-text)]
         [_ false])]
     [(AstLitUnit)
       (match b
@@ -4764,7 +4840,7 @@
         [_ false])]
     [(AstBorrowLifetimeNamed a-name)
       (match b
-        [(AstBorrowLifetimeNamed b-name) (string-eq a-name b-name)]
+        [(AstBorrowLifetimeNamed b-name) (string_mod.string-eq a-name b-name)]
         [_ false])]))
 
 (define (ctfe-maybe-type-eq [a : AstMaybeType] [b : AstMaybeType]) : bool
@@ -5000,7 +5076,7 @@
     [(AstExprVar a-name)
       (match b
         [(AstExprVar b-name)
-          (string-eq (intern-str a-name) (intern-str b-name))]
+          (string_mod.string-eq (intern-str a-name) (intern-str b-name))]
         [_ false])]
     [(AstExprBinary a-op a-l-box a-r-box)
       (let
@@ -5318,7 +5394,9 @@
     [(AstExprWithRegion a-name a-body)
       (match b
         [(AstExprWithRegion b-name b-body)
-          (and (string-eq a-name b-name) (ctfe-expr-list-eq a-body b-body))]
+          (and
+            (string_mod.string-eq a-name b-name)
+            (ctfe-expr-list-eq a-body b-body))]
         [_ false])]
     [(AstExprWithEscape a-escape-box a-body)
       (let
@@ -5544,7 +5622,7 @@
           [_ false]))]
     [(AstExprBinaryData a-bytes)
       (match b
-        [(AstExprBinaryData b-bytes) (string-eq a-bytes b-bytes)]
+        [(AstExprBinaryData b-bytes) (string_mod.string-eq a-bytes b-bytes)]
         [_ false])]
     [(AstExprProgramArgc)
       (match b
@@ -6137,21 +6215,21 @@
       (match b
         [(AstTyRef b-region b-inner)
           (and
-            (string-eq a-region b-region)
+            (string_mod.string-eq a-region b-region)
             (ctfe-type-eq (ty-node-get a-inner) (ty-node-get b-inner)))]
         [_ false])]
     [(AstTyMutRef a-region a-inner)
       (match b
         [(AstTyMutRef b-region b-inner)
           (and
-            (string-eq a-region b-region)
+            (string_mod.string-eq a-region b-region)
             (ctfe-type-eq (ty-node-get a-inner) (ty-node-get b-inner)))]
         [_ false])]
     [(AstTyRegion a-region a-inner)
       (match b
         [(AstTyRegion b-region b-inner)
           (and
-            (string-eq a-region b-region)
+            (string_mod.string-eq a-region b-region)
             (ctfe-type-eq (ty-node-get a-inner) (ty-node-get b-inner)))]
         [_ false])]
     [(AstTyEnum a-name)
@@ -6200,7 +6278,7 @@
           [(CtfeType actual)
             (and
               (ctfe-type-eq actual want)
-              (string-eq (ctfe-value-type-name value) "type"))]
+              (string_mod.string-eq (ctfe-value-type-name value) "type"))]
           [_ false])]
       [(ErrCtfe _) false])))
 
@@ -6313,7 +6391,7 @@
   (match (compiler-ctfe-eval (ast-node-get expr) env (ctfe-fuel-limit))
     [(OkCtfe value _)
       (match value
-        [(CtfeString actual) (string-eq actual want)]
+        [(CtfeString actual) (string_mod.string-eq actual want)]
         [_ false])]
     [(ErrCtfe _) false]))
 
@@ -6333,7 +6411,8 @@
   [env : CtfeEnv]
   [want : String]) : bool
   (match (compiler-ctfe-eval (ast-node-get expr) env (ctfe-fuel-limit))
-    [(ErrCtfe diag) (string-eq (compiler-diagnostic-message diag) want)]
+    [(ErrCtfe diag)
+      (string_mod.string-eq (compiler-diagnostic-message diag) want)]
     [(OkCtfe _ _) false]))
 
 (define (compiler-ctfe-f64-ok?) : bool

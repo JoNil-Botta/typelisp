@@ -6,7 +6,9 @@
 ;; %rsp/%rbp and the emitter's hard scratch registers reserved, and only admit
 ;; caller-saved integer/XMM registers for values that cannot be clobbered by
 ;; call emission.
-(import "../stdlib/io.tl")
+(import stdlib.io as io_mod)
+
+(import stdlib.hashmap as hashmap_mod)
 
 (import "compiler_liveness.tl")
 
@@ -1139,11 +1141,11 @@
 (define (compiler-reg-bits-build-rows!
   [blocks : CompilerLiveBlockList]
   [arr : (Array CompilerLiveBlock)]
-  [idmap : StringI64Map]
+  [idmap : hashmap_mod.StringI64Map]
   [use-rows : (Array i64)]
   [def-rows : (Array i64)]
   [words : i64]
-  [index : i64]) : StringI64Map
+  [index : i64]) : hashmap_mod.StringI64Map
   (match blocks
     [(CompilerLiveBlockNil) idmap]
     [(CompilerLiveBlockCons block rest)
@@ -1156,7 +1158,7 @@
             (compiler-reg-bits-build-rows!
               (box-get rest)
               arr
-              (string-i64-map-put idmap label index)
+              (hashmap_mod.string-i64-map-put idmap label index)
               use-rows
               def-rows
               words
@@ -1197,22 +1199,22 @@
   [live-out : (Array i64)]
   [live-in : (Array i64)]
   [succs : CompilerLiveLabelSet]
-  [idmap : StringI64Map]
+  [idmap : hashmap_mod.StringI64Map]
   [b : i64]
   [words : i64]) : unit
   (match succs
     [(CompilerLiveLabelNil) unit]
     [(CompilerLiveLabelCons label rest)
       (begin
-        (match (string-i64-map-get idmap label)
-          [(StringI64MapFound idx)
+        (match (hashmap_mod.string-i64-map-get idmap label)
+          [(hashmap_mod.StringI64MapFound idx)
             (compiler-reg-bits-or-row!
               live-out
               (* b words)
               live-in
               (* idx words)
               words)]
-          [(StringI64MapMissing) unit])
+          [(hashmap_mod.StringI64MapMissing) unit])
         (compiler-reg-bits-or-succs!
           live-out
           live-in
@@ -1252,7 +1254,7 @@
 
 (define (compiler-reg-bits-iterate!
   [arr : (Array CompilerLiveBlock)]
-  [idmap : StringI64Map]
+  [idmap : hashmap_mod.StringI64Map]
   [words : i64]
   [use-rows : (Array i64)]
   [live-in : (Array i64)]
@@ -1295,7 +1297,7 @@
 
 (define (compiler-reg-bits-fixpoint!
   [arr : (Array CompilerLiveBlock)]
-  [idmap : StringI64Map]
+  [idmap : hashmap_mod.StringI64Map]
   [count : i64]
   [words : i64]
   [use-rows : (Array i64)]
@@ -1468,11 +1470,11 @@
           (compiler-reg-fill-i64-array starts -1)
           (compiler-reg-fill-i64-array ends -1)
           (let
-            [idmap : StringI64Map
+            [idmap : hashmap_mod.StringI64Map
               (compiler-reg-bits-build-rows!
                 live-blocks
                 arr
-                (string-i64-map-with-capacity
+                (hashmap_mod.string-i64-map-with-capacity
                   (compiler-reg-bits-map-capacity count))
                 use-rows
                 def-rows
@@ -2776,16 +2778,16 @@
 ;; these tiny callees are inlined so the standalone pattern rarely survives; at
 ;; -O1 it is pervasive.) Self-tests never set it, so the map stays empty and the
 ;; structural Pack/Word seeding below is unaffected.
-(define compiler-reg-group-counts : StringI64Map
-  (string-i64-map-with-capacity 8))
+(define compiler-reg-group-counts : hashmap_mod.StringI64Map
+  (hashmap_mod.string-i64-map-with-capacity 8))
 
-(define compiler-reg-group-class-masks : StringI64Map
-  (string-i64-map-with-capacity 8))
+(define compiler-reg-group-class-masks : hashmap_mod.StringI64Map
+  (hashmap_mod.string-i64-map-with-capacity 8))
 
-(define (compiler-reg-set-group-counts! [counts : StringI64Map]) : unit
+(define (compiler-reg-set-group-counts! [counts : hashmap_mod.StringI64Map]) : unit
   (set! compiler-reg-group-counts counts))
 
-(define (compiler-reg-set-group-class-masks! [masks : StringI64Map]) : unit
+(define (compiler-reg-set-group-class-masks! [masks : hashmap_mod.StringI64Map]) : unit
   (set! compiler-reg-group-class-masks masks))
 
 ;; The aggregate type name a value carries (mirror of
@@ -2806,18 +2808,20 @@
     [name : String (compiler-reg-aggregate-type-name ty)]
     (if (string-eq name "")
       false
-      (match (string-i64-map-get compiler-reg-group-counts name)
-        [(StringI64MapFound count) (> count 1)]
-        [(StringI64MapMissing) false]))))
+      (match (hashmap_mod.string-i64-map-get compiler-reg-group-counts name)
+        [(hashmap_mod.StringI64MapFound count) (> count 1)]
+        [(hashmap_mod.StringI64MapMissing) false]))))
 
 (define (compiler-reg-type-register-group-has-sse? [ty : AstType]) : bool
   (let
     [name : String (compiler-reg-aggregate-type-name ty)]
     (if (string-eq name "")
       false
-      (match (string-i64-map-get compiler-reg-group-class-masks name)
-        [(StringI64MapFound mask) (> mask 0)]
-        [(StringI64MapMissing) false]))))
+      (match (hashmap_mod.string-i64-map-get
+        compiler-reg-group-class-masks
+        name)
+        [(hashmap_mod.StringI64MapFound mask) (> mask 0)]
+        [(hashmap_mod.StringI64MapMissing) false]))))
 
 (define (compiler-reg-var-register-group-has-sse?
   [types : CompilerRegVarTypes]
@@ -5776,5 +5780,5 @@
     (compiler-reg-color-storage-ranges-ok?))
     42
     (begin
-      (panic "regalloc: smoke mismatch")
+      (io_mod.panic "regalloc: smoke mismatch")
       0)))

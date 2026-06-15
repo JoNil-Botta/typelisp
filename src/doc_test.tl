@@ -12,7 +12,7 @@
 ;; path where the target supports process execution. Each failure records the
 ;; source path, the fence's source line, the example index, and the rendered
 ;; diagnostic when one is available.
-(import "../stdlib/io.tl")
+(import stdlib.io as io_mod)
 
 (import "compiler_check_core.tl")
 
@@ -20,9 +20,13 @@
 
 (import "build_run_core.tl")
 
-(import "../stdlib/string.tl")
+(import stdlib.process as process_mod)
 
-(import "../stdlib/str_cat.tl")
+(import stdlib.string as string_mod)
+
+(import stdlib.vector as vector_mod)
+
+(import stdlib.str_cat)
 
 (defenum DocTestExpectation
   (DocTestExpectPass)
@@ -303,7 +307,7 @@
               (set! start (+ i 1))
               (set! i (+ i 1)))
             (set! done true))))
-      (substring text start (- n start)))))
+      (string_mod.substring text start (- n start)))))
 
 (define (doc-test-trim-right [text : String]) : String
   (let
@@ -316,7 +320,7 @@
             (set! end (- end 1))
             (set! keep false))
           (set! keep false)))
-      (substring text 0 end))))
+      (string_mod.substring text 0 end))))
 
 (define (doc-test-trim [text : String]) : String
   (doc-test-trim-right (doc-test-trim-left text)))
@@ -381,28 +385,30 @@
                 [esc : char (string-ref text (+ i 1))]
                 (if (= esc #n')
                   (begin
-                    (set! out (string-append out "\n"))
+                    (set! out (string_mod.string-append out "\n"))
                     (set! i (+ i 2)))
                   (if (= esc #t')
                     (begin
-                      (set! out (string-append out "\t"))
+                      (set! out (string_mod.string-append out "\t"))
                       (set! i (+ i 2)))
                     (if (= esc #r')
                       (begin
-                        (set! out (string-append out "\r"))
+                        (set! out (string_mod.string-append out "\r"))
                         (set! i (+ i 2)))
                       (if (= esc #\\')
                         (begin
-                          (set! out (string-append out "\\"))
+                          (set! out (string_mod.string-append out "\\"))
                           (set! i (+ i 2)))
                         (set!
                           message
-                          (str-cat
+                          (str_cat.str-cat
                             "unsupported doctest output escape `\\"
-                            (substring text (+ i 1) 1)
+                            (string_mod.substring text (+ i 1) 1)
                             "`"))))))))
             (begin
-              (set! out (string-append out (substring text i 1)))
+              (set!
+                out
+                (string_mod.string-append out (string_mod.substring text i 1)))
               (set! i (+ i 1))))))
       (if (= (string-length message) 0)
         (DocTestSomeOutput out)
@@ -411,11 +417,11 @@
 (define (doc-test-parse-output-spec [text : String]) : DocTestMaybeOutput
   (let
     [trimmed : String (doc-test-trim text)]
-    (if (string-eq trimmed "-")
+    (if (string_mod.string-eq trimmed "-")
       (DocTestSomeOutput "")
       (if (doc-test-string-prefix? trimmed "literal:")
         (doc-test-decode-output-literal
-          (substring trimmed 8 (- (string-length trimmed) 8)))
+          (string_mod.substring trimmed 8 (- (string-length trimmed) 8)))
         (DocTestNoOutput
           "doctest output metadata must be '-' or 'literal:<escaped text>'")))))
 
@@ -484,10 +490,11 @@
         [prefix-len : i64 (string-length prefix)]
         [trimmed-len : i64 (string-length trimmed)]
         [body : String
-          (substring trimmed prefix-len (- trimmed-len prefix-len))]
+          (string_mod.substring trimmed prefix-len (- trimmed-len prefix-len))]
         (if (> (string-length body) 0)
           (if (= (string-ref body 0) #\space')
-            (DocTestSomeString (substring body 1 (- (string-length body) 1)))
+            (DocTestSomeString
+              (string_mod.substring body 1 (- (string-length body) 1)))
             (DocTestSomeString body))
           (DocTestSomeString body)))
       (DocTestNoString))))
@@ -518,7 +525,7 @@
         (let
           [rest : String
             (doc-test-trim-left
-              (substring trimmed 1 (- (string-length trimmed) 1)))]
+              (string_mod.substring trimmed 1 (- (string-length trimmed) 1)))]
           (or
             (doc-test-starts-with-form-head? rest "define")
             (doc-test-starts-with-form-head? rest "extern")
@@ -537,9 +544,10 @@
       (DocTestFenceTypeLisp mode)
       (let
         [end : i64 (doc-test-word-end trimmed 0)]
-        [option : String (substring trimmed 0 end)]
-        [rest : String (substring trimmed end (- (string-length trimmed) end))]
-        (if (string-eq option "expect-error")
+        [option : String (string_mod.substring trimmed 0 end)]
+        [rest : String
+          (string_mod.substring trimmed end (- (string-length trimmed) end))]
+        (if (string_mod.string-eq option "expect-error")
           (match mode
             [(DocTestFenceRun)
               (DocTestFenceMalformed
@@ -551,7 +559,7 @@
                 rest
                 line-number
                 (DocTestFenceCheck (DocTestExpectError)))])
-          (if (string-eq option "run")
+          (if (string_mod.string-eq option "run")
             (match mode
               [(DocTestFenceRun)
                 (doc-test-parse-fence-options rest line-number mode)]
@@ -568,7 +576,10 @@
             (DocTestFenceMalformed
               (DocTestError
                 line-number
-                (str-cat "unsupported TypeLisp doctest option `" option "`")))))))))
+                (str_cat.str-cat
+                  "unsupported TypeLisp doctest option `"
+                  option
+                  "`")))))))))
 
 (define (doc-test-parse-fence-info [info : String] [line-number : i64]) : DocTestFenceInfo
   (let
@@ -577,9 +588,12 @@
       (DocTestFenceIgnore)
       (let
         [end : i64 (doc-test-word-end trimmed 0)]
-        [language : String (substring trimmed 0 end)]
-        [rest : String (substring trimmed end (- (string-length trimmed) end))]
-        (if (or (string-eq language "typelisp") (string-eq language "tl"))
+        [language : String (string_mod.substring trimmed 0 end)]
+        [rest : String
+          (string_mod.substring trimmed end (- (string-length trimmed) end))]
+        (if (or
+          (string_mod.string-eq language "typelisp")
+          (string_mod.string-eq language "tl"))
           (doc-test-parse-fence-options
             rest
             line-number
@@ -615,7 +629,9 @@
         (doc-test-collect-code-inner
           lines
           (+ index 1)
-          (string-append code (string-append (doc-test-line-text line) "\n"))
+          (string_mod.string-append
+            code
+            (string_mod.string-append (doc-test-line-text line) "\n"))
           (doc-test-line-list-push collected line))))))
 
 (define (doc-test-collect-code [lines : DocTestLineList] [index : i64]) : DocTestCodeCollect
@@ -627,7 +643,7 @@
     (if (doc-test-string-prefix? trimmed prefix)
       (DocTestSomeString
         (doc-test-trim
-          (substring
+          (string_mod.substring
             trimmed
             (string-length prefix)
             (- (string-length trimmed) (string-length prefix)))))
@@ -909,7 +925,8 @@
       [trimmed : String (doc-test-trim-left (doc-test-line-text line))]
       (if (doc-test-string-prefix? trimmed "```")
         (let
-          [info : String (substring trimmed 3 (- (string-length trimmed) 3))]
+          [info : String
+            (string_mod.substring trimmed 3 (- (string-length trimmed) 3))]
           (match (doc-test-parse-fence-info info (doc-test-line-number line))
             [(DocTestFenceIgnore)
               (doc-test-scan-doc-block-from
@@ -956,7 +973,7 @@
       (while (< pos n)
         (let
           [line-end : i64 (doc-test-line-end src pos n)]
-          [line : String (substring src pos (- line-end pos))]
+          [line : String (string_mod.substring src pos (- line-end pos))]
           (begin
             (match (doc-test-module-doc-comment-body line)
               [(DocTestSomeString body)
@@ -996,7 +1013,7 @@
           (DocTestExtraction examples errors)]))))
 
 (define (doc-test-extract-file [path : String]) : DocTestExtraction
-  (doc-test-extract-source (read-file path)))
+  (doc-test-extract-source (io_mod.read-file path)))
 
 ;; --- runner (#724) ----------------------------------------------------------
 ;; A single doctest failure: the doc'd source path, the fence's 1-based source
@@ -1077,26 +1094,30 @@
     [(DocTestRunFailure path line index message)
       (let
         [location : String
-          (string-append
+          (string_mod.string-append
             path
-            (string-append ":" (string-append (int->string line) ": ")))]
-        (string-append location message))]))
+            (string_mod.string-append
+              ":"
+              (string_mod.string-append (string_mod.int->string line) ": ")))]
+        (string_mod.string-append location message))]))
 
 (define (doc-test-unexpected-pass-message [index : i64]) : String
-  (string-append
+  (string_mod.string-append
     "doctest example "
-    (string-append (int->string index) " was expected to fail but passed")))
+    (string_mod.string-append
+      (string_mod.int->string index)
+      " was expected to fail but passed")))
 
 (define (doc-test-public-diagnostic-render [diag : CompilerDiagnostic]) : String
   (match (compiler-diagnostic-code diag)
     [(CompilerDiagnosticSomeString code)
-      (string-append
+      (string_mod.string-append
         "error["
-        (string-append
+        (string_mod.string-append
           code
-          (string-append "]: " (compiler-diagnostic-render diag))))]
+          (string_mod.string-append "]: " (compiler-diagnostic-render diag))))]
     [CompilerDiagnosticNoString
-      (string-append "error: " (compiler-diagnostic-render diag))]))
+      (string_mod.string-append "error: " (compiler-diagnostic-render diag))]))
 
 (define (doc-test-public-diagnostic-render-smoke-ok?) : bool
   (let
@@ -1127,11 +1148,11 @@
 (define (doc-test-unexpected-error-message
   [index : i64]
   [diag : CompilerDiagnostic]) : String
-  (string-append
+  (string_mod.string-append
     "doctest example "
-    (string-append
-      (int->string index)
-      (string-append
+    (string_mod.string-append
+      (string_mod.int->string index)
+      (string_mod.string-append
         " was expected to pass\n"
         (doc-test-public-diagnostic-render diag)))))
 
@@ -1149,50 +1170,52 @@
 (define (doc-test-runnable-unsupported-message
   [index : i64]
   [target : CompilerBackendTarget]) : String
-  (string-append
+  (string_mod.string-append
     "doctest example "
-    (string-append
-      (int->string index)
-      (string-append
+    (string_mod.string-append
+      (string_mod.int->string index)
+      (string_mod.string-append
         " is a runnable doctest, but runnable doctests are unsupported on target "
         (source-tool-target-name target)))))
 
 (define (doc-test-runnable-compile-message [index : i64] [message : String]) : String
-  (string-append
+  (string_mod.string-append
     "doctest example "
-    (string-append
-      (int->string index)
-      (string-append " runnable compile failed\n" message))))
+    (string_mod.string-append
+      (string_mod.int->string index)
+      (string_mod.string-append " runnable compile failed\n" message))))
 
 (define (doc-test-runnable-build-message [index : i64] [message : String]) : String
-  (string-append
+  (string_mod.string-append
     "doctest example "
-    (string-append
-      (int->string index)
-      (string-append " runnable build failed\n" message))))
+    (string_mod.string-append
+      (string_mod.int->string index)
+      (string_mod.string-append " runnable build failed\n" message))))
 
 (define (doc-test-runnable-exec-message [index : i64] [message : String]) : String
-  (string-append
+  (string_mod.string-append
     "doctest example "
-    (string-append
-      (int->string index)
-      (string-append " runnable execution failed: " message))))
+    (string_mod.string-append
+      (string_mod.int->string index)
+      (string_mod.string-append " runnable execution failed: " message))))
 
 (define (doc-test-output-comparison-message
   [name : String]
   [expected : String]
   [actual : String]) : String
-  (string-append
+  (string_mod.string-append
     "expected "
-    (string-append
+    (string_mod.string-append
       name
-      (string-append
+      (string_mod.string-append
         ":\n"
-        (string-append
+        (string_mod.string-append
           expected
-          (string-append
+          (string_mod.string-append
             "\nactual "
-            (string-append name (string-append ":\n" actual))))))))
+            (string_mod.string-append
+              name
+              (string_mod.string-append ":\n" actual))))))))
 
 (define (doc-test-normalize-windows-crlf [text : String]) : String
   (let
@@ -1206,10 +1229,12 @@
           (< (+ i 1) n)
           (= (string-ref text (+ i 1)) #\newline'))
           (begin
-            (set! out (string-append out "\n"))
+            (set! out (string_mod.string-append out "\n"))
             (set! i (+ i 2)))
           (begin
-            (set! out (string-append out (substring text i 1)))
+            (set!
+              out
+              (string_mod.string-append out (string_mod.substring text i 1)))
             (set! i (+ i 1)))))
       out)))
 
@@ -1224,40 +1249,40 @@
   [index : i64]
   [expectation : DocTestExpectation]
   [target : CompilerBackendTarget]
-  [output : ProcessOutput]) : String
+  [output : process_mod.ProcessOutput]) : String
   (let
     [expected-exit : i64 (doc-test-expectation-run-exit expectation)]
     [expected-stdout : String (doc-test-expectation-run-stdout expectation)]
     [expected-stderr : String (doc-test-expectation-run-stderr expectation)]
-    [actual-exit : i64 (process-output-status output)]
+    [actual-exit : i64 (process_mod.process-output-status output)]
     [actual-stdout : String
       (doc-test-normalize-output-for-target
         target
-        (process-output-stdout output))]
+        (process_mod.process-output-stdout output))]
     [actual-stderr : String
       (doc-test-normalize-output-for-target
         target
-        (process-output-stderr output))]
-    (string-append
+        (process_mod.process-output-stderr output))]
+    (string_mod.string-append
       "doctest example "
-      (string-append
-        (int->string index)
-        (string-append
+      (string_mod.string-append
+        (string_mod.int->string index)
+        (string_mod.string-append
           " runnable output mismatch\nexpected exit: "
-          (string-append
-            (int->string expected-exit)
-            (string-append
+          (string_mod.string-append
+            (string_mod.int->string expected-exit)
+            (string_mod.string-append
               "\nactual exit: "
-              (string-append
-                (int->string actual-exit)
-                (string-append
+              (string_mod.string-append
+                (string_mod.int->string actual-exit)
+                (string_mod.string-append
                   "\n"
-                  (string-append
+                  (string_mod.string-append
                     (doc-test-output-comparison-message
                       "stdout"
                       expected-stdout
                       actual-stdout)
-                    (string-append
+                    (string_mod.string-append
                       "\n"
                       (doc-test-output-comparison-message
                         "stderr"
@@ -1267,77 +1292,80 @@
 (define (doc-test-runnable-output-matches?
   [expectation : DocTestExpectation]
   [target : CompilerBackendTarget]
-  [output : ProcessOutput]) : bool
+  [output : process_mod.ProcessOutput]) : bool
   (if (=
     (doc-test-expectation-run-exit expectation)
-    (process-output-status output))
-    (if (string-eq
+    (process_mod.process-output-status output))
+    (if (string_mod.string-eq
       (doc-test-expectation-run-stdout expectation)
       (doc-test-normalize-output-for-target
         target
-        (process-output-stdout output)))
-      (string-eq
+        (process_mod.process-output-stdout output)))
+      (string_mod.string-eq
         (doc-test-expectation-run-stderr expectation)
         (doc-test-normalize-output-for-target
           target
-          (process-output-stderr output)))
+          (process_mod.process-output-stderr output)))
       false)
     false))
 
 (define (doc-test-command-output-message
   [role : String]
   [target : CompilerBackendTarget]
-  [command : ProcessCommand]
-  [output : ProcessOutput]) : String
-  (string-append
+  [command : process_mod.ProcessCommand]
+  [output : process_mod.ProcessOutput]) : String
+  (string_mod.string-append
     "Error: "
-    (string-append
+    (string_mod.string-append
       role
-      (string-append
+      (string_mod.string-append
         " '"
-        (string-append
-          (process-command-executable command)
-          (string-append
+        (string_mod.string-append
+          (process_mod.process-command-executable command)
+          (string_mod.string-append
             "' failed for target "
-            (string-append
+            (string_mod.string-append
               (source-tool-target-name target)
-              (string-append
+              (string_mod.string-append
                 " with status "
-                (string-append
-                  (int->string (process-output-status output))
-                  (string-append
+                (string_mod.string-append
+                  (string_mod.int->string
+                    (process_mod.process-output-status output))
+                  (string_mod.string-append
                     "\nstdout:\n"
-                    (string-append
-                      (process-output-stdout output)
-                      (string-append
+                    (string_mod.string-append
+                      (process_mod.process-output-stdout output)
+                      (string_mod.string-append
                         "\nstderr:\n"
-                        (process-output-stderr output)))))))))))))
+                        (process_mod.process-output-stderr output)))))))))))))
 
 (define (doc-test-run-command-captured
   [role : String]
   [target : CompilerBackendTarget]
-  [command : ProcessCommand]) : SourceToolCommandStatus
-  (match (process-output command)
-    [(OkProcessOutput output)
-      (if (process-success? output)
+  [command : process_mod.ProcessCommand]) : SourceToolCommandStatus
+  (match (process_mod.process-output command)
+    [(process_mod.OkProcessOutput output)
+      (if (process_mod.process-success? output)
         SourceToolCommandOk
         (SourceToolCommandErr
           (doc-test-command-output-message role target command output)))]
-    [(ErrProcessOutput error)
+    [(process_mod.ErrProcessOutput error)
       (SourceToolCommandErr
-        (string-append
+        (string_mod.string-append
           "Error: failed to run "
-          (string-append
+          (string_mod.string-append
             role
-            (string-append
+            (string_mod.string-append
               " '"
-              (string-append
-                (process-command-executable command)
-                (string-append
+              (string_mod.string-append
+                (process_mod.process-command-executable command)
+                (string_mod.string-append
                   "' for target "
-                  (string-append
+                  (string_mod.string-append
                     (source-tool-target-name target)
-                    (string-append ": " (process-error-message error)))))))))]))
+                    (string_mod.string-append
+                      ": "
+                      (process_mod.process-error-message error)))))))))]))
 
 (define (doc-test-assemble-and-link-captured
   [target : CompilerBackendTarget]
@@ -1354,7 +1382,7 @@
 (define (doc-test-emit-runnable-assembly
   [path : String]
   [example : DocTestExample]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [target : CompilerBackendTarget]) : ResultSourceToolString
   (let
     [index : i64 (doc-test-example-index example)]
@@ -1406,8 +1434,11 @@
   [asm-path : String]
   [obj-path : String]
   [bin-path : String]) : DocTestMaybeFailure
-  (match (source-tool-run-executable bin-path target (process-args-empty))
-    [(OkProcessOutput output)
+  (match (source-tool-run-executable
+    bin-path
+    target
+    (process_mod.process-args-empty))
+    [(process_mod.OkProcessOutput output)
       (begin
         (source-tool-clean-temp temp-dir asm-path obj-path bin-path true)
         (if (doc-test-runnable-output-matches? expectation target output)
@@ -1417,14 +1448,16 @@
             source-line
             index
             (doc-test-runnable-mismatch-message index expectation target output))))]
-    [(ErrProcessOutput error)
+    [(process_mod.ErrProcessOutput error)
       (begin
         (source-tool-clean-temp temp-dir asm-path obj-path bin-path true)
         (doc-test-runnable-failure
           path
           source-line
           index
-          (doc-test-runnable-exec-message index (process-error-message error))))]))
+          (doc-test-runnable-exec-message
+            index
+            (process_mod.process-error-message error))))]))
 
 (define (doc-test-link-and-run-runnable
   [path : String]
@@ -1495,7 +1528,7 @@
 (define (doc-test-run-runnable-output
   [path : String]
   [example : DocTestExample]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [target : CompilerBackendTarget]
   [temp-dir : String]) : DocTestMaybeFailure
   (let
@@ -1531,7 +1564,7 @@
 (define (doc-test-run-runnable-example-with-roots
   [path : String]
   [example : DocTestExample]
-  [stdlib-roots : StringVec]) : DocTestMaybeFailure
+  [stdlib-roots : vector_mod.StringVec]) : DocTestMaybeFailure
   (let
     [index : i64 (doc-test-example-index example)]
     [source-line : i64 (doc-test-example-source-line example)]
@@ -1553,7 +1586,9 @@
               index
               (doc-test-runnable-build-message
                 index
-                (string-append "doctest: failed to create temp dir: " message))))])
+                (string_mod.string-append
+                  "doctest: failed to create temp dir: "
+                  message))))])
       (DocTestSomeFailure
         (DocTestRunFailure
           path
@@ -1566,15 +1601,17 @@
 ;; relative to a sibling of `path` (the doc'd source file), so examples may
 ;; import the doc'd file without colliding with the virtual source root.
 (define (doc-test-example-virtual-path [path : String] [index : i64]) : String
-  (string-append path (string-append ".doctest." (int->string index))))
+  (string_mod.string-append
+    path
+    (string_mod.string-append ".doctest." (string_mod.int->string index))))
 
 (define (doc-test-check-example [path : String] [example : DocTestExample]) : DocTestMaybeFailure
-  (doc-test-check-example-with-roots path example (string-vec-new)))
+  (doc-test-check-example-with-roots path example (vector_mod.string-vec-new)))
 
 (define (doc-test-typecheck-example-with-roots
   [path : String]
   [example : DocTestExample]
-  [stdlib-roots : StringVec]) : DocTestMaybeFailure
+  [stdlib-roots : vector_mod.StringVec]) : DocTestMaybeFailure
   (let
     [index : i64 (doc-test-example-index example)]
     [source-line : i64 (doc-test-example-source-line example)]
@@ -1607,7 +1644,7 @@
 (define (doc-test-typecheck-package-example-with-roots
   [path : String]
   [example : DocTestExample]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : DocTestMaybeFailure
   (let
@@ -1642,12 +1679,15 @@
               (doc-test-unexpected-error-message index diag))))])))
 
 (define (doc-test-typecheck-example [path : String] [example : DocTestExample]) : DocTestMaybeFailure
-  (doc-test-typecheck-example-with-roots path example (string-vec-new)))
+  (doc-test-typecheck-example-with-roots
+    path
+    example
+    (vector_mod.string-vec-new)))
 
 (define (doc-test-check-example-with-roots
   [path : String]
   [example : DocTestExample]
-  [stdlib-roots : StringVec]) : DocTestMaybeFailure
+  [stdlib-roots : vector_mod.StringVec]) : DocTestMaybeFailure
   (if (doc-test-expectation-run? (doc-test-example-expectation example))
     (doc-test-run-runnable-example-with-roots path example stdlib-roots)
     (doc-test-typecheck-example-with-roots path example stdlib-roots)))
@@ -1656,14 +1696,18 @@
   [path : String]
   [examples : DocTestExampleList]
   [failures : DocTestRunFailureList]) : DocTestRunFailureList
-  (doc-test-run-examples-with-roots path examples failures (string-vec-new)))
+  (doc-test-run-examples-with-roots
+    path
+    examples
+    failures
+    (vector_mod.string-vec-new)))
 
 (define (doc-test-run-examples-with-roots-from
   [path : String]
   [examples : DocTestExampleList]
   [index : i64]
   [failures : DocTestRunFailureList]
-  [stdlib-roots : StringVec]) : DocTestRunFailureList
+  [stdlib-roots : vector_mod.StringVec]) : DocTestRunFailureList
   (if (>= index (doc-test-example-list-count examples))
     failures
     (let
@@ -1688,7 +1732,7 @@
   [path : String]
   [examples : DocTestExampleList]
   [failures : DocTestRunFailureList]
-  [stdlib-roots : StringVec]) : DocTestRunFailureList
+  [stdlib-roots : vector_mod.StringVec]) : DocTestRunFailureList
   (doc-test-run-examples-with-roots-from path examples 0 failures stdlib-roots))
 
 (define (doc-test-typecheck-examples-with-roots-from
@@ -1696,7 +1740,7 @@
   [examples : DocTestExampleList]
   [index : i64]
   [failures : DocTestRunFailureList]
-  [stdlib-roots : StringVec]) : DocTestRunFailureList
+  [stdlib-roots : vector_mod.StringVec]) : DocTestRunFailureList
   (if (>= index (doc-test-example-list-count examples))
     failures
     (let
@@ -1721,7 +1765,7 @@
   [path : String]
   [examples : DocTestExampleList]
   [failures : DocTestRunFailureList]
-  [stdlib-roots : StringVec]) : DocTestRunFailureList
+  [stdlib-roots : vector_mod.StringVec]) : DocTestRunFailureList
   (doc-test-typecheck-examples-with-roots-from
     path
     examples
@@ -1734,7 +1778,7 @@
   [examples : DocTestExampleList]
   [index : i64]
   [failures : DocTestRunFailureList]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : DocTestRunFailureList
   (if (>= index (doc-test-example-list-count examples))
@@ -1770,7 +1814,7 @@
   [path : String]
   [examples : DocTestExampleList]
   [failures : DocTestRunFailureList]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : DocTestRunFailureList
   (doc-test-typecheck-package-examples-with-roots-from
@@ -1815,12 +1859,12 @@
 ;; errors are folded in as failures first, then each example is checked. A source
 ;; with no examples and no errors reports success with a zero count.
 (define (doc-test-run-source [path : String] [source : String]) : DocTestRunReport
-  (doc-test-run-source-with-roots path source (string-vec-new)))
+  (doc-test-run-source-with-roots path source (vector_mod.string-vec-new)))
 
 (define (doc-test-run-source-with-roots
   [path : String]
   [source : String]
-  [stdlib-roots : StringVec]) : DocTestRunReport
+  [stdlib-roots : vector_mod.StringVec]) : DocTestRunReport
   (match (doc-test-extract-source source)
     [(DocTestExtraction examples errors)
       (DocTestRunReport
@@ -1832,20 +1876,20 @@
           stdlib-roots))]))
 
 (define (doc-test-run-file [path : String]) : DocTestRunReport
-  (doc-test-run-source path (read-file path)))
+  (doc-test-run-source path (io_mod.read-file path)))
 
 (define (doc-test-run-file-with-roots
   [path : String]
-  [stdlib-roots : StringVec]) : DocTestRunReport
-  (doc-test-run-source-with-roots path (read-file path) stdlib-roots))
+  [stdlib-roots : vector_mod.StringVec]) : DocTestRunReport
+  (doc-test-run-source-with-roots path (io_mod.read-file path) stdlib-roots))
 
 (define (doc-test-typecheck-source [path : String] [source : String]) : DocTestRunReport
-  (doc-test-typecheck-source-with-roots path source (string-vec-new)))
+  (doc-test-typecheck-source-with-roots path source (vector_mod.string-vec-new)))
 
 (define (doc-test-typecheck-source-with-roots
   [path : String]
   [source : String]
-  [stdlib-roots : StringVec]) : DocTestRunReport
+  [stdlib-roots : vector_mod.StringVec]) : DocTestRunReport
   (match (doc-test-extract-source source)
     [(DocTestExtraction examples errors)
       (DocTestRunReport
@@ -1859,7 +1903,7 @@
 (define (doc-test-typecheck-package-source-with-roots
   [path : String]
   [source : String]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : DocTestRunReport
   (match (doc-test-extract-source source)
@@ -1875,21 +1919,24 @@
           deps))]))
 
 (define (doc-test-typecheck-file [path : String]) : DocTestRunReport
-  (doc-test-typecheck-source path (read-file path)))
+  (doc-test-typecheck-source path (io_mod.read-file path)))
 
 (define (doc-test-typecheck-file-with-roots
   [path : String]
-  [stdlib-roots : StringVec]) : DocTestRunReport
-  (doc-test-typecheck-source-with-roots path (read-file path) stdlib-roots))
+  [stdlib-roots : vector_mod.StringVec]) : DocTestRunReport
+  (doc-test-typecheck-source-with-roots
+    path
+    (io_mod.read-file path)
+    stdlib-roots))
 
 (define (doc-test-typecheck-package-file-with-roots
   [path : String]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : DocTestRunReport
   (doc-test-typecheck-package-source-with-roots
     path
-    (read-file path)
+    (io_mod.read-file path)
     stdlib-roots
     manifest-dir
     deps))
@@ -1906,8 +1953,8 @@
   (match failures
     [(DocTestRunFailureNil) ""]
     [(DocTestRunFailureCons failure rest)
-      (string-append
-        (string-append (doc-test-run-failure-render failure) "\n")
+      (string_mod.string-append
+        (string_mod.string-append (doc-test-run-failure-render failure) "\n")
         (doc-test-run-failures-render (box-get rest)))]))
 
 ;; Human-readable report text. Success mirrors the Rust CLI's
@@ -1919,17 +1966,20 @@
     [(DocTestRunReport count failures)
       (match failures
         [(DocTestRunFailureNil)
-          (string-append
+          (string_mod.string-append
             "Doc tests passed: "
-            (string-append (int->string count) " example(s)"))]
+            (string_mod.string-append
+              (string_mod.int->string count)
+              " example(s)"))]
         [(DocTestRunFailureCons _ _)
-          (string-append
-            (str-cat
+          (string_mod.string-append
+            (str_cat.str-cat
               "doc tests failed: "
-              (int->string (doc-test-run-failure-list-count failures))
-              (str-cat
+              (string_mod.int->string
+                (doc-test-run-failure-list-count failures))
+              (str_cat.str-cat
                 " failure(s) across "
-                (int->string count)
+                (string_mod.int->string count)
                 " example(s)\n"))
             (doc-test-run-failures-render failures))])]))
 
@@ -1974,35 +2024,35 @@
 ")
 
 (define (doc-test-runnable-source) : String
-  (string-append
+  (string_mod.string-append
     ";# Runnable docs\n"
-    (string-append
+    (string_mod.string-append
       ";# ```typelisp run\n"
-      (string-append
+      (string_mod.string-append
         ";# ;; doctest-exit: 0\n"
-        (string-append
+        (string_mod.string-append
           ";# ;; doctest-stdout: literal:hello\\n\n"
-          (string-append
+          (string_mod.string-append
             ";# ;; doctest-stderr: literal:error\\tline\\r\n"
-            (string-append
+            (string_mod.string-append
               ";# (import \"stdlib/io.tl\")\n"
-              (string-append
+              (string_mod.string-append
                 ";# (define (main) : i64\n"
-                (string-append
+                (string_mod.string-append
                   ";#   (begin\n"
-                  (string-append
+                  (string_mod.string-append
                     ";#     (let [text : String \"hello\\n\"] (stdout-write (& text)))\n"
-                    (string-append
+                    (string_mod.string-append
                       ";#     (let [text : String \"error\\tline\\r\"] (stderr-write (& text)))\n"
-                      (string-append
+                      (string_mod.string-append
                         ";#     0))\n"
-                        (string-append
+                        (string_mod.string-append
                           ";# ```\n"
-                          (string-append
+                          (string_mod.string-append
                             ";# ```tl run\n"
-                            (string-append
+                            (string_mod.string-append
                               ";# ;; doctest-exit: 42\n"
-                              (string-append
+                              (string_mod.string-append
                                 ";# (define (main) : i64 42)\n"
                                 ";# ```\n"))))))))))))))))
 
@@ -2060,8 +2110,12 @@
       [(DocTestExpectRun actual-exit actual-stdout actual-stderr)
         (begin
           (unless (= actual-exit expected-exit) (return false))
-          (unless (string-eq actual-stdout expected-stdout) (return false))
-          (unless (string-eq actual-stderr expected-stderr) (return false))
+          (unless
+            (string_mod.string-eq actual-stdout expected-stdout)
+            (return false))
+          (unless
+            (string_mod.string-eq actual-stderr expected-stderr)
+            (return false))
           (doc-test-string-contains?
             (doc-test-example-code example)
             code-fragment))]
@@ -2221,49 +2275,49 @@
           (= (doc-test-error-list-count errors) 0)
           (return
             (begin
-              (panic "doc-test: unexpected extraction error")
+              (io_mod.panic "doc-test: unexpected extraction error")
               0)))
         (unless
           (= (doc-test-example-list-count examples) 2)
           (return
             (begin
-              (panic "doc-test: example count mismatch")
+              (io_mod.panic "doc-test: example count mismatch")
               0)))
         (unless
           (doc-test-smoke-examples-ok? examples)
           (return
             (begin
-              (panic "doc-test: example metadata mismatch")
+              (io_mod.panic "doc-test: example metadata mismatch")
               0)))
         (unless
           (doc-test-ordinary-comments-ok?)
           (return
             (begin
-              (panic "doc-test: ordinary comment smoke mismatch")
+              (io_mod.panic "doc-test: ordinary comment smoke mismatch")
               0)))
         (unless
           (doc-test-legacy-item-smoke-ok?)
           (return
             (begin
-              (panic "doc-test: legacy item smoke mismatch")
+              (io_mod.panic "doc-test: legacy item smoke mismatch")
               0)))
         (unless
           (doc-test-malformed-smoke-ok?)
           (return
             (begin
-              (panic "doc-test: malformed smoke mismatch")
+              (io_mod.panic "doc-test: malformed smoke mismatch")
               0)))
         (unless
           (doc-test-runnable-smoke-ok?)
           (return
             (begin
-              (panic "doc-test: runnable smoke mismatch")
+              (io_mod.panic "doc-test: runnable smoke mismatch")
               0)))
         (unless
           (doc-test-runnable-malformed-smoke-ok?)
           (return
             (begin
-              (panic "doc-test: runnable malformed smoke mismatch")
+              (io_mod.panic "doc-test: runnable malformed smoke mismatch")
               0)))
         42)]))
 
@@ -2288,8 +2342,8 @@
 (define answer : i64 1)
 ")
 
-(define (doc-test-run-smoke-stdlib-roots) : StringVec
-  (string-vec-push (string-vec-new) "stdlib"))
+(define (doc-test-run-smoke-stdlib-roots) : vector_mod.StringVec
+  (vector_mod.string-vec-push (vector_mod.string-vec-new) "stdlib"))
 
 (define (doc-test-run-runnable-wrong-exit-source) : String
   ";# ```typelisp run
@@ -2360,7 +2414,9 @@
               (unless (= (doc-test-run-failure-index failure) 1) (return false))
               (unless (= (doc-test-run-failure-line failure) 1) (return false))
               (unless
-                (string-eq (doc-test-run-failure-path failure) "docs/bad.tl")
+                (string_mod.string-eq
+                  (doc-test-run-failure-path failure)
+                  "docs/bad.tl")
                 (return false))
               (doc-test-string-contains?
                 (doc-test-run-failure-message failure)
@@ -2588,7 +2644,7 @@ typecheck: return type mismatch"))]
     (begin
       (unless (= (doc-test-run-report-status pass-report) 0) (return false))
       (unless
-        (string-eq
+        (string_mod.string-eq
           (doc-test-run-report-render pass-report)
           "Doc tests passed: 2 example(s)")
         (return false))
@@ -2618,12 +2674,14 @@ typecheck: return type mismatch"))]
     [root : String "target/doc_test_session_cache"]
     [dep-file : String "target/doc_test_session_cache/dep.tl"]
     [doc-file : String "target/doc_test_session_cache/docs.tl"]
-    [roots : StringVec
-      (string-vec-push (string-vec-new) "target/doc_test_session_cache")]
+    [roots : vector_mod.StringVec
+      (vector_mod.string-vec-push
+        (vector_mod.string-vec-new)
+        "target/doc_test_session_cache")]
     (begin
       (compiler-load-test-mkdir "target")
       (compiler-load-test-mkdir root)
-      (write-file dep-file "(define shared-value : i64 7)")
+      (io_mod.write-file dep-file "(define shared-value : i64 7)")
       (compiler-load-session-cache-enable!)
       (compiler-load-program-cache-clear!)
       (let
@@ -2643,79 +2701,79 @@ typecheck: return type mismatch"))]
       (doc-test-run-smoke-pass-ok?)
       (return
         (begin
-          (panic "doc-test-run: pass-case mismatch")
+          (io_mod.panic "doc-test-run: pass-case mismatch")
           0)))
     (unless
       (doc-test-run-smoke-unexpected-error-ok?)
       (return
         (begin
-          (panic "doc-test-run: unexpected-error mismatch")
+          (io_mod.panic "doc-test-run: unexpected-error mismatch")
           0)))
     (unless
       (doc-test-run-smoke-unexpected-pass-ok?)
       (return
         (begin
-          (panic "doc-test-run: unexpected-pass mismatch")
+          (io_mod.panic "doc-test-run: unexpected-pass mismatch")
           0)))
     (unless
       (doc-test-run-smoke-malformed-ok?)
       (return
         (begin
-          (panic "doc-test-run: malformed mismatch")
+          (io_mod.panic "doc-test-run: malformed mismatch")
           0)))
     (unless
       (doc-test-run-smoke-empty-ok?)
       (return
         (begin
-          (panic "doc-test-run: empty-source mismatch")
+          (io_mod.panic "doc-test-run: empty-source mismatch")
           0)))
     (unless
       (doc-test-run-smoke-runnable-ok?)
       (return
         (begin
-          (panic "doc-test-run: runnable execution mismatch")
+          (io_mod.panic "doc-test-run: runnable execution mismatch")
           0)))
     (unless
       (doc-test-typecheck-smoke-runnable-only-ok?)
       (return
         (begin
-          (panic "doc-test-typecheck: runnable typecheck mismatch")
+          (io_mod.panic "doc-test-typecheck: runnable typecheck mismatch")
           0)))
     (unless
       (doc-test-typecheck-smoke-unexpected-pass-ok?)
       (return
         (begin
-          (panic "doc-test-typecheck: unexpected-pass mismatch")
+          (io_mod.panic "doc-test-typecheck: unexpected-pass mismatch")
           0)))
     (unless
       (doc-test-typecheck-smoke-malformed-ok?)
       (return
         (begin
-          (panic "doc-test-typecheck: malformed mismatch")
+          (io_mod.panic "doc-test-typecheck: malformed mismatch")
           0)))
     (unless
       (doc-test-public-diagnostic-render-smoke-ok?)
       (return
         (begin
-          (panic "doc-test-run: public diagnostic render mismatch")
+          (io_mod.panic "doc-test-run: public diagnostic render mismatch")
           0)))
     (unless
       (doc-test-run-smoke-render-ok?)
       (return
         (begin
-          (panic "doc-test-run: render mismatch")
+          (io_mod.panic "doc-test-run: render mismatch")
           0)))
     (unless
       (doc-test-run-smoke-report-render-ok?)
       (return
         (begin
-          (panic "doc-test-run: report render mismatch")
+          (io_mod.panic "doc-test-run: report render mismatch")
           0)))
     (unless
       (doc-test-session-cache-smoke-ok?)
       (return
         (begin
-          (panic "doc-test-run: session cache smoke mismatch")
+          (io_mod.panic "doc-test-run: session cache smoke mismatch")
           0)))
     42))
 
@@ -2727,30 +2785,30 @@ typecheck: return type mismatch"))]
       (= (doc-test-smoke) 42)
       (return
         (begin
-          (panic "doc-test: extraction smoke regressed")
+          (io_mod.panic "doc-test: extraction smoke regressed")
           0)))
     (unless
       (source-tool-link-inputs-dedupe-smoke-ok?)
       (return
         (begin
-          (panic "source-tool: link input dedupe smoke regressed")
+          (io_mod.panic "source-tool: link input dedupe smoke regressed")
           0)))
     (unless
       (source-tool-windows-stack-reserve-smoke-ok?)
       (return
         (begin
-          (panic "source-tool: windows stack reserve smoke regressed")
+          (io_mod.panic "source-tool: windows stack reserve smoke regressed")
           0)))
     (unless
       (source-tool-linux-direct-object-linkability-smoke-ok?)
       (return
         (begin
-          (panic "source-tool: linux direct object smoke regressed")
+          (io_mod.panic "source-tool: linux direct object smoke regressed")
           0)))
     (unless
       (source-tool-windows-direct-object-linkability-smoke-ok?)
       (return
         (begin
-          (panic "source-tool: windows direct object smoke regressed")
+          (io_mod.panic "source-tool: windows direct object smoke regressed")
           0)))
     (doc-test-run-smoke)))

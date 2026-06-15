@@ -1,4 +1,6 @@
 ;; compiler_object_elf.tl - ELF64 object-file serialization for object images.
+(import stdlib.io as io_mod)
+
 (import "compiler_object.tl")
 
 (import "compiler_float.tl")
@@ -168,7 +170,7 @@
 (define (compiler-object-elf-f64-bits [text : String]) : u64
   (match (compiler-float-parse-f64 text)
     [(CompilerFloatSomeF64 value) (compiler-float-f64-bits value)]
-    [(CompilerFloatNoF64) (panic "elf: unsupported f64 literal")]))
+    [(CompilerFloatNoF64) (io_mod.panic "elf: unsupported f64 literal")]))
 
 (define (compiler-object-elf-data-record-end-offset
   [record : CompilerObjectDataRecord]

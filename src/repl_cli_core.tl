@@ -24,7 +24,9 @@
 ;; abandons it. Parse and type errors report diagnostics, discard only the
 ;; failing input, and return to the prompt with previously accepted declarations
 ;; intact.
-(import "stdlib/io.tl")
+(import stdlib.io as io_mod)
+
+(import stdlib.fs as fs_mod)
 
 (import "compiler_typecheck.tl")
 
@@ -32,7 +34,11 @@
 
 (import "build_run_core.tl")
 
-(import "../stdlib/string.tl")
+(import stdlib.process as process_mod)
+
+(import stdlib.string as string_mod)
+
+(import stdlib.vector as vector_mod)
 
 (defenum ReplTypeCommand
   (ReplNoTypeCommand)
@@ -56,25 +62,25 @@
   "TypeLisp REPL commands:\n  .help         Show this help\n  .type <expr>  Print the inferred type without running code\n  .exit         Exit the REPL\n")
 
 (define (repl-stdout-write [text : String]) : unit
-  (stdout-write (& text)))
+  (io_mod.stdout-write (& text)))
 
 (define (repl-stdout-write-line [text : String]) : unit
-  (stdout-write-line (& text)))
+  (io_mod.stdout-write-line (& text)))
 
 (define (repl-stderr-write [text : String]) : unit
-  (stderr-write (& text)))
+  (io_mod.stderr-write (& text)))
 
 (define (repl-stderr-write-line [text : String]) : unit
-  (stderr-write-line (& text)))
+  (io_mod.stderr-write-line (& text)))
 
 (define (repl-path-join [left : String] [right : String]) : String
-  (fs-path-join (& left) (& right)))
+  (fs_mod.fs-path-join (& left) (& right)))
 
-(define (repl-try-remove-file-if-exists [path : String]) : ResultIoUnit
-  (try-remove-file-if-exists (& path)))
+(define (repl-try-remove-file-if-exists [path : String]) : io_mod.ResultIoUnit
+  (fs_mod.try-remove-file-if-exists (& path)))
 
-(define (repl-try-remove-dir-if-exists [path : String]) : ResultIoUnit
-  (try-remove-dir-if-exists (& path)))
+(define (repl-try-remove-dir-if-exists [path : String]) : io_mod.ResultIoUnit
+  (fs_mod.try-remove-dir-if-exists (& path)))
 
 ;; Print the prompt and flush stdout so it is visible before the blocking read.
 ;; A pending multiline form shows a `... ` continuation marker (aligned to the
@@ -85,7 +91,7 @@
       (if continuation?
         "... "
         "tl> "))
-    (stdout-flush)))
+    (io_mod.stdout-flush)))
 
 ;; `line` begins with `.` (a dot command). Empty lines are handled safely.
 (define (repl-dot-command? [line : String]) : bool
@@ -102,7 +108,7 @@
     [prefix-len : i64 (string-length prefix)]
     (if (> prefix-len text-len)
       false
-      (string-eq (substring text 0 prefix-len) prefix))))
+      (string_mod.string-eq (string_mod.substring text 0 prefix-len) prefix))))
 
 (define (repl-trim-left-from [text : String] [start : i64]) : String
   (let
@@ -112,7 +118,7 @@
       (while (and (< i len) (repl-space? (string-ref text i)))
         (set! i (+ i 1)))
       (if (< i len)
-        (substring text i (- len i))
+        (string_mod.substring text i (- len i))
         ""))))
 
 (define (repl-line-ending? [c : char]) : bool
@@ -128,7 +134,7 @@
 
 (define (repl-trim-leading-utf8-bom [text : String]) : String
   (if (repl-leading-utf8-bom? text)
-    (substring text 3 (- (string-length text) 3))
+    (string_mod.substring text 3 (- (string-length text) 3))
     text))
 
 (define (repl-trim-right-line-ending [text : String]) : String
@@ -145,7 +151,7 @@
               (set! end (- len 1))
               (set! len (- len 1)))
             (set! done true))))
-      (substring text 0 end))))
+      (string_mod.substring text 0 end))))
 
 (define (repl-normalize-input-line [text : String]) : String
   (repl-trim-right-line-ending (repl-trim-leading-utf8-bom text)))
@@ -166,9 +172,9 @@
       (let
         [head : AstType (ty-node-get head)]
         [rest : AstTypeList (box-get rest)]
-        (string-append
+        (string_mod.string-append
           " "
-          (string-append
+          (string_mod.string-append
             (repl-type-render head)
             (repl-type-list-render-spaced rest))))]))
 
@@ -178,9 +184,11 @@
     [(AstLifetimeCons head rest)
       (let
         [rest : AstLifetimeList (box-get rest)]
-        (string-append
+        (string_mod.string-append
           " "
-          (string-append head (repl-lifetime-list-render-spaced rest))))]))
+          (string_mod.string-append
+            head
+            (repl-lifetime-list-render-spaced rest))))]))
 
 (define (repl-type-render [ty : AstType]) : String
   (match ty
@@ -203,84 +211,101 @@
     [(AstTyExpr) "Expr"]
     [(AstTyExprList) "ExprList"]
     [(AstTyFunc args ret)
-      (string-append
+      (string_mod.string-append
         "(->"
-        (string-append
+        (string_mod.string-append
           (repl-type-list-render-spaced args)
-          (string-append
+          (string_mod.string-append
             " "
-            (string-append (repl-type-render (ty-node-get ret)) ")"))))]
+            (string_mod.string-append (repl-type-render (ty-node-get ret)) ")"))))]
     [(AstTyTuple elems)
-      (string-append
+      (string_mod.string-append
         "(Tuple"
-        (string-append (repl-type-list-render-spaced elems) ")"))]
+        (string_mod.string-append (repl-type-list-render-spaced elems) ")"))]
     [(AstTyArray elem count)
-      (string-append
+      (string_mod.string-append
         "(Array "
-        (string-append
+        (string_mod.string-append
           (repl-type-render (ty-node-get elem))
-          (string-append " " (string-append (int->string count) ")"))))]
+          (string_mod.string-append
+            " "
+            (string_mod.string-append (string_mod.int->string count) ")"))))]
     [(AstTyDynArray elem)
-      (string-append
+      (string_mod.string-append
         "(Array "
-        (string-append (repl-type-render (ty-node-get elem)) ")"))]
+        (string_mod.string-append (repl-type-render (ty-node-get elem)) ")"))]
     [(AstTyBox elem)
-      (string-append
+      (string_mod.string-append
         "(Box "
-        (string-append (repl-type-render (ty-node-get elem)) ")"))]
+        (string_mod.string-append (repl-type-render (ty-node-get elem)) ")"))]
     [(AstTyPtr elem)
-      (string-append
+      (string_mod.string-append
         "(Ptr "
-        (string-append (repl-type-render (ty-node-get elem)) ")"))]
+        (string_mod.string-append (repl-type-render (ty-node-get elem)) ")"))]
     [(AstTyMutPtr elem)
-      (string-append
+      (string_mod.string-append
         "(MutPtr "
-        (string-append (repl-type-render (ty-node-get elem)) ")"))]
+        (string_mod.string-append (repl-type-render (ty-node-get elem)) ")"))]
     [(AstTyRef region inner)
-      (string-append
+      (string_mod.string-append
         "(& "
-        (string-append
+        (string_mod.string-append
           region
-          (string-append
+          (string_mod.string-append
             " "
-            (string-append (repl-type-render (ty-node-get inner)) ")"))))]
+            (string_mod.string-append
+              (repl-type-render (ty-node-get inner))
+              ")"))))]
     [(AstTyMutRef region inner)
-      (string-append
+      (string_mod.string-append
         "(&mut "
-        (string-append
+        (string_mod.string-append
           region
-          (string-append
+          (string_mod.string-append
             " "
-            (string-append (repl-type-render (ty-node-get inner)) ")"))))]
+            (string_mod.string-append
+              (repl-type-render (ty-node-get inner))
+              ")"))))]
     [(AstTyRegion region inner)
-      (string-append
+      (string_mod.string-append
         "(in "
-        (string-append
+        (string_mod.string-append
           region
-          (string-append
+          (string_mod.string-append
             " "
-            (string-append (repl-type-render (ty-node-get inner)) ")"))))]
+            (string_mod.string-append
+              (repl-type-render (ty-node-get inner))
+              ")"))))]
     [(AstTyEnum name) (intern-str name)]
     [(AstTyEnumArgs name lifetimes)
-      (string-append
+      (string_mod.string-append
         "("
-        (string-append
+        (string_mod.string-append
           (intern-str name)
-          (string-append (repl-lifetime-list-render-spaced lifetimes) ")")))]
+          (string_mod.string-append
+            (repl-lifetime-list-render-spaced lifetimes)
+            ")")))]
     [(AstTyStruct name) (intern-str name)]
     [(AstTyStructArgs name lifetimes)
-      (string-append
+      (string_mod.string-append
         "("
-        (string-append
+        (string_mod.string-append
           (intern-str name)
-          (string-append (repl-lifetime-list-render-spaced lifetimes) ")")))]
-    [(AstTyVar name) (string-append "'" (string-append (intern-str name) "'"))]
+          (string_mod.string-append
+            (repl-lifetime-list-render-spaced lifetimes)
+            ")")))]
+    [(AstTyVar name)
+      (string_mod.string-append
+        "'"
+        (string_mod.string-append (intern-str name) "'"))]
     [(AstTyVarArgs name lifetimes)
-      (string-append
+      (string_mod.string-append
         "("
-        (string-append
+        (string_mod.string-append
           (intern-str name)
-          (string-append (repl-lifetime-list-render-spaced lifetimes) ")")))]))
+          (string_mod.string-append
+            (repl-lifetime-list-render-spaced lifetimes)
+            ")")))]))
 
 (define (repl-print-error-line [message : String]) : unit
   (repl-stderr-write-line message))
@@ -370,36 +395,40 @@
   (match ty
     [(AstTyI64)
       (OkReplString
-        (string-append "(print\n" (string-append expr-source "\n)")))]
+        (string_mod.string-append
+          "(print\n"
+          (string_mod.string-append expr-source "\n)")))]
     [(AstTyBool)
       (OkReplString
-        (string-append "(print-bool\n" (string-append expr-source "\n)")))]
+        (string_mod.string-append
+          "(print-bool\n"
+          (string_mod.string-append expr-source "\n)")))]
     [(AstTyF64)
       (OkReplString
-        (string-append
+        (string_mod.string-append
           "(__tl_repl_print_f64\n"
-          (string-append expr-source "\n)")))]
+          (string_mod.string-append expr-source "\n)")))]
     [(AstTyChar)
       (OkReplString
-        (string-append
+        (string_mod.string-append
           "(__tl_repl_print_char\n"
-          (string-append expr-source "\n)")))]
+          (string_mod.string-append expr-source "\n)")))]
     [(AstTyString)
       (OkReplString
-        (string-append
+        (string_mod.string-append
           "(begin\n  (print-string\n"
-          (string-append expr-source "\n  )\n  (print-newline))")))]
+          (string_mod.string-append expr-source "\n  )\n  (print-newline))")))]
     [(AstTyUnit) (OkReplString expr-source)]
     [_
       (ErrReplString
-        (string-append
+        (string_mod.string-append
           "Error: cannot display a value of type "
           (repl-type-render ty)))]))
 
 (define (repl-scratch-main-source [body : String]) : String
-  (string-append
+  (string_mod.string-append
     "(define (main) : i64\n  (begin\n    "
-    (string-append body "\n    0))\n")))
+    (string_mod.string-append body "\n    0))\n")))
 
 (define (repl-scratch-source
   [session-source : String]
@@ -408,13 +437,13 @@
   (match (repl-display-body ty expr-source)
     [(OkReplString body)
       (OkReplString
-        (string-append
+        (string_mod.string-append
           "(import \"stdlib/io.tl\")\n"
-          (string-append
+          (string_mod.string-append
             session-source
-            (string-append
+            (string_mod.string-append
               "\n"
-              (string-append
+              (string_mod.string-append
                 (repl-display-helpers-source ty)
                 (repl-scratch-main-source body))))))]
     [(ErrReplString message) (ErrReplString message)]))
@@ -449,9 +478,9 @@
     (begin
       (repl-stderr-write "\n")
       (repl-print-error-line
-        (string-append
+        (string_mod.string-append
           "REPL evaluation exited with status "
-          (int->string status))))))
+          (string_mod.int->string status))))))
 
 (define (repl-run-scratch-source [source : String]) : unit
   (match (source-tool-create-temp-dir "typelisp-repl")
@@ -472,8 +501,8 @@
                 (source-tool-run-source-in-temp
                   source-path
                   (source-tool-default-target)
-                  (string-vec-new)
-                  (process-args-empty)
+                  (vector_mod.string-vec-new)
+                  (process_mod.process-args-empty)
                   (compiler-optimize-default-level)
                   (BackendModeScalar)
                   (source-tool-link-inputs-empty)
@@ -483,7 +512,9 @@
                 (repl-report-run-status status)))]))]
     [(ErrSourceToolString message)
       (repl-print-error-line
-        (string-append "repl: failed to create scratch temp dir: " message))]))
+        (string_mod.string-append
+          "repl: failed to create scratch temp dir: "
+          message))]))
 
 (define (repl-evaluate-expr
   [session-source : String]
@@ -498,14 +529,14 @@
               (repl-run-scratch-source scratch-source)]
             [(ErrReplString message) (repl-print-error-line message)])]
         [(ErrTcType message)
-          (repl-print-error-line (string-append "Error: " message))])]
+          (repl-print-error-line (string_mod.string-append "Error: " message))])]
     [(ErrReplDeclList message)
-      (repl-print-error-line (string-append "Error: " message))]))
+      (repl-print-error-line (string_mod.string-append "Error: " message))]))
 
 (define (repl-handle-type-command
   [session-source : String]
   [expr-source : String]) : unit
-  (if (string-eq expr-source "")
+  (if (string_mod.string-eq expr-source "")
     (repl-print-error-line "Error: .type expects an expression")
     (match (parse-ast-repl-source expr-source)
       [(OkAstReplItem item)
@@ -519,14 +550,18 @@
                 (match (typecheck-compiler-repl-expr decls (ast-node-get expr))
                   [(OkTcType ty) (repl-stdout-write-line (repl-type-render ty))]
                   [(ErrTcType message)
-                    (repl-print-error-line (string-append "Error: " message))])]
+                    (repl-print-error-line
+                      (string_mod.string-append "Error: " message))])]
               [(ErrReplDeclList message)
-                (repl-print-error-line (string-append "Error: " message))])])]
+                (repl-print-error-line
+                  (string_mod.string-append "Error: " message))])])]
       [(ErrAstReplItem message)
-        (repl-print-error-line (string-append "Error: " message))])))
+        (repl-print-error-line (string_mod.string-append "Error: " message))])))
 
 (define (repl-session-candidate [session-source : String] [input : String]) : String
-  (string-append session-source (string-append input "\n")))
+  (string_mod.string-append
+    session-source
+    (string_mod.string-append input "\n")))
 
 (define (repl-handle-input [session-source : String] [input : String]) : String
   (match (parse-ast-repl-source input)
@@ -547,7 +582,8 @@
             session-source)])]
     [(ErrAstReplItem message)
       (begin
-        (repl-print-error-line (string-append "REPL parse error: " message))
+        (repl-print-error-line
+          (string_mod.string-append "REPL parse error: " message))
         session-source)]))
 
 ;; Completeness tracking mirrors the Rust REPL's delimiter check closely enough
@@ -696,9 +732,9 @@
   (repl-input-complete-loop input 0 (string-length input) 0 0 false false))
 
 (define (repl-append-pending [pending : String] [line : String]) : String
-  (if (string-eq pending "")
+  (if (string_mod.string-eq pending "")
     line
-    (string-append pending (string-append "\n" line))))
+    (string_mod.string-append pending (string_mod.string-append "\n" line))))
 
 (define (repl-handle-source-line
   [session-source : String]
@@ -716,8 +752,8 @@
   [session-source : String]
   [pending : String]
   [line : String]) : ReplLineResult
-  (if (string-eq pending "")
-    (if (string-eq line "")
+  (if (string_mod.string-eq pending "")
+    (if (string_mod.string-eq line "")
       (ReplLineResult session-source "")
       (match (repl-type-command line)
         [(ReplTypeCommandExpr expr-source)
@@ -725,14 +761,14 @@
             (repl-handle-type-command session-source expr-source)
             (ReplLineResult session-source ""))]
         [(ReplNoTypeCommand)
-          (if (string-eq line ".help")
+          (if (string_mod.string-eq line ".help")
             (begin
               (repl-stdout-write (repl-help-text))
               (ReplLineResult session-source ""))
             (if (repl-dot-command? line)
               (begin
                 (repl-stderr-write
-                  (string-append "Unknown REPL command: " line))
+                  (string_mod.string-append "Unknown REPL command: " line))
                 (repl-stderr-write "\nType .help for commands.\n")
                 (ReplLineResult session-source ""))
               (repl-handle-source-line session-source pending line)))]))
@@ -744,26 +780,26 @@
 ;; discards the pending buffer and returns to the top-level prompt.
 (define (repl-loop [session-source : String] [pending : String]) : unit
   (let
-    [pending? : bool (not (string-eq pending ""))]
+    [pending? : bool (not (string_mod.string-eq pending ""))]
     (begin
       (repl-prompt pending?)
-      (if (stdin-at-eof?)
+      (if (io_mod.stdin-at-eof?)
         (if pending?
           (repl-stderr-write "Error: incomplete REPL input at EOF\n")
           unit)
         (let
-          [line-read : StdinRead (stdin-read-line)]
+          [line-read : io_mod.StdinRead (io_mod.stdin-read-line)]
           [line : String
-            (repl-normalize-input-line (stdin-read-text line-read))]
-          (if (and (not pending?) (string-eq line ".exit"))
+            (repl-normalize-input-line (io_mod.stdin-read-text line-read))]
+          (if (and (not pending?) (string_mod.string-eq line ".exit"))
             unit
             ;; A blank line while a form is pending cancels it. Guard on the
             ;; read's EOF flag so an EOF-induced empty read is not mistaken for a
             ;; user-entered blank line (that path still reports incomplete-at-EOF).
             (if (and
               pending?
-              (string-eq line "")
-              (not (stdin-read-eof? line-read)))
+              (string_mod.string-eq line "")
+              (not (io_mod.stdin-read-eof? line-read)))
               (repl-loop session-source "")
               (match (repl-handle-line session-source pending line)
                 [(ReplLineResult next-session next-pending)
@@ -778,6 +814,6 @@
 (define (repl-run-from [start : i64] [count : i64]) : i64
   (if (< start count)
     (begin
-      (print-error "Error: repl does not accept arguments\n")
+      (io_mod.print-error "Error: repl does not accept arguments\n")
       1)
     (repl-run)))

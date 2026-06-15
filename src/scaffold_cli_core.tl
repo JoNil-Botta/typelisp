@@ -5,11 +5,11 @@
 ;; in `<name>/`;
 ;; `init [--lib] <name>` creates the skeleton in the current directory. Both
 ;; refuse to clobber an existing manifest or entry source.
-(import "../stdlib/io.tl")
+(import stdlib.io as io_mod)
 
-(import "../stdlib/fs.tl")
+(import stdlib.fs as fs_mod)
 
-(import "../stdlib/string.tl")
+(import stdlib.string as string_mod)
 
 ;; A package name must be non-empty and contain only name-safe characters
 ;; (alphanumerics, `-`, `_`): no path separators or whitespace.
@@ -33,15 +33,17 @@
 ;; The `typelisp.pkg` manifest text, matching the `(package ...)` form parsed by
 ;; compiler_load.tl: name, version, kind ("bin"|"staticlib"), and entry path.
 (define (scaffold-manifest [name : String] [kind : String] [entry : String]) : String
-  (string-append
+  (string_mod.string-append
     "(package (name \""
-    (string-append
+    (string_mod.string-append
       name
-      (string-append
+      (string_mod.string-append
         "\") (version \"0.1.0\") (kind \""
-        (string-append
+        (string_mod.string-append
           kind
-          (string-append "\") (entry \"" (string-append entry "\"))\n")))))))
+          (string_mod.string-append
+            "\") (entry \""
+            (string_mod.string-append entry "\"))\n")))))))
 
 (define (scaffold-bin-source) : String
   "(define (main) : i64\n  0)\n")
@@ -49,39 +51,39 @@
 (define (scaffold-lib-source) : String
   "(define (answer) : i64\n  42)\n")
 
-(define (scaffold-try-mkdir [path : String]) : ResultIoUnit
-  (try-mkdir (& path)))
+(define (scaffold-try-mkdir [path : String]) : io_mod.ResultIoUnit
+  (fs_mod.try-mkdir (& path)))
 
-(define (scaffold-try-write-file [path : String] [contents : String]) : ResultIoUnit
-  (try-write-file (& path) (& contents)))
+(define (scaffold-try-write-file [path : String] [contents : String]) : io_mod.ResultIoUnit
+  (io_mod.try-write-file (& path) (& contents)))
 
 ;; Create a directory, treating an already-existing one as success. A genuine
 ;; create failure is an error.
-(define (scaffold-ensure-dir [path : String]) : ResultIoUnit
+(define (scaffold-ensure-dir [path : String]) : io_mod.ResultIoUnit
   (match (scaffold-try-mkdir path)
-    [(OkIoUnit) OkIoUnit]
-    [(ErrIoUnit _)
-      (if (file-exists? path)
-        OkIoUnit
+    [(io_mod.OkIoUnit) io_mod.OkIoUnit]
+    [(io_mod.ErrIoUnit _)
+      (if (io_mod.file-exists? path)
+        io_mod.OkIoUnit
         (scaffold-try-mkdir path))]))
 
 ;; Write `contents` to `path`, refusing to overwrite an existing file.
 (define (scaffold-write-new [path : String] [contents : String]) : i64
-  (if (file-exists? path)
+  (if (io_mod.file-exists? path)
     (begin
-      (print-error
-        (string-append
+      (io_mod.print-error
+        (string_mod.string-append
           "scaffold: refusing to overwrite existing file: "
-          (string-append path "\n")))
+          (string_mod.string-append path "\n")))
       1)
     (match (scaffold-try-write-file path contents)
-      [(OkIoUnit) 0]
-      [(ErrIoUnit _)
+      [(io_mod.OkIoUnit) 0]
+      [(io_mod.ErrIoUnit _)
         (begin
-          (print-error
-            (string-append
+          (io_mod.print-error
+            (string_mod.string-append
               "scaffold: could not write "
-              (string-append path "\n")))
+              (string_mod.string-append path "\n")))
           1)])))
 
 ;; Create `root/src/`, then write the manifest and entry source.
@@ -95,22 +97,23 @@
       (if is-lib
         "src/lib.tl"
         "src/main.tl")]
-    [src-dir : String (string-append root "/src")]
-    [pkg-path : String (string-append root "/typelisp.pkg")]
-    [src-path : String (string-append root (string-append "/" entry))]
+    [src-dir : String (string_mod.string-append root "/src")]
+    [pkg-path : String (string_mod.string-append root "/typelisp.pkg")]
+    [src-path : String
+      (string_mod.string-append root (string_mod.string-append "/" entry))]
     [source : String
       (if is-lib
         (scaffold-lib-source)
         (scaffold-bin-source))]
     (match (scaffold-ensure-dir src-dir)
-      [(ErrIoUnit _)
+      [(io_mod.ErrIoUnit _)
         (begin
-          (print-error
-            (string-append
+          (io_mod.print-error
+            (string_mod.string-append
               "scaffold: could not create directory "
-              (string-append src-dir "\n")))
+              (string_mod.string-append src-dir "\n")))
           1)]
-      [(OkIoUnit)
+      [(io_mod.OkIoUnit)
         (let
           [pkg-code : i64
             (scaffold-write-new pkg-path (scaffold-manifest name kind entry))]
@@ -119,12 +122,14 @@
               [src-code : i64 (scaffold-write-new src-path source)]
               (if (= src-code 0)
                 (begin
-                  (print-string
-                    (string-append
+                  (io_mod.print-string
+                    (string_mod.string-append
                       "scaffold: created "
-                      (string-append
+                      (string_mod.string-append
                         kind
-                        (string-append " package " (string-append name "\n")))))
+                        (string_mod.string-append
+                          " package "
+                          (string_mod.string-append name "\n")))))
                   0)
                 src-code))
             pkg-code))])))
@@ -132,34 +137,34 @@
 (define (scaffold-new [name : String] [is-lib : bool]) : i64
   (if (not (scaffold-name-ok? name))
     (begin
-      (print-error
-        (string-append
+      (io_mod.print-error
+        (string_mod.string-append
           "scaffold: invalid package name: "
-          (string-append name "\n")))
+          (string_mod.string-append name "\n")))
       2)
     (match (scaffold-ensure-dir name)
-      [(ErrIoUnit _)
+      [(io_mod.ErrIoUnit _)
         (begin
-          (print-error
-            (string-append
+          (io_mod.print-error
+            (string_mod.string-append
               "scaffold: could not create directory "
-              (string-append name "\n")))
+              (string_mod.string-append name "\n")))
           1)]
-      [(OkIoUnit) (scaffold-emit name name is-lib)])))
+      [(io_mod.OkIoUnit) (scaffold-emit name name is-lib)])))
 
 (define (scaffold-init [name : String] [is-lib : bool]) : i64
   (if (not (scaffold-name-ok? name))
     (begin
-      (print-error
-        (string-append
+      (io_mod.print-error
+        (string_mod.string-append
           "scaffold: invalid package name: "
-          (string-append name "\n")))
+          (string_mod.string-append name "\n")))
       2)
     (scaffold-emit "." name is-lib)))
 
 (define (scaffold-usage) : i64
   (begin
-    (print-error "scaffold: usage: (new|init) [--lib] <name>\n")
+    (io_mod.print-error "scaffold: usage: (new|init) [--lib] <name>\n")
     2))
 
 ;; Parse `[--lib] <name>` from argv starting at `idx`, bounded by `count`, then
@@ -172,8 +177,8 @@
   (if (>= idx count)
     (scaffold-usage)
     (let
-      [current : String (arg idx)]
-      (if (string-eq current "--lib")
+      [current : String (io_mod.arg idx)]
+      (if (string_mod.string-eq current "--lib")
         (scaffold-dispatch-from is-init (+ idx 1) count true)
         (if (= (+ idx 1) count)
           (if is-init
@@ -191,9 +196,9 @@
   (if (>= command-idx count)
     (scaffold-usage)
     (let
-      [command : String (arg command-idx)]
-      (if (string-eq command "new")
+      [command : String (io_mod.arg command-idx)]
+      (if (string_mod.string-eq command "new")
         (scaffold-new-run-from (+ command-idx 1) count)
-        (if (string-eq command "init")
+        (if (string_mod.string-eq command "init")
           (scaffold-init-run-from (+ command-idx 1) count)
           (scaffold-usage))))))

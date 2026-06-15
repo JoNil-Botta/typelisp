@@ -1,9 +1,9 @@
 ;; inspect_cli_core.tl - Public tlci inspection command (#2655).
-(import "../stdlib/io.tl")
+(import stdlib.io as io_mod)
 
-(import "../stdlib/string.tl")
+(import stdlib.string as string_mod)
 
-(import "../stdlib/str_cat.tl")
+(import stdlib.str_cat)
 
 (import "tlci_core.tl")
 
@@ -21,13 +21,13 @@ Summary:
     "unknown"))
 
 (define (tlci-inspect-section-line [name : String] [offset : i64] [len : i64]) : String
-  (str-cat
+  (str_cat.str-cat
     "  "
     name
     ": offset="
-    (int->string offset)
+    (string_mod.int->string offset)
     " bytes="
-    (int->string len)
+    (string_mod.int->string len)
     "\n"))
 
 (define (tlci-inspect-table-line
@@ -35,35 +35,35 @@ Summary:
   [offset : i64]
   [count : i64]
   [record-size : i64]) : String
-  (str-cat
+  (str_cat.str-cat
     "  "
     name
     ": offset="
-    (int->string offset)
+    (string_mod.int->string offset)
     " records="
-    (int->string count)
+    (string_mod.int->string count)
     " bytes="
-    (int->string (* count record-size))
+    (string_mod.int->string (* count record-size))
     "\n"))
 
 (define (tlci-inspect-export-line [entry : TlciExport]) : String
   (match (struct-get entry kind)
     [(TlciExportValue)
-      (str-cat
+      (str_cat.str-cat
         "  value "
         (struct-get entry name)
         " signature="
         (struct-get entry signature)
         "\n")]
     [(TlciExportType)
-      (str-cat
+      (str_cat.str-cat
         "  type "
         (struct-get entry name)
         " layout="
         (struct-get entry layout)
         "\n")]
     [(TlciExportMacro)
-      (str-cat
+      (str_cat.str-cat
         "  macro "
         (struct-get entry name)
         " signature="
@@ -79,7 +79,7 @@ Summary:
   (match exports
     [(TlciExportNil) ""]
     [(TlciExportCons entry rest)
-      (str-cat
+      (str_cat.str-cat
         (tlci-inspect-export-line entry)
         (tlci-inspect-export-lines (box-get rest)))]))
 
@@ -92,27 +92,27 @@ Summary:
   (let
     [metadata : TlciMetadata (struct-get image metadata)]
     [host-arch : i64 (struct-get image host-arch)]
-    (str-cat
+    (str_cat.str-cat
       "tlci image\n"
       "format-version: "
-      (int->string (tlci-read-u64 bytes 8))
+      (string_mod.int->string (tlci-read-u64 bytes 8))
       "\n"
       "host-arch: "
       (tlci-inspect-host-arch-name host-arch)
       " ("
-      (int->string host-arch)
+      (string_mod.int->string host-arch)
       ")\n"
       "callback-abi-version: "
-      (int->string (struct-get image callback-abi-version))
+      (string_mod.int->string (struct-get image callback-abi-version))
       "\n"
       "compiler-build-hash: "
       (struct-get image compiler-build-hash)
       "\n"
       "content-hash: "
-      (int->string (tlci-read-u64 bytes 48))
+      (string_mod.int->string (tlci-read-u64 bytes 48))
       "\n"
       "file-size: "
-      (int->string (tlci-read-u64 bytes 152))
+      (string_mod.int->string (tlci-read-u64 bytes 152))
       "\n"
       "metadata-version: "
       (struct-get metadata version)
@@ -161,24 +161,26 @@ Summary:
 (define (tlci-inspect-run-from [idx : i64] [count : i64]) : i64
   (if (not (= count (+ idx 1)))
     (begin
-      (print-error "inspect: expected one .tlci path\n")
+      (io_mod.print-error "inspect: expected one .tlci path\n")
       1)
     (let
-      [path : String (arg idx)]
-      (match (try-read-file (& path))
-        [(ErrIoString error)
+      [path : String (io_mod.arg idx)]
+      (match (io_mod.try-read-file (& path))
+        [(io_mod.ErrIoString error)
           (begin
-            (print-error (str-cat "inspect: " (io-error-message error) "\n"))
+            (io_mod.print-error
+              (str_cat.str-cat "inspect: " (io_mod.io-error-message error) "\n"))
             1)]
-        [(OkIoString contents)
+        [(io_mod.OkIoString contents)
           (let
             [bytes : (Array u8) (tlci-string->bytes contents)]
             (match (tlci-parse-image bytes)
               [(ErrTlciImage message)
                 (begin
-                  (print-error (str-cat "inspect: " message "\n"))
+                  (io_mod.print-error
+                    (str_cat.str-cat "inspect: " message "\n"))
                   1)]
               [(OkTlciImage image)
                 (begin
-                  (print-string (tlci-inspect-render bytes image))
+                  (io_mod.print-string (tlci-inspect-render bytes image))
                   0)]))]))))

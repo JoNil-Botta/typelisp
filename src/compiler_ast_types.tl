@@ -14,12 +14,12 @@
 ;; be allocated in the persistent program arena, never a transient scratch arena
 ;; (which gets destroyed, leaving the global pool dangling). arena.tl has no
 ;; imports, so this adds no cycle.
-(import "../stdlib/arena.tl")
+(import stdlib.arena as arena_mod)
 
 ;; #2604: hash/equality helpers for the ty-node hash-consing table below.
-(import "../stdlib/hash.tl")
+(import stdlib.hash as hash_mod)
 
-(import "../stdlib/string.tl")
+(import stdlib.string as string_mod)
 
 (defstruct AstSourceSpan
   (start-line i64)
@@ -369,7 +369,7 @@
 ;; scratch arena is destroyed, leaving the pool dangling (a non-deterministic
 ;; use-after-free). This is why the pool previously failed closed.
 (define node-pool-base-arena : i64
-  (arena-current))
+  (arena_mod.arena-current))
 
 (define ast-node-pool-count : i64
   0)
@@ -390,16 +390,16 @@
       (if (< old-cap 1)
         1024
         (* old-cap 2))]
-    [prev-arena : i64 (arena-current)]
+    [prev-arena : i64 (arena_mod.arena-current)]
     [new-slots : (Array AstExpr)
       (begin
         (unsafe
-          (arena-set! node-pool-base-arena))
+          (arena_mod.arena-set! node-pool-base-arena))
         (let
           [arr : (Array AstExpr) (make-array AstExpr new-cap)]
           (begin
             (unsafe
-              (arena-set! prev-arena))
+              (arena_mod.arena-set! prev-arena))
             arr)))]
     [len : i64 ast-node-pool-count]
     [i : i64 0]
@@ -498,16 +498,16 @@
       (if (< old-cap 1)
         1024
         (* old-cap 2))]
-    [prev-arena : i64 (arena-current)]
+    [prev-arena : i64 (arena_mod.arena-current)]
     [new-slots : (Array AstType)
       (begin
         (unsafe
-          (arena-set! node-pool-base-arena))
+          (arena_mod.arena-set! node-pool-base-arena))
         (let
           [arr : (Array AstType) (make-array AstType new-cap)]
           (begin
             (unsafe
-              (arena-set! prev-arena))
+              (arena_mod.arena-set! prev-arena))
             arr)))]
     [len : i64 ty-node-pool-count]
     [i : i64 0]
@@ -527,7 +527,7 @@
 ;; arena active, so every copy is program-lifetime. Node-id references need
 ;; no copy: they point at pool nodes made persistent by the same rule.
 (define (ty-node-persist-string [s : String]) : String
-  (substring s 0 (string-length s)))
+  (string_mod.substring s 0 (string-length s)))
 
 (define (ty-node-persist-lifetimes [items : AstLifetimeList]) : AstLifetimeList
   (match items
@@ -566,16 +566,16 @@
       unit)
     (let
       [id : i64 ty-node-pool-count]
-      [prev-arena : i64 (arena-current)]
+      [prev-arena : i64 (arena_mod.arena-current)]
       [persistent : AstType
         (begin
           (unsafe
-            (arena-set! node-pool-base-arena))
+            (arena_mod.arena-set! node-pool-base-arena))
           (let
             [out : AstType (ty-node-persist node)]
             (begin
               (unsafe
-                (arena-set! prev-arena))
+                (arena_mod.arena-set! prev-arena))
               out)))]
       (begin
         (array-set! ty-node-pool-slots id persistent)
@@ -619,17 +619,17 @@
 
 (define (ty-lifetime-list-hash [items : AstLifetimeList] [seed : i64]) : i64
   (match items
-    [(AstLifetimeNil) (hash-combine seed 11)]
+    [(AstLifetimeNil) (hash_mod.hash-combine seed 11)]
     [(AstLifetimeCons name rest)
       (ty-lifetime-list-hash
         (box-get rest)
-        (hash-combine seed (hash-string (& name))))]))
+        (hash_mod.hash-combine seed (hash_mod.hash-string (& name))))]))
 
 (define (ty-type-list-hash [items : AstTypeList] [seed : i64]) : i64
   (match items
-    [(AstTypeNil) (hash-combine seed 13)]
+    [(AstTypeNil) (hash_mod.hash-combine seed 13)]
     [(AstTypeCons id rest)
-      (ty-type-list-hash (box-get rest) (hash-combine seed id))]))
+      (ty-type-list-hash (box-get rest) (hash_mod.hash-combine seed id))]))
 
 (define (ty-node-hash-value [node : AstType]) : i64
   (match node
@@ -651,28 +651,36 @@
     [(AstTyNever) 16]
     [(AstTyExpr) 17]
     [(AstTyExprList) 18]
-    [(AstTyFunc args ret) (hash-combine (ty-type-list-hash args 19) ret)]
+    [(AstTyFunc args ret)
+      (hash_mod.hash-combine (ty-type-list-hash args 19) ret)]
     [(AstTyTuple elems) (ty-type-list-hash elems 20)]
-    [(AstTyArray elem count) (hash-combine (hash-combine 21 elem) count)]
-    [(AstTyDynArray elem) (hash-combine 22 elem)]
-    [(AstTyBox inner) (hash-combine 23 inner)]
+    [(AstTyArray elem count)
+      (hash_mod.hash-combine (hash_mod.hash-combine 21 elem) count)]
+    [(AstTyDynArray elem) (hash_mod.hash-combine 22 elem)]
+    [(AstTyBox inner) (hash_mod.hash-combine 23 inner)]
     [(AstTyRegion name inner)
-      (hash-combine (hash-combine 24 (hash-string (& name))) inner)]
+      (hash_mod.hash-combine
+        (hash_mod.hash-combine 24 (hash_mod.hash-string (& name)))
+        inner)]
     [(AstTyRef name inner)
-      (hash-combine (hash-combine 25 (hash-string (& name))) inner)]
+      (hash_mod.hash-combine
+        (hash_mod.hash-combine 25 (hash_mod.hash-string (& name)))
+        inner)]
     [(AstTyMutRef name inner)
-      (hash-combine (hash-combine 26 (hash-string (& name))) inner)]
-    [(AstTyEnum name) (hash-combine 27 name)]
+      (hash_mod.hash-combine
+        (hash_mod.hash-combine 26 (hash_mod.hash-string (& name)))
+        inner)]
+    [(AstTyEnum name) (hash_mod.hash-combine 27 name)]
     [(AstTyEnumArgs name lifetimes)
-      (ty-lifetime-list-hash lifetimes (hash-combine 28 name))]
-    [(AstTyStruct name) (hash-combine 29 name)]
+      (ty-lifetime-list-hash lifetimes (hash_mod.hash-combine 28 name))]
+    [(AstTyStruct name) (hash_mod.hash-combine 29 name)]
     [(AstTyStructArgs name lifetimes)
-      (ty-lifetime-list-hash lifetimes (hash-combine 30 name))]
-    [(AstTyVar name) (hash-combine 31 name)]
+      (ty-lifetime-list-hash lifetimes (hash_mod.hash-combine 30 name))]
+    [(AstTyVar name) (hash_mod.hash-combine 31 name)]
     [(AstTyVarArgs name lifetimes)
-      (ty-lifetime-list-hash lifetimes (hash-combine 32 name))]
-    [(AstTyPtr inner) (hash-combine 33 inner)]
-    [(AstTyMutPtr inner) (hash-combine 34 inner)]))
+      (ty-lifetime-list-hash lifetimes (hash_mod.hash-combine 32 name))]
+    [(AstTyPtr inner) (hash_mod.hash-combine 33 inner)]
+    [(AstTyMutPtr inner) (hash_mod.hash-combine 34 inner)]))
 
 (define (ty-lifetime-list-eq? [a : AstLifetimeList] [b : AstLifetimeList]) : bool
   (match a
@@ -684,7 +692,7 @@
       (match b
         [(AstLifetimeCons b-name b-rest)
           (and
-            (string-eq a-name b-name)
+            (string_mod.string-eq a-name b-name)
             (ty-lifetime-list-eq? (box-get a-rest) (box-get b-rest)))]
         [_ false])]))
 
@@ -803,17 +811,17 @@
     [(AstTyRegion a-name a-inner)
       (match b
         [(AstTyRegion b-name b-inner)
-          (and (= a-inner b-inner) (string-eq a-name b-name))]
+          (and (= a-inner b-inner) (string_mod.string-eq a-name b-name))]
         [_ false])]
     [(AstTyRef a-name a-inner)
       (match b
         [(AstTyRef b-name b-inner)
-          (and (= a-inner b-inner) (string-eq a-name b-name))]
+          (and (= a-inner b-inner) (string_mod.string-eq a-name b-name))]
         [_ false])]
     [(AstTyMutRef a-name a-inner)
       (match b
         [(AstTyMutRef b-name b-inner)
-          (and (= a-inner b-inner) (string-eq a-name b-name))]
+          (and (= a-inner b-inner) (string_mod.string-eq a-name b-name))]
         [_ false])]
     [(AstTyEnum a-name)
       (match b
@@ -1746,7 +1754,7 @@
       (match b
         [(AstLifetimeCons b-head b-rest)
           (and
-            (string-eq a-head b-head)
+            (string_mod.string-eq a-head b-head)
             (ast-lifetime-list-eq? (box-get a-rest) (box-get b-rest)))]
         [_ false])]))
 
@@ -1870,21 +1878,21 @@
       (match b
         [(AstTyRegion b-region b-inner)
           (and
-            (string-eq a-region b-region)
+            (string_mod.string-eq a-region b-region)
             (ast-type-eq? (ty-node-get a-inner) (ty-node-get b-inner)))]
         [_ false])]
     [(AstTyRef a-lifetime a-inner)
       (match b
         [(AstTyRef b-lifetime b-inner)
           (and
-            (string-eq a-lifetime b-lifetime)
+            (string_mod.string-eq a-lifetime b-lifetime)
             (ast-type-eq? (ty-node-get a-inner) (ty-node-get b-inner)))]
         [_ false])]
     [(AstTyMutRef a-lifetime a-inner)
       (match b
         [(AstTyMutRef b-lifetime b-inner)
           (and
-            (string-eq a-lifetime b-lifetime)
+            (string_mod.string-eq a-lifetime b-lifetime)
             (ast-type-eq? (ty-node-get a-inner) (ty-node-get b-inner)))]
         [_ false])]
     [(AstTyEnum a-name)
@@ -1952,15 +1960,15 @@
   (match a
     [(AstExternLinkLib aname)
       (match b
-        [(AstExternLinkLib bname) (string-eq aname bname)]
+        [(AstExternLinkLib bname) (string_mod.string-eq aname bname)]
         [_ false])]
     [(AstExternLinkSearch adir)
       (match b
-        [(AstExternLinkSearch bdir) (string-eq adir bdir)]
+        [(AstExternLinkSearch bdir) (string_mod.string-eq adir bdir)]
         [_ false])]
     [(AstExternLinkArg aarg)
       (match b
-        [(AstExternLinkArg barg) (string-eq aarg barg)]
+        [(AstExternLinkArg barg) (string_mod.string-eq aarg barg)]
         [_ false])]))
 
 (define (ast-extern-link-input-list-eq?
@@ -2140,7 +2148,8 @@
                 [else-expr : AstExpr (ast-node-get else-box)]
                 (and
                   (match cond
-                    [(AstExprVar name) (string-eq (intern-str name) "cond")]
+                    [(AstExprVar name)
+                      (string_mod.string-eq (intern-str name) "cond")]
                     [_ false])
                   (match then-expr
                     [(AstExprMatch scrut-box arms)
@@ -2149,7 +2158,7 @@
                         (and
                           (match scrut
                             [(AstExprVar name)
-                              (string-eq (intern-str name) "input")]
+                              (string_mod.string-eq (intern-str name) "input")]
                             [_ false])
                           (compiler-ast-single-arm-box-ok? arms)))]
                     [_ false])
@@ -2311,7 +2320,7 @@
           (match (ty-node-get ret)
             [(AstTyRef region ptr)
               (and
-                (string-eq region "r")
+                (string_mod.string-eq region "r")
                 (match (ty-node-get ptr)
                   [(AstTyPtr array)
                     (match (ty-node-get array)

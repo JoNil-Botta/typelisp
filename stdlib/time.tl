@@ -5,16 +5,18 @@
 ;# and monotonic elapsed milliseconds. Calendar conversion, formatting, time
 ;# zones, locale behavior, sleep, timers, and scheduling are deferred.
 ;#
-;# Usage: `(import "stdlib/time.tl")`
+;# Usage: `(import stdlib.time)`
 ;#
 ;# ```typelisp
-;# (import "stdlib/time.tl")
+;# (import stdlib.time)
 ;# (define (main) : i64
-;#   (match (time-unix-ms)
-;#     [(OkTimeMs ms) (if (> ms 0) 42 1)]
-;#     [(ErrTimeMs _) 2]))
+;#   (match (time.time-unix-ms)
+;#     [(time.OkTimeMs ms) (if (> ms 0) 42 1)]
+;#     [(time.ErrTimeMs _) 2]))
 ;# ```
 ;: Recoverable time source error.
+(module stdlib.time)
+
 (defenum TimeError
   (TimeUnavailable String))
 
@@ -57,10 +59,10 @@
       [timespec : (Array i64) (make-array i64 2)]
       [status : i64
         (unsafe
-          (syscall 228 clock-id (time-array-addr timespec)))]
+          (syscall 228 clock-id (stdlib.time.time-array-addr timespec)))]
       (if (< status 0)
-        (time-unavailable "time: clock_gettime unavailable")
-        (OkTimeMs (time-timespec-ms timespec))))))
+        (stdlib.time.time-unavailable "time: clock_gettime unavailable")
+        (OkTimeMs (stdlib.time.time-timespec-ms timespec))))))
 
 ;: Windows kernel32 `GetSystemTimeAsFileTime` binding.
 (cfg
@@ -89,15 +91,15 @@
     (let
       [file-time : (Array i64) (make-array i64 1)]
       [_ok : unit
-        (time-windows-get-system-time-as-file-time
+        (stdlib.time.time-windows-get-system-time-as-file-time
           (unsafe
             (array-data file-time)))]
       [unix-ms : i64
         (-
           (/ (array-ref file-time 0) 10000)
-          (time-windows-filetime-unix-epoch-ms))]
+          (stdlib.time.time-windows-filetime-unix-epoch-ms))]
       (if (< unix-ms 0)
-        (time-unavailable "time: system time before Unix epoch")
+        (stdlib.time.time-unavailable "time: system time before Unix epoch")
         (OkTimeMs unix-ms)))))
 
 ;: Windows monotonic milliseconds via `QueryPerformanceCounter/Frequency`.
@@ -108,24 +110,45 @@
       [counter : (Array i64) (make-array i64 1)]
       [freq : (Array i64) (make-array i64 1)]
       [counter-ok : i32
-        (time-windows-query-performance-counter
+        (stdlib.time.time-windows-query-performance-counter
           (unsafe
             (array-data counter)))]
       [freq-ok : i32
-        (time-windows-query-performance-frequency
+        (stdlib.time.time-windows-query-performance-frequency
           (unsafe
             (array-data freq)))]
       [freq-value : i64 (array-ref freq 0)]
       (if (or (= counter-ok (cast 0 : i32)) (= freq-ok (cast 0 : i32)))
-        (time-unavailable "time: performance counter unavailable")
+        (stdlib.time.time-unavailable "time: performance counter unavailable")
         (if (= freq-value 0)
-          (time-unavailable "time: performance counter frequency is zero")
+          (stdlib.time.time-unavailable
+            "time: performance counter frequency is zero")
           (OkTimeMs (/ (* (array-ref counter 0) 1000) freq-value)))))))
 
 ;: Return wall-clock Unix epoch milliseconds.
 (define (time-unix-ms) : ResultTimeMs
-  (cfg windows (time-windows-unix-ms) (time-linux-clock-ms 0)))
+  (cfg
+    windows
+    (stdlib.time.time-windows-unix-ms)
+    (stdlib.time.time-linux-clock-ms 0)))
 
 ;: Return monotonic elapsed milliseconds. The epoch is platform-defined.
 (define (time-monotonic-ms) : ResultTimeMs
-  (cfg windows (time-windows-monotonic-ms) (time-linux-clock-ms 1)))
+  (cfg
+    windows
+    (stdlib.time.time-windows-monotonic-ms)
+    (stdlib.time.time-linux-clock-ms 1)))
+
+;# Dotted-module migration: preserve the pre-module flat stdlib surface.
+(export
+  (value time-error-message)
+  (value time-ms-or)
+  (value time-unavailable)
+  (value time-timespec-ms)
+  (value time-unix-ms)
+  (value time-monotonic-ms)
+  (type TimeError)
+  (type ResultTimeMs)
+  (variant TimeUnavailable)
+  (variant OkTimeMs)
+  (variant ErrTimeMs))

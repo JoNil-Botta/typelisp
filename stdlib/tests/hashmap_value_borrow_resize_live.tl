@@ -1,21 +1,21 @@
-(import "stdlib/hashmap.tl")
+(import stdlib.hashmap)
 
 (define (hashmap-borrowed-value-len
-  [lookup : (StringStringMapBorrowedValueLookup map)]) : i64
+  [lookup : (hashmap.StringStringMapBorrowedValueLookup map)]) : i64
   (match lookup
-    [(StringStringMapBorrowedValueFound value) (string-length value)]
-    [(StringStringMapBorrowedValueMissing) 0]))
+    [(hashmap.StringStringMapBorrowedValueFound value) (string-length value)]
+    [(hashmap.StringStringMapBorrowedValueMissing) 0]))
 
 ; Must fail: resizing/rehashing moves bucket storage while a value reference
 ; into the old storage is still live.
 (define (main) : i64
   (let
     [key : String "alpha"]
-    [m : StringStringMap
-      (string-string-map-put (string-string-map-with-capacity 4) "alpha" "red")]
-    [borrowed : (StringStringMapBorrowedValueLookup m)
-      (string-string-map-get-value-borrowed (& m) (& key))]
-    [resized : StringStringMap (string-string-map-resized m 16)]
+    [m : hashmap.StringStringMap
+      (hashmap.string-string-map-put (hashmap.string-string-map-with-capacity 4) "alpha" "red")]
+    [borrowed : (hashmap.StringStringMapBorrowedValueLookup m)
+      (hashmap.string-string-map-get-value-borrowed (& m) (& key))]
+    [resized : hashmap.StringStringMap (hashmap.string-string-map-resized m 16)]
     (+
       (hashmap-borrowed-value-len borrowed)
-      (string-string-map-capacity resized))))
+      (hashmap.string-string-map-capacity resized))))

@@ -6,9 +6,11 @@
 ;#
 ;# This module intentionally remains separate from `text_buf.tl` while the
 ;# compatibility surface keeps owned chunk storage.
-(import "text_buf.tl")
+(module stdlib.text_buf_borrowed)
 
-(import "string.tl")
+(import stdlib.text_buf as text_buf_mod)
+
+(import stdlib.string as string_mod)
 
 ;: Borrowed buffer chunk. Borrowed chunks are not copied until render; owned
 ;: chunks are available as explicit lifetime boundaries.
@@ -33,7 +35,7 @@
 ;: Return an empty borrowed buffer tied to `text` without storing `text`.
 (define (text-buf-borrowed-empty-like [text : (& text str)]) : (TextBufBorrowed
     text)
-  (TextBufBorrowed TextBufBorrowedChunkNil 0))
+  (TextBufBorrowed stdlib.text_buf_borrowed.TextBufBorrowedChunkNil 0))
 
 ;: Return a borrowed buffer containing one borrowed chunk.
 (define (text-buf-borrowed-single [text : (& text str)]) : (TextBufBorrowed
@@ -43,7 +45,7 @@
     (TextBufBorrowed
       (TextBufBorrowedChunkCons
         (TextBufBorrowedChunkBorrowed text)
-        (box TextBufBorrowedChunkNil))
+        (box stdlib.text_buf_borrowed.TextBufBorrowedChunkNil))
       chunk-len)))
 
 ;: Return true when `buf` contains no bytes.
@@ -88,22 +90,24 @@
 (define (text-buf-borrowed-append-copy
   [buf : (TextBufBorrowed text)]
   [chunk : (& chunk str)]) : (TextBufBorrowed text)
-  (text-buf-borrowed-append-owned
+  (stdlib.text_buf_borrowed.text-buf-borrowed-append-owned
     buf
-    (substring-borrowed chunk 0 (string-length chunk))))
+    (string_mod.substring-borrowed chunk 0 (string-length chunk))))
 
 ;: Append rendered `right` after `left`. This is an explicit owned-copy
 ;: boundary, so `right` may be assembled independently before being appended.
 (define (text-buf-borrowed-append-buffer
   [left : (TextBufBorrowed text)]
   [right : (TextBufBorrowed text)]) : (TextBufBorrowed text)
-  (text-buf-borrowed-append-owned left (text-buf-borrowed-render right)))
+  (stdlib.text_buf_borrowed.text-buf-borrowed-append-owned
+    left
+    (stdlib.text_buf_borrowed.text-buf-borrowed-render right)))
 
 ;: Return `chunk` as owned active-arena text. Borrowed chunks are copied.
 (define (text-buf-borrowed-chunk-string [chunk : (TextBufBorrowedChunk text)]) : String
   (match chunk
     [(TextBufBorrowedChunkBorrowed text)
-      (substring-borrowed text 0 (string-length text))]
+      (string_mod.substring-borrowed text 0 (string-length text))]
     [(TextBufBorrowedChunkOwned text) text]))
 
 ;: Render reversed borrowed chunks into `out`.
@@ -113,9 +117,11 @@
   (match chunks
     [(TextBufBorrowedChunkNil) out]
     [(TextBufBorrowedChunkCons chunk rest)
-      (text-buf-borrowed-chunks-render-rev
+      (stdlib.text_buf_borrowed.text-buf-borrowed-chunks-render-rev
         (box-get rest)
-        (string-append (text-buf-borrowed-chunk-string chunk) out))]))
+        (string_mod.string-append
+          (stdlib.text_buf_borrowed.text-buf-borrowed-chunk-string chunk)
+          out))]))
 
 ;: Return the number of borrowed chunk nodes in `chunks`, accumulating into
 ;: `count`.
@@ -125,7 +131,9 @@
   (match chunks
     [(TextBufBorrowedChunkNil) count]
     [(TextBufBorrowedChunkCons _ rest)
-      (text-buf-borrowed-chunk-count (box-get rest) (+ count 1))]))
+      (stdlib.text_buf_borrowed.text-buf-borrowed-chunk-count
+        (box-get rest)
+        (+ count 1))]))
 
 ;: Fill `items` with owned copies from a reversed borrowed chunk list.
 (define (text-buf-borrowed-chunks-fill-array-rev
@@ -136,8 +144,11 @@
     [(TextBufBorrowedChunkNil) unit]
     [(TextBufBorrowedChunkCons chunk rest)
       (begin
-        (array-set! items index (text-buf-borrowed-chunk-string chunk))
-        (text-buf-borrowed-chunks-fill-array-rev
+        (array-set!
+          items
+          index
+          (stdlib.text_buf_borrowed.text-buf-borrowed-chunk-string chunk))
+        (stdlib.text_buf_borrowed.text-buf-borrowed-chunks-fill-array-rev
           (box-get rest)
           items
           (- index 1)))]))
@@ -150,15 +161,48 @@
   (let
     [items : (Array String) (make-array String count)]
     (begin
-      (text-buf-borrowed-chunks-fill-array-rev chunks items (- count 1))
-      (text-buf-chunks-render-array-range items 0 count))))
+      (stdlib.text_buf_borrowed.text-buf-borrowed-chunks-fill-array-rev
+        chunks
+        items
+        (- count 1))
+      (text_buf_mod.text-buf-chunks-render-array-range items 0 count))))
 
 ;: Render borrowed `buf` to an owned String allocated in the active arena.
 (define (text-buf-borrowed-render [buf : (TextBufBorrowed text)]) : String
   (match buf
     [(TextBufBorrowed chunks _)
       (let
-        [count : i64 (text-buf-borrowed-chunk-count chunks 0)]
+        [count : i64
+          (stdlib.text_buf_borrowed.text-buf-borrowed-chunk-count chunks 0)]
         (if (> count 32)
-          (text-buf-borrowed-chunks-render-balanced chunks count)
-          (text-buf-borrowed-chunks-render-rev chunks "")))]))
+          (stdlib.text_buf_borrowed.text-buf-borrowed-chunks-render-balanced
+            chunks
+            count)
+          (stdlib.text_buf_borrowed.text-buf-borrowed-chunks-render-rev
+            chunks
+            "")))]))
+
+;# Dotted-module migration: preserve the pre-module flat stdlib surface.
+(export
+  (value text-buf-borrowed-empty-like)
+  (value text-buf-borrowed-single)
+  (value text-buf-borrowed-empty?)
+  (value text-buf-borrowed-length)
+  (value text-buf-borrowed-append)
+  (value text-buf-borrowed-append-owned)
+  (value text-buf-borrowed-append-copy)
+  (value text-buf-borrowed-append-buffer)
+  (value text-buf-borrowed-chunk-string)
+  (value text-buf-borrowed-chunks-render-rev)
+  (value text-buf-borrowed-chunk-count)
+  (value text-buf-borrowed-chunks-fill-array-rev)
+  (value text-buf-borrowed-chunks-render-balanced)
+  (value text-buf-borrowed-render)
+  (type TextBufBorrowedChunk)
+  (type TextBufBorrowedChunkList)
+  (type TextBufBorrowed)
+  (variant TextBufBorrowedChunkBorrowed)
+  (variant TextBufBorrowedChunkOwned)
+  (variant TextBufBorrowedChunkNil)
+  (variant TextBufBorrowedChunkCons)
+  (variant TextBufBorrowed))

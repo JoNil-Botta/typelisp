@@ -17,12 +17,12 @@
 ;#       (set! value (cond [false 0] [true value] [else value]))
 ;#       value)))
 ;# ```
-(module stdlib.core_macros)
-
 ;: Short-circuiting boolean conjunction.
 ;:
 ;: All operands must be bool-valued. With no operands, this macro expands to
 ;: `true`.
+(module stdlib.core_macros)
+
 (defmacro (and [args : bool ...]) : bool
   (if (expr-list-empty? args)
     (expr-bool true)

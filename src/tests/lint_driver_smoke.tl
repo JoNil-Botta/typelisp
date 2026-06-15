@@ -1,6 +1,8 @@
 ;; lint_driver_smoke.tl - Runnable smoke for lint_driver_core.tl (#1163): drives
 ;; the full load -> lint -> render path on an embedded source and returns 42.
-(import "../stdlib/io.tl")
+(import stdlib.io as io_mod)
+
+(import stdlib.vector as vector_mod)
 
 (import "lint_driver_core.tl")
 
@@ -35,7 +37,7 @@
     (selfhost-lint-source-with-roots-and-options
       "lint_driver_smoke_test.tl"
       source
-      (string-vec-new)
+      (vector_mod.string-vec-new)
       true)))
 
 (define (lint-driver-smoke-string-concat-finding-ok?
@@ -60,19 +62,19 @@
       (selfhost-lint-source-with-roots-and-options
         "lint_driver_smoke_test.tl"
         (lint-driver-smoke-string-concat-source)
-        (string-vec-new)
+        (vector_mod.string-vec-new)
         true)]
     [loop-string-concat-reported : LintFindings
       (selfhost-lint-source-with-roots-and-options
         "lint_driver_smoke_test.tl"
         (lint-driver-smoke-loop-string-concat-source)
-        (string-vec-new)
+        (vector_mod.string-vec-new)
         true)]
     [nested-string-concat-reported : LintFindings
       (selfhost-lint-source-with-roots-and-options
         "lint_driver_smoke_test.tl"
         (lint-driver-smoke-nested-string-concat-source)
-        (string-vec-new)
+        (vector_mod.string-vec-new)
         true)]
     (if (not (= (lint-findings-count string-concat-reported) 1))
       20
@@ -107,7 +109,7 @@
   (begin
     ;; The imported driver core defines printing helpers; keep the print-string
     ;; runtime linked even when this smoke only exercises the pure source path.
-    (print-string "")
+    (io_mod.print-string "")
     (let
       [core-result : i64 (compiler-lint-driver-self-test)]
       (if (= core-result 42)

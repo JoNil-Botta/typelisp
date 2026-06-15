@@ -5,9 +5,9 @@
 ;; import it. Warn-only by default; callers can pass `--check` after the input
 ;; path to exit non-zero when findings remain. The deprecated string-concat rule
 ;; is opt-in until the remaining in-tree str-cat migrations land.
-(import "../stdlib/io.tl")
+(import stdlib.io as io_mod)
 
-(import "../stdlib/list.tl")
+(import stdlib.list as list_mod)
 
 (import "compiler_load.tl")
 
@@ -15,14 +15,16 @@
 
 (import "package_source_core.tl")
 
-(import "../stdlib/string.tl")
+(import stdlib.string as string_mod)
+
+(import stdlib.vector as vector_mod)
 
 ;; Parsed lint CLI config: input paths, stdlib roots, whether `--check`
 ;; enforcing mode was requested (exit non-zero when findings are present), and
 ;; whether the staged deprecated string-concat rule is enabled.
 (defenum SelfhostLintConfig
-  (SelfhostLintFileConfig StringVec StringVec bool bool)
-  (SelfhostLintPackageConfig String bool StringVec bool bool))
+  (SelfhostLintFileConfig vector_mod.StringVec vector_mod.StringVec bool bool)
+  (SelfhostLintPackageConfig String bool vector_mod.StringVec bool bool))
 
 (defenum ResultSelfhostLintConfig
   (OkSelfhostLintConfig SelfhostLintConfig)
@@ -32,13 +34,13 @@
   (and (> (string-length value) 0) (= (string-ref value 0) #-')))
 
 (define (selfhost-lint-config-finish
-  [input-paths : StringVec]
+  [input-paths : vector_mod.StringVec]
   [manifest-path : String]
   [has-manifest : bool]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [enforcing : bool]
   [deprecated-string-concat : bool]) : ResultSelfhostLintConfig
-  (if (string-vec-is-empty? input-paths)
+  (if (vector_mod.string-vec-is-empty? input-paths)
     (OkSelfhostLintConfig
       (SelfhostLintPackageConfig
         manifest-path
@@ -59,10 +61,10 @@
 (define (selfhost-lint-parse-options
   [idx : i64]
   [count : i64]
-  [input-paths : StringVec]
+  [input-paths : vector_mod.StringVec]
   [manifest-path : String]
   [has-manifest : bool]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [enforcing : bool]
   [deprecated-string-concat : bool]) : ResultSelfhostLintConfig
   (if (>= idx count)
@@ -74,8 +76,8 @@
       enforcing
       deprecated-string-concat)
     (let
-      [current : String (arg idx)]
-      (if (string-eq current "--check")
+      [current : String (io_mod.arg idx)]
+      (if (string_mod.string-eq current "--check")
         (selfhost-lint-parse-options
           (+ idx 1)
           count
@@ -85,7 +87,7 @@
           stdlib-roots
           true
           deprecated-string-concat)
-        (if (string-eq current "--deprecated-string-concat")
+        (if (string_mod.string-eq current "--deprecated-string-concat")
           (selfhost-lint-parse-options
             (+ idx 1)
             count
@@ -95,7 +97,7 @@
             stdlib-roots
             enforcing
             true)
-          (if (string-eq current "--stdlib-root")
+          (if (string_mod.string-eq current "--stdlib-root")
             (if (>= (+ idx 1) count)
               (ErrSelfhostLintConfig
                 "selfhost-lint: --stdlib-root requires a value")
@@ -105,10 +107,10 @@
                 input-paths
                 manifest-path
                 has-manifest
-                (string-vec-push stdlib-roots (arg (+ idx 1)))
+                (vector_mod.string-vec-push stdlib-roots (io_mod.arg (+ idx 1)))
                 enforcing
                 deprecated-string-concat))
-            (if (string-eq current "--manifest-path")
+            (if (string_mod.string-eq current "--manifest-path")
               (if (>= (+ idx 1) count)
                 (ErrSelfhostLintConfig
                   "selfhost-lint: --manifest-path requires a value")
@@ -119,18 +121,20 @@
                     (+ idx 2)
                     count
                     input-paths
-                    (arg (+ idx 1))
+                    (io_mod.arg (+ idx 1))
                     true
                     stdlib-roots
                     enforcing
                     deprecated-string-concat)))
               (if (selfhost-lint-flag? current)
                 (ErrSelfhostLintConfig
-                  (string-append "selfhost-lint: unknown flag " current))
+                  (string_mod.string-append
+                    "selfhost-lint: unknown flag "
+                    current))
                 (selfhost-lint-parse-options
                   (+ idx 1)
                   count
-                  (string-vec-push input-paths current)
+                  (vector_mod.string-vec-push input-paths current)
                   manifest-path
                   has-manifest
                   stdlib-roots
@@ -142,10 +146,10 @@
   (selfhost-lint-parse-options
     start
     count
-    (string-vec-new)
+    (vector_mod.string-vec-new)
     ""
     false
-    (string-vec-new)
+    (vector_mod.string-vec-new)
     false
     false))
 
@@ -154,17 +158,17 @@
 (define (selfhost-lint-render-finding [path : String] [finding : LintFinding]) : String
   (let
     [fspan : AstSourceSpan (struct-get finding span)]
-    (string-append
+    (string_mod.string-append
       path
-      (string-append
+      (string_mod.string-append
         ":"
-        (string-append
-          (int->string (struct-get fspan start-line))
-          (string-append
+        (string_mod.string-append
+          (string_mod.int->string (struct-get fspan start-line))
+          (string_mod.string-append
             ":"
-            (string-append
-              (int->string (struct-get fspan start-col))
-              (string-append ": " (struct-get finding message)))))))))
+            (string_mod.string-append
+              (string_mod.int->string (struct-get fspan start-col))
+              (string_mod.string-append ": " (struct-get finding message)))))))))
 
 ;; Print every finding (one per line) to stdout; returns the number printed.
 ;; Findings are stored in discovery order, so render backward to preserve the
@@ -177,8 +181,8 @@
   (if (< index 0)
     printed
     (begin
-      (print-string
-        (string-append
+      (io_mod.print-string
+        (string_mod.string-append
           (selfhost-lint-render-finding path (lint-findings-ref items index))
           "\n"))
       (selfhost-lint-print-findings-from path items (- index 1) (+ printed 1)))))
@@ -250,7 +254,7 @@
   [line : i64]
   [rule-id : String]) : bool
   (let
-    [needle : String (string-append "lint-allow: " rule-id)]
+    [needle : String (string_mod.string-append "lint-allow: " rule-id)]
     [source-len : i64 (string-length source)]
     [line-start : i64 (selfhost-lint-line-start-index source line)]
     [found : bool false]
@@ -289,7 +293,7 @@
     (if (or (<= line 0) (<= col 0))
       false
       (let
-        [needle : String (string-append "(" form-name)]
+        [needle : String (string_mod.string-append "(" form-name)]
         [line-start : i64 (selfhost-lint-line-start-index source line)]
         [idx : i64 (+ line-start (- col 1))]
         (and
@@ -355,7 +359,7 @@
 (define (selfhost-lint-source-with-roots-and-options
   [path : String]
   [source : String]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [deprecated-string-concat : bool]) : LintFindings
   (match (parse-ast-source-diagnostic path source)
     [(OkAstProgramDiagnostic program)
@@ -371,7 +375,7 @@
 (define (selfhost-lint-source-with-roots
   [path : String]
   [source : String]
-  [stdlib-roots : StringVec]) : LintFindings
+  [stdlib-roots : vector_mod.StringVec]) : LintFindings
   (selfhost-lint-source-with-roots-and-options path source stdlib-roots false))
 
 ;; Lint a file on disk: print its findings + a summary; return 0 (warn-only), or
@@ -386,11 +390,11 @@
 
 (define (selfhost-lint-file
   [input-path : String]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [enforcing : bool]
   [deprecated-string-concat : bool]) : i64
   (let
-    [source : String (read-file input-path)]
+    [source : String (io_mod.read-file input-path)]
     (match (parse-ast-source-diagnostic input-path source)
       [(OkAstProgramDiagnostic program)
         (let
@@ -401,37 +405,39 @@
               deprecated-string-concat)]
           (begin
             (selfhost-lint-print-findings input-path findings)
-            (print-string
-              (string-append
+            (io_mod.print-string
+              (string_mod.string-append
                 "lint: "
-                (string-append
-                  (int->string (lint-findings-count findings))
+                (string_mod.string-append
+                  (string_mod.int->string (lint-findings-count findings))
                   " finding(s)\n")))
             (selfhost-lint-enforce-exit
               enforcing
               (lint-findings-count findings))))]
       [(ErrAstProgramDiagnostic diag)
         (begin
-          (print-error (compiler-diagnostic-render diag))
+          (io_mod.print-error (compiler-diagnostic-render diag))
           1)])))
 
 (define (selfhost-lint-files-from
-  [input-paths : StringVec]
+  [input-paths : vector_mod.StringVec]
   [index : i64]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [enforcing : bool]
   [deprecated-string-concat : bool]
   [print-headers : bool]
   [status : i64]) : i64
-  (if (>= index (string-vec-len input-paths))
+  (if (>= index (vector_mod.string-vec-len input-paths))
     status
     (let
-      [input-path : String (string-vec-get input-paths index "")]
+      [input-path : String (vector_mod.string-vec-get input-paths index "")]
       [file-status : i64
         (begin
           (if print-headers
-            (print-string
-              (string-append "--- " (string-append input-path "\n")))
+            (io_mod.print-string
+              (string_mod.string-append
+                "--- "
+                (string_mod.string-append input-path "\n")))
             unit)
           (selfhost-lint-file
             input-path
@@ -450,8 +456,8 @@
           status)))))
 
 (define (selfhost-lint-files
-  [input-paths : StringVec]
-  [stdlib-roots : StringVec]
+  [input-paths : vector_mod.StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [enforcing : bool]
   [deprecated-string-concat : bool]
   [print-headers : bool]
@@ -466,22 +472,24 @@
     status))
 
 (define (selfhost-lint-package-files-from
-  [input-paths : StringVec]
+  [input-paths : vector_mod.StringVec]
   [index : i64]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [enforcing : bool]
   [deprecated-string-concat : bool]
   [print-headers : bool]
   [status : i64]) : i64
-  (if (>= index (string-vec-len input-paths))
+  (if (>= index (vector_mod.string-vec-len input-paths))
     status
     (let
-      [input-path : String (string-vec-get input-paths index "")]
+      [input-path : String (vector_mod.string-vec-get input-paths index "")]
       [file-status : i64
         (begin
           (if print-headers
-            (print-string
-              (string-append "--- " (string-append input-path "\n")))
+            (io_mod.print-string
+              (string_mod.string-append
+                "--- "
+                (string_mod.string-append input-path "\n")))
             unit)
           (selfhost-lint-file
             input-path
@@ -500,8 +508,8 @@
           status)))))
 
 (define (selfhost-lint-package-files
-  [input-paths : StringVec]
-  [stdlib-roots : StringVec]
+  [input-paths : vector_mod.StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [enforcing : bool]
   [deprecated-string-concat : bool]
   [print-headers : bool]
@@ -518,13 +526,13 @@
 (define (selfhost-lint-package
   [manifest-path : String]
   [has-manifest : bool]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [enforcing : bool]
   [deprecated-string-concat : bool]) : i64
   (match (package-source-discover-for "lint" manifest-path has-manifest)
     [(ErrPackageSourceSet message)
       (begin
-        (print-error (string-append message "\n"))
+        (io_mod.print-error (string_mod.string-append message "\n"))
         1)]
     [(OkPackageSourceSet source-set)
       (selfhost-lint-package-files
@@ -532,7 +540,7 @@
         stdlib-roots
         enforcing
         deprecated-string-concat
-        (> (string-vec-len (struct-get source-set sources)) 1)
+        (> (vector_mod.string-vec-len (struct-get source-set sources)) 1)
         0)]))
 
 ;; Run the `lint` command over arguments starting at `start`.
@@ -550,7 +558,7 @@
             stdlib-roots
             enforcing
             deprecated-string-concat
-            (> (string-vec-len input-paths) 1)
+            (> (vector_mod.string-vec-len input-paths) 1)
             0)]
         [(SelfhostLintPackageConfig
             manifest-path
@@ -566,7 +574,7 @@
             deprecated-string-concat)])]
     [(ErrSelfhostLintConfig message)
       (begin
-        (print-error (string-append message "\n"))
+        (io_mod.print-error (string_mod.string-append message "\n"))
         2)]))
 
 ;; ---- self-test (driven by lint_driver_smoke.tl) ----
@@ -756,7 +764,7 @@
     (selfhost-lint-source-with-roots
       "lint_driver_self_test.tl"
       source
-      (string-vec-new))))
+      (vector_mod.string-vec-new))))
 
 ;; Compatibility helper retained for the nested-if-ladder metadata shape.
 (define (selfhost-lint-reported-finding-ok? [findings : LintFindings]) : bool
@@ -767,7 +775,7 @@
         (and
           (= (struct-get finding depth) 5)
           (> (struct-get fspan start-line) 0)
-          (string-eq
+          (string_mod.string-eq
             (struct-get finding rule-id)
             (lint-rule-nested-if-ladder-id))))]
     [(LintNoFinding) false]))
@@ -779,7 +787,9 @@
         [fspan : AstSourceSpan (struct-get finding span)]
         (and
           (> (struct-get fspan start-line) 0)
-          (string-eq (struct-get finding rule-id) (lint-rule-nested-let-id))))]
+          (string_mod.string-eq
+            (struct-get finding rule-id)
+            (lint-rule-nested-let-id))))]
     [(LintNoFinding) false]))
 
 (define (selfhost-lint-return-path-finding-ok? [findings : LintFindings]) : bool
@@ -790,7 +800,7 @@
         (and
           (= (struct-get finding depth) 3)
           (> (struct-get fspan start-line) 0)
-          (string-eq
+          (string_mod.string-eq
             (struct-get finding rule-id)
             (lint-rule-return-path-chain-id))))]
     [(LintNoFinding) false]))
@@ -803,7 +813,9 @@
         (and
           (= (struct-get finding depth) 1)
           (> (struct-get fspan start-line) 0)
-          (string-eq (struct-get finding rule-id) (lint-rule-unit-if-guard-id))))]
+          (string_mod.string-eq
+            (struct-get finding rule-id)
+            (lint-rule-unit-if-guard-id))))]
     [(LintNoFinding) false]))
 
 (define (selfhost-lint-cascading-and-or-finding-ok?
@@ -816,10 +828,10 @@
         (and
           (= (struct-get finding depth) 3)
           (> (struct-get fspan start-line) 0)
-          (string-eq
+          (string_mod.string-eq
             (struct-get finding rule-id)
             (lint-rule-cascading-and-or-id))
-          (string-eq (struct-get finding message) message)))]
+          (string_mod.string-eq (struct-get finding message) message)))]
     [(LintNoFinding) false]))
 
 (define (selfhost-lint-render-order-ok? [findings : LintFindings]) : bool
@@ -844,42 +856,42 @@
       (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
         (selfhost-lint-ladder-source)
-        (string-vec-new))]
+        (vector_mod.string-vec-new))]
     [return-reported : LintFindings
       (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
         (selfhost-lint-return-path-chain-source)
-        (string-vec-new))]
+        (vector_mod.string-vec-new))]
     [unit-reported : LintFindings
       (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
         (selfhost-lint-unit-if-source)
-        (string-vec-new))]
+        (vector_mod.string-vec-new))]
     [unit-set-reported : LintFindings
       (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
         (selfhost-lint-unit-set-source)
-        (string-vec-new))]
+        (vector_mod.string-vec-new))]
     [two-reported : LintFindings
       (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
         (selfhost-lint-two-findings-source)
-        (string-vec-new))]
+        (vector_mod.string-vec-new))]
     [cascading-and-reported : LintFindings
       (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
         (selfhost-lint-cascading-and-source)
-        (string-vec-new))]
+        (vector_mod.string-vec-new))]
     [cascading-or-reported : LintFindings
       (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
         (selfhost-lint-cascading-or-source)
-        (string-vec-new))]
+        (vector_mod.string-vec-new))]
     [cascading-core-and-reported : LintFindings
       (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
         (selfhost-lint-cascading-core-and-source)
-        (string-vec-new))]
+        (vector_mod.string-vec-new))]
     (if (not (= (lint-findings-count reported) 0))
       1
       (if (not (= (lint-findings-count return-reported) 1))
@@ -981,7 +993,7 @@
                                                       (selfhost-lint-source-with-roots
                                                         "lint_driver_self_test.tl"
                                                         (selfhost-lint-nested-let-source)
-                                                        (string-vec-new))))
+                                                        (vector_mod.string-vec-new))))
                                                     9
                                                     (if (not
                                                       (=

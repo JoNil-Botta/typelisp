@@ -1,4 +1,4 @@
-(import "stdlib/comptime.tl" module stdlib.comptime as comptime)
+(import stdlib.comptime as comptime)
 
 (defmacro (stdlib-comptime-id [x : comptime.Expr]) : i64
   x)
@@ -10,7 +10,7 @@
 
 (defmacro (stdlib-comptime-match-int-or-zero [x : comptime.Expr]) : i64
   (match x
-    [(ExprInt _) x]
+    [(comptime.ExprInt _) x]
     [_ (expr-int 0)]))
 
 (define (main) : i64

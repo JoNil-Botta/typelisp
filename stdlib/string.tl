@@ -4,18 +4,20 @@
 ;# `string-length`, `string-ref`, `string-data`, `array-data`, `tl_alloc`, and
 ;# `string-from-bytes`.
 ;#
-;# Usage: `(import "stdlib/string.tl")`
+;# Usage: `(import stdlib.string)`
 ;#
 ;# ```typelisp
-;# (import "stdlib/string.tl")
+;# (import stdlib.string)
 ;# (define ok : bool
 ;#   (let
 ;#     [s : String "  alpha  "]
-;#     [haystack : String (string-trim-left (& s))]
+;#     [haystack : String (string.string-trim-left (& s))]
 ;#     [needle : String "ph"]
-;#     (string-contains (& haystack) (& needle))))
+;#     (string.string-contains (& haystack) (& needle))))
 ;# ```
 ;: Runtime bounds-check trap shared with array/string indexing.
+(module stdlib.string)
+
 (extern (tl_oob_abort) : never)
 
 ;: Runtime active-arena allocator used by integer rendering.
@@ -54,7 +56,10 @@
       (let
         [digit : i64 (- 0 (% cursor 10))]
         (begin
-          (int->string-write-byte! dst (+ base index) (+ 48 digit))
+          (stdlib.string.int->string-write-byte!
+            dst
+            (+ base index)
+            (+ 48 digit))
           (set! cursor (/ cursor 10))
           (set! index (- index 1)))))))
 
@@ -66,17 +71,17 @@
       (if negative
         value
         (- 0 value))]
-    [digits : i64 (int->string-negative-digit-count magnitude)]
+    [digits : i64 (stdlib.string.int->string-negative-digit-count magnitude)]
     [len : i64
       (if negative
         (+ digits 1)
         digits)]
-    [buf : (MutPtr u8) (string-runtime-alloc len)]
+    [buf : (MutPtr u8) (stdlib.string.string-runtime-alloc len)]
     (begin
       (if negative
-        (int->string-write-byte! buf 0 45)
+        (stdlib.string.int->string-write-byte! buf 0 45)
         unit)
-      (int->string-write-negative-digits!
+      (stdlib.string.int->string-write-negative-digits!
         buf
         (if negative
           1
@@ -91,15 +96,15 @@
   (let
     [n : i64 (string-length text)]
     (if (< start 0)
-      (tl_oob_abort)
+      (stdlib.string.tl_oob_abort)
       (if (< len 0)
-        (tl_oob_abort)
+        (stdlib.string.tl_oob_abort)
         (if (> start n)
-          (tl_oob_abort)
+          (stdlib.string.tl_oob_abort)
           (let
             [remaining : i64 (- n start)]
             (if (> len remaining)
-              (tl_oob_abort)
+              (stdlib.string.tl_oob_abort)
               unit)))))))
 
 ;: Copy `n` bytes from `src` into `dst` at byte offset `doff`, eight bytes at a
@@ -146,7 +151,7 @@
       (unsafe
         (array-data buf))]
     (begin
-      (str-copy-bytes-into
+      (stdlib.string.str-copy-bytes-into
         (unsafe
           (ptr-offset src start))
         dst
@@ -172,26 +177,26 @@
       (unsafe
         (array-data buf))]
     (begin
-      (str-copy-bytes-into left-src dst 0 left-len)
-      (str-copy-bytes-into right-src dst left-len right-len)
+      (stdlib.string.str-copy-bytes-into left-src dst 0 left-len)
+      (stdlib.string.str-copy-bytes-into right-src dst left-len right-len)
       (unsafe
         (string-from-bytes (ptr-cast dst : (Ptr u8)) total-len)))))
 
 ;: Return a fresh active-arena copy of borrowed text.
 (define (string-copy-borrowed [text : (& text str)]) : String
-  (substring-borrowed text 0 (string-length text)))
+  (stdlib.string.substring-borrowed text 0 (string-length text)))
 
 ;: Borrowed alias for `string-append-borrowed`.
 (define (string-concat-borrowed [left : (& left str)] [right : (& right str)]) : String
-  (string-append-borrowed left right))
+  (stdlib.string.string-append-borrowed left right))
 
 ;: Return a fresh active-arena String by concatenating two owned strings.
 (define (string-append [left : String] [right : String]) : String
-  (string-append-borrowed (& left) (& right)))
+  (stdlib.string.string-append-borrowed (& left) (& right)))
 
 ;: Alias for `string-append`.
 (define (string-concat [left : String] [right : String]) : String
-  (string-append left right))
+  (stdlib.string.string-append left right))
 
 ;: Return a fresh active-arena String by concatenating all owned strings in order.
 (define (string-concat-all [parts : (Array String)]) : String
@@ -219,7 +224,7 @@
               [part : String (array-ref parts copy-index)]
               [len : i64 (string-length part)]
               (begin
-                (str-copy-bytes-into
+                (stdlib.string.str-copy-bytes-into
                   (unsafe
                     (string-data (& part)))
                   dst
@@ -241,11 +246,11 @@
 
 ;: Return a fresh active-arena String by concatenating three owned strings.
 (define (string-concat3 [a : String] [b : String] [c : String]) : String
-  (string-concat5 a b c "" ""))
+  (stdlib.string.string-concat5 a b c "" ""))
 
 ;: Return a fresh active-arena String by concatenating four owned strings.
 (define (string-concat4 [a : String] [b : String] [c : String] [d : String]) : String
-  (string-concat5 a b c d ""))
+  (stdlib.string.string-concat5 a b c d ""))
 
 ;: Return a fresh active-arena String by concatenating five owned strings.
 (define (string-concat5
@@ -267,35 +272,35 @@
         (array-data buf))]
     [off : i64 0]
     (begin
-      (str-copy-bytes-into
+      (stdlib.string.str-copy-bytes-into
         (unsafe
           (string-data (& a)))
         dst
         off
         a-len)
       (set! off (+ off a-len))
-      (str-copy-bytes-into
+      (stdlib.string.str-copy-bytes-into
         (unsafe
           (string-data (& b)))
         dst
         off
         b-len)
       (set! off (+ off b-len))
-      (str-copy-bytes-into
+      (stdlib.string.str-copy-bytes-into
         (unsafe
           (string-data (& c)))
         dst
         off
         c-len)
       (set! off (+ off c-len))
-      (str-copy-bytes-into
+      (stdlib.string.str-copy-bytes-into
         (unsafe
           (string-data (& d)))
         dst
         off
         d-len)
       (set! off (+ off d-len))
-      (str-copy-bytes-into
+      (stdlib.string.str-copy-bytes-into
         (unsafe
           (string-data (& e)))
         dst
@@ -307,32 +312,34 @@
 ;: Return a fresh active-arena owned substring copied from borrowed text.
 (define (substring-borrowed [text : (& text str)] [start : i64] [len : i64]) : String
   (begin
-    (substring-bounds-check text start len)
-    (substring-copy-checked text start len)))
+    (stdlib.string.substring-bounds-check text start len)
+    (stdlib.string.substring-copy-checked text start len)))
 
 ;: Return a fresh active-arena owned substring copied from owned text.
 (define (substring [text : String] [start : i64] [len : i64]) : String
-  (substring-borrowed (& text) start len))
+  (stdlib.string.substring-borrowed (& text) start len))
 
 ;: Borrowed alias for `substring-borrowed`.
 (define (string-slice-borrowed [text : (& text str)] [start : i64] [len : i64]) : String
-  (substring-borrowed text start len))
+  (stdlib.string.substring-borrowed text start len))
 
 ;: Alias for `substring`.
 (define (string-slice [text : String] [start : i64] [len : i64]) : String
-  (substring text start len))
-
-;: Return true if the character is ASCII whitespace.
-(define (is-char-whitespace [c : char]) : bool
-  (or
-    (char-eq c #\space')
-    (char-eq c #\tab')
-    (char-eq c #\newline')
-    (char-eq c #\return')))
+  (stdlib.string.substring text start len))
 
 ;: Compare two chars for equality.
 (define (char-eq [a : char] [b : char]) : bool
   (= (cast a : i64) (cast b : i64)))
+
+;: Return true if the character is ASCII whitespace.
+(define (is-char-whitespace [c : char]) : bool
+  (if (stdlib.string.char-eq c #\space')
+    true
+    (if (stdlib.string.char-eq c #\tab')
+      true
+      (if (stdlib.string.char-eq c #\newline')
+        true
+        (stdlib.string.char-eq c #\return')))))
 
 ;: Compare two borrowed strings byte-for-byte without allocating.
 (define (string-eq-borrowed [left : (& left str)] [right : (& right str)]) : bool
@@ -375,11 +382,11 @@
 
 ;: Compare two owned strings byte-for-byte without allocating.
 (define (string-eq [left : String] [right : String]) : bool
-  (string-eq-borrowed (& left) (& right)))
+  (stdlib.string.string-eq-borrowed (& left) (& right)))
 
 ;: Alias for `string-eq`.
 (define (string=? [left : String] [right : String]) : bool
-  (string-eq left right))
+  (stdlib.string.string-eq left right))
 
 ;: Parse a decimal integer from borrowed text using the legacy compatibility rules.
 (define (string->int-borrowed [text : (& text str)]) : i64
@@ -389,7 +396,9 @@
     [negative : bool false]
     [value : i64 0]
     (begin
-      (if (and (> n 0) (char-eq (string-ref text 0) #-'))
+      (if (if (> n 0)
+        (stdlib.string.char-eq (string-ref text 0) #-')
+        false)
         (begin
           (set! negative true)
           (set! i 1))
@@ -404,7 +413,7 @@
 
 ;: Parse a decimal integer using the legacy `string->int` compatibility rules.
 (define (string->int [text : String]) : i64
-  (string->int-borrowed (& text)))
+  (stdlib.string.string->int-borrowed (& text)))
 
 ;: Trim leading whitespace from borrowed text.
 (define (string-trim-left [s : (& s str)]) : String
@@ -414,10 +423,10 @@
     [done : bool false]
     (begin
       (while (and (not done) (< i n))
-        (if (is-char-whitespace (string-ref s i))
+        (if (stdlib.string.is-char-whitespace (string-ref s i))
           (set! i (+ i 1))
           (set! done true)))
-      (substring-borrowed s i (- n i)))))
+      (stdlib.string.substring-borrowed s i (- n i)))))
 
 ;: Trim trailing whitespace from borrowed text.
 (define (string-trim-right [s : (& s str)]) : String
@@ -427,10 +436,10 @@
     [done : bool false]
     (begin
       (while (and (not done) (>= i 0))
-        (if (is-char-whitespace (string-ref s i))
+        (if (stdlib.string.is-char-whitespace (string-ref s i))
           (set! i (- i 1))
           (set! done true)))
-      (substring-borrowed s 0 (+ i 1)))))
+      (stdlib.string.substring-borrowed s 0 (+ i 1)))))
 
 ;: Trim whitespace from both ends of borrowed text.
 (define (string-trim [s : (& s str)]) : String
@@ -442,14 +451,14 @@
     [done-right : bool false]
     (begin
       (while (and (not done-left) (< start n))
-        (if (is-char-whitespace (string-ref s start))
+        (if (stdlib.string.is-char-whitespace (string-ref s start))
           (set! start (+ start 1))
           (set! done-left true)))
       (while (and (not done-right) (>= end start))
-        (if (is-char-whitespace (string-ref s end))
+        (if (stdlib.string.is-char-whitespace (string-ref s end))
           (set! end (- end 1))
           (set! done-right true)))
-      (substring-borrowed s start (- (+ end 1) start)))))
+      (stdlib.string.substring-borrowed s start (- (+ end 1) start)))))
 
 ;: Return true if haystack contains needle at any position.
 (define (string-contains
@@ -467,7 +476,7 @@
           [i : i64 0]
           (begin
             (while (and (not found) (<= i (- hlen nlen)))
-              (if (is-string-prefix-at haystack needle i)
+              (if (stdlib.string.is-string-prefix-at haystack needle i)
                 (set! found true)
                 (set! i (+ i 1))))
             found))))))
@@ -480,7 +489,7 @@
     [i : i64 0]
     (begin
       (while (and (not found) (< i n))
-        (if (char-eq (string-ref haystack i) c)
+        (if (stdlib.string.char-eq (string-ref haystack i) c)
           (set! found true)
           (set! i (+ i 1))))
       found)))
@@ -502,7 +511,9 @@
           [ok : bool true]
           (begin
             (while (and ok (< j olen))
-              (if (char-eq (string-ref s (+ i j)) (string-ref old j))
+              (if (stdlib.string.char-eq
+                (string-ref s (+ i j))
+                (string-ref old j))
                 (set! j (+ j 1))
                 (set! ok false)))
             (if ok
@@ -510,9 +521,9 @@
               (set! i (+ i 1))))))
       (if found
         (begin
-          (string-append
-            (string-append (substring s 0 i) new)
-            (substring s (+ i olen) (- (- hlen i) olen))))
+          (stdlib.string.string-append
+            (stdlib.string.string-append (stdlib.string.substring s 0 i) new)
+            (stdlib.string.substring s (+ i olen) (- (- hlen i) olen))))
         s))))
 
 ;: Return true if haystack has needle at position start.
@@ -532,9 +543,49 @@
           [j : i64 0]
           (begin
             (while (and ok (< j nlen))
-              (if (char-eq
+              (if (stdlib.string.char-eq
                 (string-ref haystack (+ start j))
                 (string-ref needle j))
                 (set! j (+ j 1))
                 (set! ok false)))
             ok))))))
+
+;# Dotted-module migration: preserve the pre-module flat stdlib surface.
+(export
+  (value tl_oob_abort)
+  (value string-runtime-alloc)
+  (value int->string-write-byte!)
+  (value int->string-negative-digit-count)
+  (value int->string-write-negative-digits!)
+  (value int->string)
+  (value substring-bounds-check)
+  (value str-copy-bytes-into)
+  (value substring-copy-checked)
+  (value string-append-borrowed)
+  (value string-copy-borrowed)
+  (value string-concat-borrowed)
+  (value string-append)
+  (value string-concat)
+  (value string-concat-all)
+  (value string-concat-all-pack-part)
+  (value string-concat3)
+  (value string-concat4)
+  (value string-concat5)
+  (value substring-borrowed)
+  (value substring)
+  (value string-slice-borrowed)
+  (value string-slice)
+  (value is-char-whitespace)
+  (value char-eq)
+  (value string-eq-borrowed)
+  (value string-eq)
+  (value string=?)
+  (value string->int-borrowed)
+  (value string->int)
+  (value string-trim-left)
+  (value string-trim-right)
+  (value string-trim)
+  (value string-contains)
+  (value string-contains-char)
+  (value string-replace)
+  (value is-string-prefix-at))

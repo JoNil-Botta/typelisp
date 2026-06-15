@@ -1,4 +1,4 @@
-(import "stdlib/io.tl")
+(import stdlib.io)
 
 (define (sc-and [n : i64]) : bool
   (and (!= n 0) (= (/ 100 n) 100)))
@@ -16,7 +16,7 @@
 
 (define (main) : i64
   (let
-    [zero : i64 (- (arg-count) 1)]
+    [zero : i64 (- (io.arg-count) 1)]
     (if (sc-and zero)
       1
       (if (sc-or zero)

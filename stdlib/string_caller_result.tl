@@ -3,7 +3,9 @@
 ;# This module stays separate from `string.tl` while the compatibility wrapper
 ;# keeps the owned `String` API. It exposes helpers that may return
 ;# caller-provided text without copying.
-(import "string.tl")
+(module stdlib.string_caller_result)
+
+(import stdlib.string as string_mod)
 
 ;: Result for lifetime-preserving string replacement.
 ;:
@@ -50,9 +52,9 @@
 ;: this explicit compatibility boundary.
 (define (string-replace-result-string
   [result : (StringReplaceResult text old replacement)]) : String
-  (if (string-replace-result-owned? result)
+  (if (stdlib.string_caller_result.string-replace-result-owned? result)
     (struct-get result owned)
-    (substring-borrowed
+    (string_mod.substring-borrowed
       (struct-get result borrowed)
       0
       (string-length (struct-get result borrowed)))))
@@ -71,7 +73,7 @@
           [ok : bool true]
           (begin
             (while (and ok (< j olen))
-              (if (char-eq (string-ref s (+ i j)) (string-ref old j))
+              (if (string_mod.char-eq (string-ref s (+ i j)) (string-ref old j))
                 (set! j (+ j 1))
                 (set! ok false)))
             (if ok
@@ -90,11 +92,11 @@
   (let
     [hlen : i64 (string-length s)]
     [olen : i64 (string-length old)]
-    [prefix : String (substring-borrowed s 0 index)]
-    [prefix-new : String (string-append-borrowed (& prefix) new)]
+    [prefix : String (string_mod.substring-borrowed s 0 index)]
+    [prefix-new : String (string_mod.string-append-borrowed (& prefix) new)]
     [suffix : String
-      (substring-borrowed s (+ index olen) (- (- hlen index) olen))]
-    (string-append prefix-new suffix)))
+      (string_mod.substring-borrowed s (+ index olen) (- (- hlen index) olen))]
+    (string_mod.string-append prefix-new suffix)))
 
 ;: Replace the first occurrence of `old` in `text`, returning a no-match borrow
 ;: tied to `text` or fresh active-arena owned text when a replacement is made.
@@ -102,14 +104,32 @@
   [text : (& text str)]
   [old : (& old str)]
   [new : (& replacement str)]) : (StringReplaceResult text old replacement)
-  (if (= (string-replace-find-index text old) -1)
-    (string-replace-borrowed-result text old new)
-    (string-replace-owned-result-like
+  (if (= (stdlib.string_caller_result.string-replace-find-index text old) -1)
+    (stdlib.string_caller_result.string-replace-borrowed-result text old new)
+    (stdlib.string_caller_result.string-replace-owned-result-like
       text
       old
       new
-      (string-replace-owned-at
+      (stdlib.string_caller_result.string-replace-owned-at
         text
         old
         new
-        (string-replace-find-index text old)))))
+        (stdlib.string_caller_result.string-replace-find-index text old)))))
+
+;# Dotted-module migration: preserve the pre-module flat stdlib surface.
+(export
+  (value string-replace-result-borrowed?)
+  (value string-replace-result-owned?)
+  (value string-replace-borrowed-result)
+  (value string-replace-owned-result-like)
+  (value string-replace-result-string)
+  (value string-replace-find-index)
+  (value string-replace-owned-at)
+  (value string-replace-result)
+  (type StringReplaceResult)
+  (constructor StringReplaceResult)
+  (field StringReplaceResult borrowed)
+  (field StringReplaceResult old-text)
+  (field StringReplaceResult replacement-text)
+  (field StringReplaceResult owned)
+  (field StringReplaceResult is-owned))

@@ -11,11 +11,11 @@
 ;; item docs. Pending item docs at EOF are ignored. Declaration identities are read
 ;; from the captured top-level form with the formatter token lexer so original
 ;; source text remains available as the item signature.
-(import "../stdlib/io.tl")
+(import stdlib.io as io_mod)
 
 (import "format_tokens.tl")
 
-(import "../stdlib/string.tl")
+(import stdlib.string as string_mod)
 
 (defenum DocItemKind
   (DocKindDefine)
@@ -199,7 +199,7 @@
   [has-current : bool]
   [line : String]) : String
   (if has-current
-    (string-append current (string-append "\n" line))
+    (string_mod.string-append current (string_mod.string-append "\n" line))
     line))
 
 (define (doc-comment-body
@@ -215,7 +215,7 @@
           (set! body-start (+ body-start 1))
           (set! body-start body-start))
         (set! body-start body-start))
-      (substring src body-start (- line-end body-start)))))
+      (string_mod.substring src body-start (- line-end body-start)))))
 
 (define (doc-module-doc-prefix-len [src : String] [line-start : i64]) : i64
   (if (doc-string-prefix-at? src ";#" line-start)
@@ -351,10 +351,10 @@
           [name-idx : i64 (doc-next-code-token-index stream (+ first 1))]
           (and
             (doc-token-symbol? stream name-idx)
-            (string-eq (doc-symbol-text stream name-idx) "generated")))
+            (string_mod.string-eq (doc-symbol-text stream name-idx) "generated")))
         (and
           (doc-token-symbol? stream first)
-          (string-eq (doc-symbol-text stream first) ":generated"))))
+          (string_mod.string-eq (doc-symbol-text stream first) ":generated"))))
     false))
 
 (define (doc-info-after-name
@@ -396,17 +396,17 @@
         (let
           [head : String (doc-symbol-text stream head-idx)]
           [after-head : i64 (+ head-idx 1)]
-          (if (string-eq head "define")
+          (if (string_mod.string-eq head "define")
             (doc-info-after-define stream after-head)
-            (if (string-eq head "extern")
+            (if (string_mod.string-eq head "extern")
               (doc-info-after-extern stream after-head)
-              (if (string-eq head "defenum")
+              (if (string_mod.string-eq head "defenum")
                 (doc-info-after-name (DocKindDefEnum) stream after-head)
-                (if (string-eq head "defstruct")
+                (if (string_mod.string-eq head "defstruct")
                   (doc-info-after-name (DocKindDefStruct) stream after-head)
-                  (if (string-eq head "defmacro")
+                  (if (string_mod.string-eq head "defmacro")
                     (doc-info-after-defmacro stream after-head)
-                    (if (string-eq head "comptime-decl")
+                    (if (string_mod.string-eq head "comptime-decl")
                       (doc-info-after-comptime-decl stream after-head)
                       (DocNoDeclInfo))))))))
         (DocNoDeclInfo)))
@@ -490,7 +490,10 @@
                   (let
                     [form-end : i64 (doc-scan-form-end src line-start n)]
                     [signature : String
-                      (substring src line-start (- form-end line-start))]
+                      (string_mod.substring
+                        src
+                        line-start
+                        (- form-end line-start))]
                     (begin
                       (if pending-has
                         (match (doc-decl-info signature)
@@ -510,7 +513,7 @@
       (DocExtraction module-doc (doc-item-array-to-list items)))))
 
 (define (doc-extract-file [path : String]) : DocExtraction
-  (doc-extract-source (read-file path)))
+  (doc-extract-source (io_mod.read-file path)))
 
 (define (doc-extract-smoke-source) : String
   ";# Module title
@@ -567,8 +570,8 @@
     [(DocItem kind item-name item-doc signature)
       (begin
         (unless (= (doc-kind-tag kind) kind-tag) (return false))
-        (unless (string-eq item-name name) (return false))
-        (unless (string-eq item-doc doc-text) (return false))
+        (unless (string_mod.string-eq item-name name) (return false))
+        (unless (string_mod.string-eq item-doc doc-text) (return false))
         (doc-string-contains? signature signature-fragment))]))
 
 (define (doc-extract-smoke-items-ok? [items : DocItemList]) : bool
@@ -672,45 +675,45 @@
     [(DocExtraction module-doc items)
       (begin
         (unless
-          (string-eq
+          (string_mod.string-eq
             module-doc
             "Module title\nsecond module line\nlater module")
           (return
             (begin
-              (panic "doc-extract: module doc smoke mismatch")
+              (io_mod.panic "doc-extract: module doc smoke mismatch")
               0)))
         (unless
           (= (doc-item-list-count items) 6)
           (return
             (begin
-              (panic "doc-extract: item count smoke mismatch")
+              (io_mod.panic "doc-extract: item count smoke mismatch")
               0)))
         (unless
           (doc-extract-smoke-items-ok? items)
           (return
             (begin
-              (panic "doc-extract: item doc smoke mismatch")
+              (io_mod.panic "doc-extract: item doc smoke mismatch")
               0)))
         (unless
           (doc-extract-generated-smoke-ok?)
           (return
             (begin
-              (panic "doc-extract: generated item mismatch")
+              (io_mod.panic "doc-extract: generated item mismatch")
               0)))
         (match (doc-extract-source (doc-extract-legacy-smoke-source))
           [(DocExtraction legacy-module legacy-items)
             (begin
               (unless
-                (string-eq legacy-module "Legacy module")
+                (string_mod.string-eq legacy-module "Legacy module")
                 (return
                   (begin
-                    (panic "doc-extract: legacy module doc mismatch")
+                    (io_mod.panic "doc-extract: legacy module doc mismatch")
                     0)))
               (unless
                 (= (doc-item-list-count legacy-items) 1)
                 (return
                   (begin
-                    (panic "doc-extract: legacy item count mismatch")
+                    (io_mod.panic "doc-extract: legacy item count mismatch")
                     0)))
               (match legacy-items
                 [(DocItemCons legacy legacy-rest)
@@ -726,7 +729,7 @@
                             "(define legacy : i64 1)")
                           (return
                             (begin
-                              (panic "doc-extract: legacy item mismatch")
+                              (io_mod.panic "doc-extract: legacy item mismatch")
                               0)))
                         42)]
                     [_ 0])]

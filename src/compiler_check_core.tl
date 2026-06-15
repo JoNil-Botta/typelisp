@@ -1,7 +1,9 @@
 ;; compiler_check_core.tl - Shared selfhost check/typecheck helpers (#723).
-(import "../stdlib/io.tl")
+(import stdlib.io as io_mod)
 
-(import "../stdlib/string.tl")
+(import stdlib.string as string_mod)
+
+(import stdlib.vector as vector_mod)
 
 (cfg compile-profile (import "../stdlib/profile.tl"))
 
@@ -26,21 +28,22 @@
 (cfg
   compile-profile
   (define (compiler-check-profile-finish [phase : String]) : unit
-    (print-error
-      (string-append
+    (io_mod.print-error
+      (string_mod.string-append
         "compile-profile|check."
-        (string-append
+        (string_mod.string-append
           phase
-          (string-append
+          (string_mod.string-append
             "|"
-            (string-append
-              (int->string (- (profile-now-ms) compiler-check-profile-start-ms))
+            (string_mod.string-append
+              (string_mod.int->string
+                (- (profile-now-ms) compiler-check-profile-start-ms))
               "|0|0|0\n")))))))
 
 (define (compiler-check-diagnostic-with-fallback-path
   [diag : CompilerDiagnostic]
   [path : String]) : CompilerDiagnostic
-  (if (string-eq (compiler-diagnostic-path diag) "")
+  (if (string_mod.string-eq (compiler-diagnostic-path diag) "")
     (compiler-diagnostic-with-path diag path)
     diag))
 
@@ -87,7 +90,7 @@
 
 (define (compiler-check-file-loaded-with-prelude
   [path : String]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [prelude : ResultCompilerLoadWithPaths]) : ResultCompilerCheck
   (match prelude
     [(OkCompilerLoadWithPaths prelude-decls prelude-paths _ prelude-seen)
@@ -107,14 +110,14 @@
     (cfg compile-profile (compiler-check-profile-start))
     (compiler-check-file-loaded-with-prelude
       path
-      (string-vec-new)
+      (vector_mod.string-vec-new)
       (compiler-load-core-macro-prelude-with-roots
         (sym-i64-empty)
-        (string-vec-new)))))
+        (vector_mod.string-vec-new)))))
 
 (define (compiler-check-file-with-roots
   [path : String]
-  [stdlib-roots : StringVec]) : ResultCompilerCheck
+  [stdlib-roots : vector_mod.StringVec]) : ResultCompilerCheck
   (begin
     (compiler-check-reset-pools!)
     (cfg compile-profile (compiler-check-profile-start))
@@ -125,7 +128,7 @@
 
 (define (compiler-check-package-file-with-roots
   [path : String]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : ResultCompilerCheck
   (begin
@@ -156,7 +159,7 @@
 (define (compiler-check-package-source-with-roots
   [path : String]
   [source : String]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector_mod.StringVec]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : ResultCompilerCheck
   (begin
@@ -202,7 +205,7 @@
     (cfg compile-profile (compiler-check-profile-start))
     (match (compiler-load-core-macro-prelude-with-roots
       (sym-i64-empty)
-      (string-vec-new))
+      (vector_mod.string-vec-new))
       [(OkCompilerLoadWithPaths prelude-decls prelude-paths _ prelude-seen)
         (compiler-check-loaded-with-prelude
           path
@@ -212,7 +215,7 @@
             path
             source
             prelude-seen
-            (string-vec-new)))]
+            (vector_mod.string-vec-new)))]
       [(ErrCompilerLoadWithPaths diag)
         (begin
           (cfg compile-profile (compiler-check-profile-finish "load"))
@@ -221,7 +224,7 @@
 (define (compiler-check-source-with-roots
   [path : String]
   [source : String]
-  [stdlib-roots : StringVec]) : ResultCompilerCheck
+  [stdlib-roots : vector_mod.StringVec]) : ResultCompilerCheck
   (begin
     (compiler-check-reset-pools!)
     (cfg compile-profile (compiler-check-profile-start))
@@ -255,7 +258,7 @@
   (match (compiler-check-source path source)
     [(OkCompilerCheck _) false]
     [(ErrCompilerCheck diag)
-      (string-eq (compiler-diagnostic-message diag) want)]))
+      (string_mod.string-eq (compiler-diagnostic-message diag) want)]))
 
 (define (compiler-check-virtual-import-source) : String
   "(import \"compiler_ast_types.tl\")
@@ -372,11 +375,11 @@
     "(define (main) : i64 true)")
     [(OkCompilerCheck _) false]
     [(ErrCompilerCheck diag)
-      (if (string-eq
+      (if (string_mod.string-eq
         (compiler-diagnostic-path diag)
         "docs/examples/bad_type.tl")
         (if (= (compiler-diagnostic-line diag) 1)
-          (string-eq
+          (string_mod.string-eq
             (compiler-diagnostic-message diag)
             "typecheck: return type mismatch")
           false)
@@ -488,54 +491,56 @@
       (= (compiler-load-self-test) 42)
       (return
         (begin
-          (panic "compiler-check: loader smoke mismatch")
+          (io_mod.panic "compiler-check: loader smoke mismatch")
           0)))
     (unless
       (compiler-check-virtual-import-ok?)
       (return
         (begin
-          (panic "compiler-check: virtual import smoke mismatch")
+          (io_mod.panic "compiler-check: virtual import smoke mismatch")
           0)))
     (unless
       (compiler-check-virtual-import-inline-layout-ok?)
       (return
         (begin
-          (panic "compiler-check: virtual import inline layout smoke mismatch")
+          (io_mod.panic
+            "compiler-check: virtual import inline layout smoke mismatch")
           0)))
     (unless
       (compiler-check-export-ok?)
       (return
         (begin
-          (panic "compiler-check: export smoke mismatch")
+          (io_mod.panic "compiler-check: export smoke mismatch")
           0)))
     (unless
       (compiler-check-virtual-error-ok?)
       (return
         (begin
-          (panic "compiler-check: virtual diagnostic smoke mismatch")
+          (io_mod.panic "compiler-check: virtual diagnostic smoke mismatch")
           0)))
     (unless
       (compiler-check-runtime-stdlib-boundary-ok?)
       (return
         (begin
-          (panic "compiler-check: runtime stdlib boundary smoke mismatch")
+          (io_mod.panic
+            "compiler-check: runtime stdlib boundary smoke mismatch")
           0)))
     (unless
       (compiler-check-implicit-core-prelude-ok?)
       (return
         (begin
-          (panic "compiler-check: implicit core prelude smoke mismatch")
+          (io_mod.panic "compiler-check: implicit core prelude smoke mismatch")
           0)))
     (unless
       (compiler-check-seen-root-ok?)
       (return
         (begin
-          (panic "compiler-check: seen root smoke mismatch")
+          (io_mod.panic "compiler-check: seen root smoke mismatch")
           0)))
     (unless
       (compiler-check-pool-reset-ok?)
       (return
         (begin
-          (panic "compiler-check: pool reset smoke mismatch")
+          (io_mod.panic "compiler-check: pool reset smoke mismatch")
           0)))
     42))

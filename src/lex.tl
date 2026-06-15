@@ -35,13 +35,13 @@
 ;; module, then the reader.
 (import "compiler_intern.tl")
 
-(import "../stdlib/io.tl")
+(import stdlib.io as io_mod)
 
 (import "token.tl")
 
-(import "../stdlib/text_buf.tl")
+(import stdlib.text_buf as text_buf_mod)
 
-(import "../stdlib/string.tl")
+(import stdlib.string as string_mod)
 
 (defenum ResultTokens
   (OkTokens (Array Token))
@@ -68,7 +68,7 @@
   (ErrLexChar String))
 
 (define (lex-ok? [message : String]) : bool
-  (string-eq message ""))
+  (string_mod.string-eq message ""))
 
 ;; Numeric code point of a char, used only when a code value is intentionally
 ;; observed (for example in the lexer demo's character-code checksum).
@@ -276,7 +276,7 @@
 (define (number-int-value [src : String] [start : i64] [end : i64] [n : i64]) : i64
   (if (number-prefixed? src start n)
     (parse-prefixed-int src start end)
-    (string->int (substring src start (- end start)))))
+    (string_mod.string->int (string_mod.substring src start (- end start)))))
 
 (define (number-float? [src : String] [start : i64] [n : i64]) : bool
   (if (number-prefixed? src start n)
@@ -343,7 +343,7 @@
     [(OkLexI64 end) end]
     [(ErrLexI64 message)
       (begin
-        (panic message)
+        (io_mod.panic message)
         n)]))
 
 (define (string-escape-piece [src : String] [idx : i64]) : String
@@ -359,12 +359,12 @@
             "\\"
             (if (= c #"')
               "\""
-              (substring src idx 1))))))))
+              (string_mod.substring src idx 1))))))))
 
 (define (unescape-string-literal [src : String] [start : i64] [end : i64]) : String
   (let
     [i : i64 start]
-    [buf : TextBuf (text-buf-empty)]
+    [buf : text_buf_mod.TextBuf (text_buf_mod.text-buf-empty)]
     (begin
       (while (< i end)
         (let
@@ -374,15 +374,21 @@
               (begin
                 (set!
                   buf
-                  (text-buf-append buf (string-escape-piece src (+ i 1))))
+                  (text_buf_mod.text-buf-append
+                    buf
+                    (string-escape-piece src (+ i 1))))
                 (set! i (+ i 2)))
               (begin
-                (set! buf (text-buf-append buf "\\"))
+                (set! buf (text_buf_mod.text-buf-append buf "\\"))
                 (set! i (+ i 1))))
             (begin
-              (set! buf (text-buf-append buf (substring src i 1)))
+              (set!
+                buf
+                (text_buf_mod.text-buf-append
+                  buf
+                  (string_mod.substring src i 1)))
               (set! i (+ i 1))))))
-      (text-buf-render buf))))
+      (text_buf_mod.text-buf-render buf))))
 
 ;; Return the index of the end-of-line that ends a `;` line comment whose body
 ;; starts at `start`. `n` is the source length. Scans forward until a newline
@@ -440,19 +446,19 @@
     [message : String (char-close-error src idx n)]
     (if (lex-ok? message)
       unit
-      (panic message))))
+      (io_mod.panic message))))
 
 ;; Map a multi-letter `#\name'` character literal to its character payload.
 (define (named-char-result [name : String]) : ResultLexChar
-  (if (string-eq name "space")
+  (if (string_mod.string-eq name "space")
     (OkLexChar #\space')
-    (if (string-eq name "newline")
+    (if (string_mod.string-eq name "newline")
       (OkLexChar #\newline')
-      (if (string-eq name "tab")
+      (if (string_mod.string-eq name "tab")
         (OkLexChar #\tab')
-        (if (string-eq name "return")
+        (if (string_mod.string-eq name "return")
           (OkLexChar #\return')
-          (if (string-eq name "nul")
+          (if (string_mod.string-eq name "nul")
             (OkLexChar #\nul')
             (ErrLexChar "lexer: unknown named character literal")))))))
 
@@ -461,7 +467,7 @@
     [(OkLexChar c) c]
     [(ErrLexChar message)
       (begin
-        (panic message)
+        (io_mod.panic message)
         #\nul')]))
 
 ;; Map single-character escapes after `#\`; unknown escapes read as the literal
@@ -489,7 +495,8 @@
               [end : i64 (scan-char-name-end src start n)]
               [message : String (char-close-error src end n)]
               (if (lex-ok? message)
-                (named-char-result (substring src start (- end start)))
+                (named-char-result
+                  (string_mod.substring src start (- end start)))
                 (ErrLexChar message)))
             (let
               [message : String (char-close-error src (+ start 1) n)]
@@ -509,7 +516,7 @@
     [(OkLexChar c) c]
     [(ErrLexChar message)
       (begin
-        (panic message)
+        (io_mod.panic message)
         #\nul')]))
 
 ;; Index just after the closing `'` for a char literal beginning at `i`.
@@ -544,7 +551,7 @@
     [(OkLexI64 end) end]
     [(ErrLexI64 message)
       (begin
-        (panic message)
+        (io_mod.panic message)
         n)]))
 
 (define (lex-check-char-end [src : String] [i : i64] [n : i64]) : ResultLexI64
@@ -741,7 +748,11 @@
                                           (array-set!
                                             toks
                                             count
-                                            (TFloat (substring src i (- end i))))
+                                            (TFloat
+                                              (string_mod.substring
+                                                src
+                                                i
+                                                (- end i))))
                                           (array-set!
                                             toks
                                             count
@@ -786,7 +797,7 @@
     [(OkLexIntoSpanned count) count]
     [(ErrLexIntoSpanned err)
       (begin
-        (panic (source-error-message err))
+        (io_mod.panic (source-error-message err))
         0)]))
 
 (defenum LexPosition
@@ -988,7 +999,10 @@
                                               count
                                               (SpannedToken
                                                 (TFloat
-                                                  (substring src i (- end i)))
+                                                  (string_mod.substring
+                                                    src
+                                                    i
+                                                    (- end i)))
                                                 token-line
                                                 token-col))
                                             (array-set!
@@ -1052,7 +1066,7 @@
     [(OkTokens toks) toks]
     [(ErrTokens message)
       (begin
-        (panic message)
+        (io_mod.panic message)
         (make-array Token 1))]))
 
 ;; ---- Spanned token stream (#599) --------------------------------------------
@@ -1131,7 +1145,7 @@
     [(OkSpannedTokens toks) toks]
     [(ErrSpannedTokens err)
       (begin
-        (panic (source-error-message err))
+        (io_mod.panic (source-error-message err))
         (make-array SpannedToken 1))]))
 
 (define (lex-percent-symbol-ok?) : bool
@@ -1139,7 +1153,7 @@
     [(OkTokens toks)
       (and
         (= (token-tag (array-ref toks 1)) (tag-sym))
-        (string-eq (token-sym (array-ref toks 1)) "%"))]
+        (string_mod.string-eq (token-sym (array-ref toks 1)) "%"))]
     [(ErrTokens _) false]))
 
 (define (lex-ampersand-symbol-ok?) : bool
@@ -1147,9 +1161,9 @@
     [(OkTokens toks)
       (and
         (= (token-tag (array-ref toks 1)) (tag-sym))
-        (string-eq (token-sym (array-ref toks 1)) "&")
+        (string_mod.string-eq (token-sym (array-ref toks 1)) "&")
         (= (token-tag (array-ref toks 6)) (tag-sym))
-        (string-eq (token-sym (array-ref toks 6)) "&mut"))]
+        (string_mod.string-eq (token-sym (array-ref toks 6)) "&mut"))]
     [(ErrTokens _) false]))
 
 (define (lex-float-token-ok?) : bool
@@ -1157,7 +1171,7 @@
     [(OkTokens toks)
       (and
         (= (token-tag (array-ref toks 1)) (tag-float))
-        (string-eq (token-float (array-ref toks 1)) "3.14"))]
+        (string_mod.string-eq (token-float (array-ref toks 1)) "3.14"))]
     [(ErrTokens _) false]))
 
 (define (lex-negative-int-token-ok?) : bool
@@ -1167,7 +1181,7 @@
         (= (token-tag (array-ref toks 1)) (tag-int))
         (= (token-int (array-ref toks 1)) -1)
         (= (token-tag (array-ref toks 2)) (tag-sym))
-        (string-eq (token-sym (array-ref toks 2)) "-"))]
+        (string_mod.string-eq (token-sym (array-ref toks 2)) "-"))]
     [(ErrTokens _) false]))
 
 (define (lex-token-int-eq? [toks : (Array Token)] [idx : i64] [value : i64]) : bool
@@ -1210,19 +1224,19 @@
           (if (= (token-tag (array-ref toks 1)) (tag-sym))
             unit
             (set! ok false))
-          (if (string-eq (token-sym (array-ref toks 1)) "define")
+          (if (string_mod.string-eq (token-sym (array-ref toks 1)) "define")
             unit
             (set! ok false))
           (if (= (token-tag (array-ref toks 2)) (tag-lbracket))
             unit
             (set! ok false))
-          (if (string-eq (token-sym (array-ref toks 3)) "x")
+          (if (string_mod.string-eq (token-sym (array-ref toks 3)) "x")
             unit
             (set! ok false))
-          (if (string-eq (token-sym (array-ref toks 4)) ":")
+          (if (string_mod.string-eq (token-sym (array-ref toks 4)) ":")
             unit
             (set! ok false))
-          (if (string-eq (token-sym (array-ref toks 5)) "i64")
+          (if (string_mod.string-eq (token-sym (array-ref toks 5)) "i64")
             unit
             (set! ok false))
           (if (= (token-tag (array-ref toks 6)) (tag-rbracket))
@@ -1231,7 +1245,7 @@
           (if (= (token-int (array-ref toks 7)) -42)
             unit
             (set! ok false))
-          (if (string-eq (token-str (array-ref toks 8)) "ok")
+          (if (string_mod.string-eq (token-str (array-ref toks 8)) "ok")
             unit
             (set! ok false))
           (if (= (token-char (array-ref toks 9)) #\newline')
@@ -1247,7 +1261,7 @@
     [(ErrTokens _) false]))
 
 (define (lex-char-source [body : String]) : String
-  (string-append "#" (string-append body "'")))
+  (string_mod.string-append "#" (string_mod.string-append body "'")))
 
 (define (lex-one-char-ok? [body : String] [want : char]) : bool
   (match (lex-result (lex-char-source body))
@@ -1263,14 +1277,14 @@
     [slash : String (lex-backslash-text)]
     (and
       (lex-one-char-ok? "x" #x')
-      (lex-one-char-ok? (string-append slash "n") #\newline')
-      (lex-one-char-ok? (string-append slash "t") #\tab')
-      (lex-one-char-ok? (string-append slash "0") #\nul')
-      (lex-one-char-ok? (string-append slash "space") #\space')
-      (lex-one-char-ok? (string-append slash "newline") #\newline')
-      (lex-one-char-ok? (string-append slash "tab") #\tab')
-      (lex-one-char-ok? (string-append slash "return") #\return')
-      (lex-one-char-ok? (string-append slash "nul") #\nul'))))
+      (lex-one-char-ok? (string_mod.string-append slash "n") #\newline')
+      (lex-one-char-ok? (string_mod.string-append slash "t") #\tab')
+      (lex-one-char-ok? (string_mod.string-append slash "0") #\nul')
+      (lex-one-char-ok? (string_mod.string-append slash "space") #\space')
+      (lex-one-char-ok? (string_mod.string-append slash "newline") #\newline')
+      (lex-one-char-ok? (string_mod.string-append slash "tab") #\tab')
+      (lex-one-char-ok? (string_mod.string-append slash "return") #\return')
+      (lex-one-char-ok? (string_mod.string-append slash "nul") #\nul'))))
 
 (define (lex-error-ok?
   [src : String]
@@ -1281,7 +1295,7 @@
     [(OkSpannedTokens _) false]
     [(ErrSpannedTokens err)
       (and
-        (string-eq (source-error-message err) want-message)
+        (string_mod.string-eq (source-error-message err) want-message)
         (span-eq? (source-error-span err) want-line want-col want-line want-col))]))
 
 (define (lex-error-spans-ok?) : bool
@@ -1303,36 +1317,39 @@
 (define (lex-check-prefixed-int-error-ok?) : bool
   (match (lex-check "0b102")
     [(OkLexI64 _) false]
-    [(ErrLexI64 message) (string-eq message "lexer: malformed integer literal")]))
+    [(ErrLexI64 message)
+      (string_mod.string-eq message "lexer: malformed integer literal")]))
 
 (define (lex-string-source [inner : String]) : String
-  (string-append (lex-quote-text) (string-append inner (lex-quote-text))))
+  (string_mod.string-append
+    (lex-quote-text)
+    (string_mod.string-append inner (lex-quote-text))))
 
 (define (lex-string-token-ok? [src : String] [expected : String]) : bool
   (let
     [toks : (Array Token) (lex src)]
     (and
       (= (token-tag (array-ref toks 0)) (tag-str))
-      (string-eq (token-str (array-ref toks 0)) expected)
+      (string_mod.string-eq (token-str (array-ref toks 0)) expected)
       (= (token-tag (array-ref toks 1)) (tag-end)))))
 
 (define (lex-escaped-quote-source-inner) : String
-  (string-append
+  (string_mod.string-append
     "say "
-    (string-append
+    (string_mod.string-append
       (lex-backslash-text)
-      (string-append
+      (string_mod.string-append
         (lex-quote-text)
-        (string-append
+        (string_mod.string-append
           "hi"
-          (string-append (lex-backslash-text) (lex-quote-text)))))))
+          (string_mod.string-append (lex-backslash-text) (lex-quote-text)))))))
 
 (define (lex-backslash-quote-source-inner) : String
-  (string-append
+  (string_mod.string-append
     (lex-backslash-text)
-    (string-append
+    (string_mod.string-append
       (lex-backslash-text)
-      (string-append (lex-backslash-text) (lex-quote-text)))))
+      (string_mod.string-append (lex-backslash-text) (lex-quote-text)))))
 
 (define (lex-string-escapes-ok?) : bool
   (let
@@ -1342,13 +1359,15 @@
       (lex-string-token-ok? (lex-string-source "hello\\nworld") "hello\nworld")
       (lex-string-token-ok?
         (lex-string-source (lex-escaped-quote-source-inner))
-        (string-append "say " (string-append quote (string-append "hi" quote))))
+        (string_mod.string-append
+          "say "
+          (string_mod.string-append quote (string_mod.string-append "hi" quote))))
       (lex-string-token-ok?
-        (lex-string-source (string-append slash slash))
+        (lex-string-source (string_mod.string-append slash slash))
         slash)
       (lex-string-token-ok?
         (lex-string-source (lex-backslash-quote-source-inner))
-        (string-append slash quote)))))
+        (string_mod.string-append slash quote)))))
 
 (define (lex-quote-prefix-tokens-ok?) : bool
   (match (lex-result "`(if ,x ,@xs)")

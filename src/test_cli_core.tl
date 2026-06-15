@@ -6,9 +6,11 @@
 ;; directly. Imported files provide runtime declarations but do not contribute
 ;; their own tests to this source's harness. Normal compile paths ignore
 ;; `AstDeclTest`.
-(import "../stdlib/io.tl")
+(import stdlib.io as io_mod)
 
-(import "../stdlib/arena.tl")
+(import stdlib.arena as arena_mod)
+
+(import stdlib.hashmap as hashmap_mod)
 
 (import "build_run_core.tl")
 
@@ -22,18 +24,35 @@
 
 (import "compiler_typecheck.tl")
 
-(import "../stdlib/string.tl")
+(import stdlib.process as process_mod)
 
-(import "../stdlib/str_cat.tl")
+(import stdlib.string as string_mod)
+
+(import stdlib.vector as vector_mod)
+
+(import stdlib.str_cat)
 
 (defenum TestMode
   (TestModeRun)
   (TestModeCheck))
 
 (defenum TestConfig
-  (TestFileConfig String String String StringVec i64 TestMode)
-  (TestBatchConfig StringVec String String StringVec i64 TestMode)
-  (TestPackageConfig String bool String String StringVec i64 TestMode))
+  (TestFileConfig String String String vector_mod.StringVec i64 TestMode)
+  (TestBatchConfig
+    vector_mod.StringVec
+    String
+    String
+    vector_mod.StringVec
+    i64
+    TestMode)
+  (TestPackageConfig
+    String
+    bool
+    String
+    String
+    vector_mod.StringVec
+    i64
+    TestMode))
 
 (defenum ResultTestConfig
   (OkTestConfig TestConfig)
@@ -44,7 +63,7 @@
   (TestSomeString String))
 
 (defenum ResultTestBatchPaths
-  (OkTestBatchPaths StringVec)
+  (OkTestBatchPaths vector_mod.StringVec)
   (ErrTestBatchPaths String))
 
 (defenum InlineTest
@@ -68,16 +87,16 @@
   (ErrTestFileCheck i64))
 
 (define (tltest-unknown-target [value : String]) : String
-  (str-cat "test: unknown target " value ""))
+  (str_cat.str-cat "test: unknown target " value ""))
 
 (define (tltest-unknown-mode [value : String]) : String
-  (str-cat "test: unknown backend mode " value ""))
+  (str_cat.str-cat "test: unknown backend mode " value ""))
 
 (define (tltest-unsupported-mode [value : String]) : String
-  (str-cat "test: backend mode " value " is not implemented"))
+  (str_cat.str-cat "test: backend mode " value " is not implemented"))
 
 (define (tltest-invalid-opt-level [value : String]) : String
-  (str-cat "test: invalid --opt-level " value "; expected 0, 1, or 2"))
+  (str_cat.str-cat "test: invalid --opt-level " value "; expected 0, 1, or 2"))
 
 (define (tltest-batch-line-end [text : String] [start : i64] [n : i64]) : i64
   (let
@@ -113,7 +132,7 @@
   [text : String]
   [start : i64]
   [n : i64]
-  [paths : StringVec]) : StringVec
+  [paths : vector_mod.StringVec]) : vector_mod.StringVec
   (if (>= start n)
     paths
     (let
@@ -125,38 +144,42 @@
           text
           next-start
           n
-          (string-vec-push paths (substring text start (- line-end start))))))))
+          (vector_mod.string-vec-push
+            paths
+            (string_mod.substring text start (- line-end start))))))))
 
-(define (tltest-batch-paths-from-text [text : String]) : StringVec
+(define (tltest-batch-paths-from-text [text : String]) : vector_mod.StringVec
   (tltest-batch-paths-from-text-from
     text
     0
     (string-length text)
-    (string-vec-new)))
+    (vector_mod.string-vec-new)))
 
 (define (tltest-batch-paths-from-text-self-test?) : bool
   (let
-    [paths : StringVec (tltest-batch-paths-from-text "a.tl\n\nb.tl\r\nc.tl")]
+    [paths : vector_mod.StringVec
+      (tltest-batch-paths-from-text "a.tl\n\nb.tl\r\nc.tl")]
     (and
-      (= (string-vec-len paths) 3)
-      (string-eq (string-vec-get paths 0 "") "a.tl")
-      (string-eq (string-vec-get paths 1 "") "b.tl")
-      (string-eq (string-vec-get paths 2 "") "c.tl"))))
+      (= (vector_mod.string-vec-len paths) 3)
+      (string_mod.string-eq (vector_mod.string-vec-get paths 0 "") "a.tl")
+      (string_mod.string-eq (vector_mod.string-vec-get paths 1 "") "b.tl")
+      (string_mod.string-eq (vector_mod.string-vec-get paths 2 "") "c.tl"))))
 
 (test
   test-batch-paths-vector-preserves-order
   (if (tltest-batch-paths-from-text-self-test?)
     unit
-    (panic "test: batch path vector self-test mismatch")))
+    (io_mod.panic "test: batch path vector self-test mismatch")))
 
 (define (tltest-batch-paths [list-path : String]) : ResultTestBatchPaths
-  (match (try-read-file (& list-path))
-    [(OkIoString text) (OkTestBatchPaths (tltest-batch-paths-from-text text))]
-    [(ErrIoString error)
+  (match (io_mod.try-read-file (& list-path))
+    [(io_mod.OkIoString text)
+      (OkTestBatchPaths (tltest-batch-paths-from-text text))]
+    [(io_mod.ErrIoString error)
       (ErrTestBatchPaths
-        (string-append
+        (string_mod.string-append
           "test: failed to read --batch list file: "
-          (io-error-message error)))]))
+          (io_mod.io-error-message error)))]))
 
 (define (tltest-config-finish
   [source : String]
@@ -165,7 +188,7 @@
   [has-manifest : bool]
   [target : String]
   [mode : String]
-  [roots : StringVec]
+  [roots : vector_mod.StringVec]
   [opt-level : i64]
   [test-mode : TestMode]
   [batch-list : TestMaybeString]) : ResultTestConfig
@@ -180,7 +203,7 @@
             [(TestModeCheck)
               (match (tltest-batch-paths list-path)
                 [(OkTestBatchPaths paths)
-                  (if (string-vec-is-empty? paths)
+                  (if (vector_mod.string-vec-is-empty? paths)
                     (ErrTestConfig "test: --batch list is empty")
                     (OkTestConfig
                       (TestBatchConfig
@@ -215,9 +238,9 @@
 
 (define (tltest-backend-mode-valid? [value : String]) : bool
   (or
-    (string-eq value "scalar")
-    (string-eq value "avx2")
-    (string-eq value "avx512")))
+    (string_mod.string-eq value "scalar")
+    (string_mod.string-eq value "avx2")
+    (string_mod.string-eq value "avx512")))
 
 (define (tltest-parse-options
   [idx : i64]
@@ -228,7 +251,7 @@
   [has-manifest : bool]
   [target : String]
   [mode : String]
-  [roots : StringVec]
+  [roots : vector_mod.StringVec]
   [has-opt-level : bool]
   [opt-level : i64]
   [test-mode : TestMode]
@@ -246,8 +269,8 @@
       test-mode
       batch-list)
     (let
-      [current : String (arg idx)]
-      (if (string-eq current "--check")
+      [current : String (io_mod.arg idx)]
+      (if (string_mod.string-eq current "--check")
         (tltest-parse-options
           (+ idx 1)
           count
@@ -262,11 +285,11 @@
           opt-level
           TestModeCheck
           batch-list)
-        (if (string-eq current "--target")
+        (if (string_mod.string-eq current "--target")
           (if (>= (+ idx 1) count)
             (ErrTestConfig "test: --target requires a value")
             (let
-              [value : String (arg (+ idx 1))]
+              [value : String (io_mod.arg (+ idx 1))]
               (if (tltest-target-valid? value)
                 (tltest-parse-options
                   (+ idx 2)
@@ -283,13 +306,13 @@
                   test-mode
                   batch-list)
                 (ErrTestConfig (tltest-unknown-target value)))))
-          (if (string-eq current "--backend-mode")
+          (if (string_mod.string-eq current "--backend-mode")
             (if (>= (+ idx 1) count)
               (ErrTestConfig "test: --backend-mode requires a value")
               (let
-                [value : String (arg (+ idx 1))]
+                [value : String (io_mod.arg (+ idx 1))]
                 (if (tltest-backend-mode-valid? value)
-                  (if (string-eq value "scalar")
+                  (if (string_mod.string-eq value "scalar")
                     (tltest-parse-options
                       (+ idx 2)
                       count
@@ -306,7 +329,7 @@
                       batch-list)
                     (ErrTestConfig (tltest-unsupported-mode value)))
                   (ErrTestConfig (tltest-unknown-mode value)))))
-            (if (string-eq current "--stdlib-root")
+            (if (string_mod.string-eq current "--stdlib-root")
               (if (>= (+ idx 1) count)
                 (ErrTestConfig "test: --stdlib-root requires a value")
                 (tltest-parse-options
@@ -318,12 +341,12 @@
                   has-manifest
                   target
                   mode
-                  (string-vec-push roots (arg (+ idx 1)))
+                  (vector_mod.string-vec-push roots (io_mod.arg (+ idx 1)))
                   has-opt-level
                   opt-level
                   test-mode
                   batch-list))
-              (if (string-eq current "--manifest-path")
+              (if (string_mod.string-eq current "--manifest-path")
                 (if (>= (+ idx 1) count)
                   (ErrTestConfig "test: --manifest-path requires a value")
                   (if has-manifest
@@ -333,7 +356,7 @@
                       count
                       source
                       has-source
-                      (arg (+ idx 1))
+                      (io_mod.arg (+ idx 1))
                       true
                       target
                       mode
@@ -342,7 +365,7 @@
                       opt-level
                       test-mode
                       batch-list)))
-                (if (string-eq current "--batch")
+                (if (string_mod.string-eq current "--batch")
                   (if (>= (+ idx 1) count)
                     (ErrTestConfig "test: --batch requires a value")
                     (match batch-list
@@ -362,15 +385,15 @@
                           has-opt-level
                           opt-level
                           test-mode
-                          (TestSomeString (arg (+ idx 1))))]))
-                  (if (string-eq current "--opt-level")
+                          (TestSomeString (io_mod.arg (+ idx 1))))]))
+                  (if (string_mod.string-eq current "--opt-level")
                     (if (>= (+ idx 1) count)
                       (ErrTestConfig "test: --opt-level requires a value")
                       (if has-opt-level
                         (ErrTestConfig
                           "test: --opt-level was provided more than once")
                         (let
-                          [value : String (arg (+ idx 1))]
+                          [value : String (io_mod.arg (+ idx 1))]
                           (match (compiler-optimize-parse-level value)
                             [(OkCompilerOptimizeLevel parsed-level)
                               (tltest-parse-options
@@ -391,7 +414,7 @@
                               (ErrTestConfig (tltest-invalid-opt-level value))]))))
                     (if (source-tool-flag? current)
                       (ErrTestConfig
-                        (string-append "test: unknown flag " current))
+                        (string_mod.string-append "test: unknown flag " current))
                       (if has-source
                         (ErrTestConfig "test: accepts only one source file")
                         (tltest-parse-options
@@ -421,7 +444,7 @@
     false
     "linux-x86_64"
     "scalar"
-    (string-vec-new)
+    (vector_mod.string-vec-new)
     false
     (compiler-optimize-default-level)
     TestModeRun
@@ -464,10 +487,10 @@
   (struct-get span start-line))
 
 (define (tltest-private-name [idx : i64]) : String
-  (string-append "__tl_inline_test_" (int->string idx)))
+  (string_mod.string-append "__tl_inline_test_" (string_mod.int->string idx)))
 
 (define (tltest-owned-test-path? [target-path : String] [decl-path : String]) : bool
-  (string-eq target-path (compiler-load-normalize-path decl-path)))
+  (string_mod.string-eq target-path (compiler-load-normalize-path decl-path)))
 
 (define (tltest-collect-in
   [target-path : String]
@@ -591,27 +614,32 @@
   (ast-expr-call (ast-node-push (AstExprVar (intern name))) AstExprNil))
 
 (define (tltest-location [path : String] [line : i64]) : String
-  (if (string-eq path "")
-    (string-append "<unknown>:" (int->string line))
-    (string-append path (string-append ":" (int->string line)))))
+  (if (string_mod.string-eq path "")
+    (string_mod.string-append "<unknown>:" (string_mod.int->string line))
+    (string_mod.string-append
+      path
+      (string_mod.string-append ":" (string_mod.int->string line)))))
 
 (define (tltest-running-line [test : InlineTest]) : String
   (match test
     [(InlineTest name path line _ _)
-      (string-append
+      (string_mod.string-append
         "test "
-        (string-append
+        (string_mod.string-append
           name
-          (string-append " " (string-append (tltest-location path line) "\n"))))]))
+          (string_mod.string-append
+            " "
+            (string_mod.string-append (tltest-location path line) "\n"))))]))
 
 (define (tltest-ok-line [test : InlineTest]) : String
   (match test
-    [(InlineTest name _ _ _ _) (string-append "ok " (string-append name "\n"))]))
+    [(InlineTest name _ _ _ _)
+      (string_mod.string-append "ok " (string_mod.string-append name "\n"))]))
 
 (define (tltest-summary-line [count : i64]) : String
-  (string-append
+  (string_mod.string-append
     "TypeLisp tests passed: "
-    (string-append (int->string count) " test(s)\n")))
+    (string_mod.string-append (string_mod.int->string count) " test(s)\n")))
 
 (define (tltest-print-runtime-write-params) : AstParamList
   (ast-param-cons
@@ -891,14 +919,44 @@
 (define (tltest-empty-main-decl) : AstDecl
   (tltest-main-decl (make-array InlineTest 0)))
 
-(define (tltest-reach-mark-name [names : StringI64Map] [name : String]) : StringI64Map
-  (if (string-i64-map-contains? names name)
+(define (tltest-reach-mark-name
+  [names : hashmap_mod.StringI64Map]
+  [name : String]) : hashmap_mod.StringI64Map
+  (if (hashmap_mod.string-i64-map-contains? names name)
     names
-    (string-i64-map-put names name 1)))
+    (hashmap_mod.string-i64-map-put names name 1)))
+
+(define (tltest-name-last-dot-from
+  [name : String]
+  [index : i64]
+  [last-dot : i64]) : i64
+  (if (>= index (string-length name))
+    last-dot
+    (tltest-name-last-dot-from
+      name
+      (+ index 1)
+      (if (= (string-ref name index) #.')
+        index
+        last-dot))))
+
+(define (tltest-reach-mark-source-name
+  [names : hashmap_mod.StringI64Map]
+  [name : String]) : hashmap_mod.StringI64Map
+  (let
+    [marked : hashmap_mod.StringI64Map (tltest-reach-mark-name names name)]
+    [last-dot : i64 (tltest-name-last-dot-from name 0 -1)]
+    (if (< last-dot 0)
+      marked
+      (tltest-reach-mark-name
+        marked
+        (string_mod.substring
+          name
+          (+ last-dot 1)
+          (- (string-length name) (+ last-dot 1)))))))
 
 (define (tltest-reach-mark-expr-list
   [exprs : AstExprList]
-  [names : StringI64Map]) : StringI64Map
+  [names : hashmap_mod.StringI64Map]) : hashmap_mod.StringI64Map
   (match exprs
     [(AstExprNil) names]
     [(AstExprCons head rest)
@@ -909,7 +967,7 @@
 
 (define (tltest-reach-mark-let-bindings
   [bindings : AstLetBindingList]
-  [names : StringI64Map]) : StringI64Map
+  [names : hashmap_mod.StringI64Map]) : hashmap_mod.StringI64Map
   (match bindings
     [(AstLetBindingNil) names]
     [(AstLetBindingCons binding rest)
@@ -925,7 +983,7 @@
 
 (define (tltest-reach-mark-resource-bindings
   [bindings : AstResourceBindingList]
-  [names : StringI64Map]) : StringI64Map
+  [names : hashmap_mod.StringI64Map]) : hashmap_mod.StringI64Map
   (match bindings
     [(AstResourceBindingNil) names]
     [(AstResourceBindingCons binding rest)
@@ -944,7 +1002,7 @@
 
 (define (tltest-reach-mark-match-arms
   [arms : AstMatchArmList]
-  [names : StringI64Map]) : StringI64Map
+  [names : hashmap_mod.StringI64Map]) : hashmap_mod.StringI64Map
   (match arms
     [(AstMatchArmNil) names]
     [(AstMatchArmCons arm rest)
@@ -958,14 +1016,16 @@
                 rest
                 (tltest-reach-mark-expr body names)))]))]))
 
-(define (tltest-reach-mark-expr [expr : AstExpr] [names : StringI64Map]) : StringI64Map
+(define (tltest-reach-mark-expr
+  [expr : AstExpr]
+  [names : hashmap_mod.StringI64Map]) : hashmap_mod.StringI64Map
   (match expr
     [(AstExprSpanned inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (tltest-reach-mark-expr inner names))]
     [(AstExprLiteral _) names]
-    [(AstExprVar name) (tltest-reach-mark-name names (intern-str name))]
+    [(AstExprVar name) (tltest-reach-mark-source-name names (intern-str name))]
     [(AstExprBinary _ left-box right-box)
       (let
         [left : AstExpr (ast-node-get left-box)]
@@ -1044,7 +1104,7 @@
         [value : AstExpr (ast-node-get value-box)]
         (tltest-reach-mark-expr
           value
-          (tltest-reach-mark-name names (intern-str name))))]
+          (tltest-reach-mark-source-name names (intern-str name))))]
     [(AstExprAnn inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
@@ -1232,7 +1292,7 @@
 (define (tltest-reach-mark-tests-from
   [tests : (Array InlineTest)]
   [index : i64]
-  [names : StringI64Map]) : StringI64Map
+  [names : hashmap_mod.StringI64Map]) : hashmap_mod.StringI64Map
   (if (< index 0)
     names
     (let
@@ -1246,15 +1306,37 @@
 
 (define (tltest-reach-mark-tests
   [tests : (Array InlineTest)]
-  [names : StringI64Map]) : StringI64Map
+  [names : hashmap_mod.StringI64Map]) : hashmap_mod.StringI64Map
   (tltest-reach-mark-tests-from tests (- (array-length tests) 1) names))
 
-(define (tltest-reach-mark-decl [decl : AstDecl] [names : StringI64Map]) : StringI64Map
+(define (tltest-reach-mark-export-item
+  [item : AstExportItem]
+  [names : hashmap_mod.StringI64Map]) : hashmap_mod.StringI64Map
+  (match item
+    [(AstExportValue name) (tltest-reach-mark-name names name)]
+    [(AstExportMacro name) (tltest-reach-mark-name names name)]
+    [_ names]))
+
+(define (tltest-reach-mark-export-items
+  [items : AstExportItemList]
+  [names : hashmap_mod.StringI64Map]) : hashmap_mod.StringI64Map
+  (match items
+    [(AstExportItemNil) names]
+    [(AstExportItemCons item rest)
+      (let
+        [rest : AstExportItemList (box-get rest)]
+        (tltest-reach-mark-export-items
+          rest
+          (tltest-reach-mark-export-item item names)))]))
+
+(define (tltest-reach-mark-decl
+  [decl : AstDecl]
+  [names : hashmap_mod.StringI64Map]) : hashmap_mod.StringI64Map
   (match decl
     [(AstDeclDef name _ expr-box)
       (let
         [expr : AstExpr (ast-node-get expr-box)]
-        (if (string-i64-map-contains? names (intern-str name))
+        (if (hashmap_mod.string-i64-map-contains? names (intern-str name))
           (tltest-reach-mark-expr expr names)
           names))]
     [(AstDeclDefFn name _ _ body-box export)
@@ -1266,13 +1348,14 @@
               body
               (tltest-reach-mark-name names (intern-str name)))]
           [(AstFnNoExport)
-            (if (string-i64-map-contains? names (intern-str name))
+            (if (hashmap_mod.string-i64-map-contains? names (intern-str name))
               (tltest-reach-mark-expr body names)
               names)]))]
     [(AstDeclDefMacro _ _ _ body-box)
       (let
         [body : AstExpr (ast-node-get body-box)]
         (tltest-reach-mark-expr body names))]
+    [(AstDeclExport items) (tltest-reach-mark-export-items items names)]
     [(AstDeclUnsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
@@ -1282,7 +1365,7 @@
 (define (tltest-reach-mark-decls-from
   [decls : (Array AstDecl)]
   [index : i64]
-  [names : StringI64Map]) : StringI64Map
+  [names : hashmap_mod.StringI64Map]) : hashmap_mod.StringI64Map
   (if (>= index (array-length decls))
     names
     (tltest-reach-mark-decls-from
@@ -1298,33 +1381,40 @@
 (define (tltest-reach-fixed
   [decls : (Array AstDecl)]
   [fuel : i64]
-  [names : StringI64Map]) : StringI64Map
+  [names : hashmap_mod.StringI64Map]) : hashmap_mod.StringI64Map
   (if (<= fuel 0)
     names
     (let
-      [before : i64 (string-i64-map-len names)]
-      [next : StringI64Map (tltest-reach-mark-decls-from decls 0 names)]
-      (if (= (string-i64-map-len next) before)
+      [before : i64 (hashmap_mod.string-i64-map-len names)]
+      [next : hashmap_mod.StringI64Map
+        (tltest-reach-mark-decls-from decls 0 names)]
+      (if (= (hashmap_mod.string-i64-map-len next) before)
         next
         (tltest-reach-fixed decls (- fuel 1) next)))))
 
 (define (tltest-reachable-names
   [decls : (Array AstDecl)]
-  [tests : (Array InlineTest)]) : StringI64Map
+  [tests : (Array InlineTest)]) : hashmap_mod.StringI64Map
   (tltest-reach-fixed
     decls
     (array-length decls)
-    (tltest-reach-mark-tests tests (string-i64-map-with-capacity 64))))
+    (tltest-reach-mark-tests
+      tests
+      (hashmap_mod.string-i64-map-with-capacity 64))))
 
-(define (tltest-reachable-runtime-decl? [decl : AstDecl] [names : StringI64Map]) : bool
+(define (tltest-reachable-runtime-decl?
+  [decl : AstDecl]
+  [names : hashmap_mod.StringI64Map]) : bool
   (match decl
-    [(AstDeclDef name _ _) (string-i64-map-contains? names (intern-str name))]
+    [(AstDeclDef name _ _)
+      (hashmap_mod.string-i64-map-contains? names (intern-str name))]
     [(AstDeclDefFn name _ _ _ export)
       (match export
         [(AstFnExport _) true]
-        [(AstFnNoExport) (string-i64-map-contains? names (intern-str name))])]
+        [(AstFnNoExport)
+          (hashmap_mod.string-i64-map-contains? names (intern-str name))])]
     [(AstDeclExtern name _ _ _)
-      (string-i64-map-contains? names (intern-str name))]
+      (hashmap_mod.string-i64-map-contains? names (intern-str name))]
     [(AstDeclDefMacro _ _ _ _) true]
     [(AstDeclUnsafe inner-box)
       (let
@@ -1336,7 +1426,7 @@
   [decls : (Array AstDecl)]
   [paths : (Array String)]
   [index : i64]
-  [names : StringI64Map]
+  [names : hashmap_mod.StringI64Map]
   [out-decls : (Array AstDecl)]
   [out-paths : (Array String)]) : InlineRuntimeDecls
   (if (>= index (array-length decls))
@@ -1468,24 +1558,139 @@
               [harness-decls : AstDeclList (box-get harness-decls-box)]
               (and
                 (= count 2)
-                (string-eq (tltest-decl-name-at harness-decls 0) helper-name)
-                (string-eq
+                (string_mod.string-eq
+                  (tltest-decl-name-at harness-decls 0)
+                  helper-name)
+                (string_mod.string-eq
                   (tltest-decl-name-at harness-decls 1)
                   "__tl_inline_test_0")
-                (string-eq
+                (string_mod.string-eq
                   (tltest-decl-name-at harness-decls 2)
                   "__tl_inline_test_1")
-                (string-eq (tltest-decl-name-at harness-decls 3) "main")
-                (string-eq (tltest-path-at harness-paths 0) "runtime.tl")
-                (string-eq (tltest-path-at harness-paths 1) "driver.tl")
-                (string-eq (tltest-path-at harness-paths 2) "driver.tl")
-                (string-eq (tltest-path-at harness-paths 3) "driver.tl")))])])))
+                (string_mod.string-eq
+                  (tltest-decl-name-at harness-decls 3)
+                  "main")
+                (string_mod.string-eq
+                  (tltest-path-at harness-paths 0)
+                  "runtime.tl")
+                (string_mod.string-eq
+                  (tltest-path-at harness-paths 1)
+                  "driver.tl")
+                (string_mod.string-eq
+                  (tltest-path-at harness-paths 2)
+                  "driver.tl")
+                (string_mod.string-eq
+                  (tltest-path-at harness-paths 3)
+                  "driver.tl")))])])))
 
 (test
   test-cli-vector-builders-preserve-order
   (if (tltest-vector-builders-self-test?)
     unit
-    (panic "test CLI vector builder order mismatch")))
+    (io_mod.panic "test CLI vector builder order mismatch")))
+
+(define (tltest-exported-extern-prune-self-test?) : bool
+  (let
+    [extern-name : String "__tl_exported_extern_fixture"]
+    [extern-decl : AstDecl
+      (ast-decl-extern
+        extern-name
+        (AstExternFunction)
+        (AstExternMetadata
+          (AstExternAbiC)
+          extern-name
+          AstExternLinkInputNil
+          false)
+        (ast-ty-func AstTypeNil (AstTyI64)))]
+    [export-decl : AstDecl
+      (AstDeclExport
+        (ast-export-item-cons (AstExportValue extern-name) AstExportItemNil))]
+    [span : AstSourceSpan (AstSourceSpan 33 1 33 1)]
+    [decls : AstDeclList
+      (ast-decl-cons
+        extern-decl
+        (ast-decl-cons
+          export-decl
+          (ast-decl-cons
+            (ast-decl-test
+              "keeps-exported-extern"
+              (ast-node-push (AstExprLiteral (AstLitUnit)))
+              span)
+            AstDeclNil)))]
+    [paths : AstDeclPathList
+      (ast-decl-path-cons
+        "runtime.tl"
+        (ast-decl-path-cons
+          "runtime.tl"
+          (ast-decl-path-cons "driver.tl" AstDeclPathNil)))]
+    (match (tltest-build-harness "driver.tl" decls paths)
+      [(InlineHarness program _ _)
+        (match program
+          [(AstProgram harness-decls-box)
+            (string_mod.string-eq
+              (tltest-decl-name-at (box-get harness-decls-box) 0)
+              extern-name)])])))
+
+(test
+  test-cli-prune-keeps-exported-extern
+  (if (tltest-exported-extern-prune-self-test?)
+    unit
+    (io_mod.panic "test CLI pruned exported extern")))
+
+(define (tltest-dotted-runtime-prune-self-test?) : bool
+  (let
+    [helper-name : String "__tl_dotted_runtime_helper"]
+    [dotted-helper-name : String "stdlib.fs.__tl_dotted_runtime_helper"]
+    [caller-name : String "__tl_dotted_runtime_caller"]
+    [helper-decl : AstDecl
+      (ast-decl-def-fn
+        helper-name
+        AstParamNil
+        (AstTyUnit)
+        (ast-node-push (AstExprLiteral (AstLitUnit))))]
+    [caller-decl : AstDecl
+      (ast-decl-def-fn
+        caller-name
+        AstParamNil
+        (AstTyUnit)
+        (tltest-call-expr dotted-helper-name))]
+    [span : AstSourceSpan (AstSourceSpan 41 1 41 1)]
+    [decls : AstDeclList
+      (ast-decl-cons
+        helper-decl
+        (ast-decl-cons
+          caller-decl
+          (ast-decl-cons
+            (ast-decl-test
+              "uses-dotted-runtime"
+              (tltest-call-expr caller-name)
+              span)
+            AstDeclNil)))]
+    [paths : AstDeclPathList
+      (ast-decl-path-cons
+        "stdlib/fs.tl"
+        (ast-decl-path-cons
+          "stdlib/fs.tl"
+          (ast-decl-path-cons "driver.tl" AstDeclPathNil)))]
+    (match (tltest-build-harness "driver.tl" decls paths)
+      [(InlineHarness program _ _)
+        (match program
+          [(AstProgram harness-decls-box)
+            (let
+              [harness-decls : AstDeclList (box-get harness-decls-box)]
+              (and
+                (string_mod.string-eq
+                  (tltest-decl-name-at harness-decls 0)
+                  helper-name)
+                (string_mod.string-eq
+                  (tltest-decl-name-at harness-decls 1)
+                  caller-name)))])])))
+
+(test
+  test-cli-inline-harness-keeps-dotted-runtime-deps
+  (if (tltest-dotted-runtime-prune-self-test?)
+    unit
+    (io_mod.panic "test CLI pruned dotted runtime dependency")))
 
 (define (tltest-imported-tests-skipped-self-test?) : bool
   (let
@@ -1523,20 +1728,30 @@
               [harness-decls : AstDeclList (box-get harness-decls-box)]
               (and
                 (= count 1)
-                (string-eq (tltest-decl-name-at harness-decls 0) helper-name)
-                (string-eq
+                (string_mod.string-eq
+                  (tltest-decl-name-at harness-decls 0)
+                  helper-name)
+                (string_mod.string-eq
                   (tltest-decl-name-at harness-decls 1)
                   "__tl_inline_test_0")
-                (string-eq (tltest-decl-name-at harness-decls 2) "main")
-                (string-eq (tltest-path-at harness-paths 0) "driver.tl")
-                (string-eq (tltest-path-at harness-paths 1) "driver.tl")
-                (string-eq (tltest-path-at harness-paths 2) "driver.tl")))])])))
+                (string_mod.string-eq
+                  (tltest-decl-name-at harness-decls 2)
+                  "main")
+                (string_mod.string-eq
+                  (tltest-path-at harness-paths 0)
+                  "driver.tl")
+                (string_mod.string-eq
+                  (tltest-path-at harness-paths 1)
+                  "driver.tl")
+                (string_mod.string-eq
+                  (tltest-path-at harness-paths 2)
+                  "driver.tl")))])])))
 
 (test
   test-cli-inline-harness-skips-imported-tests
   (if (tltest-imported-tests-skipped-self-test?)
     unit
-    (panic "test CLI inline harness kept imported test")))
+    (io_mod.panic "test CLI inline harness kept imported test")))
 
 (define (tltest-import-alias-preserved? [decl : AstDecl]) : bool
   (match decl
@@ -1546,7 +1761,9 @@
           _
           (AstSomeModuleName module)
           (AstSomeImportAlias alias)))
-      (and (string-eq module "stdlib.core_macros") (string-eq alias "core"))]
+      (and
+        (string_mod.string-eq module "stdlib.core_macros")
+        (string_mod.string-eq alias "core"))]
     [_ false]))
 
 (define (tltest-import-alias-preserved-self-test?) : bool
@@ -1585,7 +1802,7 @@
   test-cli-inline-harness-preserves-import-aliases
   (if (tltest-import-alias-preserved-self-test?)
     unit
-    (panic "test CLI inline harness dropped import alias")))
+    (io_mod.panic "test CLI inline harness dropped import alias")))
 
 (define (tltest-macro-quasiquote-deps-self-test?) : bool
   (let
@@ -1629,18 +1846,24 @@
               [harness-decls : AstDeclList (box-get harness-decls-box)]
               (and
                 (= count 1)
-                (string-eq (tltest-decl-name-at harness-decls 0) helper-name)
-                (string-eq (tltest-decl-name-at harness-decls 1) macro-name)
-                (string-eq
+                (string_mod.string-eq
+                  (tltest-decl-name-at harness-decls 0)
+                  helper-name)
+                (string_mod.string-eq
+                  (tltest-decl-name-at harness-decls 1)
+                  macro-name)
+                (string_mod.string-eq
                   (tltest-decl-name-at harness-decls 2)
                   "__tl_inline_test_0")
-                (string-eq (tltest-decl-name-at harness-decls 3) "main")))])])))
+                (string_mod.string-eq
+                  (tltest-decl-name-at harness-decls 3)
+                  "main")))])])))
 
 (test
   test-cli-inline-harness-keeps-macro-quasiquote-deps
   (if (tltest-macro-quasiquote-deps-self-test?)
     unit
-    (panic "test CLI inline harness dropped macro quasiquote dependency")))
+    (io_mod.panic "test CLI inline harness dropped macro quasiquote dependency")))
 
 (define (tltest-check-only
   [program : AstProgram]
@@ -1652,14 +1875,16 @@
     (tltest-paths-with-print-runtime target paths))
     [(OkCompilerTypecheck _)
       (begin
-        (print-string
-          (string-append
+        (io_mod.print-string
+          (string_mod.string-append
             "TypeLisp test typecheck passed: "
-            (string-append (int->string count) " test(s)\n")))
+            (string_mod.string-append
+              (string_mod.int->string count)
+              " test(s)\n")))
         0)]
     [(ErrCompilerTypecheck diag)
       (begin
-        (print-error (compiler-diagnostic-render diag))
+        (io_mod.print-error (compiler-diagnostic-render diag))
         1)]))
 
 (define (tltest-stderr-ends-with-newline? [text : String]) : bool
@@ -1671,15 +1896,18 @@
         [last : char (string-ref text (- n 1))]
         (or (= last #\newline') (= last #\return'))))))
 
-(define (tltest-report-child-status [output : ProcessOutput]) : unit
+(define (tltest-report-child-status [output : process_mod.ProcessOutput]) : unit
   (begin
-    (if (tltest-stderr-ends-with-newline? (process-output-stderr output))
+    (if (tltest-stderr-ends-with-newline?
+      (process_mod.process-output-stderr output))
       unit
-      (print-error "\n"))
-    (print-error
-      (string-append
+      (io_mod.print-error "\n"))
+    (io_mod.print-error
+      (string_mod.string-append
         "typelisp test: test executable exited with exit status: "
-        (string-append (int->string (process-output-status output)) "\n")))))
+        (string_mod.string-append
+          (string_mod.int->string (process_mod.process-output-status output))
+          "\n")))))
 
 (define (tltest-diagnostic-with-source-fallback
   [source : String]
@@ -1690,27 +1918,31 @@
 
 (define (tltest-executable-spawn-detail [bin-path : String]) : String
   (match (source-tool-try-file-exists? bin-path)
-    [(OkIoBool exists)
+    [(io_mod.OkIoBool exists)
       (if exists
         "test executable exists; child-process spawn failed"
         "test executable is missing after link")]
-    [(ErrIoBool error)
-      (string-append
+    [(io_mod.ErrIoBool error)
+      (string_mod.string-append
         "could not inspect test executable: "
-        (io-error-message error))]))
+        (io_mod.io-error-message error))]))
 
 (define (tltest-run-executable-error-message
   [bin-path : String]
   [temp-dir : String]
-  [error : ProcessError]) : String
-  (string-append
-    (string-append
-      (string-append
-        (string-append "Error: failed to run test executable '" bin-path)
-        (string-append "': " (process-error-message error)))
-      (string-append " (" (tltest-executable-spawn-detail bin-path)))
-    (string-append
-      (string-append "); preserving test artifacts in '" temp-dir)
+  [error : process_mod.ProcessError]) : String
+  (string_mod.string-append
+    (string_mod.string-append
+      (string_mod.string-append
+        (string_mod.string-append
+          "Error: failed to run test executable '"
+          bin-path)
+        (string_mod.string-append
+          "': "
+          (process_mod.process-error-message error)))
+      (string_mod.string-append " (" (tltest-executable-spawn-detail bin-path)))
+    (string_mod.string-append
+      (string_mod.string-append "); preserving test artifacts in '" temp-dir)
       "'\n")))
 
 (define (tltest-run-executable-error-message-self-test?) : bool
@@ -1721,19 +1953,19 @@
       (tltest-run-executable-error-message
         bin-path
         temp-dir
-        (ProcessSpawnFailed "process: spawn failed"))]
+        (process_mod.ProcessSpawnFailed "process: spawn failed"))]
     [missing-detail : String "test executable is missing after link"]
     [preserve-detail : String
       "preserving test artifacts in 'target/typelisp-test-2619'"]
     (and
-      (string-contains (& message) (& missing-detail))
-      (string-contains (& message) (& preserve-detail)))))
+      (string_mod.string-contains (& message) (& missing-detail))
+      (string_mod.string-contains (& message) (& preserve-detail)))))
 
 (test
   test-cli-spawn-error-preserves-artifacts
   (unless
     (tltest-run-executable-error-message-self-test?)
-    (panic "test CLI spawn error diagnostic did not preserve artifacts")))
+    (io_mod.panic "test CLI spawn error diagnostic did not preserve artifacts")))
 
 (define (tltest-run-harness-in-temp
   [source : String]
@@ -1771,7 +2003,7 @@
               "test: failed to write assembly artifact")
               [(SourceToolCommandErr message)
                 (begin
-                  (print-error message)
+                  (io_mod.print-error message)
                   (source-tool-clean-temp
                     temp-dir
                     asm-path
@@ -1783,10 +2015,10 @@
                 (match (source-tool-run-executable
                   bin-path
                   target
-                  (process-args-empty))
-                  [(OkProcessOutput output)
+                  (process_mod.process-args-empty))
+                  [(process_mod.OkProcessOutput output)
                     (let
-                      [status : i64 (process-output-status output)]
+                      [status : i64 (process_mod.process-output-status output)]
                       (begin
                         (source-tool-forward-output output)
                         (if (= status 0)
@@ -1806,9 +2038,9 @@
                         (if (= status 0)
                           0
                           1)))]
-                  [(ErrProcessOutput error)
+                  [(process_mod.ErrProcessOutput error)
                     (begin
-                      (print-error
+                      (io_mod.print-error
                         (tltest-run-executable-error-message
                           bin-path
                           temp-dir
@@ -1816,12 +2048,12 @@
                       1)])])]
           [(ErrCompilerDriver diag)
             (begin
-              (print-error (compiler-diagnostic-render diag))
+              (io_mod.print-error (compiler-diagnostic-render diag))
               (source-tool-clean-temp temp-dir asm-path obj-path bin-path true)
               1)])]
       [(ErrCompilerLower diag)
         (begin
-          (print-error
+          (io_mod.print-error
             (compiler-diagnostic-render
               (tltest-diagnostic-with-source-fallback source diag)))
           (source-tool-clean-temp temp-dir asm-path obj-path bin-path true)
@@ -1837,7 +2069,7 @@
   (match (source-tool-target target)
     [(ErrSourceToolTarget _)
       (begin
-        (print-error (tltest-unknown-target target))
+        (io_mod.print-error (tltest-unknown-target target))
         1)]
     [(OkSourceToolTarget backend-target)
       (match (source-tool-create-temp-dir "typelisp-test")
@@ -1852,8 +2084,10 @@
             temp-dir)]
         [(ErrSourceToolString message)
           (begin
-            (print-error
-              (string-append "test: failed to create temp dir: " message))
+            (io_mod.print-error
+              (string_mod.string-append
+                "test: failed to create temp dir: "
+                message))
             1)])]))
 
 (define (tltest-run-direct
@@ -1868,11 +2102,11 @@
   (match (typecheck-compiler-program-with-paths (ast-program decls) paths)
     [(OkCompilerTypecheck _)
       (begin
-        (print-string "TypeLisp test typecheck passed: 0 test(s)\n")
+        (io_mod.print-string "TypeLisp test typecheck passed: 0 test(s)\n")
         0)]
     [(ErrCompilerTypecheck diag)
       (begin
-        (print-error (compiler-diagnostic-render diag))
+        (io_mod.print-error (compiler-diagnostic-render diag))
         1)]))
 
 (define (tltest-no-tests-run
@@ -1949,7 +2183,7 @@
 
 (define (tltest-source-has-inline-tests? [source : String]) : bool
   (let
-    [text : String (read-file source)]
+    [text : String (io_mod.read-file source)]
     (tltest-source-has-inline-tests-from text 0 (string-length text) true)))
 
 (define (tltest-string-prefix? [text : String] [prefix : String]) : bool
@@ -1958,10 +2192,10 @@
     [prefix-len : i64 (string-length prefix)]
     (if (> prefix-len text-len)
       false
-      (string-eq (substring text 0 prefix-len) prefix))))
+      (string_mod.string-eq (string_mod.substring text 0 prefix-len) prefix))))
 
 (define (tltest-package-tests-prefix [manifest-dir : String]) : String
-  (string-append
+  (string_mod.string-append
     (compiler-load-normalize-path
       (package-source-root-join manifest-dir "tests"))
     "/"))
@@ -1972,16 +2206,17 @@
 (define (tltest-package-tests-subdir-prefix
   [tests-prefix : String]
   [name : String]) : String
-  (string-append tests-prefix (string-append name "/")))
+  (string_mod.string-append tests-prefix (string_mod.string-append name "/")))
 
 (define (tltest-package-manifest-managed-integration? [tests-prefix : String]) : bool
   (let
     [integration-prefix : String
       (tltest-package-tests-subdir-prefix tests-prefix "integration")]
     (or
-      (file-exists? (string-append integration-prefix "native-linux.manifest"))
-      (file-exists?
-        (string-append integration-prefix "native-windows.manifest")))))
+      (io_mod.file-exists?
+        (string_mod.string-append integration-prefix "native-linux.manifest"))
+      (io_mod.file-exists?
+        (string_mod.string-append integration-prefix "native-windows.manifest")))))
 
 (define (tltest-package-manifest-managed-integration-source-with?
   [normalized : String]
@@ -2102,7 +2337,7 @@
   test-cli-package-integration-skips-diagnostics-fixtures
   (if (tltest-package-integration-filter-self-test?)
     unit
-    (panic "test CLI package integration filter mismatch")))
+    (io_mod.panic "test CLI package integration filter mismatch")))
 
 (define (tltest-decls-have-main? [decls : AstDeclList]) : bool
   (match decls
@@ -2113,11 +2348,13 @@
         (tltest-decls-have-main? (box-get rest)))]))
 
 (define (tltest-package-source-line [source : String] [count : i64]) : String
-  (string-append
+  (string_mod.string-append
     "TypeLisp test file: "
-    (string-append
+    (string_mod.string-append
       source
-      (string-append " (" (string-append (int->string count) " test(s))\n")))))
+      (string_mod.string-append
+        " ("
+        (string_mod.string-append (string_mod.int->string count) " test(s))\n")))))
 
 (define (tltest-package-summary-line
   [mode : TestMode]
@@ -2125,21 +2362,25 @@
   [test-count : i64]) : String
   (match mode
     [(TestModeCheck)
-      (string-append
+      (string_mod.string-append
         "TypeLisp package test typecheck passed: "
-        (string-append
-          (int->string test-count)
-          (string-append
+        (string_mod.string-append
+          (string_mod.int->string test-count)
+          (string_mod.string-append
             " test(s) in "
-            (string-append (int->string file-count) " file(s)\n"))))]
+            (string_mod.string-append
+              (string_mod.int->string file-count)
+              " file(s)\n"))))]
     [(TestModeRun)
-      (string-append
+      (string_mod.string-append
         "TypeLisp package tests passed: "
-        (string-append
-          (int->string test-count)
-          (string-append
+        (string_mod.string-append
+          (string_mod.int->string test-count)
+          (string_mod.string-append
             " test(s) in "
-            (string-append (int->string file-count) " file(s)\n"))))]))
+            (string_mod.string-append
+              (string_mod.int->string file-count)
+              " file(s)\n"))))]))
 
 (define (tltest-package-run-one
   [source : String]
@@ -2153,13 +2394,13 @@
     [(InlineHarness program harness-paths count)
       (if (= count 0)
         (begin
-          (print-error
-            (string-append
+          (io_mod.print-error
+            (string_mod.string-append
               "test: discovered inline test marker but no inline tests in "
-              (string-append source "\n")))
+              (string_mod.string-append source "\n")))
           (ErrTestPackageTotals 1))
         (begin
-          (print-string (tltest-package-source-line source count))
+          (io_mod.print-string (tltest-package-source-line source count))
           (let
             [status : i64
               (match test-mode
@@ -2177,28 +2418,30 @@
               (ErrTestPackageTotals status)))))]))
 
 (define (tltest-package-integration-line [source : String]) : String
-  (string-append "TypeLisp integration test file: " (string-append source "\n")))
+  (string_mod.string-append
+    "TypeLisp integration test file: "
+    (string_mod.string-append source "\n")))
 
 (define (tltest-package-integration-missing-main [source : String]) : String
-  (string-append
+  (string_mod.string-append
     "test: integration test file has no main: "
-    (string-append source "\n")))
+    (string_mod.string-append source "\n")))
 
 (define (tltest-package-integration-check
   [source : String]
   [decls : AstDeclList]
   [paths : AstDeclPathList]) : ResultTestPackageTotals
   (begin
-    (print-string (tltest-package-integration-line source))
+    (io_mod.print-string (tltest-package-integration-line source))
     (if (tltest-decls-have-main? decls)
       (match (typecheck-compiler-program-with-paths (ast-program decls) paths)
         [(OkCompilerTypecheck _) (OkTestPackageTotals 1 1)]
         [(ErrCompilerTypecheck diag)
           (begin
-            (print-error (compiler-diagnostic-render diag))
+            (io_mod.print-error (compiler-diagnostic-render diag))
             (ErrTestPackageTotals 1))])
       (begin
-        (print-error (tltest-package-integration-missing-main source))
+        (io_mod.print-error (tltest-package-integration-missing-main source))
         (ErrTestPackageTotals 1)))))
 
 (define (tltest-package-integration-run
@@ -2208,7 +2451,7 @@
   [decls : AstDeclList]
   [paths : AstDeclPathList]) : ResultTestPackageTotals
   (begin
-    (print-string (tltest-package-integration-line source))
+    (io_mod.print-string (tltest-package-integration-line source))
     (if (tltest-decls-have-main? decls)
       (let
         [status : i64
@@ -2223,13 +2466,13 @@
           (OkTestPackageTotals 1 1)
           (ErrTestPackageTotals status)))
       (begin
-        (print-error (tltest-package-integration-missing-main source))
+        (io_mod.print-error (tltest-package-integration-missing-main source))
         (ErrTestPackageTotals 1)))))
 
 (define (tltest-package-run-integration-source
   [source : String]
   [target : String]
-  [roots : StringVec]
+  [roots : vector_mod.StringVec]
   [opt-level : i64]
   [test-mode : TestMode]
   [backend-target : CompilerBackendTarget]
@@ -2251,15 +2494,17 @@
           (tltest-package-integration-run source target opt-level decls paths)])]
     [(ErrCompilerLoadWithPaths diag)
       (begin
-        (print-error
-          (string-append "test: integration test source failed: " source))
-        (print-error (compiler-diagnostic-render diag))
+        (io_mod.print-error
+          (string_mod.string-append
+            "test: integration test source failed: "
+            source))
+        (io_mod.print-error (compiler-diagnostic-render diag))
         (ErrTestPackageTotals 1))]))
 
 (define (tltest-package-run-source
   [source : String]
   [target : String]
-  [roots : StringVec]
+  [roots : vector_mod.StringVec]
   [opt-level : i64]
   [test-mode : TestMode]
   [backend-target : CompilerBackendTarget]
@@ -2293,17 +2538,18 @@
             paths))]
       [(ErrCompilerLoadWithPaths diag)
         (begin
-          (print-error (string-append "test: package source failed: " source))
-          (print-error (compiler-diagnostic-render diag))
+          (io_mod.print-error
+            (string_mod.string-append "test: package source failed: " source))
+          (io_mod.print-error (compiler-diagnostic-render diag))
           (ErrTestPackageTotals 1))])
     (OkTestPackageTotals 0 0)))
 
 (define (tltest-package-run-sources-from
-  [sources : StringVec]
+  [sources : vector_mod.StringVec]
   [index : i64]
   [tests-prefix : String]
   [target : String]
-  [roots : StringVec]
+  [roots : vector_mod.StringVec]
   [opt-level : i64]
   [test-mode : TestMode]
   [backend-target : CompilerBackendTarget]
@@ -2312,10 +2558,10 @@
   [deps : CompilerPkgDeps]
   [file-count : i64]
   [test-count : i64]) : ResultTestPackageTotals
-  (if (>= index (string-vec-len sources))
+  (if (>= index (vector_mod.string-vec-len sources))
     (OkTestPackageTotals file-count test-count)
     (let
-      [source : String (string-vec-get sources index "")]
+      [source : String (vector_mod.string-vec-get sources index "")]
       (if (tltest-package-test-source? source tests-prefix)
         (tltest-package-run-sources-from
           sources
@@ -2359,10 +2605,10 @@
               (+ test-count source-tests))])))))
 
 (define (tltest-package-run-sources
-  [sources : StringVec]
+  [sources : vector_mod.StringVec]
   [tests-prefix : String]
   [target : String]
-  [roots : StringVec]
+  [roots : vector_mod.StringVec]
   [opt-level : i64]
   [test-mode : TestMode]
   [backend-target : CompilerBackendTarget]
@@ -2387,11 +2633,11 @@
     test-count))
 
 (define (tltest-package-run-integration-sources-from
-  [sources : StringVec]
+  [sources : vector_mod.StringVec]
   [index : i64]
   [tests-prefix : String]
   [target : String]
-  [roots : StringVec]
+  [roots : vector_mod.StringVec]
   [opt-level : i64]
   [test-mode : TestMode]
   [backend-target : CompilerBackendTarget]
@@ -2400,10 +2646,10 @@
   [deps : CompilerPkgDeps]
   [file-count : i64]
   [test-count : i64]) : ResultTestPackageTotals
-  (if (>= index (string-vec-len sources))
+  (if (>= index (vector_mod.string-vec-len sources))
     (OkTestPackageTotals file-count test-count)
     (let
-      [source : String (string-vec-get sources index "")]
+      [source : String (vector_mod.string-vec-get sources index "")]
       (if (tltest-package-integration-source? source tests-prefix)
         (match (tltest-package-run-integration-source
           source
@@ -2447,10 +2693,10 @@
           test-count)))))
 
 (define (tltest-package-run-integration-sources
-  [sources : StringVec]
+  [sources : vector_mod.StringVec]
   [tests-prefix : String]
   [target : String]
-  [roots : StringVec]
+  [roots : vector_mod.StringVec]
   [opt-level : i64]
   [test-mode : TestMode]
   [backend-target : CompilerBackendTarget]
@@ -2478,19 +2724,19 @@
   [manifest-path : String]
   [has-manifest : bool]
   [target : String]
-  [roots : StringVec]
+  [roots : vector_mod.StringVec]
   [opt-level : i64]
   [test-mode : TestMode]) : i64
   (match (source-tool-target target)
     [(ErrSourceToolTarget _)
       (begin
-        (print-error (tltest-unknown-target target))
+        (io_mod.print-error (tltest-unknown-target target))
         1)]
     [(OkSourceToolTarget backend-target)
       (match (package-source-discover-for "test" manifest-path has-manifest)
         [(ErrPackageSourceSet message)
           (begin
-            (print-error message)
+            (io_mod.print-error message)
             1)]
         [(OkPackageSourceSet source-set)
           (let
@@ -2501,7 +2747,7 @@
             (match (package-source-discover-tests-for "test" source-set)
               [(ErrPackageSourceList message)
                 (begin
-                  (print-error message)
+                  (io_mod.print-error message)
                   1)]
               [(OkPackageSourceList integration-sources)
                 (match (tltest-package-run-sources
@@ -2537,7 +2783,7 @@
                           integration-file-count
                           integration-test-count)
                         (begin
-                          (print-string
+                          (io_mod.print-string
                             (tltest-package-summary-line
                               test-mode
                               (+ inline-file-count integration-file-count)
@@ -2552,7 +2798,7 @@
   (match (tltest-build-harness source decls paths)
     [(InlineHarness program harness-paths count)
       (begin
-        (print-string (tltest-package-source-line source count))
+        (io_mod.print-string (tltest-package-source-line source count))
         (let
           [status : i64
             (if (= count 0)
@@ -2564,7 +2810,7 @@
 
 (define (tltest-check-file-source
   [source : String]
-  [roots : StringVec]
+  [roots : vector_mod.StringVec]
   [backend-target : CompilerBackendTarget]) : ResultTestFileCheck
   (match (compiler-driver-load-file-with-runtime
     source
@@ -2574,28 +2820,30 @@
       (tltest-check-file-loaded source decls paths backend-target)]
     [(ErrCompilerLoadWithPaths diag)
       (begin
-        (print-error (compiler-diagnostic-render diag))
+        (io_mod.print-error (compiler-diagnostic-render diag))
         (ErrTestFileCheck 1))]))
 
 (define (tltest-batch-summary-line [file-count : i64] [test-count : i64]) : String
-  (string-append
+  (string_mod.string-append
     "TypeLisp test batch typecheck passed: "
-    (string-append
-      (int->string test-count)
-      (string-append
+    (string_mod.string-append
+      (string_mod.int->string test-count)
+      (string_mod.string-append
         " test(s) in "
-        (string-append (int->string file-count) " file(s)\n")))))
+        (string_mod.string-append
+          (string_mod.int->string file-count)
+          " file(s)\n")))))
 
 (define (tltest-run-batch-check-path
   [source : String]
-  [roots : StringVec]
+  [roots : vector_mod.StringVec]
   [backend-target : CompilerBackendTarget]) : i64
   (let
-    [home : i64 (arena-current)]
-    [scratch : i64 (arena-make)]
+    [home : i64 (arena_mod.arena-current)]
+    [scratch : i64 (arena_mod.arena-make)]
     (begin
       (unsafe
-        (arena-set! scratch))
+        (arena_mod.arena-set! scratch))
       (let
         [entry-result : i64
           (begin
@@ -2603,27 +2851,27 @@
             (match (tltest-check-file-source source roots backend-target)
               [(ErrTestFileCheck status) (- 0 status)]
               [(OkTestFileCheck count) count]))]
-        [scratch-head : i64 (arena-current)]
+        [scratch-head : i64 (arena_mod.arena-current)]
         (begin
           (unsafe
-            (arena-set! home))
+            (arena_mod.arena-set! home))
           (unsafe
-            (arena-destroy scratch-head))
+            (arena_mod.arena-destroy scratch-head))
           entry-result)))))
 
 (define (tltest-run-batch-check-paths-from
-  [paths : StringVec]
+  [paths : vector_mod.StringVec]
   [index : i64]
-  [roots : StringVec]
+  [roots : vector_mod.StringVec]
   [backend-target : CompilerBackendTarget]
   [file-count : i64]
   [test-count : i64]) : i64
-  (if (>= index (string-vec-len paths))
+  (if (>= index (vector_mod.string-vec-len paths))
     (begin
-      (print-string (tltest-batch-summary-line file-count test-count))
+      (io_mod.print-string (tltest-batch-summary-line file-count test-count))
       0)
     (let
-      [source : String (string-vec-get paths index "")]
+      [source : String (vector_mod.string-vec-get paths index "")]
       ;; Match compile --batch: isolate each entry in a destroyable scratch
       ;; arena. Lexical arena rewind keeps overflow chunks retired until the
       ;; owning arena is destroyed (#2441), so destroying the entry arena is
@@ -2632,8 +2880,9 @@
         (tltest-run-batch-check-path source roots backend-target)]
       (if (< entry-result 0)
         (begin
-          (print-error (string-append "test: batch source failed: " source))
-          (print-error "\n")
+          (io_mod.print-error
+            (string_mod.string-append "test: batch source failed: " source))
+          (io_mod.print-error "\n")
           (- 0 entry-result))
         (tltest-run-batch-check-paths-from
           paths
@@ -2644,8 +2893,8 @@
           (+ test-count entry-result))))))
 
 (define (tltest-run-batch-check-paths
-  [paths : StringVec]
-  [roots : StringVec]
+  [paths : vector_mod.StringVec]
+  [roots : vector_mod.StringVec]
   [backend-target : CompilerBackendTarget]
   [file-count : i64]
   [test-count : i64]) : i64
@@ -2658,15 +2907,15 @@
     test-count))
 
 (define (tltest-run-batch-check
-  [paths : StringVec]
+  [paths : vector_mod.StringVec]
   [target : String]
-  [roots : StringVec]) : i64
+  [roots : vector_mod.StringVec]) : i64
   (begin
     (compiler-load-session-cache-enable!)
     (match (source-tool-target target)
       [(ErrSourceToolTarget _)
         (begin
-          (print-error (tltest-unknown-target target))
+          (io_mod.print-error (tltest-unknown-target target))
           1)]
       [(OkSourceToolTarget backend-target)
         (tltest-run-batch-check-paths paths roots backend-target 0 0)])))
@@ -2677,7 +2926,7 @@
       (match (source-tool-target target)
         [(ErrSourceToolTarget _)
           (begin
-            (print-error (tltest-unknown-target target))
+            (io_mod.print-error (tltest-unknown-target target))
             1)]
         [(OkSourceToolTarget backend-target)
           (match (compiler-driver-load-file-with-runtime
@@ -2708,7 +2957,7 @@
                           opt-level)]))])]
             [(ErrCompilerLoadWithPaths diag)
               (begin
-                (print-error (compiler-diagnostic-render diag))
+                (io_mod.print-error (compiler-diagnostic-render diag))
                 1)])])]
     [(TestBatchConfig paths target _ roots _ _)
       (tltest-run-batch-check paths target roots)]
@@ -2734,5 +2983,5 @@
     [(OkTestConfig config) (tltest-run-config config)]
     [(ErrTestConfig message)
       (begin
-        (print-error message)
+        (io_mod.print-error message)
         1)]))

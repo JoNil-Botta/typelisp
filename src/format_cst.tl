@@ -3,7 +3,7 @@
 ;; The CST keeps enough shape for a formatter without committing to final
 ;; layout: atoms keep original token spelling, comments stay as trivia nodes,
 ;; and parenthesized/bracketed lists keep their delimiter kind.
-(import "../stdlib/io.tl")
+(import stdlib.io as io_mod)
 
 (import "format_tokens.tl")
 
@@ -145,7 +145,7 @@
     [(OkFormatParsedCstList parsed) parsed]
     [(ErrFormatParsedCstList err)
       (begin
-        (panic (format-source-error-message err))
+        (io_mod.panic (format-source-error-message err))
         (FmtParsedCstList FmtCstNil idx))]))
 
 (define (fmt-parse-one-result [stream : FormatTokenStream] [idx : i64]) : ResultFormatParsedCst
@@ -195,7 +195,7 @@
     [(OkFormatParsedCst parsed) parsed]
     [(ErrFormatParsedCst err)
       (begin
-        (panic (format-source-error-message err))
+        (io_mod.panic (format-source-error-message err))
         (FmtParsedCst (FmtCstAtom (format-token-at stream idx)) idx))]))
 
 (define (parse-format-tokens-result [stream : FormatTokenStream]) : ResultFormatCst
@@ -210,7 +210,7 @@
     [(OkFormatCst tree) tree]
     [(ErrFormatCst err)
       (begin
-        (panic (format-source-error-message err))
+        (io_mod.panic (format-source-error-message err))
         (FmtCstForms (box FmtCstNil)))]))
 
 (define (parse-format-source-result [src : String]) : ResultFormatCst
@@ -223,7 +223,7 @@
     [(OkFormatCst tree) tree]
     [(ErrFormatCst err)
       (begin
-        (panic (format-source-error-message err))
+        (io_mod.panic (format-source-error-message err))
         (FmtCstForms (box FmtCstNil)))]))
 
 (define (format-cst-fixture) : String

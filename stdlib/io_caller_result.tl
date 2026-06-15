@@ -3,9 +3,11 @@
 ;# This module stays separate from `io.tl` while the compatibility wrapper keeps
 ;# the owned `String` API. It exposes helpers that may return caller-provided
 ;# fallback text without copying.
-(import "io.tl")
+(module stdlib.io_caller_result)
 
-(import "string.tl")
+(import stdlib.io as io_mod)
+
+(import stdlib.string as string_mod)
 
 ;: Result for `read-file-or-result`.
 ;:
@@ -42,9 +44,9 @@
 ;: Materialize a result as an owned `String`. Borrowed branches are copied at
 ;: this explicit compatibility boundary.
 (define (read-file-or-result-string [result : (ReadFileOrResult fallback)]) : String
-  (if (read-file-or-result-owned? result)
+  (if (stdlib.io_caller_result.read-file-or-result-owned? result)
     (struct-get result owned)
-    (string-copy-borrowed (struct-get result fallback))))
+    (string_mod.string-copy-borrowed (struct-get result fallback))))
 
 ;: Read `path`, returning fresh active-arena contents on success or a borrow of
 ;: `fallback` on any structured read error.
@@ -53,10 +55,28 @@
   [fallback : (& fallback str)]) : (ReadFileOrResult fallback)
   (let
     [result : (ReadFileOrResult fallback)
-      (read-file-or-borrowed-result fallback)]
+      (stdlib.io_caller_result.read-file-or-borrowed-result fallback)]
     (begin
-      (match (try-read-file path)
-        [(OkIoString contents)
-          (set! result (read-file-or-owned-result-like fallback contents))]
-        [(ErrIoString _) unit])
+      (match (io_mod.try-read-file path)
+        [(io_mod.OkIoString contents)
+          (set!
+            result
+            (stdlib.io_caller_result.read-file-or-owned-result-like
+              fallback
+              contents))]
+        [(io_mod.ErrIoString _) unit])
       result)))
+
+;# Dotted-module migration: preserve the pre-module flat stdlib surface.
+(export
+  (value read-file-or-result-borrowed?)
+  (value read-file-or-result-owned?)
+  (value read-file-or-borrowed-result)
+  (value read-file-or-owned-result-like)
+  (value read-file-or-result-string)
+  (value read-file-or-result)
+  (type ReadFileOrResult)
+  (constructor ReadFileOrResult)
+  (field ReadFileOrResult fallback)
+  (field ReadFileOrResult owned)
+  (field ReadFileOrResult is-owned))

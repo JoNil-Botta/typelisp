@@ -1,17 +1,19 @@
 ;; lsp_frame_smoke.tl - Runnable smoke for LSP diagnostic metadata adapters.
+(import stdlib.vector as vector_mod)
+
 (import "lsp_frame_core.tl")
 
-(define (lsp-smoke-string-vec-contains? [items : StringVec] [needle : String]) : bool
+(define (lsp-smoke-string-vec-contains? [items : vector_mod.StringVec] [needle : String]) : bool
   (let
     [idx : i64 0]
     [found : bool false]
     (begin
-      (while (< idx (string-vec-len items))
+      (while (< idx (vector_mod.string-vec-len items))
         (begin
-          (if (string-eq (string-vec-get items idx "") needle)
+          (if (string-eq (vector_mod.string-vec-get items idx "") needle)
             (begin
               (set! found true)
-              (set! idx (string-vec-len items)))
+              (set! idx (vector_mod.string-vec-len items)))
             (set! idx (+ idx 1)))))
       found)))
 
@@ -19,10 +21,10 @@
   (let
     [src : String
       "(define (square [x : i64]) : i64 (* x x)) (define answer : i64 42)"]
-    [names : StringVec (lsp-collect-def-names src (string-vec-new))]
-    [keywords : StringVec (lsp-split-spaces (lsp-completion-keywords))]
-    [builtins : StringVec (lsp-split-spaces (lsp-completion-builtins))]
-    [types : StringVec (lsp-split-spaces (lsp-completion-types))]
+    [names : vector_mod.StringVec (lsp-collect-def-names src (vector_mod.string-vec-new))]
+    [keywords : vector_mod.StringVec (lsp-split-spaces (lsp-completion-keywords))]
+    [builtins : vector_mod.StringVec (lsp-split-spaces (lsp-completion-builtins))]
+    [types : vector_mod.StringVec (lsp-split-spaces (lsp-completion-types))]
     (and
       (lsp-smoke-string-vec-contains? names "square")
       (lsp-smoke-string-vec-contains? names "answer")

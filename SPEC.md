@@ -4974,6 +4974,16 @@ The standard scratch workflows are:
   invalidated heap handles are dead. This is for compiler/tool internals that
   cannot express the workflow with the two safe forms.
 
+Game-style frame/level/global lifetime layouts should use those surfaces by
+lexical nesting: default program arena for global state, one `(with-arena level
+...)` for per-level state, an inner `(with-arena frame ...)` for per-frame
+scratch that returns only scalars or outer-owned values, and `(with-escape
+scratch ...)` with a first-class scratch arena when a supported frame result
+must be cloned into the active level state. The runnable cookbook is
+`examples/arena_lifetimes.tl`. This v1 pattern does not model overlapping level
+lifetimes, double-buffered levels, or event-driven unloads; those need the
+overlapping-lifetime work tracked by #2568.
+
 #### Source-level scoped region (v1) — `with-arena`
 
 The `(with-arena ident body ...)` form (§5.16) gives programs a lexically

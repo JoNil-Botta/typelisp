@@ -15902,6 +15902,32 @@
         frame
         (opt-loop-bce-blocks summaries params blocks))]))
 
+;; The block-local load-CSE pass only rewrites `IrInstrLoad` (every other instr
+;; is returned verbatim, see opt-load-cse-instr) and the bounds pass only drops
+;; redundant `IrInstrBoundsCheck` (it never rewrites any other instr). When a
+;; block contains none of the relevant instruction, running the pass walks and
+;; re-conses the whole list to produce a byte-identical result. These guards let
+;; such blocks skip the rebuild entirely and share the input spine -- the same
+;; "return unchanged instead of re-boxing the spine" trick used by the alias and
+;; load tables. Output is byte-identical, so the self-compile fixpoint is
+;; preserved; the win is pure allocation/time at -O1 (the cheap self-host level
+;; runs this pipeline once over every function).
+(define (opt-instr-list-has-bounds-check? [instrs : CompilerIrInstrList]) : bool
+  (match instrs
+    [(IrInstrNil) false]
+    [(IrInstrCons instr rest)
+      (match instr
+        [(IrInstrBoundsCheck _ _ _) true]
+        [_ (opt-instr-list-has-bounds-check? (box-get rest))])]))
+
+(define (opt-instr-list-has-load? [instrs : CompilerIrInstrList]) : bool
+  (match instrs
+    [(IrInstrNil) false]
+    [(IrInstrCons instr rest)
+      (match instr
+        [(IrInstrLoad _ _ _) true]
+        [_ (opt-instr-list-has-load? (box-get rest))])]))
+
 (define (optimize-block [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
     [(IrBlock label instrs)
@@ -15912,19 +15938,25 @@
       ;; result into its env, so over the block it already reaches a fixpoint --
       ;; a second `opt-fold-instrs` over the result only re-walked and rebuilt the
       ;; list without changing it (byte-identical output, ~0.9% of self-compile).
-      (compiler-ir-block
-        label
-        (opt-bounds-instrs
-          (OptBoundsNil)
-          (opt-copy-instrs
-            (OptCopyNil)
+      (let
+        [csed : CompilerIrInstrList
+          (opt-cse-instrs
+            (OptExprNil)
+            (opt-strength-instrs
+              (OptConstNil)
+              (opt-fold-instr-seq (OptConstNil) instrs)))]
+        [load-csed : CompilerIrInstrList
+          (if (opt-instr-list-has-load? csed)
             (opt-load-cse-instrs
               (OptLoadCseState (opt-alias-empty) (OptLoadNil))
-              (opt-cse-instrs
-                (OptExprNil)
-                (opt-strength-instrs
-                  (OptConstNil)
-                  (opt-fold-instr-seq (OptConstNil) instrs)))))))]))
+              csed)
+            csed)]
+        [copied : CompilerIrInstrList (opt-copy-instrs (OptCopyNil) load-csed)]
+        [bounded : CompilerIrInstrList
+          (if (opt-instr-list-has-bounds-check? copied)
+            (opt-bounds-instrs (OptBoundsNil) copied)
+            copied)]
+        (compiler-ir-block label bounded))]))
 
 (define (optimize-block-fast [block : CompilerIrBlock]) : CompilerIrBlock
   (match block

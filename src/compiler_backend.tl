@@ -22012,9 +22012,11 @@ tl_memcpy:
                             [runtime-externs-buf : TextBuf
                               (text-buf-append
                                 externs-buf
-                                (compiler-backend-runtime-externs-for-target
-                                  target
-                                  plan))]
+                                (if emit-entry
+                                  (compiler-backend-runtime-externs-for-target
+                                    target
+                                    plan)
+                                  ""))]
                             (begin
                               (cfg
                                 compile-profile

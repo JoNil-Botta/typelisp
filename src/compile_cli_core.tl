@@ -10,6 +10,7 @@
 ;; `--backend-mode scalar`, `avx2`, and `avx512` are accepted by the selfhost
 ;; compiler.
 ;; `--emit-ir` writes a deterministic TypeLisp-owned IR summary.
+;; `--pic` writes runtime-free, no-entry PIC assembly plus `<output>.fixups`.
 ;;
 ;; This is a main-free core (like the other `*_cli_core.tl` modules): the entry
 ;; `compile-cli-run [count]` dispatches and executes a command, reading `(arg 1)`

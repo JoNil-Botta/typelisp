@@ -759,6 +759,35 @@
         [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])]
     [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)]))
 
+(define (compiler-driver-load-file-for-pic-image
+  [input-path : String]
+  [stdlib-roots : StringVec]
+  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  (match (compiler-load-core-macro-prelude-with-roots-cfg
+    (sym-i64-empty)
+    stdlib-roots
+    cfgs)
+    [(OkCompilerLoadWithPaths
+        prelude-decls
+        prelude-paths
+        prelude-modules
+        prelude-seen)
+      (match (compiler-load-entry-file-with-paths-and-roots-cfg
+        input-path
+        prelude-seen
+        stdlib-roots
+        cfgs)
+        [(OkCompilerLoadWithPaths entry-decls entry-paths entry-modules seen)
+          (OkCompilerLoadWithPaths
+            (compiler-load-decl-list-append prelude-decls entry-decls)
+            (compiler-load-decl-path-list-append prelude-paths entry-paths)
+            (compiler-load-decl-module-list-append
+              prelude-modules
+              entry-modules)
+            seen)]
+        [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])]
+    [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)]))
+
 (define (compiler-driver-load-and-lower-escaping
   [input-path : String]
   [target : CompilerBackendTarget]
@@ -766,6 +795,42 @@
   [mode : CompilerBackendMode]
   [cfgs : SymI64Env]) : ResultCompilerDriverLowered
   (match (compiler-driver-load-file-with-runtime input-path stdlib-roots cfgs)
+    [(OkCompilerLoadWithPaths decls paths _ _)
+      (begin
+        (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
+        (cfg compile-profile (compiler-driver-profile-start-phase))
+        (match (lower-compiler-program-with-decl-paths-mode
+          input-path
+          (ast-program decls)
+          paths
+          (compiler-driver-lower-mode-for-target target mode))
+          [(OkCompilerLower program spans)
+            (begin
+              (cfg
+                compile-profile
+                (compiler-driver-profile-finish-phase "lower"))
+              (if (ty-node-pool-exhausted?)
+                (ErrCompilerDriverLowered
+                  (compiler-driver-ty-node-pool-exhausted-diagnostic input-path))
+                (OkCompilerDriverLowered program spans)))]
+          [(ErrCompilerLower diag)
+            (begin
+              (cfg
+                compile-profile
+                (compiler-driver-profile-finish-phase "lower"))
+              (ErrCompilerDriverLowered diag))]))]
+    [(ErrCompilerLoadWithPaths diag)
+      (begin
+        (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
+        (ErrCompilerDriverLowered diag))]))
+
+(define (compiler-driver-load-and-lower-pic-image
+  [input-path : String]
+  [target : CompilerBackendTarget]
+  [stdlib-roots : StringVec]
+  [mode : CompilerBackendMode]
+  [cfgs : SymI64Env]) : ResultCompilerDriverLowered
+  (match (compiler-driver-load-file-for-pic-image input-path stdlib-roots cfgs)
     [(OkCompilerLoadWithPaths decls paths _ _)
       (begin
         (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
@@ -985,7 +1050,7 @@
   [cfgs : SymI64Env]) : ResultCompilerDriverPic
   (begin
     (cfg compile-profile (compiler-driver-profile-start-total))
-    (match (compiler-driver-load-and-lower-escaping
+    (match (compiler-driver-load-and-lower-pic-image
       input-path
       target
       stdlib-roots
@@ -1000,7 +1065,7 @@
           has-target
           mode
           opt-level
-          true
+          false
           false)]
       [(ErrCompilerDriverLowered diag) (ErrCompilerDriverPic diag)])))
 

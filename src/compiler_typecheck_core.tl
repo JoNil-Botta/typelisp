@@ -15196,13 +15196,14 @@
         (tc-inline-field-layout-offset field)
         (tc-inline-field-layout-list-offset (box-get rest) name))]))
 
-;; #2601 slice: register-resident aggregate eightbytes may be INTEGER (the
-;; existing word-class data) or SSE when a field is exactly one aligned f64.
-;; Packed f32/f32 and mixed sub-word float eightbytes need bit-preserving pack/
-;; extract IR and intentionally stay memory-backed in this first safe slice.
+;; #2601/#2855: register-resident aggregate eightbytes may be INTEGER (the
+;; existing word-class data) or SSE. SSE admits exact aligned f64 fields and
+;; packed f32 fields that share an eightbyte only with other SSE fields. Mixed
+;; integer/float sub-word eightbytes intentionally stay memory-backed.
 (define (tc-sse-eightbyte-field? [ty : AstType] [offset : i64]) : bool
   (match (tc-type-strip-region ty)
     [(AstTyF64) (= (% offset 8) 0)]
+    [(AstTyF32) (= (% offset 4) 0)]
     [_ false]))
 
 (define (tc-register-field-class [ty : AstType] [offset : i64]) : i64
@@ -15211,6 +15212,24 @@
     (if (tc-sse-eightbyte-field? ty offset)
       1
       2)))
+
+(define (tc-register-field-size [ty : AstType]) : i64
+  (match (tc-type-strip-region ty)
+    [(AstTyI64) 8]
+    [(AstTyU64) 8]
+    [(AstTyF64) 8]
+    [(AstTyI32) 4]
+    [(AstTyU32) 4]
+    [(AstTyF32) 4]
+    [(AstTyI16) 2]
+    [(AstTyU16) 2]
+    [(AstTyI8) 1]
+    [(AstTyU8) 1]
+    [(AstTyBool) 1]
+    [(AstTyChar) 1]
+    [(AstTyPtr _) 8]
+    [(AstTyMutPtr _) 8]
+    [_ 8]))
 
 ;; #2386: true when every struct field is word-class, so the aggregate can be
 ;; packed into general-purpose register words instead of a memory slot.
@@ -15222,21 +15241,52 @@
         (tc-inline-fields-all-word-class? (box-get rest))
         false)]))
 
-;; #2601: true when every struct field can be assigned to a supported register
-;; eightbyte class. This preserves every existing INTEGER case and adds exact f64
-;; SSE eightbytes; unsupported packed f32/mixed-float words keep the memory path.
+;; #2601/#2855: true when every struct field can be assigned to a supported
+;; register eightbyte class and every occupied eightbyte has a single class.
+;; This preserves every existing INTEGER case, exact f64 SSE eightbytes, and
+;; homogeneous packed f32 SSE eightbytes while rejecting mixed int/float words.
+(define (tc-inline-field-overlaps-word?
+  [field : TcInlineFieldLayout]
+  [word-index : i64]) : bool
+  (let
+    [offset : i64 (tc-inline-field-layout-offset field)]
+    [size : i64 (tc-register-field-size (tc-inline-field-layout-type field))]
+    [word-base : i64 (* word-index 8)]
+    (and (< offset (+ word-base 8)) (> (+ offset size) word-base))))
+
+(define (tc-inline-fields-word-register-class
+  [fields : TcInlineFieldLayoutList]
+  [word-index : i64]
+  [found : i64]) : i64
+  (match fields
+    [(TcInlineFieldLayoutNil) found]
+    [(TcInlineFieldLayoutCons field rest)
+      (if (tc-inline-field-overlaps-word? field word-index)
+        (let
+          [class : i64
+            (tc-register-field-class
+              (tc-inline-field-layout-type field)
+              (tc-inline-field-layout-offset field))]
+          (if (= class 2)
+            2
+            (if (= found -1)
+              (tc-inline-fields-word-register-class
+                (box-get rest)
+                word-index
+                class)
+              (if (= found class)
+                (tc-inline-fields-word-register-class
+                  (box-get rest)
+                  word-index
+                  found)
+                2))))
+        (tc-inline-fields-word-register-class (box-get rest) word-index found))]))
+
 (define (tc-inline-fields-all-register-class?
   [fields : TcInlineFieldLayoutList]) : bool
-  (match fields
-    [(TcInlineFieldLayoutNil) true]
-    [(TcInlineFieldLayoutCons field rest)
-      (if (<
-        (tc-register-field-class
-          (tc-inline-field-layout-type field)
-          (tc-inline-field-layout-offset field))
-        2)
-        (tc-inline-fields-all-register-class? (box-get rest))
-        false)]))
+  (and
+    (< (tc-inline-fields-word-register-class fields 0 -1) 2)
+    (< (tc-inline-fields-word-register-class fields 1 -1) 2)))
 
 ;; #2386: true when every payload field of a variant is word-class -- so a 16-byte
 ;; enum (tag in word0, the single word-class payload in word1) can be carried
@@ -16314,8 +16364,9 @@
       ;; #2386: an integer-class struct of 1 word (8 B) or 2 words (16 B) whose
       ;; fields are all supported register classes is register-resident --
       ;; carried in one or two register-class words end-to-end. #2601 extends the
-      ;; original INTEGER-only gate to exact f64 SSE eightbytes; packed f32/mixed
-      ;; float words stay memory-backed until bit-preserving pack/extract lands.
+      ;; original INTEGER-only gate to exact f64 SSE eightbytes; #2855 admits
+      ;; homogeneous packed f32 SSE eightbytes while mixed int/float words stay
+      ;; memory-backed.
       (if (or (= size 8) (= size 16))
         (tc-inline-fields-all-register-class? fields)
         false)]

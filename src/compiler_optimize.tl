@@ -1010,6 +1010,7 @@
             (opt-const-bind env dst folded to-ty)
             (IrInstrMov dst folded to-ty))]
         [(IrNoValue) (OptInstrResult (opt-const-unbind env dst) instr)])]
+    [(IrInstrBitcast dst _ _ _) (opt-invalidate-def env dst instr)]
     [(IrInstrBinOp dst op l r ty)
       (match (opt-fold-binop
         op
@@ -1092,6 +1093,7 @@
     [(IrInstrGep dst base offset ty) (opt-invalidate-def env dst instr)]
     [(IrInstrLoad dst src ty) (opt-invalidate-def env dst instr)]
     [(IrInstrCast dst src from-ty to-ty) (opt-invalidate-def env dst instr)]
+    [(IrInstrBitcast dst src from-ty to-ty) (opt-invalidate-def env dst instr)]
     [(IrInstrBinOp dst op l r ty)
       (match (opt-strength-binop
         op
@@ -1234,6 +1236,7 @@
     [(IrInstrBoundsCheck index length _)
       (opt-collect-value-uses (opt-collect-value-uses set index) length)]
     [(IrInstrCast _ src _ _) (opt-collect-value-uses set src)]
+    [(IrInstrBitcast _ src _ _) (opt-collect-value-uses set src)]
     [(IrInstrSplat _ value _ _) (opt-collect-value-uses set value)]
     [(IrInstrVectorBinOp _ _ lhs rhs _ _)
       (opt-collect-value-uses (opt-collect-value-uses set lhs) rhs)]
@@ -1538,6 +1541,7 @@
         (opt-collect-value-uses-array items index)
         (opt-collect-value-uses-array items length))]
     [(IrInstrCast _ src _ _) (opt-collect-value-uses-array items src)]
+    [(IrInstrBitcast _ src _ _) (opt-collect-value-uses-array items src)]
     [(IrInstrSplat _ value _ _) (opt-collect-value-uses-array items value)]
     [(IrInstrVectorBinOp _ _ lhs rhs _ _)
       (begin
@@ -1862,6 +1866,8 @@
         (opt-aggregate-value-has-pointer? base ptrs index)
         (opt-aggregate-value-has-pointer? base ptrs length))]
     [(IrInstrCast _ src _ _) (opt-aggregate-value-has-pointer? base ptrs src)]
+    [(IrInstrBitcast _ src _ _)
+      (opt-aggregate-value-has-pointer? base ptrs src)]
     [(IrInstrBinOp _ _ lhs rhs _)
       (or
         (opt-aggregate-value-has-pointer? base ptrs lhs)
@@ -2527,6 +2533,8 @@
       (opt-aggregate-field-facts-invalidate-var facts dst)]
     [(IrInstrLoad dst _ _) (opt-aggregate-field-facts-invalidate-var facts dst)]
     [(IrInstrCast dst _ _ _)
+      (opt-aggregate-field-facts-invalidate-var facts dst)]
+    [(IrInstrBitcast dst _ _ _)
       (opt-aggregate-field-facts-invalidate-var facts dst)]
     [(IrInstrBinOp dst _ _ _ _)
       (opt-aggregate-field-facts-invalidate-var facts dst)]
@@ -3290,6 +3298,15 @@
             (opt-type-eq afrom bfrom)
             (opt-type-eq ato bto))]
         [_ false])]
+    [(IrInstrBitcast ad av afrom ato)
+      (match b
+        [(IrInstrBitcast bd bv bfrom bto)
+          (and
+            (= ad bd)
+            (opt-value-eq av bv)
+            (opt-type-eq afrom bfrom)
+            (opt-type-eq ato bto))]
+        [_ false])]
     [(IrInstrBinOp ad aop al ar aty)
       (match b
         [(IrInstrBinOp bd bop bl br bty)
@@ -3806,6 +3823,8 @@
       (OptCseResult (opt-expr-invalidate-var table dst) instr)]
     [(IrInstrCast dst _ _ _)
       (OptCseResult (opt-expr-invalidate-var table dst) instr)]
+    [(IrInstrBitcast dst _ _ _)
+      (OptCseResult (opt-expr-invalidate-var table dst) instr)]
     [(IrInstrPhi dst _ _)
       (OptCseResult (opt-expr-invalidate-var table dst) instr)]
     [(IrInstrLaneId dst _ _)
@@ -4003,6 +4022,8 @@
         size)]
     [(IrInstrCast dst src from-ty to-ty)
       (IrInstrCast dst (opt-copy-resolve env src) from-ty to-ty)]
+    [(IrInstrBitcast dst src from-ty to-ty)
+      (IrInstrBitcast dst (opt-copy-resolve env src) from-ty to-ty)]
     [(IrInstrBinOp dst op l r ty)
       (IrInstrBinOp dst op (opt-copy-resolve env l) (opt-copy-resolve env r) ty)]
     [(IrInstrUnOp dst op v ty) (IrInstrUnOp dst op (opt-copy-resolve env v) ty)]
@@ -4102,6 +4123,7 @@
     [(IrInstrGep dst _ _ _) (opt-copy-invalidate-var env dst)]
     [(IrInstrLoad dst _ _) (opt-copy-invalidate-var env dst)]
     [(IrInstrCast dst _ _ _) (opt-copy-invalidate-var env dst)]
+    [(IrInstrBitcast dst _ _ _) (opt-copy-invalidate-var env dst)]
     [(IrInstrBinOp dst _ _ _ _) (opt-copy-invalidate-var env dst)]
     [(IrInstrUnOp dst _ _ _) (opt-copy-invalidate-var env dst)]
     [(IrInstrLaneId dst _ _) (opt-copy-invalidate-var env dst)]
@@ -4292,6 +4314,7 @@
     [(IrInstrGep dst _ _ _) (opt-bounds-invalidate-var facts dst)]
     [(IrInstrLoad dst _ _) (opt-bounds-invalidate-var facts dst)]
     [(IrInstrCast dst _ _ _) (opt-bounds-invalidate-var facts dst)]
+    [(IrInstrBitcast dst _ _ _) (opt-bounds-invalidate-var facts dst)]
     [(IrInstrBinOp dst _ _ _ _) (opt-bounds-invalidate-var facts dst)]
     [(IrInstrUnOp dst _ _ _) (opt-bounds-invalidate-var facts dst)]
     [(IrInstrLaneId dst _ _) (opt-bounds-invalidate-var facts dst)]
@@ -6140,6 +6163,7 @@
     [(IrInstrGep dst _ _ _) (OptSomeI64 dst)]
     [(IrInstrLoad dst _ _) (OptSomeI64 dst)]
     [(IrInstrCast dst _ _ _) (OptSomeI64 dst)]
+    [(IrInstrBitcast dst _ _ _) (OptSomeI64 dst)]
     [(IrInstrBinOp dst _ _ _ _) (OptSomeI64 dst)]
     [(IrInstrUnOp dst _ _ _) (OptSomeI64 dst)]
     [(IrInstrLaneId dst _ _) (OptSomeI64 dst)]
@@ -6539,6 +6563,8 @@
         (opt-verify-value-use defs doms index block-label pos)
         (opt-verify-value-use defs doms length block-label pos))]
     [(IrInstrCast _ src _ _)
+      (opt-verify-value-use defs doms src block-label pos)]
+    [(IrInstrBitcast _ src _ _)
       (opt-verify-value-use defs doms src block-label pos)]
     [(IrInstrBinOp _ _ lhs rhs _)
       (opt-verify-two
@@ -7011,6 +7037,7 @@
     [(IrInstrMov dst _ ty) (opt-ssa-facts-add-def-ty facts dst ty)]
     [(IrInstrLoad dst _ ty) (opt-ssa-facts-add-def-ty facts dst ty)]
     [(IrInstrCast dst _ _ ty) (opt-ssa-facts-add-def-ty facts dst ty)]
+    [(IrInstrBitcast dst _ _ ty) (opt-ssa-facts-add-def-ty facts dst ty)]
     [(IrInstrBinOp dst _ _ _ ty) (opt-ssa-facts-add-def-ty facts dst ty)]
     [(IrInstrUnOp dst _ _ ty) (opt-ssa-facts-add-def-ty facts dst ty)]
     [(IrInstrCall dst _ _ ty) (opt-ssa-facts-add-def-ty facts dst ty)]
@@ -7474,6 +7501,17 @@
         [(OptSsaDstResult out-dst next-env out-next)
           (OptSsaInstrResult
             (IrInstrCast out-dst (opt-ssa-rewrite-value env src) from-ty to-ty)
+            next-env
+            out-next)])]
+    [(IrInstrBitcast dst src from-ty to-ty)
+      (match (opt-ssa-rename-dst facts env next-var dst)
+        [(OptSsaDstResult out-dst next-env out-next)
+          (OptSsaInstrResult
+            (IrInstrBitcast
+              out-dst
+              (opt-ssa-rewrite-value env src)
+              from-ty
+              to-ty)
             next-env
             out-next)])]
     [(IrInstrBinOp dst op lhs rhs ty)
@@ -8758,6 +8796,12 @@
         ok-label)]
     [(IrInstrCast dst src from-ty to-ty)
       (IrInstrCast
+        dst
+        (opt-global-copy-resolve facts doms block-id pos src)
+        from-ty
+        to-ty)]
+    [(IrInstrBitcast dst src from-ty to-ty)
+      (IrInstrBitcast
         dst
         (opt-global-copy-resolve facts doms block-id pos src)
         from-ty
@@ -10368,6 +10412,7 @@
   (match instr
     [(IrInstrMov _ _ _) true]
     [(IrInstrCast _ _ _ _) true]
+    [(IrInstrBitcast _ _ _ _) true]
     [(IrInstrBinOp _ op _ _ _) (not (opt-binop-traps? op))]
     [(IrInstrUnOp _ _ _ _) true]
     [_ false]))
@@ -12151,6 +12196,7 @@
   (match instr
     [(IrInstrMov dst _ _) dst]
     [(IrInstrCast dst _ _ _) dst]
+    [(IrInstrBitcast dst _ _ _) dst]
     [(IrInstrBinOp dst _ _ _ _) dst]
     [(IrInstrUnOp dst _ _ _) dst]
     [(IrInstrPhi dst _ _) dst]
@@ -12423,6 +12469,8 @@
           (opt-sccp-value state src from-ty)
           from-ty
           to-ty))]
+    [(IrInstrBitcast dst _ _ _)
+      (opt-sccp-state-bind state dst (OptSccpOverdefined))]
     [(IrInstrBinOp dst op lhs rhs ty)
       (opt-sccp-state-bind
         state
@@ -12742,6 +12790,8 @@
         dst
         to-ty
         (IrInstrCast dst (opt-sccp-rewrite-value env src) from-ty to-ty))]
+    [(IrInstrBitcast dst src from-ty to-ty)
+      (IrInstrBitcast dst (opt-sccp-rewrite-value env src) from-ty to-ty)]
     [(IrInstrBinOp dst op lhs rhs ty)
       (opt-sccp-rewrite-scalar-def
         env
@@ -13069,6 +13119,7 @@
     [(IrInstrGep dst _ _ _) dst]
     [(IrInstrLoad dst _ _) dst]
     [(IrInstrCast dst _ _ _) dst]
+    [(IrInstrBitcast dst _ _ _) dst]
     [(IrInstrBinOp dst _ _ _ _) dst]
     [(IrInstrUnOp dst _ _ _) dst]
     [(IrInstrLaneId dst _ _) dst]
@@ -15168,6 +15219,7 @@
         (if (opt-loop-bce-same-width-int-cast? from-ty to-ty)
           (opt-loop-bce-value-expr sources (struct-get state exprs) src)
           (OptLoopBceUnknown)))]
+    [(IrInstrBitcast dst _ _ _) (opt-loop-bce-state-invalidate-def state dst)]
     [(IrInstrBinOp dst op lhs rhs ty)
       (if (and (opt-binop-eq op (IrBinLt)) (opt-type-eq ty (AstTyBool)))
         (opt-loop-bce-state-bind-cmp
@@ -16983,6 +17035,7 @@
         (opt-inline-census-value index census idx)
         length)]
     [(IrInstrCast _ src _ _) (opt-inline-census-value index census src)]
+    [(IrInstrBitcast _ src _ _) (opt-inline-census-value index census src)]
     [(IrInstrBinOp _ _ lhs rhs _)
       (opt-inline-census-value
         index
@@ -17559,6 +17612,7 @@
     [(IrInstrGep dst _ _ _) (>= dst np)]
     [(IrInstrLoad dst _ _) (>= dst np)]
     [(IrInstrCast dst _ _ _) (>= dst np)]
+    [(IrInstrBitcast dst _ _ _) (>= dst np)]
     [(IrInstrBinOp dst _ _ _ _) (>= dst np)]
     [(IrInstrUnOp dst _ _ _) (>= dst np)]
     [(IrInstrPack dst _ _) (>= dst np)]
@@ -17831,6 +17885,12 @@
         (clone ty))]
     [(IrInstrCast dst src from to)
       (IrInstrCast
+        (opt-inline-rebase-var dst np base)
+        (opt-inline-remap-value src sa np base)
+        (clone from)
+        (clone to))]
+    [(IrInstrBitcast dst src from to)
+      (IrInstrBitcast
         (opt-inline-rebase-var dst np base)
         (opt-inline-remap-value src sa np base)
         (clone from)
@@ -18923,6 +18983,7 @@
     [(IrInstrBoundsCheck idx length _)
       (opt-reach-value index (opt-reach-value index state idx) length)]
     [(IrInstrCast _ src _ _) (opt-reach-value index state src)]
+    [(IrInstrBitcast _ src _ _) (opt-reach-value index state src)]
     [(IrInstrBinOp _ _ lhs rhs _)
       (opt-reach-value index (opt-reach-value index state lhs) rhs)]
     [(IrInstrUnOp _ _ src _) (opt-reach-value index state src)]
@@ -19209,6 +19270,11 @@
                 (if (opt-loop-bce-same-width-int-cast? from-ty to-ty)
                   (opt-loop-bce-argc-value-expr env src)
                   (OptLoopBceUnknown)))
+              seen
+              ok)]
+          [(IrInstrBitcast dst _ _ _)
+            (OptLoopBceArgcScan
+              (opt-loop-bce-expr-bind env dst (OptLoopBceUnknown))
               seen
               ok)]
           [(IrInstrReturn maybe)
@@ -19583,6 +19649,8 @@
     [(IrInstrLoad dst _ _)
       (OptRemapSpanSomeKey (opt-remap-spans-value-key value-prefix dst))]
     [(IrInstrCast dst _ _ _)
+      (OptRemapSpanSomeKey (opt-remap-spans-value-key value-prefix dst))]
+    [(IrInstrBitcast dst _ _ _)
       (OptRemapSpanSomeKey (opt-remap-spans-value-key value-prefix dst))]
     [(IrInstrBinOp dst _ _ _ _)
       (OptRemapSpanSomeKey (opt-remap-spans-value-key value-prefix dst))]
@@ -28711,6 +28779,7 @@
       [(IrInstrGep dst base _ _) (opt-alias-update-gep facts dst base)]
       [(IrInstrMov dst value _) (opt-alias-update-copy facts dst value)]
       [(IrInstrCast dst value _ _) (opt-alias-update-copy facts dst value)]
+      [(IrInstrBitcast dst value _ _) (opt-alias-update-copy facts dst value)]
       [(IrInstrLoad dst _ _) (opt-alias-mark-may-alias facts dst)]
       [(IrInstrEntryArgc dst) (opt-alias-remove-var facts dst)]
       [(IrInstrEntryArgv dst) (opt-alias-mark-may-alias facts dst)]
@@ -28897,6 +28966,10 @@
                 [_ (OptScratchBlocked "raw_pointer")])
               (OptScratchNoBlocker)))]
         [(IrInstrCast _ src _ _)
+          (if (opt-scratch-value-derived? roots facts src)
+            (OptScratchBlocked "raw_pointer")
+            (OptScratchNoBlocker))]
+        [(IrInstrBitcast _ src _ _)
           (if (opt-scratch-value-derived? roots facts src)
             (OptScratchBlocked "raw_pointer")
             (OptScratchNoBlocker))]

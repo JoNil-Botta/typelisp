@@ -486,6 +486,8 @@
     [(IrInstrMov dst _ ty) (compiler-reg-var-type-insert types dst ty)]
     [(IrInstrLoad dst _ ty) (compiler-reg-var-type-insert types dst ty)]
     [(IrInstrCast dst _ _ to-ty) (compiler-reg-var-type-insert types dst to-ty)]
+    [(IrInstrBitcast dst _ _ to-ty)
+      (compiler-reg-var-type-insert types dst to-ty)]
     [(IrInstrBinOp dst _ _ _ ty) (compiler-reg-var-type-insert types dst ty)]
     [(IrInstrUnOp dst _ _ ty) (compiler-reg-var-type-insert types dst ty)]
     [(IrInstrVectorReduce dst _ _ _ elem-ty)
@@ -547,6 +549,8 @@
     [(IrInstrLoad dst _ ty)
       (compiler-reg-var-type-array-set! present types dst ty)]
     [(IrInstrCast dst _ _ to-ty)
+      (compiler-reg-var-type-array-set! present types dst to-ty)]
+    [(IrInstrBitcast dst _ _ to-ty)
       (compiler-reg-var-type-array-set! present types dst to-ty)]
     [(IrInstrBinOp dst _ _ _ ty)
       (compiler-reg-var-type-array-set! present types dst ty)]
@@ -3658,6 +3662,8 @@
         (compiler-reg-color-invalidate-value! roots invalid length))]
     [(IrInstrCast _ src _ _)
       (compiler-reg-color-invalidate-value! roots invalid src)]
+    [(IrInstrBitcast _ src _ _)
+      (compiler-reg-color-invalidate-value! roots invalid src)]
     [(IrInstrBinOp _ _ lhs rhs _)
       (begin
         (compiler-reg-color-invalidate-value! roots invalid lhs)
@@ -4412,6 +4418,12 @@
         ok-label)]
     [(IrInstrCast dst src from-ty to-ty)
       (IrInstrCast
+        (compiler-reg-remap-id remap dst)
+        (compiler-reg-remap-value remap src)
+        from-ty
+        to-ty)]
+    [(IrInstrBitcast dst src from-ty to-ty)
+      (IrInstrBitcast
         (compiler-reg-remap-id remap dst)
         (compiler-reg-remap-value remap src)
         from-ty

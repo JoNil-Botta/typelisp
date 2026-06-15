@@ -4892,6 +4892,26 @@
       (IrInstrCast 6 (IrValueVar 5) (AstTyF32) (AstTyF64))
       "    cvtss2sd %xmm0, %xmm0\n")))
 
+(define (compiler-backend-bitcast-shape-ok?) : bool
+  (and
+    (backend-and4
+      (compiler-backend-instr-contains?
+        (IrInstrBitcast 6 (IrValueVar 5) (AstTyF32) (AstTyU64))
+        "    movd %xmm0, %eax\n")
+      (compiler-backend-instr-contains?
+        (IrInstrBitcast 6 (IrValueVar 5) (AstTyU64) (AstTyF32))
+        "    movd %eax, %xmm0\n")
+      (compiler-backend-instr-contains?
+        (IrInstrBitcast 6 (IrValueVar 5) (AstTyF64) (AstTyU64))
+        "    movq %xmm0, %rax\n")
+      (compiler-backend-instr-contains?
+        (IrInstrBitcast 6 (IrValueVar 5) (AstTyU64) (AstTyF64))
+        "    movq %rax, %xmm0\n"))
+    (not
+      (compiler-backend-instr-contains?
+        (IrInstrBitcast 6 (IrValueVar 5) (AstTyF64) (AstTyF32))
+        "unsupported bitcast"))))
+
 ;; A source exercising `array-ref`, used to confirm the lowerer's bounds-check
 ;; trap (#528) reaches the backend as a `call tl_oob_abort`.
 (define (compiler-backend-array-access-source) : String
@@ -6330,6 +6350,55 @@
     (compiler-backend-register-f64-aggregate-target-ok? (BackendTargetLinux))
     (compiler-backend-register-f64-aggregate-target-ok? (BackendTargetWindows))))
 
+(define (compiler-backend-register-f32-aggregate-source) : String
+  "(defstruct Vec2F32 (x f32) (y f32))
+(defstruct MixUF (tag u32) (value f32))
+(define global-vec : Vec2F32 (Vec2F32 1.0 2.0))
+(define (make-vec [x : f32] [y : f32]) : Vec2F32
+  (Vec2F32 x y))
+(define (sum-vec [v : Vec2F32]) : f32
+  (+ (struct-get v x) (struct-get v y)))
+(define (choose-vec [take-left : bool]) : Vec2F32
+  (if take-left
+    (Vec2F32 1.25 2.75)
+    (Vec2F32 9.0 10.0)))
+(define (mixed [m : MixUF]) : f32
+  (struct-get m value))
+(define (main) : i64
+  (begin
+    (set! global-vec (make-vec 3.5 4.5))
+    (if (= (+ (sum-vec global-vec) (sum-vec (choose-vec true))) 12.0)
+      (cast (mixed (MixUF (cast 5 : u32) 6.0)) : i64)
+      0)))")
+
+(define (compiler-backend-register-f32-aggregate-target-ok?
+  [target : CompilerBackendTarget]) : bool
+  (match (compiler-backend-emit-source-for-target
+    (compiler-backend-register-f32-aggregate-source)
+    target)
+    [(OkCompilerBackend asm)
+      (and
+        (backend-and8
+          (compiler-backend-string-contains? asm "    movd %xmm0, %eax\n")
+          (compiler-backend-string-contains? asm "    movd %eax, %xmm0\n")
+          (compiler-backend-string-contains? asm "    movsd ")
+          (compiler-backend-string-contains? asm "%xmm0")
+          (compiler-backend-string-contains? asm "    call ")
+          (compiler-backend-string-contains? asm "    movss 4(%r10), %xmm0\n")
+          (not (compiler-backend-string-contains? asm "unsupported bitcast"))
+          (not
+            (compiler-backend-string-contains?
+              asm
+              (compiler-backend-todo-marker))))
+        (not (compiler-backend-string-contains? asm "    movsd %rax"))
+        (not (compiler-backend-string-contains? asm "    movsd %rdx")))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-register-f32-aggregate-ok?) : bool
+  (and
+    (compiler-backend-register-f32-aggregate-target-ok? (BackendTargetLinux))
+    (compiler-backend-register-f32-aggregate-target-ok? (BackendTargetWindows))))
+
 ;; #750: a SysV call with seven integer args no longer rejects as "too many
 ;; call args". The 7th arg spills: 16-byte call space is reserved, the spilled
 ;; value is staged through %r11 and stored at 0(%rsp), and `add8` reads its
@@ -7177,7 +7246,10 @@
         (compiler-backend-phi-parallel-copy-ok?)
         (compiler-backend-phi-group-cycle-copy-ok?)
         (compiler-backend-branch-phi-edge-copy-ok?))
-      (and (compiler-backend-f64-ok?) (compiler-backend-f32-literal-binop-ok?))
+      (and
+        (compiler-backend-f64-ok?)
+        (compiler-backend-f32-literal-binop-ok?)
+        (compiler-backend-bitcast-shape-ok?))
       (compiler-backend-bool-control-flow-ok?)
       (and
         (compiler-backend-stack-args-ok?)
@@ -7259,7 +7331,8 @@
         (compiler-backend-global-compare-width-ok?))
       (and
         (compiler-backend-f64-abi-ok?)
-        (compiler-backend-register-f64-aggregate-ok?))
+        (compiler-backend-register-f64-aggregate-ok?)
+        (compiler-backend-register-f32-aggregate-ok?))
       (compiler-backend-win64-f64-abi-ok?)
       (compiler-backend-aggregate-storage-shape-ok?)
       (compiler-backend-shift-guard-ok?)

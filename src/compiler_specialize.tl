@@ -1983,30 +1983,22 @@
           buf
           "          (begin\n            (array-set! slots index ("
           occupied
-          " key value hash))\n            ("
-          insert-ok))
-      (set!
-        buf
-        (gen-tb5
-          buf
-          "\n              ("
-          map-name
-          "\n                slots\n                (+ ("
-          prefix
-          "-len map) 1)\n"))
-      (set!
-        buf
-        (gen-tb4
-          buf
-          "                (if reused-tombstone\n                  (- ("
-          prefix
-          "-deleted map) 1)\n                  ("
+          " key value hash))\n            (set!\n              (struct-get map len)\n              (+ ("
           prefix))
       (set!
         buf
-        (gen-tb5
+        (gen-tb3
           buf
-          "-deleted map))))))]\n      [("
+          "-len map) 1))\n            (if reused-tombstone\n              (set! (struct-get map deleted) (- ("
+          prefix
+          "-deleted map) 1))\n"))
+      (set!
+        buf
+        (gen-tb7
+          buf
+          "              unit)\n            ("
+          insert-ok
+          " map)))]\n      [("
           probe-full
           ") ("
           insert-full
@@ -2047,20 +2039,25 @@
           tombstone))
       (set!
         buf
-        (gen-tb4 buf "))\n          (" remove-ok "\n            (" map-name))
-      (set!
-        buf
-        (gen-tb4
+        (gen-tb3
           buf
-          "\n              slots\n              (- ("
+          "))\n          (set!\n            (struct-get map len)\n            (- ("
           prefix
-          "-len map) 1)\n              (+ ("
-          prefix))
+          "-len map) 1))\n"))
       (set!
         buf
-        (gen-tb5
+        (gen-tb3
           buf
-          "-deleted map) 1))))]\n      [("
+          "          (set!\n            (struct-get map deleted)\n            (+ ("
+          prefix
+          "-deleted map) 1))\n"))
+      (set!
+        buf
+        (gen-tb7
+          buf
+          "          ("
+          remove-ok
+          " map))]\n      [("
           probe-absent
           " _) ("
           remove-missing
@@ -2292,15 +2289,7 @@
         (gen-tb4
           buf
           prefix
-          "-rehash-from src dst rounded-capacity 0 old-capacity)\n      ("
-          map-name
-          " dst ("))
-      (set!
-        buf
-        (gen-tb4
-          buf
-          prefix
-          "-len map) 0))))\n(define ("
+          "-rehash-from src dst rounded-capacity 0 old-capacity)\n      (set! (struct-get map slots) dst)\n      (set! (struct-get map deleted) 0)\n      map)))\n(define ("
           prefix
           "-grow-capacity [capacity : i64]) : i64\n"))
       (set!
@@ -3315,30 +3304,22 @@
           buf
           "          (begin\n            (array-set! slots index ("
           occupied
-          " key value hash))\n            ("
-          insert-ok))
-      (set!
-        buf
-        (gen-tb5
-          buf
-          "\n              ("
-          map-name
-          "\n                slots\n                (+ ("
-          prefix
-          "-len map) 1)\n"))
-      (set!
-        buf
-        (gen-tb4
-          buf
-          "                (if reused-tombstone\n                  (- ("
-          prefix
-          "-deleted map) 1)\n                  ("
+          " key value hash))\n            (set!\n              (struct-get map len)\n              (+ ("
           prefix))
       (set!
         buf
-        (gen-tb5
+        (gen-tb3
           buf
-          "-deleted map))))))]\n      [("
+          "-len map) 1))\n            (if reused-tombstone\n              (set! (struct-get map deleted) (- ("
+          prefix
+          "-deleted map) 1))\n"))
+      (set!
+        buf
+        (gen-tb7
+          buf
+          "              unit)\n            ("
+          insert-ok
+          " map)))]\n      [("
           probe-full
           ") ("
           insert-full
@@ -3379,20 +3360,25 @@
           tombstone))
       (set!
         buf
-        (gen-tb4 buf "))\n          (" remove-ok "\n            (" map-name))
-      (set!
-        buf
-        (gen-tb4
+        (gen-tb3
           buf
-          "\n              slots\n              (- ("
+          "))\n          (set!\n            (struct-get map len)\n            (- ("
           prefix
-          "-len map) 1)\n              (+ ("
-          prefix))
+          "-len map) 1))\n"))
       (set!
         buf
-        (gen-tb5
+        (gen-tb3
           buf
-          "-deleted map) 1))))]\n      [("
+          "          (set!\n            (struct-get map deleted)\n            (+ ("
+          prefix
+          "-deleted map) 1))\n"))
+      (set!
+        buf
+        (gen-tb7
+          buf
+          "          ("
+          remove-ok
+          " map))]\n      [("
           probe-absent
           " _) ("
           remove-missing
@@ -3587,15 +3573,7 @@
         (gen-tb4
           buf
           prefix
-          "-rehash-from src dst rounded-capacity 0 old-capacity)\n      ("
-          map-name
-          " dst ("))
-      (set!
-        buf
-        (gen-tb4
-          buf
-          prefix
-          "-len map) 0))))\n(define ("
+          "-rehash-from src dst rounded-capacity 0 old-capacity)\n      (set! (struct-get map slots) dst)\n      (set! (struct-get map deleted) 0)\n      map)))\n(define ("
           prefix
           "-grow-capacity [capacity : i64]) : i64\n"))
       (set!
@@ -9108,6 +9086,11 @@
       "string-string-map-get-mut-entry-borrowed"]
     [i64-mut-entry-needle : String "I64I64MapMutEntry"]
     [i64-mut-entry-macro-needle : String "i64-i64-map-get-mut-entry"]
+    [metadata-len-mutation-needle : String
+      "(set!\n              (struct-get map len)"]
+    [metadata-deleted-mutation-needle : String "(set! (struct-get map deleted)"]
+    [metadata-slots-mutation-needle : String
+      "(set! (struct-get map slots) dst)"]
     (and
       (string-contains (& string-source) (& string-round-needle))
       (string-contains (& i64-source) (& i64-round-needle))
@@ -9118,7 +9101,13 @@
       (string-contains (& string-source) (& string-mut-entry-needle))
       (string-contains (& string-source) (& string-mut-entry-macro-needle))
       (string-contains (& i64-source) (& i64-mut-entry-needle))
-      (string-contains (& i64-source) (& i64-mut-entry-macro-needle)))))
+      (string-contains (& i64-source) (& i64-mut-entry-macro-needle))
+      (string-contains (& string-source) (& metadata-len-mutation-needle))
+      (string-contains (& i64-source) (& metadata-len-mutation-needle))
+      (string-contains (& string-source) (& metadata-deleted-mutation-needle))
+      (string-contains (& i64-source) (& metadata-deleted-mutation-needle))
+      (string-contains (& string-source) (& metadata-slots-mutation-needle))
+      (string-contains (& i64-source) (& metadata-slots-mutation-needle)))))
 
 (define (compiler-generated-hashmap-family-bundle-ok?) : bool
   (match (parse-ast-source (compiler-generated-hashmap-family-bundle-source))

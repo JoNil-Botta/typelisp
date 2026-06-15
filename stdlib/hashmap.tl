@@ -575,14 +575,11 @@
                       slots
                       index
                       (StringI64MapOccupied key value hash))
-                    (return
-                      (StringI64MapInsertOk
-                        (StringI64Map
-                          slots
-                          (+ (string-i64-map-len map) 1)
-                          (if reused-tombstone
-                            (- deleted 1)
-                            deleted))))))]
+                    (set! (struct-get map len) (+ (string-i64-map-len map) 1))
+                    (if reused-tombstone
+                      (set! (struct-get map deleted) (- deleted 1))
+                      unit)
+                    (return (StringI64MapInsertOk map))))]
               [(StringI64MapTombstone)
                 (let
                   [next : i64 (+ cursor 1)]
@@ -620,11 +617,9 @@
               [deleted : i64 (string-i64-map-deleted map)]
               (begin
                 (array-set! slots first (StringI64MapOccupied key value hash))
-                (StringI64MapInsertOk
-                  (StringI64Map
-                    slots
-                    (+ (string-i64-map-len map) 1)
-                    (- deleted 1)))))
+                (set! (struct-get map len) (+ (string-i64-map-len map) 1))
+                (set! (struct-get map deleted) (- deleted 1))
+                (StringI64MapInsertOk map)))
             (StringI64MapInsertFull map)))))))
 
 ;: Remove borrowed `key`, replacing its live slot with a tombstone (so probing
@@ -665,12 +660,11 @@
                   false)
                   (begin
                     (array-set! slots cursor (StringI64MapTombstone))
-                    (return
-                      (StringI64MapRemoveOk
-                        (StringI64Map
-                          slots
-                          (- (string-i64-map-len map) 1)
-                          (+ (string-i64-map-deleted map) 1)))))
+                    (set! (struct-get map len) (- (string-i64-map-len map) 1))
+                    (set!
+                      (struct-get map deleted)
+                      (+ (string-i64-map-deleted map) 1))
+                    (return (StringI64MapRemoveOk map)))
                   (let
                     [next : i64 (+ cursor 1)]
                     (begin
@@ -786,7 +780,9 @@
     (begin
       (string-i64-map-fill-empty dst 0 rounded-capacity)
       (string-i64-map-rehash-from src dst rounded-capacity 0 old-capacity)
-      (StringI64Map dst (string-i64-map-len map) 0))))
+      (set! (struct-get map slots) dst)
+      (set! (struct-get map deleted) 0)
+      map)))
 
 ;: Next capacity when growing: double, with a small floor so a tiny or empty
 ;: table grows to a useful size in one step.

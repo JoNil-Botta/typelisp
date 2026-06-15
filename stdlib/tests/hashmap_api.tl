@@ -983,39 +983,41 @@
       [u2 : StringI64Map (string-i64-map-insert-or-update u1 "beta" 20)]
       [removed : StringI64MapRemoveResult (string-i64-map-remove u2 "alpha")]
       [u6 : StringI64Map (remove-result-map removed)]
-      [inserted : StringI64MapEntryOrInsertResult
-        (string-i64-map-entry-or-insert u6 "alpha" 111)]
-      [u7 : StringI64Map (entry-or-insert-result-map inserted)]
-      [found : StringI64MapEntryOrInsertResult
-        (string-i64-map-entry-or-insert u7 "alpha" 222)]
-      [u8 : StringI64Map (entry-or-insert-result-map found)]
       (begin
         (assert-i64-eq
           (string-i64-map-deleted u6)
           1
           "entry test starts with one tombstone")
-        (assert-true
-          (entry-or-insert-inserted? inserted)
-          "entry-or-insert inserts missing key")
-        (assert-i64-eq
-          (entry-or-insert-value-or inserted -1)
-          111
-          "entry-or-insert returns inserted default")
-        (assert-i64-eq
-          (string-i64-map-deleted u7)
-          0
-          "entry-or-insert reuses tombstone")
-        (assert-false
-          (entry-or-insert-inserted? found)
-          "entry-or-insert finds existing key")
-        (assert-i64-eq
-          (entry-or-insert-value-or found -1)
-          111
-          "entry-or-insert returns existing value")
-        (assert-i64-eq
-          (lookup-value-or (string-i64-map-get u8 "alpha") -1)
-          111
-          "entry-or-insert found does not overwrite")))
+        (let
+          [inserted : StringI64MapEntryOrInsertResult
+            (string-i64-map-entry-or-insert u6 "alpha" 111)]
+          [u7 : StringI64Map (entry-or-insert-result-map inserted)]
+          [found : StringI64MapEntryOrInsertResult
+            (string-i64-map-entry-or-insert u7 "alpha" 222)]
+          [u8 : StringI64Map (entry-or-insert-result-map found)]
+          (begin
+            (assert-true
+              (entry-or-insert-inserted? inserted)
+              "entry-or-insert inserts missing key")
+            (assert-i64-eq
+              (entry-or-insert-value-or inserted -1)
+              111
+              "entry-or-insert returns inserted default")
+            (assert-i64-eq
+              (string-i64-map-deleted u7)
+              0
+              "entry-or-insert reuses tombstone")
+            (assert-false
+              (entry-or-insert-inserted? found)
+              "entry-or-insert finds existing key")
+            (assert-i64-eq
+              (entry-or-insert-value-or found -1)
+              111
+              "entry-or-insert returns existing value")
+            (assert-i64-eq
+              (lookup-value-or (string-i64-map-get u8 "alpha") -1)
+              111
+              "entry-or-insert found does not overwrite")))))
     (let
       [u0 : StringI64Map (string-i64-map-with-capacity 4)]
       [u1 : StringI64Map (string-i64-map-insert-or-update u0 "alpha" 111)]

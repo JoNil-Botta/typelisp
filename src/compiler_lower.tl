@@ -21411,6 +21411,9 @@
 (define (lower-avx2-masked-if-diagnostic) : String
   "lower: SPMD masked if is not supported in AVX2 backend mode; use scalar or avx512")
 
+(define (lower-spmd-bool-lane-diagnostic) : String
+  "lower: SPMD foreach bool dynamic-array lanes require AVX-512 backend mode; use scalar or avx512")
+
 (define (lower-simd-foreach-fallback-diagnostic) : String
   "lower: SPMD foreach does not match a SIMD lowering pattern for this backend mode; use scalar or a contiguous map/zip body with supported array and uniform operands")
 
@@ -21449,6 +21452,16 @@
   (match (tc-type-without-regions ty)
     [(AstTyI64) true]
     [_ false]))
+
+(define (lower-type-bool? [ty : AstType]) : bool
+  (match (tc-type-without-regions ty)
+    [(AstTyBool) true]
+    [_ false]))
+
+(define (lower-avx512-bool-lanes [mode : CompilerLowerMode]) : i64
+  (if (lower-mode-avx512? mode)
+    64
+    0))
 
 (define (lower-simd-lanes-for-elem [mode : CompilerLowerMode] [ty : AstType]) : i64
   (match mode
@@ -21851,7 +21864,9 @@
         (if (>= (lower-masked-vector-index-offset index idx) 0)
           (match (lower-dynamic-array-var env type-env arr)
             [(LowerSomeArrayVar _ elem-ty)
-              (lower-simd-lanes-for-elem mode elem-ty)]
+              (if (lower-type-bool? elem-ty)
+                (lower-avx512-bool-lanes mode)
+                (lower-simd-lanes-for-elem mode elem-ty))]
             [LowerNoArrayVar -1])
           -1))]
     [(AstExprArraySet arr-box idx-box value-box)
@@ -21862,9 +21877,23 @@
         (if (>= (lower-masked-vector-index-offset index idx) 0)
           (match (lower-dynamic-array-var env type-env arr)
             [(LowerSomeArrayVar _ elem-ty)
-              (lower-masked-vector-lanes-merge
-                (lower-simd-lanes-for-elem mode elem-ty)
-                (lower-masked-vector-expr-lanes mode env type-env index value))]
+              (if (lower-type-bool? elem-ty)
+                (let
+                  [value-lanes : i64
+                    (lower-masked-vector-expr-lanes
+                      mode
+                      env
+                      type-env
+                      index
+                      value)]
+                  (if (< value-lanes 0)
+                    -1
+                    (if (= value-lanes 0)
+                      (lower-avx512-bool-lanes mode)
+                      value-lanes)))
+                (lower-masked-vector-lanes-merge
+                  (lower-simd-lanes-for-elem mode elem-ty)
+                  (lower-masked-vector-expr-lanes mode env type-env index value)))]
             [LowerNoArrayVar -1])
           -1))]
     [(AstExprStructSet receiver-box _ value-box)
@@ -22054,6 +22083,179 @@
                   index
                   rest)))]))]))
 
+(define (lower-masked-vector-bool-array-lane?
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [arr : AstExpr]
+  [idx : AstExpr]) : bool
+  (if (>= (lower-masked-vector-index-offset index idx) 0)
+    (match (lower-dynamic-array-var env type-env arr)
+      [(LowerSomeArrayVar _ elem-ty) (lower-type-bool? elem-ty)]
+      [LowerNoArrayVar false])
+    false))
+
+(define (lower-masked-vector-body-has-bool-array-lane?
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [expr : AstExpr]) : bool
+  (match expr
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lower-masked-vector-body-has-bool-array-lane? env type-env index inner))]
+    [(AstExprAnn inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lower-masked-vector-body-has-bool-array-lane? env type-env index inner))]
+    [(AstExprCast inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lower-masked-vector-body-has-bool-array-lane? env type-env index inner))]
+    [(AstExprUnary _ inner-box)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lower-masked-vector-body-has-bool-array-lane? env type-env index inner))]
+    [(AstExprBinary _ left-box right-box)
+      (let
+        [left : AstExpr (ast-node-get left-box)]
+        [right : AstExpr (ast-node-get right-box)]
+        (or
+          (lower-masked-vector-body-has-bool-array-lane?
+            env
+            type-env
+            index
+            left)
+          (lower-masked-vector-body-has-bool-array-lane?
+            env
+            type-env
+            index
+            right)))]
+    [(AstExprLet bindings body-box)
+      (let
+        [body : AstExpr (ast-node-get body-box)]
+        (or
+          (lower-masked-vector-let-bindings-have-bool-array-lane?
+            env
+            type-env
+            index
+            bindings)
+          (lower-masked-vector-body-has-bool-array-lane?
+            env
+            type-env
+            index
+            body)))]
+    [(AstExprIf cond-box then-box else-box)
+      (let
+        [cond : AstExpr (ast-node-get cond-box)]
+        [then-branch : AstExpr (ast-node-get then-box)]
+        [else-branch : AstExpr (ast-node-get else-box)]
+        (or
+          (lower-masked-vector-body-has-bool-array-lane?
+            env
+            type-env
+            index
+            cond)
+          (lower-masked-vector-body-has-bool-array-lane?
+            env
+            type-env
+            index
+            then-branch)
+          (lower-masked-vector-body-has-bool-array-lane?
+            env
+            type-env
+            index
+            else-branch)))]
+    [(AstExprBegin exprs)
+      (lower-masked-vector-expr-list-has-bool-array-lane?
+        env
+        type-env
+        index
+        exprs)]
+    [(AstExprArrayRef arr-box idx-box)
+      (let
+        [arr : AstExpr (ast-node-get arr-box)]
+        [idx : AstExpr (ast-node-get idx-box)]
+        (lower-masked-vector-bool-array-lane? env type-env index arr idx))]
+    [(AstExprArraySet arr-box idx-box value-box)
+      (let
+        [arr : AstExpr (ast-node-get arr-box)]
+        [idx : AstExpr (ast-node-get idx-box)]
+        [value : AstExpr (ast-node-get value-box)]
+        (or
+          (lower-masked-vector-bool-array-lane? env type-env index arr idx)
+          (lower-masked-vector-body-has-bool-array-lane?
+            env
+            type-env
+            index
+            value)))]
+    [(AstExprStructSet receiver-box _ value-box)
+      (let
+        [receiver : AstExpr (ast-node-get receiver-box)]
+        [value : AstExpr (ast-node-get value-box)]
+        (or
+          (lower-masked-vector-body-has-bool-array-lane?
+            env
+            type-env
+            index
+            receiver)
+          (lower-masked-vector-body-has-bool-array-lane?
+            env
+            type-env
+            index
+            value)))]
+    [_ false]))
+
+(define (lower-masked-vector-expr-list-has-bool-array-lane?
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [exprs : AstExprList]) : bool
+  (match exprs
+    [(AstExprNil) false]
+    [(AstExprCons expr rest)
+      (let
+        [expr : AstExpr (ast-node-get expr)]
+        [rest : AstExprList (box-get rest)]
+        (or
+          (lower-masked-vector-body-has-bool-array-lane?
+            env
+            type-env
+            index
+            expr)
+          (lower-masked-vector-expr-list-has-bool-array-lane?
+            env
+            type-env
+            index
+            rest)))]))
+
+(define (lower-masked-vector-let-bindings-have-bool-array-lane?
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [bindings : AstLetBindingList]) : bool
+  (match bindings
+    [(AstLetBindingNil) false]
+    [(AstLetBindingCons binding rest)
+      (let
+        [rest : AstLetBindingList (box-get rest)]
+        (match binding
+          [(AstLetBinding _ _ init-box)
+            (let
+              [init : AstExpr (ast-node-get init-box)]
+              (or
+                (lower-masked-vector-body-has-bool-array-lane?
+                  env
+                  type-env
+                  index
+                  init)
+                (lower-masked-vector-let-bindings-have-bool-array-lane?
+                  env
+                  type-env
+                  index
+                  rest)))]))]))
+
 (define (lower-masked-vector-map
   [mode : CompilerLowerMode]
   [env : SymI64Env]
@@ -22062,7 +22264,9 @@
   [body : AstExpr]) : LowerMaybeMaskedVectorMap
   (if (and
     (lower-mode-avx512? mode)
-    (lower-masked-vector-body-has-varying-if? mode env type-env index body))
+    (or
+      (lower-masked-vector-body-has-varying-if? mode env type-env index body)
+      (lower-masked-vector-body-has-bool-array-lane? env type-env index body)))
     (let
       [lanes : i64
         (lower-masked-vector-expr-lanes mode env type-env index body)]
@@ -24020,9 +24224,7 @@
     [(LowerSomeArrayVar array-var elem-ty)
       (let
         [lane-ty : AstType (tc-type-without-regions elem-ty)]
-        (if (=
-          (lower-simd-lanes-for-elem (lower-state-mode state) lane-ty)
-          lanes)
+        (if (lower-type-bool? lane-ty)
           (match (lower-avx512-masked-index-value state index index-var idx)
             [(OkLowerExpr idx-lowered)
               (match idx-lowered
@@ -24036,9 +24238,25 @@
                       lanes
                       lane-ty))])]
             [(ErrLowerExpr message) (ErrLowerExpr message)])
-          (lower-avx512-masked-unsupported
-            expr
-            "mixed lane widths inside one masked foreach")))]
+          (if (=
+            (lower-simd-lanes-for-elem (lower-state-mode state) lane-ty)
+            lanes)
+            (match (lower-avx512-masked-index-value state index index-var idx)
+              [(OkLowerExpr idx-lowered)
+                (match idx-lowered
+                  [(LowerExpr idx-state idx-value _)
+                    (OkLowerExpr
+                      (lower-emit-predicated-load
+                        idx-state
+                        (IrValueVar array-var)
+                        idx-value
+                        active-mask
+                        lanes
+                        lane-ty))])]
+              [(ErrLowerExpr message) (ErrLowerExpr message)])
+            (lower-avx512-masked-unsupported
+              expr
+              "mixed lane widths inside one masked foreach"))))]
     [LowerNoArrayVar
       (lower-avx512-masked-unsupported
         expr
@@ -24062,9 +24280,7 @@
     [(LowerSomeArrayVar array-var elem-ty)
       (let
         [lane-ty : AstType (tc-type-without-regions elem-ty)]
-        (if (=
-          (lower-simd-lanes-for-elem (lower-state-mode state) lane-ty)
-          lanes)
+        (if (lower-type-bool? lane-ty)
           (match (lower-avx512-masked-index-value state index index-var idx)
             [(OkLowerExpr idx-lowered)
               (match idx-lowered
@@ -24097,9 +24313,44 @@
                               (AstTyUnit)))])]
                     [(ErrLowerExpr message) (ErrLowerExpr message)])])]
             [(ErrLowerExpr message) (ErrLowerExpr message)])
-          (lower-avx512-masked-unsupported
-            expr
-            "mixed lane widths inside one masked foreach")))]
+          (if (=
+            (lower-simd-lanes-for-elem (lower-state-mode state) lane-ty)
+            lanes)
+            (match (lower-avx512-masked-index-value state index index-var idx)
+              [(OkLowerExpr idx-lowered)
+                (match idx-lowered
+                  [(LowerExpr idx-state idx-value _)
+                    (match (lower-avx512-masked-expr
+                      ctx
+                      idx-state
+                      env
+                      type-env
+                      lane-locals
+                      index
+                      index-var
+                      active-mask
+                      lanes
+                      value)
+                      [(OkLowerExpr value-lowered)
+                        (match value-lowered
+                          [(LowerExpr value-state value-ir _)
+                            (OkLowerExpr
+                              (LowerExpr
+                                (lower-emit-predicated-store
+                                  value-state
+                                  (IrValueVar array-var)
+                                  idx-value
+                                  value-ir
+                                  active-mask
+                                  lanes
+                                  lane-ty)
+                                IrValueUnit
+                                (AstTyUnit)))])]
+                      [(ErrLowerExpr message) (ErrLowerExpr message)])])]
+              [(ErrLowerExpr message) (ErrLowerExpr message)])
+            (lower-avx512-masked-unsupported
+              expr
+              "mixed lane widths inside one masked foreach"))))]
     [LowerNoArrayVar
       (lower-avx512-masked-unsupported
         expr
@@ -25492,31 +25743,42 @@
                   (if (lower-mode-avx2? (lower-state-mode state))
                     (lower-avx2-masked-if-diagnostic)
                     "lower: SPMD masked if AVX-512 lowering is not available for this backend mode or branch shape")))
-              (if (lower-vector-body-has-array-read? body)
-                (if (lower-simple-vector-map-has-unsupported-byte-mul?
-                  (lower-state-mode state)
+              (if (and
+                (lower-mode-avx2? (lower-state-mode state))
+                (lower-masked-vector-body-has-bool-array-lane?
                   env
                   type-env
                   index
-                  body)
-                  (ErrLowerExpr
-                    (lower-diagnostic-at-expr
-                      body
-                      (lower-spmd-byte-mul-diagnostic)))
-                  (ErrLowerExpr
-                    (lower-diagnostic-at-expr
-                      body
-                      (lower-simd-foreach-fallback-diagnostic))))
-                (lower-scalar-foreach-lowered
-                  ctx
-                  state
-                  env
-                  type-env
-                  index
-                  index-ty
-                  start-value
-                  end-value
-                  body)))])])
+                  body))
+                (ErrLowerExpr
+                  (lower-diagnostic-at-expr
+                    body
+                    (lower-spmd-bool-lane-diagnostic)))
+                (if (lower-vector-body-has-array-read? body)
+                  (if (lower-simple-vector-map-has-unsupported-byte-mul?
+                    (lower-state-mode state)
+                    env
+                    type-env
+                    index
+                    body)
+                    (ErrLowerExpr
+                      (lower-diagnostic-at-expr
+                        body
+                        (lower-spmd-byte-mul-diagnostic)))
+                    (ErrLowerExpr
+                      (lower-diagnostic-at-expr
+                        body
+                        (lower-simd-foreach-fallback-diagnostic))))
+                  (lower-scalar-foreach-lowered
+                    ctx
+                    state
+                    env
+                    type-env
+                    index
+                    index-ty
+                    start-value
+                    end-value
+                    body))))])])
     (lower-scalar-foreach-lowered
       ctx
       state

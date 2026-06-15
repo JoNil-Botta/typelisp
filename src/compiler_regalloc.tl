@@ -1805,7 +1805,10 @@
     [(IrInstrVectorBinOp dst _ _ _ _ _) (compiler-live-set-insert set dst)]
     [(IrInstrSelect dst _ _ _ _ _) (compiler-live-set-insert set dst)]
     [(IrInstrVectorLoad dst _ _ _ _) (compiler-live-set-insert set dst)]
-    [(IrInstrPredicatedLoad dst _ _ _ _ _) (compiler-live-set-insert set dst)]
+    [(IrInstrPredicatedLoad dst _ _ _ _ elem-ty)
+      (match elem-ty
+        [(AstTyBool) set]
+        [_ (compiler-live-set-insert set dst)])]
     [_ set]))
 
 (define (compiler-reg-mask-defs-instr
@@ -1815,6 +1818,10 @@
     [(IrInstrVectorCompare dst _ _ _ _ _) (compiler-live-set-insert set dst)]
     [(IrInstrMaskBinOp dst _ _ _ _) (compiler-live-set-insert set dst)]
     [(IrInstrMaskNot dst _ _) (compiler-live-set-insert set dst)]
+    [(IrInstrPredicatedLoad dst _ _ _ _ elem-ty)
+      (match elem-ty
+        [(AstTyBool) (compiler-live-set-insert set dst)]
+        [_ set])]
     [(IrInstrTailMask dst _ _ _) (compiler-live-set-insert set dst)]
     [_ set]))
 

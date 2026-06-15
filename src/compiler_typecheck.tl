@@ -5368,7 +5368,7 @@
       "typecheck: spmd-broadcast lane must have type i64")
     (compiler-typecheck-error-ok?
       "(define (main [bs : (Array bool)] [out : (Array bool)] [n : i64]) : bool (begin (foreach ([i : i64 0 n]) (array-set! out i (spmd-broadcast (array-ref bs i) 0))) true))"
-      "typecheck: spmd-broadcast value must have type i32, i64, f32, or f64")))
+      "typecheck: spmd-broadcast value must have type i32, i64, f32, or f64; bool broadcast remains deferred")))
 
 ;; array-builtin signature rules (#1042): make-array length, array-ref array/index
 ;; types, array-set! value-type agreement, and array-push! dynamic-array

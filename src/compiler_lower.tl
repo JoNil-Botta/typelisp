@@ -4560,6 +4560,71 @@
           inner))]
     [_ state]))
 
+(define (lower-reach-add-module-export-value-item
+  [entry-path : String]
+  [decl-path : String]
+  [module : String]
+  [all-functions : StringI64Map]
+  [state : LowerReachState]
+  [item : AstExportItem]) : LowerReachState
+  (match item
+    [(AstExportValue name)
+      (lower-reach-add-logical
+        all-functions
+        state
+        (lower-decl-logical-name entry-path decl-path module name))]
+    [_ state]))
+
+(define (lower-reach-add-module-export-value-items
+  [entry-path : String]
+  [decl-path : String]
+  [module : String]
+  [all-functions : StringI64Map]
+  [state : LowerReachState]
+  [items : AstExportItemList]) : LowerReachState
+  (match items
+    [(AstExportItemNil) state]
+    [(AstExportItemCons item rest)
+      (lower-reach-add-module-export-value-items
+        entry-path
+        decl-path
+        module
+        all-functions
+        (lower-reach-add-module-export-value-item
+          entry-path
+          decl-path
+          module
+          all-functions
+          state
+          item)
+        (box-get rest))]))
+
+(define (lower-reach-add-module-export-root-decl
+  [entry-path : String]
+  [decl-path : String]
+  [module : String]
+  [all-functions : StringI64Map]
+  [state : LowerReachState]
+  [decl : AstDecl]) : LowerReachState
+  (match decl
+    [(AstDeclExport items)
+      (lower-reach-add-module-export-value-items
+        entry-path
+        decl-path
+        module
+        all-functions
+        state
+        items)]
+    [(AstDeclUnsafe inner-box)
+      (lower-reach-add-module-export-root-decl
+        entry-path
+        decl-path
+        module
+        all-functions
+        state
+        (box-get inner-box))]
+    [_ state]))
+
 (define (lower-reach-add-export-roots-in-module
   [decls : AstDeclList]
   [paths : AstDeclPathList]
@@ -4601,7 +4666,13 @@
                 decl-path
                 module
                 all-functions
-                state
+                (lower-reach-add-module-export-root-decl
+                  entry-path
+                  decl-path
+                  module
+                  all-functions
+                  state
+                  decl)
                 decl))]))]))
 
 (define (lower-prune-unreachable-functions-with-clone-roots
@@ -38486,6 +38557,13 @@
 (define (dead-helper) : i64 0)
 (unsafe (define (dead-unsafe) : i64 (dead-helper)))")
 
+(define (compiler-lower-module-export-dce-source) : String
+  "(define (main) : i64 0)
+(module demo)
+(define (public-helper) : i64 1)
+(define (dead-helper) : i64 2)
+(export (value public-helper))")
+
 (define (compiler-lower-ast-dce-ok?) : bool
   (let
     [program : AstProgram (compiler-lower-ast-dce-program)]
@@ -38577,6 +38655,37 @@
                     (compiler-lower-unsafe-ast-dce-kept-ok? (box-get kept-box))])]))])]
     [(ErrAstProgram _) false]))
 
+(define (compiler-lower-module-export-dce-ok?) : bool
+  (match (parse-ast-source (compiler-lower-module-export-dce-source))
+    [(OkAstProgram program)
+      (match program
+        [(AstProgram decls-box)
+          (let
+            [decls : AstDeclList (box-get decls-box)]
+            [names : LowerNameEnv
+              (lower-name-env-from-decls
+                decls
+                AstDeclPathNil
+                "entry.tl"
+                LowerNameNil)]
+            [pruned : LowerPrunedProgram
+              (lower-prune-unreachable-functions
+                "entry.tl"
+                program
+                AstDeclPathNil
+                names)]
+            (match pruned
+              [(LowerPrunedProgram kept-program _)
+                (match kept-program
+                  [(AstProgram kept-box)
+                    (let
+                      [kept : AstDeclList (box-get kept-box)]
+                      (and
+                        (lower-test-decl-list-defines? kept "main")
+                        (lower-test-decl-list-defines? kept "public-helper")
+                        (not (lower-test-decl-list-defines? kept "dead-helper"))))])]))])]
+    [(ErrAstProgram _) false]))
+
 (define (compiler-lower-boxed-helper-lists-ok?) : bool
   (let
     [names : LowerNameEnv
@@ -38619,6 +38728,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-module-specialize-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-module-export-dce-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-region-shape-ok?)

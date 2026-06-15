@@ -708,6 +708,20 @@
                     (IrSomeValue
                       (IrValueI64 (opt-fold-mod-value a b operand-ty)))
                     (IrNoValue))]
+                [(IrBinSafeDiv)
+                  (if (and
+                    (opt-integer-type? operand-ty)
+                    (opt-divmod-valid? a b operand-ty))
+                    (IrSomeValue
+                      (IrValueI64 (opt-fold-div-value a b operand-ty)))
+                    (IrNoValue))]
+                [(IrBinSafeMod)
+                  (if (and
+                    (opt-integer-type? operand-ty)
+                    (opt-divmod-valid? a b operand-ty))
+                    (IrSomeValue
+                      (IrValueI64 (opt-fold-mod-value a b operand-ty)))
+                    (IrNoValue))]
                 [(IrBinBitAnd)
                   (if (opt-integer-type? operand-ty)
                     (IrSomeValue
@@ -767,6 +781,10 @@
             [(IrBinSub) (opt-f64-to-ir-value (- a b) operand-ty)]
             [(IrBinMul) (opt-f64-to-ir-value (* a b) operand-ty)]
             [(IrBinDiv)
+              (if (= b 0.0)
+                (IrNoValue)
+                (opt-f64-to-ir-value (/ a b) operand-ty))]
+            [(IrBinSafeDiv)
               (if (= b 0.0)
                 (IrNoValue)
                 (opt-f64-to-ir-value (/ a b) operand-ty))]
@@ -2716,19 +2734,21 @@
     [(IrBinMul) 2]
     [(IrBinDiv) 3]
     [(IrBinMod) 4]
-    [(IrBinEq) 5]
-    [(IrBinNe) 6]
-    [(IrBinLt) 7]
-    [(IrBinLe) 8]
-    [(IrBinGt) 9]
-    [(IrBinGe) 10]
-    [(IrBinAnd) 11]
-    [(IrBinOr) 12]
-    [(IrBinBitAnd) 13]
-    [(IrBinBitOr) 14]
-    [(IrBinBitXor) 15]
-    [(IrBinShl) 16]
-    [(IrBinShr) 17]))
+    [(IrBinSafeDiv) 5]
+    [(IrBinSafeMod) 6]
+    [(IrBinEq) 7]
+    [(IrBinNe) 8]
+    [(IrBinLt) 9]
+    [(IrBinLe) 10]
+    [(IrBinGt) 11]
+    [(IrBinGe) 12]
+    [(IrBinAnd) 13]
+    [(IrBinOr) 14]
+    [(IrBinBitAnd) 15]
+    [(IrBinBitOr) 16]
+    [(IrBinBitXor) 17]
+    [(IrBinShl) 18]
+    [(IrBinShr) 19]))
 
 (define (opt-binop-eq [a : CompilerIrBinOp] [b : CompilerIrBinOp]) : bool
   (= (opt-binop-tag a) (opt-binop-tag b)))
@@ -13551,6 +13571,694 @@
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (opt-gvn-blocks-with-context (opt-cfg-context-build blocks) params blocks))
 
+;; --- proven-safe div/rem guard elision (#2937) ------------------------------
+;;
+;; This pass marks integer div/rem as non-trapping only from facts established by
+;; explicit dominating CFG edge checks. It deliberately ignores casts and joins:
+;; a fact reaches a successor only when that successor has exactly one reachable
+;; predecessor, so facts are never accidentally unioned across paths.
+(defenum OptDivRemFactKind
+  (OptDivRemFactNonZero)
+  (OptDivRemFactNotNegOne)
+  (OptDivRemFactNotSignedMin))
+
+(defenum OptDivRemFact
+  (OptDivRemFact i64 AstType OptDivRemFactKind))
+
+(defenum OptDivRemFacts
+  (OptDivRemFactsNil)
+  (OptDivRemFactsCons OptDivRemFact (Box OptDivRemFacts)))
+
+(defenum OptDivRemCmp
+  (OptDivRemNoCmp)
+  (OptDivRemCmp CompilerIrBinOp CompilerIrValue CompilerIrValue AstType i64))
+
+(defenum OptDivRemBlockResult
+  (OptDivRemNoBlock)
+  (OptDivRemSomeBlock CompilerIrBlock))
+
+(defenum OptDivRemInstrRewrite
+  (OptDivRemInstrRewrite OptDivRemFacts CompilerIrInstrList))
+
+(defenum OptDivRemBlockRewrite
+  (OptDivRemBlockRewrite CompilerIrBlock OptDivRemFacts))
+
+(define (opt-divrem-fact-kind-eq?
+  [a : OptDivRemFactKind]
+  [b : OptDivRemFactKind]) : bool
+  (match a
+    [(OptDivRemFactNonZero)
+      (match b
+        [(OptDivRemFactNonZero) true]
+        [_ false])]
+    [(OptDivRemFactNotNegOne)
+      (match b
+        [(OptDivRemFactNotNegOne) true]
+        [_ false])]
+    [(OptDivRemFactNotSignedMin)
+      (match b
+        [(OptDivRemFactNotSignedMin) true]
+        [_ false])]))
+
+(define (opt-divrem-facts-contains-kind?
+  [facts : OptDivRemFacts]
+  [var : i64]
+  [ty : AstType]
+  [kind : OptDivRemFactKind]) : bool
+  (match facts
+    [(OptDivRemFactsNil) false]
+    [(OptDivRemFactsCons fact rest)
+      (match fact
+        [(OptDivRemFact fact-var fact-ty fact-kind)
+          (if (and
+            (= fact-var var)
+            (opt-type-eq fact-ty ty)
+            (opt-divrem-fact-kind-eq? fact-kind kind))
+            true
+            (opt-divrem-facts-contains-kind? (box-get rest) var ty kind))])]))
+
+(define (opt-divrem-facts-add-kind
+  [facts : OptDivRemFacts]
+  [var : i64]
+  [ty : AstType]
+  [kind : OptDivRemFactKind]) : OptDivRemFacts
+  (if (opt-divrem-facts-contains-kind? facts var ty kind)
+    facts
+    (OptDivRemFactsCons (OptDivRemFact var ty kind) (box facts))))
+
+(define (opt-divrem-facts-remove-var [facts : OptDivRemFacts] [var : i64]) : OptDivRemFacts
+  (match facts
+    [(OptDivRemFactsNil) (OptDivRemFactsNil)]
+    [(OptDivRemFactsCons fact rest)
+      (match fact
+        [(OptDivRemFact fact-var _ _)
+          (let
+            [rest2 : OptDivRemFacts
+              (opt-divrem-facts-remove-var (box-get rest) var)]
+            (if (= fact-var var)
+              rest2
+              (OptDivRemFactsCons fact (box rest2))))])]))
+
+(define (opt-divrem-add-nonzero
+  [facts : OptDivRemFacts]
+  [var : i64]
+  [ty : AstType]) : OptDivRemFacts
+  (opt-divrem-facts-add-kind facts var ty (OptDivRemFactNonZero)))
+
+(define (opt-divrem-add-not-neg-one
+  [facts : OptDivRemFacts]
+  [var : i64]
+  [ty : AstType]) : OptDivRemFacts
+  (opt-divrem-facts-add-kind facts var ty (OptDivRemFactNotNegOne)))
+
+(define (opt-divrem-add-not-signed-min
+  [facts : OptDivRemFacts]
+  [var : i64]
+  [ty : AstType]) : OptDivRemFacts
+  (opt-divrem-facts-add-kind facts var ty (OptDivRemFactNotSignedMin)))
+
+(define (opt-divrem-add-exact-facts
+  [facts : OptDivRemFacts]
+  [var : i64]
+  [ty : AstType]
+  [value : i64]) : OptDivRemFacts
+  (let
+    [nonzero : OptDivRemFacts
+      (if (!= value 0)
+        (opt-divrem-add-nonzero facts var ty)
+        facts)]
+    [not-neg-one : OptDivRemFacts
+      (if (and (opt-signed-integer-type? ty) (!= value (- 0 1)))
+        (opt-divrem-add-not-neg-one nonzero var ty)
+        nonzero)]
+    (if (and (opt-signed-integer-type? ty) (!= value (opt-signed-min ty)))
+      (opt-divrem-add-not-signed-min not-neg-one var ty)
+      not-neg-one)))
+
+(define (opt-divrem-add-not-eq-facts
+  [facts : OptDivRemFacts]
+  [var : i64]
+  [ty : AstType]
+  [value : i64]) : OptDivRemFacts
+  (let
+    [nonzero : OptDivRemFacts
+      (if (= value 0)
+        (opt-divrem-add-nonzero facts var ty)
+        facts)]
+    [not-neg-one : OptDivRemFacts
+      (if (and (opt-signed-integer-type? ty) (= value (- 0 1)))
+        (opt-divrem-add-not-neg-one nonzero var ty)
+        nonzero)]
+    (if (and (opt-signed-integer-type? ty) (= value (opt-signed-min ty)))
+      (opt-divrem-add-not-signed-min not-neg-one var ty)
+      not-neg-one)))
+
+(define (opt-divrem-add-gt-facts
+  [facts : OptDivRemFacts]
+  [var : i64]
+  [ty : AstType]
+  [value : i64]) : OptDivRemFacts
+  (let
+    [nonzero : OptDivRemFacts
+      (if (opt-typed-ge? value 0 ty)
+        (opt-divrem-add-nonzero facts var ty)
+        facts)]
+    [not-neg-one : OptDivRemFacts
+      (if (and (opt-signed-integer-type? ty) (>= value (- 0 1)))
+        (opt-divrem-add-not-neg-one nonzero var ty)
+        nonzero)]
+    (if (and (opt-signed-integer-type? ty) (>= value (opt-signed-min ty)))
+      (opt-divrem-add-not-signed-min not-neg-one var ty)
+      not-neg-one)))
+
+(define (opt-divrem-add-ge-facts
+  [facts : OptDivRemFacts]
+  [var : i64]
+  [ty : AstType]
+  [value : i64]) : OptDivRemFacts
+  (let
+    [nonzero : OptDivRemFacts
+      (if (opt-typed-gt? value 0 ty)
+        (opt-divrem-add-nonzero facts var ty)
+        facts)]
+    [not-neg-one : OptDivRemFacts
+      (if (and (opt-signed-integer-type? ty) (>= value 0))
+        (opt-divrem-add-not-neg-one nonzero var ty)
+        nonzero)]
+    (if (and (opt-signed-integer-type? ty) (> value (opt-signed-min ty)))
+      (opt-divrem-add-not-signed-min not-neg-one var ty)
+      not-neg-one)))
+
+(define (opt-divrem-add-lt-facts
+  [facts : OptDivRemFacts]
+  [var : i64]
+  [ty : AstType]
+  [value : i64]) : OptDivRemFacts
+  (let
+    [nonzero : OptDivRemFacts
+      (if (and (opt-signed-integer-type? ty) (<= value 0))
+        (opt-divrem-add-nonzero facts var ty)
+        facts)]
+    (if (and (opt-signed-integer-type? ty) (<= value (- 0 1)))
+      (opt-divrem-add-not-neg-one nonzero var ty)
+      nonzero)))
+
+(define (opt-divrem-add-le-facts
+  [facts : OptDivRemFacts]
+  [var : i64]
+  [ty : AstType]
+  [value : i64]) : OptDivRemFacts
+  (let
+    [nonzero : OptDivRemFacts
+      (if (and (opt-signed-integer-type? ty) (< value 0))
+        (opt-divrem-add-nonzero facts var ty)
+        facts)]
+    (if (and (opt-signed-integer-type? ty) (<= value (- 0 2)))
+      (opt-divrem-add-not-neg-one nonzero var ty)
+      nonzero)))
+
+(define (opt-divrem-add-compare-facts
+  [facts : OptDivRemFacts]
+  [var : i64]
+  [ty : AstType]
+  [op : CompilerIrBinOp]
+  [value : i64]) : OptDivRemFacts
+  (if (not (opt-integer-type? ty))
+    facts
+    (match op
+      [(IrBinEq) (opt-divrem-add-exact-facts facts var ty value)]
+      [(IrBinNe) (opt-divrem-add-not-eq-facts facts var ty value)]
+      [(IrBinGt) (opt-divrem-add-gt-facts facts var ty value)]
+      [(IrBinGe) (opt-divrem-add-ge-facts facts var ty value)]
+      [(IrBinLt) (opt-divrem-add-lt-facts facts var ty value)]
+      [(IrBinLe) (opt-divrem-add-le-facts facts var ty value)]
+      [_ facts])))
+
+(define (opt-divrem-invert-compare [op : CompilerIrBinOp]) : CompilerIrBinOp
+  (match op
+    [(IrBinEq) (IrBinNe)]
+    [(IrBinNe) (IrBinEq)]
+    [(IrBinLt) (IrBinGe)]
+    [(IrBinLe) (IrBinGt)]
+    [(IrBinGt) (IrBinLe)]
+    [(IrBinGe) (IrBinLt)]
+    [_ op]))
+
+(define (opt-divrem-flip-compare [op : CompilerIrBinOp]) : CompilerIrBinOp
+  (match op
+    [(IrBinLt) (IrBinGt)]
+    [(IrBinLe) (IrBinGe)]
+    [(IrBinGt) (IrBinLt)]
+    [(IrBinGe) (IrBinLe)]
+    [_ op]))
+
+(define (opt-divrem-edge-compare-op
+  [op : CompilerIrBinOp]
+  [truthy-edge? : bool]) : CompilerIrBinOp
+  (if truthy-edge?
+    op
+    (opt-divrem-invert-compare op)))
+
+(define (opt-divrem-compare-op? [op : CompilerIrBinOp]) : bool
+  (match op
+    [(IrBinEq) true]
+    [(IrBinNe) true]
+    [(IrBinLt) true]
+    [(IrBinLe) true]
+    [(IrBinGt) true]
+    [(IrBinGe) true]
+    [_ false]))
+
+(define (opt-divrem-value-type
+  [types : OptSsaVarTypes]
+  [value : CompilerIrValue]
+  [fallback : AstType]) : AstType
+  (match value
+    [(IrValueVar var)
+      (match (opt-ssa-var-type-lookup types var)
+        [(OptSomeAstType ty) ty]
+        [(OptNoAstType) fallback])]
+    [_ fallback]))
+
+(define (opt-divrem-add-edge-facts-from-cmp
+  [facts : OptDivRemFacts]
+  [types : OptSsaVarTypes]
+  [instrs : CompilerIrInstrSeq]
+  [cmp-index : i64]
+  [op : CompilerIrBinOp]
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]
+  [ty : AstType]) : OptDivRemFacts
+  (let
+    [operand-ty : AstType
+      (match lhs
+        [(IrValueVar _) (opt-divrem-value-type types lhs ty)]
+        [_ (opt-divrem-value-type types rhs ty)])]
+    (match lhs
+      [(IrValueVar var)
+        (if (opt-divrem-var-defined-at-or-after? instrs cmp-index var)
+          facts
+          (match (opt-normalize-scalar-to-i64 rhs operand-ty)
+            [(OptSomeI64 value)
+              (opt-divrem-add-compare-facts facts var operand-ty op value)]
+            [(OptNoI64) facts]))]
+      [_
+        (match rhs
+          [(IrValueVar var)
+            (if (opt-divrem-var-defined-at-or-after? instrs cmp-index var)
+              facts
+              (match (opt-normalize-scalar-to-i64 lhs operand-ty)
+                [(OptSomeI64 value)
+                  (opt-divrem-add-compare-facts
+                    facts
+                    var
+                    operand-ty
+                    (opt-divrem-flip-compare op)
+                    value)]
+                [(OptNoI64) facts]))]
+          [_ facts])])))
+
+(define (opt-divrem-edge-facts
+  [facts : OptDivRemFacts]
+  [types : OptSsaVarTypes]
+  [instrs : CompilerIrInstrSeq]
+  [cond : CompilerIrValue]
+  [truthy-edge? : bool]) : OptDivRemFacts
+  (match cond
+    [(IrValueVar cond-var)
+      (match (opt-divrem-find-cmp-def instrs cond-var)
+        [(OptDivRemCmp op lhs rhs ty cmp-index)
+          (opt-divrem-add-edge-facts-from-cmp
+            facts
+            types
+            instrs
+            cmp-index
+            (opt-divrem-edge-compare-op op truthy-edge?)
+            lhs
+            rhs
+            ty)]
+        [(OptDivRemNoCmp) facts])]
+    [_ facts]))
+
+(define (opt-divrem-find-cmp-def-from
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [cond-var : i64]) : OptDivRemCmp
+  (if (< index 0)
+    (OptDivRemNoCmp)
+    (match (compiler-ir-instr-seq-ref instrs index)
+      [(IrInstrBinOp dst op lhs rhs ty)
+        (if (and (= dst cond-var) (opt-divrem-compare-op? op))
+          (OptDivRemCmp op lhs rhs ty index)
+          (opt-divrem-find-cmp-def-from instrs (- index 1) cond-var))]
+      [_ (opt-divrem-find-cmp-def-from instrs (- index 1) cond-var)])))
+
+(define (opt-divrem-find-cmp-def [instrs : CompilerIrInstrSeq] [cond-var : i64]) : OptDivRemCmp
+  (opt-divrem-find-cmp-def-from
+    instrs
+    (- (compiler-ir-instr-seq-count instrs) 1)
+    cond-var))
+
+(define (opt-divrem-instr-def-var [instr : CompilerIrInstr]) : OptMaybeI64
+  (match instr
+    [(IrInstrCallIndirect dst _ _ _) (OptSomeI64 dst)]
+    [(IrInstrCallIndirectC dst _ _ _) (OptSomeI64 dst)]
+    [_ (opt-instr-def-var instr)]))
+
+(define (opt-divrem-instr-defines-var? [instr : CompilerIrInstr] [var : i64]) : bool
+  (match (opt-divrem-instr-def-var instr)
+    [(OptSomeI64 dst) (= dst var)]
+    [(OptNoI64) false]))
+
+(define (opt-divrem-var-defined-at-or-after-from?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [count : i64]
+  [var : i64]) : bool
+  (if (>= index count)
+    false
+    (if (opt-divrem-instr-defines-var?
+      (compiler-ir-instr-seq-ref instrs index)
+      var)
+      true
+      (opt-divrem-var-defined-at-or-after-from? instrs (+ index 1) count var))))
+
+(define (opt-divrem-var-defined-at-or-after?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [var : i64]) : bool
+  (opt-divrem-var-defined-at-or-after-from?
+    instrs
+    index
+    (compiler-ir-instr-seq-count instrs)
+    var))
+
+(define (opt-divrem-literal-proves-kind?
+  [value : CompilerIrValue]
+  [ty : AstType]
+  [kind : OptDivRemFactKind]) : bool
+  (match (opt-normalize-scalar-to-i64 value ty)
+    [(OptSomeI64 n)
+      (match kind
+        [(OptDivRemFactNonZero) (!= n 0)]
+        [(OptDivRemFactNotNegOne)
+          (if (opt-signed-integer-type? ty)
+            (!= n (- 0 1))
+            true)]
+        [(OptDivRemFactNotSignedMin)
+          (if (opt-signed-integer-type? ty)
+            (!= n (opt-signed-min ty))
+            true)])]
+    [(OptNoI64) false]))
+
+(define (opt-divrem-value-proves-kind?
+  [facts : OptDivRemFacts]
+  [value : CompilerIrValue]
+  [ty : AstType]
+  [kind : OptDivRemFactKind]) : bool
+  (if (opt-divrem-literal-proves-kind? value ty kind)
+    true
+    (match value
+      [(IrValueVar var) (opt-divrem-facts-contains-kind? facts var ty kind)]
+      [_ false])))
+
+(define (opt-divrem-proven-safe?
+  [facts : OptDivRemFacts]
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]
+  [ty : AstType]) : bool
+  (if (not (opt-integer-type? ty))
+    false
+    (if (opt-unsigned-integer-type? ty)
+      (opt-divrem-value-proves-kind? facts rhs ty (OptDivRemFactNonZero))
+      (and
+        (opt-divrem-value-proves-kind? facts rhs ty (OptDivRemFactNonZero))
+        (or
+          (opt-divrem-value-proves-kind? facts rhs ty (OptDivRemFactNotNegOne))
+          (opt-divrem-value-proves-kind?
+            facts
+            lhs
+            ty
+            (OptDivRemFactNotSignedMin)))))))
+
+(define (opt-divrem-rewrite-op
+  [facts : OptDivRemFacts]
+  [op : CompilerIrBinOp]
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]
+  [ty : AstType]) : CompilerIrBinOp
+  (match op
+    [(IrBinDiv)
+      (if (opt-divrem-proven-safe? facts lhs rhs ty)
+        (IrBinSafeDiv)
+        op)]
+    [(IrBinMod)
+      (if (opt-divrem-proven-safe? facts lhs rhs ty)
+        (IrBinSafeMod)
+        op)]
+    [_ op]))
+
+(define (opt-divrem-rewrite-instr
+  [facts : OptDivRemFacts]
+  [instr : CompilerIrInstr]) : CompilerIrInstr
+  (match instr
+    [(IrInstrBinOp dst op lhs rhs ty)
+      (IrInstrBinOp dst (opt-divrem-rewrite-op facts op lhs rhs ty) lhs rhs ty)]
+    [_ instr]))
+
+(define (opt-divrem-facts-after-instr
+  [facts : OptDivRemFacts]
+  [instr : CompilerIrInstr]) : OptDivRemFacts
+  (match (opt-divrem-instr-def-var instr)
+    [(OptSomeI64 dst) (opt-divrem-facts-remove-var facts dst)]
+    [(OptNoI64) facts]))
+
+(define (opt-divrem-rewrite-instr-seq-from
+  [facts : OptDivRemFacts]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [count : i64]
+  [out-rev : CompilerIrInstrList]) : OptDivRemInstrRewrite
+  (if (>= index count)
+    (OptDivRemInstrRewrite
+      facts
+      (compiler-ir-instr-list-reverse-onto out-rev IrInstrNil))
+    (let
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+      [rewritten : CompilerIrInstr (opt-divrem-rewrite-instr facts instr)]
+      (opt-divrem-rewrite-instr-seq-from
+        (opt-divrem-facts-after-instr facts rewritten)
+        instrs
+        (+ index 1)
+        count
+        (compiler-ir-instr-cons rewritten out-rev)))))
+
+(define (opt-divrem-rewrite-block
+  [facts : OptDivRemFacts]
+  [block : CompilerIrBlock]) : OptDivRemBlockRewrite
+  (match block
+    [(IrBlock label instrs)
+      (match (opt-divrem-rewrite-instr-seq-from
+        facts
+        instrs
+        0
+        (compiler-ir-instr-seq-count instrs)
+        IrInstrNil)
+        [(OptDivRemInstrRewrite final-facts rewritten)
+          (OptDivRemBlockRewrite
+            (compiler-ir-block label rewritten)
+            final-facts)])]))
+
+(define (opt-divrem-reachable-pred-count [index : OptCfgIndex] [id : i64]) : i64
+  (if (and (>= id 0) (< id (opt-cfg-index-block-count index)))
+    (let
+      [preds : OptCfgCsr (struct-get index preds)]
+      [edge : i64 (array-ref (struct-get preds offsets) id)]
+      [end : i64 (array-ref (struct-get preds offsets) (+ id 1))]
+      [count : i64 0]
+      (begin
+        (while (< edge end)
+          (let
+            [pred : i64 (array-ref (struct-get preds edges) edge)]
+            (begin
+              (if (array-ref (struct-get index reachable) pred)
+                (set! count (+ count 1))
+                unit)
+              (set! edge (+ edge 1)))))
+        count))
+    0))
+
+(define (opt-divrem-set-successor-facts!
+  [index : OptCfgIndex]
+  [facts-by-id : (Array OptDivRemFacts)]
+  [label : String]
+  [facts : OptDivRemFacts]) : unit
+  (match (opt-cfg-index-id index label)
+    [(OptSomeI64 id)
+      (if (and
+        (array-ref (struct-get index reachable) id)
+        (= (opt-divrem-reachable-pred-count index id) 1))
+        (array-set! facts-by-id id facts)
+        unit)]
+    [(OptNoI64) unit]))
+
+(define (opt-divrem-propagate-terminator!
+  [index : OptCfgIndex]
+  [facts-by-id : (Array OptDivRemFacts)]
+  [facts : OptDivRemFacts]
+  [types : OptSsaVarTypes]
+  [instrs : CompilerIrInstrSeq]
+  [terminator : CompilerIrInstr]) : unit
+  (match terminator
+    [(IrInstrJump label)
+      (opt-divrem-set-successor-facts! index facts-by-id label facts)]
+    [(IrInstrBranch cond true-label false-label)
+      (begin
+        (opt-divrem-set-successor-facts!
+          index
+          facts-by-id
+          true-label
+          (opt-divrem-edge-facts facts types instrs cond true))
+        (opt-divrem-set-successor-facts!
+          index
+          facts-by-id
+          false-label
+          (opt-divrem-edge-facts facts types instrs cond false)))]
+    [_ unit]))
+
+(define (opt-divrem-propagate-block!
+  [index : OptCfgIndex]
+  [facts-by-id : (Array OptDivRemFacts)]
+  [facts : OptDivRemFacts]
+  [types : OptSsaVarTypes]
+  [block : CompilerIrBlock]) : unit
+  (match block
+    [(IrBlock _ instrs)
+      (let
+        [count : i64 (compiler-ir-instr-seq-count instrs)]
+        (if (> count 0)
+          (opt-divrem-propagate-terminator!
+            index
+            facts-by-id
+            facts
+            types
+            instrs
+            (compiler-ir-instr-seq-ref instrs (- count 1)))
+          unit))]))
+
+(define (opt-divrem-results-fill-empty!
+  [out : (Array OptDivRemBlockResult)]
+  [index : i64]) : unit
+  (if (>= index (array-length out))
+    unit
+    (begin
+      (array-set! out index (OptDivRemNoBlock))
+      (opt-divrem-results-fill-empty! out (+ index 1)))))
+
+(define (opt-divrem-facts-fill-empty!
+  [facts : (Array OptDivRemFacts)]
+  [index : i64]) : unit
+  (if (>= index (array-length facts))
+    unit
+    (begin
+      (array-set! facts index (OptDivRemFactsNil))
+      (opt-divrem-facts-fill-empty! facts (+ index 1)))))
+
+(define (opt-divrem-process-rpo!
+  [context : OptCfgContext]
+  [blocks : CompilerIrBlockList]
+  [types : OptSsaVarTypes]
+  [facts-by-id : (Array OptDivRemFacts)]
+  [out : (Array OptDivRemBlockResult)]
+  [slot : i64]) : unit
+  (let
+    [index : OptCfgIndex (struct-get context index)]
+    (if (>= slot (struct-get index reach-count))
+      unit
+      (let
+        [id : i64 (opt-cfg-index-rpo-id index slot)]
+        [label : String (opt-cfg-index-label index id)]
+        [facts : OptDivRemFacts (array-ref facts-by-id id)]
+        (begin
+          (match (opt-cfg-find-block blocks label)
+            [(OptSomeBlock block)
+              (let
+                [rewrite : OptDivRemBlockRewrite
+                  (opt-divrem-rewrite-block facts block)]
+                (match rewrite
+                  [(OptDivRemBlockRewrite rewritten final-facts)
+                    (begin
+                      (array-set! out id (OptDivRemSomeBlock rewritten))
+                      (opt-divrem-propagate-block!
+                        index
+                        facts-by-id
+                        final-facts
+                        types
+                        rewritten))]))]
+            [(OptNoBlock) unit])
+          (opt-divrem-process-rpo!
+            context
+            blocks
+            types
+            facts-by-id
+            out
+            (+ slot 1)))))))
+
+(define (opt-divrem-materialize-blocks
+  [context : OptCfgContext]
+  [out : (Array OptDivRemBlockResult)]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (match blocks
+    [(IrBlockNil) (IrBlockNil)]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label _)
+          (let
+            [material : CompilerIrBlock
+              (match (opt-cfg-index-id (struct-get context index) label)
+                [(OptSomeI64 id)
+                  (if (and (>= id 0) (< id (array-length out)))
+                    (match (array-ref out id)
+                      [(OptDivRemSomeBlock rewritten) rewritten]
+                      [(OptDivRemNoBlock) block])
+                    block)]
+                [(OptNoI64) block])]
+            (compiler-ir-block-cons
+              material
+              (opt-divrem-materialize-blocks context out (box-get rest))))])]
+    [(IrBlockArray seq)
+      (opt-divrem-materialize-blocks
+        context
+        out
+        (compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-divrem-safety-blocks-with-context
+  [context : OptCfgContext]
+  [params : CompilerIrParamList]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (let
+    [index : OptCfgIndex (struct-get context index)]
+    [count : i64 (opt-cfg-index-block-count index)]
+    [ssa-facts : OptSsaFacts (opt-ssa-facts-from-function params blocks)]
+    [types : OptSsaVarTypes
+      (match ssa-facts
+        [(OptSsaFacts _ _ fact-types) fact-types])]
+    [facts : (Array OptDivRemFacts) (make-array OptDivRemFacts count)]
+    [out : (Array OptDivRemBlockResult) (make-array OptDivRemBlockResult count)]
+    (begin
+      (opt-divrem-facts-fill-empty! facts 0)
+      (opt-divrem-results-fill-empty! out 0)
+      (opt-divrem-process-rpo! context blocks types facts out 0)
+      (opt-divrem-materialize-blocks context out blocks))))
+
+(define (opt-divrem-safety-blocks
+  [params : CompilerIrParamList]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (opt-divrem-safety-blocks-with-context
+    (opt-cfg-context-build blocks)
+    params
+    blocks))
+
 ;; --- guarded loop bounds-check elimination (#2848) -------------------------
 ;;
 ;; The block-local bounds pass can only remove a repeated check in the same
@@ -15653,13 +16361,30 @@
                           unit)]
                       [global-blocks : CompilerIrBlockList
                         (opt-function-blocks global)]
+                      [t-divrem-safety : i64
+                        (cfg compile-profile (profile-now-ms) 0)]
+                      [divrem-safe : CompilerIrBlockList
+                        (if run-heavy?
+                          (opt-divrem-safety-blocks-with-context
+                            induction-context
+                            params
+                            global-blocks)
+                          global-blocks)]
+                      [_p-divrem-safety : unit
+                        (cfg
+                          compile-profile
+                          (compiler-opt-profile-pass-finish
+                            "divrem_safety"
+                            name
+                            t-divrem-safety)
+                          unit)]
                       [t-dce : i64 (cfg compile-profile (profile-now-ms) 0)]
                       [used : (Array bool)
                         (opt-collect-blocks-uses-array
                           induction-frame
-                          global-blocks)]
+                          divrem-safe)]
                       [dced : CompilerIrBlockList
-                        (opt-dce-block-list-array used global-blocks)]
+                        (opt-dce-block-list-array used divrem-safe)]
                       [_p-dce : unit
                         (cfg
                           compile-profile
@@ -20871,6 +21596,387 @@
         42
         2)
       1)))
+
+(define (opt-count-binop-op-instr
+  [instr : CompilerIrInstr]
+  [op : CompilerIrBinOp]) : i64
+  (match instr
+    [(IrInstrBinOp _ actual _ _ _)
+      (if (opt-binop-eq actual op)
+        1
+        0)]
+    [_ 0]))
+
+(define (opt-count-binop-op-instr-seq-from
+  [instrs : CompilerIrInstrSeq]
+  [op : CompilerIrBinOp]
+  [index : i64]
+  [acc : i64]) : i64
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    acc
+    (opt-count-binop-op-instr-seq-from
+      instrs
+      op
+      (+ index 1)
+      (+
+        acc
+        (opt-count-binop-op-instr (compiler-ir-instr-seq-ref instrs index) op)))))
+
+(define (opt-count-binop-op-instr-seq
+  [instrs : CompilerIrInstrSeq]
+  [op : CompilerIrBinOp]) : i64
+  (opt-count-binop-op-instr-seq-from instrs op 0 0))
+
+(define (opt-count-binop-op-blocks
+  [blocks : CompilerIrBlockList]
+  [op : CompilerIrBinOp]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (+
+            (opt-count-binop-op-instr-seq instrs op)
+            (opt-count-binop-op-blocks (box-get rest) op))])]
+    [(IrBlockArray seq)
+      (opt-count-binop-op-blocks (compiler-ir-block-seq-to-list seq) op)]))
+
+(define (opt-divrem-test-return
+  [result : CompilerIrValue]
+  [return-result? : bool]) : CompilerIrInstr
+  (if return-result?
+    (IrInstrReturn (IrSomeValue result))
+    (IrInstrReturn (IrSomeValue (IrValueI64 0)))))
+
+(define (opt-divrem-test-params [ty : AstType]) : CompilerIrParamList
+  (compiler-ir-param-cons
+    (IrParam "lhs" ty 0)
+    (compiler-ir-param-cons (IrParam "rhs" ty 1) (IrParamNil))))
+
+(define (opt-divrem-branch-blocks
+  [cmp-op : CompilerIrBinOp]
+  [cmp-lhs : CompilerIrValue]
+  [cmp-rhs : CompilerIrValue]
+  [arith-op : CompilerIrBinOp]
+  [arith-lhs : CompilerIrValue]
+  [arith-rhs : CompilerIrValue]
+  [arith-ty : AstType]
+  [return-result? : bool]) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (IrInstrBinOp 2 cmp-op cmp-lhs cmp-rhs (AstTyBool))
+        (compiler-ir-instr-cons
+          (IrInstrBranch (IrValueVar 2) "safe" "exit")
+          IrInstrNil)))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "safe"
+        (compiler-ir-instr-cons
+          (IrInstrBinOp 3 arith-op arith-lhs arith-rhs arith-ty)
+          (compiler-ir-instr-cons
+            (opt-divrem-test-return (IrValueVar 3) return-result?)
+            IrInstrNil)))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "exit"
+          (compiler-ir-instr-cons
+            (IrInstrReturn (IrSomeValue (IrValueI64 0)))
+            IrInstrNil))
+        IrBlockNil))))
+
+(define (opt-divrem-cast-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (IrInstrCast 2 (IrValueVar 1) (AstTyI64) (AstTyI64))
+        (compiler-ir-instr-cons
+          (IrInstrBinOp 3 (IrBinGt) (IrValueVar 2) (IrValueI64 0) (AstTyBool))
+          (compiler-ir-instr-cons
+            (IrInstrBranch (IrValueVar 3) "safe" "exit")
+            IrInstrNil))))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "safe"
+        (compiler-ir-instr-cons
+          (IrInstrBinOp 4 (IrBinDiv) (IrValueVar 0) (IrValueVar 1) (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrReturn (IrSomeValue (IrValueVar 4)))
+            IrInstrNil)))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "exit"
+          (compiler-ir-instr-cons
+            (IrInstrReturn (IrSomeValue (IrValueI64 0)))
+            IrInstrNil))
+        IrBlockNil))))
+
+(define (opt-divrem-rhs-redefined-before-branch-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (IrInstrBinOp 2 (IrBinNe) (IrValueVar 1) (IrValueI64 0) (AstTyBool))
+        (compiler-ir-instr-cons
+          (IrInstrMov 1 (IrValueI64 0) (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrBranch (IrValueVar 2) "safe" "exit")
+            IrInstrNil))))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "safe"
+        (compiler-ir-instr-cons
+          (IrInstrBinOp 3 (IrBinDiv) (IrValueVar 0) (IrValueVar 1) (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrReturn (IrSomeValue (IrValueVar 3)))
+            IrInstrNil)))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "exit"
+          (compiler-ir-instr-cons
+            (IrInstrReturn (IrSomeValue (IrValueI64 0)))
+            IrInstrNil))
+        IrBlockNil))))
+
+(define (opt-divrem-rhs-redefined-in-safe-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (IrInstrBinOp 2 (IrBinNe) (IrValueVar 1) (IrValueI64 0) (AstTyBool))
+        (compiler-ir-instr-cons
+          (IrInstrBranch (IrValueVar 2) "safe" "exit")
+          IrInstrNil)))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "safe"
+        (compiler-ir-instr-cons
+          (IrInstrMov 1 (IrValueI64 0) (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrBinOp 3 (IrBinDiv) (IrValueVar 0) (IrValueVar 1) (AstTyI64))
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueVar 3)))
+              IrInstrNil))))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "exit"
+          (compiler-ir-instr-cons
+            (IrInstrReturn (IrSomeValue (IrValueI64 0)))
+            IrInstrNil))
+        IrBlockNil))))
+
+(define (opt-divrem-lhs-not-min-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (IrInstrBinOp 2 (IrBinNe) (IrValueVar 1) (IrValueI64 0) (AstTyBool))
+        (compiler-ir-instr-cons
+          (IrInstrBranch (IrValueVar 2) "check_lhs" "exit")
+          IrInstrNil)))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "check_lhs"
+        (compiler-ir-instr-cons
+          (IrInstrBinOp
+            3
+            (IrBinNe)
+            (IrValueVar 0)
+            (IrValueI64 (opt-signed-min (AstTyI64)))
+            (AstTyBool))
+          (compiler-ir-instr-cons
+            (IrInstrBranch (IrValueVar 3) "safe" "exit")
+            IrInstrNil)))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "safe"
+          (compiler-ir-instr-cons
+            (IrInstrBinOp 4 (IrBinDiv) (IrValueVar 0) (IrValueVar 1) (AstTyI64))
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueVar 4)))
+              IrInstrNil)))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "exit"
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueI64 0)))
+              IrInstrNil))
+          IrBlockNil)))))
+
+(define (opt-divrem-dce-blocks
+  [params : CompilerIrParamList]
+  [blocks : CompilerIrBlockList]
+  [frame : i64]) : CompilerIrBlockList
+  (let
+    [safe : CompilerIrBlockList (opt-divrem-safety-blocks params blocks)]
+    [used : (Array bool) (opt-collect-blocks-uses-array frame safe)]
+    (opt-dce-block-list-array used safe)))
+
+(define (compiler-optimize-divrem-safety-self-test) : i64
+  (let
+    [i64-params : CompilerIrParamList (opt-divrem-test-params (AstTyI64))]
+    [u64-params : CompilerIrParamList (opt-divrem-test-params (AstTyU64))]
+    [signed-positive : CompilerIrBlockList
+      (opt-divrem-safety-blocks
+        i64-params
+        (opt-divrem-branch-blocks
+          (IrBinGt)
+          (IrValueVar 1)
+          (IrValueI64 0)
+          (IrBinDiv)
+          (IrValueVar 0)
+          (IrValueVar 1)
+          (AstTyI64)
+          true))]
+    [signed-mod-positive : CompilerIrBlockList
+      (opt-divrem-safety-blocks
+        i64-params
+        (opt-divrem-branch-blocks
+          (IrBinGe)
+          (IrValueVar 1)
+          (IrValueI64 1)
+          (IrBinMod)
+          (IrValueVar 0)
+          (IrValueVar 1)
+          (AstTyI64)
+          true))]
+    [unsigned-nonzero : CompilerIrBlockList
+      (opt-divrem-safety-blocks
+        u64-params
+        (opt-divrem-branch-blocks
+          (IrBinNe)
+          (IrValueVar 1)
+          (IrValueI64 0)
+          (IrBinDiv)
+          (IrValueVar 0)
+          (IrValueVar 1)
+          (AstTyU64)
+          true))]
+    [lhs-not-min : CompilerIrBlockList
+      (opt-divrem-safety-blocks i64-params (opt-divrem-lhs-not-min-blocks))]
+    [zero-reachable : CompilerIrBlockList
+      (opt-divrem-safety-blocks
+        i64-params
+        (opt-divrem-branch-blocks
+          (IrBinNe)
+          (IrValueVar 1)
+          (IrValueI64 (- 0 1))
+          (IrBinDiv)
+          (IrValueVar 0)
+          (IrValueVar 1)
+          (AstTyI64)
+          true))]
+    [neg-one-reachable : CompilerIrBlockList
+      (opt-divrem-safety-blocks
+        i64-params
+        (opt-divrem-branch-blocks
+          (IrBinNe)
+          (IrValueVar 1)
+          (IrValueI64 0)
+          (IrBinDiv)
+          (IrValueVar 0)
+          (IrValueVar 1)
+          (AstTyI64)
+          true))]
+    [weak-negative-range : CompilerIrBlockList
+      (opt-divrem-safety-blocks
+        i64-params
+        (opt-divrem-branch-blocks
+          (IrBinLt)
+          (IrValueVar 1)
+          (IrValueI64 0)
+          (IrBinDiv)
+          (IrValueVar 0)
+          (IrValueVar 1)
+          (AstTyI64)
+          true))]
+    [cast-unsupported : CompilerIrBlockList
+      (opt-divrem-safety-blocks i64-params (opt-divrem-cast-blocks))]
+    [rhs-redefined-before-branch : CompilerIrBlockList
+      (opt-divrem-safety-blocks
+        i64-params
+        (opt-divrem-rhs-redefined-before-branch-blocks))]
+    [rhs-redefined-in-safe : CompilerIrBlockList
+      (opt-divrem-safety-blocks
+        i64-params
+        (opt-divrem-rhs-redefined-in-safe-blocks))]
+    [safe-unused : CompilerIrBlockList
+      (opt-divrem-dce-blocks
+        i64-params
+        (opt-divrem-branch-blocks
+          (IrBinGt)
+          (IrValueVar 1)
+          (IrValueI64 0)
+          (IrBinDiv)
+          (IrValueVar 0)
+          (IrValueVar 1)
+          (AstTyI64)
+          false)
+        4)]
+    [unproven-unused : CompilerIrBlockList
+      (opt-divrem-dce-blocks
+        i64-params
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "entry"
+            (compiler-ir-instr-cons
+              (IrInstrBinOp
+                2
+                (IrBinDiv)
+                (IrValueVar 0)
+                (IrValueVar 1)
+                (AstTyI64))
+              (compiler-ir-instr-cons
+                (IrInstrReturn (IrSomeValue (IrValueI64 0)))
+                IrInstrNil)))
+          IrBlockNil)
+        4)]
+    (begin
+      (unless
+        (= (opt-count-binop-op-blocks signed-positive (IrBinSafeDiv)) 1)
+        (return 1))
+      (unless
+        (= (opt-count-binop-op-blocks signed-positive (IrBinDiv)) 0)
+        (return 2))
+      (unless
+        (= (opt-count-binop-op-blocks signed-mod-positive (IrBinSafeMod)) 1)
+        (return 3))
+      (unless
+        (= (opt-count-binop-op-blocks unsigned-nonzero (IrBinSafeDiv)) 1)
+        (return 4))
+      (unless
+        (= (opt-count-binop-op-blocks lhs-not-min (IrBinSafeDiv)) 1)
+        (return 5))
+      (unless
+        (= (opt-count-binop-op-blocks zero-reachable (IrBinDiv)) 1)
+        (return 6))
+      (unless
+        (= (opt-count-binop-op-blocks neg-one-reachable (IrBinDiv)) 1)
+        (return 7))
+      (unless
+        (= (opt-count-binop-op-blocks weak-negative-range (IrBinDiv)) 1)
+        (return 8))
+      (unless
+        (= (opt-count-binop-op-blocks cast-unsupported (IrBinDiv)) 1)
+        (return 9))
+      (unless
+        (= (opt-count-binop-op-blocks rhs-redefined-before-branch (IrBinDiv)) 1)
+        (return 10))
+      (unless
+        (= (opt-count-binop-op-blocks rhs-redefined-in-safe (IrBinDiv)) 1)
+        (return 11))
+      (unless
+        (= (opt-count-binop-op-blocks safe-unused (IrBinSafeDiv)) 0)
+        (return 12))
+      (unless
+        (= (opt-count-binop-op-blocks safe-unused (IrBinDiv)) 0)
+        (return 13))
+      (unless
+        (= (opt-count-binop-op-blocks unproven-unused (IrBinDiv)) 1)
+        (return 14))
+      42)))
 
 ;; `[BinOp v2 = v0 + v1, BinOp v3 = v0 + v1]` with non-constant operands: CSE
 ;; rewrites the second into `Mov v3 = v2` (two arithmetic instrs -> one).

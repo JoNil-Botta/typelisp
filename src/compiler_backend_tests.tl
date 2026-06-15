@@ -5746,6 +5746,83 @@
               (compiler-backend-todo-marker)))))]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-divrem-binop-types [ty : AstType]) : CompilerRegVarTypeList
+  (compiler-reg-var-type-cons
+    (CompilerRegVarType 0 ty)
+    (compiler-reg-var-type-cons
+      (CompilerRegVarType 1 ty)
+      (compiler-reg-var-type-cons
+        (CompilerRegVarType 2 ty)
+        CompilerRegVarTypeNil))))
+
+(define (compiler-backend-divrem-binop-asm
+  [op : CompilerIrBinOp]
+  [rhs : CompilerIrValue]
+  [ty : AstType]) : ResultCompilerBackend
+  (compiler-backend-emit-binop
+    (compiler-backend-divrem-binop-types ty)
+    (CompilerBackendGlobalTypeNil)
+    CompilerRegAssignmentNil
+    2
+    op
+    (IrValueVar 0)
+    rhs
+    ty))
+
+(define (compiler-backend-divrem-binop-guard-shape?
+  [op : CompilerIrBinOp]
+  [rhs : CompilerIrValue]
+  [ty : AstType]
+  [want-guard? : bool]
+  [want-remainder? : bool]) : bool
+  (match (compiler-backend-divrem-binop-asm op rhs ty)
+    [(OkCompilerBackend asm)
+      (and
+        (if want-guard?
+          (compiler-backend-string-contains? asm "    call tl_div_abort\n")
+          (not
+            (compiler-backend-string-contains? asm "    call tl_div_abort\n")))
+        (compiler-backend-string-contains? asm "    idivq %r8\n")
+        (if want-remainder?
+          (compiler-backend-string-contains? asm "    movq %rdx, %rax\n")
+          true)
+        (not
+          (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-safe-divrem-guard-elision-ok?) : bool
+  (and
+    (backend-and4
+      (compiler-backend-divrem-binop-guard-shape?
+        (IrBinDiv)
+        (IrValueVar 1)
+        (AstTyI64)
+        true
+        false)
+      (compiler-backend-divrem-binop-guard-shape?
+        (IrBinSafeDiv)
+        (IrValueVar 1)
+        (AstTyI64)
+        false
+        false)
+      (compiler-backend-divrem-binop-guard-shape?
+        (IrBinSafeMod)
+        (IrValueVar 1)
+        (AstTyI64)
+        false
+        true)
+      (compiler-backend-divrem-binop-guard-shape?
+        (IrBinSafeDiv)
+        (IrValueI64 (- 0 1))
+        (AstTyI64)
+        false
+        false))
+    (not
+      (compiler-backend-binop-needs-div-abort?
+        (IrBinSafeDiv)
+        (IrValueVar 1)
+        (AstTyI64)))))
+
 (define (compiler-backend-shift-guard-source) : String
   "(define (main) : i64 (shl 1 -1))")
 
@@ -7135,7 +7212,8 @@
       (compiler-backend-scalar-wide-ops-ok?)
       (and
         (compiler-backend-scalar-div-mod-ok?)
-        (compiler-backend-constant-divisor-strength-ok?))
+        (compiler-backend-constant-divisor-strength-ok?)
+        (compiler-backend-safe-divrem-guard-elision-ok?))
       (and
         (compiler-backend-i64-immediate-load-shape-ok?)
         (compiler-backend-narrow-scalar-instr-ok?)

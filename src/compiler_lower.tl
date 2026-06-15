@@ -30959,6 +30959,14 @@
       (match want
         [(IrBinMod) true]
         [_ false])]
+    [(IrBinSafeDiv)
+      (match want
+        [(IrBinSafeDiv) true]
+        [_ false])]
+    [(IrBinSafeMod)
+      (match want
+        [(IrBinSafeMod) true]
+        [_ false])]
     [(IrBinEq)
       (match want
         [(IrBinEq) true]

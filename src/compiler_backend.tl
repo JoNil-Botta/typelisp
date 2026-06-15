@@ -5613,6 +5613,20 @@
                     ty
                     want-remainder))])))))))
 
+(define (compiler-backend-constant-safe-divmod-asm
+  [n : i64]
+  [ty : AstType]
+  [want-remainder : bool]) : CompilerBackendMaybeAsm
+  (match (compiler-backend-constant-divmod-asm n ty want-remainder)
+    [(CompilerBackendSomeAsm asm) (CompilerBackendSomeAsm asm)]
+    [(CompilerBackendNoAsm)
+      (if (and
+        (compiler-backend-type-signed? ty)
+        (= (compiler-backend-normalized-signed-immediate n ty) (- 0 1)))
+        (CompilerBackendSomeAsm
+          (compiler-backend-constant-divmod-unguarded-asm n ty want-remainder))
+        (CompilerBackendNoAsm))]))
+
 (define (compiler-backend-binop-literal-divmod-asm
   [op : CompilerIrBinOp]
   [rhs : CompilerIrValue]
@@ -5627,6 +5641,16 @@
       (match (compiler-backend-value-as-i64 rhs)
         [(CompilerBackendSomeI64 n)
           (compiler-backend-constant-divmod-asm n ty true)]
+        [(CompilerBackendNoI64) (CompilerBackendNoAsm)])]
+    [(IrBinSafeDiv)
+      (match (compiler-backend-value-as-i64 rhs)
+        [(CompilerBackendSomeI64 n)
+          (compiler-backend-constant-safe-divmod-asm n ty false)]
+        [(CompilerBackendNoI64) (CompilerBackendNoAsm)])]
+    [(IrBinSafeMod)
+      (match (compiler-backend-value-as-i64 rhs)
+        [(CompilerBackendSomeI64 n)
+          (compiler-backend-constant-safe-divmod-asm n ty true)]
         [(CompilerBackendNoI64) (CompilerBackendNoAsm)])]
     [_ (CompilerBackendNoAsm)]))
 
@@ -5675,6 +5699,8 @@
           (compiler-backend-binop-reg-asm "imul" ty rhs lhs))]
       [(IrBinDiv) (compiler-backend-binop-divmod-asm ty false)]
       [(IrBinMod) (compiler-backend-binop-divmod-asm ty true)]
+      [(IrBinSafeDiv) (compiler-backend-binop-divmod-core-asm ty false)]
+      [(IrBinSafeMod) (compiler-backend-binop-divmod-core-asm ty true)]
       [(IrBinEq) (compiler-backend-binop-cmp-set-asm ty rhs lhs "sete")]
       [(IrBinNe) (compiler-backend-binop-cmp-set-asm ty rhs lhs "setne")]
       [(IrBinLt)
@@ -5884,6 +5910,9 @@
         (OkCompilerBackend
           (string-append "    mul" (string-append s " %xmm1, %xmm0\n")))]
       [(IrBinDiv)
+        (OkCompilerBackend
+          (string-append "    div" (string-append s " %xmm1, %xmm0\n")))]
+      [(IrBinSafeDiv)
         (OkCompilerBackend
           (string-append "    div" (string-append s " %xmm1, %xmm0\n")))]
       [(IrBinEq)
@@ -6342,6 +6371,8 @@
   (match op
     [(IrBinDiv) true]
     [(IrBinMod) true]
+    [(IrBinSafeDiv) true]
+    [(IrBinSafeMod) true]
     [_ false]))
 
 (define (compiler-backend-compare-true-jcc
@@ -16868,6 +16899,8 @@
     (match op
       [(IrBinDiv) (not (compiler-backend-divmod-safe-literal? rhs ty))]
       [(IrBinMod) (not (compiler-backend-divmod-safe-literal? rhs ty))]
+      [(IrBinSafeDiv) false]
+      [(IrBinSafeMod) false]
       [_ false])))
 
 (define (compiler-backend-binop-needs-shift-abort?

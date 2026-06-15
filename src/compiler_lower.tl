@@ -753,14 +753,21 @@
       (lower-type-cache-lookup-hygiene type-cache name)
       (match (if (tc-name-qualified? name)
         (OkTcString name)
-        (tc-source-name-lookup-key ctx type-env name))
+        (tc-source-name-lookup-key-after-local-field-check ctx type-env name))
         [(OkTcString lookup-name)
           (match (sym-i64-lookup env lookup-name)
             [(SomeI64 _) (tc-lookup type-env lookup-name)]
             [(NoneI64)
               (match (tc-lookup type-env lookup-name)
                 [(OkTcType ty) (OkTcType ty)]
-                [(ErrTcType _) (lower-type-cache-lookup type-cache lookup-name)])])]
+                [(ErrTcType _)
+                  (match (lower-type-cache-lookup type-cache lookup-name)
+                    [(OkTcType ty) (OkTcType ty)]
+                    [(ErrTcType message)
+                      (tc-variant-constructor-type-for-lookup-or
+                        ctx
+                        lookup-name
+                        message)])])])]
         [(ErrTcString message) (ErrTcType message)]))))
 
 (define (lower-lookup-type-id
@@ -1558,10 +1565,29 @@
     [(OkTcType ty) (OkTcEnv (tc-bind env name ty))]
     [(ErrTcType message) (ErrTcEnv message)]))
 
+(define (lower-module-local-type-env-bind-qualified-if-free
+  [top-env : TcTypeEnv]
+  [env : TcTypeEnv]
+  [module : String]
+  [name : String]) : ResultTcEnv
+  (match (tc-lookup top-env (compiler-symbol-module-key module name))
+    [(OkTcType ty) (OkTcEnv (tc-bind-alias-if-free env name ty))]
+    [(ErrTcType message) (ErrTcEnv message)]))
+
+(define (lower-module-local-type-env-bind-qualified-id-if-free
+  [top-env : TcTypeEnv]
+  [env : TcTypeEnv]
+  [module : String]
+  [name-id : i64]) : ResultTcEnv
+  (match (tc-lookup-id top-env (tc-module-name-id module name-id))
+    [(OkTcType ty) (OkTcEnv (tc-bind-alias-id-if-free env name-id ty))]
+    [(ErrTcType message) (ErrTcEnv message)]))
+
 (define (lower-module-local-type-env-add-variants
   [top-env : TcTypeEnv]
   [env : TcTypeEnv]
   [module : String]
+  [enum-name : String]
   [variants : AstVariantDefList]) : ResultTcEnv
   (match variants
     [(AstVariantDefNil) (OkTcEnv env)]
@@ -1570,16 +1596,17 @@
         [rest : AstVariantDefList (box-get rest)]
         (match variant
           [(AstVariantDef name _ _)
-            (match (lower-module-local-type-env-bind-qualified
+            (match (lower-module-local-type-env-bind-qualified-id-if-free
               top-env
               env
               module
-              (intern-str name))
+              name)
               [(OkTcEnv next-env)
                 (lower-module-local-type-env-add-variants
                   top-env
                   next-env
                   module
+                  enum-name
                   rest)]
               [(ErrTcEnv message) (ErrTcEnv message)])]))]))
 
@@ -1613,11 +1640,12 @@
         env
         module
         (intern-str name))]
-    [(AstDeclDefEnum _ cleanup variants)
+    [(AstDeclDefEnum name cleanup variants)
       (match (lower-module-local-type-env-add-variants
         top-env
         env
         module
+        (intern-str name)
         variants)
         [(OkTcEnv next-env)
           (match cleanup
@@ -1629,11 +1657,12 @@
                 module
                 (intern-str cleanup-name))])]
         [(ErrTcEnv message) (ErrTcEnv message)])]
-    [(AstDeclDefEnumLifetimes _ _ cleanup variants)
+    [(AstDeclDefEnumLifetimes name _ cleanup variants)
       (match (lower-module-local-type-env-add-variants
         top-env
         env
         module
+        (intern-str name)
         variants)
         [(OkTcEnv next-env)
           (match cleanup
@@ -31780,24 +31809,25 @@
   "(defenum Maybe (None) (Some i64) (Pair i64 i64))
 (define (score [m : Maybe]) : i64
   (match m
-    [None 0]
-    [(Some v) (+ v 1)]
-    [(Pair left _) left]))
+    [Maybe.None 0]
+    [(Maybe.Some v) (+ v 1)]
+    [(Maybe.Pair left _) left]))
 (define (zero-call [m : Maybe]) : i64
   (match m
-    [(None) 0]
+    [(Maybe.None) 0]
     [_ 1]))
 (define (or-zero [m : Maybe]) : i64
   (match m
-    [(Some v) v]
+    [(Maybe.Some v) v]
     [_ 0]))
 (define (touch [m : Maybe]) : unit
   (match m
-    [None unit]
-    [(Some _) unit]
-    [(Pair _ _) unit]))
+    [Maybe.None unit]
+    [(Maybe.Some _) unit]
+    [(Maybe.Pair _ _) unit]))
 (define (main) : i64
-  (+ (score (Some 4)) (+ (zero-call None) (or-zero (Pair 3 4)))))")
+  (+ (score (Maybe.Some 4))
+     (+ (zero-call Maybe.None) (or-zero (Maybe.Pair 3 4)))))")
 
 ;; A refutable literal payload subpattern (#651): `(Some 0)` tests the payload
 ;; and, on mismatch, falls through to the `(Some n)` binding arm. The trailing
@@ -34797,9 +34827,9 @@
     (+
       (let ([p : d.Point (d.Point 7)])
         (struct-get p x))
-      (match (d.Some 3)
-        [(d.Some v) v]
-        [d.None 0]))))")
+      (match (d.Maybe.Some 3)
+        [(d.Maybe.Some v) v]
+        [d.Maybe.None 0]))))")
 
 (define (compiler-lower-import-alias-ok?) : bool
   (match (lower-compiler-source (compiler-lower-import-alias-source))

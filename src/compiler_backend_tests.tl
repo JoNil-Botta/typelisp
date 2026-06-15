@@ -2874,7 +2874,8 @@
     (compiler-backend-zero-load-ok?)
     (compiler-backend-zero-compare-ok?)
     (compiler-backend-call-return-ok?)
-    (compiler-backend-global-immediate-store-ok?)))
+    (compiler-backend-global-immediate-store-ok?)
+    (compiler-backend-scratch-staging-direct-shapes-ok?)))
 
 (define (compiler-backend-fallthrough-program) : CompilerIrProgram
   (IrProgram
@@ -2975,6 +2976,38 @@
   (compiler-backend-instr-contains?
     (IrInstrStore "g" (IrValueI64 7) (AstTyI64))
     "    movq $7, _tl_g(%rip)\n"))
+
+(define (compiler-backend-scratch-staging-direct-shapes-ok?) : bool
+  (let
+    [assignments : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 0 (CompilerRegRegister "%r12"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment 1 (CompilerRegRegister "%r13"))
+          (compiler-reg-assignment-cons
+            (CompilerRegAssignment 2 (CompilerRegRegisterPair "%r12" "%r13"))
+            CompilerRegAssignmentNil)))]
+    [diag : CompilerDiagnostic (compiler-diagnostic-at-start "" "")]
+    (and
+      (match (compiler-backend-emit-word
+        assignments
+        1
+        (IrValueVar 2)
+        0
+        (AstTyI64)
+        8
+        diag)
+        [(OkCompilerBackend asm) (string-eq asm "    movq %r12, %r13\n")]
+        [(ErrCompilerBackend _) false])
+      (match (compiler-backend-emit-unop
+        assignments
+        1
+        (IrUnNeg)
+        (IrValueVar 0)
+        (AstTyI64))
+        [(OkCompilerBackend asm)
+          (string-eq asm "    movq %r12, %r13\n    negq %r13\n")]
+        [(ErrCompilerBackend _) false]))))
 
 (define (compiler-backend-call-return-program) : CompilerIrProgram
   (IrProgram

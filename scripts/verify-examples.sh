@@ -31,6 +31,7 @@ fi
 # Expected exit codes for each example program.
 expected_exit() {
     case "$1" in
+        arena_lifetimes) echo 42 ;;
         calc) echo 14 ;;
         char_literals) echo 64 ;;
         hello) echo 120 ;;   # main returns factorial(5)

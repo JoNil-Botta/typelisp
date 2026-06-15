@@ -687,6 +687,15 @@ owned by that first-class arena; reserve manual `arena-set!` / `arena-rewind` /
 `arena-destroy` calls for unsafe internals that can prove every invalidated
 handle is dead.
 
+For game-style loops, the current safe pattern is lexical nesting: keep global
+state in the default program arena, enter one `(with-arena level ...)` for
+per-level state, use an inner `(with-arena frame ...)` for scalar-only per-frame
+temporaries, and use `(with-escape scratch ...)` with a first-class scratch
+arena when one supported frame result must be cloned into the level state. See
+[`examples/arena_lifetimes.tl`](examples/arena_lifetimes.tl). Double-buffered
+levels and event-driven unloads need overlapping lifetimes and remain future
+work (#2568).
+
 Scoped cleanup of non-memory resources is separate. The implemented
 `(with ([name init cleanup]) body ...)` form (SPEC.md §5.19) runs cleanup
 functions in reverse binding order on scope exit for files, process handles,

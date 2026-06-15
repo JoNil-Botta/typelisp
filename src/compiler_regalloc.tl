@@ -5359,14 +5359,16 @@
             (compiler-live-set-contains? ineligible 2)
             (compiler-live-set-contains? ineligible 3)
             (compiler-live-set-contains? ineligible 4)
-            (compiler-live-set-contains? ineligible 6))]
+            (not (compiler-live-set-contains? ineligible 6)))]
         [unassigned : bool
           (and
             (compiler-reg-unassigned? assignments 0)
             (compiler-reg-unassigned? assignments 2)
             (compiler-reg-unassigned? assignments 3)
             (compiler-reg-unassigned? assignments 4)
-            (compiler-reg-unassigned? assignments 6))]
+            (compiler-reg-location-register?
+              (compiler-reg-assignment-lookup assignments 6)
+              "%r13"))]
         [homes : bool
           (and
             (compiler-reg-location-register?
@@ -5377,18 +5379,18 @@
               "%r12"))]
         (and marked unassigned homes))]))
 
-;; Scalar plan (#perf): String/DynArray handles (vars 2/4) are register-eligible
-;; 8-byte values; params (var 0) and address-taken values (var 3 via the AddrOf
-;; into var 6) stay ineligible.
+;; Scalar plan (#perf): String/DynArray handles (vars 2/4) and AddrOf result
+;; handles (var 6) are register-eligible 8-byte values; params (var 0) and
+;; address-taken values (var 3 via the AddrOf into var 6) stay ineligible.
 (define (compiler-reg-scalar-handle-eligible-ok?) : bool
   (match (compiler-reg-plan-function-scalar (compiler-reg-ineligible-function))
     [(CompilerRegPlan _ ineligible _ _)
       (and
         (compiler-live-set-contains? ineligible 0)
         (compiler-live-set-contains? ineligible 3)
-        (compiler-live-set-contains? ineligible 6)
         (not (compiler-live-set-contains? ineligible 2))
-        (not (compiler-live-set-contains? ineligible 4)))]))
+        (not (compiler-live-set-contains? ineligible 4))
+        (not (compiler-live-set-contains? ineligible 6)))]))
 
 (define (compiler-reg-scalar-function-intervals-ok?) : bool
   (match (compiler-reg-plan-function-scalar

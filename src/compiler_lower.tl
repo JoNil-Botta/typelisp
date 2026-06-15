@@ -5416,6 +5416,32 @@
                         (compiler-ir-value-cons (IrValueI64 size) (IrValueNil)))))
                   (AstTyUnit)))])])]))
 
+(define (lower-emit-memcpy-value
+  [state : LowerState]
+  [dst : CompilerIrValue]
+  [dst-offset : i64]
+  [src : CompilerIrValue]
+  [src-offset : i64]
+  [size : CompilerIrValue]) : LowerState
+  (match (lower-offset-addr state dst dst-offset)
+    [(LowerExpr dst-state dst-addr _)
+      (match (lower-offset-addr dst-state src src-offset)
+        [(LowerExpr src-state src-addr _)
+          (match (lower-state-alloc-var src-state)
+            [(LowerAlloc call-state call-var)
+              (lower-state-emit
+                call-state
+                (IrInstrCall
+                  call-var
+                  "tl_memcpy"
+                  (compiler-ir-call-args-from-list
+                    (compiler-ir-value-cons
+                      dst-addr
+                      (compiler-ir-value-cons
+                        src-addr
+                        (compiler-ir-value-cons size (IrValueNil)))))
+                  (AstTyUnit)))])])]))
+
 (define (lower-copy-bytes
   [state : LowerState]
   [dst : CompilerIrValue]
@@ -10551,6 +10577,16 @@
     [(AstTyNever) true]
     [_ false]))
 
+(define (lower-clone-bulk-copy-type? [ctx : TcContext] [ty : AstType]) : bool
+  (let
+    [clone-ty : AstType (tc-type-without-regions (tc-resolve-type ctx ty))]
+    (match clone-ty
+      [(AstTyStruct _) (lower-type-register-resident? ctx clone-ty)]
+      [(AstTyStructArgs _ _) (lower-type-register-resident? ctx clone-ty)]
+      [(AstTyEnum _) (lower-type-register-resident? ctx clone-ty)]
+      [(AstTyEnumArgs _ _) (lower-type-register-resident? ctx clone-ty)]
+      [_ (lower-clone-scalar-type? clone-ty)])))
+
 (define (lower-clone-type-list
   [ctx : TcContext]
   [state : LowerState]
@@ -10900,18 +10936,22 @@
   [new-buf : CompilerIrValue]
   [len : CompilerIrValue]
   [elem-ty : AstType]
-  [elem-size : i64]) : ResultLowerState
+  [elem-size : i64]
+  [byte-count : CompilerIrValue]) : ResultLowerState
   (if (= elem-size 0)
     (OkLowerState state)
-    (lower-clone-dynarray-copy-nonempty
-      ctx
-      state
-      env
-      type-env
-      old-buf
-      new-buf
-      len
-      elem-ty)))
+    (if (lower-clone-bulk-copy-type? ctx elem-ty)
+      (OkLowerState
+        (lower-emit-memcpy-value state new-buf 0 old-buf 0 byte-count))
+      (lower-clone-dynarray-copy-nonempty
+        ctx
+        state
+        env
+        type-env
+        old-buf
+        new-buf
+        len
+        elem-ty))))
 
 (define (lower-clone-dynarray-finish
   [ctx : TcContext]
@@ -10922,6 +10962,7 @@
   [len : CompilerIrValue]
   [elem-ty : AstType]
   [elem-size : i64]
+  [byte-count : CompilerIrValue]
   [buf-var : i64]
   [result-ty : AstType]) : ResultLowerExpr
   (match (lower-reserve-heap-storage state 16 result-ty)
@@ -10935,7 +10976,8 @@
         (IrValueVar buf-var)
         len
         elem-ty
-        elem-size)
+        elem-size
+        byte-count)
         [(OkLowerState copied-state)
           (OkLowerExpr
             (LowerExpr
@@ -10994,6 +11036,7 @@
                       len
                       elem-ty
                       elem-size
+                      byte-count
                       buf-var
                       result-ty)])]))])]))
 
@@ -30208,6 +30251,16 @@
       (clone-list list)
       0)))")
 
+(define (compiler-lower-clone-dynarray-bulk-source) : String
+  "(defstruct OneWord
+  (value i64))
+(define (copy-i64-items [items : (Array i64)]) : (Array i64)
+  (clone items))
+(define (copy-word-items [items : (Array OneWord)]) : (Array OneWord)
+  (clone items))
+(define (copy-string-items [items : (Array String)]) : (Array String)
+  (clone items))")
+
 (define (compiler-lower-clone-unsupported-source) : String
   "(define (inc [x : i64]) : i64 (+ x 1))
 (define (main) : (-> i64 i64)
@@ -30328,6 +30381,76 @@
                       functions
                       "<source>::clone$StringList$acc"
                       "tl_substring")
+                    0)
+                    unit
+                    (set! ok false))
+                  ok))])]
+        [(ErrCompilerLower _) false])]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-lower-clone-dynarray-bulk-copy-ok?) : bool
+  (match (parse-ast-source (compiler-lower-clone-dynarray-bulk-source))
+    [(OkAstProgram ast)
+      (match (lower-compiler-program-with-decl-paths
+        "<source>"
+        ast
+        AstDeclPathNil)
+        [(OkCompilerLower program _)
+          (match program
+            [(IrProgram _ functions _)
+              (let
+                [ok : bool true]
+                (begin
+                  (if (=
+                    (lower-test-function-call-count
+                      functions
+                      "<source>::copy-i64-items"
+                      "tl_memcpy")
+                    1)
+                    unit
+                    (set! ok false))
+                  (if (=
+                    (lower-test-function-branch-count
+                      functions
+                      "<source>::copy-i64-items")
+                    0)
+                    unit
+                    (set! ok false))
+                  (if (=
+                    (lower-test-function-call-count
+                      functions
+                      "<source>::copy-word-items"
+                      "tl_memcpy")
+                    1)
+                    unit
+                    (set! ok false))
+                  (if (=
+                    (lower-test-function-branch-count
+                      functions
+                      "<source>::copy-word-items")
+                    0)
+                    unit
+                    (set! ok false))
+                  (if (=
+                    (lower-test-function-call-count
+                      functions
+                      "<source>::copy-string-items"
+                      "tl_memcpy")
+                    0)
+                    unit
+                    (set! ok false))
+                  (if (>
+                    (lower-test-function-call-count
+                      functions
+                      "<source>::copy-string-items"
+                      "tl_substring")
+                    0)
+                    unit
+                    (set! ok false))
+                  (if (>
+                    (lower-test-function-branch-count
+                      functions
+                      "<source>::copy-string-items")
                     0)
                     unit
                     (set! ok false))
@@ -37516,6 +37639,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-clone-shape-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-clone-dynarray-bulk-copy-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-clone-reachable-helpers-ok?)

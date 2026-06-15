@@ -10,7 +10,7 @@ Current implementation goals:
 
 - **Typed**: Every expression has a known type at compile time. No runtime type tagging.
 - **Native**: Compiles straight to x86_64 assembly, then native toolchains produce executables. Linux uses `as` + `ld`; Windows uses `clang` + MSVC `link.exe`. No bytecode VM, no interpreter, no garbage collector. Supported targets are `linux-x86_64` and `windows-x86_64`; macOS and ARM are not supported yet and are not near-term goals.
-- **Self-hosted**: The compiler, tooling, and stdlib are written in TypeLisp (see [`src/`](selfhost) and [`stdlib/`](stdlib)). The published stage0 compiler is a single self-hosted binary that builds its own successor; the toolchain has no other-language implementation.
+- **Self-hosted**: The compiler, tooling, and stdlib are written in TypeLisp (see [`src/`](src) and [`stdlib/`](stdlib)). The published stage0 compiler is a single self-hosted binary that builds its own successor; the toolchain has no other-language implementation.
 - **Zero dependencies**: No third-party packages. The only build inputs are the native assembler/linker toolchain.
 - **Fast**: Generated code quality should approach LLVM (`clang -O2`) on the benchmark corpus while compilation itself stays fast. Performance is tracked deterministically — paired C baselines under [`benchmarks/`](benchmarks) and a cachegrind instruction-count CI gate under [`perf/`](perf) — rather than by wall-clock noise. The codegen-quality roadmap is #2559.
 
@@ -44,7 +44,7 @@ Language direction:
   imports is tracked by #2452, #2453, #2454, and #2492.
 - Use an arena-based memory model with a default program-lifetime arena and
   scoped `(with-arena ...)` allocation regions (implemented).
-- Land new language features in the self-hosted compiler ([`src/`](selfhost)).
+- Land new language features in the self-hosted compiler ([`src/`](src)).
   The toolchain is fully self-hosted (#666, #795); each published stage0 binary
   builds its successor.
 
@@ -83,7 +83,10 @@ of imitating transitional patterns still present in the tree:
   assignment uses `(set! (struct-get place field) value)` or local dotted sugar
   `(set! place.field value)` (#1521), and boxed storage uses `(box-take b)`
   plus `(set! (box-get b) value)` for destructive access (#2553).
-  Copy-on-update is transitional and hot paths migrate once those land (#2575).
+  Copy-on-update is transitional; remaining hot-path migrations are split
+  across vector/deque handle metadata (#2955), hashmap metadata (#2956),
+  `TextBuf` mutable builders (#2957), dense-key env/table storage (#2958),
+  and boxed-list rewrites (#2553).
 - **Memory + threads**: per-thread default arenas plus a shared atomic arena
   for concurrent allocation (#2591, #2593). Thread safety follows the Rust
   model via structural checker classification — no traits (#2590): values
@@ -716,7 +719,7 @@ See [SPEC.md](SPEC.md) for the full language reference.
 
 ## Self-hosting sources
 
-The [`src/`](selfhost) directory builds up a TypeLisp front end *written in
+The [`src/`](src) directory builds up a TypeLisp front end *written in
 TypeLisp*:
 
 - `lexer.tl` — a tokenizer for TypeLisp's own s-expression syntax.

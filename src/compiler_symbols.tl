@@ -1904,6 +1904,151 @@
   [index : i64]) : ResultCompilerSymbols
   (build-compiler-symbol-list-in-module decls symbols index ""))
 
+(define (compiler-symbol-decl-counts-for-index? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDeclImport _) false]
+    [(AstDeclIncludeStr _ _) false]
+    [(AstDeclIncludeBin _ _) false]
+    [(AstDeclExport _) false]
+    [(AstDeclModule _) false]
+    [(AstDeclTest _ _ _) false]
+    [_ true]))
+
+(define (compiler-symbol-path-at-index
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [target : i64]
+  [index : i64]) : String
+  (match decls
+    [(AstDeclNil) ""]
+    [(AstDeclCons decl rest)
+      (let
+        [rest : AstDeclList (box-get rest)]
+        [decl-path : String
+          (match paths
+            [(AstDeclPathCons path _) path]
+            [(AstDeclPathNil) ""])]
+        [rest-paths : AstDeclPathList
+          (match paths
+            [(AstDeclPathCons _ path-rest)
+              (let
+                [path-rest : AstDeclPathList (box-get path-rest)]
+                path-rest)]
+            [(AstDeclPathNil) AstDeclPathNil])]
+        (if (compiler-symbol-decl-counts-for-index? decl)
+          (if (= target index)
+            decl-path
+            (compiler-symbol-path-at-index rest rest-paths target (+ index 1)))
+          (compiler-symbol-path-at-index rest rest-paths target index)))]))
+
+(define (compiler-symbols-duplicate-location-suffix
+  [first-path : String]
+  [duplicate-path : String]) : String
+  (if (> (string-length first-path) 0)
+    (if (> (string-length duplicate-path) 0)
+      (string-append
+        " (first declared in "
+        (string-append
+          first-path
+          (string-append "; duplicate in " (string-append duplicate-path ")"))))
+      (string-append " (first declared in " (string-append first-path ")")))
+    (if (> (string-length duplicate-path) 0)
+      (string-append " (duplicate in " (string-append duplicate-path ")"))
+      "")))
+
+(define (compiler-symbols-duplicate-value-message-with-paths
+  [symbols : CompilerSymbols]
+  [all-decls : AstDeclList]
+  [all-paths : AstDeclPathList]
+  [module : String]
+  [name : String]
+  [index : i64]
+  [decl-path : String]) : CompilerMaybeString
+  (match (compiler-symbols-lookup-value-in-module symbols module name)
+    [(SomeI64 existing)
+      (let
+        [first-path : String
+          (compiler-symbol-path-at-index
+            all-decls
+            all-paths
+            (compiler-symbol-handle-index existing)
+            0)]
+        [display-name : String (compiler-symbol-module-key module name)]
+        (CompilerSomeString
+          (string-append
+            (compiler-symbols-duplicate-value-message display-name)
+            (compiler-symbols-duplicate-location-suffix first-path decl-path))))]
+    [(NoneI64) CompilerNoString]))
+
+(define (compiler-symbols-duplicate-value-message-for-decl-with-paths
+  [symbols : CompilerSymbols]
+  [all-decls : AstDeclList]
+  [all-paths : AstDeclPathList]
+  [module : String]
+  [decl : AstDecl]
+  [index : i64]
+  [decl-path : String]) : CompilerMaybeString
+  (match decl
+    [(AstDeclDef name _ _)
+      (compiler-symbols-duplicate-value-message-with-paths
+        symbols
+        all-decls
+        all-paths
+        module
+        (intern-str name)
+        index
+        decl-path)]
+    [(AstDeclDefFn name _ _ _ _)
+      (compiler-symbols-duplicate-value-message-with-paths
+        symbols
+        all-decls
+        all-paths
+        module
+        (intern-str name)
+        index
+        decl-path)]
+    [(AstDeclExtern name _ _ _)
+      (compiler-symbols-duplicate-value-message-with-paths
+        symbols
+        all-decls
+        all-paths
+        module
+        (intern-str name)
+        index
+        decl-path)]
+    [(AstDeclDefDispatch name _)
+      (compiler-symbols-duplicate-value-message-with-paths
+        symbols
+        all-decls
+        all-paths
+        module
+        (intern-str name)
+        index
+        decl-path)]
+    [(AstDeclUnsafe inner-box)
+      (let
+        [inner : AstDecl (box-get inner-box)]
+        (compiler-symbols-duplicate-value-message-for-decl-with-paths
+          symbols
+          all-decls
+          all-paths
+          module
+          inner
+          index
+          decl-path))]
+    [(AstDeclComptimeDecl _ template-box)
+      (let
+        [template : AstDecl (box-get template-box)]
+        (compiler-symbols-duplicate-value-message-for-decl-with-paths
+          symbols
+          all-decls
+          all-paths
+          module
+          template
+          index
+          decl-path))]
+    [_ CompilerNoString]))
+
 (define (compiler-symbol-indexed-decl [decl : AstDecl]) : AstDecl
   (match decl
     [(AstDeclComptimeDecl _ template-box)
@@ -1998,6 +2143,114 @@
                     module)]
                 [(ErrCompilerSymbols message) (ErrCompilerSymbols message)]))]))]))
 
+(define (build-compiler-symbol-list-with-paths-in-module
+  [all-decls : AstDeclList]
+  [all-paths : AstDeclPathList]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [symbols : CompilerSymbols]
+  [index : i64]
+  [module : String]) : ResultCompilerSymbols
+  (match decls
+    [(AstDeclNil) (OkCompilerSymbols symbols)]
+    [(AstDeclCons decl rest)
+      (let
+        [rest : AstDeclList (box-get rest)]
+        [decl-path : String
+          (match paths
+            [(AstDeclPathCons path _) path]
+            [(AstDeclPathNil) ""])]
+        [rest-paths : AstDeclPathList
+          (match paths
+            [(AstDeclPathCons _ path-rest)
+              (let
+                [path-rest : AstDeclPathList (box-get path-rest)]
+                path-rest)]
+            [(AstDeclPathNil) AstDeclPathNil])]
+        (match decl
+          [(AstDeclImport _)
+            (build-compiler-symbol-list-with-paths-in-module
+              all-decls
+              all-paths
+              rest
+              rest-paths
+              symbols
+              index
+              module)]
+          [(AstDeclIncludeStr _ _)
+            (build-compiler-symbol-list-with-paths-in-module
+              all-decls
+              all-paths
+              rest
+              rest-paths
+              symbols
+              index
+              module)]
+          [(AstDeclIncludeBin _ _)
+            (build-compiler-symbol-list-with-paths-in-module
+              all-decls
+              all-paths
+              rest
+              rest-paths
+              symbols
+              index
+              module)]
+          [(AstDeclExport _)
+            (build-compiler-symbol-list-with-paths-in-module
+              all-decls
+              all-paths
+              rest
+              rest-paths
+              symbols
+              index
+              module)]
+          [(AstDeclModule next-module)
+            (build-compiler-symbol-list-with-paths-in-module
+              all-decls
+              all-paths
+              rest
+              rest-paths
+              symbols
+              index
+              (intern-str next-module))]
+          [(AstDeclTest _ _ _)
+            (build-compiler-symbol-list-with-paths-in-module
+              all-decls
+              all-paths
+              rest
+              rest-paths
+              symbols
+              index
+              module)]
+          [_
+            (match (compiler-symbols-duplicate-value-message-for-decl-with-paths
+              symbols
+              all-decls
+              all-paths
+              module
+              decl
+              index
+              decl-path)
+              [(CompilerSomeString message) (ErrCompilerSymbols message)]
+              [CompilerNoString
+                (begin
+                  (compiler-symbols-index-decl! symbols decl index module)
+                  (match (compiler-symbols-add-decl-in-module
+                    symbols
+                    module
+                    decl
+                    index)
+                    [(OkCompilerSymbols next-symbols)
+                      (build-compiler-symbol-list-with-paths-in-module
+                        all-decls
+                        all-paths
+                        rest
+                        rest-paths
+                        next-symbols
+                        (+ index 1)
+                        module)]
+                    [(ErrCompilerSymbols message) (ErrCompilerSymbols message)]))])]))]))
+
 (define (build-compiler-symbols [program : AstProgram]) : ResultCompilerSymbols
   (match program
     [(AstProgram decls-box)
@@ -2008,6 +2261,27 @@
           (compiler-symbols-empty-with-decls
             (compiler-decl-list-index-count decls))
           0)
+          [(OkCompilerSymbols symbols)
+            (OkCompilerSymbols
+              (build-compiler-symbol-aliases-list decls decls symbols))]
+          [(ErrCompilerSymbols message) (ErrCompilerSymbols message)]))]))
+
+(define (build-compiler-symbols-with-paths
+  [program : AstProgram]
+  [paths : AstDeclPathList]) : ResultCompilerSymbols
+  (match program
+    [(AstProgram decls-box)
+      (let
+        [decls : AstDeclList (box-get decls-box)]
+        (match (build-compiler-symbol-list-with-paths-in-module
+          decls
+          paths
+          decls
+          paths
+          (compiler-symbols-empty-with-decls
+            (compiler-decl-list-index-count decls))
+          0
+          "")
           [(OkCompilerSymbols symbols)
             (OkCompilerSymbols
               (build-compiler-symbol-aliases-list decls decls symbols))]

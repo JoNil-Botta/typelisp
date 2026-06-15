@@ -2398,19 +2398,42 @@
                       "zmm")
                       [(OkBackendReg dst-reg)
                         (OkCompilerBackend
-                          (string-append
-                            (backend-cat5
-                              "    "
-                              move
-                              " "
-                              false-reg
-                              (backend-cat3 ", " dst-reg "\n"))
-                            (backend-cat5
-                              "    "
-                              move
-                              " "
-                              true-reg
-                              (backend-cat5 ", " dst-reg "{" mask-reg "}\n"))))]
+                          (if (and
+                            (string-eq dst-reg true-reg)
+                            (not (string-eq true-reg false-reg)))
+                            (string-append
+                              (backend-cat5
+                                "    "
+                                move
+                                " "
+                                true-reg
+                                ", %zmm15\n")
+                              (string-append
+                                (backend-cat5
+                                  "    "
+                                  move
+                                  " "
+                                  false-reg
+                                  (backend-cat3 ", " dst-reg "\n"))
+                                (backend-cat5
+                                  "    "
+                                  move
+                                  " %zmm15, "
+                                  dst-reg
+                                  (backend-cat3 "{" mask-reg "}\n"))))
+                            (string-append
+                              (backend-cat5
+                                "    "
+                                move
+                                " "
+                                false-reg
+                                (backend-cat3 ", " dst-reg "\n"))
+                              (backend-cat5
+                                "    "
+                                move
+                                " "
+                                true-reg
+                                (backend-cat5 ", " dst-reg "{" mask-reg "}\n")))))]
                       [(ErrBackendReg message)
                         (ErrCompilerBackend
                           (compiler-diagnostic-with-message instr-diag message))])]

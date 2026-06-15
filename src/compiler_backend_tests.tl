@@ -3711,6 +3711,36 @@
         0
         (+ (array-ref xs i) 1)))))")
 
+(define (compiler-backend-avx512-select-alias-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment 0 (CompilerRegRegister "%vec6"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment 1 (CompilerRegRegister "%k1"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 2 (CompilerRegRegister "%vec6"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment 3 (CompilerRegRegister "%vec7"))
+          CompilerRegAssignmentNil)))))
+
+(define (compiler-backend-avx512-select-true-alias-ok?) : bool
+  (match (compiler-backend-emit-avx512-select
+    (compiler-backend-avx512-select-alias-assignments)
+    0
+    (IrValueVar 1)
+    (IrValueVar 2)
+    (IrValueVar 3)
+    8
+    (AstTyI64)
+    (compiler-diagnostic-at-start "" ""))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "    vmovdqu64 %zmm6, %zmm15\n")
+        (compiler-backend-string-contains? asm "    vmovdqu64 %zmm7, %zmm6\n")
+        (compiler-backend-string-contains?
+          asm
+          "    vmovdqu64 %zmm15, %zmm6{%k1}\n"))]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-avx512-map-asm-contains?
   [elem : String]
   [move : String]
@@ -3837,7 +3867,8 @@
     (compiler-backend-avx512-masked-if-source-ok?
       (compiler-backend-avx512-masked-if-offset-source))
     (compiler-backend-avx512-masked-if-index-value-ok?)
-    (compiler-backend-avx512-masked-if-value-ok?)))
+    (compiler-backend-avx512-masked-if-value-ok?)
+    (compiler-backend-avx512-select-true-alias-ok?)))
 
 (define (compiler-backend-avx512-vector-map-ok?) : bool
   (and

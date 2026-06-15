@@ -16439,11 +16439,7 @@
         (text-buf-empty))
         [(OkCompilerBackend body)
           (OkCompilerBackend
-            (backend-cat4
-              (compiler-backend-asm-label function label)
-              ":\n"
-              body
-              ""))]
+            (str-cat (compiler-backend-asm-label function label) ":\n" body ""))]
         [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))
 
 (define (compiler-backend-next-block-label [blocks : CompilerIrBlockList]) : CompilerBackendMaybeLabel
@@ -16712,7 +16708,7 @@
                     (OkCompilerBackend
                       (string-append
                         (if is-float
-                          (backend-cat5
+                          (str-cat
                             "    "
                             (compiler-backend-float-move ty)
                             " "
@@ -16721,7 +16717,7 @@
                                 target
                                 stack-idx))
                             "(%rbp), %xmm0\n")
-                          (backend-cat4
+                          (str-cat
                             "    movq "
                             (int->string
                               (compiler-backend-incoming-stack-arg-offset
@@ -16954,14 +16950,14 @@
                     [_addr-forward-done : unit
                       (compiler-backend-addr-of-forwarding-disable!)]
                     (OkCompilerBackend
-                      (backend-cat5
+                      (str-cat
                         (compiler-backend-function-symbol-map-comment
                           program-index
                           name)
                         ".globl "
                         symbol
                         "\n"
-                        (backend-cat5
+                        (str-cat
                           (compiler-backend-emit-function-entry
                             target
                             symbol
@@ -17379,7 +17375,7 @@
       (text-buf-empty))))
 
 (define (compiler-backend-emit-closure-descriptor-entry [name : String]) : String
-  (backend-cat5
+  (str-cat
     (compiler-backend-closure-descriptor-label name)
     ":\n    .quad "
     (compiler-backend-closure-entry-label name)
@@ -17527,7 +17523,7 @@
           vars)
           [(OkCompilerBackend args-asm)
             (OkCompilerBackend
-              (backend-cat5
+              (str-cat
                 (compiler-backend-emit-function-entry
                   target
                   (compiler-backend-closure-entry-label name)
@@ -17546,7 +17542,7 @@
                           name
                           externs
                           param-types)
-                        (backend-cat5
+                        (str-cat
                           "    call "
                           (compiler-backend-call-symbol-index
                             name
@@ -18045,7 +18041,7 @@
         bytes
         (text-buf-append
           (text-buf-append buf "    .balign 8\n")
-          (backend-cat3 data-label ":\n" "")))]
+          (str-cat data-label ":\n" "")))]
     (text-buf-append
       (text-buf-append
         (text-buf-append
@@ -18081,12 +18077,7 @@
         "\n")]))
 
 (define (compiler-backend-emit-f64-entry [text : String]) : String
-  (backend-cat5
-    (compiler-backend-f64-label text)
-    ":\n    .double "
-    text
-    "\n"
-    ""))
+  (str-cat (compiler-backend-f64-label text) ":\n    .double " text "\n" ""))
 
 (define (compiler-backend-emit-f64-entries-into
   [floats : BackendStringList]
@@ -18128,42 +18119,36 @@
         (OkCompilerBackend "    .quad 0\n    .quad 0\n")
         (OkCompilerBackend "    .quad 0\n"))]
     [(IrValueI64 n)
-      (OkCompilerBackend (backend-cat3 "    .quad " (int->string n) "\n"))]
+      (OkCompilerBackend (str-cat "    .quad " (int->string n) "\n"))]
     [(IrValueBool b)
       (if b
         (OkCompilerBackend "    .quad 1\n")
         (OkCompilerBackend "    .quad 0\n"))]
     [(IrValueChar c)
       (OkCompilerBackend
-        (backend-cat3
-          "    .quad "
-          (int->string (compiler-backend-char-code c))
-          "\n"))]
+        (str-cat "    .quad " (int->string (compiler-backend-char-code c)) "\n"))]
     [(IrValueF64 text)
       (if (compiler-backend-f64-type? ty)
-        (OkCompilerBackend (backend-cat3 "    .double " text "\n"))
-        (OkCompilerBackend (backend-cat3 "    .float " text "\n")))]
+        (OkCompilerBackend (str-cat "    .double " text "\n"))
+        (OkCompilerBackend (str-cat "    .float " text "\n")))]
     [(IrValueGlobal name)
       (OkCompilerBackend
-        (backend-cat3 "    .quad " (compiler-backend-user-symbol name) "\n"))]
+        (str-cat "    .quad " (compiler-backend-user-symbol name) "\n"))]
     [(IrValueGlobalAddr name)
       (OkCompilerBackend
-        (backend-cat3 "    .quad " (compiler-backend-user-symbol name) "\n"))]
+        (str-cat "    .quad " (compiler-backend-user-symbol name) "\n"))]
     [(IrValueFunction name)
       (OkCompilerBackend
-        (backend-cat3
+        (str-cat
           "    .quad "
           (compiler-backend-closure-descriptor-label name)
           "\n"))]
     [(IrValueString text)
       (OkCompilerBackend
-        (backend-cat3
-          "    .quad "
-          (compiler-backend-string-fat-label text)
-          "\n"))]
+        (str-cat "    .quad " (compiler-backend-string-fat-label text) "\n"))]
     [(IrValueBytes text)
       (OkCompilerBackend
-        (backend-cat3 "    .quad " (compiler-backend-bytes-fat-label text) "\n"))]
+        (str-cat "    .quad " (compiler-backend-bytes-fat-label text) "\n"))]
     [_
       (ErrCompilerBackend
         (compiler-diagnostic-at-start
@@ -18186,9 +18171,9 @@
   [size : i64]) : String
   (match target
     [(BackendTargetLinux)
-      (backend-cat5 "    .comm " symbol ", " (int->string size) ", 8\n")]
+      (str-cat "    .comm " symbol ", " (int->string size) ", 8\n")]
     [(BackendTargetWindows)
-      (backend-cat5 "    .comm " symbol ", " (int->string size) ", 3\n")]))
+      (str-cat "    .comm " symbol ", " (int->string size) ", 3\n")]))
 
 (define (compiler-backend-emit-global
   [target : CompilerBackendTarget]
@@ -18200,7 +18185,7 @@
         [symbol : String (compiler-backend-user-symbol name)]
         (if (compiler-backend-runtime-global? ty value)
           (OkCompilerBackend
-            (backend-cat5
+            (str-cat
               ".globl "
               symbol
               "\n"
@@ -18214,11 +18199,11 @@
           (match (compiler-backend-global-value-asm ty value program-index)
             [(OkCompilerBackend value-asm)
               (OkCompilerBackend
-                (backend-cat5
+                (str-cat
                   ".globl "
                   symbol
                   "\n"
-                  (backend-cat3 symbol ":\n" value-asm)
+                  (str-cat symbol ":\n" value-asm)
                   ""))]
             [(ErrCompilerBackend message) (ErrCompilerBackend message)])))]))
 
@@ -18273,27 +18258,27 @@
     [symbol : String (compiler-backend-user-symbol name)]
     [init-symbol : String
       (compiler-backend-user-symbol (compiler-backend-global-init-name name))]
-    (backend-cat5
+    (str-cat
       "    call "
       init-symbol
       "\n"
       (if (compiler-backend-group-type? program-index ty)
         ;; #2386: a register-group init returns word0:word1 in %rax:%rdx; store
         ;; both into the inline 16-byte global slot.
-        (backend-cat5
+        (str-cat
           "    movq %rax, "
           symbol
           "(%rip)\n    movq %rdx, "
-          (backend-cat3 symbol "+8(%rip)\n" "")
+          (str-cat symbol "+8(%rip)\n" "")
           "")
         (if (compiler-backend-float-type? ty)
-          (backend-cat5
+          (str-cat
             "    "
             (compiler-backend-float-move ty)
             " %xmm0, "
             symbol
             "(%rip)\n")
-          (backend-cat3 "    movq %rax, " symbol "(%rip)\n")))
+          (str-cat "    movq %rax, " symbol "(%rip)\n")))
       "")))
 
 (define (compiler-backend-global-initializers
@@ -19369,7 +19354,7 @@
               plan
               (text-buf-append
                 (text-buf-append buf ".extern ")
-                (backend-cat3
+                (str-cat
                   (compiler-backend-link-symbol link-symbol plan)
                   "\n"
                   ""))))])]))
@@ -19417,15 +19402,15 @@ tl_current_arena:
   [target : CompilerBackendTarget]
   [dst : String]) : String
   (if (compiler-backend-target-windows? target)
-    (backend-cat3 "    movq %gs:0x28, " dst "\n")
-    (backend-cat3 "    movq %fs:tl_current_arena@tpoff, " dst "\n")))
+    (str-cat "    movq %gs:0x28, " dst "\n")
+    (str-cat "    movq %fs:tl_current_arena@tpoff, " dst "\n")))
 
 (define (compiler-backend-current-arena-store
   [target : CompilerBackendTarget]
   [src : String]) : String
   (if (compiler-backend-target-windows? target)
-    (backend-cat3 "    movq " src ", %gs:0x28\n")
-    (backend-cat3 "    movq " src ", %fs:tl_current_arena@tpoff\n")))
+    (str-cat "    movq " src ", %gs:0x28\n")
+    (str-cat "    movq " src ", %fs:tl_current_arena@tpoff\n")))
 
 (define (compiler-backend-current-arena-clear [target : CompilerBackendTarget]) : String
   (if (compiler-backend-target-windows? target)
@@ -19550,13 +19535,13 @@ tl_profile_alloc_peak_bytes:
   [profile : bool]) : String
   (if profile
     (string-append
-      (backend-cat5
+      (str-cat
         "    addq "
         size-reg
         ", tl_profile_alloc_total_bytes(%rip)\n    addq "
         size-reg
         ", tl_profile_alloc_live_bytes(%rip)\n")
-      (backend-cat5
+      (str-cat
         "    movq tl_profile_alloc_live_bytes(%rip), %r10\n    cmpq tl_profile_alloc_peak_bytes(%rip), %r10\n    jbe "
         done-label
         "\n    movq %r10, tl_profile_alloc_peak_bytes(%rip)\n"
@@ -19569,20 +19554,17 @@ tl_profile_alloc_peak_bytes:
   [used-reg : String]
   [profile : bool]) : String
   (if profile
-    (backend-cat5
+    (str-cat
       "    movq 16("
       arena-reg
       "), "
       used-reg
-      (backend-cat5
+      (str-cat
         "\n    subq 8("
         arena-reg
         "), "
         used-reg
-        (backend-cat3
-          "\n    subq "
-          used-reg
-          ", tl_profile_alloc_live_bytes(%rip)\n")))
+        (str-cat "\n    subq " used-reg ", tl_profile_alloc_live_bytes(%rip)\n")))
     ""))
 
 (define (compiler-backend-runtime-profile-live-rewind
@@ -19591,20 +19573,17 @@ tl_profile_alloc_peak_bytes:
   [used-reg : String]
   [profile : bool]) : String
   (if profile
-    (backend-cat5
+    (str-cat
       "    movq 16("
       arena-reg
       "), "
       used-reg
-      (backend-cat5
+      (str-cat
         "\n    subq "
         mark-reg
         ", "
         used-reg
-        (backend-cat3
-          "\n    subq "
-          used-reg
-          ", tl_profile_alloc_live_bytes(%rip)\n")))
+        (str-cat "\n    subq " used-reg ", tl_profile_alloc_live_bytes(%rip)\n")))
     ""))
 
 (define (compiler-backend-runtime-fast-alloc-function
@@ -19620,32 +19599,32 @@ tl_profile_alloc_peak_bytes:
     [slow-label : String (string-append label "_slow")]
     [profile-label : String (string-append label "_profile_done")]
     (string-append
-      (backend-cat3 label ":\n" "")
+      (str-cat label ":\n" "")
       (string-append
         (string-append
           (compiler-backend-current-arena-load target "%r8")
-          (backend-cat3 "    testq %r8, %r8\n    jz " slow-label "\n"))
-        (backend-cat5
+          (str-cat "    testq %r8, %r8\n    jz " slow-label "\n"))
+        (str-cat
           "    movq 16(%r8), %rax
     movq %rax, "
           next-reg
           "
     addq $"
           size-text
-          (backend-cat5
+          (str-cat
             ", "
             next-reg
             "
     jc "
             slow-label
-            (backend-cat5
+            (str-cat
               "
     cmpq 24(%r8), "
               next-reg
               "
     ja "
               slow-label
-              (backend-cat5
+              (str-cat
                 "
     movq "
                 next-reg
@@ -19655,14 +19634,14 @@ tl_profile_alloc_peak_bytes:
                   size-imm
                   profile-label
                   profile)
-                (backend-cat5
+                (str-cat
                   "    ret
 "
                   slow-label
                   ":
     movq $"
                   size-text
-                  (backend-cat4 ", " size-reg "
+                  (str-cat ", " size-reg "
     jmp tl_alloc
 " ""))))))))))
 
@@ -21498,7 +21477,7 @@ tl_memcpy:
               arena-asm
               (string-append
                 profile-asm
-                (backend-cat5
+                (str-cat
                   alloc-asm
                   region-mark-asm
                   region-reset-asm
@@ -21506,7 +21485,7 @@ tl_memcpy:
                   div-abort-asm))))]
         [runtime-string-asm : String
           (string-append
-            (backend-cat5 shift-abort-asm substring-asm concat-asm "" "")
+            (str-cat shift-abort-asm substring-asm concat-asm "" "")
             (string-append int-to-string-asm abort-asm))]
         [env-var-exists-asm : String
           (if env-var-exists
@@ -21534,12 +21513,12 @@ tl_memcpy:
           (if (compiler-backend-target-windows? target)
             (compiler-backend-runtime-windows-thread-functions)
             "")]
-        (backend-cat5
+        (str-cat
           runtime-front-asm
           runtime-string-asm
           fs-asm
           thread-asm
-          (backend-cat5
+          (str-cat
             env-var-exists-asm
             env-var-value-asm
             env-path-separator-asm
@@ -24274,15 +24253,10 @@ tl_memcpy:
           (text-buf-render out))))))
 
 (define (compiler-backend-pic-quad-pattern [target : String]) : String
-  (backend-cat3 "    .quad " target "\n"))
+  (str-cat "    .quad " target "\n"))
 
 (define (compiler-backend-pic-quad-replacement [target : String]) : String
-  (backend-cat5
-    "    .quad "
-    target
-    " - "
-    compiler-backend-pic-image-base-label
-    "\n"))
+  (str-cat "    .quad " target " - " compiler-backend-pic-image-base-label "\n"))
 
 (define (compiler-backend-pic-rewrite-target [asm : String] [target : String]) : String
   (compiler-backend-string-replace-all
@@ -24374,7 +24348,7 @@ tl_memcpy:
   [site : String]
   [target : String]) : String
   (string-append
-    (backend-cat5
+    (str-cat
       (compiler-backend-pic-section-name section)
       " "
       (int->string offset)
@@ -24464,7 +24438,7 @@ tl_memcpy:
 
 (define (compiler-backend-pic-asm [asm : String] [image : CompilerObjectImage]) : String
   (string-append
-    (backend-cat3 ".text\n" compiler-backend-pic-image-base-label ":\n")
+    (str-cat ".text\n" compiler-backend-pic-image-base-label ":\n")
     (compiler-backend-pic-rewrite-relocs asm (struct-get image relocations))))
 
 (define (compiler-backend-emit-program-pic-target-with-mode-and-crt

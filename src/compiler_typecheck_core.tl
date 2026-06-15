@@ -10087,46 +10087,108 @@
 (define (tc-thread-spawn-i64-name? [name : String]) : bool
   (tc-thread-name-base-eq? name "thread-spawn-i64"))
 
-(define (tc-thread-spawn-i64-call? [func : AstExpr]) : bool
-  (match (tc-expr-var-name func)
-    [(TcSomeString name) (tc-thread-spawn-i64-name? name)]
-    [(TcNoString) false]))
+(define (tc-thread-spawn-bool-name? [name : String]) : bool
+  (tc-thread-name-base-eq? name "thread-spawn-bool"))
 
-(define (tc-thread-spawn-i64-result-type? [ctx : TcContext] [ty : AstType]) : bool
+(define (tc-thread-spawn-unit-name? [name : String]) : bool
+  (tc-thread-name-base-eq? name "thread-spawn-unit"))
+
+(define (tc-thread-safe-spawn-name? [name : String]) : bool
+  (or
+    (tc-thread-spawn-i64-name? name)
+    (tc-thread-spawn-bool-name? name)
+    (tc-thread-spawn-unit-name? name)))
+
+(define (tc-thread-safe-handle-type-name? [name : String]) : bool
+  (or
+    (tc-thread-name-base-eq? name "ThreadI64")
+    (tc-thread-name-base-eq? name "ThreadBool")
+    (tc-thread-name-base-eq? name "ThreadUnit")))
+
+(define (tc-thread-safe-spawn-call-name [func : AstExpr]) : TcMaybeString
+  (match (tc-expr-var-name func)
+    [(TcSomeString name)
+      (if (tc-thread-safe-spawn-name? name)
+        (TcSomeString name)
+        (TcNoString))]
+    [(TcNoString) (TcNoString)]))
+
+(define (tc-thread-safe-spawn-result-type-name?
+  [spawn-name : String]
+  [result-name : String]) : bool
+  (if (tc-thread-spawn-i64-name? spawn-name)
+    (tc-thread-name-base-eq? result-name "ThreadI64SpawnResult")
+    (if (tc-thread-spawn-bool-name? spawn-name)
+      (tc-thread-name-base-eq? result-name "ThreadBoolSpawnResult")
+      (if (tc-thread-spawn-unit-name? spawn-name)
+        (tc-thread-name-base-eq? result-name "ThreadUnitSpawnResult")
+        false))))
+
+(define (tc-thread-safe-spawn-result-type?
+  [ctx : TcContext]
+  [spawn-name : String]
+  [ty : AstType]) : bool
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
     [(AstTyEnum name)
-      (tc-thread-name-base-eq? (intern-str name) "ThreadI64SpawnResult")]
+      (tc-thread-safe-spawn-result-type-name? spawn-name (intern-str name))]
     [(AstTyEnumArgs name _)
-      (tc-thread-name-base-eq? (intern-str name) "ThreadI64SpawnResult")]
+      (tc-thread-safe-spawn-result-type-name? spawn-name (intern-str name))]
     [_ false]))
 
-(define (tc-thread-spawn-i64-task-type? [ctx : TcContext] [ty : AstType]) : bool
+(define (tc-thread-safe-spawn-task-ret-type?
+  [ctx : TcContext]
+  [spawn-name : String]
+  [ty : AstType]) : bool
+  (let
+    [resolved : AstType (tc-type-strip-region (tc-resolve-type ctx ty))]
+    (if (tc-thread-spawn-i64-name? spawn-name)
+      (match resolved
+        [(AstTyI64) true]
+        [_ false])
+      (if (tc-thread-spawn-bool-name? spawn-name)
+        (match resolved
+          [(AstTyBool) true]
+          [_ false])
+        (if (tc-thread-spawn-unit-name? spawn-name)
+          (match resolved
+            [(AstTyUnit) true]
+            [_ false])
+          false)))))
+
+(define (tc-thread-safe-spawn-task-type?
+  [ctx : TcContext]
+  [spawn-name : String]
+  [ty : AstType]) : bool
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
     [(AstTyFunc task-params task-ret-box)
       (match task-params
         [(AstTypeNil)
-          (match (tc-type-strip-region
-            (tc-resolve-type ctx (ty-node-get task-ret-box)))
-            [(AstTyI64) true]
-            [_ false])]
+          (tc-thread-safe-spawn-task-ret-type?
+            ctx
+            spawn-name
+            (ty-node-get task-ret-box))]
         [_ false])]
     [_ false]))
 
-(define (tc-thread-spawn-i64-signature?
+(define (tc-thread-safe-spawn-signature?
   [ctx : TcContext]
+  [spawn-name : String]
   [params : AstTypeList]
   [ret : AstType]) : bool
   (and
-    (tc-thread-spawn-i64-result-type? ctx ret)
+    (tc-thread-safe-spawn-result-type? ctx spawn-name ret)
     (match params
       [(AstTypeCons task-param rest-box)
         (match (box-get rest-box)
           [(AstTypeNil)
-            (tc-thread-spawn-i64-task-type? ctx (ty-node-get task-param))]
+            (tc-thread-safe-spawn-task-type?
+              ctx
+              spawn-name
+              (ty-node-get task-param))]
           [_ false])]
       [_ false])))
 
-(define (tc-thread-spawn-i64-safe-capture-type?
+(define (tc-thread-safe-spawn-safe-capture-type?
   [ctx : TcContext]
   [ty : AstType]) : bool
   (if (tc-type-contains-any-region ty)
@@ -10143,18 +10205,22 @@
           [(AstTyUnit) true]
           [_ false])))))
 
-(define (tc-thread-spawn-i64-capture-message
+(define (tc-thread-safe-spawn-capture-message
+  [spawn-name : String]
   [ctx : TcContext]
   [name : String]
   [ty : AstType]) : String
   (str-cat
-    "typecheck: thread-spawn-i64 cannot capture `"
+    "typecheck: "
+    spawn-name
+    " cannot capture `"
     name
     "` of type "
     (tc-type-render (tc-type-without-regions (tc-resolve-type ctx ty)))
     "; only copyable scalar captures are safe"))
 
-(define (tc-check-thread-spawn-i64-captures-scan-root
+(define (tc-check-thread-safe-spawn-captures-scan-root
+  [spawn-name : String]
   [ctx : TcContext]
   [root : TcTypeEnv]
   [env : TcTypeEnv]
@@ -10164,7 +10230,8 @@
     [(TcTypeNil) OkTcUnit]
     [(TcTypeCache _ _ _ _ _ scan-through _ rest _)
       (if scan-through
-        (tc-check-thread-spawn-i64-captures-scan-root
+        (tc-check-thread-safe-spawn-captures-scan-root
+          spawn-name
           ctx
           root
           (box-get rest)
@@ -10178,14 +10245,16 @@
           (= key (tc-region-marker-id))
           (= key (tc-default-boundary-id))
           (tc-cleanup-owner-marker-entry? key ty))
-          (tc-check-thread-spawn-i64-captures-scan-root
+          (tc-check-thread-safe-spawn-captures-scan-root
+            spawn-name
             ctx
             root
             (box-get rest)
             bound
             body)
           (if (not (tc-expr-uses-free-name? body name bound))
-            (tc-check-thread-spawn-i64-captures-scan-root
+            (tc-check-thread-safe-spawn-captures-scan-root
+              spawn-name
               ctx
               root
               (box-get rest)
@@ -10193,64 +10262,90 @@
               body)
             (if (tc-expr-sets-free-name? body name bound)
               (ErrTcUnit
-                "typecheck: thread-spawn-i64 lambda cannot assign captured binding")
+                (str-cat
+                  "typecheck: "
+                  spawn-name
+                  " lambda cannot assign captured binding"))
               (if (tc-cleanup-owner-active? root name)
                 (ErrTcUnit
-                  "typecheck: thread-spawn-i64 cannot capture cleanup-required resource")
-                (if (tc-thread-spawn-i64-safe-capture-type? ctx ty)
-                  (tc-check-thread-spawn-i64-captures-scan-root
+                  (str-cat
+                    "typecheck: "
+                    spawn-name
+                    " cannot capture cleanup-required resource"))
+                (if (tc-thread-safe-spawn-safe-capture-type? ctx ty)
+                  (tc-check-thread-safe-spawn-captures-scan-root
+                    spawn-name
                     ctx
                     root
                     (box-get rest)
                     bound
                     body)
-                  (ErrTcUnit (tc-thread-spawn-i64-capture-message ctx name ty))))))))]))
+                  (ErrTcUnit
+                    (tc-thread-safe-spawn-capture-message
+                      spawn-name
+                      ctx
+                      name
+                      ty))))))))]))
 
-(define (tc-check-thread-spawn-i64-captures
+(define (tc-check-thread-safe-spawn-captures
+  [spawn-name : String]
   [ctx : TcContext]
   [env : TcTypeEnv]
   [params : AstParamList]
   [body : AstExpr]) : ResultTcUnit
   (match env
     [(TcTypeCache _ _ _ _ _ _ _ rest _)
-      (tc-check-thread-spawn-i64-captures-scan-root
+      (tc-check-thread-safe-spawn-captures-scan-root
+        spawn-name
         ctx
         env
         (box-get rest)
         (tc-param-bound-names params)
         body)]
     [_
-      (tc-check-thread-spawn-i64-captures-scan-root
+      (tc-check-thread-safe-spawn-captures-scan-root
+        spawn-name
         ctx
         env
         env
         (tc-param-bound-names params)
         body)]))
 
-(define (tc-check-thread-spawn-i64-direct-lambda
+(define (tc-check-thread-safe-spawn-direct-lambda
+  [spawn-name : String]
   [ctx : TcContext]
   [env : TcTypeEnv]
   [arg : AstExpr]) : ResultTcUnit
   (match (tc-active-region env)
     [(TcSomeString _)
       (ErrTcUnit
-        "typecheck: thread-spawn-i64 cannot spawn from scoped arena; closure storage would not outlive the worker")]
+        (str-cat
+          "typecheck: "
+          spawn-name
+          " cannot spawn from scoped arena; closure storage would not outlive the worker"))]
     [(TcNoString)
       (match (ast-expr-unspan arg)
         [(AstExprLambda params _ body-box)
           (match params
             [(AstParamNil)
-              (tc-check-thread-spawn-i64-captures
+              (tc-check-thread-safe-spawn-captures
+                spawn-name
                 ctx
                 env
                 params
                 (ast-node-get body-box))]
             [_
               (ErrTcUnit
-                "typecheck: thread-spawn-i64 requires a direct nullary lambda argument so captures can be checked")])]
+                (str-cat
+                  "typecheck: "
+                  spawn-name
+                  " requires a direct nullary lambda argument so captures can be checked"))])]
         [_
           (ErrTcUnit
-            "typecheck: thread-spawn-i64 requires a direct nullary lambda argument so captures can be checked")])]))
+            (str-cat
+              "typecheck: "
+              spawn-name
+              " requires a direct nullary lambda argument so captures can be checked"))])]))
 
 (define (tc-check-thread-spawn-i64-call
   [ctx : TcContext]
@@ -10259,18 +10354,26 @@
   [args : AstExprList]
   [params : AstTypeList]
   [ret : AstType]) : ResultTcUnit
-  (if (and
-    (tc-thread-spawn-i64-call? func)
-    (tc-thread-spawn-i64-signature? ctx params ret))
-    (match args
-      [(AstExprCons arg rest)
-        (match (box-get rest)
+  (match (tc-thread-safe-spawn-call-name func)
+    [(TcSomeString spawn-name)
+      (if (tc-thread-safe-spawn-signature? ctx spawn-name params ret)
+        (match args
+          [(AstExprCons arg rest)
+            (match (box-get rest)
+              [(AstExprNil)
+                (tc-check-thread-safe-spawn-direct-lambda
+                  spawn-name
+                  ctx
+                  env
+                  (ast-node-get arg))]
+              [_
+                (ErrTcUnit
+                  (str-cat "typecheck: " spawn-name " expects one argument"))])]
           [(AstExprNil)
-            (tc-check-thread-spawn-i64-direct-lambda ctx env (ast-node-get arg))]
-          [_ (ErrTcUnit "typecheck: thread-spawn-i64 expects one argument")])]
-      [(AstExprNil)
-        (ErrTcUnit "typecheck: thread-spawn-i64 expects one argument")])
-    OkTcUnit))
+            (ErrTcUnit
+              (str-cat "typecheck: " spawn-name " expects one argument"))])
+        OkTcUnit)]
+    [(TcNoString) OkTcUnit]))
 
 (define (tc-call-function-type-normal
   [ctx : TcContext]
@@ -22067,11 +22170,11 @@
     (match resolved
       [(AstTyBox _) true]
       [(AstTyStruct name)
-        (if (tc-thread-name-base-eq? (intern-str name) "ThreadI64")
+        (if (tc-thread-safe-handle-type-name? (intern-str name))
           true
           (tc-cleanup-owning-struct-type? ctx resolved))]
       [(AstTyStructArgs name _)
-        (if (tc-thread-name-base-eq? (intern-str name) "ThreadI64")
+        (if (tc-thread-safe-handle-type-name? (intern-str name))
           true
           (tc-cleanup-owning-struct-type? ctx resolved))]
       [_ false])))

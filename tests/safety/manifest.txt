@@ -80,4 +80,6 @@ thread_spawn_i64_raw_pointer_capture_reject|check-fail|tests/safety/thread_spawn
 thread_spawn_i64_non_direct_reject|check-fail|tests/safety/thread_spawn_i64_non_direct_reject.tl|-|thread-spawn-i64 requires a direct nullary lambda argument
 thread_spawn_i64_scoped_arena_reject|check-fail|tests/safety/thread_spawn_i64_scoped_arena_reject.tl|-|thread-spawn-i64 cannot spawn from scoped arena
 thread_join_i64_double_reject|check-fail|tests/safety/thread_join_i64_double_reject.tl|-|use of moved value `worker`
+thread_spawn_bool_string_capture_reject|check-fail|tests/safety/thread_spawn_bool_string_capture_reject.tl|-|thread-spawn-bool cannot capture `text` of type String
+thread_join_bool_double_reject|check-fail|tests/safety/thread_join_bool_double_reject.tl|-|use of moved value `worker`
 thread_spawn_i64_shadow_local_ok|check-ok|tests/safety/thread_spawn_i64_shadow_local_ok.tl|-|-

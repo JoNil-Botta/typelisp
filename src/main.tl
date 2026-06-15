@@ -230,7 +230,7 @@ Options:
     -o <file>                      Output assembly or IR file
     --batch <file>                 Read input|output pairs and compile them in one process
     --emit-ir                      Emit intermediate representation
-    --pic                          Emit position-independent assembly and <output>.fixups
+    --pic                          Emit runtime-free no-entry PIC assembly and <output>.fixups
     --target <target>              linux-x86_64 or windows-x86_64
     --backend-mode <mode>          scalar, avx2, or avx512
     --opt-level <0|1|2>            Select optimizer level

@@ -6554,6 +6554,26 @@
           [(OkSpecExpr rewritten state2)
             (OkSpecExpr (ast-expr-box-get rewritten) state2)]
           [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+    [(AstExprBoxTake inner-box)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (match (spec-rewrite-expr inner templates state)
+          [(OkSpecExpr rewritten state2)
+            (OkSpecExpr (ast-expr-box-take rewritten) state2)]
+          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+    [(AstExprBoxSet inner-box value-box)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        [value : AstExpr (ast-node-get value-box)]
+        (match (spec-rewrite-expr inner templates state)
+          [(OkSpecExpr rewritten-inner inner-state)
+            (match (spec-rewrite-expr value templates inner-state)
+              [(OkSpecExpr rewritten-value value-state)
+                (OkSpecExpr
+                  (ast-expr-box-set rewritten-inner rewritten-value)
+                  value-state)]
+              [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
     [(AstExprComptime inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
@@ -7127,6 +7147,25 @@
         (match (spec-substitute-values-expr inner subs)
           [(OkSpecSubExpr rewritten)
             (OkSpecSubExpr (ast-expr-box-get rewritten))]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprBoxTake inner-box)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (match (spec-substitute-values-expr inner subs)
+          [(OkSpecSubExpr rewritten)
+            (OkSpecSubExpr (ast-expr-box-take rewritten))]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprBoxSet inner-box value-box)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        [value : AstExpr (ast-node-get value-box)]
+        (match (spec-substitute-values-expr inner subs)
+          [(OkSpecSubExpr rewritten-inner)
+            (match (spec-substitute-values-expr value subs)
+              [(OkSpecSubExpr rewritten-value)
+                (OkSpecSubExpr
+                  (ast-expr-box-set rewritten-inner rewritten-value))]
+              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
           [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
     [(AstExprComptime inner-box)
       (let
@@ -7784,6 +7823,25 @@
         (match (spec-substitute-types-expr inner subs)
           [(OkSpecSubExpr rewritten)
             (OkSpecSubExpr (ast-expr-box-get rewritten))]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprBoxTake inner-box)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (match (spec-substitute-types-expr inner subs)
+          [(OkSpecSubExpr rewritten)
+            (OkSpecSubExpr (ast-expr-box-take rewritten))]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprBoxSet inner-box value-box)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        [value : AstExpr (ast-node-get value-box)]
+        (match (spec-substitute-types-expr inner subs)
+          [(OkSpecSubExpr rewritten-inner)
+            (match (spec-substitute-types-expr value subs)
+              [(OkSpecSubExpr rewritten-value)
+                (OkSpecSubExpr
+                  (ast-expr-box-set rewritten-inner rewritten-value))]
+              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
           [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
     [(AstExprComptime inner-box)
       (let

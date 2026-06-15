@@ -276,6 +276,8 @@
   (AstExprWithResource AstResourceBindingList AstExprList)
   (AstExprBox i64)
   (AstExprBoxGet i64)
+  (AstExprBoxTake i64)
+  (AstExprBoxSet i64 i64)
   ;; Compile-time-only type value literal: `(type T)`.
   (AstExprTypeLiteral AstType)
   ;; Zero/identity initialization. `(init : T)` carries `AstSomeType T`;
@@ -1314,6 +1316,12 @@
 (define (ast-expr-box-get [value : i64]) : i64
   (ast-node-push (AstExprBoxGet value)))
 
+(define (ast-expr-box-take [value : i64]) : i64
+  (ast-node-push (AstExprBoxTake value)))
+
+(define (ast-expr-box-set [target : i64] [value : i64]) : i64
+  (ast-node-push (AstExprBoxSet target value)))
+
 (define (ast-expr-init-maybe [maybe-ty : AstMaybeType]) : i64
   (ast-node-push (AstExprInit maybe-ty)))
 
@@ -1660,6 +1668,8 @@
     [(AstExprIntToPtr _ _) 39]
     [(AstExprBox _) 42]
     [(AstExprBoxGet _) 43]
+    [(AstExprBoxTake _) 65]
+    [(AstExprBoxSet _ _) 66]
     [(AstExprQuote _) 44]
     [(AstExprQuasiquote _) 45]
     [(AstExprUnquote _) 46]

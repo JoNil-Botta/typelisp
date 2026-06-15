@@ -17690,6 +17690,36 @@
 (defenum OptInlineSpanProgram
   (OptInlineSpanProgram CompilerIrFunctionList CompilerSourceSpans))
 
+(defenum OptInlineMultiClone
+  (OptInlineMultiClone CompilerIrBlockList CompilerIrPhiInputList))
+
+(defenum OptInlineMultiInstrClone
+  (OptInlineMultiInstrClone CompilerIrInstrList CompilerIrPhiInputList))
+
+(defenum OptInlineMultiSpanClone
+  (OptInlineMultiSpanClone
+    CompilerIrBlockList
+    CompilerIrPhiInputList
+    CompilerSourceSpans))
+
+(defenum OptInlineMultiSpanInstrClone
+  (OptInlineMultiSpanInstrClone
+    CompilerIrInstrList
+    CompilerIrPhiInputList
+    CompilerSourceSpans))
+
+(defenum OptInlineMaybeBlockRewrite
+  (OptInlineNoBlockRewrite)
+  (OptInlineSomeBlockRewrite CompilerIrBlockList i64 i64))
+
+(defenum OptInlineMaybeSpanBlockRewrite
+  (OptInlineNoSpanBlockRewrite)
+  (OptInlineSomeSpanBlockRewrite
+    CompilerIrBlockList
+    i64
+    i64
+    CompilerSourceSpans))
+
 (define (opt-inline-max-body) : i64
   8)
 
@@ -17808,6 +17838,197 @@
       (match block
         [(IrBlock _ seq) (- (compiler-ir-instr-seq-count seq) 1)])]
     [_ 0]))
+
+(define (opt-inline-phi-input-label?
+  [inputs : CompilerIrPhiInputList]
+  [label : String]) : bool
+  (match inputs
+    [(IrPhiInputNil) false]
+    [(IrPhiInputCons _ input-label rest)
+      (if (string-eq input-label label)
+        true
+        (opt-inline-phi-input-label? (box-get rest) label))]))
+
+(define (opt-inline-instr-phi-label? [instr : CompilerIrInstr] [label : String]) : bool
+  (match instr
+    [(IrInstrPhi _ inputs _) (opt-inline-phi-input-label? inputs label)]
+    [_ false]))
+
+(define (opt-inline-instr-seq-phi-label-from?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [label : String]) : bool
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    false
+    (if (opt-inline-instr-phi-label?
+      (compiler-ir-instr-seq-ref instrs index)
+      label)
+      true
+      (opt-inline-instr-seq-phi-label-from? instrs (+ index 1) label))))
+
+(define (opt-inline-instr-seq-phi-label?
+  [instrs : CompilerIrInstrSeq]
+  [label : String]) : bool
+  (opt-inline-instr-seq-phi-label-from? instrs 0 label))
+
+(define (opt-inline-blocks-phi-label?
+  [blocks : CompilerIrBlockList]
+  [label : String]) : bool
+  (match blocks
+    [(IrBlockNil) false]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (if (opt-inline-instr-seq-phi-label? instrs label)
+            true
+            (opt-inline-blocks-phi-label? (box-get rest) label))])]
+    [(IrBlockArray seq)
+      (opt-inline-blocks-phi-label? (compiler-ir-block-seq-to-list seq) label)]))
+
+(define (opt-inline-multiblock-instr-ok? [instr : CompilerIrInstr] [np : i64]) : bool
+  (match instr
+    [(IrInstrJump _) true]
+    [(IrInstrBranch _ _ _) true]
+    [(IrInstrReturn _) true]
+    [(IrInstrPhi dst _ _) (>= dst np)]
+    [_ (opt-inline-body-instr-ok? instr np)]))
+
+(define (opt-inline-multiblock-instrs-ok-from?
+  [instrs : CompilerIrInstrSeq]
+  [np : i64]
+  [index : i64]) : bool
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    true
+    (if (opt-inline-multiblock-instr-ok?
+      (compiler-ir-instr-seq-ref instrs index)
+      np)
+      (opt-inline-multiblock-instrs-ok-from? instrs np (+ index 1))
+      false)))
+
+(define (opt-inline-multiblock-instrs-ok?
+  [instrs : CompilerIrInstrSeq]
+  [np : i64]) : bool
+  (opt-inline-multiblock-instrs-ok-from? instrs np 0))
+
+(define (opt-inline-multiblock-blocks-ok?
+  [blocks : CompilerIrBlockList]
+  [np : i64]) : bool
+  (match blocks
+    [(IrBlockNil) true]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (and
+            (opt-inline-multiblock-instrs-ok? instrs np)
+            (opt-inline-multiblock-blocks-ok? (box-get rest) np))])]
+    [(IrBlockArray seq)
+      (opt-inline-multiblock-blocks-ok? (compiler-ir-block-seq-to-list seq) np)]))
+
+(define (opt-inline-return-count-instrs-from
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [count : i64]) : i64
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    count
+    (opt-inline-return-count-instrs-from
+      instrs
+      (+ index 1)
+      (match (compiler-ir-instr-seq-ref instrs index)
+        [(IrInstrReturn _) (+ count 1)]
+        [_ count]))))
+
+(define (opt-inline-return-count-instrs [instrs : CompilerIrInstrSeq]) : i64
+  (opt-inline-return-count-instrs-from instrs 0 0))
+
+(define (opt-inline-return-count-blocks [blocks : CompilerIrBlockList]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (+
+            (opt-inline-return-count-instrs instrs)
+            (opt-inline-return-count-blocks (box-get rest)))])]
+    [(IrBlockArray seq)
+      (opt-inline-return-count-blocks (compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-inline-cost-instrs-from
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [count : i64]) : i64
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    count
+    (opt-inline-cost-instrs-from
+      instrs
+      (+ index 1)
+      (match (compiler-ir-instr-seq-ref instrs index)
+        [(IrInstrReturn _) count]
+        [_ (+ count 1)]))))
+
+(define (opt-inline-cost-instrs [instrs : CompilerIrInstrSeq]) : i64
+  (opt-inline-cost-instrs-from instrs 0 0))
+
+(define (opt-inline-multiblock-cost-instrs [blocks : CompilerIrBlockList]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (+
+            (opt-inline-cost-instrs instrs)
+            (opt-inline-multiblock-cost-instrs (box-get rest)))])]
+    [(IrBlockArray seq)
+      (opt-inline-multiblock-cost-instrs (compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-inline-forward-successors?
+  [index : OptCfgIndex]
+  [source-id : i64]
+  [succs : OptLabelSet]) : bool
+  (match succs
+    [(OptLabelNil) true]
+    [(OptLabelCons label rest)
+      (match (opt-cfg-index-id index label)
+        [(OptSomeI64 target-id)
+          (and
+            (> target-id source-id)
+            (opt-inline-forward-successors? index source-id (box-get rest)))]
+        [(OptNoI64) false])]))
+
+(define (opt-inline-forward-edges-from?
+  [index : OptCfgIndex]
+  [id : i64]
+  [count : i64]) : bool
+  (if (>= id count)
+    true
+    (if (opt-inline-forward-successors?
+      index
+      id
+      (opt-cfg-index-successors index (opt-cfg-index-label index id)))
+      (opt-inline-forward-edges-from? index (+ id 1) count)
+      false)))
+
+(define (opt-inline-callee-acyclic? [blocks : CompilerIrBlockList]) : bool
+  (let
+    [index : OptCfgIndex (opt-cfg-index-build blocks)]
+    (opt-inline-forward-edges-from? index 0 (opt-cfg-index-block-count index))))
+
+(define (opt-inline-multiblock-callee-ok?
+  [callee : CompilerIrFunction]
+  [caller-name : String]) : bool
+  (match callee
+    [(IrFunction cname cparams _ cvars cblocks)
+      (if (string-eq cname caller-name)
+        false
+        (let
+          [np : i64 (opt-inline-param-count cparams)]
+          (and
+            (opt-inline-params-sequential? cparams 0)
+            (>= cvars np)
+            (> (compiler-ir-block-list-count cblocks) 1)
+            (> (opt-inline-return-count-blocks cblocks) 0)
+            (opt-inline-structure-ok? cblocks)
+            (opt-inline-callee-acyclic? cblocks)
+            (opt-inline-multiblock-blocks-ok? cblocks np))))]))
 
 (define (opt-inline-callee-ok?
   [callee : CompilerIrFunction]
@@ -18218,6 +18439,185 @@
     [(IrInstrCons instr rest)
       (compiler-ir-instr-cons instr (opt-inline-append (box-get rest) b))]))
 
+(define (opt-inline-block-append
+  [a : CompilerIrBlockList]
+  [b : CompilerIrBlockList]) : CompilerIrBlockList
+  (match a
+    [(IrBlockNil) b]
+    [(IrBlockCons block rest)
+      (compiler-ir-block-cons block (opt-inline-block-append (box-get rest) b))]
+    [(IrBlockArray seq)
+      (opt-inline-block-append (compiler-ir-block-seq-to-list seq) b)]))
+
+(define (opt-inline-site-prefix
+  [func-name : String]
+  [block-label : String]
+  [pos : i64]
+  [callee-name : String]) : String
+  (string-append
+    (string-append (string-append "inl." block-label) ".")
+    (int->string pos)))
+
+(define (opt-inline-prefix-label [prefix : String] [label : String]) : String
+  (string-append (string-append prefix ".") label))
+
+(define (opt-inline-cont-label [prefix : String]) : String
+  (string-append prefix ".cont"))
+
+(define (opt-inline-remap-phi-inputs
+  [inputs : CompilerIrPhiInputList]
+  [prefix : String]
+  [sa : CompilerIrCallArgs]
+  [np : i64]
+  [base : i64]) : CompilerIrPhiInputList
+  (match inputs
+    [(IrPhiInputNil) IrPhiInputNil]
+    [(IrPhiInputCons value label rest)
+      (compiler-ir-phi-input-cons
+        (opt-inline-remap-value value sa np base)
+        (opt-inline-prefix-label prefix label)
+        (opt-inline-remap-phi-inputs (box-get rest) prefix sa np base))]))
+
+(define (opt-inline-clone-multiblock-instr
+  [instr : CompilerIrInstr]
+  [prefix : String]
+  [sa : CompilerIrCallArgs]
+  [np : i64]
+  [base : i64]) : CompilerIrInstr
+  (match instr
+    [(IrInstrJump label) (IrInstrJump (opt-inline-prefix-label prefix label))]
+    [(IrInstrBranch cond true-label false-label)
+      (IrInstrBranch
+        (opt-inline-remap-value cond sa np base)
+        (opt-inline-prefix-label prefix true-label)
+        (opt-inline-prefix-label prefix false-label))]
+    [(IrInstrPhi dst inputs ty)
+      (IrInstrPhi
+        (opt-inline-rebase-var dst np base)
+        (opt-inline-remap-phi-inputs inputs prefix sa np base)
+        (clone ty))]
+    [_ (opt-inline-clone-instr instr sa np base)]))
+
+(define (opt-inline-return-value
+  [maybe : CompilerIrMaybeValue]
+  [sa : CompilerIrCallArgs]
+  [np : i64]
+  [base : i64]) : CompilerIrValue
+  (match maybe
+    [(IrSomeValue value) (opt-inline-remap-value value sa np base)]
+    [(IrNoValue) (IrValueUnit)]))
+
+(define (opt-inline-clone-multiblock-instrs
+  [instrs : CompilerIrInstrList]
+  [cloned-label : String]
+  [prefix : String]
+  [cont-label : String]
+  [sa : CompilerIrCallArgs]
+  [np : i64]
+  [base : i64]) : OptInlineMultiInstrClone
+  (match instrs
+    [(IrInstrNil) (OptInlineMultiInstrClone IrInstrNil IrPhiInputNil)]
+    [(IrInstrCons instr rest)
+      (match instr
+        [(IrInstrReturn maybe)
+          (OptInlineMultiInstrClone
+            (compiler-ir-instr-cons (IrInstrJump cont-label) IrInstrNil)
+            (compiler-ir-phi-input-cons
+              (opt-inline-return-value maybe sa np base)
+              cloned-label
+              IrPhiInputNil))]
+        [_
+          (let
+            [cloned : CompilerIrInstr
+              (opt-inline-clone-multiblock-instr instr prefix sa np base)]
+            (match (opt-inline-clone-multiblock-instrs
+              (box-get rest)
+              cloned-label
+              prefix
+              cont-label
+              sa
+              np
+              base)
+              [(OptInlineMultiInstrClone rest-instrs rest-inputs)
+                (OptInlineMultiInstrClone
+                  (compiler-ir-instr-cons cloned rest-instrs)
+                  rest-inputs)]))])]))
+
+(define (opt-inline-clone-multiblock-block
+  [block : CompilerIrBlock]
+  [prefix : String]
+  [cont-label : String]
+  [sa : CompilerIrCallArgs]
+  [np : i64]
+  [base : i64]) : OptInlineMultiClone
+  (match block
+    [(IrBlock label instrs)
+      (let
+        [cloned-label : String (opt-inline-prefix-label prefix label)]
+        (match (opt-inline-clone-multiblock-instrs
+          (compiler-ir-instr-seq-to-list instrs)
+          cloned-label
+          prefix
+          cont-label
+          sa
+          np
+          base)
+          [(OptInlineMultiInstrClone cloned-instrs inputs)
+            (OptInlineMultiClone
+              (compiler-ir-block-cons
+                (compiler-ir-block cloned-label cloned-instrs)
+                IrBlockNil)
+              inputs)]))]))
+
+(define (opt-inline-clone-multiblock-blocks
+  [blocks : CompilerIrBlockList]
+  [prefix : String]
+  [cont-label : String]
+  [sa : CompilerIrCallArgs]
+  [np : i64]
+  [base : i64]) : OptInlineMultiClone
+  (match blocks
+    [(IrBlockNil) (OptInlineMultiClone IrBlockNil IrPhiInputNil)]
+    [(IrBlockCons block rest)
+      (match (opt-inline-clone-multiblock-block
+        block
+        prefix
+        cont-label
+        sa
+        np
+        base)
+        [(OptInlineMultiClone one-block one-inputs)
+          (match (opt-inline-clone-multiblock-blocks
+            (box-get rest)
+            prefix
+            cont-label
+            sa
+            np
+            base)
+            [(OptInlineMultiClone rest-blocks rest-inputs)
+              (OptInlineMultiClone
+                (opt-inline-block-append one-block rest-blocks)
+                (compiler-ir-phi-input-list-reverse-onto one-inputs rest-inputs))])])]
+    [(IrBlockArray seq)
+      (opt-inline-clone-multiblock-blocks
+        (compiler-ir-block-seq-to-list seq)
+        prefix
+        cont-label
+        sa
+        np
+        base)]))
+
+(define (opt-inline-call-span-to-instr
+  [source-spans : CompilerSourceSpans]
+  [out-spans : CompilerSourceSpans]
+  [func-name : String]
+  [call-instr : CompilerIrInstr]
+  [new-instr : CompilerIrInstr]) : CompilerSourceSpans
+  (match (compiler-source-spans-lookup-instr source-spans func-name call-instr)
+    [(CompilerSomeSourceSpan span)
+      (compiler-source-spans-insert-instr out-spans func-name new-instr span)]
+    [(CompilerNoSourceSpan) out-spans]))
+
 (define (opt-inline-lookup-inlinable
   [index : OptFunctionIndex]
   [cname : String]
@@ -18234,6 +18634,26 @@
           [callee : CompilerIrFunction
             (array-ref (struct-get index values) callee-slot)]
           (if (opt-inline-callee-ok? callee caller-name)
+            (OptSomeFunction callee)
+            (OptNoFunction))))]
+    [(OptNoI64) (OptNoFunction)]))
+
+(define (opt-inline-lookup-multiblock-inlinable
+  [index : OptFunctionIndex]
+  [cname : String]
+  [caller-name : String]
+  [scc-result : OptSccResult]
+  [caller-scc : i64]) : OptMaybeFunction
+  (match (opt-function-index-slot index cname)
+    [(OptSomeI64 callee-slot)
+      (if (and
+        (>= caller-scc 0)
+        (= (array-ref (struct-get scc-result scc-of) callee-slot) caller-scc))
+        (OptNoFunction)
+        (let
+          [callee : CompilerIrFunction
+            (array-ref (struct-get index values) callee-slot)]
+          (if (opt-inline-multiblock-callee-ok? callee caller-name)
             (OptSomeFunction callee)
             (OptNoFunction))))]
     [(OptNoI64) (OptNoFunction)]))
@@ -18615,6 +19035,766 @@
     source-spans
     out-spans))
 
+(define (opt-inline-rewrite-single-block
+  [block-label : String]
+  [instrs : CompilerIrInstrList]
+  [index : OptFunctionIndex]
+  [census : OptInlineCensus]
+  [func-name : String]
+  [vars : i64]
+  [caller-blocks : i64]
+  [added-so-far : i64]
+  [scc-result : OptSccResult]
+  [caller-scc : i64]) : OptInlineMaybeBlockRewrite
+  (match (opt-inline-walk-instrs
+    instrs
+    index
+    census
+    func-name
+    vars
+    caller-blocks
+    added-so-far
+    scc-result
+    caller-scc)
+    [(OptInlineState new-instrs vars2 added2)
+      (OptInlineSomeBlockRewrite
+        (compiler-ir-block-cons
+          (compiler-ir-block block-label new-instrs)
+          IrBlockNil)
+        vars2
+        added2)]))
+
+(define (opt-inline-multiblock-build-rewrite
+  [block-label : String]
+  [prefix-rev : CompilerIrInstrList]
+  [rest : CompilerIrInstrList]
+  [site-pos : i64]
+  [call-instr : CompilerIrInstr]
+  [callee : CompilerIrFunction]
+  [census : OptInlineCensus]
+  [func-name : String]
+  [vars : i64]
+  [caller-blocks : i64]
+  [added-so-far : i64]
+  [scc-result : OptSccResult]
+  [caller-scc : i64]
+  [index : OptFunctionIndex]) : OptInlineMaybeBlockRewrite
+  (match call-instr
+    [(IrInstrCall dst cname cargs cret)
+      (match callee
+        [(IrFunction callee-name cparams _ cvars cblocks)
+          (let
+            [np : i64 (opt-inline-param-count cparams)]
+            (if (opt-inline-arity-ok? cargs np)
+              (let
+                [added-blocks : i64
+                  (+ (compiler-ir-block-list-count cblocks) 1)]
+                (if (opt-inline-cost-inline?
+                  (opt-inline-multiblock-cost-instrs cblocks)
+                  added-blocks
+                  (opt-inline-args-const-count cargs)
+                  (opt-inline-census-absorbable? census func-name callee-name)
+                  caller-blocks
+                  added-so-far)
+                  (match (opt-inline-walk-instrs
+                    (compiler-ir-instr-list-reverse-onto prefix-rev IrInstrNil)
+                    index
+                    census
+                    func-name
+                    vars
+                    caller-blocks
+                    added-so-far
+                    scc-result
+                    caller-scc)
+                    [(OptInlineState prefix-instrs prefix-vars prefix-added)
+                      (let
+                        [prefix : String
+                          (opt-inline-site-prefix
+                            func-name
+                            block-label
+                            site-pos
+                            callee-name)]
+                        [entry-label : String
+                          (opt-inline-prefix-label
+                            prefix
+                            (opt-cfg-entry-label cblocks))]
+                        [cont-label : String (opt-inline-cont-label prefix)]
+                        [vars2 : i64
+                          (+ prefix-vars (opt-inline-frame-growth cvars np))]
+                        [added2 : i64 (+ prefix-added added-blocks)]
+                        [prefix-instrs2 : CompilerIrInstrList
+                          (opt-inline-append
+                            prefix-instrs
+                            (compiler-ir-instr-cons
+                              (IrInstrJump entry-label)
+                              IrInstrNil))]
+                        (match (opt-inline-clone-multiblock-blocks
+                          cblocks
+                          prefix
+                          cont-label
+                          cargs
+                          np
+                          prefix-vars)
+                          [(OptInlineMultiClone cloned-blocks return-inputs)
+                            (match (opt-inline-walk-instrs
+                              rest
+                              index
+                              census
+                              func-name
+                              vars2
+                              caller-blocks
+                              added2
+                              scc-result
+                              caller-scc)
+                              [(OptInlineState suffix vars3 added3)
+                                (let
+                                  [cont-instrs : CompilerIrInstrList
+                                    (compiler-ir-instr-cons
+                                      (IrInstrPhi
+                                        dst
+                                        return-inputs
+                                        (clone cret))
+                                      suffix)]
+                                  (OptInlineSomeBlockRewrite
+                                    (compiler-ir-block-cons
+                                      (compiler-ir-block
+                                        block-label
+                                        prefix-instrs2)
+                                      (opt-inline-block-append
+                                        cloned-blocks
+                                        (compiler-ir-block-cons
+                                          (compiler-ir-block
+                                            cont-label
+                                            cont-instrs)
+                                          IrBlockNil)))
+                                    vars3
+                                    added3))])]))])
+                  (OptInlineNoBlockRewrite)))
+              (OptInlineNoBlockRewrite)))])]
+    [_ (OptInlineNoBlockRewrite)]))
+
+(define (opt-inline-try-multiblock-rewrite-from
+  [instrs : CompilerIrInstrList]
+  [block-label : String]
+  [prefix-rev : CompilerIrInstrList]
+  [site-pos : i64]
+  [all-blocks : CompilerIrBlockList]
+  [index : OptFunctionIndex]
+  [census : OptInlineCensus]
+  [func-name : String]
+  [vars : i64]
+  [caller-blocks : i64]
+  [added-so-far : i64]
+  [scc-result : OptSccResult]
+  [caller-scc : i64]) : OptInlineMaybeBlockRewrite
+  (match instrs
+    [(IrInstrNil)
+      (opt-inline-rewrite-single-block
+        block-label
+        (compiler-ir-instr-list-reverse-onto prefix-rev IrInstrNil)
+        index
+        census
+        func-name
+        vars
+        caller-blocks
+        added-so-far
+        scc-result
+        caller-scc)]
+    [(IrInstrCons instr rest)
+      (match instr
+        [(IrInstrCall _ cname _ _)
+          (match (opt-inline-lookup-multiblock-inlinable
+            index
+            cname
+            func-name
+            scc-result
+            caller-scc)
+            [(OptSomeFunction callee)
+              (match (opt-inline-multiblock-build-rewrite
+                block-label
+                prefix-rev
+                (box-get rest)
+                site-pos
+                instr
+                callee
+                census
+                func-name
+                vars
+                caller-blocks
+                added-so-far
+                scc-result
+                caller-scc
+                index)
+                [(OptInlineSomeBlockRewrite blocks2 vars2 added2)
+                  (OptInlineSomeBlockRewrite blocks2 vars2 added2)]
+                [(OptInlineNoBlockRewrite)
+                  (opt-inline-try-multiblock-rewrite-from
+                    (box-get rest)
+                    block-label
+                    (compiler-ir-instr-cons instr prefix-rev)
+                    (+ site-pos 1)
+                    all-blocks
+                    index
+                    census
+                    func-name
+                    vars
+                    caller-blocks
+                    added-so-far
+                    scc-result
+                    caller-scc)])]
+            [(OptNoFunction)
+              (opt-inline-try-multiblock-rewrite-from
+                (box-get rest)
+                block-label
+                (compiler-ir-instr-cons instr prefix-rev)
+                (+ site-pos 1)
+                all-blocks
+                index
+                census
+                func-name
+                vars
+                caller-blocks
+                added-so-far
+                scc-result
+                caller-scc)])]
+        [_
+          (opt-inline-try-multiblock-rewrite-from
+            (box-get rest)
+            block-label
+            (compiler-ir-instr-cons instr prefix-rev)
+            (+ site-pos 1)
+            all-blocks
+            index
+            census
+            func-name
+            vars
+            caller-blocks
+            added-so-far
+            scc-result
+            caller-scc)])]))
+
+(define (opt-inline-rewrite-block
+  [block : CompilerIrBlock]
+  [all-blocks : CompilerIrBlockList]
+  [index : OptFunctionIndex]
+  [census : OptInlineCensus]
+  [func-name : String]
+  [vars : i64]
+  [caller-blocks : i64]
+  [added-so-far : i64]
+  [scc-result : OptSccResult]
+  [caller-scc : i64]) : OptInlineMaybeBlockRewrite
+  (match block
+    [(IrBlock label seq)
+      (let
+        [instrs : CompilerIrInstrList (compiler-ir-instr-seq-to-list seq)]
+        (if (opt-inline-blocks-phi-label? all-blocks label)
+          (opt-inline-rewrite-single-block
+            label
+            instrs
+            index
+            census
+            func-name
+            vars
+            caller-blocks
+            added-so-far
+            scc-result
+            caller-scc)
+          (opt-inline-try-multiblock-rewrite-from
+            instrs
+            label
+            IrInstrNil
+            0
+            all-blocks
+            index
+            census
+            func-name
+            vars
+            caller-blocks
+            added-so-far
+            scc-result
+            caller-scc)))]))
+
+(define (opt-inline-clone-multiblock-instrs-with-spans
+  [instrs : CompilerIrInstrList]
+  [cloned-label : String]
+  [prefix : String]
+  [cont-label : String]
+  [sa : CompilerIrCallArgs]
+  [np : i64]
+  [base : i64]
+  [source-spans : CompilerSourceSpans]
+  [out-spans : CompilerSourceSpans]
+  [caller : String]
+  [call-instr : CompilerIrInstr]
+  [callee : String]) : OptInlineMultiSpanInstrClone
+  (match instrs
+    [(IrInstrNil)
+      (OptInlineMultiSpanInstrClone IrInstrNil IrPhiInputNil out-spans)]
+    [(IrInstrCons instr rest)
+      (match instr
+        [(IrInstrReturn maybe)
+          (OptInlineMultiSpanInstrClone
+            (compiler-ir-instr-cons (IrInstrJump cont-label) IrInstrNil)
+            (compiler-ir-phi-input-cons
+              (opt-inline-return-value maybe sa np base)
+              cloned-label
+              IrPhiInputNil)
+            out-spans)]
+        [_
+          (let
+            [cloned : CompilerIrInstr
+              (opt-inline-clone-multiblock-instr instr prefix sa np base)]
+            [spans2 : CompilerSourceSpans
+              (opt-inline-record-clone-span
+                source-spans
+                out-spans
+                caller
+                call-instr
+                callee
+                instr
+                cloned)]
+            (match (opt-inline-clone-multiblock-instrs-with-spans
+              (box-get rest)
+              cloned-label
+              prefix
+              cont-label
+              sa
+              np
+              base
+              source-spans
+              spans2
+              caller
+              call-instr
+              callee)
+              [(OptInlineMultiSpanInstrClone rest-instrs rest-inputs spans3)
+                (OptInlineMultiSpanInstrClone
+                  (compiler-ir-instr-cons cloned rest-instrs)
+                  rest-inputs
+                  spans3)]))])]))
+
+(define (opt-inline-clone-multiblock-block-with-spans
+  [block : CompilerIrBlock]
+  [prefix : String]
+  [cont-label : String]
+  [sa : CompilerIrCallArgs]
+  [np : i64]
+  [base : i64]
+  [source-spans : CompilerSourceSpans]
+  [out-spans : CompilerSourceSpans]
+  [caller : String]
+  [call-instr : CompilerIrInstr]
+  [callee : String]) : OptInlineMultiSpanClone
+  (match block
+    [(IrBlock label instrs)
+      (let
+        [cloned-label : String (opt-inline-prefix-label prefix label)]
+        (match (opt-inline-clone-multiblock-instrs-with-spans
+          (compiler-ir-instr-seq-to-list instrs)
+          cloned-label
+          prefix
+          cont-label
+          sa
+          np
+          base
+          source-spans
+          out-spans
+          caller
+          call-instr
+          callee)
+          [(OptInlineMultiSpanInstrClone cloned-instrs inputs spans2)
+            (OptInlineMultiSpanClone
+              (compiler-ir-block-cons
+                (compiler-ir-block cloned-label cloned-instrs)
+                IrBlockNil)
+              inputs
+              spans2)]))]))
+
+(define (opt-inline-clone-multiblock-blocks-with-spans
+  [blocks : CompilerIrBlockList]
+  [prefix : String]
+  [cont-label : String]
+  [sa : CompilerIrCallArgs]
+  [np : i64]
+  [base : i64]
+  [source-spans : CompilerSourceSpans]
+  [out-spans : CompilerSourceSpans]
+  [caller : String]
+  [call-instr : CompilerIrInstr]
+  [callee : String]) : OptInlineMultiSpanClone
+  (match blocks
+    [(IrBlockNil) (OptInlineMultiSpanClone IrBlockNil IrPhiInputNil out-spans)]
+    [(IrBlockCons block rest)
+      (match (opt-inline-clone-multiblock-block-with-spans
+        block
+        prefix
+        cont-label
+        sa
+        np
+        base
+        source-spans
+        out-spans
+        caller
+        call-instr
+        callee)
+        [(OptInlineMultiSpanClone one-block one-inputs spans2)
+          (match (opt-inline-clone-multiblock-blocks-with-spans
+            (box-get rest)
+            prefix
+            cont-label
+            sa
+            np
+            base
+            source-spans
+            spans2
+            caller
+            call-instr
+            callee)
+            [(OptInlineMultiSpanClone rest-blocks rest-inputs spans3)
+              (OptInlineMultiSpanClone
+                (opt-inline-block-append one-block rest-blocks)
+                (compiler-ir-phi-input-list-reverse-onto one-inputs rest-inputs)
+                spans3)])])]
+    [(IrBlockArray seq)
+      (opt-inline-clone-multiblock-blocks-with-spans
+        (compiler-ir-block-seq-to-list seq)
+        prefix
+        cont-label
+        sa
+        np
+        base
+        source-spans
+        out-spans
+        caller
+        call-instr
+        callee)]))
+
+(define (opt-inline-rewrite-single-block-with-spans
+  [block-label : String]
+  [instrs : CompilerIrInstrList]
+  [index : OptFunctionIndex]
+  [census : OptInlineCensus]
+  [func-name : String]
+  [vars : i64]
+  [caller-blocks : i64]
+  [added-so-far : i64]
+  [scc-result : OptSccResult]
+  [caller-scc : i64]
+  [source-spans : CompilerSourceSpans]
+  [out-spans : CompilerSourceSpans]) : OptInlineMaybeSpanBlockRewrite
+  (match (opt-inline-walk-instrs-with-spans
+    instrs
+    index
+    census
+    func-name
+    vars
+    caller-blocks
+    added-so-far
+    scc-result
+    caller-scc
+    source-spans
+    out-spans)
+    [(OptInlineSpanState new-instrs vars2 added2 spans2)
+      (OptInlineSomeSpanBlockRewrite
+        (compiler-ir-block-cons
+          (compiler-ir-block block-label new-instrs)
+          IrBlockNil)
+        vars2
+        added2
+        spans2)]))
+
+(define (opt-inline-multiblock-build-span-rewrite
+  [block-label : String]
+  [prefix-rev : CompilerIrInstrList]
+  [rest : CompilerIrInstrList]
+  [site-pos : i64]
+  [call-instr : CompilerIrInstr]
+  [callee : CompilerIrFunction]
+  [census : OptInlineCensus]
+  [func-name : String]
+  [vars : i64]
+  [caller-blocks : i64]
+  [added-so-far : i64]
+  [scc-result : OptSccResult]
+  [caller-scc : i64]
+  [index : OptFunctionIndex]
+  [source-spans : CompilerSourceSpans]
+  [out-spans : CompilerSourceSpans]) : OptInlineMaybeSpanBlockRewrite
+  (match call-instr
+    [(IrInstrCall dst cname cargs cret)
+      (match callee
+        [(IrFunction callee-name cparams _ cvars cblocks)
+          (let
+            [np : i64 (opt-inline-param-count cparams)]
+            (if (opt-inline-arity-ok? cargs np)
+              (let
+                [added-blocks : i64
+                  (+ (compiler-ir-block-list-count cblocks) 1)]
+                (if (opt-inline-cost-inline?
+                  (opt-inline-multiblock-cost-instrs cblocks)
+                  added-blocks
+                  (opt-inline-args-const-count cargs)
+                  (opt-inline-census-absorbable? census func-name callee-name)
+                  caller-blocks
+                  added-so-far)
+                  (match (opt-inline-walk-instrs-with-spans
+                    (compiler-ir-instr-list-reverse-onto prefix-rev IrInstrNil)
+                    index
+                    census
+                    func-name
+                    vars
+                    caller-blocks
+                    added-so-far
+                    scc-result
+                    caller-scc
+                    source-spans
+                    out-spans)
+                    [(OptInlineSpanState
+                        prefix-instrs
+                        prefix-vars
+                        prefix-added
+                        spans2)
+                      (let
+                        [prefix : String
+                          (opt-inline-site-prefix
+                            func-name
+                            block-label
+                            site-pos
+                            callee-name)]
+                        [entry-label : String
+                          (opt-inline-prefix-label
+                            prefix
+                            (opt-cfg-entry-label cblocks))]
+                        [cont-label : String (opt-inline-cont-label prefix)]
+                        [vars2 : i64
+                          (+ prefix-vars (opt-inline-frame-growth cvars np))]
+                        [added2 : i64 (+ prefix-added added-blocks)]
+                        [prefix-instrs2 : CompilerIrInstrList
+                          (opt-inline-append
+                            prefix-instrs
+                            (compiler-ir-instr-cons
+                              (IrInstrJump entry-label)
+                              IrInstrNil))]
+                        (match (opt-inline-clone-multiblock-blocks-with-spans
+                          cblocks
+                          prefix
+                          cont-label
+                          cargs
+                          np
+                          prefix-vars
+                          source-spans
+                          spans2
+                          func-name
+                          call-instr
+                          callee-name)
+                          [(OptInlineMultiSpanClone
+                              cloned-blocks
+                              return-inputs
+                              spans3)
+                            (match (opt-inline-walk-instrs-with-spans
+                              rest
+                              index
+                              census
+                              func-name
+                              vars2
+                              caller-blocks
+                              added2
+                              scc-result
+                              caller-scc
+                              source-spans
+                              spans3)
+                              [(OptInlineSpanState suffix vars3 added3 spans4)
+                                (let
+                                  [phi : CompilerIrInstr
+                                    (IrInstrPhi dst return-inputs (clone cret))]
+                                  [spans5 : CompilerSourceSpans
+                                    (opt-inline-call-span-to-instr
+                                      source-spans
+                                      spans4
+                                      func-name
+                                      call-instr
+                                      phi)]
+                                  [cont-instrs : CompilerIrInstrList
+                                    (compiler-ir-instr-cons phi suffix)]
+                                  (OptInlineSomeSpanBlockRewrite
+                                    (compiler-ir-block-cons
+                                      (compiler-ir-block
+                                        block-label
+                                        prefix-instrs2)
+                                      (opt-inline-block-append
+                                        cloned-blocks
+                                        (compiler-ir-block-cons
+                                          (compiler-ir-block
+                                            cont-label
+                                            cont-instrs)
+                                          IrBlockNil)))
+                                    vars3
+                                    added3
+                                    spans5))])]))])
+                  (OptInlineNoSpanBlockRewrite)))
+              (OptInlineNoSpanBlockRewrite)))])]
+    [_ (OptInlineNoSpanBlockRewrite)]))
+
+(define (opt-inline-try-multiblock-span-rewrite-from
+  [instrs : CompilerIrInstrList]
+  [block-label : String]
+  [prefix-rev : CompilerIrInstrList]
+  [site-pos : i64]
+  [all-blocks : CompilerIrBlockList]
+  [index : OptFunctionIndex]
+  [census : OptInlineCensus]
+  [func-name : String]
+  [vars : i64]
+  [caller-blocks : i64]
+  [added-so-far : i64]
+  [scc-result : OptSccResult]
+  [caller-scc : i64]
+  [source-spans : CompilerSourceSpans]
+  [out-spans : CompilerSourceSpans]) : OptInlineMaybeSpanBlockRewrite
+  (match instrs
+    [(IrInstrNil)
+      (opt-inline-rewrite-single-block-with-spans
+        block-label
+        (compiler-ir-instr-list-reverse-onto prefix-rev IrInstrNil)
+        index
+        census
+        func-name
+        vars
+        caller-blocks
+        added-so-far
+        scc-result
+        caller-scc
+        source-spans
+        out-spans)]
+    [(IrInstrCons instr rest)
+      (match instr
+        [(IrInstrCall _ cname _ _)
+          (match (opt-inline-lookup-multiblock-inlinable
+            index
+            cname
+            func-name
+            scc-result
+            caller-scc)
+            [(OptSomeFunction callee)
+              (match (opt-inline-multiblock-build-span-rewrite
+                block-label
+                prefix-rev
+                (box-get rest)
+                site-pos
+                instr
+                callee
+                census
+                func-name
+                vars
+                caller-blocks
+                added-so-far
+                scc-result
+                caller-scc
+                index
+                source-spans
+                out-spans)
+                [(OptInlineSomeSpanBlockRewrite blocks2 vars2 added2 spans2)
+                  (OptInlineSomeSpanBlockRewrite blocks2 vars2 added2 spans2)]
+                [(OptInlineNoSpanBlockRewrite)
+                  (opt-inline-try-multiblock-span-rewrite-from
+                    (box-get rest)
+                    block-label
+                    (compiler-ir-instr-cons instr prefix-rev)
+                    (+ site-pos 1)
+                    all-blocks
+                    index
+                    census
+                    func-name
+                    vars
+                    caller-blocks
+                    added-so-far
+                    scc-result
+                    caller-scc
+                    source-spans
+                    out-spans)])]
+            [(OptNoFunction)
+              (opt-inline-try-multiblock-span-rewrite-from
+                (box-get rest)
+                block-label
+                (compiler-ir-instr-cons instr prefix-rev)
+                (+ site-pos 1)
+                all-blocks
+                index
+                census
+                func-name
+                vars
+                caller-blocks
+                added-so-far
+                scc-result
+                caller-scc
+                source-spans
+                out-spans)])]
+        [_
+          (opt-inline-try-multiblock-span-rewrite-from
+            (box-get rest)
+            block-label
+            (compiler-ir-instr-cons instr prefix-rev)
+            (+ site-pos 1)
+            all-blocks
+            index
+            census
+            func-name
+            vars
+            caller-blocks
+            added-so-far
+            scc-result
+            caller-scc
+            source-spans
+            out-spans)])]))
+
+(define (opt-inline-rewrite-block-with-spans
+  [block : CompilerIrBlock]
+  [all-blocks : CompilerIrBlockList]
+  [index : OptFunctionIndex]
+  [census : OptInlineCensus]
+  [func-name : String]
+  [vars : i64]
+  [caller-blocks : i64]
+  [added-so-far : i64]
+  [scc-result : OptSccResult]
+  [caller-scc : i64]
+  [source-spans : CompilerSourceSpans]
+  [out-spans : CompilerSourceSpans]) : OptInlineMaybeSpanBlockRewrite
+  (match block
+    [(IrBlock label seq)
+      (let
+        [instrs : CompilerIrInstrList (compiler-ir-instr-seq-to-list seq)]
+        (if (opt-inline-blocks-phi-label? all-blocks label)
+          (opt-inline-rewrite-single-block-with-spans
+            label
+            instrs
+            index
+            census
+            func-name
+            vars
+            caller-blocks
+            added-so-far
+            scc-result
+            caller-scc
+            source-spans
+            out-spans)
+          (opt-inline-try-multiblock-span-rewrite-from
+            instrs
+            label
+            IrInstrNil
+            0
+            all-blocks
+            index
+            census
+            func-name
+            vars
+            caller-blocks
+            added-so-far
+            scc-result
+            caller-scc
+            source-spans
+            out-spans)))]))
+
 (define (opt-inline-blocks
   [blocks : CompilerIrBlockList]
   [index : OptFunctionIndex]
@@ -18628,36 +19808,38 @@
   (match blocks
     [(IrBlockNil) (OptInlineBlocks IrBlockNil vars added-so-far)]
     [(IrBlockCons block rest)
-      (match block
-        [(IrBlock label seq)
-          (match (opt-inline-walk-instr-seq
-            seq
+      (match (opt-inline-rewrite-block
+        block
+        blocks
+        index
+        census
+        func-name
+        vars
+        caller-blocks
+        added-so-far
+        scc-result
+        caller-scc)
+        [(OptInlineSomeBlockRewrite rewritten vars2 added2)
+          (match (opt-inline-blocks
+            (box-get rest)
             index
             census
             func-name
-            vars
+            vars2
             caller-blocks
-            added-so-far
+            added2
             scc-result
             caller-scc)
-            [(OptInlineState new-instrs vars2 added2)
-              (match (opt-inline-blocks
-                (box-get rest)
-                index
-                census
-                func-name
-                vars2
-                caller-blocks
-                added2
-                scc-result
-                caller-scc)
-                [(OptInlineBlocks rest-blocks vars3 added3)
-                  (OptInlineBlocks
-                    (compiler-ir-block-cons
-                      (compiler-ir-block label new-instrs)
-                      rest-blocks)
-                    vars3
-                    added3)])])])]
+            [(OptInlineBlocks rest-blocks vars3 added3)
+              (OptInlineBlocks
+                (opt-inline-block-append rewritten rest-blocks)
+                vars3
+                added3)])]
+        [(OptInlineNoBlockRewrite)
+          (OptInlineBlocks
+            (compiler-ir-block-cons block IrBlockNil)
+            vars
+            added-so-far)])]
     [(IrBlockArray seq)
       (opt-inline-blocks
         (compiler-ir-block-seq-to-list seq)
@@ -18685,41 +19867,44 @@
   (match blocks
     [(IrBlockNil) (OptInlineSpanBlocks IrBlockNil vars added-so-far out-spans)]
     [(IrBlockCons block rest)
-      (match block
-        [(IrBlock label seq)
-          (match (opt-inline-walk-instr-seq-with-spans
-            seq
+      (match (opt-inline-rewrite-block-with-spans
+        block
+        blocks
+        index
+        census
+        func-name
+        vars
+        caller-blocks
+        added-so-far
+        scc-result
+        caller-scc
+        source-spans
+        out-spans)
+        [(OptInlineSomeSpanBlockRewrite rewritten vars2 added2 spans2)
+          (match (opt-inline-blocks-with-spans
+            (box-get rest)
             index
             census
             func-name
-            vars
+            vars2
             caller-blocks
-            added-so-far
+            added2
             scc-result
             caller-scc
             source-spans
-            out-spans)
-            [(OptInlineSpanState new-instrs vars2 added2 spans2)
-              (match (opt-inline-blocks-with-spans
-                (box-get rest)
-                index
-                census
-                func-name
-                vars2
-                caller-blocks
-                added2
-                scc-result
-                caller-scc
-                source-spans
-                spans2)
-                [(OptInlineSpanBlocks rest-blocks vars3 added3 spans3)
-                  (OptInlineSpanBlocks
-                    (compiler-ir-block-cons
-                      (compiler-ir-block label new-instrs)
-                      rest-blocks)
-                    vars3
-                    added3
-                    spans3)])])])]
+            spans2)
+            [(OptInlineSpanBlocks rest-blocks vars3 added3 spans3)
+              (OptInlineSpanBlocks
+                (opt-inline-block-append rewritten rest-blocks)
+                vars3
+                added3
+                spans3)])]
+        [(OptInlineNoSpanBlockRewrite)
+          (OptInlineSpanBlocks
+            (compiler-ir-block-cons block IrBlockNil)
+            vars
+            added-so-far
+            out-spans)])]
     [(IrBlockArray seq)
       (opt-inline-blocks-with-spans
         (compiler-ir-block-seq-to-list seq)
@@ -20468,6 +21653,47 @@
       [(CompilerOptimizedProgram _ optimized-spans)
         (opt-span-lookup-ok? optimized-spans "main" cloned-call 91 17)])))
 
+(define (opt-inline-span-branch-phi-inputs) : CompilerIrPhiInputList
+  (compiler-ir-phi-input-cons
+    (IrValueVar 1)
+    "inl.entry.0.then"
+    (compiler-ir-phi-input-cons
+      (IrValueI64 42)
+      "inl.entry.0.else"
+      IrPhiInputNil)))
+
+(define (compiler-optimize-spans-inline-multiblock-ok?) : bool
+  (let
+    [spans : CompilerSourceSpans
+      (compiler-source-spans-insert-instr
+        (compiler-source-spans-insert-instr
+          (opt-spans-base)
+          "inline_branch"
+          (opt-inline-branch-callee-mov)
+          (opt-test-span 141 27))
+        "main"
+        (opt-inline-branch-caller-call)
+        (opt-test-span 151 29))]
+    [phi : CompilerIrInstr
+      (IrInstrPhi 0 (opt-inline-span-branch-phi-inputs) (AstTyI64))]
+    (match (opt-inline-program-functions-with-spans
+      (opt-inline-branch-functions)
+      2
+      spans)
+      [(OptInlineSpanProgram optimized optimized-spans)
+        (match (opt-function-list-find optimized "main")
+          [(OptSomeFunction main)
+            (and
+              (= (compiler-ir-block-list-count (opt-function-blocks main)) 5)
+              (opt-span-lookup-ok?
+                optimized-spans
+                "main"
+                (opt-inline-branch-callee-mov)
+                141
+                27)
+              (opt-span-lookup-ok? optimized-spans "main" phi 151 29))]
+          [(OptNoFunction) false])])))
+
 (define (compiler-optimize-spans-non-inline-call-ok?) : bool
   (let
     [call : CompilerIrInstr
@@ -20552,6 +21778,7 @@
     (compiler-optimize-spans-cse-ok?)
     (compiler-optimize-spans-inline-callee-ok?)
     (compiler-optimize-spans-inline-fallback-ok?)
+    (compiler-optimize-spans-inline-multiblock-ok?)
     (compiler-optimize-spans-non-inline-call-ok?)
     (compiler-optimize-spans-pack-word-ok?))
     42
@@ -24297,6 +25524,54 @@
           [_ 0])
         (opt-count-direct-call-name (box-get rest) name))]))
 
+(define (opt-count-direct-call-name-instr-seq-from
+  [slots : (Array CompilerIrInstr)]
+  [index : i64]
+  [count : i64]
+  [name : String]
+  [acc : i64]) : i64
+  (if (>= index count)
+    acc
+    (opt-count-direct-call-name-instr-seq-from
+      slots
+      (+ index 1)
+      count
+      name
+      (+
+        acc
+        (match (array-ref slots index)
+          [(IrInstrCall _ call-name _ _)
+            (if (string-eq call-name name)
+              1
+              0)]
+          [_ 0])))))
+
+(define (opt-count-direct-call-name-instr-seq
+  [instrs : CompilerIrInstrSeq]
+  [name : String]) : i64
+  (opt-count-direct-call-name-instr-seq-from
+    (struct-get instrs slots)
+    0
+    (struct-get instrs len)
+    name
+    0))
+
+(define (opt-count-direct-call-name-blocks
+  [blocks : CompilerIrBlockList]
+  [name : String]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (+
+            (opt-count-direct-call-name-instr-seq instrs name)
+            (opt-count-direct-call-name-blocks (box-get rest) name))])]
+    [(IrBlockArray seq)
+      (opt-count-direct-call-name-blocks
+        (compiler-ir-block-seq-to-list seq)
+        name)]))
+
 (define (opt-count-indirect-call-instrs [instrs : CompilerIrInstrList]) : i64
   (match instrs
     [(IrInstrNil) 0]
@@ -24493,6 +25768,248 @@
             false))]
       [(OptNoFunction) false])))
 
+(define (opt-inline-branch-params) : CompilerIrParamList
+  (compiler-ir-param-cons (IrParam "cond" (AstTyBool) 0) IrParamNil))
+
+(define (opt-inline-branch-callee-mov) : CompilerIrInstr
+  (IrInstrMov 1 (IrValueI64 7) (AstTyI64)))
+
+(define (opt-inline-branch-callee) : CompilerIrFunction
+  (IrFunction
+    "inline_branch"
+    (opt-inline-branch-params)
+    (AstTyI64)
+    2
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (IrInstrBranch (IrValueVar 0) "then" "else")
+          IrInstrNil))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "then"
+          (compiler-ir-instr-cons
+            (opt-inline-branch-callee-mov)
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueVar 1)))
+              IrInstrNil)))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "else"
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueI64 42)))
+              IrInstrNil))
+          IrBlockNil)))))
+
+(define (opt-inline-branch-caller-call) : CompilerIrInstr
+  (IrInstrCall 0 "inline_branch" (IrCallArgsOne (IrValueBool true)) (AstTyI64)))
+
+(define (opt-inline-branch-caller) : CompilerIrFunction
+  (IrFunction
+    "main"
+    IrParamNil
+    (AstTyI64)
+    1
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (opt-inline-branch-caller-call)
+          (compiler-ir-instr-cons
+            (IrInstrReturn (IrSomeValue (IrValueVar 0)))
+            IrInstrNil)))
+      IrBlockNil)))
+
+(define (opt-inline-branch-functions) : CompilerIrFunctionList
+  (compiler-ir-function-cons
+    (opt-inline-branch-caller)
+    (compiler-ir-function-cons (opt-inline-branch-callee) IrFunctionNil)))
+
+(define (compiler-optimize-inline-multiblock-ok?) : bool
+  (let
+    [optimized : CompilerIrFunctionList
+      (opt-inline-program-functions (opt-inline-branch-functions) 2)]
+    (match (opt-function-list-find optimized "main")
+      [(OptSomeFunction main)
+        (let
+          [blocks : CompilerIrBlockList (opt-function-blocks main)]
+          (and
+            (= (opt-count-direct-call-name-blocks blocks "inline_branch") 0)
+            (= (compiler-ir-block-list-count blocks) 5)
+            (= (opt-count-phi-blocks blocks) 1)
+            (= (opt-function-frame main) 2)
+            (opt-inline-structure-ok? blocks)))]
+      [(OptNoFunction) false])))
+
+(define (opt-inline-phi-predecessor-caller) : CompilerIrFunction
+  (IrFunction
+    "main"
+    IrParamNil
+    (AstTyI64)
+    2
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (opt-inline-branch-caller-call)
+          (compiler-ir-instr-cons (IrInstrJump "join") IrInstrNil)))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "join"
+          (compiler-ir-instr-cons
+            (IrInstrPhi
+              1
+              (compiler-ir-phi-input-cons (IrValueVar 0) "entry" IrPhiInputNil)
+              (AstTyI64))
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueVar 1)))
+              IrInstrNil)))
+        IrBlockNil))))
+
+(define (opt-inline-phi-predecessor-functions) : CompilerIrFunctionList
+  (compiler-ir-function-cons
+    (opt-inline-phi-predecessor-caller)
+    (compiler-ir-function-cons (opt-inline-branch-callee) IrFunctionNil)))
+
+(define (compiler-optimize-inline-multiblock-phi-predecessor-ok?) : bool
+  (let
+    [optimized : CompilerIrFunctionList
+      (opt-inline-program-functions (opt-inline-phi-predecessor-functions) 2)]
+    (match (opt-function-list-find optimized "main")
+      [(OptSomeFunction main)
+        (let
+          [blocks : CompilerIrBlockList (opt-function-blocks main)]
+          (and
+            (= (opt-count-direct-call-name-blocks blocks "inline_branch") 1)
+            (= (compiler-ir-block-list-count blocks) 2)
+            (opt-inline-structure-ok? blocks)))]
+      [(OptNoFunction) false])))
+
+(define (opt-inline-loop-callee) : CompilerIrFunction
+  (IrFunction
+    "inline_loop"
+    IrParamNil
+    (AstTyI64)
+    1
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons (IrInstrJump "loop") IrInstrNil))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "loop"
+          (compiler-ir-instr-cons
+            (IrInstrBranch (IrValueBool true) "loop" "exit")
+            IrInstrNil))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "exit"
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueI64 1)))
+              IrInstrNil))
+          IrBlockNil)))))
+
+(define (opt-inline-loop-caller) : CompilerIrFunction
+  (IrFunction
+    "main"
+    IrParamNil
+    (AstTyI64)
+    1
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (IrInstrCall 0 "inline_loop" IrCallArgsNil (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrReturn (IrSomeValue (IrValueVar 0)))
+            IrInstrNil)))
+      IrBlockNil)))
+
+(define (opt-inline-loop-functions) : CompilerIrFunctionList
+  (compiler-ir-function-cons
+    (opt-inline-loop-caller)
+    (compiler-ir-function-cons (opt-inline-loop-callee) IrFunctionNil)))
+
+(define (compiler-optimize-inline-multiblock-acyclic-ok?) : bool
+  (let
+    [optimized : CompilerIrFunctionList
+      (opt-inline-program-functions (opt-inline-loop-functions) 2)]
+    (match (opt-function-list-find optimized "main")
+      [(OptSomeFunction main)
+        (and
+          (=
+            (opt-count-direct-call-name-blocks
+              (opt-function-blocks main)
+              "inline_loop")
+            1)
+          (= (compiler-ir-block-list-count (opt-function-blocks main)) 1))]
+      [(OptNoFunction) false])))
+
+(define (opt-inline-nonleaf-callee) : CompilerIrFunction
+  (IrFunction
+    "inline_nonleaf"
+    IrParamNil
+    (AstTyI64)
+    1
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (IrInstrBranch (IrValueBool true) "call" "ret")
+          IrInstrNil))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "call"
+          (compiler-ir-instr-cons
+            (IrInstrCall 0 "external_helper" IrCallArgsNil (AstTyI64))
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueVar 0)))
+              IrInstrNil)))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "ret"
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueI64 3)))
+              IrInstrNil))
+          IrBlockNil)))))
+
+(define (opt-inline-nonleaf-caller) : CompilerIrFunction
+  (IrFunction
+    "main"
+    IrParamNil
+    (AstTyI64)
+    1
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (IrInstrCall 0 "inline_nonleaf" IrCallArgsNil (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrReturn (IrSomeValue (IrValueVar 0)))
+            IrInstrNil)))
+      IrBlockNil)))
+
+(define (opt-inline-nonleaf-functions) : CompilerIrFunctionList
+  (compiler-ir-function-cons
+    (opt-inline-nonleaf-caller)
+    (compiler-ir-function-cons (opt-inline-nonleaf-callee) IrFunctionNil)))
+
+(define (compiler-optimize-inline-multiblock-nonleaf-ok?) : bool
+  (let
+    [optimized : CompilerIrFunctionList
+      (opt-inline-program-functions (opt-inline-nonleaf-functions) 2)]
+    (match (opt-function-list-find optimized "main")
+      [(OptSomeFunction main)
+        (let
+          [blocks : CompilerIrBlockList (opt-function-blocks main)]
+          (and
+            (= (opt-count-direct-call-name-blocks blocks "inline_nonleaf") 0)
+            (= (opt-count-direct-call-name-blocks blocks "external_helper") 1)
+            (= (opt-count-phi-blocks blocks) 1)
+            (opt-inline-structure-ok? blocks)))]
+      [(OptNoFunction) false])))
+
 (define (compiler-optimize-inline-census-direct-ok?) : bool
   (let
     [functions : CompilerIrFunctionList (opt-inline-frame-functions)]
@@ -24622,12 +26139,12 @@
                       (opt-inline-mov-dst-src? indirect-instrs 2 3)
                       (return 15))
                     (unless
-                      (= (compiler-ir-function-list-count devirt-reach) 2)
+                      (= (compiler-ir-function-list-count devirt-reach) 1)
                       (return 16))
                     (unless
                       (opt-function-list-defines? devirt-reach "main")
                       (return 17))
-                    (unless
+                    (when
                       (opt-function-list-defines? devirt-reach "kept_target")
                       (return 18))
                     (when
@@ -24684,9 +26201,21 @@
                     (unless
                       (compiler-optimize-inline-pack-word-ok?)
                       (return 36))
+                    (unless
+                      (compiler-optimize-inline-multiblock-ok?)
+                      (return 37))
+                    (unless
+                      (compiler-optimize-inline-multiblock-phi-predecessor-ok?)
+                      (return 38))
+                    (unless
+                      (compiler-optimize-inline-multiblock-acyclic-ok?)
+                      (return 39))
+                    (unless
+                      (compiler-optimize-inline-multiblock-nonleaf-ok?)
+                      (return 40))
                     42))]
-              [(OptNoFunction) 37])))]
-      [(OptNoFunction) 38])))
+              [(OptNoFunction) 41])))]
+      [(OptNoFunction) 43])))
 
 (define (opt-block-list-has-label?
   [blocks : CompilerIrBlockList]

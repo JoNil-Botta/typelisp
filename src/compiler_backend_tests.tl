@@ -1913,6 +1913,43 @@
           (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-pack-immediate-word-shape-ok?) : bool
+  (match (compiler-backend-emit-pack-words
+    CompilerRegAssignmentNil
+    (IrValueI64 7)
+    (IrValueBool true)
+    "-16(%rbp)"
+    "-24(%rbp)"
+    false
+    false
+    (compiler-diagnostic-at-start "" ""))
+    [(OkCompilerBackend stack-asm)
+      (match (compiler-backend-emit-pack-words
+        CompilerRegAssignmentNil
+        (IrValueI64 9)
+        (IrValueChar #A')
+        "%r12"
+        "%r13"
+        false
+        false
+        (compiler-diagnostic-at-start "" ""))
+        [(OkCompilerBackend reg-asm)
+          (and
+            (compiler-backend-string-contains?
+              stack-asm
+              "    movq $7, -16(%rbp)\n")
+            (compiler-backend-string-contains?
+              stack-asm
+              "    movq $1, -24(%rbp)\n")
+            (compiler-backend-string-contains? reg-asm "    movl $9, %r12d\n")
+            (compiler-backend-string-contains? reg-asm "    movl $65, %r13d\n")
+            (not (compiler-backend-string-contains? stack-asm "%rax"))
+            (not (compiler-backend-string-contains? stack-asm "%rdx"))
+            (not (compiler-backend-string-contains? reg-asm "%rax"))
+            (not (compiler-backend-string-contains? reg-asm "%rdx")))]
+        [(ErrCompilerBackend _) false])]
+    [(ErrCompilerBackend _) false]))
+
 ;; Backend-owned replacement for representative aggregate storage emit-shape
 ;; checks from the legacy backend suite (#1354/#1413).
 (define (compiler-backend-aggregate-return-source) : String
@@ -7649,7 +7686,9 @@
         (compiler-backend-syscall-source-ok?)
         (compiler-backend-numeric-cast-shape-ok?)
         (compiler-backend-implicit-main-ok?))
-      (compiler-backend-aggregate-ok?))
+      (and
+        (compiler-backend-aggregate-ok?)
+        (compiler-backend-pack-immediate-word-shape-ok?)))
     (backend-and8
       (compiler-backend-literal-payload-ok?)
       (and

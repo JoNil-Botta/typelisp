@@ -3942,7 +3942,8 @@
 ;; the non-SSA IR never triggers a stale rewrite.
 (defenum OptCopyEnv
   (OptCopyNil)
-  (OptCopyCons i64 CompilerIrValue (Box OptCopyEnv)))
+  (OptCopyCons i64 CompilerIrValue (Box OptCopyEnv))
+  (OptCopyPackWordCons i64 i64 CompilerIrValue (Box OptCopyEnv)))
 
 (define (opt-copy-lookup [env : OptCopyEnv] [var : i64]) : CompilerIrMaybeValue
   (match env
@@ -3952,7 +3953,21 @@
         [rest : OptCopyEnv (box-get rest)]
         (if (= id var)
           (IrSomeValue value)
-          (opt-copy-lookup rest var)))]))
+          (opt-copy-lookup rest var)))]
+    [(OptCopyPackWordCons _ _ _ rest) (opt-copy-lookup (box-get rest) var)]))
+
+(define (opt-copy-pack-word-lookup
+  [env : OptCopyEnv]
+  [group : i64]
+  [index : i64]) : CompilerIrMaybeValue
+  (match env
+    [(OptCopyNil) (IrNoValue)]
+    [(OptCopyCons _ _ rest)
+      (opt-copy-pack-word-lookup (box-get rest) group index)]
+    [(OptCopyPackWordCons found-group found-index value rest)
+      (if (and (= found-group group) (= found-index index))
+        (IrSomeValue value)
+        (opt-copy-pack-word-lookup (box-get rest) group index))]))
 
 ;; Drop the mapping for `var` and any mapping whose replacement is `IrValueVar
 ;; var`, so redefining either a copied destination or a copied source clears the
@@ -3965,7 +3980,13 @@
         [rest2 : OptCopyEnv (opt-copy-invalidate-var (box-get rest) var)]
         (if (or (= id var) (opt-value-is-var? value var))
           rest2
-          (OptCopyCons id value (box rest2))))]))
+          (OptCopyCons id value (box rest2))))]
+    [(OptCopyPackWordCons group index value rest)
+      (let
+        [rest2 : OptCopyEnv (opt-copy-invalidate-var (box-get rest) var)]
+        (if (or (= group var) (opt-value-is-var? value var))
+          rest2
+          (OptCopyPackWordCons group index value (box rest2))))]))
 
 ;; Only var copies and unambiguous scalar literals are safe to propagate in this
 ;; slice; F64/String/global sources stay put until their backend paths exist.
@@ -3982,6 +4003,30 @@
     [(IrValueGlobal _) false]
     [(IrValueGlobalAddr _) false]
     [(IrValueFunction _) false]))
+
+(define (opt-copy-add-pack-word
+  [env : OptCopyEnv]
+  [group : i64]
+  [index : i64]
+  [value : CompilerIrValue]) : OptCopyEnv
+  (if (and (opt-copy-safe-source? value) (not (opt-value-is-var? value group)))
+    (OptCopyPackWordCons group index value (box env))
+    env))
+
+(define (opt-copy-update-pack-env
+  [env : OptCopyEnv]
+  [dst : i64]
+  [words : CompilerIrValueList]) : OptCopyEnv
+  (let
+    [e1 : OptCopyEnv (opt-copy-invalidate-var env dst)]
+    (match words
+      [(IrValueNil) e1]
+      [(IrValueCons w0 rest0)
+        (let
+          [e2 : OptCopyEnv (opt-copy-add-pack-word e1 dst 0 w0)]
+          (match (box-get rest0)
+            [(IrValueNil) e2]
+            [(IrValueCons w1 _) (opt-copy-add-pack-word e2 dst 1 w1)]))])))
 
 (define (opt-copy-resolve [env : OptCopyEnv] [value : CompilerIrValue]) : CompilerIrValue
   (match value
@@ -4129,7 +4174,15 @@
     [(IrInstrPack dst words ty)
       (IrInstrPack dst (opt-copy-subst-value-list env words) ty)]
     [(IrInstrWord dst src index ty)
-      (IrInstrWord dst (opt-copy-resolve env src) index ty)]
+      (let
+        [resolved-src : CompilerIrValue (opt-copy-resolve env src)]
+        (match resolved-src
+          [(IrValueVar group)
+            (match (opt-copy-pack-word-lookup env group index)
+              [(IrSomeValue word)
+                (IrInstrMov dst (opt-copy-resolve env word) ty)]
+              [(IrNoValue) (IrInstrWord dst resolved-src index ty)])]
+          [_ (IrInstrWord dst resolved-src index ty)]))]
     [(IrInstrTailCallIndirect func args ty)
       (IrInstrTailCallIndirect
         (opt-copy-resolve env func)
@@ -4180,7 +4233,7 @@
     [(IrInstrPhi dst _ _) (opt-copy-invalidate-var env dst)]
     ;; #2386: register-group ops define their dst -- drop any stale copy fact for
     ;; it (a reused var id must not trigger a later stale rewrite).
-    [(IrInstrPack dst _ _) (opt-copy-invalidate-var env dst)]
+    [(IrInstrPack dst words _) (opt-copy-update-pack-env env dst words)]
     [(IrInstrWord dst _ _ _) (opt-copy-invalidate-var env dst)]
     [_ env]))
 
@@ -22460,6 +22513,79 @@
         (AstTyI64))
       (IrInstrNil))))
 
+(define (opt-copy-pack-words [a : CompilerIrValue] [b : CompilerIrValue]) : CompilerIrValueList
+  (compiler-ir-value-cons a (compiler-ir-value-cons b IrValueNil)))
+
+(define (opt-copy-pack-word-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (IrInstrPack
+      2
+      (opt-copy-pack-words (IrValueVar 0) (IrValueVar 1))
+      (AstTyStruct (intern "Pair")))
+    (compiler-ir-instr-cons
+      (IrInstrWord 3 (IrValueVar 2) 0 (AstTyI64))
+      (compiler-ir-instr-cons
+        (IrInstrWord 4 (IrValueVar 2) 1 (AstTyI64))
+        (IrInstrNil)))))
+
+(define (opt-copy-pack-source-redef-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (IrInstrPack
+      2
+      (opt-copy-pack-words (IrValueVar 0) (IrValueVar 1))
+      (AstTyStruct (intern "Pair")))
+    (compiler-ir-instr-cons
+      (IrInstrLoad 0 (IrValueVar 9) (AstTyI64))
+      (compiler-ir-instr-cons
+        (IrInstrWord 3 (IrValueVar 2) 0 (AstTyI64))
+        (compiler-ir-instr-cons
+          (IrInstrWord 4 (IrValueVar 2) 1 (AstTyI64))
+          (IrInstrNil))))))
+
+(define (opt-copy-pack-dst-redef-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (IrInstrPack
+      2
+      (opt-copy-pack-words (IrValueVar 0) (IrValueVar 1))
+      (AstTyStruct (intern "Pair")))
+    (compiler-ir-instr-cons
+      (IrInstrLoad 2 (IrValueVar 9) (AstTyI64))
+      (compiler-ir-instr-cons
+        (IrInstrWord 3 (IrValueVar 2) 0 (AstTyI64))
+        (IrInstrNil)))))
+
+(define (opt-copy-mov-src-var
+  [instrs : CompilerIrInstrList]
+  [dst : i64]
+  [fallback : i64]) : i64
+  (match instrs
+    [(IrInstrNil) fallback]
+    [(IrInstrCons instr rest)
+      (match instr
+        [(IrInstrMov found src _)
+          (if (= found dst)
+            (match src
+              [(IrValueVar id) id]
+              [_ fallback])
+            (opt-copy-mov-src-var (box-get rest) dst fallback))]
+        [_ (opt-copy-mov-src-var (box-get rest) dst fallback)])]))
+
+(define (opt-copy-word-src-var
+  [instrs : CompilerIrInstrList]
+  [dst : i64]
+  [fallback : i64]) : i64
+  (match instrs
+    [(IrInstrNil) fallback]
+    [(IrInstrCons instr rest)
+      (match instr
+        [(IrInstrWord found src _ _)
+          (if (= found dst)
+            (match src
+              [(IrValueVar id) id]
+              [_ fallback])
+            (opt-copy-word-src-var (box-get rest) dst fallback))]
+        [_ (opt-copy-word-src-var (box-get rest) dst fallback)])]))
+
 (define (opt-phi-first-input-var
   [inputs : CompilerIrPhiInputList]
   [fallback : i64]) : i64
@@ -22510,6 +22636,12 @@
       (opt-copy-instrs (OptCopyNil) (opt-copy-f64-instrs))]
     [phi : CompilerIrInstrList
       (opt-copy-instrs (OptCopyNil) (opt-copy-phi-instrs))]
+    [pack-word : CompilerIrInstrList
+      (opt-copy-instrs (OptCopyNil) (opt-copy-pack-word-instrs))]
+    [pack-source-redef : CompilerIrInstrList
+      (opt-copy-instrs (OptCopyNil) (opt-copy-pack-source-redef-instrs))]
+    [pack-dst-redef : CompilerIrInstrList
+      (opt-copy-instrs (OptCopyNil) (opt-copy-pack-dst-redef-instrs))]
     (if (not (= (opt-copy-binop-lhs-var pos 2) 0))
       1
       (if (not (= (opt-copy-binop-lhs-var src-redef 2) 1))
@@ -22524,7 +22656,26 @@
                 6
                 (if (not (= (opt-phi-dst-first-input-var phi 2 (- 0 1)) 1))
                   7
-                  42)))))))))
+                  (if (not (= (opt-copy-mov-src-var pack-word 3 (- 0 1)) 0))
+                    8
+                    (if (not (= (opt-copy-mov-src-var pack-word 4 (- 0 1)) 1))
+                      9
+                      (if (not
+                        (=
+                          (opt-copy-word-src-var pack-source-redef 3 (- 0 1))
+                          2))
+                        10
+                        (if (not
+                          (=
+                            (opt-copy-mov-src-var pack-source-redef 4 (- 0 1))
+                            1))
+                          11
+                          (if (not
+                            (=
+                              (opt-copy-word-src-var pack-dst-redef 3 (- 0 1))
+                              2))
+                            12
+                            42))))))))))))))
 
 ;; Count explicit trapping bounds checks after the dedicated bounds pass.
 (define (opt-count-bounds-instrs [instrs : CompilerIrInstrList]) : i64

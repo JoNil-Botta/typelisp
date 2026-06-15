@@ -348,6 +348,31 @@
     [(AstTyChar) 8]
     [_ 0]))
 
+(define (opt-int-sign-class [ty : AstType]) : i64
+  (if (opt-signed-integer-type? ty)
+    1
+    (if (or
+      (opt-unsigned-integer-type? ty)
+      (match ty
+        [(AstTyChar) true]
+        [_ false]))
+      2
+      0)))
+
+(define (opt-int-cast-as-mov? [from-ty : AstType] [to-ty : AstType]) : bool
+  (if (and (opt-int-or-char-type? from-ty) (opt-int-or-char-type? to-ty))
+    (let
+      [from-width : i64 (opt-int-width from-ty)]
+      [to-width : i64 (opt-int-width to-ty)]
+      ;; Keep same-width signedness changes as casts; they preserve operator
+      ;; type context for cases like `(shr (cast x : u64) ...)`.
+      (or
+        (< to-width from-width)
+        (and
+          (= to-width from-width)
+          (= (opt-int-sign-class from-ty) (opt-int-sign-class to-ty)))))
+    false))
+
 (define (opt-value-to-i64 [value : CompilerIrValue]) : OptMaybeI64
   (match value
     [(IrValueI64 n) (OptSomeI64 n)]
@@ -1009,7 +1034,12 @@
           (OptInstrResult
             (opt-const-bind env dst folded to-ty)
             (IrInstrMov dst folded to-ty))]
-        [(IrNoValue) (OptInstrResult (opt-const-unbind env dst) instr)])]
+        [(IrNoValue)
+          (OptInstrResult
+            (opt-const-unbind env dst)
+            (if (opt-int-cast-as-mov? from-ty to-ty)
+              (IrInstrMov dst src to-ty)
+              instr))])]
     [(IrInstrBitcast dst _ _ _) (opt-invalidate-def env dst instr)]
     [(IrInstrBinOp dst op l r ty)
       (match (opt-fold-binop
@@ -25706,7 +25736,7 @@
                                             0))
                                           19
                                           (if (not
-                                            (= (opt-count-cast-blocks cast) 1))
+                                            (= (opt-count-cast-blocks cast) 0))
                                             20
                                             (if (not
                                               (=

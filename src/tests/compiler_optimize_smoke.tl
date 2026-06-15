@@ -23,6 +23,69 @@
 ;; only when every self-test passes.
 (import "compiler_optimize.tl")
 
+(define (smoke-mov-dst-var-type?
+  [instrs : CompilerIrInstrList]
+  [dst : i64]
+  [src : i64]
+  [ty : AstType]) : bool
+  (match instrs
+    [(IrInstrNil) false]
+    [(IrInstrCons instr rest)
+      (match instr
+        [(IrInstrMov d (IrValueVar s) mov-ty)
+          (if (= d dst)
+            (and (= s src) (opt-type-eq mov-ty ty))
+            (smoke-mov-dst-var-type? (box-get rest) dst src ty))]
+        [_ (smoke-mov-dst-var-type? (box-get rest) dst src ty)])]))
+
+(define (smoke-cast-dst-var-types?
+  [instrs : CompilerIrInstrList]
+  [dst : i64]
+  [src : i64]
+  [from-ty : AstType]
+  [to-ty : AstType]) : bool
+  (match instrs
+    [(IrInstrNil) false]
+    [(IrInstrCons instr rest)
+      (match instr
+        [(IrInstrCast d (IrValueVar s) cast-from cast-to)
+          (if (= d dst)
+            (and
+              (= s src)
+              (opt-type-eq cast-from from-ty)
+              (opt-type-eq cast-to to-ty))
+            (smoke-cast-dst-var-types? (box-get rest) dst src from-ty to-ty))]
+        [_ (smoke-cast-dst-var-types? (box-get rest) dst src from-ty to-ty)])]))
+
+(define (smoke-noop-int-cast-mov-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (IrInstrCast 50 (IrValueVar 10) (AstTyU8) (AstTyChar))
+    (compiler-ir-instr-cons
+      (IrInstrCast 51 (IrValueVar 11) (AstTyU16) (AstTyU8))
+      (compiler-ir-instr-cons
+        (IrInstrCast 52 (IrValueVar 12) (AstTyU16) (AstTyChar))
+        (compiler-ir-instr-cons
+          (IrInstrCast 53 (IrValueVar 13) (AstTyU8) (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrCast 54 (IrValueVar 14) (AstTyI16) (AstTyU32))
+            (compiler-ir-instr-cons
+              (IrInstrCast 55 (IrValueVar 15) (AstTyI64) (AstTyU64))
+              (IrInstrNil))))))))
+
+(define (smoke-noop-int-cast-mov-self-test) : i64
+  (let
+    [rewritten : CompilerIrInstrList
+      (opt-fold-instrs (OptConstNil) (smoke-noop-int-cast-mov-instrs))]
+    (begin
+      (unless (= (opt-count-cast-instrs rewritten) 3) (return 1))
+      (unless (smoke-mov-dst-var-type? rewritten 50 10 (AstTyChar)) (return 2))
+      (unless (smoke-mov-dst-var-type? rewritten 51 11 (AstTyU8)) (return 3))
+      (unless (smoke-mov-dst-var-type? rewritten 52 12 (AstTyChar)) (return 4))
+      (unless
+        (smoke-cast-dst-var-types? rewritten 55 15 (AstTyI64) (AstTyU64))
+        (return 5))
+      42)))
+
 (define (smoke-bounds-object-length-check-fragment
   [ptr-var : i64]
   [length-var : i64]
@@ -223,6 +286,7 @@
   (begin
     (unless (= (compiler-optimize-self-test) 42) (return 1))
     (unless (= (compiler-optimize-typed-fold-self-test) 42) (return 1))
+    (unless (= (smoke-noop-int-cast-mov-self-test) 42) (return 1))
     (unless (= (compiler-optimize-strength-self-test) 42) (return 1))
     (unless (= (compiler-optimize-dce-self-test) 42) (return 1))
     (unless (= (compiler-optimize-dce-mem-self-test) 42) (return 1))

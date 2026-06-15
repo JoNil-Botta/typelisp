@@ -71,9 +71,10 @@ transitional surface:
   runtime half (#2651, #2655, #2659). The umbrella map is #2645.
 - **Mutation.** In-place struct field mutation is written as
   `(set! (struct-get place field) value)` or, for a local receiver, dotted
-  field sugar such as `(set! place.field value)` (#1521). Mutable box access
-  remains tracked by #2553; the move/borrow rules in sections 3.10 and 4.6.2
-  are the contract mutation must satisfy.
+  field sugar such as `(set! place.field value)` (#1521). Boxed storage supports
+  destructive take with `(box-take b)` and in-place assignment with
+  `(set! (box-get b) value)` (#2553), under the move/borrow rules in sections
+  3.10 and 4.6.2.
 - **Text and bytes.** `String`/`str` remain immutable text/byte views. Mutable
   binary storage uses the specified `ByteBuf` owner plus borrowed `bytes` views
   from section 3.11 (#2782), not mutable `str` and not `TextBuf`.
@@ -390,7 +391,7 @@ values, call `extern` functions whose signatures contain raw pointers, construct
 typed null pointers, and test pointers for null. Safe code may not dereference,
 write through, offset, or cast raw pointers.
 
-#### 3.4.1 Arena-owned `(Box T)` indirection (specified, pending implementation)
+#### 3.4.1 Arena-owned `(Box T)` indirection
 
 `(Box T)` is an explicit, safe, arena-owned indirection type. A box value is a
 pointer-shaped owning handle to storage that contains one `T`, allocated in the
@@ -424,10 +425,16 @@ the projection has type `(in r T)` when `T` is region-taggable, otherwise `T`.
 The projection does not copy the box handle and does not by itself consume the
 box. Subsequent use of the projected value is still governed by the move rules:
 copyable `T` values may be copied out, but moving a move-only `T` out of a box
-is an aggregate path move and is rejected until the path-move and borrow slices
-define a sound operation. Immutable inspection through `box-get` is therefore
-v1's stable surface; destructive `box-take`, assignment through boxes, and
-mutable dereference are deferred to the mutable-reference/path-move work.
+through `box-get` is an aggregate path move and is rejected. Use `(box-take b)`
+to destructively move the boxed value out; this consumes the box handle, and
+subsequent use of that handle is rejected by the move checker.
+
+`(set! (box-get b) value)` mutates the value stored in a box when `b` is a
+storage place such as a local, parameter, or supported aggregate path. The value
+must typecheck against the boxed `T`, must satisfy the same region/reference
+store checks as other storage-place mutations, and the box handle itself is not
+moved. A mutable borrow of `(box-get b)` borrows the boxed storage under the
+ordinary lexical exclusivity rules.
 
 Examples:
 
@@ -2886,6 +2893,9 @@ without moving it. In v1 these are limited to:
   owned struct receiver or mutable-reference receiver. Local dotted sugar such
   as `(set! place.field value)` is the same place operation. This mutates only
   the selected field; immutable-reference receivers are rejected.
+- Box-place assignment `(set! (box-get place) value)` and mutable borrows of
+  `(box-get place)` through a live box storage place. These operations mutate or
+  borrow the boxed storage and do not move the box handle.
 
 Ordinary user-defined function parameters are by-value unless their type is a
 future reference type. Passing a `String`, array, tuple, struct, enum, or
@@ -2901,14 +2911,16 @@ owner moves are rejected until every moved path for that root is reinitialized.
 reinitializes only that exact path after the receiver, index, and value have
 been checked. Reinitializing one element does not clear sibling moved paths; if
 it clears the final moved path for the root, the partial-root marker is removed.
-Dynamic-array elements, non-literal indexes, boxes, and unsupported path forms
-do not clear moved state. Struct field-place assignment reinitializes the
-selected tracked path when the receiver path is supported; local dotted field
-sugar follows the same rule. `struct-get`, `tuple-ref`, and `array-ref` may copy
-out only copyable fields or elements, and may move out move-only fields/elements
-only where this tracked-path policy accepts the path. A consuming `match` is the
-enum exception: it moves the whole scrutinee first, then binds payload values
-owned by the selected arm.
+Dynamic-array elements, non-literal indexes, implicit moves through `box-get`,
+and unsupported path forms do not clear moved state. Struct field-place
+assignment reinitializes the selected tracked path when the receiver path is
+supported; local dotted field sugar follows the same rule. Box-place assignment
+updates boxed storage but does not reinitialize a moved box handle; explicit
+`box-take` moves the whole box handle instead. `struct-get`, `tuple-ref`, and
+`array-ref` may copy out only copyable fields or elements, and may move out
+move-only fields/elements only where this tracked-path policy accepts the path.
+A consuming `match` is the enum exception: it moves the whole scrutinee first,
+then binds payload values owned by the selected arm.
 
 **Diagnostics.** Move checking must produce source-located diagnostics for:
 

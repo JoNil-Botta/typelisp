@@ -776,6 +776,8 @@
     [(AstExprIntToPtr _ _) "int->ptr"]
     [(AstExprBox _) "box"]
     [(AstExprBoxGet _) "box-get"]
+    [(AstExprBoxTake _) "box-take"]
+    [(AstExprBoxSet _ _) "set!"]
     [(AstExprStringData _) "string-data"]
     [(AstExprStringFromBytes _ _) "string-from-bytes"]
     [(AstExprArrayData _) "array-data"]
@@ -4479,6 +4481,27 @@
           [(OkCtfeQuoteExpr quoted _ next-fuel)
             (OkCtfeQuoteExpr (ast-expr-box-get quoted) (AstTyExpr) next-fuel)]
           [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+    [(AstExprBoxTake inner-box)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (match (ctfe-quote-expr inner env fuel quasiquote)
+          [(OkCtfeQuoteExpr quoted _ next-fuel)
+            (OkCtfeQuoteExpr (ast-expr-box-take quoted) (AstTyExpr) next-fuel)]
+          [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+    [(AstExprBoxSet inner-box value-box)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        [value : AstExpr (ast-node-get value-box)]
+        (match (ctfe-quote-expr inner env fuel quasiquote)
+          [(OkCtfeQuoteExpr quoted-inner _ inner-fuel)
+            (match (ctfe-quote-expr value env inner-fuel quasiquote)
+              [(OkCtfeQuoteExpr quoted-value _ value-fuel)
+                (OkCtfeQuoteExpr
+                  (ast-expr-box-set quoted-inner quoted-value)
+                  (AstTyExpr)
+                  value-fuel)]
+              [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+          [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
     [(AstExprComptime inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
@@ -5428,6 +5451,28 @@
             (let
               [b-inner : AstExpr (ast-node-get b-inner-box)]
               (ctfe-expr-eq a-inner b-inner))]
+          [_ false]))]
+    [(AstExprBoxTake a-inner-box)
+      (let
+        [a-inner : AstExpr (ast-node-get a-inner-box)]
+        (match b
+          [(AstExprBoxTake b-inner-box)
+            (let
+              [b-inner : AstExpr (ast-node-get b-inner-box)]
+              (ctfe-expr-eq a-inner b-inner))]
+          [_ false]))]
+    [(AstExprBoxSet a-inner-box a-value-box)
+      (let
+        [a-inner : AstExpr (ast-node-get a-inner-box)]
+        [a-value : AstExpr (ast-node-get a-value-box)]
+        (match b
+          [(AstExprBoxSet b-inner-box b-value-box)
+            (let
+              [b-inner : AstExpr (ast-node-get b-inner-box)]
+              [b-value : AstExpr (ast-node-get b-value-box)]
+              (and
+                (ctfe-expr-eq a-inner b-inner)
+                (ctfe-expr-eq a-value b-value)))]
           [_ false]))]
     [(AstExprTypeLiteral a-ty)
       (match b

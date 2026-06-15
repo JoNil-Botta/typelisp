@@ -1429,6 +1429,15 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-walk-expr inner threshold acc))]
+    [(AstExprBoxTake inner-box)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lint-walk-expr inner threshold acc))]
+    [(AstExprBoxSet inner-box value-box)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        [value : AstExpr (ast-node-get value-box)]
+        (lint-walk-expr value threshold (lint-walk-expr inner threshold acc)))]
     [(AstExprComptime inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]

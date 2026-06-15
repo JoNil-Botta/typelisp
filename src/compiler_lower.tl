@@ -3118,6 +3118,21 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lower-clone-roots-expr ctx env decls able roots inner))]
+    [(AstExprBoxTake inner-box)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lower-clone-roots-expr ctx env decls able roots inner))]
+    [(AstExprBoxSet inner-box value-box)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        [value : AstExpr (ast-node-get value-box)]
+        (lower-clone-roots-expr
+          ctx
+          env
+          decls
+          able
+          (lower-clone-roots-expr ctx env decls able roots inner)
+          value))]
     [(AstExprTypeLiteral _) roots]
     [(AstExprInit _) roots]
     [(AstExprComptime inner-box)
@@ -3662,6 +3677,19 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lower-reach-expr all-functions names state inner))]
+    [(AstExprBoxTake inner-box)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lower-reach-expr all-functions names state inner))]
+    [(AstExprBoxSet inner-box value-box)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        [value : AstExpr (ast-node-get value-box)]
+        (lower-reach-expr
+          all-functions
+          names
+          (lower-reach-expr all-functions names state inner)
+          value))]
     [(AstExprTypeLiteral _) state]
     [(AstExprInit _) state]
     [(AstExprComptime inner-box)
@@ -7446,6 +7474,17 @@
           type-env
           arr
           index
+          origin
+          result-ty))]
+    [(AstExprBoxGet box-box)
+      (let
+        [box-expr : AstExpr (ast-node-get box-box)]
+        (lower-box-storage-address
+          ctx
+          state
+          env
+          type-env
+          box-expr
           origin
           result-ty))]
     [_
@@ -13005,8 +13044,13 @@
       (let
         [box-expr : AstExpr (ast-node-get box-expr-box)]
         (lower-box-get-result-type-fast ctx env type-env type-cache box-expr))]
+    [(AstExprBoxTake box-expr-box)
+      (let
+        [box-expr : AstExpr (ast-node-get box-expr-box)]
+        (lower-box-get-result-type-fast ctx env type-env type-cache box-expr))]
     [(AstExprSet _ _) (OkTcType (AstTyUnit))]
     [(AstExprStructSet _ _ _) (OkTcType (AstTyUnit))]
+    [(AstExprBoxSet _ _) (OkTcType (AstTyUnit))]
     [_ (ErrTcType "lower: expression result type is not fast-pathable")]))
 
 (define (lower-expr-result-type-or-check
@@ -13632,6 +13676,15 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lower-box-get ctx state env type-env inner expr-ty))]
+    [(AstExprBoxTake inner-box)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lower-box-get ctx state env type-env inner expr-ty))]
+    [(AstExprBoxSet inner-box value-box)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        [value : AstExpr (ast-node-get value-box)]
+        (lower-box-set ctx state env type-env inner value origin))]
     [(AstExprTry inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
@@ -14387,6 +14440,40 @@
               result-ty
               (lower-state-mode box-state)))])]
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
+
+(define (lower-box-storage-address
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [box-expr : AstExpr]
+  [origin : AstExpr]
+  [result-ty : AstType]) : ResultLowerExpr
+  (match (lower-expr-result-type-or-check
+    ctx
+    env
+    type-env
+    (lower-state-type-cache state)
+    box-expr)
+    [(OkTcType box-ty)
+      (match (tc-type-strip-region (tc-resolve-type ctx box-ty))
+        [(AstTyBox _)
+          (match (lower-expr ctx state env type-env box-expr)
+            [(OkLowerExpr lowered)
+              (match lowered
+                [(LowerExpr box-state box-value _)
+                  (OkLowerExpr (LowerExpr box-state box-value result-ty))])]
+            [(ErrLowerExpr message) (ErrLowerExpr message)])]
+        [(AstTyRef _ _)
+          (ErrLowerExpr
+            (lower-diagnostic-at-expr
+              origin
+              "lower: box-get requires Box storage"))]
+        [_
+          (ErrLowerExpr
+            (lower-diagnostic-at-expr origin "lower: box-get requires Box type"))])]
+    [(ErrTcType message)
+      (ErrLowerExpr (lower-diagnostic-at-expr box-expr message))]))
 
 ;; Locate the byte offset and resolved type of tuple element `target` within the
 ;; element-type list, laying fields out exactly like a struct over those types
@@ -19376,6 +19463,30 @@
           arr
           index
           origin))]
+    [(AstExprBoxGet box-box)
+      (let
+        [box-expr : AstExpr (ast-node-get box-box)]
+        (match (lower-expr-result-type-or-check
+          ctx
+          env
+          type-env
+          (lower-state-type-cache state)
+          box-expr)
+          [(OkTcType box-ty)
+            (match (tc-box-set-inner-type ctx box-ty)
+              [(OkTcType inner-ty)
+                (lower-box-storage-address
+                  ctx
+                  state
+                  env
+                  type-env
+                  box-expr
+                  origin
+                  (tc-type-without-regions inner-ty))]
+              [(ErrTcType message)
+                (ErrLowerExpr (lower-diagnostic-at-expr origin message))])]
+          [(ErrTcType message)
+            (ErrLowerExpr (lower-diagnostic-at-expr box-expr message))]))]
     [_
       (ErrLowerExpr
         (lower-diagnostic-at-expr
@@ -19402,6 +19513,60 @@
           (lower-type-size ctx field-ir-ty))
         IrValueUnit
         (AstTyUnit)))))
+
+(define (lower-box-set
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [box-expr : AstExpr]
+  [value : AstExpr]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match (lower-expr-result-type-or-check
+    ctx
+    env
+    type-env
+    (lower-state-type-cache state)
+    box-expr)
+    [(OkTcType box-ty)
+      (match (tc-box-set-inner-type ctx box-ty)
+        [(OkTcType inner-ty)
+          (let
+            [inner-ir-ty : AstType (tc-type-without-regions inner-ty)]
+            (match (lower-box-storage-address
+              ctx
+              state
+              env
+              type-env
+              box-expr
+              origin
+              inner-ir-ty)
+              [(OkLowerExpr place-lowered)
+                (match place-lowered
+                  [(LowerExpr place-state box-ptr _)
+                    (match (lower-expr-expected
+                      ctx
+                      place-state
+                      env
+                      type-env
+                      value
+                      inner-ir-ty
+                      value)
+                      [(OkLowerExpr value-lowered)
+                        (match value-lowered
+                          [(LowerExpr value-state value-ir _)
+                            (lower-struct-field-store-result
+                              ctx
+                              value-state
+                              box-ptr
+                              value-ir
+                              inner-ir-ty)])]
+                      [(ErrLowerExpr message) (ErrLowerExpr message)])])]
+              [(ErrLowerExpr message) (ErrLowerExpr message)]))]
+        [(ErrTcType message)
+          (ErrLowerExpr (lower-diagnostic-at-expr origin message))])]
+    [(ErrTcType message)
+      (ErrLowerExpr (lower-diagnostic-at-expr box-expr message))]))
 
 (define (lower-refresh-register-resident-root-after-store
   [ctx : TcContext]

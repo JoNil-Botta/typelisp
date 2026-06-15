@@ -64,6 +64,9 @@ invalid_struct_field_reject|check-fail|tests/safety/invalid_struct_field_reject.
 dotted_field_numeric_reject|check-fail|tests/safety/dotted_field_numeric_reject.tl|-|cannot use numeric field segments; use tuple-ref or array-ref
 struct_field_set_immutable_ref_reject|check-fail|tests/safety/struct_field_set_immutable_ref_reject.tl|-|set! struct field requires mutable struct access
 struct_field_set_temporary_reject|check-fail|tests/safety/struct_field_set_temporary_reject.tl|-|expression is not a storage place
+box_take_use_after_move_reject|check-fail|tests/safety/box_take_use_after_move_reject.tl|-|use of moved value `cell`
+box_set_temporary_reject|check-fail|tests/safety/box_set_temporary_reject.tl|-|expression is not a storage place
+box_set_borrow_live_reject|check-fail|tests/safety/box_set_borrow_live_reject.tl|-|cannot assign to borrowed place `cell`
 foreign_abi_metadata_reject|check-fail|tests/safety/foreign_abi_metadata_reject.tl|-|unknown extern ABI stdcall
 runtime_type_literal_reject|check-fail|tests/safety/runtime_type_literal_reject.tl|-|type value i64 is compile-time only
 import_arg_mismatch_diagnostic|check-fail|tests/safety/import_arg_mismatch_root.tl|-|tests/safety/import_arg_mismatch_lib.tl:5:14: typecheck: argument type mismatch

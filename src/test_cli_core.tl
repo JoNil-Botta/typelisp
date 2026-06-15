@@ -1119,6 +1119,15 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (tltest-reach-mark-expr inner names))]
+    [(AstExprBoxTake inner-box)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (tltest-reach-mark-expr inner names))]
+    [(AstExprBoxSet inner-box value-box)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        [value : AstExpr (ast-node-get value-box)]
+        (tltest-reach-mark-expr value (tltest-reach-mark-expr inner names)))]
     [(AstExprBorrow _ _ place-box)
       (let
         [place : AstExpr (ast-node-get place-box)]

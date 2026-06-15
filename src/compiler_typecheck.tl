@@ -2455,6 +2455,38 @@
 (define (compiler-typecheck-box-get-non-box-source) : String
   "(define (main) : i64 (box-get 1))")
 
+(define (compiler-typecheck-box-take-source) : String
+  "(define (main) : i64
+  (let
+    [b : (Box i64) (box 7)]
+    (box-take b)))")
+
+(define (compiler-typecheck-box-set-source) : String
+  "(define (main) : i64
+  (let
+    [b : (Box i64) (box 7)]
+    (begin
+      (set! (box-get b) 9)
+      (box-get b))))")
+
+(define (compiler-typecheck-box-set-field-source) : String
+  "(defstruct Pair (x i64) (y i64))
+(define (main) : i64
+  (let
+    [b : (Box Pair) (box (Pair 1 2))]
+    (begin
+      (set! (struct-get (box-get b) x) 9)
+      (struct-get (box-get b) x))))")
+
+(define (compiler-typecheck-box-set-mismatch-source) : String
+  "(define (main) : unit
+  (let
+    [b : (Box i64) (box 7)]
+    (set! (box-get b) false)))")
+
+(define (compiler-typecheck-box-take-non-box-source) : String
+  "(define (main) : i64 (box-take 1))")
+
 (define (compiler-typecheck-box-render-ok?) : bool
   (and
     (string-eq (tc-type-render (ast-ty-box (AstTyI64))) "(Box i64)")
@@ -2469,13 +2501,22 @@
     (compiler-typecheck-box-render-ok?)
     (compiler-typecheck-ok? (compiler-typecheck-box-source))
     (compiler-typecheck-ok? (compiler-typecheck-box-direct-source))
+    (compiler-typecheck-ok? (compiler-typecheck-box-take-source))
+    (compiler-typecheck-ok? (compiler-typecheck-box-set-source))
+    (compiler-typecheck-ok? (compiler-typecheck-box-set-field-source))
     (compiler-typecheck-ok? (compiler-typecheck-box-region-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-box-region-project-source)
       "typecheck: region-tagged value cannot escape with-arena 'r'")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-box-get-non-box-source)
-      "typecheck: box-get requires Box type")))
+      "typecheck: box-get requires Box type")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-box-set-mismatch-source)
+      "typecheck: box assignment type mismatch")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-box-take-non-box-source)
+      "typecheck: box-take requires Box type")))
 
 (define (compiler-typecheck-init-source) : String
   "(defstruct Point (x i64) (flag bool))
@@ -7348,6 +7389,12 @@
 (define (bad-owner-box-get-return [cell : (Box FileHandle)]) : FileHandle
   (return (box-get cell)))")
 
+(define (compiler-typecheck-move-box-take-reuse-source) : String
+  "(define (bad-box-take-reuse [cell : (Box String)]) : i64
+  (let
+    [value : String (box-take cell)]
+    (+ (string-length value) (string-length (box-get cell)))))")
+
 (define (compiler-typecheck-move-branch-arm-isolated-source) : String
   "(define (branch-arm-isolated [flag : bool] [s : String]) : String
   (if flag (let [t : String s] t) s))")
@@ -8053,6 +8100,11 @@
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-move-owner-box-get-return-source)
         "typecheck: cannot move owner-consuming value out of box")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-box-take-reuse-source)
+        "typecheck: use of moved value `cell`")
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?

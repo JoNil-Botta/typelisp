@@ -81,9 +81,9 @@ of imitating transitional patterns still present in the tree:
   stdlib byte-buffer module lands.
 - **Mutation**: in-place mutation is the direction: struct field-place
   assignment uses `(set! (struct-get place field) value)` or local dotted sugar
-  `(set! place.field value)` (#1521), and mutable box access is tracked by
-  #2553. Copy-on-update is transitional and hot paths migrate once those land
-  (#2575).
+  `(set! place.field value)` (#1521), and boxed storage uses `(box-take b)`
+  plus `(set! (box-get b) value)` for destructive access (#2553).
+  Copy-on-update is transitional and hot paths migrate once those land (#2575).
 - **Memory + threads**: per-thread default arenas plus a shared atomic arena
   for concurrent allocation (#2591, #2593). Thread safety follows the Rust
   model via structural checker classification — no traits (#2590): values
@@ -659,8 +659,8 @@ the boxed value for read/pattern use under the move rules. A box allocated
 inside `(with-arena r ...)` is typed as `(in r (Box T))` and cannot escape that
 scope. It provides the explicit indirection required by the default inline
 aggregate layout contract for recursive structs/enums; complete enforcement is
-staged separately (#2554). Destructive `box-take` and mutable access through
-boxes remain future work (#2553).
+staged separately (#2554). `box-take` explicitly consumes a box handle and
+returns its contents, and `(set! (box-get b) value)` mutates boxed storage.
 
 The v1 reclamation direction keeps a process-lifetime default arena per thread
 and does not add general per-object `free` or GC yet. `String` buffers, dynamic

@@ -99,7 +99,7 @@ Set `TYPELISP_BIN=target/stage0/typelisp` (or `.exe` on Windows) after
 
 ## Architecture Notes
 
-The compiler is written in TypeLisp under [`src/`](selfhost). Key modules:
+The compiler is written in TypeLisp under [`src/`](src). Key modules:
 
 - `src/lexer.tl` — tokenizes source code
 - `src/compiler_parse_core.tl` — builds the AST from tokens

@@ -956,6 +956,10 @@
   (OkGenHashmapTypeInfo GenHashmapTypeInfo)
   (ErrGenHashmapTypeInfo CompilerDiagnostic))
 
+(defenum ResultGenHashmapType
+  (OkGenHashmapType AstType)
+  (ErrGenHashmapType CompilerDiagnostic))
+
 (defenum GenHashmapArgs
   (GenHashmapArgs String String String))
 
@@ -1281,6 +1285,37 @@
                   (string-append
                     "hashmap-family: unsupported value type "
                     type-key)))])])]))
+
+(define (gen-hashmap-nominal-type-info [type-key : String] [role : String]) : ResultGenHashmapTypeInfo
+  (match (gen-hashmap-nominal-name type-key "struct_")
+    [(SpecSomeString name)
+      (OkGenHashmapTypeInfo
+        (GenHashmapTypeInfo name name (gen-hashmap-name-prefix name)))]
+    [(SpecNoString)
+      (match (gen-hashmap-nominal-name type-key "enum_")
+        [(SpecSomeString name)
+          (OkGenHashmapTypeInfo
+            (GenHashmapTypeInfo name name (gen-hashmap-name-prefix name)))]
+        [(SpecNoString)
+          (ErrGenHashmapTypeInfo
+            (gen-hashmap-diag
+              (string-append
+                "hashmap-family: unsupported "
+                (string-append role (string-append " type " type-key)))))])]))
+
+(define (gen-hashmap-key-type-info [type-key : String] [descriptor : String]) : ResultGenHashmapTypeInfo
+  (match (gen-hashmap-scalar-type-info type-key "key")
+    [(OkGenHashmapTypeInfo info) (OkGenHashmapTypeInfo info)]
+    [(ErrGenHashmapTypeInfo _)
+      (if (string-eq descriptor "stdlib/hashmap/aggregate-key-v1")
+        (gen-hashmap-nominal-type-info type-key "key")
+        (ErrGenHashmapTypeInfo
+          (gen-hashmap-diag
+            (string-append
+              "hashmap-family: unsupported key descriptor "
+              (string-append
+                descriptor
+                (string-append " for key type " type-key))))))]))
 
 (define (gen-hashmap-borrowed-value-type [value-type : String]) : String
   (if (string-eq value-type "String")
@@ -2731,9 +2766,15 @@
           ")])))\n"))
       (text-buf-render buf))))
 
-(define (gen-hashmap-source-i64-key
+(define (gen-hashmap-source-owned-key
   [map-name : String]
   [prefix : String]
+  [key-type : String]
+  [key-hash-source : String]
+  [key-support-source : String]
+  [key-eq-source : String]
+  [key-eq-call-source : String]
+  [key-init : String]
   [value-type : String]) : String
   (let
     [slot : String (string-append map-name "Slot")]
@@ -2777,7 +2818,9 @@
     [buf : TextBuf (text-buf-empty)]
     (begin
       (set! buf (gen-tb5 buf "(defenum " slot "\n  (" empty ")\n  ("))
-      (set! buf (gen-tb5 buf tombstone ")\n  (" occupied " i64 " value-type))
+      (set!
+        buf
+        (gen-tb7 buf tombstone ")\n  (" occupied " " key-type " " value-type))
       (set! buf (gen-tb3 buf " i64))\n(defenum " probe "\n"))
       (set!
         buf
@@ -2789,10 +2832,22 @@
           buf
           "-hash-normalize [value : i64]) : i64\n  (let\n    [m : i64 2147483647]\n    [raw : i64 (% value 2147483647)]\n    (if (< raw 0)\n      (+ raw m)\n      raw)))\n"
           ""))
-      (set!
-        buf
-        (gen-tb3 buf "(define (" prefix "-hash-key [key : i64]) : i64\n"))
-      (set! buf (gen-tb3 buf "  (" prefix "-hash-normalize key))\n"))
+      (set! buf (text-buf-append buf key-support-source))
+      (set! buf (gen-tb3 buf "(define (" prefix "-hash-key [key : "))
+      (set! buf (gen-tb3 buf key-type "]) : i64\n" key-hash-source))
+      (if (string-eq key-eq-source "")
+        unit
+        (begin
+          (set! buf (gen-tb3 buf "(define (" prefix "-key-eq? [left : "))
+          (set!
+            buf
+            (gen-tb5
+              buf
+              key-type
+              "] [right : "
+              key-type
+              "]) : bool\n"
+              key-eq-source))))
       (set!
         buf
         (gen-tb3
@@ -2869,10 +2924,11 @@
         (gen-tb3 buf "  [slots : (Array " slot ")]\n  [capacity : i64]\n"))
       (set!
         buf
-        (gen-tb2
+        (gen-tb3
           buf
-          "  [key : i64]\n  [hash : i64]\n  [index : i64]\n  [steps : i64]\n  [first-tombstone : i64]) : "
-          ""))
+          "  [key : "
+          key-type
+          "]\n  [hash : i64]\n  [index : i64]\n  [steps : i64]\n  [first-tombstone : i64]) : "))
       (set!
         buf
         (gen-tb2
@@ -2904,7 +2960,8 @@
         (gen-tb2
           buf
           occupied
-          " slot-key _ slot-hash)\n            (if (if (= slot-hash hash)\n              (= slot-key key)\n"))
+          " slot-key _ slot-hash)\n            (if (if (= slot-hash hash)\n              ("))
+      (set! buf (gen-tb3 buf key-eq-call-source "\n" ""))
       (set!
         buf
         (gen-tb5
@@ -2919,7 +2976,7 @@
       (set!
         buf
         (gen-tb3 buf "  [slots : (Array " slot ")]\n  [capacity : i64]\n"))
-      (set! buf (gen-tb2 buf "  [key : i64]\n  [hash : i64]) : " ""))
+      (set! buf (gen-tb3 buf "  [key : " key-type "]\n  [hash : i64]) : "))
       (set! buf (gen-tb2 buf probe "\n  (if (<= capacity 0)\n"))
       (set!
         buf
@@ -2992,10 +3049,11 @@
       (set! buf (gen-tb3 buf "(defstruct " mut-entry-info "\n"))
       (set!
         buf
-        (gen-tb2
+        (gen-tb3
           buf
-          "  (index i64)\n  (present bool)\n  (key i64)\n  (hash i64))\n"
-          ""))
+          "  (index i64)\n  (present bool)\n  (key "
+          key-type
+          ")\n  (hash i64))\n"))
       (set! buf (gen-tb3 buf "(defstruct " mut-entry "\n"))
       (set!
         buf
@@ -3007,10 +3065,11 @@
           slot))
       (set!
         buf
-        (gen-tb2
+        (gen-tb3
           buf
-          ")))\n  (index i64)\n  (present bool)\n  (key i64)\n  (hash i64))\n"
-          ""))
+          ")))\n  (index i64)\n  (present bool)\n  (key "
+          key-type
+          ")\n  (hash i64))\n"))
       (set! buf (gen-tb4 buf "(define (" prefix "-slots [map : " map-name))
       (set!
         buf
@@ -3083,15 +3142,9 @@
           " map)\n"))
       (set! buf (gen-tb4 buf "  (" borrowed-value-found " value))\n" ""))
       (set! buf (gen-tb3 buf "(define (" prefix "-get [map : "))
-      (set!
-        buf
-        (gen-tb5
-          buf
-          map-name
-          "] [key : i64]) : "
-          lookup
-          "\n  (let\n    [slots : (Array "
-          slot))
+      (set! buf (gen-tb3 buf map-name "] [key : " key-type))
+      (set! buf (gen-tb3 buf "]) : " lookup "\n  (let\n    [slots : (Array "))
+      (set! buf (text-buf-append buf slot))
       (set!
         buf
         (gen-tb5
@@ -3143,7 +3196,13 @@
       (set! buf (gen-tb4 buf "  [map : (& map " map-name ")]\n" ""))
       (set!
         buf
-        (gen-tb4 buf "  [key : i64]) : (" borrowed-value-lookup " map)\n" ""))
+        (gen-tb5
+          buf
+          "  [key : "
+          key-type
+          "]) : ("
+          borrowed-value-lookup
+          " map)\n"))
       (set!
         buf
         (gen-tb3
@@ -3182,9 +3241,15 @@
           occupied))
       (set!
         buf
-        (gen-tb4
+        (text-buf-append
           buf
-          " slot-key _ slot-hash)\n                (if (if (= slot-hash hash)\n                  (= slot-key key)\n                  false)\n                  (match (& (array-ref (struct-get map slots) cursor))\n                    [("
+          " slot-key _ slot-hash)\n                (if (if (= slot-hash hash)\n                  ("))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          key-eq-call-source
+          "\n                  false)\n                  (match (& (array-ref (struct-get map slots) cursor))\n                    [("
           occupied
           " _ value _)\n                      (return ("
           prefix))
@@ -3212,14 +3277,8 @@
           prefix))
       (set! buf (gen-tb2 buf "-borrowed-value-missing map))))))\n" ""))
       (set! buf (gen-tb3 buf "(define (" prefix "-contains? [map : "))
-      (set!
-        buf
-        (gen-tb4
-          buf
-          map-name
-          "] [key : i64]) : bool\n  (match ("
-          prefix
-          "-get map key)\n"))
+      (set! buf (gen-tb3 buf map-name "] [key : " key-type))
+      (set! buf (gen-tb3 buf "]) : bool\n  (match (" prefix "-get map key)\n"))
       (set!
         buf
         (gen-tb6
@@ -3241,14 +3300,8 @@
           empty
           ") false]\n    [("))
       (set! buf (gen-tb3 buf occupied " _ _ _) false]))\n(define (" prefix))
-      (set!
-        buf
-        (gen-tb4
-          buf
-          "-insert [map : "
-          map-name
-          "] [key : i64] [value : "
-          value-type))
+      (set! buf (gen-tb4 buf "-insert [map : " map-name "] [key : " key-type))
+      (set! buf (gen-tb3 buf "] [value : " value-type ""))
       (set!
         buf
         (gen-tb4
@@ -3325,12 +3378,12 @@
           insert-full
           " map)])))\n"))
       (set! buf (gen-tb3 buf "(define (" prefix "-remove [map : "))
+      (set! buf (gen-tb3 buf map-name "] [key : " key-type))
       (set!
         buf
-        (gen-tb5
+        (gen-tb4
           buf
-          map-name
-          "] [key : i64]) : "
+          "]) : "
           remove-result
           "\n  (let\n    [slots : (Array "
           slot))
@@ -3388,14 +3441,9 @@
         (gen-tb5 buf "      [(" probe-full ") (" remove-missing " map)])))\n"))
       (set! buf (gen-tb3 buf "(define (" prefix "-update-if-present\n"))
       (set! buf (gen-tb3 buf "  [map : " map-name "]\n"))
-      (set!
-        buf
-        (gen-tb4
-          buf
-          "  [key : i64]\n  [value : "
-          value-type
-          "]) : "
-          update-result))
+      (set! buf (text-buf-append buf "  [key : "))
+      (set! buf (gen-tb4 buf key-type "]\n  [value : " value-type "]) : "))
+      (set! buf (text-buf-append buf update-result))
       (set! buf (gen-tb3 buf "\n  (let\n    [slots : (Array " slot ") ("))
       (set!
         buf
@@ -3447,14 +3495,8 @@
           "(define ("
           prefix
           "-insert-into-empty\n  [slots : (Array "))
-      (set!
-        buf
-        (gen-tb4
-          buf
-          slot
-          ")]\n  [capacity : i64]\n  [key : i64]\n  [value : "
-          value-type
-          "]\n"))
+      (set! buf (gen-tb3 buf slot ")]\n  [capacity : i64]\n  [key : " key-type))
+      (set! buf (gen-tb3 buf "]\n  [value : " value-type "]\n"))
       (set!
         buf
         (gen-tb3
@@ -3609,15 +3651,8 @@
           "-deleted map))]\n    (if (<= capacity 0)\n      true\n      (>= (* used 4) (* capacity 3)))))\n"
           ""))
       (set! buf (gen-tb3 buf "(define (" prefix "-put [map : "))
-      (set!
-        buf
-        (gen-tb5
-          buf
-          map-name
-          "] [key : i64] [value : "
-          value-type
-          "]) : "
-          map-name))
+      (set! buf (gen-tb3 buf map-name "] [key : " key-type))
+      (set! buf (gen-tb4 buf "] [value : " value-type "]) : " map-name))
       (set!
         buf
         (gen-tb3 buf "\n  (let\n    [grown : " map-name "\n      (if ("))
@@ -3659,18 +3694,16 @@
       (set! buf (gen-tb3 buf "  [map : " map-name "]\n"))
       (set!
         buf
-        (gen-tb4 buf "  [key : i64]\n  [value : " value-type "]) : " map-name))
+        (gen-tb5 buf "  [key : " key-type "]\n  [value : " value-type "]) : "))
+      (set! buf (gen-tb2 buf map-name ""))
       (set! buf (gen-tb3 buf "\n  (" prefix "-put map key value))\n"))
       (set! buf (gen-tb3 buf "(define (" prefix "-entry-or-insert\n"))
       (set! buf (gen-tb3 buf "  [map : " map-name "]\n"))
+      (set! buf (text-buf-append buf "  [key : "))
       (set!
         buf
-        (gen-tb4
-          buf
-          "  [key : i64]\n  [default-value : "
-          value-type
-          "]) : "
-          entry-or-insert-result))
+        (gen-tb4 buf key-type "]\n  [default-value : " value-type "]) : "))
+      (set! buf (text-buf-append buf entry-or-insert-result))
       (set! buf (gen-tb3 buf "\n  (let\n    [slots : (Array " slot ") ("))
       (set!
         buf
@@ -3776,14 +3809,21 @@
       (set! buf (gen-tb3 buf "  [slots : (Array " slot ")]\n"))
       (set!
         buf
-        (gen-tb2 buf "  [capacity : i64]\n  [key : i64]) : " mut-entry-info))
+        (gen-tb4
+          buf
+          "  [capacity : i64]\n  [key : "
+          key-type
+          "]) : "
+          mut-entry-info))
       (set!
         buf
-        (gen-tb3
+        (gen-tb4
           buf
           "\n  (if (<= capacity 0)\n    ("
           mut-entry-info
-          " -1 false 0 0)\n"))
+          " -1 false "
+          key-init))
+      (set! buf (gen-tb2 buf " 0)\n" ""))
       (set!
         buf
         (gen-tb3 buf "    (let\n      [hash : i64 (" prefix "-hash-key key)]\n"))
@@ -3796,17 +3836,32 @@
           "-bucket-index hash capacity)]\n"))
       (set!
         buf
+        (gen-tb4
+          buf
+          "      [walked : i64 0]\n      [found : i64 -1]\n      [present : bool false]\n      [entry-key : "
+          key-type
+          " "
+          key-init))
+      (set!
+        buf
         (gen-tb2
           buf
-          "      [walked : i64 0]\n      [found : i64 -1]\n      [present : bool false]\n      [entry-key : i64 0]\n      [entry-hash : i64 0]\n      [done : bool false]\n      (begin\n        (while (if (< walked capacity) (not done) false)\n          (match (array-ref slots cursor)\n            [("
+          "]\n      [entry-hash : i64 0]\n      [done : bool false]\n      (begin\n        (while (if (< walked capacity) (not done) false)\n          (match (array-ref slots cursor)\n            [("
           ""))
       (set!
         buf
-        (gen-tb3
+        (gen-tb2
           buf
           occupied
-          " slot-key _ slot-hash)\n              (if (if (= slot-hash hash)\n                (= slot-key key)\n                false)\n                (begin\n                  (set! found cursor)\n                  (set! present true)\n                  (set! entry-key slot-key)\n                  (set! entry-hash slot-hash)\n                  (set! done true))\n                (begin\n                  (set! cursor ("
-          prefix))
+          " slot-key _ slot-hash)\n              (if (if (= slot-hash hash)\n                ("))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          key-eq-call-source
+          "\n                false)\n                (begin\n                  (set! found cursor)\n                  (set! present true)\n                  (set! entry-key slot-key)\n                  (set! entry-hash slot-hash)\n                  (set! done true))\n                (begin\n                  (set! cursor ("
+          prefix
+          ""))
       (set!
         buf
         (gen-tb4
@@ -3907,7 +3962,8 @@
       (set! buf (gen-tb2 buf entry ""))
       (set!
         buf
-        (gen-tb6 buf "\n  (" entry-none ")\n  (" entry-some " i64 " value-type))
+        (gen-tb7 buf "\n  (" entry-none ")\n  (" entry-some " " key-type ""))
+      (set! buf (gen-tb3 buf " " value-type ""))
       (set! buf (gen-tb3 buf "))\n(define (" prefix "-next-occupied-from\n"))
       (set! buf (gen-tb3 buf "  [slots : (Array " slot ")]\n  [index : i64]\n"))
       (set!
@@ -3993,6 +4049,682 @@
           ")])))\n"))
       (text-buf-render buf))))
 
+(define (gen-hashmap-source-aggregate-key-support [prefix : String]) : String
+  (let
+    [buf : TextBuf (text-buf-empty)]
+    (begin
+      (set! buf (gen-tb3 buf "(define (" prefix "-hash-combine\n"))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "  [seed : i64]\n  [component : i64]) : i64\n  ("
+          prefix
+          "-hash-normalize\n"))
+      (set!
+        buf
+        (gen-tb3 buf "    (+ (+ (* (" prefix "-hash-normalize seed) 131)\n"))
+      (set!
+        buf
+        (gen-tb3 buf "      (" prefix "-hash-normalize component)) 1)))\n"))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "(define ("
+          prefix
+          "-string-key-eq? [left : (& left str)] [right : (& right str)]) : bool\n"))
+      (set!
+        buf
+        (gen-tb2
+          buf
+          "  (let\n    [left-len : i64 (string-length left)]\n    [right-len : i64 (string-length right)]\n    (if (not (= left-len right-len))\n      false\n      (let\n        [i : i64 0]\n        [same : bool true]\n        (begin\n          (while (if same (< i left-len) false)\n            (if (= (cast (string-ref left i) : i64) (cast (string-ref right i) : i64))\n              (set! i (+ i 1))\n              (set! same false)))\n          same)))))\n"
+          ""))
+      (text-buf-render buf))))
+
+(define (gen-hashmap-source-i64-key
+  [map-name : String]
+  [prefix : String]
+  [value-type : String]) : String
+  (gen-hashmap-source-owned-key
+    map-name
+    prefix
+    "i64"
+    (string-append "  (" (string-append prefix "-hash-normalize key))\n"))
+    ""
+    ""
+    "= slot-key key)"
+    "0"
+    value-type))
+
+(define (gen-hashmap-aggregate-type-from-key [type-key : String]) : ResultGenHashmapType
+  (match (gen-hashmap-nominal-name type-key "struct_")
+    [(SpecSomeString name) (OkGenHashmapType (AstTyStruct (intern name)))]
+    [(SpecNoString)
+      (match (gen-hashmap-nominal-name type-key "enum_")
+        [(SpecSomeString name) (OkGenHashmapType (AstTyEnum (intern name)))]
+        [(SpecNoString)
+          (ErrGenHashmapType
+            (gen-hashmap-diag
+              (string-append
+                "hashmap-family: aggregate key descriptor requires nominal aggregate key type, got "
+                type-key)))])]))
+
+(define (gen-hashmap-aggregate-unsupported
+  [aggregate-name : String]
+  [member-name : String]
+  [type-key : String]) : ResultGenHashmapSource
+  (ErrGenHashmapSource
+    (gen-hashmap-diag
+      (string-append
+        "hashmap-family: unsupported aggregate key member "
+        (string-append
+          aggregate-name
+          (string-append
+            "."
+            (string-append member-name (string-append " type " type-key))))))))
+
+(define (gen-hashmap-aggregate-no-reflection [type-key : String]) : ResultGenHashmapSource
+  (ErrGenHashmapSource
+    (gen-hashmap-diag
+      (string-append
+        "hashmap-family: no reflection metadata for aggregate key "
+        type-key))))
+
+(define (gen-hashmap-aggregate-field-expr [base : String] [field-name : String]) : String
+  (string-append
+    "(struct-get "
+    (string-append base (string-append " " (string-append field-name ")")))))
+
+(define (gen-hashmap-aggregate-combine-expr
+  [prefix : String]
+  [seed : String]
+  [component : String]) : String
+  (string-append
+    "("
+    (string-append
+      prefix
+      (string-append
+        "-hash-combine "
+        (string-append seed (string-append " " (string-append component ")")))))))
+
+(define (gen-hashmap-aggregate-payload-name
+  [prefix : String]
+  [variant-index : i64]
+  [payload-index : i64]) : String
+  (string-append
+    prefix
+    (string-append
+      "-"
+      (string-append
+        (int->string variant-index)
+        (string-append "-" (int->string payload-index))))))
+
+(define (gen-hashmap-aggregate-payload-pattern-from
+  [prefix : String]
+  [variant-index : i64]
+  [payload-index : i64]
+  [payload-count : i64]) : String
+  (if (>= payload-index payload-count)
+    ""
+    (string-append
+      " "
+      (string-append
+        (gen-hashmap-aggregate-payload-name prefix variant-index payload-index)
+        (gen-hashmap-aggregate-payload-pattern-from
+          prefix
+          variant-index
+          (+ payload-index 1)
+          payload-count)))))
+
+(define (gen-hashmap-aggregate-payload-pattern
+  [prefix : String]
+  [variant-index : i64]
+  [payload-count : i64]) : String
+  (gen-hashmap-aggregate-payload-pattern-from
+    prefix
+    variant-index
+    0
+    payload-count))
+
+(define (gen-hashmap-aggregate-hash-expr
+  [prefix : String]
+  [aggregate-name : String]
+  [member-name : String]
+  [infos : CtfeReflectInfoList]
+  [ty : AstType]
+  [expr : String]) : ResultGenHashmapSource
+  (let
+    [resolved : AstType (ctfe-reflect-resolve-type infos ty)]
+    [type-key : String (ctfe-type-key-with-reflections infos resolved)]
+    (match resolved
+      [(AstTyI64)
+        (OkGenHashmapSource
+          (string-append
+            "("
+            (string-append
+              prefix
+              (string-append "-hash-normalize " (string-append expr ")")))))]
+      [(AstTyBool)
+        (OkGenHashmapSource (string-append "(if " (string-append expr " 1 0)")))]
+      [(AstTyChar)
+        (OkGenHashmapSource
+          (string-append
+            (string-append "(" prefix)
+            (string-append
+              "-hash-normalize (cast "
+              (string-append expr " : i64))"))))]
+      [(AstTyString)
+        (OkGenHashmapSource
+          (string-append "(hash-string (& " (string-append expr "))")))]
+      [(AstTyStruct name)
+        (match (ctfe-reflect-info-lookup infos (ctfe-type-nominal-key resolved))
+          [(CtfeSomeReflectInfo info)
+            (match info
+              [(CtfeReflectStruct _ _ _ fields)
+                (gen-hashmap-aggregate-struct-hash-from
+                  fields
+                  prefix
+                  infos
+                  (intern-str name)
+                  expr
+                  0
+                  "0")]
+              [_
+                (gen-hashmap-aggregate-unsupported
+                  aggregate-name
+                  member-name
+                  type-key)])]
+          [(CtfeNoReflectInfo) (gen-hashmap-aggregate-no-reflection type-key)])]
+      [(AstTyEnum name)
+        (match (ctfe-reflect-info-lookup infos (ctfe-type-nominal-key resolved))
+          [(CtfeSomeReflectInfo info)
+            (match info
+              [(CtfeReflectEnum _ _ _ variants)
+                (gen-hashmap-aggregate-enum-hash-expr
+                  variants
+                  prefix
+                  infos
+                  (intern-str name)
+                  expr)]
+              [_
+                (gen-hashmap-aggregate-unsupported
+                  aggregate-name
+                  member-name
+                  type-key)])]
+          [(CtfeNoReflectInfo) (gen-hashmap-aggregate-no-reflection type-key)])]
+      [_
+        (gen-hashmap-aggregate-unsupported aggregate-name member-name type-key)])))
+
+(define (gen-hashmap-aggregate-struct-hash-from
+  [fields : CtfeReflectFieldList]
+  [prefix : String]
+  [infos : CtfeReflectInfoList]
+  [aggregate-name : String]
+  [base-expr : String]
+  [index : i64]
+  [seed : String]) : ResultGenHashmapSource
+  (if (>= index (ctfe-reflect-field-list-count fields))
+    (OkGenHashmapSource seed)
+    (match (ctfe-reflect-field-list-ref fields index)
+      [(CtfeReflectField field-name ty)
+        (let
+          [field-expr : String
+            (gen-hashmap-aggregate-field-expr base-expr field-name)]
+          (match (gen-hashmap-aggregate-hash-expr
+            prefix
+            aggregate-name
+            field-name
+            infos
+            ty
+            field-expr)
+            [(ErrGenHashmapSource diag) (ErrGenHashmapSource diag)]
+            [(OkGenHashmapSource field-hash)
+              (gen-hashmap-aggregate-struct-hash-from
+                fields
+                prefix
+                infos
+                aggregate-name
+                base-expr
+                (+ index 1)
+                (gen-hashmap-aggregate-combine-expr prefix seed field-hash))]))])))
+
+(define (gen-hashmap-aggregate-payload-hash-from
+  [payloads : AstTypeList]
+  [prefix : String]
+  [infos : CtfeReflectInfoList]
+  [aggregate-name : String]
+  [variant-name : String]
+  [variant-index : i64]
+  [payload-index : i64]
+  [seed : String]) : ResultGenHashmapSource
+  (if (>= payload-index (ctfe-type-list-count payloads))
+    (OkGenHashmapSource seed)
+    (match (ctfe-type-list-ref payloads infos payload-index)
+      [(OkCtfeTypeLookup ty)
+        (let
+          [payload-name : String
+            (gen-hashmap-aggregate-payload-name
+              "hashmap-payload"
+              variant-index
+              payload-index)]
+          [member-name : String
+            (string-append
+              variant-name
+              (string-append "#" (int->string payload-index)))]
+          (match (gen-hashmap-aggregate-hash-expr
+            prefix
+            aggregate-name
+            member-name
+            infos
+            ty
+            payload-name)
+            [(ErrGenHashmapSource diag) (ErrGenHashmapSource diag)]
+            [(OkGenHashmapSource payload-hash)
+              (gen-hashmap-aggregate-payload-hash-from
+                payloads
+                prefix
+                infos
+                aggregate-name
+                variant-name
+                variant-index
+                (+ payload-index 1)
+                (gen-hashmap-aggregate-combine-expr prefix seed payload-hash))]))]
+      [(ErrCtfeTypeLookup message)
+        (ErrGenHashmapSource (gen-hashmap-diag message))])))
+
+(define (gen-hashmap-aggregate-enum-hash-arms
+  [variants : CtfeReflectVariantList]
+  [prefix : String]
+  [infos : CtfeReflectInfoList]
+  [aggregate-name : String]
+  [index : i64]) : ResultGenHashmapSource
+  (if (>= index (ctfe-reflect-variant-list-count variants))
+    (OkGenHashmapSource "")
+    (match (ctfe-reflect-variant-list-ref variants index)
+      [(CtfeReflectVariant variant-name payloads)
+        (let
+          [payload-count : i64 (ctfe-type-list-count payloads)]
+          [pattern : String
+            (gen-hashmap-aggregate-payload-pattern
+              "hashmap-payload"
+              index
+              payload-count)]
+          [variant-seed : String
+            (gen-hashmap-aggregate-combine-expr
+              prefix
+              "0"
+              (string-append
+                "("
+                (string-append
+                  prefix
+                  (string-append
+                    "-hash-normalize "
+                    (string-append (int->string index) ")")))))]
+          (match (gen-hashmap-aggregate-payload-hash-from
+            payloads
+            prefix
+            infos
+            aggregate-name
+            variant-name
+            index
+            0
+            variant-seed)
+            [(ErrGenHashmapSource diag) (ErrGenHashmapSource diag)]
+            [(OkGenHashmapSource body-source)
+              (match (gen-hashmap-aggregate-enum-hash-arms
+                variants
+                prefix
+                infos
+                aggregate-name
+                (+ index 1))
+                [(ErrGenHashmapSource diag) (ErrGenHashmapSource diag)]
+                [(OkGenHashmapSource rest-source)
+                  (let
+                    [buf : TextBuf (text-buf-empty)]
+                    (begin
+                      (set! buf (gen-tb3 buf "    [(" variant-name pattern))
+                      (set! buf (gen-tb3 buf ") " body-source "]\n"))
+                      (set! buf (text-buf-append buf rest-source))
+                      (OkGenHashmapSource (text-buf-render buf))))])]))])))
+
+(define (gen-hashmap-aggregate-enum-hash-expr
+  [variants : CtfeReflectVariantList]
+  [prefix : String]
+  [infos : CtfeReflectInfoList]
+  [aggregate-name : String]
+  [expr : String]) : ResultGenHashmapSource
+  (match (gen-hashmap-aggregate-enum-hash-arms
+    variants
+    prefix
+    infos
+    aggregate-name
+    0)
+    [(ErrGenHashmapSource diag) (ErrGenHashmapSource diag)]
+    [(OkGenHashmapSource arms-source)
+      (let
+        [buf : TextBuf (text-buf-empty)]
+        (begin
+          (set! buf (gen-tb3 buf "(match " expr "\n"))
+          (set! buf (text-buf-append buf arms-source))
+          (set! buf (text-buf-append buf "  )"))
+          (OkGenHashmapSource (text-buf-render buf))))]))
+
+(define (gen-hashmap-aggregate-eq-expr
+  [prefix : String]
+  [aggregate-name : String]
+  [member-name : String]
+  [infos : CtfeReflectInfoList]
+  [ty : AstType]
+  [left-expr : String]
+  [right-expr : String]) : ResultGenHashmapSource
+  (let
+    [resolved : AstType (ctfe-reflect-resolve-type infos ty)]
+    [type-key : String (ctfe-type-key-with-reflections infos resolved)]
+    (match resolved
+      [(AstTyI64)
+        (OkGenHashmapSource
+          (string-append
+            "(= "
+            (string-append
+              left-expr
+              (string-append " " (string-append right-expr ")")))))]
+      [(AstTyBool)
+        (OkGenHashmapSource
+          (string-append
+            "(= "
+            (string-append
+              left-expr
+              (string-append " " (string-append right-expr ")")))))]
+      [(AstTyChar)
+        (OkGenHashmapSource
+          (string-append
+            "(= "
+            (string-append
+              (string-append "(cast " (string-append left-expr " : i64)"))
+              (string-append
+                " "
+                (string-append
+                  (string-append "(cast " (string-append right-expr " : i64)"))
+                  ")")))))]
+      [(AstTyString)
+        (OkGenHashmapSource
+          (string-append
+            "("
+            (string-append
+              prefix
+              (string-append
+                "-string-key-eq? (& "
+                (string-append
+                  left-expr
+                  (string-append ") (& " (string-append right-expr "))")))))))]
+      [(AstTyStruct name)
+        (match (ctfe-reflect-info-lookup infos (ctfe-type-nominal-key resolved))
+          [(CtfeSomeReflectInfo info)
+            (match info
+              [(CtfeReflectStruct _ _ _ fields)
+                (gen-hashmap-aggregate-struct-eq-from
+                  fields
+                  prefix
+                  infos
+                  (intern-str name)
+                  left-expr
+                  right-expr
+                  0)]
+              [_
+                (gen-hashmap-aggregate-unsupported
+                  aggregate-name
+                  member-name
+                  type-key)])]
+          [(CtfeNoReflectInfo) (gen-hashmap-aggregate-no-reflection type-key)])]
+      [(AstTyEnum name)
+        (match (ctfe-reflect-info-lookup infos (ctfe-type-nominal-key resolved))
+          [(CtfeSomeReflectInfo info)
+            (match info
+              [(CtfeReflectEnum _ _ _ variants)
+                (gen-hashmap-aggregate-enum-eq-expr
+                  variants
+                  prefix
+                  infos
+                  (intern-str name)
+                  left-expr
+                  right-expr)]
+              [_
+                (gen-hashmap-aggregate-unsupported
+                  aggregate-name
+                  member-name
+                  type-key)])]
+          [(CtfeNoReflectInfo) (gen-hashmap-aggregate-no-reflection type-key)])]
+      [_
+        (gen-hashmap-aggregate-unsupported aggregate-name member-name type-key)])))
+
+(define (gen-hashmap-aggregate-and-expr [left : String] [right : String]) : String
+  (string-append
+    "(if "
+    (string-append left (string-append " " (string-append right " false)")))))
+
+(define (gen-hashmap-aggregate-struct-eq-from
+  [fields : CtfeReflectFieldList]
+  [prefix : String]
+  [infos : CtfeReflectInfoList]
+  [aggregate-name : String]
+  [left-base : String]
+  [right-base : String]
+  [index : i64]) : ResultGenHashmapSource
+  (if (>= index (ctfe-reflect-field-list-count fields))
+    (OkGenHashmapSource "true")
+    (match (ctfe-reflect-field-list-ref fields index)
+      [(CtfeReflectField field-name ty)
+        (let
+          [left-field : String
+            (gen-hashmap-aggregate-field-expr left-base field-name)]
+          [right-field : String
+            (gen-hashmap-aggregate-field-expr right-base field-name)]
+          (match (gen-hashmap-aggregate-eq-expr
+            prefix
+            aggregate-name
+            field-name
+            infos
+            ty
+            left-field
+            right-field)
+            [(ErrGenHashmapSource diag) (ErrGenHashmapSource diag)]
+            [(OkGenHashmapSource head-source)
+              (match (gen-hashmap-aggregate-struct-eq-from
+                fields
+                prefix
+                infos
+                aggregate-name
+                left-base
+                right-base
+                (+ index 1))
+                [(ErrGenHashmapSource diag) (ErrGenHashmapSource diag)]
+                [(OkGenHashmapSource rest-source)
+                  (OkGenHashmapSource
+                    (gen-hashmap-aggregate-and-expr head-source rest-source))])]))])))
+
+(define (gen-hashmap-aggregate-payload-eq-from
+  [payloads : AstTypeList]
+  [prefix : String]
+  [infos : CtfeReflectInfoList]
+  [aggregate-name : String]
+  [variant-name : String]
+  [variant-index : i64]
+  [payload-index : i64]) : ResultGenHashmapSource
+  (if (>= payload-index (ctfe-type-list-count payloads))
+    (OkGenHashmapSource "true")
+    (match (ctfe-type-list-ref payloads infos payload-index)
+      [(OkCtfeTypeLookup ty)
+        (let
+          [left-name : String
+            (gen-hashmap-aggregate-payload-name
+              "hashmap-left"
+              variant-index
+              payload-index)]
+          [right-name : String
+            (gen-hashmap-aggregate-payload-name
+              "hashmap-right"
+              variant-index
+              payload-index)]
+          [member-name : String
+            (string-append
+              variant-name
+              (string-append "#" (int->string payload-index)))]
+          (match (gen-hashmap-aggregate-eq-expr
+            prefix
+            aggregate-name
+            member-name
+            infos
+            ty
+            left-name
+            right-name)
+            [(ErrGenHashmapSource diag) (ErrGenHashmapSource diag)]
+            [(OkGenHashmapSource head-source)
+              (match (gen-hashmap-aggregate-payload-eq-from
+                payloads
+                prefix
+                infos
+                aggregate-name
+                variant-name
+                variant-index
+                (+ payload-index 1))
+                [(ErrGenHashmapSource diag) (ErrGenHashmapSource diag)]
+                [(OkGenHashmapSource rest-source)
+                  (OkGenHashmapSource
+                    (gen-hashmap-aggregate-and-expr head-source rest-source))])]))]
+      [(ErrCtfeTypeLookup message)
+        (ErrGenHashmapSource (gen-hashmap-diag message))])))
+
+(define (gen-hashmap-aggregate-enum-eq-arms
+  [variants : CtfeReflectVariantList]
+  [prefix : String]
+  [infos : CtfeReflectInfoList]
+  [aggregate-name : String]
+  [right-expr : String]
+  [index : i64]) : ResultGenHashmapSource
+  (if (>= index (ctfe-reflect-variant-list-count variants))
+    (OkGenHashmapSource "")
+    (match (ctfe-reflect-variant-list-ref variants index)
+      [(CtfeReflectVariant variant-name payloads)
+        (let
+          [payload-count : i64 (ctfe-type-list-count payloads)]
+          [left-pattern : String
+            (gen-hashmap-aggregate-payload-pattern
+              "hashmap-left"
+              index
+              payload-count)]
+          [right-pattern : String
+            (gen-hashmap-aggregate-payload-pattern
+              "hashmap-right"
+              index
+              payload-count)]
+          (match (gen-hashmap-aggregate-payload-eq-from
+            payloads
+            prefix
+            infos
+            aggregate-name
+            variant-name
+            index
+            0)
+            [(ErrGenHashmapSource diag) (ErrGenHashmapSource diag)]
+            [(OkGenHashmapSource body-source)
+              (match (gen-hashmap-aggregate-enum-eq-arms
+                variants
+                prefix
+                infos
+                aggregate-name
+                right-expr
+                (+ index 1))
+                [(ErrGenHashmapSource diag) (ErrGenHashmapSource diag)]
+                [(OkGenHashmapSource rest-source)
+                  (let
+                    [buf : TextBuf (text-buf-empty)]
+                    (begin
+                      (set!
+                        buf
+                        (gen-tb3 buf "    [(" variant-name left-pattern))
+                      (set!
+                        buf
+                        (gen-tb3 buf ")\n      (match " right-expr "\n"))
+                      (set!
+                        buf
+                        (gen-tb3 buf "        [(" variant-name right-pattern))
+                      (set! buf (gen-tb3 buf ") " body-source "]\n"))
+                      (set! buf (text-buf-append buf "        [_ false])]\n"))
+                      (set! buf (text-buf-append buf rest-source))
+                      (OkGenHashmapSource (text-buf-render buf))))])]))])))
+
+(define (gen-hashmap-aggregate-enum-eq-expr
+  [variants : CtfeReflectVariantList]
+  [prefix : String]
+  [infos : CtfeReflectInfoList]
+  [aggregate-name : String]
+  [left-expr : String]
+  [right-expr : String]) : ResultGenHashmapSource
+  (match (gen-hashmap-aggregate-enum-eq-arms
+    variants
+    prefix
+    infos
+    aggregate-name
+    right-expr
+    0)
+    [(ErrGenHashmapSource diag) (ErrGenHashmapSource diag)]
+    [(OkGenHashmapSource arms-source)
+      (let
+        [buf : TextBuf (text-buf-empty)]
+        (begin
+          (set! buf (gen-tb3 buf "(match " left-expr "\n"))
+          (set! buf (text-buf-append buf arms-source))
+          (set! buf (text-buf-append buf "  )"))
+          (OkGenHashmapSource (text-buf-render buf))))]))
+
+(define (gen-hashmap-source-aggregate-key
+  [map-name : String]
+  [prefix : String]
+  [key-type-key : String]
+  [key-info : GenHashmapTypeInfo]
+  [value-type : String]
+  [infos : CtfeReflectInfoList]) : ResultGenHashmapSource
+  (match (gen-hashmap-aggregate-type-from-key key-type-key)
+    [(ErrGenHashmapType _)
+      (gen-hashmap-descriptor-mismatch
+        "stdlib/hashmap/aggregate-key-v1"
+        key-type-key)]
+    [(OkGenHashmapType key-ty)
+      (let
+        [key-type : String (gen-hashmap-type-info-source key-info)]
+        [key-name : String (gen-hashmap-type-info-name key-info)]
+        (match (gen-hashmap-aggregate-hash-expr
+          prefix
+          key-name
+          "key"
+          infos
+          key-ty
+          "key")
+          [(ErrGenHashmapSource diag) (ErrGenHashmapSource diag)]
+          [(OkGenHashmapSource hash-expr)
+            (match (gen-hashmap-aggregate-eq-expr
+              prefix
+              key-name
+              "key"
+              infos
+              key-ty
+              "left"
+              "right")
+              [(ErrGenHashmapSource diag) (ErrGenHashmapSource diag)]
+              [(OkGenHashmapSource eq-expr)
+                (OkGenHashmapSource
+                  (gen-hashmap-source-owned-key
+                    map-name
+                    prefix
+                    key-type
+                    (string-append "  " (string-append hash-expr ")\n"))
+                    (gen-hashmap-source-aggregate-key-support prefix)
+                    (string-append "  " (string-append eq-expr ")\n"))
+                    (string-append prefix "-key-eq? slot-key key)")
+                    (string-append "(init : " (string-append key-type ")"))
+                    value-type))])]))]))
+
 (define (gen-hashmap-descriptor-mismatch
   [descriptor : String]
   [key-type-key : String]) : ResultGenHashmapSource
@@ -4022,7 +4754,8 @@
   [value-type-key : String]
   [descriptor : String]
   [key-info : GenHashmapTypeInfo]
-  [value-info : GenHashmapTypeInfo]) : ResultGenHashmapSource
+  [value-info : GenHashmapTypeInfo]
+  [infos : CtfeReflectInfoList]) : ResultGenHashmapSource
   (let
     [key-name : String (gen-hashmap-type-info-name key-info)]
     [key-prefix : String (gen-hashmap-type-info-prefix key-info)]
@@ -4053,18 +4786,27 @@
             (OkGenHashmapSource
               (gen-hashmap-source-i64-key map-name prefix value-type))
             (gen-hashmap-descriptor-mismatch descriptor key-type-key))
-          (ErrGenHashmapSource
-            (gen-hashmap-diag
-              (string-append
-                "hashmap-family: unsupported key descriptor "
-                descriptor))))))))
+          (if (string-eq descriptor "stdlib/hashmap/aggregate-key-v1")
+            (gen-hashmap-source-aggregate-key
+              map-name
+              prefix
+              key-type-key
+              key-info
+              value-type
+              infos)
+            (ErrGenHashmapSource
+              (gen-hashmap-diag
+                (string-append
+                  "hashmap-family: unsupported key descriptor "
+                  descriptor)))))))))
 
 (define (gen-hashmap-source-for
   [map-name : String]
   [key-type-key : String]
   [value-type-key : String]
-  [descriptor : String]) : ResultGenHashmapSource
-  (match (gen-hashmap-scalar-type-info key-type-key "key")
+  [descriptor : String]
+  [env : CtfeEnv]) : ResultGenHashmapSource
+  (match (gen-hashmap-key-type-info key-type-key descriptor)
     [(OkGenHashmapTypeInfo key-info)
       (match (gen-hashmap-value-type-info value-type-key)
         [(OkGenHashmapTypeInfo value-info)
@@ -4074,16 +4816,10 @@
             value-type-key
             descriptor
             key-info
-            value-info)]
+            value-info
+            (ctfe-env-reflections env))]
         [(ErrGenHashmapTypeInfo diag) (ErrGenHashmapSource diag)])]
-    [(ErrGenHashmapTypeInfo _)
-      (ErrGenHashmapSource
-        (gen-hashmap-diag
-          (string-append
-            "hashmap-family: unsupported key descriptor "
-            (string-append
-              descriptor
-              (string-append " for key type " key-type-key)))))]))
+    [(ErrGenHashmapTypeInfo diag) (ErrGenHashmapSource diag)]))
 
 (define (gen-set-descriptor-mismatch
   [descriptor : String]
@@ -5168,7 +5904,8 @@
             map-name
             key-type
             value-type
-            descriptor)
+            descriptor
+            env)
             [(OkGenHashmapSource source)
               (match (parse-ast-source source)
                 [(OkAstProgram (AstProgram decls-box))
@@ -8802,6 +9539,9 @@
 (define (compiler-generated-hashmap-family-bundle-source) : String
   "(defstruct Payload (score i64))
 (defenum Status (Ready i64) (Failed))
+(defstruct HashPoint (x i64) (enabled bool) (label String) (code char))
+(defenum HashTag (HashTagNone) (HashTagNumber i64) (HashTagOtherNumber i64) (HashTagText bool String char))
+(defstruct HashNestedKey (point HashPoint) (tag HashTag))
 (comptime-decl (:generated stdlib/hashmap-family StringStringMap (type-key (type String)) (type-key (type String)) \"stdlib/hashmap/string-key-v1\")
   (defstruct StringStringMap (__hashmap_family_request i64)))
 (comptime-decl (:generated stdlib/hashmap-family I64I64Map (type-key (type i64)) (type-key (type i64)) \"stdlib/hashmap/i64-key-v1\")
@@ -8814,6 +9554,8 @@
   (defstruct StringPayloadMap (__hashmap_family_request i64)))
 (comptime-decl (:generated stdlib/hashmap-family I64StatusMap (type-key (type i64)) (type-key (type Status)) \"stdlib/hashmap/i64-key-v1\")
   (defstruct I64StatusMap (__hashmap_family_request i64)))
+(comptime-decl (:generated stdlib/hashmap-family HashNestedKeyI64Map (type-key (type HashNestedKey)) (type-key (type i64)) \"stdlib/hashmap/aggregate-key-v1\")
+  (defstruct HashNestedKeyI64Map (__hashmap_family_request i64)))
 (comptime-decl (:generated stdlib/hashmap-family StringPayloadMap (type-key (type String)) (type-key (type Payload)) \"stdlib/hashmap/string-key-v1\")
   (defstruct StringPayloadMap (__hashmap_family_request i64)))")
 
@@ -8824,6 +9566,11 @@
 (define (compiler-generated-hashmap-family-unsupported-value-source) : String
   "(comptime-decl (:generated stdlib/hashmap-family StringBoolMap (type-key (type String)) (type-key (type bool)) \"stdlib/hashmap/string-key-v1\")
   (defstruct StringBoolMap (__hashmap_family_request i64)))")
+
+(define (compiler-generated-hashmap-family-unsupported-aggregate-key-source) : String
+  "(defstruct BadAggregateKey (score f64))
+(comptime-decl (:generated stdlib/hashmap-family BadAggregateKeyI64Map (type-key (type BadAggregateKey)) (type-key (type i64)) \"stdlib/hashmap/aggregate-key-v1\")
+  (defstruct BadAggregateKeyI64Map (__hashmap_family_request i64)))")
 
 (define (compiler-generated-set-family-bundle-source) : String
   "(comptime-decl (:generated stdlib/set-family StringSet (type-key (type String)) \"stdlib/hashmap/string-key-v1\")
@@ -9208,6 +9955,22 @@
                     (compiler-specialize-decl-list-count-defs
                       decls
                       "i64-status-map-put")]
+                  [hash-nested-key-map-count : i64
+                    (compiler-specialize-decl-list-count-visible
+                      decls
+                      "HashNestedKeyI64Map")]
+                  [hash-nested-key-put-count : i64
+                    (compiler-specialize-decl-list-count-defs
+                      decls
+                      "hash-nested-key-i64-map-put")]
+                  [hash-nested-key-hash-count : i64
+                    (compiler-specialize-decl-list-count-defs
+                      decls
+                      "hash-nested-key-i64-map-hash-key")]
+                  [hash-nested-key-eq-count : i64
+                    (compiler-specialize-decl-list-count-defs
+                      decls
+                      "hash-nested-key-i64-map-key-eq?")]
                   [ok : bool true]
                   (begin
                     (if (= slot-count 1)
@@ -9360,6 +10123,18 @@
                     (if (= i64-status-put-count 1)
                       unit
                       (set! ok false))
+                    (if (= hash-nested-key-map-count 1)
+                      unit
+                      (set! ok false))
+                    (if (= hash-nested-key-put-count 1)
+                      unit
+                      (set! ok false))
+                    (if (= hash-nested-key-hash-count 1)
+                      unit
+                      (set! ok false))
+                    (if (= hash-nested-key-eq-count 1)
+                      unit
+                      (set! ok false))
                     ok))])]
           [(ErrSpecProgram _) false]))]
     [(ErrAstProgram _) false]))
@@ -9386,6 +10161,18 @@
           (string-eq
             (compiler-diagnostic-message diag)
             "hashmap-family: unsupported value type bool")])]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-generated-hashmap-family-unsupported-aggregate-key-rejected?) : bool
+  (match (parse-ast-source
+    (compiler-generated-hashmap-family-unsupported-aggregate-key-source))
+    [(OkAstProgram program)
+      (match (compiler-specialize-program program)
+        [(OkSpecProgram _) false]
+        [(ErrSpecProgram diag)
+          (string-eq
+            (compiler-diagnostic-message diag)
+            "hashmap-family: unsupported aggregate key member BadAggregateKey.score type f64")])]
     [(ErrAstProgram _) false]))
 
 (define (compiler-generated-set-family-bundle-ok?) : bool
@@ -9579,6 +10366,9 @@
       (return 0))
     (unless
       (compiler-generated-hashmap-family-unsupported-value-rejected?)
+      (return 0))
+    (unless
+      (compiler-generated-hashmap-family-unsupported-aggregate-key-rejected?)
       (return 0))
     (unless (compiler-generated-set-family-bundle-ok?) (return 0))
     (unless

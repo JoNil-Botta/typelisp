@@ -32,6 +32,10 @@
 ;# - `stdlib/hashmap/i64-key-v1`: scalar `i64` keys, `hash-i64`,
 ;#   `hash-key-i64-eq?`, no borrowed-key wrappers, and generated borrowed
 ;#   value lookup results tied to the map lifetime.
+;# - `stdlib/hashmap/aggregate-key-v1`: owned nominal struct/enum keys. Hashing
+;#   and equality are derived from supported fields/payloads in declaration
+;#   order (`i64`, `bool`, `char`, `String`, and nested supported nominal
+;#   aggregates). No borrowed-key wrappers are emitted.
 ;# Unsupported key types are intentionally rejected by the generator request
 ;# path instead of falling back to a trait or implicit `Hash`/`Eq` bound.
 ;#
@@ -54,6 +58,10 @@
 ;: Stable descriptor identity for generated `i64`-key hashmap families.
 (define (hashmap-i64-key-descriptor-key) : String
   "stdlib/hashmap/i64-key-v1")
+
+;: Stable descriptor identity for generated nominal aggregate-key hashmap families.
+(define (hashmap-aggregate-key-descriptor-key) : String
+  "stdlib/hashmap/aggregate-key-v1")
 
 ;: One open-addressing slot: empty, a deleted tombstone, or an occupied entry
 ;: carrying the owned key, its copied value, and the cached key hash (#824).

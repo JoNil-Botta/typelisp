@@ -667,24 +667,26 @@ Generated declaration identity is the tuple:
 For `stdlib/hashmap-family`, the argument key list must include the key
 `type-key`, value `type-key`, and an explicit key descriptor identity. The v1
 built-in descriptors are `stdlib/hashmap/string-key-v1` for owned `String`
-keys and `stdlib/hashmap/i64-key-v1` for scalar `i64` keys. A descriptor fixes
-the hash operation, equality operation, generated family/name prefix, and
+keys, `stdlib/hashmap/i64-key-v1` for scalar `i64` keys, and
+`stdlib/hashmap/aggregate-key-v1` for nominal struct/enum keys. A descriptor
+fixes the hash operation, equality operation, generated family/name prefix, and
 whether borrowed-key lookup wrappers are emitted. `String` uses `hash-string`,
 `hash-key-string-eq?`, and borrowed lookup/contains/remove wrappers; `i64` uses
-`hash-i64`, `hash-key-i64-eq?`, and no borrowed-key wrappers. Unsupported key
-types must produce a compile-time `hashmap-family` diagnostic naming the
-unsupported key descriptor instead of using source-level traits or implicit
-`Hash`/`Eq` bounds. Changing descriptor identity changes generated declaration
-identity even when the key/value types and public item names are otherwise the
-same.
+`hash-i64`, `hash-key-i64-eq?`, and no borrowed-key wrappers. Aggregate keys
+derive deterministic hash/equality from declaration-order struct fields or enum
+variant tag plus declaration-order payloads. Supported aggregate members are
+`i64`, `bool`, `char`, `String`, and nested supported nominal aggregates.
+Unsupported key types or unsupported aggregate members must produce a
+compile-time `hashmap-family` diagnostic naming the descriptor or aggregate
+member instead of using source-level traits, implicit `Hash`/`Eq` bounds,
+runtime type IDs, or address hashing. Changing descriptor identity changes
+generated declaration identity even when the key/value types and public item
+names are otherwise the same.
 
-The built-in `String` and `i64` key descriptors support nominal struct and enum
-value types. Aggregate values are stored as ordinary map-owned values, may be
-looked up through owned results, and may be borrowed through
-`*-get-value-borrowed` for field/payload inspection while the map is not
-mutated. This does not add aggregate key hashing or equality: aggregate keys
-remain unsupported until a future descriptor defines their hash/equality
-contract.
+The built-in key descriptors support nominal struct and enum value types.
+Aggregate values are stored as ordinary map-owned values, may be looked up
+through owned results, and may be borrowed through `*-get-value-borrowed` for
+field/payload inspection while the map is not mutated.
 
 Generated hashmap families may also expose borrowed-value lookup helpers such
 as `*-get-value-borrowed`. These helpers are independent from borrowed-key

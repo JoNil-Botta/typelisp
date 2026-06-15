@@ -27353,6 +27353,429 @@
             [_ type-env])]
         (lower-tail-expr ctx state body-env body-type-env body ret-ty sret-var))]))
 
+(define (lower-tail-match-enum
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [scrut-var : i64]
+  [scrut-ty : AstType]
+  [arms : AstMatchArmList]
+  [ret-ty : AstType]
+  [sret-var : i64]
+  [force-memory : bool]) : ResultLowerState
+  (let
+    [scrut-words : i64 (lower-type-register-words ctx scrut-ty)]
+    (if (and (> scrut-words 0) (not force-memory))
+      (if (= scrut-words 2)
+        (match (lower-emit-word state (IrValueVar scrut-var) 0 (AstTyI64))
+          [(LowerExpr tag-state tag-value _)
+            (match tag-value
+              [(IrValueVar tag-var)
+                (lower-tail-match-enum-arms
+                  ctx
+                  tag-state
+                  env
+                  type-env
+                  scrut-var
+                  scrut-ty
+                  tag-var
+                  arms
+                  ret-ty
+                  sret-var
+                  (TcNoString)
+                  true)]
+              [_
+                (ErrLowerState
+                  (lower-diagnostic "lower: internal enum tag extract failed"))])])
+        (lower-tail-match-enum-arms
+          ctx
+          state
+          env
+          type-env
+          scrut-var
+          scrut-ty
+          scrut-var
+          arms
+          ret-ty
+          sret-var
+          (TcNoString)
+          false))
+      (match (lower-load-at-offset state (IrValueVar scrut-var) 0 (AstTyI64))
+        [(LowerExpr tag-state tag-value _)
+          (match tag-value
+            [(IrValueVar tag-var)
+              (lower-tail-match-enum-arms
+                ctx
+                tag-state
+                env
+                type-env
+                scrut-var
+                scrut-ty
+                tag-var
+                arms
+                ret-ty
+                sret-var
+                (TcNoString)
+                false)]
+            [_
+              (ErrLowerState
+                (lower-diagnostic "lower: internal enum tag load failed"))])]))))
+
+(define (lower-tail-match-enum-arms
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [scrut-var : i64]
+  [scrut-ty : AstType]
+  [tag-var : i64]
+  [arms : AstMatchArmList]
+  [ret-ty : AstType]
+  [sret-var : i64]
+  [borrow-lifetime : TcMaybeString]
+  [scrut-reg-group? : bool]) : ResultLowerState
+  (match arms
+    [(AstMatchArmNil)
+      (ErrLowerState (lower-diagnostic "lower: match with no arms"))]
+    [(AstMatchArmCons arm rest)
+      (let
+        [rest : AstMatchArmList (box-get rest)]
+        (match arm
+          [(AstMatchArm pat body-box)
+            (let
+              [body : AstExpr (ast-node-get body-box)]
+              (match rest
+                [(AstMatchArmNil)
+                  (match pat
+                    [(AstPatWildcard)
+                      (lower-tail-match-catch-all
+                        ctx
+                        state
+                        env
+                        type-env
+                        scrut-var
+                        scrut-ty
+                        arm
+                        ret-ty
+                        sret-var)]
+                    [(AstPatBinding variant-name)
+                      (lower-tail-match-variant-final
+                        ctx
+                        state
+                        env
+                        type-env
+                        scrut-var
+                        scrut-ty
+                        (intern-str variant-name)
+                        AstPatternNil
+                        body
+                        ret-ty
+                        sret-var
+                        borrow-lifetime
+                        scrut-reg-group?)]
+                    [(AstPatVariant variant-name args-box)
+                      (let
+                        [args : AstPatternList (box-get args-box)]
+                        (lower-tail-match-variant-final
+                          ctx
+                          state
+                          env
+                          type-env
+                          scrut-var
+                          scrut-ty
+                          (intern-str variant-name)
+                          args
+                          body
+                          ret-ty
+                          sret-var
+                          borrow-lifetime
+                          scrut-reg-group?))]
+                    [_
+                      (ErrLowerState
+                        (lower-diagnostic
+                          "lower: unsupported enum match pattern"))])]
+                [_
+                  (match pat
+                    [(AstPatWildcard)
+                      (lower-tail-match-catch-all
+                        ctx
+                        state
+                        env
+                        type-env
+                        scrut-var
+                        scrut-ty
+                        arm
+                        ret-ty
+                        sret-var)]
+                    [(AstPatBinding variant-name)
+                      (lower-tail-match-variant-arm
+                        ctx
+                        state
+                        env
+                        type-env
+                        scrut-var
+                        scrut-ty
+                        tag-var
+                        (intern-str variant-name)
+                        AstPatternNil
+                        body
+                        rest
+                        ret-ty
+                        sret-var
+                        borrow-lifetime
+                        scrut-reg-group?)]
+                    [(AstPatVariant variant-name args-box)
+                      (let
+                        [args : AstPatternList (box-get args-box)]
+                        (lower-tail-match-variant-arm
+                          ctx
+                          state
+                          env
+                          type-env
+                          scrut-var
+                          scrut-ty
+                          tag-var
+                          (intern-str variant-name)
+                          args
+                          body
+                          rest
+                          ret-ty
+                          sret-var
+                          borrow-lifetime
+                          scrut-reg-group?))]
+                    [_
+                      (ErrLowerState
+                        (lower-diagnostic
+                          "lower: unsupported enum match pattern"))])]))]))]))
+
+(define (lower-tail-match-variant-final
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [scrut-var : i64]
+  [scrut-ty : AstType]
+  [variant-name : String]
+  [args : AstPatternList]
+  [body : AstExpr]
+  [ret-ty : AstType]
+  [sret-var : i64]
+  [borrow-lifetime : TcMaybeString]
+  [scrut-reg-group? : bool]) : ResultLowerState
+  (match ctx
+    [(TcContext _ symbols registries _)
+      (let
+        [resolved-scrut-ty : AstType
+          (tc-type-strip-region (tc-resolve-type ctx scrut-ty))]
+        [lookup-name : String
+          (lower-variant-lookup-name-for-scrut
+            ctx
+            resolved-scrut-ty
+            variant-name)]
+        (match (compiler-registries-lookup-variant registries lookup-name)
+          [(SomeI64 handle)
+            (match (compiler-registries-variant-fields-indexed symbols handle)
+              [(OkAstTypeList fields)
+                (let
+                  [resolved-fields : AstTypeList
+                    (tc-resolve-type-list
+                      ctx
+                      (lower-enum-constructor-fields-for-result
+                        ctx
+                        (lower-enum-type-name-or-empty resolved-scrut-ty)
+                        resolved-scrut-ty
+                        fields))]
+                  (if (lower-pattern-list-refutable? args)
+                    (ErrLowerState
+                      (lower-diagnostic
+                        "lower: refutable payload pattern in final match arm requires a trailing catch-all"))
+                    (match (lower-bind-match-variant-payloads
+                      ctx
+                      state
+                      env
+                      type-env
+                      borrow-lifetime
+                      (IrValueVar scrut-var)
+                      args
+                      resolved-fields
+                      (lower-state-mode state)
+                      (lower-enum-type-name-or-empty resolved-scrut-ty)
+                      variant-name
+                      0
+                      8
+                      (lower-state-current-label state)
+                      scrut-reg-group?)
+                      [(OkLowerEnv body-start body-env body-type-env)
+                        (lower-tail-expr
+                          ctx
+                          body-start
+                          body-env
+                          body-type-env
+                          body
+                          ret-ty
+                          sret-var)]
+                      [(ErrLowerEnv message) (ErrLowerState message)])))]
+              [(ErrAstTypeList message)
+                (ErrLowerState (lower-diagnostic message))])]
+          [(NoneI64)
+            (ErrLowerState
+              (lower-diagnostic
+                (string-append "lower: unknown variant " variant-name)))]))]))
+
+(define (lower-tail-match-variant-body
+  [ctx : TcContext]
+  [body-start : LowerState]
+  [next-label : String]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [scrut-var : i64]
+  [scrut-ty : AstType]
+  [tag-var : i64]
+  [variant-name : String]
+  [fields : AstTypeList]
+  [args : AstPatternList]
+  [body : AstExpr]
+  [rest : AstMatchArmList]
+  [ret-ty : AstType]
+  [sret-var : i64]
+  [borrow-lifetime : TcMaybeString]
+  [scrut-reg-group? : bool]) : ResultLowerState
+  (match (lower-bind-match-variant-payloads
+    ctx
+    body-start
+    env
+    type-env
+    borrow-lifetime
+    (IrValueVar scrut-var)
+    args
+    fields
+    (lower-state-mode body-start)
+    (lower-enum-type-name-or-empty scrut-ty)
+    variant-name
+    0
+    8
+    next-label
+    scrut-reg-group?)
+    [(OkLowerEnv bound-state body-env body-type-env)
+      (match (lower-tail-expr
+        ctx
+        bound-state
+        body-env
+        body-type-env
+        body
+        ret-ty
+        sret-var)
+        [(OkLowerState body-state)
+          (lower-tail-match-enum-arms
+            ctx
+            (lower-state-finish-block body-state next-label)
+            env
+            type-env
+            scrut-var
+            scrut-ty
+            tag-var
+            rest
+            ret-ty
+            sret-var
+            borrow-lifetime
+            scrut-reg-group?)]
+        [(ErrLowerState message) (ErrLowerState message)])]
+    [(ErrLowerEnv message) (ErrLowerState message)]))
+
+(define (lower-tail-match-variant-arm
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [scrut-var : i64]
+  [scrut-ty : AstType]
+  [tag-var : i64]
+  [variant-name : String]
+  [args : AstPatternList]
+  [body : AstExpr]
+  [rest : AstMatchArmList]
+  [ret-ty : AstType]
+  [sret-var : i64]
+  [borrow-lifetime : TcMaybeString]
+  [scrut-reg-group? : bool]) : ResultLowerState
+  (match ctx
+    [(TcContext _ symbols registries _)
+      (let
+        [resolved-scrut-ty : AstType
+          (tc-type-strip-region (tc-resolve-type ctx scrut-ty))]
+        [lookup-name : String
+          (lower-variant-lookup-name-for-scrut
+            ctx
+            resolved-scrut-ty
+            variant-name)]
+        (match (compiler-registries-lookup-variant registries lookup-name)
+          [(SomeI64 handle)
+            (match (compiler-registries-variant-fields-indexed symbols handle)
+              [(OkAstTypeList fields)
+                (let
+                  [resolved-fields : AstTypeList
+                    (tc-resolve-type-list
+                      ctx
+                      (lower-enum-constructor-fields-for-result
+                        ctx
+                        (lower-enum-type-name-or-empty resolved-scrut-ty)
+                        resolved-scrut-ty
+                        fields))]
+                  (match (lower-state-alloc-var state)
+                    [(LowerAlloc eq-alloc eq-var)
+                      (let
+                        [eq-state : LowerState
+                          (lower-state-emit
+                            eq-alloc
+                            (IrInstrBinOp
+                              eq-var
+                              IrBinEq
+                              (IrValueVar tag-var)
+                              (IrValueI64
+                                (compiler-registry-handle-child-index handle))
+                              (AstTyI64)))]
+                        (match (lower-state-fresh-label eq-state "match_arm")
+                          [(LowerLabel body-label-state body-label)
+                            (match (lower-state-fresh-label
+                              body-label-state
+                              "match_next")
+                              [(LowerLabel next-label-state next-label)
+                                (let
+                                  [body-start : LowerState
+                                    (lower-state-finish-block
+                                      (lower-state-emit
+                                        next-label-state
+                                        (IrInstrBranch
+                                          (IrValueVar eq-var)
+                                          body-label
+                                          next-label))
+                                      body-label)]
+                                  (lower-tail-match-variant-body
+                                    ctx
+                                    body-start
+                                    next-label
+                                    env
+                                    type-env
+                                    scrut-var
+                                    scrut-ty
+                                    tag-var
+                                    variant-name
+                                    resolved-fields
+                                    args
+                                    body
+                                    rest
+                                    ret-ty
+                                    sret-var
+                                    borrow-lifetime
+                                    scrut-reg-group?))])]))]))]
+              [(ErrAstTypeList message)
+                (ErrLowerState (lower-diagnostic message))])]
+          [(NoneI64)
+            (ErrLowerState
+              (lower-diagnostic
+                (string-append "lower: unknown variant " variant-name)))]))]))
+
 (define (lower-borrowed-enum-match-scrutinee?
   [ctx : TcContext]
   [type-env : TcTypeEnv]
@@ -27395,32 +27818,53 @@
           [(LowerExpr scrut-state scrut-value scrut-ty)
             (match (tc-type-strip-region (tc-resolve-type ctx scrut-ty))
               [(AstTyEnum _)
-                (lower-return-expr
-                  ctx
-                  state
-                  env
-                  type-env
-                  origin
-                  ret-ty
-                  sret-var)]
+                (match (lower-state-alloc-var scrut-state)
+                  [(LowerAlloc scrut-alloc scrut-var)
+                    (lower-tail-match-enum
+                      ctx
+                      (lower-state-emit
+                        scrut-alloc
+                        (IrInstrMov scrut-var scrut-value scrut-ty))
+                      env
+                      type-env
+                      scrut-var
+                      scrut-ty
+                      arms
+                      ret-ty
+                      sret-var
+                      false)])]
               [(AstTyEnumArgs _ _)
-                (lower-return-expr
-                  ctx
-                  state
-                  env
-                  type-env
-                  origin
-                  ret-ty
-                  sret-var)]
+                (match (lower-state-alloc-var scrut-state)
+                  [(LowerAlloc scrut-alloc scrut-var)
+                    (lower-tail-match-enum
+                      ctx
+                      (lower-state-emit
+                        scrut-alloc
+                        (IrInstrMov scrut-var scrut-value scrut-ty))
+                      env
+                      type-env
+                      scrut-var
+                      scrut-ty
+                      arms
+                      ret-ty
+                      sret-var
+                      false)])]
               [(AstTyVarArgs _ _)
-                (lower-return-expr
-                  ctx
-                  state
-                  env
-                  type-env
-                  origin
-                  ret-ty
-                  sret-var)]
+                (match (lower-state-alloc-var scrut-state)
+                  [(LowerAlloc scrut-alloc scrut-var)
+                    (lower-tail-match-enum
+                      ctx
+                      (lower-state-emit
+                        scrut-alloc
+                        (IrInstrMov scrut-var scrut-value scrut-ty))
+                      env
+                      type-env
+                      scrut-var
+                      scrut-ty
+                      arms
+                      ret-ty
+                      sret-var
+                      false)])]
               [_
                 (match (lower-state-alloc-var scrut-state)
                   [(LowerAlloc scrut-alloc scrut-var)
@@ -30713,6 +31157,26 @@
     [(WideSome _ _ c) c]
     [WideNone 0]))")
 
+(define (compiler-lower-inline-sret-enum-match-constructor-source) : String
+  "(defstruct Wide (a i64) (b i64) (c i64))
+(defenum Choice (Make i64) (Zero))
+(define (from-choice [choice : Choice]) : Wide
+  (match choice
+    [(Make n) (Wide n (+ n 1) (+ n 2))]
+    [Zero (Wide 0 1 2)]))
+(define (main) : i64
+  (struct-get (from-choice (Make 40)) c))")
+
+(define (compiler-lower-inline-sret-enum-match-generic-source) : String
+  "(defstruct Wide (a i64) (b i64) (c i64))
+(defenum Choice (Make i64) (Wrap Wide))
+(define (from-choice [choice : Choice]) : Wide
+  (match choice
+    [(Make n) (Wide n (+ n 1) (+ n 2))]
+    [(Wrap w) w]))
+(define (main) : i64
+  (struct-get (from-choice (Make 40)) c))")
+
 (define (compiler-lower-inline-hot-loop-struct-source) : String
   "(defstruct Pair (x i64) (y i64))
 (define (main [n : i64]) : i64
@@ -30861,6 +31325,43 @@
             [(ErrCompilerLower _) false])])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-inline-sret-enum-match-shape-ok?) : bool
+  (match (lower-compiler-source-with-mode
+    (compiler-lower-inline-sret-enum-match-constructor-source)
+    (CompilerLowerInlineAggregates))
+    [(OkCompilerLower constructor-program _)
+      (match constructor-program
+        [(IrProgram _ constructor-functions _)
+          (match (lower-compiler-source-with-mode
+            (compiler-lower-inline-sret-enum-match-generic-source)
+            (CompilerLowerInlineAggregates))
+            [(OkCompilerLower generic-program _)
+              (match generic-program
+                [(IrProgram _ generic-functions _)
+                  (and
+                    (=
+                      (lower-test-function-copy-bytes-count
+                        constructor-functions
+                        "from-choice")
+                      0)
+                    (=
+                      (lower-test-function-phi-count
+                        constructor-functions
+                        "from-choice")
+                      0)
+                    (>
+                      (lower-test-function-copy-bytes-count
+                        generic-functions
+                        "from-choice")
+                      0)
+                    (=
+                      (lower-test-function-phi-count
+                        generic-functions
+                        "from-choice")
+                      0))])]
+            [(ErrCompilerLower _) false])])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-inline-hot-loop-struct-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-inline-hot-loop-struct-source))
     [(OkCompilerLower program _)
@@ -30878,6 +31379,7 @@
     (compiler-lower-inline-boxed-recursive-shape-ok?)
     (compiler-lower-inline-aggregate-copy-shape-ok?)
     (compiler-lower-inline-sret-constructor-copy-shape-ok?)
+    (compiler-lower-inline-sret-enum-match-shape-ok?)
     (compiler-lower-inline-hot-loop-struct-shape-ok?)
     (compiler-lower-inline-error-ok?
       (compiler-lower-inline-recursive-error-source)

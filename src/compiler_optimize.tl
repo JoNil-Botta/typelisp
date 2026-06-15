@@ -14438,7 +14438,13 @@
 
 (defenum OptLoopBceCmpEnv
   (OptLoopBceCmpNil)
-  (OptLoopBceCmpCons i64 OptLoopBceExpr OptLoopBceExpr (Box OptLoopBceCmpEnv)))
+  (OptLoopBceCmpCons
+    i64
+    CompilerIrBinOp
+    OptLoopBceExpr
+    OptLoopBceExpr
+    AstType
+    (Box OptLoopBceCmpEnv)))
 
 (defenum OptLoopBceGuardEnv
   (OptLoopBceGuardNil)
@@ -14447,6 +14453,14 @@
     OptLoopBceExpr
     OptLoopBceExpr
     (Box OptLoopBceGuardEnv)))
+
+(defenum OptRangeFact
+  (OptRangeFactNonnegative String OptLoopBceExpr)
+  (OptRangeFactLessThan String OptLoopBceExpr OptLoopBceExpr))
+
+(defenum OptRangeFacts
+  (OptRangeFactsNil)
+  (OptRangeFactsCons OptRangeFact (Box OptRangeFacts)))
 
 (defstruct OptLoopBceSummaries
   (enabled bool)
@@ -14459,7 +14473,8 @@
   (ptrs OptLoopBcePtrEnv)
   (lengths OptLoopBceLengthEnv)
   (cmps OptLoopBceCmpEnv)
-  (guards OptLoopBceGuardEnv))
+  (guards OptLoopBceGuardEnv)
+  (ranges OptRangeFacts))
 
 (defenum OptLoopBceRewrite
   (OptLoopBceRewrite OptLoopBceState CompilerIrInstrList))
@@ -14541,6 +14556,242 @@
                 (opt-loop-bce-expr-eq (box-get al) (box-get br))
                 (opt-loop-bce-expr-eq (box-get ar) (box-get bl)))))]
         [_ false])]))
+
+(define (opt-range-nonnegative-contains?
+  [facts : OptRangeFacts]
+  [label : String]
+  [expr : OptLoopBceExpr]) : bool
+  (match facts
+    [(OptRangeFactsNil) false]
+    [(OptRangeFactsCons fact rest)
+      (match fact
+        [(OptRangeFactNonnegative fact-label fact-expr)
+          (if (and
+            (string-eq fact-label label)
+            (opt-loop-bce-expr-eq fact-expr expr))
+            true
+            (opt-range-nonnegative-contains? (box-get rest) label expr))]
+        [_ (opt-range-nonnegative-contains? (box-get rest) label expr)])]))
+
+(define (opt-range-less-than-contains?
+  [facts : OptRangeFacts]
+  [label : String]
+  [lhs : OptLoopBceExpr]
+  [rhs : OptLoopBceExpr]) : bool
+  (match facts
+    [(OptRangeFactsNil) false]
+    [(OptRangeFactsCons fact rest)
+      (match fact
+        [(OptRangeFactLessThan fact-label fact-lhs fact-rhs)
+          (if (and
+            (string-eq fact-label label)
+            (opt-loop-bce-expr-eq fact-lhs lhs)
+            (opt-loop-bce-expr-eq fact-rhs rhs))
+            true
+            (opt-range-less-than-contains? (box-get rest) label lhs rhs))]
+        [_ (opt-range-less-than-contains? (box-get rest) label lhs rhs)])]))
+
+(define (opt-range-facts-add-nonnegative
+  [facts : OptRangeFacts]
+  [label : String]
+  [expr : OptLoopBceExpr]) : OptRangeFacts
+  (if (opt-range-nonnegative-contains? facts label expr)
+    facts
+    (OptRangeFactsCons (OptRangeFactNonnegative label expr) (box facts))))
+
+(define (opt-range-facts-add-less-than
+  [facts : OptRangeFacts]
+  [label : String]
+  [lhs : OptLoopBceExpr]
+  [rhs : OptLoopBceExpr]) : OptRangeFacts
+  (if (opt-range-less-than-contains? facts label lhs rhs)
+    facts
+    (OptRangeFactsCons (OptRangeFactLessThan label lhs rhs) (box facts))))
+
+(define (opt-range-facts-propagate-label-from
+  [source : OptRangeFacts]
+  [out : OptRangeFacts]
+  [parent-label : String]
+  [child-label : String]) : OptRangeFacts
+  (if (string-eq parent-label child-label)
+    out
+    (match source
+      [(OptRangeFactsNil) out]
+      [(OptRangeFactsCons fact rest)
+        (let
+          [next : OptRangeFacts
+            (match fact
+              [(OptRangeFactNonnegative label expr)
+                (if (string-eq label parent-label)
+                  (opt-range-facts-add-nonnegative out child-label expr)
+                  out)]
+              [(OptRangeFactLessThan label lhs rhs)
+                (if (string-eq label parent-label)
+                  (opt-range-facts-add-less-than out child-label lhs rhs)
+                  out)])]
+          (opt-range-facts-propagate-label-from
+            (box-get rest)
+            next
+            parent-label
+            child-label))])))
+
+(define (opt-range-facts-propagate-label
+  [facts : OptRangeFacts]
+  [parent-label : String]
+  [child-label : String]) : OptRangeFacts
+  (opt-range-facts-propagate-label-from facts facts parent-label child-label))
+
+(define (opt-range-expr-stable? [sources : I64I64Map] [expr : OptLoopBceExpr]) : bool
+  (match expr
+    [(OptLoopBceUnknown) false]
+    [(OptLoopBceArgc) true]
+    [(OptLoopBceValue value) (opt-gvn-value-stable? sources value)]
+    [(OptLoopBceBin op lhs rhs _)
+      (and
+        (not (opt-binop-traps? op))
+        (opt-range-expr-stable? sources (box-get lhs))
+        (opt-range-expr-stable? sources (box-get rhs)))]))
+
+(define (opt-range-expr-type
+  [types : OptSsaVarTypes]
+  [expr : OptLoopBceExpr]
+  [fallback : AstType]) : AstType
+  (match expr
+    [(OptLoopBceValue value) (opt-divrem-value-type types value fallback)]
+    [(OptLoopBceArgc) (AstTyI64)]
+    [(OptLoopBceBin _ _ _ ty) ty]
+    [(OptLoopBceUnknown) fallback]))
+
+(define (opt-range-compare-operand-type
+  [types : OptSsaVarTypes]
+  [lhs : OptLoopBceExpr]
+  [rhs : OptLoopBceExpr]
+  [fallback : AstType]) : AstType
+  (let
+    [lhs-ty : AstType (opt-range-expr-type types lhs fallback)]
+    (if (opt-integer-type? lhs-ty)
+      lhs-ty
+      (opt-range-expr-type types rhs fallback))))
+
+(define (opt-range-compare-value-type
+  [types : OptSsaVarTypes]
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]
+  [fallback : AstType]) : AstType
+  (match lhs
+    [(IrValueVar _) (opt-divrem-value-type types lhs fallback)]
+    [_ (opt-divrem-value-type types rhs fallback)]))
+
+(define (opt-range-expr-i64 [expr : OptLoopBceExpr] [ty : AstType]) : OptMaybeI64
+  (match expr
+    [(OptLoopBceValue value) (opt-normalize-scalar-to-i64 value ty)]
+    [_ (OptNoI64)]))
+
+(define (opt-range-add-nonnegative-from-compare
+  [facts : OptRangeFacts]
+  [sources : I64I64Map]
+  [label : String]
+  [op : CompilerIrBinOp]
+  [lhs : OptLoopBceExpr]
+  [rhs : OptLoopBceExpr]
+  [ty : AstType]) : OptRangeFacts
+  (if (not (opt-integer-type? ty))
+    facts
+    (let
+      [from-lhs : OptRangeFacts
+        (if (opt-range-expr-stable? sources lhs)
+          (match (opt-range-expr-i64 rhs ty)
+            [(OptSomeI64 value)
+              (match op
+                [(IrBinGe)
+                  (if (= value 0)
+                    (opt-range-facts-add-nonnegative facts label lhs)
+                    facts)]
+                [(IrBinGt)
+                  (if (and (opt-signed-integer-type? ty) (= value (- 0 1)))
+                    (opt-range-facts-add-nonnegative facts label lhs)
+                    facts)]
+                [_ facts])]
+            [(OptNoI64) facts])
+          facts)]
+      (if (opt-range-expr-stable? sources rhs)
+        (match (opt-range-expr-i64 lhs ty)
+          [(OptSomeI64 value)
+            (match op
+              [(IrBinLe)
+                (if (= value 0)
+                  (opt-range-facts-add-nonnegative from-lhs label rhs)
+                  from-lhs)]
+              [(IrBinLt)
+                (if (and (opt-signed-integer-type? ty) (= value (- 0 1)))
+                  (opt-range-facts-add-nonnegative from-lhs label rhs)
+                  from-lhs)]
+              [_ from-lhs])]
+          [(OptNoI64) from-lhs])
+        from-lhs))))
+
+(define (opt-range-add-less-than-from-compare
+  [facts : OptRangeFacts]
+  [sources : I64I64Map]
+  [label : String]
+  [op : CompilerIrBinOp]
+  [lhs : OptLoopBceExpr]
+  [rhs : OptLoopBceExpr]) : OptRangeFacts
+  (match op
+    [(IrBinLt)
+      (if (and
+        (opt-range-expr-stable? sources lhs)
+        (opt-range-expr-stable? sources rhs))
+        (opt-range-facts-add-less-than facts label lhs rhs)
+        facts)]
+    [(IrBinGt)
+      (if (and
+        (opt-range-expr-stable? sources lhs)
+        (opt-range-expr-stable? sources rhs))
+        (opt-range-facts-add-less-than facts label rhs lhs)
+        facts)]
+    [_ facts]))
+
+(define (opt-range-add-edge-facts
+  [facts : OptRangeFacts]
+  [sources : I64I64Map]
+  [types : OptSsaVarTypes]
+  [label : String]
+  [op : CompilerIrBinOp]
+  [lhs : OptLoopBceExpr]
+  [rhs : OptLoopBceExpr]
+  [fallback-ty : AstType]) : OptRangeFacts
+  (let
+    [operand-ty : AstType
+      (opt-range-compare-operand-type types lhs rhs fallback-ty)]
+    [less : OptRangeFacts
+      (opt-range-add-less-than-from-compare facts sources label op lhs rhs)]
+    [nonnegative : OptRangeFacts
+      (opt-range-add-nonnegative-from-compare
+        less
+        sources
+        label
+        op
+        lhs
+        rhs
+        operand-ty)]
+    (if (and
+      (opt-unsigned-integer-type? operand-ty)
+      (match op
+        [(IrBinLt) true]
+        [(IrBinGt) true]
+        [_ false]))
+      (match op
+        [(IrBinLt)
+          (if (opt-range-expr-stable? sources lhs)
+            (opt-range-facts-add-nonnegative nonnegative label lhs)
+            nonnegative)]
+        [(IrBinGt)
+          (if (opt-range-expr-stable? sources rhs)
+            (opt-range-facts-add-nonnegative nonnegative label rhs)
+            nonnegative)]
+        [_ nonnegative])
+      nonnegative)))
 
 (define (opt-loop-bce-expr-unbind [env : OptLoopBceExprEnv] [var : i64]) : OptLoopBceExprEnv
   (match env
@@ -14663,26 +14914,28 @@
 (define (opt-loop-bce-cmp-unbind [env : OptLoopBceCmpEnv] [var : i64]) : OptLoopBceCmpEnv
   (match env
     [(OptLoopBceCmpNil) (OptLoopBceCmpNil)]
-    [(OptLoopBceCmpCons id lhs rhs rest)
+    [(OptLoopBceCmpCons id op lhs rhs ty rest)
       (let
         [tail : OptLoopBceCmpEnv (opt-loop-bce-cmp-unbind (box-get rest) var)]
         (if (= id var)
           tail
-          (OptLoopBceCmpCons id lhs rhs (box tail))))]))
+          (OptLoopBceCmpCons id op lhs rhs ty (box tail))))]))
 
 (define (opt-loop-bce-cmp-bind
   [env : OptLoopBceCmpEnv]
   [var : i64]
+  [op : CompilerIrBinOp]
   [lhs : OptLoopBceExpr]
-  [rhs : OptLoopBceExpr]) : OptLoopBceCmpEnv
-  (OptLoopBceCmpCons var lhs rhs (box (opt-loop-bce-cmp-unbind env var))))
+  [rhs : OptLoopBceExpr]
+  [ty : AstType]) : OptLoopBceCmpEnv
+  (OptLoopBceCmpCons var op lhs rhs ty (box (opt-loop-bce-cmp-unbind env var))))
 
 (define (opt-loop-bce-cmp-lookup [env : OptLoopBceCmpEnv] [var : i64]) : OptLoopBceCmpEnv
   (match env
     [(OptLoopBceCmpNil) (OptLoopBceCmpNil)]
-    [(OptLoopBceCmpCons id lhs rhs rest)
+    [(OptLoopBceCmpCons id op lhs rhs ty rest)
       (if (= id var)
-        (OptLoopBceCmpCons id lhs rhs (box OptLoopBceCmpNil))
+        (OptLoopBceCmpCons id op lhs rhs ty (box OptLoopBceCmpNil))
         (opt-loop-bce-cmp-lookup (box-get rest) var))]))
 
 (define (opt-loop-bce-guard-unbind [env : OptLoopBceGuardEnv] [label : String]) : OptLoopBceGuardEnv
@@ -14743,6 +14996,50 @@
     [(IrValueI64 value) (= value 0)]
     [_ false]))
 
+(define (opt-loop-bce-expr-uses-var? [expr : OptLoopBceExpr] [var : i64]) : bool
+  (match expr
+    [(OptLoopBceUnknown) false]
+    [(OptLoopBceArgc) false]
+    [(OptLoopBceValue value) (opt-value-is-var? value var)]
+    [(OptLoopBceBin _ lhs rhs _)
+      (or
+        (opt-loop-bce-expr-uses-var? (box-get lhs) var)
+        (opt-loop-bce-expr-uses-var? (box-get rhs) var))]))
+
+(define (opt-loop-bce-guard-invalidate-var
+  [guards : OptLoopBceGuardEnv]
+  [var : i64]) : OptLoopBceGuardEnv
+  (match guards
+    [(OptLoopBceGuardNil) (OptLoopBceGuardNil)]
+    [(OptLoopBceGuardCons label index length rest)
+      (let
+        [tail : OptLoopBceGuardEnv
+          (opt-loop-bce-guard-invalidate-var (box-get rest) var)]
+        (if (or
+          (opt-loop-bce-expr-uses-var? index var)
+          (opt-loop-bce-expr-uses-var? length var))
+          tail
+          (OptLoopBceGuardCons label index length (box tail))))]))
+
+(define (opt-range-fact-uses-var? [fact : OptRangeFact] [var : i64]) : bool
+  (match fact
+    [(OptRangeFactNonnegative _ expr) (opt-loop-bce-expr-uses-var? expr var)]
+    [(OptRangeFactLessThan _ lhs rhs)
+      (or
+        (opt-loop-bce-expr-uses-var? lhs var)
+        (opt-loop-bce-expr-uses-var? rhs var))]))
+
+(define (opt-range-facts-invalidate-var [facts : OptRangeFacts] [var : i64]) : OptRangeFacts
+  (match facts
+    [(OptRangeFactsNil) (OptRangeFactsNil)]
+    [(OptRangeFactsCons fact rest)
+      (let
+        [tail : OptRangeFacts
+          (opt-range-facts-invalidate-var (box-get rest) var)]
+        (if (opt-range-fact-uses-var? fact var)
+          tail
+          (OptRangeFactsCons fact (box tail))))]))
+
 (define (opt-loop-bce-state-invalidate-def
   [state : OptLoopBceState]
   [var : i64]) : OptLoopBceState
@@ -14752,7 +15049,8 @@
     (opt-loop-bce-ptr-unbind (struct-get state ptrs) var)
     (opt-loop-bce-length-unbind (struct-get state lengths) var)
     (opt-loop-bce-cmp-unbind (struct-get state cmps) var)
-    (struct-get state guards)))
+    (opt-loop-bce-guard-invalidate-var (struct-get state guards) var)
+    (opt-range-facts-invalidate-var (struct-get state ranges) var)))
 
 (define (opt-loop-bce-state-clear-lengths [state : OptLoopBceState]) : OptLoopBceState
   (OptLoopBceState
@@ -14761,7 +15059,8 @@
     (struct-get state ptrs)
     (OptLoopBceLengthNil)
     (struct-get state cmps)
-    (struct-get state guards)))
+    (struct-get state guards)
+    (struct-get state ranges)))
 
 (define (opt-loop-bce-state-bind-expr
   [state : OptLoopBceState]
@@ -14777,7 +15076,8 @@
         (struct-get invalid ptrs)
         (struct-get invalid lengths)
         (struct-get invalid cmps)
-        (struct-get invalid guards))
+        (struct-get invalid guards)
+        (struct-get invalid ranges))
       invalid)))
 
 (define (opt-loop-bce-state-bind-alias
@@ -14790,7 +15090,8 @@
     (struct-get state ptrs)
     (struct-get state lengths)
     (struct-get state cmps)
-    (struct-get state guards)))
+    (struct-get state guards)
+    (struct-get state ranges)))
 
 (define (opt-loop-bce-state-bind-ptr
   [state : OptLoopBceState]
@@ -14802,7 +15103,8 @@
     (opt-loop-bce-ptr-bind (struct-get state ptrs) dst kind)
     (struct-get state lengths)
     (struct-get state cmps)
-    (struct-get state guards)))
+    (struct-get state guards)
+    (struct-get state ranges)))
 
 (define (opt-loop-bce-state-bind-length
   [state : OptLoopBceState]
@@ -14814,14 +15116,17 @@
     (struct-get state ptrs)
     (opt-loop-bce-length-bind (struct-get state lengths) object expr)
     (struct-get state cmps)
-    (struct-get state guards)))
+    (struct-get state guards)
+    (struct-get state ranges)))
 
 (define (opt-loop-bce-state-bind-cmp
   [state : OptLoopBceState]
   [sources : I64I64Map]
   [dst : i64]
+  [op : CompilerIrBinOp]
   [lhs : OptLoopBceExpr]
-  [rhs : OptLoopBceExpr]) : OptLoopBceState
+  [rhs : OptLoopBceExpr]
+  [ty : AstType]) : OptLoopBceState
   (let
     [invalid : OptLoopBceState (opt-loop-bce-state-invalidate-def state dst)]
     (if (opt-gvn-stable-var? sources dst)
@@ -14830,8 +15135,9 @@
         (struct-get invalid aliases)
         (struct-get invalid ptrs)
         (struct-get invalid lengths)
-        (opt-loop-bce-cmp-bind (struct-get invalid cmps) dst lhs rhs)
-        (struct-get invalid guards))
+        (opt-loop-bce-cmp-bind (struct-get invalid cmps) dst op lhs rhs ty)
+        (struct-get invalid guards)
+        (struct-get invalid ranges))
       invalid)))
 
 (define (opt-loop-bce-state-bind-guard
@@ -14845,7 +15151,20 @@
     (struct-get state ptrs)
     (struct-get state lengths)
     (struct-get state cmps)
-    (opt-loop-bce-guard-bind (struct-get state guards) label index length)))
+    (opt-loop-bce-guard-bind (struct-get state guards) label index length)
+    (struct-get state ranges)))
+
+(define (opt-loop-bce-state-bind-ranges
+  [state : OptLoopBceState]
+  [ranges : OptRangeFacts]) : OptLoopBceState
+  (OptLoopBceState
+    (struct-get state exprs)
+    (struct-get state aliases)
+    (struct-get state ptrs)
+    (struct-get state lengths)
+    (struct-get state cmps)
+    (struct-get state guards)
+    ranges))
 
 (define (opt-loop-bce-expr-var [expr : OptLoopBceExpr]) : OptLoopBceMaybeVar
   (match expr
@@ -15115,26 +15434,58 @@
 
 (define (opt-loop-bce-branch-state
   [state : OptLoopBceState]
+  [sources : I64I64Map]
+  [types : OptSsaVarTypes]
   [blocks : CompilerIrBlockList]
   [index : OptCfgIndex]
   [block-label : String]
   [cond : CompilerIrValue]
-  [true-label : String]) : OptLoopBceState
+  [true-label : String]
+  [false-label : String]) : OptLoopBceState
   (match cond
     [(IrValueVar cond-var)
       (match (opt-loop-bce-cmp-lookup (struct-get state cmps) cond-var)
-        [(OptLoopBceCmpCons _ lhs rhs _)
+        [(OptLoopBceCmpCons _ op lhs rhs ty _)
           (let
             [marker : OptLoopBceExpr (OptLoopBceValue (IrValueI64 (- 0 1)))]
+            [operand-ty : AstType
+              (opt-range-compare-operand-type types lhs rhs ty)]
+            [true-ranges : OptRangeFacts
+              (opt-range-add-edge-facts
+                (struct-get state ranges)
+                sources
+                types
+                true-label
+                op
+                lhs
+                rhs
+                ty)]
+            [false-ranges : OptRangeFacts
+              (opt-range-add-edge-facts
+                true-ranges
+                sources
+                types
+                false-label
+                (opt-divrem-invert-compare op)
+                lhs
+                rhs
+                ty)]
+            [range-state : OptLoopBceState
+              (opt-loop-bce-state-bind-ranges state false-ranges)]
             [range-nonnegative : bool
-              (match (opt-loop-bce-guard-lookup
-                (struct-get state guards)
-                block-label)
-                [(OptLoopBceGuardCons _ found found-marker _)
-                  (and
-                    (opt-loop-bce-expr-eq found lhs)
-                    (opt-loop-bce-expr-eq found-marker marker))]
-                [(OptLoopBceGuardNil) false])]
+              (or
+                (opt-range-nonnegative-contains?
+                  (struct-get range-state ranges)
+                  block-label
+                  lhs)
+                (match (opt-loop-bce-guard-lookup
+                  (struct-get state guards)
+                  block-label)
+                  [(OptLoopBceGuardCons _ found found-marker _)
+                    (and
+                      (opt-loop-bce-expr-eq found lhs)
+                      (opt-loop-bce-expr-eq found-marker marker))]
+                  [(OptLoopBceGuardNil) false]))]
             [loop-nonnegative : bool
               (opt-loop-bce-guard-nonnegative?
                 blocks
@@ -15142,11 +15493,36 @@
                 block-label
                 true-label
                 lhs)]
-            (if (opt-loop-bce-expr-eq rhs marker)
-              (opt-loop-bce-state-bind-guard state true-label lhs marker)
-              (if (or range-nonnegative loop-nonnegative)
-                (opt-loop-bce-state-bind-guard state true-label lhs rhs)
-                state)))]
+            (match op
+              [(IrBinGe)
+                (match (opt-range-expr-i64 rhs operand-ty)
+                  [(OptSomeI64 value)
+                    (if (= value 0)
+                      (opt-loop-bce-state-bind-guard
+                        range-state
+                        true-label
+                        lhs
+                        marker)
+                      range-state)]
+                  [(OptNoI64) range-state])]
+              [(IrBinGt)
+                (match (opt-range-expr-i64 rhs operand-ty)
+                  [(OptSomeI64 value)
+                    (if (and
+                      (opt-signed-integer-type? operand-ty)
+                      (= value (- 0 1)))
+                      (opt-loop-bce-state-bind-guard
+                        range-state
+                        true-label
+                        lhs
+                        marker)
+                      range-state)]
+                  [(OptNoI64) range-state])]
+              [(IrBinLt)
+                (if (or range-nonnegative loop-nonnegative)
+                  (opt-loop-bce-state-bind-guard range-state true-label lhs rhs)
+                  range-state)]
+              [_ range-state]))]
         [(OptLoopBceCmpNil) state])]
     [_ state]))
 
@@ -15279,6 +15655,7 @@
   [state : OptLoopBceState]
   [summaries : OptLoopBceSummaries]
   [sources : I64I64Map]
+  [types : OptSsaVarTypes]
   [blocks : CompilerIrBlockList]
   [index : OptCfgIndex]
   [block-label : String]
@@ -15319,36 +15696,26 @@
           (OptLoopBceUnknown)))]
     [(IrInstrBitcast dst _ _ _) (opt-loop-bce-state-invalidate-def state dst)]
     [(IrInstrBinOp dst op lhs rhs ty)
-      (if (and (opt-type-eq ty (AstTyBool)) (opt-binop-eq op (IrBinLt)))
-        (opt-loop-bce-state-bind-cmp
-          state
-          sources
-          dst
-          (opt-loop-bce-value-expr sources (struct-get state exprs) lhs)
-          (opt-loop-bce-value-expr sources (struct-get state exprs) rhs))
-        (if (and
-          (opt-type-eq ty (AstTyBool))
-          (opt-binop-eq op (IrBinGe))
-          (match rhs
-            [(IrValueI64 value) (= value 0)]
-            [_ false]))
+      (if (and (opt-type-eq ty (AstTyBool)) (opt-divrem-compare-op? op))
+        (let
+          [operand-ty : AstType (opt-range-compare-value-type types lhs rhs ty)]
           (opt-loop-bce-state-bind-cmp
             state
             sources
             dst
+            op
             (opt-loop-bce-value-expr sources (struct-get state exprs) lhs)
-            (OptLoopBceValue (IrValueI64 (- 0 1))))
-          (opt-loop-bce-state-bind-expr
-            state
-            sources
-            dst
-            (OptLoopBceBin
-              op
-              (box
-                (opt-loop-bce-value-expr sources (struct-get state exprs) lhs))
-              (box
-                (opt-loop-bce-value-expr sources (struct-get state exprs) rhs))
-              ty))))]
+            (opt-loop-bce-value-expr sources (struct-get state exprs) rhs)
+            operand-ty))
+        (opt-loop-bce-state-bind-expr
+          state
+          sources
+          dst
+          (OptLoopBceBin
+            op
+            (box (opt-loop-bce-value-expr sources (struct-get state exprs) lhs))
+            (box (opt-loop-bce-value-expr sources (struct-get state exprs) rhs))
+            ty)))]
     [(IrInstrUnOp dst _ _ _) (opt-loop-bce-state-invalidate-def state dst)]
     [(IrInstrLaneId dst _ _) (opt-loop-bce-state-invalidate-def state dst)]
     [(IrInstrSplat dst _ _ _) (opt-loop-bce-state-invalidate-def state dst)]
@@ -15395,8 +15762,17 @@
     [(IrInstrPredicatedStore _ _ _ _ _ _)
       (opt-loop-bce-state-clear-lengths state)]
     [(IrInstrStore _ _ _) state]
-    [(IrInstrBranch cond true-label _)
-      (opt-loop-bce-branch-state state blocks index block-label cond true-label)]
+    [(IrInstrBranch cond true-label false-label)
+      (opt-loop-bce-branch-state
+        state
+        sources
+        types
+        blocks
+        index
+        block-label
+        cond
+        true-label
+        false-label)]
     [(IrInstrPhi dst _ _) (opt-loop-bce-state-invalidate-def state dst)]
     [(IrInstrPack dst _ _) (opt-loop-bce-state-invalidate-def state dst)]
     [(IrInstrWord dst _ _ _) (opt-loop-bce-state-invalidate-def state dst)]
@@ -15415,6 +15791,22 @@
         true
         (opt-loop-bce-length-expr-known? (box-get rest) expr))]))
 
+(define (opt-loop-bce-range-can-remove?
+  [state : OptLoopBceState]
+  [sources : I64I64Map]
+  [block-label : String]
+  [index : CompilerIrValue]
+  [length : CompilerIrValue]) : bool
+  (let
+    [index-expr : OptLoopBceExpr
+      (opt-loop-bce-value-expr sources (struct-get state exprs) index)]
+    [length-expr : OptLoopBceExpr
+      (opt-loop-bce-value-expr sources (struct-get state exprs) length)]
+    [ranges : OptRangeFacts (struct-get state ranges)]
+    (and
+      (opt-range-nonnegative-contains? ranges block-label index-expr)
+      (opt-range-less-than-contains? ranges block-label index-expr length-expr))))
+
 (define (opt-loop-bce-can-remove?
   [state : OptLoopBceState]
   [sources : I64I64Map]
@@ -15424,21 +15816,24 @@
   (let
     [length-expr : OptLoopBceExpr
       (opt-loop-bce-value-expr sources (struct-get state exprs) length)]
-    (and
-      (opt-loop-bce-length-expr-known? (struct-get state lengths) length-expr)
-      (match (opt-loop-bce-guard-lookup (struct-get state guards) block-label)
-        [(OptLoopBceGuardCons _ guard-index guard-length _)
-          (and
-            (opt-loop-bce-expr-eq
-              guard-index
-              (opt-loop-bce-value-expr sources (struct-get state exprs) index))
-            (opt-loop-bce-expr-eq guard-length length-expr))]
-        [(OptLoopBceGuardNil) false]))))
+    (or
+      (opt-loop-bce-range-can-remove? state sources block-label index length)
+      (and
+        (opt-loop-bce-length-expr-known? (struct-get state lengths) length-expr)
+        (match (opt-loop-bce-guard-lookup (struct-get state guards) block-label)
+          [(OptLoopBceGuardCons _ guard-index guard-length _)
+            (and
+              (opt-loop-bce-expr-eq
+                guard-index
+                (opt-loop-bce-value-expr sources (struct-get state exprs) index))
+              (opt-loop-bce-expr-eq guard-length length-expr))]
+          [(OptLoopBceGuardNil) false])))))
 
 (define (opt-loop-bce-rewrite-instrs
   [state : OptLoopBceState]
   [summaries : OptLoopBceSummaries]
   [sources : I64I64Map]
+  [types : OptSsaVarTypes]
   [blocks : CompilerIrBlockList]
   [index : OptCfgIndex]
   [block-label : String]
@@ -15457,6 +15852,7 @@
             state
             summaries
             sources
+            types
             blocks
             index
             block-label
@@ -15467,6 +15863,7 @@
                 state
                 summaries
                 sources
+                types
                 blocks
                 index
                 block-label
@@ -15475,6 +15872,7 @@
               next-state
               summaries
               sources
+              types
               blocks
               index
               block-label
@@ -15488,6 +15886,7 @@
   [state : OptLoopBceState]
   [summaries : OptLoopBceSummaries]
   [sources : I64I64Map]
+  [types : OptSsaVarTypes]
   [blocks : CompilerIrBlockList]
   [index : OptCfgIndex]
   [block : CompilerIrBlock]) : OptLoopBceBlockRewrite
@@ -15497,6 +15896,7 @@
         state
         summaries
         sources
+        types
         blocks
         index
         label
@@ -15706,6 +16106,39 @@
         summaries
         (compiler-ir-block-seq-to-list seq))]))
 
+(define (opt-loop-bce-compare-shape-instrs
+  [slots : (Array CompilerIrInstr)]
+  [index : i64]
+  [count : i64]) : bool
+  (if (>= index count)
+    false
+    (match (array-ref slots index)
+      [(IrInstrBinOp _ op _ _ ty)
+        (if (and
+          (opt-type-eq ty (AstTyBool))
+          (match op
+            [(IrBinLt) true]
+            [(IrBinGt) true]
+            [_ false]))
+          true
+          (opt-loop-bce-compare-shape-instrs slots (+ index 1) count))]
+      [_ (opt-loop-bce-compare-shape-instrs slots (+ index 1) count)])))
+
+(define (opt-loop-bce-compare-shape-blocks [blocks : CompilerIrBlockList]) : bool
+  (match blocks
+    [(IrBlockNil) false]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (if (opt-loop-bce-compare-shape-instrs
+            (struct-get instrs slots)
+            0
+            (struct-get instrs len))
+            true
+            (opt-loop-bce-compare-shape-blocks (box-get rest)))])]
+    [(IrBlockArray seq)
+      (opt-loop-bce-compare-shape-blocks (compiler-ir-block-seq-to-list seq))]))
+
 (define (opt-loop-bce-eligible-blocks?
   [summaries : OptLoopBceSummaries]
   [blocks : CompilerIrBlockList]) : bool
@@ -15718,7 +16151,10 @@
         (opt-loop-bce-length-store-shape-blocks blocks (OptI64Nil)))
       (and
         (opt-loop-bce-length-load-shape-blocks blocks (OptI64Nil))
-        (opt-loop-bce-string-byte-shape-blocks blocks)))))
+        (opt-loop-bce-string-byte-shape-blocks blocks))
+      (and
+        (<= (compiler-ir-block-list-count blocks) 8)
+        (opt-loop-bce-compare-shape-blocks blocks)))))
 
 (define (opt-loop-bce-initial-state) : OptLoopBceState
   (OptLoopBceState
@@ -15727,7 +16163,8 @@
     (OptLoopBcePtrNil)
     (OptLoopBceLengthNil)
     (OptLoopBceCmpNil)
-    (OptLoopBceGuardNil)))
+    (OptLoopBceGuardNil)
+    (OptRangeFactsNil)))
 
 (define (opt-loop-bce-block-results-fill-empty!
   [out : (Array OptLoopBceBlockResult)]
@@ -15767,6 +16204,7 @@
 (define (opt-loop-bce-rewrite-id
   [summaries : OptLoopBceSummaries]
   [sources : I64I64Map]
+  [types : OptSsaVarTypes]
   [blocks : CompilerIrBlockList]
   [cfg-index : OptCfgIndex]
   [children : OptCfgCsr]
@@ -15785,6 +16223,7 @@
               state
               summaries
               sources
+              types
               blocks
               cfg-index
               block)
@@ -15794,6 +16233,7 @@
                   (opt-loop-bce-rewrite-children
                     summaries
                     sources
+                    types
                     blocks
                     cfg-index
                     children
@@ -15805,6 +16245,7 @@
 (define (opt-loop-bce-rewrite-children
   [summaries : OptLoopBceSummaries]
   [sources : I64I64Map]
+  [types : OptSsaVarTypes]
   [blocks : CompilerIrBlockList]
   [cfg-index : OptCfgIndex]
   [children : OptCfgCsr]
@@ -15829,6 +16270,7 @@
             (opt-loop-bce-rewrite-id
               summaries
               sources
+              types
               blocks
               cfg-index
               children
@@ -15858,6 +16300,10 @@
         (opt-gvn-sources-blocks
           blocks
           (opt-gvn-sources-params params (i64-i64-map-with-capacity 64)))]
+      [ssa-facts : OptSsaFacts (opt-ssa-facts-from-function params blocks)]
+      [types : OptSsaVarTypes
+        (match ssa-facts
+          [(OptSsaFacts _ _ fact-types) fact-types])]
       (begin
         (opt-loop-bce-block-results-fill-empty! out 0)
         (match (opt-cfg-index-id cfg-index (struct-get context entry-label))
@@ -15868,6 +16314,7 @@
               (opt-loop-bce-rewrite-id
                 summaries
                 sources
+                types
                 blocks
                 cfg-index
                 children
@@ -15882,13 +16329,25 @@
   [state : OptLoopBceState]
   [parent-label : String]
   [child-label : String]) : OptLoopBceState
-  (match (opt-loop-bce-guard-lookup (struct-get state guards) child-label)
-    [(OptLoopBceGuardCons _ _ _ _) state]
-    [(OptLoopBceGuardNil)
-      (match (opt-loop-bce-guard-lookup (struct-get state guards) parent-label)
-        [(OptLoopBceGuardCons _ index length _)
-          (opt-loop-bce-state-bind-guard state child-label index length)]
-        [(OptLoopBceGuardNil) state])]))
+  (let
+    [range-state : OptLoopBceState
+      (opt-loop-bce-state-bind-ranges
+        state
+        (opt-range-facts-propagate-label
+          (struct-get state ranges)
+          parent-label
+          child-label))]
+    (match (opt-loop-bce-guard-lookup
+      (struct-get range-state guards)
+      child-label)
+      [(OptLoopBceGuardCons _ _ _ _) range-state]
+      [(OptLoopBceGuardNil)
+        (match (opt-loop-bce-guard-lookup
+          (struct-get range-state guards)
+          parent-label)
+          [(OptLoopBceGuardCons _ index length _)
+            (opt-loop-bce-state-bind-guard range-state child-label index length)]
+          [(OptLoopBceGuardNil) range-state])])))
 
 (define (opt-loop-bce-function
   [summaries : OptLoopBceSummaries]
@@ -24518,7 +24977,7 @@
                   7
                   (if (not (= (opt-count-bounds-blocks cross) 2))
                     8
-                    (if (not (= loop-positive 1))
+                    (if (not (= loop-positive 0))
                       9
                       (if (not (= loop-negative-init 1))
                         10

@@ -37,15 +37,43 @@
 (defstruct ThreadI64
   (raw Thread))
 
+;: Typed handle returned by `thread-spawn-bool`.
+(defstruct ThreadBool
+  (raw Thread))
+
+;: Typed handle returned by `thread-spawn-unit`.
+(defstruct ThreadUnit
+  (raw Thread))
+
 ;: Result returned by `thread-spawn-i64`.
 (defenum ThreadI64SpawnResult
   (ThreadI64SpawnOk ThreadI64)
   (ThreadI64SpawnErr String))
 
+;: Result returned by `thread-spawn-bool`.
+(defenum ThreadBoolSpawnResult
+  (ThreadBoolSpawnOk ThreadBool)
+  (ThreadBoolSpawnErr String))
+
+;: Result returned by `thread-spawn-unit`.
+(defenum ThreadUnitSpawnResult
+  (ThreadUnitSpawnOk ThreadUnit)
+  (ThreadUnitSpawnErr String))
+
 ;: Result returned by `thread-join-i64`.
 (defenum ThreadI64JoinResult
   (ThreadI64JoinOk i64)
   (ThreadI64JoinErr String))
+
+;: Result returned by `thread-join-bool`.
+(defenum ThreadBoolJoinResult
+  (ThreadBoolJoinOk bool)
+  (ThreadBoolJoinErr String))
+
+;: Result returned by `thread-join-unit`.
+(defenum ThreadUnitJoinResult
+  (ThreadUnitJoinOk)
+  (ThreadUnitJoinErr String))
 
 ;: Opaque counting semaphore handle.
 (defstruct ThreadSemaphore
@@ -302,6 +330,31 @@
     [(ThreadSpawnOk raw) (ThreadI64SpawnOk (ThreadI64 raw))]
     [(ThreadSpawnErr message) (ThreadI64SpawnErr message)]))
 
+;: Spawn a compiler-checked direct nullary closure returning `bool`.
+;:
+;: The worker result is encoded through the raw `i64` substrate and decoded by
+;: `thread-join-bool`.
+(define (thread-spawn-bool [task : (-> bool)]) : ThreadBoolSpawnResult
+  (match (thread-spawn
+    (lambda ([ignored : i64]) : i64
+      (if (task)
+        1
+        0))
+    0)
+    [(ThreadSpawnOk raw) (ThreadBoolSpawnOk (ThreadBool raw))]
+    [(ThreadSpawnErr message) (ThreadBoolSpawnErr message)]))
+
+;: Spawn a compiler-checked direct nullary closure returning `unit`.
+(define (thread-spawn-unit [task : (-> unit)]) : ThreadUnitSpawnResult
+  (match (thread-spawn
+    (lambda ([ignored : i64]) : i64
+      (begin
+        (task)
+        0))
+    0)
+    [(ThreadSpawnOk raw) (ThreadUnitSpawnOk (ThreadUnit raw))]
+    [(ThreadSpawnErr message) (ThreadUnitSpawnErr message)]))
+
 ;: Wait for a Linux raw-clone thread to clear its join cell.
 (define (thread-linux-join [thread : Thread]) : ThreadJoinResult
   (let
@@ -335,6 +388,18 @@
   (match (thread-join (struct-get thread raw))
     [(ThreadJoinOk value) (ThreadI64JoinOk value)]
     [(ThreadJoinErr message) (ThreadI64JoinErr message)]))
+
+;: Join a typed `bool` thread and return its closure result.
+(define (thread-join-bool [thread : ThreadBool]) : ThreadBoolJoinResult
+  (match (thread-join (struct-get thread raw))
+    [(ThreadJoinOk value) (ThreadBoolJoinOk (not (= value 0)))]
+    [(ThreadJoinErr message) (ThreadBoolJoinErr message)]))
+
+;: Join a typed `unit` thread and report completion.
+(define (thread-join-unit [thread : ThreadUnit]) : ThreadUnitJoinResult
+  (match (thread-join (struct-get thread raw))
+    [(ThreadJoinOk _) (ThreadUnitJoinOk)]
+    [(ThreadJoinErr message) (ThreadUnitJoinErr message)]))
 
 ;: Count set bits in a positive byte value.
 (define (thread-count-byte-bits [byte : i64]) : i64

@@ -182,9 +182,11 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   `(import "stdlib/test.tl")`.
 - `thread.tl`: minimal native thread primitives for selfhost worker pools:
   spawn/join for `(-> i64 i64)` entries, counting semaphores, and default worker
-  count, plus `thread-spawn-i64`/`thread-join-i64` for checked nullary closures
-  returning `i64`. Linux uses raw clone/futex/eventfd syscalls; Windows uses
-  kernel32 threads and semaphores. Import it with `(import "stdlib/thread.tl")`.
+  count, plus `thread-spawn-i64`/`thread-join-i64`,
+  `thread-spawn-bool`/`thread-join-bool`, and
+  `thread-spawn-unit`/`thread-join-unit` for checked nullary closures. Linux
+  uses raw clone/futex/eventfd syscalls; Windows uses kernel32 threads and
+  semaphores. Import it with `(import "stdlib/thread.tl")`.
 - `time.tl`: portable millisecond timestamp helpers separate from profiling
   counters. `time-unix-ms` returns wall-clock Unix epoch milliseconds and
   `time-monotonic-ms` returns monotonic elapsed milliseconds, both as

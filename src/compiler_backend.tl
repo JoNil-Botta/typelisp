@@ -7544,6 +7544,150 @@
                           to-ty)))]
                   [(ErrCompilerBackend message) (ErrCompilerBackend message)])))))))))
 
+(define (compiler-backend-bitcast-width [ty : AstType]) : i64
+  (match ty
+    [(AstTyF32) 4]
+    [(AstTyI32) 4]
+    [(AstTyU32) 4]
+    [(AstTyF64) 8]
+    [(AstTyI64) 8]
+    [(AstTyU64) 8]
+    [_ 0]))
+
+(define (compiler-backend-bitcast-int-type? [ty : AstType]) : bool
+  (match ty
+    [(AstTyI32) true]
+    [(AstTyU32) true]
+    [(AstTyI64) true]
+    [(AstTyU64) true]
+    [_ false]))
+
+(define (compiler-backend-float-to-int-bitcast-asm [from-ty : AstType]) : String
+  (match from-ty
+    [(AstTyF32) "    movd %xmm0, %eax\n"]
+    [_ "    movq %xmm0, %rax\n"]))
+
+(define (compiler-backend-int-to-float-bitcast-asm [to-ty : AstType]) : String
+  (match to-ty
+    [(AstTyF32) "    movd %eax, %xmm0\n"]
+    [_ "    movq %rax, %xmm0\n"]))
+
+(define (compiler-backend-bitcast-compatible?
+  [from-ty : AstType]
+  [to-ty : AstType]
+  [from-width : i64]
+  [to-width : i64]
+  [from-float : bool]
+  [to-float : bool]
+  [from-int : bool]
+  [to-int : bool]) : bool
+  (or
+    (= from-width to-width)
+    (and from-float to-int (= from-width 4) (= to-width 8))
+    (and from-int to-float (= from-width 8) (= to-width 4))))
+
+(define (compiler-backend-emit-bitcast
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [src : CompilerIrValue]
+  [from-ty : AstType]
+  [to-ty : AstType]
+  [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
+  (let
+    [from-width : i64 (compiler-backend-bitcast-width from-ty)]
+    [to-width : i64 (compiler-backend-bitcast-width to-ty)]
+    [from-float : bool (compiler-backend-float-type? from-ty)]
+    [to-float : bool (compiler-backend-float-type? to-ty)]
+    [from-int : bool (compiler-backend-bitcast-int-type? from-ty)]
+    [to-int : bool (compiler-backend-bitcast-int-type? to-ty)]
+    (if (or
+      (= from-width 0)
+      (= to-width 0)
+      (not
+        (compiler-backend-bitcast-compatible?
+          from-ty
+          to-ty
+          from-width
+          to-width
+          from-float
+          to-float
+          from-int
+          to-int)))
+      (ErrCompilerBackend
+        (compiler-diagnostic-at-start "" "backend: unsupported bitcast width"))
+      (if (and from-float to-int)
+        (match (compiler-backend-emit-load-float-value-with-plan
+          assignments
+          src
+          from-ty
+          "%xmm0")
+          [(OkCompilerBackend load)
+            (OkCompilerBackend
+              (string-append
+                load
+                (string-append
+                  (compiler-backend-float-to-int-bitcast-asm from-ty)
+                  (compiler-backend-emit-store-typed-var-with-plan
+                    assignments
+                    dst
+                    "%rax"
+                    to-ty))))]
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+        (if (and from-int to-float)
+          (match (compiler-backend-emit-load-typed-value-with-plan
+            assignments
+            src
+            from-ty
+            program-index)
+            [(OkCompilerBackend load)
+              (OkCompilerBackend
+                (string-append
+                  load
+                  (string-append
+                    (compiler-backend-int-to-float-bitcast-asm to-ty)
+                    (compiler-backend-emit-store-float-var-with-plan
+                      assignments
+                      dst
+                      "%xmm0"
+                      to-ty))))]
+            [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+          (if (and from-int to-int)
+            (match (compiler-backend-emit-load-typed-value-with-plan
+              assignments
+              src
+              from-ty
+              program-index)
+              [(OkCompilerBackend load)
+                (OkCompilerBackend
+                  (string-append
+                    load
+                    (compiler-backend-emit-store-typed-var-with-plan
+                      assignments
+                      dst
+                      "%rax"
+                      to-ty)))]
+              [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+            (if (and from-float to-float)
+              (match (compiler-backend-emit-load-float-value-with-plan
+                assignments
+                src
+                from-ty
+                "%xmm0")
+                [(OkCompilerBackend load)
+                  (OkCompilerBackend
+                    (string-append
+                      load
+                      (compiler-backend-emit-store-float-var-with-plan
+                        assignments
+                        dst
+                        "%xmm0"
+                        to-ty)))]
+                [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+              (ErrCompilerBackend
+                (compiler-diagnostic-at-start
+                  ""
+                  "backend: unsupported bitcast type")))))))))
+
 (define (compiler-backend-ir-value-list-count [args : CompilerIrValueList]) : i64
   (match args
     [(IrValueNil) 0]
@@ -11669,6 +11813,18 @@
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
               (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+      [(IrInstrBitcast dst src from-ty to-ty)
+        (match (compiler-backend-emit-bitcast
+          assignments
+          dst
+          src
+          from-ty
+          to-ty
+          program-index)
+          [(OkCompilerBackend asm) (OkCompilerBackend asm)]
+          [(ErrCompilerBackend message)
+            (ErrCompilerBackend
+              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
       [(IrInstrBinOp dst op lhs rhs ty)
         (match (compiler-backend-emit-binop
           types
@@ -12255,6 +12411,7 @@
         (compiler-backend-count-value-use counts index)
         (compiler-backend-count-value-use counts length))]
     [(IrInstrCast _ src _ _) (compiler-backend-count-value-use counts src)]
+    [(IrInstrBitcast _ src _ _) (compiler-backend-count-value-use counts src)]
     [(IrInstrBinOp _ _ lhs rhs _)
       (begin
         (compiler-backend-count-value-use counts lhs)
@@ -16423,6 +16580,8 @@
         (compiler-backend-collect-value-collections collections index)
         length)]
     [(IrInstrCast _ src _ _)
+      (compiler-backend-collect-value-collections collections src)]
+    [(IrInstrBitcast _ src _ _)
       (compiler-backend-collect-value-collections collections src)]
     [(IrInstrSplat _ value _ _)
       (compiler-backend-collect-value-collections collections value)]
@@ -21342,6 +21501,8 @@ tl_memcpy:
         function
         length)]
     [(IrInstrCast _ src _ _)
+      (compiler-backend-object-value-ref parts function src)]
+    [(IrInstrBitcast _ src _ _)
       (compiler-backend-object-value-ref parts function src)]
     [(IrInstrSplat _ value _ _)
       (compiler-backend-object-value-ref parts function value)]

@@ -571,6 +571,7 @@
     [(IrInstrBoundsCheck index length _)
       (compiler-live-values2-vars index length)]
     [(IrInstrCast _ src _ _) (compiler-live-value-vars src)]
+    [(IrInstrBitcast _ src _ _) (compiler-live-value-vars src)]
     [(IrInstrBinOp _ _ lhs rhs _) (compiler-live-values2-vars lhs rhs)]
     [(IrInstrUnOp _ _ src _) (compiler-live-value-vars src)]
     [(IrInstrLaneId _ _ _) (compiler-live-set-empty)]
@@ -623,6 +624,7 @@
     [(IrInstrGep dst _ _ _) (compiler-live-set1 dst)]
     [(IrInstrLoad dst _ _) (compiler-live-set1 dst)]
     [(IrInstrCast dst _ _ _) (compiler-live-set1 dst)]
+    [(IrInstrBitcast dst _ _ _) (compiler-live-set1 dst)]
     [(IrInstrBinOp dst _ _ _ _) (compiler-live-set1 dst)]
     [(IrInstrUnOp dst _ _ _) (compiler-live-set1 dst)]
     [(IrInstrLaneId dst _ _) (compiler-live-set1 dst)]

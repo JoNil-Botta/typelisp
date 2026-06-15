@@ -90,6 +90,7 @@
   (IrInstrCopyBytes CompilerIrValue CompilerIrValue i64)
   (IrInstrBoundsCheck CompilerIrValue CompilerIrValue String)
   (IrInstrCast i64 CompilerIrValue AstType AstType)
+  (IrInstrBitcast i64 CompilerIrValue AstType AstType)
   (IrInstrBinOp i64 CompilerIrBinOp CompilerIrValue CompilerIrValue AstType)
   (IrInstrUnOp i64 CompilerIrUnOp CompilerIrValue AstType)
   (IrInstrLaneId i64 i64 AstType)
@@ -653,6 +654,12 @@
         (clone label))]
     [(IrInstrCast dst src from-ty to-ty)
       (IrInstrCast
+        dst
+        (compiler-ir-clone-value src)
+        (compiler-ir-clone-type from-ty)
+        (compiler-ir-clone-type to-ty))]
+    [(IrInstrBitcast dst src from-ty to-ty)
+      (IrInstrBitcast
         dst
         (compiler-ir-clone-value src)
         (compiler-ir-clone-type from-ty)
@@ -1371,6 +1378,7 @@
     [(IrInstrAddrOf _ _) IrEffectPure]
     [(IrInstrGep _ _ _ _) IrEffectPure]
     [(IrInstrCast _ _ _ _) IrEffectPure]
+    [(IrInstrBitcast _ _ _ _) IrEffectPure]
     [(IrInstrBinOp _ _ _ _ _) IrEffectPure]
     [(IrInstrUnOp _ _ _ _) IrEffectPure]
     [(IrInstrPhi _ _ _) IrEffectPure]
@@ -1564,6 +1572,11 @@
         spans
         (compiler-source-spans-value-key function dst)
         span)]
+    [(IrInstrBitcast dst _ _ _)
+      (compiler-source-spans-insert-instr-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
     [(IrInstrBinOp dst _ _ _ _)
       (compiler-source-spans-insert-instr-entry
         spans
@@ -1731,6 +1744,10 @@
             instr-entries
             (compiler-source-spans-value-key function dst))]
         [(IrInstrCast dst _ _ _)
+          (compiler-source-spans-entry-list-lookup
+            instr-entries
+            (compiler-source-spans-value-key function dst))]
+        [(IrInstrBitcast dst _ _ _)
           (compiler-source-spans-entry-list-lookup
             instr-entries
             (compiler-source-spans-value-key function dst))]

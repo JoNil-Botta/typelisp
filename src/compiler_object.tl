@@ -58,7 +58,12 @@
   (ObjectX64SubRspImm8 i64)
   (ObjectX64MovRcxRip String)
   (ObjectX64MovRdxRip String)
+  (ObjectX64LoadRipAddressRdx String)
+  (ObjectX64StoreR14Rip String)
+  (ObjectX64StoreR15Rip String)
+  (ObjectX64AddRcxRip String)
   (ObjectX64MovRcxRax)
+  (ObjectX64Bytes String)
   (ObjectX64Raw String))
 
 (defenum CompilerObjectX64InstrList

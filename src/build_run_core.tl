@@ -745,21 +745,48 @@
 (define (source-tool-windows-direct-object-enabled?) : bool
   (source-tool-env-command-set? (source-tool-windows-direct-object-env-name)))
 
+(define (source-tool-windows-direct-object-extern-linkable?
+  [name : String]
+  [kind : CompilerObjectSymbolKind]) : bool
+  (and
+    (compiler-object-symbol-kind-eq? kind (ObjectSymbolFunction))
+    (or (string-eq name "ExitProcess") (string-eq name "GetCommandLineA"))))
+
+(define (source-tool-windows-direct-object-symbols-linkable?
+  [symbols : CompilerObjectSymbolList]) : bool
+  (match symbols
+    [(ObjectSymbolNil) true]
+    [(ObjectSymbolCons symbol rest)
+      (match symbol
+        [(ObjectSymbol name binding kind _)
+          (match binding
+            [(ObjectSymbolExtern)
+              (and
+                (source-tool-windows-direct-object-extern-linkable? name kind)
+                (source-tool-windows-direct-object-symbols-linkable?
+                  (box-get rest)))]
+            [_
+              (source-tool-windows-direct-object-symbols-linkable?
+                (box-get rest))])])]))
+
 (define (source-tool-windows-direct-object-linkable?
   [image : CompilerObjectImage]) : bool
   (and
     (compiler-object-coff-image-supported? image)
+    (source-tool-windows-direct-object-symbols-linkable?
+      (struct-get image symbols))
     (compiler-object-symbol-list-contains?
       (struct-get image symbols)
       "_tl_start"
       (ObjectSymbolExport)
       (ObjectSymbolFunction))
-    ;; The entry/unwind records can now be serialized, but the no-assembler
-    ;; source-tool path must still wait for executable Windows runtime text.
-    (compiler-object-section-contains-label?
-      (struct-get image sections)
-      (ObjectSectionText)
-      "tl_setup_argv")
+    ;; Text labels live in the instruction stream, not the section data records.
+    (>=
+      (compiler-object-coff-section-label-offset
+        image
+        (ObjectSectionText)
+        "tl_setup_argv")
+      0)
     (> (compiler-object-coff-section-raw-size image (ObjectSectionText)) 0)))
 
 (define (source-tool-windows-direct-object-unavailable-message) : String
@@ -1129,6 +1156,20 @@
 (define (source-tool-windows-direct-object-linkability-smoke-ok?) : bool
   (match (compiler-backend-emit-source-object-image-for-target
     "(define (main) : i64 0)"
+    (BackendTargetWindows))
+    [(OkCompilerBackendObject image)
+      (if (source-tool-windows-direct-object-linkable? image)
+        (match (source-tool-render-linkable-windows-coff-object image)
+          [(OkSourceToolString obj) (> (string-length obj) 0)]
+          [(ErrSourceToolString _) false])
+        false)]
+    [(ErrCompilerBackendObject _) false]))
+
+(define (source-tool-windows-direct-object-runtime-fallback-smoke-ok?) : bool
+  (match (compiler-backend-emit-source-object-image-for-target
+    "(define (main) : i64
+  (let [items : (Array i64) (make-array i64 1)]
+    (array-length items)))"
     (BackendTargetWindows))
     [(OkCompilerBackendObject image)
       (not (source-tool-windows-direct-object-linkable? image))]

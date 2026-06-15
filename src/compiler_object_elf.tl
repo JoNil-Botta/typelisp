@@ -211,7 +211,12 @@
     [(ObjectX64SubRspImm8 _) 4]
     [(ObjectX64MovRcxRip _) 7]
     [(ObjectX64MovRdxRip _) 7]
+    [(ObjectX64LoadRipAddressRdx _) 7]
+    [(ObjectX64StoreR14Rip _) 7]
+    [(ObjectX64StoreR15Rip _) 7]
+    [(ObjectX64AddRcxRip _) 7]
     [(ObjectX64MovRcxRax) 3]
+    [(ObjectX64Bytes bytes) (string-length bytes)]
     [(ObjectX64Raw bytes) (string-length bytes)]
     [_ 0]))
 
@@ -229,7 +234,12 @@
     [(ObjectX64SubRspImm8 _) 0]
     [(ObjectX64MovRcxRip _) 1]
     [(ObjectX64MovRdxRip _) 1]
+    [(ObjectX64LoadRipAddressRdx _) 1]
+    [(ObjectX64StoreR14Rip _) 1]
+    [(ObjectX64StoreR15Rip _) 1]
+    [(ObjectX64AddRcxRip _) 1]
     [(ObjectX64MovRcxRax) 0]
+    [(ObjectX64Bytes _) 0]
     [(ObjectX64Raw _) 0]))
 
 (define (compiler-object-elf-instrs-relocation-count
@@ -332,7 +342,17 @@
           (compiler-object-elf-instrs-supported? (box-get rest))]
         [(ObjectX64MovRdxRip _)
           (compiler-object-elf-instrs-supported? (box-get rest))]
+        [(ObjectX64LoadRipAddressRdx _)
+          (compiler-object-elf-instrs-supported? (box-get rest))]
+        [(ObjectX64StoreR14Rip _)
+          (compiler-object-elf-instrs-supported? (box-get rest))]
+        [(ObjectX64StoreR15Rip _)
+          (compiler-object-elf-instrs-supported? (box-get rest))]
+        [(ObjectX64AddRcxRip _)
+          (compiler-object-elf-instrs-supported? (box-get rest))]
         [(ObjectX64MovRcxRax)
+          (compiler-object-elf-instrs-supported? (box-get rest))]
+        [(ObjectX64Bytes _)
           (compiler-object-elf-instrs-supported? (box-get rest))]
         [(ObjectX64Raw _)
           (compiler-object-elf-instrs-supported? (box-get rest))]
@@ -528,7 +548,16 @@
             (and (>= (compiler-object-elf-symbol-index image target) 0) tail-ok)]
           [(ObjectX64MovRdxRip target)
             (and (>= (compiler-object-elf-symbol-index image target) 0) tail-ok)]
+          [(ObjectX64LoadRipAddressRdx target)
+            (and (>= (compiler-object-elf-symbol-index image target) 0) tail-ok)]
+          [(ObjectX64StoreR14Rip target)
+            (and (>= (compiler-object-elf-symbol-index image target) 0) tail-ok)]
+          [(ObjectX64StoreR15Rip target)
+            (and (>= (compiler-object-elf-symbol-index image target) 0) tail-ok)]
+          [(ObjectX64AddRcxRip target)
+            (and (>= (compiler-object-elf-symbol-index image target) 0) tail-ok)]
           [(ObjectX64MovRcxRax) tail-ok]
+          [(ObjectX64Bytes _) tail-ok]
           [(ObjectX64Raw _) tail-ok]))]))
 
 (define (compiler-object-elf-text-targets-known? [image : CompilerObjectImage]) : bool
@@ -924,11 +953,36 @@
         (compiler-object-elf-push-u8! out 0x8b)
         (compiler-object-elf-push-u8! out 0x15)
         (compiler-object-elf-push-rel32-placeholder! out))]
+    [(ObjectX64LoadRipAddressRdx _)
+      (begin
+        (compiler-object-elf-push-u8! out 0x48)
+        (compiler-object-elf-push-u8! out 0x8d)
+        (compiler-object-elf-push-u8! out 0x15)
+        (compiler-object-elf-push-rel32-placeholder! out))]
+    [(ObjectX64StoreR14Rip _)
+      (begin
+        (compiler-object-elf-push-u8! out 0x4c)
+        (compiler-object-elf-push-u8! out 0x89)
+        (compiler-object-elf-push-u8! out 0x35)
+        (compiler-object-elf-push-rel32-placeholder! out))]
+    [(ObjectX64StoreR15Rip _)
+      (begin
+        (compiler-object-elf-push-u8! out 0x4c)
+        (compiler-object-elf-push-u8! out 0x89)
+        (compiler-object-elf-push-u8! out 0x3d)
+        (compiler-object-elf-push-rel32-placeholder! out))]
+    [(ObjectX64AddRcxRip _)
+      (begin
+        (compiler-object-elf-push-u8! out 0x48)
+        (compiler-object-elf-push-u8! out 0x01)
+        (compiler-object-elf-push-u8! out 0x0d)
+        (compiler-object-elf-push-rel32-placeholder! out))]
     [(ObjectX64MovRcxRax)
       (begin
         (compiler-object-elf-push-u8! out 0x48)
         (compiler-object-elf-push-u8! out 0x89)
         (compiler-object-elf-push-u8! out 0xc1))]
+    [(ObjectX64Bytes bytes) (compiler-object-elf-push-string-bytes! out bytes)]
     [(ObjectX64Raw bytes) (compiler-object-elf-push-string-bytes! out bytes)]
     [_ unit]))
 
@@ -1105,7 +1159,36 @@
               (+ offset 3)
               (ObjectRelocRipValue)
               target)]
+          [(ObjectX64LoadRipAddressRdx target)
+            (compiler-object-elf-render-relocation-record!
+              out
+              image
+              (+ offset 3)
+              (ObjectRelocRipAddress)
+              target)]
+          [(ObjectX64StoreR14Rip target)
+            (compiler-object-elf-render-relocation-record!
+              out
+              image
+              (+ offset 3)
+              (ObjectRelocRipAddress)
+              target)]
+          [(ObjectX64StoreR15Rip target)
+            (compiler-object-elf-render-relocation-record!
+              out
+              image
+              (+ offset 3)
+              (ObjectRelocRipAddress)
+              target)]
+          [(ObjectX64AddRcxRip target)
+            (compiler-object-elf-render-relocation-record!
+              out
+              image
+              (+ offset 3)
+              (ObjectRelocRipAddress)
+              target)]
           [(ObjectX64MovRcxRax) unit]
+          [(ObjectX64Bytes _) unit]
           [(ObjectX64Raw _) unit])
         (compiler-object-elf-render-text-instr-relocations!
           out

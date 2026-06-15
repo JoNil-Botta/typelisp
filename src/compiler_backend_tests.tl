@@ -628,12 +628,11 @@
             (compiler-backend-string-contains?
               asm
               (backend-cat3 base-label ":\n" ""))
-            (compiler-backend-string-contains?
-              asm
-              (backend-cat5 "    .quad " data-label " - " base-label "\n"))
-            (compiler-backend-string-contains?
-              asm
-              (backend-cat5 "    .quad " fat-label " - " base-label "\n"))
+            (>= (compiler-backend-string-count asm "    .quad 0\n") 2)
+            (not
+              (compiler-backend-string-contains?
+                asm
+                (backend-cat3 " - " base-label "\n")))
             (not
               (compiler-backend-string-contains?
                 asm

@@ -201,6 +201,14 @@
   (asm String)
   (fixups String))
 
+(defstruct CompilerBackendAddressBase
+  (asm String)
+  (reg String))
+
+(defenum ResultCompilerBackendAddressBase
+  (OkCompilerBackendAddressBase CompilerBackendAddressBase)
+  (ErrCompilerBackendAddressBase CompilerDiagnostic))
+
 (defstruct CompilerBackendU64DivPow2
   (quot u64)
   (rem u64)
@@ -371,6 +379,12 @@
 
 (define (compiler-backend-user-symbol-cache-count) : i64
   compiler-backend-user-symbol-cache-count-value)
+
+(define compiler-backend-addr-of-forwarding-enabled : bool
+  false)
+
+(define compiler-backend-addr-of-forwarding-src : (Array i64)
+  (make-array i64 0))
 
 (defenum ResultBackendRuntimePlan
   (OkBackendRuntimePlan CompilerBackendRuntimePlan)
@@ -2654,33 +2668,51 @@
 (define (compiler-backend-emit-store-xmm-var [var-id : i64] [reg : String]) : String
   (compiler-backend-emit-store-float-var var-id reg (AstTyF64)))
 
+(define (compiler-backend-forwarded-addr-of-src [var-id : i64]) : i64
+  (if compiler-backend-addr-of-forwarding-enabled
+    (if (and
+      (>= var-id 0)
+      (< var-id (array-length compiler-backend-addr-of-forwarding-src)))
+      (array-ref compiler-backend-addr-of-forwarding-src var-id)
+      (- 0 1))
+    (- 0 1)))
+
 (define (compiler-backend-emit-load-var-with-plan
   [assignments : CompilerRegAssignmentList]
   [var-id : i64]
   [reg : String]) : String
-  (match (compiler-reg-assignment-lookup assignments var-id)
-    [(CompilerRegSomeLocation location)
-      (match location
-        [(CompilerRegRegister home)
-          (if (string-eq home reg)
-            ""
-            (str-cat "    movq " home ", " reg "\n"))]
-        [(CompilerRegRegisterPair home _)
-          ;; #2386: loading a whole register-group var into one register is not a
-          ;; scalar op; word extraction goes through IrInstrWord. Word0's home is
-          ;; the low register -- used only by the (unreached here) group paths.
-          (if (string-eq home reg)
-            ""
-            (str-cat "    movq " home ", " reg "\n"))]
-        [(CompilerRegSpill offset)
-          (str-cat
-            "    movq "
-            (compiler-backend-frame-offset offset)
-            ", "
-            reg
-            "\n")])]
-    [(CompilerRegNoLocation)
-      (str-cat "    movq " (compiler-backend-slot var-id) ", " reg "\n")]))
+  (let
+    [forward-src : i64 (compiler-backend-forwarded-addr-of-src var-id)]
+    (if (>= forward-src 0)
+      (backend-cat5
+        "    leaq "
+        (compiler-backend-slot forward-src)
+        ", "
+        reg
+        "\n")
+      (match (compiler-reg-assignment-lookup assignments var-id)
+        [(CompilerRegSomeLocation location)
+          (match location
+            [(CompilerRegRegister home)
+              (if (string-eq home reg)
+                ""
+                (str-cat "    movq " home ", " reg "\n"))]
+            [(CompilerRegRegisterPair home _)
+              ;; #2386: loading a whole register-group var into one register is not a
+              ;; scalar op; word extraction goes through IrInstrWord. Word0's home is
+              ;; the low register -- used only by the (unreached here) group paths.
+              (if (string-eq home reg)
+                ""
+                (str-cat "    movq " home ", " reg "\n"))]
+            [(CompilerRegSpill offset)
+              (str-cat
+                "    movq "
+                (compiler-backend-frame-offset offset)
+                ", "
+                reg
+                "\n")])]
+        [(CompilerRegNoLocation)
+          (str-cat "    movq " (compiler-backend-slot var-id) ", " reg "\n")]))))
 
 (define (compiler-backend-emit-store-var-with-plan
   [assignments : CompilerRegAssignmentList]
@@ -3625,6 +3657,64 @@
     CompilerRegAssignmentNil
     value
     reg))
+
+(define (compiler-backend-address-base-register-ok?
+  [home : String]
+  [avoid : String]) : bool
+  (and
+    (not (string-eq home ""))
+    (not (string-eq home "%rax"))
+    (not (string-eq home "%r11"))
+    (if (string-eq avoid "")
+      true
+      (not (string-eq home avoid)))))
+
+(define (compiler-backend-address-base-home
+  [assignments : CompilerRegAssignmentList]
+  [value : CompilerIrValue]
+  [avoid : String]) : String
+  (match value
+    [(IrValueVar id)
+      (if (>= (compiler-backend-forwarded-addr-of-src id) 0)
+        ""
+        (match (compiler-reg-assignment-lookup assignments id)
+          [(CompilerRegSomeLocation location)
+            (match location
+              [(CompilerRegRegister home)
+                (if (compiler-backend-address-base-register-ok? home avoid)
+                  home
+                  "")]
+              [_ ""])]
+          [(CompilerRegNoLocation) ""]))]
+    [_ ""]))
+
+(define (compiler-backend-emit-address-base-with-avoid
+  [assignments : CompilerRegAssignmentList]
+  [value : CompilerIrValue]
+  [fallback-reg : String]
+  [avoid : String]) : ResultCompilerBackendAddressBase
+  (let
+    [home : String (compiler-backend-address-base-home assignments value avoid)]
+    (if (string-eq home "")
+      (match (compiler-backend-emit-load-value-with-plan
+        assignments
+        value
+        fallback-reg)
+        [(OkCompilerBackend asm)
+          (OkCompilerBackendAddressBase
+            (CompilerBackendAddressBase asm fallback-reg))]
+        [(ErrCompilerBackend message) (ErrCompilerBackendAddressBase message)])
+      (OkCompilerBackendAddressBase (CompilerBackendAddressBase "" home)))))
+
+(define (compiler-backend-emit-address-base
+  [assignments : CompilerRegAssignmentList]
+  [value : CompilerIrValue]
+  [fallback-reg : String]) : ResultCompilerBackendAddressBase
+  (compiler-backend-emit-address-base-with-avoid
+    assignments
+    value
+    fallback-reg
+    ""))
 
 (define (compiler-backend-emit-load-memory [addr : String] [ty : AstType]) : String
   (let
@@ -6833,10 +6923,31 @@
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [src : i64]) : ResultCompilerBackend
-  (OkCompilerBackend
-    (string-append
-      (backend-cat5 "    leaq " (compiler-backend-slot src) ", " "%rax" "\n")
-      (compiler-backend-emit-store-var-with-plan assignments dst "%rax"))))
+  (if (>= (compiler-backend-forwarded-addr-of-src dst) 0)
+    (OkCompilerBackend "")
+    (let
+      [slot : String (compiler-backend-slot src)]
+      (OkCompilerBackend
+        (match (compiler-reg-assignment-lookup assignments dst)
+          [(CompilerRegSomeLocation location)
+            (match location
+              [(CompilerRegRegister home)
+                (backend-cat5 "    leaq " slot ", " home "\n")]
+              [(CompilerRegRegisterPair home _)
+                (backend-cat5 "    leaq " slot ", " home "\n")]
+              [(CompilerRegSpill offset)
+                (string-append
+                  (backend-cat5 "    leaq " slot ", " "%rax" "\n")
+                  (backend-cat5
+                    "    movq %rax, "
+                    (compiler-backend-frame-offset offset)
+                    "\n"
+                    ""
+                    ""))])]
+          [(CompilerRegNoLocation)
+            (string-append
+              (backend-cat5 "    leaq " slot ", " "%rax" "\n")
+              (compiler-backend-emit-store-var-with-plan assignments dst "%rax"))])))))
 
 (define (compiler-backend-gep-index-asm [scale : i64]) : String
   (if (= scale 1)
@@ -6861,12 +6972,25 @@
     (backend-cat4 "(%r10,%r8," (int->string scale) ")" "")
     ""))
 
+(define (compiler-backend-gep-index-address [base-reg : String] [scale : i64]) : String
+  (if (or (= scale 1) (= scale 2) (= scale 4) (= scale 8))
+    (backend-cat5 "(" base-reg ",%r8," (int->string scale) ")")
+    ""))
+
 (define (compiler-backend-gep-immediate-asm [disp : i64]) : CompilerBackendMaybeAsm
   (if (= disp 0)
     (CompilerBackendSomeAsm "")
     (if (compiler-backend-imm32? disp)
       (CompilerBackendSomeAsm
         (backend-cat4 "    addq $" (int->string disp) ", %rax\n" ""))
+      (CompilerBackendNoAsm))))
+
+(define (compiler-backend-gep-immediate-r10-asm [disp : i64]) : CompilerBackendMaybeAsm
+  (if (= disp 0)
+    (CompilerBackendSomeAsm "")
+    (if (compiler-backend-imm32? disp)
+      (CompilerBackendSomeAsm
+        (backend-cat4 "    addq $" (int->string disp) ", %r10\n" ""))
       (CompilerBackendNoAsm))))
 
 (define (compiler-backend-emit-gep
@@ -7061,6 +7185,67 @@
           [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
       [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
 
+(define (compiler-backend-emit-copy-bytes-from-gep
+  [assignments : CompilerRegAssignmentList]
+  [base : CompilerIrValue]
+  [offset : CompilerIrValue]
+  [elem-ty : AstType]
+  [src : CompilerIrValue]
+  [size : i64]) : ResultCompilerBackend
+  (if (<= size 0)
+    (OkCompilerBackend "")
+    (match (compiler-backend-emit-load-value-with-plan assignments base "%r10")
+      [(OkCompilerBackend base-asm)
+        (let
+          [scale : i64 (compiler-backend-type-size elem-ty)]
+          (match (compiler-backend-value-as-i64 offset)
+            [(CompilerBackendSomeI64 n)
+              (match (compiler-backend-gep-immediate-r10-asm (* n scale))
+                [(CompilerBackendSomeAsm offset-asm)
+                  (match (compiler-backend-emit-load-value-with-plan
+                    assignments
+                    src
+                    "%r11")
+                    [(OkCompilerBackend src-asm)
+                      (OkCompilerBackend
+                        (string-append
+                          base-asm
+                          (string-append
+                            offset-asm
+                            (string-append
+                              src-asm
+                              (compiler-backend-emit-copy-bytes-chunks 0 size)))))]
+                    [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+                [(CompilerBackendNoAsm)
+                  (ErrCompilerBackend
+                    (compiler-diagnostic-at-start
+                      ""
+                      "backend: fused gep copy displacement out of range"))])]
+            [(CompilerBackendNoI64)
+              (match (compiler-backend-emit-load-value-with-plan
+                assignments
+                offset
+                "%r8")
+                [(OkCompilerBackend offset-asm)
+                  (match (compiler-backend-emit-load-value-with-plan
+                    assignments
+                    src
+                    "%r11")
+                    [(OkCompilerBackend src-asm)
+                      (OkCompilerBackend
+                        (string-append
+                          base-asm
+                          (string-append
+                            offset-asm
+                            (string-append
+                              (compiler-backend-gep-index-r10-asm scale)
+                              (string-append
+                                src-asm
+                                (compiler-backend-emit-copy-bytes-chunks 0 size))))))]
+                    [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+                [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))]
+      [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
+
 (define (compiler-backend-emit-c-memory-stack-arg
   [target : CompilerBackendTarget]
   [assignments : CompilerRegAssignmentList]
@@ -7178,37 +7363,146 @@
               [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]))
 
+(define (compiler-backend-emit-load-from-gep-r10-live
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [offset : CompilerIrValue]
+  [elem-ty : AstType]
+  [load-ty : AstType]) : ResultCompilerBackend
+  (match (compiler-backend-value-as-i64 offset)
+    [(CompilerBackendSomeI64 n)
+      (let
+        [disp : i64 (* n (compiler-backend-type-size elem-ty))]
+        [addr : String (compiler-backend-r10-address disp)]
+        (OkCompilerBackend
+          (if (compiler-backend-float-type? load-ty)
+            (string-append
+              (compiler-backend-emit-load-float-memory addr "%xmm0" load-ty)
+              (compiler-backend-emit-store-float-var-with-plan
+                assignments
+                dst
+                "%xmm0"
+                load-ty))
+            (string-append
+              (compiler-backend-emit-load-memory addr load-ty)
+              (compiler-backend-emit-store-var-with-plan assignments dst "%rax")))))]
+    [(CompilerBackendNoI64)
+      (ErrCompilerBackend
+        (compiler-diagnostic-at-start
+          ""
+          "backend: non-immediate r10-live gep load"))]))
+
+(define (compiler-backend-emit-load-from-gep-pair
+  [assignments : CompilerRegAssignmentList]
+  [base : CompilerIrValue]
+  [offset0 : CompilerIrValue]
+  [elem-ty0 : AstType]
+  [load-dst0 : i64]
+  [load-ty0 : AstType]
+  [offset1 : CompilerIrValue]
+  [elem-ty1 : AstType]
+  [load-dst1 : i64]
+  [load-ty1 : AstType]) : ResultCompilerBackend
+  (match (compiler-backend-emit-load-from-gep
+    assignments
+    load-dst0
+    base
+    offset0
+    elem-ty0
+    load-ty0)
+    [(OkCompilerBackend first-asm)
+      (match (compiler-backend-emit-load-from-gep-r10-live
+        assignments
+        load-dst1
+        offset1
+        elem-ty1
+        load-ty1)
+        [(OkCompilerBackend second-asm)
+          (OkCompilerBackend (string-append first-asm second-asm))]
+        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+
+(define (compiler-backend-emit-load-load
+  [assignments : CompilerRegAssignmentList]
+  [first-dst : i64]
+  [ptr : CompilerIrValue]
+  [first-ty : AstType]
+  [second-dst : i64]
+  [second-ty : AstType]) : ResultCompilerBackend
+  (let
+    [_first-dst : i64 first-dst]
+    (if (= (compiler-backend-type-size first-ty) 8)
+      (match (compiler-backend-emit-load-value-with-plan assignments ptr "%r10")
+        [(OkCompilerBackend ptr-asm)
+          (OkCompilerBackend
+            (string-append
+              ptr-asm
+              (string-append
+                "    movq (%r10), %r10\n"
+                (if (compiler-backend-float-type? second-ty)
+                  (string-append
+                    (compiler-backend-emit-load-float-memory
+                      "(%r10)"
+                      "%xmm0"
+                      second-ty)
+                    (compiler-backend-emit-store-float-var-with-plan
+                      assignments
+                      second-dst
+                      "%xmm0"
+                      second-ty))
+                  (string-append
+                    (compiler-backend-emit-load-memory "(%r10)" second-ty)
+                    (compiler-backend-emit-store-var-with-plan
+                      assignments
+                      second-dst
+                      "%rax"))))))]
+        [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+      (compiler-backend-emit-load-instr assignments first-dst ptr first-ty))))
+
+(define (compiler-backend-emit-store-value-to-address
+  [assignments : CompilerRegAssignmentList]
+  [src : CompilerIrValue]
+  [ty : AstType]
+  [addr : String]
+  [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
+  (match (compiler-backend-emit-store-immediate-to-memory src addr ty)
+    [(CompilerBackendSomeAsm store-asm) (OkCompilerBackend store-asm)]
+    [(CompilerBackendNoAsm)
+      (match (compiler-backend-emit-load-typed-value-with-plan
+        assignments
+        src
+        ty
+        program-index)
+        [(OkCompilerBackend src-asm)
+          (OkCompilerBackend
+            (string-append
+              src-asm
+              (if (compiler-backend-float-type? ty)
+                (compiler-backend-emit-store-xmm-to-memory addr "%xmm0" ty)
+                (compiler-backend-emit-store-rax-to-memory addr ty))))]
+        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))
+
 (define (compiler-backend-emit-store-ptr
   [assignments : CompilerRegAssignmentList]
   [dst : CompilerIrValue]
   [src : CompilerIrValue]
   [ty : AstType]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
-  (match (compiler-backend-emit-load-value-with-plan assignments dst "%r10")
-    [(OkCompilerBackend ptr-asm)
-      (match (compiler-backend-emit-store-immediate-to-memory src "(%r10)" ty)
-        [(CompilerBackendSomeAsm store-asm)
-          (OkCompilerBackend (string-append ptr-asm store-asm))]
-        [(CompilerBackendNoAsm)
-          (match (compiler-backend-emit-load-typed-value-with-plan
-            assignments
-            src
-            ty
-            program-index)
-            [(OkCompilerBackend src-asm)
-              (OkCompilerBackend
-                (string-append
-                  ptr-asm
-                  (string-append
-                    src-asm
-                    (if (compiler-backend-float-type? ty)
-                      (compiler-backend-emit-store-xmm-to-memory
-                        "(%r10)"
-                        "%xmm0"
-                        ty)
-                      (compiler-backend-emit-store-rax-to-memory "(%r10)" ty)))))]
-            [(ErrCompilerBackend message) (ErrCompilerBackend message)])])]
-    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+  (match (compiler-backend-emit-address-base assignments dst "%r10")
+    [(OkCompilerBackendAddressBase base)
+      (let
+        [ptr-asm : String (struct-get base asm)]
+        [addr : String (compiler-backend-copy-address 0 (struct-get base reg))]
+        (match (compiler-backend-emit-store-value-to-address
+          assignments
+          src
+          ty
+          addr
+          program-index)
+          [(OkCompilerBackend store-asm)
+            (OkCompilerBackend (string-append ptr-asm store-asm))]
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
+    [(ErrCompilerBackendAddressBase message) (ErrCompilerBackend message)]))
 
 (define (compiler-backend-emit-store-to-gep
   [assignments : CompilerRegAssignmentList]
@@ -7222,101 +7516,104 @@
     [(CompilerBackendSomeI64 n)
       (let
         [disp : i64 (* n (compiler-backend-type-size elem-ty))]
-        [addr : String (compiler-backend-r10-address disp)]
-        (match (compiler-backend-emit-load-value-with-plan
-          assignments
-          base
-          "%r10")
-          [(OkCompilerBackend base-asm)
-            (match (compiler-backend-emit-store-immediate-to-memory
-              value
-              addr
-              store-ty)
-              [(CompilerBackendSomeAsm store-asm)
-                (OkCompilerBackend (string-append base-asm store-asm))]
-              [(CompilerBackendNoAsm)
-                (match (compiler-backend-emit-load-typed-value-with-plan
-                  assignments
-                  value
-                  store-ty
-                  program-index)
-                  [(OkCompilerBackend value-asm)
-                    (OkCompilerBackend
-                      (string-append
-                        base-asm
-                        (string-append
-                          value-asm
-                          (if (compiler-backend-float-type? store-ty)
-                            (compiler-backend-emit-store-xmm-to-memory
-                              addr
-                              "%xmm0"
-                              store-ty)
-                            (compiler-backend-emit-store-rax-to-memory
-                              addr
-                              store-ty)))))]
-                  [(ErrCompilerBackend message) (ErrCompilerBackend message)])])]
-          [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
+        (match (compiler-backend-emit-address-base assignments base "%r10")
+          [(OkCompilerBackendAddressBase base-plan)
+            (let
+              [base-asm : String (struct-get base-plan asm)]
+              [addr : String
+                (compiler-backend-copy-address disp (struct-get base-plan reg))]
+              (match (compiler-backend-emit-store-value-to-address
+                assignments
+                value
+                store-ty
+                addr
+                program-index)
+                [(OkCompilerBackend store-asm)
+                  (OkCompilerBackend (string-append base-asm store-asm))]
+                [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
+          [(ErrCompilerBackendAddressBase message) (ErrCompilerBackend message)]))]
     [(CompilerBackendNoI64)
       (let
         [scale : i64 (compiler-backend-type-size elem-ty)]
-        [addr : String (compiler-backend-gep-index-address-r10 scale)]
-        [addr-asm : String
-          (if (string-eq addr "")
-            (compiler-backend-gep-index-r10-asm scale)
-            "")]
-        [store-addr : String
-          (if (string-eq addr "")
-            "(%r10)"
-            addr)]
-        (match (compiler-backend-emit-load-value-with-plan
+        (match (compiler-backend-emit-address-base-with-avoid
           assignments
           base
-          "%r10")
-          [(OkCompilerBackend base-asm)
+          "%r10"
+          "%r8")
+          [(OkCompilerBackendAddressBase base-plan)
             (match (compiler-backend-emit-load-value-with-plan
               assignments
               offset
               "%r8")
               [(OkCompilerBackend offset-asm)
-                (match (compiler-backend-emit-store-immediate-to-memory
-                  value
-                  store-addr
-                  store-ty)
-                  [(CompilerBackendSomeAsm store-asm)
-                    (OkCompilerBackend
+                (let
+                  [base-reg : String (struct-get base-plan reg)]
+                  [addr : String
+                    (compiler-backend-gep-index-address base-reg scale)]
+                  [addr-asm : String
+                    (if (string-eq addr "")
                       (string-append
-                        base-asm
+                        (if (string-eq base-reg "%r10")
+                          ""
+                          (backend-cat5 "    movq " base-reg ", " "%r10" "\n"))
+                        (compiler-backend-gep-index-r10-asm scale))
+                      "")]
+                  [store-addr : String
+                    (if (string-eq addr "")
+                      "(%r10)"
+                      addr)]
+                  (match (compiler-backend-emit-store-value-to-address
+                    assignments
+                    value
+                    store-ty
+                    store-addr
+                    program-index)
+                    [(OkCompilerBackend store-asm)
+                      (OkCompilerBackend
                         (string-append
-                          offset-asm
-                          (string-append addr-asm store-asm))))]
-                  [(CompilerBackendNoAsm)
-                    (match (compiler-backend-emit-load-typed-value-with-plan
-                      assignments
-                      value
-                      store-ty
-                      program-index)
-                      [(OkCompilerBackend value-asm)
-                        (OkCompilerBackend
+                          (struct-get base-plan asm)
                           (string-append
-                            base-asm
-                            (string-append
-                              offset-asm
-                              (string-append
-                                addr-asm
-                                (string-append
-                                  value-asm
-                                  (if (compiler-backend-float-type? store-ty)
-                                    (compiler-backend-emit-store-xmm-to-memory
-                                      store-addr
-                                      "%xmm0"
-                                      store-ty)
-                                    (compiler-backend-emit-store-rax-to-memory
-                                      store-addr
-                                      store-ty)))))))]
-                      [(ErrCompilerBackend message)
-                        (ErrCompilerBackend message)])])]
+                            offset-asm
+                            (string-append addr-asm store-asm))))]
+                    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
               [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-          [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]))
+          [(ErrCompilerBackendAddressBase message) (ErrCompilerBackend message)]))]))
+
+(define (compiler-backend-emit-store-ptr-pair
+  [assignments : CompilerRegAssignmentList]
+  [ptr : CompilerIrValue]
+  [value0 : CompilerIrValue]
+  [ty0 : AstType]
+  [disp : i64]
+  [value1 : CompilerIrValue]
+  [ty1 : AstType]
+  [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
+  (match (compiler-backend-emit-address-base assignments ptr "%r10")
+    [(OkCompilerBackendAddressBase base-plan)
+      (let
+        [base-asm : String (struct-get base-plan asm)]
+        [base-reg : String (struct-get base-plan reg)]
+        [addr0 : String (compiler-backend-copy-address 0 base-reg)]
+        [addr1 : String (compiler-backend-copy-address disp base-reg)]
+        (match (compiler-backend-emit-store-value-to-address
+          assignments
+          value0
+          ty0
+          addr0
+          program-index)
+          [(OkCompilerBackend store0)
+            (match (compiler-backend-emit-store-value-to-address
+              assignments
+              value1
+              ty1
+              addr1
+              program-index)
+              [(OkCompilerBackend store1)
+                (OkCompilerBackend
+                  (string-append base-asm (string-append store0 store1)))]
+              [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
+    [(ErrCompilerBackendAddressBase message) (ErrCompilerBackend message)]))
 
 (define (compiler-backend-float-precision-cast-asm
   [from-ty : AstType]
@@ -12559,9 +12856,121 @@
       false
       (= (array-ref counts var) 1))))
 
+(define (compiler-backend-addr-of-forwarding-fill!
+  [items : (Array i64)]
+  [index : i64]) : unit
+  (if (>= index (array-length items))
+    unit
+    (begin
+      (array-set! items index (- 0 1))
+      (compiler-backend-addr-of-forwarding-fill! items (+ index 1)))))
+
+(define (compiler-backend-addr-of-forwarding-record!
+  [items : (Array i64)]
+  [use-counts : (Array i64)]
+  [instr : CompilerIrInstr]) : unit
+  (match instr
+    [(IrInstrAddrOf dst src)
+      (if (and
+        (>= dst 0)
+        (< dst (array-length items))
+        (compiler-backend-var-single-use? use-counts dst))
+        (array-set! items dst src)
+        unit)]
+    [_ unit]))
+
+(define (compiler-backend-addr-of-forwarding-record-seq!
+  [items : (Array i64)]
+  [use-counts : (Array i64)]
+  [instrs : CompilerIrInstrSeq]) : unit
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (compiler-backend-addr-of-forwarding-record!
+            items
+            use-counts
+            (array-ref slots index))
+          (set! index (+ index 1))))
+      unit)))
+
+(define (compiler-backend-addr-of-forwarding-record-blocks!
+  [items : (Array i64)]
+  [use-counts : (Array i64)]
+  [blocks : CompilerIrBlockList]) : unit
+  (match blocks
+    [(IrBlockNil) unit]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (begin
+            (compiler-backend-addr-of-forwarding-record-seq!
+              items
+              use-counts
+              instrs)
+            (compiler-backend-addr-of-forwarding-record-blocks!
+              items
+              use-counts
+              (box-get rest)))])]
+    [(IrBlockArray seq)
+      (compiler-backend-addr-of-forwarding-record-blocks!
+        items
+        use-counts
+        (compiler-ir-block-seq-to-list seq))]))
+
+(define (compiler-backend-addr-of-forwarding-enable!
+  [vars : i64]
+  [blocks : CompilerIrBlockList]
+  [use-counts : (Array i64)]) : unit
+  (let
+    [items : (Array i64) (make-array i64 vars)]
+    (begin
+      (compiler-backend-addr-of-forwarding-fill! items 0)
+      (compiler-backend-addr-of-forwarding-record-blocks!
+        items
+        use-counts
+        blocks)
+      (set! compiler-backend-addr-of-forwarding-src items)
+      (set! compiler-backend-addr-of-forwarding-enabled true))))
+
+(define (compiler-backend-addr-of-forwarding-disable!) : unit
+  (begin
+    (set! compiler-backend-addr-of-forwarding-enabled false)
+    (set! compiler-backend-addr-of-forwarding-src (make-array i64 0))))
+
 (define (compiler-backend-branch-uses-var? [cond : CompilerIrValue] [var : i64]) : bool
   (match cond
     [(IrValueVar id) (= id var)]
+    [_ false]))
+
+(define (compiler-backend-rest-starts-load-compare-branch?
+  [rest : CompilerIrInstrList]
+  [load-dst : i64]
+  [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
+  [use-counts : (Array i64)]) : bool
+  (match rest
+    [(IrInstrCons maybe-cmp after-cmp)
+      (match maybe-cmp
+        [(IrInstrBinOp cmp-dst op lhs rhs cmp-ty)
+          (if (and
+            (compiler-backend-compare-op? op)
+            (compiler-backend-branch-uses-var? lhs load-dst)
+            (compiler-backend-var-single-use? use-counts cmp-dst)
+            (not
+              (compiler-backend-binop-f64? types global-types lhs rhs cmp-ty)))
+            (match (box-get after-cmp)
+              [(IrInstrCons branch _)
+                (match branch
+                  [(IrInstrBranch cond _ _)
+                    (compiler-backend-branch-uses-var? cond cmp-dst)]
+                  [_ false])]
+              [_ false])
+            false)]
+        [_ false])]
     [_ false]))
 
 (define (compiler-backend-fused-compare-fallthrough
@@ -12626,6 +13035,53 @@
     program-index
     spans
     func-diag)
+    [(OkCompilerBackend head)
+      (compiler-backend-emit-instrs
+        target
+        function
+        source-function
+        blocks
+        current-label
+        fallthrough
+        rest
+        assignments
+        vars
+        types
+        global-types
+        ret-ty
+        plan
+        functions
+        externs
+        program-index
+        spans
+        func-diag
+        use-counts
+        (text-buf-append buf head))]
+    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+
+(define (compiler-backend-emit-fused-result-rest
+  [target : CompilerBackendTarget]
+  [function : String]
+  [source-function : String]
+  [blocks : CompilerIrBlockList]
+  [current-label : String]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [result : ResultCompilerBackend]
+  [rest : CompilerIrInstrList]
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]
+  [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
+  [ret-ty : AstType]
+  [plan : CompilerBackendRuntimePlan]
+  [functions : CompilerIrFunctionList]
+  [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
+  [spans : CompilerSourceSpans]
+  [func-diag : CompilerDiagnostic]
+  [use-counts : (Array i64)]
+  [buf : TextBuf]) : ResultCompilerBackend
+  (match result
     [(OkCompilerBackend head)
       (compiler-backend-emit-instrs
         target
@@ -12911,45 +13367,261 @@
   [func-diag : CompilerDiagnostic]
   [use-counts : (Array i64)]
   [buf : TextBuf]) : ResultCompilerBackend
-  (match (compiler-backend-emit-load-from-gep
-    assignments
-    load-dst
-    base
-    offset
-    elem-ty
-    load-ty)
-    [(OkCompilerBackend head)
-      (compiler-backend-emit-instrs
-        target
-        function
-        source-function
-        blocks
-        current-label
-        fallthrough
-        rest
+  (let
+    [single : ResultCompilerBackend
+      (compiler-backend-emit-load-from-gep
         assignments
-        vars
-        types
-        global-types
-        ret-ty
-        plan
-        functions
-        externs
-        program-index
-        spans
-        func-diag
-        use-counts
-        (text-buf-append buf head))]
-    [(ErrCompilerBackend message)
-      (ErrCompilerBackend
-        (compiler-backend-apply-instr-diagnostic
-          message
-          (compiler-backend-instr-diagnostic
-            spans
-            source-function
-            (IrInstrGep gep-dst base offset elem-ty)
-            func-diag
-            "")))]))
+        load-dst
+        base
+        offset
+        elem-ty
+        load-ty)]
+    (match (compiler-backend-value-as-i64 offset)
+      [(CompilerBackendSomeI64 _)
+        (match rest
+          [(IrInstrCons maybe-gep after-gep)
+            (match maybe-gep
+              [(IrInstrGep gep-dst2 base2 offset2 elem-ty2)
+                (if (and
+                  (compiler-backend-var-single-use? use-counts gep-dst2)
+                  (opt-value-eq base2 base))
+                  (match (compiler-backend-value-as-i64 offset2)
+                    [(CompilerBackendSomeI64 _)
+                      (match (box-get after-gep)
+                        [(IrInstrCons maybe-load after-load2)
+                          (match maybe-load
+                            [(IrInstrLoad load-dst2 src2 load-ty2)
+                              (if (and
+                                (compiler-backend-branch-uses-var?
+                                  src2
+                                  gep-dst2)
+                                (not
+                                  (and
+                                    (compiler-backend-load-compare-type?
+                                      load-ty2)
+                                    (compiler-backend-var-single-use?
+                                      use-counts
+                                      load-dst2)
+                                    (compiler-backend-rest-starts-load-compare-branch?
+                                      (box-get after-load2)
+                                      load-dst2
+                                      types
+                                      global-types
+                                      use-counts))))
+                                (compiler-backend-emit-fused-result-rest
+                                  target
+                                  function
+                                  source-function
+                                  blocks
+                                  current-label
+                                  fallthrough
+                                  (compiler-backend-emit-load-from-gep-pair
+                                    assignments
+                                    base
+                                    offset
+                                    elem-ty
+                                    load-dst
+                                    load-ty
+                                    offset2
+                                    elem-ty2
+                                    load-dst2
+                                    load-ty2)
+                                  (box-get after-load2)
+                                  assignments
+                                  vars
+                                  types
+                                  global-types
+                                  ret-ty
+                                  plan
+                                  functions
+                                  externs
+                                  program-index
+                                  spans
+                                  func-diag
+                                  use-counts
+                                  buf)
+                                (compiler-backend-emit-fused-result-rest
+                                  target
+                                  function
+                                  source-function
+                                  blocks
+                                  current-label
+                                  fallthrough
+                                  single
+                                  rest
+                                  assignments
+                                  vars
+                                  types
+                                  global-types
+                                  ret-ty
+                                  plan
+                                  functions
+                                  externs
+                                  program-index
+                                  spans
+                                  func-diag
+                                  use-counts
+                                  buf))]
+                            [_
+                              (compiler-backend-emit-fused-result-rest
+                                target
+                                function
+                                source-function
+                                blocks
+                                current-label
+                                fallthrough
+                                single
+                                rest
+                                assignments
+                                vars
+                                types
+                                global-types
+                                ret-ty
+                                plan
+                                functions
+                                externs
+                                program-index
+                                spans
+                                func-diag
+                                use-counts
+                                buf)])]
+                        [_
+                          (compiler-backend-emit-fused-result-rest
+                            target
+                            function
+                            source-function
+                            blocks
+                            current-label
+                            fallthrough
+                            single
+                            rest
+                            assignments
+                            vars
+                            types
+                            global-types
+                            ret-ty
+                            plan
+                            functions
+                            externs
+                            program-index
+                            spans
+                            func-diag
+                            use-counts
+                            buf)])]
+                    [(CompilerBackendNoI64)
+                      (compiler-backend-emit-fused-result-rest
+                        target
+                        function
+                        source-function
+                        blocks
+                        current-label
+                        fallthrough
+                        single
+                        rest
+                        assignments
+                        vars
+                        types
+                        global-types
+                        ret-ty
+                        plan
+                        functions
+                        externs
+                        program-index
+                        spans
+                        func-diag
+                        use-counts
+                        buf)])
+                  (compiler-backend-emit-fused-result-rest
+                    target
+                    function
+                    source-function
+                    blocks
+                    current-label
+                    fallthrough
+                    single
+                    rest
+                    assignments
+                    vars
+                    types
+                    global-types
+                    ret-ty
+                    plan
+                    functions
+                    externs
+                    program-index
+                    spans
+                    func-diag
+                    use-counts
+                    buf))]
+              [_
+                (compiler-backend-emit-fused-result-rest
+                  target
+                  function
+                  source-function
+                  blocks
+                  current-label
+                  fallthrough
+                  single
+                  rest
+                  assignments
+                  vars
+                  types
+                  global-types
+                  ret-ty
+                  plan
+                  functions
+                  externs
+                  program-index
+                  spans
+                  func-diag
+                  use-counts
+                  buf)])]
+          [_
+            (compiler-backend-emit-fused-result-rest
+              target
+              function
+              source-function
+              blocks
+              current-label
+              fallthrough
+              single
+              rest
+              assignments
+              vars
+              types
+              global-types
+              ret-ty
+              plan
+              functions
+              externs
+              program-index
+              spans
+              func-diag
+              use-counts
+              buf)])]
+      [(CompilerBackendNoI64)
+        (compiler-backend-emit-fused-result-rest
+          target
+          function
+          source-function
+          blocks
+          current-label
+          fallthrough
+          single
+          rest
+          assignments
+          vars
+          types
+          global-types
+          ret-ty
+          plan
+          functions
+          externs
+          program-index
+          spans
+          func-diag
+          use-counts
+          buf)])))
 
 (define (compiler-backend-emit-fused-gep-store-rest
   [target : CompilerBackendTarget]
@@ -14045,10 +14717,242 @@
                 func-diag
                 use-counts
                 buf)])]
+        [(IrInstrStorePtr ptr value0 ty0)
+          (match (box-get rest)
+            [(IrInstrCons maybe-gep after-gep)
+              (match maybe-gep
+                [(IrInstrGep gep-dst base offset elem-ty)
+                  (if (and
+                    (opt-value-eq base ptr)
+                    (compiler-backend-var-single-use? use-counts gep-dst))
+                    (match (compiler-backend-value-as-i64 offset)
+                      [(CompilerBackendSomeI64 n)
+                        (let
+                          [disp : i64
+                            (* n (compiler-backend-type-size elem-ty))]
+                          (if (compiler-backend-imm32? disp)
+                            (match (box-get after-gep)
+                              [(IrInstrCons maybe-store after-store)
+                                (match maybe-store
+                                  [(IrInstrStorePtr dst value1 ty1)
+                                    (if (compiler-backend-branch-uses-var?
+                                      dst
+                                      gep-dst)
+                                      (compiler-backend-emit-fused-result-rest
+                                        target
+                                        function
+                                        source-function
+                                        blocks
+                                        current-label
+                                        fallthrough
+                                        (compiler-backend-emit-store-ptr-pair
+                                          assignments
+                                          ptr
+                                          value0
+                                          ty0
+                                          disp
+                                          value1
+                                          ty1
+                                          program-index)
+                                        (box-get after-store)
+                                        assignments
+                                        vars
+                                        types
+                                        global-types
+                                        ret-ty
+                                        plan
+                                        functions
+                                        externs
+                                        program-index
+                                        spans
+                                        func-diag
+                                        use-counts
+                                        buf)
+                                      (compiler-backend-emit-instrs-normal
+                                        target
+                                        function
+                                        source-function
+                                        blocks
+                                        current-label
+                                        fallthrough
+                                        instr
+                                        (box-get rest)
+                                        assignments
+                                        vars
+                                        types
+                                        global-types
+                                        ret-ty
+                                        plan
+                                        functions
+                                        externs
+                                        program-index
+                                        spans
+                                        func-diag
+                                        use-counts
+                                        buf))]
+                                  [_
+                                    (compiler-backend-emit-instrs-normal
+                                      target
+                                      function
+                                      source-function
+                                      blocks
+                                      current-label
+                                      fallthrough
+                                      instr
+                                      (box-get rest)
+                                      assignments
+                                      vars
+                                      types
+                                      global-types
+                                      ret-ty
+                                      plan
+                                      functions
+                                      externs
+                                      program-index
+                                      spans
+                                      func-diag
+                                      use-counts
+                                      buf)])]
+                              [_
+                                (compiler-backend-emit-instrs-normal
+                                  target
+                                  function
+                                  source-function
+                                  blocks
+                                  current-label
+                                  fallthrough
+                                  instr
+                                  (box-get rest)
+                                  assignments
+                                  vars
+                                  types
+                                  global-types
+                                  ret-ty
+                                  plan
+                                  functions
+                                  externs
+                                  program-index
+                                  spans
+                                  func-diag
+                                  use-counts
+                                  buf)])
+                            (compiler-backend-emit-instrs-normal
+                              target
+                              function
+                              source-function
+                              blocks
+                              current-label
+                              fallthrough
+                              instr
+                              (box-get rest)
+                              assignments
+                              vars
+                              types
+                              global-types
+                              ret-ty
+                              plan
+                              functions
+                              externs
+                              program-index
+                              spans
+                              func-diag
+                              use-counts
+                              buf)))]
+                      [(CompilerBackendNoI64)
+                        (compiler-backend-emit-instrs-normal
+                          target
+                          function
+                          source-function
+                          blocks
+                          current-label
+                          fallthrough
+                          instr
+                          (box-get rest)
+                          assignments
+                          vars
+                          types
+                          global-types
+                          ret-ty
+                          plan
+                          functions
+                          externs
+                          program-index
+                          spans
+                          func-diag
+                          use-counts
+                          buf)])
+                    (compiler-backend-emit-instrs-normal
+                      target
+                      function
+                      source-function
+                      blocks
+                      current-label
+                      fallthrough
+                      instr
+                      (box-get rest)
+                      assignments
+                      vars
+                      types
+                      global-types
+                      ret-ty
+                      plan
+                      functions
+                      externs
+                      program-index
+                      spans
+                      func-diag
+                      use-counts
+                      buf))]
+                [_
+                  (compiler-backend-emit-instrs-normal
+                    target
+                    function
+                    source-function
+                    blocks
+                    current-label
+                    fallthrough
+                    instr
+                    (box-get rest)
+                    assignments
+                    vars
+                    types
+                    global-types
+                    ret-ty
+                    plan
+                    functions
+                    externs
+                    program-index
+                    spans
+                    func-diag
+                    use-counts
+                    buf)])]
+            [_
+              (compiler-backend-emit-instrs-normal
+                target
+                function
+                source-function
+                blocks
+                current-label
+                fallthrough
+                instr
+                (box-get rest)
+                assignments
+                vars
+                types
+                global-types
+                ret-ty
+                plan
+                functions
+                externs
+                program-index
+                spans
+                func-diag
+                use-counts
+                buf)])]
         [(IrInstrGep gep-dst base offset elem-ty)
           (if (compiler-backend-var-single-use? use-counts gep-dst)
             (match (compiler-backend-value-as-i64 offset)
-              [(CompilerBackendSomeI64 _)
+              [(CompilerBackendSomeI64 n)
                 (match (box-get rest)
                   [(IrInstrCons next after-load)
                     (match next
@@ -14387,6 +15291,61 @@
                             func-diag
                             use-counts
                             buf))]
+                      [(IrInstrCopyBytes copy-dst copy-src copy-size)
+                        (if (and
+                          (compiler-backend-branch-uses-var? copy-dst gep-dst)
+                          (compiler-backend-imm32?
+                            (* n (compiler-backend-type-size elem-ty))))
+                          (compiler-backend-emit-fused-result-rest
+                            target
+                            function
+                            source-function
+                            blocks
+                            current-label
+                            fallthrough
+                            (compiler-backend-emit-copy-bytes-from-gep
+                              assignments
+                              base
+                              offset
+                              elem-ty
+                              copy-src
+                              copy-size)
+                            (box-get after-load)
+                            assignments
+                            vars
+                            types
+                            global-types
+                            ret-ty
+                            plan
+                            functions
+                            externs
+                            program-index
+                            spans
+                            func-diag
+                            use-counts
+                            buf)
+                          (compiler-backend-emit-instrs-normal
+                            target
+                            function
+                            source-function
+                            blocks
+                            current-label
+                            fallthrough
+                            instr
+                            (box-get rest)
+                            assignments
+                            vars
+                            types
+                            global-types
+                            ret-ty
+                            plan
+                            functions
+                            externs
+                            program-index
+                            spans
+                            func-diag
+                            use-counts
+                            buf))]
                       [_
                         (compiler-backend-emit-instrs-normal
                           target
@@ -14667,6 +15626,58 @@
                             func-diag
                             use-counts
                             buf))]
+                      [(IrInstrCopyBytes copy-dst copy-src copy-size)
+                        (if (compiler-backend-branch-uses-var? copy-dst gep-dst)
+                          (compiler-backend-emit-fused-result-rest
+                            target
+                            function
+                            source-function
+                            blocks
+                            current-label
+                            fallthrough
+                            (compiler-backend-emit-copy-bytes-from-gep
+                              assignments
+                              base
+                              offset
+                              elem-ty
+                              copy-src
+                              copy-size)
+                            (box-get after-gep)
+                            assignments
+                            vars
+                            types
+                            global-types
+                            ret-ty
+                            plan
+                            functions
+                            externs
+                            program-index
+                            spans
+                            func-diag
+                            use-counts
+                            buf)
+                          (compiler-backend-emit-instrs-normal
+                            target
+                            function
+                            source-function
+                            blocks
+                            current-label
+                            fallthrough
+                            instr
+                            (box-get rest)
+                            assignments
+                            vars
+                            types
+                            global-types
+                            ret-ty
+                            plan
+                            functions
+                            externs
+                            program-index
+                            spans
+                            func-diag
+                            use-counts
+                            buf))]
                       [_
                         (compiler-backend-emit-instrs-normal
                           target
@@ -14742,6 +15753,58 @@
             (match (box-get rest)
               [(IrInstrCons next after-cmp)
                 (match next
+                  [(IrInstrLoad second-dst second-src second-ty)
+                    (if (compiler-backend-branch-uses-var? second-src load-dst)
+                      (compiler-backend-emit-fused-result-rest
+                        target
+                        function
+                        source-function
+                        blocks
+                        current-label
+                        fallthrough
+                        (compiler-backend-emit-load-load
+                          assignments
+                          load-dst
+                          ptr
+                          load-ty
+                          second-dst
+                          second-ty)
+                        (box-get after-cmp)
+                        assignments
+                        vars
+                        types
+                        global-types
+                        ret-ty
+                        plan
+                        functions
+                        externs
+                        program-index
+                        spans
+                        func-diag
+                        use-counts
+                        buf)
+                      (compiler-backend-emit-instrs-normal
+                        target
+                        function
+                        source-function
+                        blocks
+                        current-label
+                        fallthrough
+                        instr
+                        (box-get rest)
+                        assignments
+                        vars
+                        types
+                        global-types
+                        ret-ty
+                        plan
+                        functions
+                        externs
+                        program-index
+                        spans
+                        func-diag
+                        use-counts
+                        buf))]
                   [(IrInstrBinOp cmp-dst op lhs rhs cmp-ty)
                     (if (and
                       (compiler-backend-compare-op? op)
@@ -15708,6 +16771,11 @@
                 (compiler-backend-function-symbol-index program-index name)]
               [label-scope : String
                 (compiler-backend-function-label-scope program-index name)]
+              [_addr-forward : unit
+                (compiler-backend-addr-of-forwarding-enable!
+                  vars
+                  emit-blocks-list
+                  use-counts)]
               (match (compiler-backend-emit-blocks
                 target
                 label-scope
@@ -15739,6 +16807,8 @@
                           target
                           blocks
                           program-index))]
+                    [_addr-forward-done : unit
+                      (compiler-backend-addr-of-forwarding-disable!)]
                     (OkCompilerBackend
                       (backend-cat5
                         (compiler-backend-function-symbol-map-comment
@@ -15798,7 +16868,11 @@
                                           (compiler-backend-emit-windows-seh-endproc
                                             target)))))))))
                           "\n"))))]
-                [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
+                [(ErrCompilerBackend message)
+                  (let
+                    [_addr-forward-done : unit
+                      (compiler-backend-addr-of-forwarding-disable!)]
+                    (ErrCompilerBackend message))]))]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]))
 
 ;; 0: every function escapes through a per-function scratch arena. The old

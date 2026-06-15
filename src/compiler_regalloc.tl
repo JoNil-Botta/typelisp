@@ -479,11 +479,19 @@
             (box-get rest)
             (compiler-reg-var-type-insert types id ty))])]))
 
+(define (compiler-reg-addr-of-result-type) : AstType
+  (ast-ty-mut-ptr (AstTyU8)))
+
 (define (compiler-reg-instr-def-type
   [types : CompilerRegVarTypeList]
   [instr : CompilerIrInstr]) : CompilerRegVarTypeList
   (match instr
     [(IrInstrMov dst _ ty) (compiler-reg-var-type-insert types dst ty)]
+    [(IrInstrAddrOf dst _)
+      (compiler-reg-var-type-insert
+        types
+        dst
+        (compiler-reg-addr-of-result-type))]
     [(IrInstrLoad dst _ ty) (compiler-reg-var-type-insert types dst ty)]
     [(IrInstrCast dst _ _ to-ty) (compiler-reg-var-type-insert types dst to-ty)]
     [(IrInstrBitcast dst _ _ to-ty)
@@ -546,6 +554,12 @@
   (match instr
     [(IrInstrMov dst _ ty)
       (compiler-reg-var-type-array-set! present types dst ty)]
+    [(IrInstrAddrOf dst _)
+      (compiler-reg-var-type-array-set!
+        present
+        types
+        dst
+        (compiler-reg-addr-of-result-type))]
     [(IrInstrLoad dst _ ty)
       (compiler-reg-var-type-array-set! present types dst ty)]
     [(IrInstrCast dst _ _ to-ty)
@@ -1540,8 +1554,7 @@
   [set : CompilerLiveI64Set]) : CompilerLiveI64Set
   (match instr
     [(IrInstrAlloc dst _) (compiler-live-set-insert set dst)]
-    [(IrInstrAddrOf dst src)
-      (compiler-live-set-insert (compiler-live-set-insert set dst) src)]
+    [(IrInstrAddrOf _ src) (compiler-live-set-insert set src)]
     [(IrInstrGep dst _ _ _) (compiler-live-set-insert set dst)]
     [_ set]))
 

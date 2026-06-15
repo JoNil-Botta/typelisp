@@ -450,6 +450,124 @@
 (define (ast-node-pool-reset!) : unit
   (ast-node-pool-truncate! 0))
 
+;; State-owned expression node pools are the migration substrate for compiler
+;; workers. The current compiler hot path still uses the process-global wrappers
+;; above until parser/typechecker/driver state is threaded through every call.
+(defstruct AstExprNodePoolState
+  (slots (Array AstExpr))
+  (count i64)
+  (base-arena i64))
+
+(defenum AstExprNodePoolPushResult
+  (AstExprNodePoolPushOk AstExprNodePoolState i64))
+
+(define (node-pool-state-normalize-capacity [capacity : i64]) : i64
+  (if (< capacity 1)
+    1
+    capacity))
+
+(define (ast-expr-node-pool-state-init [capacity : i64] [base-arena : i64]) : AstExprNodePoolState
+  (let
+    [cap : i64 (node-pool-state-normalize-capacity capacity)]
+    [prev-arena : i64 (arena-current)]
+    [slots : (Array AstExpr)
+      (begin
+        (unsafe
+          (arena-set! base-arena))
+        (let
+          [arr : (Array AstExpr) (make-array AstExpr cap)]
+          (begin
+            (unsafe
+              (arena-set! prev-arena))
+            arr)))]
+    (AstExprNodePoolState slots 0 base-arena)))
+
+(define (ast-expr-node-pool-state-create [capacity : i64]) : AstExprNodePoolState
+  (ast-expr-node-pool-state-init capacity (arena-current)))
+
+(define (ast-expr-node-pool-state-len [pool : AstExprNodePoolState]) : i64
+  (struct-get pool count))
+
+(define (ast-expr-node-pool-state-capacity [pool : AstExprNodePoolState]) : i64
+  (array-length (struct-get pool slots)))
+
+(define (ast-expr-node-pool-state-mark [pool : AstExprNodePoolState]) : i64
+  (ast-expr-node-pool-state-len pool))
+
+(define (ast-expr-node-pool-state-reset-to
+  [pool : AstExprNodePoolState]
+  [mark : i64]) : AstExprNodePoolState
+  (AstExprNodePoolState
+    (struct-get pool slots)
+    mark
+    (struct-get pool base-arena)))
+
+(define (ast-expr-node-pool-state-reset-to-mark
+  [pool : AstExprNodePoolState]
+  [mark : i64]) : AstExprNodePoolState
+  (ast-expr-node-pool-state-reset-to pool mark))
+
+(define (ast-expr-node-pool-state-reset [pool : AstExprNodePoolState]) : AstExprNodePoolState
+  (ast-expr-node-pool-state-reset-to pool 0))
+
+(define (ast-expr-node-pool-state-grow [pool : AstExprNodePoolState]) : AstExprNodePoolState
+  (let
+    [old-slots : (Array AstExpr) (struct-get pool slots)]
+    [old-cap : i64 (array-length old-slots)]
+    [new-cap : i64
+      (if (< old-cap 1)
+        1024
+        (* old-cap 2))]
+    [base-arena : i64 (struct-get pool base-arena)]
+    [prev-arena : i64 (arena-current)]
+    [new-slots : (Array AstExpr)
+      (begin
+        (unsafe
+          (arena-set! base-arena))
+        (let
+          [arr : (Array AstExpr) (make-array AstExpr new-cap)]
+          (begin
+            (unsafe
+              (arena-set! prev-arena))
+            arr)))]
+    [len : i64 (struct-get pool count)]
+    [i : i64 0]
+    (begin
+      (while (< i len)
+        (begin
+          (array-set! new-slots i (array-ref old-slots i))
+          (set! i (+ i 1))))
+      (AstExprNodePoolState new-slots len base-arena))))
+
+(define (ast-expr-node-pool-state-push
+  [pool : AstExprNodePoolState]
+  [node : AstExpr]) : AstExprNodePoolPushResult
+  (let
+    [ready : AstExprNodePoolState
+      (if (>=
+        (ast-expr-node-pool-state-len pool)
+        (ast-expr-node-pool-state-capacity pool))
+        (ast-expr-node-pool-state-grow pool)
+        pool)]
+    [slots : (Array AstExpr) (struct-get ready slots)]
+    [id : i64 (struct-get ready count)]
+    (begin
+      (array-set! slots id node)
+      (AstExprNodePoolPushOk
+        (AstExprNodePoolState slots (+ id 1) (struct-get ready base-arena))
+        id))))
+
+(define (ast-expr-node-pool-state-get [pool : AstExprNodePoolState] [id : i64]) : AstExpr
+  (array-ref (struct-get pool slots) id))
+
+(define (ast-expr-node-pool-state-set!
+  [pool : AstExprNodePoolState]
+  [id : i64]
+  [node : AstExpr]) : AstExprNodePoolState
+  (begin
+    (array-set! (struct-get pool slots) id node)
+    pool))
+
 ;; --- AstType node pool (flat ty ids) ---
 ;; AstType's recursive children are stored as i64 ids into this pool instead of
 ;; (Box AstType), mirroring the AstExpr pool above. The pool is PERSISTENT for a
@@ -559,6 +677,157 @@
     [(AstTyVarArgs name lifetimes)
       (AstTyVarArgs name (ty-node-persist-lifetimes lifetimes))]
     [_ node]))
+
+;; State-owned type node pools mirror the global type-node backing store while
+;; keeping each worker's ids and reset marks independent. Hash-consing remains
+;; only on the process-global hot path until the full compiler state migration.
+(defstruct AstTypeNodePoolState
+  (slots (Array AstType))
+  (count i64)
+  (base-arena i64)
+  (exhausted bool))
+
+(defenum AstTypeNodePoolPushResult
+  (AstTypeNodePoolPushOk AstTypeNodePoolState i64))
+
+(define (ast-type-node-pool-state-init [capacity : i64] [base-arena : i64]) : AstTypeNodePoolState
+  (let
+    [cap : i64 (node-pool-state-normalize-capacity capacity)]
+    [prev-arena : i64 (arena-current)]
+    [slots : (Array AstType)
+      (begin
+        (unsafe
+          (arena-set! base-arena))
+        (let
+          [arr : (Array AstType) (make-array AstType cap)]
+          (begin
+            (unsafe
+              (arena-set! prev-arena))
+            arr)))]
+    (AstTypeNodePoolState slots 0 base-arena false)))
+
+(define (ast-type-node-pool-state-create [capacity : i64]) : AstTypeNodePoolState
+  (ast-type-node-pool-state-init capacity (arena-current)))
+
+(define (ast-type-node-pool-state-len [pool : AstTypeNodePoolState]) : i64
+  (struct-get pool count))
+
+(define (ast-type-node-pool-state-capacity [pool : AstTypeNodePoolState]) : i64
+  (array-length (struct-get pool slots)))
+
+(define (ast-type-node-pool-state-exhausted? [pool : AstTypeNodePoolState]) : bool
+  (struct-get pool exhausted))
+
+(define (ast-type-node-pool-state-mark [pool : AstTypeNodePoolState]) : i64
+  (ast-type-node-pool-state-len pool))
+
+(define (ast-type-node-pool-state-reset-to
+  [pool : AstTypeNodePoolState]
+  [mark : i64]) : AstTypeNodePoolState
+  (AstTypeNodePoolState
+    (struct-get pool slots)
+    mark
+    (struct-get pool base-arena)
+    false))
+
+(define (ast-type-node-pool-state-reset-to-mark
+  [pool : AstTypeNodePoolState]
+  [mark : i64]) : AstTypeNodePoolState
+  (ast-type-node-pool-state-reset-to pool mark))
+
+(define (ast-type-node-pool-state-reset [pool : AstTypeNodePoolState]) : AstTypeNodePoolState
+  (ast-type-node-pool-state-reset-to pool 0))
+
+(define (ast-type-node-pool-state-grow [pool : AstTypeNodePoolState]) : AstTypeNodePoolState
+  (let
+    [old-slots : (Array AstType) (struct-get pool slots)]
+    [old-cap : i64 (array-length old-slots)]
+    [new-cap : i64
+      (if (< old-cap 1)
+        1024
+        (* old-cap 2))]
+    [base-arena : i64 (struct-get pool base-arena)]
+    [prev-arena : i64 (arena-current)]
+    [new-slots : (Array AstType)
+      (begin
+        (unsafe
+          (arena-set! base-arena))
+        (let
+          [arr : (Array AstType) (make-array AstType new-cap)]
+          (begin
+            (unsafe
+              (arena-set! prev-arena))
+            arr)))]
+    [len : i64 (struct-get pool count)]
+    [i : i64 0]
+    (begin
+      (while (< i len)
+        (begin
+          (array-set! new-slots i (array-ref old-slots i))
+          (set! i (+ i 1))))
+      (AstTypeNodePoolState
+        new-slots
+        len
+        base-arena
+        (struct-get pool exhausted)))))
+
+(define (ast-type-node-pool-state-push
+  [pool : AstTypeNodePoolState]
+  [node : AstType]) : AstTypeNodePoolPushResult
+  (let
+    [ready : AstTypeNodePoolState
+      (if (>=
+        (ast-type-node-pool-state-len pool)
+        (ast-type-node-pool-state-capacity pool))
+        (ast-type-node-pool-state-grow pool)
+        pool)]
+    [slots : (Array AstType) (struct-get ready slots)]
+    [id : i64 (struct-get ready count)]
+    [base-arena : i64 (struct-get ready base-arena)]
+    [prev-arena : i64 (arena-current)]
+    [persistent : AstType
+      (begin
+        (unsafe
+          (arena-set! base-arena))
+        (let
+          [out : AstType (ty-node-persist node)]
+          (begin
+            (unsafe
+              (arena-set! prev-arena))
+            out)))]
+    (begin
+      (array-set! slots id persistent)
+      (AstTypeNodePoolPushOk
+        (AstTypeNodePoolState
+          slots
+          (+ id 1)
+          base-arena
+          (struct-get ready exhausted))
+        id))))
+
+(define (ast-type-node-pool-state-get [pool : AstTypeNodePoolState] [id : i64]) : AstType
+  (array-ref (struct-get pool slots) id))
+
+(define (ast-type-node-pool-state-set!
+  [pool : AstTypeNodePoolState]
+  [id : i64]
+  [node : AstType]) : AstTypeNodePoolState
+  (let
+    [prev-arena : i64 (arena-current)]
+    [base-arena : i64 (struct-get pool base-arena)]
+    [persistent : AstType
+      (begin
+        (unsafe
+          (arena-set! base-arena))
+        (let
+          [out : AstType (ty-node-persist node)]
+          (begin
+            (unsafe
+              (arena-set! prev-arena))
+            out)))]
+    (begin
+      (array-set! (struct-get pool slots) id persistent)
+      pool)))
 
 ;: Append `node` to the pool unconditionally and return its ty id.
 (define (ty-node-push-raw [node : AstType]) : i64

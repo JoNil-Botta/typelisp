@@ -5,6 +5,8 @@
 
 (import "compiler_symbols.tl")
 
+(import "compiler_load.tl")
+
 (import "compiler_builtin_ids.tl")
 
 (import "compiler_diagnostic.tl")
@@ -338,6 +340,156 @@
 (defenum ResultCompilerTypecheckChecked
   (OkCompilerTypecheckChecked CompilerTypecheckSummary TcContext TcTypeEnv)
   (ErrCompilerTypecheckChecked CompilerDiagnostic))
+
+(defenum TcPrefixSnapshotLookup
+  (TcPrefixSnapshotMiss)
+  (TcPrefixSnapshotHit i64 String CompilerTypecheckSummary))
+
+(defenum TcPrefixSnapshotSlot
+  (TcPrefixSnapshotEmpty)
+  (TcPrefixSnapshotFull String i64 String CompilerTypecheckSummary))
+
+(defenum TcPrefixCandidate
+  (TcNoPrefixCandidate)
+  (TcSomePrefixCandidate String i64 String))
+
+(define tc-prefix-snapshot-cache-capacity : i64
+  64)
+
+(define tc-prefix-snapshot-cache : (Array TcPrefixSnapshotSlot)
+  (make-array TcPrefixSnapshotSlot 64))
+
+(define tc-prefix-snapshot-cache-ready : bool
+  false)
+
+(define tc-prefix-snapshot-cache-hit-count : i64
+  0)
+
+(define tc-prefix-snapshot-cache-miss-count : i64
+  0)
+
+(define tc-prefix-snapshot-cache-store-count : i64
+  0)
+
+(define (tc-prefix-snapshot-cache-fill! [index : i64]) : unit
+  (if (>= index tc-prefix-snapshot-cache-capacity)
+    unit
+    (begin
+      (array-set! tc-prefix-snapshot-cache index (TcPrefixSnapshotEmpty))
+      (tc-prefix-snapshot-cache-fill! (+ index 1)))))
+
+(define (tc-prefix-snapshot-cache-stats-reset!) : unit
+  (begin
+    (set! tc-prefix-snapshot-cache-hit-count 0)
+    (set! tc-prefix-snapshot-cache-miss-count 0)
+    (set! tc-prefix-snapshot-cache-store-count 0)))
+
+(define (tc-prefix-snapshot-cache-clear!) : unit
+  (begin
+    (tc-prefix-snapshot-cache-fill! 0)
+    (set! tc-prefix-snapshot-cache-ready true)
+    (tc-prefix-snapshot-cache-stats-reset!)))
+
+(define (tc-prefix-snapshot-cache-ensure!) : unit
+  (if tc-prefix-snapshot-cache-ready
+    unit
+    (tc-prefix-snapshot-cache-clear!)))
+
+(define (tc-prefix-snapshot-cache-note-hit!) : unit
+  (set!
+    tc-prefix-snapshot-cache-hit-count
+    (+ tc-prefix-snapshot-cache-hit-count 1)))
+
+(define (tc-prefix-snapshot-cache-note-miss!) : unit
+  (set!
+    tc-prefix-snapshot-cache-miss-count
+    (+ tc-prefix-snapshot-cache-miss-count 1)))
+
+(define (tc-prefix-snapshot-cache-note-store!) : unit
+  (set!
+    tc-prefix-snapshot-cache-store-count
+    (+ tc-prefix-snapshot-cache-store-count 1)))
+
+(define (tc-prefix-snapshot-cache-lookup-from [key : String] [index : i64]) : TcPrefixSnapshotLookup
+  (if (>= index tc-prefix-snapshot-cache-capacity)
+    (TcPrefixSnapshotMiss)
+    (match (array-ref tc-prefix-snapshot-cache index)
+      [(TcPrefixSnapshotEmpty) (TcPrefixSnapshotMiss)]
+      [(TcPrefixSnapshotFull slot-key count module summary)
+        (if (string-eq slot-key key)
+          (TcPrefixSnapshotHit count module summary)
+          (tc-prefix-snapshot-cache-lookup-from key (+ index 1)))])))
+
+(define (tc-prefix-snapshot-cache-lookup [key : String]) : TcPrefixSnapshotLookup
+  (begin
+    (tc-prefix-snapshot-cache-ensure!)
+    (tc-prefix-snapshot-cache-lookup-from key 0)))
+
+(define (tc-prefix-snapshot-cache-store-at
+  [key : String]
+  [count : i64]
+  [module : String]
+  [summary : CompilerTypecheckSummary]
+  [index : i64]) : bool
+  (if (>= index tc-prefix-snapshot-cache-capacity)
+    false
+    (match (array-ref tc-prefix-snapshot-cache index)
+      [(TcPrefixSnapshotEmpty)
+        (begin
+          (array-set!
+            tc-prefix-snapshot-cache
+            index
+            (TcPrefixSnapshotFull key count module summary))
+          (tc-prefix-snapshot-cache-note-store!)
+          true)]
+      [(TcPrefixSnapshotFull slot-key _ _ _)
+        (if (string-eq slot-key key)
+          (begin
+            (array-set!
+              tc-prefix-snapshot-cache
+              index
+              (TcPrefixSnapshotFull key count module summary))
+            (tc-prefix-snapshot-cache-note-store!)
+            true)
+          (tc-prefix-snapshot-cache-store-at
+            key
+            count
+            module
+            summary
+            (+ index 1)))])))
+
+(define (tc-prefix-snapshot-cache-store
+  [key : String]
+  [count : i64]
+  [module : String]
+  [summary : CompilerTypecheckSummary]) : bool
+  (begin
+    (tc-prefix-snapshot-cache-ensure!)
+    (tc-prefix-snapshot-cache-store-at key count module summary 0)))
+
+(define (tc-prefix-snapshot-cache-store-persistent
+  [key : String]
+  [count : i64]
+  [module : String]
+  [summary : CompilerTypecheckSummary]) : bool
+  (let
+    [prev-arena : i64 (arena-current)]
+    [stored : bool
+      (begin
+        (unsafe
+          (arena-set! node-pool-base-arena))
+        (let
+          [persistent-key : String (string-copy-borrowed (& key))]
+          [persistent-module : String (string-copy-borrowed (& module))]
+          (begin
+            (unsafe
+              (arena-set! prev-arena))
+            (tc-prefix-snapshot-cache-store
+              persistent-key
+              count
+              persistent-module
+              summary))))]
+    stored))
 
 (define (tc-context-with-module [ctx : TcContext] [module : String]) : TcContext
   (match ctx
@@ -28792,7 +28944,145 @@
               [(ErrTcEnv message)
                 (ErrCompilerTypecheck (tc-decl-diag decl message))])]))]))
 
-(define (tc-check-decls-with-paths
+(define (tc-decl-path-list-last [paths : AstDeclPathList] [last : String]) : String
+  (match paths
+    [(AstDeclPathNil) last]
+    [(AstDeclPathCons path rest)
+      (let
+        [rest : AstDeclPathList (box-get rest)]
+        (tc-decl-path-list-last rest path))]))
+
+(define (tc-prefix-decl-key [decl : AstDecl]) : String
+  (match decl
+    [(AstDeclModule name) (str-cat "module:" (intern-str name))]
+    [(AstDeclDef name _ _) (str-cat "def:" (intern-str name))]
+    [(AstDeclDefFn name _ _ _ _) (str-cat "fn:" (intern-str name))]
+    [(AstDeclDefMacro name _ _ _) (str-cat "macro:" (intern-str name))]
+    [(AstDeclExtern name _ _ _) (str-cat "extern:" (intern-str name))]
+    [(AstDeclDefEnum name _ _) (str-cat "enum:" (intern-str name))]
+    [(AstDeclDefEnumLifetimes name _ _ _)
+      (str-cat "enum-lifetimes:" (intern-str name))]
+    [(AstDeclDefStruct name _ _ _) (str-cat "struct:" (intern-str name))]
+    [(AstDeclDefStructLifetimes name _ _ _ _)
+      (str-cat "struct-lifetimes:" (intern-str name))]
+    [(AstDeclImport _) "import"]
+    [(AstDeclIncludeStr name _) (str-cat "include-str:" name)]
+    [(AstDeclIncludeBin name _) (str-cat "include-bin:" name)]
+    [(AstDeclExport _) "export"]
+    [(AstDeclDefDispatch name _) (str-cat "dispatch:" (intern-str name))]
+    [(AstDeclTest name _ _) (str-cat "test:" (intern-str name))]
+    [(AstDeclUnsafe inner)
+      (str-cat "unsafe:" (tc-prefix-decl-key (box-get inner)))]
+    [(AstDeclComptimeDecl _ inner)
+      (str-cat "comptime:" (tc-prefix-decl-key (box-get inner)))]))
+
+(define (tc-prefix-key-add [key : String] [decl-path : String] [decl : AstDecl]) : String
+  (str-cat
+    key
+    (int->string (string-length decl-path))
+    ":"
+    decl-path
+    ":"
+    (tc-prefix-decl-key decl)
+    ";"))
+
+(define (tc-prefix-cache-safe-path? [path : String]) : bool
+  (let
+    [needle : String "stdlib/"]
+    (string-contains (& path) (& needle))))
+
+(define (tc-prefix-candidate-from
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [entry-path : String]
+  [count : i64]
+  [module : String]
+  [key : String]) : TcPrefixCandidate
+  (match decls
+    [(AstDeclNil) (TcNoPrefixCandidate)]
+    [(AstDeclCons decl rest)
+      (let
+        [rest : AstDeclList (box-get rest)]
+        [decl-path : String
+          (match paths
+            [(AstDeclPathCons path _) path]
+            [(AstDeclPathNil) ""])]
+        [rest-paths : AstDeclPathList
+          (match paths
+            [(AstDeclPathCons _ path-rest)
+              (let
+                [path-rest : AstDeclPathList (box-get path-rest)]
+                path-rest)]
+            [(AstDeclPathNil) AstDeclPathNil])]
+        (if (string-eq decl-path entry-path)
+          (if (> count 0)
+            (TcSomePrefixCandidate key count module)
+            (TcNoPrefixCandidate))
+          (if (tc-prefix-cache-safe-path? decl-path)
+            (let
+              [next-module : String
+                (match decl
+                  [(AstDeclModule next-module) (intern-str next-module)]
+                  [_ module])]
+              (tc-prefix-candidate-from
+                rest
+                rest-paths
+                entry-path
+                (+ count 1)
+                next-module
+                (tc-prefix-key-add key decl-path decl)))
+            (if (> count 0)
+              (TcSomePrefixCandidate key count module)
+              (TcNoPrefixCandidate)))))]))
+
+(define (tc-prefix-candidate [decls : AstDeclList] [paths : AstDeclPathList]) : TcPrefixCandidate
+  (let
+    [entry-path : String (tc-decl-path-list-last paths "")]
+    (if (string-eq entry-path "")
+      (TcNoPrefixCandidate)
+      (tc-prefix-candidate-from decls paths entry-path 0 "" "tc-prefix-v1;"))))
+
+(define (tc-decl-list-take [decls : AstDeclList] [count : i64]) : AstDeclList
+  (if (<= count 0)
+    AstDeclNil
+    (match decls
+      [(AstDeclNil) AstDeclNil]
+      [(AstDeclCons decl rest)
+        (let
+          [rest : AstDeclList (box-get rest)]
+          (AstDeclCons decl (box (tc-decl-list-take rest (- count 1)))))])))
+
+(define (tc-decl-path-list-take [paths : AstDeclPathList] [count : i64]) : AstDeclPathList
+  (if (<= count 0)
+    AstDeclPathNil
+    (match paths
+      [(AstDeclPathNil) AstDeclPathNil]
+      [(AstDeclPathCons path rest)
+        (let
+          [rest : AstDeclPathList (box-get rest)]
+          (AstDeclPathCons path (box (tc-decl-path-list-take rest (- count 1)))))])))
+
+(define (tc-decl-list-drop [decls : AstDeclList] [count : i64]) : AstDeclList
+  (if (<= count 0)
+    decls
+    (match decls
+      [(AstDeclNil) AstDeclNil]
+      [(AstDeclCons _ rest)
+        (let
+          [rest : AstDeclList (box-get rest)]
+          (tc-decl-list-drop rest (- count 1)))])))
+
+(define (tc-decl-path-list-drop [paths : AstDeclPathList] [count : i64]) : AstDeclPathList
+  (if (<= count 0)
+    paths
+    (match paths
+      [(AstDeclPathNil) AstDeclPathNil]
+      [(AstDeclPathCons _ rest)
+        (let
+          [rest : AstDeclPathList (box-get rest)]
+          (tc-decl-path-list-drop rest (- count 1)))])))
+
+(define (tc-check-decls-with-paths-cold
   [ctx : TcContext]
   [top-env : TcTypeEnv]
   [decls : AstDeclList]
@@ -28808,6 +29098,95 @@
       summary
       ""
       (TcModuleLocalEnvNil))))
+
+(define (tc-check-decls-with-prefix-hit
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [count : i64]
+  [module : String]
+  [summary : CompilerTypecheckSummary]) : ResultCompilerTypecheck
+  (begin
+    (tc-prefix-snapshot-cache-note-hit!)
+    (cfg compile-profile (compiler-tc-decl-profile-reset))
+    (tc-check-decls-with-paths-in-module
+      ctx
+      top-env
+      (tc-decl-list-drop decls count)
+      (tc-decl-path-list-drop paths count)
+      summary
+      module
+      (TcModuleLocalEnvNil))))
+
+(define (tc-check-decls-with-prefix-miss
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [key : String]
+  [count : i64]
+  [module : String]) : ResultCompilerTypecheck
+  (begin
+    (tc-prefix-snapshot-cache-note-miss!)
+    (cfg compile-profile (compiler-tc-decl-profile-reset))
+    (match (tc-check-decls-with-paths-in-module
+      ctx
+      top-env
+      (tc-decl-list-take decls count)
+      (tc-decl-path-list-take paths count)
+      (CompilerTypecheckSummary 0 0 0)
+      ""
+      (TcModuleLocalEnvNil))
+      [(OkCompilerTypecheck prefix-summary)
+        (begin
+          (tc-prefix-snapshot-cache-store-persistent
+            key
+            count
+            module
+            prefix-summary)
+          (cfg compile-profile (compiler-tc-decl-profile-reset))
+          (tc-check-decls-with-paths-in-module
+            ctx
+            top-env
+            (tc-decl-list-drop decls count)
+            (tc-decl-path-list-drop paths count)
+            prefix-summary
+            module
+            (TcModuleLocalEnvNil)))]
+      [(ErrCompilerTypecheck diag) (ErrCompilerTypecheck diag)])))
+
+(define (tc-check-decls-with-paths
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [summary : CompilerTypecheckSummary]) : ResultCompilerTypecheck
+  (if (compiler-load-session-cache-enabled?)
+    (match (tc-prefix-candidate decls paths)
+      [(TcSomePrefixCandidate key count module)
+        (match (tc-prefix-snapshot-cache-lookup key)
+          [(TcPrefixSnapshotHit cached-count cached-module cached-summary)
+            (tc-check-decls-with-prefix-hit
+              ctx
+              top-env
+              decls
+              paths
+              cached-count
+              cached-module
+              cached-summary)]
+          [(TcPrefixSnapshotMiss)
+            (tc-check-decls-with-prefix-miss
+              ctx
+              top-env
+              decls
+              paths
+              key
+              count
+              module)])]
+      [(TcNoPrefixCandidate)
+        (tc-check-decls-with-paths-cold ctx top-env decls paths summary)])
+    (tc-check-decls-with-paths-cold ctx top-env decls paths summary)))
 
 (define (tc-generated-clone-name? [name : String]) : bool
   (if (>= (string-length name) 6)

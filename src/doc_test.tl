@@ -2753,4 +2753,10 @@ typecheck: return type mismatch"))]
         (begin
           (panic "source-tool: windows direct object smoke regressed")
           0)))
+    (unless
+      (source-tool-windows-direct-object-runtime-fallback-smoke-ok?)
+      (return
+        (begin
+          (panic "source-tool: windows direct object fallback smoke regressed")
+          0)))
     (doc-test-run-smoke)))

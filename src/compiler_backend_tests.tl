@@ -752,13 +752,51 @@
                 (ObjectSymbolFunction))
               (compiler-object-symbol-list-contains?
                 symbols
+                "GetCommandLineA"
+                (ObjectSymbolExtern)
+                (ObjectSymbolFunction))
+              (compiler-object-symbol-list-contains?
+                symbols
+                "__chkstk"
+                (ObjectSymbolLocal)
+                (ObjectSymbolRuntime))
+              (compiler-object-symbol-list-contains?
+                symbols
                 ".L_tl_start_xdata"
                 (ObjectSymbolLocal)
                 (ObjectSymbolData))
+              true)
+            (backend-and8
               (compiler-object-section-contains-label?
                 sections
                 (ObjectSectionData)
                 ".L_tl_argc")
+              (compiler-object-section-contains-label?
+                sections
+                (ObjectSectionBss)
+                "tl_boot_off")
+              (compiler-object-section-contains-label?
+                sections
+                (ObjectSectionBss)
+                "tl_boot_pool")
+              true
+              true
+              true
+              true
+              true)
+            (backend-and8
+              (>=
+                (compiler-object-coff-section-label-offset
+                  image
+                  (ObjectSectionText)
+                  "tl_setup_argv")
+                0)
+              (>=
+                (compiler-object-coff-section-label-offset
+                  image
+                  (ObjectSectionText)
+                  ".L_tl_boot_alloc")
+                0)
               (compiler-object-section-contains-label?
                 sections
                 (ObjectSectionPdata)
@@ -766,12 +804,49 @@
               (compiler-object-section-contains-label?
                 sections
                 (ObjectSectionXdata)
-                ".L_tl_start_xdata"))
+                ".L_tl_start_xdata")
+              (compiler-object-symbol-list-contains?
+                symbols
+                ".L_tl_boot_alloc"
+                (ObjectSymbolLocal)
+                (ObjectSymbolRuntime))
+              true
+              true
+              true)
             (backend-and8
               (compiler-object-relocation-list-contains?
                 relocs
                 (ObjectRelocCall)
                 "tl_setup_argv")
+              (compiler-object-relocation-list-contains?
+                relocs
+                (ObjectRelocCall)
+                "GetCommandLineA")
+              (compiler-object-relocation-list-contains?
+                relocs
+                (ObjectRelocCall)
+                ".L_tl_boot_alloc")
+              (compiler-object-relocation-list-contains?
+                relocs
+                (ObjectRelocRipAddress)
+                ".L_tl_argc")
+              (compiler-object-relocation-list-contains?
+                relocs
+                (ObjectRelocRipAddress)
+                ".L_tl_argv")
+              (compiler-object-relocation-list-contains?
+                relocs
+                (ObjectRelocRipValue)
+                "tl_boot_off")
+              (compiler-object-relocation-list-contains?
+                relocs
+                (ObjectRelocRipAddress)
+                "tl_boot_pool")
+              (compiler-object-relocation-list-contains?
+                relocs
+                (ObjectRelocRipAddress)
+                "tl_boot_off"))
+            (backend-and8
               (compiler-object-relocation-list-contains?
                 relocs
                 (ObjectRelocCall)
@@ -799,7 +874,8 @@
               (compiler-object-relocation-list-contains?
                 relocs
                 (ObjectRelocAddr32Nb)
-                ".L_tl_start_xdata")))]
+                ".L_tl_start_xdata")
+              true))]
         (if shape-ok
           (match (compiler-object-coff-render image)
             [(OkCompilerObjectCoff obj)
@@ -807,6 +883,17 @@
                 [pdata-header : i64
                   (compiler-object-coff-section-header-offset
                     (ObjectSectionPdata))]
+                [text-header : i64
+                  (compiler-object-coff-section-header-offset
+                    (ObjectSectionText))]
+                [text-ptr : i64
+                  (compiler-object-coff-u32-at obj (+ text-header 20))]
+                [entry-offset : i64
+                  (compiler-object-coff-section-label-offset
+                    image
+                    (ObjectSectionText)
+                    "_tl_start")]
+                [gs-clear-offset : i64 (+ text-ptr (+ entry-offset 9))]
                 [xdata-header : i64
                   (compiler-object-coff-section-header-offset
                     (ObjectSectionXdata))]
@@ -826,7 +913,14 @@
                   (= (compiler-object-coff-u8-at obj (+ xdata-ptr 1)) 0x04)
                   (= (compiler-object-coff-u8-at obj (+ xdata-ptr 2)) 0x01)
                   (= (compiler-object-coff-u8-at obj (+ xdata-ptr 4)) 0x04)
-                  (= (compiler-object-coff-u8-at obj (+ xdata-ptr 5)) 0x42)))]
+                  (= (compiler-object-coff-u8-at obj (+ xdata-ptr 5)) 0x42)
+                  (= (compiler-object-coff-u8-at obj gs-clear-offset) 0x65)
+                  (=
+                    (compiler-object-coff-u8-at obj (+ gs-clear-offset 1))
+                    0x48)
+                  (=
+                    (compiler-object-coff-u8-at obj (+ gs-clear-offset 2))
+                    0xc7)))]
             [(ErrCompilerObjectCoff _) false])
           false))]
     [(ErrCompilerBackendObject _) false]))

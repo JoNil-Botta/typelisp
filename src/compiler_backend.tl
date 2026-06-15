@@ -23095,6 +23095,65 @@ tl_memcpy:
         plan
         (box-get rest))]))
 
+(define (compiler-backend-object-hex-value [c : char]) : i64
+  (if (and (>= c #0') (<= c #9'))
+    (- (cast c : i64) (cast #0' : i64))
+    (if (and (>= c #a') (<= c #f'))
+      (+ 10 (- (cast c : i64) (cast #a' : i64)))
+      (if (and (>= c #A') (<= c #F'))
+        (+ 10 (- (cast c : i64) (cast #A' : i64)))
+        0))))
+
+(define (compiler-backend-object-bytes-from-hex [hex : String]) : String
+  (let
+    [out : (Array u8) (make-array u8 0)]
+    [i : i64 0]
+    [n : i64 (string-length hex)]
+    (begin
+      (while (< (+ i 1) n)
+        (let
+          [hi : i64 (compiler-backend-object-hex-value (string-ref hex i))]
+          [lo : i64
+            (compiler-backend-object-hex-value (string-ref hex (+ i 1)))]
+          (begin
+            (array-push! out (cast (+ (* hi 16) lo) : u8))
+            (set! i (+ i 2)))))
+      (unsafe
+        (string-from-bytes
+          (ptr-cast (array-data out) : (Ptr u8))
+          (array-length out))))))
+
+(define (compiler-backend-object-windows-chkstk-bytes) : String
+  (compiler-backend-object-bytes-from-hex
+    "51504889c1488d4424104881f9001000007212482d00100000c600004881e900100000ebe54829c8c600005859c3"))
+
+(define (compiler-backend-object-windows-setup-pre-getcmd-bytes) : String
+  (compiler-backend-object-bytes-from-hex "554889e55341544155415641574883ec28"))
+
+(define (compiler-backend-object-windows-setup-after-getcmd-bytes) : String
+  (compiler-backend-object-bytes-from-hex
+    "4889c34d31e442803c2300740549ffc4ebf4498d4c24014883ec20"))
+
+(define (compiler-backend-object-windows-setup-after-boot1-bytes) : String
+  (compiler-backend-object-bytes-from-hex
+    "4883c4204989c54831c94c39e17d0d8a040b4188440d0048ffc1ebee43c64425000048c7c1080800004883ec20"))
+
+(define (compiler-backend-object-windows-setup-after-boot2-pre-store-bytes) : String
+  (compiler-backend-object-bytes-from-hex
+    "4883c4204989c64d31ff4c89eb8a033c0074513c20750548ffc3ebf14981ffff0000007d3f4b891cfe49ffc74531c98a033c00742f3c2275154183f1014889d98a4101880148ffc13c0075f4ebe13c20750d4585c97508c6030048ffc3ebae48ffc3ebcb4bc704fe00000000"))
+
+(define (compiler-backend-object-windows-setup-epilogue-bytes) : String
+  (compiler-backend-object-bytes-from-hex "4883c428415f415e415d415c5b5dc3"))
+
+(define (compiler-backend-object-windows-add-rdx-rax-bytes) : String
+  (compiler-backend-object-bytes-from-hex "4801d0"))
+
+(define (compiler-backend-object-windows-ret-bytes) : String
+  (compiler-backend-object-bytes-from-hex "c3"))
+
+(define (compiler-backend-object-windows-entry-gs-clear-bytes) : String
+  (compiler-backend-object-bytes-from-hex "6548c704252800000000000000"))
+
 (define (compiler-backend-object-windows-entry-xdata-bytes) : String
   (let
     [out : (Array u8) (make-array u8 0)]
@@ -23113,23 +23172,197 @@ tl_memcpy:
 
 (define (compiler-backend-object-add-windows-entry-data
   [parts : CompilerBackendObjectParts]) : CompilerBackendObjectParts
-  (compiler-backend-object-add-data
-    (compiler-backend-object-add-data
+  (let
+    [with-argc-symbol : CompilerBackendObjectParts
       (compiler-backend-object-symbol-local-section
+        parts
+        ".L_tl_argc"
+        (ObjectSectionData)
+        (ObjectSymbolData))]
+    [with-argc : CompilerBackendObjectParts
+      (compiler-backend-object-add-data
         (compiler-backend-object-add-data
-          (compiler-backend-object-add-data
-            (compiler-backend-object-symbol-local-section
-              parts
-              ".L_tl_argc"
-              (ObjectSectionData)
-              (ObjectSymbolData))
-            (ObjectDataLabel ".L_tl_argc"))
-          (ObjectDataI64 0))
+          with-argc-symbol
+          (ObjectDataLabel ".L_tl_argc"))
+        (ObjectDataI64 0))]
+    [with-argv-symbol : CompilerBackendObjectParts
+      (compiler-backend-object-symbol-local-section
+        with-argc
         ".L_tl_argv"
         (ObjectSectionData)
-        (ObjectSymbolData))
-      (ObjectDataLabel ".L_tl_argv"))
-    (ObjectDataI64 0)))
+        (ObjectSymbolData))]
+    [with-argv : CompilerBackendObjectParts
+      (compiler-backend-object-add-data
+        (compiler-backend-object-add-data
+          with-argv-symbol
+          (ObjectDataLabel ".L_tl_argv"))
+        (ObjectDataI64 0))]
+    [with-boot-off-symbol : CompilerBackendObjectParts
+      (compiler-backend-object-symbol-local-section
+        with-argv
+        "tl_boot_off"
+        (ObjectSectionBss)
+        (ObjectSymbolData))]
+    [with-boot-off : CompilerBackendObjectParts
+      (compiler-backend-object-add-bss
+        (compiler-backend-object-add-bss
+          (compiler-backend-object-add-bss
+            with-boot-off-symbol
+            (ObjectDataAlign 8))
+          (ObjectDataLabel "tl_boot_off"))
+        (ObjectDataZero 8))]
+    [with-boot-pool-symbol : CompilerBackendObjectParts
+      (compiler-backend-object-symbol-local-section
+        with-boot-off
+        "tl_boot_pool"
+        (ObjectSectionBss)
+        (ObjectSymbolData))]
+    (compiler-backend-object-add-bss
+      (compiler-backend-object-add-bss
+        with-boot-pool-symbol
+        (ObjectDataLabel "tl_boot_pool"))
+      (ObjectDataZero 524288))))
+
+(define (compiler-backend-object-add-text-bytes
+  [parts : CompilerBackendObjectParts]
+  [bytes : String]) : CompilerBackendObjectParts
+  (compiler-backend-object-add-text parts (ObjectX64Bytes bytes)))
+
+(define (compiler-backend-object-add-call-instr
+  [parts : CompilerBackendObjectParts]
+  [site : String]
+  [target : String]) : CompilerBackendObjectParts
+  (compiler-backend-object-add-text
+    (compiler-backend-object-add-text-relocation
+      parts
+      site
+      (ObjectRelocCall)
+      target)
+    (ObjectX64Call target)))
+
+(define (compiler-backend-object-add-rip-instr
+  [parts : CompilerBackendObjectParts]
+  [site : String]
+  [kind : CompilerObjectRelocationKind]
+  [target : String]
+  [instr : CompilerObjectX64Instr]) : CompilerBackendObjectParts
+  (compiler-backend-object-add-text
+    (compiler-backend-object-add-text-relocation parts site kind target)
+    instr))
+
+(define (compiler-backend-object-add-windows-runtime-text
+  [parts : CompilerBackendObjectParts]) : CompilerBackendObjectParts
+  (let
+    [with-symbols : CompilerBackendObjectParts
+      (compiler-backend-object-symbol-extern-once
+        (compiler-backend-object-symbol-local-section
+          (compiler-backend-object-symbol-local-section
+            (compiler-backend-object-symbol-local-section
+              parts
+              "__chkstk"
+              (ObjectSectionText)
+              (ObjectSymbolRuntime))
+            "tl_setup_argv"
+            (ObjectSectionText)
+            (ObjectSymbolRuntime))
+          ".L_tl_boot_alloc"
+          (ObjectSectionText)
+          (ObjectSymbolRuntime))
+        "GetCommandLineA"
+        (ObjectSymbolFunction))]
+    [with-chkstk-label : CompilerBackendObjectParts
+      (compiler-backend-object-add-text
+        with-symbols
+        (ObjectX64Label "__chkstk"))]
+    [with-chkstk : CompilerBackendObjectParts
+      (compiler-backend-object-add-text-bytes
+        with-chkstk-label
+        (compiler-backend-object-windows-chkstk-bytes))]
+    [with-setup-label : CompilerBackendObjectParts
+      (compiler-backend-object-add-text
+        with-chkstk
+        (ObjectX64Label "tl_setup_argv"))]
+    [with-setup-pre : CompilerBackendObjectParts
+      (compiler-backend-object-add-text-bytes
+        with-setup-label
+        (compiler-backend-object-windows-setup-pre-getcmd-bytes))]
+    [with-getcmd-call : CompilerBackendObjectParts
+      (compiler-backend-object-add-call-instr
+        with-setup-pre
+        "tl_setup_argv"
+        "GetCommandLineA")]
+    [with-after-getcmd : CompilerBackendObjectParts
+      (compiler-backend-object-add-text-bytes
+        with-getcmd-call
+        (compiler-backend-object-windows-setup-after-getcmd-bytes))]
+    [with-boot1-call : CompilerBackendObjectParts
+      (compiler-backend-object-add-call-instr
+        with-after-getcmd
+        "tl_setup_argv"
+        ".L_tl_boot_alloc")]
+    [with-after-boot1 : CompilerBackendObjectParts
+      (compiler-backend-object-add-text-bytes
+        with-boot1-call
+        (compiler-backend-object-windows-setup-after-boot1-bytes))]
+    [with-boot2-call : CompilerBackendObjectParts
+      (compiler-backend-object-add-call-instr
+        with-after-boot1
+        "tl_setup_argv"
+        ".L_tl_boot_alloc")]
+    [with-after-boot2 : CompilerBackendObjectParts
+      (compiler-backend-object-add-text-bytes
+        with-boot2-call
+        (compiler-backend-object-windows-setup-after-boot2-pre-store-bytes))]
+    [with-argc-store : CompilerBackendObjectParts
+      (compiler-backend-object-add-rip-instr
+        with-after-boot2
+        "tl_setup_argv"
+        (ObjectRelocRipAddress)
+        ".L_tl_argc"
+        (ObjectX64StoreR15Rip ".L_tl_argc"))]
+    [with-argv-store : CompilerBackendObjectParts
+      (compiler-backend-object-add-rip-instr
+        with-argc-store
+        "tl_setup_argv"
+        (ObjectRelocRipAddress)
+        ".L_tl_argv"
+        (ObjectX64StoreR14Rip ".L_tl_argv"))]
+    [with-setup-end : CompilerBackendObjectParts
+      (compiler-backend-object-add-text-bytes
+        with-argv-store
+        (compiler-backend-object-windows-setup-epilogue-bytes))]
+    [with-boot-label : CompilerBackendObjectParts
+      (compiler-backend-object-add-text
+        with-setup-end
+        (ObjectX64Label ".L_tl_boot_alloc"))]
+    [with-boot-off-load : CompilerBackendObjectParts
+      (compiler-backend-object-add-rip-instr
+        with-boot-label
+        ".L_tl_boot_alloc"
+        (ObjectRelocRipValue)
+        "tl_boot_off"
+        (ObjectX64LoadRip "tl_boot_off"))]
+    [with-boot-pool-lea : CompilerBackendObjectParts
+      (compiler-backend-object-add-rip-instr
+        with-boot-off-load
+        ".L_tl_boot_alloc"
+        (ObjectRelocRipAddress)
+        "tl_boot_pool"
+        (ObjectX64LoadRipAddressRdx "tl_boot_pool"))]
+    [with-add-base : CompilerBackendObjectParts
+      (compiler-backend-object-add-text-bytes
+        with-boot-pool-lea
+        (compiler-backend-object-windows-add-rdx-rax-bytes))]
+    [with-boot-off-add : CompilerBackendObjectParts
+      (compiler-backend-object-add-rip-instr
+        with-add-base
+        ".L_tl_boot_alloc"
+        (ObjectRelocRipAddress)
+        "tl_boot_off"
+        (ObjectX64AddRcxRip "tl_boot_off"))]
+    (compiler-backend-object-add-text-bytes
+      with-boot-off-add
+      (compiler-backend-object-windows-ret-bytes))))
 
 (define (compiler-backend-object-add-windows-entry-text
   [parts : CompilerBackendObjectParts]) : CompilerBackendObjectParts
@@ -23149,14 +23382,8 @@ tl_memcpy:
           (ObjectSymbolFunction))
         "ExitProcess"
         (ObjectSymbolFunction))]
-    [with-setup : CompilerBackendObjectParts
-      (compiler-backend-object-symbol-local-section
-        with-symbols
-        "tl_setup_argv"
-        (ObjectSectionText)
-        (ObjectSymbolRuntime))]
     [with-label : CompilerBackendObjectParts
-      (compiler-backend-object-add-text with-setup (ObjectX64Label entry))]
+      (compiler-backend-object-add-text with-symbols (ObjectX64Label entry))]
     [with-sub : CompilerBackendObjectParts
       (compiler-backend-object-add-text with-label (ObjectX64SubRspImm8 40))]
     [with-setup-call : CompilerBackendObjectParts
@@ -23167,10 +23394,14 @@ tl_memcpy:
           (ObjectRelocCall)
           "tl_setup_argv")
         (ObjectX64Call "tl_setup_argv"))]
+    [with-gs-clear : CompilerBackendObjectParts
+      (compiler-backend-object-add-text-bytes
+        with-setup-call
+        (compiler-backend-object-windows-entry-gs-clear-bytes))]
     [with-argc : CompilerBackendObjectParts
       (compiler-backend-object-add-text
         (compiler-backend-object-add-text-relocation
-          with-setup-call
+          with-gs-clear
           entry
           (ObjectRelocRipValue)
           ".L_tl_argc")
@@ -23256,7 +23487,8 @@ tl_memcpy:
   [parts : CompilerBackendObjectParts]) : CompilerBackendObjectParts
   (compiler-backend-object-add-windows-entry-unwind
     (compiler-backend-object-add-windows-entry-text
-      (compiler-backend-object-add-windows-entry-data parts))))
+      (compiler-backend-object-add-windows-runtime-text
+        (compiler-backend-object-add-windows-entry-data parts)))))
 
 (define (compiler-backend-object-entry-symbols
   [parts : CompilerBackendObjectParts]

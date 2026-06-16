@@ -5089,14 +5089,16 @@
   [kind : AstImportKind]
   [path : String]
   [module-name : AstMaybeModuleName]
-  [alias : AstMaybeImportAlias]) : ResultAstDecl
-  (OkAstDecl (AstDeclImport (AstImportSpec kind path module-name alias))))
+  [alias : AstMaybeImportAlias]
+  [span : AstSourceSpan]) : ResultAstDecl
+  (OkAstDecl (AstDeclImport (AstImportSpec kind path module-name alias span))))
 
 (define (parse-ast-import-alias
   [kind : AstImportKind]
   [path : String]
   [module-name : AstMaybeModuleName]
-  [tail : SpannedSexpr]) : ResultAstDecl
+  [tail : SpannedSexpr]
+  [span : AstSourceSpan]) : ResultAstDecl
   (match tail
     [(SpSCons as-node alias-tail _)
       (match (sp-node-get as-node)
@@ -5114,7 +5116,8 @@
                           kind
                           path
                           module-name
-                          (AstSomeImportAlias alias))
+                          (AstSomeImportAlias alias)
+                          span)
                         (ErrAstDecl "parse: malformed import"))]
                     [_ (ErrAstDecl "parse: malformed import")])]
                 [_ (ErrAstDecl "parse: malformed import")])]
@@ -5122,7 +5125,10 @@
         [_ (ErrAstDecl "parse: malformed import")])]
     [_ (ErrAstDecl "parse: malformed import")]))
 
-(define (parse-ast-import-module-tail [path : String] [tail : SpannedSexpr]) : ResultAstDecl
+(define (parse-ast-import-module-tail
+  [path : String]
+  [tail : SpannedSexpr]
+  [span : AstSourceSpan]) : ResultAstDecl
   (match tail
     [(SpSCons module-name-node after-module _)
       (match (sp-node-get module-name-node)
@@ -5133,31 +5139,42 @@
                 (AstImportPath)
                 path
                 (AstSomeModuleName module-name)
-                AstNoImportAlias)]
+                AstNoImportAlias
+                span)]
             [_
               (parse-ast-import-alias
                 (AstImportPath)
                 path
                 (AstSomeModuleName module-name)
-                (sp-node-get after-module))])]
+                (sp-node-get after-module)
+                span)])]
         [_ (ErrAstDecl "parse: malformed import")])]
     [_ (ErrAstDecl "parse: malformed import")]))
 
-(define (parse-ast-import-tail [path : String] [tail : SpannedSexpr]) : ResultAstDecl
+(define (parse-ast-import-tail
+  [path : String]
+  [tail : SpannedSexpr]
+  [span : AstSourceSpan]) : ResultAstDecl
   (match tail
     [(SpSNil _)
       (parse-ast-import-spec
         (AstImportPath)
         path
         AstNoModuleName
-        AstNoImportAlias)]
+        AstNoImportAlias
+        span)]
     [(SpSCons head-node after-head _)
       (match (sp-node-get head-node)
         [(SpSSym head _)
           (if (string-eq head "as")
-            (parse-ast-import-alias (AstImportPath) path AstNoModuleName tail)
+            (parse-ast-import-alias
+              (AstImportPath)
+              path
+              AstNoModuleName
+              tail
+              span)
             (if (string-eq head "module")
-              (parse-ast-import-module-tail path (sp-node-get after-head))
+              (parse-ast-import-module-tail path (sp-node-get after-head) span)
               (ErrAstDecl "parse: malformed import")))]
         [_ (ErrAstDecl "parse: malformed import")])]
     [_ (ErrAstDecl "parse: malformed import")]))
@@ -5165,7 +5182,8 @@
 (define (parse-ast-import-macro-tail
   [dispatch : SymI64Env]
   [call-form : SpannedSexpr]
-  [tail : SpannedSexpr]) : ResultAstDecl
+  [tail : SpannedSexpr]
+  [span : AstSourceSpan]) : ResultAstDecl
   (match (parse-ast-expr dispatch call-form)
     [(OkAstExpr call-expr)
       (match (ast-expr-unspan (ast-node-get call-expr))
@@ -5176,7 +5194,8 @@
                 (AstImportMacro call-expr)
                 ""
                 AstNoModuleName
-                AstNoImportAlias)]
+                AstNoImportAlias
+                span)]
             [(SpSCons head-node _ _)
               (match (sp-node-get head-node)
                 [(SpSSym head _)
@@ -5185,7 +5204,8 @@
                       (AstImportMacro call-expr)
                       ""
                       AstNoModuleName
-                      tail)
+                      tail
+                      span)
                     (ErrAstDecl "parse: malformed import"))]
                 [_ (ErrAstDecl "parse: malformed import")])]
             [_ (ErrAstDecl "parse: malformed import")])]
@@ -5240,7 +5260,8 @@
 
 (define (parse-ast-dotted-import-tail
   [module-name : String]
-  [tail : SpannedSexpr]) : ResultAstDecl
+  [tail : SpannedSexpr]
+  [span : AstSourceSpan]) : ResultAstDecl
   (if (not (parse-ast-dotted-import-name-valid? module-name))
     (ErrAstDecl "parse: invalid dotted import module name")
     (match tail
@@ -5250,7 +5271,8 @@
           module-name
           (AstSomeModuleName module-name)
           (AstSomeImportAlias
-            (parse-ast-dotted-import-default-alias module-name)))]
+            (parse-ast-dotted-import-default-alias module-name))
+          span)]
       [(SpSCons head-node _ _)
         (match (sp-node-get head-node)
           [(SpSSym head _)
@@ -5259,23 +5281,28 @@
                 (AstImportModule)
                 module-name
                 (AstSomeModuleName module-name)
-                tail)
+                tail
+                span)
               (ErrAstDecl "parse: malformed import"))]
           [_ (ErrAstDecl "parse: malformed import")])]
       [_ (ErrAstDecl "parse: malformed import")])))
 
-(define (parse-ast-import [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstDecl
+(define (parse-ast-import
+  [dispatch : SymI64Env]
+  [rest : SpannedSexpr]
+  [span : AstSourceSpan]) : ResultAstDecl
   (match rest
     [(SpSCons path-node tail _)
       (match (sp-node-get path-node)
-        [(SpSStr path _) (parse-ast-import-tail path (sp-node-get tail))]
+        [(SpSStr path _) (parse-ast-import-tail path (sp-node-get tail) span)]
         [(SpSSym module-name _)
-          (parse-ast-dotted-import-tail module-name (sp-node-get tail))]
+          (parse-ast-dotted-import-tail module-name (sp-node-get tail) span)]
         [(SpSCons _ _ _)
           (parse-ast-import-macro-tail
             dispatch
             (sp-node-get path-node)
-            (sp-node-get tail))]
+            (sp-node-get tail)
+            span)]
         [_ (ErrAstDecl "parse: malformed import")])]
     [_ (ErrAstDecl "parse: malformed import")]))
 
@@ -5713,7 +5740,8 @@
             (AstImportMacroDecls call-expr)
             ""
             AstNoModuleName
-            AstNoImportAlias)]
+            AstNoImportAlias
+            (ast-source-span-from-source-span (spanned-sexpr-span form)))]
         [_ (ErrAstDecl "parse: expected declaration")])]
     [(ErrAstExpr message) (ErrAstDecl message)]))
 
@@ -5737,7 +5765,11 @@
                       (if (= tag (compiler-parse-tag-decl-defmacro))
                         (parse-ast-defmacro dispatch (sp-node-get rest))
                         (if (= tag (compiler-parse-tag-decl-import))
-                          (parse-ast-import dispatch (sp-node-get rest))
+                          (parse-ast-import
+                            dispatch
+                            (sp-node-get rest)
+                            (ast-source-span-from-source-span
+                              (spanned-sexpr-span s)))
                           (if (= tag (compiler-parse-tag-decl-include-str))
                             (parse-ast-include-str (sp-node-get rest))
                             (if (= tag (compiler-parse-tag-decl-include-bin))
@@ -5894,7 +5926,8 @@
           (AstImportMacroDecls _)
           path
           (AstNoModuleName)
-          (AstNoImportAlias)))
+          (AstNoImportAlias)
+          _))
       (string-eq path "")]
     [_ false]))
 
@@ -6074,7 +6107,7 @@
 
 (define (ast-first-import-ok? [decls : AstDeclList]) : bool
   (match decls
-    [(AstDeclCons (AstDeclImport (AstImportSpec (AstImportPath) path _ _)) _)
+    [(AstDeclCons (AstDeclImport (AstImportSpec (AstImportPath) path _ _ _)) _)
       (string-eq path "stdlib/test.tl")]
     [_ false]))
 
@@ -6117,7 +6150,8 @@
                   (AstImportPath)
                   path
                   (AstSomeModuleName module-name)
-                  (AstSomeImportAlias alias)))
+                  (AstSomeImportAlias alias)
+                  _))
               rest)
             (let
               [rest : AstDeclList (box-get rest)]
@@ -6143,7 +6177,8 @@
                   (AstImportModule)
                   module-path
                   (AstSomeModuleName module-name)
-                  (AstSomeImportAlias alias)))
+                  (AstSomeImportAlias alias)
+                  _))
               rest)
             (let
               [rest : AstDeclList (box-get rest)]
@@ -6169,7 +6204,8 @@
                   (AstImportModule)
                   module-path
                   (AstSomeModuleName module-name)
-                  (AstSomeImportAlias alias)))
+                  (AstSomeImportAlias alias)
+                  _))
               rest)
             (let
               [rest : AstDeclList (box-get rest)]
@@ -6200,7 +6236,8 @@
                   (AstImportMacroDecls call-expr)
                   path
                   (AstNoModuleName)
-                  (AstNoImportAlias)))
+                  (AstNoImportAlias)
+                  _))
               rest)
             (let
               [rest : AstDeclList (box-get rest)]
@@ -6225,7 +6262,8 @@
                   (AstImportMacro call-expr)
                   path
                   (AstNoModuleName)
-                  (AstSomeImportAlias alias)))
+                  (AstSomeImportAlias alias)
+                  _))
               rest)
             (let
               [rest : AstDeclList (box-get rest)]

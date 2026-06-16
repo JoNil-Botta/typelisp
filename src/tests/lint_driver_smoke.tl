@@ -110,5 +110,9 @@
     (let
       [core-result : i64 (compiler-lint-driver-self-test)]
       (if (= core-result 42)
-        (lint-driver-smoke-deprecated-string-concat-self-test)
+        (let
+          [unused-import-result : i64 (selfhost-lint-unused-imports-self-test)]
+          (if (= unused-import-result 42)
+            (lint-driver-smoke-deprecated-string-concat-self-test)
+            unused-import-result))
         core-result))))

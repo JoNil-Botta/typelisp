@@ -1116,7 +1116,7 @@
               (intern-str name)
               seen)]
           [(AstDeclImport
-              (AstImportSpec (AstImportModule) _ _ (AstSomeImportAlias alias)))
+              (AstImportSpec (AstImportModule) _ _ (AstSomeImportAlias alias) _))
             (let
               [key : String
                 (compiler-load-dotted-import-alias-key current-module alias)]
@@ -1166,7 +1166,13 @@
   (match alias
     [(AstSomeImportAlias _)
       (ast-decl-cons
-        (AstDeclImport (AstImportSpec kind import-path expected-module alias))
+        (AstDeclImport
+          (AstImportSpec
+            kind
+            import-path
+            expected-module
+            alias
+            (AstSourceSpan 0 0 0 0)))
         rest)]
     [(AstNoImportAlias) rest]))
 
@@ -1283,7 +1289,7 @@
         [rest : AstDeclList (box-get rest)]
         (match decl
           [(AstDeclImport
-              (AstImportSpec kind import-path expected-module alias))
+              (AstImportSpec kind import-path expected-module alias _))
             (match (compiler-load-resolve-import-spec-with-roots
               importer-path
               import-root
@@ -2661,7 +2667,7 @@
         [rest : AstDeclList (box-get rest)]
         (match decl
           [(AstDeclImport
-              (AstImportSpec kind import-path expected-module alias))
+              (AstImportSpec kind import-path expected-module alias _))
             (match (compiler-load-resolve-package-import-spec
               importer-path
               kind
@@ -3084,7 +3090,8 @@
                 _
                 _
                 (AstSomeModuleName module-name)
-                (AstSomeImportAlias alias)))
+                (AstSomeImportAlias alias)
+                _))
             (if (and
               (string-eq module-name target-module)
               (string-eq alias target-alias))
@@ -3119,7 +3126,8 @@
                               _
                               _
                               (AstSomeModuleName alias-module)
-                              (AstSomeImportAlias alias-name)))
+                              (AstSomeImportAlias alias-name)
+                              _))
                           rest4)
                         (let
                           [rest4 : AstDeclList (box-get rest4)]

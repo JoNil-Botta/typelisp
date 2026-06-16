@@ -4854,7 +4854,7 @@
               current-module-id
               target-id
               next-module)]
-          [(AstDeclImport (AstImportSpec _ _ expected _))
+          [(AstDeclImport (AstImportSpec _ _ expected _ _))
             (if (= module-id current-module-id)
               (match expected
                 [(AstSomeModuleName target)
@@ -8634,7 +8634,8 @@
                 _
                 _
                 (AstSomeModuleName target-module)
-                (AstSomeImportAlias alias)))
+                (AstSomeImportAlias alias)
+                _))
             (match (tc-bind-import-alias-module
               ctx
               all-decls
@@ -26475,7 +26476,7 @@
               current-module-id
               alias
               next-module)]
-          [(AstDeclImport (AstImportSpec _ _ expected maybe-alias))
+          [(AstDeclImport (AstImportSpec _ _ expected maybe-alias _))
             (match maybe-alias
               [(AstSomeImportAlias import-alias)
                 (if (and

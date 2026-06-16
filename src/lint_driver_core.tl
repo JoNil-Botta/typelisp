@@ -667,6 +667,58 @@
 (define (selfhost-lint-clean-source) : String
   "(define (inc [x : i64]) : i64 (+ x 1))")
 
+(define (selfhost-lint-unused-dotted-import-source) : String
+  "(import pkg.data)
+(define (main) : i64 42)")
+
+(define (selfhost-lint-used-dotted-import-alias-source) : String
+  "(import pkg.data)
+(define (main) : i64 (data.value))")
+
+(define (selfhost-lint-used-dotted-import-full-path-source) : String
+  "(import pkg.data)
+(define (main) : i64 (pkg.data.value))")
+
+(define (selfhost-lint-unused-explicit-path-alias-source) : String
+  "(import \"data.tl\" module data :as d)
+(define (main) : i64 42)")
+
+(define (selfhost-lint-used-explicit-path-alias-source) : String
+  "(import \"data.tl\" module data :as d)
+(define (main) : i64 (d.value))")
+
+(define (selfhost-lint-unused-underscore-import-source) : String
+  "(import pkg.data as _data)
+(define (main) : i64 42)")
+
+(define (selfhost-lint-legacy-path-import-source) : String
+  "(import \"data.tl\")
+(define (main) : i64 42)")
+
+(define (selfhost-lint-used-import-type-source) : String
+  "(import pkg.data)
+(define (make) : data.Item (init : data.Item))")
+
+(define (selfhost-lint-used-import-pattern-source) : String
+  "(import pkg.data)
+(define (read [x : data.Maybe]) : i64
+  (match x
+    [(data.Maybe.Some y) y]
+    [_ 0]))")
+
+(define (selfhost-lint-used-import-export-source) : String
+  "(import pkg.data)
+(export (value data.value))")
+
+(define (selfhost-lint-used-import-macro-call-source) : String
+  "(import pkg.macros)
+(pkg.macros.emit i64)")
+
+(define (selfhost-lint-suppressed-unused-import-source) : String
+  ";; lint-allow: unused-import
+(import pkg.data)
+(define (main) : i64 42)")
+
 (define (selfhost-lint-nested-let-source) : String
   "(define (main) : i64
   (let
@@ -752,6 +804,95 @@
       "lint_driver_self_test.tl"
       source
       (string-vec-new))))
+
+(define (selfhost-lint-unused-import-finding-ok? [findings : LintFindings]) : bool
+  (match (lint-findings-get findings 0)
+    [(LintSomeFinding finding)
+      (let
+        [fspan : AstSourceSpan (struct-get finding span)]
+        (and
+          (= (lint-findings-count findings) 1)
+          (> (struct-get fspan start-line) 0)
+          (string-eq (struct-get finding rule-id) (lint-rule-unused-import-id))))]
+    [(LintNoFinding) false]))
+
+(define (selfhost-lint-unused-imports-self-test) : i64
+  (let
+    [unused : LintFindings
+      (selfhost-lint-source-with-roots
+        "lint_driver_self_test.tl"
+        (selfhost-lint-unused-dotted-import-source)
+        (string-vec-new))]
+    [unused-path-alias : LintFindings
+      (selfhost-lint-source-with-roots
+        "lint_driver_self_test.tl"
+        (selfhost-lint-unused-explicit-path-alias-source)
+        (string-vec-new))]
+    (if (not (selfhost-lint-unused-import-finding-ok? unused))
+      30
+      (if (not (selfhost-lint-unused-import-finding-ok? unused-path-alias))
+        31
+        (if (not
+          (=
+            (selfhost-lint-source-finding-count
+              (selfhost-lint-used-dotted-import-alias-source))
+            0))
+          32
+          (if (not
+            (=
+              (selfhost-lint-source-finding-count
+                (selfhost-lint-used-dotted-import-full-path-source))
+              0))
+            33
+            (if (not
+              (=
+                (selfhost-lint-source-finding-count
+                  (selfhost-lint-used-explicit-path-alias-source))
+                0))
+              34
+              (if (not
+                (=
+                  (selfhost-lint-source-finding-count
+                    (selfhost-lint-unused-underscore-import-source))
+                  0))
+                35
+                (if (not
+                  (=
+                    (selfhost-lint-source-finding-count
+                      (selfhost-lint-legacy-path-import-source))
+                    0))
+                  36
+                  (if (not
+                    (=
+                      (selfhost-lint-source-finding-count
+                        (selfhost-lint-used-import-type-source))
+                      0))
+                    37
+                    (if (not
+                      (=
+                        (selfhost-lint-source-finding-count
+                          (selfhost-lint-used-import-pattern-source))
+                        0))
+                      38
+                      (if (not
+                        (=
+                          (selfhost-lint-source-finding-count
+                            (selfhost-lint-used-import-export-source))
+                          0))
+                        39
+                        (if (not
+                          (=
+                            (selfhost-lint-source-finding-count
+                              (selfhost-lint-used-import-macro-call-source))
+                            0))
+                          40
+                          (if (not
+                            (=
+                              (selfhost-lint-source-finding-count
+                                (selfhost-lint-suppressed-unused-import-source))
+                              0))
+                            41
+                            42))))))))))))))
 
 ;; Compatibility helper retained for the nested-if-ladder metadata shape.
 (define (selfhost-lint-reported-finding-ok? [findings : LintFindings]) : bool

@@ -1461,7 +1461,8 @@
                   _
                   _
                   (AstSomeModuleName target-module)
-                  (AstSomeImportAlias alias)))
+                  (AstSomeImportAlias alias)
+                  _))
               (lower-name-env-add-module-aliases
                 all-decls
                 all-paths

@@ -1988,7 +1988,8 @@
                   _
                   _
                   (AstSomeModuleName target-module)
-                  (AstSomeImportAlias alias)))
+                  (AstSomeImportAlias alias)
+                  _))
               (compiler-symbols-add-module-aliases
                 (compiler-symbols-remove-module-macro-aliases
                   symbols
@@ -2831,7 +2832,8 @@
                   _
                   _
                   (AstSomeModuleName target-module)
-                  (AstSomeImportAlias alias)))
+                  (AstSomeImportAlias alias)
+                  _))
               (compiler-registries-add-module-aliases
                 registries
                 all-decls

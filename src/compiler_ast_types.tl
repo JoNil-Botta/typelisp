@@ -1195,7 +1195,9 @@
 
 (defenum AstImportKind
   (AstImportPath)
-  (AstImportModule))
+  (AstImportModule)
+  (AstImportMacro i64)
+  (AstImportMacroDecls i64))
 
 (defenum AstImportSpec
   (AstImportSpec AstImportKind String AstMaybeModuleName AstMaybeImportAlias))

@@ -593,7 +593,7 @@ chain.
 Until that path is complete, write explicit monomorphic declarations such as
 `MaybeI64`, `ResultStringI64`, or domain-specific structs/enums.
 
-#### 3.7.1 Comptime-generated declarations (v1 design)
+#### 3.7.1 Comptime-generated declarations (v1 design, deprecated)
 
 V1 generated declarations are concrete top-level declarations produced during
 compile time. They are TypeLisp's replacement for source-level generics and
@@ -601,9 +601,16 @@ traits: a generator inspects compile-time metadata such as `(type T)` and
 `(type-key (type T))`, then requests or emits ordinary monomorphic
 `defstruct`, `defenum`, and `define` declarations.
 
-The source surface is the top-level `comptime-decl` declaration for a single
-payload, or `comptime-decls` when a generator request emits a bundle whose
-payloads share the same generator and argument keys:
+`comptime-decl` and `comptime-decls` are deprecated compatibility surface.
+New declaration generation should be expressed as declaration-emitting
+`defmacro` declarations (section 3.7.2): use `: module` for generated module
+families bound by `import`, and `: decls` for declarations spliced into the
+current module. Existing checked-in uses may remain while the stdlib and
+compiler-side generator families migrate; removal is tracked by #3077.
+
+The deprecated source surface is the top-level `comptime-decl` declaration for
+a single payload, or `comptime-decls` when a generator request emits a bundle
+whose payloads share the same generator and argument keys:
 
 ```lisp test=ignore name=comptime-generated-decl-surface reason="generated declarations are specified before #893 implementation"
 (comptime-decl
@@ -863,12 +870,66 @@ Typed expansion has three checks:
 3. The expanded expression is checked again by the ordinary typechecker as a
    safety net; failures are compiler or macro diagnostics with expansion spans.
 
+Declaration-emitting macros extend `defmacro` with two module-scope result
+categories:
+
+- `: module` means the macro body produces exactly one `(module ...)`
+  declaration. It is called only through import syntax:
+  `(import (macro args))` or `(import (macro args) as alias)`. Without `as`,
+  the generated module is anonymous and all exported items are imported
+  unqualified into the current module. With `as`, only qualified access through
+  the alias is bound. The macro operand is always the nested call form; a flat
+  import such as `(import vector i64)` is not a module macro import. The
+  generated module participates in ordinary
+  dot-qualified lookup, export checking, typechecking, lowering, tests, docs,
+  and diagnostics after expansion.
+- `: decls` means the macro body produces a declaration list. A call at module
+  scope, for example `(point-vec i64)`, is replaced by those declarations at
+  that exact location. One returned declaration is inserted directly; multiple
+  returned declarations are treated as if wrapped in an implicit `(begin ...)`.
+  No import binding is created. This form is for one-off helper declarations;
+  module-shaped reusable families should prefer `: module`.
+
+Expression macros remain the existing expression-position form above: the
+declared result is the produced expression type that the expansion must satisfy
+after splicing, while the macro body itself constructs `Expr` syntax. `: Expr`
+is the wildcard expression result for macros that intentionally defer all
+produced-type checking to the expanded form. `: module` and `: decls` are not
+runtime types, cannot appear in value positions, and are valid only as macro
+result annotations.
+
+Module-scope expansion runs before ordinary typechecking:
+
+1. Parse the module, collect source imports, and resolve/load imported modules.
+2. Build the macro namespace from local and imported `defmacro` declarations.
+3. Expand module-scope macro imports and `: decls` calls. If expansion emits new
+   imports, resolve those imports and repeat this step to a fixed point.
+4. Recurse into generated modules, then typecheck the fully expanded module.
+
+The macro must be visible in the ordinary macro namespace: a local macro in the
+same module regardless of source order, an imported macro, or a qualified macro
+name such as `(stdlib.vector.vector i64)`. A macro with `: module` used outside
+`import`, a macro with `: decls` used in expression position or import syntax,
+and an expression macro used at module scope are diagnostics.
+
+Two unqualified generated module imports that export the same name create the
+same kind of namespace collision as hand-written imports. The diagnostic should
+name both generated module identities and suggest qualified access using either
+an explicit alias or the full generated module identity.
+
+Generated module identity and deduplication are keyed by the canonical macro
+module identity, macro name, and evaluated argument-key strings. Repeating the
+same macro call with the same keys reuses the generated module when the emitted
+module is structurally identical; incompatible output for the same identity is a
+compiler diagnostic.
+
 #### 3.7.2.1 Comptime purity for macros and generated declarations
 
-`defmacro` bodies and `comptime-decl`/`comptime-decls` generated declaration
-templates are safe compile-time TypeLisp. The checked comptime path is a
-deterministic transformer over compiler-owned syntax and metadata, not a way to
-perform host I/O or call target FFI during compilation.
+`defmacro` bodies, declaration-emitting macro output, and deprecated
+`comptime-decl`/`comptime-decls` generated declaration templates are safe
+compile-time TypeLisp. The checked comptime path is a deterministic transformer
+over compiler-owned syntax and metadata, not a way to perform host I/O or call
+target FFI during compilation.
 
 The purity rule is direct and transitive through helpers reachable from the
 macro body or generated template:
@@ -919,11 +980,12 @@ user-visible bindings.
 Local `defmacro` declarations are visible throughout their module regardless of
 source order, matching functions, values, and types. A macro may therefore be
 called before its declaration, and one macro may expand to a call of another
-macro declared later in the same module. Declarations produced by
-`comptime-decl` / `comptime-decls` are materialized before macro expansion; a
-generated `defmacro` participates in the same module-wide macro table for the
-generated program, but is not visible while evaluating the generator that emits
-it.
+macro declared later in the same module. Compatibility declarations produced by
+deprecated `comptime-decl` / `comptime-decls` are materialized before macro
+expansion. Declarations produced by `: decls` or `: module` macros participate
+in the module-wide macro table for subsequent fixed-point expansion and
+ordinary typechecking, but a macro emitted by a declaration-emitting macro is
+not visible while evaluating the macro that emits it.
 
 #### 3.7.2.2 Stdlib-owned comptime syntax and reflection types
 
@@ -5975,6 +6037,7 @@ top-level     ::= define-var
                 | defenum
                 | defstruct
                 | test-decl
+                | module-macro-call
 
 cfg-decl      ::= "(" "cfg" cfg-predicate top-level ")"
 cfg-predicate ::= ident
@@ -5995,9 +6058,12 @@ unsafe-decl-payload ::= define-func | extern-decl
 dispatch-decl ::= "(" "defdispatch" ident dispatch-variant+ ")"
 dispatch-variant ::= "(" dispatch-isa ident ")"
 dispatch-isa  ::= "scalar" | "avx2" | "avx512"
-defmacro      ::= "(" "defmacro" "(" ident macro-operand* ")" ":" type expr+ ")"
+defmacro      ::= "(" "defmacro" "(" ident macro-operand* ")" ":" macro-result-type expr+ ")"
 macro-operand ::= "[" ident ":" type "]"
                 | "[" ident ":" type "..." "]"      ; variadic final operand only
+macro-result-type ::= type
+                    | "module"                      ; declaration-emitting macro
+                    | "decls"                       ; declaration-splicing macro
 extern-decl   ::= "(" "extern" ident extern-meta* ":" type ")"
                 | "(" "extern" extern-head extern-meta* ":" type extern-meta* ")"
 extern-head   ::= "(" ident extern-param* extern-varargs? ")"
@@ -6010,7 +6076,10 @@ extern-meta   ::= "(" ":abi" "c" ")"
                 | "(" ":link-search" string ")"
                 | "(" ":link-arg" string ")"
 module-decl   ::= "(" "module" module-ident ")"
-import-decl   ::= "(" "import" string [":as" ident] ")"
+import-decl   ::= "(" "import" string ["module" module-ident] [import-alias] ")"
+                | "(" "import" module-ident [import-alias] ")"
+                | "(" "import" macro-call [import-alias] ")"
+import-alias  ::= ("as" | ":as") ident
 export-decl   ::= "(" "export" export-item+ ")"
 export-item   ::= "(" "value" ident ")"
                 | "(" "type" ident ")"
@@ -6028,6 +6097,7 @@ enum-meta     ::= aggregate-lifetime-meta
 aggregate-lifetime-meta ::= "(" ":lifetimes" ident+ ")"
 aggregate-cleanup-meta ::= "(" ":cleanup" ident ")"
 test-decl     ::= "(" "test" ident expr+ ")"
+module-macro-call ::= macro-call                    ; must resolve to a `: decls` macro
 
 param         ::= "[" ident ":" type "]"
 field         ::= "(" ident type field-meta* ")"
@@ -6077,6 +6147,8 @@ expr          ::= literal
                 | "(" "align-of" expr ")"
                 | "(" "offset-of" expr ident ")"
                 | "(" expr call-operand* ")"  ; function or macro call
+
+macro-call    ::= "(" qualified-name call-operand* ")"
 
 call-operand  ::= expr
                 | "[" expr expr "]"            ; macro-only ExprClause operand

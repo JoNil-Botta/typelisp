@@ -47,13 +47,19 @@
 (define (compiler-check-reset-pools!) : unit
   (compiler-load-session-reset-pools!))
 
-(define (compiler-check-program-with-paths
+(define (compiler-check-program-with-paths-cache
   [path : String]
   [decls : AstDeclList]
-  [paths : AstDeclPathList]) : ResultCompilerCheck
+  [paths : AstDeclPathList]
+  [stdlib-roots : StringVec]
+  [cache-scope : String]) : ResultCompilerCheck
   (begin
     (cfg compile-profile (compiler-check-profile-start))
-    (match (typecheck-compiler-program-with-paths (ast-program decls) paths)
+    (match (typecheck-compiler-program-with-paths-cache
+      (ast-program decls)
+      paths
+      stdlib-roots
+      cache-scope)
       [(OkCompilerTypecheck summary)
         (begin
           (cfg compile-profile (compiler-check-profile-finish "typecheck"))
@@ -64,26 +70,54 @@
           (ErrCompilerCheck
             (compiler-check-diagnostic-with-fallback-path diag path)))])))
 
+(define (compiler-check-program-with-paths
+  [path : String]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]) : ResultCompilerCheck
+  (compiler-check-program-with-paths-cache
+    path
+    decls
+    paths
+    (string-vec-new)
+    (tc-prefix-default-cache-scope)))
+
 (define (compiler-check-program [path : String] [decls : AstDeclList]) : ResultCompilerCheck
   (compiler-check-program-with-paths path decls AstDeclPathNil))
+
+(define (compiler-check-loaded-with-prelude-cache
+  [path : String]
+  [prelude-decls : AstDeclList]
+  [prelude-paths : AstDeclPathList]
+  [loaded : ResultCompilerLoadWithPaths]
+  [stdlib-roots : StringVec]
+  [cache-scope : String]) : ResultCompilerCheck
+  (match loaded
+    [(OkCompilerLoadWithPaths entry-decls entry-paths _ _)
+      (begin
+        (cfg compile-profile (compiler-check-profile-finish "load"))
+        (compiler-check-program-with-paths-cache
+          path
+          (compiler-load-decl-list-append prelude-decls entry-decls)
+          (compiler-load-decl-path-list-append prelude-paths entry-paths)
+          stdlib-roots
+          cache-scope))]
+    [(ErrCompilerLoadWithPaths diag)
+      (begin
+        (cfg compile-profile (compiler-check-profile-finish "load"))
+        (ErrCompilerCheck diag))]))
 
 (define (compiler-check-loaded-with-prelude
   [path : String]
   [prelude-decls : AstDeclList]
   [prelude-paths : AstDeclPathList]
   [loaded : ResultCompilerLoadWithPaths]) : ResultCompilerCheck
-  (match loaded
-    [(OkCompilerLoadWithPaths entry-decls entry-paths _ _)
-      (begin
-        (cfg compile-profile (compiler-check-profile-finish "load"))
-        (compiler-check-program-with-paths
-          path
-          (compiler-load-decl-list-append prelude-decls entry-decls)
-          (compiler-load-decl-path-list-append prelude-paths entry-paths)))]
-    [(ErrCompilerLoadWithPaths diag)
-      (begin
-        (cfg compile-profile (compiler-check-profile-finish "load"))
-        (ErrCompilerCheck diag))]))
+  (compiler-check-loaded-with-prelude-cache
+    path
+    prelude-decls
+    prelude-paths
+    loaded
+    (string-vec-new)
+    (tc-prefix-default-cache-scope)))
 
 (define (compiler-check-file-loaded-with-prelude
   [path : String]
@@ -91,11 +125,16 @@
   [prelude : ResultCompilerLoadWithPaths]) : ResultCompilerCheck
   (match prelude
     [(OkCompilerLoadWithPaths prelude-decls prelude-paths _ prelude-seen)
-      (compiler-check-loaded-with-prelude
+      (compiler-check-loaded-with-prelude-cache
         path
         prelude-decls
         prelude-paths
-        (compiler-load-file-with-paths-and-roots path prelude-seen stdlib-roots))]
+        (compiler-load-file-with-paths-and-roots path prelude-seen stdlib-roots)
+        stdlib-roots
+        (compiler-typecheck-prefix-cache-scope
+          "typecheck-prefix-check"
+          stdlib-roots
+          (compiler-cfg-empty)))]
     [(ErrCompilerLoadWithPaths diag)
       (begin
         (cfg compile-profile (compiler-check-profile-finish "load"))
@@ -138,7 +177,7 @@
       deps
       (compiler-cfg-empty))
       [(OkCompilerLoadWithPaths prelude-decls prelude-paths _ prelude-seen)
-        (compiler-check-loaded-with-prelude
+        (compiler-check-loaded-with-prelude-cache
           path
           prelude-decls
           prelude-paths
@@ -147,7 +186,12 @@
             prelude-seen
             stdlib-roots
             manifest-dir
-            deps))]
+            deps)
+          stdlib-roots
+          (compiler-typecheck-prefix-cache-scope
+            "typecheck-prefix-check"
+            stdlib-roots
+            (compiler-cfg-empty)))]
       [(ErrCompilerLoadWithPaths diag)
         (begin
           (cfg compile-profile (compiler-check-profile-finish "load"))
@@ -174,7 +218,7 @@
           source
           (compiler-cfg-empty))
           [(OkAstProgramDiagnostic program)
-            (compiler-check-loaded-with-prelude
+            (compiler-check-loaded-with-prelude-cache
               path
               prelude-decls
               prelude-paths
@@ -186,6 +230,11 @@
                 AstNoModuleName
                 manifest-dir
                 deps
+                (compiler-cfg-empty))
+              stdlib-roots
+              (compiler-typecheck-prefix-cache-scope
+                "typecheck-prefix-check"
+                stdlib-roots
                 (compiler-cfg-empty)))]
           [(ErrAstProgramDiagnostic diag)
             (begin
@@ -204,7 +253,7 @@
       (sym-i64-empty)
       (string-vec-new))
       [(OkCompilerLoadWithPaths prelude-decls prelude-paths _ prelude-seen)
-        (compiler-check-loaded-with-prelude
+        (compiler-check-loaded-with-prelude-cache
           path
           prelude-decls
           prelude-paths
@@ -212,7 +261,12 @@
             path
             source
             prelude-seen
-            (string-vec-new)))]
+            (string-vec-new))
+          (string-vec-new)
+          (compiler-typecheck-prefix-cache-scope
+            "typecheck-prefix-check"
+            (string-vec-new)
+            (compiler-cfg-empty)))]
       [(ErrCompilerLoadWithPaths diag)
         (begin
           (cfg compile-profile (compiler-check-profile-finish "load"))
@@ -229,7 +283,7 @@
       (sym-i64-empty)
       stdlib-roots)
       [(OkCompilerLoadWithPaths prelude-decls prelude-paths _ prelude-seen)
-        (compiler-check-loaded-with-prelude
+        (compiler-check-loaded-with-prelude-cache
           path
           prelude-decls
           prelude-paths
@@ -237,7 +291,12 @@
             path
             source
             prelude-seen
-            stdlib-roots))]
+            stdlib-roots)
+          stdlib-roots
+          (compiler-typecheck-prefix-cache-scope
+            "typecheck-prefix-check"
+            stdlib-roots
+            (compiler-cfg-empty)))]
       [(ErrCompilerLoadWithPaths diag)
         (begin
           (cfg compile-profile (compiler-check-profile-finish "load"))

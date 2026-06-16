@@ -30116,11 +30116,13 @@
   [program : AstProgram]) : ResultCompilerLower
   (lower-compiler-program-with-path-mode path program (CompilerLowerScalar)))
 
-(define (lower-compiler-expanded-program-with-decl-paths-mode
+(define (lower-compiler-expanded-program-with-decl-paths-mode-cache
   [entry-path : String]
   [program : AstProgram]
   [paths : AstDeclPathList]
-  [mode : CompilerLowerMode]) : ResultCompilerLower
+  [mode : CompilerLowerMode]
+  [stdlib-roots : StringVec]
+  [cache-scope : String]) : ResultCompilerLower
   (begin
     (cfg compile-profile (compiler-lower-profile-start))
     (let
@@ -30211,9 +30213,11 @@
                               (cfg
                                 compile-profile
                                 (compiler-lower-profile-start))
-                              (match (typecheck-compiler-specialized-program-with-paths-checked
+                              (match (typecheck-compiler-specialized-program-with-paths-checked-cache
                                 checked-program
-                                checked-paths)
+                                checked-paths
+                                stdlib-roots
+                                cache-scope)
                                 [(OkCompilerTypecheckChecked _ ctx top-env)
                                   (begin
                                     (cfg
@@ -30264,11 +30268,26 @@
             (cfg compile-profile (compiler-lower-profile-finish "specialize"))
             (ErrCompilerLower (lower-diagnostic-with-path diag entry-path)))]))))
 
-(define (lower-compiler-program-with-decl-paths-mode
+(define (lower-compiler-expanded-program-with-decl-paths-mode
   [entry-path : String]
   [program : AstProgram]
   [paths : AstDeclPathList]
   [mode : CompilerLowerMode]) : ResultCompilerLower
+  (lower-compiler-expanded-program-with-decl-paths-mode-cache
+    entry-path
+    program
+    paths
+    mode
+    (string-vec-new)
+    (tc-prefix-default-cache-scope)))
+
+(define (lower-compiler-program-with-decl-paths-mode-cache
+  [entry-path : String]
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [mode : CompilerLowerMode]
+  [stdlib-roots : StringVec]
+  [cache-scope : String]) : ResultCompilerLower
   (begin
     (cfg compile-profile (compiler-lower-profile-start))
     (tc-agg-caches-reset!)
@@ -30282,11 +30301,13 @@
               (cfg
                 compile-profile
                 (compiler-lower-profile-finish "macro_expand"))
-              (lower-compiler-expanded-program-with-decl-paths-mode
+              (lower-compiler-expanded-program-with-decl-paths-mode-cache
                 entry-path
                 expanded
                 generated-paths
-                mode))]
+                mode
+                stdlib-roots
+                cache-scope))]
           [(ErrMacroExpand diag)
             (begin
               (cfg
@@ -30297,6 +30318,19 @@
         (begin
           (cfg compile-profile (compiler-lower-profile-finish "macro_expand"))
           (ErrCompilerLower (lower-diagnostic-with-path diag entry-path)))])))
+
+(define (lower-compiler-program-with-decl-paths-mode
+  [entry-path : String]
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [mode : CompilerLowerMode]) : ResultCompilerLower
+  (lower-compiler-program-with-decl-paths-mode-cache
+    entry-path
+    program
+    paths
+    mode
+    (string-vec-new)
+    (tc-prefix-default-cache-scope)))
 
 (define (lower-compiler-program-with-decl-paths
   [entry-path : String]

@@ -799,11 +799,16 @@
       (begin
         (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
         (cfg compile-profile (compiler-driver-profile-start-phase))
-        (match (lower-compiler-program-with-decl-paths-mode
+        (match (lower-compiler-program-with-decl-paths-mode-cache
           input-path
           (ast-program decls)
           paths
-          (compiler-driver-lower-mode-for-target target mode))
+          (compiler-driver-lower-mode-for-target target mode)
+          stdlib-roots
+          (compiler-load-prelude-cache-key
+            "typecheck-prefix-lower"
+            stdlib-roots
+            cfgs))
           [(OkCompilerLower program spans)
             (begin
               (cfg
@@ -835,11 +840,16 @@
       (begin
         (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
         (cfg compile-profile (compiler-driver-profile-start-phase))
-        (match (lower-compiler-program-with-decl-paths-mode
+        (match (lower-compiler-program-with-decl-paths-mode-cache
           input-path
           (ast-program decls)
           paths
-          (compiler-driver-lower-mode-for-target target mode))
+          (compiler-driver-lower-mode-for-target target mode)
+          stdlib-roots
+          (compiler-load-prelude-cache-key
+            "typecheck-prefix-lower"
+            stdlib-roots
+            cfgs))
           [(OkCompilerLower program spans)
             (begin
               (cfg
@@ -1208,11 +1218,16 @@
     deps
     emit-entry)
     [(OkCompilerLoadWithPaths decls paths _ _)
-      (match (lower-compiler-program-with-decl-paths-mode
+      (match (lower-compiler-program-with-decl-paths-mode-cache
         ""
         (ast-program decls)
         paths
-        (compiler-driver-lower-mode-for-target target mode))
+        (compiler-driver-lower-mode-for-target target mode)
+        stdlib-roots
+        (compiler-load-prelude-cache-key
+          "typecheck-prefix-lower"
+          stdlib-roots
+          (compiler-driver-target-cfgs target (compiler-cfg-empty))))
         [(OkCompilerLower program spans)
           (compiler-driver-emit-lowered-with-level-mode-entry-and-crt
             input-path
@@ -1485,11 +1500,16 @@
     stdlib-roots
     (compiler-driver-target-cfgs target cfgs))
     [(OkCompilerLoadWithPaths decls paths _ _)
-      (match (lower-compiler-program-with-decl-paths-mode
+      (match (lower-compiler-program-with-decl-paths-mode-cache
         input-path
         (ast-program decls)
         paths
-        (compiler-driver-lower-mode-for-target target mode))
+        (compiler-driver-lower-mode-for-target target mode)
+        stdlib-roots
+        (compiler-load-prelude-cache-key
+          "typecheck-prefix-lower"
+          stdlib-roots
+          (compiler-driver-target-cfgs target cfgs)))
         [(OkCompilerLower program spans)
           (compiler-driver-emit-ir-summary-lowered-with-level
             program

@@ -92,9 +92,66 @@
         (panic "lint: loop string append should produce a finding")])
     42))
 
+(define (lint-smoke-nested-str-cat-self-test) : i64
+  (let
+    [vx : i64 (lint-test-var "x")]
+    [vy : i64 (lint-test-var "y")]
+    [vz : i64 (lint-test-var "z")]
+    [str-cat-callee : i64 (lint-test-var "str-cat")]
+    [str-cat-yz : i64
+      (ast-expr-call str-cat-callee (lint-test-expr-list2 vy vz))]
+    [nested-str-cat : i64
+      (ast-expr-call str-cat-callee (lint-test-expr-list2 vx str-cat-yz))]
+    [flat-str-cat : i64
+      (ast-expr-call str-cat-callee (lint-test-expr-list3 vx vy vz))]
+    [spanned-str-cat : i64
+      (ast-expr-spanned nested-str-cat (AstSourceSpan 23 4 23 36))]
+    (begin
+      (if (=
+        (lint-findings-count
+          (lint-test-walk
+            nested-str-cat
+            (lint-default-ladder-threshold)
+            (lint-findings-empty)))
+        1)
+        unit
+        (panic "lint: nested str-cat should be flagged once"))
+      (match (lint-findings-get
+        (lint-test-walk
+          spanned-str-cat
+          (lint-default-ladder-threshold)
+          (lint-findings-empty))
+        0)
+        [(LintSomeFinding finding)
+          (let
+            [span : AstSourceSpan (struct-get finding span)]
+            (if (and
+              (string-eq
+                (struct-get finding rule-id)
+                (lint-rule-nested-str-cat-id))
+              (string-eq
+                (struct-get finding message)
+                "nested str-cat: prefer one flat str-cat call")
+              (= (struct-get span start-line) 23))
+              unit
+              (panic "lint: nested str-cat finding metadata mismatch")))]
+        [(LintNoFinding)
+          (panic "lint: spanned nested str-cat should produce a finding")])
+      (if (=
+        (lint-findings-count
+          (lint-test-walk
+            flat-str-cat
+            (lint-default-ladder-threshold)
+            (lint-findings-empty)))
+        0)
+        42
+        (panic "lint: flat str-cat should not be flagged")))))
+
 (define (main) : i64
   (let
     [core-result : i64 (compiler-lint-self-test)]
     (if (= core-result 42)
-      (lint-smoke-deprecated-string-concat-self-test)
+      (if (= (lint-smoke-deprecated-string-concat-self-test) 42)
+        (lint-smoke-nested-str-cat-self-test)
+        1)
       core-result)))

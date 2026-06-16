@@ -433,10 +433,10 @@
         (str-cat
           level-text
           "["
-          (str-cat
-            code-text
-            "]: "
-            (string-append (compiler-diagnostic-message diag) "\n")))]
+          code-text
+          "]: "
+          (compiler-diagnostic-message diag)
+          "\n")]
       [CompilerDiagnosticNoString
         (str-cat
           level-text
@@ -447,10 +447,11 @@
   (str-cat
     "  --> "
     (compiler-diagnostic-path diag)
-    (str-cat
-      ":"
-      (int->string (compiler-diagnostic-line diag))
-      (str-cat ":" (int->string (compiler-diagnostic-col diag)) "\n"))))
+    ":"
+    (int->string (compiler-diagnostic-line diag))
+    ":"
+    (int->string (compiler-diagnostic-col diag))
+    "\n"))
 
 (define (compiler-diagnostic-render-source-snippet
   [diag : CompilerDiagnostic]
@@ -469,7 +470,7 @@
             (compiler-diagnostic-column-padding (compiler-diagnostic-col diag)))]
         (string-append
           (str-cat gutter " | " (string-append line-text "\n"))
-          (str-cat blank " | " (str-cat padding "^" "\n"))))]
+          (str-cat blank " | " padding "^" "\n")))]
     [CompilerDiagnosticNoString ""]))
 
 (define (compiler-diagnostic-render-help [help : CompilerDiagnosticMaybeString]) : String

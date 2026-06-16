@@ -2,8 +2,8 @@
 ;#
 ;# A selfhost lint pass: walk the parsed AST, run registered rules, and collect
 ;# findings. The rules flag body-only nested `let` forms, nested success-path
-;# `if` return chains, unit-branch return guards, and deprecated user-facing
-;# string concatenation primitives.
+;# `if` return chains, unit-branch return guards, nested `str-cat` calls, and
+;# deprecated user-facing string concatenation primitives.
 ;#
 ;# The `typelisp lint` CLI driver consumes the rule id attached to each finding
 ;# for suppression (`;; lint-allow: <rule-id>`). This module owns stable rule
@@ -73,6 +73,15 @@
 (define (lint-rule-deprecated-string-concat-suggestion) : String
   "import stdlib/str_cat.tl and use str-cat, or use stdlib/text_buf.tl in accumulation loops")
 
+(define (lint-rule-nested-str-cat-id) : String
+  "nested-str-cat")
+
+(define (lint-rule-nested-str-cat-message) : String
+  "nested str-cat: prefer one flat str-cat call")
+
+(define (lint-rule-nested-str-cat-suggestion) : String
+  "flatten nested str-cat operands into the outer call")
+
 (define (lint-rule-cascading-and-or-id) : String
   "cascading-and-or")
 
@@ -129,6 +138,12 @@
     (lint-rule-deprecated-string-concat-message)
     (lint-rule-deprecated-string-concat-suggestion)))
 
+(define (lint-rule-nested-str-cat) : LintRule
+  (LintRule
+    (lint-rule-nested-str-cat-id)
+    (lint-rule-nested-str-cat-message)
+    (lint-rule-nested-str-cat-suggestion)))
+
 (define (lint-rule-cascading-and-or) : LintRule
   (LintRule
     (lint-rule-cascading-and-or-id)
@@ -151,7 +166,9 @@
           (lint-rule-unit-if-guard)
           (lint-rule-cons
             (lint-rule-deprecated-string-concat)
-            (lint-rule-cons (lint-rule-cascading-and-or) LintRuleNil)))))))
+            (lint-rule-cons
+              (lint-rule-nested-str-cat)
+              (lint-rule-cons (lint-rule-cascading-and-or) LintRuleNil))))))))
 
 (define (lint-rule-find-in [rules : LintRuleList] [rule-id : String]) : LintMaybeRule
   (match rules
@@ -465,6 +482,15 @@
     [(AstExprVar name) (lint-and-or-op-name (intern-str name))]
     [_ ""]))
 
+(define (lint-str-cat-func? [func : AstExpr]) : bool
+  (match func
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lint-str-cat-func? inner))]
+    [(AstExprVar name) (string-eq (intern-str name) "str-cat")]
+    [_ false]))
+
 (define (lint-literal-render [lit : AstLiteral]) : String
   (match lit
     [(AstLitInt value) (int->string value)]
@@ -581,6 +607,29 @@
           true
           (lint-and-or-args-have-kind? op rest)))]))
 
+(define (lint-str-cat-call? [expr : AstExpr]) : bool
+  (match expr
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lint-str-cat-call? inner))]
+    [(AstExprCall func-box _)
+      (let
+        [func : AstExpr (ast-node-get func-box)]
+        (lint-str-cat-func? func))]
+    [_ false]))
+
+(define (lint-str-cat-args-have-nested? [args : AstExprList]) : bool
+  (match args
+    [(AstExprNil) false]
+    [(AstExprCons head rest)
+      (let
+        [head-expr : AstExpr (ast-node-get head)]
+        [rest : AstExprList (box-get rest)]
+        (if (lint-str-cat-call? head-expr)
+          true
+          (lint-str-cat-args-have-nested? rest)))]))
+
 (define (lint-cascading-and-or-flat-arg-render [op : String] [expr : AstExpr]) : String
   (match expr
     [(AstExprSpanned inner-box _)
@@ -658,6 +707,13 @@
           (lint-cascading-and-or-flat-call callee op args))))
     (lint-rule-cascading-and-or-id)
     (lint-cascading-and-or-flat-arg-count-list op args)
+    span))
+
+(define (lint-nested-str-cat-finding [span : AstSourceSpan]) : LintFinding
+  (LintFinding
+    (lint-rule-nested-str-cat-message)
+    (lint-rule-nested-str-cat-id)
+    0
     span))
 
 (define (lint-deprecated-string-concat-token-span
@@ -1228,7 +1284,14 @@
         (lint-findings-add
           (lint-cascading-and-or-finding op (lint-expr-render func) args span)
           (lint-walk-expr func threshold acc)))
-      (lint-walk-expr-list args threshold (lint-walk-expr func threshold acc)))))
+      (if (and (lint-str-cat-func? func) (lint-str-cat-args-have-nested? args))
+        (lint-walk-expr-list
+          args
+          threshold
+          (lint-findings-add
+            (lint-nested-str-cat-finding span)
+            (lint-walk-expr func threshold acc)))
+        (lint-walk-expr-list args threshold (lint-walk-expr func threshold acc))))))
 
 ;: Walk `expr`, collecting active lint findings while recursing into all
 ;: sub-expressions. Spanned expressions pass their wrapper span to rules that
@@ -2031,6 +2094,11 @@
         "import stdlib/str_cat.tl and use str-cat, or use stdlib/text_buf.tl in accumulation loops")
         unit
         (panic "lint: deprecated-string-concat suggestion should be registered"))
+      (if (string-eq
+        (lint-rule-suggestion (lint-rule-nested-str-cat-id))
+        "flatten nested str-cat operands into the outer call")
+        unit
+        (panic "lint: nested-str-cat suggestion should be registered"))
       (if (string-eq
         (lint-rule-suggestion (lint-rule-cascading-and-or-id))
         "flatten same-operator and/or operands, e.g. (and a b c)")

@@ -833,12 +833,11 @@ pre {
   [title : String]
   [guides : DocSiteGuidePageList]) : String
   (str-cat
-    (str-cat
-      "<nav class=\"tl-doc-site-nav\" aria-label=\""
-      (doc-html-escape title)
-      "\">\n<h2>"
-      (doc-html-escape title)
-      "</h2>\n<ul>\n")
+    "<nav class=\"tl-doc-site-nav\" aria-label=\""
+    (doc-html-escape title)
+    "\">\n<h2>"
+    (doc-html-escape title)
+    "</h2>\n<ul>\n"
     (doc-site-index-guide-entries guides)
     "</ul>\n</nav>\n"))
 
@@ -846,12 +845,11 @@ pre {
   (let
     [root : String (doc-site-api-tree-root tree)]
     (str-cat
-      (str-cat
-        "<nav class=\"tl-doc-site-nav\" aria-label=\""
-        (doc-html-escape root)
-        " API\">\n<h2>"
-        (doc-html-escape root)
-        "</h2>\n<ul>\n")
+      "<nav class=\"tl-doc-site-nav\" aria-label=\""
+      (doc-html-escape root)
+      " API\">\n<h2>"
+      (doc-html-escape root)
+      "</h2>\n<ul>\n"
       (doc-site-index-module-entries (doc-site-api-tree-modules tree))
       "</ul>\n</nav>\n")))
 
@@ -1006,10 +1004,9 @@ pre {
       (doc-site-api-tree-output tree)
       (doc-site-api-tree-root tree)
       current)
-    (str-cat
-      "<ul>\n"
-      (doc-site-sidebar-module-entries (doc-site-api-tree-modules tree) current)
-      "</ul>\n</li>\n")))
+    "<ul>\n"
+    (doc-site-sidebar-module-entries (doc-site-api-tree-modules tree) current)
+    "</ul>\n</li>\n"))
 
 (define (doc-site-sidebar-section [section : DocSiteSection] [current : String]) : String
   (match section
@@ -1056,12 +1053,10 @@ pre {
     (doc-html-header "TypeLisp Docs" subtitle)
     "<div class=\"tl-doc-shell\">\n"
     (doc-site-sidebar sections current)
-    (str-cat
-      "<main class=\"tl-doc-content\">\n"
-      body
-      "</main>\n</div>\n"
-      (doc-html-page-close)
-      "")))
+    "<main class=\"tl-doc-content\">\n"
+    body
+    "</main>\n</div>\n"
+    (doc-html-page-close)))
 
 (define (doc-site-render-index
   [sections : DocSiteSectionList]

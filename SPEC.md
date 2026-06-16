@@ -247,9 +247,16 @@ example, `\0` in a string is the character `0`, not a NUL byte.
 
 ### 2.4 Numeric literals and type inference
 
-Integer literals have type `i64`. Use `(cast expr : target_type)` when a
-narrower or unsigned integer is required. Floating-point literals are always
-`f64`.
+Integer literals default to `i64` when unconstrained. In an expected integer
+position, an integer literal adopts the expected type (`i8`, `i16`, `i32`,
+`i64`, `u8`, `u16`, `u32`, or `u64`) when the literal value is representable by
+the current source literal storage. Out-of-range contextual literals are
+compile-time errors; explicit `(cast expr : target_type)` keeps the normal cast
+semantics, including truncation/wrapping behavior for supported numeric casts.
+For binary operators, an integer literal operand may adopt the other integer
+operand's type; two unconstrained integer literal operands still use the `i64`
+default. Floating-point literals are always `f64` unless a contextual `f32`
+expected type is present.
 
 ---
 

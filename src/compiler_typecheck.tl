@@ -4401,7 +4401,7 @@
   "(define (main) : i64 (shl true 1))")
 
 (define (compiler-typecheck-op-bitwise-mismatch-source) : String
-  "(define (main) : u64 (bit-and (cast -1 : u64) 1))")
+  "(define (main [n : i64]) : u64 (bit-and (cast -1 : u64) n))")
 
 (define (compiler-typecheck-op-ok-call-source) : String
   "(define (add [a : i64] [b : i64]) : i64 (+ a b))
@@ -4478,6 +4478,53 @@
 
 (define (compiler-typecheck-scalar-narrow-match-bad-source) : String
   "(define (main [n : u8]) : i64 (match n [true 1] [_ 0]))")
+
+(define (compiler-typecheck-scalar-integer-context-source) : String
+  "(defstruct Color (r u8) (g u8) (b u8) (a u8))
+(defenum Tone (Tone u8) (Silent))
+(extern (ffi-take-i32 [x : i32]) : i32)
+(define global-u8 : u8 255)
+(define (take-i16 [x : i16]) : i16 x)
+(define (take-u32 [x : u32]) : u32 x)
+(define (make-color) : Color (Color 135 206 235 255))
+(define (make-tone) : Tone (Tone 64))
+(define (array-first) : u8
+  (let
+    [items : (Array u8 4) (array 1 2 3 4)]
+    (array-ref items 0)))
+(define (tuple-first) : u16
+  (tuple-ref (ann (tuple 65535 -8) : (Tuple u16 i8)) 0))
+(define (assign-local) : u8
+  (let
+    [n : u8 0]
+    (begin (set! n 42) n)))
+(define (assign-field) : u8
+  (let
+    [c : Color (Color 0 0 0 0)]
+    (begin
+      (set! (struct-get c r) 135)
+      (struct-get c r))))
+(define (return-u32) : u32 4294967295)
+(define (return-u64) : u64 9223372036854775807)
+(define (call-i16) : i16 (take-i16 -32768))
+(define (call-u32) : u32 (take-u32 2147483648))
+(define (ffi-call) : i32 (ffi-take-i32 2147483647))
+(define (bin-left [x : u8]) : u8 (+ 1 x))
+(define (bin-right [x : u16]) : u16 (+ x 1))
+(define (two-literals) : i64 (+ 1 2))
+(define (main) : i64 0)")
+
+(define (compiler-typecheck-scalar-int-i8-overflow-source) : String
+  "(define (main) : i8 128)")
+
+(define (compiler-typecheck-scalar-int-u8-overflow-source) : String
+  "(define (main) : u8 256)")
+
+(define (compiler-typecheck-scalar-int-unsigned-negative-source) : String
+  "(define (main) : u8 -1)")
+
+(define (compiler-typecheck-scalar-int-binop-overflow-source) : String
+  "(define (main [x : i8]) : i8 (+ 128 x))")
 
 (define (compiler-typecheck-scalar-f32-context-source) : String
   "(define gx : f32 1.0)
@@ -4583,6 +4630,40 @@
           (compiler-typecheck-error-ok?
             (compiler-typecheck-scalar-narrow-match-bad-source)
             "typecheck: literal pattern type mismatch")))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-ok?
+            (compiler-typecheck-scalar-integer-context-source))))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-scalar-int-i8-overflow-source)
+            "typecheck: integer literal 128 does not fit expected type i8")))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-scalar-int-u8-overflow-source)
+            "typecheck: integer literal 256 does not fit expected type u8")))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-scalar-int-unsigned-negative-source)
+            "typecheck: integer literal -1 does not fit expected type u8")))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-scalar-int-binop-overflow-source)
+            "typecheck: integer literal 128 does not fit expected type i8")))
       (set!
         ok
         (and

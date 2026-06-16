@@ -17547,53 +17547,55 @@
                     [_addr-forward-done : unit
                       (compiler-backend-addr-of-forwarding-disable!)]
                     (OkCompilerBackend
-                      (str-cat
-                        (compiler-backend-function-symbol-map-comment
-                          program-index
-                          name)
-                        ".globl "
-                        symbol
-                        "\n"
-                        (compiler-backend-emit-function-entry
-                          target
-                          symbol
-                          frame)
-                        ""
-                        ""
-                        (compiler-backend-mode-prologue mode)
-                        (compiler-backend-emit-save-callee-regs
-                          assignments
-                          slot-vars)
-                        (compiler-backend-emit-windows-main-argv-capture
-                          target
-                          name
-                          emit-entry
-                          plan)
-                        (compiler-backend-emit-linux-crt-main-argv-capture
-                          target
-                          name
-                          crt-entry
-                          plan)
-                        (if (and
-                          (string-eq name "main")
-                          (or
-                            (compiler-backend-target-windows? target)
-                            (and
+                      (compiler-backend-elide-dead-frame-stores
+                        (compiler-backend-peephole-asm
+                          (str-cat
+                            (compiler-backend-function-symbol-map-comment
+                              program-index
+                              name)
+                            ".globl "
+                            symbol
+                            "\n"
+                            (compiler-backend-emit-function-entry
+                              target
+                              symbol
+                              frame)
+                            ""
+                            ""
+                            (compiler-backend-mode-prologue mode)
+                            (compiler-backend-emit-save-callee-regs
+                              assignments
+                              slot-vars)
+                            (compiler-backend-emit-windows-main-argv-capture
+                              target
+                              name
+                              emit-entry
+                              plan)
+                            (compiler-backend-emit-linux-crt-main-argv-capture
+                              target
+                              name
                               crt-entry
-                              (compiler-backend-target-linux? target))))
-                          (compiler-backend-global-initializers
-                            globals
-                            program-index)
-                          "")
-                        spills
-                        body
-                        (compiler-backend-return-epilogue
-                          name
-                          assignments
-                          slot-vars
-                          emit-blocks-list)
-                        (compiler-backend-emit-windows-seh-endproc target)
-                        "\n")))]
+                              plan)
+                            (if (and
+                              (string-eq name "main")
+                              (or
+                                (compiler-backend-target-windows? target)
+                                (and
+                                  crt-entry
+                                  (compiler-backend-target-linux? target))))
+                              (compiler-backend-global-initializers
+                                globals
+                                program-index)
+                              "")
+                            spills
+                            body
+                            (compiler-backend-return-epilogue
+                              name
+                              assignments
+                              slot-vars
+                              emit-blocks-list)
+                            (compiler-backend-emit-windows-seh-endproc target)
+                            "\n")))))]
                 [(ErrCompilerBackend message)
                   (let
                     [_addr-forward-done : unit
@@ -25063,6 +25065,114 @@ tl_memcpy:
   (text-buf-append
     (text-buf-empty)
     (compiler-backend-peephole-asm (text-buf-render buf))))
+
+;; Per-function dead-store elimination for write-only stack slots (opt1, #2559).
+;; After load-elision, an SSA-temp frame slot that is only ever STORED and never
+;; LOADED is dead (its value is never used). Collect every frame slot that is
+;; loaded (`movq -N(%rbp), reg`), then drop pure stores (`movq <reg/imm>,-N(%rbp)`)
+;; to slots never loaded. MUST run on a single function's asm (each frame-slot
+;; offset is reused across functions). Conservative: if the function references a
+;; frame slot in any way we cannot prove is a plain movq load/store -- leaq
+;; (address taken), sized movl/movb, SIMD, RMW, computed `(%rbp,idx)` addressing --
+;; BAIL and return the asm unchanged, so the pass can only ever keep a live store,
+;; never remove one.
+(defenum CompilerBackendDeadStoreScan
+  (CompilerBackendDeadStoreScan StringI64Map bool))
+
+;; A movq operand my pass cannot account for: it contains "(%rbp" but is not a
+;; clean negative local slot "-N(%rbp)". A POSITIVE offset like "48(%rbp)" is an
+;; incoming stack argument (above %rbp, Windows passes the 5th+ args there) --
+;; disjoint from local slots (below %rbp) -- so it is ignored, never bailed. Only a
+;; NEGATIVE non-clean ref (e.g. a computed "-8(%rbp,%rax,8)") could alias a local
+;; slot and so forces a conservative bail.
+(define (compiler-backend-dead-store-operand-needs-bail? [operand : String]) : bool
+  (and
+    (compiler-backend-string-contains? operand "(%rbp")
+    (not (compiler-backend-peephole-local-frame-slot-operand? operand))
+    (> (string-length operand) 0)
+    (= (string-ref operand 0) #-')))
+
+(define (compiler-backend-dead-store-collect [asm : String]) : CompilerBackendDeadStoreScan
+  (let
+    [n : i64 (string-length asm)]
+    [i : i64 0]
+    [loaded : StringI64Map (string-i64-map-with-capacity 16)]
+    [bail : bool false]
+    (begin
+      (while (< i n)
+        (let
+          [end : i64 (compiler-backend-peephole-line-end asm i n)]
+          [line : String (substring asm i (- end i))]
+          (begin
+            (match (compiler-backend-peephole-movq line)
+              [(CompilerBackendPeepholeMove src dst)
+                (begin
+                  (if (compiler-backend-peephole-local-frame-slot-operand? src)
+                    (set! loaded (string-i64-map-put loaded src 1))
+                    (if (compiler-backend-dead-store-operand-needs-bail? src)
+                      (set! bail true)
+                      unit))
+                  (if (compiler-backend-peephole-local-frame-slot-operand? dst)
+                    unit
+                    (if (compiler-backend-dead-store-operand-needs-bail? dst)
+                      (set! bail true)
+                      unit)))]
+              [(CompilerBackendPeepholeNoMove)
+                (if (compiler-backend-string-contains? line "(%rbp")
+                  (set! bail true)
+                  unit)])
+            (set!
+              i
+              (if (< end n)
+                (+ end 1)
+                end)))))
+      (CompilerBackendDeadStoreScan loaded bail))))
+
+(define (compiler-backend-dead-store-removable-line?
+  [line : String]
+  [loaded : StringI64Map]) : bool
+  (match (compiler-backend-peephole-movq line)
+    [(CompilerBackendPeepholeMove src dst)
+      (and
+        (compiler-backend-peephole-local-frame-slot-operand? dst)
+        (not (compiler-backend-peephole-local-frame-slot-operand? src))
+        (match (string-i64-map-get loaded dst)
+          [(StringI64MapFound _) false]
+          [(StringI64MapMissing) true]))]
+    [(CompilerBackendPeepholeNoMove) false]))
+
+(define (compiler-backend-dead-store-rebuild
+  [asm : String]
+  [loaded : StringI64Map]) : String
+  (let
+    [n : i64 (string-length asm)]
+    [i : i64 0]
+    [out : TextBuf (text-buf-empty)]
+    (begin
+      (while (< i n)
+        (let
+          [end : i64 (compiler-backend-peephole-line-end asm i n)]
+          [next-start : i64
+            (if (< end n)
+              (+ end 1)
+              end)]
+          [line-newline : bool (< end n)]
+          [line : String (substring asm i (- end i))]
+          (begin
+            (if (compiler-backend-dead-store-removable-line? line loaded)
+              unit
+              (set!
+                out
+                (compiler-backend-peephole-append-line out line line-newline)))
+            (set! i next-start))))
+      (text-buf-render out))))
+
+(define (compiler-backend-elide-dead-frame-stores [asm : String]) : String
+  (match (compiler-backend-dead-store-collect asm)
+    [(CompilerBackendDeadStoreScan loaded bail)
+      (if bail
+        asm
+        (compiler-backend-dead-store-rebuild asm loaded))]))
 
 (define (compiler-backend-emit-program-target-with-mode-and-crt
   [program : CompilerIrProgram]

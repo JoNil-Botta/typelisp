@@ -7078,6 +7078,60 @@
     [(AstTyU8) true]
     [_ false]))
 
+(define (tc-integer-literal-min-value [ty : AstType]) : i64
+  (match (tc-type-strip-region ty)
+    [(AstTyI8) (- 0 128)]
+    [(AstTyI16) (- 0 32768)]
+    [(AstTyI32) (- 0 2147483648)]
+    [(AstTyI64) (- (- 0 9223372036854775807) 1)]
+    [(AstTyU64) 0]
+    [(AstTyU32) 0]
+    [(AstTyU16) 0]
+    [(AstTyU8) 0]
+    [_ 0]))
+
+(define (tc-integer-literal-max-value [ty : AstType]) : i64
+  (match (tc-type-strip-region ty)
+    [(AstTyI8) 127]
+    [(AstTyI16) 32767]
+    [(AstTyI32) 2147483647]
+    [(AstTyI64) 9223372036854775807]
+    ;; AstLitInt stores parsed integer literals as i64 today, so contextual
+    ;; u64 literals can only cover the non-negative representable i64 range.
+    [(AstTyU64) 9223372036854775807]
+    [(AstTyU32) 4294967295]
+    [(AstTyU16) 65535]
+    [(AstTyU8) 255]
+    [_ 0]))
+
+(define (tc-integer-literal-fits-type? [value : i64] [ty : AstType]) : bool
+  (and
+    (>= value (tc-integer-literal-min-value ty))
+    (<= value (tc-integer-literal-max-value ty))))
+
+(define (tc-integer-literal-range-message
+  [ctx : TcContext]
+  [value : i64]
+  [expected : AstType]) : String
+  (str-cat
+    "typecheck: integer literal "
+    (int->string value)
+    " does not fit expected type "
+    (tc-type-render (tc-type-without-regions (tc-resolve-type ctx expected)))))
+
+(define (tc-integer-literal-type-with-expected
+  [ctx : TcContext]
+  [value : i64]
+  [expected : AstType]) : ResultTcType
+  (let
+    [resolved : AstType
+      (tc-type-without-regions (tc-resolve-type ctx expected))]
+    (if (tc-integer-type? resolved)
+      (if (tc-integer-literal-fits-type? value resolved)
+        (OkTcType resolved)
+        (ErrTcType (tc-integer-literal-range-message ctx value expected)))
+      (OkTcType (AstTyI64)))))
+
 (define (tc-float-type? [ty : AstType]) : bool
   (match (tc-type-strip-region ty)
     [(AstTyF64) true]
@@ -8904,6 +8958,36 @@
         [_ false])]
     [_ false]))
 
+(define (tc-integer-literal-expr? [expr : AstExpr]) : bool
+  (match expr
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (tc-integer-literal-expr? inner))]
+    [(AstExprLiteral lit)
+      (match lit
+        [(AstLitInt _) true]
+        [_ false])]
+    [_ false]))
+
+(define (tc-integer-literal-expr-with-expected
+  [ctx : TcContext]
+  [expr : AstExpr]
+  [expected : AstType]) : ResultTcType
+  (match expr
+    [(AstExprSpanned inner-box span)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (match (tc-integer-literal-expr-with-expected ctx inner expected)
+          [(OkTcType ty) (OkTcType ty)]
+          [(ErrTcType message) (tc-locate-spanned-error inner span message)]))]
+    [(AstExprLiteral lit)
+      (match lit
+        [(AstLitInt value)
+          (tc-integer-literal-type-with-expected ctx value expected)]
+        [_ (OkTcType (tc-literal-type lit))])]
+    [_ (OkTcType (AstTyI64))]))
+
 (define (tc-binop-types-from-left
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -8912,6 +8996,19 @@
   [right : AstExpr]) : ResultTcBinOpTypes
   (match (tc-expr-with-expected-or-actual ctx env right left-ty)
     [(OkTcType right-ty)
+      (match (tc-binop-type op left-ty right-ty)
+        [(OkTcType result-ty)
+          (OkTcBinOpTypes (TcBinOpTypes left-ty right-ty result-ty))]
+        [(ErrTcType message) (ErrTcBinOpTypes message)])]
+    [(ErrTcType message) (ErrTcBinOpTypes message)]))
+
+(define (tc-binop-types-from-right
+  [ctx : TcContext]
+  [op : AstBinOp]
+  [left : AstExpr]
+  [right-ty : AstType]) : ResultTcBinOpTypes
+  (match (tc-integer-literal-expr-with-expected ctx left right-ty)
+    [(OkTcType left-ty)
       (match (tc-binop-type op left-ty right-ty)
         [(OkTcType result-ty)
           (OkTcBinOpTypes (TcBinOpTypes left-ty right-ty result-ty))]
@@ -8941,7 +9038,14 @@
               (tc-binop-types-with-same-operands op (AstTyF32))
               (tc-binop-types-from-left ctx env op left-ty right))]
           [(ErrTcType message) (ErrTcBinOpTypes message)])
-        (tc-binop-types-from-left ctx env op left-ty right))]
+        (if (tc-integer-literal-expr? left)
+          (match (tc-expr ctx env right)
+            [(OkTcType right-actual)
+              (if (tc-integer-type? right-actual)
+                (tc-binop-types-from-right ctx op left right-actual)
+                (tc-binop-types-from-left ctx env op left-ty right))]
+            [(ErrTcType message) (ErrTcBinOpTypes message)])
+          (tc-binop-types-from-left ctx env op left-ty right)))]
     [(ErrTcType message) (ErrTcBinOpTypes message)]))
 
 (define (tc-expr-list-with-expected-elements
@@ -9238,16 +9342,18 @@
                 (OkTcType actual))]
             [(ErrTcType message) (ErrTcType message)])])]
     [_
-      (if (and
-        (tc-type-eq (tc-type-strip-region expected) (AstTyF32))
-        (tc-float-literal-expr? expr))
-        (OkTcType expected)
-        (match (tc-expr ctx env expr)
-          [(OkTcType actual)
-            (if (tc-type-compatible? expected actual)
-              (OkTcType (tc-contextual-result-type expected actual))
-              (OkTcType actual))]
-          [(ErrTcType message) (ErrTcType message)]))]))
+      (if (tc-integer-literal-expr? expr)
+        (tc-integer-literal-expr-with-expected ctx expr expected)
+        (if (and
+          (tc-type-eq (tc-type-strip-region expected) (AstTyF32))
+          (tc-float-literal-expr? expr))
+          (OkTcType expected)
+          (match (tc-expr ctx env expr)
+            [(OkTcType actual)
+              (if (tc-type-compatible? expected actual)
+                (OkTcType (tc-contextual-result-type expected actual))
+                (OkTcType actual))]
+            [(ErrTcType message) (ErrTcType message)])))]))
 
 (define (tc-expr-with-expected-or-actual
   [ctx : TcContext]

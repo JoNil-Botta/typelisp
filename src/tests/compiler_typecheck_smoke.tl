@@ -262,6 +262,113 @@
       (compiler-typecheck-auto-borrow-move-live-source)
       "typecheck: cannot move borrowed place `text`")))
 
+(define (compiler-typecheck-borrow-projection-assign-source) : String
+  "(defstruct Pair (left i64) (right i64))
+(define (main [pair : Pair]) : i64
+  (let
+    [borrowed : (& pair i64) (& (struct-get pair left))]
+    (begin
+      (set! (struct-get pair left) 3)
+      0)))")
+
+(define (compiler-typecheck-borrow-mut-after-immut-source) : String
+  "(define (main [items : (Array i64)]) : unit
+  (let
+    [borrowed : (& items i64) (& (array-ref items 0))]
+    (let
+      [exclusive : (&mut items i64) (&mut (array-ref items 0))]
+      unit)))")
+
+(define (compiler-typecheck-borrow-immut-after-mut-source) : String
+  "(define (main [items : (Array i64)]) : unit
+  (let
+    [exclusive : (&mut items i64) (&mut (array-ref items 0))]
+    (let
+      [borrowed : (& items i64) (& (array-ref items 0))]
+      unit)))")
+
+(define (compiler-typecheck-borrow-returned-call-source) : String
+  "(define (borrow-text [text : (& text str)]) : (& text str)
+  text)
+(define (main) : i64
+  (let
+    [text : String \"borrowed\"]
+    (let
+      [borrowed : (& text str) (borrow-text (& text))]
+      (let [moved : String text] 1))))")
+
+(define (compiler-typecheck-borrow-narrow-lexical-ok-source) : String
+  "(define (take [n : (& n i64)]) : i64
+  1)
+(define (main [n : i64]) : i64
+  (begin
+    (let [tmp : i64 (take n)] tmp)
+    (set! n 2)
+    n))")
+
+(define (compiler-typecheck-secondary-label-contains?
+  [labels : CompilerDiagnosticLabelList]
+  [needle : String]) : bool
+  (match labels
+    [(CompilerDiagnosticLabelNil) false]
+    [(CompilerDiagnosticLabelCons entry rest)
+      (match (struct-get entry label)
+        [(CompilerDiagnosticSomeString text)
+          (if (string-contains (& text) (& needle))
+            true
+            (compiler-typecheck-secondary-label-contains? (box-get rest) needle))]
+        [CompilerDiagnosticNoString
+          (compiler-typecheck-secondary-label-contains? (box-get rest) needle)])]))
+
+(define (compiler-typecheck-help-contains?
+  [diag : CompilerDiagnostic]
+  [needle : String]) : bool
+  (match (compiler-diagnostic-help diag)
+    [(CompilerDiagnosticSomeString text) (string-contains (& text) (& needle))]
+    [CompilerDiagnosticNoString false]))
+
+(define (compiler-typecheck-labeled-borrow-error-ok?
+  [src : String]
+  [want-message-fragment : String]) : bool
+  (match (typecheck-compiler-source src)
+    [(ErrCompilerTypecheck diag)
+      (let
+        [message : String (compiler-diagnostic-message diag)]
+        (and
+          (string-contains (& message) (& want-message-fragment))
+          (compiler-typecheck-help-contains? diag "narrower lexical scope")
+          (=
+            (compiler-typecheck-secondary-count
+              (compiler-diagnostic-secondary-spans diag))
+            1)
+          (compiler-typecheck-secondary-label-contains?
+            (compiler-diagnostic-secondary-spans diag)
+            "remains live")))]
+    [(OkCompilerTypecheck _) false]))
+
+(define (compiler-typecheck-borrow-diagnostic-tests-ok?) : bool
+  (and
+    (compiler-typecheck-labeled-borrow-error-ok?
+      (compiler-typecheck-auto-borrow-assignment-live-source)
+      "typecheck: cannot assign to borrowed place `n`")
+    (compiler-typecheck-labeled-borrow-error-ok?
+      (compiler-typecheck-auto-borrow-move-live-source)
+      "typecheck: cannot move borrowed place `text`")
+    (compiler-typecheck-labeled-borrow-error-ok?
+      (compiler-typecheck-borrow-projection-assign-source)
+      "typecheck: cannot assign to borrowed place `pair.left`")
+    (compiler-typecheck-labeled-borrow-error-ok?
+      (compiler-typecheck-borrow-mut-after-immut-source)
+      "typecheck: cannot mutably borrow borrowed place")
+    (compiler-typecheck-labeled-borrow-error-ok?
+      (compiler-typecheck-borrow-immut-after-mut-source)
+      "typecheck: cannot immutably borrow mutably borrowed place")
+    (compiler-typecheck-labeled-borrow-error-ok?
+      (compiler-typecheck-borrow-returned-call-source)
+      "typecheck: cannot move borrowed place `text`")
+    (compiler-typecheck-ok?
+      (compiler-typecheck-borrow-narrow-lexical-ok-source))))
+
 (define (compiler-typecheck-reference-return-container-tests-ok?) : bool
   (and
     (compiler-typecheck-ok?
@@ -518,6 +625,9 @@
     (unless
       (compiler-typecheck-auto-borrow-tests-ok?)
       (panic "typecheck: auto-borrow tests failed"))
+    (unless
+      (compiler-typecheck-borrow-diagnostic-tests-ok?)
+      (panic "typecheck: borrow diagnostic tests failed"))
     (unless
       (compiler-typecheck-macro-alias-cache-collision-ok?)
       (panic "typecheck: macro alias cache collision test failed"))

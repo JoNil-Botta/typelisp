@@ -26307,42 +26307,25 @@
         (macro-decl-from-decl template module))]
     [_ (MacroNoDecl)]))
 
-(define (macro-decl-counts-for-symbol-index? [decl : AstDecl]) : bool
-  (match decl
-    [(AstDeclImport _) false]
-    [(AstDeclIncludeStr _ _) false]
-    [(AstDeclIncludeBin _ _) false]
-    [(AstDeclExport _) false]
-    [(AstDeclModule _) false]
-    [(AstDeclTest _ _ _) false]
-    [_ true]))
-
-(define (macro-find-decl-by-index-loop
-  [decls : AstDeclList]
+;; Resolve a macro decl from its symbol-table index in O(1). The symbols decls
+;; array is populated (compiler-symbols-index-decl!) at the SAME index that
+;; compiler-symbol-handle-index returns: build-compiler-symbol-list-in-module
+;; writes the array slot and registers the handle with one shared `index`,
+;; skipping the identical Import/IncludeStr/IncludeBin/Export/Module/Test set
+;; that the old linear scan skipped. The array already stores the unwrapped decl
+;; (compiler-symbol-indexed-decl peels AstDeclUnsafe/AstDeclComptimeDecl the same
+;; way macro-decl-from-decl does), so this returns the identical MacroSomeDecl the
+;; previous O(decls) macro-find-decl-by-index walk produced. The defining module
+;; is supplied by the caller -- every call site looks the macro up in the module
+;; it is defined in, which is exactly the module the scan recovered by tracking
+;; AstDeclModule as it walked.
+(define (macro-decl-at-index-in-module
+  [symbols : CompilerSymbols]
   [target : i64]
-  [index : i64]
   [module : String]) : MacroMaybeDecl
-  (match decls
-    [(AstDeclNil) (MacroNoDecl)]
-    [(AstDeclCons decl rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        (match decl
-          [(AstDeclModule next-module)
-            (macro-find-decl-by-index-loop
-              rest
-              target
-              index
-              (intern-str next-module))]
-          [_
-            (if (macro-decl-counts-for-symbol-index? decl)
-              (if (= index target)
-                (macro-decl-from-decl decl module)
-                (macro-find-decl-by-index-loop rest target (+ index 1) module))
-              (macro-find-decl-by-index-loop rest target index module))]))]))
-
-(define (macro-find-decl-by-index [decls : AstDeclList] [target : i64]) : MacroMaybeDecl
-  (macro-find-decl-by-index-loop decls target 0 ""))
+  (match (compiler-symbols-decl-at-index symbols target)
+    [(OkAstDecl decl) (macro-decl-from-decl decl module)]
+    [(ErrAstDecl _) (MacroNoDecl)]))
 
 ;; The module accumulator and the current module compare as INTERN IDS: the
 ;; previous String-based walk converted every AstDeclModule's interned name
@@ -26581,9 +26564,10 @@
     (intern target-module)
     (intern base))
     [(SomeI64 handle)
-      (match (macro-find-decl-by-index
-        decls
-        (compiler-symbol-handle-index handle))
+      (match (macro-decl-at-index-in-module
+        (tc-context-symbols ctx)
+        (compiler-symbol-handle-index handle)
+        target-module)
         [(MacroSomeDecl macro-name def-module params ret body)
           (OkMacroCallDecl
             (MacroSomeDecl macro-name def-module params ret body))]
@@ -26655,7 +26639,7 @@
 ;; error) when the name is not a prelude macro, leaving plain calls unaffected.
 (define (macro-prelude-resolve-module-with-exports
   [exports : CompilerExports]
-  [decls : AstDeclList]
+  [symbols : CompilerSymbols]
   [module-name : String]
   [lookup-name : String]) : ResultMacroCallDecl
   (match (compiler-exports-lookup-id
@@ -26664,9 +26648,10 @@
     (intern module-name)
     (intern lookup-name))
     [(SomeI64 handle)
-      (match (macro-find-decl-by-index
-        decls
-        (compiler-symbol-handle-index handle))
+      (match (macro-decl-at-index-in-module
+        symbols
+        (compiler-symbol-handle-index handle)
+        module-name)
         [(MacroSomeDecl macro-name def-module params ret body)
           (OkMacroCallDecl
             (MacroSomeDecl macro-name def-module params ret body))]
@@ -26675,11 +26660,11 @@
 
 (define (macro-prelude-resolve-with-exports
   [exports : CompilerExports]
-  [decls : AstDeclList]
+  [symbols : CompilerSymbols]
   [lookup-name : String]) : ResultMacroCallDecl
   (match (macro-prelude-resolve-module-with-exports
     exports
-    decls
+    symbols
     "stdlib.core_macros"
     lookup-name)
     [(OkMacroCallDecl maybe-decl)
@@ -26689,7 +26674,7 @@
           ;; identity before the core_macros spelling migration.
           (macro-prelude-resolve-module-with-exports
             exports
-            decls
+            symbols
             "stdlib.core-macros"
             lookup-name)]
         [_ (OkMacroCallDecl maybe-decl)])]
@@ -26697,20 +26682,23 @@
 
 (define (macro-prelude-call-decl
   [ctx : TcContext]
-  [decls : AstDeclList]
+  [_decls : AstDeclList]
   [lookup-name : String]
   [call-expr : AstExpr]) : ResultMacroCallDecl
   (if macro-expand-exports-ready
     (macro-prelude-resolve-with-exports
       macro-expand-exports-value
-      decls
+      (tc-context-symbols ctx)
       lookup-name)
     (match (build-compiler-exports-with
       (tc-context-program ctx)
       (tc-context-symbols ctx)
       (tc-context-registries ctx))
       [(OkCompilerExports exports)
-        (macro-prelude-resolve-with-exports exports decls lookup-name)]
+        (macro-prelude-resolve-with-exports
+          exports
+          (tc-context-symbols ctx)
+          lookup-name)]
       [(ErrCompilerExports message)
         (ErrMacroCallDecl (ctfe-diagnostic-at-expr call-expr message))])))
 
@@ -26725,9 +26713,10 @@
     (intern module)
     (intern lookup-name))
     [(SomeI64 handle)
-      (match (macro-find-decl-by-index
-        decls
-        (compiler-symbol-handle-index handle))
+      (match (macro-decl-at-index-in-module
+        (tc-context-symbols ctx)
+        (compiler-symbol-handle-index handle)
+        module)
         [(MacroSomeDecl macro-name def-module params ret body)
           (OkMacroCallDecl
             (MacroSomeDecl macro-name def-module params ret body))]

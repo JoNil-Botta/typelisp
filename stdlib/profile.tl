@@ -12,7 +12,6 @@
 (cfg
   windows
   (extern (profile-win-query-performance-counter [arg0 : (MutPtr i64)]) : i32 (:symbol "QueryPerformanceCounter")))
-
 (cfg
   windows
   (extern (profile-win-query-performance-frequency [arg0 : (MutPtr i64)]) : i32 (:symbol "QueryPerformanceFrequency")))

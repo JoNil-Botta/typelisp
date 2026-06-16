@@ -1,5 +1,4 @@
 (import "stdlib/sync.tl")
-
 (import "stdlib/thread.tl")
 
 (define sync-integration-count : i64

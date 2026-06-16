@@ -21,7 +21,6 @@
 ;: Local arena hooks keep this module import-free while letting persistent
 ;: intern entries survive scoped compile arenas.
 (extern (intern-arena-make) : i64 (:symbol "tl_arena_make"))
-
 (extern (intern-arena-current) : i64 (:symbol "tl_arena_current"))
 
 (unsafe
@@ -44,22 +43,16 @@
 
 (define intern-pool-slots : (Array String)
   (make-array String 262144))
-
 (define intern-pool-qualified-slots : (Array bool)
   (make-array bool 262144))
-
 (define intern-pool-last-slash-slots : (Array i64)
   (make-array i64 262144))
-
 (define intern-pool-first-dot-slots : (Array i64)
   (make-array i64 262144))
-
 (define intern-pool-module-id-slots : (Array i64)
   (make-array i64 262144))
-
 (define intern-pool-base-id-slots : (Array i64)
   (make-array i64 262144))
-
 (define intern-pool-count : i64
   0)
 
@@ -68,52 +61,36 @@
 
 (define intern-map-slots : (Array InternSlot)
   (make-array InternSlot 262144))
-
 (define intern-map-ready : bool
   false)
-
 (define intern-reset-generation : i64
   0)
-
 (define intern-slice-cache0-name : String
   "")
-
 (define intern-slice-cache0-id : i64
   -1)
-
 (define intern-slice-cache0-ready : bool
   false)
-
 (define intern-slice-cache1-name : String
   "")
-
 (define intern-slice-cache1-id : i64
   -1)
-
 (define intern-slice-cache1-ready : bool
   false)
-
 (define intern-slice-cache2-name : String
   "")
-
 (define intern-slice-cache2-id : i64
   -1)
-
 (define intern-slice-cache2-ready : bool
   false)
-
 (define intern-slice-cache3-name : String
   "")
-
 (define intern-slice-cache3-id : i64
   -1)
-
 (define intern-slice-cache3-ready : bool
   false)
-
 (define intern-persistent-arena : i64
   (intern-arena-current))
-
 (define intern-persistent-storage-enabled : bool
   false)
 

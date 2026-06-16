@@ -1,5 +1,4 @@
 (import "stdlib/text_buf.tl")
-
 (import "stdlib/test.tl")
 
 (define (assert-owned-string-eq

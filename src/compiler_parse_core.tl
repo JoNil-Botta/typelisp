@@ -5,15 +5,10 @@
 ;; parsed `AstProgram` for typechecking/lowering once those selfhost passes
 ;; exist.
 (import "../stdlib/io.tl")
-
 (import "compiler_ast_types.tl")
-
 (import "compiler_diagnostic.tl")
-
 (import "read.tl")
-
 (import "sym_i64_env.tl")
-
 (import "../stdlib/string.tl")
 
 (defenum ResultAstType

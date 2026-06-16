@@ -1,10 +1,8 @@
 (import "stdlib/io.tl")
-
 (import "stdlib/test.tl")
 
 (define pipe-stdin-read-size : i64
   4194304)
-
 (define pipe-stdin-expected-bytes : i64
   2097152)
 

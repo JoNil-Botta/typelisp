@@ -1,5 +1,4 @@
 (import "stdlib/arena.tl")
-
 (import "stdlib/thread.tl")
 
 (define (arena-atomic-worker-loop [i : i64] [sum : i64]) : i64

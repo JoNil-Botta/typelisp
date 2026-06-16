@@ -6,11 +6,8 @@
 ;; lockfiles itself; build_cli_core.tl consumes these helpers for package build
 ;; cache reuse/refetch and lockfile integration.
 (import "../stdlib/fs.tl")
-
 (import "../stdlib/io.tl")
-
 (import "../stdlib/string.tl")
-
 (import "../stdlib/str_cat.tl")
 
 (defenum PackageCachePinKind
@@ -42,10 +39,8 @@
 
 (define package-cache-version : String
   "v1")
-
 (define package-cache-metadata-name : String
   "typelisp-cache-entry.txt")
-
 (define package-cache-complete-marker-name : String
   ".typelisp-cache-complete")
 

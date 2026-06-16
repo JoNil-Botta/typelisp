@@ -4,11 +4,8 @@
 ;; model as the Markdown renderer. Anchors intentionally reuse `doc-render-anchor`
 ;; so standalone item links remain compatible with existing Markdown anchors.
 (import "../stdlib/io.tl")
-
 (import "doc_render.tl")
-
 (import "../stdlib/string.tl")
-
 (import "../stdlib/str_cat.tl")
 
 (define (doc-html-escape-one [text : String] [idx : i64]) : String

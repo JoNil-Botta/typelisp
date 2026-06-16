@@ -41,39 +41,26 @@
   (tail u32))
 
 (extern (nested-byte-score [arg : OuterByteC] [tag : u64]) : i64 (:symbol "tl_cabi_nested_byte_score"))
-
 (extern (nested-byte-make [tag : u64]) : OuterByteC (:symbol "tl_cabi_nested_byte_make"))
-
 (extern (nested-pair-score [arg : OuterPairC] [tag : u64]) : i64 (:symbol "tl_cabi_nested_pair_score"))
-
 (extern nested-pair-scorer (:symbol "tl_cabi_nested_pair_score_ptr") : (->
   OuterPairC
   u64
   i64))
-
 (extern (nested-pair-make [tag : u64]) : OuterPairC (:symbol "tl_cabi_nested_pair_make"))
-
 (extern (nested-word-score [arg : OuterWordDefault] [tag : u64]) : i64 (:symbol "tl_cabi_nested_word_score"))
-
 (extern (nested-word-make [tag : u64]) : OuterWordDefault (:symbol "tl_cabi_nested_word_make"))
-
 (extern (nested-double-score [arg : OuterDoubleC] [tag : u64]) : i64 (:symbol "tl_cabi_nested_double_score"))
-
 (extern (nested-double-make [tag : u64]) : OuterDoubleC (:symbol "tl_cabi_nested_double_make"))
-
 (extern nested-double-maker (:symbol "tl_cabi_nested_double_make_ptr") : (->
   u64
   OuterDoubleC))
-
 (extern (nested-wide-score [arg : WideOuterC] [tag : u64]) : i64 (:symbol "tl_cabi_nested_wide_score"))
-
 (extern nested-wide-scorer (:symbol "tl_cabi_nested_wide_score_ptr") : (->
   WideOuterC
   u64
   i64))
-
 (extern (nested-wide-make [tag : u64]) : WideOuterC (:symbol "tl_cabi_nested_wide_make"))
-
 (extern nested-wide-maker (:symbol "tl_cabi_nested_wide_make_ptr") : (->
   u64
   WideOuterC))

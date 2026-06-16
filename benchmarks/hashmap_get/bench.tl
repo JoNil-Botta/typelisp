@@ -4,12 +4,10 @@
 ;# a fixed-capacity map, then alternates deterministic hit and miss lookups so
 ;# the generated read probe path dominates the runtime.
 (import "stdlib/io.tl")
-
 (import "stdlib/hashmap.tl")
 
 (define hashmap-get-base-rounds : i64
   1200)
-
 (define hashmap-get-size : i64
   2048)
 

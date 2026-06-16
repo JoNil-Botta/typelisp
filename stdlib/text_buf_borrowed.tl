@@ -7,7 +7,6 @@
 ;# This module intentionally remains separate from `text_buf.tl` while the
 ;# compatibility surface keeps owned chunk storage.
 (import "text_buf.tl")
-
 (import "string.tl")
 
 ;: Borrowed buffer chunk. Borrowed chunks are not copied until render; owned

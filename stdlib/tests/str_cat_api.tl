@@ -5,7 +5,6 @@
 ;# the same program as a macro, covering the "generate declaration families
 ;# before macro expansion" pipeline ordering. Exits 42 on success.
 (import "stdlib/str_cat.tl")
-
 (import "stdlib/hashmap.tl")
 
 ;: 1 when the strings are byte-equal, else 0.

@@ -7,7 +7,6 @@
 ;; caller-saved integer/XMM registers for values that cannot be clobbered by
 ;; call emission.
 (import "../stdlib/io.tl")
-
 (import "compiler_liveness.tl")
 
 (defenum CompilerRegStringList
@@ -2798,7 +2797,6 @@
 ;; structural Pack/Word seeding below is unaffected.
 (define compiler-reg-group-counts : StringI64Map
   (string-i64-map-with-capacity 8))
-
 (define compiler-reg-group-class-masks : StringI64Map
   (string-i64-map-with-capacity 8))
 

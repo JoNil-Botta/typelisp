@@ -4,13 +4,9 @@
 ;; gofmt-like first pass for common TypeLisp special forms while still building
 ;; `Doc` values for width-aware rendering.
 (import "../stdlib/io.tl")
-
 (import "format_tokens.tl")
-
 (import "format_cst.tl")
-
 (import "format_doc.tl")
-
 (import "../stdlib/string.tl")
 
 (defenum ResultFormatString
@@ -51,15 +47,67 @@
         [_ false])]
     [_ false]))
 
+(define (format-rules-define-value-rest? [rest : FormatCstList]) : bool
+  (match rest
+    [(FmtCstCons target _)
+      (match target
+        [(FmtCstList _) false]
+        [_ true])]
+    [_ false]))
+
+(define (format-rules-cfg-top-form-family [rest : FormatCstList]) : String
+  (match rest
+    [(FmtCstCons _ after-predicate-box)
+      (match (box-get after-predicate-box)
+        [(FmtCstCons inner _) (format-rules-top-form-family inner)]
+        [_ ""])]
+    [_ ""]))
+
+(define (format-rules-top-form-family-list [items : FormatCstList]) : String
+  (match items
+    [(FmtCstCons head rest-box)
+      (let
+        [head-name : String (format-rules-node-symbol-name head)]
+        [rest : FormatCstList (box-get rest-box)]
+        (if (string-eq head-name "import")
+          "import"
+          (if (string-eq head-name "extern")
+            "extern"
+            (if (string-eq head-name "include-str")
+              "include-str"
+              (if (string-eq head-name "define")
+                (if (format-rules-define-value-rest? rest)
+                  "define"
+                  "")
+                (if (string-eq head-name "cfg")
+                  (format-rules-cfg-top-form-family rest)
+                  ""))))))]
+    [_ ""]))
+
+(define (format-rules-top-form-family [node : FormatCst]) : String
+  (match node
+    [(FmtCstList items) (format-rules-top-form-family-list (box-get items))]
+    [_ ""]))
+
+(define (format-rules-adjacent-top-forms?
+  [previous : FormatCst]
+  [node : FormatCst]) : bool
+  (let
+    [previous-family : String (format-rules-top-form-family previous)]
+    [node-family : String (format-rules-top-form-family node)]
+    (and
+      (> (string-length previous-family) 0)
+      (string-eq previous-family node-family))))
+
 (define (format-rules-gap) : Doc
   (doc-append (doc-hard-line) (doc-hard-line)))
 
-(define (format-rules-forms-separator
-  [previous-comment : bool]
-  [node : FormatCst]) : Doc
-  (if previous-comment
+(define (format-rules-forms-separator [previous : FormatCst] [node : FormatCst]) : Doc
+  (if (format-rules-node-comment? previous)
     (doc-hard-line)
-    (format-rules-gap)))
+    (if (format-rules-adjacent-top-forms? previous node)
+      (doc-hard-line)
+      (format-rules-gap))))
 
 (define (format-rules-space [doc : Doc]) : Doc
   (doc-append (doc-text " ") doc))
@@ -586,18 +634,16 @@
         (format-rules-special-list-doc head (box-get rest)))]))
 
 (define (format-rules-forms-tail-doc
-  [previous-comment : bool]
+  [previous : FormatCst]
   [items : FormatCstList]) : Doc
   (match items
     [(FmtCstNil) (doc-empty)]
     [(FmtCstCons node rest)
       (doc-append
-        (format-rules-forms-separator previous-comment node)
+        (format-rules-forms-separator previous node)
         (doc-append
           (format-rules-cst-doc node)
-          (format-rules-forms-tail-doc
-            (format-rules-node-comment? node)
-            (box-get rest))))]))
+          (format-rules-forms-tail-doc node (box-get rest))))]))
 
 (define (format-rules-forms-doc [items : FormatCstList]) : Doc
   (match items
@@ -605,9 +651,7 @@
     [(FmtCstCons node rest)
       (doc-append
         (format-rules-cst-doc node)
-        (format-rules-forms-tail-doc
-          (format-rules-node-comment? node)
-          (box-get rest)))]))
+        (format-rules-forms-tail-doc node (box-get rest)))]))
 
 (define (format-rules-cst-doc [node : FormatCst]) : Doc
   (match node
@@ -649,10 +693,10 @@
         "")]))
 
 (define (format-rules-decls-source) : String
-  "(import \"std.tl\") (extern (print-string [arg0 : String]) : unit (:abi c) (:symbol \"tl_print_string\")) (defenum Maybe (Some i64) (None)) (defstruct Point (x i64) (y i64))")
+  "(import \"std.tl\") (import \"ffi.tl\") (extern (print-string [arg0 : String]) : unit (:abi c) (:symbol \"tl_print_string\")) (extern (print-int [arg0 : i64]) : unit) (defenum Maybe (Some i64) (None)) (defstruct Point (x i64) (y i64)) (define KEY_A : i64 1) (define KEY_B : i64 2)")
 
 (define (format-rules-decls-expected) : String
-  "(import \"std.tl\")\n\n(extern (print-string [arg0 : String]) : unit (:abi c) (:symbol \"tl_print_string\"))\n\n(defenum Maybe\n  (Some i64)\n  (None))\n\n(defstruct Point\n  (x i64)\n  (y i64))")
+  "(import \"std.tl\")\n(import \"ffi.tl\")\n\n(extern (print-string [arg0 : String]) : unit (:abi c) (:symbol \"tl_print_string\"))\n(extern (print-int [arg0 : i64]) : unit)\n\n(defenum Maybe\n  (Some i64)\n  (None))\n\n(defstruct Point\n  (x i64)\n  (y i64))\n\n(define KEY_A : i64\n  1)\n(define KEY_B : i64\n  2)")
 
 (define (format-rules-flow-source) : String
   "(define (main [x : i64]) : i64 (begin (let ([y : i64 1]) (if (< x y) (while (< x 10) (set! x (+ x 1))) x)) (match (Some x) [(Some v) v] [None 0])))")

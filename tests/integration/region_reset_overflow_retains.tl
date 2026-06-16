@@ -1,9 +1,6 @@
 (extern (tl_alloc [arg0 : u64]) : u64)
-
 (extern (tl_region_mark) : u64)
-
 (extern (tl_region_reset [arg0 : u64]) : unit)
-
 (extern (tl_arena_poison_enable) : unit)
 
 (define (write-u64! [addr : u64] [value : u64]) : unit

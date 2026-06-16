@@ -3,11 +3,8 @@
 ;; printing, float formatting, allocation, environment, filesystem, and file IO.
 ;; The guard builds this to a native binary and asserts it pulls in no C runtime.
 (import "../../stdlib/io.tl")
-
 (import "../../stdlib/string.tl")
-
 (import "../../stdlib/env.tl")
-
 (import "../../stdlib/fs.tl")
 
 (define (main) : i64

@@ -6,15 +6,10 @@
 ;; path to exit non-zero when findings remain. The deprecated string-concat rule
 ;; is opt-in until the remaining in-tree str-cat migrations land.
 (import "../stdlib/io.tl")
-
 (import "../stdlib/list.tl")
-
 (import "compiler_load.tl")
-
 (import "lint_core.tl")
-
 (import "package_source_core.tl")
-
 (import "../stdlib/string.tl")
 
 ;; Parsed lint CLI config: input paths, stdlib roots, whether `--check`

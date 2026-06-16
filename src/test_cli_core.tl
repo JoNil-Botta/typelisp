@@ -7,23 +7,14 @@
 ;; their own tests to this source's harness. Normal compile paths ignore
 ;; `AstDeclTest`.
 (import "../stdlib/io.tl")
-
 (import "../stdlib/arena.tl")
-
 (import "build_run_core.tl")
-
 (import "compiler_backend.tl")
-
 (import "compiler_load.tl")
-
 (import "package_source_core.tl")
-
 (import "compiler_optimize.tl")
-
 (import "compiler_typecheck.tl")
-
 (import "../stdlib/string.tl")
-
 (import "../stdlib/str_cat.tl")
 
 (defenum TestMode

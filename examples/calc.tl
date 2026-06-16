@@ -41,7 +41,6 @@
 ;; accessors, and the tag constants. Resolved relative to this file, so it finds
 ;; the co-located `token.tl`.
 (import "stdlib/io.tl")
-
 (import "token.tl")
 
 ;; ============================ AST model ===================================

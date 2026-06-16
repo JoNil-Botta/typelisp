@@ -1,5 +1,4 @@
 (import "stdlib/test.tl")
-
 (import "stdlib/profile.tl")
 
 (define (profile-test-allocation) : String

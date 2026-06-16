@@ -4,7 +4,6 @@
 ;; spelling and comments. Whitespace is skipped for now; comments are retained
 ;; as trivia tokens so later layout rules can place them deliberately.
 (import "../stdlib/io.tl")
-
 (import "../stdlib/string.tl")
 
 (defenum FormatToken

@@ -12,9 +12,7 @@
 ;; from the captured top-level form with the formatter token lexer so original
 ;; source text remains available as the item signature.
 (import "../stdlib/io.tl")
-
 (import "format_tokens.tl")
-
 (import "../stdlib/string.tl")
 
 (defenum DocItemKind

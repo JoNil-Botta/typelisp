@@ -20,7 +20,6 @@
 ;;   -9223372036854775808
 ;; Exit code: 42
 (import "stdlib/io.tl")
-
 (import "stdlib/string.tl")
 
 (define (integration-trim-left [s : String]) : String

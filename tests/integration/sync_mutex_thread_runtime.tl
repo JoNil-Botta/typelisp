@@ -1,5 +1,4 @@
 (import "stdlib/sync.tl")
-
 (import "stdlib/thread.tl")
 
 (define sync-mutex-integration-count : i64

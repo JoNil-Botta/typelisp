@@ -4,9 +4,7 @@
 ;; model is intentionally close to the Rust IR: functions contain blocks, blocks
 ;; contain typed instructions, and instructions use explicit vars/values.
 (import "../stdlib/string.tl")
-
 (import "compiler_ast_types.tl")
-
 (import "../stdlib/str_cat.tl")
 
 (defenum CompilerIrBinOp

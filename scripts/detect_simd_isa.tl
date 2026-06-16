@@ -6,7 +6,6 @@
 ;; /proc/cpuinfo (Windows) so SIMD *execution* tests gate on real CPU+OS
 ;; capability rather than host OS. The detection logic lives in stdlib/cpu.tl.
 (import "stdlib/io.tl")
-
 (import "stdlib/cpu.tl")
 
 (define (main) : i64

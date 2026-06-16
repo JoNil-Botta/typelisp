@@ -4,13 +4,9 @@
 ;; source-order position among supported declarations. Import declarations have
 ;; no top-level symbol name here and do not consume an index.
 (import "../stdlib/io.tl")
-
 (import "compiler_parse_core.tl")
-
 (import "sym_i64_env.tl")
-
 (import "../stdlib/hashmap.tl")
-
 (import "../stdlib/string.tl")
 
 (defenum CompilerSymbols

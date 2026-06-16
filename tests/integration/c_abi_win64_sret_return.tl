@@ -4,7 +4,6 @@
   (b u64))
 
 (extern (wide-make [a : u32] [b : u32] [c : u32] [d : u32] [tag : u64]) : Wide (:symbol "tl_cabi_wide_make"))
-
 (extern wide-maker (:symbol "tl_cabi_wide_make_ptr") : (->
   u32
   u32

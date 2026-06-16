@@ -2,9 +2,7 @@
 ;# Exercises zero, single, two, three, four, and duplicate-separator joins.
 ;# Exits 42 on success.
 (import "stdlib/fs.tl")
-
 (import "stdlib/string.tl")
-
 (import "stdlib/test.tl")
 
 (define (fs-path-join-many-api-assert

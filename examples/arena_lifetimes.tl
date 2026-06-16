@@ -4,11 +4,8 @@
 ; - frame-only temporaries live inside a nested lexical with-arena scope
 ; - one frame result is cloned out of a first-class scratch arena with with-escape
 (import "stdlib/arena.tl")
-
 (import "stdlib/profile.tl")
-
 (import "stdlib/string.tl")
-
 (import "stdlib/test.tl")
 
 (defstruct GlobalState

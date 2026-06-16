@@ -4,13 +4,9 @@
 ;; directories. Source-file cleanup targets default source-adjacent outputs;
 ;; package cleanup targets the manifest's package output directory.
 (import "../stdlib/fs.tl")
-
 (import "../stdlib/io.tl")
-
 (import "build_cli_core.tl")
-
 (import "../stdlib/string.tl")
-
 (import "../stdlib/str_cat.tl")
 
 (defenum CleanConfig

@@ -1,10 +1,7 @@
 ;; inspect_cli_core.tl - Public tlci inspection command (#2655).
 (import "../stdlib/io.tl")
-
 (import "../stdlib/string.tl")
-
 (import "../stdlib/str_cat.tl")
-
 (import "tlci_core.tl")
 
 (define (tlci-inspect-help-text) : String

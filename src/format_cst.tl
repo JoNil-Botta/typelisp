@@ -4,7 +4,6 @@
 ;; layout: atoms keep original token spelling, comments stay as trivia nodes,
 ;; and parenthesized/bracketed lists keep their delimiter kind.
 (import "../stdlib/io.tl")
-
 (import "format_tokens.tl")
 
 (defenum FormatCst

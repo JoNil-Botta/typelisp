@@ -1,5 +1,4 @@
 (import "stdlib/arena.tl")
-
 (import "stdlib/thread.tl")
 
 (define (main) : i64

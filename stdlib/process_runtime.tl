@@ -17,9 +17,7 @@
 ;#
 ;# Usage: imported by `process.tl` (which provides the public wrappers).
 (import "process.tl")
-
 (import "io.tl")
-
 (import "string.tl")
 
 ;: Linux inherited environment array (NUL-terminated `char**`). On the freestanding
@@ -37,11 +35,9 @@
 (cfg
   windows
   (extern (process-win-get-environment-strings) : (Ptr u8) (:symbol "GetEnvironmentStringsA")))
-
 (cfg
   windows
   (extern (process-win-get-temp-path [arg0 : i32] [arg1 : (MutPtr u8)]) : i32 (:symbol "GetTempPathA")))
-
 (cfg
   windows
   (extern (process-win-get-temp-file-name
@@ -49,7 +45,6 @@
     [arg1 : (Ptr u8)]
     [arg2 : i32]
     [arg3 : (MutPtr u8)]) : i32 (:symbol "GetTempFileNameA")))
-
 (cfg
   windows
   (extern (process-win-create-process
@@ -63,11 +58,9 @@
     [arg7 : i64]
     [arg8 : i64]
     [arg9 : i64]) : i32 (:symbol "CreateProcessA")))
-
 (cfg
   windows
   (extern (process-win-wait-single [arg0 : i64] [arg1 : i32]) : i32 (:symbol "WaitForSingleObject")))
-
 (cfg
   windows
   (extern (process-win-get-exit-code [arg0 : i64] [arg1 : (MutPtr i32)]) : i32 (:symbol "GetExitCodeProcess")))

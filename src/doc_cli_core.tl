@@ -9,19 +9,12 @@
 ;;   typelisp run selfhost/cli.tl -- doc --test --batch inputs.txt
 ;;   typelisp run selfhost/cli.tl -- doc --load input.tl output.md [--stdlib-root <dir>...]
 (import "../stdlib/io.tl")
-
 (import "../stdlib/vector.tl")
-
 (import "doc_render.tl")
-
 (import "doc_html.tl")
-
 (import "doc_test.tl")
-
 (import "compiler_load.tl")
-
 (import "package_source_core.tl")
-
 (import "../stdlib/string.tl")
 
 (defenum DocMaybeString

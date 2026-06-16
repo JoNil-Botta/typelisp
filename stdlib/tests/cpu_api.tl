@@ -1,5 +1,4 @@
 (import "stdlib/test.tl")
-
 (import "stdlib/cpu.tl")
 
 ;; Host-independent invariants for the cpuid/xgetbv-based SIMD detector. The

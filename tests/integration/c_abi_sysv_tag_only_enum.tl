@@ -4,9 +4,7 @@
   (Failed))
 
 (extern (status-pick [arg0 : Status] [arg1 : Status] [choose-second : i64]) : Status (:symbol "tl_cabi_status_pick"))
-
 (extern (status-eq [arg0 : Status] [arg1 : Status]) : i64 (:symbol "tl_cabi_status_eq"))
-
 (extern status-pick-ptr (:symbol "tl_cabi_status_pick_ptr") : (->
   Status
   Status

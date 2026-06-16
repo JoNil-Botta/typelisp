@@ -34,13 +34,9 @@
 ;; `token.tl`; the loader's post-order DFS loads `token.tl` first, then this
 ;; module, then the reader.
 (import "compiler_intern.tl")
-
 (import "../stdlib/io.tl")
-
 (import "token.tl")
-
 (import "../stdlib/text_buf.tl")
-
 (import "../stdlib/string.tl")
 
 (defenum ResultTokens
@@ -1108,7 +1104,6 @@
 ;; so the fixed size needs no growth path.
 (define lex-spanned-token-buffer-cap : i64
   1310720)
-
 (define lex-spanned-token-buffer : (Array SpannedToken)
   (make-array SpannedToken lex-spanned-token-buffer-cap))
 

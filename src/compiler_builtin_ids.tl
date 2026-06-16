@@ -3,163 +3,110 @@
 
 (define compiler-builtin-generation : i64
   -1)
-
 (define compiler-builtin-id-tl-alloc : i64
   -1)
-
 (define compiler-builtin-id-tl-region-mark : i64
   -1)
-
 (define compiler-builtin-id-tl-region-reset : i64
   -1)
-
 (define compiler-builtin-id-tl-arena-make : i64
   -1)
-
 (define compiler-builtin-id-tl-arena-make-atomic : i64
   -1)
-
 (define compiler-builtin-id-tl-arena-current : i64
   -1)
-
 (define compiler-builtin-id-tl-arena-set : i64
   -1)
-
 (define compiler-builtin-id-tl-arena-destroy : i64
   -1)
-
 (define compiler-builtin-id-tl-arena-poison-enable : i64
   -1)
-
 (define compiler-builtin-id-tl-thread-entry-ptr : i64
   -1)
-
 (define compiler-builtin-id-tl-thread-init : i64
   -1)
-
 (define compiler-builtin-id-tl-profile-alloc-total : i64
   -1)
-
 (define compiler-builtin-id-tl-profile-alloc-live : i64
   -1)
-
 (define compiler-builtin-id-tl-profile-alloc-peak : i64
   -1)
-
 (define compiler-builtin-id-tl-profile-alloc-reset-peak : i64
   -1)
-
 (define compiler-builtin-id-tl-substring : i64
   -1)
-
 (define compiler-builtin-id-tl-string-concat : i64
   -1)
-
 (define compiler-builtin-id-tl-string-concat3 : i64
   -1)
-
 (define compiler-builtin-id-tl-string-concat4 : i64
   -1)
-
 (define compiler-builtin-id-tl-string-concat5 : i64
   -1)
-
 (define compiler-builtin-id-tl-string-eq : i64
   -1)
-
 (define compiler-builtin-id-tl-string-to-int : i64
   -1)
-
 (define compiler-builtin-id-tl-int-to-string : i64
   -1)
-
 (define compiler-builtin-id-tl-hash-string : i64
   -1)
-
 (define compiler-builtin-id-tl-env-var-exists : i64
   -1)
-
 (define compiler-builtin-id-tl-env-var-value : i64
   -1)
-
 (define compiler-builtin-id-env-path-separator : i64
   -1)
-
 (define compiler-builtin-id-tl-oob-abort : i64
   -1)
-
 (define compiler-builtin-id-tl-abort-label : i64
   -1)
-
 (define compiler-builtin-id-tl-div-abort : i64
   -1)
-
 (define compiler-builtin-id-tl-shift-abort : i64
   -1)
-
 (define compiler-builtin-id-tl-array-fill8 : i64
   -1)
-
 (define compiler-builtin-id-tl-array-zero : i64
   -1)
-
 (define compiler-builtin-id-tl-print-char : i64
   -1)
-
 (define compiler-builtin-id-tl-print-f64 : i64
   -1)
-
 (define compiler-builtin-id-string-length : i64
   -1)
-
 (define compiler-builtin-id-length : i64
   -1)
-
 (define compiler-builtin-id-string-eq : i64
   -1)
-
 (define compiler-builtin-id-string-eq-question : i64
   -1)
-
 (define compiler-builtin-id-string-to-int : i64
   -1)
-
 (define compiler-builtin-id-string-ref : i64
   -1)
-
 (define compiler-builtin-id-char-at : i64
   -1)
-
 (define compiler-builtin-id-array-length : i64
   -1)
-
 (define compiler-builtin-id-cpuid : i64
   -1)
-
 (define compiler-builtin-id-xgetbv : i64
   -1)
-
 (define compiler-builtin-id-clone : i64
   -1)
-
 (define compiler-builtin-id-arena-make : i64
   -1)
-
 (define compiler-builtin-id-arena-make-atomic : i64
   -1)
-
 (define compiler-builtin-id-arena-current : i64
   -1)
-
 (define compiler-builtin-id-arena-mark : i64
   -1)
-
 (define compiler-builtin-id-arena-set-bang : i64
   -1)
-
 (define compiler-builtin-id-arena-destroy : i64
   -1)
-
 (define compiler-builtin-id-arena-rewind : i64
   -1)
 

@@ -13,11 +13,8 @@
 ;; compile-time-only values are not clone-able. Clone-ability is a
 ;; least-fixed-point over the type graph.
 (import "../stdlib/io.tl")
-
 (import "compiler_ast_types.tl")
-
 (import "../stdlib/hashmap.tl")
-
 (import "../stdlib/string.tl")
 
 (defstruct CloneNameSet

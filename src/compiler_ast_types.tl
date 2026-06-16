@@ -18,7 +18,6 @@
 
 ;; #2604: hash/equality helpers for the ty-node hash-consing table below.
 (import "../stdlib/hash.tl")
-
 (import "../stdlib/string.tl")
 
 (defstruct AstSourceSpan
@@ -372,7 +371,6 @@
 ;; use-after-free). This is why the pool previously failed closed.
 (define node-pool-base-arena : i64
   (arena-current))
-
 (define ast-node-pool-count : i64
   0)
 
@@ -580,10 +578,8 @@
 ;; pool starts small; the proven grow path remains as backstop.
 (define ty-node-pool-slots : (Array AstType)
   (make-array AstType 262144))
-
 (define ty-node-pool-count : i64
   0)
-
 (define ty-node-pool-exhausted : bool
   false)
 
@@ -871,10 +867,8 @@
 ;; fixpoint. String payloads (lifetime names) compare by content.
 (define ty-node-dedup-capacity : i64
   1048576)
-
 (define ty-node-dedup-slots : (Array i64)
   (make-array i64 1048576))
-
 (define ty-node-dedup-count : i64
   0)
 

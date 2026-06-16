@@ -1,14 +1,9 @@
 ;; compiler_typecheck.tl - First scalar typechecker pass over compiler AstProgram (#426).
 (import "../stdlib/io.tl")
-
 (import "compiler_typecheck_core.tl")
-
 (import "compiler_load.tl")
-
 (import "compiler_specialize.tl")
-
 (import "../stdlib/string.tl")
-
 (import "../stdlib/str_cat.tl")
 
 (define (compiler-typecheck-prefix-cache-scope

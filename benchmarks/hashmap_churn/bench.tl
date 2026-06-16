@@ -5,12 +5,10 @@
 ;# final map contents stay observable. The workload keeps tombstones on the
 ;# insert/put path and makes grow-vs-rehash policy visible.
 (import "stdlib/io.tl")
-
 (import "stdlib/hashmap.tl")
 
 (define churn-base-rounds : i64
   320)
-
 (define churn-batch-size : i64
   96)
 

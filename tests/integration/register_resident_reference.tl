@@ -17,7 +17,6 @@
 
 (define global-pair : Pair
   (Pair 10 20))
-
 (define global-maybe : Maybe
   (Some 9))
 

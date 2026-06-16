@@ -1,7 +1,5 @@
 (import "stdlib/test.tl")
-
 (import "stdlib/vector.tl")
-
 (import "stdlib/sort.tl")
 
 (define (assert-owned-string-eq

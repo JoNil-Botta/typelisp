@@ -4,9 +4,7 @@
 ;; does not expose undocumented declarations as separate records yet, so this
 ;; renderer emits exactly the declarations present in the extracted model.
 (import "../stdlib/io.tl")
-
 (import "doc_extract.tl")
-
 (import "../stdlib/string.tl")
 
 (defenum DocModule

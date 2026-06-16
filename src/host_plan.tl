@@ -4,9 +4,7 @@
 ;; The boundary is deliberately not shell-tokenized: paths and runtime args are
 ;; emitted as netstrings so spaces, colons, and newlines round-trip exactly.
 (import "../stdlib/env.tl")
-
 (import "../stdlib/string.tl")
-
 (import "../stdlib/str_cat.tl")
 
 (define (host-plan-header) : String

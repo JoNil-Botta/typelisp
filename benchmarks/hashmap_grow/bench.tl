@@ -10,7 +10,6 @@
 ;# extra arguments, matching C `argc`), keeping the result deterministic while
 ;# preventing whole-loop constant folding.
 (import "stdlib/io.tl")
-
 (import "stdlib/hashmap.tl")
 
 (define base-entries : i64

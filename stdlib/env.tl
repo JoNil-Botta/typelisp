@@ -15,7 +15,6 @@
 ;#   (let [name : String "TYPELISP_DOC_TEST_MISSING_ENV"] (env-get (& name))))
 ;# ```
 (import "string.tl")
-
 (import "vector.tl")
 
 ;: Windows kernel32 `GetEnvironmentStringsA` binding (#2142 follow-up). Returns

@@ -1,7 +1,5 @@
 (import "stdlib/arena.tl")
-
 (import "stdlib/string.tl")
-
 (import "stdlib/test.tl")
 
 (define (scratch-temporary-score [seed : i64]) : i64

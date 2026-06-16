@@ -1,5 +1,4 @@
 (import "stdlib/io.tl")
-
 (import "stdlib/test.tl")
 
 (define (assert-owned-string-eq
@@ -10,19 +9,14 @@
 
 (define io-file : String
   "target/stdlib-verify/io_edges_file.txt")
-
 (define io-empty-file : String
   "target/stdlib-verify/io_edges_empty.txt")
-
 (define io-created-file : String
   "target/stdlib-verify/io_edges_created.txt")
-
 (define io-missing-file : String
   "target/stdlib-verify/io_edges_missing.txt")
-
 (define io-missing-parent-file : String
   "target/stdlib-verify/io-missing-parent/io_edges.txt")
-
 (define io-directory-path : String
   "target/stdlib-verify")
 

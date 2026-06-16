@@ -34,7 +34,6 @@
 ;; the `lex` entry and the `Token` enum + token accessors/tag constants.
 ;; Resolved relative to this file, so it finds the co-located `lex.tl`.
 (import "../stdlib/io.tl")
-
 (import "lex.tl")
 
 ;; --------------------------------------------------------------------------
@@ -89,7 +88,6 @@
 ;; so the pool is reset per program parse (see compiler_parse_core.tl).
 (define sp-node-pool-slots : (Array SpannedSexpr)
   (make-array SpannedSexpr 262144))
-
 (define sp-node-pool-count : i64
   0)
 

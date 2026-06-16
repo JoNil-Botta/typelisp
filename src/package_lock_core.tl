@@ -4,11 +4,8 @@
 ;; resolved. It parses and emits `typelisp.lock` S-expressions only; build-time
 ;; fetch/replay behavior remains owned by the package build pipeline.
 (import "../stdlib/string.tl")
-
 (import "../stdlib/str_cat.tl")
-
 (import "read.tl")
-
 (import "package_cache_core.tl")
 
 (defstruct PackageLockEntry

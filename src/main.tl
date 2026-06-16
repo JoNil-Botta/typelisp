@@ -18,33 +18,19 @@
 ;; `compiler_typecheck`), so `check` does the same macro-expansion and
 ;; specialization as build/run/test.
 (import "../stdlib/io.tl")
-
 (import "build_cli_core.tl")
-
 (import "run_cli_core.tl")
-
 (import "check_cli_core.tl")
-
 (import "format_cli_core.tl")
-
 (import "lint_driver_core.tl")
-
 (import "test_cli_core.tl")
-
 (import "doc_cli_core.tl")
-
 (import "compile_cli_core.tl")
-
 (import "clean_cli_core.tl")
-
 (import "inspect_cli_core.tl")
-
 (import "repl_cli_core.tl")
-
 (import "scaffold_cli_core.tl")
-
 (import "lsp_frame_core.tl")
-
 (import "../stdlib/string.tl")
 
 ;; Keeps the shipped stage0 help surface stable while individual commands route

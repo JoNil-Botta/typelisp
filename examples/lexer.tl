@@ -28,7 +28,6 @@
 ;;     whitespace classification compares the char's `i64` code point against
 ;;     ASCII constants rather than against char literals.
 (import "stdlib/io.tl")
-
 (import "stdlib/string.tl")
 
 (defenum Token

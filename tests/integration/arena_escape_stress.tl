@@ -10,7 +10,6 @@
 ; manual because host reporting differs across CI platforms; stale handles fail
 ; as output/exit mismatches here.
 (import "stdlib/arena.tl")
-
 (import "stdlib/string.tl")
 
 (extern (tl_alloc [arg0 : u64]) : u64)

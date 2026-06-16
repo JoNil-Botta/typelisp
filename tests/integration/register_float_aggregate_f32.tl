@@ -10,7 +10,6 @@
 
 (define global-vec : Vec2
   (Vec2 2.0 3.0))
-
 (define global-mix : MixUF
   (MixUF (cast 7 : u32) 8.5))
 

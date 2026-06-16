@@ -408,3 +408,317 @@
 ;: Join PATH-style items using the current platform separator.
 (define (env-path-join [items : EnvStringList]) : String
   (env-path-join-vec (env-string-list-to-vec items)))
+
+;: Inline test helper that forces a test failure without importing `io.tl`.
+(define (env-test-fail) : unit
+  (begin
+    (/ 1 0)
+    unit))
+
+;: Inline test assertion for boolean predicates.
+(define (env-test-assert-true [condition : bool] [message : String]) : unit
+  (if condition
+    unit
+    (env-test-fail)))
+
+;: Inline test assertion for `i64` equality.
+(define (env-test-assert-i64-eq
+  [actual : i64]
+  [expected : i64]
+  [message : String]) : unit
+  (env-test-assert-true (= actual expected) message))
+
+;: Inline test assertion for owned string equality.
+(define (env-test-assert-owned-string-eq
+  [actual : String]
+  [expected : String]
+  [message : String]) : unit
+  (env-test-assert-true (string-eq actual expected) message))
+
+;: Assert that an environment lookup is missing.
+(define (env-test-assert-none [value : EnvMaybeString] [message : String]) : unit
+  (match value
+    [(EnvNoString) unit]
+    [(EnvSomeString _) (env-test-fail)]))
+
+;: Assert that an environment lookup is present with `expected`.
+(define (env-test-assert-some
+  [value : EnvMaybeString]
+  [expected : String]
+  [message : String]) : unit
+  (match value
+    [(EnvSomeString actual)
+      (env-test-assert-owned-string-eq actual expected message)]
+    [(EnvNoString) (env-test-fail)]))
+
+;: Assert that an environment path-list lookup is missing.
+(define (env-test-assert-path-none
+  [value : EnvMaybeStringList]
+  [message : String]) : unit
+  (match value
+    [(EnvNoStringList) unit]
+    [(EnvSomeStringList _) (env-test-fail)]))
+
+;: Assert that an environment path-vector lookup is missing.
+(define (env-test-assert-path-vec-none
+  [value : EnvMaybeStringVec]
+  [message : String]) : unit
+  (match value
+    [(EnvNoStringVec) unit]
+    [(EnvSomeStringVec _) (env-test-fail)]))
+
+;: Assert that an environment path-list lookup returns an empty list.
+(define (env-test-assert-path-empty
+  [value : EnvMaybeStringList]
+  [message : String]) : unit
+  (match value
+    [(EnvSomeStringList items)
+      (match items
+        [(EnvStringNil) unit]
+        [_ (env-test-fail)])]
+    [(EnvNoStringList) (env-test-fail)]))
+
+;: Assert that an environment path-vector lookup returns an empty vector.
+(define (env-test-assert-path-vec-empty
+  [value : EnvMaybeStringVec]
+  [message : String]) : unit
+  (match value
+    [(EnvSomeStringVec items)
+      (env-test-assert-i64-eq (string-vec-len items) 0 message)]
+    [(EnvNoStringVec) (env-test-fail)]))
+
+;: Assert that an environment string list contains exactly three strings.
+(define (env-test-assert-list3
+  [items : EnvStringList]
+  [first : String]
+  [second : String]
+  [third : String]
+  [message : String]) : unit
+  (match items
+    [(EnvStringCons a rest)
+      (match (box-get rest)
+        [(EnvStringCons b tail)
+          (match (box-get tail)
+            [(EnvStringCons c end)
+              (match (box-get end)
+                [(EnvStringNil)
+                  (begin
+                    (env-test-assert-owned-string-eq a first message)
+                    (env-test-assert-owned-string-eq b second message)
+                    (env-test-assert-owned-string-eq c third message))]
+                [_ (env-test-fail)])]
+            [_ (env-test-fail)])]
+        [_ (env-test-fail)])]
+    [_ (env-test-fail)]))
+
+;: Assert that an environment string list contains exactly five strings.
+(define (env-test-assert-list5
+  [items : EnvStringList]
+  [first : String]
+  [second : String]
+  [third : String]
+  [fourth : String]
+  [fifth : String]
+  [message : String]) : unit
+  (match items
+    [(EnvStringCons a rest)
+      (match (box-get rest)
+        [(EnvStringCons b rest2)
+          (match (box-get rest2)
+            [(EnvStringCons c rest3)
+              (match (box-get rest3)
+                [(EnvStringCons d rest4)
+                  (match (box-get rest4)
+                    [(EnvStringCons e end)
+                      (match (box-get end)
+                        [(EnvStringNil)
+                          (begin
+                            (env-test-assert-owned-string-eq a first message)
+                            (env-test-assert-owned-string-eq b second message)
+                            (env-test-assert-owned-string-eq c third message)
+                            (env-test-assert-owned-string-eq d fourth message)
+                            (env-test-assert-owned-string-eq e fifth message))]
+                        [_ (env-test-fail)])]
+                    [_ (env-test-fail)])]
+                [_ (env-test-fail)])]
+            [_ (env-test-fail)])]
+        [_ (env-test-fail)])]
+    [_ (env-test-fail)]))
+
+;: Assert that a string vector contains exactly three strings.
+(define (env-test-assert-vec3
+  [items : StringVec]
+  [first : String]
+  [second : String]
+  [third : String]
+  [message : String]) : unit
+  (begin
+    (env-test-assert-i64-eq (string-vec-len items) 3 message)
+    (env-test-assert-owned-string-eq
+      (string-vec-get items 0 "missing")
+      first
+      message)
+    (env-test-assert-owned-string-eq
+      (string-vec-get items 1 "missing")
+      second
+      message)
+    (env-test-assert-owned-string-eq
+      (string-vec-get items 2 "missing")
+      third
+      message)))
+
+;: Assert that a string vector contains exactly five strings.
+(define (env-test-assert-vec5
+  [items : StringVec]
+  [first : String]
+  [second : String]
+  [third : String]
+  [fourth : String]
+  [fifth : String]
+  [message : String]) : unit
+  (begin
+    (env-test-assert-i64-eq (string-vec-len items) 5 message)
+    (env-test-assert-owned-string-eq
+      (string-vec-get items 0 "missing")
+      first
+      message)
+    (env-test-assert-owned-string-eq
+      (string-vec-get items 1 "missing")
+      second
+      message)
+    (env-test-assert-owned-string-eq
+      (string-vec-get items 2 "missing")
+      third
+      message)
+    (env-test-assert-owned-string-eq
+      (string-vec-get items 3 "missing")
+      fourth
+      message)
+    (env-test-assert-owned-string-eq
+      (string-vec-get items 4 "missing")
+      fifth
+      message)))
+
+;: Assert that a present path-list lookup contains exactly three strings.
+(define (env-test-assert-path3
+  [value : EnvMaybeStringList]
+  [first : String]
+  [second : String]
+  [third : String]
+  [message : String]) : unit
+  (match value
+    [(EnvSomeStringList items)
+      (env-test-assert-list3 items first second third message)]
+    [(EnvNoStringList) (env-test-fail)]))
+
+;: Assert that a present path-vector lookup contains exactly three strings.
+(define (env-test-assert-path-vec3
+  [value : EnvMaybeStringVec]
+  [first : String]
+  [second : String]
+  [third : String]
+  [message : String]) : unit
+  (match value
+    [(EnvSomeStringVec items)
+      (env-test-assert-vec3 items first second third message)]
+    [(EnvNoStringVec) (env-test-fail)]))
+
+(test
+  env-api
+  (begin
+    (let
+      [name : String "TYPELISP_STDLIB_TEST_MISSING_854"]
+      (env-test-assert-none (env-get (& name)) "env missing"))
+    (let
+      [name : String "TYPELISP_STDLIB_TEST_EMPTY"]
+      (match (env-get (& name))
+        [(EnvSomeString actual)
+          (begin
+            (env-test-assert-owned-string-eq actual "" "env empty")
+            (env-test-assert-path-empty
+              (env-path-list (& name))
+              "env path empty")
+            (env-test-assert-path-vec-empty
+              (env-path-list-vec (& name))
+              "env path vec empty"))]
+        [(EnvNoString) unit]))
+    (let
+      [name : String "TYPELISP_STDLIB_TEST_VALUE"]
+      (env-test-assert-some (env-get (& name)) "env-value-854" "env value"))
+    (let
+      [name : String "TYPELISP_STDLIB_TEST_MISSING_854"]
+      (env-test-assert-path-none (env-path-list (& name)) "env path missing"))
+    (let
+      [name : String "TYPELISP_STDLIB_TEST_MISSING_854"]
+      (env-test-assert-path-vec-none
+        (env-path-list-vec (& name))
+        "env path vec missing"))
+    (let
+      [name : String "TYPELISP_STDLIB_TEST_PATH"]
+      (env-test-assert-path3
+        (env-path-list (& name))
+        "one"
+        "two"
+        "three"
+        "env path list"))
+    (let
+      [name : String "TYPELISP_STDLIB_TEST_PATH"]
+      (env-test-assert-path-vec3
+        (env-path-list-vec (& name))
+        "one"
+        "two"
+        "three"
+        "env path vec"))
+    (let
+      [value : String (env-var-value "TYPELISP_STDLIB_TEST_PATH")]
+      (env-test-assert-owned-string-eq
+        (env-path-join (env-path-split (& value)))
+        value
+        "env path join"))
+    (let
+      [value : String (env-var-value "TYPELISP_STDLIB_TEST_PATH")]
+      (env-test-assert-owned-string-eq
+        (env-path-join-vec (env-path-split-vec (& value)))
+        value
+        "env path vec join"))
+    (let
+      [value : String "a;b;;c;"]
+      [separator : String ";"]
+      (env-test-assert-list5
+        (env-path-split-with-separator (& value) (& separator))
+        "a"
+        "b"
+        ""
+        "c"
+        ""
+        "env semicolon split"))
+    (let
+      [value : String "a;b;;c;"]
+      [separator : String ";"]
+      (env-test-assert-vec5
+        (env-path-split-with-separator-vec (& value) (& separator))
+        "a"
+        "b"
+        ""
+        "c"
+        ""
+        "env semicolon split vec"))
+    (let
+      [value : String "a;b;;c;"]
+      [separator : String ";"]
+      (env-test-assert-owned-string-eq
+        (env-path-join-with-separator
+          (env-path-split-with-separator (& value) (& separator))
+          (& separator))
+        value
+        "env semicolon join"))
+    (let
+      [value : String "a;b;;c;"]
+      [separator : String ";"]
+      (env-test-assert-owned-string-eq
+        (env-path-join-vec-with-separator
+          (env-path-split-with-separator-vec (& value) (& separator))
+          (& separator))
+        value
+        "env semicolon join vec"))
+    unit))

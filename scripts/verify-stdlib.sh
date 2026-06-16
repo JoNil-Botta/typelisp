@@ -225,18 +225,14 @@ stdlib_test_manifest() {
     cat <<'EOF'
 stdlib/tests/arena_atomic_api.tl|42|-|-|-|requires-stage0-symbol:tl_arena_make_atomic
 stdlib/tests/arena_patterns.tl|42|-|-|-|requires-stage0-symbol:with-escape
-stdlib/tests/args_api.tl|42|-|-|-
 stdlib/tests/comptime_api.tl|42|-|-|-
 stdlib/tests/str_cat_api.tl|42|-|-|-
 stdlib/tests/core_macros_runtime_import.tl|42|-|-|-
 stdlib/tests/string_edges.tl|42|-|-
-stdlib/tests/json_helpers.tl|42|-|-|-
-stdlib/tests/json_parse_stringify.tl|42|-|-
 stdlib/tests/io_edges.tl|42|-|-|-
 stdlib/tests/io_file_handle.tl|42|-|-|-
 stdlib/tests/io_stdio_lines.tl|42|printf:stdout-line\n|printf:stderr-line\n|printf:alpha\n\nomega
 stdlib/tests/io_stdio_bytes.tl|42|-|-|literal:abcdef
-stdlib/tests/env_api.tl|42|-|-
 stdlib/tests/cpu_api.tl|42|-|-
 stdlib/tests/fs_path_join_many_api.tl|42|-|-
 stdlib/tests/fs_api.tl|42|-|-|-
@@ -246,7 +242,6 @@ stdlib/tests/msvc_api.tl|42|-|-
 stdlib/tests/process_api.tl|42|-|-|-|requires-stage0-symbol:tl_process_start,tl_process_wait
 stdlib/tests/process_runtime.tl|42|-|-
 stdlib/tests/profile_api.tl|42|-|-
-stdlib/tests/random_api.tl|42|-|-
 stdlib/tests/set_api.tl|42|-|-
 stdlib/tests/sort_api.tl|42|-|-
 stdlib/tests/sync_api.tl|42|-|-
@@ -473,6 +468,7 @@ mkdir -p "$TEST_COPY_ROOT" "$RUN_ROOT"
 
 PATH_SEP=:
 [ "$HOST_OS" = windows ] && PATH_SEP=';'
+unset TYPELISP_STDLIB_TEST_MISSING_854
 export TYPELISP_STDLIB_TEST_EMPTY=
 export TYPELISP_STDLIB_TEST_VALUE=env-value-854
 export TYPELISP_STDLIB_TEST_PATH="one${PATH_SEP}two${PATH_SEP}three"

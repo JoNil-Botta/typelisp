@@ -35,11 +35,9 @@
 (include-str compiler-embedded-stdlib-tests-arena-policy-escape-string "stdlib/tests/arena_policy_escape_string.tl")
 (include-str compiler-embedded-stdlib-tests-arena-policy-escape-text-buf "stdlib/tests/arena_policy_escape_text_buf.tl")
 (include-str compiler-embedded-stdlib-tests-arena-policy-escape-text-buf-borrowed "stdlib/tests/arena_policy_escape_text_buf_borrowed.tl")
-(include-str compiler-embedded-stdlib-tests-args-api "stdlib/tests/args_api.tl")
 (include-str compiler-embedded-stdlib-tests-cpu-api "stdlib/tests/cpu_api.tl")
 (include-str compiler-embedded-stdlib-tests-core-macros-api "stdlib/tests/core_macros_api.tl")
 (include-str compiler-embedded-stdlib-tests-comptime-api "stdlib/tests/comptime_api.tl")
-(include-str compiler-embedded-stdlib-tests-env-api "stdlib/tests/env_api.tl")
 (include-str compiler-embedded-stdlib-tests-fs-api "stdlib/tests/fs_api.tl")
 (include-str compiler-embedded-stdlib-tests-fs-path-join-many-api "stdlib/tests/fs_path_join_many_api.tl")
 (include-str compiler-embedded-stdlib-tests-hashmap-api "stdlib/tests/hashmap_api.tl")
@@ -49,15 +47,12 @@
 (include-str compiler-embedded-stdlib-tests-io-stdio-bytes "stdlib/tests/io_stdio_bytes.tl")
 (include-str compiler-embedded-stdlib-tests-io-stdio-lines "stdlib/tests/io_stdio_lines.tl")
 (include-str compiler-embedded-stdlib-tests-io-stdio-pipe-short-read "stdlib/tests/io_stdio_pipe_short_read.tl")
-(include-str compiler-embedded-stdlib-tests-json-helpers "stdlib/tests/json_helpers.tl")
-(include-str compiler-embedded-stdlib-tests-json-parse-stringify "stdlib/tests/json_parse_stringify.tl")
 (include-str compiler-embedded-stdlib-tests-list-api "stdlib/tests/list_api.tl")
 (include-str compiler-embedded-stdlib-tests-msvc-api "stdlib/tests/msvc_api.tl")
 (include-str compiler-embedded-stdlib-tests-process-api "stdlib/tests/process_api.tl")
 (include-str compiler-embedded-stdlib-tests-process-borrowed-escape "stdlib/tests/process_borrowed_escape.tl")
 (include-str compiler-embedded-stdlib-tests-process-runtime "stdlib/tests/process_runtime.tl")
 (include-str compiler-embedded-stdlib-tests-profile-api "stdlib/tests/profile_api.tl")
-(include-str compiler-embedded-stdlib-tests-random-api "stdlib/tests/random_api.tl")
 (include-str compiler-embedded-stdlib-tests-sort-api "stdlib/tests/sort_api.tl")
 (include-str compiler-embedded-stdlib-tests-sync-api "stdlib/tests/sync_api.tl")
 (include-str compiler-embedded-stdlib-tests-string-edges "stdlib/tests/string_edges.tl")
@@ -203,12 +198,6 @@
           (CompilerEmbeddedStdlibSomeSource
             compiler-embedded-stdlib-tests-arena-policy-escape-text-buf-borrowed))
         unit)
-      (if (string-eq suffix "tests/args_api.tl")
-        (set!
-          source
-          (CompilerEmbeddedStdlibSomeSource
-            compiler-embedded-stdlib-tests-args-api))
-        unit)
       (if (string-eq suffix "tests/cpu_api.tl")
         (set!
           source
@@ -226,12 +215,6 @@
           source
           (CompilerEmbeddedStdlibSomeSource
             compiler-embedded-stdlib-tests-core-macros-api))
-        unit)
-      (if (string-eq suffix "tests/env_api.tl")
-        (set!
-          source
-          (CompilerEmbeddedStdlibSomeSource
-            compiler-embedded-stdlib-tests-env-api))
         unit)
       (if (string-eq suffix "tests/fs_api.tl")
         (set!
@@ -287,18 +270,6 @@
           (CompilerEmbeddedStdlibSomeSource
             compiler-embedded-stdlib-tests-io-stdio-pipe-short-read))
         unit)
-      (if (string-eq suffix "tests/json_helpers.tl")
-        (set!
-          source
-          (CompilerEmbeddedStdlibSomeSource
-            compiler-embedded-stdlib-tests-json-helpers))
-        unit)
-      (if (string-eq suffix "tests/json_parse_stringify.tl")
-        (set!
-          source
-          (CompilerEmbeddedStdlibSomeSource
-            compiler-embedded-stdlib-tests-json-parse-stringify))
-        unit)
       (if (string-eq suffix "tests/list_api.tl")
         (set!
           source
@@ -334,12 +305,6 @@
           source
           (CompilerEmbeddedStdlibSomeSource
             compiler-embedded-stdlib-tests-profile-api))
-        unit)
-      (if (string-eq suffix "tests/random_api.tl")
-        (set!
-          source
-          (CompilerEmbeddedStdlibSomeSource
-            compiler-embedded-stdlib-tests-random-api))
         unit)
       (if (string-eq suffix "tests/sort_api.tl")
         (set!

@@ -139,7 +139,8 @@
         (make-array VecApiTag (* (vec-api-tag-vec-capacity v) 2))]
       (begin
         (vec-api-tag-vec-copy-range bigger (vec-api-tag-vec-slots v) 0 n)
-        (VecApiTagVec bigger n)))))
+        (set! (struct-get v slots) bigger)
+        v))))
 
 (comptime-decl
   (:generated vector-family vec-api-tag-vec-push "VecApiTag")
@@ -147,9 +148,11 @@
     (if (< (vec-api-tag-vec-len v) (vec-api-tag-vec-capacity v))
       (let
         [slots : (Array VecApiTag) (vec-api-tag-vec-slots v)]
+        [index : i64 (vec-api-tag-vec-len v)]
         (begin
-          (array-set! slots (vec-api-tag-vec-len v) value)
-          (VecApiTagVec slots (+ (vec-api-tag-vec-len v) 1))))
+          (array-set! slots index value)
+          (set! (struct-get v len) (+ index 1))
+          v))
       (vec-api-tag-vec-push (vec-api-tag-vec-grow v) value))))
 
 (comptime-decl
@@ -159,9 +162,10 @@
       (VecApiTagVecPopEmpty)
       (let
         [last-index : i64 (- (vec-api-tag-vec-len v) 1)]
-        (VecApiTagVecPopOk
-          (array-ref (vec-api-tag-vec-slots v) last-index)
-          (VecApiTagVec (vec-api-tag-vec-slots v) last-index))))))
+        [value : VecApiTag (array-ref (vec-api-tag-vec-slots v) last-index)]
+        (begin
+          (set! (struct-get v len) last-index)
+          (VecApiTagVecPopOk value v))))))
 
 (comptime-decl
   (:generated vector-family vec-api-tag-vec-to-array "VecApiTag")
@@ -258,6 +262,29 @@
                           (i64-vec-last rest -1)
                           99
                           "rest last -> 99")))))))))))
+    ;; --- returned handles can be threaded through mutable locals ---
+    (let
+      [mut : I64Vec (i64-vec-with-capacity 1)]
+      (begin
+        (set! mut (i64-vec-push mut 41))
+        (assert-i64-eq (i64-vec-len mut) 1 "mutable push len 1")
+        (assert-i64-eq (i64-vec-capacity mut) 1 "mutable push no growth")
+        (set! mut (i64-vec-push mut 42))
+        (assert-i64-eq (i64-vec-len mut) 2 "mutable growth push len 2")
+        (assert-i64-eq (i64-vec-capacity mut) 2 "mutable growth capacity 2")
+        (set! mut (i64-vec-set! mut 0 40))
+        (assert-i64-eq (i64-vec-get mut 0 -1) 40 "mutable set after push")
+        (set! mut (i64-vec-reverse! mut))
+        (assert-i64-eq (i64-vec-get mut 0 -1) 42 "mutable reverse first")
+        (assert-i64-eq (i64-vec-get mut 1 -1) 40 "mutable reverse second")
+        (match (i64-vec-pop mut)
+          [(I64VecPopOk value rest)
+            (begin
+              (set! mut rest)
+              (assert-i64-eq value 40 "mutable pop value")
+              (assert-i64-eq (i64-vec-len mut) 1 "mutable pop len 1")
+              (assert-i64-eq (i64-vec-last mut -1) 42 "mutable pop rest last"))]
+          [(I64VecPopEmpty) (assert-true false "mutable pop should be ok")])))
     ;; --- pop on an empty vector is Empty ---
     (let
       [pe : I64VecPop (i64-vec-pop (i64-vec-with-capacity 1))]

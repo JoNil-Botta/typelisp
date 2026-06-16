@@ -714,6 +714,10 @@
   "(import pkg.macros)
 (pkg.macros.emit i64)")
 
+(define (selfhost-lint-used-import-legacy-macro-call-source) : String
+  "(import \"stdlib/core_macros.tl\" module stdlib.core_macros as core)
+(define (check [flag : bool]) : bool (core/and flag true))")
+
 (define (selfhost-lint-suppressed-unused-import-source) : String
   ";; lint-allow: unused-import
 (import pkg.data)
@@ -892,7 +896,13 @@
                                 (selfhost-lint-suppressed-unused-import-source))
                               0))
                             41
-                            42))))))))))))))
+                            (if (not
+                              (=
+                                (selfhost-lint-source-finding-count
+                                  (selfhost-lint-used-import-legacy-macro-call-source))
+                                0))
+                              43
+                              42)))))))))))))))
 
 ;; Compatibility helper retained for the nested-if-ladder metadata shape.
 (define (selfhost-lint-reported-finding-ok? [findings : LintFindings]) : bool

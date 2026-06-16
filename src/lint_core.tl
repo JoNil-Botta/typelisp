@@ -827,7 +827,10 @@
               (set! ok false)))
           ok)))))
 
-(define (lint-name-qualified-by? [name : String] [qualifier : String]) : bool
+(define (lint-name-qualified-by-separator?
+  [name : String]
+  [qualifier : String]
+  [separator : char]) : bool
   (let
     [name-len : i64 (string-length name)]
     [qualifier-len : i64 (string-length qualifier)]
@@ -837,7 +840,12 @@
         false
         (if (not (lint-string-prefix? name qualifier))
           false
-          (= (string-ref name qualifier-len) #.'))))))
+          (= (string-ref name qualifier-len) separator))))))
+
+(define (lint-name-qualified-by? [name : String] [qualifier : String]) : bool
+  (if (lint-name-qualified-by-separator? name qualifier #.')
+    true
+    (lint-name-qualified-by-separator? name qualifier #/')))
 
 (define (lint-name-uses-import?
   [name : String]

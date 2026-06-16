@@ -129,10 +129,18 @@ expect_trap() {
 
 expect_exit tests/spmd/broadcast_lane0_i64.tl scalar 105
 expect_trap tests/spmd/broadcast_lane1_i64.tl scalar
+expect_exit tests/spmd/broadcast_lane0_u64.tl scalar 105
+expect_trap tests/spmd/broadcast_lane1_u64.tl scalar
+expect_exit tests/spmd/broadcast_lane0_u32.tl scalar 105
+expect_trap tests/spmd/broadcast_lane1_u32.tl scalar
 
 if isa_available avx2; then
     expect_exit tests/spmd/broadcast_lane0_i64.tl avx2 86
     expect_exit tests/spmd/broadcast_lane1_i64.tl avx2 32
+    expect_exit tests/spmd/broadcast_lane0_u64.tl avx2 86
+    expect_exit tests/spmd/broadcast_lane1_u64.tl avx2 32
+    expect_exit tests/spmd/broadcast_lane0_u32.tl avx2 62
+    expect_exit tests/spmd/broadcast_lane1_u32.tl avx2 16
 else
     echo "[spmd-broadcast] skip avx2 (not runnable on this $HOST_OS host)"
 fi
@@ -140,6 +148,10 @@ fi
 if isa_available avx512bw; then
     expect_exit tests/spmd/broadcast_lane0_i64.tl avx512 62
     expect_exit tests/spmd/broadcast_lane1_i64.tl avx512 16
+    expect_exit tests/spmd/broadcast_lane0_u64.tl avx512 62
+    expect_exit tests/spmd/broadcast_lane1_u64.tl avx512 16
+    expect_exit tests/spmd/broadcast_lane0_u32.tl avx512 14
+    expect_exit tests/spmd/broadcast_lane1_u32.tl avx512 16
 else
     echo "[spmd-broadcast] skip avx512 (avx512bw not runnable on this $HOST_OS host)"
 fi

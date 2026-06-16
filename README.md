@@ -868,11 +868,12 @@ through the TypeLisp-owned build/run path.
 
 `compile`, `run`, and `build` accept `--backend-mode scalar|avx2|avx512`.
 `scalar` is the default. `avx2` and `avx512` support a first contiguous SPMD
-`foreach` map/zip subset over `i8`, `u8`, `i16`, `u16`, `i32`, `i64`, `f32`,
-and `f64` lanes, with AVX-512 additionally supporting bool dynamic-array copies
-and bool-valued map results through private mask conversion. SIMD backend modes
-also support eligible `spmd-reduce` array folds. Scalar `spmd-reduce` lowering supports
-`sum`, `min`, `max`, `all`, and `any` over the SPEC.md supported types.
+`foreach` map/zip subset over `i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `i64`,
+`u64`, `f32`, and `f64` lanes, with AVX-512 additionally supporting bool
+dynamic-array copies and bool-valued map results through private mask
+conversion. SIMD backend modes also support eligible `spmd-reduce` array folds.
+Scalar `spmd-reduce` lowering supports `sum`, `min`, `max`, `all`, and `any`
+over the SPEC.md supported types.
 For `i8`/`u8` lanes, `+` is vectorized and `*` is rejected in explicit SIMD
 backend modes until widening/narrowing byte multiply lowering is designed.
 AVX-512 uses ZMM vectors and opmask predicated tails, requires AVX-512BW for

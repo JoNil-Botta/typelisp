@@ -55,9 +55,9 @@ falling back to scalar code.
 - `i8_mul_reject.tl` - scalar `foreach` byte multiplication fixture that
   compiles and exits 42 in scalar mode; explicit SIMD modes reject it with the
   documented 8-bit lane multiplication diagnostic.
-- `../integration/spmd_foreach.tl` - `foreach` add/mul maps over i64, i32,
-  i16, u16, i8, u8, f64, and f32 arrays, self-checked against scalar loops
-  across empty, sub-lane, exact-lane, and tail lengths. Exit 42.
+- `../integration/spmd_foreach.tl` - `foreach` add/mul maps over i64, u64,
+  i32, u32, i16, u16, i8, u8, f64, and f32 arrays, self-checked against
+  scalar loops across empty, sub-lane, exact-lane, and tail lengths. Exit 42.
 - `bool_lanes.tl` - AVX-512-only bool dynamic-array lane fixture covering
   bool array copies and i64 comparison results stored to bool arrays across
   empty, sub-lane, exact-lane, and tail lengths. Scalar exits 42; AVX2 reports
@@ -68,9 +68,10 @@ falling back to scalar code.
 - `runtime_dispatch_select.tl` — one `defdispatch` binary whose variants share
   the same i64 SPMD checksum and encode the selected variant in the exit code.
   Scalar exits 42, AVX2 exits 106, and AVX-512 exits 170.
-- `broadcast_lane0_i64.tl` and `broadcast_lane1_i64.tl` are backend-observable
-  `spmd-broadcast` fixtures checked by `scripts/verify-spmd-broadcast.sh`.
-  They are intentionally separate from the scalar-vs-SIMD same-exit corpus.
+- `broadcast_lane*_i64.tl`, `broadcast_lane*_u64.tl`, and
+  `broadcast_lane*_u32.tl` are backend-observable `spmd-broadcast` fixtures
+  checked by `scripts/verify-spmd-broadcast.sh`. They are intentionally
+  separate from the scalar-vs-SIMD same-exit corpus.
 
 Future `(program-index)`/`(program-count)` and other backend-observable fixtures
 should be kept separate from the scalar-vs-SIMD same-exit corpus when they
@@ -80,10 +81,11 @@ lane/tail behavior from `SPEC.md` section 5.15.
 
 Coverage map:
 
-- `foreach` scalar and SIMD map/zip coverage for `i64`, `i32`, `i16`, `u16`,
-  `i8`, `u8`, `f64`, and `f32` lives in `../integration/spmd_foreach.tl`, the
-  two tail fixtures, and `uniform_zip_i64.tl`. The intentionally unsupported
-  byte multiply policy is covered by `i8_mul_reject.tl`.
+- `foreach` scalar and SIMD map/zip coverage for `i64`, `u64`, `i32`, `u32`,
+  `i16`, `u16`, `i8`, `u8`, `f64`, and `f32` lives in
+  `../integration/spmd_foreach.tl`, the two tail fixtures, and
+  `uniform_zip_i64.tl`. The intentionally unsupported byte multiply policy is
+  covered by `i8_mul_reject.tl`.
 - AVX-512 bool dynamic-array lane coverage lives in `bool_lanes.tl`; AVX2 keeps
   an explicit staged diagnostic for the same source shape.
 - AVX-512 masked varying `if` direct-index, shifted-contiguous-index, and
@@ -96,9 +98,8 @@ Coverage map:
   `inline_helper_f64.tl`, and `inline_helper_masked_if_i64.tl`.
 - `spmd-reduce` scalar coverage for the documented operator/type surface lives
   in `../integration/spmd_reduce_scalar.tl`.
-- `spmd-broadcast` executable coverage lives in `broadcast_lane0_i64.tl` and
-  `broadcast_lane1_i64.tl`, with mode-specific expectations in
-  `scripts/verify-spmd-broadcast.sh`.
+- `spmd-broadcast` executable coverage lives in the `broadcast_lane*_{i64,u64,u32}.tl`
+  fixtures, with mode-specific expectations in `scripts/verify-spmd-broadcast.sh`.
 - SIMD reduction vectorization shape checks live in `src/compiler_lower.tl`
   and `src/compiler_backend_tests.tl`; this corpus runs the executable
   scalar/SIMD comparison for the same reduction fixture.

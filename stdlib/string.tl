@@ -538,3 +538,110 @@
                 (set! j (+ j 1))
                 (set! ok false)))
             ok))))))
+
+(test
+  string-borrowed-str-gate
+  (let
+    [fail : (-> unit)
+      (lambda () : unit
+        (begin
+          (/ 1 0)
+          unit))]
+    [input : String "borrowed"]
+    [view : (& input str) (& input)]
+    (if (= (string-length view) (string-length input))
+      unit
+      (fail))))
+
+(test
+  string-scoped-arena-allocation-policy
+  (let
+    [fail : (-> unit)
+      (lambda () : unit
+        (begin
+          (/ 1 0)
+          unit))]
+    (with-arena
+      outer
+      (let
+        [s : String "  outer  "]
+        [outer-trimmed : String (string-trim (& s))]
+        [outer-slice : String (substring-borrowed (& s) 2 5)]
+        [outer-suffix : String "-append"]
+        [outer-appended : String
+          (string-append-borrowed (& outer-trimmed) (& outer-suffix))]
+        [outer-number : String (int->string 12345)]
+        [outer-expected : String "outer"]
+        [outer-appended-expected : String "outer-append"]
+        [outer-number-expected : String "12345"]
+        (begin
+          (if (string-eq-borrowed (& outer-trimmed) (& outer-expected))
+            unit
+            (fail))
+          (if (string-eq-borrowed (& outer-slice) (& outer-expected))
+            unit
+            (fail))
+          (if (string-eq-borrowed
+            (& outer-appended)
+            (& outer-appended-expected))
+            unit
+            (fail))
+          (if (string-eq-borrowed (& outer-number) (& outer-number-expected))
+            unit
+            (fail))
+          (with-arena
+            inner
+            (let
+              [inner-replaced : String (string-replace "alpha" "ph" "ren")]
+              [inner-slice : String (string-slice "alphabet" 2 3)]
+              [inner-appended : String (string-append "inner" "-append")]
+              [inner-concat : String (string-concat "inner" "-concat")]
+              [inner-number : String (int->string -6789)]
+              [inner-borrowed : String
+                (string-append-borrowed (& inner-slice) (& inner-replaced))]
+              [inner-replaced-expected : String "alrena"]
+              [inner-slice-expected : String "pha"]
+              [inner-appended-expected : String "inner-append"]
+              [inner-concat-expected : String "inner-concat"]
+              [inner-number-expected : String "-6789"]
+              [inner-borrowed-expected : String "phaalrena"]
+              (begin
+                (if (string-eq-borrowed
+                  (& inner-replaced)
+                  (& inner-replaced-expected))
+                  unit
+                  (fail))
+                (if (string-eq-borrowed
+                  (& inner-slice)
+                  (& inner-slice-expected))
+                  unit
+                  (fail))
+                (if (string-eq-borrowed
+                  (& inner-appended)
+                  (& inner-appended-expected))
+                  unit
+                  (fail))
+                (if (string-eq-borrowed
+                  (& inner-concat)
+                  (& inner-concat-expected))
+                  unit
+                  (fail))
+                (if (string-eq-borrowed
+                  (& inner-number)
+                  (& inner-number-expected))
+                  unit
+                  (fail))
+                (if (string-eq-borrowed
+                  (& inner-borrowed)
+                  (& inner-borrowed-expected))
+                  unit
+                  (fail))
+                (if (= (string-length outer-trimmed) 5)
+                  unit
+                  (fail))
+                (if (= (string-length outer-appended) 12)
+                  unit
+                  (fail))
+                (if (= (string-length outer-number) 5)
+                  unit
+                  (fail))))))))))

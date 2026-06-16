@@ -162,3 +162,40 @@
         (if (> count 32)
           (text-buf-borrowed-chunks-render-balanced chunks count)
           (text-buf-borrowed-chunks-render-rev chunks "")))]))
+
+(define (text-buf-borrowed-test-fail) : unit
+  (begin
+    (/ 1 0)
+    unit))
+
+(define (text-buf-borrowed-test-render [text : String] [chunk : String]) : String
+  (let
+    [left : (TextBufBorrowed text)
+      (text-buf-borrowed-append-owned (text-buf-borrowed-single (& text)) "-")]
+    [right : (TextBufBorrowed text)
+      (text-buf-borrowed-append
+        (text-buf-borrowed-empty-like (& text))
+        (& text))]
+    [joined : (TextBufBorrowed text)
+      (text-buf-borrowed-append-buffer left right)]
+    [copied : (TextBufBorrowed text)
+      (text-buf-borrowed-append-copy joined (& chunk))]
+    (text-buf-borrowed-render copied)))
+
+(test
+  text-buf-borrowed-api
+  (let
+    [text : String "alpha"]
+    [chunk : String "tail"]
+    [empty : (TextBufBorrowed text) (text-buf-borrowed-empty-like (& text))]
+    [rendered : String (text-buf-borrowed-test-render text chunk)]
+    (begin
+      (if (text-buf-borrowed-empty? empty)
+        unit
+        (text-buf-borrowed-test-fail))
+      (if (= (text-buf-borrowed-length empty) 0)
+        unit
+        (text-buf-borrowed-test-fail))
+      (if (string-eq rendered "alpha-alphatail")
+        unit
+        (text-buf-borrowed-test-fail)))))

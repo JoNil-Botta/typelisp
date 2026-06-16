@@ -113,3 +113,58 @@
         old
         new
         (string-replace-find-index text old)))))
+
+(define (string-caller-result-test-fail) : unit
+  (begin
+    (/ 1 0)
+    unit))
+
+(define (string-caller-result-test-string-eq
+  [actual : String]
+  [expected : String]) : unit
+  (if (string-eq actual expected)
+    unit
+    (string-caller-result-test-fail)))
+
+(test
+  string-caller-result-api
+  (let
+    [text : String "alpha"]
+    [missing : String "zz"]
+    [needle : String "ph"]
+    [replacement : String "ren"]
+    [owned : String "owned"]
+    [borrowed : (StringReplaceResult text missing replacement)
+      (string-replace-borrowed-result (& text) (& missing) (& replacement))]
+    [owned-result : (StringReplaceResult text missing replacement)
+      (string-replace-owned-result-like
+        (& text)
+        (& missing)
+        (& replacement)
+        owned)]
+    [helper-borrowed : (StringReplaceResult text missing replacement)
+      (string-replace-result (& text) (& missing) (& replacement))]
+    [helper-owned : (StringReplaceResult text needle replacement)
+      (string-replace-result (& text) (& needle) (& replacement))]
+    (begin
+      (if (string-replace-result-borrowed? borrowed)
+        unit
+        (string-caller-result-test-fail))
+      (if (string-replace-result-owned? owned-result)
+        unit
+        (string-caller-result-test-fail))
+      (string-caller-result-test-string-eq
+        (string-replace-result-string borrowed)
+        "alpha")
+      (string-caller-result-test-string-eq
+        (string-replace-result-string owned-result)
+        "owned")
+      (if (string-replace-result-borrowed? helper-borrowed)
+        unit
+        (string-caller-result-test-fail))
+      (if (string-replace-result-owned? helper-owned)
+        unit
+        (string-caller-result-test-fail))
+      (string-caller-result-test-string-eq
+        (string-replace-result-string helper-owned)
+        "alrena"))))

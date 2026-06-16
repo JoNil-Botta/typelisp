@@ -223,7 +223,6 @@ EOF
 # `<host>` is `linux`, `windows`, or `all`.
 stdlib_test_manifest() {
     cat <<'EOF'
-stdlib/tests/arena_api.tl|42|-|-
 stdlib/tests/arena_patterns.tl|42|-|-|-|requires-stage0-symbol:with-escape
 stdlib/tests/args_api.tl|42|-|-|-
 stdlib/tests/comptime_api.tl|42|-|-|-
@@ -237,7 +236,6 @@ stdlib/tests/io_file_handle.tl|42|-|-|-
 stdlib/tests/io_stdio_lines.tl|42|printf:stdout-line\n|printf:stderr-line\n|printf:alpha\n\nomega
 stdlib/tests/io_stdio_bytes.tl|42|-|-|literal:abcdef
 stdlib/tests/env_api.tl|42|-|-
-stdlib/tests/ffi_api.tl|42|-|-
 stdlib/tests/cpu_api.tl|42|-|-
 stdlib/tests/fs_path_join_many_api.tl|42|-|-
 stdlib/tests/fs_api.tl|42|-|-|-
@@ -268,7 +266,6 @@ EOF
 # appear on stderr. Pass rows may use "-" for the diagnostic field.
 stdlib_check_manifest() {
     cat <<'EOF'
-stdlib/tests/arena_policy.tl|pass|-
 stdlib/tests/arena_policy_escape_string.tl|fail|cannot escape with-arena 'inner'
 stdlib/tests/arena_policy_escape_text_buf.tl|fail|cannot escape with-arena 'inner'
 stdlib/tests/core_macros_api.tl|pass|-
@@ -279,8 +276,6 @@ stdlib/tests/core_macros_cond_non_bool.tl|fail|typecheck: if condition must be b
 stdlib/tests/core_macros_cond_branch_mismatch.tl|fail|typecheck: if branches must match
 stdlib/tests/arena_policy_escape_text_buf_borrowed.tl|fail|typecheck: reference value would escape lexical scope
 stdlib/tests/io_stdio_pipe_short_read.tl|pass|-
-stdlib/tests/borrowed_str_gate.tl|pass|-
-stdlib/tests/io_caller_result_check.tl|pass|-
 stdlib/tests/io_caller_result_escape.tl|fail|typecheck: reference value would escape lexical scope
 stdlib/tests/hashmap_value_borrow_escape.tl|fail|typecheck: reference value would escape lexical scope
 stdlib/tests/hashmap_value_borrow_insert_live.tl|fail|typecheck: cannot assign to borrowed place `m`
@@ -292,11 +287,8 @@ stdlib/tests/hashmap_mut_entry_double_live.tl|fail|typecheck: cannot mutably bor
 stdlib/tests/hashmap_mut_entry_put_live.tl|fail|typecheck: cannot assign to borrowed place `m`
 stdlib/tests/hashmap_mut_entry_resize_live.tl|fail|typecheck: cannot assign to borrowed place `m`
 stdlib/tests/hashmap_mut_entry_value_borrow_live.tl|fail|typecheck: cannot mutably borrow borrowed place `m.slots`
-stdlib/tests/process_borrowed_check.tl|pass|-
 stdlib/tests/process_borrowed_escape.tl|fail|typecheck: reference value would escape lexical scope
-stdlib/tests/string_caller_result_check.tl|pass|-
 stdlib/tests/string_caller_result_escape.tl|fail|typecheck: reference value would escape lexical scope
-stdlib/tests/text_buf_borrowed_check.tl|pass|-
 stdlib/tests/vector_slice_check.tl|pass|-
 stdlib/tests/vector_slice_escape.tl|fail|typecheck: reference value would escape lexical scope
 EOF

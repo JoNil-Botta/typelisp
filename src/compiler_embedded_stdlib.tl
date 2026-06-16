@@ -57,11 +57,7 @@
 
 (include-str compiler-embedded-stdlib-time "stdlib/time.tl")
 
-(include-str compiler-embedded-stdlib-tests-arena-api "stdlib/tests/arena_api.tl")
-
 (include-str compiler-embedded-stdlib-tests-arena-patterns "stdlib/tests/arena_patterns.tl")
-
-(include-str compiler-embedded-stdlib-tests-arena-policy "stdlib/tests/arena_policy.tl")
 
 (include-str compiler-embedded-stdlib-tests-arena-policy-escape-string "stdlib/tests/arena_policy_escape_string.tl")
 
@@ -71,8 +67,6 @@
 
 (include-str compiler-embedded-stdlib-tests-args-api "stdlib/tests/args_api.tl")
 
-(include-str compiler-embedded-stdlib-tests-borrowed-str-gate "stdlib/tests/borrowed_str_gate.tl")
-
 (include-str compiler-embedded-stdlib-tests-cpu-api "stdlib/tests/cpu_api.tl")
 
 (include-str compiler-embedded-stdlib-tests-core-macros-api "stdlib/tests/core_macros_api.tl")
@@ -80,8 +74,6 @@
 (include-str compiler-embedded-stdlib-tests-comptime-api "stdlib/tests/comptime_api.tl")
 
 (include-str compiler-embedded-stdlib-tests-env-api "stdlib/tests/env_api.tl")
-
-(include-str compiler-embedded-stdlib-tests-ffi-api "stdlib/tests/ffi_api.tl")
 
 (include-str compiler-embedded-stdlib-tests-fs-api "stdlib/tests/fs_api.tl")
 
@@ -111,8 +103,6 @@
 
 (include-str compiler-embedded-stdlib-tests-process-api "stdlib/tests/process_api.tl")
 
-(include-str compiler-embedded-stdlib-tests-process-borrowed-check "stdlib/tests/process_borrowed_check.tl")
-
 (include-str compiler-embedded-stdlib-tests-process-borrowed-escape "stdlib/tests/process_borrowed_escape.tl")
 
 (include-str compiler-embedded-stdlib-tests-process-runtime "stdlib/tests/process_runtime.tl")
@@ -132,8 +122,6 @@
 (include-str compiler-embedded-stdlib-tests-time-api "stdlib/tests/time_api.tl")
 
 (include-str compiler-embedded-stdlib-tests-text-buf-api "stdlib/tests/text_buf_api.tl")
-
-(include-str compiler-embedded-stdlib-tests-text-buf-borrowed-check "stdlib/tests/text_buf_borrowed_check.tl")
 
 (include-str compiler-embedded-stdlib-tests-vector-api "stdlib/tests/vector_api.tl")
 
@@ -244,176 +232,214 @@
                                                               (CompilerEmbeddedStdlibNoSource))))))))))))))))))))))))))))))))
 
 (define (compiler-embedded-stdlib-lookup-tests [suffix : String]) : CompilerEmbeddedStdlibSource
-  (if (string-eq suffix "tests/arena_api.tl")
-    (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-tests-arena-api)
-    (if (string-eq suffix "tests/arena_patterns.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-tests-arena-patterns)
-      (if (string-eq suffix "tests/arena_policy.tl")
-        (CompilerEmbeddedStdlibSomeSource
-          compiler-embedded-stdlib-tests-arena-policy)
-        (if (string-eq suffix "tests/arena_policy_escape_string.tl")
+  (let
+    [source : CompilerEmbeddedStdlibSource (CompilerEmbeddedStdlibNoSource)]
+    (begin
+      (if (string-eq suffix "tests/arena_patterns.tl")
+        (set!
+          source
           (CompilerEmbeddedStdlibSomeSource
-            compiler-embedded-stdlib-tests-arena-policy-escape-string)
-          (if (string-eq suffix "tests/arena_policy_escape_text_buf.tl")
-            (CompilerEmbeddedStdlibSomeSource
-              compiler-embedded-stdlib-tests-arena-policy-escape-text-buf)
-            (if (string-eq
-              suffix
-              "tests/arena_policy_escape_text_buf_borrowed.tl")
-              (CompilerEmbeddedStdlibSomeSource
-                compiler-embedded-stdlib-tests-arena-policy-escape-text-buf-borrowed)
-              (if (string-eq suffix "tests/args_api.tl")
-                (CompilerEmbeddedStdlibSomeSource
-                  compiler-embedded-stdlib-tests-args-api)
-                (if (string-eq suffix "tests/borrowed_str_gate.tl")
-                  (CompilerEmbeddedStdlibSomeSource
-                    compiler-embedded-stdlib-tests-borrowed-str-gate)
-                  (if (string-eq suffix "tests/cpu_api.tl")
-                    (CompilerEmbeddedStdlibSomeSource
-                      compiler-embedded-stdlib-tests-cpu-api)
-                    (if (string-eq suffix "tests/comptime_api.tl")
-                      (CompilerEmbeddedStdlibSomeSource
-                        compiler-embedded-stdlib-tests-comptime-api)
-                      (if (string-eq suffix "tests/core_macros_api.tl")
-                        (CompilerEmbeddedStdlibSomeSource
-                          compiler-embedded-stdlib-tests-core-macros-api)
-                        (if (string-eq suffix "tests/env_api.tl")
-                          (CompilerEmbeddedStdlibSomeSource
-                            compiler-embedded-stdlib-tests-env-api)
-                          (if (string-eq suffix "tests/ffi_api.tl")
-                            (CompilerEmbeddedStdlibSomeSource
-                              compiler-embedded-stdlib-tests-ffi-api)
-                            (if (string-eq suffix "tests/fs_api.tl")
-                              (CompilerEmbeddedStdlibSomeSource
-                                compiler-embedded-stdlib-tests-fs-api)
-                              (if (string-eq
-                                suffix
-                                "tests/fs_path_join_many_api.tl")
-                                (CompilerEmbeddedStdlibSomeSource
-                                  compiler-embedded-stdlib-tests-fs-path-join-many-api)
-                                (if (string-eq suffix "tests/hashmap_api.tl")
-                                  (CompilerEmbeddedStdlibSomeSource
-                                    compiler-embedded-stdlib-tests-hashmap-api)
-                                  (if (string-eq
-                                    suffix
-                                    "tests/hashmap_mut_borrow_insert_or_update_live.tl")
-                                    (CompilerEmbeddedStdlibSomeSource
-                                      compiler-embedded-stdlib-tests-hashmap-mut-borrow-insert-or-update-live)
-                                    (if (string-eq suffix "tests/io_edges.tl")
-                                      (CompilerEmbeddedStdlibSomeSource
-                                        compiler-embedded-stdlib-tests-io-edges)
-                                      (if (string-eq
-                                        suffix
-                                        "tests/io_file_handle.tl")
-                                        (CompilerEmbeddedStdlibSomeSource
-                                          compiler-embedded-stdlib-tests-io-file-handle)
-                                        (if (string-eq
-                                          suffix
-                                          "tests/io_stdio_bytes.tl")
-                                          (CompilerEmbeddedStdlibSomeSource
-                                            compiler-embedded-stdlib-tests-io-stdio-bytes)
-                                          (if (string-eq
-                                            suffix
-                                            "tests/io_stdio_lines.tl")
-                                            (CompilerEmbeddedStdlibSomeSource
-                                              compiler-embedded-stdlib-tests-io-stdio-lines)
-                                            (if (string-eq
-                                              suffix
-                                              "tests/io_stdio_pipe_short_read.tl")
-                                              (CompilerEmbeddedStdlibSomeSource
-                                                compiler-embedded-stdlib-tests-io-stdio-pipe-short-read)
-                                              (if (string-eq
-                                                suffix
-                                                "tests/json_helpers.tl")
-                                                (CompilerEmbeddedStdlibSomeSource
-                                                  compiler-embedded-stdlib-tests-json-helpers)
-                                                (if (string-eq
-                                                  suffix
-                                                  "tests/json_parse_stringify.tl")
-                                                  (CompilerEmbeddedStdlibSomeSource
-                                                    compiler-embedded-stdlib-tests-json-parse-stringify)
-                                                  (if (string-eq
-                                                    suffix
-                                                    "tests/list_api.tl")
-                                                    (CompilerEmbeddedStdlibSomeSource
-                                                      compiler-embedded-stdlib-tests-list-api)
-                                                    (if (string-eq
-                                                      suffix
-                                                      "tests/msvc_api.tl")
-                                                      (CompilerEmbeddedStdlibSomeSource
-                                                        compiler-embedded-stdlib-tests-msvc-api)
-                                                      (if (string-eq
-                                                        suffix
-                                                        "tests/process_api.tl")
-                                                        (CompilerEmbeddedStdlibSomeSource
-                                                          compiler-embedded-stdlib-tests-process-api)
-                                                        (if (string-eq
-                                                          suffix
-                                                          "tests/process_borrowed_check.tl")
-                                                          (CompilerEmbeddedStdlibSomeSource
-                                                            compiler-embedded-stdlib-tests-process-borrowed-check)
-                                                          (if (string-eq
-                                                            suffix
-                                                            "tests/process_borrowed_escape.tl")
-                                                            (CompilerEmbeddedStdlibSomeSource
-                                                              compiler-embedded-stdlib-tests-process-borrowed-escape)
-                                                            (if (string-eq
-                                                              suffix
-                                                              "tests/process_runtime.tl")
-                                                              (CompilerEmbeddedStdlibSomeSource
-                                                                compiler-embedded-stdlib-tests-process-runtime)
-                                                              (if (string-eq
-                                                                suffix
-                                                                "tests/profile_api.tl")
-                                                                (CompilerEmbeddedStdlibSomeSource
-                                                                  compiler-embedded-stdlib-tests-profile-api)
-                                                                (if (string-eq
-                                                                  suffix
-                                                                  "tests/random_api.tl")
-                                                                  (CompilerEmbeddedStdlibSomeSource
-                                                                    compiler-embedded-stdlib-tests-random-api)
-                                                                  (if (string-eq
-                                                                    suffix
-                                                                    "tests/sort_api.tl")
-                                                                    (CompilerEmbeddedStdlibSomeSource
-                                                                      compiler-embedded-stdlib-tests-sort-api)
-                                                                    (if (string-eq
-                                                                      suffix
-                                                                      "tests/sync_api.tl")
-                                                                      (CompilerEmbeddedStdlibSomeSource
-                                                                        compiler-embedded-stdlib-tests-sync-api)
-                                                                      (if (string-eq
-                                                                        suffix
-                                                                        "tests/string_edges.tl")
-                                                                        (CompilerEmbeddedStdlibSomeSource
-                                                                          compiler-embedded-stdlib-tests-string-edges)
-                                                                        (if (string-eq
-                                                                          suffix
-                                                                          "tests/test_assert_failure.tl")
-                                                                          (CompilerEmbeddedStdlibSomeSource
-                                                                            compiler-embedded-stdlib-tests-test-assert-failure)
-                                                                          (if (string-eq
-                                                                            suffix
-                                                                            "tests/time_api.tl")
-                                                                            (CompilerEmbeddedStdlibSomeSource
-                                                                              compiler-embedded-stdlib-tests-time-api)
-                                                                            (if (string-eq
-                                                                              suffix
-                                                                              "tests/text_buf_api.tl")
-                                                                              (CompilerEmbeddedStdlibSomeSource
-                                                                                compiler-embedded-stdlib-tests-text-buf-api)
-                                                                              (if (string-eq
-                                                                                suffix
-                                                                                "tests/text_buf_borrowed_check.tl")
-                                                                                (CompilerEmbeddedStdlibSomeSource
-                                                                                  compiler-embedded-stdlib-tests-text-buf-borrowed-check)
-                                                                                (if (string-eq
-                                                                                  suffix
-                                                                                  "tests/vector_api.tl")
-                                                                                  (CompilerEmbeddedStdlibSomeSource
-                                                                                    compiler-embedded-stdlib-tests-vector-api)
-                                                                                  (CompilerEmbeddedStdlibNoSource))))))))))))))))))))))))))))))))))))))))))
+            compiler-embedded-stdlib-tests-arena-patterns))
+        unit)
+      (if (string-eq suffix "tests/arena_policy_escape_string.tl")
+        (set!
+          source
+          (CompilerEmbeddedStdlibSomeSource
+            compiler-embedded-stdlib-tests-arena-policy-escape-string))
+        unit)
+      (if (string-eq suffix "tests/arena_policy_escape_text_buf.tl")
+        (set!
+          source
+          (CompilerEmbeddedStdlibSomeSource
+            compiler-embedded-stdlib-tests-arena-policy-escape-text-buf))
+        unit)
+      (if (string-eq suffix "tests/arena_policy_escape_text_buf_borrowed.tl")
+        (set!
+          source
+          (CompilerEmbeddedStdlibSomeSource
+            compiler-embedded-stdlib-tests-arena-policy-escape-text-buf-borrowed))
+        unit)
+      (if (string-eq suffix "tests/args_api.tl")
+        (set!
+          source
+          (CompilerEmbeddedStdlibSomeSource
+            compiler-embedded-stdlib-tests-args-api))
+        unit)
+      (if (string-eq suffix "tests/cpu_api.tl")
+        (set!
+          source
+          (CompilerEmbeddedStdlibSomeSource
+            compiler-embedded-stdlib-tests-cpu-api))
+        unit)
+      (if (string-eq suffix "tests/comptime_api.tl")
+        (set!
+          source
+          (CompilerEmbeddedStdlibSomeSource
+            compiler-embedded-stdlib-tests-comptime-api))
+        unit)
+      (if (string-eq suffix "tests/core_macros_api.tl")
+        (set!
+          source
+          (CompilerEmbeddedStdlibSomeSource
+            compiler-embedded-stdlib-tests-core-macros-api))
+        unit)
+      (if (string-eq suffix "tests/env_api.tl")
+        (set!
+          source
+          (CompilerEmbeddedStdlibSomeSource
+            compiler-embedded-stdlib-tests-env-api))
+        unit)
+      (if (string-eq suffix "tests/fs_api.tl")
+        (set!
+          source
+          (CompilerEmbeddedStdlibSomeSource
+            compiler-embedded-stdlib-tests-fs-api))
+        unit)
+      (if (string-eq suffix "tests/fs_path_join_many_api.tl")
+        (set!
+          source
+          (CompilerEmbeddedStdlibSomeSource
+            compiler-embedded-stdlib-tests-fs-path-join-many-api))
+        unit)
+      (if (string-eq suffix "tests/hashmap_api.tl")
+        (set!
+          source
+          (CompilerEmbeddedStdlibSomeSource
+            compiler-embedded-stdlib-tests-hashmap-api))
+        unit)
+      (if (string-eq suffix "tests/hashmap_mut_borrow_insert_or_update_live.tl")
+        (set!
+          source
+          (CompilerEmbeddedStdlibSomeSource
+            compiler-embedded-stdlib-tests-hashmap-mut-borrow-insert-or-update-live))
+        unit)
+      (if (string-eq suffix "tests/io_edges.tl")
+        (set!
+          source
+          (CompilerEmbeddedStdlibSomeSource
+            compiler-embedded-stdlib-tests-io-edges))
+        unit)
+      (if (string-eq suffix "tests/io_file_handle.tl")
+        (set!
+          source
+          (CompilerEmbeddedStdlibSomeSource
+            compiler-embedded-stdlib-tests-io-file-handle))
+        unit)
+      (if (string-eq suffix "tests/io_stdio_bytes.tl")
+        (set!
+          source
+          (CompilerEmbeddedStdlibSomeSource
+            compiler-embedded-stdlib-tests-io-stdio-bytes))
+        unit)
+      (if (string-eq suffix "tests/io_stdio_lines.tl")
+        (set!
+          source
+          (CompilerEmbeddedStdlibSomeSource
+            compiler-embedded-stdlib-tests-io-stdio-lines))
+        unit)
+      (if (string-eq suffix "tests/io_stdio_pipe_short_read.tl")
+        (set!
+          source
+          (CompilerEmbeddedStdlibSomeSource
+            compiler-embedded-stdlib-tests-io-stdio-pipe-short-read))
+        unit)
+      (if (string-eq suffix "tests/json_helpers.tl")
+        (set!
+          source
+          (CompilerEmbeddedStdlibSomeSource
+            compiler-embedded-stdlib-tests-json-helpers))
+        unit)
+      (if (string-eq suffix "tests/json_parse_stringify.tl")
+        (set!
+          source
+          (CompilerEmbeddedStdlibSomeSource
+            compiler-embedded-stdlib-tests-json-parse-stringify))
+        unit)
+      (if (string-eq suffix "tests/list_api.tl")
+        (set!
+          source
+          (CompilerEmbeddedStdlibSomeSource
+            compiler-embedded-stdlib-tests-list-api))
+        unit)
+      (if (string-eq suffix "tests/msvc_api.tl")
+        (set!
+          source
+          (CompilerEmbeddedStdlibSomeSource
+            compiler-embedded-stdlib-tests-msvc-api))
+        unit)
+      (if (string-eq suffix "tests/process_api.tl")
+        (set!
+          source
+          (CompilerEmbeddedStdlibSomeSource
+            compiler-embedded-stdlib-tests-process-api))
+        unit)
+      (if (string-eq suffix "tests/process_borrowed_escape.tl")
+        (set!
+          source
+          (CompilerEmbeddedStdlibSomeSource
+            compiler-embedded-stdlib-tests-process-borrowed-escape))
+        unit)
+      (if (string-eq suffix "tests/process_runtime.tl")
+        (set!
+          source
+          (CompilerEmbeddedStdlibSomeSource
+            compiler-embedded-stdlib-tests-process-runtime))
+        unit)
+      (if (string-eq suffix "tests/profile_api.tl")
+        (set!
+          source
+          (CompilerEmbeddedStdlibSomeSource
+            compiler-embedded-stdlib-tests-profile-api))
+        unit)
+      (if (string-eq suffix "tests/random_api.tl")
+        (set!
+          source
+          (CompilerEmbeddedStdlibSomeSource
+            compiler-embedded-stdlib-tests-random-api))
+        unit)
+      (if (string-eq suffix "tests/sort_api.tl")
+        (set!
+          source
+          (CompilerEmbeddedStdlibSomeSource
+            compiler-embedded-stdlib-tests-sort-api))
+        unit)
+      (if (string-eq suffix "tests/sync_api.tl")
+        (set!
+          source
+          (CompilerEmbeddedStdlibSomeSource
+            compiler-embedded-stdlib-tests-sync-api))
+        unit)
+      (if (string-eq suffix "tests/string_edges.tl")
+        (set!
+          source
+          (CompilerEmbeddedStdlibSomeSource
+            compiler-embedded-stdlib-tests-string-edges))
+        unit)
+      (if (string-eq suffix "tests/test_assert_failure.tl")
+        (set!
+          source
+          (CompilerEmbeddedStdlibSomeSource
+            compiler-embedded-stdlib-tests-test-assert-failure))
+        unit)
+      (if (string-eq suffix "tests/time_api.tl")
+        (set!
+          source
+          (CompilerEmbeddedStdlibSomeSource
+            compiler-embedded-stdlib-tests-time-api))
+        unit)
+      (if (string-eq suffix "tests/text_buf_api.tl")
+        (set!
+          source
+          (CompilerEmbeddedStdlibSomeSource
+            compiler-embedded-stdlib-tests-text-buf-api))
+        unit)
+      (if (string-eq suffix "tests/vector_api.tl")
+        (set!
+          source
+          (CompilerEmbeddedStdlibSomeSource
+            compiler-embedded-stdlib-tests-vector-api))
+        unit)
+      source)))
 
 (define (compiler-embedded-stdlib-lookup [suffix : String]) : CompilerEmbeddedStdlibSource
   (match (compiler-embedded-stdlib-lookup-modules suffix)

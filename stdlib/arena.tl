@@ -139,3 +139,29 @@
   (define (arena-rewind [mark : i64]) : unit
     (unsafe
       (tl_region_reset mark))))
+
+(test
+  arena-first-class-api
+  (let
+    [fail : (-> unit)
+      (lambda () : unit
+        (begin
+          (/ 1 0)
+          unit))]
+    [home : i64 (arena-current)]
+    [scratch : i64 (arena-make)]
+    (begin
+      (unsafe
+        (arena-set! scratch))
+      (let
+        [scratch-current : i64 (arena-current)]
+        [scratch-mark : i64 (arena-mark)]
+        (begin
+          (if (= scratch-current scratch)
+            unit
+            (fail))
+          (unsafe
+            (begin
+              (arena-rewind scratch-mark)
+              (arena-set! home)
+              (arena-destroy scratch))))))))

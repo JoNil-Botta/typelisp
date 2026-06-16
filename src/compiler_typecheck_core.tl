@@ -9531,6 +9531,24 @@
                   (int->string actual)
                   (tc-call-arity-argument-word actual))))))))))
 
+;; Deferred arity-mismatch message. tc-call-arity-message is real work (two
+;; list-length walks, callee-name unspan/intern, two int->string division loops,
+;; seven string-appends) but it is only ever consumed on the arity-mismatch error
+;; path, which never fires while typechecking well-formed code (the self-compile).
+;; Carrying the ingredients in this enum and materializing the text only at the
+;; error arms keeps the success path -- the overwhelmingly common one -- free of
+;; that build, with byte-identical output for accepted programs and identical
+;; diagnostics for rejected ones.
+(defenum TcArityMessage
+  (TcArityLiteral)
+  (TcArityDetailed AstExpr AstExprList AstTypeList))
+
+(define (tc-arity-message-text [arity-msg : TcArityMessage]) : String
+  (match arity-msg
+    [(TcArityLiteral) "typecheck: arity mismatch"]
+    [(TcArityDetailed func args params)
+      (tc-call-arity-message func args params)]))
+
 (define (tc-nullary-variant-call-expr
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -10660,7 +10678,6 @@
   (let
     [allow-region-args : bool
       (tc-call-region-args-allowed-for-func ctx env func)]
-    [arity-message : String (tc-call-arity-message func args params)]
     (if (tc-call-lifetime-constructor-for-func? ctx func ret)
       (tc-call-lifetime-constructor-type
         ctx
@@ -10701,7 +10718,7 @@
                     params
                     allow-region-args
                     constructor-target
-                    arity-message
+                    (TcArityDetailed func args params)
                     c-abi-args)
                     [(OkTcUnit)
                       (match (tc-check-thread-spawn-i64-call
@@ -10732,13 +10749,13 @@
   [params : AstTypeList]
   [allow-region-args : bool]
   [constructor-target : AstMaybeType]
-  [arity-message : String]
+  [arity-msg : TcArityMessage]
   [c-abi-args : bool]) : ResultTcUnit
   (match args
     [(AstExprNil)
       (match params
         [(AstTypeNil) OkTcUnit]
-        [_ (ErrTcUnit arity-message)])]
+        [_ (ErrTcUnit (tc-arity-message-text arity-msg))])]
     [(AstExprCons arg rest-args)
       (let
         [arg : AstExpr (ast-node-get arg)]
@@ -10805,7 +10822,7 @@
                                                 rest-params
                                                 allow-region-args
                                                 constructor-target
-                                                arity-message
+                                                arity-msg
                                                 c-abi-args)]
                                             [(ErrTcUnit message)
                                               (ErrTcUnit message)])]
@@ -10819,14 +10836,14 @@
                                         rest-params
                                         allow-region-args
                                         constructor-target
-                                        arity-message
+                                        arity-msg
                                         c-abi-args)]))]
                               [(ErrTcUnit message) (ErrTcUnit message)])]
                           [(ErrTcUnit message) (ErrTcUnit message)])]
                       [(ErrTcType message) (ErrTcUnit message)]))]
                 [(ErrTcExpr message)
                   (ErrTcUnit (tc-locate-error-at-expr arg message))]))]
-          [(AstTypeNil) (ErrTcUnit arity-message)]))]))
+          [(AstTypeNil) (ErrTcUnit (tc-arity-message-text arity-msg))]))]))
 
 (define (tc-check-call-args
   [ctx : TcContext]
@@ -10843,7 +10860,7 @@
     params
     allow-region-args
     constructor-target
-    "typecheck: arity mismatch"
+    (TcArityLiteral)
     c-abi-args))
 
 (define (tc-check-args
@@ -10915,7 +10932,7 @@
                     params
                     false
                     (AstNoType)
-                    (tc-call-arity-message func args params)
+                    (TcArityDetailed func args params)
                     (tc-expr-c-abi-fnptr? ctx env func))
                     [(OkTcUnit)
                       (OkTcType (tc-tag-active-region env (ty-node-get ret)))]

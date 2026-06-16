@@ -2371,9 +2371,9 @@
         (AstTyI64)
         (compiler-backend-program-index-build IrFunctionNil IrExternNil))
         [(OkCompilerBackend asm)
-          (compiler-backend-string-contains?
-            asm
-            "    movslq %r12d, %rax\n    movq %rax, %r13\n")]
+          (and
+            (string-eq asm "    movslq %r12d, %r13\n")
+            (not (compiler-backend-string-contains? asm "%rax")))]
         [(ErrCompilerBackend _) false]))))
 
 (define (compiler-backend-direct-immediate-mov-ok?) : bool

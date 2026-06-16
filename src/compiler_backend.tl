@@ -16854,8 +16854,12 @@
 (define (compiler-backend-emit-windows-main-argv-capture
   [target : CompilerBackendTarget]
   [name : String]
+  [emit-entry : bool]
   [plan : CompilerBackendRuntimePlan]) : String
-  (if (and (compiler-backend-target-windows? target) (string-eq name "main"))
+  (if (and
+    emit-entry
+    (compiler-backend-target-windows? target)
+    (string-eq name "main"))
     (let
       [_ : CompilerBackendRuntimePlan plan]
       "    movq %rcx, .L_tl_argc(%rip)
@@ -16892,6 +16896,7 @@
   [program-index : CompilerBackendProgramIndex]
   [spans : CompilerSourceSpans]
   [span-index : CompilerBackendSourceSpanIndex]
+  [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerBackend
   (match func
     [(IrFunction name params ret-ty vars raw-blocks)
@@ -17051,6 +17056,7 @@
                                 (compiler-backend-emit-windows-main-argv-capture
                                   target
                                   name
+                                  emit-entry
                                   plan)
                                 (string-append
                                   (compiler-backend-emit-linux-crt-main-argv-capture
@@ -17119,6 +17125,7 @@
   [program-index : CompilerBackendProgramIndex]
   [spans : CompilerSourceSpans]
   [span-index : CompilerBackendSourceSpanIndex]
+  [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerBackend
   (let
     [enclosing : i64 (arena-current)]
@@ -17138,6 +17145,7 @@
         program-index
         spans
         span-index
+        emit-entry
         crt-entry)
         [(OkCompilerBackend asm)
           (let
@@ -17180,6 +17188,7 @@
   [program-index : CompilerBackendProgramIndex]
   [spans : CompilerSourceSpans]
   [span-index : CompilerBackendSourceSpanIndex]
+  [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerBackend
   (if (compiler-backend-emit-function-direct? func)
     (compiler-backend-emit-function
@@ -17194,6 +17203,7 @@
       program-index
       spans
       span-index
+      emit-entry
       crt-entry)
     (compiler-backend-emit-function-scratch
       target
@@ -17207,6 +17217,7 @@
       program-index
       spans
       span-index
+      emit-entry
       crt-entry)))
 
 (define (compiler-backend-emit-functions-into
@@ -17221,6 +17232,7 @@
   [program-index : CompilerBackendProgramIndex]
   [spans : CompilerSourceSpans]
   [span-index : CompilerBackendSourceSpanIndex]
+  [emit-entry : bool]
   [crt-entry : bool]
   [buf : TextBuf]) : ResultCompilerBackend
   (match functions
@@ -17238,6 +17250,7 @@
         program-index
         spans
         span-index
+        emit-entry
         crt-entry)
         [(OkCompilerBackend head)
           (compiler-backend-emit-functions-into
@@ -17252,6 +17265,7 @@
             program-index
             spans
             span-index
+            emit-entry
             crt-entry
             (text-buf-append buf head))]
         [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
@@ -17268,6 +17282,7 @@
         program-index
         spans
         span-index
+        emit-entry
         crt-entry
         buf)]))
 
@@ -17281,6 +17296,7 @@
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
   [spans : CompilerSourceSpans]
+  [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerBackend
   (let
     [span-index : CompilerBackendSourceSpanIndex
@@ -17308,6 +17324,7 @@
       program-index
       spans
       span-index
+      emit-entry
       crt-entry
       (text-buf-empty))))
 
@@ -17349,6 +17366,7 @@
   [program-index : CompilerBackendProgramIndex]
   [spans : CompilerSourceSpans]
   [span-index : CompilerBackendSourceSpanIndex]
+  [emit-entry : bool]
   [crt-entry : bool]
   [buf : TextBuf]) : ResultCompilerBackendBuffer
   (match functions
@@ -17368,6 +17386,7 @@
           program-index
           spans
           span-index
+          emit-entry
           crt-entry)
           [(OkCompilerBackend head)
             (begin
@@ -17388,6 +17407,7 @@
                 program-index
                 spans
                 span-index
+                emit-entry
                 crt-entry
                 (text-buf-append buf head)))]
           [(ErrCompilerBackend message)
@@ -17411,6 +17431,7 @@
         program-index
         spans
         span-index
+        emit-entry
         crt-entry
         buf)]))
 
@@ -17424,6 +17445,7 @@
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
   [spans : CompilerSourceSpans]
+  [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerBackendBuffer
   (let
     [span-index : CompilerBackendSourceSpanIndex
@@ -17448,6 +17470,7 @@
       program-index
       spans
       span-index
+      emit-entry
       crt-entry
       (text-buf-empty))))
 
@@ -22160,6 +22183,7 @@ tl_memcpy:
             program-index
             spans
             span-index
+            emit-entry
             crt-entry
             prefix-buf)
             [(OkCompilerBackendBuffer with-functions)
@@ -24333,7 +24357,7 @@ tl_memcpy:
   (str-cat "    .quad " target "\n"))
 
 (define (compiler-backend-pic-quad-replacement [target : String]) : String
-  (str-cat "    .quad " target " - " compiler-backend-pic-image-base-label "\n"))
+  "    .quad 0\n")
 
 (define (compiler-backend-pic-rewrite-target [asm : String] [target : String]) : String
   (compiler-backend-string-replace-all
@@ -24482,25 +24506,52 @@ tl_memcpy:
             [(ObjectSymbolExtern) true]
             [_ (compiler-backend-pic-symbols-have-extern? (box-get rest))])])]))
 
+(define (compiler-backend-pic-target-symbol-internal?
+  [symbols : CompilerObjectSymbolList]
+  [target : String]) : bool
+  (match symbols
+    [(ObjectSymbolNil) false]
+    [(ObjectSymbolCons symbol rest)
+      (match symbol
+        [(ObjectSymbol name binding _ section)
+          (if (string-eq name target)
+            (match binding
+              [(ObjectSymbolExtern) false]
+              [_
+                (match section
+                  [(ObjectNoSection) false]
+                  [_ true])])
+            (compiler-backend-pic-target-symbol-internal? (box-get rest) target))])]))
+
 (define (compiler-backend-pic-reloc-site-valid?
   [image : CompilerObjectImage]
   [reloc : CompilerObjectRelocation]) : bool
   (match reloc
-    [(ObjectRelocation section site kind _)
+    [(ObjectRelocation section site kind target)
       (match kind
         [(ObjectRelocAbs64)
-          (match section
-            [(ObjectSectionData)
-              (let
-                [offset : i64
-                  (compiler-backend-pic-section-label-offset image section site)]
-                (and (>= offset 0) (= (% offset 8) 0)))]
-            [(ObjectSectionRodata)
-              (let
-                [offset : i64
-                  (compiler-backend-pic-section-label-offset image section site)]
-                (and (>= offset 0) (= (% offset 8) 0)))]
-            [_ false])]
+          (and
+            (compiler-backend-pic-target-symbol-internal?
+              (struct-get image symbols)
+              target)
+            (match section
+              [(ObjectSectionData)
+                (let
+                  [offset : i64
+                    (compiler-backend-pic-section-label-offset
+                      image
+                      section
+                      site)]
+                  (and (>= offset 0) (= (% offset 8) 0)))]
+              [(ObjectSectionRodata)
+                (let
+                  [offset : i64
+                    (compiler-backend-pic-section-label-offset
+                      image
+                      section
+                      site)]
+                  (and (>= offset 0) (= (% offset 8) 0)))]
+              [_ false]))]
         [_ true])]))
 
 (define (compiler-backend-pic-relocs-valid?

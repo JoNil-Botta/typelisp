@@ -132,9 +132,9 @@
         (array-set! dst index (array-ref src index))
         (i64-vec-copy-range dst src (+ index 1) count)))))
 
-;: Return a copy of `v` whose backing array is twice as large, preserving the
-;: live prefix. Capacity is always positive (see `i64-vec-with-capacity`), so
-;: doubling strictly grows the array.
+;: Grow `v` to a backing array twice as large, preserving the live prefix.
+;: Capacity is always positive (see `i64-vec-with-capacity`), so doubling
+;: strictly grows the array.
 (comptime-decl
   (:generated vector-family i64-vec-grow "i64")
   (define (i64-vec-grow [v : I64Vec]) : I64Vec
@@ -143,7 +143,8 @@
       [bigger : (Array i64) (make-array i64 (* (i64-vec-capacity v) 2))]
       (begin
         (i64-vec-copy-range bigger (i64-vec-slots v) 0 n)
-        (I64Vec bigger n)))))
+        (set! (struct-get v slots) bigger)
+        v))))
 
 ;: Append `value` to the end, growing the backing array first when it is full.
 ;: Returns the updated vector, which callers must thread forward because a push
@@ -154,9 +155,11 @@
     (if (< (i64-vec-len v) (i64-vec-capacity v))
       (let
         [slots : (Array i64) (i64-vec-slots v)]
+        [index : i64 (i64-vec-len v)]
         (begin
-          (array-set! slots (i64-vec-len v) value)
-          (I64Vec slots (+ (i64-vec-len v) 1))))
+          (array-set! slots index value)
+          (set! (struct-get v len) (+ index 1))
+          v))
       (i64-vec-push (i64-vec-grow v) value))))
 
 ;: Remove and return the last element together with the shrunk vector, or
@@ -169,9 +172,10 @@
       (I64VecPopEmpty)
       (let
         [last-index : i64 (- (i64-vec-len v) 1)]
-        (I64VecPopOk
-          (array-ref (i64-vec-slots v) last-index)
-          (I64Vec (i64-vec-slots v) last-index))))))
+        [value : i64 (array-ref (i64-vec-slots v) last-index)]
+        (begin
+          (set! (struct-get v len) last-index)
+          (I64VecPopOk value v))))))
 
 ;: Build a vector from the live prefix `[0, count)` of `src`, copied into a
 ;: fresh backing array. A non-positive `count` yields an empty vector; the
@@ -435,7 +439,7 @@
         (array-set! dst index (array-ref src index))
         (string-vec-copy-range dst src (+ index 1) count)))))
 
-;: Return a copy of `v` whose backing array is twice as large.
+;: Grow `v` to a backing array twice as large.
 (comptime-decl
   (:generated vector-family string-vec-grow "String")
   (define (string-vec-grow [v : StringVec]) : StringVec
@@ -445,7 +449,8 @@
         (make-array String (* (string-vec-capacity v) 2))]
       (begin
         (string-vec-copy-range bigger (string-vec-slots v) 0 n)
-        (StringVec bigger n)))))
+        (set! (struct-get v slots) bigger)
+        v))))
 
 ;: Append `value` to the end, growing the backing array first when it is full.
 (comptime-decl
@@ -454,9 +459,11 @@
     (if (< (string-vec-len v) (string-vec-capacity v))
       (let
         [slots : (Array String) (string-vec-slots v)]
+        [index : i64 (string-vec-len v)]
         (begin
-          (array-set! slots (string-vec-len v) value)
-          (StringVec slots (+ (string-vec-len v) 1))))
+          (array-set! slots index value)
+          (set! (struct-get v len) (+ index 1))
+          v))
       (string-vec-push (string-vec-grow v) value))))
 
 ;: Remove and return the last string together with the shrunk vector.
@@ -467,9 +474,10 @@
       (StringVecPopEmpty)
       (let
         [last-index : i64 (- (string-vec-len v) 1)]
-        (StringVecPopOk
-          (array-ref (string-vec-slots v) last-index)
-          (StringVec (string-vec-slots v) last-index))))))
+        [value : String (array-ref (string-vec-slots v) last-index)]
+        (begin
+          (set! (struct-get v len) last-index)
+          (StringVecPopOk value v))))))
 
 ;: Build a string vector from the live prefix `[0, count)` of `src`.
 (comptime-decl

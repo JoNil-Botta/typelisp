@@ -112,14 +112,16 @@
         (array-ref (i64-deque-slots q) (i64-deque-physical-index q index)))
       (i64-deque-copy-live dst q (+ index 1)))))
 
-;: Return a copy of `q` with twice the capacity and `head` reset to 0.
+;: Grow `q` to twice the capacity and reset `head` to 0.
 (define (i64-deque-grow [q : I64Deque]) : I64Deque
   (let
     [n : i64 (i64-deque-len q)]
     [bigger : (Array i64) (make-array i64 (* (i64-deque-capacity q) 2))]
     (begin
       (i64-deque-copy-live bigger q 0)
-      (I64Deque bigger 0 n))))
+      (set! (struct-get q slots) bigger)
+      (set! (struct-get q head) 0)
+      q)))
 
 ;: Append `value` to the back, growing first when full. Returns the updated
 ;: deque because growth may allocate a new backing array.
@@ -127,10 +129,12 @@
   (if (< (i64-deque-len q) (i64-deque-capacity q))
     (let
       [slots : (Array i64) (i64-deque-slots q)]
-      [tail : i64 (i64-deque-physical-index q (i64-deque-len q))]
+      [old-len : i64 (i64-deque-len q)]
+      [tail : i64 (i64-deque-physical-index q old-len)]
       (begin
         (array-set! slots tail value)
-        (I64Deque slots (i64-deque-head q) (+ (i64-deque-len q) 1))))
+        (set! (struct-get q len) (+ old-len 1))
+        q))
     (i64-deque-push-back (i64-deque-grow q) value)))
 
 ;: Push `value` to the front, growing first when full. Returns the updated
@@ -139,11 +143,14 @@
   (if (< (i64-deque-len q) (i64-deque-capacity q))
     (let
       [slots : (Array i64) (i64-deque-slots q)]
+      [old-len : i64 (i64-deque-len q)]
       [new-head : i64
         (i64-deque-prev-index (i64-deque-head q) (i64-deque-capacity q))]
       (begin
         (array-set! slots new-head value)
-        (I64Deque slots new-head (+ (i64-deque-len q) 1))))
+        (set! (struct-get q head) new-head)
+        (set! (struct-get q len) (+ old-len 1))
+        q))
     (i64-deque-push-front (i64-deque-grow q) value)))
 
 ;: Remove and return the front element together with the updated deque.
@@ -153,14 +160,14 @@
     (let
       [value : i64 (array-ref (i64-deque-slots q) (i64-deque-head q))]
       [new-len : i64 (- (i64-deque-len q) 1)]
-      (I64DequePopOk
-        value
-        (I64Deque
-          (i64-deque-slots q)
-          (if (= new-len 0)
-            0
-            (i64-deque-next-index (i64-deque-head q) (i64-deque-capacity q)))
-          new-len)))))
+      [new-head : i64
+        (if (= new-len 0)
+          0
+          (i64-deque-next-index (i64-deque-head q) (i64-deque-capacity q)))]
+      (begin
+        (set! (struct-get q head) new-head)
+        (set! (struct-get q len) new-len)
+        (I64DequePopOk value q)))))
 
 ;: Remove and return the back element together with the updated deque.
 (define (i64-deque-pop-back [q : I64Deque]) : I64DequePop
@@ -169,14 +176,15 @@
     (let
       [last-index : i64 (i64-deque-physical-index q (- (i64-deque-len q) 1))]
       [new-len : i64 (- (i64-deque-len q) 1)]
-      (I64DequePopOk
-        (array-ref (i64-deque-slots q) last-index)
-        (I64Deque
-          (i64-deque-slots q)
-          (if (= new-len 0)
-            0
-            (i64-deque-head q))
-          new-len)))))
+      [value : i64 (array-ref (i64-deque-slots q) last-index)]
+      [new-head : i64
+        (if (= new-len 0)
+          0
+          (i64-deque-head q))]
+      (begin
+        (set! (struct-get q head) new-head)
+        (set! (struct-get q len) new-len)
+        (I64DequePopOk value q)))))
 
 (test
   i64-deque-api
@@ -327,6 +335,58 @@
                           (if (= (i64-deque-peek-front again -1) 99)
                             unit
                             (fail)))))]
+                  [(I64DequePopEmpty) (fail)]))]
+            [(I64DequePopEmpty) (fail)])))
+      (let
+        [mut : I64Deque (i64-deque-with-capacity 1)]
+        (begin
+          (set! mut (i64-deque-push-back mut 1))
+          (if (= (i64-deque-len mut) 1)
+            unit
+            (fail))
+          (if (= (i64-deque-capacity mut) 1)
+            unit
+            (fail))
+          (set! mut (i64-deque-push-front mut 0))
+          (if (= (i64-deque-len mut) 2)
+            unit
+            (fail))
+          (if (= (i64-deque-capacity mut) 2)
+            unit
+            (fail))
+          (if (= (i64-deque-get mut 0 -1) 0)
+            unit
+            (fail))
+          (if (= (i64-deque-get mut 1 -1) 1)
+            unit
+            (fail))
+          (match (i64-deque-pop-back mut)
+            [(I64DequePopOk back-value after-back)
+              (begin
+                (set! mut after-back)
+                (if (= back-value 1)
+                  unit
+                  (fail))
+                (if (= (i64-deque-len mut) 1)
+                  unit
+                  (fail))
+                (if (= (i64-deque-peek-front mut -1) 0)
+                  unit
+                  (fail))
+                (set! mut (i64-deque-push-back mut 2))
+                (match (i64-deque-pop-front mut)
+                  [(I64DequePopOk front-value after-front)
+                    (begin
+                      (set! mut after-front)
+                      (if (= front-value 0)
+                        unit
+                        (fail))
+                      (if (= (i64-deque-len mut) 1)
+                        unit
+                        (fail))
+                      (if (= (i64-deque-peek-front mut -1) 2)
+                        unit
+                        (fail)))]
                   [(I64DequePopEmpty) (fail)]))]
             [(I64DequePopEmpty) (fail)])))
       (match (i64-deque-pop-front (i64-deque-new))

@@ -5887,6 +5887,22 @@
     [(OkSpannedTokens toks) (parse-ast-program-with-cfg toks cfgs)]
     [(ErrSpannedTokens err) (ErrAstProgram (source-error-message err))]))
 
+(define (parse-ast-repl-module-macro-call-decl? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDeclImport
+        (AstImportSpec
+          (AstImportMacroDecls _)
+          path
+          (AstNoModuleName)
+          (AstNoImportAlias)))
+      (string-eq path "")]
+    [_ false]))
+
+(define (parse-ast-repl-expr-item [dispatch : SymI64Env] [form : SpannedSexpr]) : ResultAstReplItem
+  (match (parse-ast-expr dispatch form)
+    [(OkAstExpr expr) (OkAstReplItem (AstReplExpr expr))]
+    [(ErrAstExpr message) (ErrAstReplItem message)]))
+
 (define (parse-ast-repl-source [src : String]) : ResultAstReplItem
   (match (lex-spanned-result src)
     [(OkSpannedTokens toks)
@@ -5902,11 +5918,11 @@
               [(OkSpannedSexpr form)
                 (if (= (peek-spanned-tag toks cur) (tag-end))
                   (match (parse-ast-decl dispatch form)
-                    [(OkAstDecl decl) (OkAstReplItem (AstReplDecl decl))]
-                    [(ErrAstDecl _)
-                      (match (parse-ast-expr dispatch form)
-                        [(OkAstExpr expr) (OkAstReplItem (AstReplExpr expr))]
-                        [(ErrAstExpr message) (ErrAstReplItem message)])])
+                    [(OkAstDecl decl)
+                      (if (parse-ast-repl-module-macro-call-decl? decl)
+                        (parse-ast-repl-expr-item dispatch form)
+                        (OkAstReplItem (AstReplDecl decl)))]
+                    [(ErrAstDecl _) (parse-ast-repl-expr-item dispatch form)])
                   (ErrAstReplItem "parse: trailing tokens after REPL input"))]
               [(ErrSpannedSexpr err)
                 (ErrAstReplItem (source-error-message err))]))))]
@@ -9039,6 +9055,8 @@
     (compiler-parse-repl-decl-ok? "(define x : i64 42)")
     ;; parenthesized expression item
     (compiler-parse-repl-expr-ok? "(+ 1 2)")
+    ;; unknown function-style calls are REPL expressions, not module macro decls
+    (compiler-parse-repl-expr-ok? "(double 4)")
     ;; bare expression item
     (compiler-parse-repl-expr-ok? "42")
     ;; trailing tokens after a complete item are rejected

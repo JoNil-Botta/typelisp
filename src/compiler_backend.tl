@@ -24986,6 +24986,7 @@ tl_memcpy:
     [has-pending : bool false]
     [pending-line : String ""]
     [pending-newline : bool false]
+    [rax-owner : String ""]
     (begin
       (while (< i n)
         (let
@@ -25009,12 +25010,36 @@ tl_memcpy:
                     unit
                     (if (= action 3)
                       (begin
-                        (set!
-                          out
-                          (compiler-backend-peephole-append-line
-                            out
-                            pending-line
-                            pending-newline))
+                        (match (compiler-backend-peephole-movq pending-line)
+                          [(CompilerBackendPeepholeMove src dst)
+                            (begin
+                              (if (and
+                                (string-eq dst "%rax")
+                                (string-eq src rax-owner)
+                                (compiler-backend-peephole-stack-slot-operand?
+                                  src))
+                                unit
+                                (set!
+                                  out
+                                  (compiler-backend-peephole-append-line
+                                    out
+                                    pending-line
+                                    pending-newline)))
+                              (set!
+                                rax-owner
+                                (compiler-backend-peephole-rax-slot-next-owner
+                                  rax-owner
+                                  src
+                                  dst)))]
+                          [(CompilerBackendPeepholeNoMove)
+                            (begin
+                              (set! rax-owner "")
+                              (set!
+                                out
+                                (compiler-backend-peephole-append-line
+                                  out
+                                  pending-line
+                                  pending-newline)))])
                         (set!
                           pending-line
                           (compiler-backend-peephole-forward-frame-load-line
@@ -25022,12 +25047,36 @@ tl_memcpy:
                             line))
                         (set! pending-newline line-newline))
                       (begin
-                        (set!
-                          out
-                          (compiler-backend-peephole-append-line
-                            out
-                            pending-line
-                            pending-newline))
+                        (match (compiler-backend-peephole-movq pending-line)
+                          [(CompilerBackendPeepholeMove src dst)
+                            (begin
+                              (if (and
+                                (string-eq dst "%rax")
+                                (string-eq src rax-owner)
+                                (compiler-backend-peephole-stack-slot-operand?
+                                  src))
+                                unit
+                                (set!
+                                  out
+                                  (compiler-backend-peephole-append-line
+                                    out
+                                    pending-line
+                                    pending-newline)))
+                              (set!
+                                rax-owner
+                                (compiler-backend-peephole-rax-slot-next-owner
+                                  rax-owner
+                                  src
+                                  dst)))]
+                          [(CompilerBackendPeepholeNoMove)
+                            (begin
+                              (set! rax-owner "")
+                              (set!
+                                out
+                                (compiler-backend-peephole-append-line
+                                  out
+                                  pending-line
+                                  pending-newline)))])
                         (set! pending-line line)
                         (set! pending-newline line-newline))))))
               (begin
@@ -25038,14 +25087,53 @@ tl_memcpy:
       (if (and
         has-pending
         (not (compiler-backend-peephole-self-move? pending-line)))
-        (set!
-          out
-          (compiler-backend-peephole-append-line
-            out
-            pending-line
-            pending-newline))
+        (begin
+          (match (compiler-backend-peephole-movq pending-line)
+            [(CompilerBackendPeepholeMove src dst)
+              (begin
+                (if (and
+                  (string-eq dst "%rax")
+                  (string-eq src rax-owner)
+                  (compiler-backend-peephole-stack-slot-operand? src))
+                  unit
+                  (set!
+                    out
+                    (compiler-backend-peephole-append-line
+                      out
+                      pending-line
+                      pending-newline)))
+                (set!
+                  rax-owner
+                  (compiler-backend-peephole-rax-slot-next-owner
+                    rax-owner
+                    src
+                    dst)))]
+            [(CompilerBackendPeepholeNoMove)
+              (begin
+                (set! rax-owner "")
+                (set!
+                  out
+                  (compiler-backend-peephole-append-line
+                    out
+                    pending-line
+                    pending-newline)))]))
         unit)
       (text-buf-render out))))
+
+(define (compiler-backend-peephole-rax-slot-next-owner
+  [owner : String]
+  [src : String]
+  [dst : String]) : String
+  (if (string-eq dst "%rax")
+    (if (compiler-backend-peephole-stack-slot-operand? src)
+      src
+      "")
+    (if (and
+      (not (string-eq owner ""))
+      (string-eq dst owner)
+      (not (string-eq src "%rax")))
+      ""
+      owner)))
 
 (define (compiler-backend-peephole-asm [asm : String]) : String
   (compiler-backend-peephole-asm-once asm))

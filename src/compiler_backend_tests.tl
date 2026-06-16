@@ -5467,6 +5467,151 @@
             (not (compiler-backend-string-contains? asm "%r10")))]
         [(ErrCompilerBackend _) false]))))
 
+(define (compiler-backend-copy-bytes-direct-home-shape-ok?) : bool
+  (let
+    [assignments : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 0 (CompilerRegRegister "%r12"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment 1 (CompilerRegRegister "%r13"))
+          CompilerRegAssignmentNil))]
+    (match (compiler-backend-emit-test-instrs
+      (compiler-ir-instr-cons
+        (IrInstrCopyBytes (IrValueVar 0) (IrValueVar 1) 24)
+        IrInstrNil)
+      assignments
+      3)
+      [(OkCompilerBackend asm)
+        (and
+          (backend-and4
+            (compiler-backend-string-contains?
+              asm
+              "    movups (%r13), %xmm15\n")
+            (compiler-backend-string-contains?
+              asm
+              "    movups %xmm15, (%r12)\n")
+            (compiler-backend-string-contains? asm "    movq 16(%r13), %rax\n")
+            (compiler-backend-string-contains? asm "    movq %rax, 16(%r12)\n"))
+          (not (compiler-backend-string-contains? asm "    movq %r12, %r10\n"))
+          (not (compiler-backend-string-contains? asm "    movq %r13, %r11\n")))]
+      [(ErrCompilerBackend _) false])))
+
+(define (compiler-backend-widening-cast-direct-home-shape-ok?) : bool
+  (let
+    [index : CompilerBackendProgramIndex
+      (compiler-backend-program-index-build IrFunctionNil IrExternNil)]
+    [reg-src : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 5 (CompilerRegRegister "%r12"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment 6 (CompilerRegRegister "%rbx"))
+          CompilerRegAssignmentNil))]
+    [stack-src : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 6 (CompilerRegRegister "%rbx"))
+        CompilerRegAssignmentNil)]
+    (and
+      (match (compiler-backend-emit-cast
+        "_tl_test"
+        "entry"
+        reg-src
+        6
+        (IrValueVar 5)
+        (AstTyI8)
+        (AstTyI64)
+        index)
+        [(OkCompilerBackend asm) (string-eq asm "    movsbq %r12b, %rbx\n")]
+        [(ErrCompilerBackend _) false])
+      (match (compiler-backend-emit-cast
+        "_tl_test"
+        "entry"
+        stack-src
+        6
+        (IrValueVar 5)
+        (AstTyU8)
+        (AstTyU64)
+        index)
+        [(OkCompilerBackend asm) (string-eq asm "    movzbq -48(%rbp), %rbx\n")]
+        [(ErrCompilerBackend _) false]))))
+
+(define (compiler-backend-global-store-direct-home-shape-ok?) : bool
+  (let
+    [assignments : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 0 (CompilerRegRegister "%r12"))
+        CompilerRegAssignmentNil)]
+    (match (compiler-backend-emit-test-instrs
+      (compiler-ir-instr-cons
+        (IrInstrStore "g" (IrValueVar 0) (AstTyI32))
+        IrInstrNil)
+      assignments
+      2)
+      [(OkCompilerBackend asm)
+        (and
+          (compiler-backend-string-contains? asm "    movq %r12, _tl_g(%rip)\n")
+          (not (compiler-backend-string-contains? asm "    movq %r12, %rax\n"))
+          (not
+            (compiler-backend-string-contains?
+              asm
+              "    movq %rax, _tl_g(%rip)\n")))]
+      [(ErrCompilerBackend _) false])))
+
+(define (compiler-backend-pack-direct-home-shape-ok?) : bool
+  (let
+    [ty : AstType (compiler-backend-register-group-test-type)]
+    [index : CompilerBackendProgramIndex
+      (compiler-backend-register-group-test-index)]
+    [words : CompilerIrValueList
+      (compiler-ir-value-cons
+        (IrValueVar 0)
+        (compiler-ir-value-cons (IrValueVar 1) IrValueNil))]
+    [direct-assignments : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 0 (CompilerRegRegister "%r12"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment 1 (CompilerRegRegister "%rbx"))
+          (compiler-reg-assignment-cons
+            (CompilerRegAssignment 2 (CompilerRegRegisterPair "%r14" "%r15"))
+            CompilerRegAssignmentNil)))]
+    [noop-assignments : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 0 (CompilerRegRegister "%r14"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment 1 (CompilerRegRegister "%r15"))
+          (compiler-reg-assignment-cons
+            (CompilerRegAssignment 2 (CompilerRegRegisterPair "%r14" "%r15"))
+            CompilerRegAssignmentNil)))]
+    [diag : CompilerDiagnostic (compiler-diagnostic-at-start "" "")]
+    (and
+      (match (compiler-backend-emit-pack
+        direct-assignments
+        2
+        words
+        ty
+        4
+        index
+        diag)
+        [(OkCompilerBackend asm)
+          (string-eq asm "    movq %r12, %r14\n    movq %rbx, %r15\n")]
+        [(ErrCompilerBackend _) false])
+      (match (compiler-backend-emit-pack
+        noop-assignments
+        2
+        words
+        ty
+        4
+        index
+        diag)
+        [(OkCompilerBackend asm) (string-eq asm "")]
+        [(ErrCompilerBackend _) false]))))
+
+(define (compiler-backend-scratch-staging-direct-home-shape-ok?) : bool
+  (backend-and4
+    (compiler-backend-copy-bytes-direct-home-shape-ok?)
+    (compiler-backend-widening-cast-direct-home-shape-ok?)
+    (compiler-backend-global-store-direct-home-shape-ok?)
+    (compiler-backend-pack-direct-home-shape-ok?)))
+
 (define (compiler-backend-address-mode-fusion-ok?) : bool
   (and
     (backend-and8
@@ -7958,6 +8103,7 @@
       (and
         (compiler-backend-memory-op-ok?)
         (compiler-backend-address-mode-fusion-ok?)
+        (compiler-backend-scratch-staging-direct-home-shape-ok?)
         (compiler-backend-low-level-instr-ok?)
         (compiler-backend-syscall-source-ok?)
         (compiler-backend-numeric-cast-shape-ok?)

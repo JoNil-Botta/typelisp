@@ -39,6 +39,18 @@
 ;#       (string-append-borrowed (& prefix) (& suffix)))))
 ;# ```
 ;#
+;# For one-shot scratch work, `with-scratch` creates and destroys the scratch
+;# arena itself while cloning one supported result back into the enclosing
+;# active arena:
+;#
+;# ```typelisp
+;# (import "stdlib/string.tl")
+;#
+;# (define (build-once [n : i64]) : String
+;#   (with-scratch
+;#     (string-append "once:" (int->string n))))
+;# ```
+;#
 ;# To keep results owned by the target arena itself, use `in-arena`. It switches
 ;# the active allocation target for the dynamic extent and restores the previous
 ;# active arena without marking, rewinding, destroying, or cloning:
@@ -101,8 +113,9 @@
 
 ;: Create a fresh independent arena and return its handle without switching to it.
 ;:
-;: Prefer passing the handle to `with-escape` for safe scratch-work clone-out.
-;: Direct switching or destruction of the handle remains unsafe.
+;: Prefer `with-scratch` for one-shot scratch clone-out, or pass the handle to
+;: `with-escape` when the scratch arena should be reused. Direct switching or
+;: destruction of the handle remains unsafe.
 (define (arena-make) : i64
   (tl_arena_make))
 

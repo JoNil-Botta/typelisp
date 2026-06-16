@@ -271,6 +271,7 @@
   (AstExprStructSet i64 i64 i64)
   (AstExprWithRegion String AstExprList)
   (AstExprWithEscape i64 AstExprList)
+  (AstExprWithScratch AstExprList)
   (AstExprInArena i64 AstExprList)
   (AstExprWithResource AstResourceBindingList AstExprList)
   (AstExprBox i64)
@@ -1570,6 +1571,9 @@
 (define (ast-expr-with-escape [escape : i64] [body : AstExprList]) : i64
   (ast-node-push (AstExprWithEscape escape body)))
 
+(define (ast-expr-with-scratch [body : AstExprList]) : i64
+  (ast-node-push (AstExprWithScratch body)))
+
 (define (ast-expr-in-arena [arena : i64] [body : AstExprList]) : i64
   (ast-node-push (AstExprInArena arena body)))
 
@@ -1911,6 +1915,7 @@
     [(AstExprStructSet _ _ _) 63]
     [(AstExprWithRegion _ _) 25]
     [(AstExprWithEscape _ _) 48]
+    [(AstExprWithScratch _) 67]
     [(AstExprInArena _ _) 65]
     [(AstExprTypeLiteral _) 26]
     [(AstExprInit _) 61]

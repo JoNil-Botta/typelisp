@@ -3966,11 +3966,25 @@ active allocation target. On exit, the result is cloned into the enclosing activ
 arena when needed, the scratch arena is rewound to its entry mark, and the active
 arena is restored. The v1 result surface follows the current `clone` lowering:
 copyable values are returned as-is, `String` values are copied, and cloneable
-named aggregates use their generated clone helpers. Direct tuple, array,
-dynamic-array, and box results are rejected until those shapes have deep-clone
-lowering. Typechecking returns the body result type with source-region tags
-stripped, matching the clone semantics of moving the result back to the
-enclosing arena.
+tuples, fixed arrays, dynamic arrays, boxes, and named aggregates are cloned
+recursively when their elements or fields are clone-supported. Unsupported
+result shapes such as function values are rejected. Typechecking returns the
+body result type with source-region tags stripped, matching the clone semantics
+of moving the result back to the enclosing arena.
+
+**One-shot scratch escape:** `(with-scratch body ...)` is the explicit one-shot
+variant of `with-escape`. It creates a fresh first-class scratch arena,
+evaluates the non-empty body sequence with that arena active, switches back to
+the enclosing active arena, clones the body result when the type requires it,
+destroys the scratch arena head, restores the enclosing active arena, and
+returns the cloned result. The result surface and source-region stripping match
+`with-escape`: copyable values are returned as-is, `String` values are copied,
+cloneable tuple, array, box, and named aggregate results are deep-cloned when
+their elements or fields are clone-supported, and unsupported result shapes such
+as function values are rejected.
+`with-arena` continues to reject region-tagged escapes; clone-out is explicit
+through `with-escape` for reusable first-class scratch arenas and
+`with-scratch` for one-shot scratch work.
 
 **First-class arena target:** `(in-arena arena-expr body ...)` is the safe
 dynamic allocation-target form for first-class arena handles. `arena-expr` must
@@ -4991,6 +5005,10 @@ The standard scratch workflows are:
   `arena-make`, then wrap each transient build in `(with-escape scratch ...)`.
   The result is cloned into the enclosing active arena before the scratch arena
   is rewound.
+- **One-shot clone-out:** use `(with-scratch body ...)` when a supported result
+  should be cloned out of a fresh scratch arena and the caller does not need to
+  reuse the arena handle across builds. The scratch arena is destroyed after the
+  clone.
 - **Keep results in a first-class arena:** allocate or receive an arena handle
   and wrap the build in `(in-arena arena ...)`. The saved active arena is
   restored afterward, and the returned owned value remains in the target arena.
@@ -5004,7 +5022,8 @@ lexical nesting: default program arena for global state, one `(with-arena level
 ...)` for per-level state, an inner `(with-arena frame ...)` for per-frame
 scratch that returns only scalars or outer-owned values, and `(with-escape
 scratch ...)` with a first-class scratch arena when a supported frame result
-must be cloned into the active level state. The runnable cookbook is
+must be cloned into the active level state; use `(with-scratch ...)` for the
+same clone-out when the scratch work is one-shot. The runnable cookbook is
 `examples/arena_lifetimes.tl`. This v1 pattern does not model overlapping level
 lifetimes, double-buffered levels, or event-driven unloads; those need the
 overlapping-lifetime work tracked by #2568.
@@ -5156,6 +5175,27 @@ enclosing active arena. This lowers to the same `arena-current` / `arena-set!` /
 used before. The form is intended for first-class scratch arenas; it is not a
 lexical lifetime binder, and lexical region cleanup remains the job of
 `with-arena`.
+
+#### One-shot scratch arena escape - `with-scratch`
+
+Use `(with-scratch body ...)` when the scratch arena is only needed for one
+transient build:
+
+```lisp test=check name=with-scratch-example
+(import "stdlib/string.tl")
+
+(define (build-message) : String
+  (with-scratch
+    (int->string 42)))
+```
+
+`with-scratch` creates a fresh first-class scratch arena, records the enclosing
+active arena, switches to the scratch arena, evaluates the non-empty body
+sequence, switches back to the enclosing arena, clones the body result when the
+type requires it, destroys the scratch arena head, restores the enclosing active
+arena, and returns the cloned result. It uses the same clone-supported result
+rules and source-region stripping as `with-escape`, and rejects unsupported
+result shapes with a `with-scratch` diagnostic.
 
 #### First-class arena allocation target - `in-arena`
 
@@ -5400,7 +5440,8 @@ not the future safe reference/borrow model (#182), not a replacement for
   `arena-current`, `arena-mark`, `arena-set!`, `arena-destroy`, and
   `arena-rewind`; invalidating helpers require `(unsafe ...)`. The safe
   `in-arena` form switches to a first-class arena for one body without exposing
-  `arena-set!` to safe code.
+  `arena-set!` to safe code, and `with-scratch` performs one-shot scratch
+  clone-out without exposing arena destruction to safe code.
 - `extern` declarations, including unsafe declaration metadata for externs and
   top-level functions.
 - Multi-file modules via `import`.
@@ -6017,6 +6058,7 @@ expr          ::= literal
                 | "(" "return" expr ")"
                 | "(" "with-arena" ident expr+ ")"
                 | "(" "with-escape" expr expr+ ")"
+                | "(" "with-scratch" expr+ ")"
                 | "(" "in-arena" expr expr+ ")"
                 | "(" "with" "(" resource-binding* ")" expr+ ")"
                 | borrow-expr                 ; specified, not implemented

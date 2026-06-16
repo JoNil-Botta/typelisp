@@ -687,8 +687,10 @@ helpers below. See [SPEC.md §5.16](SPEC.md) and §7.3 for the full contract.
 The standard scratch patterns are: use `(with-arena scratch ...)` for temporary
 work that returns only scalars or outer-owned values; use `(with-escape scratch
 ...)` with a first-class arena from `arena-make` when one supported result must
-be cloned out; use `(arena-make-atomic)` for a shared atomic allocation target;
-use `(in-arena arena body ...)` when the result should remain
+be cloned out across repeated scratch builds; use `(with-scratch body ...)`
+when a supported result should be cloned out from a fresh one-shot scratch
+arena; use `(arena-make-atomic)` for a shared atomic allocation target; use
+`(in-arena arena body ...)` when the result should remain
 owned by that first-class arena; reserve manual `arena-set!` / `arena-rewind` /
 `arena-destroy` calls for unsafe internals that can prove every invalidated
 handle is dead.
@@ -697,7 +699,8 @@ For game-style loops, the current safe pattern is lexical nesting: keep global
 state in the default program arena, enter one `(with-arena level ...)` for
 per-level state, use an inner `(with-arena frame ...)` for scalar-only per-frame
 temporaries, and use `(with-escape scratch ...)` with a first-class scratch
-arena when one supported frame result must be cloned into the level state. See
+arena or `(with-scratch ...)` for one-shot work when one supported frame result
+must be cloned into the level state. See
 [`examples/arena_lifetimes.tl`](examples/arena_lifetimes.tl). Double-buffered
 levels and event-driven unloads need overlapping lifetimes and remain future
 work (#2568).

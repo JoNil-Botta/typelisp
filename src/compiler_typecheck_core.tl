@@ -6258,6 +6258,8 @@
         (match (tc-source-expr-spmd-broadcast-scope-ok scratch allow)
           [(OkTcUnit) (tc-source-expr-list-spmd-broadcast-scope-ok body allow)]
           [(ErrTcUnit message) (ErrTcUnit message)]))]
+    [(AstExprWithScratch body)
+      (tc-source-expr-list-spmd-broadcast-scope-ok body allow)]
     [(AstExprInArena arena-box body)
       (let
         [arena : AstExpr (ast-node-get arena-box)]
@@ -6565,6 +6567,7 @@
         (match (tc-source-expr-policy-ok ctx scratch)
           [(OkTcUnit) (tc-source-expr-list-policy-ok ctx body)]
           [(ErrTcUnit message) (ErrTcUnit message)]))]
+    [(AstExprWithScratch body) (tc-source-expr-list-policy-ok ctx body)]
     [(AstExprInArena arena-box body)
       (let
         [arena : AstExpr (ast-node-get arena-box)]
@@ -11897,6 +11900,8 @@
         (and
           (tc-ref-closure-local-uses-ok? scratch name bound)
           (tc-ref-closure-expr-list-local-uses-ok? body name bound)))]
+    [(AstExprWithScratch body)
+      (tc-ref-closure-expr-list-local-uses-ok? body name bound)]
     [(AstExprInArena arena-box body)
       (let
         [arena : AstExpr (ast-node-get arena-box)]
@@ -13020,6 +13025,9 @@
     [(AstExprWithEscape _ _)
       (tc-spmd-masked-if-unsupported
         "allocations that can escape masked branches")]
+    [(AstExprWithScratch _)
+      (tc-spmd-masked-if-unsupported
+        "allocations that can escape masked branches")]
     [(AstExprInArena _ _)
       (tc-spmd-masked-if-unsupported
         "allocations that can escape masked branches")]
@@ -14006,6 +14014,8 @@
       (tc-spmd-begin-list ctx (tc-push-region env region) spmd-env body)]
     [(AstExprWithEscape _ _)
       (ErrTcSpmdExprInfo "typecheck: with-escape inside spmd is not supported")]
+    [(AstExprWithScratch _)
+      (ErrTcSpmdExprInfo "typecheck: with-scratch inside spmd is not supported")]
     [(AstExprInArena _ _)
       (ErrTcSpmdExprInfo "typecheck: in-arena inside spmd is not supported")]
     [(AstExprWithResource _ _)
@@ -14558,6 +14568,7 @@
         (or
           (tc-expr-uses-free-name? scratch name bound)
           (tc-expr-list-uses-free-name? body name bound)))]
+    [(AstExprWithScratch body) (tc-expr-list-uses-free-name? body name bound)]
     [(AstExprInArena arena-box body)
       (let
         [arena : AstExpr (ast-node-get arena-box)]
@@ -14973,6 +14984,7 @@
         (or
           (tc-expr-sets-free-name? scratch name bound)
           (tc-expr-list-sets-free-name? body name bound)))]
+    [(AstExprWithScratch body) (tc-expr-list-sets-free-name? body name bound)]
     [(AstExprInArena arena-box body)
       (let
         [arena : AstExpr (ast-node-get arena-box)]
@@ -15248,6 +15260,8 @@
     [(AstExprWithRegion _ body)
       (tc-expr-list-result-uses-cleanup-owner? body owners bound)]
     [(AstExprWithEscape _ body)
+      (tc-expr-list-result-uses-cleanup-owner? body owners bound)]
+    [(AstExprWithScratch body)
       (tc-expr-list-result-uses-cleanup-owner? body owners bound)]
     [(AstExprInArena _ body)
       (tc-expr-list-result-uses-cleanup-owner? body owners bound)]
@@ -19798,10 +19812,21 @@
         (tc-quasiquote-template-ok ctx env inner))]
     [_ OkTcUnit]))
 
-(define (tc-with-escape-unsupported-message [ctx : TcContext] [ty : AstType]) : String
-  (string-append
-    "typecheck: with-escape result type is not clone-supported: "
+(define (tc-clone-out-unsupported-message
+  [ctx : TcContext]
+  [form : String]
+  [ty : AstType]) : String
+  (str-cat
+    "typecheck: "
+    form
+    " result type is not clone-supported: "
     (tc-type-render (tc-type-without-regions (tc-resolve-type ctx ty)))))
+
+(define (tc-with-escape-unsupported-message [ctx : TcContext] [ty : AstType]) : String
+  (tc-clone-out-unsupported-message ctx "with-escape" ty))
+
+(define (tc-with-scratch-unsupported-message [ctx : TcContext] [ty : AstType]) : String
+  (tc-clone-out-unsupported-message ctx "with-scratch" ty))
 
 ;; with-escape is a first-class scratch-arena clone path, not a lexical
 ;; lifetime binder. The scratch expression is just an arena handle, and
@@ -19821,6 +19846,17 @@
               (ErrTcType (tc-with-escape-unsupported-message ctx body-ty)))]
           [(ErrTcType message) (ErrTcType message)])
         (ErrTcType "typecheck: with-escape arena must be i64"))]
+    [(ErrTcType message) (ErrTcType message)]))
+
+(define (tc-with-scratch-expr
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [body : AstExprList]) : ResultTcType
+  (match (tc-begin-list ctx env body)
+    [(OkTcType body-ty)
+      (if (tc-clone-able-type? ctx body-ty)
+        (OkTcType (tc-type-without-regions body-ty))
+        (ErrTcType (tc-with-scratch-unsupported-message ctx body-ty)))]
     [(ErrTcType message) (ErrTcType message)]))
 
 (define (tc-in-arena-expr
@@ -20566,6 +20602,7 @@
       (let
         [scratch : AstExpr (ast-node-get scratch-box)]
         (tc-with-escape-expr ctx env scratch body))]
+    [(AstExprWithScratch body) (tc-with-scratch-expr ctx env body)]
     [(AstExprInArena arena-box body)
       (let
         [arena : AstExpr (ast-node-get arena-box)]
@@ -21625,6 +21662,15 @@
             template?
             body)]
         [(ErrTcUnit message) (ErrTcUnit message)])]
+    [(AstExprWithScratch body)
+      (tc-comptime-purity-expr-list-mode
+        ctx
+        env
+        bound
+        chain
+        seen
+        template?
+        body)]
     [(AstExprInArena arena body)
       (match (tc-comptime-purity-node-mode
         ctx
@@ -23838,6 +23884,8 @@
           [(OkTcMove moved1)
             (tc-move-check-exprs ctx env locals loop-carried moved1 exprs)]
           [(ErrTcMove message) (ErrTcMove message)]))]
+    [(AstExprWithScratch exprs)
+      (tc-move-check-exprs ctx env locals loop-carried moved exprs)]
     [(AstExprInArena arena-box exprs)
       (let
         [arena : AstExpr (ast-node-get arena-box)]
@@ -25347,6 +25395,15 @@
               [(OkTcBorrowCheck _) (OkTcBorrowCheck borrowed1)]
               [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
           [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+    [(AstExprWithScratch exprs)
+      (match (tc-borrow-check-exprs
+        ctx
+        env
+        locals
+        (tc-moved-clone borrowed)
+        exprs)
+        [(OkTcBorrowCheck _) (OkTcBorrowCheck borrowed)]
+        [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
     [(AstExprInArena arena-box exprs)
       (let
         [arena : AstExpr (ast-node-get arena-box)]
@@ -26172,6 +26229,9 @@
         (ast-expr-with-escape
           (macro-hygiene-expr scratch env macro-name depth)
           (macro-hygiene-expr-list body env macro-name depth)))]
+    [(AstExprWithScratch body)
+      (ast-expr-with-scratch
+        (macro-hygiene-expr-list body env macro-name depth))]
     [(AstExprInArena arena-box body)
       (let
         [arena : AstExpr (ast-node-get arena-box)]
@@ -27595,6 +27655,10 @@
                   (OkMacroExpr (ast-expr-with-escape nscratch nbody))]
                 [(ErrMacroExprList diag) (ErrMacroExpr diag)])]
             [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+      [(AstExprWithScratch body)
+        (match (macro-expand-exprs ctx env decls depth body)
+          [(OkMacroExprList nbody) (OkMacroExpr (ast-expr-with-scratch nbody))]
+          [(ErrMacroExprList diag) (ErrMacroExpr diag)])]
       [(AstExprInArena arena-box body)
         (let
           [arena : AstExpr (ast-node-get arena-box)]
@@ -27984,6 +28048,7 @@
       (or
         (macro-node-uses-macro? ctx decls i)
         (macro-exprs-use-macro? ctx decls exprs))]
+    [(AstExprWithScratch exprs) (macro-exprs-use-macro? ctx decls exprs)]
     [(AstExprInArena i exprs)
       (or
         (macro-node-uses-macro? ctx decls i)
@@ -28165,6 +28230,7 @@
     [(AstExprWithRegion _ exprs) (ctfe-exprs-have-type-literal? exprs)]
     [(AstExprWithEscape i exprs)
       (or (ctfe-node-has-type-literal? i) (ctfe-exprs-have-type-literal? exprs))]
+    [(AstExprWithScratch exprs) (ctfe-exprs-have-type-literal? exprs)]
     [(AstExprInArena i exprs)
       (or (ctfe-node-has-type-literal? i) (ctfe-exprs-have-type-literal? exprs))]
     [(AstExprBox i) (ctfe-node-has-type-literal? i)]

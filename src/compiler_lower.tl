@@ -3101,6 +3101,14 @@
           [(OkTcType result-ty)
             (lower-clone-root-add-type ctx decls able walked result-ty)]
           [(ErrTcType _) walked]))]
+    [(AstExprWithScratch exprs)
+      (let
+        [walked : CloneNameList
+          (lower-clone-roots-expr-list ctx env decls able roots exprs)]
+        (match (tc-with-scratch-expr ctx env exprs)
+          [(OkTcType result-ty)
+            (lower-clone-root-add-type ctx decls able walked result-ty)]
+          [(ErrTcType _) walked]))]
     [(AstExprInArena arena-box exprs)
       (let
         [arena : AstExpr (ast-node-get arena-box)]
@@ -3671,6 +3679,8 @@
           names
           (lower-reach-expr all-functions names state scratch)
           exprs))]
+    [(AstExprWithScratch exprs)
+      (lower-reach-expr-list all-functions names state exprs)]
     [(AstExprInArena arena-box exprs)
       (let
         [arena : AstExpr (ast-node-get arena-box)]
@@ -13743,6 +13753,7 @@
       (let
         [scratch : AstExpr (ast-node-get scratch-box)]
         (lower-with-escape ctx state env type-env scratch body))]
+    [(AstExprWithScratch body) (lower-with-scratch ctx state env type-env body)]
     [(AstExprInArena arena-box body)
       (let
         [arena : AstExpr (ast-node-get arena-box)]
@@ -20946,6 +20957,148 @@
                                     mark-value
                                     body)])]
                             [(ErrLowerExpr message) (ErrLowerExpr message)])])]
+                    [(ErrLowerExpr message) (ErrLowerExpr message)])])]
+            [(ErrLowerExpr message) (ErrLowerExpr message)])])]
+    [(ErrLowerExpr message) (ErrLowerExpr message)]))
+
+(define (lower-with-scratch-final-restore
+  [state : LowerState]
+  [new-enclosing-value : CompilerIrValue]
+  [escaped-value : CompilerIrValue]
+  [escaped-ty : AstType]) : ResultLowerExpr
+  (match (lower-runtime-call-values
+    state
+    "tl_arena_set"
+    (compiler-ir-value-cons new-enclosing-value IrValueNil)
+    (AstTyUnit))
+    [(OkLowerExpr final-lowered)
+      (lower-with-escape-final final-lowered escaped-value escaped-ty)]
+    [(ErrLowerExpr message) (ErrLowerExpr message)]))
+
+(define (lower-with-scratch-cleanup
+  [state : LowerState]
+  [scratch-head-value : CompilerIrValue]
+  [escaped-value : CompilerIrValue]
+  [escaped-ty : AstType]) : ResultLowerExpr
+  (match (lower-runtime-call-values
+    state
+    "tl_arena_current"
+    IrValueNil
+    (AstTyI64))
+    [(OkLowerExpr new-enclosing-lowered)
+      (match new-enclosing-lowered
+        [(LowerExpr new-enclosing-state new-enclosing-value _)
+          (match (lower-runtime-call-values
+            new-enclosing-state
+            "tl_arena_destroy"
+            (compiler-ir-value-cons scratch-head-value IrValueNil)
+            (AstTyUnit))
+            [(OkLowerExpr destroy-lowered)
+              (match destroy-lowered
+                [(LowerExpr destroy-state _ _)
+                  (lower-with-scratch-final-restore
+                    destroy-state
+                    new-enclosing-value
+                    escaped-value
+                    escaped-ty)])]
+            [(ErrLowerExpr message) (ErrLowerExpr message)])])]
+    [(ErrLowerExpr message) (ErrLowerExpr message)]))
+
+(define (lower-with-scratch-clone
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [scratch-head-value : CompilerIrValue]
+  [body-value : CompilerIrValue]
+  [body-ty : AstType]) : ResultLowerExpr
+  (match (lower-clone-dispatch ctx state env type-env body-value body-ty)
+    [(OkLowerExpr escaped-lowered)
+      (match escaped-lowered
+        [(LowerExpr escaped-state escaped-value escaped-ty)
+          (lower-with-scratch-cleanup
+            escaped-state
+            scratch-head-value
+            escaped-value
+            escaped-ty)])]
+    [(ErrLowerExpr message) (ErrLowerExpr message)]))
+
+(define (lower-with-scratch-body
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [enclosing-value : CompilerIrValue]
+  [body : AstExprList]) : ResultLowerExpr
+  (match (lower-begin ctx state env type-env body)
+    [(OkLowerExpr body-lowered)
+      (match body-lowered
+        [(LowerExpr body-state body-value body-ty)
+          (match (lower-runtime-call-values
+            body-state
+            "tl_arena_current"
+            IrValueNil
+            (AstTyI64))
+            [(OkLowerExpr scratch-head-lowered)
+              (match scratch-head-lowered
+                [(LowerExpr scratch-head-state scratch-head-value _)
+                  (match (lower-runtime-call-values
+                    scratch-head-state
+                    "tl_arena_set"
+                    (compiler-ir-value-cons enclosing-value IrValueNil)
+                    (AstTyUnit))
+                    [(OkLowerExpr restore-enclosing-lowered)
+                      (match restore-enclosing-lowered
+                        [(LowerExpr restore-state _ _)
+                          (lower-with-scratch-clone
+                            ctx
+                            restore-state
+                            env
+                            type-env
+                            scratch-head-value
+                            body-value
+                            body-ty)])]
+                    [(ErrLowerExpr message) (ErrLowerExpr message)])])]
+            [(ErrLowerExpr message) (ErrLowerExpr message)])])]
+    [(ErrLowerExpr message) (ErrLowerExpr message)]))
+
+(define (lower-with-scratch
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [body : AstExprList]) : ResultLowerExpr
+  (match (lower-runtime-call-values
+    state
+    "tl_arena_current"
+    IrValueNil
+    (AstTyI64))
+    [(OkLowerExpr enclosing-lowered)
+      (match enclosing-lowered
+        [(LowerExpr enclosing-state enclosing-value _)
+          (match (lower-runtime-call-values
+            enclosing-state
+            "tl_arena_make"
+            IrValueNil
+            (AstTyI64))
+            [(OkLowerExpr scratch-lowered)
+              (match scratch-lowered
+                [(LowerExpr scratch-state scratch-value _)
+                  (match (lower-runtime-call-values
+                    scratch-state
+                    "tl_arena_set"
+                    (compiler-ir-value-cons scratch-value IrValueNil)
+                    (AstTyUnit))
+                    [(OkLowerExpr set-scratch-lowered)
+                      (match set-scratch-lowered
+                        [(LowerExpr set-scratch-state _ _)
+                          (lower-with-scratch-body
+                            ctx
+                            set-scratch-state
+                            env
+                            type-env
+                            enclosing-value
+                            body)])]
                     [(ErrLowerExpr message) (ErrLowerExpr message)])])]
             [(ErrLowerExpr message) (ErrLowerExpr message)])])]
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
@@ -37223,6 +37376,131 @@
         (set! ok false))
       ok)))
 
+(define (compiler-lower-with-scratch-scalar-source) : String
+  (compiler-lower-with-arena-source
+    "(define (main) : i64
+  (with-scratch 40 42))"))
+
+(define (compiler-lower-with-scratch-string-source) : String
+  (compiler-lower-with-arena-source
+    "(define (main) : String
+  (with-scratch (int->string 42)))"))
+
+(define (compiler-lower-with-scratch-owning-source) : String
+  (compiler-lower-with-arena-source
+    "(defstruct ScratchPayload
+  (name String)
+  (items (Array String))
+  (cell (Box String)))
+(defenum ScratchResult
+  (ScratchOk ScratchPayload)
+  (ScratchNone))
+(define (main) : ScratchResult
+  (with-scratch
+    (let
+      [items : (Array String) (make-array String 2)]
+      (begin
+        (array-set! items 0 (int->string 1))
+        (array-set! items 1 (int->string 2))
+        (ScratchOk
+          (ScratchPayload
+            (int->string 3)
+            items
+            (box (int->string 4))))))))"))
+
+(define (compiler-lower-with-scratch-arena-shape-ok? [src : String]) : bool
+  (match (lower-compiler-source src)
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (>=
+              (lower-test-function-call-count
+                functions
+                "main"
+                "tl_arena_current")
+              3)
+            (>=
+              (lower-test-function-call-count functions "main" "tl_arena_set")
+              3)
+            (>=
+              (lower-test-function-call-count functions "main" "tl_arena_make")
+              1)
+            (>=
+              (lower-test-function-call-count
+                functions
+                "main"
+                "tl_arena_destroy")
+              1)
+            (=
+              (lower-test-function-call-count functions "main" "tl_region_mark")
+              0)
+            (=
+              (lower-test-function-call-count
+                functions
+                "main"
+                "tl_region_reset")
+              0))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-with-scratch-owning-shape-ok?) : bool
+  (match (parse-ast-source (compiler-lower-with-scratch-owning-source))
+    [(OkAstProgram ast)
+      (match (lower-compiler-program-with-decl-paths
+        "<source>"
+        ast
+        AstDeclPathNil)
+        [(OkCompilerLower program _)
+          (match program
+            [(IrProgram _ functions _)
+              (and
+                (compiler-lower-with-scratch-arena-shape-ok?
+                  (compiler-lower-with-scratch-owning-source))
+                (=
+                  (lower-test-function-call-count
+                    functions
+                    "main"
+                    "<source>::clone$ScratchResult")
+                  1)
+                (lower-test-function-defined?
+                  functions
+                  "<source>::clone$ScratchResult")
+                (>
+                  (lower-test-function-call-count functions "main" "tl_alloc")
+                  0))])]
+        [(ErrCompilerLower _) false])]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-lower-with-scratch-shape-ok?) : bool
+  (let
+    [ok : bool true]
+    (begin
+      (if (compiler-lower-with-scratch-arena-shape-ok?
+        (compiler-lower-with-scratch-scalar-source))
+        unit
+        (set! ok false))
+      (if (match (lower-compiler-source
+        (compiler-lower-with-scratch-string-source))
+        [(OkCompilerLower program _)
+          (match program
+            [(IrProgram _ functions _)
+              (and
+                (compiler-lower-with-scratch-arena-shape-ok?
+                  (compiler-lower-with-scratch-string-source))
+                (>
+                  (lower-test-function-call-count
+                    functions
+                    "main"
+                    "tl_substring")
+                  0))])]
+        [(ErrCompilerLower _) false])
+        unit
+        (set! ok false))
+      (if (compiler-lower-with-scratch-owning-shape-ok?)
+        unit
+        (set! ok false))
+      ok)))
+
 (define (compiler-lower-in-arena-source) : String
   (compiler-lower-with-arena-source
     "(define (main) : String
@@ -39180,6 +39458,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-with-escape-shape-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-with-scratch-shape-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-in-arena-shape-ok?)

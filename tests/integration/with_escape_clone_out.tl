@@ -40,6 +40,21 @@
         (array (piece seed 4) (piece seed 5))
         (box (piece seed 6))))))
 
+(define (scratch-items [seed : i64]) : (Array String)
+  (with-scratch (make-items seed)))
+
+(define (scratch-cell [seed : i64]) : (Box String)
+  (with-scratch (box (piece seed 3))))
+
+(define (scratch-bundle [seed : i64]) : EscapeOutcome
+  (with-scratch
+    (Escaped
+      (EscapeBundle
+        (piece seed 0)
+        (make-items seed)
+        (array (piece seed 4) (piece seed 5))
+        (box (piece seed 6))))))
+
 (define (items-ok? [items : (Array String)] [seed : i64]) : bool
   (and
     (string-eq (array-ref items 0) (piece seed 1))
@@ -68,10 +83,16 @@
     [cell : (Box String) (escape-cell scratch 20)]
     [bundle : EscapeOutcome (escape-bundle scratch 30)]
     [noise : EscapeOutcome (escape-bundle scratch 99)]
+    [scratch-items-out : (Array String) (scratch-items 110)]
+    [scratch-cell-out : (Box String) (scratch-cell 120)]
+    [scratch-bundle-out : EscapeOutcome (scratch-bundle 130)]
     (if (and
       (items-ok? items 10)
       (cell-ok? cell 20 3)
       (outcome-ok? bundle 30)
-      (outcome-ok? noise 99))
+      (outcome-ok? noise 99)
+      (items-ok? scratch-items-out 110)
+      (cell-ok? scratch-cell-out 120 3)
+      (outcome-ok? scratch-bundle-out 130))
       42
       1)))

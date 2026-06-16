@@ -749,6 +749,7 @@
     [(AstExprStructSet _ _ _) "set!"]
     [(AstExprWithRegion _ _) "with-arena"]
     [(AstExprWithEscape _ _) "with-escape"]
+    [(AstExprWithScratch _) "with-scratch"]
     [(AstExprInArena _ _) "in-arena"]
     [(AstExprWithResource _ _) "with"]
     [(AstExprTypeLiteral _) "type literal"]
@@ -4437,6 +4438,14 @@
                   body-fuel)]
               [(ErrCtfeQuoteExprList diag) (ErrCtfeQuoteExpr diag)])]
           [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+    [(AstExprWithScratch body)
+      (match (ctfe-quote-expr-list body env fuel quasiquote)
+        [(OkCtfeQuoteExprList quoted-body body-fuel)
+          (OkCtfeQuoteExpr
+            (ast-expr-with-scratch quoted-body)
+            (AstTyExpr)
+            body-fuel)]
+        [(ErrCtfeQuoteExprList diag) (ErrCtfeQuoteExpr diag)])]
     [(AstExprInArena arena-box body)
       (let
         [arena : AstExpr (ast-node-get arena-box)]
@@ -5349,6 +5358,10 @@
                 (ctfe-expr-eq a-escape b-escape)
                 (ctfe-expr-list-eq a-body b-body)))]
           [_ false]))]
+    [(AstExprWithScratch a-body)
+      (match b
+        [(AstExprWithScratch b-body) (ctfe-expr-list-eq a-body b-body)]
+        [_ false])]
     [(AstExprInArena a-arena-box a-body)
       (let
         [a-arena : AstExpr (ast-node-get a-arena-box)]

@@ -1211,6 +1211,7 @@
           threshold
           (lint-walk-expr scrutinee threshold acc)))]
     [(AstExprWithRegion _ body) (lint-walk-tail-expr-list body threshold acc)]
+    [(AstExprWithScratch body) (lint-walk-tail-expr-list body threshold acc)]
     [(AstExprInArena arena-box body)
       (let
         [arena : AstExpr (ast-node-get arena-box)]
@@ -1470,6 +1471,7 @@
           body
           threshold
           (lint-walk-expr scratch threshold acc)))]
+    [(AstExprWithScratch body) (lint-walk-expr-list body threshold acc)]
     [(AstExprInArena arena-box body)
       (let
         [arena : AstExpr (ast-node-get arena-box)]

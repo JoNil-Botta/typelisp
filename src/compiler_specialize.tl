@@ -7234,6 +7234,11 @@
                   body-state)]
               [(ErrSpecExprList diag) (ErrSpecExpr diag)])]
           [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+    [(AstExprWithScratch body)
+      (match (spec-rewrite-expr-list body templates state)
+        [(OkSpecExprList rewritten-body body-state)
+          (OkSpecExpr (ast-expr-with-scratch rewritten-body) body-state)]
+        [(ErrSpecExprList diag) (ErrSpecExpr diag)])]
     [(AstExprInArena arena-box body)
       (let
         [arena : AstExpr (ast-node-get arena-box)]
@@ -7830,6 +7835,11 @@
                   (ast-expr-with-escape rewritten-scratch rewritten-body))]
               [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
           [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprWithScratch body)
+      (match (spec-substitute-values-expr-list body subs)
+        [(OkSpecSubExprList rewritten-body)
+          (OkSpecSubExpr (ast-expr-with-scratch rewritten-body))]
+        [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
     [(AstExprInArena arena-box body)
       (let
         [arena : AstExpr (ast-node-get arena-box)]
@@ -8506,6 +8516,11 @@
                   (ast-expr-with-escape rewritten-scratch rewritten-body))]
               [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
           [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprWithScratch body)
+      (match (spec-substitute-types-expr-list body subs)
+        [(OkSpecSubExprList rewritten-body)
+          (OkSpecSubExpr (ast-expr-with-scratch rewritten-body))]
+        [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
     [(AstExprInArena arena-box body)
       (let
         [arena : AstExpr (ast-node-get arena-box)]

@@ -1094,6 +1094,7 @@
         (tltest-reach-mark-expr-list
           body
           (tltest-reach-mark-expr scratch names)))]
+    [(AstExprWithScratch body) (tltest-reach-mark-expr-list body names)]
     [(AstExprInArena arena-box body)
       (let
         [arena : AstExpr (ast-node-get arena-box)]

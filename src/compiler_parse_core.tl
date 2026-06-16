@@ -699,6 +699,9 @@
 (define (compiler-parse-tag-expr-with-escape) : i64
   269)
 
+(define (compiler-parse-tag-expr-with-scratch) : i64
+  293)
+
 (define (compiler-parse-tag-expr-in-arena) : i64
   291)
 
@@ -866,6 +869,9 @@
       (set!
         out
         (sym-i64-bind out "with-escape" (compiler-parse-tag-expr-with-escape)))
+      (set!
+        out
+        (sym-i64-bind out "with-scratch" (compiler-parse-tag-expr-with-scratch)))
       (set!
         out
         (sym-i64-bind out "in-arena" (compiler-parse-tag-expr-in-arena)))
@@ -3397,6 +3403,15 @@
             [(ErrAstExpr message) (ErrAstExpr message)])])]
     [_ (ErrAstExpr "parse: malformed with-escape")]))
 
+(define (parse-ast-with-scratch [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
+  (match rest
+    [(SpSNil _) (ErrAstExpr "parse: with-scratch requires a non-empty body")]
+    [(SpSCons _ _ _)
+      (match (parse-ast-expr-list dispatch rest)
+        [(OkAstExprList exprs) (OkAstExpr (ast-expr-with-scratch exprs))]
+        [(ErrAstExprList message) (ErrAstExpr message)])]
+    [_ (ErrAstExpr "parse: malformed with-scratch")]))
+
 (define (parse-ast-in-arena [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
     [(SpSNil _)
@@ -3782,194 +3797,200 @@
                                                       rest)
                                                     (if (=
                                                       tag
-                                                      (compiler-parse-tag-expr-in-arena))
-                                                      (parse-ast-in-arena
+                                                      (compiler-parse-tag-expr-with-scratch))
+                                                      (parse-ast-with-scratch
                                                         dispatch
                                                         rest)
                                                       (if (=
                                                         tag
-                                                        (compiler-parse-tag-expr-with-resource))
-                                                        (parse-ast-with-resource
+                                                        (compiler-parse-tag-expr-in-arena))
+                                                        (parse-ast-in-arena
                                                           dispatch
                                                           rest)
                                                         (if (=
                                                           tag
-                                                          (compiler-parse-tag-expr-quote))
-                                                          (parse-ast-quote-like
+                                                          (compiler-parse-tag-expr-with-resource))
+                                                          (parse-ast-with-resource
                                                             dispatch
-                                                            tag
                                                             rest)
                                                           (if (=
                                                             tag
-                                                            (compiler-parse-tag-expr-quasiquote))
+                                                            (compiler-parse-tag-expr-quote))
                                                             (parse-ast-quote-like
                                                               dispatch
                                                               tag
                                                               rest)
                                                             (if (=
                                                               tag
-                                                              (compiler-parse-tag-expr-unquote))
+                                                              (compiler-parse-tag-expr-quasiquote))
                                                               (parse-ast-quote-like
                                                                 dispatch
                                                                 tag
                                                                 rest)
                                                               (if (=
                                                                 tag
-                                                                (compiler-parse-tag-expr-unquote-splicing))
+                                                                (compiler-parse-tag-expr-unquote))
                                                                 (parse-ast-quote-like
                                                                   dispatch
                                                                   tag
                                                                   rest)
                                                                 (if (=
                                                                   tag
-                                                                  (compiler-parse-tag-expr-try))
-                                                                  (parse-ast-try
+                                                                  (compiler-parse-tag-expr-unquote-splicing))
+                                                                  (parse-ast-quote-like
                                                                     dispatch
+                                                                    tag
                                                                     rest)
                                                                   (if (=
                                                                     tag
-                                                                    (compiler-parse-tag-expr-return))
-                                                                    (parse-ast-return
+                                                                    (compiler-parse-tag-expr-try))
+                                                                    (parse-ast-try
                                                                       dispatch
                                                                       rest)
                                                                     (if (=
                                                                       tag
-                                                                      (compiler-parse-tag-expr-box))
-                                                                      (parse-ast-box-like
+                                                                      (compiler-parse-tag-expr-return))
+                                                                      (parse-ast-return
                                                                         dispatch
-                                                                        rest
-                                                                        false
-                                                                        false)
+                                                                        rest)
                                                                       (if (=
                                                                         tag
-                                                                        (compiler-parse-tag-expr-box-get))
+                                                                        (compiler-parse-tag-expr-box))
                                                                         (parse-ast-box-like
                                                                           dispatch
                                                                           rest
-                                                                          true
+                                                                          false
                                                                           false)
                                                                         (if (=
                                                                           tag
-                                                                          (compiler-parse-tag-expr-box-take))
+                                                                          (compiler-parse-tag-expr-box-get))
                                                                           (parse-ast-box-like
                                                                             dispatch
                                                                             rest
-                                                                            false
-                                                                            true)
+                                                                            true
+                                                                            false)
                                                                           (if (=
                                                                             tag
-                                                                            (compiler-parse-tag-expr-string-data))
-                                                                            (parse-ast-string-data
+                                                                            (compiler-parse-tag-expr-box-take))
+                                                                            (parse-ast-box-like
                                                                               dispatch
-                                                                              rest)
+                                                                              rest
+                                                                              false
+                                                                              true)
                                                                             (if (=
                                                                               tag
-                                                                              (compiler-parse-tag-expr-string-from-bytes))
-                                                                              (parse-ast-string-from-bytes
+                                                                              (compiler-parse-tag-expr-string-data))
+                                                                              (parse-ast-string-data
                                                                                 dispatch
                                                                                 rest)
                                                                               (if (=
                                                                                 tag
-                                                                                (compiler-parse-tag-expr-array-data))
-                                                                                (parse-ast-array-data
+                                                                                (compiler-parse-tag-expr-string-from-bytes))
+                                                                                (parse-ast-string-from-bytes
                                                                                   dispatch
                                                                                   rest)
                                                                                 (if (=
                                                                                   tag
-                                                                                  (compiler-parse-tag-expr-program-argc))
-                                                                                  (parse-ast-no-arg-low-level
-                                                                                    rest
-                                                                                    "program-argc"
-                                                                                    (ast-node-push
-                                                                                      (AstExprProgramArgc)))
+                                                                                  (compiler-parse-tag-expr-array-data))
+                                                                                  (parse-ast-array-data
+                                                                                    dispatch
+                                                                                    rest)
                                                                                   (if (=
                                                                                     tag
-                                                                                    (compiler-parse-tag-expr-program-argv))
+                                                                                    (compiler-parse-tag-expr-program-argc))
                                                                                     (parse-ast-no-arg-low-level
                                                                                       rest
-                                                                                      "program-argv"
+                                                                                      "program-argc"
                                                                                       (ast-node-push
-                                                                                        (AstExprProgramArgv)))
+                                                                                        (AstExprProgramArgc)))
                                                                                     (if (=
                                                                                       tag
-                                                                                      (compiler-parse-tag-expr-program-envp))
+                                                                                      (compiler-parse-tag-expr-program-argv))
                                                                                       (parse-ast-no-arg-low-level
                                                                                         rest
-                                                                                        "program-envp"
+                                                                                        "program-argv"
                                                                                         (ast-node-push
-                                                                                          (AstExprProgramEnvp)))
+                                                                                          (AstExprProgramArgv)))
                                                                                       (if (=
                                                                                         tag
-                                                                                        (compiler-parse-tag-expr-cpuid-eax))
-                                                                                        (parse-ast-cpuid-like
-                                                                                          dispatch
-                                                                                          tag
-                                                                                          rest)
+                                                                                        (compiler-parse-tag-expr-program-envp))
+                                                                                        (parse-ast-no-arg-low-level
+                                                                                          rest
+                                                                                          "program-envp"
+                                                                                          (ast-node-push
+                                                                                            (AstExprProgramEnvp)))
                                                                                         (if (=
                                                                                           tag
-                                                                                          (compiler-parse-tag-expr-cpuid-ebx))
+                                                                                          (compiler-parse-tag-expr-cpuid-eax))
                                                                                           (parse-ast-cpuid-like
                                                                                             dispatch
                                                                                             tag
                                                                                             rest)
                                                                                           (if (=
                                                                                             tag
-                                                                                            (compiler-parse-tag-expr-cpuid-ecx))
+                                                                                            (compiler-parse-tag-expr-cpuid-ebx))
                                                                                             (parse-ast-cpuid-like
                                                                                               dispatch
                                                                                               tag
                                                                                               rest)
                                                                                             (if (=
                                                                                               tag
-                                                                                              (compiler-parse-tag-expr-cpuid-edx))
+                                                                                              (compiler-parse-tag-expr-cpuid-ecx))
                                                                                               (parse-ast-cpuid-like
                                                                                                 dispatch
                                                                                                 tag
                                                                                                 rest)
                                                                                               (if (=
                                                                                                 tag
-                                                                                                (compiler-parse-tag-expr-xgetbv))
-                                                                                                (parse-ast-xgetbv
+                                                                                                (compiler-parse-tag-expr-cpuid-edx))
+                                                                                                (parse-ast-cpuid-like
                                                                                                   dispatch
+                                                                                                  tag
                                                                                                   rest)
                                                                                                 (if (=
                                                                                                   tag
-                                                                                                  (compiler-parse-tag-expr-syscall))
-                                                                                                  (parse-ast-syscall
+                                                                                                  (compiler-parse-tag-expr-xgetbv))
+                                                                                                  (parse-ast-xgetbv
                                                                                                     dispatch
                                                                                                     rest)
                                                                                                   (if (=
                                                                                                     tag
-                                                                                                    (compiler-parse-tag-expr-init))
-                                                                                                    (parse-ast-init
+                                                                                                    (compiler-parse-tag-expr-syscall))
+                                                                                                    (parse-ast-syscall
                                                                                                       dispatch
                                                                                                       rest)
                                                                                                     (if (=
                                                                                                       tag
-                                                                                                      (compiler-parse-tag-expr-ptr-null))
-                                                                                                      (parse-ast-ptr-null
+                                                                                                      (compiler-parse-tag-expr-init))
+                                                                                                      (parse-ast-init
                                                                                                         dispatch
                                                                                                         rest)
                                                                                                       (if (=
                                                                                                         tag
-                                                                                                        (compiler-parse-tag-expr-ptr-null-check))
-                                                                                                        (parse-ast-ptr-null-check
+                                                                                                        (compiler-parse-tag-expr-ptr-null))
+                                                                                                        (parse-ast-ptr-null
                                                                                                           dispatch
                                                                                                           rest)
                                                                                                         (if (=
                                                                                                           tag
-                                                                                                          (compiler-parse-tag-decl-comptime-decl))
-                                                                                                          (ErrAstExpr
-                                                                                                            "parse: comptime-decl is only valid as a top-level declaration")
+                                                                                                          (compiler-parse-tag-expr-ptr-null-check))
+                                                                                                          (parse-ast-ptr-null-check
+                                                                                                            dispatch
+                                                                                                            rest)
                                                                                                           (if (=
                                                                                                             tag
-                                                                                                            (compiler-parse-tag-decl-comptime-decls))
+                                                                                                            (compiler-parse-tag-decl-comptime-decl))
                                                                                                             (ErrAstExpr
-                                                                                                              "parse: comptime-decls is only valid as a top-level declaration")
-                                                                                                            (parse-ast-call
-                                                                                                              dispatch
-                                                                                                              head
-                                                                                                              rest)))))))))))))))))))))))))))))))))))))))))))))))))))))))
+                                                                                                              "parse: comptime-decl is only valid as a top-level declaration")
+                                                                                                            (if (=
+                                                                                                              tag
+                                                                                                              (compiler-parse-tag-decl-comptime-decls))
+                                                                                                              (ErrAstExpr
+                                                                                                                "parse: comptime-decls is only valid as a top-level declaration")
+                                                                                                              (parse-ast-call
+                                                                                                                dispatch
+                                                                                                                head
+                                                                                                                rest))))))))))))))))))))))))))))))))))))))))))))))))))))))))
 
 (define (parse-ast-list-expr
   [dispatch : SymI64Env]
@@ -8634,6 +8655,45 @@
       "(define (main) : i64 (with-escape (arena-make)))"
       "parse: with-escape requires a non-empty body")))
 
+(define (compiler-parse-with-scratch-shape-ok?) : bool
+  (match (parse-ast-source
+    "(define (main) : String (with-scratch (int->string 41) (int->string 42)))")
+    [(OkAstProgram (AstProgram decls-box))
+      (let
+        [decls : AstDeclList (box-get decls-box)]
+        (match decls
+          [(AstDeclCons (AstDeclDefFn _ _ _ body-box _) rest)
+            (let
+              [body : AstExpr (ast-node-get body-box)]
+              [rest : AstDeclList (box-get rest)]
+              (match rest
+                [(AstDeclNil)
+                  (match (ast-expr-unspan body)
+                    [(AstExprWithScratch body-exprs)
+                      (match body-exprs
+                        [(AstExprCons _ tail)
+                          (let
+                            [tail : AstExprList (box-get tail)]
+                            (match tail
+                              [(AstExprCons _ end)
+                                (match (box-get end)
+                                  [(AstExprNil) true]
+                                  [_ false])]
+                              [_ false]))]
+                        [_ false])]
+                    [_ false])]
+                [_ false]))]
+          [_ false]))]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-parse-with-scratch-tests-ok?) : bool
+  (and
+    (compiler-parse-with-scratch-shape-ok?)
+    (compiler-parse-ok? "(define (main) : i64 (with-scratch 1 2 3))")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (with-scratch))"
+      "parse: with-scratch requires a non-empty body")))
+
 (define (compiler-parse-in-arena-shape-ok?) : bool
   (match (parse-ast-source
     "(define (main [arena : i64]) : i64 (in-arena arena 1 2))")
@@ -8980,6 +9040,7 @@
     (compiler-parse-defmacro-tests-ok?)
     (compiler-parse-resource-with-tests-ok?)
     (compiler-parse-with-escape-tests-ok?)
+    (compiler-parse-with-scratch-tests-ok?)
     (compiler-parse-in-arena-tests-ok?)
     (compiler-parse-quote-syntax-tests-ok?)
     (compiler-parse-export-error-tests-ok?)
@@ -9042,6 +9103,9 @@
     (if (compiler-parse-with-escape-shape-ok?)
       unit
       (panic "parse: with-escape shape test failed"))
+    (if (compiler-parse-with-scratch-shape-ok?)
+      unit
+      (panic "parse: with-scratch shape test failed"))
     (if (compiler-parse-in-arena-shape-ok?)
       unit
       (panic "parse: in-arena shape test failed"))

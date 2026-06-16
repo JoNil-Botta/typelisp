@@ -17077,48 +17077,39 @@
                           frame)
                         ""
                         ""
-                        (string-append
-                          (compiler-backend-mode-prologue mode)
-                          (string-append
-                            (compiler-backend-emit-save-callee-regs
-                              assignments
-                              slot-vars)
-                            (string-append
-                              (compiler-backend-emit-windows-main-argv-capture
-                                target
-                                name
-                                emit-entry
-                                plan)
-                              (string-append
-                                (compiler-backend-emit-linux-crt-main-argv-capture
-                                  target
-                                  name
-                                  crt-entry
-                                  plan)
-                                (string-append
-                                  (if (and
-                                    (string-eq name "main")
-                                    (or
-                                      (compiler-backend-target-windows? target)
-                                      (and
-                                        crt-entry
-                                        (compiler-backend-target-linux? target))))
-                                    (compiler-backend-global-initializers
-                                      globals
-                                      program-index)
-                                    "")
-                                  (string-append
-                                    spills
-                                    (string-append
-                                      body
-                                      (string-append
-                                        (compiler-backend-return-epilogue
-                                          name
-                                          assignments
-                                          slot-vars
-                                          emit-blocks-list)
-                                        (compiler-backend-emit-windows-seh-endproc
-                                          target)))))))))
+                        (compiler-backend-mode-prologue mode)
+                        (compiler-backend-emit-save-callee-regs
+                          assignments
+                          slot-vars)
+                        (compiler-backend-emit-windows-main-argv-capture
+                          target
+                          name
+                          emit-entry
+                          plan)
+                        (compiler-backend-emit-linux-crt-main-argv-capture
+                          target
+                          name
+                          crt-entry
+                          plan)
+                        (if (and
+                          (string-eq name "main")
+                          (or
+                            (compiler-backend-target-windows? target)
+                            (and
+                              crt-entry
+                              (compiler-backend-target-linux? target))))
+                          (compiler-backend-global-initializers
+                            globals
+                            program-index)
+                          "")
+                        spills
+                        body
+                        (compiler-backend-return-epilogue
+                          name
+                          assignments
+                          slot-vars
+                          emit-blocks-list)
+                        (compiler-backend-emit-windows-seh-endproc target)
                         "\n")))]
                 [(ErrCompilerBackend message)
                   (let

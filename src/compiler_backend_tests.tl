@@ -2843,6 +2843,14 @@
     movq %rax, %r12
     movq %rax, -16(%rbp)
     movq -16(%rbp), %rax
+    movq %r8, -24(%rbp)
+    movq -24(%rbp), %r10
+    movq %r8, -24(%rbp)
+    movq %r9, -24(%rbp)
+    movq %rax, -32(%rbp)
+    movq %r8, -40(%rbp)
+    movq %rax, 16(%rbp)
+    movq %r8, 16(%rbp)
     movq -8(%rbp), %r8
     addq %r8, %rax
     movq $0, %r8
@@ -2853,6 +2861,13 @@
       "label:
     movq %rax, %r12
     movq %rax, -16(%rbp)
+    movq %r8, -24(%rbp)
+    movq %r8, %r10
+    movq %r9, -24(%rbp)
+    movq %rax, -32(%rbp)
+    movq %r8, -40(%rbp)
+    movq %rax, 16(%rbp)
+    movq %r8, 16(%rbp)
     movq -8(%rbp), %r8
     addq %r8, %rax
     movq $0, %r8

@@ -23989,6 +23989,12 @@ tl_memcpy:
 (define (compiler-backend-peephole-stack-slot-operand? [operand : String]) : bool
   (compiler-backend-string-contains? operand "(%rbp)"))
 
+(define (compiler-backend-peephole-local-frame-slot-operand? [operand : String]) : bool
+  (and
+    (> (string-length operand) 0)
+    (= (string-ref operand 0) #-')
+    (compiler-backend-peephole-stack-slot-operand? operand)))
+
 (define (compiler-backend-peephole-local-move-operand? [operand : String]) : bool
   (or
     (compiler-backend-peephole-register-operand? operand)
@@ -24013,13 +24019,55 @@ tl_memcpy:
       (and (string-eq src next-src) (string-eq dst next-dst))
       (and (string-eq src next-dst) (string-eq dst next-src)))))
 
+(define (compiler-backend-peephole-overwritten-frame-store-operands?
+  [src : String]
+  [dst : String]
+  [next-src : String]
+  [next-dst : String]) : bool
+  (and
+    (compiler-backend-peephole-register-operand? src)
+    (compiler-backend-peephole-local-frame-slot-operand? dst)
+    (compiler-backend-peephole-register-operand? next-src)
+    (compiler-backend-peephole-local-frame-slot-operand? next-dst)
+    (string-eq dst next-dst)))
+
+(define (compiler-backend-peephole-forward-frame-load-operands?
+  [src : String]
+  [dst : String]
+  [next-src : String]
+  [next-dst : String]) : bool
+  (and
+    (compiler-backend-peephole-register-operand? src)
+    (compiler-backend-peephole-local-frame-slot-operand? dst)
+    (compiler-backend-peephole-local-frame-slot-operand? next-src)
+    (compiler-backend-peephole-register-operand? next-dst)
+    (string-eq dst next-src)))
+
+(define (compiler-backend-peephole-forward-frame-load-line
+  [pending : String]
+  [next : String]) : String
+  (match (compiler-backend-peephole-movq pending)
+    [(CompilerBackendPeepholeMove src dst)
+      (match (compiler-backend-peephole-movq next)
+        [(CompilerBackendPeepholeMove next-src next-dst)
+          (if (compiler-backend-peephole-forward-frame-load-operands?
+            src
+            dst
+            next-src
+            next-dst)
+            (backend-cat4 "    movq " src ", " next-dst)
+            next)]
+        [(CompilerBackendPeepholeNoMove) next])]
+    [(CompilerBackendPeepholeNoMove) next]))
+
 (define (compiler-backend-peephole-self-move? [line : String]) : bool
   (match (compiler-backend-peephole-movq line)
     [(CompilerBackendPeepholeMove src dst)
       (compiler-backend-peephole-self-move-operands? src dst)]
     [(CompilerBackendPeepholeNoMove) false]))
 
-;; Pair action: 0 emits pending, 1 drops pending, 2 keeps pending and skips next.
+;; Pair action: 0 emits pending, 1 drops pending, 2 keeps pending and skips next,
+;; 3 emits pending and replaces next with a register-forwarded move.
 (define (compiler-backend-peephole-pair-action
   [pending : String]
   [next : String]) : i64
@@ -24029,13 +24077,25 @@ tl_memcpy:
         1
         (match (compiler-backend-peephole-movq next)
           [(CompilerBackendPeepholeMove next-src next-dst)
-            (if (compiler-backend-peephole-redundant-move-operands?
+            (if (compiler-backend-peephole-overwritten-frame-store-operands?
               src
               dst
               next-src
               next-dst)
-              2
-              0)]
+              1
+              (if (compiler-backend-peephole-redundant-move-operands?
+                src
+                dst
+                next-src
+                next-dst)
+                2
+                (if (compiler-backend-peephole-forward-frame-load-operands?
+                  src
+                  dst
+                  next-src
+                  next-dst)
+                  3
+                  0)))]
           [(CompilerBackendPeepholeNoMove) 0]))]
     [(CompilerBackendPeepholeNoMove) 0]))
 
@@ -24068,15 +24128,29 @@ tl_memcpy:
                     (set! pending-newline line-newline))
                   (if (= action 2)
                     unit
-                    (begin
-                      (set!
-                        out
-                        (compiler-backend-peephole-append-line
+                    (if (= action 3)
+                      (begin
+                        (set!
                           out
+                          (compiler-backend-peephole-append-line
+                            out
+                            pending-line
+                            pending-newline))
+                        (set!
                           pending-line
-                          pending-newline))
-                      (set! pending-line line)
-                      (set! pending-newline line-newline)))))
+                          (compiler-backend-peephole-forward-frame-load-line
+                            pending-line
+                            line))
+                        (set! pending-newline line-newline))
+                      (begin
+                        (set!
+                          out
+                          (compiler-backend-peephole-append-line
+                            out
+                            pending-line
+                            pending-newline))
+                        (set! pending-line line)
+                        (set! pending-newline line-newline))))))
               (begin
                 (set! has-pending true)
                 (set! pending-line line)

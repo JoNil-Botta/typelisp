@@ -185,6 +185,19 @@ artifact directory, and `--asm target/path/build.s` to analyze an existing
 assembly file without recompiling. The report is intentionally a local
 measurement tool, not a CI size gate.
 
+Use [`../scripts/analyze-move-traffic.sh`](../scripts/analyze-move-traffic.sh)
+for adjacent `movq` traffic counts in selfhost assembly. It reports exact
+duplicate moves, swap-back pairs, repeated stack-slot loads, store-then-load
+pairs, and overwritten same-slot stores:
+
+```sh
+TYPELISP_BIN=target/stage0/typelisp scripts/analyze-move-traffic.sh --opt-level 2
+scripts/analyze-move-traffic.sh --asm target/path/build.s
+```
+
+The census is a deterministic local measurement helper for regalloc/backend
+traffic work, not a CI gate.
+
 `scripts/measure-instruction-counts.sh` is the Linux-only dynamic instruction
 counter for local deterministic performance measurements. It builds TypeLisp
 benchmark binaries and runs them under `valgrind --tool=cachegrind`, then runs a

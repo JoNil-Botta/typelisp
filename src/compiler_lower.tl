@@ -244,6 +244,11 @@
   (OkLowerState LowerState)
   (ErrLowerState CompilerDiagnostic))
 
+(defenum LowerMaybeDirectStore
+  (LowerNoDirectStore)
+  (LowerDirectStore LowerState)
+  (LowerDirectStoreErr CompilerDiagnostic))
+
 (defenum ResultLowerEnv
   (OkLowerEnv LowerState SymI64Env TcTypeEnv)
   (ErrLowerEnv CompilerDiagnostic))
@@ -12262,6 +12267,150 @@
                               lookup-name)))]))])])])]
     [(ErrTcEnumDecl message) (ErrLowerExpr (lower-diagnostic message))]))
 
+(define (lower-init-struct-into
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [dst : CompilerIrValue]
+  [struct-name : String]
+  [struct-ty : AstType]) : ResultLowerState
+  (if (lower-struct-repr-c? ctx struct-name)
+    (ErrLowerState
+      (lower-diagnostic "lower: init supports only default-layout structs"))
+    (match (lower-struct-fields ctx struct-name)
+      [(OkAstFieldDefList fields)
+        (let
+          [field-types : AstTypeList
+            (tc-resolve-type-list
+              ctx
+              (lower-struct-constructor-field-types-for-result
+                ctx
+                struct-name
+                struct-ty
+                fields))]
+          (lower-construct-struct-into
+            ctx
+            state
+            env
+            type-env
+            dst
+            struct-name
+            (lower-init-expr-list-from-types field-types)
+            struct-ty))]
+      [(ErrAstFieldDefList message) (ErrLowerState (lower-diagnostic message))])))
+
+(define (lower-init-enum-into
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [dst : CompilerIrValue]
+  [enum-name : String]
+  [enum-ty : AstType]) : ResultLowerState
+  (match (tc-enum-decl ctx enum-name)
+    [(OkTcEnumDecl decl)
+      (match decl
+        [(TcEnumDecl _ variants)
+          (match variants
+            [(AstVariantDefNil)
+              (ErrLowerState
+                (lower-diagnostic
+                  "lower: init requires enum with at least one variant"))]
+            [(AstVariantDefCons variant _)
+              (match variant
+                [(AstVariantDef variant-name fields _)
+                  (let
+                    [lookup-name : String
+                      (tc-variant-name-for-enum
+                        enum-name
+                        (intern-str variant-name))]
+                    [payload-types : AstTypeList
+                      (tc-resolve-type-list
+                        ctx
+                        (lower-enum-constructor-fields-for-result
+                          ctx
+                          enum-name
+                          enum-ty
+                          fields))]
+                    (match (compiler-registries-lookup-variant
+                      (tc-context-registries ctx)
+                      lookup-name)
+                      [(SomeI64 handle)
+                        (lower-construct-enum-with-name-into
+                          ctx
+                          state
+                          env
+                          type-env
+                          dst
+                          lookup-name
+                          handle
+                          (lower-init-expr-list-from-types payload-types)
+                          enum-name
+                          enum-ty)]
+                      [(NoneI64)
+                        (ErrLowerState
+                          (lower-diagnostic
+                            (string-append
+                              "lower: unknown variant "
+                              lookup-name)))]))])])])]
+    [(ErrTcEnumDecl message) (ErrLowerState (lower-diagnostic message))]))
+
+(define (lower-init-expr-into
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [dst : CompilerIrValue]
+  [ty : AstType]
+  [origin : AstExpr]) : ResultLowerState
+  (let
+    [resolved : AstType (tc-type-without-regions (tc-resolve-type ctx ty))]
+    (match resolved
+      [(AstTyStruct name)
+        (lower-init-struct-into
+          ctx
+          state
+          env
+          type-env
+          dst
+          (intern-str name)
+          resolved)]
+      [(AstTyStructArgs name _)
+        (lower-init-struct-into
+          ctx
+          state
+          env
+          type-env
+          dst
+          (intern-str name)
+          resolved)]
+      [(AstTyEnum name)
+        (lower-init-enum-into
+          ctx
+          state
+          env
+          type-env
+          dst
+          (intern-str name)
+          resolved)]
+      [(AstTyEnumArgs name _)
+        (lower-init-enum-into
+          ctx
+          state
+          env
+          type-env
+          dst
+          (intern-str name)
+          resolved)]
+      [_
+        (ErrLowerState
+          (lower-diagnostic-at-expr
+            origin
+            (string-append
+              "lower: init unsupported type "
+              (tc-type-render resolved))))])))
+
 (define (lower-init-expr
   [ctx : TcContext]
   [state : LowerState]
@@ -14706,30 +14855,81 @@
       (let
         [value : AstExpr (ast-node-get value)]
         [rest-values : AstExprList (box-get rest-values)]
-        (match (lower-expr-expected ctx state env type-env value elem-ty value)
-          [(OkLowerExpr lowered)
-            (match lowered
-              [(LowerExpr elem-state elem-value _)
-                (lower-array-literal-store-elems
-                  ctx
-                  (if (> elem-size 0)
-                    (lower-store-inline-value-at-offset
-                      ctx
-                      elem-state
-                      base
-                      offset
-                      elem-value
-                      elem-ty
-                      elem-size)
-                    elem-state)
-                  env
-                  type-env
-                  base
-                  rest-values
-                  elem-ty
-                  elem-size
-                  (+ offset elem-size))])]
-          [(ErrLowerExpr message) (ErrLowerState message)]))]))
+        (if (> elem-size 0)
+          (match (lower-direct-store-rhs-at-offset
+            ctx
+            state
+            env
+            type-env
+            base
+            offset
+            value
+            elem-ty
+            value)
+            [(LowerDirectStore elem-state)
+              (lower-array-literal-store-elems
+                ctx
+                elem-state
+                env
+                type-env
+                base
+                rest-values
+                elem-ty
+                elem-size
+                (+ offset elem-size))]
+            [(LowerDirectStoreErr message) (ErrLowerState message)]
+            [(LowerNoDirectStore)
+              (match (lower-expr-expected
+                ctx
+                state
+                env
+                type-env
+                value
+                elem-ty
+                value)
+                [(OkLowerExpr lowered)
+                  (match lowered
+                    [(LowerExpr elem-state elem-value _)
+                      (lower-array-literal-store-elems
+                        ctx
+                        (lower-store-inline-value-at-offset
+                          ctx
+                          elem-state
+                          base
+                          offset
+                          elem-value
+                          elem-ty
+                          elem-size)
+                        env
+                        type-env
+                        base
+                        rest-values
+                        elem-ty
+                        elem-size
+                        (+ offset elem-size))])]
+                [(ErrLowerExpr message) (ErrLowerState message)])])
+          (match (lower-expr-expected
+            ctx
+            state
+            env
+            type-env
+            value
+            elem-ty
+            value)
+            [(OkLowerExpr lowered)
+              (match lowered
+                [(LowerExpr elem-state _ _)
+                  (lower-array-literal-store-elems
+                    ctx
+                    elem-state
+                    env
+                    type-env
+                    base
+                    rest-values
+                    elem-ty
+                    elem-size
+                    (+ offset elem-size))])]
+            [(ErrLowerExpr message) (ErrLowerState message)])))]))
 
 ;; Lower `(array v0 v1 ...)`: reserve inline storage for `count` elements of the
 ;; element type, store each element at `index * elem-size`, and return the
@@ -17604,6 +17804,260 @@
                   result-ty
                   origin)])]))]))
 
+(define (lower-direct-store-target?
+  [ctx : TcContext]
+  [state : LowerState]
+  [ty : AstType]) : bool
+  (and
+    (lower-mode-inline-aggregates? (lower-state-mode state))
+    (lower-type-inline-struct-or-enum? ctx ty)
+    (not (lower-type-register-resident? ctx ty))))
+
+(define (lower-direct-store-result [result : ResultLowerState]) : LowerMaybeDirectStore
+  (match result
+    [(OkLowerState done-state) (LowerDirectStore done-state)]
+    [(ErrLowerState message) (LowerDirectStoreErr message)]))
+
+(define (lower-direct-constructor-call-into
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [dst : CompilerIrValue]
+  [name : String]
+  [args : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : LowerMaybeDirectStore
+  (match (sym-i64-lookup env name)
+    [(SomeI64 _) (LowerNoDirectStore)]
+    [(NoneI64)
+      (let
+        [source-name : String (lower-hygiene-source-name name)]
+        [symbols : CompilerSymbols (tc-context-symbols ctx)]
+        [registries : CompilerRegistries (tc-context-registries ctx)]
+        [variant-name : String
+          (lower-variant-constructor-lookup-name ctx source-name result-ty)]
+        [struct-name : String
+          (match (tc-type-strip-region result-ty)
+            [(AstTyStruct resolved-struct)
+              (if (lower-call-name-matches-nominal?
+                ctx
+                source-name
+                (intern-str resolved-struct))
+                (intern-str resolved-struct)
+                (lower-module-lookup-name ctx source-name))]
+            [(AstTyStructArgs resolved-struct _)
+              (if (lower-call-name-matches-nominal?
+                ctx
+                source-name
+                (intern-str resolved-struct))
+                (intern-str resolved-struct)
+                (lower-module-lookup-name ctx source-name))]
+            [_ (lower-module-lookup-name ctx source-name)])]
+        (match (compiler-registries-lookup-variant registries variant-name)
+          [(SomeI64 handle)
+            (lower-direct-store-result
+              (lower-construct-enum-with-handle-into
+                ctx
+                state
+                env
+                type-env
+                dst
+                variant-name
+                handle
+                args
+                result-ty))]
+          [(NoneI64)
+            (match (compiler-symbols-lookup-type symbols struct-name)
+              [(SomeI64 handle)
+                (if (=
+                  (compiler-symbol-handle-kind handle)
+                  (compiler-symbol-kind-defstruct))
+                  (lower-direct-store-result
+                    (lower-construct-struct-into
+                      ctx
+                      state
+                      env
+                      type-env
+                      dst
+                      struct-name
+                      args
+                      result-ty))
+                  (LowerNoDirectStore))]
+              [(NoneI64) (LowerNoDirectStore)])]))]))
+
+(define (lower-direct-nullary-variant-into
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [dst : CompilerIrValue]
+  [name : String]
+  [result-ty : AstType]) : LowerMaybeDirectStore
+  (match (sym-i64-lookup env name)
+    [(SomeI64 _) (LowerNoDirectStore)]
+    [(NoneI64)
+      (let
+        [source-name : String (lower-hygiene-source-name name)]
+        [registries : CompilerRegistries (tc-context-registries ctx)]
+        [symbols : CompilerSymbols (tc-context-symbols ctx)]
+        [variant-name : String
+          (lower-variant-constructor-lookup-name ctx source-name result-ty)]
+        (match (compiler-registries-lookup-variant registries variant-name)
+          [(SomeI64 handle)
+            (match (compiler-registries-variant-fields-indexed symbols handle)
+              [(OkAstTypeList fields)
+                (match fields
+                  [(AstTypeNil)
+                    (lower-direct-store-result
+                      (lower-construct-enum-with-handle-into
+                        ctx
+                        state
+                        env
+                        type-env
+                        dst
+                        variant-name
+                        handle
+                        AstExprNil
+                        result-ty))]
+                  [_ (LowerNoDirectStore)])]
+              [(ErrAstTypeList message)
+                (LowerDirectStoreErr (lower-diagnostic message))])]
+          [(NoneI64) (LowerNoDirectStore)]))]))
+
+(define (lower-direct-init-into
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [dst : CompilerIrValue]
+  [maybe-ty : AstMaybeType]
+  [result-ty : AstType]
+  [origin : AstExpr]) : LowerMaybeDirectStore
+  (match maybe-ty
+    [(AstNoType)
+      (lower-direct-store-result
+        (lower-init-expr-into ctx state env type-env dst result-ty origin))]
+    [(AstSomeType ty)
+      (let
+        [resolved-init : AstType
+          (tc-type-without-regions (tc-resolve-type ctx ty))]
+        [resolved-result : AstType
+          (tc-type-without-regions (tc-resolve-type ctx result-ty))]
+        (if (tc-type-eq resolved-init resolved-result)
+          (lower-direct-store-result
+            (lower-init-expr-into ctx state env type-env dst ty origin))
+          (LowerNoDirectStore)))]))
+
+(define (lower-direct-store-rhs-into
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [dst : CompilerIrValue]
+  [value : AstExpr]
+  [result-ty : AstType]
+  [origin : AstExpr]) : LowerMaybeDirectStore
+  (if (lower-direct-store-target? ctx state result-ty)
+    (match value
+      [(AstExprSpanned inner-box _)
+        (let
+          [inner : AstExpr (ast-node-get inner-box)]
+          (lower-direct-store-rhs-into
+            ctx
+            state
+            env
+            type-env
+            dst
+            inner
+            result-ty
+            origin))]
+      [(AstExprAnn inner-box _)
+        (let
+          [inner : AstExpr (ast-node-get inner-box)]
+          (lower-direct-store-rhs-into
+            ctx
+            state
+            env
+            type-env
+            dst
+            inner
+            result-ty
+            origin))]
+      [(AstExprInit maybe-ty)
+        (lower-direct-init-into
+          ctx
+          state
+          env
+          type-env
+          dst
+          maybe-ty
+          result-ty
+          origin)]
+      [(AstExprCall func-box args)
+        (let
+          [func : AstExpr (ast-node-get func-box)]
+          (match (ast-expr-unspan func)
+            [(AstExprVar name)
+              (lower-direct-constructor-call-into
+                ctx
+                state
+                env
+                type-env
+                dst
+                (intern-str name)
+                args
+                result-ty
+                origin)]
+            [_ (LowerNoDirectStore)]))]
+      [(AstExprVar name)
+        (if (tc-dotted-local-field-name-id? type-env name)
+          (LowerNoDirectStore)
+          (lower-direct-nullary-variant-into
+            ctx
+            state
+            env
+            type-env
+            dst
+            (intern-str name)
+            result-ty))]
+      [_ (LowerNoDirectStore)])
+    (LowerNoDirectStore)))
+
+(define (lower-direct-store-rhs-at-offset
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [base : CompilerIrValue]
+  [offset : i64]
+  [value : AstExpr]
+  [result-ty : AstType]
+  [origin : AstExpr]) : LowerMaybeDirectStore
+  (if (lower-direct-store-target? ctx state result-ty)
+    (if (= offset 0)
+      (lower-direct-store-rhs-into
+        ctx
+        state
+        env
+        type-env
+        base
+        value
+        result-ty
+        origin)
+      (match (lower-gep-byte state base offset)
+        [(LowerExpr ptr-state ptr _)
+          (lower-direct-store-rhs-into
+            ctx
+            ptr-state
+            env
+            type-env
+            ptr
+            value
+            result-ty
+            origin)]))
+    (LowerNoDirectStore)))
+
 (define (lower-call
   [ctx : TcContext]
   [state : LowerState]
@@ -19296,6 +19750,120 @@
         addr-state
         (IrInstrStorePtr elem-ptr value-ir elem-ir-ty)))))
 
+(define (lower-array-set-store-materialized
+  [ctx : TcContext]
+  [state : LowerState]
+  [arr : AstExpr]
+  [arr-value : CompilerIrValue]
+  [idx-value : CompilerIrValue]
+  [idx-ty : AstType]
+  [container-ty : AstType]
+  [elem-ir-ty : AstType]
+  [value-ir : CompilerIrValue]) : ResultLowerExpr
+  (match (tc-type-strip-region (tc-resolve-type ctx container-ty))
+    [(AstTyDynArray _)
+      (match (lower-array-element-addr
+        ctx
+        state
+        arr-value
+        idx-value
+        idx-ty
+        elem-ir-ty)
+        [(LowerExpr addr-state elem-ptr _)
+          (OkLowerExpr
+            (LowerExpr
+              (lower-array-elem-store-state
+                ctx
+                addr-state
+                elem-ptr
+                value-ir
+                elem-ir-ty)
+              IrValueUnit
+              (AstTyUnit)))])]
+    [(AstTyArray _ elem-count)
+      (match (lower-fixed-array-element-addr
+        ctx
+        state
+        arr-value
+        idx-value
+        idx-ty
+        elem-ir-ty
+        elem-count)
+        [(LowerExpr addr-state elem-ptr _)
+          (if (= (lower-type-size ctx elem-ir-ty) 0)
+            (OkLowerExpr (LowerExpr addr-state IrValueUnit (AstTyUnit)))
+            (OkLowerExpr
+              (LowerExpr
+                (lower-array-elem-store-state
+                  ctx
+                  addr-state
+                  elem-ptr
+                  value-ir
+                  elem-ir-ty)
+                IrValueUnit
+                (AstTyUnit))))])]
+    [_
+      (ErrLowerExpr
+        (lower-diagnostic-at-expr arr "lower: array-set! requires array type"))]))
+
+(define (lower-array-set-direct-store
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [arr : AstExpr]
+  [arr-value : CompilerIrValue]
+  [idx-value : CompilerIrValue]
+  [idx-ty : AstType]
+  [container-ty : AstType]
+  [elem-ir-ty : AstType]
+  [value : AstExpr]) : LowerMaybeDirectStore
+  (if (and
+    (> (lower-type-size ctx elem-ir-ty) 0)
+    (lower-direct-store-target? ctx state elem-ir-ty))
+    (match (tc-type-strip-region (tc-resolve-type ctx container-ty))
+      [(AstTyDynArray _)
+        (match (lower-array-element-addr
+          ctx
+          state
+          arr-value
+          idx-value
+          idx-ty
+          elem-ir-ty)
+          [(LowerExpr addr-state elem-ptr _)
+            (lower-direct-store-rhs-into
+              ctx
+              addr-state
+              env
+              type-env
+              elem-ptr
+              value
+              elem-ir-ty
+              value)])]
+      [(AstTyArray _ elem-count)
+        (match (lower-fixed-array-element-addr
+          ctx
+          state
+          arr-value
+          idx-value
+          idx-ty
+          elem-ir-ty
+          elem-count)
+          [(LowerExpr addr-state elem-ptr _)
+            (lower-direct-store-rhs-into
+              ctx
+              addr-state
+              env
+              type-env
+              elem-ptr
+              value
+              elem-ir-ty
+              value)])]
+      [_
+        (LowerDirectStoreErr
+          (lower-diagnostic-at-expr arr "lower: array-set! requires array type"))])
+    (LowerNoDirectStore)))
+
 (define (lower-mutable-var-storage-address-id
   [state : LowerState]
   [env : SymI64Env]
@@ -19607,6 +20175,59 @@
         IrValueUnit
         (AstTyUnit)))))
 
+(define (lower-store-expr-into-address-result
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [dst : CompilerIrValue]
+  [value : AstExpr]
+  [value-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (if (> (lower-type-size ctx value-ty) 0)
+    (match (lower-direct-store-rhs-into
+      ctx
+      state
+      env
+      type-env
+      dst
+      value
+      value-ty
+      origin)
+      [(LowerDirectStore done-state)
+        (OkLowerExpr (LowerExpr done-state IrValueUnit (AstTyUnit)))]
+      [(LowerDirectStoreErr message) (ErrLowerExpr message)]
+      [(LowerNoDirectStore)
+        (match (lower-expr-expected
+          ctx
+          state
+          env
+          type-env
+          value
+          value-ty
+          origin)
+          [(OkLowerExpr value-lowered)
+            (match value-lowered
+              [(LowerExpr value-state value-ir _)
+                (lower-struct-field-store-result
+                  ctx
+                  value-state
+                  dst
+                  value-ir
+                  value-ty)])]
+          [(ErrLowerExpr message) (ErrLowerExpr message)])])
+    (match (lower-expr-expected ctx state env type-env value value-ty origin)
+      [(OkLowerExpr value-lowered)
+        (match value-lowered
+          [(LowerExpr value-state value-ir _)
+            (lower-struct-field-store-result
+              ctx
+              value-state
+              dst
+              value-ir
+              value-ty)])]
+      [(ErrLowerExpr message) (ErrLowerExpr message)])))
+
 (define (lower-box-set
   [ctx : TcContext]
   [state : LowerState]
@@ -19637,24 +20258,15 @@
               [(OkLowerExpr place-lowered)
                 (match place-lowered
                   [(LowerExpr place-state box-ptr _)
-                    (match (lower-expr-expected
+                    (lower-store-expr-into-address-result
                       ctx
                       place-state
                       env
                       type-env
+                      box-ptr
                       value
                       inner-ir-ty
-                      value)
-                      [(OkLowerExpr value-lowered)
-                        (match value-lowered
-                          [(LowerExpr value-state value-ir _)
-                            (lower-struct-field-store-result
-                              ctx
-                              value-state
-                              box-ptr
-                              value-ir
-                              inner-ir-ty)])]
-                      [(ErrLowerExpr message) (ErrLowerExpr message)])])]
+                      value)])]
               [(ErrLowerExpr message) (ErrLowerExpr message)]))]
         [(ErrTcType message)
           (ErrLowerExpr (lower-diagnostic-at-expr origin message))])]
@@ -19784,35 +20396,25 @@
                     [(OkLowerExpr place-lowered)
                       (match place-lowered
                         [(LowerExpr place-state field-ptr _)
-                          (match (lower-expr-expected
+                          (match (lower-store-expr-into-address-result
                             ctx
                             place-state
                             env
                             type-env
+                            field-ptr
                             value
                             field-ir-ty
                             value)
-                            [(OkLowerExpr value-lowered)
-                              (match value-lowered
-                                [(LowerExpr value-state value-ir _)
-                                  (match (lower-struct-field-store-result
+                            [(OkLowerExpr stored-field)
+                              (match stored-field
+                                [(LowerExpr store-state _ _)
+                                  (lower-reload-register-resident-local-from-storage
                                     ctx
-                                    value-state
-                                    field-ptr
-                                    value-ir
-                                    field-ir-ty)
-                                    [(OkLowerExpr stored-field)
-                                      (match stored-field
-                                        [(LowerExpr store-state _ _)
-                                          (lower-reload-register-resident-local-from-storage
-                                            ctx
-                                            store-state
-                                            storage-ptr
-                                            local-id
-                                            receiver-ir-ty
-                                            origin)])]
-                                    [(ErrLowerExpr message)
-                                      (ErrLowerExpr message)])])]
+                                    store-state
+                                    storage-ptr
+                                    local-id
+                                    receiver-ir-ty
+                                    origin)])]
                             [(ErrLowerExpr message) (ErrLowerExpr message)])])]
                     [(ErrLowerExpr message) (ErrLowerExpr message)]))]))]
         [(NoneI64)
@@ -19882,42 +20484,32 @@
                         [(OkLowerExpr field-lowered)
                           (match field-lowered
                             [(LowerExpr field-state field-ptr _)
-                              (match (lower-expr-expected
+                              (match (lower-store-expr-into-address-result
                                 ctx
                                 field-state
                                 env
                                 type-env
+                                field-ptr
                                 value
                                 field-ir-ty
                                 value)
-                                [(OkLowerExpr value-lowered)
-                                  (match value-lowered
-                                    [(LowerExpr value-state value-ir _)
-                                      (match (lower-struct-field-store-result
+                                [(OkLowerExpr stored)
+                                  (match stored
+                                    [(LowerExpr store-state _ _)
+                                      (match (lower-refresh-register-resident-root-after-store
                                         ctx
-                                        value-state
-                                        field-ptr
-                                        value-ir
-                                        field-ir-ty)
-                                        [(OkLowerExpr stored)
-                                          (match stored
-                                            [(LowerExpr store-state _ _)
-                                              (match (lower-refresh-register-resident-root-after-store
-                                                ctx
-                                                store-state
-                                                env
-                                                type-env
-                                                receiver
-                                                origin)
-                                                [(OkLowerState refreshed-state)
-                                                  (OkLowerExpr
-                                                    (LowerExpr
-                                                      refreshed-state
-                                                      IrValueUnit
-                                                      (AstTyUnit)))]
-                                                [(ErrLowerState message)
-                                                  (ErrLowerExpr message)])])]
-                                        [(ErrLowerExpr message)
+                                        store-state
+                                        env
+                                        type-env
+                                        receiver
+                                        origin)
+                                        [(OkLowerState refreshed-state)
+                                          (OkLowerExpr
+                                            (LowerExpr
+                                              refreshed-state
+                                              IrValueUnit
+                                              (AstTyUnit)))]
+                                        [(ErrLowerState message)
                                           (ErrLowerExpr message)])])]
                                 [(ErrLowerExpr message) (ErrLowerExpr message)])])]
                         [(ErrLowerExpr message) (ErrLowerExpr message)])])]
@@ -19963,81 +20555,53 @@
                               [(OkLowerExpr idx-lowered)
                                 (match idx-lowered
                                   [(LowerExpr idx-state idx-value _)
-                                    (match (lower-expr-expected
+                                    (match (lower-array-set-direct-store
                                       ctx
                                       idx-state
                                       env
                                       type-env
-                                      value
+                                      arr
+                                      arr-value
+                                      idx-value
+                                      idx-ty
+                                      container-ty
                                       elem-ir-ty
                                       value)
-                                      [(OkLowerExpr value-lowered)
-                                        (match value-lowered
-                                          [(LowerExpr value-state value-ir _)
-                                            (match (tc-type-strip-region
-                                              (tc-resolve-type ctx container-ty))
-                                              [(AstTyDynArray _)
-                                                (match (lower-array-element-addr
+                                      [(LowerDirectStore direct-state)
+                                        (OkLowerExpr
+                                          (LowerExpr
+                                            direct-state
+                                            IrValueUnit
+                                            (AstTyUnit)))]
+                                      [(LowerDirectStoreErr message)
+                                        (ErrLowerExpr message)]
+                                      [(LowerNoDirectStore)
+                                        (match (lower-expr-expected
+                                          ctx
+                                          idx-state
+                                          env
+                                          type-env
+                                          value
+                                          elem-ir-ty
+                                          value)
+                                          [(OkLowerExpr value-lowered)
+                                            (match value-lowered
+                                              [(LowerExpr
+                                                  value-state
+                                                  value-ir
+                                                  _)
+                                                (lower-array-set-store-materialized
                                                   ctx
                                                   value-state
+                                                  arr
                                                   arr-value
                                                   idx-value
                                                   idx-ty
-                                                  elem-ir-ty)
-                                                  [(LowerExpr
-                                                      addr-state
-                                                      elem-ptr
-                                                      _)
-                                                    (OkLowerExpr
-                                                      (LowerExpr
-                                                        (lower-array-elem-store-state
-                                                          ctx
-                                                          addr-state
-                                                          elem-ptr
-                                                          value-ir
-                                                          elem-ir-ty)
-                                                        IrValueUnit
-                                                        (AstTyUnit)))])]
-                                              [(AstTyArray _ elem-count)
-                                                (match (lower-fixed-array-element-addr
-                                                  ctx
-                                                  value-state
-                                                  arr-value
-                                                  idx-value
-                                                  idx-ty
+                                                  container-ty
                                                   elem-ir-ty
-                                                  elem-count)
-                                                  [(LowerExpr
-                                                      addr-state
-                                                      elem-ptr
-                                                      _)
-                                                    (if (=
-                                                      (lower-type-size
-                                                        ctx
-                                                        elem-ir-ty)
-                                                      0)
-                                                      (OkLowerExpr
-                                                        (LowerExpr
-                                                          addr-state
-                                                          IrValueUnit
-                                                          (AstTyUnit)))
-                                                      (OkLowerExpr
-                                                        (LowerExpr
-                                                          (lower-array-elem-store-state
-                                                            ctx
-                                                            addr-state
-                                                            elem-ptr
-                                                            value-ir
-                                                            elem-ir-ty)
-                                                          IrValueUnit
-                                                          (AstTyUnit))))])]
-                                              [_
-                                                (ErrLowerExpr
-                                                  (lower-diagnostic-at-expr
-                                                    arr
-                                                    "lower: array-set! requires array type"))])])]
-                                      [(ErrLowerExpr message)
-                                        (ErrLowerExpr message)])])]
+                                                  value-ir)])]
+                                          [(ErrLowerExpr message)
+                                            (ErrLowerExpr message)])])])]
                               [(ErrLowerExpr message) (ErrLowerExpr message)])]
                           [(ErrTcType message)
                             (ErrLowerExpr
@@ -31824,6 +32388,24 @@
             (set! i (+ i 1)))))
       sum)))")
 
+(define (compiler-lower-inline-direct-store-source) : String
+  "(defstruct Wide (a i64) (b i64) (c i64))
+(defstruct Holder (wide Wide) (tail i64))
+(define (direct-field [h : Holder]) : i64
+  (begin
+    (set! (struct-get h wide) (Wide 1 2 3))
+    0))
+(define (direct-init [h : Holder]) : i64
+  (begin
+    (set! (struct-get h wide) (init : Wide))
+    0))
+(define (direct-dyn-array [items : (Array Wide)] [i : i64]) : unit
+  (array-set! items i (Wide 4 5 6)))
+(define (direct-fixed-array [items : (Array Wide 2)] [i : i64]) : unit
+  (array-set! items i (Wide 7 8 9)))
+(define (direct-fixed-literal) : (Array Wide 2)
+  (array (Wide 10 11 12) (Wide 13 14 15)))")
+
 (define (compiler-lower-inline-struct-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-inline-struct-source))
     [(OkCompilerLower program _)
@@ -32024,6 +32606,35 @@
             (> (lower-test-function-branch-count functions "main") 0))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-inline-direct-store-copy-shape-ok?) : bool
+  (match (lower-compiler-source-with-mode
+    (compiler-lower-inline-direct-store-source)
+    (CompilerLowerInlineAggregates))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (=
+              (lower-test-function-copy-bytes-count functions "direct-field")
+              0)
+            (= (lower-test-function-copy-bytes-count functions "direct-init") 0)
+            (=
+              (lower-test-function-copy-bytes-count
+                functions
+                "direct-dyn-array")
+              0)
+            (=
+              (lower-test-function-copy-bytes-count
+                functions
+                "direct-fixed-array")
+              0)
+            (=
+              (lower-test-function-copy-bytes-count
+                functions
+                "direct-fixed-literal")
+              0))])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-inline-aggregate-tests-ok?) : bool
   (and
     (compiler-lower-inline-struct-shape-ok?)
@@ -32033,6 +32644,7 @@
     (compiler-lower-inline-sret-constructor-copy-shape-ok?)
     (compiler-lower-inline-sret-enum-match-shape-ok?)
     (compiler-lower-inline-hot-loop-struct-shape-ok?)
+    (compiler-lower-inline-direct-store-copy-shape-ok?)
     (compiler-lower-inline-error-ok?
       (compiler-lower-inline-recursive-error-source)
       "typecheck: inline aggregate layout cycle BadList -> BadList; insert (Box BadList) at the recursive edge")))

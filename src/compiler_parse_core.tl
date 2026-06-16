@@ -5162,6 +5162,36 @@
         [_ (ErrAstDecl "parse: malformed import")])]
     [_ (ErrAstDecl "parse: malformed import")]))
 
+(define (parse-ast-import-macro-tail
+  [dispatch : SymI64Env]
+  [call-form : SpannedSexpr]
+  [tail : SpannedSexpr]) : ResultAstDecl
+  (match (parse-ast-expr dispatch call-form)
+    [(OkAstExpr call-expr)
+      (match (ast-expr-unspan (ast-node-get call-expr))
+        [(AstExprCall _ _)
+          (match tail
+            [(SpSNil _)
+              (parse-ast-import-spec
+                (AstImportMacro call-expr)
+                ""
+                AstNoModuleName
+                AstNoImportAlias)]
+            [(SpSCons head-node _ _)
+              (match (sp-node-get head-node)
+                [(SpSSym head _)
+                  (if (or (string-eq head "as") (string-eq head ":as"))
+                    (parse-ast-import-alias
+                      (AstImportMacro call-expr)
+                      ""
+                      AstNoModuleName
+                      tail)
+                    (ErrAstDecl "parse: malformed import"))]
+                [_ (ErrAstDecl "parse: malformed import")])]
+            [_ (ErrAstDecl "parse: malformed import")])]
+        [_ (ErrAstDecl "parse: import macro operand must be a call")])]
+    [(ErrAstExpr message) (ErrAstDecl message)]))
+
 (define (parse-ast-dotted-import-tl-suffix? [name : String]) : bool
   (let
     [n : i64 (string-length name)]
@@ -5234,13 +5264,18 @@
           [_ (ErrAstDecl "parse: malformed import")])]
       [_ (ErrAstDecl "parse: malformed import")])))
 
-(define (parse-ast-import [rest : SpannedSexpr]) : ResultAstDecl
+(define (parse-ast-import [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstDecl
   (match rest
     [(SpSCons path-node tail _)
       (match (sp-node-get path-node)
         [(SpSStr path _) (parse-ast-import-tail path (sp-node-get tail))]
         [(SpSSym module-name _)
           (parse-ast-dotted-import-tail module-name (sp-node-get tail))]
+        [(SpSCons _ _ _)
+          (parse-ast-import-macro-tail
+            dispatch
+            (sp-node-get path-node)
+            (sp-node-get tail))]
         [_ (ErrAstDecl "parse: malformed import")])]
     [_ (ErrAstDecl "parse: malformed import")]))
 
@@ -5667,6 +5702,21 @@
             "parse: unsafe declaration expects exactly one declaration")])]
     [_ (ErrAstDecl "parse: unsafe declaration expects exactly one declaration")]))
 
+(define (parse-ast-module-macro-call
+  [dispatch : SymI64Env]
+  [form : SpannedSexpr]) : ResultAstDecl
+  (match (parse-ast-expr dispatch form)
+    [(OkAstExpr call-expr)
+      (match (ast-expr-unspan (ast-node-get call-expr))
+        [(AstExprCall _ _)
+          (parse-ast-import-spec
+            (AstImportMacroDecls call-expr)
+            ""
+            AstNoModuleName
+            AstNoImportAlias)]
+        [_ (ErrAstDecl "parse: expected declaration")])]
+    [(ErrAstExpr message) (ErrAstDecl message)]))
+
 (define (parse-ast-decl [dispatch : SymI64Env] [s : SpannedSexpr]) : ResultAstDecl
   (match s
     [(SpSCons head-node rest _)
@@ -5687,7 +5737,7 @@
                       (if (= tag (compiler-parse-tag-decl-defmacro))
                         (parse-ast-defmacro dispatch (sp-node-get rest))
                         (if (= tag (compiler-parse-tag-decl-import))
-                          (parse-ast-import (sp-node-get rest))
+                          (parse-ast-import dispatch (sp-node-get rest))
                           (if (= tag (compiler-parse-tag-decl-include-str))
                             (parse-ast-include-str (sp-node-get rest))
                             (if (= tag (compiler-parse-tag-decl-include-bin))
@@ -5715,8 +5765,9 @@
                                         (if (compiler-parse-policy-form? head)
                                           (ErrAstDecl
                                             (compiler-parse-abstraction-policy-message))
-                                          (ErrAstDecl
-                                            "parse: expected declaration")))))))))))))))))]
+                                          (parse-ast-module-macro-call
+                                            dispatch
+                                            s)))))))))))))))))]
         [_ (ErrAstDecl "parse: malformed declaration")])]
     [_ (ErrAstDecl "parse: malformed declaration")]))
 
@@ -5836,6 +5887,22 @@
     [(OkSpannedTokens toks) (parse-ast-program-with-cfg toks cfgs)]
     [(ErrSpannedTokens err) (ErrAstProgram (source-error-message err))]))
 
+(define (parse-ast-repl-module-macro-call-decl? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDeclImport
+        (AstImportSpec
+          (AstImportMacroDecls _)
+          path
+          (AstNoModuleName)
+          (AstNoImportAlias)))
+      (string-eq path "")]
+    [_ false]))
+
+(define (parse-ast-repl-expr-item [dispatch : SymI64Env] [form : SpannedSexpr]) : ResultAstReplItem
+  (match (parse-ast-expr dispatch form)
+    [(OkAstExpr expr) (OkAstReplItem (AstReplExpr expr))]
+    [(ErrAstExpr message) (ErrAstReplItem message)]))
+
 (define (parse-ast-repl-source [src : String]) : ResultAstReplItem
   (match (lex-spanned-result src)
     [(OkSpannedTokens toks)
@@ -5851,11 +5918,11 @@
               [(OkSpannedSexpr form)
                 (if (= (peek-spanned-tag toks cur) (tag-end))
                   (match (parse-ast-decl dispatch form)
-                    [(OkAstDecl decl) (OkAstReplItem (AstReplDecl decl))]
-                    [(ErrAstDecl _)
-                      (match (parse-ast-expr dispatch form)
-                        [(OkAstExpr expr) (OkAstReplItem (AstReplExpr expr))]
-                        [(ErrAstExpr message) (ErrAstReplItem message)])])
+                    [(OkAstDecl decl)
+                      (if (parse-ast-repl-module-macro-call-decl? decl)
+                        (parse-ast-repl-expr-item dispatch form)
+                        (OkAstReplItem (AstReplDecl decl)))]
+                    [(ErrAstDecl _) (parse-ast-repl-expr-item dispatch form)])
                   (ErrAstReplItem "parse: trailing tokens after REPL input"))]
               [(ErrSpannedSexpr err)
                 (ErrAstReplItem (source-error-message err))]))))]
@@ -5981,6 +6048,21 @@
         [rest : AstExprList (box-get rest)]
         (+ 1 (compiler-parse-expr-list-count rest)))]))
 
+(define (compiler-parse-macro-call-node-ok?
+  [call-expr : i64]
+  [name : String]
+  [want-args : i64]) : bool
+  (match (ast-expr-unspan (ast-node-get call-expr))
+    [(AstExprCall head args)
+      (let
+        [head-expr : AstExpr (ast-node-get head)]
+        (and
+          (= (compiler-parse-expr-list-count args) want-args)
+          (match (ast-expr-unspan head-expr)
+            [(AstExprVar found) (string-eq (intern-str found) name)]
+            [_ false])))]
+    [_ false]))
+
 (define (compiler-parse-resource-binding-count
   [bindings : AstResourceBindingList]) : i64
   (match bindings
@@ -6105,6 +6187,63 @@
   (and
     (compiler-parse-dotted-import-explicit-alias-ok?)
     (compiler-parse-dotted-import-default-alias-ok?)))
+
+(define (compiler-parse-module-macro-call-ok?) : bool
+  (match (parse-ast-source "(point-vec i64)")
+    [(OkAstProgram (AstProgram decls-box))
+      (let
+        [decls : AstDeclList (box-get decls-box)]
+        (match decls
+          [(AstDeclCons
+              (AstDeclImport
+                (AstImportSpec
+                  (AstImportMacroDecls call-expr)
+                  path
+                  (AstNoModuleName)
+                  (AstNoImportAlias)))
+              rest)
+            (let
+              [rest : AstDeclList (box-get rest)]
+              (match rest
+                [(AstDeclNil)
+                  (and
+                    (string-eq path "")
+                    (compiler-parse-macro-call-node-ok? call-expr "point-vec" 1))]
+                [_ false]))]
+          [_ false]))]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-parse-macro-import-ok?) : bool
+  (match (parse-ast-source "(import (vector i64) as svec)")
+    [(OkAstProgram (AstProgram decls-box))
+      (let
+        [decls : AstDeclList (box-get decls-box)]
+        (match decls
+          [(AstDeclCons
+              (AstDeclImport
+                (AstImportSpec
+                  (AstImportMacro call-expr)
+                  path
+                  (AstNoModuleName)
+                  (AstSomeImportAlias alias)))
+              rest)
+            (let
+              [rest : AstDeclList (box-get rest)]
+              (match rest
+                [(AstDeclNil)
+                  (and
+                    (string-eq path "")
+                    (string-eq alias "svec")
+                    (compiler-parse-macro-call-node-ok? call-expr "vector" 1))]
+                [_ false]))]
+          [_ false]))]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-parse-module-macro-surface-ok?) : bool
+  (and
+    (compiler-parse-module-macro-call-ok?)
+    (compiler-parse-macro-import-ok?)
+    (compiler-parse-error-ok? "(import vector i64)" "parse: malformed import")))
 
 (define (compiler-parse-dotted-import-errors-ok?) : bool
   (and
@@ -8916,6 +9055,8 @@
     (compiler-parse-repl-decl-ok? "(define x : i64 42)")
     ;; parenthesized expression item
     (compiler-parse-repl-expr-ok? "(+ 1 2)")
+    ;; unknown function-style calls are REPL expressions, not module macro decls
+    (compiler-parse-repl-expr-ok? "(double 4)")
     ;; bare expression item
     (compiler-parse-repl-expr-ok? "42")
     ;; trailing tokens after a complete item are rejected
@@ -9011,6 +9152,7 @@
     (compiler-parse-module-decl-ok?)
     (compiler-parse-import-metadata-ok?)
     (compiler-parse-dotted-import-metadata-ok?)
+    (compiler-parse-module-macro-surface-ok?)
     (compiler-parse-export-decl-ok?)
     (compiler-parse-defdispatch-tests-ok?)
     (compiler-parse-flat-let-call-body-ok?)
@@ -9142,6 +9284,7 @@
         (compiler-parse-module-decl-ok?)
         (compiler-parse-import-metadata-ok?)
         (compiler-parse-dotted-import-metadata-ok?)
+        (compiler-parse-module-macro-surface-ok?)
         (compiler-parse-export-decl-ok?)
         (compiler-parse-defdispatch-tests-ok?)
         (compiler-parse-flat-let-call-body-ok?)

@@ -603,8 +603,8 @@ traits: a generator inspects compile-time metadata such as `(type T)` and
 
 `comptime-decl` and `comptime-decls` are deprecated compatibility surface.
 New declaration generation should be expressed as declaration-emitting
-`defmacro` declarations (section 3.7.2): use `: module` for generated module
-families bound by `import`, and `: decls` for declarations spliced into the
+`defmacro` declarations (section 3.7.2): use `: Module` for generated module
+families bound by `import`, and `: Decls` for declarations spliced into the
 current module. Existing checked-in uses may remain while the stdlib and
 compiler-side generator families migrate; removal is tracked by #3077.
 
@@ -873,7 +873,7 @@ Typed expansion has three checks:
 Declaration-emitting macros extend `defmacro` with two module-scope result
 categories:
 
-- `: module` means the macro body produces exactly one `(module ...)`
+- `: Module` means the macro body produces exactly one `(module ...)`
   declaration. It is called only through import syntax:
   `(import (macro args))` or `(import (macro args) as alias)`. Without `as`,
   the generated module is anonymous and all exported items are imported
@@ -883,18 +883,18 @@ categories:
   generated module participates in ordinary
   dot-qualified lookup, export checking, typechecking, lowering, tests, docs,
   and diagnostics after expansion.
-- `: decls` means the macro body produces a declaration list. A call at module
+- `: Decls` means the macro body produces a declaration list. A call at module
   scope, for example `(point-vec i64)`, is replaced by those declarations at
   that exact location. One returned declaration is inserted directly; multiple
   returned declarations are treated as if wrapped in an implicit `(begin ...)`.
   No import binding is created. This form is for one-off helper declarations;
-  module-shaped reusable families should prefer `: module`.
+  module-shaped reusable families should prefer `: Module`.
 
 Expression macros remain the existing expression-position form above: the
 declared result is the produced expression type that the expansion must satisfy
 after splicing, while the macro body itself constructs `Expr` syntax. `: Expr`
 is the wildcard expression result for macros that intentionally defer all
-produced-type checking to the expanded form. `: module` and `: decls` are not
+produced-type checking to the expanded form. `: Module` and `: Decls` are not
 runtime types, cannot appear in value positions, and are valid only as macro
 result annotations.
 
@@ -902,14 +902,14 @@ Module-scope expansion runs before ordinary typechecking:
 
 1. Parse the module, collect source imports, and resolve/load imported modules.
 2. Build the macro namespace from local and imported `defmacro` declarations.
-3. Expand module-scope macro imports and `: decls` calls. If expansion emits new
+3. Expand module-scope macro imports and `: Decls` calls. If expansion emits new
    imports, resolve those imports and repeat this step to a fixed point.
 4. Recurse into generated modules, then typecheck the fully expanded module.
 
 The macro must be visible in the ordinary macro namespace: a local macro in the
 same module regardless of source order, an imported macro, or a qualified macro
-name such as `(stdlib.vector.vector i64)`. A macro with `: module` used outside
-`import`, a macro with `: decls` used in expression position or import syntax,
+name such as `(stdlib.vector.vector i64)`. A macro with `: Module` used outside
+`import`, a macro with `: Decls` used in expression position or import syntax,
 and an expression macro used at module scope are diagnostics.
 
 Two unqualified generated module imports that export the same name create the
@@ -982,7 +982,7 @@ source order, matching functions, values, and types. A macro may therefore be
 called before its declaration, and one macro may expand to a call of another
 macro declared later in the same module. Compatibility declarations produced by
 deprecated `comptime-decl` / `comptime-decls` are materialized before macro
-expansion. Declarations produced by `: decls` or `: module` macros participate
+expansion. Declarations produced by `: Decls` or `: Module` macros participate
 in the module-wide macro table for subsequent fixed-point expansion and
 ordinary typechecking, but a macro emitted by a declaration-emitting macro is
 not visible while evaluating the macro that emits it.
@@ -6098,7 +6098,7 @@ enum-meta     ::= aggregate-lifetime-meta
 aggregate-lifetime-meta ::= "(" ":lifetimes" ident+ ")"
 aggregate-cleanup-meta ::= "(" ":cleanup" ident ")"
 test-decl     ::= "(" "test" ident expr+ ")"
-module-macro-call ::= macro-call                    ; must resolve to a `: decls` macro
+module-macro-call ::= macro-call                    ; must resolve to a `: Decls` macro
 
 param         ::= "[" ident ":" type "]"
 field         ::= "(" ident type field-meta* ")"

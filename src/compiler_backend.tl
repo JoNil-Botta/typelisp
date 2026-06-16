@@ -6840,6 +6840,28 @@
         ", ")
       (backend-cat3 (compiler-backend-sized-reg "%rax" ty) "\n" ""))))
 
+;; A scalar register-homed var IS its own cmp source operand, so a comparison can
+;; emit `cmp <home>, %rax` directly instead of `movq <home>, %r8; cmp %r8, %rax`
+;; -- one fewer instruction per comparison (hot in every loop bound test). Returns
+;; "" (forcing the %r8 load path) for spilled vars, register groups/pairs (not a
+;; scalar operand) and addr-of-forwarded vars (whose value is a computed address,
+;; not the contents of the home register). The home is always a callee-saved
+;; register (never %rax/%r8), so it cannot be clobbered by the lhs load into %rax.
+(define (compiler-backend-value-scalar-register-home
+  [assignments : CompilerRegAssignmentList]
+  [value : CompilerIrValue]) : String
+  (match value
+    [(IrValueVar id)
+      (if (>= (compiler-backend-forwarded-addr-of-src id) 0)
+        ""
+        (match (compiler-reg-assignment-lookup assignments id)
+          [(CompilerRegSomeLocation location)
+            (match location
+              [(CompilerRegRegister r) r]
+              [_ ""])]
+          [_ ""]))]
+    [_ ""]))
+
 (define (compiler-backend-emit-compare-branch
   [assignments : CompilerRegAssignmentList]
   [function : String]
@@ -6873,29 +6895,48 @@
                       true-jcc
                       false-jcc))))]
             [(CompilerBackendNoImmediate)
-              (match (compiler-backend-emit-load-value-with-plan
-                assignments
-                rhs
-                "%r8")
-                [(OkCompilerBackend rhs-asm)
+              (let
+                [rhs-home : String
+                  (compiler-backend-value-scalar-register-home assignments rhs)]
+                (if (not (string-eq rhs-home ""))
                   (OkCompilerBackend
                     (string-append
                       lhs-asm
                       (string-append
-                        rhs-asm
+                        (compiler-backend-emit-compare-flags
+                          op
+                          (compiler-backend-sized-reg rhs-home ty)
+                          ty)
+                        (compiler-backend-emit-compare-branch-jumps
+                          function
+                          true-label
+                          false-label
+                          fallthrough
+                          true-jcc
+                          false-jcc))))
+                  (match (compiler-backend-emit-load-value-with-plan
+                    assignments
+                    rhs
+                    "%r8")
+                    [(OkCompilerBackend rhs-asm)
+                      (OkCompilerBackend
                         (string-append
-                          (compiler-backend-emit-compare-flags
-                            op
-                            (compiler-backend-sized-reg "%r8" ty)
-                            ty)
-                          (compiler-backend-emit-compare-branch-jumps
-                            function
-                            true-label
-                            false-label
-                            fallthrough
-                            true-jcc
-                            false-jcc)))))]
-                [(ErrCompilerBackend message) (ErrCompilerBackend message)])])]
+                          lhs-asm
+                          (string-append
+                            rhs-asm
+                            (string-append
+                              (compiler-backend-emit-compare-flags
+                                op
+                                (compiler-backend-sized-reg "%r8" ty)
+                                ty)
+                              (compiler-backend-emit-compare-branch-jumps
+                                function
+                                true-label
+                                false-label
+                                fallthrough
+                                true-jcc
+                                false-jcc)))))]
+                    [(ErrCompilerBackend message) (ErrCompilerBackend message)])))])]
         [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))
 
 (define (compiler-backend-load-compare-type? [ty : AstType]) : bool

@@ -609,7 +609,7 @@
   (foreign-call 1))")
 
 (define (compiler-backend-pic-output-ok?) : bool
-  (match (compiler-backend-emit-source-pic (compiler-backend-pic-source))
+  (match (compiler-backend-emit-source-pic-linux (compiler-backend-pic-source))
     [(OkCompilerBackendPic output)
       (let
         [asm : String (struct-get output asm)]
@@ -645,7 +645,8 @@
     [(ErrCompilerBackendPic _) false]))
 
 (define (compiler-backend-pic-extern-reject-ok?) : bool
-  (match (compiler-backend-emit-source-pic (compiler-backend-pic-extern-source))
+  (match (compiler-backend-emit-source-pic-linux
+    (compiler-backend-pic-extern-source))
     [(OkCompilerBackendPic _) false]
     [(ErrCompilerBackendPic diag)
       (compiler-backend-string-contains?
@@ -2913,7 +2914,8 @@
     IrExternNil))
 
 (define (compiler-backend-fallthrough-jump-ok?) : bool
-  (match (compiler-backend-emit-program (compiler-backend-fallthrough-program))
+  (match (compiler-backend-emit-program-linux
+    (compiler-backend-fallthrough-program))
     [(OkCompilerBackend asm)
       (and
         (compiler-backend-string-contains? asm ".Lf0_done:\n")
@@ -3056,7 +3058,8 @@
     IrExternNil))
 
 (define (compiler-backend-call-return-ok?) : bool
-  (match (compiler-backend-emit-program (compiler-backend-call-return-program))
+  (match (compiler-backend-emit-program-linux
+    (compiler-backend-call-return-program))
     [(OkCompilerBackend asm)
       (and
         (or
@@ -3780,7 +3783,7 @@
               IrBlockNil))
           IrFunctionNil)
         IrExternNil)]
-    (match (compiler-backend-emit-program-with-spans program spans)
+    (match (compiler-backend-emit-program-linux-with-spans program spans)
       [(ErrCompilerBackend diag)
         (and
           (string-eq (compiler-diagnostic-message diag) want-message)
@@ -4672,7 +4675,7 @@
         (compiler-backend-test-span 55 13))]
     (match (optimize-program-with-spans program spans)
       [(CompilerOptimizedProgram optimized optimized-spans)
-        (match (compiler-backend-emit-program-with-spans
+        (match (compiler-backend-emit-program-linux-with-spans
           optimized
           optimized-spans)
           [(ErrCompilerBackend diag)
@@ -6736,7 +6739,8 @@
     (and trap-branches helper-shapes op-shapes no-externs)))
 
 (define (compiler-backend-checked-trap-emit-shape-ok?) : bool
-  (match (compiler-backend-emit-program (compiler-backend-checked-trap-program))
+  (match (compiler-backend-emit-program-linux
+    (compiler-backend-checked-trap-program))
     [(OkCompilerBackend asm) (compiler-backend-checked-trap-asm-shape-ok? asm)]
     [(ErrCompilerBackend _) false]))
 
@@ -6952,7 +6956,7 @@
     IrExternNil))
 
 (define (compiler-backend-global-compare-branch-ok?) : bool
-  (match (compiler-backend-emit-program
+  (match (compiler-backend-emit-program-linux
     (compiler-backend-global-compare-program))
     [(OkCompilerBackend asm)
       (and
@@ -7433,7 +7437,7 @@
     IrExternNil))
 
 (define (compiler-backend-clean-module-symbol-collision-ok?) : bool
-  (match (compiler-backend-emit-program
+  (match (compiler-backend-emit-program-linux
     (compiler-backend-clean-module-symbol-collision-program))
     [(ErrCompilerBackend diag)
       (string-eq

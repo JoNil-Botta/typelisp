@@ -4,7 +4,8 @@
 
 (define (compiler-backend-runtime-fixture-emit [target-name : String]) : ResultCompilerBackend
   (if (string-eq target-name "linux-x86_64")
-    (compiler-backend-emit-program (compiler-backend-runtime-helper-program))
+    (compiler-backend-emit-program-linux
+      (compiler-backend-runtime-helper-program))
     (if (string-eq target-name "windows-x86_64")
       (compiler-backend-emit-program-for-target
         (compiler-backend-runtime-helper-program)

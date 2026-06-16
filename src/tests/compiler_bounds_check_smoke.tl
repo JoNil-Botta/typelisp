@@ -33,7 +33,7 @@
     IrExternNil))
 
 (define (main) : i64
-  (match (compiler-backend-emit-program
+  (match (compiler-backend-emit-program-linux
     (optimize-program-with-level (bounds-check-smoke-program) 2))
     [(OkCompilerBackend asm)
       (let

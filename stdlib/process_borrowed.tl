@@ -356,3 +356,247 @@
     [(ProcessSomeString message)
       (ErrProcessChild (ProcessInvalidCommand message))]
     [(ProcessNoString) (process-start (process-borrowed-command-owned command))]))
+
+;: Inline test helper that forces a borrowed process test failure.
+(define (process-borrowed-test-fail) : unit
+  (begin
+    (/ 1 0)
+    unit))
+
+;: Inline test assertion for boolean true.
+(define (process-borrowed-test-assert-true [condition : bool]) : unit
+  (if condition
+    unit
+    (process-borrowed-test-fail)))
+
+;: Inline test assertion for boolean false.
+(define (process-borrowed-test-assert-false [condition : bool]) : unit
+  (process-borrowed-test-assert-true (not condition)))
+
+;: Inline test assertion for integer equality.
+(define (process-borrowed-test-assert-i64-eq [actual : i64] [expected : i64]) : unit
+  (process-borrowed-test-assert-true (= actual expected)))
+
+;: Inline test assertion for owned process strings.
+(define (process-borrowed-test-assert-owned-string-eq
+  [actual : String]
+  [expected : String]) : unit
+  (process-borrowed-test-assert-true (string-eq actual expected)))
+
+;: Inline test assertion for a one-element owned process string list.
+(define (process-borrowed-test-assert-process-string-list1
+  [items : ProcessStringList]
+  [first : String]) : unit
+  (match items
+    [(ProcessStringCons a rest)
+      (match (box-get rest)
+        [(ProcessStringNil)
+          (process-borrowed-test-assert-owned-string-eq a first)]
+        [_ (process-borrowed-test-fail)])]
+    [_ (process-borrowed-test-fail)]))
+
+;: Inline test assertion for an owned optional process string.
+(define (process-borrowed-test-assert-process-some-string
+  [value : ProcessMaybeString]
+  [expected : String]) : unit
+  (match value
+    [(ProcessSomeString actual)
+      (process-borrowed-test-assert-owned-string-eq actual expected)]
+    [(ProcessNoString) (process-borrowed-test-fail)]))
+
+;: Inline test assertion for a one-element borrowed process string list.
+(define (process-borrowed-test-assert-borrowed-string-list1
+  [items : (ProcessBorrowedStringList text)]
+  [expected : String]) : unit
+  (match items
+    [(ProcessBorrowedStringCons actual rest)
+      (match (box-get rest)
+        [(ProcessBorrowedStringNil)
+          (process-borrowed-test-assert-true
+            (string-eq-borrowed actual (& expected)))]
+        [_ (process-borrowed-test-fail)])]
+    [(ProcessBorrowedStringNil) (process-borrowed-test-fail)]))
+
+;: Inline test assertion for a borrowed optional process string.
+(define (process-borrowed-test-assert-borrowed-some-string
+  [value : (ProcessBorrowedMaybeString text)]
+  [expected : String]) : unit
+  (match value
+    [(ProcessBorrowedSomeString actual)
+      (process-borrowed-test-assert-true
+        (string-eq-borrowed actual (& expected)))]
+    [(ProcessBorrowedNoString) (process-borrowed-test-fail)]))
+
+;: Inline test assertion for the head of an owned process environment list.
+(define (process-borrowed-test-assert-process-env-head
+  [env : ProcessEnvList]
+  [expected-name : String]
+  [expected-value : String]) : unit
+  (match env
+    [(ProcessEnvCons name value _)
+      (begin
+        (process-borrowed-test-assert-owned-string-eq name expected-name)
+        (process-borrowed-test-assert-owned-string-eq value expected-value))]
+    [(ProcessEnvNil) (process-borrowed-test-fail)]))
+
+;: Inline test assertion for the head of a borrowed process environment list.
+(define (process-borrowed-test-assert-borrowed-env-head
+  [env : (ProcessBorrowedEnvList text)]
+  [expected-name : String]
+  [expected-value : String]) : unit
+  (match env
+    [(ProcessBorrowedEnvCons name value _)
+      (begin
+        (process-borrowed-test-assert-true
+          (string-eq-borrowed name (& expected-name)))
+        (process-borrowed-test-assert-true
+          (string-eq-borrowed value (& expected-value))))]
+    [(ProcessBorrowedEnvNil) (process-borrowed-test-fail)]))
+
+;: Inline test assertion for invalid borrowed process output results.
+(define (process-borrowed-test-assert-invalid-output
+  [result : ResultProcessOutput]
+  [message : String]) : unit
+  (match result
+    [(ErrProcessOutput error)
+      (begin
+        (process-borrowed-test-assert-true
+          (process-error-invalid-command? error))
+        (process-borrowed-test-assert-owned-string-eq
+          (process-error-message error)
+          message))]
+    [(OkProcessOutput _) (process-borrowed-test-fail)]))
+
+;: Inline test assertion for invalid borrowed process child results.
+(define (process-borrowed-test-assert-invalid-child
+  [result : ResultProcessChild]
+  [message : String]) : unit
+  (match result
+    [(ErrProcessChild error)
+      (begin
+        (process-borrowed-test-assert-true
+          (process-error-invalid-command? error))
+        (process-borrowed-test-assert-owned-string-eq
+          (process-error-message error)
+          message))]
+    [(OkProcessChild _) (process-borrowed-test-fail)]))
+
+;: Inline test body for borrowed process conversion helpers.
+(define (process-borrowed-test-api-check) : unit
+  (let
+    [exe : String "echo"]
+    [arg : String "hello"]
+    [cwd : String "target"]
+    [env-pair : String "TL_BORROWED_PROCESS"]
+    [stdin : String "stdin"]
+    [argv : (ProcessBorrowedStringList arg)
+      (process-borrowed-args-single (& arg))]
+    [env : (ProcessBorrowedEnvList env-pair)
+      (process-borrowed-env-cons
+        (& env-pair)
+        (& env-pair)
+        (process-borrowed-env-empty-like (& env-pair)))]
+    [base : (ProcessBorrowedCommand exe exe exe exe exe)
+      (process-borrowed-command-empty (& exe))]
+    [with-argv : (ProcessBorrowedCommand exe arg exe exe exe)
+      (process-borrowed-command-with-argv base argv)]
+    [with-cwd : (ProcessBorrowedCommand exe arg cwd exe exe)
+      (process-borrowed-command-with-cwd with-argv (& cwd))]
+    [with-env-list : (ProcessBorrowedCommand exe arg cwd env-pair exe)
+      (process-borrowed-command-with-env-list with-cwd env)]
+    [borrowed : (ProcessBorrowedCommand exe arg cwd env-pair stdin)
+      (process-borrowed-command-with-stdin with-env-list (& stdin))]
+    [owned : ProcessCommand (process-borrowed-command-owned borrowed)]
+    (begin
+      (process-borrowed-test-assert-true
+        (string-eq-borrowed
+          (process-borrowed-command-executable borrowed)
+          (& exe)))
+      (process-borrowed-test-assert-borrowed-string-list1
+        (process-borrowed-command-argv borrowed)
+        "hello")
+      (process-borrowed-test-assert-i64-eq
+        (process-borrowed-args-count (process-borrowed-command-argv borrowed))
+        1)
+      (process-borrowed-test-assert-borrowed-some-string
+        (process-borrowed-command-cwd borrowed)
+        "target")
+      (process-borrowed-test-assert-borrowed-some-string
+        (process-borrowed-command-stdin borrowed)
+        "stdin")
+      (process-borrowed-test-assert-borrowed-env-head
+        (process-borrowed-command-env borrowed)
+        "TL_BORROWED_PROCESS"
+        "TL_BORROWED_PROCESS")
+      (process-borrowed-test-assert-i64-eq
+        (process-borrowed-env-count (process-borrowed-command-env borrowed))
+        1)
+      (process-borrowed-test-assert-owned-string-eq
+        (process-command-executable owned)
+        "echo")
+      (process-borrowed-test-assert-process-string-list1
+        (process-command-argv owned)
+        "hello")
+      (process-borrowed-test-assert-process-some-string
+        (process-command-cwd owned)
+        "target")
+      (process-borrowed-test-assert-process-some-string
+        (process-command-stdin owned)
+        "stdin")
+      (process-borrowed-test-assert-process-env-head
+        (process-command-env owned)
+        "TL_BORROWED_PROCESS"
+        "TL_BORROWED_PROCESS")
+      (process-borrowed-test-assert-true
+        (process-borrowed-command-valid? borrowed)))))
+
+;: Inline test body for borrowed process validation helpers.
+(define (process-borrowed-test-validation-check) : unit
+  (let
+    [exe : String "echo"]
+    [empty : String ""]
+    [bad-env-name : String "BAD=NAME"]
+    [empty-command : (ProcessBorrowedCommand empty empty empty empty empty)
+      (process-borrowed-command-empty (& empty))]
+    [base : (ProcessBorrowedCommand exe exe exe exe exe)
+      (process-borrowed-command-empty (& exe))]
+    [empty-cwd-command : (ProcessBorrowedCommand exe exe empty exe exe)
+      (process-borrowed-command-with-cwd base (& empty))]
+    [empty-env-command : (ProcessBorrowedCommand exe exe exe empty exe)
+      (process-borrowed-command-with-env-list
+        base
+        (process-borrowed-env-cons
+          (& empty)
+          (& empty)
+          (process-borrowed-env-empty-like (& empty))))]
+    [bad-env-command : (ProcessBorrowedCommand exe exe exe bad-env-name exe)
+      (process-borrowed-command-with-env-list
+        base
+        (process-borrowed-env-cons
+          (& bad-env-name)
+          (& bad-env-name)
+          (process-borrowed-env-empty-like (& bad-env-name))))]
+    (begin
+      (process-borrowed-test-assert-invalid-output
+        (process-borrowed-output empty-command)
+        "process: executable path is empty")
+      (process-borrowed-test-assert-invalid-child
+        (process-borrowed-start empty-command)
+        "process: executable path is empty")
+      (process-borrowed-test-assert-invalid-output
+        (process-borrowed-output empty-cwd-command)
+        "process: cwd path is empty")
+      (process-borrowed-test-assert-invalid-output
+        (process-borrowed-output empty-env-command)
+        "process: environment variable name is empty")
+      (process-borrowed-test-assert-invalid-output
+        (process-borrowed-output bad-env-command)
+        "process: environment variable name contains '='")
+      (process-borrowed-test-assert-false
+        (process-borrowed-command-valid? empty-command)))))
+
+(test
+  process-borrowed-api
+  (begin
+    (process-borrowed-test-api-check)
+    (process-borrowed-test-validation-check)))

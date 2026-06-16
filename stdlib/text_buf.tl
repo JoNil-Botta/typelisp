@@ -406,3 +406,23 @@
 ;: Alias for `text-buf-clear` for call sites that model builder reuse as reset.
 (define (text-buf-reset [buf : TextBuf]) : TextBuf
   (text-buf-clear buf))
+
+(test
+  text-buf-scoped-arena-render-policy
+  (let
+    [fail : (-> unit)
+      (lambda () : unit
+        (begin
+          (/ 1 0)
+          unit))]
+    [program-buf : TextBuf (text-buf-append (text-buf-empty) "scoped")]
+    (with-arena
+      outer
+      (with-arena
+        inner
+        (let
+          [rendered : String (text-buf-render program-buf)]
+          [expected : String "scoped"]
+          (if (string-eq-borrowed (& rendered) (& expected))
+            unit
+            (fail)))))))

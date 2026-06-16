@@ -60,3 +60,44 @@
           (set! result (read-file-or-owned-result-like fallback contents))]
         [(ErrIoString _) unit])
       result)))
+
+;: Inline test helper that forces an IO caller-result test failure.
+(define (io-caller-result-test-fail) : unit
+  (begin
+    (/ 1 0)
+    unit))
+
+;: Inline test assertion for owned string equality.
+(define (io-caller-result-test-string-eq [actual : String] [expected : String]) : unit
+  (if (string-eq actual expected)
+    unit
+    (io-caller-result-test-fail)))
+
+(test
+  io-caller-result-api
+  (let
+    [fallback : String "fallback"]
+    [owned : String "contents"]
+    [missing-path : String "target/stdlib-inline-io-caller-result-missing.txt"]
+    [direct : (ReadFileOrResult fallback)
+      (read-file-or-result (& missing-path) (& fallback))]
+    [manual-owned : (ReadFileOrResult fallback)
+      (read-file-or-owned-result-like (& fallback) owned)]
+    [manual-borrowed : (ReadFileOrResult fallback)
+      (read-file-or-borrowed-result (& fallback))]
+    (begin
+      (if (read-file-or-result-borrowed? direct)
+        unit
+        (io-caller-result-test-fail))
+      (if (read-file-or-result-owned? manual-owned)
+        unit
+        (io-caller-result-test-fail))
+      (if (read-file-or-result-borrowed? manual-borrowed)
+        unit
+        (io-caller-result-test-fail))
+      (io-caller-result-test-string-eq
+        (read-file-or-result-string direct)
+        "fallback")
+      (io-caller-result-test-string-eq
+        (read-file-or-result-string manual-owned)
+        "contents"))))

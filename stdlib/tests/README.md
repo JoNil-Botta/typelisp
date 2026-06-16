@@ -12,14 +12,12 @@ for exact expected output bytes. Check-only rows map a fixture path to `pass` or
 
 Coverage notes:
 
-- `arena_policy.tl` exercises stdlib allocating APIs inside nested scoped
-  arenas. The `arena_policy_escape_*.tl` fixtures are check-only negative cases
-  proving active-arena stdlib results cannot escape their scoped arena.
-- `arena_api.tl` covers the imported first-class arena helpers, including safe
-  handle/mark observation and unsafe switch, rewind, and destroy calls.
 - `arena_patterns.tl` covers the standard safe scratch workflows: temporary
   scalar-only work inside `with-arena` and clone-out from a reusable
-  first-class scratch arena through `with-escape`.
+  first-class scratch arena through `with-escape`. The row remains a runnable
+  fixture while its `requires-stage0-symbol:with-escape` constraint is needed.
+  The `arena_policy_escape_*.tl` fixtures are check-only negative cases proving
+  active-arena stdlib results cannot escape their scoped arena.
 - `args_api.tl` covers the reusable argv parser for empty argv, positional-only
   argv, flags before and after positionals, `--` end-of-options handling,
   missing-value diagnostics, unknown-option diagnostics, repeated short/long
@@ -71,10 +69,6 @@ Coverage notes:
 - `env_api.tl` covers missing, empty, and present environment variables,
   host-separator PATH splitting/joining, vector-backed PATH split/list/join
   helpers, and explicit Windows `;` path-list behavior.
-- `ffi_api.tl` covers C string buffers: required byte counts, exact-capacity
-  caller-owned copies, trailing NUL writes, too-small buffers, interior NUL
-  rejection using an explicitly unsafe test-only string fixture, and
-  active-arena pointer allocation through `ffi-c-string-alloc` / `ffi-cstr`.
 - `fs_path_join_many_api.tl` covers the variadic path-join macro for zero,
   single, two, three, four, and duplicate-separator joins.
 - `fs_api.tl` covers path joins, dirname/basename/extension helpers, temp-dir
@@ -108,13 +102,9 @@ Coverage notes:
 - `process_api.tl` covers command construction, argv append helpers,
   cwd/stdin/env accessors, invalid-command diagnostics, result/error predicates,
   and async start/wait API validation.
-- `process_borrowed_check.tl` typechecks the `process_borrowed.tl` storage
-  surface for borrowed executable, argv, cwd, env, and stdin fields, validation
-  diagnostics, and explicit conversion to owned `ProcessCommand` before the
-  runtime boundary. `process_runtime.tl` covers borrowed output/start execution
-  through that runtime boundary. The escape fixture verifies the checker rejects
-  returning a borrowed command whose text owner is shorter-lived than the
-  declared command lifetime.
+- The process borrowed escape fixture verifies the checker rejects returning a
+  borrowed command whose text owner is shorter-lived than the declared command
+  lifetime.
 - `process_runtime.tl` covers backend process execution for stdout, stderr,
   nonzero status, failed spawn, and async start/wait on Linux, plus the
   structured unsupported async result on Windows.
@@ -129,21 +119,13 @@ Coverage notes:
   `ResultTimeMs` error/fallback helpers without depending on exact timestamps.
 - `text_buf_api.tl` covers empty buffers, repeated appends, char/int append
   helpers, buffer concatenation, clear/reset behavior, and rendering.
-- `text_buf_borrowed_check.tl` verifies the lifetime-parameterized
-  `text_buf_borrowed.tl` surface, including borrowed chunks, owned chunk
-  boundaries, copied unrelated borrowed chunks, render, length, and empty
-  predicates. The borrowed escape fixture verifies the checker rejects a
+- The borrowed text buffer escape fixture verifies the checker rejects a
   borrowed buffer that would outlive its chunk owner.
-- `string_caller_result_check.tl` verifies the
-  `string_caller_result.tl` caller-result shape for borrowed no-match results,
-  owned replacement results, the branch-selecting `string-replace-result`
-  helper, and explicit owned materialization. The escape fixture verifies the
-  checker rejects a helper result that may borrow from a shorter-lived text
-  owner.
-- `io_caller_result_check.tl` verifies the `io_caller_result.tl`
-  `read-file-or-result` surface for fallback-borrow and owned-result paths. The
-  escape fixture verifies the checker rejects returning a fallback result whose
-  fallback owner is shorter-lived than the declared result lifetime.
+- The `string_caller_result.tl` escape fixture verifies the checker rejects a
+  helper result that may borrow from a shorter-lived text owner.
+- The `io_caller_result.tl` escape fixture verifies the checker rejects
+  returning a fallback result whose fallback owner is shorter-lived than the
+  declared result lifetime.
 - `test_assert_failure.tl` covers the panic-on-failure path and exact caller
   diagnostic on stderr.
 
@@ -161,3 +143,25 @@ Inline stdlib coverage:
   growth, reuse after draining, and explicit empty-pop results.
 - `test.tl` owns inline tests for successful assertion helpers, including the
   borrowed `assert-string-eq` path with explicit borrows.
+- `arena.tl` owns inline tests for first-class arena helpers, including safe
+  handle/mark observation and unsafe switch, rewind, and destroy calls.
+- `string.tl` owns inline tests for the borrowed `str` gate and scoped arena
+  string allocation policy, including nested `with-arena` allocation and
+  borrowed equality against region-owned values.
+- `text_buf.tl` owns inline tests for scoped arena rendering of a program-owned
+  text buffer from an inner active arena.
+- `ffi.tl` owns inline tests for C string buffers: required byte counts,
+  exact-capacity caller-owned copies, trailing NUL writes, too-small buffers,
+  interior NUL rejection, and active-arena pointer allocation through
+  `ffi-c-string-alloc` / `ffi-cstr`.
+- `string_caller_result.tl` owns inline tests for borrowed no-match results,
+  owned replacement results, the branch-selecting `string-replace-result`
+  helper, and explicit owned materialization.
+- `io_caller_result.tl` owns inline tests for `read-file-or-result`
+  fallback-borrow and owned-result paths.
+- `text_buf_borrowed.tl` owns inline tests for borrowed chunks, owned chunk
+  boundaries, copied unrelated borrowed chunks, render, length, and empty
+  predicates.
+- `process_borrowed.tl` owns inline tests for borrowed executable, argv, cwd,
+  env, and stdin fields, validation diagnostics, and explicit conversion to
+  owned `ProcessCommand` before the runtime boundary.

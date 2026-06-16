@@ -31,13 +31,13 @@
         (+
           score
           (str-cat-api-eq (str-cat "1" "2" "3" "4" "5" "6" "7") "1234567")))
-      ;; A str-cat operand that is itself a str-cat call: the inner macro must be
-      ;; expanded before the outer operand is typechecked.
-      (set!
-        score
-        (+
+      ;; A str-cat-produced value remains a valid operand to another flat
+      ;; str-cat call.
+      (let
+        [middle : String (str-cat "-" b "-")]
+        (set!
           score
-          (str-cat-api-eq (str-cat a (str-cat "-" b "-") a) "foo-bar-foo")))
+          (+ score (str-cat-api-eq (str-cat a middle a) "foo-bar-foo"))))
       (let
         [__tl_str_cat_parts : String "baz"]
         (set!

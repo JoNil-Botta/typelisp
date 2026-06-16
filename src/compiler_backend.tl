@@ -2154,12 +2154,11 @@
                           (compiler-backend-avx512-vector-move elem-ty)
                           " "
                           (compiler-backend-avx2-indexed-addr elem-ty)
-                          (str-cat
-                            ", "
-                            dst-reg
-                            (str-cat "{" mask-reg "}{z}\n")
-                            ""
-                            ""))))]
+                          ", "
+                          dst-reg
+                          "{"
+                          mask-reg
+                          "}{z}\n")))]
                   [(ErrCompilerBackend message)
                     (ErrCompilerBackend
                       (compiler-backend-apply-instr-diagnostic
@@ -2217,12 +2216,11 @@
                           (compiler-backend-avx512-vector-move elem-ty)
                           " "
                           value-reg
-                          (str-cat
-                            ", "
-                            (compiler-backend-avx2-indexed-addr elem-ty)
-                            (str-cat "{" mask-reg "}\n")
-                            ""
-                            ""))))]
+                          ", "
+                          (compiler-backend-avx2-indexed-addr elem-ty)
+                          "{"
+                          mask-reg
+                          "}\n")))]
                   [(ErrCompilerBackend message)
                     (ErrCompilerBackend
                       (compiler-backend-apply-instr-diagnostic
@@ -2264,12 +2262,13 @@
                     (str-cat
                       "    vmovdqu8 "
                       (compiler-backend-avx2-indexed-addr (AstTyBool))
-                      (str-cat ", %zmm15{" mask-reg "}{z}\n")
-                      (str-cat
-                        "    vpxord %zmm14, %zmm14, %zmm14\n"
-                        "    vpcmpub $4, %zmm14, %zmm15, "
-                        dst-reg
-                        "\n"))))]
+                      ", %zmm15{"
+                      mask-reg
+                      "}{z}\n"
+                      "    vpxord %zmm14, %zmm14, %zmm14\n"
+                      "    vpcmpub $4, %zmm14, %zmm15, "
+                      dst-reg
+                      "\n")))]
               [(ErrCompilerBackend message)
                 (ErrCompilerBackend
                   (compiler-backend-apply-instr-diagnostic message instr-diag))])]
@@ -2311,13 +2310,13 @@
                     (str-cat
                       "    vpxord %zmm15, %zmm15, %zmm15\n"
                       "    movl $1, %edx\n    vmovd %edx, %xmm14\n"
-                      (str-cat
-                        "    vpbroadcastb %xmm14, %zmm14\n    vmovdqu8 %zmm14, %zmm15{"
-                        value-reg
-                        (str-cat
-                          "}\n    vmovdqu8 %zmm15, "
-                          (compiler-backend-avx2-indexed-addr (AstTyBool))
-                          (str-cat "{" mask-reg "}\n"))))))]
+                      "    vpbroadcastb %xmm14, %zmm14\n    vmovdqu8 %zmm14, %zmm15{"
+                      value-reg
+                      "}\n    vmovdqu8 %zmm15, "
+                      (compiler-backend-avx2-indexed-addr (AstTyBool))
+                      "{"
+                      mask-reg
+                      "}\n")))]
               [(ErrCompilerBackend message)
                 (ErrCompilerBackend
                   (compiler-backend-apply-instr-diagnostic message instr-diag))])]
@@ -2362,7 +2361,11 @@
                     (compiler-backend-mask-binop-mnemonic op lanes)
                     " "
                     rhs-reg
-                    (str-cat ", " lhs-reg ", " dst-reg "\n")))]
+                    ", "
+                    lhs-reg
+                    ", "
+                    dst-reg
+                    "\n"))]
               [(ErrBackendReg message)
                 (ErrCompilerBackend
                   (compiler-diagnostic-with-message instr-diag message))])]
@@ -2401,23 +2404,27 @@
                     (string-append "knot" mask-suffix)
                     " "
                     src-reg
-                    (str-cat ", " dst-reg "\n"))
+                    ", "
+                    dst-reg
+                    "\n")
                   (str-cat
                     "    "
                     mov-imm
                     " $"
                     (int->string full-mask)
-                    (str-cat
-                      ", "
-                      mask-gpr
-                      "\n    "
-                      mask-move
-                      (str-cat
-                        " "
-                        mask-gpr
-                        ", %k7\n    "
-                        (string-append "kand" mask-suffix)
-                        (str-cat " %k7, " dst-reg ", " dst-reg "\n"))))))]
+                    ", "
+                    mask-gpr
+                    "\n    "
+                    mask-move
+                    " "
+                    mask-gpr
+                    ", %k7\n    "
+                    (string-append "kand" mask-suffix)
+                    " %k7, "
+                    dst-reg
+                    ", "
+                    dst-reg
+                    "\n")))]
             [(ErrBackendReg message)
               (ErrCompilerBackend
                 (compiler-diagnostic-with-message instr-diag message))])]
@@ -2450,12 +2457,7 @@
             (string-append
               (string-append
                 (string-append
-                  (str-cat
-                    "    "
-                    mask-move
-                    " "
-                    src-reg
-                    (str-cat ", " mask-gpr "\n"))
+                  (str-cat "    " mask-move " " src-reg ", " mask-gpr "\n")
                   (match op
                     [(IrMaskReduceAny)
                       (str-cat
@@ -2463,24 +2465,24 @@
                         test-op
                         " "
                         mask-gpr
-                        (str-cat ", " mask-gpr "\n    setne %al\n"))]
+                        ", "
+                        mask-gpr
+                        "\n    setne %al\n")]
                     [(IrMaskReduceAll)
                       (str-cat
                         "    "
                         and-op
                         " $"
                         (int->string full-mask)
-                        (str-cat
-                          ", "
-                          mask-gpr
-                          "\n    "
-                          cmp-op
-                          (str-cat
-                            " $"
-                            (int->string full-mask)
-                            ", "
-                            mask-gpr
-                            "\n    sete %al\n")))]))
+                        ", "
+                        mask-gpr
+                        "\n    "
+                        cmp-op
+                        " $"
+                        (int->string full-mask)
+                        ", "
+                        mask-gpr
+                        "\n    sete %al\n")]))
                 "    movzbq %al, %rax\n")
               (compiler-backend-emit-store-var-with-plan assignments dst "%rax")))]
         [(ErrBackendReg message)
@@ -2902,23 +2904,20 @@
           [(CompilerRegRegister home)
             (if (string-eq home reg)
               ""
-              (str-cat "    " mov (str-cat " " home ", ") reg "\n"))]
+              (str-cat "    " mov " " home ", " reg "\n"))]
           ;; #2386: a register-group var is never float-class; unreachable.
           [(CompilerRegRegisterPair _ _) ""]
           [(CompilerRegSpill offset)
             (str-cat
               "    "
               mov
-              (str-cat " " (compiler-backend-frame-offset offset) ", ")
+              " "
+              (compiler-backend-frame-offset offset)
+              ", "
               reg
               "\n")])]
       [(CompilerRegNoLocation)
-        (str-cat
-          "    "
-          mov
-          (str-cat " " (compiler-backend-slot var-id) ", ")
-          reg
-          "\n")])))
+        (str-cat "    " mov " " (compiler-backend-slot var-id) ", " reg "\n")])))
 
 (define (compiler-backend-emit-load-f64-var-with-plan
   [assignments : CompilerRegAssignmentList]
@@ -2943,14 +2942,16 @@
           [(CompilerRegRegister home)
             (if (string-eq home reg)
               ""
-              (str-cat "    " mov (str-cat " " reg ", ") home "\n"))]
+              (str-cat "    " mov " " reg ", " home "\n"))]
           ;; #2386: a register-group var is never float-class; unreachable.
           [(CompilerRegRegisterPair _ _) ""]
           [(CompilerRegSpill offset)
             (str-cat
               "    "
               mov
-              (str-cat " " reg ", ")
+              " "
+              reg
+              ", "
               (compiler-backend-frame-offset offset)
               "\n")])]
       [(CompilerRegNoLocation)
@@ -3677,7 +3678,9 @@
           (str-cat
             "    "
             mov
-            (str-cat " " (compiler-backend-user-symbol name) "(%rip), ")
+            " "
+            (compiler-backend-user-symbol name)
+            "(%rip), "
             reg
             "\n"))]
       [(IrValueF64 text)
@@ -3890,12 +3893,7 @@
   [addr : String]
   [reg : String]
   [ty : AstType]) : String
-  (str-cat
-    "    "
-    (compiler-backend-float-move ty)
-    (str-cat " " addr ", ")
-    reg
-    "\n"))
+  (str-cat "    " (compiler-backend-float-move ty) " " addr ", " reg "\n"))
 
 (define (compiler-backend-emit-load-f64-memory [addr : String] [reg : String]) : String
   (compiler-backend-emit-load-float-memory addr reg (AstTyF64)))
@@ -4046,12 +4044,7 @@
   [addr : String]
   [reg : String]
   [ty : AstType]) : String
-  (str-cat
-    "    "
-    (compiler-backend-float-move ty)
-    (str-cat " " reg ", ")
-    addr
-    "\n"))
+  (str-cat "    " (compiler-backend-float-move ty) " " reg ", " addr "\n"))
 
 (define (compiler-backend-store-immediate-mnemonic [ty : AstType]) : String
   (let
@@ -4079,7 +4072,7 @@
           (if (string-eq mnemonic "")
             (CompilerBackendNoAsm)
             (CompilerBackendSomeAsm
-              (str-cat "    " mnemonic " " imm (str-cat ", " addr "\n")))))]
+              (str-cat "    " mnemonic " " imm ", " addr "\n"))))]
       [(CompilerBackendNoImmediate) (CompilerBackendNoAsm)])))
 
 (define (compiler-backend-emit-load-immediate-to-reg
@@ -4145,7 +4138,9 @@
           ymm
           ", %xmm0\n    "
           mnemonic
-          (str-cat " %xmm0, " xmm ", %xmm0\n"))
+          " %xmm0, "
+          xmm
+          ", %xmm0\n")
         "    vunpckhpd %xmm0, %xmm0, %xmm1\n    vaddsd %xmm1, %xmm0, %xmm0\n")]
     [(AstTyI64)
       (string-append
@@ -4154,7 +4149,9 @@
           ymm
           ", %xmm0\n    "
           mnemonic
-          (str-cat " %xmm0, " xmm ", %xmm0\n"))
+          " %xmm0, "
+          xmm
+          ", %xmm0\n")
         (str-cat
           "    vpsrldq $8, %xmm0, %xmm1\n    "
           mnemonic
@@ -4167,7 +4164,9 @@
           ymm
           ", %xmm0\n    "
           mnemonic
-          (str-cat " %xmm0, " xmm ", %xmm0\n"))
+          " %xmm0, "
+          xmm
+          ", %xmm0\n")
         (string-append
           (str-cat
             "    vpsrldq $8, %xmm0, %xmm1\n    "
@@ -4254,7 +4253,9 @@
             zmm
             ", %ymm0\n    "
             mnemonic
-            (str-cat " %ymm0, " ymm ", %ymm0\n"))
+            " %ymm0, "
+            ymm
+            ", %ymm0\n")
           (str-cat
             "    vextractf128 $1, %ymm0, %xmm1\n    "
             mnemonic
@@ -4269,7 +4270,9 @@
             zmm
             ", %ymm0\n    "
             mnemonic
-            (str-cat " %ymm0, " ymm ", %ymm0\n"))
+            " %ymm0, "
+            ymm
+            ", %ymm0\n")
           (str-cat
             "    vextracti128 $1, %ymm0, %xmm1\n    "
             mnemonic
@@ -4289,7 +4292,9 @@
               zmm
               ", %ymm0\n    "
               mnemonic
-              (str-cat " %ymm0, " ymm ", %ymm0\n"))
+              " %ymm0, "
+              ymm
+              ", %ymm0\n")
             (str-cat
               "    vextracti128 $1, %ymm0, %xmm1\n    "
               mnemonic
@@ -4398,7 +4403,9 @@
         "movq")
       " "
       src
-      (str-cat ", " dst "\n"))))
+      ", "
+      dst
+      "\n")))
 
 (define (compiler-backend-emit-load-pack-word
   [assignments : CompilerRegAssignmentList]
@@ -5094,10 +5101,9 @@
           (str-cat
             "    "
             (compiler-backend-float-move ty)
-            (str-cat
-              " "
-              (compiler-backend-global-symbol-index program-index name)
-              "(%rip), ")
+            " "
+            (compiler-backend-global-symbol-index program-index name)
+            "(%rip), "
             "%xmm0"
             "\n"))]
       [_
@@ -17046,58 +17052,55 @@
                         ".globl "
                         symbol
                         "\n"
-                        (str-cat
-                          (compiler-backend-emit-function-entry
-                            target
-                            symbol
-                            frame)
-                          ""
-                          ""
+                        (compiler-backend-emit-function-entry
+                          target
+                          symbol
+                          frame)
+                        ""
+                        ""
+                        (string-append
+                          (compiler-backend-mode-prologue mode)
                           (string-append
-                            (compiler-backend-mode-prologue mode)
+                            (compiler-backend-emit-save-callee-regs
+                              assignments
+                              slot-vars)
                             (string-append
-                              (compiler-backend-emit-save-callee-regs
-                                assignments
-                                slot-vars)
+                              (compiler-backend-emit-windows-main-argv-capture
+                                target
+                                name
+                                emit-entry
+                                plan)
                               (string-append
-                                (compiler-backend-emit-windows-main-argv-capture
+                                (compiler-backend-emit-linux-crt-main-argv-capture
                                   target
                                   name
-                                  emit-entry
+                                  crt-entry
                                   plan)
                                 (string-append
-                                  (compiler-backend-emit-linux-crt-main-argv-capture
-                                    target
-                                    name
-                                    crt-entry
-                                    plan)
+                                  (if (and
+                                    (string-eq name "main")
+                                    (or
+                                      (compiler-backend-target-windows? target)
+                                      (and
+                                        crt-entry
+                                        (compiler-backend-target-linux? target))))
+                                    (compiler-backend-global-initializers
+                                      globals
+                                      program-index)
+                                    "")
                                   (string-append
-                                    (if (and
-                                      (string-eq name "main")
-                                      (or
-                                        (compiler-backend-target-windows?
-                                          target)
-                                        (and
-                                          crt-entry
-                                          (compiler-backend-target-linux?
-                                            target))))
-                                      (compiler-backend-global-initializers
-                                        globals
-                                        program-index)
-                                      "")
+                                    spills
                                     (string-append
-                                      spills
+                                      body
                                       (string-append
-                                        body
-                                        (string-append
-                                          (compiler-backend-return-epilogue
-                                            name
-                                            assignments
-                                            slot-vars
-                                            emit-blocks-list)
-                                          (compiler-backend-emit-windows-seh-endproc
-                                            target)))))))))
-                          "\n"))))]
+                                        (compiler-backend-return-epilogue
+                                          name
+                                          assignments
+                                          slot-vars
+                                          emit-blocks-list)
+                                        (compiler-backend-emit-windows-seh-endproc
+                                          target)))))))))
+                        "\n")))]
                 [(ErrCompilerBackend message)
                   (let
                     [_addr-forward-done : unit
@@ -18306,12 +18309,7 @@
           (match (compiler-backend-global-value-asm ty value program-index)
             [(OkCompilerBackend value-asm)
               (OkCompilerBackend
-                (str-cat
-                  ".globl "
-                  symbol
-                  "\n"
-                  (str-cat symbol ":\n" value-asm)
-                  ""))]
+                (str-cat ".globl " symbol "\n" symbol ":\n" value-asm ""))]
             [(ErrCompilerBackend message) (ErrCompilerBackend message)])))]))
 
 (define (compiler-backend-emit-globals-into
@@ -18376,7 +18374,8 @@
           "    movq %rax, "
           symbol
           "(%rip)\n    movq %rdx, "
-          (str-cat symbol "+8(%rip)\n" "")
+          symbol
+          "+8(%rip)\n"
           "")
         (if (compiler-backend-float-type? ty)
           (str-cat
@@ -19666,12 +19665,13 @@ tl_profile_alloc_peak_bytes:
       arena-reg
       "), "
       used-reg
-      (str-cat
-        "\n    subq 8("
-        arena-reg
-        "), "
-        used-reg
-        (str-cat "\n    subq " used-reg ", tl_profile_alloc_live_bytes(%rip)\n")))
+      "\n    subq 8("
+      arena-reg
+      "), "
+      used-reg
+      "\n    subq "
+      used-reg
+      ", tl_profile_alloc_live_bytes(%rip)\n")
     ""))
 
 (define (compiler-backend-runtime-profile-live-rewind
@@ -19685,12 +19685,13 @@ tl_profile_alloc_peak_bytes:
       arena-reg
       "), "
       used-reg
-      (str-cat
-        "\n    subq "
-        mark-reg
-        ", "
-        used-reg
-        (str-cat "\n    subq " used-reg ", tl_profile_alloc_live_bytes(%rip)\n")))
+      "\n    subq "
+      mark-reg
+      ", "
+      used-reg
+      "\n    subq "
+      used-reg
+      ", tl_profile_alloc_live_bytes(%rip)\n")
     ""))
 
 (define (compiler-backend-runtime-fast-alloc-function
@@ -19713,7 +19714,9 @@ tl_profile_alloc_peak_bytes:
         label
         ":\n"
         (compiler-backend-current-arena-load target "%r8")
-        (str-cat "    testq %r8, %r8\n    jz " slow-label "\n"))]
+        "    testq %r8, %r8\n    jz "
+        slow-label
+        "\n")]
     [ordinary-body-a : String
       (backend-cat4
         "    movq 40(%r8), %r9
@@ -19778,10 +19781,11 @@ tl_profile_alloc_peak_bytes:
         "    ret
 "
         slow-label
-        (str-cat
-          ":\n    movq $"
-          size-text
-          (str-cat ", " size-reg "\n    jmp tl_alloc\n")))]
+        ":\n    movq $"
+        size-text
+        ", "
+        size-reg
+        "\n    jmp tl_alloc\n")]
     (string-append
       prologue
       (string-append
@@ -20870,8 +20874,7 @@ tl_alloc:
     movq %r10, 16(%r8)
 "
       fast-profile
-      (str-cat
-        "    ret
+      "    ret
 .L_tl_alloc_win_atomic:
     movq 56(%r9), %r8
     movq 16(%r8), %rax
@@ -20884,9 +20887,8 @@ tl_alloc:
     lock cmpxchgq %r10, 16(%r8)
     jne .L_tl_alloc_win_atomic_cas
 "
-        atomic-fast-profile
-        (str-cat
-          "    ret
+      atomic-fast-profile
+      "    ret
 .L_tl_alloc_atomic_new_arena_entry:
     push %rbp
     mov %rsp, %rbp
@@ -20925,9 +20927,8 @@ tl_alloc:
     jne .L_tl_alloc_atomic_locked_cas
     movq $1, 48(%r9)
 "
-          atomic-locked-profile
-          (str-cat
-            "    mov %rbp, %rsp
+      atomic-locked-profile
+      "    mov %rbp, %rsp
     pop %rbp
     ret
 .L_tl_alloc_atomic_abort_locked:
@@ -20974,9 +20975,8 @@ tl_alloc:
     movq $1, 48(%r9)
     movq %r8, %rax
 "
-            atomic-new-profile
-            (str-cat
-              "    mov %rbp, %rsp
+      atomic-new-profile
+      "    mov %rbp, %rsp
     pop %rbp
     ret
 .L_tl_alloc_new_arena:
@@ -21024,8 +21024,8 @@ tl_alloc:
     movq %rax, %gs:0x28
     movq %r8, %rax
 "
-              new-profile
-              "
+      new-profile
+      "
     mov %rbp, %rsp
     pop %rbp
     ret
@@ -21033,7 +21033,7 @@ tl_alloc:
     sub $32, %rsp
     call tl_oom_abort
 
-")))))))
+")))
 
 ;; The Linux out-of-bounds/division/shift abort handlers moved to the runtime
 ;; prelude (stdlib/runtime.tl as `tl-runtime-*-abort`, exported as the fixed
@@ -22014,12 +22014,11 @@ tl_memcpy:
           runtime-string-asm
           fs-asm
           thread-asm
-          (str-cat
-            env-var-exists-asm
-            env-var-value-asm
-            env-path-separator-asm
-            linux-libc-shims-asm
-            "")))]))
+          env-var-exists-asm
+          env-var-value-asm
+          env-path-separator-asm
+          linux-libc-shims-asm
+          ""))]))
 
 ;; Argument register for call arg `idx` under the target's calling convention.
 ;; System V (Linux) uses rdi/rsi/rdx/rcx/r8/r9 via `compiler-backend-arg-reg`;

@@ -61,11 +61,13 @@
         [(ErrIoString _) unit])
       result)))
 
+;: Inline test helper that forces an IO caller-result test failure.
 (define (io-caller-result-test-fail) : unit
   (begin
     (/ 1 0)
     unit))
 
+;: Inline test assertion for owned string equality.
 (define (io-caller-result-test-string-eq [actual : String] [expected : String]) : unit
   (if (string-eq actual expected)
     unit

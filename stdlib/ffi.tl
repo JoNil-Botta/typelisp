@@ -108,28 +108,34 @@
 (define (ffi-cstr [text : String]) : (Ptr u8)
   (ffi-c-string-alloc text))
 
+;: Inline test helper that reads a mutable byte pointer at `index`.
 (define (ffi-test-read-u8 [ptr : (MutPtr u8)] [index : i64]) : u8
   (unsafe
     (ptr-read (ptr-offset ptr index))))
 
+;: Inline test helper that reads a const byte pointer at `index`.
 (define (ffi-test-read-const-u8 [ptr : (Ptr u8)] [index : i64]) : u8
   (unsafe
     (ptr-read (ptr-offset ptr index))))
 
+;: Inline test helper that writes `value` to a mutable byte pointer.
 (define (ffi-test-write-u8! [ptr : (MutPtr u8)] [index : i64] [value : i64]) : unit
   (unsafe
     (ptr-write! (ptr-offset ptr index) (cast value : u8))))
 
+;: Inline test helper that forces a test failure.
 (define (ffi-test-fail) : unit
   (begin
     (/ 1 0)
     unit))
 
+;: Inline test assertion for byte values.
 (define (ffi-test-assert-u8-eq [actual : u8] [expected : i64]) : unit
   (if (= (cast actual : i64) expected)
     unit
     (ffi-test-fail)))
 
+;: Inline test assertion for successful C string copies.
 (define (ffi-test-assert-copy-ok
   [result : FfiCStringCopyResult]
   [expected : i64]) : unit
@@ -140,6 +146,7 @@
         (ffi-test-fail))]
     [_ (ffi-test-fail)]))
 
+;: Inline test assertion for too-small C string copy buffers.
 (define (ffi-test-assert-too-small
   [result : FfiCStringCopyResult]
   [expected : i64]) : unit
@@ -150,11 +157,13 @@
         (ffi-test-fail))]
     [_ (ffi-test-fail)]))
 
+;: Inline test assertion for rejected interior NUL strings.
 (define (ffi-test-assert-interior-nul [result : FfiCStringCopyResult]) : unit
   (match result
     [(FfiCStringInteriorNul) unit]
     [_ (ffi-test-fail)]))
 
+;: Inline test helper that builds a string containing an interior NUL byte.
 (define (ffi-test-string-with-nul) : String
   (let
     [data : (Array u8) (make-array u8 3)]

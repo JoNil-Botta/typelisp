@@ -163,11 +163,13 @@
           (text-buf-borrowed-chunks-render-balanced chunks count)
           (text-buf-borrowed-chunks-render-rev chunks "")))]))
 
+;: Inline test helper that forces a borrowed text buffer test failure.
 (define (text-buf-borrowed-test-fail) : unit
   (begin
     (/ 1 0)
     unit))
 
+;: Inline test helper that exercises borrowed text buffer rendering.
 (define (text-buf-borrowed-test-render [text : String] [chunk : String]) : String
   (let
     [left : (TextBufBorrowed text)

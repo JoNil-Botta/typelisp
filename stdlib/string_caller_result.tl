@@ -114,11 +114,13 @@
         new
         (string-replace-find-index text old)))))
 
+;: Inline test helper that forces a caller-result string test failure.
 (define (string-caller-result-test-fail) : unit
   (begin
     (/ 1 0)
     unit))
 
+;: Inline test assertion for owned string equality.
 (define (string-caller-result-test-string-eq
   [actual : String]
   [expected : String]) : unit

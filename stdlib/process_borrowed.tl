@@ -357,27 +357,33 @@
       (ErrProcessChild (ProcessInvalidCommand message))]
     [(ProcessNoString) (process-start (process-borrowed-command-owned command))]))
 
+;: Inline test helper that forces a borrowed process test failure.
 (define (process-borrowed-test-fail) : unit
   (begin
     (/ 1 0)
     unit))
 
+;: Inline test assertion for boolean true.
 (define (process-borrowed-test-assert-true [condition : bool]) : unit
   (if condition
     unit
     (process-borrowed-test-fail)))
 
+;: Inline test assertion for boolean false.
 (define (process-borrowed-test-assert-false [condition : bool]) : unit
   (process-borrowed-test-assert-true (not condition)))
 
+;: Inline test assertion for integer equality.
 (define (process-borrowed-test-assert-i64-eq [actual : i64] [expected : i64]) : unit
   (process-borrowed-test-assert-true (= actual expected)))
 
+;: Inline test assertion for owned process strings.
 (define (process-borrowed-test-assert-owned-string-eq
   [actual : String]
   [expected : String]) : unit
   (process-borrowed-test-assert-true (string-eq actual expected)))
 
+;: Inline test assertion for a one-element owned process string list.
 (define (process-borrowed-test-assert-process-string-list1
   [items : ProcessStringList]
   [first : String]) : unit
@@ -389,6 +395,7 @@
         [_ (process-borrowed-test-fail)])]
     [_ (process-borrowed-test-fail)]))
 
+;: Inline test assertion for an owned optional process string.
 (define (process-borrowed-test-assert-process-some-string
   [value : ProcessMaybeString]
   [expected : String]) : unit
@@ -397,6 +404,7 @@
       (process-borrowed-test-assert-owned-string-eq actual expected)]
     [(ProcessNoString) (process-borrowed-test-fail)]))
 
+;: Inline test assertion for a one-element borrowed process string list.
 (define (process-borrowed-test-assert-borrowed-string-list1
   [items : (ProcessBorrowedStringList text)]
   [expected : String]) : unit
@@ -409,6 +417,7 @@
         [_ (process-borrowed-test-fail)])]
     [(ProcessBorrowedStringNil) (process-borrowed-test-fail)]))
 
+;: Inline test assertion for a borrowed optional process string.
 (define (process-borrowed-test-assert-borrowed-some-string
   [value : (ProcessBorrowedMaybeString text)]
   [expected : String]) : unit
@@ -418,6 +427,7 @@
         (string-eq-borrowed actual (& expected)))]
     [(ProcessBorrowedNoString) (process-borrowed-test-fail)]))
 
+;: Inline test assertion for the head of an owned process environment list.
 (define (process-borrowed-test-assert-process-env-head
   [env : ProcessEnvList]
   [expected-name : String]
@@ -429,6 +439,7 @@
         (process-borrowed-test-assert-owned-string-eq value expected-value))]
     [(ProcessEnvNil) (process-borrowed-test-fail)]))
 
+;: Inline test assertion for the head of a borrowed process environment list.
 (define (process-borrowed-test-assert-borrowed-env-head
   [env : (ProcessBorrowedEnvList text)]
   [expected-name : String]
@@ -442,6 +453,7 @@
           (string-eq-borrowed value (& expected-value))))]
     [(ProcessBorrowedEnvNil) (process-borrowed-test-fail)]))
 
+;: Inline test assertion for invalid borrowed process output results.
 (define (process-borrowed-test-assert-invalid-output
   [result : ResultProcessOutput]
   [message : String]) : unit
@@ -455,6 +467,7 @@
           message))]
     [(OkProcessOutput _) (process-borrowed-test-fail)]))
 
+;: Inline test assertion for invalid borrowed process child results.
 (define (process-borrowed-test-assert-invalid-child
   [result : ResultProcessChild]
   [message : String]) : unit
@@ -468,6 +481,7 @@
           message))]
     [(OkProcessChild _) (process-borrowed-test-fail)]))
 
+;: Inline test body for borrowed process conversion helpers.
 (define (process-borrowed-test-api-check) : unit
   (let
     [exe : String "echo"]
@@ -536,6 +550,7 @@
       (process-borrowed-test-assert-true
         (process-borrowed-command-valid? borrowed)))))
 
+;: Inline test body for borrowed process validation helpers.
 (define (process-borrowed-test-validation-check) : unit
   (let
     [exe : String "echo"]

@@ -2816,7 +2816,11 @@
                             "    cmpq $10, %rax\n    setl %al\n")
                           (compiler-backend-string-contains?
                             branch-asm
-                            "    testq %rax, %rax\n    jne ")
+                            "    testq %r12, %r12\n    jne ")
+                          (not
+                            (compiler-backend-string-contains?
+                              branch-asm
+                              "    movq %r12, %rax\n"))
                           (not
                             (compiler-backend-string-contains?
                               branch-asm
@@ -3176,15 +3180,166 @@
       4)
       [(OkCompilerBackend asm)
         (and
-          (compiler-backend-string-contains?
-            asm
-            "    jl .Lphi_edge_entry_branch_true\n")
+          (compiler-backend-string-contains? asm "    jge .Lphi_edge_exit\n")
+          (not
+            (compiler-backend-string-contains?
+              asm
+              "    jl .Lphi_edge_entry_branch_true\n"))
           (compiler-backend-string-contains?
             asm
             ".Lphi_edge_entry_branch_true:\n")
-          (compiler-backend-string-contains? asm "    movl $1, %eax\n")
-          (compiler-backend-string-contains? asm "    movq %rax, %r12\n")
+          (compiler-backend-string-contains? asm "    movl $1, %r12d\n")
+          (not (compiler-backend-string-contains? asm "    movq %rax, %r12\n"))
+          (not
+            (compiler-backend-string-contains?
+              asm
+              ".Lphi_edge_entry_branch_false:\n"))
           (compiler-backend-string-contains? asm "    jmp .Lphi_edge_body\n"))]
+      [(ErrCompilerBackend _) false])))
+
+(define (compiler-backend-phi-immediate-stack-copy-ok?) : bool
+  (match (compiler-backend-emit-phi-edge-copies
+    CompilerRegAssignmentNil
+    (compiler-backend-branch-phi-blocks)
+    "body"
+    "entry"
+    (compiler-backend-program-index-build IrFunctionNil IrExternNil)
+    4)
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "    movq $1, -8(%rbp)\n")
+        (not (compiler-backend-string-contains? asm "    movl $1, %eax\n"))
+        (not
+          (compiler-backend-string-contains? asm "    movq %rax, -8(%rbp)\n")))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-phi-direct-scalar-copy-ok?) : bool
+  (match (compiler-backend-emit-phi-edge-copies
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment 0 (CompilerRegRegister "%r12"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 1 (CompilerRegRegister "%r13"))
+        CompilerRegAssignmentNil))
+    (compiler-backend-branch-phi-blocks)
+    "body"
+    "body"
+    (compiler-backend-program-index-build IrFunctionNil IrExternNil)
+    4)
+    [(OkCompilerBackend reg-reg)
+      (match (compiler-backend-emit-phi-edge-copies
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment 0 (CompilerRegRegister "%r12"))
+          (compiler-reg-assignment-cons
+            (CompilerRegAssignment 1 (CompilerRegSpill -16))
+            CompilerRegAssignmentNil))
+        (compiler-backend-branch-phi-blocks)
+        "body"
+        "body"
+        (compiler-backend-program-index-build IrFunctionNil IrExternNil)
+        4)
+        [(OkCompilerBackend spill-reg)
+          (match (compiler-backend-emit-phi-edge-copies
+            (compiler-reg-assignment-cons
+              (CompilerRegAssignment 0 (CompilerRegSpill -8))
+              (compiler-reg-assignment-cons
+                (CompilerRegAssignment 1 (CompilerRegRegister "%r13"))
+                CompilerRegAssignmentNil))
+            (compiler-backend-branch-phi-blocks)
+            "body"
+            "body"
+            (compiler-backend-program-index-build IrFunctionNil IrExternNil)
+            4)
+            [(OkCompilerBackend reg-spill)
+              (and
+                (compiler-backend-string-contains?
+                  reg-reg
+                  "    movq %r13, %r12\n")
+                (not
+                  (compiler-backend-string-contains?
+                    reg-reg
+                    "    movq %r13, %rax\n"))
+                (compiler-backend-string-contains?
+                  spill-reg
+                  "    movq -16(%rbp), %r12\n")
+                (not
+                  (compiler-backend-string-contains?
+                    spill-reg
+                    "    movq -16(%rbp), %rax\n"))
+                (compiler-backend-string-contains?
+                  reg-spill
+                  "    movq %r13, -8(%rbp)\n")
+                (not
+                  (compiler-backend-string-contains?
+                    reg-spill
+                    "    movq %r13, %rax\n")))]
+            [(ErrCompilerBackend _) false])]
+        [(ErrCompilerBackend _) false])]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-mov-phi-copy-entry-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (IrInstrMov 2 (IrValueI64 7) (AstTyI64))
+    (compiler-ir-instr-cons (IrInstrJump "join") IrInstrNil)))
+
+(define (compiler-backend-mov-phi-copy-join-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (IrInstrPhi
+      0
+      (compiler-ir-phi-input-cons (IrValueVar 2) "entry" IrPhiInputNil)
+      (AstTyI64))
+    (compiler-ir-instr-cons
+      (IrInstrMov 1 (IrValueVar 0) (AstTyI64))
+      (compiler-ir-instr-cons
+        (IrInstrReturn (IrSomeValue (IrValueVar 1)))
+        IrInstrNil))))
+
+(define (compiler-backend-mov-phi-copy-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block "entry" (compiler-backend-mov-phi-copy-entry-instrs))
+    (compiler-ir-block-cons
+      (compiler-ir-block "join" (compiler-backend-mov-phi-copy-join-instrs))
+      IrBlockNil)))
+
+(define (compiler-backend-mov-phi-copy-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment 0 (CompilerRegRegister "%r12"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment 1 (CompilerRegRegister "%r13"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 2 (CompilerRegRegister "%r14"))
+        CompilerRegAssignmentNil))))
+
+(define (compiler-backend-mov-phi-copy-fusion-ok?) : bool
+  (let
+    [blocks : CompilerIrBlockList (compiler-backend-mov-phi-copy-blocks)]
+    [use-counts : (Array i64) (compiler-backend-function-use-counts 3 blocks)]
+    (match (compiler-backend-emit-instrs
+      (BackendTargetLinux)
+      "_tl_test"
+      "test"
+      blocks
+      "entry"
+      (CompilerBackendNoLabel)
+      (compiler-backend-mov-phi-copy-entry-instrs)
+      (compiler-backend-mov-phi-copy-assignments)
+      3
+      CompilerRegVarTypeNil
+      (CompilerBackendGlobalTypeNil)
+      (AstTyI64)
+      (compiler-backend-runtime-helper-full-plan)
+      IrFunctionNil
+      IrExternNil
+      (compiler-backend-program-index-build IrFunctionNil IrExternNil)
+      (compiler-source-spans-empty)
+      (compiler-diagnostic-at-start "" "")
+      use-counts
+      (text-buf-empty))
+      [(OkCompilerBackend asm)
+        (and
+          (compiler-backend-string-contains? asm "    movl $7, %r12d\n")
+          (not (compiler-backend-string-contains? asm "    movl $7, %r14d\n"))
+          (not (compiler-backend-string-contains? asm "    movq %r14, %r12\n"))
+          (compiler-backend-string-contains? asm "    jmp .L_tl_test_join\n"))]
       [(ErrCompilerBackend _) false])))
 
 (define (compiler-backend-phi-parallel-copy-ok?) : bool
@@ -6184,6 +6339,43 @@
 (define (compiler-backend-bool-not-source) : String
   "(define (f [a : bool]) : bool (not a))")
 
+(define (compiler-backend-direct-condition-branch-ok?) : bool
+  (match (compiler-backend-emit-branch
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment 0 (CompilerRegRegister "%r12"))
+      CompilerRegAssignmentNil)
+    "bool_branch"
+    (IrValueVar 0)
+    "yes"
+    "no"
+    (CompilerBackendNoLabel))
+    [(OkCompilerBackend reg-asm)
+      (match (compiler-backend-emit-branch
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment 0 (CompilerRegSpill -24))
+          CompilerRegAssignmentNil)
+        "bool_branch"
+        (IrValueVar 0)
+        "yes"
+        "no"
+        (CompilerBackendNoLabel))
+        [(OkCompilerBackend spill-asm)
+          (and
+            (compiler-backend-string-contains? reg-asm "    testq %r12, %r12\n")
+            (not
+              (compiler-backend-string-contains?
+                reg-asm
+                "    movq %r12, %rax\n"))
+            (compiler-backend-string-contains?
+              spill-asm
+              "    cmpq $0, -24(%rbp)\n")
+            (not
+              (compiler-backend-string-contains?
+                spill-asm
+                "    movq -24(%rbp), %rax\n")))]
+        [(ErrCompilerBackend _) false])]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-todo-marker) : String
   (string-append "# " "TODO"))
 
@@ -6224,7 +6416,7 @@
       (compiler-backend-source-not-contains?
         (compiler-backend-bool-not-source)
         (compiler-backend-todo-marker))
-      true)))
+      (compiler-backend-direct-condition-branch-ok?))))
 
 ;; Backend-owned scalar instruction emit-shape coverage for stable wide integer
 ;; forms (#1353).
@@ -7783,7 +7975,10 @@
       (and
         (compiler-backend-phi-parallel-copy-ok?)
         (compiler-backend-phi-group-cycle-copy-ok?)
-        (compiler-backend-branch-phi-edge-copy-ok?))
+        (compiler-backend-branch-phi-edge-copy-ok?)
+        (compiler-backend-phi-immediate-stack-copy-ok?)
+        (compiler-backend-phi-direct-scalar-copy-ok?)
+        (compiler-backend-mov-phi-copy-fusion-ok?))
       (and
         (compiler-backend-f64-ok?)
         (compiler-backend-f32-literal-binop-ok?)

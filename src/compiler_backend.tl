@@ -6649,6 +6649,70 @@
     [(CompilerBackendSomeLabel label) (string-eq target label)]
     [(CompilerBackendNoLabel) false]))
 
+(define (compiler-backend-emit-branch-jumps
+  [function : String]
+  [true-label : String]
+  [false-label : String]
+  [fallthrough : CompilerBackendMaybeLabel]) : String
+  (if (compiler-backend-jump-target-is-fallthrough? false-label fallthrough)
+    (backend-cat4
+      "    jne "
+      (compiler-backend-asm-label function true-label)
+      "\n"
+      "")
+    (if (compiler-backend-jump-target-is-fallthrough? true-label fallthrough)
+      (backend-cat4
+        "    je "
+        (compiler-backend-asm-label function false-label)
+        "\n"
+        "")
+      (backend-cat5
+        "    jne "
+        (compiler-backend-asm-label function true-label)
+        "\n    jmp "
+        (compiler-backend-asm-label function false-label)
+        "\n"))))
+
+(define (compiler-backend-branch-test-var-asm
+  [assignments : CompilerRegAssignmentList]
+  [var-id : i64]) : String
+  (if (>= (compiler-backend-forwarded-addr-of-src var-id) 0)
+    ""
+    (match (compiler-reg-assignment-lookup assignments var-id)
+      [(CompilerRegSomeLocation location)
+        (match location
+          [(CompilerRegRegister home)
+            (str-cat "    testq " home ", " home "\n")]
+          [(CompilerRegRegisterPair _ _) ""]
+          [(CompilerRegSpill offset)
+            (str-cat
+              "    cmpq $0, "
+              (compiler-backend-frame-offset offset)
+              "\n")])]
+      [(CompilerRegNoLocation)
+        (str-cat "    cmpq $0, " (compiler-backend-slot var-id) "\n")])))
+
+(define (compiler-backend-emit-load-test-branch
+  [assignments : CompilerRegAssignmentList]
+  [function : String]
+  [cond : CompilerIrValue]
+  [true-label : String]
+  [false-label : String]
+  [fallthrough : CompilerBackendMaybeLabel]) : ResultCompilerBackend
+  (match (compiler-backend-emit-load-value-with-plan assignments cond "%rax")
+    [(OkCompilerBackend load)
+      (OkCompilerBackend
+        (string-append
+          load
+          (string-append
+            "    testq %rax, %rax\n"
+            (compiler-backend-emit-branch-jumps
+              function
+              true-label
+              false-label
+              fallthrough))))]
+    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+
 (define (compiler-backend-emit-branch
   [assignments : CompilerRegAssignmentList]
   [function : String]
@@ -6671,6 +6735,26 @@
             fallthrough)
             ""
             (compiler-backend-jump-label function false-label))))]
+    [(IrValueVar id)
+      (let
+        [test-asm : String
+          (compiler-backend-branch-test-var-asm assignments id)]
+        (if (string-eq test-asm "")
+          (compiler-backend-emit-load-test-branch
+            assignments
+            function
+            cond
+            true-label
+            false-label
+            fallthrough)
+          (OkCompilerBackend
+            (string-append
+              test-asm
+              (compiler-backend-emit-branch-jumps
+                function
+                true-label
+                false-label
+                fallthrough)))))]
     [_
       (match (compiler-backend-emit-load-value-with-plan
         assignments
@@ -10839,6 +10923,55 @@
               (box-get rest)
               dst-home-var))])]))
 
+(define (compiler-backend-phi-source-is-var?
+  [source : CompilerBackendPhiSource]
+  [var : i64]) : bool
+  (match source
+    [(BackendPhiSourceValue value)
+      (match value
+        [(IrValueVar id) (= id var)]
+        [_ false])]
+    [(BackendPhiSourceTemp) false]))
+
+(define (compiler-backend-phi-source-replace-var
+  [source : CompilerBackendPhiSource]
+  [var : i64]
+  [replacement : CompilerIrValue]) : CompilerBackendPhiSource
+  (if (compiler-backend-phi-source-is-var? source var)
+    (BackendPhiSourceValue replacement)
+    source))
+
+(define (compiler-backend-phi-copy-list-has-source-var?
+  [copies : CompilerBackendPhiCopyList]
+  [var : i64]) : bool
+  (match copies
+    [(BackendPhiCopyNil) false]
+    [(BackendPhiCopyCons copy rest)
+      (match copy
+        [(BackendPhiCopy _ source _)
+          (or
+            (compiler-backend-phi-source-is-var? source var)
+            (compiler-backend-phi-copy-list-has-source-var? (box-get rest) var))])]))
+
+(define (compiler-backend-phi-copy-list-replace-source-var
+  [copies : CompilerBackendPhiCopyList]
+  [var : i64]
+  [replacement : CompilerIrValue]) : CompilerBackendPhiCopyList
+  (match copies
+    [(BackendPhiCopyNil) BackendPhiCopyNil]
+    [(BackendPhiCopyCons copy rest)
+      (match copy
+        [(BackendPhiCopy dst source ty)
+          (compiler-backend-phi-copy-cons
+            (BackendPhiCopy
+              dst
+              (compiler-backend-phi-source-replace-var source var replacement)
+              ty)
+            (compiler-backend-phi-copy-list-replace-source-var
+              (box-get rest)
+              var
+              replacement))])]))
+
 (define (compiler-backend-phi-group-temp-reg
   [program-index : CompilerBackendProgramIndex]
   [ty : AstType]
@@ -10887,6 +11020,149 @@
     (OkCompilerBackend
       (compiler-backend-emit-store-var-with-plan assignments dst "%r11"))))
 
+(define (compiler-backend-emit-phi-source-load-store
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [value : CompilerIrValue]
+  [ty : AstType]
+  [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
+  (match (compiler-backend-emit-load-typed-value-with-plan
+    assignments
+    value
+    ty
+    program-index)
+    [(OkCompilerBackend load)
+      (OkCompilerBackend
+        (string-append
+          load
+          (compiler-backend-emit-store-typed-var-with-plan
+            assignments
+            dst
+            (if (compiler-backend-float-type? ty)
+              "%xmm0"
+              "%rax")
+            ty)))]
+    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+
+(define (compiler-backend-emit-phi-var-source-direct
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [src-id : i64]) : CompilerBackendMaybeAsm
+  (if (>= (compiler-backend-forwarded-addr-of-src src-id) 0)
+    (CompilerBackendNoAsm)
+    (match (compiler-reg-assignment-lookup assignments dst)
+      [(CompilerRegSomeLocation dst-location)
+        (match dst-location
+          [(CompilerRegRegister dst-home)
+            (match (compiler-reg-assignment-lookup assignments src-id)
+              [(CompilerRegSomeLocation src-location)
+                (match src-location
+                  [(CompilerRegRegister src-home)
+                    (CompilerBackendSomeAsm
+                      (if (string-eq src-home dst-home)
+                        ""
+                        (str-cat "    movq " src-home ", " dst-home "\n")))]
+                  [(CompilerRegRegisterPair _ _) (CompilerBackendNoAsm)]
+                  [(CompilerRegSpill src-offset)
+                    (CompilerBackendSomeAsm
+                      (str-cat
+                        "    movq "
+                        (compiler-backend-frame-offset src-offset)
+                        ", "
+                        dst-home
+                        "\n"))])]
+              [(CompilerRegNoLocation)
+                (CompilerBackendSomeAsm
+                  (str-cat
+                    "    movq "
+                    (compiler-backend-slot src-id)
+                    ", "
+                    dst-home
+                    "\n"))])]
+          [(CompilerRegRegisterPair _ _) (CompilerBackendNoAsm)]
+          [(CompilerRegSpill dst-offset)
+            (match (compiler-reg-assignment-lookup assignments src-id)
+              [(CompilerRegSomeLocation src-location)
+                (match src-location
+                  [(CompilerRegRegister src-home)
+                    (CompilerBackendSomeAsm
+                      (str-cat
+                        "    movq "
+                        src-home
+                        ", "
+                        (compiler-backend-frame-offset dst-offset)
+                        "\n"))]
+                  [_ (CompilerBackendNoAsm)])]
+              [(CompilerRegNoLocation) (CompilerBackendNoAsm)])])]
+      [(CompilerRegNoLocation)
+        (match (compiler-reg-assignment-lookup assignments src-id)
+          [(CompilerRegSomeLocation src-location)
+            (match src-location
+              [(CompilerRegRegister src-home)
+                (CompilerBackendSomeAsm
+                  (str-cat
+                    "    movq "
+                    src-home
+                    ", "
+                    (compiler-backend-slot dst)
+                    "\n"))]
+              [_ (CompilerBackendNoAsm)])]
+          [(CompilerRegNoLocation) (CompilerBackendNoAsm)])])))
+
+(define (compiler-backend-emit-phi-source-immediate-or-load-store
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [value : CompilerIrValue]
+  [ty : AstType]
+  [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
+  (match (compiler-backend-emit-store-immediate-to-var-home
+    assignments
+    dst
+    value)
+    [(CompilerBackendSomeAsm asm) (OkCompilerBackend asm)]
+    [(CompilerBackendNoAsm)
+      (compiler-backend-emit-phi-source-load-store
+        assignments
+        dst
+        value
+        ty
+        program-index)]))
+
+(define (compiler-backend-emit-phi-source-scalar-to-var
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [value : CompilerIrValue]
+  [ty : AstType]
+  [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
+  (if (compiler-backend-float-type? ty)
+    (compiler-backend-emit-phi-source-load-store
+      assignments
+      dst
+      value
+      ty
+      program-index)
+    (match value
+      [(IrValueVar src-id)
+        (match (compiler-backend-emit-phi-var-source-direct
+          assignments
+          dst
+          src-id)
+          [(CompilerBackendSomeAsm asm) (OkCompilerBackend asm)]
+          [(CompilerBackendNoAsm)
+            (compiler-backend-emit-phi-source-immediate-or-load-store
+              assignments
+              dst
+              value
+              ty
+              program-index)])]
+      [_
+        (compiler-backend-emit-phi-source-immediate-or-load-store
+          assignments
+          dst
+          value
+          ty
+          program-index)])))
+
 (define (compiler-backend-emit-phi-source-to-var
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
@@ -10929,23 +11205,12 @@
                   (OkCompilerBackend (string-append load store))]
                 [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
             [(ErrCompilerBackend message) (ErrCompilerBackend message)])
-          (match (compiler-backend-emit-load-typed-value-with-plan
+          (compiler-backend-emit-phi-source-scalar-to-var
             assignments
+            dst
             value
             ty
-            program-index)
-            [(OkCompilerBackend load)
-              (OkCompilerBackend
-                (string-append
-                  load
-                  (compiler-backend-emit-store-typed-var-with-plan
-                    assignments
-                    dst
-                    (if (compiler-backend-float-type? ty)
-                      "%xmm0"
-                      "%rax")
-                    ty)))]
-            [(ErrCompilerBackend message) (ErrCompilerBackend message)])))]))
+            program-index)))]))
 
 (define (compiler-backend-emit-phi-copy-item
   [assignments : CompilerRegAssignmentList]
@@ -11140,6 +11405,64 @@
         program-index
         vars)]))
 
+(define (compiler-backend-emit-mov-phi-copy-edge
+  [assignments : CompilerRegAssignmentList]
+  [blocks : CompilerIrBlockList]
+  [target-label : String]
+  [from-label : String]
+  [moved-dst : i64]
+  [moved-src : CompilerIrValue]
+  [program-index : CompilerBackendProgramIndex]
+  [vars : i64]) : ResultCompilerBackend
+  (match blocks
+    [(IrBlockNil)
+      (ErrCompilerBackend
+        (compiler-diagnostic-at-start
+          ""
+          (string-append "backend: unknown block " target-label)))]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock block-label instrs)
+          (if (string-eq block-label target-label)
+            (match (compiler-backend-leading-phi-copies-seq
+              assignments
+              instrs
+              from-label)
+              [(OkBackendPhiCopies copies)
+                (if (compiler-backend-phi-copy-list-has-source-var?
+                  copies
+                  moved-dst)
+                  (compiler-backend-emit-phi-copy-list
+                    assignments
+                    (compiler-backend-phi-copy-list-replace-source-var
+                      copies
+                      moved-dst
+                      moved-src)
+                    program-index
+                    vars)
+                  (OkCompilerBackend ""))]
+              [(ErrBackendPhiCopies message)
+                (ErrCompilerBackend (compiler-diagnostic-at-start "" message))])
+            (compiler-backend-emit-mov-phi-copy-edge
+              assignments
+              (box-get rest)
+              target-label
+              from-label
+              moved-dst
+              moved-src
+              program-index
+              vars))])]
+    [(IrBlockArray seq)
+      (compiler-backend-emit-mov-phi-copy-edge
+        assignments
+        (compiler-ir-block-seq-to-list seq)
+        target-label
+        from-label
+        moved-dst
+        moved-src
+        program-index
+        vars)]))
+
 (define (compiler-backend-instr-seq-starts-with-phi?
   [instrs : CompilerIrInstrSeq]) : bool
   (if (= (compiler-ir-instr-seq-count instrs) 0)
@@ -11196,17 +11519,40 @@
   [suffix : String]) : String
   (string-append (string-append current-label "_branch_") suffix))
 
+(define (compiler-backend-branch-edge-target
+  [edge-label : String]
+  [target-label : String]
+  [copies : String]) : String
+  (if (string-eq copies "")
+    target-label
+    edge-label))
+
+(define (compiler-backend-branch-edge-fallthrough
+  [current-label : String]
+  [true-copies : String]
+  [false-copies : String]
+  [fallthrough : CompilerBackendMaybeLabel]) : CompilerBackendMaybeLabel
+  (if (not (string-eq true-copies ""))
+    (CompilerBackendSomeLabel
+      (compiler-backend-branch-edge-label current-label "true"))
+    (if (not (string-eq false-copies ""))
+      (CompilerBackendSomeLabel
+        (compiler-backend-branch-edge-label current-label "false"))
+      fallthrough)))
+
 (define (compiler-backend-emit-branch-edge-block
   [function : String]
   [edge-label : String]
   [target-label : String]
   [copies : String]) : String
-  (backend-cat5
-    (compiler-backend-asm-label function edge-label)
-    ":\n"
-    copies
-    (compiler-backend-jump-label function target-label)
-    ""))
+  (if (string-eq copies "")
+    ""
+    (backend-cat5
+      (compiler-backend-asm-label function edge-label)
+      ":\n"
+      copies
+      (compiler-backend-jump-label function target-label)
+      "")))
 
 (define (compiler-backend-emit-branch-edges
   [function : String]
@@ -11275,13 +11621,29 @@
                 (compiler-backend-branch-edge-label current-label "true")]
               [false-edge : String
                 (compiler-backend-branch-edge-label current-label "false")]
+              [true-target : String
+                (compiler-backend-branch-edge-target
+                  true-edge
+                  true-label
+                  true-copies)]
+              [false-target : String
+                (compiler-backend-branch-edge-target
+                  false-edge
+                  false-label
+                  false-copies)]
+              [edge-fallthrough : CompilerBackendMaybeLabel
+                (compiler-backend-branch-edge-fallthrough
+                  current-label
+                  true-copies
+                  false-copies
+                  fallthrough)]
               (match (compiler-backend-emit-branch
                 assignments
                 function
                 cond
-                true-edge
-                false-edge
-                CompilerBackendNoLabel)
+                true-target
+                false-target
+                edge-fallthrough)
                 [(OkCompilerBackend branch-asm)
                   (OkCompilerBackend
                     (compiler-backend-emit-branch-edges
@@ -11342,6 +11704,22 @@
                 (compiler-backend-branch-edge-label current-label "true")]
               [false-edge : String
                 (compiler-backend-branch-edge-label current-label "false")]
+              [true-target : String
+                (compiler-backend-branch-edge-target
+                  true-edge
+                  true-label
+                  true-copies)]
+              [false-target : String
+                (compiler-backend-branch-edge-target
+                  false-edge
+                  false-label
+                  false-copies)]
+              [edge-fallthrough : CompilerBackendMaybeLabel
+                (compiler-backend-branch-edge-fallthrough
+                  current-label
+                  true-copies
+                  false-copies
+                  fallthrough)]
               (match (compiler-backend-emit-compare-branch
                 assignments
                 function
@@ -11349,9 +11727,9 @@
                 lhs
                 rhs
                 ty
-                true-edge
-                false-edge
-                CompilerBackendNoLabel)
+                true-target
+                false-target
+                edge-fallthrough)
                 [(OkCompilerBackend branch-asm)
                   (OkCompilerBackend
                     (compiler-backend-emit-branch-edges
@@ -11412,6 +11790,22 @@
                 (compiler-backend-branch-edge-label current-label "true")]
               [false-edge : String
                 (compiler-backend-branch-edge-label current-label "false")]
+              [true-target : String
+                (compiler-backend-branch-edge-target
+                  true-edge
+                  true-label
+                  true-copies)]
+              [false-target : String
+                (compiler-backend-branch-edge-target
+                  false-edge
+                  false-label
+                  false-copies)]
+              [edge-fallthrough : CompilerBackendMaybeLabel
+                (compiler-backend-branch-edge-fallthrough
+                  current-label
+                  true-copies
+                  false-copies
+                  fallthrough)]
               (match (compiler-backend-emit-load-compare-branch
                 assignments
                 function
@@ -11419,9 +11813,9 @@
                 op
                 rhs
                 ty
-                true-edge
-                false-edge
-                CompilerBackendNoLabel)
+                true-target
+                false-target
+                edge-fallthrough)
                 [(OkCompilerBackend branch-asm)
                   (OkCompilerBackend
                     (compiler-backend-emit-branch-edges
@@ -11486,6 +11880,22 @@
                 (compiler-backend-branch-edge-label current-label "true")]
               [false-edge : String
                 (compiler-backend-branch-edge-label current-label "false")]
+              [true-target : String
+                (compiler-backend-branch-edge-target
+                  true-edge
+                  true-label
+                  true-copies)]
+              [false-target : String
+                (compiler-backend-branch-edge-target
+                  false-edge
+                  false-label
+                  false-copies)]
+              [edge-fallthrough : CompilerBackendMaybeLabel
+                (compiler-backend-branch-edge-fallthrough
+                  current-label
+                  true-copies
+                  false-copies
+                  fallthrough)]
               (match (compiler-backend-emit-gep-load-compare-branch
                 assignments
                 function
@@ -11495,9 +11905,9 @@
                 op
                 rhs
                 ty
-                true-edge
-                false-edge
-                CompilerBackendNoLabel)
+                true-target
+                false-target
+                edge-fallthrough)
                 [(OkCompilerBackend branch-asm)
                   (OkCompilerBackend
                     (compiler-backend-emit-branch-edges
@@ -13982,28 +14392,101 @@
     program-index)
     [(OkCompilerBackend direct-return)
       (if (string-eq direct-return "")
-        (compiler-backend-emit-instrs-normal
-          target
-          function
-          source-function
-          blocks
-          current-label
-          fallthrough
-          (IrInstrMov dst src ty)
-          (compiler-ir-instr-cons (IrInstrJump target-label) after-jump)
-          assignments
-          vars
-          types
-          global-types
-          ret-ty
-          plan
-          functions
-          externs
-          program-index
-          spans
-          func-diag
-          use-counts
-          buf)
+        (if (compiler-backend-var-single-use? use-counts dst)
+          (match (compiler-backend-emit-mov-phi-copy-edge
+            assignments
+            blocks
+            target-label
+            current-label
+            dst
+            src
+            program-index
+            vars)
+            [(OkCompilerBackend fused-copies)
+              (if (string-eq fused-copies "")
+                (compiler-backend-emit-instrs-normal
+                  target
+                  function
+                  source-function
+                  blocks
+                  current-label
+                  fallthrough
+                  (IrInstrMov dst src ty)
+                  (compiler-ir-instr-cons (IrInstrJump target-label) after-jump)
+                  assignments
+                  vars
+                  types
+                  global-types
+                  ret-ty
+                  plan
+                  functions
+                  externs
+                  program-index
+                  spans
+                  func-diag
+                  use-counts
+                  buf)
+                (compiler-backend-emit-instrs
+                  target
+                  function
+                  source-function
+                  blocks
+                  current-label
+                  fallthrough
+                  after-jump
+                  assignments
+                  vars
+                  types
+                  global-types
+                  ret-ty
+                  plan
+                  functions
+                  externs
+                  program-index
+                  spans
+                  func-diag
+                  use-counts
+                  (text-buf-append
+                    buf
+                    (string-append
+                      fused-copies
+                      (if (compiler-backend-jump-target-is-fallthrough?
+                        target-label
+                        fallthrough)
+                        ""
+                        (compiler-backend-jump-label function target-label))))))]
+            [(ErrCompilerBackend message)
+              (ErrCompilerBackend
+                (compiler-backend-apply-instr-diagnostic
+                  message
+                  (compiler-backend-instr-diagnostic
+                    spans
+                    source-function
+                    (IrInstrMov dst src ty)
+                    func-diag
+                    "")))])
+          (compiler-backend-emit-instrs-normal
+            target
+            function
+            source-function
+            blocks
+            current-label
+            fallthrough
+            (IrInstrMov dst src ty)
+            (compiler-ir-instr-cons (IrInstrJump target-label) after-jump)
+            assignments
+            vars
+            types
+            global-types
+            ret-ty
+            plan
+            functions
+            externs
+            program-index
+            spans
+            func-diag
+            use-counts
+            buf))
         (compiler-backend-emit-instrs
           target
           function

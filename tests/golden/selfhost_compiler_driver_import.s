@@ -147,7 +147,7 @@ tl_oob_abort:
 .Lf4_entry:
     leaq .L_tl_str_l30_684964583_949472601(%rip), %rax
     movq %rax, -8(%rbp)
-    movq -8(%rbp), %rdi
+    movq %rax, %rdi
     call _tl_stdlib_runtime_runtime_abort_write
     movq %rax, -16(%rbp)
     movl $134, %edi
@@ -162,7 +162,7 @@ tl_div_abort:
 .Lf5_entry:
     leaq .L_tl_str_l40_150886025_1314050685(%rip), %rax
     movq %rax, -8(%rbp)
-    movq -8(%rbp), %rdi
+    movq %rax, %rdi
     call _tl_stdlib_runtime_runtime_abort_write
     movq %rax, -16(%rbp)
     movl $135, %edi
@@ -177,7 +177,7 @@ tl_shift_abort:
 .Lf6_entry:
     leaq .L_tl_str_l29_1993323280_919009571(%rip), %rax
     movq %rax, -8(%rbp)
-    movq -8(%rbp), %rdi
+    movq %rax, %rdi
     call _tl_stdlib_runtime_runtime_abort_write
     movq %rax, -16(%rbp)
     movl $129, %edi
@@ -264,7 +264,7 @@ tl_region_abort:
 .Lf10_entry:
     leaq .L_tl_str_l24_1300740986_1050262163(%rip), %rax
     movq %rax, -8(%rbp)
-    movq -8(%rbp), %rdi
+    movq %rax, %rdi
     call _tl_stdlib_runtime_runtime_abort_write
     movq %rax, -16(%rbp)
     movl $134, %edi
@@ -279,7 +279,7 @@ tl_oom_abort:
 .Lf11_entry:
     leaq .L_tl_str_l22_1063972566_1775948496(%rip), %rax
     movq %rax, -8(%rbp)
-    movq -8(%rbp), %rdi
+    movq %rax, %rdi
     call _tl_stdlib_runtime_runtime_abort_write
     movq %rax, -16(%rbp)
     movl $134, %edi

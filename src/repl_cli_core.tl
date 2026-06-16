@@ -25,13 +25,9 @@
 ;; failing input, and return to the prompt with previously accepted declarations
 ;; intact.
 (import "stdlib/io.tl")
-
 (import "compiler_typecheck.tl")
-
 (import "compiler_load.tl")
-
 (import "build_run_core.tl")
-
 (import "../stdlib/string.tl")
 
 (defenum ReplTypeCommand

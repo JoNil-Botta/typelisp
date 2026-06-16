@@ -1,11 +1,7 @@
 (import "stdlib/fs.tl")
-
 (import "stdlib/io.tl")
-
 (import "stdlib/msvc.tl")
-
 (import "stdlib/test.tl")
-
 (import "stdlib/vector.tl")
 
 (define (assert-owned-string-eq

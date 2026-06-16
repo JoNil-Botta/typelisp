@@ -1,22 +1,13 @@
 ;; compiler_typecheck_core.tl - Specialization-free scalar typechecker core (#1436).
 (import "../stdlib/io.tl")
-
 (import "../stdlib/arena.tl")
-
 (import "compiler_symbols.tl")
-
 (import "compiler_load.tl")
-
 (import "compiler_builtin_ids.tl")
-
 (import "compiler_diagnostic.tl")
-
 (import "compiler_ctfe.tl")
-
 (import "compiler_clone.tl")
-
 (import "../stdlib/string.tl")
-
 (import "../stdlib/str_cat.tl")
 
 ;; TcTypeCache fields: ids map, values, unsafe flags, raw C fnptr flags,
@@ -355,19 +346,14 @@
 
 (define tc-prefix-snapshot-cache-capacity : i64
   64)
-
 (define tc-prefix-snapshot-cache : (Array TcPrefixSnapshotSlot)
   (make-array TcPrefixSnapshotSlot 64))
-
 (define tc-prefix-snapshot-cache-ready : bool
   false)
-
 (define tc-prefix-snapshot-cache-hit-count : i64
   0)
-
 (define tc-prefix-snapshot-cache-miss-count : i64
   0)
-
 (define tc-prefix-snapshot-cache-store-count : i64
   0)
 
@@ -736,12 +722,10 @@
   compile-profile
   (define compiler-tc-profile-start-ms : i64
     0))
-
 (cfg
   compile-profile
   (define compiler-tc-profile-start-total : i64
     0))
-
 (cfg
   compile-profile
   (define compiler-tc-profile-start-live : i64
@@ -789,7 +773,6 @@
   compile-profile
   (define compiler-tc-macro-profile-start-ms : i64
     0))
-
 (cfg
   compile-profile
   (define compiler-tc-macro-profile-entries : CompilerTcMacroProfileEntries
@@ -926,147 +909,118 @@
   compile-profile
   (define compiler-tc-decl-profile-start-ms : i64
     0))
-
 (cfg
   compile-profile
   (define compiler-tc-decl-profile-section-start-alloc : i64
     0))
-
 (cfg
   compile-profile
   (define compiler-tc-decl-profile-section-start-live : i64
     0))
-
 (cfg
   compile-profile
   (define compiler-tc-decl-profile-local-env-alloc : i64
     0))
-
 (cfg
   compile-profile
   (define compiler-tc-decl-profile-local-env-live : i64
     0))
-
 (cfg
   compile-profile
   (define compiler-tc-decl-profile-arena-alloc : i64
     0))
-
 (cfg
   compile-profile
   (define compiler-tc-decl-profile-arena-live : i64
     0))
-
 (cfg
   compile-profile
   (define compiler-tc-decl-profile-def-expr-alloc : i64
     0))
-
 (cfg
   compile-profile
   (define compiler-tc-decl-profile-def-expr-live : i64
     0))
-
 (cfg
   compile-profile
   (define compiler-tc-decl-profile-fn-expr-alloc : i64
     0))
-
 (cfg
   compile-profile
   (define compiler-tc-decl-profile-fn-expr-live : i64
     0))
-
 (cfg
   compile-profile
   (define compiler-tc-decl-profile-fn-move-alloc : i64
     0))
-
 (cfg
   compile-profile
   (define compiler-tc-decl-profile-fn-move-live : i64
     0))
-
 (cfg
   compile-profile
   (define compiler-tc-decl-profile-macro-alloc : i64
     0))
-
 (cfg
   compile-profile
   (define compiler-tc-decl-profile-macro-live : i64
     0))
-
 (cfg
   compile-profile
   (define compiler-tc-decl-profile-extern-alloc : i64
     0))
-
 (cfg
   compile-profile
   (define compiler-tc-decl-profile-extern-live : i64
     0))
-
 (cfg
   compile-profile
   (define compiler-tc-decl-profile-local-env-ms : i64
     0))
-
 (cfg
   compile-profile
   (define compiler-tc-decl-profile-arena-ms : i64
     0))
-
 (cfg
   compile-profile
   (define compiler-tc-decl-profile-def-expr-ms : i64
     0))
-
 (cfg
   compile-profile
   (define compiler-tc-decl-profile-fn-expr-ms : i64
     0))
-
 (cfg
   compile-profile
   (define compiler-tc-decl-profile-fn-move-ms : i64
     0))
-
 (cfg
   compile-profile
   (define compiler-tc-decl-profile-macro-ms : i64
     0))
-
 (cfg
   compile-profile
   (define compiler-tc-decl-profile-extern-ms : i64
     0))
-
 (cfg
   compile-profile
   (define compiler-tc-decl-profile-decl-count : i64
     0))
-
 (cfg
   compile-profile
   (define compiler-tc-decl-profile-def-count : i64
     0))
-
 (cfg
   compile-profile
   (define compiler-tc-decl-profile-fn-count : i64
     0))
-
 (cfg
   compile-profile
   (define compiler-tc-decl-profile-macro-count : i64
     0))
-
 (cfg
   compile-profile
   (define compiler-tc-decl-profile-extern-count : i64
     0))
-
 (cfg
   compile-profile
   (define compiler-tc-decl-profile-other-count : i64
@@ -1850,7 +1804,6 @@
 ;; zero-initialized arrays are invalid for every generation.
 (define tc-unsafe-decl-marker-id-cache : (Array i64)
   (make-array i64 262144))
-
 (define tc-unsafe-decl-marker-id-cache-gens : (Array i64)
   (make-array i64 262144))
 
@@ -1886,7 +1839,6 @@
 
 (define tc-c-abi-fnptr-marker-id-cache : (Array i64)
   (make-array i64 262144))
-
 (define tc-c-abi-fnptr-marker-id-cache-gens : (Array i64)
   (make-array i64 262144))
 
@@ -2385,7 +2337,6 @@
 ;; name-id memo comment above tc-unsafe-decl-marker-id.
 (define tc-default-boundary-id-cache : i64
   -1)
-
 (define tc-default-boundary-id-cache-generation : i64
   -1)
 
@@ -2404,7 +2355,6 @@
 
 (define tc-region-marker-id-cache : i64
   -1)
-
 (define tc-region-marker-id-cache-generation : i64
   -1)
 
@@ -2423,7 +2373,6 @@
 
 (define tc-cleanup-owner-marker-id-cache : i64
   -1)
-
 (define tc-cleanup-owner-marker-id-cache-generation : i64
   -1)
 
@@ -2442,7 +2391,6 @@
 
 (define tc-return-type-id-cache : i64
   -1)
-
 (define tc-return-type-id-cache-generation : i64
   -1)
 
@@ -2461,7 +2409,6 @@
 
 (define tc-hygiene-global-boundary-id-cache : i64
   -1)
-
 (define tc-hygiene-global-boundary-id-cache-generation : i64
   -1)
 
@@ -2501,7 +2448,6 @@
 
 (define tc-hygiene-active-top-env : TcTypeEnv
   (tc-empty-type-env))
-
 (define tc-hygiene-module-env-cache : TcModuleLocalEnvCache
   (tc-empty-module-local-env-cache))
 
@@ -2624,7 +2570,6 @@
 
 (define tc-unsafe-marker-id-cache : i64
   -1)
-
 (define tc-unsafe-marker-id-cache-generation : i64
   -1)
 
@@ -5231,61 +5176,42 @@
 
 (define tc-nominal-owner-cache-handle : i64
   0)
-
 (define tc-nominal-owner-cache-name : String
   "")
-
 (define tc-nominal-owner-cache-handle1 : i64
   0)
-
 (define tc-nominal-owner-cache-name1 : String
   "")
-
 (define tc-nominal-owner-cache-handle2 : i64
   0)
-
 (define tc-nominal-owner-cache-name2 : String
   "")
-
 (define tc-nominal-owner-cache-handle3 : i64
   0)
-
 (define tc-nominal-owner-cache-name3 : String
   "")
-
 (define tc-nominal-owner-cache-handle4 : i64
   0)
-
 (define tc-nominal-owner-cache-name4 : String
   "")
-
 (define tc-nominal-owner-cache-handle5 : i64
   0)
-
 (define tc-nominal-owner-cache-name5 : String
   "")
-
 (define tc-nominal-owner-cache-handle6 : i64
   0)
-
 (define tc-nominal-owner-cache-name6 : String
   "")
-
 (define tc-nominal-owner-cache-handle7 : i64
   0)
-
 (define tc-nominal-owner-cache-name7 : String
   "")
-
 (define tc-resolve-type-name-cache-valid : bool
   false)
-
 (define tc-resolve-type-name-cache-found : bool
   false)
-
 (define tc-resolve-type-name-cache-key : String
   "")
-
 (define tc-resolve-type-name-cache-handle : i64
   0)
 
@@ -11425,7 +11351,6 @@
 ;; the set is rebuilt without caching, preserving correctness.
 (define tc-clone-able-cache-ready : bool
   false)
-
 (define tc-clone-able-cache : CloneNameSet
   (clone-name-set-empty))
 
@@ -12130,19 +12055,14 @@
 ;; --------------------------------------------------------------------------
 (define tc-inlay-hint-capacity : i64
   65536)
-
 (define tc-inlay-hint-enabled : bool
   false)
-
 (define tc-inlay-hint-count : i64
   0)
-
 (define tc-inlay-hint-lines : (Array i64)
   (make-array i64 65536))
-
 (define tc-inlay-hint-cols : (Array i64)
   (make-array i64 65536))
-
 (define tc-inlay-hint-types : (Array String)
   (make-array String 65536))
 
@@ -16432,10 +16352,8 @@
 
 (define tc-agg-layout-cache-capacity : i64
   65536)
-
 (define tc-agg-layout-cache : (Array TcAggLayoutCacheSlot)
   (make-array TcAggLayoutCacheSlot 65536))
-
 (define tc-agg-layout-cache-generation : i64
   -1)
 
@@ -16659,7 +16577,6 @@
 ;; the next query to clear them at lower boundaries.
 (define tc-agg-scalar-cache-capacity : i64
   400000)
-
 (define tc-agg-size-cache : (Array i64)
   (make-array i64 400000))
 
@@ -16722,7 +16639,6 @@
 ;; layout here defeats the size/regword caches.
 (define tc-agg-align-cache : (Array i64)
   (make-array i64 400000))
-
 (define tc-agg-align-cache-generation : i64
   -1)
 
@@ -25758,7 +25674,6 @@
 ;; build them once (in `macro-expand-program`) and reuse.
 (define macro-expand-exports-ready : bool
   false)
-
 (define macro-expand-exports-value : CompilerExports
   (CompilerExports (i64-i64-map-with-capacity 1)))
 
@@ -25769,7 +25684,6 @@
 ;; invariant across an expansion run, so build it once per run and reuse.
 (define macro-expand-ctfe-env-ready : bool
   false)
-
 (define macro-expand-ctfe-env-value : CtfeEnv
   (ctfe-env-empty))
 
@@ -26537,22 +26451,16 @@
 ;; correctness, degrades.
 (define macro-alias-cache-capacity : i64
   4096)
-
 (define macro-alias-cache-module-keys : (Array i64)
   (make-array i64 4096))
-
 (define macro-alias-cache-qualifier-keys : (Array i64)
   (make-array i64 4096))
-
 (define macro-alias-cache-values : (Array i64)
   (make-array i64 4096))
-
 (define macro-alias-cache-count : i64
   0)
-
 (define macro-alias-cache-generation : i64
   -1)
-
 (define macro-alias-cache-ready : bool
   false)
 

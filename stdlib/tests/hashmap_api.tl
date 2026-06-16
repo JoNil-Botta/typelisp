@@ -1,5 +1,4 @@
 (import "stdlib/test.tl")
-
 (import "stdlib/hashmap.tl")
 
 (defstruct HashPayload

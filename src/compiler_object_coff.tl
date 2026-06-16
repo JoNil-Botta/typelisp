@@ -7,52 +7,36 @@
 
 (define compiler-object-coff-machine-amd64 : i64
   0x8664)
-
 (define compiler-object-coff-section-count : i64
   6)
-
 (define compiler-object-coff-file-header-size : i64
   20)
-
 (define compiler-object-coff-section-header-size : i64
   40)
-
 (define compiler-object-coff-relocation-size : i64
   10)
-
 (define compiler-object-coff-symbol-size : i64
   18)
-
 (define compiler-object-coff-reloc-amd64-addr64 : i64
   0x0001)
-
 (define compiler-object-coff-reloc-amd64-rel32 : i64
   0x0004)
-
 (define compiler-object-coff-reloc-amd64-addr32nb : i64
   0x0003)
-
 (define compiler-object-coff-section-cnt-code : i64
   0x00000020)
-
 (define compiler-object-coff-section-cnt-initialized-data : i64
   0x00000040)
-
 (define compiler-object-coff-section-cnt-uninitialized-data : i64
   0x00000080)
-
 (define compiler-object-coff-section-align-8 : i64
   0x00400000)
-
 (define compiler-object-coff-section-align-16 : i64
   0x00500000)
-
 (define compiler-object-coff-section-mem-execute : i64
   0x20000000)
-
 (define compiler-object-coff-section-mem-read : i64
   0x40000000)
-
 (define compiler-object-coff-section-mem-write : i64
   0x80000000)
 

@@ -53,7 +53,6 @@
 (cfg
   windows
   (extern (io-win-get-std-handle [arg0 : i32]) : i64 (:symbol "GetStdHandle")))
-
 (cfg
   windows
   (extern (io-win-write-file
@@ -62,7 +61,6 @@
     [arg2 : i32]
     [arg3 : (MutPtr i32)]
     [arg4 : i64]) : i32 (:symbol "WriteFile")))
-
 (cfg
   windows
   (extern (io-win-read-file
@@ -71,7 +69,6 @@
     [arg2 : i32]
     [arg3 : (MutPtr i32)]
     [arg4 : i64]) : i32 (:symbol "ReadFile")))
-
 (cfg
   windows
   (extern (io-win-create-file
@@ -82,11 +79,9 @@
     [arg4 : i64]
     [arg5 : i64]
     [arg6 : i64]) : i64 (:symbol "CreateFileA")))
-
 (cfg
   windows
   (extern (io-win-close-handle [arg0 : i64]) : i32 (:symbol "CloseHandle")))
-
 (cfg
   windows
   (extern (io-win-set-file-pointer-ex
@@ -94,11 +89,9 @@
     [arg1 : i64]
     [arg2 : (MutPtr i64)]
     [arg3 : i32]) : i32 (:symbol "SetFilePointerEx")))
-
 (cfg
   windows
   (extern (io-win-get-file-attributes [arg0 : (Ptr u8)]) : i32 (:symbol "GetFileAttributesA")))
-
 (cfg windows (extern (io-win-get-last-error) : i32 (:symbol "GetLastError")))
 
 ;: Map a stdio fd (0/1/2) to its Windows standard handle; other fd values are

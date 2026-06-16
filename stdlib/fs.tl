@@ -22,13 +22,9 @@
 ;#   (fs-path-join-many "target" "typelisp" "cache"))
 ;# ```
 (import "env.tl")
-
 (import "io.tl")
-
 (import "list.tl")
-
 (import "string.tl")
-
 (import "vector.tl")
 
 ;: Result type for directory-listing APIs.
@@ -119,32 +115,25 @@
 (cfg
   windows
   (extern (fs-win-create-directory [arg0 : (Ptr u8)] [arg1 : i64]) : i32 (:symbol "CreateDirectoryA")))
-
 (cfg
   windows
   (extern (fs-win-remove-directory [arg0 : (Ptr u8)]) : i32 (:symbol "RemoveDirectoryA")))
-
 (cfg
   windows
   (extern (fs-win-delete-file [arg0 : (Ptr u8)]) : i32 (:symbol "DeleteFileA")))
-
 (cfg windows (extern (fs-win-get-last-error) : i32 (:symbol "GetLastError")))
-
 (cfg
   windows
   (extern (fs-win-get-file-attributes-ex
     [arg0 : (Ptr u8)]
     [arg1 : i32]
     [arg2 : (MutPtr u8)]) : i32 (:symbol "GetFileAttributesExA")))
-
 (cfg
   windows
   (extern (fs-win-find-first-file [arg0 : (Ptr u8)] [arg1 : (MutPtr u8)]) : i64 (:symbol "FindFirstFileA")))
-
 (cfg
   windows
   (extern (fs-win-find-next-file [arg0 : i64] [arg1 : (MutPtr u8)]) : i32 (:symbol "FindNextFileA")))
-
 (cfg
   windows
   (extern (fs-win-find-close [arg0 : i64]) : i32 (:symbol "FindClose")))
@@ -629,27 +618,22 @@
   (not windows)
   (define fs-linux-stat-buffer-size : i64
     160))
-
 (cfg
   (not windows)
   (define fs-linux-stat-mode-offset : i64
     24))
-
 (cfg
   (not windows)
   (define fs-linux-stat-size-offset : i64
     48))
-
 (cfg
   (not windows)
   (define fs-linux-stat-mode-kind-mask : i64
     61440))
-
 (cfg
   (not windows)
   (define fs-linux-stat-regular-mode : i64
     32768))
-
 (cfg
   (not windows)
   (define fs-linux-stat-directory-mode : i64

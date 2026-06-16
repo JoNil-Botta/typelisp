@@ -1,6 +1,5 @@
 ;: `in-arena` does not weaken lexical `with-arena` escape checking.
 (import "stdlib/arena.tl")
-
 (import "stdlib/string.tl")
 
 (define (main) : String

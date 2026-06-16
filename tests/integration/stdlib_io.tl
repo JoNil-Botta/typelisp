@@ -8,10 +8,8 @@
 
 (define io-smoke-path : String
   "target/stdlib_io_smoke_long_path_copy_helper_payload_alpha_beta_gamma_delta.txt")
-
 (define io-absent-path : String
   "target/stdlib_io_absent_long_path_copy_helper_payload_alpha_beta_gamma_delta.txt")
-
 (define io-missing-parent-path : String
   "target/stdlib_io_missing_parent_long_path_copy_helper_payload/out.txt")
 

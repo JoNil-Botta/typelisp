@@ -19,7 +19,6 @@
 
 (define array-len : i64
   1000)
-
 (define base-reps : i64
   1000000)
 

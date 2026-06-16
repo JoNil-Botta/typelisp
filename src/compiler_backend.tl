@@ -1,47 +1,31 @@
 ;; compiler_backend.tl - First selfhost CompilerIrProgram -> x86_64 .s emitter (#447).
 (import "../stdlib/io.tl")
-
 (import "../stdlib/arena.tl")
-
 (import "compiler_lower.tl")
-
 (import "compiler_builtin_ids.tl")
-
 (import "compiler_diagnostic.tl")
-
 (import "compiler_optimize.tl")
-
 (import "compiler_regalloc.tl")
-
 (import "../stdlib/text_buf.tl")
-
 (import "compiler_object.tl")
-
 (import "compiler_intern.tl")
-
 (import "sym_i64_env.tl")
-
 (import "../stdlib/hashmap.tl")
-
 (import "../stdlib/string.tl")
-
 (import "../stdlib/str_cat.tl")
 
 (cfg
   compile-profile
   (define compiler-backend-profile-start-ms : i64
     0))
-
 (cfg
   compile-profile
   (define compiler-backend-profile-start-total : i64
     0))
-
 (cfg
   compile-profile
   (define compiler-backend-profile-start-live : i64
     0))
-
 (cfg
   compile-profile
   (define compiler-backend-profile-detail-start-ms : i64
@@ -351,16 +335,12 @@
 ;; keeps direct helper calls safe across intern-reset! reuse of numeric ids.
 (define compiler-backend-user-symbol-cache-values : (Array String)
   (make-array String 262144))
-
 (define compiler-backend-user-symbol-cache-epochs : (Array i64)
   (make-array i64 262144))
-
 (define compiler-backend-user-symbol-cache-epoch : i64
   1)
-
 (define compiler-backend-user-symbol-cache-count-value : i64
   0)
-
 (define compiler-backend-user-symbol-cache-generation : i64
   -1)
 
@@ -382,7 +362,6 @@
 
 (define compiler-backend-addr-of-forwarding-enabled : bool
   false)
-
 (define compiler-backend-addr-of-forwarding-src : (Array i64)
   (make-array i64 0))
 
@@ -404,7 +383,6 @@
 
 (define compiler-backend-current-phi-targets : BackendStringList
   (compiler-backend-empty-string-list))
-
 (define compiler-backend-current-phi-target-count : i64
   0)
 

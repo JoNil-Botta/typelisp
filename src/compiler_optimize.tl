@@ -20,19 +20,12 @@
 ;;
 ;; Out of scope: broad aggregate/String/array IR optimization.
 (import "../stdlib/io.tl")
-
 (import "../stdlib/arena.tl")
-
 (import "compiler_ir_types.tl")
-
 (import "compiler_float.tl")
-
 (import "../stdlib/hash.tl")
-
 (import "../stdlib/hashmap.tl")
-
 (import "../stdlib/string.tl")
-
 (cfg compile-profile (import "../stdlib/str_cat.tl"))
 
 (defenum ResultCompilerOptimizeLevel
@@ -114,22 +107,18 @@
 
 (define compiler-optimize-level-default : i64
   1)
-
 (cfg
   compile-profile
   (define compiler-opt-profile-start-ms : i64
     0))
-
 (cfg
   compile-profile
   (define compiler-opt-profile-start-total : i64
     0))
-
 (cfg
   compile-profile
   (define compiler-opt-profile-start-live : i64
     0))
-
 (cfg
   compile-profile
   (define compiler-opt-profile-detail-start-ms : i64

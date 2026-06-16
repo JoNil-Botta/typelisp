@@ -1,20 +1,12 @@
 ;; compiler_driver_core.tl - Import-aware selfhost compiler driver helpers.
 (import "../stdlib/io.tl")
-
 (import "../stdlib/arena.tl")
-
 (import "../stdlib/string.tl")
-
 (cfg compile-profile (import "../stdlib/profile.tl"))
-
 (import "compiler_backend.tl")
-
 (import "compiler_diagnostic.tl")
-
 (import "compiler_load.tl")
-
 (import "compiler_optimize.tl")
-
 (import "../stdlib/text_buf.tl")
 
 (defenum ResultCompilerDriver
@@ -39,11 +31,9 @@
 
 (define compiler-driver-runtime-prelude-cache-capacity : i64
   16)
-
 (define compiler-driver-runtime-prelude-cache : (Array
     CompilerLoadPreludeCacheSlot)
   (make-array CompilerLoadPreludeCacheSlot 16))
-
 (define compiler-driver-runtime-prelude-cache-ready : bool
   false)
 
@@ -144,32 +134,26 @@
   compile-profile
   (define compiler-driver-profile-total-start-ms : i64
     0))
-
 (cfg
   compile-profile
   (define compiler-driver-profile-total-start-total : i64
     0))
-
 (cfg
   compile-profile
   (define compiler-driver-profile-total-start-live : i64
     0))
-
 (cfg
   compile-profile
   (define compiler-driver-profile-phase-start-ms : i64
     0))
-
 (cfg
   compile-profile
   (define compiler-driver-profile-phase-start-total : i64
     0))
-
 (cfg
   compile-profile
   (define compiler-driver-profile-phase-start-live : i64
     0))
-
 (cfg
   compile-profile
   (define compiler-driver-profile-best-peak : i64

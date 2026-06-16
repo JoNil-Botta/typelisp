@@ -4,15 +4,10 @@
 ;; trees. API pages still use the source/module documentation extractor and HTML
 ;; renderer without hard-coding TypeLisp guide-page knowledge into that path.
 (import "../../stdlib/io.tl")
-
 (import "../../src/doc_html.tl")
-
 (import "doc_md.tl")
-
 (import "../../stdlib/fs.tl")
-
 (import "../../stdlib/string.tl")
-
 (import "../../stdlib/str_cat.tl")
 
 (defenum DocSiteModule
@@ -48,13 +43,10 @@
 
 (define doc-site-status-ok : i64
   0)
-
 (define doc-site-stdlib-manifest-size : i64
   19)
-
 (define doc-site-repo-blob-root : String
   "https://github.com/JoNil-Botta/typelisp/blob/main/")
-
 (define doc-site-repo-tree-root : String
   "https://github.com/JoNil-Botta/typelisp/tree/main/")
 

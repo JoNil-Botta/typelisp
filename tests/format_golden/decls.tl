@@ -1,11 +1,8 @@
 (import "std.tl")
+(import "ffi.tl")
 
-(extern (print-string [arg0 : String]) : unit)
+(extern (print-string [arg0 : String]) : unit (:abi c) (:symbol "tl_print_string"))
+(extern (print-int [arg0 : i64]) : unit)
 
-(defenum Maybe
-  (Some i64)
-  (None))
-
-(defstruct Point
-  (x i64)
-  (y i64))
+(define KEY_A : i64 1)
+(define KEY_B : i64 2)

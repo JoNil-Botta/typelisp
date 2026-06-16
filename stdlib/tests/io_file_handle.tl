@@ -1,7 +1,5 @@
 (import "stdlib/fs.tl")
-
 (import "stdlib/io.tl")
-
 (import "stdlib/test.tl")
 
 (define (assert-owned-string-eq
@@ -12,16 +10,12 @@
 
 (define handle-read-file : String
   "target/stdlib-verify/io_file_handle_read.txt")
-
 (define handle-truncate-file : String
   "target/stdlib-verify/io_file_handle_truncate.txt")
-
 (define handle-append-file : String
   "target/stdlib-verify/io_file_handle_append.txt")
-
 (define handle-created-file : String
   "target/stdlib-verify/io_file_handle_created.txt")
-
 (define handle-missing-file : String
   "target/stdlib-verify/io_file_handle_missing.txt")
 

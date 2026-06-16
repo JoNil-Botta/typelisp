@@ -16,15 +16,10 @@
 ;#   (msvc-find-tool (& target) (& tool)))
 ;# ```
 (import "env.tl")
-
 (import "io.tl")
-
 (import "fs.tl")
-
 (import "process.tl")
-
 (import "string.tl")
-
 (import "vector.tl")
 
 ;: Resolved MSVC tool: executable path plus the command-environment overrides.

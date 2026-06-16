@@ -18,14 +18,11 @@
   (tail u64))
 
 (extern (wide-mem-score [arg0 : WideMem] [salt : u64]) : i64 (:symbol "tl_cabi_wide_mem_score"))
-
 (extern wide-mem-scorer (:symbol "tl_cabi_wide_mem_score_ptr") : (->
   WideMem
   u64
   i64))
-
 (extern (wide-mem-make [seed : u64]) : WideMem (:symbol "tl_cabi_wide_mem_make"))
-
 (extern (nested-mem-score [arg0 : NestedMem]) : i64 (:symbol "tl_cabi_nested_mem_score"))
 
 (define (main) : i64

@@ -7,7 +7,6 @@
 ;; below use plain equality. `main` returns 42 only when every f32 extern call
 ;; lowers its XMM-register arguments and return value to match the C ABI.
 (extern (f32-add [a : f32] [b : f32]) : f32 (:symbol "tl_cabi_f32_add"))
-
 (extern (f32-scale [a : f32] [b : f32] [c : f32]) : f32 (:symbol "tl_cabi_f32_scale"))
 
 ;; Nine f32 arguments forces the ninth onto the System V stack (and past the

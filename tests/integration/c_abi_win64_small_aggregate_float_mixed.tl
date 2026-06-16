@@ -9,15 +9,10 @@
   (value f32))
 
 (extern (vec2-score [arg : Vec2] [tag : u64]) : i64 (:symbol "tl_cabi_vec2_score"))
-
 (extern (vec2-make [tag : u64]) : Vec2 (:symbol "tl_cabi_vec2_make"))
-
 (extern vec2-maker (:symbol "tl_cabi_vec2_make_ptr") : (-> u64 Vec2))
-
 (extern (mix8-score [arg : Mix8] [tag : u64]) : i64 (:symbol "tl_cabi_mix8_score"))
-
 (extern (mix8-make [tag : u32]) : Mix8 (:symbol "tl_cabi_mix8_make"))
-
 (extern mix8-maker (:symbol "tl_cabi_mix8_make_ptr") : (-> u32 Mix8))
 
 (define (main) : i64

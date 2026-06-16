@@ -9,15 +9,10 @@
 ;; threaded through recursion, and the step budget ("fuel") is threaded through
 ;; results so the evaluator stays deterministic without a mutable counter.
 (import "../stdlib/io.tl")
-
 (import "../stdlib/hashmap.tl")
-
 (import "compiler_ast_types.tl")
-
 (import "compiler_diagnostic.tl")
-
 (import "compiler_float.tl")
-
 (import "../stdlib/string.tl")
 
 ;; A compile-time value. Scalar subset from #719; Expr / ExprList aggregates

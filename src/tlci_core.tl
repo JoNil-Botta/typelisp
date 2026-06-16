@@ -3,9 +3,7 @@
 ;; This module is deliberately dormant: it specifies and validates the tlci
 ;; container and metadata schema, but does not change package build behavior.
 (import "../stdlib/string.tl")
-
 (import "../stdlib/str_cat.tl")
-
 (import "read.tl")
 
 (defenum TlciExportKind
@@ -70,34 +68,24 @@
 
 (define tlci-format-version : i64
   1)
-
 (define tlci-metadata-version : String
   "v1")
-
 (define tlci-host-arch-x86-64 : i64
   1)
-
 (define tlci-callback-abi-version : i64
   1)
-
 (define tlci-header-size : i64
   160)
-
 (define tlci-page-align : i64
   4096)
-
 (define tlci-hash-field-offset : i64
   48)
-
 (define tlci-hash-field-size : i64
   8)
-
 (define tlci-section-fixup-record-size : i64
   8)
-
 (define tlci-section-entry-record-size : i64
   24)
-
 (define tlci-section-symbol-record-size : i64
   40)
 

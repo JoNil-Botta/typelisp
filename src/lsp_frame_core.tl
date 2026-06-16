@@ -4,19 +4,12 @@
 ;; the first selfhost protocol loop: initialize/shutdown, document tracking, and
 ;; diagnostics for full-document open/change notifications.
 (import "../stdlib/io.tl")
-
 (import "../stdlib/json.tl")
-
 (import "compiler_check_core.tl")
-
 (import "compiler_load.tl")
-
 (import "format_rules.tl")
-
 (import "lint_driver_core.tl")
-
 (import "../stdlib/string.tl")
-
 (import "../stdlib/str_cat.tl")
 
 (defenum LspFrameRead

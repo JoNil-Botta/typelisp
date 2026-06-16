@@ -5,37 +5,21 @@
 ;; parse/discover `typelisp.pkg`, emit assembly for the manifest entry, and
 ;; produce the package artifact selected by manifest kind.
 (import "../stdlib/fs.tl")
-
 (import "../stdlib/env.tl")
-
 (import "../stdlib/io.tl")
-
 (import "../stdlib/list.tl")
-
 (import "../stdlib/string.tl")
-
 (import "../stdlib/str_cat.tl")
-
 (import "host_plan.tl")
-
 (import "build_run_core.tl")
-
 (import "doc_test.tl")
-
 (import "package_source_core.tl")
-
 (import "package_cache_core.tl")
-
 (import "package_lock_core.tl")
-
 (import "compiler_diagnostic.tl")
-
 (import "compiler_parse_core.tl")
-
 (import "compiler_driver_core.tl")
-
 (import "compiler_typecheck.tl")
-
 (import "tlci_core.tl")
 
 (defenum BuildConfig
@@ -228,19 +212,14 @@
 
 (define build-default-opt-level : i64
   1)
-
 (define build-package-release-opt-level : i64
   2)
-
 (define build-package-visit-visiting : i64
   1)
-
 (define build-package-visit-done : i64
   2)
-
 (define build-status-ok : i64
   0)
-
 (define build-status-already-exists : i64
   17)
 

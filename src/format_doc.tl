@@ -4,7 +4,6 @@
 ;; owns the reusable layout engine: callers build `Doc` values, then render them
 ;; with deterministic width-aware grouping and indentation.
 (import "../stdlib/text_buf.tl")
-
 (import "../stdlib/string.tl")
 
 (defstruct DocSeq

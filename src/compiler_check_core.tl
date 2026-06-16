@@ -1,12 +1,8 @@
 ;; compiler_check_core.tl - Shared selfhost check/typecheck helpers (#723).
 (import "../stdlib/io.tl")
-
 (import "../stdlib/string.tl")
-
 (cfg compile-profile (import "../stdlib/profile.tl"))
-
 (import "compiler_load.tl")
-
 (import "compiler_typecheck.tl")
 
 (defenum ResultCompilerCheck

@@ -1,16 +1,10 @@
 ;; compiler_backend_tests.tl - Selfhost backend test helpers split from production backend.
 (import "../stdlib/io.tl")
-
 (import "compiler_backend.tl")
-
 (import "compiler_builtin_ids.tl")
-
 (import "compiler_intern.tl")
-
 (import "compiler_object_coff.tl")
-
 (import "compiler_object_elf.tl")
-
 (import "../stdlib/string.tl")
 
 (define (compiler-backend-smoke-source) : String

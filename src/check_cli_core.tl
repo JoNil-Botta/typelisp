@@ -4,15 +4,10 @@
 ;; retained check compatibility/coverage driver share the command without a
 ;; duplicate `main`.
 (import "../stdlib/io.tl")
-
 (import "../stdlib/vector.tl")
-
 (import "compiler_check_core.tl")
-
 (import "doc_test.tl")
-
 (import "package_source_core.tl")
-
 (import "../stdlib/string.tl")
 
 (defenum SelfhostCheckConfig

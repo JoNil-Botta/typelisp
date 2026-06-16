@@ -1,5 +1,4 @@
 (import "stdlib/test.tl")
-
 (import "stdlib/time.tl")
 
 (define (assert-time-result-error-shape) : unit

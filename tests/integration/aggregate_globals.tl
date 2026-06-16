@@ -14,16 +14,12 @@
 
 (define greeting
   "hello")
-
 (define choice : MaybeI64
   (Some 8))
-
 (define pair
   (Pair 10 11))
-
 (define cells
   (make-array i64 3))
-
 (define nested : Nested
   (Nested "ok" (Some 3)))
 

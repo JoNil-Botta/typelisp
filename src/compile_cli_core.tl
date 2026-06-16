@@ -18,17 +18,11 @@
 ;; unified `cli.tl` dispatcher both call it, so the single binary drives the
 ;; compiler (#1638).
 (import "../stdlib/io.tl")
-
 (import "../stdlib/arena.tl")
-
 (import "compiler_check_core.tl")
-
 (import "compiler_driver_core.tl")
-
 (import "doc_test.tl")
-
 (import "../stdlib/string.tl")
-
 (import "../stdlib/str_cat.tl")
 
 ;; Pair-shaped batch entries stay as a list until aggregate-element vector

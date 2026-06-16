@@ -1,18 +1,11 @@
 ;; compiler_specialize.tl - Selfhost comptime function specialization (#832).
 (import "../stdlib/io.tl")
-
 (import "../stdlib/text_buf.tl")
-
 (import "compiler_ctfe.tl")
-
 (import "compiler_diagnostic.tl")
-
 (import "compiler_float.tl")
-
 (import "compiler_parse_core.tl")
-
 (import "../stdlib/string.tl")
-
 (import "../stdlib/hashmap.tl")
 
 (defenum SpecTemplate

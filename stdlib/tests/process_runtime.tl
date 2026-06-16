@@ -1,7 +1,5 @@
 (import "stdlib/env.tl")
-
 (import "stdlib/process_borrowed.tl")
-
 (import "stdlib/test.tl")
 
 (define (assert-owned-string-eq

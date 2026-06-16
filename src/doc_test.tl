@@ -13,15 +13,10 @@
 ;; source path, the fence's source line, the example index, and the rendered
 ;; diagnostic when one is available.
 (import "../stdlib/io.tl")
-
 (import "compiler_check_core.tl")
-
 (import "compiler_load.tl")
-
 (import "build_run_core.tl")
-
 (import "../stdlib/string.tl")
-
 (import "../stdlib/str_cat.tl")
 
 (defenum DocTestExpectation

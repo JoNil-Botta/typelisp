@@ -22,36 +22,26 @@
 ;#
 ;# Usage: `typelisp run tools/work-queue-chooser/chooser.tl --stdlib-root stdlib`
 (import "stdlib/json.tl")
-
 (import "stdlib/io.tl")
-
 (import "stdlib/random.tl")
-
 (import "stdlib/string.tl")
 
 ;: Kind tags: 0 = PR (review), 1 = ready-for-implementation issue (implement),
 ;: 2 = research/triage issue.
 (define kind-pr : i64
   0)
-
 (define kind-ready : i64
   1)
-
 (define kind-triage : i64
   2)
-
 (define review-weight : i64
   45)
-
 (define implement-weight : i64
   10)
-
 (define research-weight : i64
   1)
-
 (define p0-priority-bonus : i64
   50)
-
 (define p1-priority-bonus : i64
   3)
 

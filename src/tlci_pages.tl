@@ -23,34 +23,24 @@
 
 (define tlci-pages-page-size : i64
   4096)
-
 (define tlci-pages-linux-prot-read : i64
   1)
-
 (define tlci-pages-linux-prot-write : i64
   2)
-
 (define tlci-pages-linux-prot-exec : i64
   4)
-
 (define tlci-pages-linux-map-private : i64
   2)
-
 (define tlci-pages-linux-map-anonymous : i64
   32)
-
 (define tlci-pages-windows-mem-commit-reserve : i32
   (cast 12288 : i32))
-
 (define tlci-pages-windows-mem-release : i32
   (cast 32768 : i32))
-
 (define tlci-pages-windows-page-readwrite : i32
   (cast 4 : i32))
-
 (define tlci-pages-windows-page-readonly : i32
   (cast 2 : i32))
-
 (define tlci-pages-windows-page-execute-read : i32
   (cast 32 : i32))
 
@@ -61,7 +51,6 @@
     [size : i64]
     [allocation-type : i32]
     [protect : i32]) : i64 (:symbol "VirtualAlloc")))
-
 (cfg
   windows
   (extern (tlci-pages-win-virtual-protect
@@ -69,7 +58,6 @@
     [size : i64]
     [new-protect : i32]
     [old-protect : (MutPtr i32)]) : i32 (:symbol "VirtualProtect")))
-
 (cfg
   windows
   (extern (tlci-pages-win-virtual-free

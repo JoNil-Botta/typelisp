@@ -18,11 +18,8 @@
 ;# (define sample : String (json-stringify (JsonBool true)))
 ;# ```
 (import "string.tl")
-
 (import "io.tl")
-
 (import "str_cat.tl")
-
 (import "text_buf.tl")
 
 ;: Canonical JSON value model used by the stdlib parser and serializer.

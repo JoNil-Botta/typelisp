@@ -1,22 +1,13 @@
 ;; build_run_core.tl - Shared selfhost source build/run execution helpers (#1018).
 (import "compiler_driver_core.tl")
-
 (import "compiler_object_coff.tl")
-
 (import "compiler_object_elf.tl")
-
 (import "../stdlib/env.tl")
-
 (import "../stdlib/fs.tl")
-
 (import "../stdlib/io.tl")
-
 (import "../stdlib/msvc.tl")
-
 (import "../stdlib/process.tl")
-
 (import "../stdlib/string.tl")
-
 (import "../stdlib/str_cat.tl")
 
 (defenum SourceToolCommandStatus

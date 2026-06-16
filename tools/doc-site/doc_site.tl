@@ -3,7 +3,6 @@
 ;; Usage through the current compiler runner:
 ;;   typelisp run tools/doc-site/doc_site.tl -- target/site
 (import "../../stdlib/io.tl")
-
 (import "doc_site_core.tl")
 
 (define (doc-site-usage) : i64

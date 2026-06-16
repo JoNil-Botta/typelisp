@@ -5,23 +5,14 @@
 ;; construction/projection; closure, array, and enum-match lowering remain
 ;; explicit future work.
 (import "../stdlib/io.tl")
-
 (import "../stdlib/arena.tl")
-
 (import "compiler_typecheck.tl")
-
 (import "compiler_builtin_ids.tl")
-
 (import "compiler_diagnostic.tl")
-
 (import "compiler_ir_types.tl")
-
 (import "compiler_clone.tl")
-
 (import "compiler_ctfe.tl")
-
 (import "../stdlib/hashmap.tl")
-
 (import "../stdlib/string.tl")
 
 (defenum LowerNameEnv
@@ -348,17 +339,14 @@
   compile-profile
   (define compiler-lower-profile-start-ms : i64
     0))
-
 (cfg
   compile-profile
   (define compiler-lower-profile-start-total : i64
     0))
-
 (cfg
   compile-profile
   (define compiler-lower-profile-start-live : i64
     0))
-
 (cfg
   compile-profile
   (define compiler-lower-profile-detail-start-ms : i64
@@ -1807,7 +1795,6 @@
 
 (define lower-spmd-inline-helper-stack : LowerStringSet
   (lower-spmd-inline-empty-helper-stack))
-
 (define lower-spmd-inline-next-temp : i64
   0)
 
@@ -9871,13 +9858,10 @@
 
 (define lower-spmd-reduce-acc-id-cache : i64
   -1)
-
 (define lower-spmd-reduce-end-id-cache : i64
   -1)
-
 (define lower-spmd-reduce-val-id-cache : i64
   -1)
-
 (define lower-spmd-reduce-current-id-cache : i64
   -1)
 
@@ -12964,19 +12948,14 @@
 ;; collision (different id, same slot) misses via the stored-id check.
 (define tc-rtf-cap : i64
   1048576)
-
 (define tc-rtf-gen-arr : (Array i64)
   (make-array i64 1048576))
-
 (define tc-rtf-id-arr : (Array i64)
   (make-array i64 1048576))
-
 (define tc-rtf-ty-arr : (Array AstType)
   (make-array AstType 1048576))
-
 (define tc-rtf-current-gen : i64
   0)
-
 (define tc-rtf-filled : bool
   false)
 

@@ -1,7 +1,5 @@
 (import "stdlib/random.tl")
-
 (import "stdlib/vector.tl")
-
 (import "stdlib/test.tl")
 
 (define (assert-owned-string-eq

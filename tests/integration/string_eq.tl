@@ -2,7 +2,6 @@
 ; This covers empty, short, long, first-byte mismatch, late mismatch, and
 ; length mismatch cases. Exit status 0.
 (import "stdlib/io.tl")
-
 (import "stdlib/string.tl")
 
 (define (main) : i64

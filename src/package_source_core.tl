@@ -7,19 +7,12 @@
 ;; ordinary package source discovery skips them. Hosts without directory
 ;; enumeration fall back to the manifest entry source.
 (import "../stdlib/fs.tl")
-
 (import "../stdlib/io.tl")
-
 (import "../stdlib/list.tl")
-
 (import "../stdlib/vector.tl")
-
 (import "../stdlib/string.tl")
-
 (import "../stdlib/str_cat.tl")
-
 (import "compiler_diagnostic.tl")
-
 (import "compiler_load.tl")
 
 (defstruct PackageSourceSet

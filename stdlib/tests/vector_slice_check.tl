@@ -1,5 +1,4 @@
 (import "stdlib/test.tl")
-
 (import "stdlib/vector_slice.tl")
 
 (define (main) : unit

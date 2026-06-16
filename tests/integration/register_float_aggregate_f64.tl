@@ -14,7 +14,6 @@
 
 (define global-pair : PairF64
   (PairF64 2.0 3.0))
-
 (define global-mix : MixIF
   (MixIF 7 8.5))
 

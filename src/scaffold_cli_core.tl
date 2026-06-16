@@ -6,9 +6,7 @@
 ;; `init [--lib] <name>` creates the skeleton in the current directory. Both
 ;; refuse to clobber an existing manifest or entry source.
 (import "../stdlib/io.tl")
-
 (import "../stdlib/fs.tl")
-
 (import "../stdlib/string.tl")
 
 ;; A package name must be non-empty and contain only name-safe characters

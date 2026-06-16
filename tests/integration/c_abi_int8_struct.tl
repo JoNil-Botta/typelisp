@@ -8,7 +8,6 @@
   (a i64))
 
 (extern (w8-make [arg0 : i64]) : W8 (:symbol "tl_cabi_w8_make"))
-
 (extern (w8-use [arg0 : W8]) : i64 (:symbol "tl_cabi_w8_use"))
 
 (define (main) : i64

@@ -16,7 +16,6 @@
 
 (define scan-text : String
   "the quick brown fox jumps over the lazy dog 0123456789")
-
 (define base-rounds : i64
   25000000)
 

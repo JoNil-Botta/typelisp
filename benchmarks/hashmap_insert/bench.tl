@@ -4,12 +4,10 @@
 ;# builds a fresh power-of-two map and populates it with deterministic i64 keys,
 ;# then samples a lookup so the inserted contents stay observable.
 (import "stdlib/io.tl")
-
 (import "stdlib/hashmap.tl")
 
 (define hashmap-insert-base-rounds : i64
   640)
-
 (define hashmap-insert-size : i64
   1024)
 

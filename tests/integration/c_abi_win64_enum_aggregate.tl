@@ -16,29 +16,22 @@
   (ReturnPair u64 u64))
 
 (extern (status-pick [arg0 : Status] [arg1 : Status] [choose-second : i64]) : Status (:symbol "tl_win64_status_pick"))
-
 (extern status-pick-ptr (:symbol "tl_win64_status_pick_ptr") : (->
   Status
   Status
   i64
   Status))
-
 (extern (small-score [arg : SmallChoice] [bias : i64]) : i64 (:symbol "tl_win64_small_score"))
-
 (extern small-scorer (:symbol "tl_win64_small_score_ptr") : (->
   SmallChoice
   i64
   i64))
-
 (extern (wide-score [arg : WideChoice] [tag : u64]) : i64 (:symbol "tl_win64_wide_score"))
-
 (extern wide-scorer (:symbol "tl_win64_wide_score_ptr") : (->
   WideChoice
   u64
   i64))
-
 (extern (return-choice-make [a : u32] [b : u32] [tag : u64]) : ReturnChoice (:symbol "tl_win64_return_choice_make"))
-
 (extern return-choice-maker (:symbol "tl_win64_return_choice_make_ptr") : (->
   u32
   u32

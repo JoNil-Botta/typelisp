@@ -1,6 +1,5 @@
 ;; compiler_object_elf.tl - ELF64 object-file serialization for object images.
 (import "compiler_object.tl")
-
 (import "compiler_float.tl")
 
 (defenum ResultCompilerObjectElf
@@ -9,94 +8,64 @@
 
 (define compiler-object-elf-header-size : i64
   64)
-
 (define compiler-object-elf-section-header-size : i64
   64)
-
 (define compiler-object-elf-symbol-size : i64
   24)
-
 (define compiler-object-elf-relocation-size : i64
   24)
-
 (define compiler-object-elf-section-null-index : i64
   0)
-
 (define compiler-object-elf-section-text-index : i64
   1)
-
 (define compiler-object-elf-section-data-index : i64
   2)
-
 (define compiler-object-elf-section-rodata-index : i64
   3)
-
 (define compiler-object-elf-section-bss-index : i64
   4)
-
 (define compiler-object-elf-section-rela-text-index : i64
   5)
-
 (define compiler-object-elf-section-rela-data-index : i64
   6)
-
 (define compiler-object-elf-section-rela-rodata-index : i64
   7)
-
 (define compiler-object-elf-section-rela-bss-index : i64
   8)
-
 (define compiler-object-elf-section-symtab-index : i64
   9)
-
 (define compiler-object-elf-section-strtab-index : i64
   10)
-
 (define compiler-object-elf-section-shstrtab-index : i64
   11)
-
 (define compiler-object-elf-section-note-gnu-stack-index : i64
   12)
-
 (define compiler-object-elf-section-count : i64
   13)
-
 (define compiler-object-elf-shstrtab-size : i64
   113)
-
 (define compiler-object-elf-sht-null : i64
   0)
-
 (define compiler-object-elf-sht-progbits : i64
   1)
-
 (define compiler-object-elf-sht-symtab : i64
   2)
-
 (define compiler-object-elf-sht-strtab : i64
   3)
-
 (define compiler-object-elf-sht-rela : i64
   4)
-
 (define compiler-object-elf-sht-nobits : i64
   8)
-
 (define compiler-object-elf-shf-write : i64
   1)
-
 (define compiler-object-elf-shf-alloc : i64
   2)
-
 (define compiler-object-elf-shf-execinstr : i64
   4)
-
 (define compiler-object-elf-r-x86-64-64 : i64
   1)
-
 (define compiler-object-elf-r-x86-64-pc32 : i64
   2)
-
 (define compiler-object-elf-r-x86-64-plt32 : i64
   4)
 

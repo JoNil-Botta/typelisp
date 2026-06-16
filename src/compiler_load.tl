@@ -1,24 +1,14 @@
 ;; compiler_load.tl - Shared selfhost compiler source/import loader.
 (import "../stdlib/io.tl")
-
 (import "compiler_parse_core.tl")
-
 (import "compiler_diagnostic.tl")
-
 (import "sym_i64_env.tl")
-
 (import "../stdlib/env.tl")
-
 (import "../stdlib/fs.tl")
-
 (import "../stdlib/hashmap.tl")
-
 (import "../stdlib/vector.tl")
-
 (import "compiler_embedded_stdlib.tl")
-
 (import "../stdlib/string.tl")
-
 (import "../stdlib/str_cat.tl")
 
 (defenum ResultCompilerLoad
@@ -105,41 +95,29 @@
 
 (define compiler-load-session-ast-floor : i64
   0)
-
 (define compiler-load-session-ty-floor : i64
   0)
-
 (define compiler-load-session-intern-floor : i64
   0)
-
 (define compiler-load-session-cache-enabled : bool
   false)
-
 (define compiler-load-program-cache-capacity : i64
   256)
-
 (define compiler-load-local-program-cache-node-limit : i64
   2048)
-
 (define compiler-load-program-cache : (Array CompilerLoadProgramCacheSlot)
   (make-array CompilerLoadProgramCacheSlot 256))
-
 (define compiler-load-program-admission : (Array
     CompilerLoadProgramAdmissionSlot)
   (make-array CompilerLoadProgramAdmissionSlot 256))
-
 (define compiler-load-program-cache-ready : bool
   false)
-
 (define compiler-load-program-admission-ready : bool
   false)
-
 (define compiler-load-program-cache-hit-count : i64
   0)
-
 (define compiler-load-program-cache-miss-count : i64
   0)
-
 (define compiler-load-program-cache-store-count : i64
   0)
 

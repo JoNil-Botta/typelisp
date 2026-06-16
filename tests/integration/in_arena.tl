@@ -1,7 +1,5 @@
 (import "stdlib/arena.tl")
-
 (import "stdlib/string.tl")
-
 (import "stdlib/test.tl")
 
 (define (build-kept [scratch : i64]) : String

@@ -2,7 +2,6 @@
 ;; witness program's assembly for a target so the integration suite can
 ;; assemble, link, and run it.
 (import "../../stdlib/io.tl")
-
 (import "../compiler_backend_tests.tl")
 
 (define (compiler-backend-raw-pointer-fixture-for-name [target-name : String]) : ResultCompilerBackend

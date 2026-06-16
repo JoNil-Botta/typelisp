@@ -108,6 +108,134 @@
       (fill-i32-scalar a b want n)
       (eq-i32 got want n))))
 
+(define (init-u64 [a : (Array u64)] [b : (Array u64)] [n : i64]) : unit
+  (let
+    [i : i64 0]
+    (while (< i n)
+      (begin
+        (array-set! a i (cast (+ (* i 17) 5) : u64))
+        (array-set! b i (cast (+ (* i 3) 11) : u64))
+        (set! i (+ i 1))))))
+
+(define (fill-u64-foreach
+  [a : (Array u64)]
+  [b : (Array u64)]
+  [out : (Array u64)]
+  [n : i64]
+  [factor : u64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (array-set!
+      out
+      i
+      (+ (+ (array-ref a i) (* (array-ref b i) factor)) (cast 7 : u64)))))
+
+(define (fill-u64-scalar
+  [a : (Array u64)]
+  [b : (Array u64)]
+  [out : (Array u64)]
+  [n : i64]
+  [factor : u64]) : unit
+  (let
+    [i : i64 0]
+    (while (< i n)
+      (begin
+        (array-set!
+          out
+          i
+          (+ (+ (array-ref a i) (* (array-ref b i) factor)) (cast 7 : u64)))
+        (set! i (+ i 1))))))
+
+(define (eq-u64 [a : (Array u64)] [b : (Array u64)] [n : i64]) : bool
+  (let
+    [i : i64 0]
+    [ok : bool true]
+    (begin
+      (while (< i n)
+        (begin
+          (if (!= (array-ref a i) (array-ref b i))
+            (set! ok false)
+            unit)
+          (set! i (+ i 1))))
+      ok)))
+
+(define (case-u64 [n : i64]) : bool
+  (let
+    [a : (Array u64) (make-array u64 n)]
+    [b : (Array u64) (make-array u64 n)]
+    [got : (Array u64) (make-array u64 n)]
+    [want : (Array u64) (make-array u64 n)]
+    [factor : u64 (cast 13 : u64)]
+    (begin
+      (init-u64 a b n)
+      (fill-u64-foreach a b got n factor)
+      (fill-u64-scalar a b want n factor)
+      (eq-u64 got want n))))
+
+(define (init-u32 [a : (Array u32)] [b : (Array u32)] [n : i64]) : unit
+  (let
+    [i : i64 0]
+    (while (< i n)
+      (begin
+        (array-set! a i (cast (+ (* i 19) 7) : u32))
+        (array-set! b i (cast (+ (* i 5) 23) : u32))
+        (set! i (+ i 1))))))
+
+(define (fill-u32-foreach
+  [a : (Array u32)]
+  [b : (Array u32)]
+  [out : (Array u32)]
+  [n : i64]
+  [factor : u32]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (array-set!
+      out
+      i
+      (+ (+ (array-ref a i) (* (array-ref b i) factor)) (cast 9 : u32)))))
+
+(define (fill-u32-scalar
+  [a : (Array u32)]
+  [b : (Array u32)]
+  [out : (Array u32)]
+  [n : i64]
+  [factor : u32]) : unit
+  (let
+    [i : i64 0]
+    (while (< i n)
+      (begin
+        (array-set!
+          out
+          i
+          (+ (+ (array-ref a i) (* (array-ref b i) factor)) (cast 9 : u32)))
+        (set! i (+ i 1))))))
+
+(define (eq-u32 [a : (Array u32)] [b : (Array u32)] [n : i64]) : bool
+  (let
+    [i : i64 0]
+    [ok : bool true]
+    (begin
+      (while (< i n)
+        (begin
+          (if (!= (array-ref a i) (array-ref b i))
+            (set! ok false)
+            unit)
+          (set! i (+ i 1))))
+      ok)))
+
+(define (case-u32 [n : i64]) : bool
+  (let
+    [a : (Array u32) (make-array u32 n)]
+    [b : (Array u32) (make-array u32 n)]
+    [got : (Array u32) (make-array u32 n)]
+    [want : (Array u32) (make-array u32 n)]
+    [factor : u32 (cast 17 : u32)]
+    (begin
+      (init-u32 a b n)
+      (fill-u32-foreach a b got n factor)
+      (fill-u32-scalar a b want n factor)
+      (eq-u32 got want n))))
+
 (define (init-i8 [a : (Array i8)] [b : (Array i8)] [n : i64]) : unit
   (let
     [i : i64 0]
@@ -507,6 +635,42 @@
         unit
         (set! ok false))
       (if (case-i32 17)
+        unit
+        (set! ok false))
+      (if (case-u64 0)
+        unit
+        (set! ok false))
+      (if (case-u64 3)
+        unit
+        (set! ok false))
+      (if (case-u64 4)
+        unit
+        (set! ok false))
+      (if (case-u64 8)
+        unit
+        (set! ok false))
+      (if (case-u64 9)
+        unit
+        (set! ok false))
+      (if (case-u64 17)
+        unit
+        (set! ok false))
+      (if (case-u32 0)
+        unit
+        (set! ok false))
+      (if (case-u32 3)
+        unit
+        (set! ok false))
+      (if (case-u32 8)
+        unit
+        (set! ok false))
+      (if (case-u32 9)
+        unit
+        (set! ok false))
+      (if (case-u32 16)
+        unit
+        (set! ok false))
+      (if (case-u32 17)
         unit
         (set! ok false))
       (if (case-i8 0)

@@ -3444,7 +3444,8 @@ Initial dynamic-array use cases:
 - Array indexes must be the loop index or a simple uniform offset from it, such
   as `i` or `(+ base i)`. Gather/scatter through an index array is deferred.
 - Supported lane element types for the first contiguous map/zip slice are
-  `i8`, `u8`, `i16`, `u16`, `i32`, `i64`, `f32`, and `f64`, plus an
+  `i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `i64`, `u64`, `f32`, and `f64`,
+  plus an
   AVX-512-only bool dynamic-array subset for contiguous bool copies and
   bool-valued map results. Bool array storage remains byte-compatible (`0` or
   `1` per element); the SIMD lowering converts at the private boundary between
@@ -3453,9 +3454,9 @@ Initial dynamic-array use cases:
   with the same modulo wrapping semantics as scalar integer addition; `*` over
   `i8`/`u8` is rejected in explicit SIMD backend modes until a
   widening/narrowing byte multiply policy is specified and implemented.
-  `i16`/`u16` support vectorized `+` and `*` with the same modulo wrapping
-  semantics as scalar integer arithmetic. `String`, structs, enums, tuples, and
-  arrays as lane elements are deferred.
+  `i16`/`u16`, `i32`/`u32`, and `i64`/`u64` support vectorized `+` and `*`
+  with the same modulo wrapping semantics as scalar integer arithmetic.
+  `String`, structs, enums, tuples, and arrays as lane elements are deferred.
 
 Uniform and varying rules:
 
@@ -3579,8 +3580,8 @@ Masked varying `if` (v2):
   evaluate exactly the selected branch. SIMD lowering must produce the same
   observable result as this scalar fallback for every safe program.
 - Both branches must have the same type. A varying `if` expression may produce
-  `unit` or a supported lane value (`i8`, `u8`, `i16`, `u16`, `i32`, `i64`,
-  `f32`, `f64`, or `bool`).
+  `unit` or a supported lane value (`i8`, `u8`, `i16`, `u16`, `i32`, `u32`,
+  `i64`, `u64`, `f32`, `f64`, or `bool`).
   Aggregate, string, function, array, and public vector/mask results remain
   deferred.
 - Branch bodies may use local `let`, `begin`, nested varying `if`, supported
@@ -3724,10 +3725,10 @@ Cross-lane operations:
 - `spmd-broadcast` is valid only inside a `foreach` body or inside the `value`
   expression of `spmd-reduce`. It is invalid in ordinary expressions, type
   positions, `foreach` bounds, and `spmd-reduce` start/end/init expressions.
-- The first broadcast slice supports `i32`, `i64`, `f32`, and `f64` values.
-  `lane` must be a uniform `i64` source-lane slot. The result type is the
-  value type. If `value` is varying, the result is varying; if `value` is
-  uniform, the result remains uniform.
+- The first broadcast slice supports `i32`, `u32`, `i64`, `u64`, `f32`, and
+  `f64` values. `lane` must be a uniform `i64` source-lane slot. The result
+  type is the value type. If `value` is varying, the result is varying; if
+  `value` is uniform, the result remains uniform.
 - In scalar backend modes the current gang has one active lane: source lane `0`
   returns `value`, and any other source lane traps through the standard
   out-of-bounds abort path.
@@ -5470,7 +5471,7 @@ not the future safe reference/borrow model (#182), not a replacement for
 | `(with ...)` scoped non-memory resource cleanup | Implemented (#907): parser/typechecker/lowering with LIFO cleanup order |
 | `(in-arena ...)` first-class arena target | Implemented (#2625): safe dynamic active-arena switch with restoration on normal and early exits, no mark/rewind/destroy/clone |
 | Cleanup-owning aggregate declarations | Implemented for structs (#907); cleanup-owning enums remain reserved |
-| SPMD / SIMD `foreach` and `spmd-reduce` | Scalar reference lowering implemented; AVX2/AVX-512 support a first contiguous `foreach` map/zip subset over `i8`, `u8`, `i16`, `u16`, `i32`, `i64`, `f32`, and `f64`; AVX-512 also supports bool dynamic-array copies and bool-valued map results through private mask conversion; eligible `spmd-reduce` folds and direct array-value `spmd-broadcast` maps are implemented; masked varying `if` is in flight (#2131/#2205/#2207) |
+| SPMD / SIMD `foreach` and `spmd-reduce` | Scalar reference lowering implemented; AVX2/AVX-512 support a first contiguous `foreach` map/zip subset over `i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `i64`, `u64`, `f32`, and `f64`; AVX-512 also supports bool dynamic-array copies and bool-valued map results through private mask conversion; eligible `spmd-reduce` folds and direct array-value `spmd-broadcast` maps are implemented; masked varying `if` is in flight (#2131/#2205/#2207) |
 | Public cross-lane ops beyond `spmd-reduce`/`spmd-broadcast` | Scans/prefix reductions, shuffles, public lane indices/counts, gathers/scatters, atomics, and public vector/mask values remain deferred; split across #2761, #2762, #2764, #2765, and #2766 |
 | Runtime SIMD dispatch (`defdispatch`) | Implemented for scalar/AVX2/AVX-512 variants with cached runtime selection and end-to-end selection verification |
 | Windows region helpers | Implemented for `tl_region_mark`/`tl_region_reset` and `with-arena` scoped reclamation |

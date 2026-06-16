@@ -7263,7 +7263,9 @@
 (define (tc-spmd-varying-value-type-supported? [ty : AstType]) : bool
   (match (tc-type-strip-region ty)
     [(AstTyI64) true]
+    [(AstTyU64) true]
     [(AstTyI32) true]
+    [(AstTyU32) true]
     [(AstTyI16) true]
     [(AstTyU16) true]
     [(AstTyI8) true]
@@ -7276,7 +7278,9 @@
 (define (tc-spmd-lane-type-supported? [ty : AstType]) : bool
   (match (tc-type-strip-region ty)
     [(AstTyI64) true]
+    [(AstTyU64) true]
     [(AstTyI32) true]
+    [(AstTyU32) true]
     [(AstTyI16) true]
     [(AstTyU16) true]
     [(AstTyI8) true]
@@ -7289,13 +7293,15 @@
 (define (tc-spmd-broadcast-type-supported? [ty : AstType]) : bool
   (match (tc-type-strip-region ty)
     [(AstTyI64) true]
+    [(AstTyU64) true]
     [(AstTyI32) true]
+    [(AstTyU32) true]
     [(AstTyF64) true]
     [(AstTyF32) true]
     [_ false]))
 
 (define (tc-spmd-broadcast-type-message) : String
-  "typecheck: spmd-broadcast value must have type i32, i64, f32, or f64; bool broadcast remains deferred")
+  "typecheck: spmd-broadcast value must have type i32, u32, i64, u64, f32, or f64; bool broadcast remains deferred")
 
 (define (tc-spmd-broadcast-finish
   [ctx : TcContext]

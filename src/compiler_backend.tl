@@ -20063,9 +20063,6 @@ tl_profile_alloc_peak_bytes:
 
 "))
 
-(define (compiler-backend-runtime-data [plan : CompilerBackendRuntimePlan]) : String
-  (compiler-backend-runtime-data-for-target (BackendTargetLinux) plan))
-
 (define (compiler-backend-runtime-data-for-target
   [target : CompilerBackendTarget]
   [plan : CompilerBackendRuntimePlan]) : String
@@ -20348,7 +20345,7 @@ tl_profile_alloc_peak_bytes:
             next-reg
             profile))))))
 
-(define (compiler-backend-runtime-alloc-functions [profile : bool]) : String
+(define (compiler-backend-runtime-linux-alloc-functions [profile : bool]) : String
   (let
     [fast-profile : String
       (compiler-backend-runtime-profile-alloc-account
@@ -20832,7 +20829,7 @@ tl_boot_pool:
 ;; reference these symbols as externs, so a multi-object link (a package plus its
 ;; dependency .a archive) resolves every object's calls to the single definition
 ;; in the entry object Ã¢â‚¬â€ no `multiple definition` collision.
-(define (compiler-backend-runtime-arena-functions [profile : bool]) : String
+(define (compiler-backend-runtime-linux-arena-functions [profile : bool]) : String
   (string-append
     "    .globl tl_thread_init
 tl_thread_init:
@@ -22338,9 +22335,6 @@ tl_memcpy:
     ret
 "))
 
-(define (compiler-backend-runtime-functions [plan : CompilerBackendRuntimePlan]) : String
-  (compiler-backend-runtime-functions-for-target (BackendTargetLinux) plan))
-
 (define (compiler-backend-runtime-linux-only
   [target : CompilerBackendTarget]
   [enabled : bool]
@@ -22396,7 +22390,7 @@ tl_memcpy:
           (if alloc
             (if (compiler-backend-target-windows? target)
               (compiler-backend-runtime-windows-alloc-functions profile)
-              (compiler-backend-runtime-alloc-functions profile))
+              (compiler-backend-runtime-linux-alloc-functions profile))
             "")]
         ;; The out-of-bounds/division/shift fault handlers now live in the
         ;; runtime prelude (stdlib/runtime.tl), exported via #2143; the backend
@@ -22455,7 +22449,7 @@ tl_memcpy:
         [arena-asm : String
           (if (compiler-backend-target-windows? target)
             (compiler-backend-runtime-windows-arena-functions profile)
-            (compiler-backend-runtime-arena-functions profile))]
+            (compiler-backend-runtime-linux-arena-functions profile))]
         [profile-asm : String
           (compiler-backend-runtime-profile-functions-for-target target profile)]
         [memcpy-asm : String (compiler-backend-runtime-memcpy-functions target)]
@@ -22841,18 +22835,15 @@ tl_memcpy:
     (compiler-source-spans-empty)
     true))
 
-(define (compiler-backend-emit-program [program : CompilerIrProgram]) : ResultCompilerBackend
-  (compiler-backend-emit-program-for-target program (BackendTargetLinux)))
-
 (define (compiler-backend-emit-program-linux [program : CompilerIrProgram]) : ResultCompilerBackend
   (compiler-backend-emit-program-for-target program (BackendTargetLinux)))
 
-(define (compiler-backend-emit-program-with-spans
+(define (compiler-backend-emit-program-linux-with-spans
   [program : CompilerIrProgram]
   [spans : CompilerSourceSpans]) : ResultCompilerBackend
   (compiler-backend-emit-program-target program (BackendTargetLinux) spans true))
 
-(define (compiler-backend-emit-program-with-spans-and-entry
+(define (compiler-backend-emit-program-linux-with-spans-and-entry
   [program : CompilerIrProgram]
   [spans : CompilerSourceSpans]
   [emit-entry : bool]) : ResultCompilerBackend
@@ -24801,7 +24792,7 @@ tl_memcpy:
     spans
     emit-entry))
 
-(define (compiler-backend-emit-program-object-image
+(define (compiler-backend-emit-program-object-image-linux
   [program : CompilerIrProgram]
   [spans : CompilerSourceSpans]) : ResultCompilerBackendObject
   (compiler-backend-emit-program-object-image-target
@@ -25152,7 +25143,7 @@ tl_memcpy:
 (define (compiler-backend-emit-source [src : String]) : ResultCompilerBackend
   (match (lower-compiler-source src)
     [(OkCompilerLower program spans)
-      (compiler-backend-emit-program-with-spans program spans)]
+      (compiler-backend-emit-program-linux-with-spans program spans)]
     [(ErrCompilerLower diag) (ErrCompilerBackend diag)]))
 
 (define (compiler-backend-emit-source-for-target
@@ -25176,7 +25167,7 @@ tl_memcpy:
 (define (compiler-backend-emit-source-object-image [src : String]) : ResultCompilerBackendObject
   (match (lower-compiler-source src)
     [(OkCompilerLower program spans)
-      (compiler-backend-emit-program-object-image program spans)]
+      (compiler-backend-emit-program-object-image-linux program spans)]
     [(ErrCompilerLower diag) (ErrCompilerBackendObject diag)]))
 
 (define (compiler-backend-emit-source-object-image-for-target
@@ -25590,16 +25581,21 @@ tl_memcpy:
     emit-entry
     false))
 
-(define (compiler-backend-emit-source-pic [src : String]) : ResultCompilerBackendPic
-  (match (lower-compiler-source src)
+(define (compiler-backend-emit-source-pic-for-target
+  [src : String]
+  [target : CompilerBackendTarget]) : ResultCompilerBackendPic
+  (match (compiler-backend-lower-source-for-target src target)
     [(OkCompilerLower program spans)
       (compiler-backend-emit-program-pic-target-with-mode
         program
-        (BackendTargetLinux)
+        target
         (BackendModeScalar)
         spans
         true)]
     [(ErrCompilerLower diag) (ErrCompilerBackendPic diag)]))
+
+(define (compiler-backend-emit-source-pic-linux [src : String]) : ResultCompilerBackendPic
+  (compiler-backend-emit-source-pic-for-target src (BackendTargetLinux)))
 
 (define (compiler-backend-runtime-helper-externs) : CompilerIrExternList
   (compiler-ir-extern-cons
@@ -25946,7 +25942,7 @@ tl_memcpy:
     IrExternNil))
 
 (define (compiler-backend-user-helper-name-ok?) : bool
-  (match (compiler-backend-emit-program
+  (match (compiler-backend-emit-program-linux
     (compiler-backend-user-helper-name-program))
     [(OkCompilerBackend asm)
       (and
@@ -26007,7 +26003,7 @@ tl_memcpy:
       IrExternNil)))
 
 (define (compiler-backend-runtime-coexist-ok?) : bool
-  (match (compiler-backend-emit-program
+  (match (compiler-backend-emit-program-linux
     (compiler-backend-runtime-coexist-program))
     [(OkCompilerBackend asm)
       (and
@@ -26058,7 +26054,7 @@ tl_memcpy:
     IrExternNil))
 
 (define (compiler-backend-module-symbol-ok?) : bool
-  (match (compiler-backend-emit-program
+  (match (compiler-backend-emit-program-linux
     (compiler-backend-module-symbol-program))
     [(OkCompilerBackend asm)
       (and

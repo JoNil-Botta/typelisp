@@ -2,7 +2,7 @@
 ;; folding (#543, first slice of #519).
 ;;
 ;; Runs between lowering (`lower-compiler-program`) and backend emission
-;; (`compiler-backend-emit-program`). It performs conservative, scalar-only
+;; (`compiler-backend-emit-program-for-target`). It performs conservative, scalar-only
 ;; local rewrites: constant folding, algebraic strength reduction, CSE, copy
 ;; propagation, conservative global value numbering/cross-block copy
 ;; propagation, conservative loop-invariant scalar hoisting, redundant

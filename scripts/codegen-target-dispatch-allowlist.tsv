@@ -61,25 +61,22 @@ src/compiler_backend.tl	compiler-backend-current-arena-load	runtime	compiler-bac
 src/compiler_backend.tl	compiler-backend-current-arena-store	runtime	compiler-backend-target-windows[?]	1	Current-arena TLS store uses target runtime storage conventions.
 src/compiler_backend.tl	compiler-backend-current-arena-clear	runtime	compiler-backend-target-windows[?]	1	Current-arena TLS clear uses target runtime storage conventions.
 src/compiler_backend.tl	compiler-backend-runtime-arena-data-for-target	runtime	BackendTarget(Linux|Windows)	2	Runtime arena storage differs between Linux and Windows.
-src/compiler_backend.tl	compiler-backend-runtime-data	transitional	BackendTargetLinux	1	Legacy default runtime data helper emits Linux runtime data until callers pass targets explicitly. Tracked by #3057.
-src/compiler_backend.tl	compiler-backend-runtime-alloc-functions	transitional	BackendTargetLinux	1	Legacy default runtime helper emits Linux allocation runtime until callers pass targets explicitly. Tracked by #3057.
-src/compiler_backend.tl	compiler-backend-runtime-arena-functions	transitional	BackendTargetLinux	2	Legacy default runtime helpers emit Linux arena runtime until callers pass targets explicitly. Tracked by #3057.
+src/compiler_backend.tl	compiler-backend-runtime-linux-alloc-functions	runtime	BackendTargetLinux	1	Linux allocation runtime helper explicitly emits System V runtime assembly.
+src/compiler_backend.tl	compiler-backend-runtime-linux-arena-functions	runtime	BackendTargetLinux	2	Linux arena runtime helper explicitly emits System V TLS arena assembly.
 src/compiler_backend.tl	compiler-backend-runtime-windows-alloc-functions	runtime	BackendTargetWindows	1	Windows allocation runtime is emitted by an explicit target helper.
 src/compiler_backend.tl	compiler-backend-runtime-windows-arena-functions	runtime	BackendTargetWindows	2	Windows arena runtime is emitted by explicit target helpers.
-src/compiler_backend.tl	compiler-backend-runtime-functions	transitional	BackendTargetLinux	1	Legacy default runtime function helper emits Linux runtime until callers pass targets explicitly. Tracked by #3057.
 src/compiler_backend.tl	compiler-backend-runtime-linux-only	runtime	compiler-backend-target-windows[?]	1	Linux-only runtime helpers must be rejected on Windows.
 src/compiler_backend.tl	compiler-backend-runtime-externs-for-target	runtime	compiler-backend-target-windows[?]	1	Runtime extern declarations differ for Windows imports.
 src/compiler_backend.tl	compiler-backend-runtime-fs-functions-for-target	runtime	compiler-backend-target-windows[?]	1	Runtime filesystem helpers differ between Windows and Linux.
 src/compiler_backend.tl	compiler-backend-runtime-memcpy-functions	runtime	compiler-backend-target-windows[?]	1	Runtime memcpy helper differs between Windows and Linux.
 src/compiler_backend.tl	compiler-backend-runtime-functions-for-target	runtime	compiler-backend-target-windows[?]	12	Runtime helper assembly selects Windows imports and implementations by target.
-src/compiler_backend.tl	compiler-backend-emit-program	transitional	BackendTargetLinux	1	Legacy default assembly emitter targets Linux until callers use target-aware APIs. Tracked by #3057.
-src/compiler_backend.tl	compiler-backend-emit-program-linux	transitional	BackendTargetLinux	1	Linux-named public helper intentionally selects the Linux target. Tracked by #3057.
-src/compiler_backend.tl	compiler-backend-emit-program-with-spans	transitional	BackendTargetLinux	1	Legacy default span-aware emitter targets Linux until callers use target-aware APIs. Tracked by #3057.
-src/compiler_backend.tl	compiler-backend-emit-program-with-spans-and-entry	transitional	BackendTargetLinux	1	Legacy default entry-aware emitter targets Linux until callers use target-aware APIs. Tracked by #3057.
+src/compiler_backend.tl	compiler-backend-emit-program-linux	entry	BackendTargetLinux	1	Linux-named assembly emitter explicitly selects the Linux entry/runtime target.
+src/compiler_backend.tl	compiler-backend-emit-program-linux-with-spans	entry	BackendTargetLinux	1	Linux-named span-aware emitter explicitly selects the Linux entry/runtime target.
+src/compiler_backend.tl	compiler-backend-emit-program-linux-with-spans-and-entry	entry	BackendTargetLinux	1	Linux-named entry-aware emitter explicitly selects the Linux target.
 src/compiler_backend.tl	compiler-backend-object-entry-symbols	object-format	BackendTarget(Linux|Windows)	2	Native object entry symbols differ for ELF and COFF/PE.
 src/compiler_backend.tl	compiler-backend-object-image-sections	object-format	BackendTarget(Linux|Windows)	2	Object image section sets differ between Linux and Windows targets.
-src/compiler_backend.tl	compiler-backend-emit-program-object-image	transitional	BackendTargetLinux	1	Legacy default object image emitter targets Linux until callers use target-aware APIs. Tracked by #3057.
-src/compiler_backend.tl	compiler-backend-emit-source-pic	transitional	BackendTargetLinux	1	Current public PIC source helper lowers through the legacy Linux default path. Tracked by #3057.
+src/compiler_backend.tl	compiler-backend-emit-program-object-image-linux	object-format	BackendTargetLinux	1	Linux-named object image emitter explicitly selects ELF object layout.
+src/compiler_backend.tl	compiler-backend-emit-source-pic-linux	object-format	BackendTargetLinux	1	Linux-named PIC source helper explicitly selects ELF PIC emission.
 src/compiler_backend.tl	compiler-backend-target-cfgs	target-cfg	BackendTarget(Linux|Windows)|target-(linux|windows)	4	Backend target cfgs expose source-level target cfg names.
 src/compiler_backend.tl	compiler-backend-lower-mode-for-target	backend-mode	BackendTarget(Linux|Windows)|CompilerLower(Linux|Windows)(Scalar|Avx2|Avx512)	12	Backend target and ISA mode choose the corresponding lowerer mode.
 src/compiler_backend.tl	compiler-backend-extern-metadata-symbol-ok?	test-only	BackendTarget(Linux|Windows)	2	Inline backend test checks extern metadata symbols on both targets.

@@ -89,6 +89,15 @@
 (define (lint-rule-cascading-and-or-suggestion) : String
   "flatten same-operator and/or operands, e.g. (and a b c)")
 
+(define (lint-rule-unused-import-id) : String
+  "unused-import")
+
+(define (lint-rule-unused-import-message) : String
+  "unused import: imported module alias is never referenced")
+
+(define (lint-rule-unused-import-suggestion) : String
+  "remove the import or prefix an intentionally unused alias with _")
+
 ;: Metadata for one lint rule. Rule id is stable public API for suppressions;
 ;: message is the rendered finding text; suggestion is structured helper text
 ;: that drivers or tooling can render separately from the message.
@@ -148,6 +157,12 @@
     (lint-rule-cascading-and-or-message)
     (lint-rule-cascading-and-or-suggestion)))
 
+(define (lint-rule-unused-import) : LintRule
+  (LintRule
+    (lint-rule-unused-import-id)
+    (lint-rule-unused-import-message)
+    (lint-rule-unused-import-suggestion)))
+
 (define (lint-rule-cons [rule : LintRule] [rest : LintRuleList]) : LintRuleList
   (LintRuleCons rule (box rest)))
 
@@ -166,7 +181,9 @@
             (lint-rule-deprecated-string-concat)
             (lint-rule-cons
               (lint-rule-nested-str-cat)
-              (lint-rule-cons (lint-rule-cascading-and-or) LintRuleNil))))))))
+              (lint-rule-cons
+                (lint-rule-cascading-and-or)
+                (lint-rule-cons (lint-rule-unused-import) LintRuleNil)))))))))
 
 (define (lint-rule-find-in [rules : LintRuleList] [rule-id : String]) : LintMaybeRule
   (match rules
@@ -793,6 +810,792 @@
                       unit))))
               (set! i (+ i 1))))
           findings))]))
+
+(define (lint-string-prefix? [text : String] [prefix : String]) : bool
+  (let
+    [text-len : i64 (string-length text)]
+    [prefix-len : i64 (string-length prefix)]
+    (if (> prefix-len text-len)
+      false
+      (let
+        [idx : i64 0]
+        [ok : bool true]
+        (begin
+          (while (and ok (< idx prefix-len))
+            (if (= (string-ref text idx) (string-ref prefix idx))
+              (set! idx (+ idx 1))
+              (set! ok false)))
+          ok)))))
+
+(define (lint-name-qualified-by-separator?
+  [name : String]
+  [qualifier : String]
+  [separator : char]) : bool
+  (let
+    [name-len : i64 (string-length name)]
+    [qualifier-len : i64 (string-length qualifier)]
+    (if (<= qualifier-len 0)
+      false
+      (if (<= name-len qualifier-len)
+        false
+        (if (not (lint-string-prefix? name qualifier))
+          false
+          (= (string-ref name qualifier-len) separator))))))
+
+(define (lint-name-qualified-by? [name : String] [qualifier : String]) : bool
+  (if (lint-name-qualified-by-separator? name qualifier #.')
+    true
+    (lint-name-qualified-by-separator? name qualifier #/')))
+
+(define (lint-name-uses-import?
+  [name : String]
+  [alias : String]
+  [module-name : String]) : bool
+  (if (lint-name-qualified-by? name alias)
+    true
+    (lint-name-qualified-by? name module-name)))
+
+(define (lint-name-id-uses-import?
+  [name : i64]
+  [alias : String]
+  [module-name : String]) : bool
+  (lint-name-uses-import? (intern-str name) alias module-name))
+
+(define (lint-maybe-type-uses-import?
+  [maybe-ty : AstMaybeType]
+  [alias : String]
+  [module-name : String]) : bool
+  (match maybe-ty
+    [(AstNoType) false]
+    [(AstSomeType ty) (lint-type-uses-import? ty alias module-name)]))
+
+(define (lint-type-list-uses-import?
+  [types : AstTypeList]
+  [alias : String]
+  [module-name : String]) : bool
+  (match types
+    [(AstTypeNil) false]
+    [(AstTypeCons head rest)
+      (let
+        [head-ty : AstType (ty-node-get head)]
+        [rest : AstTypeList (box-get rest)]
+        (if (lint-type-uses-import? head-ty alias module-name)
+          true
+          (lint-type-list-uses-import? rest alias module-name)))]))
+
+(define (lint-type-id-uses-import?
+  [ty : i64]
+  [alias : String]
+  [module-name : String]) : bool
+  (lint-type-uses-import? (ty-node-get ty) alias module-name))
+
+(define (lint-type-uses-import?
+  [ty : AstType]
+  [alias : String]
+  [module-name : String]) : bool
+  (match ty
+    [(AstTyI64) false]
+    [(AstTyI32) false]
+    [(AstTyI16) false]
+    [(AstTyI8) false]
+    [(AstTyU64) false]
+    [(AstTyU32) false]
+    [(AstTyU16) false]
+    [(AstTyU8) false]
+    [(AstTyF64) false]
+    [(AstTyF32) false]
+    [(AstTyBool) false]
+    [(AstTyChar) false]
+    [(AstTyString) false]
+    [(AstTyStr) false]
+    [(AstTyUnit) false]
+    [(AstTyNever) false]
+    [(AstTyExpr) false]
+    [(AstTyExprList) false]
+    [(AstTyFunc args ret)
+      (if (lint-type-list-uses-import? args alias module-name)
+        true
+        (lint-type-id-uses-import? ret alias module-name))]
+    [(AstTyTuple items) (lint-type-list-uses-import? items alias module-name)]
+    [(AstTyArray elem _) (lint-type-id-uses-import? elem alias module-name)]
+    [(AstTyDynArray elem) (lint-type-id-uses-import? elem alias module-name)]
+    [(AstTyBox elem) (lint-type-id-uses-import? elem alias module-name)]
+    [(AstTyRegion _ inner) (lint-type-id-uses-import? inner alias module-name)]
+    [(AstTyRef _ inner) (lint-type-id-uses-import? inner alias module-name)]
+    [(AstTyMutRef _ inner) (lint-type-id-uses-import? inner alias module-name)]
+    [(AstTyEnum name) (lint-name-id-uses-import? name alias module-name)]
+    [(AstTyEnumArgs name _) (lint-name-id-uses-import? name alias module-name)]
+    [(AstTyStruct name) (lint-name-id-uses-import? name alias module-name)]
+    [(AstTyStructArgs name _)
+      (lint-name-id-uses-import? name alias module-name)]
+    [(AstTyVar name) (lint-name-id-uses-import? name alias module-name)]
+    [(AstTyVarArgs name _) (lint-name-id-uses-import? name alias module-name)]
+    [(AstTyPtr inner) (lint-type-id-uses-import? inner alias module-name)]
+    [(AstTyMutPtr inner) (lint-type-id-uses-import? inner alias module-name)]))
+
+(define (lint-param-list-uses-import?
+  [params : AstParamList]
+  [alias : String]
+  [module-name : String]) : bool
+  (match params
+    [(AstParamNil) false]
+    [(AstParamCons param rest)
+      (let
+        [rest : AstParamList (box-get rest)]
+        (match param
+          [(AstParam _ ty _)
+            (if (lint-type-uses-import? ty alias module-name)
+              true
+              (lint-param-list-uses-import? rest alias module-name))]))]))
+
+(define (lint-macro-param-list-uses-import?
+  [params : AstMacroParamList]
+  [alias : String]
+  [module-name : String]) : bool
+  (match params
+    [(AstMacroParamNil) false]
+    [(AstMacroParamCons param rest)
+      (let
+        [rest : AstMacroParamList (box-get rest)]
+        (match param
+          [(AstMacroParam _ ty _)
+            (if (lint-type-uses-import? ty alias module-name)
+              true
+              (lint-macro-param-list-uses-import? rest alias module-name))]))]))
+
+(define (lint-pattern-list-uses-import?
+  [patterns : AstPatternList]
+  [alias : String]
+  [module-name : String]) : bool
+  (match patterns
+    [(AstPatternNil) false]
+    [(AstPatternCons head rest)
+      (let
+        [head : AstPattern (box-get head)]
+        [rest : AstPatternList (box-get rest)]
+        (if (lint-pattern-uses-import? head alias module-name)
+          true
+          (lint-pattern-list-uses-import? rest alias module-name)))]))
+
+(define (lint-pattern-uses-import?
+  [pattern : AstPattern]
+  [alias : String]
+  [module-name : String]) : bool
+  (match pattern
+    [(AstPatVar _ maybe-ty)
+      (lint-maybe-type-uses-import? maybe-ty alias module-name)]
+    [(AstPatTuple items)
+      (lint-pattern-list-uses-import? (box-get items) alias module-name)]
+    [(AstPatWildcard) false]
+    [(AstPatBinding _) false]
+    [(AstPatVariant name items)
+      (if (lint-name-id-uses-import? name alias module-name)
+        true
+        (lint-pattern-list-uses-import? (box-get items) alias module-name))]
+    [(AstPatLiteral _) false]))
+
+(define (lint-expr-list-uses-import?
+  [exprs : AstExprList]
+  [alias : String]
+  [module-name : String]) : bool
+  (match exprs
+    [(AstExprNil) false]
+    [(AstExprCons head rest)
+      (let
+        [head : AstExpr (ast-node-get head)]
+        [rest : AstExprList (box-get rest)]
+        (if (lint-expr-uses-import? head alias module-name)
+          true
+          (lint-expr-list-uses-import? rest alias module-name)))]))
+
+(define (lint-let-bindings-use-import?
+  [bindings : AstLetBindingList]
+  [alias : String]
+  [module-name : String]) : bool
+  (match bindings
+    [(AstLetBindingNil) false]
+    [(AstLetBindingCons binding rest)
+      (let
+        [rest : AstLetBindingList (box-get rest)]
+        (match binding
+          [(AstLetBinding _ maybe-ty init)
+            (if (lint-maybe-type-uses-import? maybe-ty alias module-name)
+              true
+              (if (lint-expr-uses-import? (ast-node-get init) alias module-name)
+                true
+                (lint-let-bindings-use-import? rest alias module-name)))]))]))
+
+(define (lint-match-arms-use-import?
+  [arms : AstMatchArmList]
+  [alias : String]
+  [module-name : String]) : bool
+  (match arms
+    [(AstMatchArmNil) false]
+    [(AstMatchArmCons arm rest)
+      (let
+        [rest : AstMatchArmList (box-get rest)]
+        (match arm
+          [(AstMatchArm pattern body)
+            (if (lint-pattern-uses-import? pattern alias module-name)
+              true
+              (if (lint-expr-uses-import? (ast-node-get body) alias module-name)
+                true
+                (lint-match-arms-use-import? rest alias module-name)))]))]))
+
+(define (lint-resource-bindings-use-import?
+  [bindings : AstResourceBindingList]
+  [alias : String]
+  [module-name : String]) : bool
+  (match bindings
+    [(AstResourceBindingNil) false]
+    [(AstResourceBindingCons binding rest)
+      (let
+        [rest : AstResourceBindingList (box-get rest)]
+        (match binding
+          [(AstResourceBinding _ init cleanup)
+            (if (lint-expr-uses-import? (ast-node-get init) alias module-name)
+              true
+              (if (lint-expr-uses-import?
+                (ast-node-get cleanup)
+                alias
+                module-name)
+                true
+                (lint-resource-bindings-use-import? rest alias module-name)))]))]))
+
+(define (lint-expr-uses-import?
+  [expr : AstExpr]
+  [alias : String]
+  [module-name : String]) : bool
+  (match expr
+    [(AstExprSpanned inner-box _)
+      (lint-expr-uses-import? (ast-node-get inner-box) alias module-name)]
+    [(AstExprLiteral _) false]
+    [(AstExprVar name) (lint-name-id-uses-import? name alias module-name)]
+    [(AstExprBinary _ left right)
+      (if (lint-expr-uses-import? (ast-node-get left) alias module-name)
+        true
+        (lint-expr-uses-import? (ast-node-get right) alias module-name))]
+    [(AstExprUnary _ inner)
+      (lint-expr-uses-import? (ast-node-get inner) alias module-name)]
+    [(AstExprCall func args)
+      (if (lint-expr-uses-import? (ast-node-get func) alias module-name)
+        true
+        (lint-expr-list-uses-import? args alias module-name))]
+    [(AstExprIf cond then-branch else-branch)
+      (if (lint-expr-uses-import? (ast-node-get cond) alias module-name)
+        true
+        (if (lint-expr-uses-import?
+          (ast-node-get then-branch)
+          alias
+          module-name)
+          true
+          (lint-expr-uses-import? (ast-node-get else-branch) alias module-name)))]
+    [(AstExprLet bindings body)
+      (if (lint-let-bindings-use-import? bindings alias module-name)
+        true
+        (lint-expr-uses-import? (ast-node-get body) alias module-name))]
+    [(AstExprLambda params ret body)
+      (if (lint-param-list-uses-import? params alias module-name)
+        true
+        (if (lint-maybe-type-uses-import? ret alias module-name)
+          true
+          (lint-expr-uses-import? (ast-node-get body) alias module-name)))]
+    [(AstExprTuple exprs) (lint-expr-list-uses-import? exprs alias module-name)]
+    [(AstExprTupleRef tuple _)
+      (lint-expr-uses-import? (ast-node-get tuple) alias module-name)]
+    [(AstExprArray exprs) (lint-expr-list-uses-import? exprs alias module-name)]
+    [(AstExprMakeArray elem len)
+      (if (lint-type-uses-import? elem alias module-name)
+        true
+        (lint-expr-uses-import? (ast-node-get len) alias module-name))]
+    [(AstExprArrayRef array index)
+      (if (lint-expr-uses-import? (ast-node-get array) alias module-name)
+        true
+        (lint-expr-uses-import? (ast-node-get index) alias module-name))]
+    [(AstExprArraySet array index value)
+      (if (lint-expr-uses-import? (ast-node-get array) alias module-name)
+        true
+        (if (lint-expr-uses-import? (ast-node-get index) alias module-name)
+          true
+          (lint-expr-uses-import? (ast-node-get value) alias module-name)))]
+    [(AstExprArrayPush array value)
+      (if (lint-expr-uses-import? (ast-node-get array) alias module-name)
+        true
+        (lint-expr-uses-import? (ast-node-get value) alias module-name))]
+    [(AstExprStringRef text index)
+      (if (lint-expr-uses-import? (ast-node-get text) alias module-name)
+        true
+        (lint-expr-uses-import? (ast-node-get index) alias module-name))]
+    [(AstExprWhile cond body)
+      (if (lint-expr-uses-import? (ast-node-get cond) alias module-name)
+        true
+        (lint-expr-uses-import? (ast-node-get body) alias module-name))]
+    [(AstExprBegin exprs) (lint-expr-list-uses-import? exprs alias module-name)]
+    [(AstExprUnsafe exprs)
+      (lint-expr-list-uses-import? exprs alias module-name)]
+    [(AstExprSet target value)
+      (if (lint-name-id-uses-import? target alias module-name)
+        true
+        (lint-expr-uses-import? (ast-node-get value) alias module-name))]
+    [(AstExprAnn inner ty)
+      (if (lint-expr-uses-import? (ast-node-get inner) alias module-name)
+        true
+        (lint-type-uses-import? ty alias module-name))]
+    [(AstExprCast inner ty)
+      (if (lint-expr-uses-import? (ast-node-get inner) alias module-name)
+        true
+        (lint-type-uses-import? ty alias module-name))]
+    [(AstExprBorrow _ _ place)
+      (lint-expr-uses-import? (ast-node-get place) alias module-name)]
+    [(AstExprMatch scrutinee arms)
+      (if (lint-expr-uses-import? (ast-node-get scrutinee) alias module-name)
+        true
+        (lint-match-arms-use-import? arms alias module-name))]
+    [(AstExprForeach _ index-ty start end body)
+      (if (lint-type-uses-import? index-ty alias module-name)
+        true
+        (if (lint-expr-uses-import? (ast-node-get start) alias module-name)
+          true
+          (if (lint-expr-uses-import? (ast-node-get end) alias module-name)
+            true
+            (lint-expr-uses-import? (ast-node-get body) alias module-name))))]
+    [(AstExprSpmdReduce _ _ index-ty start end init value)
+      (if (lint-type-uses-import? index-ty alias module-name)
+        true
+        (if (lint-expr-uses-import? (ast-node-get start) alias module-name)
+          true
+          (if (lint-expr-uses-import? (ast-node-get end) alias module-name)
+            true
+            (if (lint-expr-uses-import? (ast-node-get init) alias module-name)
+              true
+              (lint-expr-uses-import? (ast-node-get value) alias module-name)))))]
+    [(AstExprSpmdBroadcast value lane)
+      (if (lint-expr-uses-import? (ast-node-get value) alias module-name)
+        true
+        (lint-expr-uses-import? (ast-node-get lane) alias module-name))]
+    [(AstExprStructGet receiver _)
+      (lint-expr-uses-import? (ast-node-get receiver) alias module-name)]
+    [(AstExprStructSet receiver _ value)
+      (if (lint-expr-uses-import? (ast-node-get receiver) alias module-name)
+        true
+        (lint-expr-uses-import? (ast-node-get value) alias module-name))]
+    [(AstExprWithRegion _ body)
+      (lint-expr-list-uses-import? body alias module-name)]
+    [(AstExprWithEscape scratch body)
+      (if (lint-expr-uses-import? (ast-node-get scratch) alias module-name)
+        true
+        (lint-expr-list-uses-import? body alias module-name))]
+    [(AstExprWithScratch body)
+      (lint-expr-list-uses-import? body alias module-name)]
+    [(AstExprInArena arena body)
+      (if (lint-expr-uses-import? (ast-node-get arena) alias module-name)
+        true
+        (lint-expr-list-uses-import? body alias module-name))]
+    [(AstExprWithResource bindings body)
+      (if (lint-resource-bindings-use-import? bindings alias module-name)
+        true
+        (lint-expr-list-uses-import? body alias module-name))]
+    [(AstExprBox inner)
+      (lint-expr-uses-import? (ast-node-get inner) alias module-name)]
+    [(AstExprBoxGet inner)
+      (lint-expr-uses-import? (ast-node-get inner) alias module-name)]
+    [(AstExprBoxTake inner)
+      (lint-expr-uses-import? (ast-node-get inner) alias module-name)]
+    [(AstExprBoxSet inner value)
+      (if (lint-expr-uses-import? (ast-node-get inner) alias module-name)
+        true
+        (lint-expr-uses-import? (ast-node-get value) alias module-name))]
+    [(AstExprTypeLiteral ty) (lint-type-uses-import? ty alias module-name)]
+    [(AstExprInit maybe-ty)
+      (lint-maybe-type-uses-import? maybe-ty alias module-name)]
+    [(AstExprComptime inner)
+      (lint-expr-uses-import? (ast-node-get inner) alias module-name)]
+    [(AstExprQuote inner)
+      (lint-expr-uses-import? (ast-node-get inner) alias module-name)]
+    [(AstExprQuasiquote inner)
+      (lint-expr-uses-import? (ast-node-get inner) alias module-name)]
+    [(AstExprUnquote inner)
+      (lint-expr-uses-import? (ast-node-get inner) alias module-name)]
+    [(AstExprUnquoteSplicing inner)
+      (lint-expr-uses-import? (ast-node-get inner) alias module-name)]
+    [(AstExprBracketClause items)
+      (lint-expr-list-uses-import? items alias module-name)]
+    [(AstExprTry inner)
+      (lint-expr-uses-import? (ast-node-get inner) alias module-name)]
+    [(AstExprReturn inner)
+      (lint-expr-uses-import? (ast-node-get inner) alias module-name)]
+    [(AstExprPtrNull ty) (lint-type-uses-import? ty alias module-name)]
+    [(AstExprPtrNullCheck inner)
+      (lint-expr-uses-import? (ast-node-get inner) alias module-name)]
+    [(AstExprPtrAddrOf place)
+      (lint-expr-uses-import? (ast-node-get place) alias module-name)]
+    [(AstExprPtrRead ptr)
+      (lint-expr-uses-import? (ast-node-get ptr) alias module-name)]
+    [(AstExprPtrWrite ptr value)
+      (if (lint-expr-uses-import? (ast-node-get ptr) alias module-name)
+        true
+        (lint-expr-uses-import? (ast-node-get value) alias module-name))]
+    [(AstExprPtrOffset ptr offset)
+      (if (lint-expr-uses-import? (ast-node-get ptr) alias module-name)
+        true
+        (lint-expr-uses-import? (ast-node-get offset) alias module-name))]
+    [(AstExprPtrCast ptr ty)
+      (if (lint-expr-uses-import? (ast-node-get ptr) alias module-name)
+        true
+        (lint-type-uses-import? ty alias module-name))]
+    [(AstExprPtrToInt ptr)
+      (lint-expr-uses-import? (ast-node-get ptr) alias module-name)]
+    [(AstExprIntToPtr value ty)
+      (if (lint-expr-uses-import? (ast-node-get value) alias module-name)
+        true
+        (lint-type-uses-import? ty alias module-name))]
+    [(AstExprStringData inner)
+      (lint-expr-uses-import? (ast-node-get inner) alias module-name)]
+    [(AstExprStringFromBytes ptr len)
+      (if (lint-expr-uses-import? (ast-node-get ptr) alias module-name)
+        true
+        (lint-expr-uses-import? (ast-node-get len) alias module-name))]
+    [(AstExprArrayData inner)
+      (lint-expr-uses-import? (ast-node-get inner) alias module-name)]
+    [(AstExprBinaryData _) false]
+    [(AstExprProgramArgc) false]
+    [(AstExprProgramArgv) false]
+    [(AstExprProgramEnvp) false]
+    [(AstExprCpuIdEax leaf subleaf)
+      (if (lint-expr-uses-import? (ast-node-get leaf) alias module-name)
+        true
+        (lint-expr-uses-import? (ast-node-get subleaf) alias module-name))]
+    [(AstExprCpuIdEbx leaf subleaf)
+      (if (lint-expr-uses-import? (ast-node-get leaf) alias module-name)
+        true
+        (lint-expr-uses-import? (ast-node-get subleaf) alias module-name))]
+    [(AstExprCpuIdEcx leaf subleaf)
+      (if (lint-expr-uses-import? (ast-node-get leaf) alias module-name)
+        true
+        (lint-expr-uses-import? (ast-node-get subleaf) alias module-name))]
+    [(AstExprCpuIdEdx leaf subleaf)
+      (if (lint-expr-uses-import? (ast-node-get leaf) alias module-name)
+        true
+        (lint-expr-uses-import? (ast-node-get subleaf) alias module-name))]
+    [(AstExprXgetbv index)
+      (lint-expr-uses-import? (ast-node-get index) alias module-name)]
+    [(AstExprSyscall args) (lint-expr-list-uses-import? args alias module-name)]))
+
+(define (lint-extern-abi-uses-import?
+  [abi : AstExternAbi]
+  [alias : String]
+  [module-name : String]) : bool
+  (match abi
+    [(AstExternAbiC) false]
+    [(AstExternAbiCVarargsOpen) false]
+    [(AstExternAbiCVarargsTyped tail-ty)
+      (lint-type-uses-import? tail-ty alias module-name)]))
+
+(define (lint-extern-metadata-uses-import?
+  [meta : AstExternMetadata]
+  [alias : String]
+  [module-name : String]) : bool
+  (match meta
+    [(AstExternMetadata abi _ _ _)
+      (lint-extern-abi-uses-import? abi alias module-name)]))
+
+(define (lint-field-cleanup-uses-import?
+  [cleanup : AstFieldCleanup]
+  [alias : String]
+  [module-name : String]) : bool
+  (match cleanup
+    [(AstFieldNoCleanup) false]
+    [(AstFieldCleanupFn name)
+      (lint-name-id-uses-import? name alias module-name)]
+    [(AstFieldOwnedCleanup) false]))
+
+(define (lint-field-def-list-uses-import?
+  [fields : AstFieldDefList]
+  [alias : String]
+  [module-name : String]) : bool
+  (match fields
+    [(AstFieldDefNil) false]
+    [(AstFieldDefCons field rest)
+      (let
+        [rest : AstFieldDefList (box-get rest)]
+        (match field
+          [(AstFieldDef _ ty cleanup)
+            (if (lint-type-uses-import? ty alias module-name)
+              true
+              (if (lint-field-cleanup-uses-import? cleanup alias module-name)
+                true
+                (lint-field-def-list-uses-import? rest alias module-name)))]))]))
+
+(define (lint-struct-cleanup-uses-import?
+  [cleanup : AstStructCleanup]
+  [alias : String]
+  [module-name : String]) : bool
+  (match cleanup
+    [(AstStructNoCleanup) false]
+    [(AstStructCleanupFn name)
+      (lint-name-id-uses-import? name alias module-name)]))
+
+(define (lint-enum-cleanup-uses-import?
+  [cleanup : AstEnumCleanup]
+  [alias : String]
+  [module-name : String]) : bool
+  (match cleanup
+    [(AstEnumNoCleanup) false]
+    [(AstEnumCleanupFn name) (lint-name-id-uses-import? name alias module-name)]))
+
+(define (lint-variant-payload-cleanup-uses-import?
+  [cleanup : AstVariantPayloadCleanup]
+  [alias : String]
+  [module-name : String]) : bool
+  (match cleanup
+    [(AstVariantPayloadNoCleanup) false]
+    [(AstVariantPayloadCleanupFn name)
+      (lint-name-id-uses-import? name alias module-name)]
+    [(AstVariantPayloadOwnedCleanup) false]))
+
+(define (lint-variant-payload-cleanup-list-uses-import?
+  [items : AstVariantPayloadCleanupList]
+  [alias : String]
+  [module-name : String]) : bool
+  (match items
+    [(AstVariantPayloadCleanupNil) false]
+    [(AstVariantPayloadCleanupCons cleanup rest)
+      (let
+        [rest : AstVariantPayloadCleanupList (box-get rest)]
+        (if (lint-variant-payload-cleanup-uses-import?
+          cleanup
+          alias
+          module-name)
+          true
+          (lint-variant-payload-cleanup-list-uses-import?
+            rest
+            alias
+            module-name)))]))
+
+(define (lint-variant-def-list-uses-import?
+  [variants : AstVariantDefList]
+  [alias : String]
+  [module-name : String]) : bool
+  (match variants
+    [(AstVariantDefNil) false]
+    [(AstVariantDefCons variant rest)
+      (let
+        [rest : AstVariantDefList (box-get rest)]
+        (match variant
+          [(AstVariantDef _ payloads cleanups)
+            (if (lint-type-list-uses-import? payloads alias module-name)
+              true
+              (if (lint-variant-payload-cleanup-list-uses-import?
+                cleanups
+                alias
+                module-name)
+                true
+                (lint-variant-def-list-uses-import? rest alias module-name)))]))]))
+
+(define (lint-dispatch-variant-list-uses-import?
+  [variants : AstDispatchVariantList]
+  [alias : String]
+  [module-name : String]) : bool
+  (match variants
+    [(AstDispatchVariantNil) false]
+    [(AstDispatchVariantCons variant rest)
+      (let
+        [rest : AstDispatchVariantList (box-get rest)]
+        (match variant
+          [(AstDispatchVariant _ name)
+            (if (lint-name-uses-import? name alias module-name)
+              true
+              (lint-dispatch-variant-list-uses-import? rest alias module-name))]))]))
+
+(define (lint-export-item-uses-import?
+  [item : AstExportItem]
+  [alias : String]
+  [module-name : String]) : bool
+  (match item
+    [(AstExportValue name) (lint-name-uses-import? name alias module-name)]
+    [(AstExportType name) (lint-name-uses-import? name alias module-name)]
+    [(AstExportMacro name) (lint-name-uses-import? name alias module-name)]
+    [(AstExportConstructor name)
+      (lint-name-uses-import? name alias module-name)]
+    [(AstExportField type-name field-name)
+      (if (lint-name-uses-import? type-name alias module-name)
+        true
+        (lint-name-uses-import? field-name alias module-name))]
+    [(AstExportVariant name) (lint-name-uses-import? name alias module-name)]))
+
+(define (lint-export-item-list-uses-import?
+  [items : AstExportItemList]
+  [alias : String]
+  [module-name : String]) : bool
+  (match items
+    [(AstExportItemNil) false]
+    [(AstExportItemCons item rest)
+      (let
+        [rest : AstExportItemList (box-get rest)]
+        (if (lint-export-item-uses-import? item alias module-name)
+          true
+          (lint-export-item-list-uses-import? rest alias module-name)))]))
+
+(define (lint-generated-decl-meta-uses-import?
+  [meta : AstGeneratedDeclMeta]
+  [alias : String]
+  [module-name : String]) : bool
+  (match meta
+    [(AstNoGeneratedDeclMeta) false]
+    [(AstSomeGeneratedDeclMeta _ _ args _)
+      (lint-expr-list-uses-import? args alias module-name)]))
+
+(define (lint-decl-uses-import?
+  [decl : AstDecl]
+  [alias : String]
+  [module-name : String]) : bool
+  (match decl
+    [(AstDeclModule _) false]
+    [(AstDeclDef _ maybe-ty body)
+      (if (lint-maybe-type-uses-import? maybe-ty alias module-name)
+        true
+        (lint-expr-uses-import? (ast-node-get body) alias module-name))]
+    [(AstDeclDefFn _ params ret body _)
+      (if (lint-param-list-uses-import? params alias module-name)
+        true
+        (if (lint-type-uses-import? ret alias module-name)
+          true
+          (lint-expr-uses-import? (ast-node-get body) alias module-name)))]
+    [(AstDeclDefMacro _ params ret body)
+      (if (lint-macro-param-list-uses-import? params alias module-name)
+        true
+        (if (lint-type-uses-import? ret alias module-name)
+          true
+          (lint-expr-uses-import? (ast-node-get body) alias module-name)))]
+    [(AstDeclExtern _ _ meta ty)
+      (if (lint-extern-metadata-uses-import? meta alias module-name)
+        true
+        (lint-type-uses-import? ty alias module-name))]
+    [(AstDeclDefEnum _ cleanup variants)
+      (if (lint-enum-cleanup-uses-import? cleanup alias module-name)
+        true
+        (lint-variant-def-list-uses-import? variants alias module-name))]
+    [(AstDeclDefEnumLifetimes _ _ cleanup variants)
+      (if (lint-enum-cleanup-uses-import? cleanup alias module-name)
+        true
+        (lint-variant-def-list-uses-import? variants alias module-name))]
+    [(AstDeclDefStruct _ _ cleanup fields)
+      (if (lint-struct-cleanup-uses-import? cleanup alias module-name)
+        true
+        (lint-field-def-list-uses-import? fields alias module-name))]
+    [(AstDeclDefStructLifetimes _ _ _ cleanup fields)
+      (if (lint-struct-cleanup-uses-import? cleanup alias module-name)
+        true
+        (lint-field-def-list-uses-import? fields alias module-name))]
+    [(AstDeclImport (AstImportSpec (AstImportMacro call-expr) _ _ _ _))
+      (lint-expr-uses-import? (ast-node-get call-expr) alias module-name)]
+    [(AstDeclImport (AstImportSpec (AstImportMacroDecls call-expr) _ _ _ _))
+      (lint-expr-uses-import? (ast-node-get call-expr) alias module-name)]
+    [(AstDeclImport _) false]
+    [(AstDeclIncludeStr _ _) false]
+    [(AstDeclIncludeBin _ _) false]
+    [(AstDeclExport items)
+      (lint-export-item-list-uses-import? items alias module-name)]
+    [(AstDeclDefDispatch _ variants)
+      (lint-dispatch-variant-list-uses-import? variants alias module-name)]
+    [(AstDeclTest _ body _)
+      (lint-expr-uses-import? (ast-node-get body) alias module-name)]
+    [(AstDeclUnsafe inner)
+      (lint-decl-uses-import? (box-get inner) alias module-name)]
+    [(AstDeclComptimeDecl meta inner)
+      (if (lint-generated-decl-meta-uses-import? meta alias module-name)
+        true
+        (lint-decl-uses-import? (box-get inner) alias module-name))]))
+
+(define (lint-decl-list-uses-import?
+  [decls : AstDeclList]
+  [alias : String]
+  [module-name : String]) : bool
+  (match decls
+    [(AstDeclNil) false]
+    [(AstDeclCons decl rest)
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (if (lint-decl-uses-import? decl alias module-name)
+          true
+          (lint-decl-list-uses-import? rest alias module-name)))]))
+
+(define (lint-underscore-prefixed? [name : String]) : bool
+  (let
+    [n : i64 (string-length name)]
+    (if (<= n 0)
+      false
+      (= (string-ref name 0) #_'))))
+
+(define (lint-import-kind-lintable?
+  [kind : AstImportKind]
+  [expected : AstMaybeModuleName]) : bool
+  (match kind
+    [(AstImportModule) true]
+    ;; Legacy path imports with no explicit module alias still bring
+    ;; unqualified names into scope, so skip them until #2453/#2454 remove that
+    ;; transitional surface.
+    [(AstImportPath)
+      (match expected
+        [(AstSomeModuleName _) true]
+        [(AstNoModuleName) false])]
+    [(AstImportMacro _) false]
+    [(AstImportMacroDecls _) false]))
+
+(define (lint-unused-import-finding
+  [module-name : String]
+  [alias : String]
+  [span : AstSourceSpan]) : LintFinding
+  (LintFinding
+    (string-append
+      "unused import: module alias "
+      (string-append
+        alias
+        (string-append
+          " from "
+          (string-append module-name " is never referenced"))))
+    (lint-rule-unused-import-id)
+    0
+    span))
+
+(define (lint-unused-import-add-if-needed
+  [all-decls : AstDeclList]
+  [spec : AstImportSpec]
+  [acc : LintFindings]) : LintFindings
+  (match spec
+    [(AstImportSpec kind _ expected maybe-alias span)
+      (if (not (lint-import-kind-lintable? kind expected))
+        acc
+        (match expected
+          [(AstNoModuleName) acc]
+          [(AstSomeModuleName module-name)
+            (match maybe-alias
+              [(AstNoImportAlias) acc]
+              [(AstSomeImportAlias alias)
+                (if (lint-underscore-prefixed? alias)
+                  acc
+                  (if (lint-decl-list-uses-import? all-decls alias module-name)
+                    acc
+                    (lint-findings-add
+                      (lint-unused-import-finding module-name alias span)
+                      acc)))])]))]))
+
+(define (lint-unused-imports-in-decl-list
+  [all-decls : AstDeclList]
+  [decls : AstDeclList]
+  [acc : LintFindings]) : LintFindings
+  (match decls
+    [(AstDeclNil) acc]
+    [(AstDeclCons decl rest)
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (lint-unused-imports-in-decl-list
+          all-decls
+          rest
+          (match decl
+            [(AstDeclImport spec)
+              (lint-unused-import-add-if-needed all-decls spec acc)]
+            [_ acc])))]))
 
 ;: Walk every expression in `exprs`, accumulating findings.
 (define (lint-walk-expr-list
@@ -1656,7 +2459,10 @@
     [(AstProgram decls-box)
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (lint-walk-decl-list decls threshold (lint-findings-empty)))]))
+        (lint-unused-imports-in-decl-list
+          decls
+          decls
+          (lint-walk-decl-list decls threshold (lint-findings-empty))))]))
 
 (define (lint-program-with-deprecated-string-concat
   [source : String]
@@ -1668,7 +2474,10 @@
         [decls : AstDeclList (box-get decls-box)]
         (lint-deprecated-string-concat-scan
           source
-          (lint-walk-decl-list decls threshold (lint-findings-empty))))]))
+          (lint-unused-imports-in-decl-list
+            decls
+            decls
+            (lint-walk-decl-list decls threshold (lint-findings-empty)))))]))
 
 ;: Self-test: the nested-`if`-ladder rule and the AST walk.
 ;: Flat-AST test helpers: the self-test builds exprs with i64-returning
@@ -2104,6 +2913,16 @@
         "flatten same-operator and/or operands, e.g. (and a b c)")
         unit
         (panic "lint: cascading-and-or suggestion should be registered"))
+      (if (string-eq
+        (lint-rule-suggestion (lint-rule-unused-import-id))
+        "remove the import or prefix an intentionally unused alias with _")
+        unit
+        (panic "lint: unused-import suggestion should be registered"))
+      (if (string-eq
+        (lint-rule-message (lint-rule-unused-import-id))
+        "unused import: imported module alias is never referenced")
+        unit
+        (panic "lint: unused-import message should be registered"))
       (if (string-eq (lint-rule-suggestion "unknown-rule") "")
         unit
         (panic "lint: unknown rule should have no suggestion"))

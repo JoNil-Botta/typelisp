@@ -1200,7 +1200,12 @@
   (AstImportMacroDecls i64))
 
 (defenum AstImportSpec
-  (AstImportSpec AstImportKind String AstMaybeModuleName AstMaybeImportAlias))
+  (AstImportSpec
+    AstImportKind
+    String
+    AstMaybeModuleName
+    AstMaybeImportAlias
+    AstSourceSpan))
 
 (defenum AstExportItem
   (AstExportValue String)

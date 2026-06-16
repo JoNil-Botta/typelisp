@@ -1546,7 +1546,8 @@
           _
           _
           (AstSomeModuleName module)
-          (AstSomeImportAlias alias)))
+          (AstSomeImportAlias alias)
+          _))
       (and (string-eq module "stdlib.core_macros") (string-eq alias "core"))]
     [_ false]))
 
@@ -1558,7 +1559,8 @@
           (AstImportPath)
           "stdlib/core_macros.tl"
           (AstSomeModuleName "stdlib.core_macros")
-          (AstSomeImportAlias "core")))]
+          (AstSomeImportAlias "core")
+          (AstSourceSpan 0 0 0 0)))]
     [span : AstSourceSpan (AstSourceSpan 9 1 9 1)]
     [decls : AstDeclList
       (ast-decl-cons

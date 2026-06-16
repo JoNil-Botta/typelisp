@@ -22282,6 +22282,9 @@
 (define (tc-moved-add [set : TcMovedSet] [name : String]) : TcMovedSet
   (TcMovedSet (string-i64-map-put (tc-moved-map set) name 1)))
 
+(define (tc-moved-add-value [set : TcMovedSet] [name : String] [value : i64]) : TcMovedSet
+  (TcMovedSet (string-i64-map-put (tc-moved-map set) name value)))
+
 (define (tc-moved-remove [set : TcMovedSet] [name : String]) : TcMovedSet
   (match (string-i64-map-remove (tc-moved-map set) name)
     [(StringI64MapRemoveOk map) (TcMovedSet map)]
@@ -24139,6 +24142,10 @@
   (OkTcBorrowCheckResourceBindings TcTypeEnv TcMovedSet TcMovedSet)
   (ErrTcBorrowCheckResourceBindings String))
 
+(defenum TcBorrowConflictOrigin
+  (TcNoBorrowConflictOrigin)
+  (TcSomeBorrowConflictOrigin i64))
+
 (define (tc-borrow-check-move-message [path : String]) : String
   (string-append
     (string-append "typecheck: cannot move borrowed place `" path)
@@ -24160,6 +24167,77 @@
       "typecheck: cannot immutably borrow mutably borrowed place `"
       path)
     "`"))
+
+(define (tc-borrow-check-help) : String
+  "shorten the borrow with a narrower lexical scope, clone the owner before borrowing when ownership must move later, or use an immutable borrow for non-mutating access")
+
+(define (tc-borrow-check-origin-label [path : String]) : String
+  (str-cat
+    "borrow of `"
+    path
+    "` remains live for the enclosing lexical scope in the v1 borrow checker"))
+
+(define (tc-borrow-check-conflict-origin-loop
+  [map : StringI64Map]
+  [path : String]
+  [index : i64]) : TcBorrowConflictOrigin
+  (if (>= index (string-i64-map-capacity map))
+    TcNoBorrowConflictOrigin
+    (match (string-i64-map-entry-at map index)
+      [(StringI64MapEntrySome key value)
+        (if (tc-moved-path-key-conflicts? key path)
+          (TcSomeBorrowConflictOrigin value)
+          (tc-borrow-check-conflict-origin-loop
+            map
+            path
+            (string-i64-map-next-occupied map (+ index 1))))]
+      [(StringI64MapEntryNone)
+        (tc-borrow-check-conflict-origin-loop
+          map
+          path
+          (string-i64-map-next-occupied map (+ index 1)))])))
+
+(define (tc-borrow-check-conflict-origin
+  [borrowed : TcMovedSet]
+  [path : String]) : TcBorrowConflictOrigin
+  (tc-borrow-check-conflict-origin-loop
+    (tc-moved-map borrowed)
+    path
+    (string-i64-map-next-occupied (tc-moved-map borrowed) 0)))
+
+(define (tc-borrow-check-rich-conflict-message
+  [borrowed : TcMovedSet]
+  [conflict-path : String]
+  [display-path : String]
+  [primary : AstExpr]
+  [message : String]) : String
+  (match (tc-expr-maybe-span primary)
+    [(TcSomeAstSourceSpan primary-span)
+      (match (tc-borrow-check-conflict-origin borrowed conflict-path)
+        [(TcSomeBorrowConflictOrigin origin-id)
+          (match (tc-expr-maybe-span (ast-node-get origin-id))
+            [(TcSomeAstSourceSpan origin-span)
+              (tc-rich-error-one-secondary
+                primary-span
+                message
+                (tc-borrow-check-help)
+                origin-span
+                (tc-borrow-check-origin-label display-path))]
+            [(TcNoAstSourceSpan)
+              (tc-rich-error-one-secondary
+                primary-span
+                message
+                (tc-borrow-check-help)
+                primary-span
+                (tc-borrow-check-origin-label display-path))])]
+        [(TcNoBorrowConflictOrigin)
+          (tc-rich-error-one-secondary
+            primary-span
+            message
+            (tc-borrow-check-help)
+            primary-span
+            (tc-borrow-check-origin-label display-path))])]
+    [(TcNoAstSourceSpan) message]))
 
 (define (tc-borrow-check-mut-path [path : String]) : String
   (string-append "#mut." path))
@@ -24186,58 +24264,93 @@
 (define (tc-borrow-check-add-borrow-path
   [borrowed : TcMovedSet]
   [path : String]
-  [mutable : bool]) : TcMovedSet
+  [mutable : bool]
+  [origin : AstExpr]) : TcMovedSet
   (let
-    [borrowed1 : TcMovedSet (tc-moved-add borrowed (tc-moved-path-key path))]
+    [origin-id : i64 (ast-node-push origin)]
+    [borrowed1 : TcMovedSet
+      (tc-moved-add-value borrowed (tc-moved-path-key path) origin-id)]
     (if mutable
-      (tc-moved-add
+      (tc-moved-add-value
         borrowed1
-        (tc-moved-path-key (tc-borrow-check-mut-path path)))
+        (tc-moved-path-key (tc-borrow-check-mut-path path))
+        origin-id)
       borrowed1)))
 
-(define (tc-borrow-check-move-conflict [borrowed : TcMovedSet] [path : String]) : ResultTcUnit
+(define (tc-borrow-check-move-conflict
+  [borrowed : TcMovedSet]
+  [path : String]
+  [primary : AstExpr]) : ResultTcUnit
   (if (tc-moved-path-conflict? borrowed path)
-    (ErrTcUnit (tc-borrow-check-move-message path))
+    (ErrTcUnit
+      (tc-borrow-check-rich-conflict-message
+        borrowed
+        path
+        path
+        primary
+        (tc-borrow-check-move-message path)))
     OkTcUnit))
 
 (define (tc-borrow-check-assign-conflict
   [borrowed : TcMovedSet]
-  [path : String]) : ResultTcUnit
+  [path : String]
+  [primary : AstExpr]) : ResultTcUnit
   (if (tc-moved-path-conflict? borrowed path)
-    (ErrTcUnit (tc-borrow-check-assign-message path))
+    (ErrTcUnit
+      (tc-borrow-check-rich-conflict-message
+        borrowed
+        path
+        path
+        primary
+        (tc-borrow-check-assign-message path)))
     OkTcUnit))
 
 (define (tc-borrow-check-mutably-borrow-conflict
   [borrowed : TcMovedSet]
-  [path : String]) : ResultTcUnit
+  [path : String]
+  [primary : AstExpr]) : ResultTcUnit
   (if (tc-moved-path-conflict? borrowed path)
-    (ErrTcUnit (tc-borrow-check-mutably-borrow-message path))
+    (ErrTcUnit
+      (tc-borrow-check-rich-conflict-message
+        borrowed
+        path
+        path
+        primary
+        (tc-borrow-check-mutably-borrow-message path)))
     OkTcUnit))
 
 (define (tc-borrow-check-immutably-borrow-conflict
   [borrowed : TcMovedSet]
-  [path : String]) : ResultTcUnit
+  [path : String]
+  [primary : AstExpr]) : ResultTcUnit
   (if (tc-moved-path-conflict? borrowed (tc-borrow-check-mut-path path))
-    (ErrTcUnit (tc-borrow-check-immutably-borrow-message path))
+    (ErrTcUnit
+      (tc-borrow-check-rich-conflict-message
+        borrowed
+        (tc-borrow-check-mut-path path)
+        path
+        primary
+        (tc-borrow-check-immutably-borrow-message path)))
     OkTcUnit))
 
 (define (tc-borrow-check-add-place-with-mutability
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [mutable : bool]
-  [place : AstExpr]) : TcBorrowCheckResult
+  [place : AstExpr]
+  [origin : AstExpr]) : TcBorrowCheckResult
   (match (tc-borrow-check-local-place-path locals place)
     [(TcSomeString path)
       (if mutable
-        (match (tc-borrow-check-mutably-borrow-conflict borrowed path)
+        (match (tc-borrow-check-mutably-borrow-conflict borrowed path origin)
           [(OkTcUnit)
             (OkTcBorrowCheck
-              (tc-borrow-check-add-borrow-path borrowed path true))]
+              (tc-borrow-check-add-borrow-path borrowed path true origin))]
           [(ErrTcUnit message) (ErrTcBorrowCheck message)])
-        (match (tc-borrow-check-immutably-borrow-conflict borrowed path)
+        (match (tc-borrow-check-immutably-borrow-conflict borrowed path origin)
           [(OkTcUnit)
             (OkTcBorrowCheck
-              (tc-borrow-check-add-borrow-path borrowed path false))]
+              (tc-borrow-check-add-borrow-path borrowed path false origin))]
           [(ErrTcUnit message) (ErrTcBorrowCheck message)]))]
     [(TcNoString) (OkTcBorrowCheck borrowed)]))
 
@@ -24247,7 +24360,7 @@
   [expr : AstExpr]) : TcBorrowCheckResult
   (match (tc-borrow-check-local-place-path locals expr)
     [(TcSomeString path)
-      (match (tc-borrow-check-move-conflict borrowed path)
+      (match (tc-borrow-check-move-conflict borrowed path expr)
         [(OkTcUnit) (OkTcBorrowCheck borrowed)]
         [(ErrTcUnit message) (ErrTcBorrowCheck message)])]
     [(TcNoString) (OkTcBorrowCheck borrowed)]))
@@ -24273,7 +24386,7 @@
       (if (and
         (tc-moved-contains? locals name)
         (tc-move-var-move-only? env name))
-        (match (tc-borrow-check-move-conflict borrowed name)
+        (match (tc-borrow-check-move-conflict borrowed name init)
           [(OkTcUnit) (OkTcBorrowCheck borrowed)]
           [(ErrTcUnit message) (ErrTcBorrowCheck message)])
         (OkTcBorrowCheck borrowed))]
@@ -24288,22 +24401,25 @@
 (define (tc-borrow-check-assignment
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
-  [name : String]) : ResultTcUnit
+  [name : String]
+  [primary : AstExpr]) : ResultTcUnit
   (if (tc-moved-contains? locals name)
-    (tc-borrow-check-assign-conflict borrowed name)
+    (tc-borrow-check-assign-conflict borrowed name primary)
     OkTcUnit))
 
 (define (tc-borrow-check-array-set-conflict
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [array : AstExpr]
-  [index : AstExpr]) : ResultTcUnit
+  [index : AstExpr]
+  [primary : AstExpr]) : ResultTcUnit
   (match (tc-move-root-projection-var array)
     [(TcSomeString root)
       (if (tc-moved-contains? locals root)
         (match (tc-move-array-set-path array index)
-          [(TcSomeString path) (tc-borrow-check-assign-conflict borrowed path)]
-          [(TcNoString) (tc-borrow-check-assign-conflict borrowed root)])
+          [(TcSomeString path)
+            (tc-borrow-check-assign-conflict borrowed path primary)]
+          [(TcNoString) (tc-borrow-check-assign-conflict borrowed root primary)])
         OkTcUnit)]
     [(TcNoString) OkTcUnit]))
 
@@ -24311,24 +24427,27 @@
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [receiver : AstExpr]
-  [field : String]) : ResultTcUnit
+  [field : String]
+  [primary : AstExpr]) : ResultTcUnit
   (match (tc-move-root-projection-var receiver)
     [(TcSomeString root)
       (if (tc-moved-contains? locals root)
         (match (tc-move-struct-set-path receiver field)
-          [(TcSomeString path) (tc-borrow-check-assign-conflict borrowed path)]
-          [(TcNoString) (tc-borrow-check-assign-conflict borrowed root)])
+          [(TcSomeString path)
+            (tc-borrow-check-assign-conflict borrowed path primary)]
+          [(TcNoString) (tc-borrow-check-assign-conflict borrowed root primary)])
         OkTcUnit)]
     [(TcNoString) OkTcUnit]))
 
 (define (tc-borrow-check-root-mutation-conflict
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
-  [place : AstExpr]) : ResultTcUnit
+  [place : AstExpr]
+  [primary : AstExpr]) : ResultTcUnit
   (match (tc-move-root-projection-var place)
     [(TcSomeString root)
       (if (tc-moved-contains? locals root)
-        (tc-borrow-check-assign-conflict borrowed root)
+        (tc-borrow-check-assign-conflict borrowed root primary)
         OkTcUnit)]
     [(TcNoString) OkTcUnit]))
 
@@ -24390,7 +24509,7 @@
     [(AstExprCons arg _)
       (let
         [arg : AstExpr (ast-node-get arg)]
-        (match (tc-borrow-check-root-mutation-conflict locals borrowed arg)
+        (match (tc-borrow-check-root-mutation-conflict locals borrowed arg arg)
           [(OkTcUnit) (OkTcBorrowCheck borrowed)]
           [(ErrTcUnit message) (ErrTcBorrowCheck message)]))]
     [(AstExprNil) (OkTcBorrowCheck borrowed)]))
@@ -24545,7 +24664,8 @@
                 locals
                 borrowed
                 mutable
-                place))]
+                place
+                arg))]
           [_ (OkTcBorrowCheck borrowed)])]
       [(ErrTcExpr message)
         (ErrTcBorrowCheck (tc-locate-error-at-expr arg message))])))
@@ -24671,7 +24791,8 @@
                 locals
                 borrowed
                 mutable
-                place))]
+                place
+                arg))]
           [(AstExprAnn inner-box _)
             (let
               [inner : AstExpr (ast-node-get inner-box)]
@@ -25076,7 +25197,8 @@
                           locals
                           borrowed4
                           array
-                          index)
+                          index
+                          array)
                           [(OkTcUnit) (OkTcBorrowCheck borrowed4)]
                           [(ErrTcUnit message) (ErrTcBorrowCheck message)])]
                       [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
@@ -25102,7 +25224,8 @@
                       locals
                       borrowed3
                       receiver
-                      (intern-str field))
+                      (intern-str field)
+                      receiver)
                       [(OkTcUnit) (OkTcBorrowCheck borrowed3)]
                       [(ErrTcUnit message) (ErrTcBorrowCheck message)])]
                   [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
@@ -25126,6 +25249,7 @@
                     (match (tc-borrow-check-root-mutation-conflict
                       locals
                       borrowed3
+                      array
                       array)
                       [(OkTcUnit) (OkTcBorrowCheck borrowed3)]
                       [(ErrTcUnit message) (ErrTcBorrowCheck message)])]
@@ -25176,7 +25300,11 @@
             [(OkTcBorrowCheck borrowed1)
               (match (tc-borrow-check-after-bind ctx env locals borrowed1 rhs)
                 [(OkTcBorrowCheck borrowed2)
-                  (match (tc-borrow-check-assignment locals borrowed2 name-text)
+                  (match (tc-borrow-check-assignment
+                    locals
+                    borrowed2
+                    name-text
+                    rhs)
                     [(OkTcUnit) (OkTcBorrowCheck borrowed2)]
                     [(ErrTcUnit message) (ErrTcBorrowCheck message)])]
                 [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
@@ -25200,6 +25328,7 @@
                   locals
                   borrowed1
                   mutable
+                  inner
                   inner)]
               [(ErrTcBorrowPlace message) (ErrTcBorrowCheck message)])]
           [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
@@ -25357,7 +25486,8 @@
                     (match (tc-borrow-check-root-mutation-conflict
                       locals
                       borrowed3
-                      (ast-node-get (ast-expr-box-get box-box)))
+                      (ast-node-get (ast-expr-box-get box-box))
+                      box-expr)
                       [(OkTcUnit) (OkTcBorrowCheck borrowed3)]
                       [(ErrTcUnit message) (ErrTcBorrowCheck message)])]
                   [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]

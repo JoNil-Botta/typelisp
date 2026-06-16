@@ -387,7 +387,9 @@ tl_arena_make:
     movq $0, 0(%rax)
     movq $0, 32(%rax)
     movq %rax, 40(%rax)
-    leaq 48(%rax), %rcx
+    movq $0, 48(%rax)
+    movq %rax, 56(%rax)
+    leaq 64(%rax), %rcx
     movq %rcx, 8(%rax)
     movq %rcx, 16(%rax)
     movq %rax, %rcx
@@ -395,6 +397,35 @@ tl_arena_make:
     movq %rcx, 24(%rax)
     ret
 .L_tl_arena_make_abort:
+    movq $60, %rax
+    movq $134, %rdi
+    syscall
+
+    .globl tl_arena_make_atomic
+tl_arena_make_atomic:
+    movq $0x4000000, %rsi
+    xorq %rdi, %rdi
+    movq $3, %rdx
+    movq $0x22, %r10
+    movq $-1, %r8
+    xorq %r9, %r9
+    movq $9, %rax
+    syscall
+    testq %rax, %rax
+    js .L_tl_arena_make_atomic_abort
+    movq $0, 0(%rax)
+    movq $0, 32(%rax)
+    movq %rax, 40(%rax)
+    movq $1, 48(%rax)
+    movq %rax, 56(%rax)
+    leaq 64(%rax), %rcx
+    movq %rcx, 8(%rax)
+    movq %rcx, 16(%rax)
+    movq %rax, %rcx
+    addq $0x4000000, %rcx
+    movq %rcx, 24(%rax)
+    ret
+.L_tl_arena_make_atomic_abort:
     movq $60, %rax
     movq $134, %rdi
     syscall
@@ -410,6 +441,10 @@ tl_arena_destroy:
     movq 40(%rbx), %r12
     testq %r12, %r12
     jz .L_tl_arena_destroy_loop
+    testq $1, 48(%r12)
+    jz .L_tl_arena_destroy_retired_ready
+    movq 56(%r12), %rbx
+.L_tl_arena_destroy_retired_ready:
     movq 32(%r12), %r12
 .L_tl_arena_destroy_loop:
     testq %rbx, %rbx

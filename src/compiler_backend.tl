@@ -1380,6 +1380,13 @@
         [(AstTyF64) "vmulpd"]
         [(AstTyF32) "vmulps"]
         [_ ""])]
+    [(IrBinBitAnd)
+      (match elem-ty
+        [(AstTyI64) "vpandq"]
+        [(AstTyU64) "vpandq"]
+        [(AstTyI32) "vpandd"]
+        [(AstTyU32) "vpandd"]
+        [_ ""])]
     [_ ""]))
 
 (define (compiler-backend-avx512-vector-compare-mnemonic [elem-ty : AstType]) : String

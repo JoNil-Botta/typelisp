@@ -91,6 +91,7 @@ tests/spmd/i8_mul_reject.tl
 tests/spmd/masked_if_i64.tl
 tests/spmd/masked_if_offset_i64.tl
 tests/spmd/masked_if_index_value_i64.tl
+tests/spmd/masked_if_index_mod_i64.tl
 tests/spmd/masked_if_value_i64.tl
 tests/spmd/masked_if_i16_u16.tl
 tests/spmd/inline_helper_masked_if_i64.tl
@@ -115,6 +116,9 @@ spmd_mode_expected_compile_diagnostic() {
             printf '%s\n' "lower: SPMD masked if is not supported in AVX2 backend mode; use scalar or avx512"
             ;;
         tests/spmd/masked_if_index_value_i64.tl:avx2)
+            printf '%s\n' "lower: SPMD masked if is not supported in AVX2 backend mode; use scalar or avx512"
+            ;;
+        tests/spmd/masked_if_index_mod_i64.tl:avx2)
             printf '%s\n' "lower: SPMD masked if is not supported in AVX2 backend mode; use scalar or avx512"
             ;;
         tests/spmd/masked_if_value_i64.tl:avx2)

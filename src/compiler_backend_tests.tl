@@ -3880,6 +3880,14 @@
       (array-set! out i i)
       (array-set! out i (+ i 1)))))")
 
+(define (compiler-backend-avx512-masked-if-index-mod-source) : String
+  "(define (fill [out : (Array i64)] [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (if (= (% i 2) 0)
+      (array-set! out i (+ i 10))
+      (array-set! out i (+ i 100)))))")
+
 (define (compiler-backend-avx512-masked-if-value-source) : String
   "(define (fill [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
   (foreach
@@ -4009,6 +4017,35 @@
         [(ErrCompilerBackend _) false])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-backend-avx512-masked-if-index-mod-ok?) : bool
+  (match (lower-compiler-source-with-mode
+    (compiler-backend-avx512-masked-if-index-mod-source)
+    (CompilerLowerAvx512))
+    [(OkCompilerLower program spans)
+      (match (compiler-backend-emit-program-target-with-mode
+        program
+        (BackendTargetLinux)
+        (BackendModeAvx512)
+        spans
+        true)
+        [(OkCompilerBackend asm)
+          (and
+            (backend-and8
+              (compiler-backend-string-contains? asm "    vpcmpq $0,")
+              (compiler-backend-string-contains? asm "    kandw ")
+              (compiler-backend-string-contains? asm "    knotw ")
+              (compiler-backend-string-contains? asm "    vpbroadcastq ")
+              (compiler-backend-string-contains? asm "tail_mask_")
+              (compiler-backend-string-contains? asm "lane_id_")
+              (compiler-backend-string-contains? asm "    vpandq ")
+              (compiler-backend-string-contains? asm "    vmovdqu64 "))
+            (not
+              (compiler-backend-string-contains?
+                asm
+                "vector/mask IR emission is not implemented")))]
+        [(ErrCompilerBackend _) false])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-backend-avx512-masked-if-value-ok?) : bool
   (match (lower-compiler-source-with-mode
     (compiler-backend-avx512-masked-if-value-source)
@@ -4045,6 +4082,7 @@
     (compiler-backend-avx512-masked-if-source-ok?
       (compiler-backend-avx512-masked-if-offset-source))
     (compiler-backend-avx512-masked-if-index-value-ok?)
+    (compiler-backend-avx512-masked-if-index-mod-ok?)
     (compiler-backend-avx512-masked-if-value-ok?)
     (compiler-backend-avx512-select-true-alias-ok?)))
 

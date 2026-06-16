@@ -41,6 +41,9 @@ falling back to scalar code.
 - `masked_if_index_value_i64.tl` - AVX-512-only masked varying `if` over
   `n = 13` i64 lanes whose condition and stores use the foreach index as a
   varying value. Exit 42.
+- `masked_if_index_mod_i64.tl` - AVX-512-only masked varying `if` over
+  `n = 13` i64 lanes whose condition uses `% i 2` lane-index arithmetic.
+  Exit 42.
 - `masked_if_value_i64.tl` - AVX-512-only value-producing masked `if` over
   `n = 13` i64 lanes feeding a predicated store. Exit 42.
 - `masked_if_i16_u16.tl` - AVX-512-only masked varying `if` over i16 and u16
@@ -86,7 +89,8 @@ Coverage map:
 - AVX-512 masked varying `if` direct-index, shifted-contiguous-index, and
   foreach-index-as-value coverage lives in `masked_if_i64.tl`,
   `masked_if_offset_i64.tl`, `masked_if_index_value_i64.tl`,
-  `masked_if_value_i64.tl`, and `masked_if_i16_u16.tl`.
+  `masked_if_index_mod_i64.tl`, `masked_if_value_i64.tl`, and
+  `masked_if_i16_u16.tl`.
 - Direct inline-helper coverage for varying scalar lane values lives in
   `inline_helper_i64.tl`, `inline_helper_shadow_i64.tl`,
   `inline_helper_f64.tl`, and `inline_helper_masked_if_i64.tl`.

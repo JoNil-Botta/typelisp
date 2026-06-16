@@ -10597,15 +10597,17 @@
 (define (lower-arena-builtin-symbol-id [name-id : i64]) : String
   (if (compiler-builtin-lower-arena-make-id? name-id)
     "tl_arena_make"
-    (if (compiler-builtin-lower-arena-current-id? name-id)
-      "tl_arena_current"
-      (if (compiler-builtin-lower-arena-mark-id? name-id)
-        "tl_region_mark"
-        (if (compiler-builtin-lower-arena-set-id? name-id)
-          "tl_arena_set"
-          (if (compiler-builtin-lower-arena-destroy-id? name-id)
-            "tl_arena_destroy"
-            "tl_region_reset"))))))
+    (if (compiler-builtin-lower-arena-make-atomic-id? name-id)
+      "tl_arena_make_atomic"
+      (if (compiler-builtin-lower-arena-current-id? name-id)
+        "tl_arena_current"
+        (if (compiler-builtin-lower-arena-mark-id? name-id)
+          "tl_region_mark"
+          (if (compiler-builtin-lower-arena-set-id? name-id)
+            "tl_arena_set"
+            (if (compiler-builtin-lower-arena-destroy-id? name-id)
+              "tl_arena_destroy"
+              "tl_region_reset")))))))
 
 (define (lower-arena-builtin-symbol [name : String]) : String
   (lower-arena-builtin-symbol-id (intern name)))

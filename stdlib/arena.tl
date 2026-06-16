@@ -78,6 +78,9 @@
 ;: Runtime hook backing `arena-make`.
 (extern (tl_arena_make) : i64)
 
+;: Runtime hook backing `arena-make-atomic`.
+(extern (tl_arena_make_atomic) : i64)
+
 ;: Runtime hook backing `arena-current`.
 (extern (tl_arena_current) : i64)
 
@@ -102,6 +105,10 @@
 ;: Direct switching or destruction of the handle remains unsafe.
 (define (arena-make) : i64
   (tl_arena_make))
+
+;: Create a fresh independent atomic arena without switching to it.
+(define (arena-make-atomic) : i64
+  (tl_arena_make_atomic))
 
 ;: Return the current active arena handle, or `0` before the first allocation.
 (define (arena-current) : i64

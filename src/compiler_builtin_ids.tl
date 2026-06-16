@@ -16,6 +16,9 @@
 (define compiler-builtin-id-tl-arena-make : i64
   -1)
 
+(define compiler-builtin-id-tl-arena-make-atomic : i64
+  -1)
+
 (define compiler-builtin-id-tl-arena-current : i64
   -1)
 
@@ -142,6 +145,9 @@
 (define compiler-builtin-id-arena-make : i64
   -1)
 
+(define compiler-builtin-id-arena-make-atomic : i64
+  -1)
+
 (define compiler-builtin-id-arena-current : i64
   -1)
 
@@ -168,6 +174,9 @@
       (set! compiler-builtin-id-tl-region-mark (intern "tl_region_mark"))
       (set! compiler-builtin-id-tl-region-reset (intern "tl_region_reset"))
       (set! compiler-builtin-id-tl-arena-make (intern "tl_arena_make"))
+      (set!
+        compiler-builtin-id-tl-arena-make-atomic
+        (intern "tl_arena_make_atomic"))
       (set! compiler-builtin-id-tl-arena-current (intern "tl_arena_current"))
       (set! compiler-builtin-id-tl-arena-set (intern "tl_arena_set"))
       (set! compiler-builtin-id-tl-arena-destroy (intern "tl_arena_destroy"))
@@ -224,6 +233,7 @@
       (set! compiler-builtin-id-xgetbv (intern "xgetbv"))
       (set! compiler-builtin-id-clone (intern "clone"))
       (set! compiler-builtin-id-arena-make (intern "arena-make"))
+      (set! compiler-builtin-id-arena-make-atomic (intern "arena-make-atomic"))
       (set! compiler-builtin-id-arena-current (intern "arena-current"))
       (set! compiler-builtin-id-arena-mark (intern "arena-mark"))
       (set! compiler-builtin-id-arena-set-bang (intern "arena-set!"))
@@ -261,12 +271,13 @@
         compiler-builtin-id-tl-arena-make)
       (compiler-builtin-id-any4?
         name-id
+        compiler-builtin-id-tl-arena-make-atomic
         compiler-builtin-id-tl-arena-current
         compiler-builtin-id-tl-arena-set
-        compiler-builtin-id-tl-arena-destroy
-        compiler-builtin-id-tl-arena-poison-enable)
-      (compiler-builtin-id-any2?
+        compiler-builtin-id-tl-arena-destroy)
+      (compiler-builtin-id-any3?
         name-id
+        compiler-builtin-id-tl-arena-poison-enable
         compiler-builtin-id-tl-thread-entry-ptr
         compiler-builtin-id-tl-thread-init))))
 
@@ -335,10 +346,11 @@
         name-id
         compiler-builtin-id-tl-arena-poison-enable
         compiler-builtin-id-tl-arena-make
-        compiler-builtin-id-tl-arena-current
-        compiler-builtin-id-tl-arena-set)
-      (compiler-builtin-id-any2?
+        compiler-builtin-id-tl-arena-make-atomic
+        compiler-builtin-id-tl-arena-current)
+      (compiler-builtin-id-any3?
         name-id
+        compiler-builtin-id-tl-arena-set
         compiler-builtin-id-tl-thread-entry-ptr
         compiler-builtin-id-tl-thread-init))))
 
@@ -473,20 +485,22 @@
       (compiler-builtin-id-any4?
         name-id
         compiler-builtin-id-arena-make
+        compiler-builtin-id-arena-make-atomic
         compiler-builtin-id-arena-current
-        compiler-builtin-id-arena-mark
-        compiler-builtin-id-arena-set-bang)
-      (compiler-builtin-id-any2?
+        compiler-builtin-id-arena-mark)
+      (compiler-builtin-id-any3?
         name-id
+        compiler-builtin-id-arena-set-bang
         compiler-builtin-id-arena-destroy
         compiler-builtin-id-arena-rewind))))
 
 (define (compiler-builtin-lower-arena-nullary-id? [name-id : i64]) : bool
   (begin
     (compiler-builtin-refresh!)
-    (compiler-builtin-id-any3?
+    (compiler-builtin-id-any4?
       name-id
       compiler-builtin-id-arena-make
+      compiler-builtin-id-arena-make-atomic
       compiler-builtin-id-arena-current
       compiler-builtin-id-arena-mark)))
 
@@ -494,6 +508,11 @@
   (begin
     (compiler-builtin-refresh!)
     (= name-id compiler-builtin-id-arena-make)))
+
+(define (compiler-builtin-lower-arena-make-atomic-id? [name-id : i64]) : bool
+  (begin
+    (compiler-builtin-refresh!)
+    (= name-id compiler-builtin-id-arena-make-atomic)))
 
 (define (compiler-builtin-lower-arena-current-id? [name-id : i64]) : bool
   (begin

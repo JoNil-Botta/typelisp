@@ -687,7 +687,8 @@ helpers below. See [SPEC.md §5.16](SPEC.md) and §7.3 for the full contract.
 The standard scratch patterns are: use `(with-arena scratch ...)` for temporary
 work that returns only scalars or outer-owned values; use `(with-escape scratch
 ...)` with a first-class arena from `arena-make` when one supported result must
-be cloned out; use `(in-arena arena body ...)` when the result should remain
+be cloned out; use `(arena-make-atomic)` for a shared atomic allocation target;
+use `(in-arena arena body ...)` when the result should remain
 owned by that first-class arena; reserve manual `arena-set!` / `arena-rewind` /
 `arena-destroy` calls for unsafe internals that can prove every invalidated
 handle is dead.
@@ -708,9 +709,9 @@ locks, mapped files, and similar resources; it does not imply destructors,
 `free`, or arena reset semantics.
 
 Programs that need manual control import `stdlib/arena.tl` and use the
-first-class arena helpers. `arena-make`, `arena-current`, and `arena-mark` are
-safe because they only create/read handles or record a reset mark. `arena-set!`,
-`arena-destroy`, and `arena-rewind` require
+first-class arena helpers. `arena-make`, `arena-make-atomic`, `arena-current`,
+and `arena-mark` are safe because they only create/read handles or record a reset
+mark. `arena-set!`, `arena-destroy`, and `arena-rewind` require
 `(unsafe ...)`, because switching, freeing, or rewinding arenas can invalidate
 live heap handles. The safe `with-arena` surface remains preferred for scoped
 cleanup, while `in-arena` is the safe dynamic allocation-target switch without

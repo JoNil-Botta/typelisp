@@ -4733,7 +4733,10 @@
         "tl_arena_destroy")
       (compiler-backend-runtime-helper-inventory-core-symbol-ok?
         plan
-        "tl_arena_poison_enable"))
+        "tl_arena_make_atomic"))
+    (compiler-backend-runtime-helper-inventory-core-symbol-ok?
+      plan
+      "tl_arena_poison_enable")
     (compiler-backend-runtime-helper-inventory-core-symbol-ok?
       plan
       "tl_thread_init")))
@@ -5036,21 +5039,22 @@
         (compiler-backend-string-contains? asm "tl_arena_set:\n")
         (compiler-backend-string-contains? asm "tl_arena_destroy:\n")
         (compiler-backend-string-contains? asm "tl_arena_poison_enable:\n"))
+      (compiler-backend-string-contains? asm "tl_arena_make_atomic:\n")
       (backend-and4
         (=
           (compiler-backend-string-count asm "    movq $9, %rax\n    syscall\n")
-          3)
+          5)
         (=
           (compiler-backend-string-count
             asm
             "    movq $11, %rax\n    syscall\n")
           4)
-        (= (compiler-backend-string-count asm "    syscall\n") 10)
+        (= (compiler-backend-string-count asm "    syscall\n") 13)
         (=
           (compiler-backend-string-count
             asm
             "    movq $60, %rax\n    movq $134, %rdi\n    syscall\n")
-          2))
+          3))
       (compiler-backend-string-contains?
         asm
         "    movq $158, %rax\n    syscall\n")
@@ -5073,8 +5077,9 @@
         (compiler-backend-string-contains? asm "tl_arena_set:\n")
         (compiler-backend-string-contains? asm "tl_arena_destroy:\n")
         (compiler-backend-string-contains? asm "tl_arena_poison_enable:\n"))
+      (compiler-backend-string-contains? asm "tl_arena_make_atomic:\n")
       (backend-and4
-        (= (compiler-backend-string-count asm "    call VirtualAlloc\n") 2)
+        (= (compiler-backend-string-count asm "    call VirtualAlloc\n") 4)
         (= (compiler-backend-string-count asm "    call VirtualFree\n") 4)
         (not (compiler-backend-string-contains? asm "    syscall\n"))
         (not (compiler-backend-string-contains? asm "    call WriteFile\n")))

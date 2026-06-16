@@ -230,13 +230,14 @@ names so runtime-plan additions must be assigned an owner first.
 
 - **Core runtime:** the backend-owned allocator/arena substrate:
   `tl_alloc`, `tl_region_mark`, `tl_region_reset`, `tl_arena_make`,
-  `tl_arena_current`, `tl_arena_set`, `tl_arena_destroy`,
+  `tl_arena_make_atomic`, `tl_arena_current`, `tl_arena_set`, `tl_arena_destroy`,
   `tl_arena_poison_enable`. These helpers are irreducible backend runtime
   because they bootstrap ordinary TypeLisp allocation, own the single
   `tl_current_arena` slot, and must stay import-free and allocation-free on
   allocation/reclaim paths. Their checked OS-call inventory is Linux
-  `mmap`/`munmap` in `tl_alloc`, `tl_arena_make`, `tl_arena_destroy`, and
-  `tl_region_reset(0)`, plus the current `tl_arena_make` fatal-exit syscall;
+  `mmap`/`munmap` in `tl_alloc`, `tl_arena_make`, `tl_arena_make_atomic`,
+  `tl_arena_destroy`, and `tl_region_reset(0)`, plus the current arena make
+  fatal-exit syscalls;
   Windows uses kernel32 `VirtualAlloc`/`VirtualFree` in the corresponding page
   acquisition/release paths. Nonzero `tl_region_reset(mark)` retires overflow
   chunks on the arena root instead of releasing them immediately, and reset-all
@@ -344,7 +345,7 @@ owned stdlib imports keep the compatibility wrappers.
 | `MutexI64` helpers in `sync.tl` | Mutex creation allocates one runtime-owned scalar slot and one OS semaphore handle. `mutex-i64-lock` blocks on the semaphore and returns a cleanup-owned `MutexI64Guard`; guarded get/set/add do not allocate and `mutex-i64-unlock` releases the semaphore automatically when the `with` scope exits. `mutex-i64-close` releases the OS memory and semaphore after all users are done. |
 | `i64-slice-*` helpers in `vector_slice.tl` | `I64Slice` constructors, `get`, `len`, `is-empty?`, and sub-slicing are non-allocating views tied to a source owner borrow; invalid ranges/counts produce an empty view. `i64-slice-to-array` and `i64-slice-to-vec` are explicit owned-copy boundaries that allocate active-arena storage. |
 | Future `byte-buf-*` / `bytes-*` helpers in `byte_buf.tl` | `ByteBuf` construction, copy-in, reserve, growth, and copy-out allocate in the active arena. Borrowing a buffer's live range as `(& r bytes)` or `(&mut r bytes)` is non-allocating; mutable views are exclusive and fixed-length. String/`str`/`(Array u8)` conversion boundaries are explicit copies unless a helper explicitly returns an immutable borrowed byte view. |
-| `arena-*` helpers in `arena.tl` | First-class arena control does not allocate returned aggregate storage. `arena-make` creates an independent arena handle, `arena-current` observes the active arena, and `arena-mark` observes the current bump mark. `arena-set!`, `arena-destroy`, and `arena-rewind` can invalidate live heap handles and require `(unsafe ...)`. |
+| `arena-*` helpers in `arena.tl` | First-class arena control does not allocate returned aggregate storage. `arena-make` creates an independent ordinary arena handle, `arena-make-atomic` creates an independent atomic arena handle, `arena-current` observes the active arena, and `arena-mark` observes the current bump mark. `arena-set!`, `arena-destroy`, and `arena-rewind` can invalidate live heap handles and require `(unsafe ...)`. |
 | `args-*` helpers in `args.tl` | Option specs, parse results, occurrence lists, positional list spines, diagnostic payloads, and helper substrings allocate in the active arena. Token classification, option lookup, count/presence checks, and value accessors are non-allocating aside from caller-provided owned strings and existing result storage. |
 | `json-*` helpers | Parser, lookup, escaping, and JSON number parsing helpers borrow source text or keys. Object lookup compares borrowed keys without allocating. Parsed JSON aggregates, decoded strings, escaped strings, stringified output, float number text, validation copies, and list/member spines allocate owned results in the active arena. Float conversion is deterministic, finite-only, host-locale independent, and currently accepts up to 300 non-zero significant decimal digits; longer non-zero number text is rejected rather than rounded through an unbounded scratch representation. |
 | `string-eq`, `string=?`, `string-eq-borrowed`, `string->int`, `string->int-borrowed` | Equality and integer parsing helpers inspect string bytes without allocating. The owned wrappers borrow their inputs internally; the borrowed variants are available to stdlib code that already has `(& r str)` values. `string->int` keeps the legacy runtime parser rules, including `""`/`"-"` as zero and byte-minus-`'0'` arithmetic for non-digits. |

@@ -223,6 +223,7 @@ EOF
 # `<host>` is `linux`, `windows`, or `all`.
 stdlib_test_manifest() {
     cat <<'EOF'
+stdlib/tests/arena_atomic_api.tl|42|-|-|-|requires-stage0-symbol:tl_arena_make_atomic
 stdlib/tests/arena_patterns.tl|42|-|-|-|requires-stage0-symbol:with-escape
 stdlib/tests/args_api.tl|42|-|-|-
 stdlib/tests/comptime_api.tl|42|-|-|-

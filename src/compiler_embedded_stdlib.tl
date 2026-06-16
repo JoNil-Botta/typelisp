@@ -57,6 +57,8 @@
 
 (include-str compiler-embedded-stdlib-time "stdlib/time.tl")
 
+(include-str compiler-embedded-stdlib-tests-arena-atomic-api "stdlib/tests/arena_atomic_api.tl")
+
 (include-str compiler-embedded-stdlib-tests-arena-patterns "stdlib/tests/arena_patterns.tl")
 
 (include-str compiler-embedded-stdlib-tests-arena-policy-escape-string "stdlib/tests/arena_policy_escape_string.tl")
@@ -235,6 +237,12 @@
   (let
     [source : CompilerEmbeddedStdlibSource (CompilerEmbeddedStdlibNoSource)]
     (begin
+      (if (string-eq suffix "tests/arena_atomic_api.tl")
+        (set!
+          source
+          (CompilerEmbeddedStdlibSomeSource
+            compiler-embedded-stdlib-tests-arena-atomic-api))
+        unit)
       (if (string-eq suffix "tests/arena_patterns.tl")
         (set!
           source

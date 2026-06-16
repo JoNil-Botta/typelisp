@@ -5063,7 +5063,7 @@ not as an independently quantified region. The specified owner classes are:
   source code cannot write a lifetime name for them directly. Safe code may use
   them through `with-escape` and `in-arena`, but concurrent allocation into one
   ordinary arena is not defined.
-- **Atomic first-class arena owners:** handles returned by the planned
+- **Atomic first-class arena owners:** handles returned by the
   `arena-make-atomic` wrapper over `tl_arena_make_atomic` name allocation homes
   whose lifetime may span multiple threads. Multiple threads may make the same
   atomic arena current and allocate into it concurrently, subject to the source
@@ -5181,9 +5181,9 @@ inner scoped region would escape.
 
 #### Atomic arena allocation target
 
-The planned source wrapper for `tl_arena_make_atomic` is:
+The source wrapper for `tl_arena_make_atomic` is:
 
-```lisp test=ignore name=arena-make-atomic-specified reason="specified before runtime helper support"
+```lisp test=check name=arena-make-atomic-specified
 (import "stdlib/arena.tl")
 
 (define (main) : i64
@@ -5256,8 +5256,9 @@ first-class arena helpers:
         (arena-destroy scratch)))))
 ```
 
-`arena-make`, `arena-current`, and `arena-mark` are safe: they create an arena
-handle, read the active arena handle, or record the active arena bump pointer.
+`arena-make`, `arena-make-atomic`, `arena-current`, and `arena-mark` are safe:
+they create an arena handle, read the active arena handle, or record the active
+arena bump pointer.
 By themselves they do not switch the active arena, free arena chains, rewind
 allocation, or invalidate live safe handles.
 

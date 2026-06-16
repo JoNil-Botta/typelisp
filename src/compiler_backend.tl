@@ -19704,53 +19704,91 @@ tl_profile_alloc_peak_bytes:
     [size-imm : String (string-append "$" size-text)]
     [label : String (compiler-backend-fast-alloc-label size)]
     [slow-label : String (string-append label "_slow")]
+    [atomic-label : String (string-append label "_atomic")]
+    [atomic-cas-label : String (string-append label "_atomic_cas")]
+    [atomic-profile-label : String (string-append label "_atomic_profile_done")]
     [profile-label : String (string-append label "_profile_done")]
-    (string-append
-      (str-cat label ":\n" "")
-      (string-append
-        (string-append
-          (compiler-backend-current-arena-load target "%r8")
-          (str-cat "    testq %r8, %r8\n    jz " slow-label "\n"))
-        (str-cat
-          "    movq 16(%r8), %rax
+    [prologue : String
+      (str-cat
+        label
+        ":\n"
+        (compiler-backend-current-arena-load target "%r8")
+        (str-cat "    testq %r8, %r8\n    jz " slow-label "\n"))]
+    [ordinary-body-a : String
+      (backend-cat4
+        "    movq 40(%r8), %r9
+    testq $1, 48(%r9)
+    jnz "
+        atomic-label
+        "
+    movq 16(%r8), %rax
     movq %rax, "
-          next-reg
-          "
-    addq $"
+        next-reg)]
+    [ordinary-body-b : String
+      (backend-cat4 "\n    addq $" size-text ", " next-reg)]
+    [ordinary-body-c : String
+      (backend-cat4 "\n    jc " slow-label "\n    cmpq 24(%r8), " next-reg)]
+    [ordinary-body-d : String
+      (backend-cat4 "\n    ja " slow-label "\n    movq " next-reg)]
+    [ordinary-body : String
+      (backend-cat4
+        ordinary-body-a
+        ordinary-body-b
+        ordinary-body-c
+        (backend-cat3 ordinary-body-d ", 16(%r8)\n" ""))]
+    [ordinary-profile : String
+      (compiler-backend-runtime-profile-alloc-account
+        size-imm
+        profile-label
+        profile)]
+    [atomic-body-a : String
+      (backend-cat4
+        "    ret
+"
+        atomic-label
+        ":
+    movq 56(%r9), %r8
+    movq 16(%r8), %rax
+"
+        atomic-cas-label)]
+    [atomic-body-b : String
+      (backend-cat4 ":\n    movq %rax, " next-reg "\n    addq $" size-text)]
+    [atomic-body-c : String (backend-cat4 ", " next-reg "\n    jc " slow-label)]
+    [atomic-body-d : String
+      (backend-cat4 "\n    cmpq 24(%r8), " next-reg "\n    ja " slow-label)]
+    [atomic-body-e : String
+      (backend-cat4
+        "\n    lock cmpxchgq "
+        next-reg
+        ", 16(%r8)\n    jne "
+        atomic-cas-label)]
+    [atomic-body : String
+      (backend-cat4
+        atomic-body-a
+        atomic-body-b
+        atomic-body-c
+        (backend-cat3 atomic-body-d atomic-body-e "\n"))]
+    [atomic-profile : String
+      (compiler-backend-runtime-profile-alloc-account
+        size-imm
+        atomic-profile-label
+        profile)]
+    [slow-body : String
+      (str-cat
+        "    ret
+"
+        slow-label
+        (str-cat
+          ":\n    movq $"
           size-text
-          (str-cat
-            ", "
-            next-reg
-            "
-    jc "
-            slow-label
-            (str-cat
-              "
-    cmpq 24(%r8), "
-              next-reg
-              "
-    ja "
-              slow-label
-              (str-cat
-                "
-    movq "
-                next-reg
-                ", 16(%r8)
-"
-                (compiler-backend-runtime-profile-alloc-account
-                  size-imm
-                  profile-label
-                  profile)
-                (str-cat
-                  "    ret
-"
-                  slow-label
-                  ":
-    movq $"
-                  size-text
-                  (str-cat ", " size-reg "
-    jmp tl_alloc
-" ""))))))))))
+          (str-cat ", " size-reg "\n    jmp tl_alloc\n")))]
+    (string-append
+      prologue
+      (string-append
+        ordinary-body
+        (string-append
+          ordinary-profile
+          (string-append atomic-body (string-append atomic-profile slow-body)))))))
 
 (define (compiler-backend-runtime-fast-alloc-functions
   [target : CompilerBackendTarget]
@@ -19814,14 +19852,40 @@ tl_profile_alloc_peak_bytes:
             profile))))))
 
 (define (compiler-backend-runtime-alloc-functions [profile : bool]) : String
-  (string-append
-    (compiler-backend-runtime-fast-alloc-functions
-      (BackendTargetLinux)
-      "%rdi"
-      "%rcx"
-      profile)
-    (string-append
-      "    .globl tl_alloc
+  (let
+    [fast-profile : String
+      (compiler-backend-runtime-profile-alloc-account
+        "%rsi"
+        ".L_tl_alloc_profile_fast_done"
+        profile)]
+    [atomic-fast-profile : String
+      (compiler-backend-runtime-profile-alloc-account
+        "%rsi"
+        ".L_tl_alloc_profile_atomic_fast_done"
+        profile)]
+    [atomic-locked-profile : String
+      (compiler-backend-runtime-profile-alloc-account
+        "%rsi"
+        ".L_tl_alloc_profile_atomic_locked_done"
+        profile)]
+    [atomic-new-profile : String
+      (compiler-backend-runtime-profile-alloc-account
+        "%rsi"
+        ".L_tl_alloc_profile_atomic_new_done"
+        profile)]
+    [new-profile : String
+      (compiler-backend-runtime-profile-alloc-account
+        "%rsi"
+        ".L_tl_alloc_profile_new_done"
+        profile)]
+    [prefix : String
+      (str-cat
+        (compiler-backend-runtime-fast-alloc-functions
+          (BackendTargetLinux)
+          "%rdi"
+          "%rcx"
+          profile)
+        "    .globl tl_alloc
 tl_alloc:
     addq $7, %rdi
     jc .L_tl_alloc_abort
@@ -19830,6 +19894,9 @@ tl_alloc:
     movq %fs:tl_current_arena@tpoff, %r8
     testq %r8, %r8
     jz .L_tl_alloc_new_arena
+    movq 40(%r8), %r9
+    testq $1, 48(%r9)
+    jnz .L_tl_alloc_atomic
     movq 16(%r8), %rax
     movq %rax, %rcx
     addq %rsi, %rcx
@@ -19838,17 +19905,99 @@ tl_alloc:
     ja .L_tl_alloc_new_arena
     movq %rcx, 16(%r8)
 "
-      (string-append
-        (string-append
-          (compiler-backend-runtime-profile-alloc-account
-            "%rsi"
-            ".L_tl_alloc_profile_fast_done"
-            profile)
-          "    ret
+        "")]
+    [atomic-fast-asm : String
+      "    ret
+.L_tl_alloc_atomic:
+    movq 56(%r9), %r8
+    movq 16(%r8), %rax
+.L_tl_alloc_atomic_cas:
+    movq %rax, %rcx
+    addq %rsi, %rcx
+    jc .L_tl_alloc_abort
+    cmpq 24(%r8), %rcx
+    ja .L_tl_alloc_atomic_new_arena
+    lock cmpxchgq %rcx, 16(%r8)
+    jne .L_tl_alloc_atomic_cas
+"]
+    [atomic-lock-asm : String
+      "    ret
+.L_tl_alloc_atomic_new_arena:
+    movq $1, %rax
+    movq $3, %rcx
+    lock cmpxchgq %rcx, 48(%r9)
+    je .L_tl_alloc_atomic_locked
+    pause
+    jmp .L_tl_alloc_atomic_new_arena
+.L_tl_alloc_atomic_locked:
+    movq 56(%r9), %r8
+    movq 16(%r8), %rax
+.L_tl_alloc_atomic_locked_cas:
+    movq %rax, %rcx
+    addq %rsi, %rcx
+    jc .L_tl_alloc_atomic_abort_locked
+    cmpq 24(%r8), %rcx
+    ja .L_tl_alloc_atomic_map
+    lock cmpxchgq %rcx, 16(%r8)
+    jne .L_tl_alloc_atomic_locked_cas
+    movq $1, 48(%r9)
+"]
+    [atomic-map-asm : String
+      "    ret
+.L_tl_alloc_atomic_abort_locked:
+    movq $1, 48(%r9)
+    jmp .L_tl_alloc_abort
+.L_tl_alloc_atomic_map:
+    movq $0x4000000, %rdx
+    movq %rsi, %rcx
+    addq $64, %rcx
+    jc .L_tl_alloc_abort
+    cmpq %rdx, %rcx
+    jbe .L_tl_alloc_atomic_len_ready
+    movq %rcx, %rdx
+.L_tl_alloc_atomic_len_ready:
+    push %r9
+    push %rdx
+    push %rsi
+    movq %rdx, %rsi
+    xorq %rdi, %rdi
+    movq $3, %rdx
+    movq $0x22, %r10
+    movq $-1, %r8
+    xorq %r9, %r9
+    movq $9, %rax
+    syscall
+    pop %rsi
+    pop %rdx
+    pop %r9
+    testq %rax, %rax
+    js .L_tl_alloc_abort
+    movq %rax, %rcx
+    addq %rdx, %rcx
+    jc .L_tl_alloc_abort
+    movq 56(%r9), %r8
+    movq %r8, 0(%rax)
+    movq $0, 32(%rax)
+    movq %r9, 40(%rax)
+    movq $1, 48(%rax)
+    movq $0, 56(%rax)
+    leaq 64(%rax), %r8
+    movq %r8, 8(%rax)
+    movq %rcx, 24(%rax)
+    movq %r8, %rcx
+    addq %rsi, %rcx
+    movq %rcx, 16(%rax)
+    movq %rax, 56(%r9)
+    movq %rax, %fs:tl_current_arena@tpoff
+    movq $1, 48(%r9)
+    movq %r8, %rax
+"]
+    [ordinary-new-asm : String
+      "    ret
 .L_tl_alloc_new_arena:
     movq $0x4000000, %rdx
     movq %rsi, %rcx
-    addq $48, %rcx
+    addq $64, %rcx
     jc .L_tl_alloc_abort
     cmpq %rdx, %rcx
     jbe .L_tl_alloc_len_ready
@@ -19882,7 +20031,9 @@ tl_alloc:
     movq %rax, %r10
 .L_tl_alloc_root_ready:
     movq %r10, 40(%rax)
-    leaq 48(%rax), %r8
+    movq $0, 48(%rax)
+    movq %rax, 56(%rax)
+    leaq 64(%rax), %r8
     movq %r8, 8(%rax)
     movq %rcx, 24(%rax)
     movq %r8, %rcx
@@ -19890,17 +20041,31 @@ tl_alloc:
     movq %rcx, 16(%rax)
     movq %rax, %fs:tl_current_arena@tpoff
     movq %r8, %rax
-")
-        (string-append
-          (compiler-backend-runtime-profile-alloc-account
-            "%rsi"
-            ".L_tl_alloc_profile_new_done"
-            profile)
-          "    ret
+"]
+    [tail-asm : String "    ret
 .L_tl_alloc_abort:
     jmp tl_oom_abort
 
-")))))
+"]
+    (string-append
+      prefix
+      (string-append
+        fast-profile
+        (string-append
+          atomic-fast-asm
+          (string-append
+            atomic-fast-profile
+            (string-append
+              atomic-lock-asm
+              (string-append
+                atomic-locked-profile
+                (string-append
+                  atomic-map-asm
+                  (string-append
+                    atomic-new-profile
+                    (string-append
+                      ordinary-new-asm
+                      (string-append new-profile tail-asm))))))))))))
 
 (define (compiler-backend-runtime-region-mark-functions
   [target : CompilerBackendTarget]) : String
@@ -19912,6 +20077,12 @@ tl_region_mark:
       (compiler-backend-current-arena-load target "%rax")
       "    testq %rax, %rax
     jz .L_tl_region_mark_zero
+.L_tl_region_mark_current:
+    movq 40(%rax), %r8
+    testq $1, 48(%r8)
+    jz .L_tl_region_mark_read
+    movq 56(%r8), %rax
+.L_tl_region_mark_read:
     movq 16(%rax), %rax
     ret
 .L_tl_region_mark_zero:
@@ -20150,8 +20321,9 @@ tl_boot_pool:
 ;; 64 MiB arena chain (prev-link 0) and returns its header WITHOUT changing the
 ;; active arena. `tl_arena_current`/`tl_arena_set` read/write the active arena.
 ;; `tl_arena_destroy` releases an arena's whole active chain plus any retired
-;; overflow chunks held by the chain root. Arena header is the same 48-byte
-;; record as tl_alloc {0:prev, 8:base, 16:bump, 24:end, 32:retired, 40:root}.
+;; overflow chunks held by the chain root. Arena header is the same 64-byte
+;; record as tl_alloc {0:prev, 8:base, 16:bump, 24:end, 32:retired, 40:root,
+;; 48:kind/lock, 56:atomic-current}.
 ;; System V (mmap=9 / munmap=11) flavor.
 ;; These mmap/munmap calls are part of the checked backend-core page boundary
 ;; (#2314), not stdlib-owned OS helpers.
@@ -20227,7 +20399,9 @@ tl_arena_make:
     movq $0, 0(%rax)
     movq $0, 32(%rax)
     movq %rax, 40(%rax)
-    leaq 48(%rax), %rcx
+    movq $0, 48(%rax)
+    movq %rax, 56(%rax)
+    leaq 64(%rax), %rcx
     movq %rcx, 8(%rax)
     movq %rcx, 16(%rax)
     movq %rax, %rcx
@@ -20235,6 +20409,35 @@ tl_arena_make:
     movq %rcx, 24(%rax)
     ret
 .L_tl_arena_make_abort:
+    movq $60, %rax
+    movq $134, %rdi
+    syscall
+
+    .globl tl_arena_make_atomic
+tl_arena_make_atomic:
+    movq $0x4000000, %rsi
+    xorq %rdi, %rdi
+    movq $3, %rdx
+    movq $0x22, %r10
+    movq $-1, %r8
+    xorq %r9, %r9
+    movq $9, %rax
+    syscall
+    testq %rax, %rax
+    js .L_tl_arena_make_atomic_abort
+    movq $0, 0(%rax)
+    movq $0, 32(%rax)
+    movq %rax, 40(%rax)
+    movq $1, 48(%rax)
+    movq %rax, 56(%rax)
+    leaq 64(%rax), %rcx
+    movq %rcx, 8(%rax)
+    movq %rcx, 16(%rax)
+    movq %rax, %rcx
+    addq $0x4000000, %rcx
+    movq %rcx, 24(%rax)
+    ret
+.L_tl_arena_make_atomic_abort:
     movq $60, %rax
     movq $134, %rdi
     syscall
@@ -20250,6 +20453,10 @@ tl_arena_destroy:
     movq 40(%rbx), %r12
     testq %r12, %r12
     jz .L_tl_arena_destroy_loop
+    testq $1, 48(%r12)
+    jz .L_tl_arena_destroy_retired_ready
+    movq 56(%r12), %rbx
+.L_tl_arena_destroy_retired_ready:
     movq 32(%r12), %r12
 .L_tl_arena_destroy_loop:
     testq %rbx, %rbx
@@ -20350,7 +20557,9 @@ tl_arena_make:
     movq $0, 0(%rax)
     movq $0, 32(%rax)
     movq %rax, 40(%rax)
-    leaq 48(%rax), %rcx
+    movq $0, 48(%rax)
+    movq %rax, 56(%rax)
+    leaq 64(%rax), %rcx
     movq %rcx, 8(%rax)
     movq %rcx, 16(%rax)
     movq %rax, %rcx
@@ -20362,6 +20571,39 @@ tl_arena_make:
     popq %rbp
     ret
 .L_tl_arena_make_win_abort:
+    ud2
+
+    .globl tl_arena_make_atomic
+tl_arena_make_atomic:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %rsi
+    sub $32, %rsp
+    xorq %rcx, %rcx
+    movq $0x4000000, %rdx
+    movq $0x3000, %r8
+    movq $0x4, %r9
+    call VirtualAlloc
+    testq %rax, %rax
+    jz .L_tl_arena_make_atomic_win_abort
+    movq $0, 0(%rax)
+    movq $0, 32(%rax)
+    movq %rax, 40(%rax)
+    movq $1, 48(%rax)
+    movq %rax, 56(%rax)
+    leaq 64(%rax), %rcx
+    movq %rcx, 8(%rax)
+    movq %rcx, 16(%rax)
+    movq %rax, %rcx
+    addq $0x4000000, %rcx
+    movq %rcx, 24(%rax)
+    add $32, %rsp
+    popq %rsi
+    popq %rbx
+    popq %rbp
+    ret
+.L_tl_arena_make_atomic_win_abort:
     ud2
 
     .globl tl_arena_destroy
@@ -20379,6 +20621,10 @@ tl_arena_destroy:
     movq 40(%rsi), %r12
     testq %r12, %r12
     jz .L_tl_arena_destroy_win_loop
+    testq $1, 48(%r12)
+    jz .L_tl_arena_destroy_win_retired_ready
+    movq 56(%r12), %rsi
+.L_tl_arena_destroy_win_retired_ready:
     movq 32(%r12), %r12
 .L_tl_arena_destroy_win_loop:
     testq %rsi, %rsi
@@ -20427,6 +20673,10 @@ tl_region_reset:
     movq %fs:tl_current_arena@tpoff, %r8
     testq %r8, %r8
     jz .L_tl_region_reset_invalid
+    movq 40(%r8), %r12
+    testq $1, 48(%r12)
+    jz .L_tl_region_reset_find
+    movq 56(%r12), %r8
 .L_tl_region_reset_find:
     movq 8(%r8), %r9
     cmpq %r9, %rbx
@@ -20484,6 +20734,10 @@ tl_region_reset:
     rep stosb
 .L_tl_region_reset_restore_set:
     movq %rbx, 16(%r8)
+    testq $1, 48(%r12)
+    jz .L_tl_region_reset_restore_current_ready
+    movq %r8, 56(%r12)
+.L_tl_region_reset_restore_current_ready:
     movq %r8, %fs:tl_current_arena@tpoff
     pop %r12
     pop %rbx
@@ -20497,6 +20751,10 @@ tl_region_reset:
     movq 40(%r8), %r10
     testq %r10, %r10
     jz .L_tl_region_reset_all_loop
+    testq $1, 48(%r10)
+    jz .L_tl_region_reset_all_retired_ready
+    movq 56(%r10), %r8
+.L_tl_region_reset_all_retired_ready:
     movq 32(%r10), %rbx
 .L_tl_region_reset_all_loop:
     testq %r8, %r8
@@ -20555,13 +20813,38 @@ tl_region_reset:
 ")))))))
 
 (define (compiler-backend-runtime-windows-alloc-functions [profile : bool]) : String
-  (string-append
-    (compiler-backend-runtime-fast-alloc-functions
-      (BackendTargetWindows)
-      "%rcx"
-      "%r10"
-      profile)
-    (string-append
+  (let
+    [fast-profile : String
+      (compiler-backend-runtime-profile-alloc-account
+        "%r11"
+        ".L_tl_alloc_profile_win_fast_done"
+        profile)]
+    [atomic-fast-profile : String
+      (compiler-backend-runtime-profile-alloc-account
+        "%r11"
+        ".L_tl_alloc_profile_win_atomic_fast_done"
+        profile)]
+    [atomic-locked-profile : String
+      (compiler-backend-runtime-profile-alloc-account
+        "%r11"
+        ".L_tl_alloc_profile_win_atomic_locked_done"
+        profile)]
+    [atomic-new-profile : String
+      (compiler-backend-runtime-profile-alloc-account
+        "%r11"
+        ".L_tl_alloc_profile_win_atomic_new_done"
+        profile)]
+    [new-profile : String
+      (compiler-backend-runtime-profile-alloc-account
+        "%r11"
+        ".L_tl_alloc_profile_win_new_done"
+        profile)]
+    (str-cat
+      (compiler-backend-runtime-fast-alloc-functions
+        (BackendTargetWindows)
+        "%rcx"
+        "%r10"
+        profile)
       "    .globl tl_alloc
 tl_alloc:
     testq %rcx, %rcx
@@ -20575,6 +20858,9 @@ tl_alloc:
     movq %gs:0x28, %r8
     testq %r8, %r8
     jz .L_tl_alloc_new_arena_entry
+    movq 40(%r8), %r9
+    testq $1, 48(%r9)
+    jnz .L_tl_alloc_win_atomic
     movq 16(%r8), %rax
     movq %rax, %r10
     addq %r11, %r10
@@ -20583,13 +20869,29 @@ tl_alloc:
     ja .L_tl_alloc_new_arena_entry
     movq %r10, 16(%r8)
 "
-      (string-append
-        (string-append
-          (compiler-backend-runtime-profile-alloc-account
-            "%r11"
-            ".L_tl_alloc_profile_win_fast_done"
-            profile)
+      fast-profile
+      (str-cat
+        "    ret
+.L_tl_alloc_win_atomic:
+    movq 56(%r9), %r8
+    movq 16(%r8), %rax
+.L_tl_alloc_win_atomic_cas:
+    movq %rax, %r10
+    addq %r11, %r10
+    jc .L_tl_alloc_enter_abort
+    cmpq 24(%r8), %r10
+    ja .L_tl_alloc_atomic_new_arena_entry
+    lock cmpxchgq %r10, 16(%r8)
+    jne .L_tl_alloc_win_atomic_cas
+"
+        atomic-fast-profile
+        (str-cat
           "    ret
+.L_tl_alloc_atomic_new_arena_entry:
+    push %rbp
+    mov %rsp, %rbp
+    sub $48, %rsp
+    jmp .L_tl_alloc_atomic_new_arena
 .L_tl_alloc_new_arena_entry:
     push %rbp
     mov %rsp, %rbp
@@ -20600,11 +20902,88 @@ tl_alloc:
     mov %rsp, %rbp
     sub $48, %rsp
     jmp .L_tl_alloc_abort
+.L_tl_alloc_atomic_new_arena:
+    movq %r9, -24(%rbp)
+.L_tl_alloc_atomic_lock:
+    movq -24(%rbp), %r9
+    movq $1, %rax
+    movq $3, %r10
+    lock cmpxchgq %r10, 48(%r9)
+    je .L_tl_alloc_atomic_locked
+    pause
+    jmp .L_tl_alloc_atomic_lock
+.L_tl_alloc_atomic_locked:
+    movq 56(%r9), %r8
+    movq 16(%r8), %rax
+.L_tl_alloc_atomic_locked_cas:
+    movq %rax, %r10
+    addq %r11, %r10
+    jc .L_tl_alloc_atomic_abort_locked
+    cmpq 24(%r8), %r10
+    ja .L_tl_alloc_atomic_map
+    lock cmpxchgq %r10, 16(%r8)
+    jne .L_tl_alloc_atomic_locked_cas
+    movq $1, 48(%r9)
+"
+          atomic-locked-profile
+          (str-cat
+            "    mov %rbp, %rsp
+    pop %rbp
+    ret
+.L_tl_alloc_atomic_abort_locked:
+    movq $1, 48(%r9)
+    jmp .L_tl_alloc_abort
+.L_tl_alloc_atomic_map:
+    movq %r11, -8(%rbp)
+    movq $0x4000000, %rdx
+    movq %r11, %rax
+    addq $64, %rax
+    jc .L_tl_alloc_abort
+    cmpq %rdx, %rax
+    jbe .L_tl_alloc_atomic_len_ready
+    movq %rax, %rdx
+.L_tl_alloc_atomic_len_ready:
+    movq %rdx, -16(%rbp)
+    xorq %rcx, %rcx
+    movq $0x3000, %r8
+    movq $4, %r9
+    call VirtualAlloc
+    testq %rax, %rax
+    jz .L_tl_alloc_abort
+    movq -24(%rbp), %r9
+    movq -16(%rbp), %rdx
+    movq -8(%rbp), %r11
+    movq %rax, %rcx
+    addq %rdx, %rcx
+    jc .L_tl_alloc_abort
+    movq 56(%r9), %r8
+    movq %r8, 0(%rax)
+    movq $0, 32(%rax)
+    movq %r9, 40(%rax)
+    movq $1, 48(%rax)
+    movq $0, 56(%rax)
+    leaq 64(%rax), %r8
+    movq %r8, 8(%rax)
+    movq %rcx, 24(%rax)
+    movq %r8, %r10
+    addq %r11, %r10
+    jc .L_tl_alloc_abort
+    movq %r10, 16(%rax)
+    movq %rax, 56(%r9)
+    movq %rax, %gs:0x28
+    movq $1, 48(%r9)
+    movq %r8, %rax
+"
+            atomic-new-profile
+            (str-cat
+              "    mov %rbp, %rsp
+    pop %rbp
+    ret
 .L_tl_alloc_new_arena:
     movq %r11, -8(%rbp)
     movq $0x4000000, %rdx
     movq %r11, %rax
-    addq $48, %rax
+    addq $64, %rax
     jc .L_tl_alloc_abort
     cmpq %rdx, %rax
     jbe .L_tl_alloc_len_ready
@@ -20633,7 +21012,9 @@ tl_alloc:
     movq %rax, %r10
 .L_tl_alloc_win_root_ready:
     movq %r10, 40(%rax)
-    leaq 48(%rax), %r8
+    movq $0, 48(%rax)
+    movq %rax, 56(%rax)
+    leaq 64(%rax), %r8
     movq %r8, 8(%rax)
     movq %rcx, 24(%rax)
     movq %r8, %r10
@@ -20642,13 +21023,9 @@ tl_alloc:
     movq %r10, 16(%rax)
     movq %rax, %gs:0x28
     movq %r8, %rax
-")
-        (string-append
-          (compiler-backend-runtime-profile-alloc-account
-            "%r11"
-            ".L_tl_alloc_profile_win_new_done"
-            profile)
-          "
+"
+              new-profile
+              "
     mov %rbp, %rsp
     pop %rbp
     ret
@@ -20656,7 +21033,7 @@ tl_alloc:
     sub $32, %rsp
     call tl_oom_abort
 
-")))))
+")))))))
 
 ;; The Linux out-of-bounds/division/shift abort handlers moved to the runtime
 ;; prelude (stdlib/runtime.tl as `tl-runtime-*-abort`, exported as the fixed
@@ -20696,7 +21073,7 @@ tl_alloc:
 
 ;; Windows variant of `tl_region_reset`. Identical arena-walk structure to the
 ;; Linux helper (offsets: 0=prev arena, 8=usable base, 16=bump pointer, 24=end,
-;; 32=retired list link/head, 40=root; the arena header sits at the VirtualAlloc
+;; 32=retired list link/head, 40=root, 48=kind/lock, 56=atomic-current; the arena header sits at the VirtualAlloc
 ;; base). Nonzero reset retires newer chunks; reset-all releases chunks with
 ;; `VirtualFree(lpAddress=arena, dwSize=0, dwFreeType=MEM_RELEASE=0x8000)` Ã¢â‚¬â€ the
 ;; arena node address is exactly the VirtualAlloc base, so MEM_RELEASE frees the
@@ -20718,6 +21095,10 @@ tl_region_reset:
     movq %gs:0x28, %r13
     testq %r13, %r13
     jz .L_tl_region_reset_win_invalid
+    movq 40(%r13), %r11
+    testq $1, 48(%r11)
+    jz .L_tl_region_reset_win_find
+    movq 56(%r11), %r13
 .L_tl_region_reset_win_find:
     movq 8(%r13), %rax
     cmpq %rax, %r12
@@ -20760,6 +21141,10 @@ tl_region_reset:
             profile)
           (string-append
             "    movq %r12, 16(%r13)
+    testq $1, 48(%r11)
+    jz .L_tl_region_reset_win_restore_current_ready
+    movq %r13, 56(%r11)
+.L_tl_region_reset_win_restore_current_ready:
     movq %r13, %gs:0x28
     jmp .L_tl_region_reset_win_done
 .L_tl_region_reset_win_all:
@@ -20771,6 +21156,10 @@ tl_region_reset:
     movq 40(%r14), %r12
     testq %r12, %r12
     jz .L_tl_region_reset_win_all_drop
+    testq $1, 48(%r12)
+    jz .L_tl_region_reset_win_all_retired_ready
+    movq 56(%r12), %r14
+.L_tl_region_reset_win_all_retired_ready:
     movq 32(%r12), %r12
 .L_tl_region_reset_win_all_drop:
     testq %r14, %r14
@@ -24983,17 +25372,20 @@ tl_memcpy:
           ".section .tbss,\"awT\",@nobits\n")
         (compiler-backend-string-contains? asm "tl_current_arena:\n")
         (compiler-backend-string-contains? asm "tl_thread_init:\n")
+        (compiler-backend-string-contains? asm "tl_arena_make_atomic:\n")
         (compiler-backend-string-contains?
           asm
           "    movq %fs:tl_current_arena@tpoff, %r8\n")
         (compiler-backend-string-contains? asm ".L_tl_alloc_new_arena:\n")
         (compiler-backend-string-contains? asm "    movq $0x4000000, %rdx\n")
-        (compiler-backend-string-contains? asm "    addq $48, %rcx\n")
+        (compiler-backend-string-contains? asm "    addq $64, %rcx\n")
         (compiler-backend-string-contains? asm "    movq $0, 32(%rax)\n")
         (compiler-backend-string-contains? asm "    movq %r10, 40(%rax)\n")
-        (compiler-backend-string-contains? asm "    leaq 48(%rax), %r8\n")
+        (compiler-backend-string-contains? asm "    movq $0, 48(%rax)\n")
+        (compiler-backend-string-contains? asm "    leaq 64(%rax), %r8\n")
         (compiler-backend-string-contains? asm "    movq %rax, 40(%rax)\n")
-        (compiler-backend-string-contains? asm "    leaq 48(%rax), %rcx\n")
+        (compiler-backend-string-contains? asm "    movq $1, 48(%rax)\n")
+        (compiler-backend-string-contains? asm "    leaq 64(%rax), %rcx\n")
         (compiler-backend-string-contains?
           asm
           "    movq %rax, %fs:tl_current_arena@tpoff\n")
@@ -25014,6 +25406,15 @@ tl_memcpy:
           (compiler-backend-string-contains? asm "    movq $0x22, %r10\n")
           (compiler-backend-string-contains? asm "    jc .L_tl_alloc_abort\n")
           (compiler-backend-string-contains? asm "    js .L_tl_alloc_abort\n"))
+        (backend-and4
+          (compiler-backend-string-contains? asm "    testq $1, 48(%r9)\n")
+          (compiler-backend-string-contains?
+            asm
+            "    lock cmpxchgq %rcx, 16(%r8)\n")
+          (compiler-backend-string-contains?
+            asm
+            "    lock cmpxchgq %rcx, 48(%r9)\n")
+          (compiler-backend-string-contains? asm "    movq %rax, 56(%r9)\n"))
         (compiler-backend-string-contains? asm ".L_tl_alloc_abort:\n")
         (compiler-backend-string-contains? asm "    jmp tl_oom_abort\n"))]
     [(ErrCompilerBackend _) false]))

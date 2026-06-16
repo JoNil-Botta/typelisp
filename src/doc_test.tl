@@ -1927,10 +1927,9 @@
             (str-cat
               "doc tests failed: "
               (int->string (doc-test-run-failure-list-count failures))
-              (str-cat
-                " failure(s) across "
-                (int->string count)
-                " example(s)\n"))
+              " failure(s) across "
+              (int->string count)
+              " example(s)\n")
             (doc-test-run-failures-render failures))])]))
 
 (define (doc-test-smoke-source) : String

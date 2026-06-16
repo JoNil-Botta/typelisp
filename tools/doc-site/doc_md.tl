@@ -902,7 +902,11 @@
       level-text
       " id=\""
       (doc-html-escape anchor)
-      (str-cat "\">" (md-render-inline text) "</h" level-text ">\n"))))
+      "\">"
+      (md-render-inline text)
+      "</h"
+      level-text
+      ">\n")))
 
 (define (md-render-paragraph [text : String]) : String
   (str-cat "<p>" (md-render-inline text) "</p>\n"))

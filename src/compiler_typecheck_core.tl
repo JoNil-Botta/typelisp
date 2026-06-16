@@ -535,13 +535,12 @@
   (str-cat
     (int->string (struct-get span start-line))
     "|"
-    (str-cat
-      (int->string (struct-get span start-col))
-      "|"
-      (str-cat
-        (int->string (struct-get span end-line))
-        "|"
-        (str-cat (int->string (struct-get span end-col)) "|")))))
+    (int->string (struct-get span start-col))
+    "|"
+    (int->string (struct-get span end-line))
+    "|"
+    (int->string (struct-get span end-col))
+    "|"))
 
 (define (tc-rich-error-one-secondary
   [primary : AstSourceSpan]
@@ -552,13 +551,12 @@
   (str-cat
     (tc-rich-error-prefix)
     (tc-rich-error-span-fields primary)
-    (str-cat
-      message
-      "|"
-      (str-cat
-        help
-        "|1|"
-        (str-cat (tc-rich-error-span-fields secondary) secondary-label)))))
+    message
+    "|"
+    help
+    "|1|"
+    (tc-rich-error-span-fields secondary)
+    secondary-label))
 
 (define (tc-rich-error-two-secondaries
   [primary : AstSourceSpan]
@@ -571,18 +569,15 @@
   (str-cat
     (tc-rich-error-prefix)
     (tc-rich-error-span-fields primary)
-    (str-cat
-      message
-      "|"
-      (str-cat
-        help
-        "|2|"
-        (str-cat
-          (tc-rich-error-span-fields first)
-          (str-cat
-            first-label
-            "|"
-            (str-cat (tc-rich-error-span-fields second) second-label)))))))
+    message
+    "|"
+    help
+    "|2|"
+    (tc-rich-error-span-fields first)
+    first-label
+    "|"
+    (tc-rich-error-span-fields second)
+    second-label))
 
 (define (tc-located-error-field-end [text : String] [start : i64]) : i64
   (let
@@ -2771,7 +2766,9 @@
       (str-cat
         "(Array "
         (tc-type-render (ty-node-get elem))
-        (str-cat " " (int->string count) ")"))]
+        " "
+        (int->string count)
+        ")")]
     [(AstTyDynArray elem)
       (str-cat "(Array " (tc-type-render (ty-node-get elem)) ")")]
     [(AstTyBox elem) (str-cat "(Box " (tc-type-render (ty-node-get elem)) ")")]
@@ -16039,7 +16036,9 @@
   (str-cat
     "typecheck: inline aggregate layout cycle "
     (tc-inline-aggregate-cycle-path stack name)
-    (str-cat "; insert (Box " name ") at the recursive edge")))
+    "; insert (Box "
+    name
+    ") at the recursive edge"))
 
 (define (tc-inline-aggregate-type-list-finite-ok
   [ctx : TcContext]
@@ -16862,10 +16861,10 @@
   (str-cat
     "typecheck: repr c struct "
     owner
-    (str-cat
-      " field "
-      field
-      (string-append " has unsupported field type " (tc-type-render ty)))))
+    " field "
+    field
+    " has unsupported field type "
+    (tc-type-render ty)))
 
 (define (tc-repr-c-field-layout-info
   [ctx : TcContext]
@@ -21021,9 +21020,8 @@
       (str-cat
         "typecheck: comptime purity rejects "
         reason
-        (str-cat
-          "; reference path: "
-          (tc-comptime-purity-chain-path chain name))))))
+        "; reference path: "
+        (tc-comptime-purity-chain-path chain name)))))
 
 (define (tc-comptime-purity-banned-module? [module : String]) : bool
   (if (string-eq module "io")
@@ -26801,7 +26799,8 @@
   (str-cat
     "typecheck: macro operand type mismatch: expected "
     (tc-type-render expected)
-    (str-cat ", got " (tc-type-render actual) "")))
+    ", got "
+    (tc-type-render actual)))
 
 (define (macro-clause-shape-message) : String
   "typecheck: ExprClause macro operand expects bracket clause [expr expr]")
@@ -28443,10 +28442,9 @@
   (str-cat
     "typecheck: struct "
     struct-name
-    (str-cat
-      " field "
-      field-name
-      " has cleanup metadata but struct is not cleanup-owning")))
+    " field "
+    field-name
+    " has cleanup metadata but struct is not cleanup-owning"))
 
 (define (tc-struct-field-cleanup-owning-without-owned-message
   [struct-name : String]
@@ -28455,13 +28453,11 @@
   (str-cat
     "typecheck: struct "
     struct-name
-    (str-cat
-      " field "
-      field-name
-      (str-cat
-        " stores cleanup-owning type "
-        (tc-type-render ty)
-        " without :owned"))))
+    " field "
+    field-name
+    " stores cleanup-owning type "
+    (tc-type-render ty)
+    " without :owned"))
 
 (define (tc-struct-field-owned-non-cleanup-message
   [struct-name : String]
@@ -28470,13 +28466,11 @@
   (str-cat
     "typecheck: struct "
     struct-name
-    (str-cat
-      " field "
-      field-name
-      (str-cat
-        " uses :owned but type "
-        (tc-type-render ty)
-        " is not cleanup-owning"))))
+    " field "
+    field-name
+    " uses :owned but type "
+    (tc-type-render ty)
+    " is not cleanup-owning"))
 
 (define (tc-struct-field-cleanup-fn-mismatch-message
   [struct-name : String]
@@ -28485,10 +28479,11 @@
   (str-cat
     "typecheck: struct "
     struct-name
-    (str-cat
-      " field "
-      field-name
-      (str-cat " cleanup function " cleanup-name " type mismatch"))))
+    " field "
+    field-name
+    " cleanup function "
+    cleanup-name
+    " type mismatch"))
 
 (define (tc-cleanup-field-helper-name
   [owner-name : String]
@@ -28616,7 +28611,9 @@
   (str-cat
     "typecheck: enum "
     enum-name
-    (str-cat " cleanup function " cleanup-name " type mismatch")))
+    " cleanup function "
+    cleanup-name
+    " type mismatch"))
 
 (define (tc-enum-payload-cleanup-outside-message
   [enum-name : String]
@@ -28624,10 +28621,9 @@
   (str-cat
     "typecheck: enum "
     enum-name
-    (str-cat
-      " variant "
-      variant-name
-      " has payload cleanup metadata but enum is not cleanup-owning")))
+    " variant "
+    variant-name
+    " has payload cleanup metadata but enum is not cleanup-owning"))
 
 (define (tc-enum-payload-cleanup-owning-without-owned-message
   [enum-name : String]
@@ -28636,13 +28632,11 @@
   (str-cat
     "typecheck: enum "
     enum-name
-    (str-cat
-      " variant "
-      variant-name
-      (str-cat
-        " stores cleanup-owning type "
-        (tc-type-render ty)
-        " without :owned"))))
+    " variant "
+    variant-name
+    " stores cleanup-owning type "
+    (tc-type-render ty)
+    " without :owned"))
 
 (define (tc-enum-payload-owned-non-cleanup-message
   [enum-name : String]
@@ -28651,13 +28645,11 @@
   (str-cat
     "typecheck: enum "
     enum-name
-    (str-cat
-      " variant "
-      variant-name
-      (str-cat
-        " uses :owned but type "
-        (tc-type-render ty)
-        " is not cleanup-owning"))))
+    " variant "
+    variant-name
+    " uses :owned but type "
+    (tc-type-render ty)
+    " is not cleanup-owning"))
 
 (define (tc-enum-payload-cleanup-fn-mismatch-message
   [enum-name : String]
@@ -28666,10 +28658,11 @@
   (str-cat
     "typecheck: enum "
     enum-name
-    (str-cat
-      " variant "
-      variant-name
-      (str-cat " cleanup function " cleanup-name " type mismatch"))))
+    " variant "
+    variant-name
+    " cleanup function "
+    cleanup-name
+    " type mismatch"))
 
 (define (tc-check-enum-cleanup-fn
   [ctx : TcContext]

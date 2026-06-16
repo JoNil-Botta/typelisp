@@ -1133,7 +1133,9 @@
       (str-cat
         "(Array "
         (compiler-ir-type-render (ty-node-get elem))
-        (str-cat " " (int->string count) ")"))]
+        " "
+        (int->string count)
+        ")")]
     [(AstTyDynArray elem)
       (str-cat "(Array " (compiler-ir-type-render (ty-node-get elem)) ")")]
     [(AstTyBox elem)
@@ -1272,10 +1274,10 @@
   (str-cat
     "  tailcall "
     name
-    (str-cat
-      "("
-      (compiler-ir-call-args-render args)
-      (str-cat ") : " (compiler-ir-type-render ty) ""))))
+    "("
+    (compiler-ir-call-args-render args)
+    ") : "
+    (compiler-ir-type-render ty)))
 
 (define (compiler-ir-tail-call-indirect-render
   [callee : CompilerIrValue]
@@ -1284,10 +1286,10 @@
   (str-cat
     "  tailcall* "
     (compiler-ir-value-render callee)
-    (str-cat
-      "("
-      (compiler-ir-call-args-render args)
-      (str-cat ") : " (compiler-ir-type-render ty) ""))))
+    "("
+    (compiler-ir-call-args-render args)
+    ") : "
+    (compiler-ir-type-render ty)))
 
 (define (compiler-ir-instr-render [instr : CompilerIrInstr]) : String
   (match instr
@@ -2446,7 +2448,8 @@
         "(->"
         (compiler-ir-type-list-name args)
         " "
-        (str-cat (compiler-ir-type-name (ty-node-get ret)) ")" ""))]
+        (compiler-ir-type-name (ty-node-get ret))
+        ")")]
     [(AstTyTuple elems)
       (str-cat "(Tuple" (compiler-ir-type-list-name elems) ")")]
     [(AstTyArray elem count)
@@ -2615,33 +2618,44 @@
       (str-cat
         "  "
         (compiler-ir-value-describe (IrValueVar dst))
-        (str-cat " = vector_" (compiler-ir-binop-name op) " ")
+        " = vector_"
+        (compiler-ir-binop-name op)
+        " "
         (compiler-ir-value-describe lhs)
-        (str-cat ", " (compiler-ir-value-describe rhs) "")
+        ", "
+        (compiler-ir-value-describe rhs)
         (compiler-ir-vector-suffix lanes elem-ty))]
     [(IrInstrVectorReduce dst op src lanes elem-ty)
       (str-cat
         "  "
         (compiler-ir-value-describe (IrValueVar dst))
-        (str-cat " = vector_reduce_" (compiler-ir-vector-reduce-op-name op) " ")
+        " = vector_reduce_"
+        (compiler-ir-vector-reduce-op-name op)
+        " "
         (compiler-ir-value-describe src)
-        (compiler-ir-vector-suffix lanes elem-ty)
-        "")]
+        (compiler-ir-vector-suffix lanes elem-ty))]
     [(IrInstrVectorCompare dst op lhs rhs lanes elem-ty)
       (str-cat
         "  "
         (compiler-ir-value-describe (IrValueVar dst))
-        (str-cat " = vector_cmp_" (compiler-ir-binop-name op) " ")
+        " = vector_cmp_"
+        (compiler-ir-binop-name op)
+        " "
         (compiler-ir-value-describe lhs)
-        (str-cat ", " (compiler-ir-value-describe rhs) "")
+        ", "
+        (compiler-ir-value-describe rhs)
         (compiler-ir-vector-suffix lanes elem-ty))]
     [(IrInstrMaskBinOp dst op lhs rhs lanes)
       (str-cat
         "  "
         (compiler-ir-value-describe (IrValueVar dst))
-        (str-cat " = " (compiler-ir-mask-binop-name op) " ")
+        " = "
+        (compiler-ir-mask-binop-name op)
+        " "
         (compiler-ir-value-describe lhs)
-        (str-cat ", " (compiler-ir-value-describe rhs) " : ")
+        ", "
+        (compiler-ir-value-describe rhs)
+        " : "
         (int->string lanes))]
     [(IrInstrMaskNot dst src lanes)
       (str-cat
@@ -2655,7 +2669,9 @@
       (str-cat
         "  "
         (compiler-ir-value-describe (IrValueVar dst))
-        (str-cat " = mask_reduce_" (compiler-ir-mask-reduce-op-name op) " ")
+        " = mask_reduce_"
+        (compiler-ir-mask-reduce-op-name op)
+        " "
         (compiler-ir-value-describe src)
         " : "
         (int->string lanes))]
@@ -2665,12 +2681,10 @@
         (compiler-ir-value-describe (IrValueVar dst))
         " = select "
         (compiler-ir-value-describe mask)
-        (str-cat
-          ", "
-          (compiler-ir-value-describe on-true)
-          ", "
-          (compiler-ir-value-describe on-false)
-          "")
+        ", "
+        (compiler-ir-value-describe on-true)
+        ", "
+        (compiler-ir-value-describe on-false)
         (compiler-ir-vector-suffix lanes ty))]
     [(IrInstrVectorLoad dst base index lanes elem-ty)
       (str-cat
@@ -2678,41 +2692,39 @@
         (compiler-ir-value-describe (IrValueVar dst))
         " = vector_load "
         (compiler-ir-value-describe base)
-        (str-cat ", " (compiler-ir-value-describe index) "")
+        ", "
+        (compiler-ir-value-describe index)
         (compiler-ir-vector-suffix lanes elem-ty))]
     [(IrInstrVectorStore base index value lanes elem-ty)
       (str-cat
         "  vector_store "
         (compiler-ir-value-describe base)
-        (str-cat ", " (compiler-ir-value-describe index) "")
-        (str-cat ", " (compiler-ir-value-describe value) "")
-        (compiler-ir-vector-suffix lanes elem-ty)
-        "")]
+        ", "
+        (compiler-ir-value-describe index)
+        ", "
+        (compiler-ir-value-describe value)
+        (compiler-ir-vector-suffix lanes elem-ty))]
     [(IrInstrPredicatedStore base index value mask lanes elem-ty)
       (str-cat
         "  predicated_store "
         (compiler-ir-value-describe base)
-        (str-cat ", " (compiler-ir-value-describe index) "")
-        (str-cat
-          ", "
-          (compiler-ir-value-describe value)
-          ", "
-          (compiler-ir-value-describe mask)
-          "")
-        (compiler-ir-vector-suffix lanes elem-ty)
-        "")]
+        ", "
+        (compiler-ir-value-describe index)
+        ", "
+        (compiler-ir-value-describe value)
+        ", "
+        (compiler-ir-value-describe mask)
+        (compiler-ir-vector-suffix lanes elem-ty))]
     [(IrInstrPredicatedLoad dst base index mask lanes elem-ty)
       (str-cat
         "  "
         (compiler-ir-value-describe (IrValueVar dst))
         " = predicated_load "
         (compiler-ir-value-describe base)
-        (str-cat
-          ", "
-          (compiler-ir-value-describe index)
-          ", "
-          (compiler-ir-value-describe mask)
-          "")
+        ", "
+        (compiler-ir-value-describe index)
+        ", "
+        (compiler-ir-value-describe mask)
         (compiler-ir-vector-suffix lanes elem-ty))]
     [(IrInstrTailMask dst index len lanes)
       (str-cat
@@ -2720,7 +2732,9 @@
         (compiler-ir-value-describe (IrValueVar dst))
         " = tail_mask "
         (compiler-ir-value-describe index)
-        (str-cat ", " (compiler-ir-value-describe len) " : ")
+        ", "
+        (compiler-ir-value-describe len)
+        " : "
         (int->string lanes))]
     [_ "non-vector-mask-instr"]))
 

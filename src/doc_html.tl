@@ -99,12 +99,11 @@
   [meta : String]
   [source : String]) : String
   (str-cat
-    (str-cat
-      "<pre><code class=\"language-"
-      (doc-html-escape language)
-      "\""
-      (doc-html-code-block-meta-attr meta)
-      ">")
+    "<pre><code class=\"language-"
+    (doc-html-escape language)
+    "\""
+    (doc-html-code-block-meta-attr meta)
+    ">"
     (doc-html-escape source)
     "</code></pre>\n"))
 
@@ -149,20 +148,17 @@
       anchor
       "\"></a>\n<section class=\"tl-doc-item\">\n<h3><a href=\"#"
       anchor
-      (str-cat
-        "\">"
-        (doc-html-escape name)
-        "</a></h3>\n<dl class=\"tl-doc-meta\"><dt>Kind</dt><dd>"
-        (doc-html-escape kind)
-        (str-cat
-          "</dd></dl>\n"
-          (doc-html-code-block (doc-item-signature item))
-          (doc-html-doc-block
-            "tl-doc-item-text"
-            (doc-item-doc item)
-            "No item docs.")
-          "</section>\n"
-          "")))))
+      "\">"
+      (doc-html-escape name)
+      "</a></h3>\n<dl class=\"tl-doc-meta\"><dt>Kind</dt><dd>"
+      (doc-html-escape kind)
+      "</dd></dl>\n"
+      (doc-html-code-block (doc-item-signature item))
+      (doc-html-doc-block
+        "tl-doc-item-text"
+        (doc-item-doc item)
+        "No item docs.")
+      "</section>\n")))
 
 (define (doc-html-item-list [items : DocItemList]) : String
   (match items
@@ -213,20 +209,18 @@
       anchor
       "\">\n<h2><a href=\"#"
       anchor
-      (str-cat
-        "\">"
-        (doc-html-escape path)
-        "</a></h2>\n<p class=\"tl-doc-source\"><code>"
-        (doc-html-escape path)
-        (str-cat
-          "</code></p>\n"
-          (doc-html-doc-block
-            "tl-doc-module-text"
-            (doc-extraction-module-doc docs)
-            "No module docs.")
-          (doc-html-item-nav (doc-extraction-items docs))
-          (doc-html-items (doc-extraction-items docs))
-          "</section>\n")))))
+      "\">"
+      (doc-html-escape path)
+      "</a></h2>\n<p class=\"tl-doc-source\"><code>"
+      (doc-html-escape path)
+      "</code></p>\n"
+      (doc-html-doc-block
+        "tl-doc-module-text"
+        (doc-extraction-module-doc docs)
+        "No module docs.")
+      (doc-html-item-nav (doc-extraction-items docs))
+      (doc-html-items (doc-extraction-items docs))
+      "</section>\n")))
 
 (define (doc-html-module-sections [modules : DocModuleList]) : String
   (match modules
@@ -244,7 +238,8 @@
       (doc-html-header "TypeLisp API" path)
       "<main>\n"
       (doc-html-module-section (DocModule path docs))
-      (str-cat "</main>\n" (doc-html-page-close) ""))))
+      "</main>\n"
+      (doc-html-page-close))))
 
 (define (doc-html-render-source [path : String] [source : String]) : String
   (doc-html-render-module-page path (doc-extract-source source)))
@@ -255,10 +250,9 @@
     (doc-html-header "TypeLisp API" "module index")
     (doc-html-module-nav modules)
     "<main>\n"
-    (str-cat
-      (doc-html-module-sections modules)
-      "</main>\n"
-      (doc-html-page-close))))
+    (doc-html-module-sections modules)
+    "</main>\n"
+    (doc-html-page-close)))
 
 (define (doc-html-smoke-source) : String
   ";# Module docs with `code`, [links], <tag>, & amp.

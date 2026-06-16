@@ -86,7 +86,10 @@
     CompilerSourceSpans
     LowerNameCache
     LowerTypeCache
-    CompilerLowerMode))
+    CompilerLowerMode
+    ;; Tail-call-safe current function parameter var range: [start, end).
+    i64
+    i64))
 
 (defenum LowerMaybeArrayVar
   (LowerNoArrayVar)
@@ -4801,35 +4804,83 @@
 
 (define (lower-state-next-var [state : LowerState]) : i64
   (match state
-    [(LowerState next-var _ _ _ _ _ _ _ _ _ _ _) next-var]))
+    [(LowerState next-var _ _ _ _ _ _ _ _ _ _ _ _ _) next-var]))
 
 (define (lower-state-current-label [state : LowerState]) : String
   (match state
-    [(LowerState _ _ _ label _ _ _ _ _ _ _ _) label]))
+    [(LowerState _ _ _ label _ _ _ _ _ _ _ _ _ _) label]))
 
 (define (lower-state-current-function [state : LowerState]) : String
   (match state
-    [(LowerState _ _ _ _ _ _ _ function _ _ _ _) function]))
+    [(LowerState _ _ _ _ _ _ _ function _ _ _ _ _ _) function]))
 
 (define (lower-state-spans [state : LowerState]) : CompilerSourceSpans
   (match state
-    [(LowerState _ _ _ _ _ _ _ _ spans _ _ _) spans]))
+    [(LowerState _ _ _ _ _ _ _ _ spans _ _ _ _ _) spans]))
 
 (define (lower-state-names [state : LowerState]) : LowerNameCache
   (match state
-    [(LowerState _ _ _ _ _ _ _ _ _ names _ _) names]))
+    [(LowerState _ _ _ _ _ _ _ _ _ names _ _ _ _) names]))
 
 (define (lower-state-type-cache [state : LowerState]) : LowerTypeCache
   (match state
-    [(LowerState _ _ _ _ _ _ _ _ _ _ type-cache _) type-cache]))
+    [(LowerState _ _ _ _ _ _ _ _ _ _ type-cache _ _ _) type-cache]))
 
 (define (lower-state-functions [state : LowerState]) : CompilerIrFunctionList
   (match state
-    [(LowerState _ _ _ _ _ _ functions _ _ _ _ _) functions]))
+    [(LowerState _ _ _ _ _ _ functions _ _ _ _ _ _ _) functions]))
 
 (define (lower-state-mode [state : LowerState]) : CompilerLowerMode
   (match state
-    [(LowerState _ _ _ _ _ _ _ _ _ _ _ mode) mode]))
+    [(LowerState _ _ _ _ _ _ _ _ _ _ _ mode _ _) mode]))
+
+(define (lower-state-tail-param-start [state : LowerState]) : i64
+  (match state
+    [(LowerState _ _ _ _ _ _ _ _ _ _ _ _ param-start _) param-start]))
+
+(define (lower-state-tail-param-end [state : LowerState]) : i64
+  (match state
+    [(LowerState _ _ _ _ _ _ _ _ _ _ _ _ _ param-end) param-end]))
+
+(define (lower-state-tail-param-range-contains?
+  [state : LowerState]
+  [var-id : i64]) : bool
+  (and
+    (>= var-id (lower-state-tail-param-start state))
+    (< var-id (lower-state-tail-param-end state))))
+
+(define (lower-state-clear-tail-param-range [state : LowerState]) : LowerState
+  (match state
+    [(LowerState
+        next-var
+        next-label
+        next-lambda
+        current-label
+        current-instrs
+        blocks
+        functions
+        function
+        spans
+        names
+        type-cache
+        mode
+        _
+        _)
+      (LowerState
+        next-var
+        next-label
+        next-lambda
+        current-label
+        current-instrs
+        blocks
+        functions
+        function
+        spans
+        names
+        type-cache
+        mode
+        0
+        0)]))
 
 (define (lower-state-alloc-var [state : LowerState]) : LowerAlloc
   (match state
@@ -4845,7 +4896,9 @@
         spans
         names
         type-cache
-        mode)
+        mode
+        tail-param-start
+        tail-param-end)
       (LowerAlloc
         (LowerState
           (+ next-var 1)
@@ -4859,7 +4912,9 @@
           spans
           names
           type-cache
-          mode)
+          mode
+          tail-param-start
+          tail-param-end)
         next-var)]))
 
 (define (lower-state-fresh-label [state : LowerState] [prefix : String]) : LowerLabel
@@ -4876,7 +4931,9 @@
         spans
         names
         type-cache
-        mode)
+        mode
+        tail-param-start
+        tail-param-end)
       (LowerLabel
         (LowerState
           next-var
@@ -4890,7 +4947,9 @@
           spans
           names
           type-cache
-          mode)
+          mode
+          tail-param-start
+          tail-param-end)
         (string-append (string-append prefix ".") (int->string next-label)))]))
 
 (define (lower-state-fresh-lambda-name [state : LowerState]) : LowerLambdaName
@@ -4907,7 +4966,9 @@
         spans
         names
         type-cache
-        mode)
+        mode
+        tail-param-start
+        tail-param-end)
       (LowerLambdaName
         (LowerState
           next-var
@@ -4921,7 +4982,9 @@
           spans
           names
           type-cache
-          mode)
+          mode
+          tail-param-start
+          tail-param-end)
         (string-append
           (string-append (string-append "__tl_lambda_" function) "_")
           (int->string next-lambda)))]))
@@ -4940,7 +5003,9 @@
         spans
         names
         type-cache
-        mode)
+        mode
+        tail-param-start
+        tail-param-end)
       (LowerState
         next-var
         next-label
@@ -4953,7 +5018,9 @@
         spans
         names
         type-cache
-        mode)]))
+        mode
+        tail-param-start
+        tail-param-end)]))
 
 (define (lower-state-record-instr-span
   [state : LowerState]
@@ -4972,7 +5039,9 @@
         spans
         names
         type-cache
-        mode)
+        mode
+        tail-param-start
+        tail-param-end)
       (LowerState
         next-var
         next-label
@@ -4985,7 +5054,9 @@
         (compiler-source-spans-insert-instr spans function instr span)
         names
         type-cache
-        mode)]))
+        mode
+        tail-param-start
+        tail-param-end)]))
 
 (define (lower-state-emit-at-expr
   [state : LowerState]
@@ -5010,7 +5081,9 @@
         spans
         names
         type-cache
-        mode)
+        mode
+        tail-param-start
+        tail-param-end)
       (LowerState
         next-var
         next-label-id
@@ -5027,11 +5100,13 @@
         spans
         names
         type-cache
-        mode)]))
+        mode
+        tail-param-start
+        tail-param-end)]))
 
 (define (lower-state-build-blocks [state : LowerState]) : CompilerIrBlockList
   (match state
-    [(LowerState _ _ _ current-label current-instrs blocks _ _ _ _ _ _)
+    [(LowerState _ _ _ current-label current-instrs blocks _ _ _ _ _ _ _ _)
       (let
         [current-block : CompilerIrBlock
           (IrBlock
@@ -5061,7 +5136,9 @@
         _
         names
         type-cache
-        mode)
+        mode
+        tail-param-start
+        tail-param-end)
       (LowerState
         next-var
         next-label
@@ -5074,7 +5151,9 @@
         new-spans
         names
         type-cache
-        mode)]))
+        mode
+        tail-param-start
+        tail-param-end)]))
 
 (define (lower-materialize
   [state : LowerState]
@@ -9677,7 +9756,9 @@
           function-spans
           names
           type-cache
-          mode)]
+          mode
+          1
+          param-count)]
       (match (lower-load-captures
         ctx
         state
@@ -13749,14 +13830,30 @@
                       [(LowerExpr value-state value-ir _)
                         (match (sym-i64-lookup-id env name-id)
                           [(SomeI64 id)
-                            (OkLowerExpr
-                              (LowerExpr
-                                (lower-state-emit-at-expr
-                                  value-state
-                                  (IrInstrMov id value-ir target-ir-ty)
-                                  origin)
-                                IrValueUnit
-                                expr-ty))]
+                            (let
+                              [assign-state
+                                : LowerState
+                                ;; A rebound aggregate param may point at
+                                ;; current-frame storage, so its var id no
+                                ;; longer proves tail-call forwarding is safe.
+                                (if (and
+                                  (lower-state-tail-param-range-contains?
+                                    value-state
+                                    id)
+                                  (lower-type-contains-inline-aggregate?
+                                    ctx
+                                    target-ty))
+                                  (lower-state-clear-tail-param-range
+                                    value-state)
+                                  value-state)]
+                              (OkLowerExpr
+                                (LowerExpr
+                                  (lower-state-emit-at-expr
+                                    assign-state
+                                    (IrInstrMov id value-ir target-ir-ty)
+                                    origin)
+                                  IrValueUnit
+                                  expr-ty)))]
                           [(NoneI64)
                             (match (lower-return-abi-value
                               ctx
@@ -27748,6 +27845,7 @@
 (define (lower-tail-call-indirect-supported?
   [ctx : TcContext]
   [state : LowerState]
+  [env : SymI64Env]
   [type-env : TcTypeEnv]
   [func-ty : AstType]
   [args : AstExprList]
@@ -27756,6 +27854,7 @@
   (if (lower-tail-call-inline-aggregate-risk?
     ctx
     state
+    env
     type-env
     args
     ret-ty
@@ -27781,6 +27880,7 @@
       (if (lower-tail-call-indirect-supported?
         ctx
         state
+        env
         type-env
         func-ty
         args
@@ -28145,9 +28245,32 @@
         (lower-return-expr-generic ctx state env type-env expr ret-ty sret-var)])
     (lower-return-expr-generic ctx state env type-env expr ret-ty sret-var)))
 
-(define (lower-expr-list-contains-inline-aggregate?
+(define (lower-tail-call-safe-param-aggregate-arg?
+  [state : LowerState]
+  [env : SymI64Env]
+  [expr : AstExpr]) : bool
+  (match expr
+    [(AstExprSpanned inner-box _)
+      (lower-tail-call-safe-param-aggregate-arg?
+        state
+        env
+        (ast-node-get inner-box))]
+    [(AstExprAnn inner-box _)
+      (lower-tail-call-safe-param-aggregate-arg?
+        state
+        env
+        (ast-node-get inner-box))]
+    [(AstExprVar name)
+      (match (sym-i64-lookup-id env name)
+        [(SomeI64 var-id) (lower-state-tail-param-range-contains? state var-id)]
+        [(NoneI64) false])]
+    [_ false]))
+
+(define (lower-expr-list-contains-unsafe-inline-aggregate?
   [ctx : TcContext]
-  [env : TcTypeEnv]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
   [exprs : AstExprList]) : bool
   (match exprs
     [(AstExprNil) false]
@@ -28155,17 +28278,30 @@
       (let
         [expr : AstExpr (ast-node-get expr)]
         [rest : AstExprList (box-get rest)]
-        (match (tc-expr ctx env expr)
+        (match (tc-expr ctx type-env expr)
           [(OkTcType ty)
             (or
-              (lower-type-contains-inline-aggregate? ctx ty)
-              (lower-expr-list-contains-inline-aggregate? ctx env rest))]
+              (and
+                (lower-type-contains-inline-aggregate? ctx ty)
+                (not (lower-tail-call-safe-param-aggregate-arg? state env expr)))
+              (lower-expr-list-contains-unsafe-inline-aggregate?
+                ctx
+                state
+                env
+                type-env
+                rest))]
           [(ErrTcType _)
-            (lower-expr-list-contains-inline-aggregate? ctx env rest)]))]))
+            (lower-expr-list-contains-unsafe-inline-aggregate?
+              ctx
+              state
+              env
+              type-env
+              rest)]))]))
 
 (define (lower-tail-call-inline-aggregate-risk?
   [ctx : TcContext]
   [state : LowerState]
+  [env : SymI64Env]
   [type-env : TcTypeEnv]
   [args : AstExprList]
   [ret-ty : AstType]
@@ -28176,7 +28312,12 @@
     (and
       (< sret-var 0)
       (lower-inline-aggregate-abi-copy-needed? ctx state ret-ty))
-    (lower-expr-list-contains-inline-aggregate? ctx type-env args)))
+    (lower-expr-list-contains-unsafe-inline-aggregate?
+      ctx
+      state
+      env
+      type-env
+      args)))
 
 (define (lower-tail-call-append-current-sret-arg
   [ctx : TcContext]
@@ -28214,6 +28355,7 @@
           (lower-tail-call-inline-aggregate-risk?
             ctx
             state
+            env
             type-env
             args
             ret-ty
@@ -29341,7 +29483,9 @@
           function-spans
           names
           type-cache
-          mode)]
+          mode
+          0
+          param-count)]
       (if (lower-supported-function-return-type? ctx ret-ty)
         (match (lower-tail-expr ctx state env type-env body ret-ty sret-var)
           [(OkLowerState final-state)
@@ -36252,11 +36396,50 @@
   (let ([value : Big (step 3 39)])
     (struct-get value c)))")
 
+(define (compiler-lower-tail-aggregate-param-source) : String
+  "(defstruct Big (a i64) (b i64) (c i64))
+(define (finish [x : Big] [n : i64]) : i64
+  (+ (struct-get x a) n))
+(define (step [x : Big] [n : i64]) : i64
+  (if (= n 0)
+    (finish x n)
+    (step x (- n 1))))
+(define (main) : i64
+  (step (Big 39 1 2) 3))")
+
+(define (compiler-lower-tail-aggregate-local-source) : String
+  "(defstruct Big (a i64) (b i64) (c i64))
+(define (finish [x : Big] [n : i64]) : i64
+  (+ (struct-get x a) n))
+(define (step [n : i64]) : i64
+  (finish (Big n (+ n 1) (+ n 2)) n))
+(define (main) : i64 (step 39))")
+
+(define (compiler-lower-tail-aggregate-reassigned-param-source) : String
+  "(defstruct Big (a i64) (b i64) (c i64))
+(define (finish [x : Big] [n : i64]) : i64
+  (+ (struct-get x a) n))
+(define (step [x : Big] [n : i64]) : i64
+  (begin
+    (set! x (Big n (+ n 1) (+ n 2)))
+    (finish x n)))
+(define (main) : i64
+  (step (Big 1 2 3) 39))")
+
 (define (compiler-lower-tail-indirect-source) : String
   "(define (finish [x : i64]) : i64 x)
 (define (step [f : (-> i64 i64)] [x : i64]) : i64
   (f x))
 (define (main) : i64 (step finish 42))")
+
+(define (compiler-lower-tail-indirect-aggregate-param-source) : String
+  "(defstruct Big (a i64) (b i64) (c i64))
+(define (finish [x : Big]) : i64
+  (struct-get x b))
+(define (step [f : (-> Big i64)] [x : Big]) : i64
+  (f x))
+(define (main) : i64
+  (step finish (Big 1 42 3)))")
 
 (define (compiler-lower-tail-indirect-aggregate-return-source) : String
   "(defstruct Big (a i64) (b i64) (c i64))
@@ -36343,8 +36526,60 @@
             (= (lower-test-function-call-count functions "step" "finish") 0))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-tail-aggregate-param-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-tail-aggregate-param-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (= (lower-test-function-tail-call-count functions "step" "step") 1)
+            (= (lower-test-function-call-count functions "step" "step") 0)
+            (=
+              (lower-test-function-tail-call-count functions "step" "finish")
+              1)
+            (= (lower-test-function-call-count functions "step" "finish") 0))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-tail-aggregate-local-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-tail-aggregate-local-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (=
+              (lower-test-function-tail-call-count functions "step" "finish")
+              0)
+            (> (lower-test-function-call-count functions "step" "finish") 0))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-tail-aggregate-reassigned-param-shape-ok?) : bool
+  (match (lower-compiler-source
+    (compiler-lower-tail-aggregate-reassigned-param-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (=
+              (lower-test-function-tail-call-count functions "step" "finish")
+              0)
+            (> (lower-test-function-call-count functions "step" "finish") 0))])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-tail-indirect-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-tail-indirect-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (=
+              (lower-test-function-indirect-tail-call-count functions "step")
+              1)
+            (= (lower-test-function-indirect-call-count functions "step") 0))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-tail-indirect-aggregate-param-shape-ok?) : bool
+  (match (lower-compiler-source
+    (compiler-lower-tail-indirect-aggregate-param-source))
     [(OkCompilerLower program _)
       (match program
         [(IrProgram _ functions _)
@@ -36388,7 +36623,11 @@
     (compiler-lower-tail-direct-shape-ok?)
     (compiler-lower-tail-direct-stack-shape-ok?)
     (compiler-lower-tail-aggregate-return-shape-ok?)
+    (compiler-lower-tail-aggregate-param-shape-ok?)
+    (compiler-lower-tail-aggregate-local-shape-ok?)
+    (compiler-lower-tail-aggregate-reassigned-param-shape-ok?)
     (compiler-lower-tail-indirect-shape-ok?)
+    (compiler-lower-tail-indirect-aggregate-param-shape-ok?)
     (compiler-lower-tail-indirect-aggregate-return-shape-ok?)
     (compiler-lower-tail-cleanup-shape-ok?)))
 

@@ -6419,13 +6419,15 @@
 
 ;; 64-bit accumulate-in-place mnemonic for the arithmetic/bitwise binops whose
 ;; result can be computed directly in the destination register (dst = lhs <op>
-;; rhs via "<op>q %r8, dst"). Comparisons, div/mod and shifts are excluded (they
-;; need %rax/%rdx/%rcx) and return "".
+;; rhs via "<op>q src, dst"). Comparisons, div/mod and shifts are excluded (they
+;; need %rax/%rdx/%rcx or setcc) and return "".
 (define (compiler-backend-binop-direct-mnemonic [op : CompilerIrBinOp]) : String
   (match op
     [(IrBinAdd) "addq"]
     [(IrBinSub) "subq"]
     [(IrBinMul) "imulq"]
+    [(IrBinAnd) "andq"]
+    [(IrBinOr) "orq"]
     [(IrBinBitAnd) "andq"]
     [(IrBinBitOr) "orq"]
     [(IrBinBitXor) "xorq"]
@@ -6442,13 +6444,194 @@
   [value : CompilerIrValue]) : String
   (match value
     [(IrValueVar id)
-      (match (compiler-reg-assignment-lookup assignments id)
-        [(CompilerRegSomeLocation location)
-          (match location
-            [(CompilerRegRegister r) r]
-            [_ ""])]
-        [(CompilerRegNoLocation) ""])]
+      (if (>= (compiler-backend-forwarded-addr-of-src id) 0)
+        ""
+        (match (compiler-reg-assignment-lookup assignments id)
+          [(CompilerRegSomeLocation location)
+            (match location
+              [(CompilerRegRegister r) r]
+              [_ ""])]
+          [(CompilerRegNoLocation) ""]))]
     [_ ""]))
+
+;; Stack address of a scalar variable value that can be used as an instruction
+;; source operand. Forwarded addr-of values are not stack loads and must fall
+;; back to the ordinary load path.
+(define (compiler-backend-value-stack-address
+  [assignments : CompilerRegAssignmentList]
+  [value : CompilerIrValue]) : String
+  (match value
+    [(IrValueVar id)
+      (if (>= (compiler-backend-forwarded-addr-of-src id) 0)
+        ""
+        (match (compiler-reg-assignment-lookup assignments id)
+          [(CompilerRegSomeLocation location)
+            (match location
+              [(CompilerRegSpill offset) (compiler-backend-frame-offset offset)]
+              [_ ""])]
+          [(CompilerRegNoLocation) (compiler-backend-slot id)]))]
+    [_ ""]))
+
+(define (compiler-backend-immediate-displacement [imm : String]) : String
+  (substring imm 1 (- (string-length imm) 1)))
+
+(define (compiler-backend-binop-source-asm
+  [op : CompilerIrBinOp]
+  [ty : AstType]
+  [rhs : String]) : CompilerBackendMaybeAsm
+  (match op
+    [(IrBinAdd)
+      (CompilerBackendSomeAsm
+        (compiler-backend-binop-reg-asm
+          "add"
+          ty
+          rhs
+          (compiler-backend-sized-reg "%rax" ty)))]
+    [(IrBinSub)
+      (CompilerBackendSomeAsm
+        (compiler-backend-binop-reg-asm
+          "sub"
+          ty
+          rhs
+          (compiler-backend-sized-reg "%rax" ty)))]
+    [(IrBinMul)
+      (if (= (compiler-backend-type-size ty) 1)
+        (CompilerBackendNoAsm)
+        (CompilerBackendSomeAsm
+          (compiler-backend-binop-reg-asm
+            "imul"
+            ty
+            rhs
+            (compiler-backend-sized-reg "%rax" ty))))]
+    [(IrBinEq)
+      (CompilerBackendSomeAsm
+        (compiler-backend-binop-cmp-set-asm
+          ty
+          rhs
+          (compiler-backend-sized-reg "%rax" ty)
+          "sete"))]
+    [(IrBinNe)
+      (CompilerBackendSomeAsm
+        (compiler-backend-binop-cmp-set-asm
+          ty
+          rhs
+          (compiler-backend-sized-reg "%rax" ty)
+          "setne"))]
+    [(IrBinLt)
+      (CompilerBackendSomeAsm
+        (compiler-backend-binop-cmp-set-asm
+          ty
+          rhs
+          (compiler-backend-sized-reg "%rax" ty)
+          (if (compiler-backend-unsigned-rel-ty? ty)
+            "setb"
+            "setl")))]
+    [(IrBinLe)
+      (CompilerBackendSomeAsm
+        (compiler-backend-binop-cmp-set-asm
+          ty
+          rhs
+          (compiler-backend-sized-reg "%rax" ty)
+          (if (compiler-backend-unsigned-rel-ty? ty)
+            "setbe"
+            "setle")))]
+    [(IrBinGt)
+      (CompilerBackendSomeAsm
+        (compiler-backend-binop-cmp-set-asm
+          ty
+          rhs
+          (compiler-backend-sized-reg "%rax" ty)
+          (if (compiler-backend-unsigned-rel-ty? ty)
+            "seta"
+            "setg")))]
+    [(IrBinGe)
+      (CompilerBackendSomeAsm
+        (compiler-backend-binop-cmp-set-asm
+          ty
+          rhs
+          (compiler-backend-sized-reg "%rax" ty)
+          (if (compiler-backend-unsigned-rel-ty? ty)
+            "setae"
+            "setge")))]
+    [(IrBinAnd)
+      (CompilerBackendSomeAsm
+        (compiler-backend-binop-reg-asm
+          "and"
+          ty
+          rhs
+          (compiler-backend-sized-reg "%rax" ty)))]
+    [(IrBinOr)
+      (CompilerBackendSomeAsm
+        (compiler-backend-binop-reg-asm
+          "or"
+          ty
+          rhs
+          (compiler-backend-sized-reg "%rax" ty)))]
+    [(IrBinBitAnd)
+      (CompilerBackendSomeAsm
+        (compiler-backend-binop-reg-asm
+          "and"
+          ty
+          rhs
+          (compiler-backend-sized-reg "%rax" ty)))]
+    [(IrBinBitOr)
+      (CompilerBackendSomeAsm
+        (compiler-backend-binop-reg-asm
+          "or"
+          ty
+          rhs
+          (compiler-backend-sized-reg "%rax" ty)))]
+    [(IrBinBitXor)
+      (CompilerBackendSomeAsm
+        (compiler-backend-binop-reg-asm
+          "xor"
+          ty
+          rhs
+          (compiler-backend-sized-reg "%rax" ty)))]
+    [_ (CompilerBackendNoAsm)]))
+
+(define (compiler-backend-emit-binop-direct-immediate
+  [assignments : CompilerRegAssignmentList]
+  [dst-home : String]
+  [mnem : String]
+  [op : CompilerIrBinOp]
+  [lhs : CompilerIrValue]
+  [imm : String]) : ResultCompilerBackend
+  (let
+    [lhs-reg : String (compiler-backend-value-scalar-register assignments lhs)]
+    (if (and
+      (not (string-eq lhs-reg ""))
+      (match op
+        [(IrBinMul) true]
+        [_ false]))
+      (OkCompilerBackend
+        (str-cat "    imulq " imm ", " lhs-reg ", " dst-home "\n"))
+      (if (and
+        (not (string-eq lhs-reg ""))
+        (not (string-eq lhs-reg dst-home))
+        (not (string-eq imm "$0"))
+        (match op
+          [(IrBinAdd) true]
+          [_ false]))
+        (OkCompilerBackend
+          (str-cat
+            "    leaq "
+            (compiler-backend-immediate-displacement imm)
+            "("
+            lhs-reg
+            "), "
+            dst-home
+            "\n"))
+        (match (compiler-backend-emit-load-value-with-plan
+          assignments
+          lhs
+          dst-home)
+          [(OkCompilerBackend lhs-asm)
+            (OkCompilerBackend
+              (string-append
+                lhs-asm
+                (str-cat "    " mnem " " imm ", " dst-home "\n")))]
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)])))))
 
 (define (compiler-backend-emit-binop
   [types : CompilerRegVarTypeList]
@@ -6505,11 +6688,7 @@
       (if (if (string-eq dst-home "")
         false
         (if (= (compiler-backend-type-size operand-ty) 8)
-          (if (string-eq mnem "")
-            false
-            (match (compiler-backend-immediate-operand rhs)
-              [(CompilerBackendSomeImmediate _) false]
-              [(CompilerBackendNoImmediate) true]))
+          (not (string-eq mnem ""))
           false))
         ;; Accumulate directly in the destination register: dst = lhs <op> rhs.
         ;; #2386 (roadmap #1): if rhs already lives in a register distinct from
@@ -6519,32 +6698,22 @@
         ;; load cannot clobber it). Otherwise stage rhs through %r8 FIRST: lhs
         ;; goes into dst's home register, which may itself be rhs's home, and
         ;; loading lhs first would clobber rhs.
-        (let
-          [rhs-reg : String
-            (compiler-backend-value-scalar-register assignments rhs)]
-          (if (if (string-eq rhs-reg "")
-            false
-            (not (string-eq rhs-reg dst-home)))
-            (match (compiler-backend-emit-load-value-with-plan
+        (match (compiler-backend-immediate-operand rhs)
+          [(CompilerBackendSomeImmediate imm)
+            (compiler-backend-emit-binop-direct-immediate
               assignments
+              dst-home
+              mnem
+              op
               lhs
-              dst-home)
-              [(OkCompilerBackend lhs-asm)
-                (OkCompilerBackend
-                  (string-append
-                    lhs-asm
-                    (str-cat
-                      "    "
-                      mnem
-                      " "
-                      rhs-reg
-                      (string-append ", " (string-append dst-home "\n")))))]
-              [(ErrCompilerBackend message) (ErrCompilerBackend message)])
-            (match (compiler-backend-emit-load-value-with-plan
-              assignments
-              rhs
-              "%r8")
-              [(OkCompilerBackend rhs-asm)
+              imm)]
+          [(CompilerBackendNoImmediate)
+            (let
+              [rhs-reg : String
+                (compiler-backend-value-scalar-register assignments rhs)]
+              (if (if (string-eq rhs-reg "")
+                false
+                (not (string-eq rhs-reg dst-home)))
                 (match (compiler-backend-emit-load-value-with-plan
                   assignments
                   lhs
@@ -6552,12 +6721,33 @@
                   [(OkCompilerBackend lhs-asm)
                     (OkCompilerBackend
                       (string-append
-                        rhs-asm
-                        (string-append
-                          lhs-asm
-                          (str-cat "    " mnem " %r8, " dst-home "\n"))))]
-                  [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-              [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
+                        lhs-asm
+                        (str-cat
+                          "    "
+                          mnem
+                          " "
+                          rhs-reg
+                          (string-append ", " (string-append dst-home "\n")))))]
+                  [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+                (match (compiler-backend-emit-load-value-with-plan
+                  assignments
+                  rhs
+                  "%r8")
+                  [(OkCompilerBackend rhs-asm)
+                    (match (compiler-backend-emit-load-value-with-plan
+                      assignments
+                      lhs
+                      dst-home)
+                      [(OkCompilerBackend lhs-asm)
+                        (OkCompilerBackend
+                          (string-append
+                            rhs-asm
+                            (string-append
+                              lhs-asm
+                              (str-cat "    " mnem " %r8, " dst-home "\n"))))]
+                      [(ErrCompilerBackend message)
+                        (ErrCompilerBackend message)])]
+                  [(ErrCompilerBackend message) (ErrCompilerBackend message)])))])
         (match (compiler-backend-emit-load-value-with-plan
           assignments
           lhs
@@ -6614,25 +6804,66 @@
                           [(ErrCompilerBackend message)
                             (ErrCompilerBackend message)])])]
                   [(CompilerBackendNoImmediate)
-                    (match (compiler-backend-emit-load-value-with-plan
-                      assignments
-                      rhs
-                      "%r8")
-                      [(OkCompilerBackend rhs-asm)
-                        (OkCompilerBackend
-                          (string-append
-                            lhs-asm
-                            (string-append
-                              rhs-asm
+                    (let
+                      [rhs-address : String
+                        (compiler-backend-value-stack-address assignments rhs)]
+                      (if (not (string-eq rhs-address ""))
+                        (match (compiler-backend-binop-source-asm
+                          op
+                          operand-ty
+                          rhs-address)
+                          [(CompilerBackendSomeAsm op-asm)
+                            (OkCompilerBackend
                               (string-append
-                                (compiler-backend-binop-asm op operand-ty)
-                                (compiler-backend-emit-store-typed-var-with-plan
-                                  assignments
-                                  dst
-                                  "%rax"
-                                  ty)))))]
-                      [(ErrCompilerBackend message)
-                        (ErrCompilerBackend message)])])])]
+                                lhs-asm
+                                (string-append
+                                  op-asm
+                                  (compiler-backend-emit-store-typed-var-with-plan
+                                    assignments
+                                    dst
+                                    "%rax"
+                                    ty))))]
+                          [(CompilerBackendNoAsm)
+                            (match (compiler-backend-emit-load-value-with-plan
+                              assignments
+                              rhs
+                              "%r8")
+                              [(OkCompilerBackend rhs-asm)
+                                (OkCompilerBackend
+                                  (string-append
+                                    lhs-asm
+                                    (string-append
+                                      rhs-asm
+                                      (string-append
+                                        (compiler-backend-binop-asm
+                                          op
+                                          operand-ty)
+                                        (compiler-backend-emit-store-typed-var-with-plan
+                                          assignments
+                                          dst
+                                          "%rax"
+                                          ty)))))]
+                              [(ErrCompilerBackend message)
+                                (ErrCompilerBackend message)])])
+                        (match (compiler-backend-emit-load-value-with-plan
+                          assignments
+                          rhs
+                          "%r8")
+                          [(OkCompilerBackend rhs-asm)
+                            (OkCompilerBackend
+                              (string-append
+                                lhs-asm
+                                (string-append
+                                  rhs-asm
+                                  (string-append
+                                    (compiler-backend-binop-asm op operand-ty)
+                                    (compiler-backend-emit-store-typed-var-with-plan
+                                      assignments
+                                      dst
+                                      "%rax"
+                                      ty)))))]
+                          [(ErrCompilerBackend message)
+                            (ErrCompilerBackend message)])))])])]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)])))))
 
 (define (compiler-backend-empty-assignments?
@@ -7439,6 +7670,63 @@
               ""
               "backend: non-immediate fused gep load compare branch"))]))))
 
+(define (compiler-backend-bounds-length-operand
+  [assignments : CompilerRegAssignmentList]
+  [length : CompilerIrValue]) : String
+  (match (compiler-backend-immediate-operand length)
+    [(CompilerBackendSomeImmediate imm) imm]
+    [(CompilerBackendNoImmediate)
+      (let
+        [length-reg : String
+          (compiler-backend-value-scalar-register-home assignments length)]
+        (if (not (string-eq length-reg ""))
+          length-reg
+          (compiler-backend-value-stack-address assignments length)))]))
+
+(define (compiler-backend-bounds-check-tail
+  [call-space : i64]
+  [ok-symbol : String]
+  [plan : CompilerBackendRuntimePlan]
+  [program-index : CompilerBackendProgramIndex]) : String
+  (string-append
+    (compiler-backend-emit-call-space-sub call-space)
+    (str-cat
+      "    call "
+      (compiler-backend-call-symbol-index "tl_oob_abort" plan program-index)
+      "\n"
+      (string-append
+        (compiler-backend-emit-call-space-add call-space)
+        (str-cat ok-symbol ":\n" "" ""))
+      "")))
+
+(define (compiler-backend-bounds-check-asm
+  [index-asm : String]
+  [length-asm : String]
+  [length-operand : String]
+  [index-operand : String]
+  [call-space : i64]
+  [ok-symbol : String]
+  [plan : CompilerBackendRuntimePlan]
+  [program-index : CompilerBackendProgramIndex]) : String
+  (string-append
+    index-asm
+    (string-append
+      length-asm
+      (string-append
+        (str-cat
+          "    cmpq "
+          length-operand
+          ", "
+          index-operand
+          "\n    jb "
+          ok-symbol
+          "\n")
+        (compiler-backend-bounds-check-tail
+          call-space
+          ok-symbol
+          plan
+          program-index)))))
+
 (define (compiler-backend-emit-bounds-check
   [target : CompilerBackendTarget]
   [function : String]
@@ -7450,44 +7738,88 @@
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
-  (match (compiler-backend-emit-load-value-with-plan assignments index "%rax")
-    [(OkCompilerBackend index-asm)
+  (let
+    [call-space : i64
+      (compiler-backend-call-arg-space
+        target
+        (IrCallArgsNil)
+        AstTypeNil
+        false
+        program-index)]
+    [ok-symbol : String (compiler-backend-asm-label function ok-label)]
+    [index-reg : String
+      (compiler-backend-value-scalar-register-home assignments index)]
+    [index-operand : String
+      (if (string-eq index-reg "")
+        "%rax"
+        index-reg)]
+    (if (string-eq index-reg "")
       (match (compiler-backend-emit-load-value-with-plan
         assignments
-        length
-        "%r11")
-        [(OkCompilerBackend length-asm)
+        index
+        "%rax")
+        [(OkCompilerBackend index-asm)
           (let
-            [call-space : i64
-              (compiler-backend-call-arg-space
-                target
-                (IrCallArgsNil)
-                AstTypeNil
-                false
-                program-index)]
-            [ok-symbol : String (compiler-backend-asm-label function ok-label)]
-            (OkCompilerBackend
-              (string-append
-                index-asm
-                (string-append
+            [length-operand : String
+              (compiler-backend-bounds-length-operand assignments length)]
+            (if (not (string-eq length-operand ""))
+              (OkCompilerBackend
+                (compiler-backend-bounds-check-asm
+                  index-asm
+                  ""
+                  length-operand
+                  index-operand
+                  call-space
+                  ok-symbol
+                  plan
+                  program-index))
+              (match (compiler-backend-emit-load-value-with-plan
+                assignments
+                length
+                "%r11")
+                [(OkCompilerBackend length-asm)
+                  (OkCompilerBackend
+                    (compiler-backend-bounds-check-asm
+                      index-asm
+                      length-asm
+                      "%r11"
+                      index-operand
+                      call-space
+                      ok-symbol
+                      plan
+                      program-index))]
+                [(ErrCompilerBackend message) (ErrCompilerBackend message)])))]
+        [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+      (let
+        [length-operand : String
+          (compiler-backend-bounds-length-operand assignments length)]
+        (if (not (string-eq length-operand ""))
+          (OkCompilerBackend
+            (compiler-backend-bounds-check-asm
+              ""
+              ""
+              length-operand
+              index-operand
+              call-space
+              ok-symbol
+              plan
+              program-index))
+          (match (compiler-backend-emit-load-value-with-plan
+            assignments
+            length
+            "%r11")
+            [(OkCompilerBackend length-asm)
+              (OkCompilerBackend
+                (compiler-backend-bounds-check-asm
+                  ""
                   length-asm
-                  (string-append
-                    (str-cat "    cmpq %r11, %rax\n    jb " ok-symbol "\n" "")
-                    (string-append
-                      (compiler-backend-emit-call-space-sub call-space)
-                      (str-cat
-                        "    call "
-                        (compiler-backend-call-symbol-index
-                          "tl_oob_abort"
-                          plan
-                          program-index)
-                        "\n"
-                        (string-append
-                          (compiler-backend-emit-call-space-add call-space)
-                          (str-cat ok-symbol ":\n" "" ""))
-                        "")))))))]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+                  "%r11"
+                  index-operand
+                  call-space
+                  ok-symbol
+                  plan
+                  program-index))]
+            [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))))
 
 (define (compiler-backend-emit-unop
   [assignments : CompilerRegAssignmentList]

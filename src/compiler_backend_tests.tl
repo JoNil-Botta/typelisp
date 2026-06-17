@@ -1917,7 +1917,7 @@
           (compiler-backend-string-contains?
             asm
             "    .quad .L_tl_str_data_l2_12961_16211\n")
-          (compiler-backend-string-contains? asm "    cmpq %r11, %rax\n")
+          (not (compiler-backend-string-contains? asm "    cmpq %r11, %rax\n"))
           (compiler-backend-string-contains? asm "    jb .Lf0_str_bounds_ok")
           (compiler-backend-string-contains? asm "    call tl_oob_abort")
           (not (compiler-backend-string-contains? asm "tl_oob_abort:\n")))
@@ -2843,18 +2843,18 @@
                         (and
                           (compiler-backend-string-contains?
                             add-asm
-                            "    addq $5, %rax\n")
+                            "    leaq 5(%r12), %r13\n")
                           (not
                             (compiler-backend-string-contains?
                               add-asm
-                              "    movq $5, %r8\n"))
+                              "    addq $5, %rax\n"))
                           (compiler-backend-string-contains?
                             mul-asm
-                            "    imulq $3, %rax\n")
+                            "    imulq $3, %r12, %r13\n")
                           (not
                             (compiler-backend-string-contains?
                               mul-asm
-                              "    movq $3, %r8\n"))
+                              "    imulq $3, %rax\n"))
                           (compiler-backend-string-contains?
                             shl-asm
                             "    shlq $2, %rax\n")
@@ -3022,11 +3022,119 @@
         [(ErrCompilerBackend _) false])]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-binop-operand-folding-ok?) : bool
+  (let
+    [rhs-spill : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 1 (CompilerRegSpill -16))
+        CompilerRegAssignmentNil)]
+    [cmp-types : CompilerRegVarTypeList
+      (compiler-reg-var-type-cons
+        (CompilerRegVarType 0 (AstTyI64))
+        (compiler-reg-var-type-cons
+          (CompilerRegVarType 1 (AstTyI64))
+          CompilerRegVarTypeNil))]
+    (match (compiler-backend-emit-binop
+      (CompilerRegVarTypeNil)
+      (CompilerBackendGlobalTypeNil)
+      rhs-spill
+      2
+      (IrBinAdd)
+      (IrValueVar 0)
+      (IrValueVar 1)
+      (AstTyI64))
+      [(OkCompilerBackend add-asm)
+        (match (compiler-backend-emit-binop
+          cmp-types
+          (CompilerBackendGlobalTypeNil)
+          rhs-spill
+          2
+          (IrBinLt)
+          (IrValueVar 0)
+          (IrValueVar 1)
+          (AstTyBool))
+          [(OkCompilerBackend cmp-asm)
+            (and
+              (compiler-backend-string-contains?
+                add-asm
+                "    addq -16(%rbp), %rax\n")
+              (not
+                (compiler-backend-string-contains?
+                  add-asm
+                  "    movq -16(%rbp), %r8\n"))
+              (compiler-backend-string-contains?
+                cmp-asm
+                "    cmpq -16(%rbp), %rax\n    setl %al\n")
+              (not
+                (compiler-backend-string-contains?
+                  cmp-asm
+                  "    movq -16(%rbp), %r8\n"))
+              (string-eq
+                (compiler-backend-binop-direct-mnemonic (IrBinAnd))
+                "andq")
+              (string-eq
+                (compiler-backend-binop-direct-mnemonic (IrBinOr))
+                "orq"))]
+          [(ErrCompilerBackend _) false])]
+      [(ErrCompilerBackend _) false])))
+
+(define (compiler-backend-bounds-operand-folding-ok?) : bool
+  (let
+    [index-reg : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 0 (CompilerRegRegister "%r12"))
+        CompilerRegAssignmentNil)]
+    [index-reg-length-spill : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 0 (CompilerRegRegister "%r12"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment 1 (CompilerRegSpill -16))
+          CompilerRegAssignmentNil))]
+    (match (compiler-backend-emit-test-instrs
+      (compiler-ir-instr-cons
+        (IrInstrBoundsCheck (IrValueVar 0) (IrValueI64 3) "bounds_ok")
+        IrInstrNil)
+      index-reg
+      2)
+      [(OkCompilerBackend imm-asm)
+        (match (compiler-backend-emit-test-instrs
+          (compiler-ir-instr-cons
+            (IrInstrBoundsCheck (IrValueVar 0) (IrValueVar 1) "bounds_ok")
+            IrInstrNil)
+          index-reg-length-spill
+          3)
+          [(OkCompilerBackend spill-asm)
+            (and
+              (compiler-backend-string-contains? imm-asm "    cmpq $3, %r12\n")
+              (not
+                (compiler-backend-string-contains?
+                  imm-asm
+                  "    movq %r12, %rax\n"))
+              (not
+                (compiler-backend-string-contains?
+                  imm-asm
+                  "    movl $3, %r11d\n"))
+              (compiler-backend-string-contains?
+                spill-asm
+                "    cmpq -16(%rbp), %r12\n")
+              (not
+                (compiler-backend-string-contains?
+                  spill-asm
+                  "    movq %r12, %rax\n"))
+              (not
+                (compiler-backend-string-contains?
+                  spill-asm
+                  "    movq -16(%rbp), %r11\n")))]
+          [(ErrCompilerBackend _) false])]
+      [(ErrCompilerBackend _) false])))
+
 (define (compiler-backend-peephole-ok?) : bool
   (and
     (compiler-backend-peephole-register-moves-ok?)
     (compiler-backend-direct-immediate-mov-ok?)
     (compiler-backend-peephole-asm-ok?)
+    (compiler-backend-binop-operand-folding-ok?)
+    (compiler-backend-bounds-operand-folding-ok?)
     (compiler-backend-post-regalloc-peephole-ok?)
     (compiler-backend-rax-forwarding-ok?)
     (compiler-backend-fallthrough-jump-ok?)
@@ -5927,8 +6035,8 @@
           (or
             (compiler-backend-string-contains? asm "_tl_use_fixed")
             (compiler-backend-string-contains? asm "_tl_f"))
-          (compiler-backend-string-contains? asm "    movl $3, %r11d\n")
-          (compiler-backend-string-contains? asm "    cmpq %r11, %rax\n")
+          (compiler-backend-string-contains? asm "    cmpq $3, %rax\n")
+          (not (compiler-backend-string-contains? asm "    movl $3, %r11d\n"))
           (compiler-backend-string-contains? asm "    call tl_oob_abort\n")
           (compiler-backend-string-contains?
             asm
@@ -7188,14 +7296,14 @@
         (AstTyI32)
         (AstTyI32)
         (AstTyI32)
-        "    addl %r8d, %eax\n"
+        "    addl -16(%rbp), %eax\n"
         "    addq %r8, %rax\n")
       (compiler-backend-narrow-binop-shape?
         (IrBinMul)
         (AstTyI32)
         (AstTyI32)
         (AstTyI32)
-        "    imull %r8d, %eax\n"
+        "    imull -16(%rbp), %eax\n"
         "    imulq %r8, %rax\n")
       (compiler-backend-narrow-binop-shape?
         (IrBinDiv)
@@ -7209,21 +7317,21 @@
         (AstTyI8)
         (AstTyI8)
         (AstTyI8)
-        "    addb %r8b, %al\n"
+        "    addb -16(%rbp), %al\n"
         "    addq %r8, %rax\n")
       (compiler-backend-narrow-binop-shape?
         (IrBinSub)
         (AstTyI8)
         (AstTyI8)
         (AstTyI8)
-        "    subb %r8b, %al\n"
+        "    subb -16(%rbp), %al\n"
         "    subq %r8, %rax\n")
       (compiler-backend-narrow-binop-shape?
         (IrBinLt)
         (AstTyI8)
         (AstTyI8)
         (AstTyBool)
-        "    cmpb %r8b, %al\n    setl %al\n"
+        "    cmpb -16(%rbp), %al\n    setl %al\n"
         "    cmpq %r8, %rax\n")
       (compiler-backend-narrow-binop-shape?
         (IrBinMod)
@@ -7237,7 +7345,7 @@
         (AstTyI16)
         (AstTyI16)
         (AstTyI16)
-        "    andw %r8w, %ax\n"
+        "    andw -16(%rbp), %ax\n"
         "    andq %r8, %rax\n"))
     (backend-and4
       (compiler-backend-narrow-binop-shape?
@@ -7282,7 +7390,7 @@
           (AstTyU8)
           (AstTyU8)
           (AstTyBool)
-          "    cmpb %r8b, %al\n    setb %al\n"
+          "    cmpb -16(%rbp), %al\n    setb %al\n"
           "    setl %al\n")))))
 
 (define (compiler-backend-global-compare-types) : CompilerBackendGlobalTypeList

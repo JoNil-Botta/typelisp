@@ -264,6 +264,14 @@ EOF
     assert_empty "$_err" "Linux direct object build stderr"
     assert_contains "$_out" "Built $_bin" "Linux direct object build stdout"
     [ -x "$_bin" ] || fail "Linux direct object build did not write executable"
+    set +e
+    "$_bin"
+    _run_got=$?
+    set -e
+    if [ "$_run_got" -ne 42 ]; then
+        echo "FAIL: Linux direct object executable exited $_run_got, expected 42" >&2
+        exit 1
+    fi
 
     mkdir -p "$_pkg/src" "$_dep/src"
     cat > "$_pkg/typelisp.pkg" <<'EOF'
@@ -308,8 +316,14 @@ EOF
     assert_contains "$_pkg_out" "Built $_pkg_bin" "Linux direct object package build stdout"
     [ -s "$_dep_archive" ] || fail "Linux direct object package build did not write dependency archive"
     [ -x "$_pkg_bin" ] || fail "Linux direct object package build did not write executable"
-    # #2932 tracks executing direct ELF objects once ordinary function-body
-    # instruction encoding is complete for package objects.
+    set +e
+    "$_pkg_bin"
+    _pkg_run_got=$?
+    set -e
+    if [ "$_pkg_run_got" -ne 42 ]; then
+        echo "FAIL: Linux direct object package executable exited $_pkg_run_got, expected 42" >&2
+        exit 1
+    fi
 }
 
 run_compiler_driver() {

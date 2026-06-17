@@ -584,9 +584,15 @@
               relocs
               (ObjectRelocCall)
               "tl_alloc")
-            true
-            true
-            true)
+            (compiler-object-section-contains-bytes?
+              sections
+              (compiler-backend-object-bytes-from-hex "554889e5"))
+            (compiler-object-section-contains-bytes?
+              sections
+              (compiler-backend-object-bytes-from-hex "c9c3"))
+            (compiler-object-section-contains-bytes?
+              sections
+              (compiler-backend-object-linux-exit-bytes)))
           (compiler-object-relocation-list-contains?
             relocs
             (ObjectRelocAbs64)

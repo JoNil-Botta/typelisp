@@ -127,6 +127,7 @@ tail_self_loop|tests/integration/tail_self_loop.tl|42|-|-|-
 thread_runtime|tests/integration/thread_runtime.tl|42|-|-|stdlib/thread.tl
 thread_safe_i64|tests/integration/thread_safe_i64.tl|42|-|-|stdlib/thread.tl
 thread_safe_bool_unit|tests/integration/thread_safe_bool_unit.tl|42|-|-|stdlib/thread.tl
+thread_safe_aggregate_capture|tests/integration/thread_safe_aggregate_capture.tl|42|-|-|stdlib/thread.tl
 tl_alloc|tests/integration/tl_alloc.tl|0|-|-|-
 tree|tests/integration/tree.tl|3|-|-|-
 tuple_values|tests/integration/tuple_values.tl|42|-|-|-

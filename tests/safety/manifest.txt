@@ -78,9 +78,13 @@ sync_mutex_guard_let_reject|check-fail|tests/safety/sync_mutex_guard_let_reject.
 sync_mutex_guard_return_reject|check-fail|tests/safety/sync_mutex_guard_return_reject.tl|-|cleanup-required resource would escape with scope
 sync_mutex_guard_capture_reject|check-fail|tests/safety/sync_mutex_guard_capture_reject.tl|-|lambda cannot capture cleanup-required resource; resource value would escape
 sync_mutex_guard_store_reject|check-fail|tests/safety/sync_mutex_guard_store_reject.tl|-|struct Bad field guard stores cleanup-owning type MutexI64Guard without :owned
+thread_spawn_i64_aggregate_capture_ok|check-ok|tests/safety/thread_spawn_i64_aggregate_capture_ok.tl|-|-
 thread_spawn_i64_string_capture_reject|check-fail|tests/safety/thread_spawn_i64_string_capture_reject.tl|-|thread-spawn-i64 cannot capture `text` of type String
+thread_spawn_i64_struct_string_capture_reject|check-fail|tests/safety/thread_spawn_i64_struct_string_capture_reject.tl|-|owned heap storage needs a static/program or spanning atomic owner proof
+thread_spawn_i64_borrowed_str_capture_reject|check-fail|tests/safety/thread_spawn_i64_borrowed_str_capture_reject.tl|-|lambda cannot capture immutable reference
 thread_spawn_i64_reference_capture_reject|check-fail|tests/safety/thread_spawn_i64_reference_capture_reject.tl|-|lambda cannot capture immutable reference
 thread_spawn_i64_raw_pointer_capture_reject|check-fail|tests/safety/thread_spawn_i64_raw_pointer_capture_reject.tl|-|thread-spawn-i64 cannot capture `ptr` of type (Ptr i64)
+thread_spawn_i64_struct_raw_pointer_capture_reject|check-fail|tests/safety/thread_spawn_i64_struct_raw_pointer_capture_reject.tl|-|raw pointers cannot cross thread boundaries in safe code
 thread_spawn_i64_non_direct_reject|check-fail|tests/safety/thread_spawn_i64_non_direct_reject.tl|-|thread-spawn-i64 requires a direct nullary lambda argument
 thread_spawn_i64_scoped_arena_reject|check-fail|tests/safety/thread_spawn_i64_scoped_arena_reject.tl|-|thread-spawn-i64 cannot spawn from scoped arena
 thread_join_i64_double_reject|check-fail|tests/safety/thread_join_i64_double_reject.tl|-|use of moved value `worker`

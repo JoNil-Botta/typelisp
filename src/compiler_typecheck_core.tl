@@ -126,6 +126,11 @@
   (TcStringNil)
   (TcStringCons String (Box TcStringList)))
 
+(defenum TcThreadTransferClass
+  (TcThreadTransferable)
+  (TcThreadShareable)
+  (TcThreadTransferRejected String))
+
 (cfg
   compile-profile
   (defenum CompilerTcMacroProfileEntries
@@ -10531,28 +10536,210 @@
           [_ false])]
       [_ false])))
 
-(define (tc-thread-safe-spawn-safe-capture-type?
+(define (tc-thread-transfer-class-merge
+  [left : TcThreadTransferClass]
+  [right : TcThreadTransferClass]) : TcThreadTransferClass
+  (match left
+    [(TcThreadTransferRejected _) left]
+    [(TcThreadTransferable)
+      (match right
+        [(TcThreadTransferRejected _) right]
+        [_ (TcThreadTransferable)])]
+    [(TcThreadShareable)
+      (match right
+        [(TcThreadTransferRejected _) right]
+        [(TcThreadTransferable) (TcThreadTransferable)]
+        [(TcThreadShareable) (TcThreadShareable)])]))
+
+(define (tc-thread-transfer-reject [message : String]) : TcThreadTransferClass
+  (TcThreadTransferRejected message))
+
+(define (tc-thread-transfer-aggregate-class [class : TcThreadTransferClass]) : TcThreadTransferClass
+  (match class
+    [(TcThreadTransferRejected _) class]
+    [_ (TcThreadTransferable)]))
+
+(define (tc-thread-transfer-region-reject) : TcThreadTransferClass
+  (tc-thread-transfer-reject
+    "scoped-region and lifetime-parameterized values cannot cross thread boundaries"))
+
+(define (tc-thread-transfer-reference-reject) : TcThreadTransferClass
+  (tc-thread-transfer-reject
+    "borrowed references cannot cross thread boundaries"))
+
+(define (tc-thread-transfer-mut-reference-reject) : TcThreadTransferClass
+  (tc-thread-transfer-reject
+    "mutable references cannot cross thread boundaries"))
+
+(define (tc-thread-transfer-raw-pointer-reject) : TcThreadTransferClass
+  (tc-thread-transfer-reject
+    "raw pointers cannot cross thread boundaries in safe code"))
+
+(define (tc-thread-transfer-owned-heap-reject) : TcThreadTransferClass
+  (tc-thread-transfer-reject
+    "owned heap storage needs a static/program or spanning atomic owner proof"))
+
+(define (tc-thread-transfer-cleanup-reject) : TcThreadTransferClass
+  (tc-thread-transfer-reject
+    "cleanup-required resources cannot cross thread boundaries"))
+
+(define (tc-thread-transfer-type-list-class
   [ctx : TcContext]
-  [ty : AstType]) : bool
-  (if (tc-type-contains-any-region ty)
-    false
-    (let
-      [resolved : AstType (tc-type-strip-region (tc-resolve-type ctx ty))]
-      (if (tc-integer-type? resolved)
-        true
-        (match resolved
-          [(AstTyF64) true]
-          [(AstTyF32) true]
-          [(AstTyBool) true]
-          [(AstTyChar) true]
-          [(AstTyUnit) true]
-          [_ false])))))
+  [types : AstTypeList]
+  [stack : TcStringList]) : TcThreadTransferClass
+  (match types
+    [(AstTypeNil) (TcThreadShareable)]
+    [(AstTypeCons head rest)
+      (let
+        [head : AstType (ty-node-get head)]
+        [rest : AstTypeList (box-get rest)]
+        (tc-thread-transfer-class-merge
+          (tc-thread-transfer-type-class ctx head stack)
+          (tc-thread-transfer-type-list-class ctx rest stack)))]))
+
+(define (tc-thread-transfer-field-list-class
+  [ctx : TcContext]
+  [fields : AstFieldDefList]
+  [stack : TcStringList]) : TcThreadTransferClass
+  (match fields
+    [(AstFieldDefNil) (TcThreadShareable)]
+    [(AstFieldDefCons field rest)
+      (let
+        [rest : AstFieldDefList (box-get rest)]
+        (match field
+          [(AstFieldDef _ ty _)
+            (tc-thread-transfer-class-merge
+              (tc-thread-transfer-type-class ctx ty stack)
+              (tc-thread-transfer-field-list-class ctx rest stack))]))]))
+
+(define (tc-thread-transfer-variant-list-class
+  [ctx : TcContext]
+  [variants : AstVariantDefList]
+  [stack : TcStringList]) : TcThreadTransferClass
+  (match variants
+    [(AstVariantDefNil) (TcThreadShareable)]
+    [(AstVariantDefCons variant rest)
+      (let
+        [rest : AstVariantDefList (box-get rest)]
+        (match variant
+          [(AstVariantDef _ payloads _)
+            (tc-thread-transfer-class-merge
+              (tc-thread-transfer-type-list-class ctx payloads stack)
+              (tc-thread-transfer-variant-list-class ctx rest stack))]))]))
+
+(define (tc-thread-transfer-struct-class
+  [ctx : TcContext]
+  [struct-name : String]
+  [stack : TcStringList]) : TcThreadTransferClass
+  (if (tc-string-list-contains stack struct-name)
+    (tc-thread-transfer-reject
+      (str-cat
+        "recursive aggregate "
+        struct-name
+        " needs an explicit spanning owner proof"))
+    (match (tc-struct-decl ctx struct-name)
+      [(OkTcStructDecl decl)
+        (match decl
+          [(TcStructDecl _ cleanup fields)
+            (if (ast-struct-cleanup? cleanup)
+              (tc-thread-transfer-cleanup-reject)
+              (tc-thread-transfer-aggregate-class
+                (tc-thread-transfer-field-list-class
+                  ctx
+                  fields
+                  (tc-string-list-add stack struct-name))))])]
+      [(ErrTcStructDecl message) (tc-thread-transfer-reject message)])))
+
+(define (tc-thread-transfer-enum-class
+  [ctx : TcContext]
+  [enum-name : String]
+  [stack : TcStringList]) : TcThreadTransferClass
+  (if (tc-string-list-contains stack enum-name)
+    (tc-thread-transfer-reject
+      (str-cat
+        "recursive aggregate "
+        enum-name
+        " needs an explicit spanning owner proof"))
+    (match (tc-enum-decl ctx enum-name)
+      [(OkTcEnumDecl decl)
+        (match decl
+          [(TcEnumDecl cleanup variants)
+            (if (ast-enum-cleanup? cleanup)
+              (tc-thread-transfer-cleanup-reject)
+              (tc-thread-transfer-aggregate-class
+                (tc-thread-transfer-variant-list-class
+                  ctx
+                  variants
+                  (tc-string-list-add stack enum-name))))])]
+      [(ErrTcEnumDecl message) (tc-thread-transfer-reject message)])))
+
+(define (tc-thread-transfer-type-class-with-stack
+  [ctx : TcContext]
+  [ty : AstType]
+  [stack : TcStringList]) : TcThreadTransferClass
+  (let
+    [resolved : AstType (tc-resolve-type ctx ty)]
+    (match resolved
+      [(AstTyRegion _ _) (tc-thread-transfer-region-reject)]
+      [(AstTyRef _ _) (tc-thread-transfer-reference-reject)]
+      [(AstTyMutRef _ _) (tc-thread-transfer-mut-reference-reject)]
+      [(AstTyPtr _) (tc-thread-transfer-raw-pointer-reject)]
+      [(AstTyMutPtr _) (tc-thread-transfer-raw-pointer-reject)]
+      [(AstTyString) (tc-thread-transfer-owned-heap-reject)]
+      [(AstTyStr) (tc-thread-transfer-reference-reject)]
+      [(AstTyBytes) (tc-thread-transfer-reference-reject)]
+      [(AstTyDynArray _) (tc-thread-transfer-owned-heap-reject)]
+      [(AstTyBox _) (tc-thread-transfer-owned-heap-reject)]
+      [(AstTyTuple elems)
+        (tc-thread-transfer-aggregate-class
+          (tc-thread-transfer-type-list-class ctx elems stack))]
+      [(AstTyArray elem _)
+        (tc-thread-transfer-aggregate-class
+          (tc-thread-transfer-type-class ctx (ty-node-get elem) stack))]
+      [(AstTyStruct name)
+        (tc-thread-transfer-struct-class ctx (intern-str name) stack)]
+      [(AstTyStructArgs name lifetimes)
+        (if (> (tc-lifetime-list-count lifetimes) 0)
+          (tc-thread-transfer-region-reject)
+          (tc-thread-transfer-struct-class ctx (intern-str name) stack))]
+      [(AstTyEnum name)
+        (tc-thread-transfer-enum-class ctx (intern-str name) stack)]
+      [(AstTyEnumArgs name lifetimes)
+        (if (> (tc-lifetime-list-count lifetimes) 0)
+          (tc-thread-transfer-region-reject)
+          (tc-thread-transfer-enum-class ctx (intern-str name) stack))]
+      [(AstTyFunc _ _)
+        (tc-thread-transfer-reject
+          "function value transfer requires a direct no-capture function symbol")]
+      [(AstTyExpr)
+        (tc-thread-transfer-reject
+          "compile-time expression values cannot cross thread boundaries")]
+      [(AstTyExprList)
+        (tc-thread-transfer-reject
+          "compile-time expression values cannot cross thread boundaries")]
+      [(AstTyVar _)
+        (tc-thread-transfer-reject
+          "unresolved type variable cannot cross thread boundaries")]
+      [(AstTyVarArgs _ _)
+        (tc-thread-transfer-reject
+          "unresolved lifetime-parameterized type cannot cross thread boundaries")]
+      [_ (TcThreadShareable)])))
+
+(define (tc-thread-transfer-type-class
+  [ctx : TcContext]
+  [ty : AstType]
+  [stack : TcStringList]) : TcThreadTransferClass
+  (tc-thread-transfer-type-class-with-stack ctx ty stack))
+
+(define (tc-thread-transfer-classify-type [ctx : TcContext] [ty : AstType]) : TcThreadTransferClass
+  (tc-thread-transfer-type-class ctx ty TcStringNil))
 
 (define (tc-thread-safe-spawn-capture-message
   [spawn-name : String]
   [ctx : TcContext]
   [name : String]
-  [ty : AstType]) : String
+  [ty : AstType]
+  [reason : String]) : String
   (str-cat
     "typecheck: "
     spawn-name
@@ -10560,7 +10747,8 @@
     name
     "` of type "
     (tc-type-render (tc-type-without-regions (tc-resolve-type ctx ty)))
-    "; only copyable scalar captures are safe"))
+    "; "
+    reason))
 
 (define (tc-check-thread-safe-spawn-captures-scan-root
   [spawn-name : String]
@@ -10615,20 +10803,23 @@
                     "typecheck: "
                     spawn-name
                     " cannot capture cleanup-required resource"))
-                (if (tc-thread-safe-spawn-safe-capture-type? ctx ty)
-                  (tc-check-thread-safe-spawn-captures-scan-root
-                    spawn-name
-                    ctx
-                    root
-                    (box-get rest)
-                    bound
-                    body)
-                  (ErrTcUnit
-                    (tc-thread-safe-spawn-capture-message
+                (match (tc-thread-transfer-classify-type ctx ty)
+                  [(TcThreadTransferRejected reason)
+                    (ErrTcUnit
+                      (tc-thread-safe-spawn-capture-message
+                        spawn-name
+                        ctx
+                        name
+                        ty
+                        reason))]
+                  [_
+                    (tc-check-thread-safe-spawn-captures-scan-root
                       spawn-name
                       ctx
-                      name
-                      ty))))))))]))
+                      root
+                      (box-get rest)
+                      bound
+                      body)]))))))]))
 
 (define (tc-check-thread-safe-spawn-captures
   [spawn-name : String]

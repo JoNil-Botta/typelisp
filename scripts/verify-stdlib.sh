@@ -171,6 +171,7 @@ should_skip_staged() {
 stdlib_manifest() {
     cat <<'EOF'
 arena.tl
+atomic.tl
 args.tl
 comptime.tl
 core_macros.tl

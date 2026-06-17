@@ -4,6 +4,7 @@
   (CompilerEmbeddedStdlibSomeSource String))
 
 (include-str compiler-embedded-stdlib-arena "stdlib/arena.tl")
+(include-str compiler-embedded-stdlib-atomic "stdlib/atomic.tl")
 (include-str compiler-embedded-stdlib-args "stdlib/args.tl")
 (include-str compiler-embedded-stdlib-cpu "stdlib/cpu.tl")
 (include-str compiler-embedded-stdlib-comptime "stdlib/comptime.tl")
@@ -62,102 +63,106 @@
 (define (compiler-embedded-stdlib-lookup-modules [suffix : String]) : CompilerEmbeddedStdlibSource
   (if (string-eq suffix "arena.tl")
     (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-arena)
-    (if (string-eq suffix "args.tl")
-      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-args)
-      (if (string-eq suffix "cpu.tl")
-        (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-cpu)
-        (if (string-eq suffix "comptime.tl")
-          (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-comptime)
-          (if (string-eq suffix "core_macros.tl")
-            (CompilerEmbeddedStdlibSomeSource
-              compiler-embedded-stdlib-core-macros)
-            (if (string-eq suffix "env.tl")
-              (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-env)
-              (if (string-eq suffix "ffi.tl")
-                (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-ffi)
-                (if (string-eq suffix "fs.tl")
-                  (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-fs)
-                  (if (string-eq suffix "hash.tl")
+    (if (string-eq suffix "atomic.tl")
+      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-atomic)
+      (if (string-eq suffix "args.tl")
+        (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-args)
+        (if (string-eq suffix "cpu.tl")
+          (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-cpu)
+          (if (string-eq suffix "comptime.tl")
+            (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-comptime)
+            (if (string-eq suffix "core_macros.tl")
+              (CompilerEmbeddedStdlibSomeSource
+                compiler-embedded-stdlib-core-macros)
+              (if (string-eq suffix "env.tl")
+                (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-env)
+                (if (string-eq suffix "ffi.tl")
+                  (CompilerEmbeddedStdlibSomeSource
+                    compiler-embedded-stdlib-ffi)
+                  (if (string-eq suffix "fs.tl")
                     (CompilerEmbeddedStdlibSomeSource
-                      compiler-embedded-stdlib-hash)
-                    (if (string-eq suffix "hashmap.tl")
+                      compiler-embedded-stdlib-fs)
+                    (if (string-eq suffix "hash.tl")
                       (CompilerEmbeddedStdlibSomeSource
-                        compiler-embedded-stdlib-hashmap)
-                      (if (string-eq suffix "io.tl")
+                        compiler-embedded-stdlib-hash)
+                      (if (string-eq suffix "hashmap.tl")
                         (CompilerEmbeddedStdlibSomeSource
-                          compiler-embedded-stdlib-io)
-                        (if (string-eq suffix "json.tl")
+                          compiler-embedded-stdlib-hashmap)
+                        (if (string-eq suffix "io.tl")
                           (CompilerEmbeddedStdlibSomeSource
-                            compiler-embedded-stdlib-json)
-                          (if (string-eq suffix "list.tl")
+                            compiler-embedded-stdlib-io)
+                          (if (string-eq suffix "json.tl")
                             (CompilerEmbeddedStdlibSomeSource
-                              compiler-embedded-stdlib-list)
-                            (if (string-eq suffix "math.tl")
+                              compiler-embedded-stdlib-json)
+                            (if (string-eq suffix "list.tl")
                               (CompilerEmbeddedStdlibSomeSource
-                                compiler-embedded-stdlib-math)
-                              (if (string-eq suffix "msvc.tl")
+                                compiler-embedded-stdlib-list)
+                              (if (string-eq suffix "math.tl")
                                 (CompilerEmbeddedStdlibSomeSource
-                                  compiler-embedded-stdlib-msvc)
-                                (if (string-eq suffix "process.tl")
+                                  compiler-embedded-stdlib-math)
+                                (if (string-eq suffix "msvc.tl")
                                   (CompilerEmbeddedStdlibSomeSource
-                                    compiler-embedded-stdlib-process)
-                                  (if (string-eq suffix "process_borrowed.tl")
+                                    compiler-embedded-stdlib-msvc)
+                                  (if (string-eq suffix "process.tl")
                                     (CompilerEmbeddedStdlibSomeSource
-                                      compiler-embedded-stdlib-process-borrowed)
-                                    (if (string-eq suffix "profile.tl")
+                                      compiler-embedded-stdlib-process)
+                                    (if (string-eq suffix "process_borrowed.tl")
                                       (CompilerEmbeddedStdlibSomeSource
-                                        compiler-embedded-stdlib-profile)
-                                      (if (string-eq suffix "queue.tl")
+                                        compiler-embedded-stdlib-process-borrowed)
+                                      (if (string-eq suffix "profile.tl")
                                         (CompilerEmbeddedStdlibSomeSource
-                                          compiler-embedded-stdlib-queue)
-                                        (if (string-eq suffix "random.tl")
+                                          compiler-embedded-stdlib-profile)
+                                        (if (string-eq suffix "queue.tl")
                                           (CompilerEmbeddedStdlibSomeSource
-                                            compiler-embedded-stdlib-random)
-                                          (if (string-eq suffix "runtime.tl")
+                                            compiler-embedded-stdlib-queue)
+                                          (if (string-eq suffix "random.tl")
                                             (CompilerEmbeddedStdlibSomeSource
-                                              compiler-embedded-stdlib-runtime)
-                                            (if (string-eq suffix "sort.tl")
+                                              compiler-embedded-stdlib-random)
+                                            (if (string-eq suffix "runtime.tl")
                                               (CompilerEmbeddedStdlibSomeSource
-                                                compiler-embedded-stdlib-sort)
-                                              (if (string-eq suffix "sync.tl")
+                                                compiler-embedded-stdlib-runtime)
+                                              (if (string-eq suffix "sort.tl")
                                                 (CompilerEmbeddedStdlibSomeSource
-                                                  compiler-embedded-stdlib-sync)
-                                                (if (string-eq
-                                                  suffix
-                                                  "string.tl")
+                                                  compiler-embedded-stdlib-sort)
+                                                (if (string-eq suffix "sync.tl")
                                                   (CompilerEmbeddedStdlibSomeSource
-                                                    compiler-embedded-stdlib-string)
+                                                    compiler-embedded-stdlib-sync)
                                                   (if (string-eq
                                                     suffix
-                                                    "test.tl")
+                                                    "string.tl")
                                                     (CompilerEmbeddedStdlibSomeSource
-                                                      compiler-embedded-stdlib-test)
+                                                      compiler-embedded-stdlib-string)
                                                     (if (string-eq
                                                       suffix
-                                                      "thread.tl")
+                                                      "test.tl")
                                                       (CompilerEmbeddedStdlibSomeSource
-                                                        compiler-embedded-stdlib-thread)
+                                                        compiler-embedded-stdlib-test)
                                                       (if (string-eq
                                                         suffix
-                                                        "time.tl")
+                                                        "thread.tl")
                                                         (CompilerEmbeddedStdlibSomeSource
-                                                          compiler-embedded-stdlib-time)
+                                                          compiler-embedded-stdlib-thread)
                                                         (if (string-eq
                                                           suffix
-                                                          "text_buf.tl")
+                                                          "time.tl")
                                                           (CompilerEmbeddedStdlibSomeSource
-                                                            compiler-embedded-stdlib-text-buf)
+                                                            compiler-embedded-stdlib-time)
                                                           (if (string-eq
                                                             suffix
-                                                            "text_buf_borrowed.tl")
+                                                            "text_buf.tl")
                                                             (CompilerEmbeddedStdlibSomeSource
-                                                              compiler-embedded-stdlib-text-buf-borrowed)
+                                                              compiler-embedded-stdlib-text-buf)
                                                             (if (string-eq
                                                               suffix
-                                                              "vector.tl")
+                                                              "text_buf_borrowed.tl")
                                                               (CompilerEmbeddedStdlibSomeSource
-                                                                compiler-embedded-stdlib-vector)
-                                                              (CompilerEmbeddedStdlibNoSource))))))))))))))))))))))))))))))))
+                                                                compiler-embedded-stdlib-text-buf-borrowed)
+                                                              (if (string-eq
+                                                                suffix
+                                                                "vector.tl")
+                                                                (CompilerEmbeddedStdlibSomeSource
+                                                                  compiler-embedded-stdlib-vector)
+                                                                (CompilerEmbeddedStdlibNoSource)))))))))))))))))))))))))))))))))
 
 (define (compiler-embedded-stdlib-lookup-tests [suffix : String]) : CompilerEmbeddedStdlibSource
   (let

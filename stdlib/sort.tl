@@ -108,3 +108,230 @@
             (array-set! slots j value)
             (set! i (+ i 1)))))
       v)))
+
+;; Inline coverage migrated from stdlib/tests/sort_api.tl (#3082).
+(cfg test (import "test.tl"))
+
+(cfg
+  test
+  (define (sort-test-assert-owned-string-eq
+    [actual : String]
+    [expected : String]
+    [message : String]) : unit
+    (assert-string-eq (& actual) (& expected) message)))
+
+(cfg
+  test
+  (define (sort-test-make-i64-vec1 [a : i64]) : I64Vec
+    (i64-vec-push (i64-vec-new) a)))
+
+(cfg
+  test
+  (define (sort-test-make-i64-vec3 [a : i64] [b : i64] [c : i64]) : I64Vec
+    (i64-vec-push (i64-vec-push (i64-vec-push (i64-vec-new) a) b) c)))
+
+(cfg
+  test
+  (define (sort-test-make-i64-vec5
+    [a : i64]
+    [b : i64]
+    [c : i64]
+    [d : i64]
+    [e : i64]) : I64Vec
+    (i64-vec-push
+      (i64-vec-push
+        (i64-vec-push (i64-vec-push (i64-vec-push (i64-vec-new) a) b) c)
+        d)
+      e)))
+
+(cfg
+  test
+  (define (sort-test-assert-i64-vec1 [v : I64Vec] [a : i64]) : unit
+    (begin
+      (assert-i64-eq (i64-vec-len v) 1 "i64 vec1 len")
+      (assert-i64-eq (i64-vec-get v 0 9999) a "i64 vec1 0"))))
+
+(cfg
+  test
+  (define (sort-test-assert-i64-vec3 [v : I64Vec] [a : i64] [b : i64] [c : i64]) : unit
+    (begin
+      (assert-i64-eq (i64-vec-len v) 3 "i64 vec3 len")
+      (assert-i64-eq (i64-vec-get v 0 9999) a "i64 vec3 0")
+      (assert-i64-eq (i64-vec-get v 1 9999) b "i64 vec3 1")
+      (assert-i64-eq (i64-vec-get v 2 9999) c "i64 vec3 2"))))
+
+(cfg
+  test
+  (define (sort-test-assert-i64-vec5
+    [v : I64Vec]
+    [a : i64]
+    [b : i64]
+    [c : i64]
+    [d : i64]
+    [e : i64]) : unit
+    (begin
+      (assert-i64-eq (i64-vec-len v) 5 "i64 vec5 len")
+      (assert-i64-eq (i64-vec-get v 0 9999) a "i64 vec5 0")
+      (assert-i64-eq (i64-vec-get v 1 9999) b "i64 vec5 1")
+      (assert-i64-eq (i64-vec-get v 2 9999) c "i64 vec5 2")
+      (assert-i64-eq (i64-vec-get v 3 9999) d "i64 vec5 3")
+      (assert-i64-eq (i64-vec-get v 4 9999) e "i64 vec5 4"))))
+
+(cfg
+  test
+  (define (sort-test-make-string-vec1 [a : String]) : StringVec
+    (string-vec-push (string-vec-new) a)))
+
+(cfg
+  test
+  (define (sort-test-make-string-vec4
+    [a : String]
+    [b : String]
+    [c : String]
+    [d : String]) : StringVec
+    (string-vec-push
+      (string-vec-push
+        (string-vec-push (string-vec-push (string-vec-new) a) b)
+        c)
+      d)))
+
+(cfg
+  test
+  (define (sort-test-assert-string-vec1 [v : StringVec] [a : String]) : unit
+    (begin
+      (assert-i64-eq (string-vec-len v) 1 "string vec1 len")
+      (sort-test-assert-owned-string-eq
+        (string-vec-get v 0 "missing")
+        a
+        "string vec1 0"))))
+
+(cfg
+  test
+  (define (sort-test-assert-string-vec4
+    [v : StringVec]
+    [a : String]
+    [b : String]
+    [c : String]
+    [d : String]) : unit
+    (begin
+      (assert-i64-eq (string-vec-len v) 4 "string vec4 len")
+      (sort-test-assert-owned-string-eq
+        (string-vec-get v 0 "missing")
+        a
+        "string vec4 0")
+      (sort-test-assert-owned-string-eq
+        (string-vec-get v 1 "missing")
+        b
+        "string vec4 1")
+      (sort-test-assert-owned-string-eq
+        (string-vec-get v 2 "missing")
+        c
+        "string vec4 2")
+      (sort-test-assert-owned-string-eq
+        (string-vec-get v 3 "missing")
+        d
+        "string vec4 3"))))
+
+(cfg
+  test
+  (define (sort-test-assert-i64-sort-cases) : unit
+    (begin
+      (let
+        [empty : I64Vec (i64-vec-sort! (i64-vec-new))]
+        (begin
+          (assert-i64-eq (i64-vec-len empty) 0 "empty i64 sort len")
+          (assert-true
+            (>= (i64-vec-capacity empty) 1)
+            "empty i64 sort growable")))
+      (sort-test-assert-i64-vec1 (i64-vec-sort! (sort-test-make-i64-vec1 7)) 7)
+      (sort-test-assert-i64-vec3
+        (i64-vec-sort! (sort-test-make-i64-vec3 1 2 3))
+        1
+        2
+        3)
+      (sort-test-assert-i64-vec5
+        (i64-vec-sort! (sort-test-make-i64-vec5 5 4 3 2 1))
+        1
+        2
+        3
+        4
+        5)
+      (sort-test-assert-i64-vec5
+        (i64-vec-sort! (sort-test-make-i64-vec5 3 1 3 2 1))
+        1
+        1
+        2
+        3
+        3)
+      (sort-test-assert-i64-vec5
+        (i64-vec-sort! (sort-test-make-i64-vec5 0 -10 5 -10 2))
+        -10
+        -10
+        0
+        2
+        5))))
+
+(cfg
+  test
+  (define (sort-test-assert-string-less-cases) : unit
+    (begin
+      (assert-true (sort-string-less? "" "a") "empty string sorts first")
+      (assert-true (sort-string-less? "a" "aa") "prefix sorts first")
+      (assert-true (sort-string-less? "alpha" "beta") "alpha before beta")
+      (assert-false (sort-string-less? "beta" "alpha") "beta after alpha")
+      (assert-false (sort-string-less? "same" "same") "equal is not less"))))
+
+(cfg
+  test
+  (define (sort-test-assert-string-sort-cases) : unit
+    (begin
+      (let
+        [empty : StringVec (string-vec-sort! (string-vec-new))]
+        (begin
+          (assert-i64-eq (string-vec-len empty) 0 "empty string sort len")
+          (assert-true
+            (>= (string-vec-capacity empty) 1)
+            "empty string sort growable")))
+      (sort-test-assert-string-vec1
+        (string-vec-sort! (sort-test-make-string-vec1 "solo"))
+        "solo")
+      (sort-test-assert-string-vec4
+        (string-vec-sort!
+          (sort-test-make-string-vec4 "alpha" "bravo" "charlie" "delta"))
+        "alpha"
+        "bravo"
+        "charlie"
+        "delta")
+      (sort-test-assert-string-vec4
+        (string-vec-sort!
+          (sort-test-make-string-vec4 "delta" "alpha" "charlie" "bravo"))
+        "alpha"
+        "bravo"
+        "charlie"
+        "delta")
+      (sort-test-assert-string-vec4
+        (string-vec-sort! (sort-test-make-string-vec4 "b" "aa" "a" ""))
+        ""
+        "a"
+        "aa"
+        "b")
+      (sort-test-assert-string-vec4
+        (string-vec-sort!
+          (sort-test-make-string-vec4 "beta" "alpha" "beta" "alpha"))
+        "alpha"
+        "alpha"
+        "beta"
+        "beta"))))
+
+(cfg
+  test
+  (define (sort-test-main) : i64
+    (begin
+      (sort-test-assert-i64-sort-cases)
+      (sort-test-assert-string-less-cases)
+      (sort-test-assert-string-sort-cases)
+      42)))
+
+(cfg
+  test
+  (test sort-api (assert-i64-eq (sort-test-main) 42 "sort-api fixture result")))

@@ -23,22 +23,7 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
   fixture while its `requires-stage0-symbol:with-escape` constraint is needed.
   The `arena_policy_escape_*.tl` fixtures are check-only negative cases proving
   active-arena stdlib results cannot escape their scoped arena.
-- `string_edges.tl` covers the public string equality/parsing predicates,
-  trimming helpers, replacement paths, and prefix checks, including empty
-  strings, empty needles, misses, prefix positions, legacy `string->int` edge
-  cases, and replacement edge cases.
-- `list_api.tl` covers the monomorphic `StringList` and `StringListBuilder`
-  helpers: empty/single lists, count, reverse, append, build-onto order, array
-  conversion with count clamping, and `StringVec` bridge round trips.
-- `vector_api.tl` covers the generated concrete vector family: `I64Vec`
-  compatibility, higher-order `I64Vec` fold/map helpers with named functions
-  and scalar-capturing lambdas, `StringVec` growth/mutation/pop/snapshot/reverse
-  paths, and a fixture-local generated enum-payload vector witness for nominal
-  element metadata.
-- `vector_slice_check.tl` covers the lifetime-scoped `I64Slice` view API,
-  including vector and array constructors, invalid ranges producing empty views,
-  sub-slicing, fallback reads, and explicit array/vector copy boundaries.
-  `vector_slice_escape.tl` verifies the checker rejects returning a slice tied
+- `vector_slice_escape.tl` verifies the checker rejects returning a slice tied
   to a shorter-lived vector.
 - `comptime_api.tl` remains a check-only import-shape fixture for expression
   macros whose operand types are written through an explicit
@@ -69,10 +54,6 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
   families, descriptor identities, borrowed string-key contains/remove wrappers,
   duplicate insert, collision chains, tombstone reuse, growth/rehash, missing
   remove, and deterministic bucket-order iteration.
-- `sort_api.tl` covers `stdlib/sort.tl` stable in-place insertion sort helpers
-  for `I64Vec` and `StringVec`, including empty, single, already sorted,
-  reverse sorted, duplicate, negative-number, prefix, and lexicographic string
-  cases.
 - `sync_api.tl` covers `stdlib/sync.tl` bounded `ChannelI64` creation
   failures, blocking send/recv success paths in a single thread, FIFO
   wraparound, raw handle packing, and resource close. It also covers `MutexI64`
@@ -97,8 +78,6 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
 - `time_api.tl` covers `time-unix-ms` positive wall-clock range checks,
   `time-monotonic-ms` non-negative and non-decreasing checks, and structured
   `ResultTimeMs` error/fallback helpers without depending on exact timestamps.
-- `text_buf_api.tl` covers empty buffers, repeated appends, char/int append
-  helpers, buffer concatenation, clear/reset behavior, and rendering.
 - The borrowed text buffer escape fixture verifies the checker rejects a
   borrowed buffer that would outlive its chunk owner.
 - The `string_caller_result.tl` escape fixture verifies the checker rejects a
@@ -154,11 +133,33 @@ Inline stdlib coverage:
   borrowed `assert-string-eq` path with explicit borrows.
 - `arena.tl` owns inline tests for first-class arena helpers, including safe
   handle/mark observation and unsafe switch, rewind, and destroy calls.
-- `string.tl` owns inline tests for the borrowed `str` gate and scoped arena
-  string allocation policy, including nested `with-arena` allocation and
-  borrowed equality against region-owned values.
+- `string.tl` owns inline tests for the borrowed `str` gate, scoped arena
+  string allocation policy, public equality/parsing predicates, trimming
+  helpers, replacement paths, prefix checks, borrowed/owned substring helpers,
+  and legacy `string->int` / `int->string` edge cases.
+- `str_cat.tl` owns inline tests for empty, single, two-operand, many-operand,
+  variable-operand, nested `str-cat` expansion, generated helper hygiene, and
+  declaration-family ordering beside macro expansion.
 - `text_buf.tl` owns inline tests for scoped arena rendering of a program-owned
-  text buffer from an inner active arena.
+  text buffer from an inner active arena, empty buffers, repeated appends,
+  char/int append helpers, buffer concatenation, clear/reset behavior, and
+  rendering.
+- `list.tl` owns inline tests for the monomorphic `StringList` and
+  `StringListBuilder` helpers: empty/single lists, count, reverse, append,
+  build-onto order, array conversion with count clamping, and `StringVec`
+  bridge round trips.
+- `vector.tl` owns inline tests for the generated concrete vector family:
+  `I64Vec` compatibility, higher-order `I64Vec` fold/map helpers with named
+  functions and scalar-capturing lambdas, `StringVec`
+  growth/mutation/pop/snapshot/reverse paths, and fixture-local generated
+  enum/struct vector witnesses for nominal element metadata.
+- `vector_slice.tl` owns inline tests for the lifetime-scoped `I64Slice` view
+  API, including vector and array constructors, invalid ranges producing empty
+  views, sub-slicing, fallback reads, and explicit array/vector copy
+  boundaries.
+- `sort.tl` owns inline tests for stable in-place insertion sort helpers for
+  `I64Vec` and `StringVec`, including empty, single, already sorted, reverse
+  sorted, duplicate, negative-number, prefix, and lexicographic string cases.
 - `ffi.tl` owns inline tests for C string buffers: required byte counts,
   exact-capacity caller-owned copies, trailing NUL writes, too-small buffers,
   interior NUL rejection, and active-arena pointer allocation through

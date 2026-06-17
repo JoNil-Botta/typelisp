@@ -434,7 +434,7 @@
       false
       ""
       false
-      "linux-x86_64"
+      (source-tool-default-target-name)
       "scalar"
       (string-vec-new)
       false

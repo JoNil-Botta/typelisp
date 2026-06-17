@@ -540,7 +540,7 @@
           (compile-cli-default-output input-path)
           false
           false
-          (BackendTargetLinux)
+          (source-tool-default-target)
           (string-vec-new)
           (string-vec-new)
           false
@@ -564,7 +564,7 @@
           count
           batch-path
           false
-          (BackendTargetLinux)
+          (source-tool-default-target)
           (string-vec-new)
           (string-vec-new)
           false
@@ -710,27 +710,19 @@
                 input-path
                 output-path
                 target
-                has-target
+                true
                 stdlib-roots
                 opt-level
                 backend-mode
                 cfgs)
-              (if has-target
-                (compiler-driver-compile-file-for-target-with-roots-level-mode-and-cfg
-                  input-path
-                  output-path
-                  target
-                  stdlib-roots
-                  opt-level
-                  backend-mode
-                  cfgs)
-                (compiler-driver-compile-file-with-roots-level-mode-and-cfg
-                  input-path
-                  output-path
-                  stdlib-roots
-                  opt-level
-                  backend-mode
-                  cfgs))))))
+              (compiler-driver-compile-file-for-target-with-roots-level-mode-and-cfg
+                input-path
+                output-path
+                target
+                stdlib-roots
+                opt-level
+                backend-mode
+                cfgs)))))
       doctest-status)))
 
 (define (compile-cli-batch-line-end [text : String] [start : i64] [n : i64]) : i64

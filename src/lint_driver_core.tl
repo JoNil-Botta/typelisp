@@ -1871,6 +1871,59 @@
 "
     (string-append "(te" "st \"test-only\" (test-only-helper))")))
 
+(define (selfhost-lint-unused-assignment-init-source) : String
+  "(define (main) : i64
+  (let
+    [x : i64 1]
+    (begin
+      (set! x 2)
+      x)))")
+
+(define (selfhost-lint-unused-assignment-set-source) : String
+  "(define (main) : i64
+  (let
+    [x : i64 0]
+    (begin
+      (set! x (+ x 1))
+      (set! x 2)
+      x)))")
+
+(define (selfhost-lint-used-before-overwrite-source) : String
+  "(define (main) : i64
+  (let
+    [x : i64 1]
+    (begin
+      (set! x (+ x 1))
+      x)))")
+
+(define (selfhost-lint-branch-conservative-assignment-source) : String
+  "(define (main [flag : bool]) : i64
+  (let
+    [x : i64 1]
+    (begin
+      (if flag
+        (set! x 2)
+        unit)
+      (set! x 3)
+      x)))")
+
+(define (selfhost-lint-underscore-assignment-source) : String
+  "(define (main) : i64
+  (let
+    [_x : i64 1]
+    (begin
+      (set! _x 2)
+      _x)))")
+
+(define (selfhost-lint-suppressed-unused-assignment-source) : String
+  "(define (main) : i64
+  (let
+    ;; lint-allow: unused-assignment
+    [x : i64 1]
+    (begin
+      (set! x 2)
+      x)))")
+
 (define (selfhost-lint-nested-let-source) : String
   "(define (main) : i64
   (let
@@ -1956,6 +2009,42 @@
       "lint_driver_self_test.tl"
       source
       (string-vec-new))))
+
+(define (selfhost-lint-findings-rule-count-from
+  [findings : LintFindings]
+  [rule-id : String]
+  [index : i64]
+  [count : i64]) : i64
+  (if (>= index (lint-findings-count findings))
+    count
+    (match (lint-findings-get findings index)
+      [(LintSomeFinding finding)
+        (selfhost-lint-findings-rule-count-from
+          findings
+          rule-id
+          (+ index 1)
+          (if (string-eq (struct-get finding rule-id) rule-id)
+            (+ count 1)
+            count))]
+      [(LintNoFinding)
+        (selfhost-lint-findings-rule-count-from
+          findings
+          rule-id
+          (+ index 1)
+          count)])))
+
+(define (selfhost-lint-findings-rule-count
+  [findings : LintFindings]
+  [rule-id : String]) : i64
+  (selfhost-lint-findings-rule-count-from findings rule-id 0 0))
+
+(define (selfhost-lint-source-rule-count [source : String] [rule-id : String]) : i64
+  (selfhost-lint-findings-rule-count
+    (selfhost-lint-source-with-roots
+      "lint_driver_self_test.tl"
+      source
+      (string-vec-new))
+    rule-id))
 
 (define (selfhost-lint-unused-import-finding-ok? [findings : LintFindings]) : bool
   (match (lint-findings-get findings 0)
@@ -2082,6 +2171,58 @@
             (lint-rule-dead-code-message)))
           52
           42)))))
+
+(define (selfhost-lint-unused-assignment-self-test) : i64
+  (let
+    [rule : String (lint-rule-unused-assignment-id)]
+    (if (not
+      (=
+        (selfhost-lint-source-rule-count
+          (selfhost-lint-unused-assignment-init-source)
+          rule)
+        1))
+      50
+      (if (not
+        (=
+          (selfhost-lint-source-rule-count
+            (selfhost-lint-unused-assignment-set-source)
+            rule)
+          1))
+        51
+        (if (not
+          (=
+            (selfhost-lint-source-rule-count
+              (selfhost-lint-used-before-overwrite-source)
+              rule)
+            0))
+          52
+          (if (not
+            (=
+              (selfhost-lint-source-rule-count
+                (selfhost-lint-branch-conservative-assignment-source)
+                rule)
+              0))
+            53
+            (if (not
+              (=
+                (selfhost-lint-source-rule-count
+                  (selfhost-lint-underscore-assignment-source)
+                  rule)
+                0))
+              54
+              (if (not
+                (=
+                  (selfhost-lint-source-rule-count
+                    (selfhost-lint-suppressed-unused-assignment-source)
+                    rule)
+                  0))
+                55
+                (if (not
+                  (string-eq
+                    (lint-rule-message rule)
+                    (lint-rule-unused-assignment-message)))
+                  56
+                  42)))))))))
 
 ;; Compatibility helper retained for the nested-if-ladder metadata shape.
 (define (selfhost-lint-reported-finding-ok? [findings : LintFindings]) : bool

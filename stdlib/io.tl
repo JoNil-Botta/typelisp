@@ -1179,27 +1179,19 @@
 (define (io-float-f64-bits [value : f64]) : u64
   (let
     [buf : (Array f64) (make-array f64 1)]
-    [bits : u64 (cast 0 : u64)]
     (begin
       (array-set! buf 0 value)
-      (set!
-        bits
-        (unsafe
-          (ptr-read (ptr-cast (array-data buf) : (Ptr u64)))))
-      bits)))
+      (unsafe
+        (ptr-read (ptr-cast (array-data buf) : (Ptr u64)))))))
 
 ;: Reinterpret an f32 as IEEE-754 binary32 bits.
 (define (io-float-f32-bits [value : f32]) : u32
   (let
     [buf : (Array f32) (make-array f32 1)]
-    [bits : u32 (cast 0 : u32)]
     (begin
       (array-set! buf 0 value)
-      (set!
-        bits
-        (unsafe
-          (ptr-read (ptr-cast (array-data buf) : (Ptr u32)))))
-      bits)))
+      (unsafe
+        (ptr-read (ptr-cast (array-data buf) : (Ptr u32)))))))
 
 ;: Return true when an f64 is neither NaN nor infinity.
 (define (io-float-f64-finite? [value : f64]) : bool
@@ -1366,14 +1358,12 @@
 (define (io-format-float-core [value : f64]) : String
   (let
     [buf : (Array f64) (make-array f64 1)]
-    [bits : u64 (cast 0 : u64)]
     (begin
       (array-set! buf 0 value)
-      (set!
-        bits
-        (unsafe
-          (ptr-read (ptr-cast (array-data buf) : (Ptr u64)))))
       (let
+        [bits : u64
+          (unsafe
+            (ptr-read (ptr-cast (array-data buf) : (Ptr u64))))]
         [neg : bool (= (bit-and (shr bits 63) (cast 1 : u64)) (cast 1 : u64))]
         [expf : u64 (bit-and (shr bits 52) (cast 0x7ff : u64))]
         [frac : u64 (bit-and bits (cast 0xfffffffffffff : u64))]

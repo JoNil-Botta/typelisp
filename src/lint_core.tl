@@ -126,6 +126,15 @@
 (define (lint-rule-dead-code-suggestion) : String
   "remove the declaration or export/reference it intentionally")
 
+(define (lint-rule-unused-assignment-id) : String
+  "unused-assignment")
+
+(define (lint-rule-unused-assignment-message) : String
+  "unused assignment: value is overwritten before it is read")
+
+(define (lint-rule-unused-assignment-suggestion) : String
+  "remove the assignment or read the value before overwriting it")
+
 ;: Metadata for one lint rule. Rule id is stable public API for suppressions;
 ;: message is the rendered finding text; suggestion is structured helper text
 ;: that drivers or tooling can render separately from the message.
@@ -209,6 +218,12 @@
     (lint-rule-dead-code-message)
     (lint-rule-dead-code-suggestion)))
 
+(define (lint-rule-unused-assignment) : LintRule
+  (LintRule
+    (lint-rule-unused-assignment-id)
+    (lint-rule-unused-assignment-message)
+    (lint-rule-unused-assignment-suggestion)))
+
 (define (lint-rule-cons [rule : LintRule] [rest : LintRuleList]) : LintRuleList
   (LintRuleCons rule (box rest)))
 
@@ -235,7 +250,11 @@
                     (lint-rule-cascading-and-or)
                     (lint-rule-cons
                       (lint-rule-unused-import)
-                      (lint-rule-cons (lint-rule-dead-code) LintRuleNil))))))))))))
+                      (lint-rule-cons
+                        (lint-rule-dead-code)
+                        (lint-rule-cons
+                          (lint-rule-unused-assignment)
+                          LintRuleNil)))))))))))))
 
 (define (lint-rule-find-in [rules : LintRuleList] [rule-id : String]) : LintMaybeRule
   (match rules
@@ -513,6 +532,15 @@
       "dead code: private top-level declaration "
       (string-append name " is never referenced"))
     (lint-rule-dead-code-id)
+    0
+    span))
+
+(define (lint-unused-assignment-finding [name : String] [span : AstSourceSpan]) : LintFinding
+  (LintFinding
+    (string-append
+      "unused assignment: value assigned to "
+      (string-append name " is overwritten before it is read"))
+    (lint-rule-unused-assignment-id)
     0
     span))
 
@@ -1758,6 +1786,570 @@
               (lint-unused-import-add-if-needed all-decls spec acc)]
             [_ acc])))]))
 
+(defenum LintNameList
+  (LintNameNil)
+  (LintNameCons String (Box LintNameList)))
+
+(defstruct LintPendingAssignment
+  (name String)
+  (span AstSourceSpan))
+
+(defenum LintPendingAssignmentList
+  (LintPendingAssignmentNil)
+  (LintPendingAssignmentCons
+    LintPendingAssignment
+    (Box LintPendingAssignmentList)))
+
+(defenum LintMaybePendingAssignment
+  (LintNoPendingAssignment)
+  (LintSomePendingAssignment LintPendingAssignment))
+
+(defstruct LintUnusedAssignmentState
+  (locals LintNameList)
+  (pending LintPendingAssignmentList)
+  (findings LintFindings))
+
+(define (lint-name-list-contains? [items : LintNameList] [name : String]) : bool
+  (match items
+    [(LintNameNil) false]
+    [(LintNameCons head rest)
+      (if (string-eq head name)
+        true
+        (lint-name-list-contains? (box-get rest) name))]))
+
+(define (lint-name-list-add [items : LintNameList] [name : String]) : LintNameList
+  (if (lint-name-list-contains? items name)
+    items
+    (LintNameCons name (box items))))
+
+(define (lint-param-list-add-locals
+  [params : AstParamList]
+  [locals : LintNameList]) : LintNameList
+  (match params
+    [(AstParamNil) locals]
+    [(AstParamCons param rest)
+      (match param
+        [(AstParam name _ _)
+          (lint-param-list-add-locals
+            (box-get rest)
+            (lint-name-list-add locals (intern-str name)))])]))
+
+(define (lint-macro-param-list-add-locals
+  [params : AstMacroParamList]
+  [locals : LintNameList]) : LintNameList
+  (match params
+    [(AstMacroParamNil) locals]
+    [(AstMacroParamCons param rest)
+      (match param
+        [(AstMacroParam name _ _)
+          (lint-macro-param-list-add-locals
+            (box-get rest)
+            (lint-name-list-add locals (intern-str name)))])]))
+
+(define (lint-pending-assignment-find
+  [items : LintPendingAssignmentList]
+  [name : String]) : LintMaybePendingAssignment
+  (match items
+    [(LintPendingAssignmentNil) LintNoPendingAssignment]
+    [(LintPendingAssignmentCons item rest)
+      (if (string-eq (struct-get item name) name)
+        (LintSomePendingAssignment item)
+        (lint-pending-assignment-find (box-get rest) name))]))
+
+(define (lint-pending-assignment-remove
+  [items : LintPendingAssignmentList]
+  [name : String]) : LintPendingAssignmentList
+  (match items
+    [(LintPendingAssignmentNil) LintPendingAssignmentNil]
+    [(LintPendingAssignmentCons item rest)
+      (let
+        [rest-items : LintPendingAssignmentList (box-get rest)]
+        (if (string-eq (struct-get item name) name)
+          (lint-pending-assignment-remove rest-items name)
+          (LintPendingAssignmentCons
+            item
+            (box (lint-pending-assignment-remove rest-items name)))))]))
+
+(define (lint-pending-assignment-add
+  [items : LintPendingAssignmentList]
+  [name : String]
+  [span : AstSourceSpan]) : LintPendingAssignmentList
+  (LintPendingAssignmentCons
+    (LintPendingAssignment name span)
+    (box (lint-pending-assignment-remove items name))))
+
+(define (lint-unused-assignment-state-with
+  [state : LintUnusedAssignmentState]
+  [pending : LintPendingAssignmentList]
+  [findings : LintFindings]) : LintUnusedAssignmentState
+  (LintUnusedAssignmentState (struct-get state locals) pending findings))
+
+(define (lint-unused-assignment-read-name
+  [state : LintUnusedAssignmentState]
+  [name : String]) : LintUnusedAssignmentState
+  (lint-unused-assignment-state-with
+    state
+    (lint-pending-assignment-remove (struct-get state pending) name)
+    (struct-get state findings)))
+
+(define (lint-unused-assignment-read-id
+  [state : LintUnusedAssignmentState]
+  [name : i64]) : LintUnusedAssignmentState
+  (lint-unused-assignment-read-name state (intern-str name)))
+
+(define (lint-unused-assignment-write-name
+  [state : LintUnusedAssignmentState]
+  [name : String]
+  [span : AstSourceSpan]) : LintUnusedAssignmentState
+  (if (not (lint-name-list-contains? (struct-get state locals) name))
+    state
+    (if (lint-underscore-prefixed? name)
+      state
+      (let
+        [found : LintMaybePendingAssignment
+          (lint-pending-assignment-find (struct-get state pending) name)]
+        [next-findings : LintFindings
+          (match found
+            [(LintNoPendingAssignment) (struct-get state findings)]
+            [(LintSomePendingAssignment pending)
+              (lint-findings-add
+                (lint-unused-assignment-finding name (struct-get pending span))
+                (struct-get state findings))])]
+        (lint-unused-assignment-state-with
+          state
+          (lint-pending-assignment-add (struct-get state pending) name span)
+          next-findings)))))
+
+(define (lint-unused-assignment-write-id
+  [state : LintUnusedAssignmentState]
+  [name : i64]
+  [span : AstSourceSpan]) : LintUnusedAssignmentState
+  (lint-unused-assignment-write-name state (intern-str name) span))
+
+(define (lint-unused-assignment-clear-pending
+  [state : LintUnusedAssignmentState]) : LintUnusedAssignmentState
+  (lint-unused-assignment-state-with
+    state
+    LintPendingAssignmentNil
+    (struct-get state findings)))
+
+(define (lint-unused-assignment-with-locals
+  [state : LintUnusedAssignmentState]
+  [locals : LintNameList]) : LintUnusedAssignmentState
+  (LintUnusedAssignmentState
+    locals
+    (struct-get state pending)
+    (struct-get state findings)))
+
+(define (lint-unused-assignment-note-reads-list
+  [exprs : AstExprList]
+  [state : LintUnusedAssignmentState]) : LintUnusedAssignmentState
+  (match exprs
+    [(AstExprNil) state]
+    [(AstExprCons head rest)
+      (lint-unused-assignment-note-reads-list
+        (box-get rest)
+        (lint-unused-assignment-note-reads (ast-node-get head) state))]))
+
+(define (lint-unused-assignment-note-reads-let-bindings
+  [bindings : AstLetBindingList]
+  [state : LintUnusedAssignmentState]) : LintUnusedAssignmentState
+  (match bindings
+    [(AstLetBindingNil) state]
+    [(AstLetBindingCons binding rest)
+      (match binding
+        [(AstLetBinding _ _ init)
+          (lint-unused-assignment-note-reads-let-bindings
+            (box-get rest)
+            (lint-unused-assignment-note-reads (ast-node-get init) state))])]))
+
+(define (lint-unused-assignment-note-reads-match-arms
+  [arms : AstMatchArmList]
+  [state : LintUnusedAssignmentState]) : LintUnusedAssignmentState
+  (match arms
+    [(AstMatchArmNil) state]
+    [(AstMatchArmCons arm rest)
+      (match arm
+        [(AstMatchArm _ body)
+          (lint-unused-assignment-note-reads-match-arms
+            (box-get rest)
+            (lint-unused-assignment-note-reads (ast-node-get body) state))])]))
+
+(define (lint-unused-assignment-note-reads-resource-bindings
+  [bindings : AstResourceBindingList]
+  [state : LintUnusedAssignmentState]) : LintUnusedAssignmentState
+  (match bindings
+    [(AstResourceBindingNil) state]
+    [(AstResourceBindingCons binding rest)
+      (match binding
+        [(AstResourceBinding _ init cleanup)
+          (lint-unused-assignment-note-reads-resource-bindings
+            (box-get rest)
+            (lint-unused-assignment-note-reads
+              (ast-node-get cleanup)
+              (lint-unused-assignment-note-reads (ast-node-get init) state)))])]))
+
+(define (lint-unused-assignment-note-reads
+  [expr : AstExpr]
+  [state : LintUnusedAssignmentState]) : LintUnusedAssignmentState
+  (match expr
+    [(AstExprSpanned inner-box _)
+      (lint-unused-assignment-note-reads (ast-node-get inner-box) state)]
+    [(AstExprLiteral _) state]
+    [(AstExprVar name) (lint-unused-assignment-read-id state name)]
+    [(AstExprBinary _ left right)
+      (lint-unused-assignment-note-reads
+        (ast-node-get right)
+        (lint-unused-assignment-note-reads (ast-node-get left) state))]
+    [(AstExprUnary _ inner)
+      (lint-unused-assignment-note-reads (ast-node-get inner) state)]
+    [(AstExprCall func args)
+      (lint-unused-assignment-clear-pending
+        (lint-unused-assignment-note-reads-list
+          args
+          (lint-unused-assignment-note-reads (ast-node-get func) state)))]
+    [(AstExprIf cond then-branch else-branch)
+      (lint-unused-assignment-clear-pending
+        (lint-unused-assignment-note-reads
+          (ast-node-get else-branch)
+          (lint-unused-assignment-note-reads
+            (ast-node-get then-branch)
+            (lint-unused-assignment-note-reads (ast-node-get cond) state))))]
+    [(AstExprLet bindings body)
+      (lint-unused-assignment-clear-pending
+        (lint-unused-assignment-note-reads
+          (ast-node-get body)
+          (lint-unused-assignment-note-reads-let-bindings bindings state)))]
+    [(AstExprLambda _ _ body)
+      (lint-unused-assignment-clear-pending
+        (lint-unused-assignment-note-reads (ast-node-get body) state))]
+    [(AstExprTuple exprs) (lint-unused-assignment-note-reads-list exprs state)]
+    [(AstExprTupleRef tuple _)
+      (lint-unused-assignment-note-reads (ast-node-get tuple) state)]
+    [(AstExprArray exprs) (lint-unused-assignment-note-reads-list exprs state)]
+    [(AstExprMakeArray _ len)
+      (lint-unused-assignment-note-reads (ast-node-get len) state)]
+    [(AstExprArrayRef array index)
+      (lint-unused-assignment-note-reads
+        (ast-node-get index)
+        (lint-unused-assignment-note-reads (ast-node-get array) state))]
+    [(AstExprArraySet array index value)
+      (lint-unused-assignment-note-reads
+        (ast-node-get value)
+        (lint-unused-assignment-note-reads
+          (ast-node-get index)
+          (lint-unused-assignment-note-reads (ast-node-get array) state)))]
+    [(AstExprArrayPush array value)
+      (lint-unused-assignment-note-reads
+        (ast-node-get value)
+        (lint-unused-assignment-note-reads (ast-node-get array) state))]
+    [(AstExprStringRef text index)
+      (lint-unused-assignment-note-reads
+        (ast-node-get index)
+        (lint-unused-assignment-note-reads (ast-node-get text) state))]
+    [(AstExprWhile cond body)
+      (lint-unused-assignment-clear-pending
+        (lint-unused-assignment-note-reads
+          (ast-node-get body)
+          (lint-unused-assignment-note-reads (ast-node-get cond) state)))]
+    [(AstExprBegin exprs) (lint-unused-assignment-note-reads-list exprs state)]
+    [(AstExprUnsafe exprs) (lint-unused-assignment-note-reads-list exprs state)]
+    [(AstExprSet _ value)
+      (lint-unused-assignment-note-reads (ast-node-get value) state)]
+    [(AstExprAnn inner _)
+      (lint-unused-assignment-note-reads (ast-node-get inner) state)]
+    [(AstExprCast inner _)
+      (lint-unused-assignment-note-reads (ast-node-get inner) state)]
+    [(AstExprBorrow _ _ place)
+      (lint-unused-assignment-note-reads (ast-node-get place) state)]
+    [(AstExprMatch scrutinee arms)
+      (lint-unused-assignment-clear-pending
+        (lint-unused-assignment-note-reads-match-arms
+          arms
+          (lint-unused-assignment-note-reads (ast-node-get scrutinee) state)))]
+    [(AstExprForeach _ _ start end body)
+      (lint-unused-assignment-clear-pending
+        (lint-unused-assignment-note-reads
+          (ast-node-get body)
+          (lint-unused-assignment-note-reads
+            (ast-node-get end)
+            (lint-unused-assignment-note-reads (ast-node-get start) state))))]
+    [(AstExprSpmdReduce _ _ _ start end init value)
+      (lint-unused-assignment-clear-pending
+        (lint-unused-assignment-note-reads
+          (ast-node-get value)
+          (lint-unused-assignment-note-reads
+            (ast-node-get init)
+            (lint-unused-assignment-note-reads
+              (ast-node-get end)
+              (lint-unused-assignment-note-reads (ast-node-get start) state)))))]
+    [(AstExprSpmdBroadcast value lane)
+      (lint-unused-assignment-note-reads
+        (ast-node-get lane)
+        (lint-unused-assignment-note-reads (ast-node-get value) state))]
+    [(AstExprStructGet receiver _)
+      (lint-unused-assignment-note-reads (ast-node-get receiver) state)]
+    [(AstExprStructSet receiver _ value)
+      (lint-unused-assignment-note-reads
+        (ast-node-get value)
+        (lint-unused-assignment-note-reads (ast-node-get receiver) state))]
+    [(AstExprWithRegion _ body)
+      (lint-unused-assignment-note-reads-list body state)]
+    [(AstExprWithEscape scratch body)
+      (lint-unused-assignment-note-reads-list
+        body
+        (lint-unused-assignment-note-reads (ast-node-get scratch) state))]
+    [(AstExprWithScratch body)
+      (lint-unused-assignment-note-reads-list body state)]
+    [(AstExprInArena arena body)
+      (lint-unused-assignment-note-reads-list
+        body
+        (lint-unused-assignment-note-reads (ast-node-get arena) state))]
+    [(AstExprWithResource bindings body)
+      (lint-unused-assignment-note-reads-list
+        body
+        (lint-unused-assignment-note-reads-resource-bindings bindings state))]
+    [(AstExprBox inner)
+      (lint-unused-assignment-note-reads (ast-node-get inner) state)]
+    [(AstExprBoxGet inner)
+      (lint-unused-assignment-note-reads (ast-node-get inner) state)]
+    [(AstExprBoxTake inner)
+      (lint-unused-assignment-note-reads (ast-node-get inner) state)]
+    [(AstExprBoxSet inner value)
+      (lint-unused-assignment-note-reads
+        (ast-node-get value)
+        (lint-unused-assignment-note-reads (ast-node-get inner) state))]
+    [(AstExprTypeLiteral _) state]
+    [(AstExprInit _) state]
+    [(AstExprComptime inner)
+      (lint-unused-assignment-note-reads (ast-node-get inner) state)]
+    [(AstExprQuote _) state]
+    [(AstExprQuasiquote _) state]
+    [(AstExprUnquote inner)
+      (lint-unused-assignment-note-reads (ast-node-get inner) state)]
+    [(AstExprUnquoteSplicing inner)
+      (lint-unused-assignment-note-reads (ast-node-get inner) state)]
+    [(AstExprBracketClause items)
+      (lint-unused-assignment-note-reads-list items state)]
+    [(AstExprTry inner)
+      (lint-unused-assignment-note-reads (ast-node-get inner) state)]
+    [(AstExprReturn inner)
+      (lint-unused-assignment-note-reads (ast-node-get inner) state)]
+    [(AstExprPtrNull _) state]
+    [(AstExprPtrNullCheck inner)
+      (lint-unused-assignment-note-reads (ast-node-get inner) state)]
+    [(AstExprPtrAddrOf place)
+      (lint-unused-assignment-note-reads (ast-node-get place) state)]
+    [(AstExprPtrRead ptr)
+      (lint-unused-assignment-note-reads (ast-node-get ptr) state)]
+    [(AstExprPtrWrite ptr value)
+      (lint-unused-assignment-note-reads
+        (ast-node-get value)
+        (lint-unused-assignment-note-reads (ast-node-get ptr) state))]
+    [(AstExprPtrOffset ptr offset)
+      (lint-unused-assignment-note-reads
+        (ast-node-get offset)
+        (lint-unused-assignment-note-reads (ast-node-get ptr) state))]
+    [(AstExprPtrCast ptr _)
+      (lint-unused-assignment-note-reads (ast-node-get ptr) state)]
+    [(AstExprPtrToInt ptr)
+      (lint-unused-assignment-note-reads (ast-node-get ptr) state)]
+    [(AstExprIntToPtr value _)
+      (lint-unused-assignment-note-reads (ast-node-get value) state)]
+    [(AstExprStringData inner)
+      (lint-unused-assignment-note-reads (ast-node-get inner) state)]
+    [(AstExprStringFromBytes ptr len)
+      (lint-unused-assignment-note-reads
+        (ast-node-get len)
+        (lint-unused-assignment-note-reads (ast-node-get ptr) state))]
+    [(AstExprArrayData inner)
+      (lint-unused-assignment-note-reads (ast-node-get inner) state)]
+    [(AstExprBinaryData _) state]
+    [(AstExprProgramArgc) state]
+    [(AstExprProgramArgv) state]
+    [(AstExprProgramEnvp) state]
+    [(AstExprCpuIdEax leaf subleaf)
+      (lint-unused-assignment-note-reads
+        (ast-node-get subleaf)
+        (lint-unused-assignment-note-reads (ast-node-get leaf) state))]
+    [(AstExprCpuIdEbx leaf subleaf)
+      (lint-unused-assignment-note-reads
+        (ast-node-get subleaf)
+        (lint-unused-assignment-note-reads (ast-node-get leaf) state))]
+    [(AstExprCpuIdEcx leaf subleaf)
+      (lint-unused-assignment-note-reads
+        (ast-node-get subleaf)
+        (lint-unused-assignment-note-reads (ast-node-get leaf) state))]
+    [(AstExprCpuIdEdx leaf subleaf)
+      (lint-unused-assignment-note-reads
+        (ast-node-get subleaf)
+        (lint-unused-assignment-note-reads (ast-node-get leaf) state))]
+    [(AstExprXgetbv index)
+      (lint-unused-assignment-note-reads (ast-node-get index) state)]
+    [(AstExprSyscall args) (lint-unused-assignment-note-reads-list args state)]))
+
+(define (lint-unused-assignment-binding-span [init : i64]) : AstSourceSpan
+  (lint-no-effect-span (ast-node-get init)))
+
+(define (lint-unused-assignment-expr-list
+  [exprs : AstExprList]
+  [state : LintUnusedAssignmentState]) : LintUnusedAssignmentState
+  (lint-unused-assignment-expr-list-after-terminal exprs state false))
+
+(define (lint-unused-assignment-expr-list-after-terminal
+  [exprs : AstExprList]
+  [state : LintUnusedAssignmentState]
+  [after-terminal : bool]) : LintUnusedAssignmentState
+  (match exprs
+    [(AstExprNil) state]
+    [(AstExprCons head rest)
+      (if after-terminal
+        state
+        (let
+          [head-expr : AstExpr (ast-node-get head)]
+          (lint-unused-assignment-expr-list-after-terminal
+            (box-get rest)
+            (lint-unused-assignment-expr head-expr state (lint-no-span))
+            (lint-terminal-expr? head-expr))))]))
+
+(define (lint-unused-assignment-let-bindings
+  [bindings : AstLetBindingList]
+  [state : LintUnusedAssignmentState]) : LintUnusedAssignmentState
+  (match bindings
+    [(AstLetBindingNil) state]
+    [(AstLetBindingCons binding rest)
+      (match binding
+        [(AstLetBinding name _ init)
+          (let
+            [after-init : LintUnusedAssignmentState
+              (lint-unused-assignment-expr
+                (ast-node-get init)
+                state
+                (lint-unused-assignment-binding-span init))]
+            [text : String (intern-str name)]
+            [binding-base : LintUnusedAssignmentState
+              (if (lint-name-list-contains? (struct-get after-init locals) text)
+                (lint-unused-assignment-state-with
+                  after-init
+                  (lint-pending-assignment-remove
+                    (struct-get after-init pending)
+                    text)
+                  (struct-get after-init findings))
+                after-init)]
+            [with-local : LintUnusedAssignmentState
+              (lint-unused-assignment-with-locals
+                binding-base
+                (lint-name-list-add (struct-get binding-base locals) text))]
+            (lint-unused-assignment-let-bindings
+              (box-get rest)
+              (lint-unused-assignment-write-name
+                with-local
+                text
+                (lint-unused-assignment-binding-span init))))])]))
+
+(define (lint-unused-assignment-let
+  [bindings : AstLetBindingList]
+  [body : AstExpr]
+  [state : LintUnusedAssignmentState]
+  [span : AstSourceSpan]) : LintUnusedAssignmentState
+  (let
+    [inner : LintUnusedAssignmentState
+      (lint-unused-assignment-expr
+        body
+        (lint-unused-assignment-let-bindings bindings state)
+        span)]
+    (LintUnusedAssignmentState
+      (struct-get state locals)
+      LintPendingAssignmentNil
+      (struct-get inner findings))))
+
+(define (lint-unused-assignment-expr
+  [expr : AstExpr]
+  [state : LintUnusedAssignmentState]
+  [span : AstSourceSpan]) : LintUnusedAssignmentState
+  (match expr
+    [(AstExprSpanned inner-box inner-span)
+      (lint-unused-assignment-expr (ast-node-get inner-box) state inner-span)]
+    [(AstExprLet bindings body)
+      (lint-unused-assignment-let bindings (ast-node-get body) state span)]
+    [(AstExprBegin exprs) (lint-unused-assignment-expr-list exprs state)]
+    [(AstExprUnsafe exprs) (lint-unused-assignment-expr-list exprs state)]
+    [(AstExprWithRegion _ body) (lint-unused-assignment-expr-list body state)]
+    [(AstExprWithScratch body) (lint-unused-assignment-expr-list body state)]
+    [(AstExprWithEscape scratch body)
+      (lint-unused-assignment-expr-list
+        body
+        (lint-unused-assignment-note-reads (ast-node-get scratch) state))]
+    [(AstExprInArena arena body)
+      (lint-unused-assignment-expr-list
+        body
+        (lint-unused-assignment-note-reads (ast-node-get arena) state))]
+    [(AstExprWithResource bindings body)
+      (lint-unused-assignment-expr-list
+        body
+        (lint-unused-assignment-note-reads-resource-bindings bindings state))]
+    [(AstExprSet target value)
+      (lint-unused-assignment-write-id
+        (lint-unused-assignment-note-reads (ast-node-get value) state)
+        target
+        span)]
+    [_ (lint-unused-assignment-note-reads expr state)]))
+
+(define (lint-unused-assignment-state-empty
+  [locals : LintNameList]
+  [acc : LintFindings]) : LintUnusedAssignmentState
+  (LintUnusedAssignmentState locals LintPendingAssignmentNil acc))
+
+(define (lint-unused-assignments-in-decl [decl : AstDecl] [acc : LintFindings]) : LintFindings
+  (match decl
+    [(AstDeclDef _ _ body)
+      (struct-get
+        (lint-unused-assignment-expr
+          (ast-node-get body)
+          (lint-unused-assignment-state-empty LintNameNil acc)
+          (lint-no-span))
+        findings)]
+    [(AstDeclDefFn _ params _ body _)
+      (struct-get
+        (lint-unused-assignment-expr
+          (ast-node-get body)
+          (lint-unused-assignment-state-empty
+            (lint-param-list-add-locals params LintNameNil)
+            acc)
+          (lint-no-span))
+        findings)]
+    [(AstDeclDefMacro _ params _ body)
+      (struct-get
+        (lint-unused-assignment-expr
+          (ast-node-get body)
+          (lint-unused-assignment-state-empty
+            (lint-macro-param-list-add-locals params LintNameNil)
+            acc)
+          (lint-no-span))
+        findings)]
+    [(AstDeclTest _ body _)
+      (struct-get
+        (lint-unused-assignment-expr
+          (ast-node-get body)
+          (lint-unused-assignment-state-empty LintNameNil acc)
+          (lint-no-span))
+        findings)]
+    [(AstDeclUnsafe inner)
+      (lint-unused-assignments-in-decl (box-get inner) acc)]
+    [(AstDeclComptimeDecl _ inner)
+      (lint-unused-assignments-in-decl (box-get inner) acc)]
+    [_ acc]))
+
+(define (lint-unused-assignments-in-decl-list
+  [decls : AstDeclList]
+  [acc : LintFindings]) : LintFindings
+  (match decls
+    [(AstDeclNil) acc]
+    [(AstDeclCons decl rest)
+      (lint-unused-assignments-in-decl-list
+        (box-get rest)
+        (lint-unused-assignments-in-decl decl acc))]))
+
 ;: Walk every expression in `exprs`, accumulating findings.
 (define (lint-walk-expr-list
   [exprs : AstExprList]
@@ -2778,7 +3370,9 @@
         (lint-unused-imports-in-decl-list
           decls
           decls
-          (lint-walk-decl-list decls threshold (lint-findings-empty))))]))
+          (lint-unused-assignments-in-decl-list
+            decls
+            (lint-walk-decl-list decls threshold (lint-findings-empty)))))]))
 
 (define (lint-program-with-deprecated-string-concat
   [source : String]
@@ -2793,7 +3387,9 @@
           (lint-unused-imports-in-decl-list
             decls
             decls
-            (lint-walk-decl-list decls threshold (lint-findings-empty)))))]))
+            (lint-unused-assignments-in-decl-list
+              decls
+              (lint-walk-decl-list decls threshold (lint-findings-empty))))))]))
 
 ;: Self-test: the nested-`if`-ladder rule and the AST walk.
 ;: Flat-AST test helpers: the self-test builds exprs with i64-returning

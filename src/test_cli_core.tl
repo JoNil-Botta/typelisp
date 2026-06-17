@@ -2637,26 +2637,12 @@
   [source : String]
   [roots : StringVec]
   [backend-target : CompilerBackendTarget]) : i64
-  (let
-    [home : i64 (arena-current)]
-    [scratch : i64 (arena-make)]
+  (with-scratch
     (begin
-      (unsafe
-        (arena-set! scratch))
-      (let
-        [entry-result : i64
-          (begin
-            (compiler-driver-reset-file-state!)
-            (match (tltest-check-file-source source roots backend-target)
-              [(ErrTestFileCheck status) (- 0 status)]
-              [(OkTestFileCheck count) count]))]
-        [scratch-head : i64 (arena-current)]
-        (begin
-          (unsafe
-            (arena-set! home))
-          (unsafe
-            (arena-destroy scratch-head))
-          entry-result)))))
+      (compiler-driver-reset-file-state!)
+      (match (tltest-check-file-source source roots backend-target)
+        [(ErrTestFileCheck status) (- 0 status)]
+        [(OkTestFileCheck count) count]))))
 
 (define (tltest-run-batch-check-paths-from
   [paths : StringVec]

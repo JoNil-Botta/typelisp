@@ -31552,18 +31552,10 @@
   (define (compiler-opt-scratch-region-report-function-escaping
     [func : CompilerIrFunction]
     [scratch : i64]) : unit
-    (let
-      [enclosing : i64 (arena-current)]
-      (begin
-        (unsafe
-          (arena-set! scratch))
-        (let
-          [mark : i64 (arena-mark)]
-          (begin
-            (compiler-opt-scratch-region-report-function func)
-            (unsafe
-              (arena-rewind mark)
-              (arena-set! enclosing))))))))
+    (with-escape
+      scratch
+      (compiler-opt-scratch-region-report-function func)
+      unit)))
 
 (define (opt-scratch-test-alloc) : CompilerIrInstr
   (IrInstrCall 1 "tl_alloc" (IrCallArgsOne (IrValueI64 32)) (AstTyU64)))

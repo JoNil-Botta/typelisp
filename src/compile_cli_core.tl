@@ -810,32 +810,18 @@
   [cfg-names : StringVec]
   [backend-mode : CompilerBackendMode]
   [opt-level : i64]) : i64
-  (let
-    [home : i64 (arena-current)]
-    [scratch : i64 (arena-make)]
-    (begin
-      (unsafe
-        (arena-set! scratch))
-      (let
-        [status : i64
-          (compile-cli-run-compile-file
-            input-path
-            output-path
-            false
-            false
-            has-target
-            target
-            stdlib-roots
-            cfg-names
-            backend-mode
-            opt-level)]
-        [scratch-head : i64 (arena-current)]
-        (begin
-          (unsafe
-            (arena-set! home))
-          (unsafe
-            (arena-destroy scratch-head))
-          status)))))
+  (with-scratch
+    (compile-cli-run-compile-file
+      input-path
+      output-path
+      false
+      false
+      has-target
+      target
+      stdlib-roots
+      cfg-names
+      backend-mode
+      opt-level)))
 
 (define (compile-cli-run-batch-entries
   [entries : CompileCliBatchEntryList]

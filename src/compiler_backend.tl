@@ -17883,50 +17883,21 @@
   [span-index : CompilerBackendSourceSpanIndex]
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerBackend
-  (let
-    [enclosing : i64 (arena-current)]
-    [scratch : i64 (arena-make)]
-    (begin
-      (unsafe
-        (arena-set! scratch))
-      (match (compiler-backend-emit-function
-        target
-        mode
-        func
-        all-functions
-        globals
-        global-types
-        externs
-        plan
-        program-index
-        spans
-        span-index
-        emit-entry
-        crt-entry)
-        [(OkCompilerBackend asm)
-          (let
-            [scratch-head : i64 (arena-current)]
-            (begin
-              (unsafe
-                (arena-set! enclosing))
-              (let
-                [escaped : String (clone asm)]
-                (begin
-                  (unsafe
-                    (arena-destroy scratch-head))
-                  (OkCompilerBackend escaped)))))]
-        [(ErrCompilerBackend message)
-          (let
-            [scratch-head : i64 (arena-current)]
-            (begin
-              (unsafe
-                (arena-set! enclosing))
-              (let
-                [escaped : CompilerDiagnostic (clone message)]
-                (begin
-                  (unsafe
-                    (arena-destroy scratch-head))
-                  (ErrCompilerBackend escaped)))))]))))
+  (with-scratch
+    (compiler-backend-emit-function
+      target
+      mode
+      func
+      all-functions
+      globals
+      global-types
+      externs
+      plan
+      program-index
+      spans
+      span-index
+      emit-entry
+      crt-entry)))
 
 ;; Keep the direct path available for A/B experiments by raising
 ;; `compiler-backend-direct-emit-instr-limit`; normal builds route emitted

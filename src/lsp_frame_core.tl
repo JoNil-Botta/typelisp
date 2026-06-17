@@ -3440,30 +3440,61 @@
         (lsp-write-error id -32600 "Document not found")
         (LspContinue docs))]))
 
-;; tl/expandMacro - stub
+;; tl/expandMacro - Find the form at cursor position and return its text
+;; For now, returns the top-level form by name.
+;; Full macro expansion would require compiler macro expansion integration.
 (define (lsp-handle-tl-expand-macro
   [id : Json]
   [params : Json]
   [docs : LspDocuments]) : LspHandleResult
   (match (lsp-get-document params docs)
     [(FoundLspDocument uri path text)
-      (let
-        [result : LspEditResult (ErrLspEdit "Not yet implemented")]
-        (match result
-          [(OkLspEdit new-text)
+      (match (lsp-json-string-field params "name")
+        [(OkLspJsonText name)
+          (let
+            [text-copy : String (string-copy-borrowed (& text))]
+            [decls : LspDeclList (lsp-scan-decls text-copy)]
+            [i : i64 0]
+            [n : i64 (lsp-decl-list-len decls)]
+            [found-idx : i64 -1]
             (begin
-              (lsp-write-response
-                id
-                (lsp-json-object2
-                  "success"
-                  (JsonBool true)
-                  "text"
-                  (JsonString new-text)))
-              (LspContinue docs))]
-          [(ErrLspEdit message)
-            (begin
-              (lsp-write-error id -32600 message)
-              (LspContinue docs))]))]
+              (while (and (< i n) (= found-idx -1))
+                (let
+                  [entry : LspDeclEntry (lsp-decl-list-get decls i)]
+                  (if (string-eq (struct-get entry name) name)
+                    (set! found-idx i)
+                    (set! i (+ i 1)))))
+              (if (= found-idx -1)
+                (begin
+                  (lsp-write-error id -32600 "Form not found")
+                  (LspContinue docs))
+                (let
+                  [entry : LspDeclEntry (lsp-decl-list-get decls found-idx)]
+                  [start-off : i64
+                    (lsp-offset-at-position
+                      text
+                      (- (struct-get entry form-start-line) 1)
+                      (- (struct-get entry form-start-col) 1))]
+                  [end-off : i64
+                    (lsp-offset-at-position
+                      text
+                      (- (struct-get entry form-end-line) 1)
+                      (- (struct-get entry form-end-col) 1))]
+                  [result : String
+                    (substring text start-off (- end-off start-off))]
+                  (begin
+                    (lsp-write-response
+                      id
+                      (lsp-json-object2
+                        "success"
+                        (JsonBool true)
+                        "text"
+                        (JsonString result)))
+                    (LspContinue docs))))))]
+        [(MissingLspJsonText)
+          (begin
+            (lsp-write-error id -32600 "Missing name parameter")
+            (LspContinue docs))])]
     [(MissingLspDocument)
       (begin
         (lsp-write-error id -32600 "Document not found")

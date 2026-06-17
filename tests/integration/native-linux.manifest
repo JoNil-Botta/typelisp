@@ -48,6 +48,7 @@ mutable_reference_array|tests/integration/mutable_reference_array.tl|42|-|-|-
 mutable_reference_by_value_writeback|tests/integration/mutable_reference_by_value_writeback.tl|42|-|-|-
 enum_string_payload|tests/integration/enum_string_payload.tl|5|-|-|-
 f32_scalar|tests/integration/f32_scalar.tl|42|-|-|-
+f64_negation|tests/integration/f64_negation.tl|42|-|-|-
 repr_c_f32_fields|tests/integration/repr_c_f32_fields.tl|42|-|-|-
 factorial|tests/integration/factorial.tl|120|-|-|-
 fibonacci|tests/integration/fibonacci.tl|13|-|-|-

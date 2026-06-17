@@ -217,6 +217,7 @@
     [(ObjectX64StoreR15Rip _) 7]
     [(ObjectX64AddRcxRip _) 7]
     [(ObjectX64MovRcxRax) 3]
+    [(ObjectX64XorpdRip _) 8]
     [(ObjectX64Bytes bytes) (string-length bytes)]
     [(ObjectX64Raw _) 0]
     [_ 0]))
@@ -240,6 +241,7 @@
     [(ObjectX64StoreR15Rip _) 1]
     [(ObjectX64AddRcxRip _) 1]
     [(ObjectX64MovRcxRax) 0]
+    [(ObjectX64XorpdRip _) 1]
     [(ObjectX64Bytes _) 0]
     [(ObjectX64Raw _) 0]))
 
@@ -362,6 +364,8 @@
         [(ObjectX64AddRcxRip _)
           (compiler-object-coff-instrs-supported? (box-get rest))]
         [(ObjectX64MovRcxRax)
+          (compiler-object-coff-instrs-supported? (box-get rest))]
+        [(ObjectX64XorpdRip _)
           (compiler-object-coff-instrs-supported? (box-get rest))]
         [(ObjectX64Bytes _)
           (compiler-object-coff-instrs-supported? (box-get rest))]
@@ -540,6 +544,10 @@
               (>= (compiler-object-coff-symbol-index image target) 0)
               tail-ok)]
           [(ObjectX64MovRcxRax) tail-ok]
+          [(ObjectX64XorpdRip target)
+            (and
+              (>= (compiler-object-coff-symbol-index image target) 0)
+              tail-ok)]
           [(ObjectX64Bytes _) tail-ok]
           [(ObjectX64Raw _) false]))]))
 
@@ -959,6 +967,13 @@
         (compiler-object-coff-push-u8! out 0x48)
         (compiler-object-coff-push-u8! out 0x89)
         (compiler-object-coff-push-u8! out 0xc1))]
+    [(ObjectX64XorpdRip _)
+      (begin
+        (compiler-object-coff-push-u8! out 0x66)
+        (compiler-object-coff-push-u8! out 0x0f)
+        (compiler-object-coff-push-u8! out 0x57)
+        (compiler-object-coff-push-u8! out 0x05)
+        (compiler-object-coff-push-rel32-placeholder! out))]
     [(ObjectX64Bytes bytes) (compiler-object-coff-push-string-bytes! out bytes)]
     [(ObjectX64Raw _) unit]))
 
@@ -1147,6 +1162,13 @@
               (ObjectRelocRipAddress)
               target)]
           [(ObjectX64MovRcxRax) unit]
+          [(ObjectX64XorpdRip target)
+            (compiler-object-coff-render-relocation-record!
+              out
+              image
+              (+ offset 4)
+              (ObjectRelocRipValue)
+              target)]
           [(ObjectX64Bytes _) unit]
           [(ObjectX64Raw _) unit])
         (compiler-object-coff-render-text-instr-relocations!

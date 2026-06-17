@@ -404,7 +404,8 @@
   (functions BackendStringSet)
   (strings BackendStringSet)
   (floats BackendStringSet)
-  (bytes BackendStringSet))
+  (bytes BackendStringSet)
+  (uses-f64-neg bool))
 
 (defenum CompilerBackendCollectState
   (BackendCollectCollections CompilerBackendProgramCollections)
@@ -428,7 +429,8 @@
     (compiler-backend-string-set-new 256)
     (compiler-backend-string-set-new 256)
     (compiler-backend-string-set-new 256)
-    (compiler-backend-string-set-new 64)))
+    (compiler-backend-string-set-new 64)
+    false))
 
 (define (compiler-backend-program-collections-add-function
   [collections : CompilerBackendProgramCollections]
@@ -437,7 +439,8 @@
     (compiler-backend-string-set-add (struct-get collections functions) name)
     (struct-get collections strings)
     (struct-get collections floats)
-    (struct-get collections bytes)))
+    (struct-get collections bytes)
+    (struct-get collections uses-f64-neg)))
 
 (define (compiler-backend-program-collections-add-string
   [collections : CompilerBackendProgramCollections]
@@ -446,7 +449,8 @@
     (struct-get collections functions)
     (compiler-backend-string-set-add (struct-get collections strings) text)
     (struct-get collections floats)
-    (struct-get collections bytes)))
+    (struct-get collections bytes)
+    (struct-get collections uses-f64-neg)))
 
 (define (compiler-backend-program-collections-add-float
   [collections : CompilerBackendProgramCollections]
@@ -455,7 +459,8 @@
     (struct-get collections functions)
     (struct-get collections strings)
     (compiler-backend-string-set-add (struct-get collections floats) text)
-    (struct-get collections bytes)))
+    (struct-get collections bytes)
+    (struct-get collections uses-f64-neg)))
 
 (define (compiler-backend-program-collections-add-bytes
   [collections : CompilerBackendProgramCollections]
@@ -464,7 +469,17 @@
     (struct-get collections functions)
     (struct-get collections strings)
     (struct-get collections floats)
-    (compiler-backend-string-set-add (struct-get collections bytes) text)))
+    (compiler-backend-string-set-add (struct-get collections bytes) text)
+    (struct-get collections uses-f64-neg)))
+
+(define (compiler-backend-program-collections-mark-f64-neg
+  [collections : CompilerBackendProgramCollections]) : CompilerBackendProgramCollections
+  (CompilerBackendProgramCollections
+    (struct-get collections functions)
+    (struct-get collections strings)
+    (struct-get collections floats)
+    (struct-get collections bytes)
+    true))
 
 ;; Concatenate fixed string groups with one allocation and one linear copy per
 ;; piece, instead of the right-nested `string-append` chain that reallocates and
@@ -3655,6 +3670,9 @@
 (define (compiler-backend-f64-label [text : String]) : String
   (string-append ".L_tl_f64_" (compiler-backend-string-label-suffix text)))
 
+(define (compiler-backend-f64-sign-bit-label) : String
+  ".L_tl_f64_sign_bit")
+
 (define (compiler-backend-emit-load-float-value-with-plan
   [assignments : CompilerRegAssignmentList]
   [value : CompilerIrValue]
@@ -6436,7 +6454,10 @@
   (match op
     [(IrUnNeg)
       (OkCompilerBackend
-        "    movabsq $0x8000000000000000, %rax\n    movq %rax, %xmm1\n    xorpd %xmm1, %xmm0\n")]
+        (str-cat
+          "    xorpd "
+          (compiler-backend-f64-sign-bit-label)
+          "(%rip), %xmm0\n"))]
     [_
       (ErrCompilerBackend
         (compiler-diagnostic-at-start "" "backend: unsupported f64 unary op"))]))
@@ -18506,6 +18527,10 @@
   [collections : CompilerBackendProgramCollections]) : BackendStringList
   (compiler-backend-string-set-list (struct-get collections bytes)))
 
+(define (compiler-backend-program-collections-uses-f64-neg?
+  [collections : CompilerBackendProgramCollections]) : bool
+  (struct-get collections uses-f64-neg))
+
 (define (compiler-backend-collect-value-collections
   [collections : CompilerBackendProgramCollections]
   [value : CompilerIrValue]) : CompilerBackendProgramCollections
@@ -18588,8 +18613,16 @@
       (compiler-backend-collect-value-collections
         (compiler-backend-collect-value-collections collections lhs)
         rhs)]
-    [(IrInstrUnOp _ _ src _)
-      (compiler-backend-collect-value-collections collections src)]
+    [(IrInstrUnOp _ op src ty)
+      (let
+        [with-src : CompilerBackendProgramCollections
+          (compiler-backend-collect-value-collections collections src)]
+        (match op
+          [(IrUnNeg)
+            (if (compiler-backend-f64-type? ty)
+              (compiler-backend-program-collections-mark-f64-neg with-src)
+              with-src)]
+          [_ with-src]))]
     [(IrInstrCall _ _ args _)
       (compiler-backend-collect-call-args-collections collections args)]
     [(IrInstrCallIndirect _ func args _)
@@ -18941,6 +18974,17 @@
 (define (compiler-backend-emit-f64-rodata [floats : BackendStringList]) : String
   (text-buf-render
     (compiler-backend-emit-f64-rodata-into floats (text-buf-empty))))
+
+(define (compiler-backend-emit-f64-sign-bit-rodata-into
+  [enabled : bool]
+  [buf : TextBuf]) : TextBuf
+  (if enabled
+    (text-buf-append
+      (text-buf-append
+        (text-buf-append buf "    .section .rodata\n    .balign 16\n")
+        (compiler-backend-f64-sign-bit-label))
+      ":\n    .quad 0x8000000000000000\n    .quad 0\n")
+    buf))
 
 (define (compiler-backend-global-value-asm
   [ty : AstType]
@@ -23134,6 +23178,7 @@ tl_memcpy:
   [strings : BackendStringList]
   [bytes : BackendStringList]
   [floats : BackendStringList]
+  [uses-f64-neg : bool]
   [globals-buf : TextBuf]
   [emit-entry : bool]
   [crt-entry : bool]) : TextBuf
@@ -23154,8 +23199,12 @@ tl_memcpy:
             (compiler-backend-profile-finish "compose.bytes_data"))
           (cfg compile-profile (compiler-backend-profile-start))
           (let
-            [f64-buf : TextBuf
+            [f64-literals-buf : TextBuf
               (compiler-backend-emit-f64-rodata-into floats bytes-buf)]
+            [f64-buf : TextBuf
+              (compiler-backend-emit-f64-sign-bit-rodata-into
+                uses-f64-neg
+                f64-literals-buf)]
             (begin
               (cfg
                 compile-profile
@@ -23254,6 +23303,8 @@ tl_memcpy:
       (compiler-backend-program-collections-bytes collections)]
     [floats : BackendStringList
       (compiler-backend-program-collections-floats collections)]
+    [uses-f64-neg : bool
+      (compiler-backend-program-collections-uses-f64-neg? collections)]
     [span-index : CompilerBackendSourceSpanIndex
       (compiler-backend-source-span-index-build spans)]
     [global-types : CompilerBackendGlobalTypeList
@@ -23273,6 +23324,7 @@ tl_memcpy:
             strings
             bytes
             floats
+            uses-f64-neg
             globals-buf
             emit-entry
             crt-entry)]
@@ -23812,8 +23864,21 @@ tl_memcpy:
         (compiler-backend-object-value-ref parts function lhs)
         function
         rhs)]
-    [(IrInstrUnOp _ _ src _)
-      (compiler-backend-object-value-ref parts function src)]
+    [(IrInstrUnOp _ op src ty)
+      (let
+        [with-src : CompilerBackendObjectParts
+          (compiler-backend-object-value-ref parts function src)]
+        (match op
+          [(IrUnNeg)
+            (if (compiler-backend-f64-type? ty)
+              (compiler-backend-object-add-rip-instr
+                with-src
+                function
+                (ObjectRelocRipValue)
+                (compiler-backend-f64-sign-bit-label)
+                (ObjectX64XorpdRip (compiler-backend-f64-sign-bit-label)))
+              with-src)]
+          [_ with-src]))]
     [(IrInstrCall _ name args _)
       (let
         [target : String
@@ -24322,6 +24387,27 @@ tl_memcpy:
               (ObjectDataLabel symbol))
             (ObjectDataF64 text))
           (box-get rest)))]))
+
+(define (compiler-backend-object-f64-sign-bit
+  [parts : CompilerBackendObjectParts]
+  [enabled : bool]) : CompilerBackendObjectParts
+  (if enabled
+    (let
+      [symbol : String (compiler-backend-f64-sign-bit-label)]
+      (compiler-backend-object-add-rodata
+        (compiler-backend-object-add-rodata
+          (compiler-backend-object-add-rodata
+            (compiler-backend-object-add-rodata
+              (compiler-backend-object-symbol-local-section
+                parts
+                symbol
+                (ObjectSectionRodata)
+                (ObjectSymbolData))
+              (ObjectDataAlign 16))
+            (ObjectDataLabel symbol))
+          (ObjectDataI64 -9223372036854775808))
+        (ObjectDataI64 0)))
+    parts))
 
 (define (compiler-backend-object-closure-descriptors
   [parts : CompilerBackendObjectParts]
@@ -24917,27 +25003,31 @@ tl_memcpy:
       (compiler-backend-program-collections-bytes collections)]
     [floats : BackendStringList
       (compiler-backend-program-collections-floats collections)]
+    [uses-f64-neg : bool
+      (compiler-backend-program-collections-uses-f64-neg? collections)]
     [seed : CompilerBackendObjectParts
       (compiler-backend-object-entry-symbols
         (compiler-backend-object-runtime-symbols
           (compiler-backend-object-externs
-            (compiler-backend-object-floats
-              (compiler-backend-object-bytes
-                (compiler-backend-object-strings
-                  (compiler-backend-object-closure-descriptors
-                    (compiler-backend-object-globals
-                      (compiler-backend-object-functions
-                        (compiler-backend-object-parts-empty)
-                        entry-functions
-                        plan
-                        program-index)
-                      target
-                      globals)
-                    closure-names
-                    program-index)
-                  strings)
-                bytes)
-              floats)
+            (compiler-backend-object-f64-sign-bit
+              (compiler-backend-object-floats
+                (compiler-backend-object-bytes
+                  (compiler-backend-object-strings
+                    (compiler-backend-object-closure-descriptors
+                      (compiler-backend-object-globals
+                        (compiler-backend-object-functions
+                          (compiler-backend-object-parts-empty)
+                          entry-functions
+                          plan
+                          program-index)
+                        target
+                        globals)
+                      closure-names
+                      program-index)
+                    strings)
+                  bytes)
+                floats)
+              uses-f64-neg)
             externs
             plan)
           plan

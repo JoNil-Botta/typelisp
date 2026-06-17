@@ -40,11 +40,15 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
   sub-slicing, fallback reads, and explicit array/vector copy boundaries.
   `vector_slice_escape.tl` verifies the checker rejects returning a slice tied
   to a shorter-lived vector.
-- `core_macros_api.tl` covers explicit import of the stdlib core macro module
-  and the qualified macro API. The adjacent `core_macros_cond_*` check fixtures
-  cover flat-syntax rejection and post-expansion `cond` diagnostics, and
-  `core_macros_runtime_import.tl` covers bare prelude macros beside runtime
-  stdlib modules such as `io`.
+- `comptime_api.tl` remains a check-only import-shape fixture for expression
+  macros whose operand types are written through an explicit
+  `stdlib.comptime` module alias; its inline test provides the runnable
+  comptime behavior.
+- `core_macros_api.tl` remains a check-only import-shape fixture for explicit
+  qualified import of the stdlib core macro module as `core`; the runnable core
+  macro behavior lives inline in `core_macros.tl` and `io.tl`. The adjacent
+  `core_macros_cond_*` check fixtures cover flat-syntax rejection and
+  post-expansion `cond` diagnostics.
 - `io_edges.tl` covers `IoError` rendering, `try-read-file`,
   `try-write-file`, `try-file-exists?`, `try-append-file`, `read-file-or`,
   `append-file`, and `file-nonempty?` on missing, empty-path, directory-read,
@@ -128,6 +132,14 @@ Inline stdlib coverage:
   end-of-options handling, missing-value and unknown-option diagnostics,
   repeated short/long options, and the intentionally unsupported
   `--name=value` spelling.
+- `comptime_api.tl` owns inline tests for expression macro operand values,
+  variadic `Expr` lists, syntax matching, and generated expression results
+  while preserving the explicit `stdlib.comptime` module-alias import shape.
+- `core_macros.tl` owns inline tests for zero-, one-, and many-operand
+  `and`/`or`, guard macros, bracket-arm `cond` result types, and
+  short-circuiting.
+- `io.tl` owns inline coverage that bare prelude `and`/`or`/`when`/`unless`
+  macros remain available beside a runtime stdlib module.
 - `json.tl` owns inline tests for the JSON data model, list/member helpers,
   escape helpers, parser subroutines, deterministic finite f64/f32 number
   conversion, serializer helpers, and end-to-end parse/stringify behavior for

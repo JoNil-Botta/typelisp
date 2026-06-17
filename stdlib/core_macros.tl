@@ -89,6 +89,98 @@
               ,(expr-clause-second arm)
               (cond ,@(expr-clause-list->expr-list rest))))]))))
 
+(test
+  core-macros-api
+  (let
+    [value : i64 0]
+    [short : i64 0]
+    (begin
+      (if (and)
+        unit
+        (begin
+          (/ 1 0)
+          unit))
+      (if (and true)
+        unit
+        (begin
+          (/ 1 0)
+          unit))
+      (if (and true true true)
+        unit
+        (begin
+          (/ 1 0)
+          unit))
+      (if (not (and true false true))
+        unit
+        (begin
+          (/ 1 0)
+          unit))
+      (if (not (or))
+        unit
+        (begin
+          (/ 1 0)
+          unit))
+      (if (or true)
+        unit
+        (begin
+          (/ 1 0)
+          unit))
+      (if (or false true false)
+        unit
+        (begin
+          (/ 1 0)
+          unit))
+      (if (not (or false false false))
+        unit
+        (begin
+          (/ 1 0)
+          unit))
+      (when true (set! value 1))
+      (when false (set! value 1000))
+      (unless false (set! value (+ value 41)))
+      (unless true (set! value 1000))
+      (if (= value 42)
+        unit
+        (begin
+          (/ 1 0)
+          unit))
+      (if (= (cond [(< -1 0) 7] [(= -1 0) 8] [else 9]) 7)
+        unit
+        (begin
+          (/ 1 0)
+          unit))
+      (if (= (cond [false 7] [else 42]) 42)
+        unit
+        (begin
+          (/ 1 0)
+          unit))
+      (if (string-eq (cond [true "yes"] [else "no"]) "yes")
+        unit
+        (begin
+          (/ 1 0)
+          unit))
+      (cond [true unit] [else unit])
+      (if (and
+        true
+        false
+        (begin
+          (set! short 1000)
+          true))
+        (set! short 1000)
+        unit)
+      (if (or
+        true
+        (begin
+          (set! short 1000)
+          false))
+        unit
+        (set! short 1000))
+      (if (= short 0)
+        unit
+        (begin
+          (/ 1 0)
+          unit)))))
+
 (export (macro and))
 
 (export (macro or))

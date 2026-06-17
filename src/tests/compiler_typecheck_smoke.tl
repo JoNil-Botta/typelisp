@@ -731,6 +731,108 @@
       (tc-prefix-snapshot-cache-clear!)
       ok)))
 
+(define (compiler-typecheck-smoke-prefix-cache-file-check
+  [entry-path : String]
+  [stdlib-roots : StringVec]
+  [cfgs : SymI64Env]) : bool
+  (match (compiler-load-file-with-paths-and-roots-cfg
+    entry-path
+    (sym-i64-empty)
+    stdlib-roots
+    cfgs)
+    [(OkCompilerLoadWithPaths decls paths _ _)
+      (match (typecheck-compiler-program-with-paths-cache
+        (ast-program decls)
+        paths
+        stdlib-roots
+        (compiler-typecheck-prefix-cache-scope
+          "typecheck-prefix-smoke"
+          stdlib-roots
+          cfgs))
+        [(OkCompilerTypecheck _) true]
+        [(ErrCompilerTypecheck _) false])]
+    [(ErrCompilerLoadWithPaths _) false]))
+
+(define (compiler-typecheck-smoke-prefix-cache-local-module-hit-ok?) : bool
+  (let
+    [dep : String "target/tc_prefix_local_dep.tl"]
+    [entry-a : String "target/tc_prefix_local_entry_a.tl"]
+    [entry-b : String "target/tc_prefix_local_entry_b.tl"]
+    [roots : StringVec (string-vec-new)]
+    [cfgs : SymI64Env (compiler-cfg-empty)]
+    [ok : bool true]
+    (begin
+      (write-file
+        dep
+        "(module tc.prefix.local.dep)
+(define (value [x : i64]) : i64 (+ x 1))
+(export (value value))")
+      (write-file
+        entry-a
+        "(import \"tc_prefix_local_dep.tl\" module tc.prefix.local.dep as dep)
+(define (main) : i64 (dep.value 1))")
+      (write-file
+        entry-b
+        "(import \"tc_prefix_local_dep.tl\" module tc.prefix.local.dep as dep)
+(define (main) : i64 (dep.value 2))")
+      (compiler-load-session-cache-enable!)
+      (tc-prefix-snapshot-cache-clear!)
+      (if (compiler-typecheck-smoke-prefix-cache-file-check entry-a roots cfgs)
+        unit
+        (set! ok false))
+      (compiler-load-session-reset-pools!)
+      (compiler-load-session-reset-interns!)
+      (if (compiler-typecheck-smoke-prefix-cache-file-check entry-b roots cfgs)
+        unit
+        (set! ok false))
+      (if (> tc-prefix-snapshot-cache-hit-count 0)
+        unit
+        (set! ok false))
+      (if (> tc-prefix-snapshot-cache-store-count 0)
+        unit
+        (set! ok false))
+      (compiler-load-session-cache-disable-for-test!)
+      (tc-prefix-snapshot-cache-clear!)
+      ok)))
+
+(define (compiler-typecheck-smoke-prefix-cache-flat-local-no-hit-ok?) : bool
+  (let
+    [dep : String "target/tc_prefix_flat_dep.tl"]
+    [entry-a : String "target/tc_prefix_flat_entry_a.tl"]
+    [entry-b : String "target/tc_prefix_flat_entry_b.tl"]
+    [roots : StringVec (string-vec-new)]
+    [cfgs : SymI64Env (compiler-cfg-empty)]
+    [ok : bool true]
+    (begin
+      (write-file dep "(define (flat-helper [x : i64]) : i64 (+ x 1))")
+      (write-file
+        entry-a
+        "(import \"tc_prefix_flat_dep.tl\")
+(define (main) : i64 (flat-helper 1))")
+      (write-file
+        entry-b
+        "(import \"tc_prefix_flat_dep.tl\")
+(define (main) : i64 (flat-helper 2))")
+      (compiler-load-session-cache-enable!)
+      (tc-prefix-snapshot-cache-clear!)
+      (if (compiler-typecheck-smoke-prefix-cache-file-check entry-a roots cfgs)
+        unit
+        (set! ok false))
+      (compiler-load-session-reset-pools!)
+      (compiler-load-session-reset-interns!)
+      (if (compiler-typecheck-smoke-prefix-cache-file-check entry-b roots cfgs)
+        unit
+        (set! ok false))
+      (if (= tc-prefix-snapshot-cache-hit-count 0)
+        unit
+        (set! ok false))
+      (if (= tc-prefix-snapshot-cache-store-count 0)
+        unit
+        (set! ok false))
+      (compiler-load-session-cache-disable-for-test!)
+      (tc-prefix-snapshot-cache-clear!)
+      ok)))
+
 (define (main) : i64
   (begin
     (compiler-typecheck-self-test)
@@ -752,5 +854,11 @@
     (unless
       (compiler-typecheck-smoke-prefix-cache-cfg-isolation-ok?)
       (panic "typecheck: prefix cache cfg smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-prefix-cache-local-module-hit-ok?)
+      (panic "typecheck: prefix cache local module smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-prefix-cache-flat-local-no-hit-ok?)
+      (panic "typecheck: prefix cache flat local smoke failed"))
     (macro-alias-cache-reset!)
     42))

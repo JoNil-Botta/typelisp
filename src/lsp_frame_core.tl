@@ -3375,7 +3375,7 @@
         (lsp-write-error id -32600 "Document not found")
         (LspContinue docs))]))
 
-;; tl/expandMacro - Expand macro at cursor position
+;; tl/expandMacro - stub
 (define (lsp-handle-tl-expand-macro
   [id : Json]
   [params : Json]

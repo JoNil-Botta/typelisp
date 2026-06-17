@@ -62,7 +62,8 @@
     StringVec
     StringVec
     CompilerBackendMode
-    i64))
+    i64
+    bool))
 
 (defenum ResultCompileCliConfig
   (OkCompileCliConfig CompileCliConfig)
@@ -94,7 +95,7 @@
   (and (> (string-length value) 0) (= (string-ref value 0) #-')))
 
 (define (compile-cli-usage) : String
-  "Usage:\n  typelisp check <file.tl> [--stdlib-root <dir>...]\n  typelisp compile <file.tl> [-o <file>] [--emit-ir] [--pic] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...]\n  typelisp compile --batch <input-output-list> [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...]")
+  "Usage:\n  typelisp check <file.tl> [--stdlib-root <dir>...]\n  typelisp compile <file.tl> [-o <file>] [--emit-ir] [--pic] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...]\n  typelisp compile --batch <input-output-list> [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [--prefix-cache-stats]")
 
 (define (compile-cli-message-with-usage [message : String]) : String
   (string-append message (string-append "\n\n" (compile-cli-usage))))
@@ -381,7 +382,8 @@
   [cfg-names : StringVec]
   [has-opt-level : bool]
   [opt-level : i64]
-  [backend-mode : CompilerBackendMode]) : ResultCompileCliBatchConfig
+  [backend-mode : CompilerBackendMode]
+  [prefix-cache-stats : bool]) : ResultCompileCliBatchConfig
   (if (>= idx count)
     (OkCompileCliBatchConfig
       (CompileCliBatchConfig
@@ -391,7 +393,8 @@
         stdlib-roots
         cfg-names
         backend-mode
-        opt-level))
+        opt-level
+        prefix-cache-stats))
     (let
       [current : String (arg idx)]
       (if (string-eq current "-o")
@@ -416,7 +419,8 @@
                   cfg-names
                   has-opt-level
                   opt-level
-                  backend-mode))
+                  backend-mode
+                  prefix-cache-stats))
               (if (string-eq current "--cfg")
                 (if (>= (+ idx 1) count)
                   (ErrCompileCliBatchConfig "compile: --cfg requires a value")
@@ -430,7 +434,8 @@
                     (string-vec-push cfg-names (arg (+ idx 1)))
                     has-opt-level
                     opt-level
-                    backend-mode))
+                    backend-mode
+                    prefix-cache-stats))
                 (if (string-eq current "--target")
                   (if (>= (+ idx 1) count)
                     (ErrCompileCliBatchConfig
@@ -450,7 +455,8 @@
                             cfg-names
                             has-opt-level
                             opt-level
-                            backend-mode)]
+                            backend-mode
+                            prefix-cache-stats)]
                         [(ErrCompileCliTarget message)
                           (ErrCompileCliBatchConfig message)])))
                   (if (string-eq current "--opt-level")
@@ -474,7 +480,8 @@
                                 cfg-names
                                 true
                                 parsed-level
-                                backend-mode)]
+                                backend-mode
+                                prefix-cache-stats)]
                             [(ErrCompilerOptimizeLevel)
                               (ErrCompileCliBatchConfig
                                 (compile-cli-invalid-opt-level value))]))))
@@ -494,16 +501,30 @@
                               cfg-names
                               has-opt-level
                               opt-level
-                              parsed-mode)]
+                              parsed-mode
+                              prefix-cache-stats)]
                           [(ErrCompileCliBackendMode message)
                             (ErrCompileCliBatchConfig message)]))
-                      (if (compile-cli-flag? current)
-                        (ErrCompileCliBatchConfig
-                          (string-append "compile: unknown flag " current))
-                        (ErrCompileCliBatchConfig
-                          (string-append
-                            "compile: unexpected argument "
-                            current))))))))))))))
+                      (if (string-eq current "--prefix-cache-stats")
+                        (compile-cli-batch-parse-options
+                          (+ idx 1)
+                          count
+                          batch-path
+                          has-target
+                          target
+                          stdlib-roots
+                          cfg-names
+                          has-opt-level
+                          opt-level
+                          backend-mode
+                          true)
+                        (if (compile-cli-flag? current)
+                          (ErrCompileCliBatchConfig
+                            (string-append "compile: unknown flag " current))
+                          (ErrCompileCliBatchConfig
+                            (string-append
+                              "compile: unexpected argument "
+                              current)))))))))))))))
 
 (define (compile-cli-config-from [input-idx : i64] [count : i64]) : ResultCompileCliConfig
   (if (>= input-idx count)
@@ -548,7 +569,8 @@
           (string-vec-new)
           false
           (compiler-optimize-default-level)
-          (BackendModeScalar))))))
+          (BackendModeScalar)
+          false)))))
 
 (define (compile-cli-command-action [count : i64]) : CompileCliAction
   (if (and (> count 2) (string-eq (arg 2) "--batch"))
@@ -900,17 +922,29 @@
           stdlib-roots
           cfg-names
           backend-mode
-          opt-level)
-        (compile-cli-run-batch-from
-          (read-file batch-path)
-          0
-          1
-          has-target
-          target
-          stdlib-roots
-          cfg-names
-          backend-mode
-          opt-level)])))
+          opt-level
+          prefix-cache-stats)
+        (let
+          [status : i64
+            (begin
+              (if prefix-cache-stats
+                (tc-prefix-snapshot-cache-clear!)
+                unit)
+              (compile-cli-run-batch-from
+                (read-file batch-path)
+                0
+                1
+                has-target
+                target
+                stdlib-roots
+                cfg-names
+                backend-mode
+                opt-level))]
+          (begin
+            (if prefix-cache-stats
+              (tc-prefix-snapshot-cache-print-stats "compile-batch")
+              unit)
+            status))])))
 
 (define (compile-cli-run [count : i64]) : i64
   (match (compile-cli-dispatch count)

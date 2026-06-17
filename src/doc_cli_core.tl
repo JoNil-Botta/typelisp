@@ -33,6 +33,9 @@
   (OkDocTestCliConfig DocTestCliConfig)
   (ErrDocTestCliConfig String))
 
+(define doc-test-prefix-cache-stats : bool
+  false)
+
 (defenum DocDefaultCliConfig
   (DocDefaultCliExplicitConfig StringVec DocMaybeString StringVec)
   (DocDefaultCliPackageConfig String bool String))
@@ -287,13 +290,15 @@
                 (OkDocTestCliConfig (DocTestCliFileConfig paths stdlib-roots)))]
             [(ErrDocTestBatchPaths message) (ErrDocTestCliConfig message)])))]
     [(DocNoString)
-      (if (string-vec-is-empty? input-paths)
-        (OkDocTestCliConfig
-          (DocTestCliPackageConfig manifest-path has-manifest stdlib-roots))
-        (if has-manifest
-          (ErrDocTestCliConfig
-            "doc: cannot combine input paths with --manifest-path")
-          (OkDocTestCliConfig (DocTestCliFileConfig input-paths stdlib-roots))))]))
+      (if doc-test-prefix-cache-stats
+        (ErrDocTestCliConfig "doc: --prefix-cache-stats requires --batch")
+        (if (string-vec-is-empty? input-paths)
+          (OkDocTestCliConfig
+            (DocTestCliPackageConfig manifest-path has-manifest stdlib-roots))
+          (if has-manifest
+            (ErrDocTestCliConfig
+              "doc: cannot combine input paths with --manifest-path")
+            (OkDocTestCliConfig (DocTestCliFileConfig input-paths stdlib-roots)))))]))
 
 (define (doc-test-parse-options
   [idx : i64]
@@ -351,26 +356,40 @@
                     has-manifest
                     stdlib-roots
                     (DocSomeString (arg (+ idx 1))))]))
-            (if (doc-flag? current)
-              (ErrDocTestCliConfig (string-append "doc: unknown flag " current))
-              (doc-test-parse-options
-                (+ idx 1)
-                count
-                (string-vec-push input-paths current)
-                manifest-path
-                has-manifest
-                stdlib-roots
-                batch-list))))))))
+            (if (string-eq current "--prefix-cache-stats")
+              (begin
+                (set! doc-test-prefix-cache-stats true)
+                (doc-test-parse-options
+                  (+ idx 1)
+                  count
+                  input-paths
+                  manifest-path
+                  has-manifest
+                  stdlib-roots
+                  batch-list))
+              (if (doc-flag? current)
+                (ErrDocTestCliConfig
+                  (string-append "doc: unknown flag " current))
+                (doc-test-parse-options
+                  (+ idx 1)
+                  count
+                  (string-vec-push input-paths current)
+                  manifest-path
+                  has-manifest
+                  stdlib-roots
+                  batch-list)))))))))
 
 (define (doc-test-config-from [base : i64] [count : i64]) : ResultDocTestCliConfig
-  (doc-test-parse-options
-    (+ base 1)
-    count
-    (string-vec-new)
-    ""
-    false
-    (string-vec-new)
-    (DocNoString)))
+  (begin
+    (set! doc-test-prefix-cache-stats false)
+    (doc-test-parse-options
+      (+ base 1)
+      count
+      (string-vec-new)
+      ""
+      false
+      (string-vec-new)
+      (DocNoString))))
 
 (define (doc-test-files-from
   [input-paths : StringVec]
@@ -612,11 +631,22 @@
       [(OkDocTestCliConfig config)
         (match config
           [(DocTestCliFileConfig input-paths stdlib-roots)
-            (doc-test-files
-              input-paths
-              stdlib-roots
-              (> (string-vec-len input-paths) 1)
-              0)]
+            (let
+              [status : i64
+                (begin
+                  (if doc-test-prefix-cache-stats
+                    (tc-prefix-snapshot-cache-clear!)
+                    unit)
+                  (doc-test-files
+                    input-paths
+                    stdlib-roots
+                    (> (string-vec-len input-paths) 1)
+                    0))]
+              (begin
+                (if doc-test-prefix-cache-stats
+                  (tc-prefix-snapshot-cache-print-stats "doc-test-batch")
+                  unit)
+                status))]
           [(DocTestCliPackageConfig manifest-path has-manifest stdlib-roots)
             (doc-test-package manifest-path has-manifest stdlib-roots)])]
       [(ErrDocTestCliConfig message)

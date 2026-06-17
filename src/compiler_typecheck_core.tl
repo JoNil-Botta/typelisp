@@ -401,6 +401,34 @@
     tc-prefix-snapshot-cache-store-count
     (+ tc-prefix-snapshot-cache-store-count 1)))
 
+(define (tc-prefix-snapshot-cache-lookup-count) : i64
+  (+ tc-prefix-snapshot-cache-hit-count tc-prefix-snapshot-cache-miss-count))
+
+(define (tc-prefix-snapshot-cache-hit-rate-per-mille) : i64
+  (let
+    [lookups : i64 (tc-prefix-snapshot-cache-lookup-count)]
+    (if (= lookups 0)
+      0
+      (/ (* tc-prefix-snapshot-cache-hit-count 1000) lookups))))
+
+(define (tc-prefix-snapshot-cache-stats-line [label : String]) : String
+  (str-cat
+    "typecheck-prefix-cache|"
+    label
+    "|hits="
+    (int->string tc-prefix-snapshot-cache-hit-count)
+    "|misses="
+    (int->string tc-prefix-snapshot-cache-miss-count)
+    "|stores="
+    (int->string tc-prefix-snapshot-cache-store-count)
+    "|lookups="
+    (int->string (tc-prefix-snapshot-cache-lookup-count))
+    "|hit-rate-per-mille="
+    (int->string (tc-prefix-snapshot-cache-hit-rate-per-mille))))
+
+(define (tc-prefix-snapshot-cache-print-stats [label : String]) : unit
+  (print-error (string-append (tc-prefix-snapshot-cache-stats-line label) "\n")))
+
 (define (tc-prefix-snapshot-cache-lookup-from [key : String] [index : i64]) : TcPrefixSnapshotLookup
   (if (>= index tc-prefix-snapshot-cache-capacity)
     (TcPrefixSnapshotMiss)

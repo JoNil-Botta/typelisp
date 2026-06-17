@@ -172,7 +172,7 @@ Options:
 (define (cli-test-help-text) : String
   "Usage:
     typelisp test [--check] [<file.tl>] [--manifest-path <typelisp.pkg>] [--target <target>] [--opt-level <0|1|2>] [--stdlib-root <dir>...]
-    typelisp test --check --batch <inputs.txt> [--target <target>] [--stdlib-root <dir>...]
+    typelisp test --check --batch <inputs.txt> [--target <target>] [--stdlib-root <dir>...] [--prefix-cache-stats]
 
 Summary:
     Run or typecheck inline `(test ...)` declarations.
@@ -180,6 +180,7 @@ Summary:
 Options:
     --check                        Typecheck inline tests without running them
     --batch <file>                 Read newline-separated inline-test input paths for --check
+    --prefix-cache-stats           Print typecheck prefix-cache stats for a batch
     --manifest-path <file>         Defaults to nearest typelisp.pkg upward when no file is provided
     --target <target>              linux-x86_64 or windows-x86_64
     --opt-level <0|1|2>            Select selfhost test harness optimization
@@ -191,6 +192,7 @@ Options:
     typelisp doc <file.tl> [<out.md>|-o <out.md>] [--stdlib-root <dir>...]
     typelisp doc -o <out.md> [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]
     typelisp doc --test [<file.tl>...] [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]
+    typelisp doc --test --batch <inputs.txt> [--stdlib-root <dir>...] [--prefix-cache-stats]
     typelisp doc --html <file.tl> [<imported.tl>...] <out.html>
     typelisp doc --load <file.tl> <out.md> [--stdlib-root <dir>...]
 
@@ -200,6 +202,8 @@ Summary:
 Options:
     -o <out.md>                    Output markdown path
     --test                         Check TypeLisp fenced examples in docs
+    --batch <file>                 Read newline-separated doc-test input paths
+    --prefix-cache-stats           Print typecheck prefix-cache stats for a batch
     --manifest-path <file>         Defaults to nearest typelisp.pkg upward for package docs
     --stdlib-root <dir>            Search root for stdlib/... imports
 ")
@@ -207,7 +211,7 @@ Options:
 (define (cli-compile-help-text) : String
   "Usage:
     typelisp compile <file.tl> [-o <file>] [--emit-ir] [--pic] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...]
-    typelisp compile --batch <input-output-list> [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...]
+    typelisp compile --batch <input-output-list> [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [--prefix-cache-stats]
 
 Summary:
     Generate assembly or an IR summary.
@@ -215,6 +219,7 @@ Summary:
 Options:
     -o <file>                      Output assembly or IR file
     --batch <file>                 Read input|output pairs and compile them in one process
+    --prefix-cache-stats           Print typecheck prefix-cache stats for a batch
     --emit-ir                      Emit intermediate representation
     --pic                          Emit runtime-free no-entry PIC assembly and <output>.fixups
     --target <target>              linux-x86_64 or windows-x86_64

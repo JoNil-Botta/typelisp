@@ -29,6 +29,32 @@
   (OkCompilerDriverLowered CompilerIrProgram CompilerSourceSpans)
   (ErrCompilerDriverLowered CompilerDiagnostic))
 
+(defstruct CompilerDriverState
+  (expr-pool AstExprNodePoolState)
+  (type-pool AstTypeNodePoolState)
+  (session-cache-enabled bool))
+
+(define (compiler-driver-state-new) : CompilerDriverState
+  (CompilerDriverState
+    (ast-expr-node-pool-state-create 1)
+    (ast-type-node-pool-state-create 1)
+    false))
+
+(define (compiler-driver-state-session-cache-enabled?
+  [state : CompilerDriverState]) : bool
+  (struct-get state session-cache-enabled))
+
+(define (compiler-driver-state-session-cache-enable
+  [state : CompilerDriverState]) : CompilerDriverState
+  (begin
+    ;; The loader cache implementation is still process-global; keep the
+    ;; compatibility cache enabled while the compile CLI threads job state.
+    (compiler-load-session-cache-enable!)
+    (CompilerDriverState
+      (struct-get state expr-pool)
+      (struct-get state type-pool)
+      true)))
+
 (define compiler-driver-runtime-prelude-cache-capacity : i64
   16)
 (define compiler-driver-runtime-prelude-cache : (Array
@@ -129,6 +155,16 @@
     ;; #2596: drop the previous entry's lowered IR (kept alive through the
     ;; backend for opt level 0 compiles).
     (lower-ir-arena-release!)))
+
+(define (compiler-driver-state-reset-file-state! [state : CompilerDriverState]) : unit
+  (begin
+    ;; #2919 state boundary: compile jobs now carry an explicit driver state.
+    ;; Parser/typechecker/lowerer hot paths still use compatibility globals
+    ;; until the remaining node-pool and loader migrations are complete.
+    (if (compiler-driver-state-session-cache-enabled? state)
+      (compiler-load-session-cache-enable!)
+      unit)
+    (compiler-driver-reset-file-state!)))
 
 (cfg
   compile-profile

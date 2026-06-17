@@ -676,6 +676,7 @@
             1)))]))
 
 (define (compile-cli-run-compile-file
+  [state : CompilerDriverState]
   [input-path : String]
   [output-path : String]
   [emit-ir : bool]
@@ -691,7 +692,7 @@
       (compile-cli-typecheck-doctests input-path stdlib-roots)]
     (if (= doctest-status 0)
       (begin
-        (compiler-driver-reset-file-state!)
+        (compiler-driver-state-reset-file-state! state)
         (let
           [cfgs : SymI64Env (compile-cli-cfg-names-to-env cfg-names)]
           (if emit-ir
@@ -823,29 +824,8 @@
                       [(ErrCompileCliBatchEntryList status)
                         (ErrCompileCliBatchEntryList status)])))))))))))
 
-(define (compile-cli-run-batch-entry
-  [input-path : String]
-  [output-path : String]
-  [has-target : bool]
-  [target : CompilerBackendTarget]
-  [stdlib-roots : StringVec]
-  [cfg-names : StringVec]
-  [backend-mode : CompilerBackendMode]
-  [opt-level : i64]) : i64
-  (with-scratch
-    (compile-cli-run-compile-file
-      input-path
-      output-path
-      false
-      false
-      has-target
-      target
-      stdlib-roots
-      cfg-names
-      backend-mode
-      opt-level)))
-
 (define (compile-cli-run-batch-entries
+  [state : CompilerDriverState]
   [entries : CompileCliBatchEntryList]
   [has-target : bool]
   [target : CompilerBackendTarget]
@@ -862,17 +842,22 @@
         ;; until the owning arena is destroyed (#2441), so long batches must
         ;; destroy the entry arena to avoid inter-entry growth.
         [status : i64
-          (compile-cli-run-batch-entry
-            input-path
-            output-path
-            has-target
-            target
-            stdlib-roots
-            cfg-names
-            backend-mode
-            opt-level)]
+          (with-scratch
+            (compile-cli-run-compile-file
+              state
+              input-path
+              output-path
+              false
+              false
+              has-target
+              target
+              stdlib-roots
+              cfg-names
+              backend-mode
+              opt-level))]
         (if (= status 0)
           (compile-cli-run-batch-entries
+            state
             (box-get rest)
             has-target
             target
@@ -886,6 +871,7 @@
             status)))]))
 
 (define (compile-cli-run-batch-from
+  [state : CompilerDriverState]
   [text : String]
   [start : i64]
   [line : i64]
@@ -902,6 +888,7 @@
     (string-length text))
     [(OkCompileCliBatchEntryList entries)
       (compile-cli-run-batch-entries
+        state
         entries
         has-target
         target
@@ -912,8 +899,9 @@
     [(ErrCompileCliBatchEntryList status) status]))
 
 (define (compile-cli-run-batch [config : CompileCliBatchConfig]) : i64
-  (begin
-    (compiler-load-session-cache-enable!)
+  (let
+    [state : CompilerDriverState
+      (compiler-driver-state-session-cache-enable (compiler-driver-state-new))]
     (match config
       [(CompileCliBatchConfig
           batch-path
@@ -931,6 +919,7 @@
                 (tc-prefix-snapshot-cache-clear!)
                 unit)
               (compile-cli-run-batch-from
+                state
                 (read-file batch-path)
                 0
                 1
@@ -962,6 +951,7 @@
             backend-mode
             opt-level)
           (compile-cli-run-compile-file
+            (compiler-driver-state-new)
             input-path
             output-path
             emit-ir

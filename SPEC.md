@@ -84,9 +84,10 @@ transitional surface:
   classification, not traits (#2590): a value may cross threads only when
   owned by an arena whose lifetime spans both threads. Section 6.5 specifies
   the structural transfer/share model, while sections 6.2 and 7.3 specify the
-  v1 atomic arena runtime/source contract; until the runtime and checker slices
-  land, the raw `stdlib/thread.tl` caveat about unsynchronized allocation
-  remains implementation behavior.
+  v1 atomic arena runtime/source contract. The raw `stdlib/thread.tl` substrate
+  still exposes integer-address escape hatches for unsafe code, while the
+  checker-visible safe APIs use the structural transfer/share rules for the
+  landed surfaces and keep aggregate transfer extensions split into follow-ups.
 - **Tests.** Inline tests and doctests are typechecked on every build of the
   owning package and generate no code outside the test runner (#2587/#2594);
   the checked test surface is exactly the package's own sources.
@@ -5364,9 +5365,10 @@ evaluates `arena-expr`, saves the calling thread's current arena, installs the
 target for `body`, then restores the saved arena without marking, rewinding,
 destroying, or cloning. With #2591, "current arena" is thread-local, so selecting
 an atomic arena in one thread does not change another thread's default arena.
-Before the atomic-arena runtime lands, threaded allocation through `arena-set!`
-remains an unsafe manual operation because ordinary first-class arenas are still
-single-threaded allocation targets.
+The lower-level `arena-set!` helper remains an unsafe manual operation for code
+that cannot express its dynamic allocation extent with `in-arena`; callers must
+prove that the selected arena is valid for the current thread and that later
+reset/destroy operations cannot invalidate live handles.
 
 Values allocated while an atomic arena is current are owned by that atomic arena
 for thread-safety reasoning, even where the transitional lowerable type remains

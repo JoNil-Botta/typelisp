@@ -16,8 +16,10 @@
 ;#   (str-cat "hello, " name "!"))
 ;# ```
 (import "string.tl")
+(cfg test (import "test.tl"))
+(cfg test (import "hashmap.tl"))
 
-(module stdlib.str-cat)
+(cfg (not test) (module stdlib.str-cat))
 
 ;: Internal recursive pack step used by `str-cat` expansion.
 ;:
@@ -79,3 +81,77 @@
 (export (macro str-cat-pack))
 
 (export (macro str-cat))
+
+;; Inline coverage migrated from stdlib/tests/str_cat_api.tl (#3082).
+(cfg
+  test
+  (define (str-cat-api-eq [got : String] [want : String]) : i64
+    (if (string-eq got want)
+      1
+      0)))
+
+(cfg
+  test
+  (define (str-cat-api-checks) : i64
+    (let
+      [a : String "foo"]
+      [b : String "bar"]
+      [empty : String ""]
+      [score : i64 0]
+      (begin
+        (set! score (+ score (str-cat-api-eq (str-cat) "")))
+        (set! score (+ score (str-cat-api-eq (str-cat a) "foo")))
+        (set! score (+ score (str-cat-api-eq (str-cat a b) "foobar")))
+        (set! score (+ score (str-cat-api-eq (str-cat b "!" b) "bar!bar")))
+        (set! score (+ score (str-cat-api-eq (str-cat empty a empty) "foo")))
+        (set!
+          score
+          (+
+            score
+            (str-cat-api-eq (str-cat "1" "2" "3" "4" "5" "6" "7") "1234567")))
+        ;; A str-cat-produced value remains a valid operand to another flat
+        ;; str-cat call.
+        (let
+          [middle : String (str-cat "-" b "-")]
+          (set!
+            score
+            (+ score (str-cat-api-eq (str-cat a middle a) "foo-bar-foo"))))
+        (let
+          [__tl_str_cat_parts : String "baz"]
+          (set!
+            score
+            (+
+              score
+              (str-cat-api-eq
+                (str-cat
+                  __tl_str_cat_parts
+                  "!"
+                  __tl_str_cat_parts
+                  "!"
+                  "q"
+                  "!"
+                  "r")
+                "baz!baz!q!r"))))
+        score))))
+
+(cfg
+  test
+  (define (str-cat-api-generated-ok) : bool
+    (>=
+      (i64-i64-map-capacity (i64-i64-map-put (i64-i64-map-with-capacity 8) 1 7))
+      8)))
+
+(cfg
+  test
+  (define (str-cat-test-main) : i64
+    (if (= (str-cat-api-checks) 8)
+      (if (str-cat-api-generated-ok)
+        42
+        1)
+      1)))
+
+(cfg
+  test
+  (test
+    str-cat-api
+    (assert-i64-eq (str-cat-test-main) 42 "str-cat-api fixture result")))

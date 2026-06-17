@@ -226,22 +226,16 @@ stdlib_test_manifest() {
     cat <<'EOF'
 stdlib/tests/arena_atomic_api.tl|42|-|-|-|requires-stage0-symbol:tl_arena_make_atomic
 stdlib/tests/arena_patterns.tl|42|-|-|-|requires-stage0-symbol:with-escape
-stdlib/tests/str_cat_api.tl|42|-|-|-
-stdlib/tests/string_edges.tl|42|-|-
 stdlib/tests/io_stdio_lines.tl|42|printf:stdout-line\n|printf:stderr-line\n|printf:alpha\n\nomega
 stdlib/tests/io_stdio_bytes.tl|42|-|-|literal:abcdef
 stdlib/tests/cpu_api.tl|42|-|-
-stdlib/tests/list_api.tl|42|-|-
 stdlib/tests/msvc_api.tl|42|-|-
 stdlib/tests/process_api.tl|42|-|-|-|requires-stage0-symbol:tl_process_start,tl_process_wait
 stdlib/tests/process_runtime.tl|42|-|-
 stdlib/tests/profile_api.tl|42|-|-
-stdlib/tests/sort_api.tl|42|-|-
 stdlib/tests/sync_api.tl|42|-|-
 stdlib/tests/thread_api.tl|42|-|-
 stdlib/tests/time_api.tl|42|-|-
-stdlib/tests/text_buf_api.tl|42|-|-
-stdlib/tests/vector_api.tl|42|-|-
 stdlib/tests/test_assert_failure.tl|134|-|literal:stdlib test failure message
 EOF
 }
@@ -279,7 +273,6 @@ stdlib/tests/hashmap_mut_entry_resize_live.tl|fail|typecheck: cannot assign to b
 stdlib/tests/hashmap_mut_entry_value_borrow_live.tl|fail|typecheck: cannot mutably borrow borrowed place `m.slots`
 stdlib/tests/process_borrowed_escape.tl|fail|typecheck: reference value would escape lexical scope
 stdlib/tests/string_caller_result_escape.tl|fail|typecheck: reference value would escape lexical scope
-stdlib/tests/vector_slice_check.tl|pass|-
 stdlib/tests/vector_slice_escape.tl|fail|typecheck: reference value would escape lexical scope
 EOF
 }

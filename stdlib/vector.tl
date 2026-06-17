@@ -585,3 +585,923 @@
   (:generated vector-family string-vec-contains? "String")
   (define (string-vec-contains? [v : StringVec] [x : String]) : bool
     (string-vec-contains-from? v x 0)))
+
+;; Inline coverage migrated from stdlib/tests/vector_api.tl (#3082).
+(cfg test (import "test.tl"))
+
+(cfg
+  test
+  (define (vector-test-assert-owned-string-eq
+    [actual : String]
+    [expected : String]
+    [message : String]) : unit
+    (assert-string-eq (& actual) (& expected) message)))
+
+(cfg
+  test
+  (define (vector-test-pop-ok? [p : I64VecPop]) : bool
+    (match p
+      [(I64VecPopOk _ _) true]
+      [(I64VecPopEmpty) false])))
+
+(cfg
+  test
+  (define (vector-test-pop-value-or [p : I64VecPop] [fallback : i64]) : i64
+    (match p
+      [(I64VecPopOk value _) value]
+      [(I64VecPopEmpty) fallback])))
+
+(cfg
+  test
+  (define (vector-test-pop-vec-or [p : I64VecPop] [fallback : I64Vec]) : I64Vec
+    (match p
+      [(I64VecPopOk _ rest) rest]
+      [(I64VecPopEmpty) fallback])))
+
+(cfg
+  test
+  (define (vector-test-string-pop-ok? [p : StringVecPop]) : bool
+    (match p
+      [(StringVecPopOk _ _) true]
+      [(StringVecPopEmpty) false])))
+
+(cfg
+  test
+  (define (vector-test-string-pop-value-or
+    [p : StringVecPop]
+    [fallback : String]) : String
+    (match p
+      [(StringVecPopOk value _) value]
+      [(StringVecPopEmpty) fallback])))
+
+(cfg
+  test
+  (define (vector-test-string-pop-vec-or
+    [p : StringVecPop]
+    [fallback : StringVec]) : StringVec
+    (match p
+      [(StringVecPopOk _ rest) rest]
+      [(StringVecPopEmpty) fallback])))
+
+(cfg
+  test
+  (defenum VecApiTag
+    (VecApiTagA i64)
+    (VecApiTagB i64)))
+
+(cfg
+  test
+  (defstruct VecApiPoint
+    (x i64)
+    (y i64)))
+
+(cfg
+  test
+  (define (vec-api-tag-score [tag : VecApiTag]) : i64
+    (match tag
+      [(VecApiTagA value) value]
+      [(VecApiTagB value) (+ value 100)])))
+
+(cfg
+  test
+  (define (vec-api-point-score [point : VecApiPoint]) : i64
+    (+ (struct-get point x) (* (struct-get point y) 10))))
+
+(cfg
+  test
+  (define (vec-api-fold-decimal [acc : i64] [value : i64]) : i64
+    (+ (* acc 10) value)))
+
+(cfg
+  test
+  (define (vec-api-double [value : i64]) : i64
+    (* value 2)))
+
+(cfg
+  test
+  (comptime-decl
+    (:generated vector-family VecApiPointVec "VecApiPoint")
+    (defstruct VecApiPointVec
+      (slots (Array VecApiPoint))
+      (len i64))))
+
+(cfg
+  test
+  (comptime-decl
+    (:generated vector-family VecApiPointVecPop "VecApiPoint")
+    (defenum VecApiPointVecPop
+      (VecApiPointVecPopEmpty)
+      (VecApiPointVecPopOk VecApiPoint VecApiPointVec))))
+
+(cfg
+  test
+  (comptime-decl
+    (:generated vector-family vec-api-point-vec-slots "VecApiPoint")
+    (define (vec-api-point-vec-slots [v : VecApiPointVec]) : (Array VecApiPoint)
+      (struct-get v slots))))
+
+(cfg
+  test
+  (comptime-decl
+    (:generated vector-family vec-api-point-vec-len "VecApiPoint")
+    (define (vec-api-point-vec-len [v : VecApiPointVec]) : i64
+      (struct-get v len))))
+
+(cfg
+  test
+  (comptime-decl
+    (:generated vector-family vec-api-point-vec-capacity "VecApiPoint")
+    (define (vec-api-point-vec-capacity [v : VecApiPointVec]) : i64
+      (array-length (struct-get v slots)))))
+
+(cfg
+  test
+  (comptime-decl
+    (:generated vector-family vec-api-point-vec-with-capacity "VecApiPoint")
+    (define (vec-api-point-vec-with-capacity [capacity : i64]) : VecApiPointVec
+      (let
+        [cap : i64
+          (if (< capacity 1)
+            1
+            capacity)]
+        (VecApiPointVec (make-array VecApiPoint cap) 0)))))
+
+(cfg
+  test
+  (comptime-decl
+    (:generated vector-family vec-api-point-vec-get "VecApiPoint")
+    (define (vec-api-point-vec-get
+      [v : VecApiPointVec]
+      [index : i64]
+      [fallback : VecApiPoint]) : VecApiPoint
+      (if (if (>= index 0)
+        (< index (vec-api-point-vec-len v))
+        false)
+        (array-ref (vec-api-point-vec-slots v) index)
+        fallback))))
+
+(cfg
+  test
+  (comptime-decl
+    (:generated vector-family vec-api-point-vec-set! "VecApiPoint")
+    (define (vec-api-point-vec-set!
+      [v : VecApiPointVec]
+      [index : i64]
+      [value : VecApiPoint]) : VecApiPointVec
+      (begin
+        (if (if (>= index 0)
+          (< index (vec-api-point-vec-len v))
+          false)
+          (array-set! (vec-api-point-vec-slots v) index value)
+          unit)
+        v))))
+
+(cfg
+  test
+  (comptime-decl
+    (:generated vector-family vec-api-point-vec-copy-range "VecApiPoint")
+    (define (vec-api-point-vec-copy-range
+      [dst : (Array VecApiPoint)]
+      [src : (Array VecApiPoint)]
+      [index : i64]
+      [count : i64]) : unit
+      (if (>= index count)
+        unit
+        (begin
+          (array-set! dst index (array-ref src index))
+          (vec-api-point-vec-copy-range dst src (+ index 1) count))))))
+
+(cfg
+  test
+  (comptime-decl
+    (:generated vector-family vec-api-point-vec-grow "VecApiPoint")
+    (define (vec-api-point-vec-grow [v : VecApiPointVec]) : VecApiPointVec
+      (let
+        [n : i64 (vec-api-point-vec-len v)]
+        [bigger : (Array VecApiPoint)
+          (make-array VecApiPoint (* (vec-api-point-vec-capacity v) 2))]
+        (begin
+          (vec-api-point-vec-copy-range bigger (vec-api-point-vec-slots v) 0 n)
+          (set! (struct-get v slots) bigger)
+          v)))))
+
+(cfg
+  test
+  (comptime-decl
+    (:generated vector-family vec-api-point-vec-push "VecApiPoint")
+    (define (vec-api-point-vec-push [v : VecApiPointVec] [value : VecApiPoint]) : VecApiPointVec
+      (if (< (vec-api-point-vec-len v) (vec-api-point-vec-capacity v))
+        (let
+          [slots : (Array VecApiPoint) (vec-api-point-vec-slots v)]
+          [index : i64 (vec-api-point-vec-len v)]
+          (begin
+            (array-set! slots index value)
+            (set! (struct-get v len) (+ index 1))
+            v))
+        (vec-api-point-vec-push (vec-api-point-vec-grow v) value)))))
+
+(cfg
+  test
+  (comptime-decl
+    (:generated vector-family vec-api-point-vec-pop "VecApiPoint")
+    (define (vec-api-point-vec-pop [v : VecApiPointVec]) : VecApiPointVecPop
+      (if (<= (vec-api-point-vec-len v) 0)
+        (VecApiPointVecPopEmpty)
+        (let
+          [last-index : i64 (- (vec-api-point-vec-len v) 1)]
+          [value : VecApiPoint
+            (array-ref (vec-api-point-vec-slots v) last-index)]
+          (begin
+            (set! (struct-get v len) last-index)
+            (VecApiPointVecPopOk value v)))))))
+
+(cfg
+  test
+  (comptime-decl
+    (:generated vector-family vec-api-point-vec-to-array "VecApiPoint")
+    (define (vec-api-point-vec-to-array [v : VecApiPointVec]) : (Array
+        VecApiPoint)
+      (let
+        [n : i64 (vec-api-point-vec-len v)]
+        [out : (Array VecApiPoint) (make-array VecApiPoint n)]
+        (begin
+          (vec-api-point-vec-copy-range out (vec-api-point-vec-slots v) 0 n)
+          out)))))
+
+(cfg
+  test
+  (comptime-decl
+    (:generated vector-family vec-api-point-vec-score-from "VecApiPoint")
+    (define (vec-api-point-vec-score-from
+      [v : VecApiPointVec]
+      [index : i64]
+      [acc : i64]) : i64
+      (if (>= index (vec-api-point-vec-len v))
+        acc
+        (vec-api-point-vec-score-from
+          v
+          (+ index 1)
+          (+
+            acc
+            (let
+              [point : VecApiPoint
+                (array-ref (vec-api-point-vec-slots v) index)]
+              (+ (struct-get point x) (* (struct-get point y) 10)))))))))
+
+(cfg
+  test
+  (comptime-decl
+    (:generated vector-family vec-api-point-vec-score "VecApiPoint")
+    (define (vec-api-point-vec-score [v : VecApiPointVec]) : i64
+      (vec-api-point-vec-score-from v 0 0))))
+
+(cfg
+  test
+  (comptime-decl
+    (:generated vector-family VecApiTagVec "VecApiTag")
+    (defstruct VecApiTagVec
+      (slots (Array VecApiTag))
+      (len i64))))
+
+(cfg
+  test
+  (comptime-decl
+    (:generated vector-family VecApiTagVecPop "VecApiTag")
+    (defenum VecApiTagVecPop
+      (VecApiTagVecPopEmpty)
+      (VecApiTagVecPopOk VecApiTag VecApiTagVec))))
+
+(cfg
+  test
+  (comptime-decl
+    (:generated vector-family vec-api-tag-vec-slots "VecApiTag")
+    (define (vec-api-tag-vec-slots [v : VecApiTagVec]) : (Array VecApiTag)
+      (struct-get v slots))))
+
+(cfg
+  test
+  (comptime-decl
+    (:generated vector-family vec-api-tag-vec-len "VecApiTag")
+    (define (vec-api-tag-vec-len [v : VecApiTagVec]) : i64
+      (struct-get v len))))
+
+(cfg
+  test
+  (comptime-decl
+    (:generated vector-family vec-api-tag-vec-capacity "VecApiTag")
+    (define (vec-api-tag-vec-capacity [v : VecApiTagVec]) : i64
+      (array-length (struct-get v slots)))))
+
+(cfg
+  test
+  (comptime-decl
+    (:generated vector-family vec-api-tag-vec-with-capacity "VecApiTag")
+    (define (vec-api-tag-vec-with-capacity [capacity : i64]) : VecApiTagVec
+      (let
+        [cap : i64
+          (if (< capacity 1)
+            1
+            capacity)]
+        (VecApiTagVec (make-array VecApiTag cap) 0)))))
+
+(cfg
+  test
+  (comptime-decl
+    (:generated vector-family vec-api-tag-vec-get "VecApiTag")
+    (define (vec-api-tag-vec-get
+      [v : VecApiTagVec]
+      [index : i64]
+      [fallback : VecApiTag]) : VecApiTag
+      (if (if (>= index 0)
+        (< index (vec-api-tag-vec-len v))
+        false)
+        (array-ref (vec-api-tag-vec-slots v) index)
+        fallback))))
+
+(cfg
+  test
+  (comptime-decl
+    (:generated vector-family vec-api-tag-vec-set! "VecApiTag")
+    (define (vec-api-tag-vec-set!
+      [v : VecApiTagVec]
+      [index : i64]
+      [value : VecApiTag]) : VecApiTagVec
+      (begin
+        (if (if (>= index 0)
+          (< index (vec-api-tag-vec-len v))
+          false)
+          (array-set! (vec-api-tag-vec-slots v) index value)
+          unit)
+        v))))
+
+(cfg
+  test
+  (comptime-decl
+    (:generated vector-family vec-api-tag-vec-copy-range "VecApiTag")
+    (define (vec-api-tag-vec-copy-range
+      [dst : (Array VecApiTag)]
+      [src : (Array VecApiTag)]
+      [index : i64]
+      [count : i64]) : unit
+      (if (>= index count)
+        unit
+        (begin
+          (array-set! dst index (array-ref src index))
+          (vec-api-tag-vec-copy-range dst src (+ index 1) count))))))
+
+(cfg
+  test
+  (comptime-decl
+    (:generated vector-family vec-api-tag-vec-grow "VecApiTag")
+    (define (vec-api-tag-vec-grow [v : VecApiTagVec]) : VecApiTagVec
+      (let
+        [n : i64 (vec-api-tag-vec-len v)]
+        [bigger : (Array VecApiTag)
+          (make-array VecApiTag (* (vec-api-tag-vec-capacity v) 2))]
+        (begin
+          (vec-api-tag-vec-copy-range bigger (vec-api-tag-vec-slots v) 0 n)
+          (set! (struct-get v slots) bigger)
+          v)))))
+
+(cfg
+  test
+  (comptime-decl
+    (:generated vector-family vec-api-tag-vec-push "VecApiTag")
+    (define (vec-api-tag-vec-push [v : VecApiTagVec] [value : VecApiTag]) : VecApiTagVec
+      (if (< (vec-api-tag-vec-len v) (vec-api-tag-vec-capacity v))
+        (let
+          [slots : (Array VecApiTag) (vec-api-tag-vec-slots v)]
+          [index : i64 (vec-api-tag-vec-len v)]
+          (begin
+            (array-set! slots index value)
+            (set! (struct-get v len) (+ index 1))
+            v))
+        (vec-api-tag-vec-push (vec-api-tag-vec-grow v) value)))))
+
+(cfg
+  test
+  (comptime-decl
+    (:generated vector-family vec-api-tag-vec-pop "VecApiTag")
+    (define (vec-api-tag-vec-pop [v : VecApiTagVec]) : VecApiTagVecPop
+      (if (<= (vec-api-tag-vec-len v) 0)
+        (VecApiTagVecPopEmpty)
+        (let
+          [last-index : i64 (- (vec-api-tag-vec-len v) 1)]
+          [value : VecApiTag (array-ref (vec-api-tag-vec-slots v) last-index)]
+          (begin
+            (set! (struct-get v len) last-index)
+            (VecApiTagVecPopOk value v)))))))
+
+(cfg
+  test
+  (comptime-decl
+    (:generated vector-family vec-api-tag-vec-to-array "VecApiTag")
+    (define (vec-api-tag-vec-to-array [v : VecApiTagVec]) : (Array VecApiTag)
+      (let
+        [n : i64 (vec-api-tag-vec-len v)]
+        [out : (Array VecApiTag) (make-array VecApiTag n)]
+        (begin
+          (vec-api-tag-vec-copy-range out (vec-api-tag-vec-slots v) 0 n)
+          out)))))
+
+(cfg
+  test
+  (define (vector-test-tag-pop-ok? [p : VecApiTagVecPop]) : bool
+    (match p
+      [(VecApiTagVecPopOk _ _) true]
+      [(VecApiTagVecPopEmpty) false])))
+
+(cfg
+  test
+  (define (vector-test-tag-pop-score-or [p : VecApiTagVecPop] [fallback : i64]) : i64
+    (match p
+      [(VecApiTagVecPopOk value _) (vec-api-tag-score value)]
+      [(VecApiTagVecPopEmpty) fallback])))
+
+(cfg
+  test
+  (define (vector-test-tag-pop-vec-or
+    [p : VecApiTagVecPop]
+    [fallback : VecApiTagVec]) : VecApiTagVec
+    (match p
+      [(VecApiTagVecPopOk _ rest) rest]
+      [(VecApiTagVecPopEmpty) fallback])))
+
+(cfg
+  test
+  (define (vector-test-point-pop-ok? [p : VecApiPointVecPop]) : bool
+    (match p
+      [(VecApiPointVecPopOk _ _) true]
+      [(VecApiPointVecPopEmpty) false])))
+
+(cfg
+  test
+  (define (vector-test-point-pop-score-or
+    [p : VecApiPointVecPop]
+    [fallback : i64]) : i64
+    (match p
+      [(VecApiPointVecPopOk value _) (vec-api-point-score value)]
+      [(VecApiPointVecPopEmpty) fallback])))
+
+(cfg
+  test
+  (define (vector-test-point-pop-vec-or
+    [p : VecApiPointVecPop]
+    [fallback : VecApiPointVec]) : VecApiPointVec
+    (match p
+      [(VecApiPointVecPopOk _ rest) rest]
+      [(VecApiPointVecPopEmpty) fallback])))
+
+(cfg
+  test
+  (define (vector-test-main) : i64
+    (begin
+      ;; --- empty vector: len/capacity/is-empty? ---
+      (let
+        [empty : I64Vec (i64-vec-with-capacity 2)]
+        (begin
+          (assert-i64-eq (i64-vec-len empty) 0 "empty len 0")
+          (assert-i64-eq (i64-vec-capacity empty) 2 "empty capacity 2")
+          (assert-true (i64-vec-is-empty? empty) "empty is-empty?")
+          ;; out-of-range reads fall back
+          (assert-i64-eq (i64-vec-get empty 0 -1) -1 "empty get 0 fallback")
+          (assert-i64-eq (i64-vec-last empty -1) -1 "empty last fallback")))
+      ;; --- non-positive capacity is clamped to 1 ---
+      (assert-i64-eq
+        (i64-vec-capacity (i64-vec-with-capacity 0))
+        1
+        "zero capacity clamps to 1")
+      (assert-true (>= (i64-vec-capacity (i64-vec-new)) 1) "new has capacity")
+      ;; --- push within capacity: no growth ---
+      (let
+        [v2 : I64Vec
+          (i64-vec-push (i64-vec-push (i64-vec-with-capacity 2) 10) 20)]
+        (begin
+          (assert-i64-eq (i64-vec-len v2) 2 "two pushes -> len 2")
+          (assert-i64-eq (i64-vec-capacity v2) 2 "still capacity 2")
+          (assert-i64-eq (i64-vec-get v2 0 -1) 10 "get 0 -> 10")
+          (assert-i64-eq (i64-vec-get v2 1 -1) 20 "get 1 -> 20")
+          (assert-i64-eq (i64-vec-last v2 -1) 20 "last -> 20")
+          ;; index at len and a negative index both fall back
+          (assert-i64-eq (i64-vec-get v2 2 -1) -1 "get at len fallback")
+          (assert-i64-eq (i64-vec-get v2 -1 -1) -1 "get negative fallback")
+          ;; --- push past capacity: grows, preserves prefix ---
+          (let
+            [v3 : I64Vec (i64-vec-push v2 30)]
+            (begin
+              (assert-i64-eq (i64-vec-len v3) 3 "third push -> len 3")
+              (assert-i64-eq (i64-vec-capacity v3) 4 "grew to capacity 4")
+              (assert-i64-eq
+                (i64-vec-get v3 0 -1)
+                10
+                "prefix preserved: 0 -> 10")
+              (assert-i64-eq
+                (i64-vec-get v3 1 -1)
+                20
+                "prefix preserved: 1 -> 20")
+              (assert-i64-eq (i64-vec-get v3 2 -1) 30 "new element: 2 -> 30")
+              (assert-i64-eq (i64-vec-last v3 -1) 30 "last -> 30")
+              ;; --- set! mutates in place within bounds ---
+              (let
+                [v4 : I64Vec (i64-vec-set! v3 1 99)]
+                (begin
+                  (assert-i64-eq (i64-vec-get v4 1 -1) 99 "set! 1 -> 99")
+                  (assert-i64-eq (i64-vec-len v4) 3 "set! keeps len")
+                  ;; out-of-range set! is a no-op
+                  (i64-vec-set! v4 5 7)
+                  (assert-i64-eq
+                    (i64-vec-get v4 5 -1)
+                    -1
+                    "set! out of range no-op")
+                  ;; --- pop: last element + shrunk vector ---
+                  (let
+                    [popped : I64VecPop (i64-vec-pop v4)]
+                    (begin
+                      (assert-true (vector-test-pop-ok? popped) "pop ok")
+                      (assert-i64-eq
+                        (vector-test-pop-value-or popped -1)
+                        30
+                        "pop value -> 30")
+                      (let
+                        [rest : I64Vec (vector-test-pop-vec-or popped v4)]
+                        (begin
+                          (assert-i64-eq (i64-vec-len rest) 2 "pop shrinks len")
+                          (assert-i64-eq
+                            (i64-vec-last rest -1)
+                            99
+                            "rest last -> 99")))))))))))
+      ;; --- returned handles can be threaded through mutable locals ---
+      (let
+        [mut : I64Vec (i64-vec-with-capacity 1)]
+        (begin
+          (set! mut (i64-vec-push mut 41))
+          (assert-i64-eq (i64-vec-len mut) 1 "mutable push len 1")
+          (assert-i64-eq (i64-vec-capacity mut) 1 "mutable push no growth")
+          (set! mut (i64-vec-push mut 42))
+          (assert-i64-eq (i64-vec-len mut) 2 "mutable growth push len 2")
+          (assert-i64-eq (i64-vec-capacity mut) 2 "mutable growth capacity 2")
+          (set! mut (i64-vec-set! mut 0 40))
+          (assert-i64-eq (i64-vec-get mut 0 -1) 40 "mutable set after push")
+          (set! mut (i64-vec-reverse! mut))
+          (assert-i64-eq (i64-vec-get mut 0 -1) 42 "mutable reverse first")
+          (assert-i64-eq (i64-vec-get mut 1 -1) 40 "mutable reverse second")
+          (match (i64-vec-pop mut)
+            [(I64VecPopOk value rest)
+              (begin
+                (set! mut rest)
+                (assert-i64-eq value 40 "mutable pop value")
+                (assert-i64-eq (i64-vec-len mut) 1 "mutable pop len 1")
+                (assert-i64-eq (i64-vec-last mut -1) 42 "mutable pop rest last"))]
+            [(I64VecPopEmpty) (assert-true false "mutable pop should be ok")])))
+      ;; --- pop on an empty vector is Empty ---
+      (let
+        [pe : I64VecPop (i64-vec-pop (i64-vec-with-capacity 1))]
+        (begin
+          (assert-true (not (vector-test-pop-ok? pe)) "empty pop not ok")
+          (assert-i64-eq
+            (vector-test-pop-value-or pe -1)
+            -1
+            "empty pop value fallback")))
+      ;; --- from-array / to-array round-trip (#1212) ---
+      (let
+        [src : (Array i64) (make-array i64 3)]
+        (begin
+          (array-set! src 0 5)
+          (array-set! src 1 6)
+          (array-set! src 2 7)
+          ;; from-array copies the live prefix [0, count)
+          (let
+            [fv : I64Vec (i64-vec-from-array src 3)]
+            (begin
+              (assert-i64-eq (i64-vec-len fv) 3 "from-array len 3")
+              (assert-i64-eq (i64-vec-get fv 0 -1) 5 "from-array[0] = 5")
+              (assert-i64-eq (i64-vec-get fv 2 -1) 7 "from-array[2] = 7")
+              ;; sum + contains? over the live elements
+              (assert-i64-eq (i64-vec-sum fv) 18 "sum 5+6+7 = 18")
+              (assert-true (i64-vec-contains? fv 6) "contains 6")
+              (assert-false (i64-vec-contains? fv 99) "does not contain 99")
+              ;; to-array snapshot has exactly len elements and is independent
+              (let
+                [snap : (Array i64) (i64-vec-to-array fv)]
+                (begin
+                  (assert-i64-eq (array-length snap) 3 "to-array length = len")
+                  (assert-i64-eq (array-ref snap 1) 6 "to-array[1] = 6")
+                  ;; mutating the snapshot does not affect the vector
+                  (array-set! snap 1 0)
+                  (assert-i64-eq
+                    (i64-vec-get fv 1 -1)
+                    6
+                    "vector unaffected by snapshot mutation")))
+              ;; reverse! reverses the live prefix in place
+              (let
+                [rv : I64Vec (i64-vec-reverse! fv)]
+                (begin
+                  (assert-i64-eq (i64-vec-get rv 0 -1) 7 "reverse![0] = 7")
+                  (assert-i64-eq (i64-vec-get rv 2 -1) 5 "reverse![2] = 5")
+                  (assert-i64-eq (i64-vec-sum rv) 18 "reverse keeps sum")))))
+          ;; from-array with non-positive count yields an empty, growable vector
+          (let
+            [ev : I64Vec (i64-vec-from-array src 0)]
+            (begin
+              (assert-true (i64-vec-is-empty? ev) "from-array 0 is empty")
+              (assert-true
+                (>= (i64-vec-capacity ev) 1)
+                "empty from-array still growable")
+              ;; extend pushes the first count elements (growing as needed)
+              (let
+                [xv : I64Vec (i64-vec-extend ev src 3)]
+                (begin
+                  (assert-i64-eq (i64-vec-len xv) 3 "extend len 3")
+                  (assert-i64-eq (i64-vec-get xv 0 -1) 5 "extend[0] = 5")
+                  (assert-i64-eq (i64-vec-get xv 2 -1) 7 "extend[2] = 7")
+                  (assert-i64-eq (i64-vec-sum xv) 18 "extend sum 18")))))))
+      ;; --- I64Vec higher-order fold/map helpers (#2067) ---
+      (let
+        [src : (Array i64) (make-array i64 5)]
+        (begin
+          (array-set! src 0 1)
+          (array-set! src 1 2)
+          (array-set! src 2 3)
+          (array-set! src 3 4)
+          (array-set! src 4 5)
+          (let
+            [hv : I64Vec (i64-vec-from-array src 5)]
+            (begin
+              (assert-i64-eq
+                (i64-vec-fold hv 0 vec-api-fold-decimal)
+                12345
+                "fold named function preserves order")
+              (assert-i64-eq
+                (i64-vec-fold-from hv 2 10 vec-api-fold-decimal)
+                10345
+                "fold-from starts at index")
+              (assert-i64-eq
+                (i64-vec-fold (i64-vec-new) 77 vec-api-fold-decimal)
+                77
+                "fold empty returns initial")
+              (let
+                [empty-mapped : I64Vec
+                  (i64-vec-map (i64-vec-new) vec-api-double)]
+                (begin
+                  (assert-i64-eq (i64-vec-len empty-mapped) 0 "map empty len 0")
+                  (assert-true
+                    (>= (i64-vec-capacity empty-mapped) 1)
+                    "map empty remains growable")))
+              (let
+                [doubled : I64Vec (i64-vec-map hv vec-api-double)]
+                (begin
+                  (assert-i64-eq (i64-vec-len doubled) 5 "map len 5")
+                  (assert-i64-eq
+                    (i64-vec-capacity doubled)
+                    8
+                    "map output grows through push")
+                  (assert-i64-eq (i64-vec-get doubled 0 -1) 2 "map order 0")
+                  (assert-i64-eq (i64-vec-get doubled 4 -1) 10 "map order 4")))
+              (let
+                [suffix : I64Vec (i64-vec-map-from hv 2 vec-api-double)]
+                (begin
+                  (assert-i64-eq (i64-vec-len suffix) 3 "map-from len 3")
+                  (assert-i64-eq
+                    (i64-vec-get suffix 0 -1)
+                    6
+                    "map-from first suffix")
+                  (assert-i64-eq
+                    (i64-vec-get suffix 2 -1)
+                    10
+                    "map-from last suffix")))
+              (let
+                [bias : i64 7]
+                [biased : I64Vec
+                  (i64-vec-map
+                    hv
+                    (lambda ([x : i64]) : i64
+                      (+ x bias)))]
+                (begin
+                  (assert-i64-eq
+                    (i64-vec-get biased 0 -1)
+                    8
+                    "map scalar-capturing lambda first")
+                  (assert-i64-eq
+                    (i64-vec-get biased 4 -1)
+                    12
+                    "map scalar-capturing lambda last")))))))
+      ;; --- generated StringVec: growth, mutation, pop, snapshot, reverse ---
+      (let
+        [sv2 : StringVec
+          (string-vec-push
+            (string-vec-push (string-vec-with-capacity 2) "alpha")
+            "beta")]
+        (begin
+          (assert-i64-eq (string-vec-len sv2) 2 "string two pushes -> len 2")
+          (assert-i64-eq
+            (string-vec-capacity sv2)
+            2
+            "string capacity unchanged")
+          (vector-test-assert-owned-string-eq
+            (string-vec-get sv2 0 "missing")
+            "alpha"
+            "string get 0")
+          (vector-test-assert-owned-string-eq
+            (string-vec-last sv2 "missing")
+            "beta"
+            "string last")
+          (let
+            [sv3 : StringVec (string-vec-push sv2 "gamma")]
+            (begin
+              (assert-i64-eq (string-vec-len sv3) 3 "string third push len")
+              (assert-i64-eq (string-vec-capacity sv3) 4 "string grow capacity")
+              (assert-true
+                (string-vec-contains? sv3 "beta")
+                "string contains beta")
+              (let
+                [sv4 : StringVec (string-vec-set! sv3 1 "BETA")]
+                (begin
+                  (vector-test-assert-owned-string-eq
+                    (string-vec-get sv4 1 "missing")
+                    "BETA"
+                    "string set! 1")
+                  (let
+                    [popped : StringVecPop (string-vec-pop sv4)]
+                    (begin
+                      (assert-true
+                        (vector-test-string-pop-ok? popped)
+                        "string pop ok")
+                      (vector-test-assert-owned-string-eq
+                        (vector-test-string-pop-value-or popped "missing")
+                        "gamma"
+                        "string pop value")
+                      (let
+                        [rest : StringVec
+                          (vector-test-string-pop-vec-or popped sv4)]
+                        (begin
+                          (assert-i64-eq
+                            (string-vec-len rest)
+                            2
+                            "string pop shrinks")
+                          (let
+                            [snap : (Array String) (string-vec-to-array rest)]
+                            (begin
+                              (assert-i64-eq
+                                (array-length snap)
+                                2
+                                "string snapshot length")
+                              (vector-test-assert-owned-string-eq
+                                (array-ref snap 1)
+                                "BETA"
+                                "string snapshot value")
+                              (array-set! snap 1 "changed")
+                              (vector-test-assert-owned-string-eq
+                                (string-vec-get rest 1 "missing")
+                                "BETA"
+                                "string snapshot independent")))
+                          (let
+                            [rv : StringVec (string-vec-reverse! rest)]
+                            (begin
+                              (vector-test-assert-owned-string-eq
+                                (string-vec-get rv 0 "missing")
+                                "BETA"
+                                "string reverse first")
+                              (vector-test-assert-owned-string-eq
+                                (string-vec-get rv 1 "missing")
+                                "alpha"
+                                "string reverse second")))))))))))))
+      ;; --- generated nominal enum payload vector witness ---
+      (let
+        [tv2 : VecApiTagVec
+          (vec-api-tag-vec-push
+            (vec-api-tag-vec-push
+              (vec-api-tag-vec-with-capacity 1)
+              (VecApiTagA 1))
+            (VecApiTagB 2))]
+        (begin
+          (assert-i64-eq (vec-api-tag-vec-len tv2) 2 "tag vec len")
+          (assert-i64-eq (vec-api-tag-vec-capacity tv2) 2 "tag vec grew")
+          (assert-i64-eq
+            (vec-api-tag-score (vec-api-tag-vec-get tv2 1 (VecApiTagA 0)))
+            102
+            "tag vec get")
+          (let
+            [tv3 : VecApiTagVec (vec-api-tag-vec-set! tv2 0 (VecApiTagB 7))]
+            (begin
+              (assert-i64-eq
+                (vec-api-tag-score (vec-api-tag-vec-get tv3 0 (VecApiTagA 0)))
+                107
+                "tag vec set!")
+              (let
+                [popped : VecApiTagVecPop (vec-api-tag-vec-pop tv3)]
+                (begin
+                  (assert-true (vector-test-tag-pop-ok? popped) "tag pop ok")
+                  (assert-i64-eq
+                    (vector-test-tag-pop-score-or popped -1)
+                    102
+                    "tag pop value")
+                  (let
+                    [rest : VecApiTagVec
+                      (vector-test-tag-pop-vec-or popped tv3)]
+                    (begin
+                      (assert-i64-eq (vec-api-tag-vec-len rest) 1 "tag pop len")
+                      (let
+                        [snap : (Array VecApiTag)
+                          (vec-api-tag-vec-to-array rest)]
+                        (begin
+                          (assert-i64-eq
+                            (array-length snap)
+                            1
+                            "tag snapshot length")
+                          (assert-i64-eq
+                            (vec-api-tag-score (array-ref snap 0))
+                            107
+                            "tag snapshot value")
+                          (array-set! snap 0 (VecApiTagA 99))
+                          (assert-i64-eq
+                            (vec-api-tag-score
+                              (vec-api-tag-vec-get rest 0 (VecApiTagA 0)))
+                            107
+                            "tag snapshot independent")))))))))))
+      ;; --- generated nominal struct element vector witness (#2564) ---
+      (let
+        [pv2 : VecApiPointVec
+          (vec-api-point-vec-push
+            (vec-api-point-vec-push
+              (vec-api-point-vec-with-capacity 1)
+              (VecApiPoint 1 2))
+            (VecApiPoint 3 4))]
+        (begin
+          (assert-i64-eq (vec-api-point-vec-len pv2) 2 "point vec len")
+          (assert-i64-eq (vec-api-point-vec-capacity pv2) 2 "point vec grew")
+          (assert-i64-eq
+            (vec-api-point-score
+              (vec-api-point-vec-get pv2 1 (VecApiPoint 0 0)))
+            43
+            "point vec get")
+          (assert-i64-eq
+            (vec-api-point-vec-score pv2)
+            64
+            "point vec index iteration")
+          (let
+            [pv3 : VecApiPointVec
+              (vec-api-point-vec-set! pv2 0 (VecApiPoint 5 6))]
+            (begin
+              (assert-i64-eq
+                (vec-api-point-score
+                  (vec-api-point-vec-get pv3 0 (VecApiPoint 0 0)))
+                65
+                "point vec set!")
+              (assert-i64-eq
+                (vec-api-point-vec-score pv3)
+                108
+                "point vec iteration after set!")
+              (let
+                [pv4 : VecApiPointVec
+                  (vec-api-point-vec-set! pv3 99 (VecApiPoint 9 9))]
+                (begin
+                  (assert-i64-eq
+                    (vec-api-point-vec-score pv4)
+                    108
+                    "point vec out-of-range set! no-op")
+                  (let
+                    [popped : VecApiPointVecPop (vec-api-point-vec-pop pv4)]
+                    (begin
+                      (assert-true
+                        (vector-test-point-pop-ok? popped)
+                        "point pop ok")
+                      (assert-i64-eq
+                        (vector-test-point-pop-score-or popped -1)
+                        43
+                        "point pop value")
+                      (let
+                        [rest : VecApiPointVec
+                          (vector-test-point-pop-vec-or popped pv4)]
+                        (begin
+                          (assert-i64-eq
+                            (vec-api-point-vec-len rest)
+                            1
+                            "point pop len")
+                          (let
+                            [snap : (Array VecApiPoint)
+                              (vec-api-point-vec-to-array rest)]
+                            (begin
+                              (assert-i64-eq
+                                (array-length snap)
+                                1
+                                "point snapshot length")
+                              (assert-i64-eq
+                                (vec-api-point-score (array-ref snap 0))
+                                65
+                                "point snapshot value")
+                              (array-set! snap 0 (VecApiPoint 9 9))
+                              (assert-i64-eq
+                                (vec-api-point-score
+                                  (vec-api-point-vec-get
+                                    rest
+                                    0
+                                    (VecApiPoint 0 0)))
+                                65
+                                "point snapshot independent")))))))))))))
+      42)))
+
+(cfg
+  test
+  (test
+    vector-api
+    (assert-i64-eq (vector-test-main) 42 "vector-api fixture result")))

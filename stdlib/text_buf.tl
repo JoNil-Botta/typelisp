@@ -426,3 +426,165 @@
           (if (string-eq-borrowed (& rendered) (& expected))
             unit
             (fail)))))))
+
+;; Inline coverage migrated from stdlib/tests/text_buf_api.tl (#3082).
+(cfg test (import "test.tl"))
+
+(cfg
+  test
+  (define (text-buf-test-assert-owned-string-eq
+    [actual : String]
+    [expected : String]
+    [message : String]) : unit
+    (assert-string-eq (& actual) (& expected) message)))
+
+(cfg
+  test
+  (define (text-buf-test-assert-text-buf
+    [buf : TextBuf]
+    [expected : String]
+    [message : String]) : unit
+    (begin
+      (text-buf-test-assert-owned-string-eq
+        (text-buf-render buf)
+        expected
+        message)
+      (assert-i64-eq (text-buf-length buf) (string-length expected) message))))
+
+(cfg
+  test
+  (define (text-buf-test-main) : i64
+    (begin
+      (assert-true (text-buf-empty? (text-buf-empty)) "empty buffer predicate")
+      (text-buf-test-assert-text-buf
+        (text-buf-empty)
+        ""
+        "empty buffer renders empty")
+      (text-buf-test-assert-text-buf
+        (text-buf-append
+          (text-buf-append (text-buf-append (text-buf-empty) "alpha") " ")
+          "beta")
+        "alpha beta"
+        "append order")
+      (let
+        [buf : TextBuf (text-buf-empty)]
+        (begin
+          (text-buf-append! buf "")
+          (text-buf-test-assert-text-buf
+            buf
+            ""
+            "mutable empty append leaves buffer empty")
+          (text-buf-append! buf "alpha")
+          (text-buf-append! buf "")
+          (text-buf-append! buf " beta")
+          (text-buf-test-assert-text-buf
+            buf
+            "alpha beta"
+            "mutable append order")))
+      (let
+        [buf : TextBuf (text-buf-empty)]
+        [i : i64 0]
+        (begin
+          (while (< i 6)
+            (begin
+              (set! buf (text-buf-append buf "ha"))
+              (set! i (+ i 1))))
+          (text-buf-test-assert-text-buf buf "hahahahahaha" "repeated append")))
+      (let
+        [buf : TextBuf (text-buf-empty)]
+        [i : i64 0]
+        (begin
+          (while (< i 6)
+            (begin
+              (text-buf-append! buf "ha")
+              (set! i (+ i 1))))
+          (text-buf-test-assert-text-buf
+            buf
+            "hahahahahaha"
+            "mutable repeated append")))
+      (let
+        [buf : TextBuf (text-buf-empty)]
+        [i : i64 0]
+        (begin
+          (while (< i 40)
+            (begin
+              (set! buf (text-buf-append buf "x"))
+              (set! i (+ i 1))))
+          (text-buf-test-assert-text-buf
+            buf
+            "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+            "balanced repeated append")))
+      (text-buf-test-assert-text-buf
+        (text-buf-append
+          (text-buf-append
+            (text-buf-append
+              (text-buf-append (text-buf-empty) "0123456789abcdefg")
+              "a")
+            "b")
+          "0123456789abcdefg")
+        "0123456789abcdefgab0123456789abcdefg"
+        "mixed small and large chunks")
+      (text-buf-test-assert-text-buf
+        (text-buf-append-int
+          (text-buf-append-char
+            (text-buf-append-char
+              (text-buf-append (text-buf-empty) "A")
+              #\newline')
+            #\tab')
+          -12)
+        "A\n\t-12"
+        "char and int append")
+      (let
+        [buf : TextBuf (text-buf-empty)]
+        (begin
+          (text-buf-append! buf "A")
+          (text-buf-append-char! buf #\newline')
+          (text-buf-append-char! buf #\tab')
+          (text-buf-append-int! buf -12)
+          (text-buf-test-assert-text-buf
+            buf
+            "A\n\t-12"
+            "mutable char and int append")))
+      (let
+        [left : TextBuf
+          (text-buf-append (text-buf-append (text-buf-empty) "left") "-")]
+        [right : TextBuf
+          (text-buf-append (text-buf-append (text-buf-empty) "right") "\n")]
+        (text-buf-test-assert-text-buf
+          (text-buf-append-buffer left right)
+          "left-right\n"
+          "append buffer"))
+      (let
+        [original : TextBuf (text-buf-append (text-buf-empty) "keep")]
+        (begin
+          (text-buf-test-assert-text-buf
+            (text-buf-clear original)
+            ""
+            "clear returns empty")
+          (text-buf-test-assert-text-buf
+            (text-buf-reset original)
+            ""
+            "reset returns empty")
+          (text-buf-test-assert-text-buf
+            original
+            "keep"
+            "clear leaves original value")))
+      (let
+        [buf : TextBuf (text-buf-append (text-buf-empty) "drop")]
+        (begin
+          (text-buf-clear! buf)
+          (text-buf-test-assert-text-buf buf "" "mutable clear empties buffer")
+          (text-buf-append! buf "again")
+          (text-buf-test-assert-text-buf
+            buf
+            "again"
+            "mutable append after clear")
+          (text-buf-reset! buf)
+          (text-buf-test-assert-text-buf buf "" "mutable reset empties buffer")))
+      42)))
+
+(cfg
+  test
+  (test
+    text-buf-api
+    (assert-i64-eq (text-buf-test-main) 42 "text-buf-api fixture result")))

@@ -923,9 +923,9 @@
 ;: Combine direct slot access, a live mutable slots borrow, and probe metadata
 ;: into a mutable-entry handle tied to the map borrow lifetime.
 (define (string-i64-map-mut-entry-from-info
+  [info : StringI64MapMutEntryInfo]
   [slots : (Array StringI64MapSlot)]
-  [borrow : (&mut map (Array StringI64MapSlot))]
-  [info : StringI64MapMutEntryInfo]) : (StringI64MapMutEntry map)
+  [borrow : (&mut map (Array StringI64MapSlot))]) : (StringI64MapMutEntry map)
   (StringI64MapMutEntry
     slots
     borrow
@@ -939,12 +939,12 @@
 ;: reported as absent and are not inserted by the handle API.
 (defmacro (string-i64-map-get-mut-entry-borrowed [map : Expr] [key : Expr]) : Expr
   `(string-i64-map-mut-entry-from-info
-    (struct-get ,map slots)
-    (&mut (struct-get ,map slots))
     (string-i64-map-mut-entry-info
       (struct-get ,map slots)
       (array-length (struct-get ,map slots))
-      ,key)))
+      ,key)
+    (struct-get ,map slots)
+    (&mut (struct-get ,map slots))))
 
 ;: Return whether a mutable-entry handle currently points at an occupied slot.
 (define (string-i64-map-mut-entry-present? [entry : (StringI64MapMutEntry map)]) : bool

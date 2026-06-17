@@ -22,7 +22,8 @@
 (define (sync-mutex-integration-mutex-from-ctx [ctx : i64] [offset : i64]) : MutexI64
   (MutexI64
     (sync-mutex-integration-read-i64 ctx offset)
-    (sync-mutex-integration-read-i64 ctx (+ offset 1))))
+    (sync-mutex-integration-read-i64 ctx (+ offset 1))
+    (sync-mutex-integration-read-i64 ctx (+ offset 2))))
 
 (define (sync-mutex-integration-worker [ctx : i64]) : i64
   (let

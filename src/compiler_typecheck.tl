@@ -8025,7 +8025,7 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-live-mut-borrow-duplicate-source)
-        "typecheck: cannot mutably borrow borrowed place `items.#array.0`")
+        "typecheck: cannot read mutably borrowed place `items.#array.0`")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -8035,12 +8035,12 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-live-immut-borrow-after-mut-source)
-        "typecheck: cannot immutably borrow mutably borrowed place `items.#array.0`")
+        "typecheck: cannot read mutably borrowed place `items.#array.0`")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-live-mut-borrow-call-duplicate-source)
-        "typecheck: cannot mutably borrow borrowed place `n`")
+        "typecheck: cannot read mutably borrowed place `n`")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?

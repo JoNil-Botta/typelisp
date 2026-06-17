@@ -515,6 +515,9 @@ test <file.tl>` loads the import graph, turns inline tests owned by the
 requested source into private unit-returning functions, generates a test-owned
 `main`, and runs the resulting executable. Imported files provide runtime
 declarations but do not contribute their own inline tests to that harness. With
+`typelisp test`, the loader enables the `test` cfg predicate, so source-local
+fixture declarations may be gated with `(cfg test ...)` and skipped by normal
+production commands. With
 no file, `typelisp test` discovers the nearest package and runs package sources
 that contain top-level inline tests, plus package-local `tests/**/*.tl`
 integration test files; stdlib and dependency imports provide runtime

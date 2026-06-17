@@ -40,7 +40,6 @@
 (include-str compiler-embedded-stdlib-tests-comptime-api "stdlib/tests/comptime_api.tl")
 (include-str compiler-embedded-stdlib-tests-fs-api "stdlib/tests/fs_api.tl")
 (include-str compiler-embedded-stdlib-tests-fs-path-join-many-api "stdlib/tests/fs_path_join_many_api.tl")
-(include-str compiler-embedded-stdlib-tests-hashmap-api "stdlib/tests/hashmap_api.tl")
 (include-str compiler-embedded-stdlib-tests-hashmap-mut-borrow-insert-or-update-live "stdlib/tests/hashmap_mut_borrow_insert_or_update_live.tl")
 (include-str compiler-embedded-stdlib-tests-io-edges "stdlib/tests/io_edges.tl")
 (include-str compiler-embedded-stdlib-tests-io-file-handle "stdlib/tests/io_file_handle.tl")
@@ -227,12 +226,6 @@
           source
           (CompilerEmbeddedStdlibSomeSource
             compiler-embedded-stdlib-tests-fs-path-join-many-api))
-        unit)
-      (if (string-eq suffix "tests/hashmap_api.tl")
-        (set!
-          source
-          (CompilerEmbeddedStdlibSomeSource
-            compiler-embedded-stdlib-tests-hashmap-api))
         unit)
       (if (string-eq suffix "tests/hashmap_mut_borrow_insert_or_update_live.tl")
         (set!

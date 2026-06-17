@@ -73,18 +73,19 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
   directory iteration through list and vector wrappers, read-dir split order,
   missing and empty rename paths, and Windows unsupported rename/read-dir
   results.
-- `hashmap_api.tl` covers the compatibility `StringI64Map`, generated
-  `StringStringMap` and `I64I64Map` APIs, key descriptor identities, borrowed
-  string-key wrappers, update-only, entry-or-insert, live mutable-entry helpers,
-  tombstone reuse, growth/rehash, and deterministic bucket-order iteration. The
+- `stdlib/hashmap.tl` inline tests cover the compatibility `StringI64Map`,
+  generated `StringStringMap`, `I64I64Map`, and aggregate key/value map
+  families, key descriptor identities, borrowed string-key wrappers,
+  update-only, entry-or-insert, live mutable-entry helpers, tombstone reuse,
+  growth/rehash, and deterministic bucket-order iteration. The
   `hashmap_mut_borrow_insert_or_update_live.tl` fixture verifies that a live
   map-level mutable borrow rejects insert-or-update. The
   `hashmap_mut_entry_*_live.tl` fixtures verify that live mutable entries reject
   aliasing entries, value borrows, puts, and resizes.
-- `set_api.tl` covers generated `StringSet` and `I64Set` families, descriptor
-  identities, borrowed string-key contains/remove wrappers, duplicate insert,
-  collision chains, tombstone reuse, growth/rehash, missing remove, and
-  deterministic bucket-order iteration.
+- `stdlib/set.tl` inline tests cover generated `StringSet` and `I64Set`
+  families, descriptor identities, borrowed string-key contains/remove wrappers,
+  duplicate insert, collision chains, tombstone reuse, growth/rehash, missing
+  remove, and deterministic bucket-order iteration.
 - `sort_api.tl` covers `stdlib/sort.tl` stable in-place insertion sort helpers
   for `I64Vec` and `StringVec`, including empty, single, already sorted,
   reverse sorted, duplicate, negative-number, prefix, and lexicographic string

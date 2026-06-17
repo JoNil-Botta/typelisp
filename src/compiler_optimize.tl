@@ -18376,26 +18376,54 @@
     [(IrInstrReturn _) true]
     [_ false]))
 
-(define (opt-inline-body-instr-ok? [instr : CompilerIrInstr] [np : i64]) : bool
+(define (opt-inline-body-instr-op-ok? [instr : CompilerIrInstr]) : bool
   (match instr
-    [(IrInstrMov dst _ _) (>= dst np)]
-    [(IrInstrGep dst _ _ _) (>= dst np)]
-    [(IrInstrLoad dst _ _) (>= dst np)]
-    [(IrInstrCast dst _ _ _) (>= dst np)]
-    [(IrInstrBitcast dst _ _ _) (>= dst np)]
-    [(IrInstrBinOp dst _ _ _ _) (>= dst np)]
-    [(IrInstrUnOp dst _ _ _) (>= dst np)]
-    [(IrInstrPack dst _ _) (>= dst np)]
-    [(IrInstrWord dst _ _ _) (>= dst np)]
-    [(IrInstrCall dst _ _ _) (>= dst np)]
-    [(IrInstrCallIndirect dst _ _ _) (>= dst np)]
-    [(IrInstrCallIndirectC dst _ _ _) (>= dst np)]
+    [(IrInstrMov _ _ _) true]
+    [(IrInstrGep _ _ _ _) true]
+    [(IrInstrLoad _ _ _) true]
+    [(IrInstrCast _ _ _ _) true]
+    [(IrInstrBitcast _ _ _ _) true]
+    [(IrInstrBinOp _ _ _ _ _) true]
+    [(IrInstrUnOp _ _ _ _) true]
+    [(IrInstrPack _ _ _) true]
+    [(IrInstrWord _ _ _ _) true]
+    [(IrInstrCall _ _ _ _) true]
+    [(IrInstrCallIndirect _ _ _ _) true]
+    [(IrInstrCallIndirectC _ _ _ _) true]
     ;; IrInstrBoundsCheck carries a backend label in its String field; copying it
     ;; into a call site duplicates that label (assembler "symbol already defined"),
     ;; so callees containing one are not inlinable.
     [(IrInstrStorePtr _ _ _) true]
     [(IrInstrCopyBytes _ _ _) true]
     [_ false]))
+
+(define (opt-inline-body-instr-ok? [instr : CompilerIrInstr] [np : i64]) : bool
+  (match instr
+    [(IrInstrMov dst _ _)
+      (and (>= dst np) (opt-inline-body-instr-op-ok? instr))]
+    [(IrInstrGep dst _ _ _)
+      (and (>= dst np) (opt-inline-body-instr-op-ok? instr))]
+    [(IrInstrLoad dst _ _)
+      (and (>= dst np) (opt-inline-body-instr-op-ok? instr))]
+    [(IrInstrCast dst _ _ _)
+      (and (>= dst np) (opt-inline-body-instr-op-ok? instr))]
+    [(IrInstrBitcast dst _ _ _)
+      (and (>= dst np) (opt-inline-body-instr-op-ok? instr))]
+    [(IrInstrBinOp dst _ _ _ _)
+      (and (>= dst np) (opt-inline-body-instr-op-ok? instr))]
+    [(IrInstrUnOp dst _ _ _)
+      (and (>= dst np) (opt-inline-body-instr-op-ok? instr))]
+    [(IrInstrPack dst _ _)
+      (and (>= dst np) (opt-inline-body-instr-op-ok? instr))]
+    [(IrInstrWord dst _ _ _)
+      (and (>= dst np) (opt-inline-body-instr-op-ok? instr))]
+    [(IrInstrCall dst _ _ _)
+      (and (>= dst np) (opt-inline-body-instr-op-ok? instr))]
+    [(IrInstrCallIndirect dst _ _ _)
+      (and (>= dst np) (opt-inline-body-instr-op-ok? instr))]
+    [(IrInstrCallIndirectC dst _ _ _)
+      (and (>= dst np) (opt-inline-body-instr-op-ok? instr))]
+    [_ (opt-inline-body-instr-op-ok? instr)]))
 
 (define (opt-inline-seq-ok? [instrs : CompilerIrInstrList] [np : i64]) : bool
   (match instrs
@@ -18505,8 +18533,8 @@
     [(IrInstrJump _) true]
     [(IrInstrBranch _ _ _) true]
     [(IrInstrReturn _) true]
-    [(IrInstrPhi dst _ _) (>= dst np)]
-    [_ (opt-inline-body-instr-ok? instr np)]))
+    [(IrInstrPhi dst _ _) (>= dst 0)]
+    [_ (opt-inline-body-instr-op-ok? instr)]))
 
 (define (opt-inline-multiblock-instrs-ok-from?
   [instrs : CompilerIrInstrSeq]
@@ -18538,6 +18566,42 @@
             (opt-inline-multiblock-blocks-ok? (box-get rest) np))])]
     [(IrBlockArray seq)
       (opt-inline-multiblock-blocks-ok? (compiler-ir-block-seq-to-list seq) np)]))
+
+(define (opt-inline-param-mutating-instr? [instr : CompilerIrInstr] [np : i64]) : bool
+  (match (opt-instr-def-var instr)
+    [(OptSomeI64 var) (< var np)]
+    [(OptNoI64) false]))
+
+(define (opt-inline-param-mutating-instrs-from?
+  [instrs : CompilerIrInstrSeq]
+  [np : i64]
+  [index : i64]) : bool
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    false
+    (if (opt-inline-param-mutating-instr?
+      (compiler-ir-instr-seq-ref instrs index)
+      np)
+      true
+      (opt-inline-param-mutating-instrs-from? instrs np (+ index 1)))))
+
+(define (opt-inline-param-mutating-instrs?
+  [instrs : CompilerIrInstrSeq]
+  [np : i64]) : bool
+  (opt-inline-param-mutating-instrs-from? instrs np 0))
+
+(define (opt-inline-param-mutating-blocks?
+  [blocks : CompilerIrBlockList]
+  [np : i64]) : bool
+  (match blocks
+    [(IrBlockNil) false]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (if (opt-inline-param-mutating-instrs? instrs np)
+            true
+            (opt-inline-param-mutating-blocks? (box-get rest) np))])]
+    [(IrBlockArray seq)
+      (opt-inline-param-mutating-blocks? (compiler-ir-block-seq-to-list seq) np)]))
 
 (define (opt-inline-return-count-instrs-from
   [instrs : CompilerIrInstrSeq]
@@ -18642,7 +18706,6 @@
             (> (compiler-ir-block-list-count cblocks) 1)
             (> (opt-inline-return-count-blocks cblocks) 0)
             (opt-inline-structure-ok? cblocks)
-            (opt-inline-callee-acyclic? cblocks)
             (opt-inline-multiblock-blocks-ok? cblocks np))))]))
 
 (define (opt-inline-callee-ok?
@@ -18751,6 +18814,51 @@
 
 (define (opt-inline-frame-growth [frame : i64] [np : i64]) : i64
   (- frame np))
+
+(define (opt-inline-stage-arg-var [base : i64] [id : i64]) : CompilerIrValue
+  (IrValueVar (+ base id)))
+
+(define (opt-inline-staged-args-array-fill!
+  [out : (Array CompilerIrValue)]
+  [base : i64]
+  [index : i64]) : unit
+  (if (>= index (array-length out))
+    unit
+    (begin
+      (array-set! out index (opt-inline-stage-arg-var base index))
+      (opt-inline-staged-args-array-fill! out base (+ index 1)))))
+
+(define (opt-inline-staged-args [np : i64] [base : i64]) : CompilerIrCallArgs
+  (if (= np 0)
+    (IrCallArgsNil)
+    (if (= np 1)
+      (IrCallArgsOne (opt-inline-stage-arg-var base 0))
+      (if (= np 2)
+        (IrCallArgsTwo
+          (opt-inline-stage-arg-var base 0)
+          (opt-inline-stage-arg-var base 1))
+        (let
+          [out : (Array CompilerIrValue) (make-array CompilerIrValue np)]
+          (begin
+            (opt-inline-staged-args-array-fill! out base 0)
+            (IrCallArgsArray out)))))))
+
+(define (opt-inline-stage-param-instrs
+  [params : CompilerIrParamList]
+  [args : CompilerIrCallArgs]
+  [base : i64]
+  [index : i64]) : CompilerIrInstrList
+  (match params
+    [(IrParamNil) IrInstrNil]
+    [(IrParamCons param rest)
+      (match param
+        [(IrParam _ ty _)
+          (compiler-ir-instr-cons
+            (IrInstrMov
+              (+ base index)
+              (opt-inline-clone-arg-at args index)
+              (clone ty))
+            (opt-inline-stage-param-instrs (box-get rest) args base (+ index 1)))])]))
 
 (define (opt-inline-clone-arg-at [sa : CompilerIrCallArgs] [id : i64]) : CompilerIrValue
   (match sa
@@ -19234,6 +19342,18 @@
         np
         base)]))
 
+(define (opt-inline-cont-result-instr
+  [dst : i64]
+  [inputs : CompilerIrPhiInputList]
+  [ret : AstType]) : CompilerIrInstr
+  (match inputs
+    [(IrPhiInputCons value _ rest)
+      (match (box-get rest)
+        [(IrPhiInputNil)
+          (IrInstrMov dst (compiler-ir-clone-value value) (clone ret))]
+        [_ (IrInstrPhi dst inputs (clone ret))])]
+    [(IrPhiInputNil) (IrInstrMov dst (IrValueUnit) (clone ret))]))
+
 (define (opt-inline-call-span-to-instr
   [source-spans : CompilerSourceSpans]
   [out-spans : CompilerSourceSpans]
@@ -19716,8 +19836,14 @@
               (let
                 [added-blocks : i64
                   (+ (compiler-ir-block-list-count cblocks) 1)]
+                [stage-args? : bool
+                  (opt-inline-param-mutating-blocks? cblocks np)]
                 (if (opt-inline-cost-inline?
-                  (opt-inline-multiblock-cost-instrs cblocks)
+                  (+
+                    (opt-inline-multiblock-cost-instrs cblocks)
+                    (if stage-args?
+                      np
+                      0))
                   added-blocks
                   (opt-inline-args-const-count cargs)
                   (opt-inline-census-absorbable? census func-name callee-name)
@@ -19747,21 +19873,43 @@
                             (opt-cfg-entry-label cblocks))]
                         [cont-label : String (opt-inline-cont-label prefix)]
                         [vars2 : i64
-                          (+ prefix-vars (opt-inline-frame-growth cvars np))]
+                          (+
+                            prefix-vars
+                            (if stage-args?
+                              cvars
+                              (opt-inline-frame-growth cvars np)))]
                         [added2 : i64 (+ prefix-added added-blocks)]
+                        [stage-instrs : CompilerIrInstrList
+                          (if stage-args?
+                            (opt-inline-stage-param-instrs
+                              cparams
+                              cargs
+                              prefix-vars
+                              0)
+                            IrInstrNil)]
+                        [staged-args : CompilerIrCallArgs
+                          (if stage-args?
+                            (opt-inline-staged-args np prefix-vars)
+                            cargs)]
+                        [clone-base : i64
+                          (if stage-args?
+                            (+ prefix-vars np)
+                            prefix-vars)]
                         [prefix-instrs2 : CompilerIrInstrList
                           (opt-inline-append
                             prefix-instrs
-                            (compiler-ir-instr-cons
-                              (IrInstrJump entry-label)
-                              IrInstrNil))]
+                            (opt-inline-append
+                              stage-instrs
+                              (compiler-ir-instr-cons
+                                (IrInstrJump entry-label)
+                                IrInstrNil)))]
                         (match (opt-inline-clone-multiblock-blocks
                           cblocks
                           prefix
                           cont-label
-                          cargs
+                          staged-args
                           np
-                          prefix-vars)
+                          clone-base)
                           [(OptInlineMultiClone cloned-blocks return-inputs)
                             (match (opt-inline-walk-instrs
                               rest
@@ -19775,13 +19923,13 @@
                               caller-scc)
                               [(OptInlineState suffix vars3 added3)
                                 (let
+                                  [result-instr : CompilerIrInstr
+                                    (opt-inline-cont-result-instr
+                                      dst
+                                      return-inputs
+                                      cret)]
                                   [cont-instrs : CompilerIrInstrList
-                                    (compiler-ir-instr-cons
-                                      (IrInstrPhi
-                                        dst
-                                        return-inputs
-                                        (clone cret))
-                                      suffix)]
+                                    (compiler-ir-instr-cons result-instr suffix)]
                                   (OptInlineSomeBlockRewrite
                                     (compiler-ir-block-cons
                                       (compiler-ir-block
@@ -20157,8 +20305,14 @@
               (let
                 [added-blocks : i64
                   (+ (compiler-ir-block-list-count cblocks) 1)]
+                [stage-args? : bool
+                  (opt-inline-param-mutating-blocks? cblocks np)]
                 (if (opt-inline-cost-inline?
-                  (opt-inline-multiblock-cost-instrs cblocks)
+                  (+
+                    (opt-inline-multiblock-cost-instrs cblocks)
+                    (if stage-args?
+                      np
+                      0))
                   added-blocks
                   (opt-inline-args-const-count cargs)
                   (opt-inline-census-absorbable? census func-name callee-name)
@@ -20194,21 +20348,43 @@
                             (opt-cfg-entry-label cblocks))]
                         [cont-label : String (opt-inline-cont-label prefix)]
                         [vars2 : i64
-                          (+ prefix-vars (opt-inline-frame-growth cvars np))]
+                          (+
+                            prefix-vars
+                            (if stage-args?
+                              cvars
+                              (opt-inline-frame-growth cvars np)))]
                         [added2 : i64 (+ prefix-added added-blocks)]
+                        [stage-instrs : CompilerIrInstrList
+                          (if stage-args?
+                            (opt-inline-stage-param-instrs
+                              cparams
+                              cargs
+                              prefix-vars
+                              0)
+                            IrInstrNil)]
+                        [staged-args : CompilerIrCallArgs
+                          (if stage-args?
+                            (opt-inline-staged-args np prefix-vars)
+                            cargs)]
+                        [clone-base : i64
+                          (if stage-args?
+                            (+ prefix-vars np)
+                            prefix-vars)]
                         [prefix-instrs2 : CompilerIrInstrList
                           (opt-inline-append
                             prefix-instrs
-                            (compiler-ir-instr-cons
-                              (IrInstrJump entry-label)
-                              IrInstrNil))]
+                            (opt-inline-append
+                              stage-instrs
+                              (compiler-ir-instr-cons
+                                (IrInstrJump entry-label)
+                                IrInstrNil)))]
                         (match (opt-inline-clone-multiblock-blocks-with-spans
                           cblocks
                           prefix
                           cont-label
-                          cargs
+                          staged-args
                           np
-                          prefix-vars
+                          clone-base
                           source-spans
                           spans2
                           func-name
@@ -20232,17 +20408,20 @@
                               spans3)
                               [(OptInlineSpanState suffix vars3 added3 spans4)
                                 (let
-                                  [phi : CompilerIrInstr
-                                    (IrInstrPhi dst return-inputs (clone cret))]
+                                  [result-instr : CompilerIrInstr
+                                    (opt-inline-cont-result-instr
+                                      dst
+                                      return-inputs
+                                      cret)]
                                   [spans5 : CompilerSourceSpans
                                     (opt-inline-call-span-to-instr
                                       source-spans
                                       spans4
                                       func-name
                                       call-instr
-                                      phi)]
+                                      result-instr)]
                                   [cont-instrs : CompilerIrInstrList
-                                    (compiler-ir-instr-cons phi suffix)]
+                                    (compiler-ir-instr-cons result-instr suffix)]
                                   (OptInlineSomeSpanBlockRewrite
                                     (compiler-ir-block-cons
                                       (compiler-ir-block
@@ -20564,6 +20743,18 @@
         next
         fallback)]))
 
+(define (opt-inline-repair-or-keep
+  [fallback : CompilerIrFunction]
+  [next : CompilerIrFunction]
+  [repair? : bool]) : CompilerIrFunction
+  (match next
+    [(IrFunction _ _ _ _ blocks)
+      (if (opt-inline-structure-ok? blocks)
+        (if repair?
+          (opt-ssa-construct-function next)
+          next)
+        fallback)]))
+
 (define (opt-inline-function
   [func : CompilerIrFunction]
   [index : OptFunctionIndex]
@@ -20584,10 +20775,11 @@
           0
           scc-result
           caller-scc)
-          [(OptInlineBlocks new-blocks new-vars _)
-            (opt-inline-revert-or-keep
+          [(OptInlineBlocks new-blocks new-vars added)
+            (opt-inline-repair-or-keep
               func
-              (IrFunction name params ret new-vars new-blocks))]))]))
+              (IrFunction name params ret new-vars new-blocks)
+              (> added 0))]))]))
 
 (define (opt-inline-function-with-spans
   [func : CompilerIrFunction]
@@ -20613,13 +20805,17 @@
           caller-scc
           source-spans
           out-spans)
-          [(OptInlineSpanBlocks new-blocks new-vars _ next-spans)
+          [(OptInlineSpanBlocks new-blocks new-vars added next-spans)
             (let
               [next : CompilerIrFunction
                 (IrFunction name params ret new-vars new-blocks)]
               (if (opt-inline-structure-ok? new-blocks)
                 (OptInlineSpanProgram
-                  (compiler-ir-function-cons next IrFunctionNil)
+                  (compiler-ir-function-cons
+                    (if (> added 0)
+                      (opt-ssa-construct-function next)
+                      next)
+                    IrFunctionNil)
                   next-spans)
                 (OptInlineSpanProgram
                   (compiler-ir-function-cons func IrFunctionNil)
@@ -26578,13 +26774,144 @@
       (opt-inline-program-functions (opt-inline-loop-functions) 2)]
     (match (opt-function-list-find optimized "main")
       [(OptSomeFunction main)
-        (and
-          (=
-            (opt-count-direct-call-name-blocks
-              (opt-function-blocks main)
-              "inline_loop")
-            1)
-          (= (compiler-ir-block-list-count (opt-function-blocks main)) 1))]
+        (let
+          [blocks : CompilerIrBlockList (opt-function-blocks main)]
+          (and
+            (= (opt-count-direct-call-name-blocks blocks "inline_loop") 0)
+            (= (compiler-ir-block-list-count blocks) 5)
+            (= (opt-count-phi-blocks blocks) 0)
+            (opt-inline-structure-ok? blocks)))]
+      [(OptNoFunction) false])))
+
+(define (opt-inline-mut-param-params) : CompilerIrParamList
+  (compiler-ir-param-cons (IrParam "n" (AstTyI64) 0) IrParamNil))
+
+(define (opt-inline-mut-param-callee) : CompilerIrFunction
+  (IrFunction
+    "inline_mut_param_loop"
+    (opt-inline-mut-param-params)
+    (AstTyI64)
+    1
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons (IrInstrJump "loop") IrInstrNil))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "loop"
+          (compiler-ir-instr-cons
+            (IrInstrBinOp 0 (IrBinAdd) (IrValueVar 0) (IrValueI64 1) (AstTyI64))
+            (compiler-ir-instr-cons
+              (IrInstrBranch (IrValueBool false) "loop" "exit")
+              IrInstrNil)))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "exit"
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueVar 0)))
+              IrInstrNil))
+          IrBlockNil)))))
+
+(define (opt-inline-mut-param-caller) : CompilerIrFunction
+  (IrFunction
+    "main"
+    IrParamNil
+    (AstTyI64)
+    1
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (IrInstrCall
+            0
+            "inline_mut_param_loop"
+            (IrCallArgsOne (IrValueI64 4))
+            (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrReturn (IrSomeValue (IrValueVar 0)))
+            IrInstrNil)))
+      IrBlockNil)))
+
+(define (opt-inline-mut-param-functions) : CompilerIrFunctionList
+  (compiler-ir-function-cons
+    (opt-inline-mut-param-caller)
+    (compiler-ir-function-cons (opt-inline-mut-param-callee) IrFunctionNil)))
+
+(define (compiler-optimize-inline-mut-param-loop-ok?) : bool
+  (let
+    [optimized : CompilerIrFunctionList
+      (opt-inline-program-functions (opt-inline-mut-param-functions) 2)]
+    (match (opt-function-list-find optimized "main")
+      [(OptSomeFunction main)
+        (let
+          [blocks : CompilerIrBlockList (opt-function-blocks main)]
+          (and
+            (=
+              (opt-count-direct-call-name-blocks blocks "inline_mut_param_loop")
+              0)
+            (= (compiler-ir-block-list-count blocks) 5)
+            (opt-verify-ok? (opt-verify-function main))))]
+      [(OptNoFunction) false])))
+
+(define (opt-inline-caller-phi-loop-caller) : CompilerIrFunction
+  (IrFunction
+    "main"
+    IrParamNil
+    (AstTyI64)
+    2
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (IrInstrCall 0 "inline_loop" IrCallArgsNil (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrBranch (IrValueBool true) "left" "right")
+            IrInstrNil)))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "left"
+          (compiler-ir-instr-cons (IrInstrJump "join") IrInstrNil))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "right"
+            (compiler-ir-instr-cons (IrInstrJump "join") IrInstrNil))
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              "join"
+              (compiler-ir-instr-cons
+                (IrInstrPhi
+                  1
+                  (compiler-ir-phi-input-cons
+                    (IrValueI64 7)
+                    "left"
+                    (compiler-ir-phi-input-cons
+                      (IrValueI64 9)
+                      "right"
+                      IrPhiInputNil))
+                  (AstTyI64))
+                (compiler-ir-instr-cons
+                  (IrInstrReturn (IrSomeValue (IrValueVar 1)))
+                  IrInstrNil)))
+            IrBlockNil))))))
+
+(define (opt-inline-caller-phi-loop-functions) : CompilerIrFunctionList
+  (compiler-ir-function-cons
+    (opt-inline-caller-phi-loop-caller)
+    (compiler-ir-function-cons (opt-inline-loop-callee) IrFunctionNil)))
+
+(define (compiler-optimize-inline-caller-phi-loop-ok?) : bool
+  (let
+    [optimized : CompilerIrFunctionList
+      (opt-inline-program-functions (opt-inline-caller-phi-loop-functions) 2)]
+    (match (opt-function-list-find optimized "main")
+      [(OptSomeFunction main)
+        (let
+          [blocks : CompilerIrBlockList (opt-function-blocks main)]
+          (and
+            (= (opt-count-direct-call-name-blocks blocks "inline_loop") 0)
+            (= (compiler-ir-block-list-count blocks) 8)
+            (= (opt-count-phi-blocks blocks) 1)
+            (opt-inline-structure-ok? blocks)))]
       [(OptNoFunction) false])))
 
 (define (opt-inline-nonleaf-callee) : CompilerIrFunction
@@ -26851,6 +27178,12 @@
                     (unless
                       (compiler-optimize-inline-multiblock-acyclic-ok?)
                       (return 39))
+                    (unless
+                      (compiler-optimize-inline-mut-param-loop-ok?)
+                      (return 44))
+                    (unless
+                      (compiler-optimize-inline-caller-phi-loop-ok?)
+                      (return 45))
                     (unless
                       (compiler-optimize-inline-multiblock-nonleaf-ok?)
                       (return 40))

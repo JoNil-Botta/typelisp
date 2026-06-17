@@ -2754,9 +2754,11 @@
             (lint-findings-add
               (lint-return-path-chain-finding return-chain span)
               acc))
-          ;; #2579: bootstrap source cannot use bracket `cond` until the
-          ;; published seed parser has the bracket-arm surface, so keep this
-          ;; rule registered but do not emit ladder findings.
+          ;; A maximal else-`if` ladder of length >= threshold is flagged once
+          ;; at its head, carrying the ladder depth; lint-walk-ladder then
+          ;; descends the else-chain (walking each cond/then) without
+          ;; re-emitting. #2579's bracket-`cond` seed support has landed, so the
+          ;; rule is active.
           (if (>= ladder threshold)
             (lint-walk-ladder
               (AstExprIf
@@ -2765,7 +2767,9 @@
                 (ast-node-push else-branch))
               threshold
               tail-return-path
-              acc)
+              (lint-findings-add
+                (lint-ladder-finding ladder span)
+                acc))
             (if tail-return-path
               (lint-walk-tail-expr
                 else-branch
@@ -3560,18 +3564,32 @@
       (if (= (lint-test-ladder-length vx) 0)
         unit
         (panic "lint: non-if ladder length should be 0"))
-      ;; The nested-if-ladder rule remains registered, but #2579 keeps it
-      ;; dormant while bootstrap source must use nested `if` instead of bracket
-      ;; `cond`, so ladders are traversed without emitting findings.
+      ;; The nested-if-ladder rule flags a maximal else-`if` ladder of length
+      ;; >= threshold once, at its head, carrying the ladder depth.
       (if (=
         (lint-findings-count
           (lint-test-walk
             ladder3
             (lint-default-ladder-threshold)
             (lint-findings-empty)))
-        0)
+        1)
         unit
-        (panic "lint: dormant 3-deep ladder should not be flagged"))
+        (panic "lint: 3-deep ladder should be flagged once"))
+      (match (lint-findings-get
+        (lint-test-walk
+          ladder3
+          (lint-default-ladder-threshold)
+          (lint-findings-empty))
+        0)
+        [(LintSomeFinding finding)
+          (if (and
+            (= (struct-get finding depth) 3)
+            (string-eq
+              (struct-get finding rule-id)
+              (lint-rule-nested-if-ladder-id)))
+            unit
+            (panic "lint: 3-deep ladder finding should carry rule id and depth"))]
+        [(LintNoFinding) (panic "lint: 3-deep ladder should produce a finding")])
       ;; a 2-deep ladder is NOT flagged at threshold 3
       (if (=
         (lint-findings-count
@@ -3582,12 +3600,12 @@
         0)
         unit
         (panic "lint: 2-deep ladder should not be flagged at threshold 3"))
-      ;; ... and is still not flagged at threshold 2 while dormant.
+      ;; ... and is flagged at threshold 2, where its length meets the bound.
       (if (=
         (lint-findings-count (lint-test-walk ladder2 2 (lint-findings-empty)))
-        0)
+        1)
         unit
-        (panic "lint: dormant 2-deep ladder should not be flagged"))
+        (panic "lint: 2-deep ladder should be flagged at threshold 2"))
       ;; return-path chains are only reported in tail contexts, where replacing
       ;; nested failure values with `(return ...)` preserves semantics.
       (if (=
@@ -3668,9 +3686,9 @@
             nested
             (lint-default-ladder-threshold)
             (lint-findings-empty)))
-        0)
+        1)
         unit
-        (panic "lint: dormant ladder nested in begin should not be flagged"))
+        (panic "lint: ladder nested in begin should be flagged once"))
       ;; ... and into let-binding initializers
       (if (=
         (lint-findings-count
@@ -3678,28 +3696,38 @@
             in-let
             (lint-default-ladder-threshold)
             (lint-findings-empty)))
-        0)
+        1)
         unit
-        (panic "lint: dormant ladder in a let binding should not be flagged"))
-      ;; Longer ladders are also traversed without findings while dormant.
+        (panic "lint: ladder in a let binding should be flagged once"))
+      ;; Longer ladders are flagged once at the head with their full depth.
       (if (=
         (lint-findings-count
           (lint-test-walk
             ladder4
             (lint-default-ladder-threshold)
             (lint-findings-empty)))
-        0)
+        1)
         unit
-        (panic "lint: dormant 4-deep ladder should not be flagged"))
-      (if (=
-        (lint-findings-count
-          (lint-test-walk
-            spanned
-            (lint-default-ladder-threshold)
-            (lint-findings-empty)))
+        (panic "lint: 4-deep ladder should be flagged once"))
+      ;; A spanned ladder carries its head wrapper span on the finding.
+      (match (lint-findings-get
+        (lint-test-walk
+          spanned
+          (lint-default-ladder-threshold)
+          (lint-findings-empty))
         0)
-        unit
-        (panic "lint: dormant spanned ladder should not be flagged"))
+        [(LintSomeFinding finding)
+          (let
+            [fspan : AstSourceSpan (struct-get finding span)]
+            (if (and
+              (= (struct-get fspan start-line) 7)
+              (string-eq
+                (struct-get finding rule-id)
+                (lint-rule-nested-if-ladder-id)))
+              unit
+              (panic "lint: spanned ladder finding should carry rule id and span")))]
+        [(LintNoFinding)
+          (panic "lint: spanned ladder should produce a finding")])
       (if (=
         (lint-findings-count
           (lint-test-walk

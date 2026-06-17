@@ -1698,9 +1698,8 @@
         2)]))
 
 ;; ---- self-test (driven by lint_driver_smoke.tl) ----
-;; A five-deep value-dispatch if-ladder. The nested-if-ladder rule remains
-;; registered, but #2579 keeps it dormant while bootstrap source must use
-;; nested `if` instead of bracket `cond`, so this emits no findings.
+;; A five-deep value-dispatch if-ladder. The nested-if-ladder rule is active, so
+;; this emits one finding at the ladder head.
 (define (selfhost-lint-ladder-source) : String
   "(define (classify [x : i64]) : i64
   (if (= x 0)
@@ -1715,8 +1714,8 @@
             50
             0))))))")
 
-;; Same ladder, but with a `;; lint-allow: nested-if-ladder` directive retained
-;; to prove the dormant rule id still parses as a stable suppression key.
+;; Same ladder, but with a `;; lint-allow: nested-if-ladder` directive that
+;; suppresses the ladder finding via its stable rule id.
 (define (selfhost-lint-suppressed-ladder-source) : String
   "(define (classify [x : i64]) : i64
   ;; lint-allow: nested-if-ladder
@@ -1728,8 +1727,8 @@
         30
         0))))")
 
-;; A directive for a different rule id also emits no ladder finding while the
-;; rule is dormant.
+;; A directive for a different rule id does not suppress the ladder finding, so
+;; this still emits one.
 (define (selfhost-lint-wrong-allow-ladder-source) : String
   "(define (classify [x : i64]) : i64
   ;; lint-allow: other-rule
@@ -2346,7 +2345,9 @@
         "lint_driver_self_test.tl"
         (selfhost-lint-cascading-core-and-source)
         (string-vec-new))]
-    (if (not (= (lint-findings-count reported) 0))
+    (if (or
+        (not (= (lint-findings-count reported) 1))
+        (not (selfhost-lint-reported-finding-ok? reported)))
       1
       (if (not (= (lint-findings-count return-reported) 1))
         9
@@ -2360,7 +2361,7 @@
                 16
                 (if (not (selfhost-lint-unit-if-finding-ok? unit-set-reported))
                   17
-                  (if (not (= (lint-findings-count two-reported) 0))
+                  (if (not (= (lint-findings-count two-reported) 2))
                     18
                     (if (not (= (lint-findings-count cascading-and-reported) 1))
                       20
@@ -2434,7 +2435,7 @@
                                                 (=
                                                   (selfhost-lint-source-finding-count
                                                     (selfhost-lint-wrong-allow-ladder-source))
-                                                  0))
+                                                  1))
                                                 4
                                                 (if (not
                                                   (=

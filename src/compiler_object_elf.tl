@@ -185,6 +185,7 @@
     [(ObjectX64StoreR15Rip _) 7]
     [(ObjectX64AddRcxRip _) 7]
     [(ObjectX64MovRcxRax) 3]
+    [(ObjectX64XorpdRip _) 8]
     [(ObjectX64Bytes bytes) (string-length bytes)]
     [(ObjectX64Raw bytes) (string-length bytes)]
     [_ 0]))
@@ -208,6 +209,7 @@
     [(ObjectX64StoreR15Rip _) 1]
     [(ObjectX64AddRcxRip _) 1]
     [(ObjectX64MovRcxRax) 0]
+    [(ObjectX64XorpdRip _) 1]
     [(ObjectX64Bytes _) 0]
     [(ObjectX64Raw _) 0]))
 
@@ -320,6 +322,8 @@
         [(ObjectX64AddRcxRip _)
           (compiler-object-elf-instrs-supported? (box-get rest))]
         [(ObjectX64MovRcxRax)
+          (compiler-object-elf-instrs-supported? (box-get rest))]
+        [(ObjectX64XorpdRip _)
           (compiler-object-elf-instrs-supported? (box-get rest))]
         [(ObjectX64Bytes _)
           (compiler-object-elf-instrs-supported? (box-get rest))]
@@ -526,6 +530,8 @@
           [(ObjectX64AddRcxRip target)
             (and (>= (compiler-object-elf-symbol-index image target) 0) tail-ok)]
           [(ObjectX64MovRcxRax) tail-ok]
+          [(ObjectX64XorpdRip target)
+            (and (>= (compiler-object-elf-symbol-index image target) 0) tail-ok)]
           [(ObjectX64Bytes _) tail-ok]
           [(ObjectX64Raw _) tail-ok]))]))
 
@@ -951,6 +957,13 @@
         (compiler-object-elf-push-u8! out 0x48)
         (compiler-object-elf-push-u8! out 0x89)
         (compiler-object-elf-push-u8! out 0xc1))]
+    [(ObjectX64XorpdRip _)
+      (begin
+        (compiler-object-elf-push-u8! out 0x66)
+        (compiler-object-elf-push-u8! out 0x0f)
+        (compiler-object-elf-push-u8! out 0x57)
+        (compiler-object-elf-push-u8! out 0x05)
+        (compiler-object-elf-push-rel32-placeholder! out))]
     [(ObjectX64Bytes bytes) (compiler-object-elf-push-string-bytes! out bytes)]
     [(ObjectX64Raw bytes) (compiler-object-elf-push-string-bytes! out bytes)]
     [_ unit]))
@@ -1157,6 +1170,13 @@
               (ObjectRelocRipAddress)
               target)]
           [(ObjectX64MovRcxRax) unit]
+          [(ObjectX64XorpdRip target)
+            (compiler-object-elf-render-relocation-record!
+              out
+              image
+              (+ offset 4)
+              (ObjectRelocRipValue)
+              target)]
           [(ObjectX64Bytes _) unit]
           [(ObjectX64Raw _) unit])
         (compiler-object-elf-render-text-instr-relocations!

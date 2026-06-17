@@ -6453,6 +6453,113 @@
         (compiler-backend-string-contains? asm "    setb %al\n"))]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-f64-neg-source) : String
+  "(define (negf [x : f64]) : f64
+  (neg x))
+(define (main) : i64
+  (if (< (negf 1.5) 0.0) 0 1))")
+
+(define (compiler-backend-f64-neg-object-source) : String
+  "(define (negf [x : f64]) : f64
+  (neg x))
+(define (main) : i64 0)")
+
+(define (compiler-backend-f64-neg-sign-mask-asm-ok?) : bool
+  (match (compiler-backend-emit-source (compiler-backend-f64-neg-source))
+    [(OkCompilerBackend asm)
+      (and
+        (backend-and8
+          (compiler-backend-string-contains?
+            asm
+            "    xorpd .L_tl_f64_sign_bit(%rip), %xmm0\n")
+          (= (compiler-backend-string-count asm ".L_tl_f64_sign_bit:\n") 1)
+          (compiler-backend-string-contains? asm "    .balign 16\n")
+          (compiler-backend-string-contains?
+            asm
+            "    .quad 0x8000000000000000\n")
+          (compiler-backend-string-contains? asm "    .quad 0\n")
+          (not
+            (compiler-backend-string-contains?
+              asm
+              "    movabsq $0x8000000000000000, %rax\n"))
+          (not (compiler-backend-string-contains? asm "    movq %rax, %xmm1\n"))
+          true)
+        (not (compiler-backend-string-contains? asm "    xorpd %xmm1, %xmm0\n"))
+        (match (compiler-backend-emit-source (compiler-backend-f64-source))
+          [(OkCompilerBackend no-neg-asm)
+            (not
+              (compiler-backend-string-contains?
+                no-neg-asm
+                ".L_tl_f64_sign_bit"))]
+          [(ErrCompilerBackend _) false]))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-f64-neg-sign-mask-object-render-ok?
+  [image : CompilerObjectImage]
+  [target : CompilerBackendTarget]) : bool
+  (match target
+    [(BackendTargetLinux)
+      (match (compiler-object-elf-render image)
+        [(OkCompilerObjectElf _) true]
+        [(ErrCompilerObjectElf _) false])]
+    [(BackendTargetWindows)
+      (match (compiler-object-coff-render image)
+        [(OkCompilerObjectCoff _) true]
+        [(ErrCompilerObjectCoff _) false])]))
+
+(define (compiler-backend-f64-neg-sign-mask-object-target-ok?
+  [target : CompilerBackendTarget]) : bool
+  (match (compiler-backend-emit-source-object-image-for-target
+    (compiler-backend-f64-neg-object-source)
+    target)
+    [(OkCompilerBackendObject image)
+      (let
+        [sections : CompilerObjectSectionList (struct-get image sections)]
+        [symbols : CompilerObjectSymbolList (struct-get image symbols)]
+        [relocs : CompilerObjectRelocationList (struct-get image relocations)]
+        [label : String (compiler-backend-f64-sign-bit-label)]
+        (and
+          (backend-and8
+            (compiler-object-symbol-list-contains?
+              symbols
+              label
+              (ObjectSymbolLocal)
+              (ObjectSymbolData))
+            (compiler-object-section-contains-label?
+              sections
+              (ObjectSectionRodata)
+              label)
+            (compiler-object-section-contains-align?
+              sections
+              (ObjectSectionRodata)
+              16)
+            (compiler-object-section-label-has-i64-pair?
+              sections
+              (ObjectSectionRodata)
+              label
+              -9223372036854775808
+              0)
+            (compiler-object-section-contains-xorpd-rip? sections label)
+            (compiler-object-relocation-list-contains?
+              relocs
+              (ObjectRelocRipValue)
+              label)
+            true
+            true)
+          (compiler-backend-f64-neg-sign-mask-object-render-ok? image target)))]
+    [(ErrCompilerBackendObject _) false]))
+
+(define (compiler-backend-f64-neg-sign-mask-object-ok?) : bool
+  (and
+    (compiler-backend-f64-neg-sign-mask-object-target-ok? (BackendTargetLinux))
+    (compiler-backend-f64-neg-sign-mask-object-target-ok?
+      (BackendTargetWindows))))
+
+(define (compiler-backend-f64-neg-sign-mask-ok?) : bool
+  (and
+    (compiler-backend-f64-neg-sign-mask-asm-ok?)
+    (compiler-backend-f64-neg-sign-mask-object-ok?)))
+
 (define (compiler-backend-f32-literal-binop-source) : String
   "(define (main) : i64
   (let
@@ -8144,6 +8251,7 @@
         (compiler-backend-mov-phi-copy-fusion-ok?))
       (and
         (compiler-backend-f64-ok?)
+        (compiler-backend-f64-neg-sign-mask-ok?)
         (compiler-backend-f32-literal-binop-ok?)
         (compiler-backend-bitcast-shape-ok?))
       (compiler-backend-bool-control-flow-ok?)

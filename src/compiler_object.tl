@@ -63,6 +63,7 @@
   (ObjectX64StoreR15Rip String)
   (ObjectX64AddRcxRip String)
   (ObjectX64MovRcxRax)
+  (ObjectX64XorpdRip String)
   (ObjectX64Bytes String)
   (ObjectX64Raw String))
 
@@ -469,6 +470,44 @@
         [_
           (compiler-object-data-record-list-contains-i64? (box-get rest) value)])]))
 
+(define (compiler-object-data-record-list-label-has-i64-pair?
+  [records : CompilerObjectDataRecordList]
+  [label : String]
+  [first : i64]
+  [second : i64]) : bool
+  (match records
+    [(ObjectDataNil) false]
+    [(ObjectDataCons record rest)
+      (match record
+        [(ObjectDataLabel found)
+          (if (string-eq found label)
+            (match (box-get rest)
+              [(ObjectDataCons first-record after-first)
+                (match first-record
+                  [(ObjectDataI64 first-found)
+                    (if (= first-found first)
+                      (match (box-get after-first)
+                        [(ObjectDataCons second-record _)
+                          (match second-record
+                            [(ObjectDataI64 second-found)
+                              (= second-found second)]
+                            [_ false])]
+                        [(ObjectDataNil) false])
+                      false)]
+                  [_ false])]
+              [(ObjectDataNil) false])
+            (compiler-object-data-record-list-label-has-i64-pair?
+              (box-get rest)
+              label
+              first
+              second))]
+        [_
+          (compiler-object-data-record-list-label-has-i64-pair?
+            (box-get rest)
+            label
+            first
+            second)])]))
+
 (define (compiler-object-section-contains-string?
   [sections : CompilerObjectSectionList]
   [kind : CompilerObjectSectionKind]
@@ -509,6 +548,20 @@
     [(ObjectSection _ data _)
       (compiler-object-data-record-list-contains-i64? data value)]))
 
+(define (compiler-object-section-label-has-i64-pair?
+  [sections : CompilerObjectSectionList]
+  [kind : CompilerObjectSectionKind]
+  [label : String]
+  [first : i64]
+  [second : i64]) : bool
+  (match (compiler-object-section-list-find sections kind)
+    [(ObjectSection _ data _)
+      (compiler-object-data-record-list-label-has-i64-pair?
+        data
+        label
+        first
+        second)]))
+
 (define (compiler-object-instr-list-contains-call?
   [instrs : CompilerObjectX64InstrList]
   [target : String]) : bool
@@ -528,3 +581,26 @@
   (match (compiler-object-section-list-find sections (ObjectSectionText))
     [(ObjectSection _ _ instrs)
       (compiler-object-instr-list-contains-call? instrs target)]))
+
+(define (compiler-object-instr-list-contains-xorpd-rip?
+  [instrs : CompilerObjectX64InstrList]
+  [target : String]) : bool
+  (match instrs
+    [(ObjectInstrNil) false]
+    [(ObjectInstrCons instr rest)
+      (match instr
+        [(ObjectX64XorpdRip found)
+          (if (string-eq found target)
+            true
+            (compiler-object-instr-list-contains-xorpd-rip?
+              (box-get rest)
+              target))]
+        [_
+          (compiler-object-instr-list-contains-xorpd-rip? (box-get rest) target)])]))
+
+(define (compiler-object-section-contains-xorpd-rip?
+  [sections : CompilerObjectSectionList]
+  [target : String]) : bool
+  (match (compiler-object-section-list-find sections (ObjectSectionText))
+    [(ObjectSection _ _ instrs)
+      (compiler-object-instr-list-contains-xorpd-rip? instrs target)]))

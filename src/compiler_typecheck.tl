@@ -4546,8 +4546,20 @@
 (define (ffi-call) : i32 (ffi-take-i32 2147483647))
 (define (bin-left [x : u8]) : u8 (+ 1 x))
 (define (bin-right [x : u16]) : u16 (+ x 1))
-(define (two-literals) : i64 (+ 1 2))
+(define (two-literals) : i32 (+ 1 2))
+(define (contextual-binary-literals) : i64 (- 0 1))
+(define (contextual-unary-literal) : i64 (neg 1))
+(define (contextual-let-binary-literals) : i64
+  (let
+    [x : i64 (- 0 1)]
+    x))
 (define (main) : i64 0)")
+
+(define (compiler-typecheck-scalar-unconstrained-int-default-source) : String
+  "(define (main) : i32
+  (let
+    [x (+ 1 2)]
+    x))")
 
 (define (compiler-typecheck-scalar-int-i8-overflow-source) : String
   "(define (main) : i8 128)")
@@ -4671,6 +4683,12 @@
           ok
           (compiler-typecheck-ok?
             (compiler-typecheck-scalar-integer-context-source))))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-ok?
+            (compiler-typecheck-scalar-unconstrained-int-default-source))))
       (set!
         ok
         (and

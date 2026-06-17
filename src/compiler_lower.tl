@@ -12945,6 +12945,69 @@
           (OkTcType (tc-type-without-regions (tc-resolve-type ctx result-ty)))])]
     [(ErrTcBinOpTypes message) (ErrTcType message)]))
 
+(define (lower-binop-types-with-result
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [op : AstBinOp]
+  [left : AstExpr]
+  [right : AstExpr]
+  [expr-ty : AstType]) : ResultTcBinOpTypes
+  (let
+    [operand-expected : AstType
+      (tc-type-without-regions (tc-resolve-type ctx expr-ty))]
+    (match (tc-binop-contextual-operand-type op operand-expected)
+      [(AstNoType) (tc-binop-expr-types ctx type-env op left right)]
+      [(AstSomeType operand-ty)
+        (match (tc-expr-with-expected-or-actual ctx type-env left operand-ty)
+          [(OkTcType left-ty)
+            (match (tc-expr-with-expected-or-actual
+              ctx
+              type-env
+              right
+              operand-ty)
+              [(OkTcType right-ty)
+                (match (tc-binop-type op left-ty right-ty)
+                  [(OkTcType result-ty)
+                    (if (tc-type-compatible? expr-ty result-ty)
+                      (OkTcBinOpTypes
+                        (TcBinOpTypes
+                          left-ty
+                          right-ty
+                          (tc-contextual-result-type expr-ty result-ty)))
+                      (tc-binop-expr-types ctx type-env op left right))]
+                  [(ErrTcType _)
+                    (tc-binop-expr-types ctx type-env op left right)])]
+              [(ErrTcType message) (ErrTcBinOpTypes message)])]
+          [(ErrTcType message) (ErrTcBinOpTypes message)])])))
+
+(define (lower-unop-type-with-result
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [op : AstUnOp]
+  [inner : AstExpr]
+  [expr-ty : AstType]) : ResultTcType
+  (let
+    [operand-expected : AstType
+      (tc-type-without-regions (tc-resolve-type ctx expr-ty))]
+    (match (tc-unop-contextual-operand-type op operand-expected)
+      [(AstNoType)
+        (match (tc-expr ctx type-env inner)
+          [(OkTcType inner-ty) (tc-unop-type op inner-ty)]
+          [(ErrTcType message) (ErrTcType message)])]
+      [(AstSomeType operand-ty)
+        (match (tc-expr-with-expected-or-actual ctx type-env inner operand-ty)
+          [(OkTcType inner-ty)
+            (match (tc-unop-type op inner-ty)
+              [(OkTcType result-ty)
+                (if (tc-type-compatible? expr-ty result-ty)
+                  (OkTcType (tc-contextual-result-type expr-ty result-ty))
+                  (tc-unop-type op inner-ty))]
+              [(ErrTcType _)
+                (match (tc-expr ctx type-env inner)
+                  [(OkTcType actual-ty) (tc-unop-type op actual-ty)]
+                  [(ErrTcType message) (ErrTcType message)])])]
+          [(ErrTcType message) (ErrTcType message)])])))
+
 (define (lower-if-result-type-fast
   [ctx : TcContext]
   [env : SymI64Env]
@@ -13818,21 +13881,58 @@
     [(AstExprUnary op inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
-        (match (lower-expr ctx state env type-env inner)
-          [(OkLowerExpr lowered)
-            (match lowered
-              [(LowerExpr inner-state value _)
-                (match (lower-state-alloc-var inner-state)
-                  [(LowerAlloc allocated var-id)
-                    (OkLowerExpr
-                      (LowerExpr
-                        (lower-state-emit-at-expr
-                          allocated
-                          (IrInstrUnOp var-id (lower-unop op) value expr-ty)
-                          origin)
-                        (IrValueVar var-id)
-                        expr-ty))])])]
-          [(ErrLowerExpr message) (ErrLowerExpr message)]))]
+        (match (lower-unop-type-with-result ctx type-env op inner expr-ty)
+          [(OkTcType result-ty)
+            (match (tc-unop-contextual-operand-type op result-ty)
+              [(AstNoType)
+                (match (lower-expr ctx state env type-env inner)
+                  [(OkLowerExpr lowered)
+                    (match lowered
+                      [(LowerExpr inner-state value _)
+                        (match (lower-state-alloc-var inner-state)
+                          [(LowerAlloc allocated var-id)
+                            (OkLowerExpr
+                              (LowerExpr
+                                (lower-state-emit-at-expr
+                                  allocated
+                                  (IrInstrUnOp
+                                    var-id
+                                    (lower-unop op)
+                                    value
+                                    result-ty)
+                                  origin)
+                                (IrValueVar var-id)
+                                result-ty))])])]
+                  [(ErrLowerExpr message) (ErrLowerExpr message)])]
+              [(AstSomeType operand-ty)
+                (match (lower-expr-expected
+                  ctx
+                  state
+                  env
+                  type-env
+                  inner
+                  operand-ty
+                  inner)
+                  [(OkLowerExpr lowered)
+                    (match lowered
+                      [(LowerExpr inner-state value _)
+                        (match (lower-state-alloc-var inner-state)
+                          [(LowerAlloc allocated var-id)
+                            (OkLowerExpr
+                              (LowerExpr
+                                (lower-state-emit-at-expr
+                                  allocated
+                                  (IrInstrUnOp
+                                    var-id
+                                    (lower-unop op)
+                                    value
+                                    result-ty)
+                                  origin)
+                                (IrValueVar var-id)
+                                result-ty))])])]
+                  [(ErrLowerExpr message) (ErrLowerExpr message)])])]
+          [(ErrTcType message)
+            (ErrLowerExpr (lower-diagnostic-at-expr origin message))]))]
     [(AstExprBinary op left-box right-box)
       ;; `and`/`or` short-circuit: desugar to a conditional branch so the right
       ;; operand is evaluated only when the left does not already decide the
@@ -13864,10 +13964,16 @@
               right
               expr-ty)]
           [_
-            (match (tc-binop-expr-types ctx type-env op left right)
+            (match (lower-binop-types-with-result
+              ctx
+              type-env
+              op
+              left
+              right
+              expr-ty)
               [(OkTcBinOpTypes binop-types)
                 (match binop-types
-                  [(TcBinOpTypes left-ty right-ty _)
+                  [(TcBinOpTypes left-ty right-ty result-ty)
                     (match (lower-expr-expected
                       ctx
                       state
@@ -13900,7 +14006,7 @@
                                         left-value
                                         right-value
                                         left-ty
-                                        expr-ty
+                                        result-ty
                                         origin)
                                       (match (lower-state-alloc-var right-state)
                                         [(LowerAlloc allocated var-id)
@@ -13913,10 +14019,10 @@
                                                   (lower-binop op)
                                                   left-value
                                                   right-value
-                                                  expr-ty)
+                                                  result-ty)
                                                 origin)
                                               (IrValueVar var-id)
-                                              expr-ty))]))])]
+                                              result-ty))]))])]
                               [(ErrLowerExpr message) (ErrLowerExpr message)])])]
                       [(ErrLowerExpr message) (ErrLowerExpr message)])])]
               [(ErrTcBinOpTypes message)
@@ -13943,11 +14049,25 @@
         [body : AstExpr (ast-node-get body-box)]
         (match (lower-let-bindings ctx state env type-env bindings)
           [(OkLowerEnv binding-state body-env body-type-env)
-            (lower-expr ctx binding-state body-env body-type-env body)]
+            (lower-expr-expected
+              ctx
+              binding-state
+              body-env
+              body-type-env
+              body
+              expr-ty
+              body)]
           [(ErrLowerEnv message) (ErrLowerExpr message)]))]
-    [(AstExprBegin exprs) (lower-begin ctx state env type-env exprs)]
+    [(AstExprBegin exprs)
+      (lower-begin-expected ctx state env type-env exprs expr-ty)]
     [(AstExprUnsafe exprs)
-      (lower-begin ctx state env (tc-enter-unsafe type-env) exprs)]
+      (lower-begin-expected
+        ctx
+        state
+        env
+        (tc-enter-unsafe type-env)
+        exprs
+        expr-ty)]
     [(AstExprSet name value-box)
       (let
         [name-id : i64 name]
@@ -14517,6 +14637,26 @@
         (lower-literal-value lit)
         expected-ty
         origin)]
+    [(AstExprUnary _ _)
+      (lower-expr-with-type-and-coerce
+        ctx
+        state
+        env
+        type-env
+        expr
+        origin
+        expected-ty
+        expected-ty)]
+    [(AstExprBinary _ _ _)
+      (lower-expr-with-type-and-coerce
+        ctx
+        state
+        env
+        type-env
+        expr
+        origin
+        expected-ty
+        expected-ty)]
     [(AstExprLet _ _)
       (lower-expr-with-type-and-coerce
         ctx
@@ -21807,6 +21947,39 @@
                       (OkLowerExpr
                         (LowerExpr next-state IrValueUnit (AstTyNever)))
                       (lower-begin ctx next-state env type-env rest))])]
+              [(ErrLowerExpr message) (ErrLowerExpr message)])]))]))
+
+(define (lower-begin-expected
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [exprs : AstExprList]
+  [expected-ty : AstType]) : ResultLowerExpr
+  (match exprs
+    [(AstExprNil) (OkLowerExpr (LowerExpr state IrValueUnit (AstTyUnit)))]
+    [(AstExprCons expr rest)
+      (let
+        [expr : AstExpr (ast-node-get expr)]
+        [rest : AstExprList (box-get rest)]
+        (match rest
+          [(AstExprNil)
+            (lower-expr-expected ctx state env type-env expr expected-ty expr)]
+          [_
+            (match (lower-expr ctx state env type-env expr)
+              [(OkLowerExpr lowered)
+                (match lowered
+                  [(LowerExpr next-state _ expr-ty)
+                    (if (tc-never-type? expr-ty)
+                      (OkLowerExpr
+                        (LowerExpr next-state IrValueUnit (AstTyNever)))
+                      (lower-begin-expected
+                        ctx
+                        next-state
+                        env
+                        type-env
+                        rest
+                        expected-ty))])]
               [(ErrLowerExpr message) (ErrLowerExpr message)])]))]))
 
 (define (lower-with-arena

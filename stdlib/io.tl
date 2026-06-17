@@ -2270,3 +2270,30 @@
   (let
     [newline : String "\n"]
     (print-error (string-append-borrowed text (& newline)))))
+
+(test
+  io-core-macros-prelude
+  (let
+    [zero : i64
+      (if (> (arg-count) 0)
+        0
+        0)]
+    [value : i64 0]
+    (begin
+      (if (not (and (!= zero 0) (= (/ 100 zero) 100)))
+        unit
+        (begin
+          (/ 1 0)
+          unit))
+      (if (or (= zero 0) (= (/ 100 zero) 100))
+        unit
+        (begin
+          (/ 1 0)
+          unit))
+      (when (= zero 0) (set! value 11))
+      (unless (!= zero 0) (set! value (+ value 31)))
+      (if (= value 42)
+        unit
+        (begin
+          (/ 1 0)
+          unit)))))

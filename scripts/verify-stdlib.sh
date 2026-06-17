@@ -225,9 +225,7 @@ stdlib_test_manifest() {
     cat <<'EOF'
 stdlib/tests/arena_atomic_api.tl|42|-|-|-|requires-stage0-symbol:tl_arena_make_atomic
 stdlib/tests/arena_patterns.tl|42|-|-|-|requires-stage0-symbol:with-escape
-stdlib/tests/comptime_api.tl|42|-|-|-
 stdlib/tests/str_cat_api.tl|42|-|-|-
-stdlib/tests/core_macros_runtime_import.tl|42|-|-|-
 stdlib/tests/string_edges.tl|42|-|-
 stdlib/tests/io_edges.tl|42|-|-|-
 stdlib/tests/io_file_handle.tl|42|-|-|-
@@ -264,6 +262,7 @@ stdlib_check_manifest() {
     cat <<'EOF'
 stdlib/tests/arena_policy_escape_string.tl|fail|cannot escape with-arena 'inner'
 stdlib/tests/arena_policy_escape_text_buf.tl|fail|cannot escape with-arena 'inner'
+stdlib/tests/comptime_api.tl|pass|-
 stdlib/tests/core_macros_api.tl|pass|-
 stdlib/tests/core_macros_cond_flat_reject.tl|fail|typecheck: ExprClause macro operand expects bracket syntax
 stdlib/tests/core_macros_cond_missing_else.tl|fail|core-cond-missing-else

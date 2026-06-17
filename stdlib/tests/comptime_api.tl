@@ -13,9 +13,17 @@
     [(ExprInt _) x]
     [_ (expr-int 0)]))
 
-(define (main) : i64
+(define (stdlib-comptime-qualified-import-shape) : i64
   (+
     (stdlib-comptime-id 14)
     (+
       (stdlib-comptime-first-or-zero 14 100)
       (stdlib-comptime-match-int-or-zero 14))))
+
+(test
+  comptime-qualified-import-shape
+  (if (= (stdlib-comptime-qualified-import-shape) 42)
+    unit
+    (begin
+      (/ 1 0)
+      unit)))

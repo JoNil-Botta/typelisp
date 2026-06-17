@@ -66,6 +66,10 @@
   (present (Array i64))
   (items (Array CompilerRegLocation)))
 
+(defstruct CompilerRegAssignmentTable
+  (present (Array i64))
+  (items (Array CompilerRegLocation)))
+
 (defstruct CompilerRegIntervalIndex
   (starts (Array i64))
   (ends (Array i64)))
@@ -89,7 +93,7 @@
     CompilerRegVarTypeList))
 
 (defenum CompilerRegAssignState
-  (CompilerRegAssignState CompilerRegActiveList CompilerRegAssignmentList))
+  (CompilerRegAssignState CompilerRegActiveList CompilerRegAssignmentTable))
 
 (defenum CompilerRegMove
   (CompilerRegMove i64 i64))
@@ -803,6 +807,71 @@
       (if (= (array-ref present var) 0)
         CompilerRegNoLocation
         (CompilerRegSomeLocation (array-ref items var))))))
+
+(define (compiler-reg-assignment-table-make [vars : i64]) : CompilerRegAssignmentTable
+  (let
+    [n : i64
+      (if (< vars 1)
+        1
+        vars)]
+    [present : (Array i64) (make-array i64 n)]
+    [items : (Array CompilerRegLocation) (make-array CompilerRegLocation n)]
+    (begin
+      (compiler-reg-fill-i64-array present 0)
+      (compiler-reg-fill-location-array items (CompilerRegSpill 0))
+      (CompilerRegAssignmentTable present items))))
+
+(define (compiler-reg-assignment-table-insert
+  [assignments : CompilerRegAssignmentTable]
+  [var : i64]
+  [location : CompilerRegLocation]) : CompilerRegAssignmentTable
+  (let
+    [present : (Array i64) (struct-get assignments present)]
+    [items : (Array CompilerRegLocation) (struct-get assignments items)]
+    (begin
+      (if (or (< var 0) (>= var (array-length present)))
+        unit
+        (begin
+          (array-set! present var 1)
+          (array-set! items var location)))
+      assignments)))
+
+(define (compiler-reg-assignment-table-lookup
+  [assignments : CompilerRegAssignmentTable]
+  [var : i64]) : CompilerRegMaybeLocation
+  (let
+    [present : (Array i64) (struct-get assignments present)]
+    [items : (Array CompilerRegLocation) (struct-get assignments items)]
+    (if (or (< var 0) (>= var (array-length present)))
+      CompilerRegNoLocation
+      (if (= (array-ref present var) 0)
+        CompilerRegNoLocation
+        (CompilerRegSomeLocation (array-ref items var))))))
+
+(define (compiler-reg-assignment-table-to-list-from
+  [assignments : CompilerRegAssignmentTable]
+  [index : i64]
+  [out : CompilerRegAssignmentList]) : CompilerRegAssignmentList
+  (if (< index 0)
+    out
+    (let
+      [present : (Array i64) (struct-get assignments present)]
+      [items : (Array CompilerRegLocation) (struct-get assignments items)]
+      (compiler-reg-assignment-table-to-list-from
+        assignments
+        (- index 1)
+        (if (= (array-ref present index) 0)
+          out
+          (compiler-reg-assignment-cons
+            (CompilerRegAssignment index (array-ref items index))
+            out))))))
+
+(define (compiler-reg-assignment-table-to-list
+  [assignments : CompilerRegAssignmentTable]) : CompilerRegAssignmentList
+  (compiler-reg-assignment-table-to-list-from
+    assignments
+    (- (array-length (struct-get assignments present)) 1)
+    CompilerRegAssignmentNil))
 
 (define (compiler-reg-interval-index-fill!
   [intervals : CompilerRegIntervalList]
@@ -2200,8 +2269,62 @@
                 ignore-var
                 location)))])]))
 
+(define (compiler-reg-assignment-table-location-conflicts-from?
+  [assignments : CompilerRegAssignmentTable]
+  [intervals : CompilerRegIntervalIndex]
+  [var : i64]
+  [ignore-var : i64]
+  [location : CompilerRegLocation]
+  [index : i64]) : bool
+  (let
+    [present : (Array i64) (struct-get assignments present)]
+    [items : (Array CompilerRegLocation) (struct-get assignments items)]
+    (if (>= index (array-length present))
+      false
+      (if (= (array-ref present index) 0)
+        (compiler-reg-assignment-table-location-conflicts-from?
+          assignments
+          intervals
+          var
+          ignore-var
+          location
+          (+ index 1))
+        (if (or (= index var) (= index ignore-var))
+          (compiler-reg-assignment-table-location-conflicts-from?
+            assignments
+            intervals
+            var
+            ignore-var
+            location
+            (+ index 1))
+          (if (and
+            (compiler-reg-location-eq? (array-ref items index) location)
+            (compiler-reg-vars-interfere-index? intervals var index))
+            true
+            (compiler-reg-assignment-table-location-conflicts-from?
+              assignments
+              intervals
+              var
+              ignore-var
+              location
+              (+ index 1))))))))
+
+(define (compiler-reg-assignment-table-location-conflicts?
+  [assignments : CompilerRegAssignmentTable]
+  [intervals : CompilerRegIntervalIndex]
+  [var : i64]
+  [ignore-var : i64]
+  [location : CompilerRegLocation]) : bool
+  (compiler-reg-assignment-table-location-conflicts-from?
+    assignments
+    intervals
+    var
+    ignore-var
+    location
+    0))
+
 (define (compiler-reg-coalesce-location-from-var
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [intervals : CompilerRegIntervalIndex]
   [types : CompilerRegVarTypes]
   [var : i64]
@@ -2211,9 +2334,9 @@
     (not (compiler-reg-compatible-types? types var other))
     (compiler-reg-vars-interfere-index? intervals var other))
     CompilerRegNoLocation
-    (match (compiler-reg-assignment-lookup assignments other)
+    (match (compiler-reg-assignment-table-lookup assignments other)
       [(CompilerRegSomeLocation location)
-        (if (compiler-reg-location-conflicts?
+        (if (compiler-reg-assignment-table-location-conflicts?
           assignments
           intervals
           var
@@ -2225,7 +2348,7 @@
 
 (define (compiler-reg-coalesce-location
   [moves : CompilerRegMoveList]
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [intervals : CompilerRegIntervalIndex]
   [types : CompilerRegVarTypes]
   [var : i64]) : CompilerRegMaybeLocation
@@ -2294,7 +2417,7 @@
 (define (compiler-reg-spill-at-interval
   [interval : CompilerRegInterval]
   [active : CompilerRegActiveList]
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [group-vars : CompilerLiveI64Set]) : CompilerRegAssignState
   (match interval
     [(CompilerRegInterval var _ end)
@@ -2302,7 +2425,7 @@
         [(CompilerRegNoActive)
           (CompilerRegAssignState
             active
-            (compiler-reg-assignment-insert
+            (compiler-reg-assignment-table-insert
               assignments
               var
               (CompilerRegSpill (compiler-reg-stack-slot-offset var))))]
@@ -2314,8 +2437,8 @@
                   (compiler-reg-active-insert
                     (compiler-reg-active-remove-var active spill-var)
                     (CompilerRegActive var end spill-reg))
-                  (compiler-reg-assignment-insert
-                    (compiler-reg-assignment-insert
+                  (compiler-reg-assignment-table-insert
+                    (compiler-reg-assignment-table-insert
                       assignments
                       spill-var
                       (CompilerRegSpill
@@ -2324,7 +2447,7 @@
                     (CompilerRegRegister spill-reg)))
                 (CompilerRegAssignState
                   active
-                  (compiler-reg-assignment-insert
+                  (compiler-reg-assignment-table-insert
                     assignments
                     var
                     (CompilerRegSpill (compiler-reg-stack-slot-offset var)))))])])]))
@@ -2333,7 +2456,7 @@
   [candidates : CompilerRegIntervalList]
   [regs : CompilerRegStringList]
   [active : CompilerRegActiveList]
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [moves : CompilerRegMoveList]
   [interval-index : CompilerRegIntervalIndex]
   [types : CompilerRegVarTypes]
@@ -2372,7 +2495,10 @@
                       (compiler-reg-active-insert
                         expired
                         (CompilerRegActive var end reg))
-                      (compiler-reg-assignment-insert assignments var location)
+                      (compiler-reg-assignment-table-insert
+                        assignments
+                        var
+                        location)
                       moves
                       interval-index
                       types
@@ -2388,7 +2514,10 @@
                           expired
                           (CompilerRegActive var end reg-a))
                         (CompilerRegActive var end reg-b))
-                      (compiler-reg-assignment-insert assignments var location)
+                      (compiler-reg-assignment-table-insert
+                        assignments
+                        var
+                        location)
                       moves
                       interval-index
                       types
@@ -2398,7 +2527,10 @@
                       (box-get rest)
                       regs
                       expired
-                      (compiler-reg-assignment-insert assignments var location)
+                      (compiler-reg-assignment-table-insert
+                        assignments
+                        var
+                        location)
                       moves
                       interval-index
                       types
@@ -2443,7 +2575,7 @@
                           (compiler-reg-active-insert
                             active-a
                             (CompilerRegActive var end reg-b))
-                          (compiler-reg-assignment-insert
+                          (compiler-reg-assignment-table-insert
                             assignments
                             var
                             (CompilerRegRegisterPair reg-a reg-b))
@@ -2493,7 +2625,7 @@
                         (compiler-reg-active-insert
                           expired
                           (CompilerRegActive var end reg))
-                        (compiler-reg-assignment-insert
+                        (compiler-reg-assignment-table-insert
                           assignments
                           var
                           (CompilerRegRegister reg))
@@ -2506,7 +2638,7 @@
   [candidates : CompilerRegIntervalList]
   [regs : CompilerRegStringList]
   [active : CompilerRegActiveList]
-  [assignments : CompilerRegAssignmentList]) : CompilerRegAssignState
+  [assignments : CompilerRegAssignmentTable]) : CompilerRegAssignState
   (match candidates
     [(CompilerRegIntervalNil) (CompilerRegAssignState active assignments)]
     [(CompilerRegIntervalCons interval rest)
@@ -2531,7 +2663,7 @@
                   (compiler-reg-active-insert
                     expired
                     (CompilerRegActive var end reg))
-                  (compiler-reg-assignment-insert
+                  (compiler-reg-assignment-table-insert
                     assignments
                     var
                     (CompilerRegRegister reg))))))])]))
@@ -2916,20 +3048,23 @@
   [intervals : CompilerRegIntervalList]
   [ineligible : CompilerLiveI64Set]) : CompilerRegPlan
   (let
+    [vars : i64
+      (match func
+        [(IrFunction _ _ _ function-vars _) function-vars])]
     [moves : CompilerRegMoveList (compiler-reg-function-moves func)]
     [group-vars : CompilerLiveI64Set
       (compiler-reg-function-group-vars func types)]
     [vector-mask-defs : CompilerLiveUseDef
       (compiler-reg-function-vector-mask-defs func)]
     [interval-index : CompilerRegIntervalIndex
-      (match func
-        [(IrFunction _ _ _ vars _)
-          (compiler-reg-interval-index-build intervals vars)])]
+      (compiler-reg-interval-index-build intervals vars)]
+    [assignment-table : CompilerRegAssignmentTable
+      (compiler-reg-assignment-table-make vars)]
     (match (compiler-reg-assign-candidates
       (compiler-reg-candidates intervals type-info ineligible false)
       (compiler-reg-sysv-integer-registers)
       CompilerRegActiveNil
-      CompilerRegAssignmentNil
+      assignment-table
       moves
       interval-index
       type-info
@@ -2965,7 +3100,11 @@
                       CompilerRegActiveNil
                       vector-assignments)
                       [(CompilerRegAssignState _ assignments)
-                        (CompilerRegPlan assignments ineligible intervals types)])])])])])))
+                        (CompilerRegPlan
+                          (compiler-reg-assignment-table-to-list assignments)
+                          ineligible
+                          intervals
+                          types)])])])])])))
 
 ;; SIMD/AVX register plan (unchanged from before #perf): full dataflow-liveness
 ;; intervals + the call-live-conservative ineligibility, keeping AVX backend
@@ -5512,6 +5651,16 @@
               CompilerRegIntervalNil))))]
     [assignment-index : CompilerRegAssignmentIndex
       (compiler-reg-assignment-index-build assignments 5)]
+    [assignment-table : CompilerRegAssignmentTable
+      (compiler-reg-assignment-table-insert
+        (compiler-reg-assignment-table-insert
+          (compiler-reg-assignment-table-make 5)
+          1
+          (CompilerRegRegister "%r12"))
+        3
+        (CompilerRegSpill 24))]
+    [assignment-table-list : CompilerRegAssignmentList
+      (compiler-reg-assignment-table-to-list assignment-table)]
     [interval-index : CompilerRegIntervalIndex
       (compiler-reg-interval-index-build intervals 5)]
     [assignment-hit-ok : bool
@@ -5527,6 +5676,29 @@
       (match (compiler-reg-assignment-index-lookup assignment-index -1)
         [(CompilerRegSomeLocation _) false]
         [(CompilerRegNoLocation) true])]
+    [table-hit-ok : bool
+      (match (compiler-reg-assignment-table-lookup assignment-table 1)
+        [(CompilerRegSomeLocation location)
+          (compiler-reg-location-eq? location (CompilerRegRegister "%r12"))]
+        [(CompilerRegNoLocation) false])]
+    [table-miss-ok : bool
+      (match (compiler-reg-assignment-table-lookup assignment-table 2)
+        [(CompilerRegSomeLocation _) false]
+        [(CompilerRegNoLocation) true])]
+    [table-oob-ok : bool
+      (match (compiler-reg-assignment-table-lookup assignment-table -1)
+        [(CompilerRegSomeLocation _) false]
+        [(CompilerRegNoLocation) true])]
+    [table-list-ok : bool
+      (and
+        (compiler-reg-location-register?
+          (compiler-reg-assignment-lookup assignment-table-list 1)
+          "%r12")
+        (compiler-reg-location-eq?
+          (match (compiler-reg-assignment-lookup assignment-table-list 3)
+            [(CompilerRegSomeLocation location) location]
+            [(CompilerRegNoLocation) (CompilerRegSpill -1)])
+          (CompilerRegSpill 24)))]
     [interval-hit-ok : bool
       (match (compiler-reg-interval-index-lookup interval-index 3)
         [(CompilerRegSomeInterval interval)
@@ -5564,15 +5736,35 @@
           2
           -1
           (CompilerRegRegister "%r12")))]
+    [table-conflict-ok : bool
+      (and
+        (not
+          (compiler-reg-assignment-table-location-conflicts?
+            assignment-table
+            interval-index
+            3
+            -1
+            (CompilerRegRegister "%r12")))
+        (compiler-reg-assignment-table-location-conflicts?
+          assignment-table
+          interval-index
+          2
+          -1
+          (CompilerRegRegister "%r12")))]
     (and
       assignment-hit-ok
       assignment-miss-ok
       assignment-oob-ok
+      table-hit-ok
+      table-miss-ok
+      table-oob-ok
+      table-list-ok
       interval-hit-ok
       interval-miss-ok
       interval-first-ok
       interference-ok
-      conflict-ok)))
+      conflict-ok
+      table-conflict-ok)))
 
 (define (compiler-reg-coalesce-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-move-chain-function))

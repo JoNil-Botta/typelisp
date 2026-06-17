@@ -194,17 +194,13 @@
       (opt-bounds-instrs (OptBoundsNil) (smoke-bounds-object-call-barrier))]
     [object-store : CompilerIrInstrList
       (opt-bounds-instrs (OptBoundsNil) (smoke-bounds-object-store-barrier))]
-    (if (not (= (opt-count-bounds-instrs object-array) 1))
-      1
-      (if (not (= (opt-count-bounds-instrs object-string) 1))
-        2
-        (if (not (= (opt-count-bounds-instrs object-mismatch) 2))
-          3
-          (if (not (= (opt-count-bounds-instrs object-call) 2))
-            4
-            (if (not (= (opt-count-bounds-instrs object-store) 2))
-              5
-              42)))))))
+    (cond
+      [(not (= (opt-count-bounds-instrs object-array) 1)) 1]
+      [(not (= (opt-count-bounds-instrs object-string) 1)) 2]
+      [(not (= (opt-count-bounds-instrs object-mismatch) 2)) 3]
+      [(not (= (opt-count-bounds-instrs object-call) 2)) 4]
+      [(not (= (opt-count-bounds-instrs object-store) 2)) 5]
+      [else 42])))
 
 (define (smoke-range-bce-entry [with-nonnegative : bool]) : CompilerIrBlock
   (compiler-ir-block

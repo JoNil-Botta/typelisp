@@ -374,28 +374,30 @@
               (set! message "trailing escape in doctest output metadata")
               (let
                 [esc : char (string-ref text (+ i 1))]
-                (if (= esc #n')
-                  (begin
-                    (set! out (string-append out "\n"))
-                    (set! i (+ i 2)))
-                  (if (= esc #t')
+                (cond
+                  [(= esc #n')
+                    (begin
+                      (set! out (string-append out "\n"))
+                      (set! i (+ i 2)))]
+                  [(= esc #t')
                     (begin
                       (set! out (string-append out "\t"))
-                      (set! i (+ i 2)))
-                    (if (= esc #r')
-                      (begin
-                        (set! out (string-append out "\r"))
-                        (set! i (+ i 2)))
-                      (if (= esc #\\')
-                        (begin
-                          (set! out (string-append out "\\"))
-                          (set! i (+ i 2)))
-                        (set!
-                          message
-                          (str-cat
-                            "unsupported doctest output escape `\\"
-                            (substring text (+ i 1) 1)
-                            "`"))))))))
+                      (set! i (+ i 2)))]
+                  [(= esc #r')
+                    (begin
+                      (set! out (string-append out "\r"))
+                      (set! i (+ i 2)))]
+                  [(= esc #\\')
+                    (begin
+                      (set! out (string-append out "\\"))
+                      (set! i (+ i 2)))]
+                  [else
+                    (set!
+                      message
+                      (str-cat
+                        "unsupported doctest output escape `\\"
+                        (substring text (+ i 1) 1)
+                        "`"))])))
             (begin
               (set! out (string-append out (substring text i 1)))
               (set! i (+ i 1))))))

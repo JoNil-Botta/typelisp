@@ -370,14 +370,13 @@
         (str-cat "tlci metadata: field `" fname "` must be a string"))]))
 
 (define (tlci-parse-export-kind [name : String]) : ResultTlciExportKind
-  (if (string-eq name "value")
-    (OkTlciExportKind (TlciExportValue))
-    (if (string-eq name "type")
-      (OkTlciExportKind (TlciExportType))
-      (if (string-eq name "macro")
-        (OkTlciExportKind (TlciExportMacro))
-        (ErrTlciExportKind
-          "tlci metadata: export must start with `value`, `type`, or `macro`")))))
+  (cond
+    [(string-eq name "value") (OkTlciExportKind (TlciExportValue))]
+    [(string-eq name "type") (OkTlciExportKind (TlciExportType))]
+    [(string-eq name "macro") (OkTlciExportKind (TlciExportMacro))]
+    [else
+      (ErrTlciExportKind
+        "tlci metadata: export must start with `value`, `type`, or `macro`")]))
 
 (define (tlci-export-fields
   [fields : Sexpr]
@@ -390,53 +389,56 @@
   [has-layout : bool]) : ResultTlciExport
   (match fields
     [(SNil)
-      (if (not has-name)
-        (ErrTlciExport "tlci metadata: export missing required field `name`")
-        (if (string-eq name "")
-          (ErrTlciExport "tlci metadata: export name must not be empty")
-          (if (or
-            (tlci-export-kind-eq? kind (TlciExportValue))
-            (tlci-export-kind-eq? kind (TlciExportMacro)))
-            (if has-layout
+      (cond
+        [(not has-name)
+          (ErrTlciExport "tlci metadata: export missing required field `name`")]
+        [(string-eq name "")
+          (ErrTlciExport "tlci metadata: export name must not be empty")]
+        [(or
+          (tlci-export-kind-eq? kind (TlciExportValue))
+          (tlci-export-kind-eq? kind (TlciExportMacro)))
+          (cond
+            [has-layout
               (ErrTlciExport
-                "tlci metadata: value and macro exports must not include `layout`")
-              (if (not has-signature)
-                (ErrTlciExport
-                  "tlci metadata: value and macro exports require `signature`")
-                (if (string-eq signature "")
-                  (ErrTlciExport
-                    "tlci metadata: export signature must not be empty")
-                  (OkTlciExport (TlciExport kind name signature "")))))
-            (if has-signature
+                "tlci metadata: value and macro exports must not include `layout`")]
+            [(not has-signature)
               (ErrTlciExport
-                "tlci metadata: type exports must not include `signature`")
-              (if (not has-layout)
-                (ErrTlciExport "tlci metadata: type exports require `layout`")
-                (if (string-eq layout "")
-                  (ErrTlciExport
-                    "tlci metadata: export layout must not be empty")
-                  (OkTlciExport (TlciExport kind name "" layout))))))))]
+                "tlci metadata: value and macro exports require `signature`")]
+            [(string-eq signature "")
+              (ErrTlciExport
+                "tlci metadata: export signature must not be empty")]
+            [else (OkTlciExport (TlciExport kind name signature ""))])]
+        [has-signature
+          (ErrTlciExport
+            "tlci metadata: type exports must not include `signature`")]
+        [(not has-layout)
+          (ErrTlciExport "tlci metadata: type exports require `layout`")]
+        [(string-eq layout "")
+          (ErrTlciExport
+            "tlci metadata: export layout must not be empty")]
+        [else (OkTlciExport (TlciExport kind name "" layout))])]
     [(SCons field rest)
       (match (box-get field)
         [(SCons fhead ftail)
           (match (box-get fhead)
             [(SSym fname)
-              (if (string-eq fname "name")
-                (if has-name
-                  (ErrTlciExport "tlci metadata: duplicate export field `name`")
-                  (match (tlci-field-string-value (box-get ftail) fname)
-                    [(ErrTlciString message) (ErrTlciExport message)]
-                    [(OkTlciString value)
-                      (tlci-export-fields
-                        (box-get rest)
-                        kind
-                        value
-                        true
-                        signature
-                        has-signature
-                        layout
-                        has-layout)]))
-                (if (string-eq fname "signature")
+              (cond
+                [(string-eq fname "name")
+                  (if has-name
+                    (ErrTlciExport "tlci metadata: duplicate export field `name`")
+                    (match (tlci-field-string-value (box-get ftail) fname)
+                      [(ErrTlciString message) (ErrTlciExport message)]
+                      [(OkTlciString value)
+                        (tlci-export-fields
+                          (box-get rest)
+                          kind
+                          value
+                          true
+                          signature
+                          has-signature
+                          layout
+                          has-layout)]))]
+                [(string-eq fname "signature")
                   (if has-signature
                     (ErrTlciExport
                       "tlci metadata: duplicate export field `signature`")
@@ -451,28 +453,29 @@
                           value
                           true
                           layout
-                          has-layout)]))
-                  (if (string-eq fname "layout")
-                    (if has-layout
-                      (ErrTlciExport
-                        "tlci metadata: duplicate export field `layout`")
-                      (match (tlci-field-string-value (box-get ftail) fname)
-                        [(ErrTlciString message) (ErrTlciExport message)]
-                        [(OkTlciString value)
-                          (tlci-export-fields
-                            (box-get rest)
-                            kind
-                            name
-                            has-name
-                            signature
-                            has-signature
-                            value
-                            true)]))
+                          has-layout)]))]
+                [(string-eq fname "layout")
+                  (if has-layout
                     (ErrTlciExport
-                      (str-cat
-                        "tlci metadata: unknown export field `"
-                        fname
-                        "`")))))]
+                      "tlci metadata: duplicate export field `layout`")
+                    (match (tlci-field-string-value (box-get ftail) fname)
+                      [(ErrTlciString message) (ErrTlciExport message)]
+                      [(OkTlciString value)
+                        (tlci-export-fields
+                          (box-get rest)
+                          kind
+                          name
+                          has-name
+                          signature
+                          has-signature
+                          value
+                          true)]))]
+                [else
+                  (ErrTlciExport
+                    (str-cat
+                      "tlci metadata: unknown export field `"
+                      fname
+                      "`"))])]
             [_
               (ErrTlciExport
                 "tlci metadata: export fields must start with a name")])]
@@ -519,18 +522,20 @@
   [has-version : bool]) : ResultTlciMetadata
   (match fields
     [(SNil)
-      (if (not has-name)
-        (ErrTlciMetadata "tlci metadata: package missing required field `name`")
-        (if (not has-version)
+      (cond
+        [(not has-name)
+          (ErrTlciMetadata "tlci metadata: package missing required field `name`")]
+        [(not has-version)
           (ErrTlciMetadata
-            "tlci metadata: package missing required field `version`")
-          (if (string-eq name "")
-            (ErrTlciMetadata "tlci metadata: package name must not be empty")
-            (if (string-eq version "")
-              (ErrTlciMetadata
-                "tlci metadata: package version must not be empty")
-              (OkTlciMetadata
-                (TlciMetadata tlci-metadata-version name version TlciExportNil))))))]
+            "tlci metadata: package missing required field `version`")]
+        [(string-eq name "")
+          (ErrTlciMetadata "tlci metadata: package name must not be empty")]
+        [(string-eq version "")
+          (ErrTlciMetadata
+            "tlci metadata: package version must not be empty")]
+        [else
+          (OkTlciMetadata
+            (TlciMetadata tlci-metadata-version name version TlciExportNil))])]
     [(SCons field rest)
       (match (box-get field)
         [(SCons fhead ftail)
@@ -584,39 +589,42 @@
   [has-exports : bool]) : ResultTlciMetadata
   (match fields
     [(SNil)
-      (if (not has-version)
-        (ErrTlciMetadata "tlci metadata: missing required field `version`")
-        (if (not (string-eq version tlci-metadata-version))
+      (cond
+        [(not has-version)
+          (ErrTlciMetadata "tlci metadata: missing required field `version`")]
+        [(not (string-eq version tlci-metadata-version))
           (ErrTlciMetadata
-            (str-cat "tlci metadata: unsupported version `" version "`"))
-          (if (not has-package)
-            (ErrTlciMetadata "tlci metadata: missing required field `package`")
-            (if (not has-exports)
-              (ErrTlciMetadata
-                "tlci metadata: missing required field `exports`")
-              (OkTlciMetadata
-                (TlciMetadata version package-name package-version exports))))))]
+            (str-cat "tlci metadata: unsupported version `" version "`"))]
+        [(not has-package)
+          (ErrTlciMetadata "tlci metadata: missing required field `package`")]
+        [(not has-exports)
+          (ErrTlciMetadata
+            "tlci metadata: missing required field `exports`")]
+        [else
+          (OkTlciMetadata
+            (TlciMetadata version package-name package-version exports))])]
     [(SCons field rest)
       (match (box-get field)
         [(SCons fhead ftail)
           (match (box-get fhead)
             [(SSym fname)
-              (if (string-eq fname "version")
-                (if has-version
-                  (ErrTlciMetadata "tlci metadata: duplicate field `version`")
-                  (match (tlci-field-string-value (box-get ftail) fname)
-                    [(ErrTlciString message) (ErrTlciMetadata message)]
-                    [(OkTlciString value)
-                      (tlci-metadata-fields
-                        (box-get rest)
-                        value
-                        true
-                        package-name
-                        package-version
-                        has-package
-                        exports
-                        has-exports)]))
-                (if (string-eq fname "package")
+              (cond
+                [(string-eq fname "version")
+                  (if has-version
+                    (ErrTlciMetadata "tlci metadata: duplicate field `version`")
+                    (match (tlci-field-string-value (box-get ftail) fname)
+                      [(ErrTlciString message) (ErrTlciMetadata message)]
+                      [(OkTlciString value)
+                        (tlci-metadata-fields
+                          (box-get rest)
+                          value
+                          true
+                          package-name
+                          package-version
+                          has-package
+                          exports
+                          has-exports)]))]
+                [(string-eq fname "package")
                   (if has-package
                     (ErrTlciMetadata "tlci metadata: duplicate field `package`")
                     (match (tlci-package-from-field (box-get ftail))
@@ -630,25 +638,26 @@
                           (struct-get parsed package-version)
                           true
                           exports
-                          has-exports)]))
-                  (if (string-eq fname "exports")
-                    (if has-exports
-                      (ErrTlciMetadata
-                        "tlci metadata: duplicate field `exports`")
-                      (match (tlci-export-forms (box-get ftail) TlciExportNil)
-                        [(ErrTlciExportList message) (ErrTlciMetadata message)]
-                        [(OkTlciExportList parsed)
-                          (tlci-metadata-fields
-                            (box-get rest)
-                            version
-                            has-version
-                            package-name
-                            package-version
-                            has-package
-                            parsed
-                            true)]))
+                          has-exports)]))]
+                [(string-eq fname "exports")
+                  (if has-exports
                     (ErrTlciMetadata
-                      (str-cat "tlci metadata: unknown field `" fname "`")))))]
+                      "tlci metadata: duplicate field `exports`")
+                    (match (tlci-export-forms (box-get ftail) TlciExportNil)
+                      [(ErrTlciExportList message) (ErrTlciMetadata message)]
+                      [(OkTlciExportList parsed)
+                        (tlci-metadata-fields
+                          (box-get rest)
+                          version
+                          has-version
+                          package-name
+                          package-version
+                          has-package
+                          parsed
+                          true)]))]
+                [else
+                  (ErrTlciMetadata
+                    (str-cat "tlci metadata: unknown field `" fname "`"))])]
             [_
               (ErrTlciMetadata
                 "tlci metadata: fields must start with a field name")])]
@@ -702,17 +711,13 @@
         (begin
           (let
             [code : i64 (tlci-char-code-at text i)]
-            (if (= code 34)
-              (set! out (str-cat out slash quote))
-              (if (= code 92)
-                (set! out (str-cat out slash slash))
-                (if (= code 10)
-                  (set! out (str-cat out slash "n"))
-                  (if (= code 9)
-                    (set! out (str-cat out slash "t"))
-                    (if (= code 13)
-                      (set! out (str-cat out slash "r"))
-                      (set! out (str-cat out (substring text i 1)))))))))
+            (cond
+              [(= code 34) (set! out (str-cat out slash quote))]
+              [(= code 92) (set! out (str-cat out slash slash))]
+              [(= code 10) (set! out (str-cat out slash "n"))]
+              [(= code 9) (set! out (str-cat out slash "t"))]
+              [(= code 13) (set! out (str-cat out slash "r"))]
+              [else (set! out (str-cat out (substring text i 1)))]))
           (set! i (+ i 1))))
       out)))
 
@@ -778,30 +783,32 @@
   (or (= len 0) (>= offset cursor)))
 
 (define (tlci-emit-image [image : TlciImage]) : ResultTlciBytes
-  (if (string-eq (struct-get image compiler-build-hash) "")
-    (ErrTlciBytes "tlci: compiler build hash must not be empty")
-    (if (not
+  (cond
+    [(string-eq (struct-get image compiler-build-hash) "")
+      (ErrTlciBytes "tlci: compiler build hash must not be empty")]
+    [(not
       (=
         (%
           (array-length (struct-get image fixups))
           tlci-section-fixup-record-size)
         0))
-      (ErrTlciBytes "tlci: malformed fixup table length")
-      (if (not
-        (=
-          (%
-            (array-length (struct-get image entries))
-            tlci-section-entry-record-size)
-          0))
-        (ErrTlciBytes "tlci: malformed entry table length")
-        (if (not
-          (=
-            (%
-              (array-length (struct-get image symbols))
-              tlci-section-symbol-record-size)
-            0))
-          (ErrTlciBytes "tlci: malformed symbol table length")
-          (let
+      (ErrTlciBytes "tlci: malformed fixup table length")]
+    [(not
+      (=
+        (%
+          (array-length (struct-get image entries))
+          tlci-section-entry-record-size)
+        0))
+      (ErrTlciBytes "tlci: malformed entry table length")]
+    [(not
+      (=
+        (%
+          (array-length (struct-get image symbols))
+          tlci-section-symbol-record-size)
+        0))
+      (ErrTlciBytes "tlci: malformed symbol table length")]
+    [else
+      (let
             [compiler-hash-bytes : (Array u8)
               (tlci-string->bytes (struct-get image compiler-build-hash))]
             [metadata-text : String
@@ -893,7 +900,7 @@
                   (tlci-append-bytes! out (struct-get image symbols)))
                 unit)
               (tlci-set-u64! out tlci-hash-field-offset (tlci-content-hash out))
-              (OkTlciBytes out))))))))
+              (OkTlciBytes out)))]))
 
 (define (tlci-section-range-ok? [file-size : i64] [offset : i64] [len : i64]) : bool
   (if (= len 0)
@@ -954,184 +961,186 @@
             (tlci-section-end fixups-end entries-offset entries-len)]
           [content-end : i64
             (tlci-section-end entries-end symbols-offset symbols-len)]
-          (if (not (= version tlci-format-version))
-            (ErrTlciImage
-              (str-cat
-                "tlci: unsupported format version "
-                (int->string version)))
-            (if (not (= host-arch tlci-host-arch-x86-64))
-              (ErrTlciImage "tlci: unsupported host arch")
-              (if (not (= callback-abi tlci-callback-abi-version))
-                (ErrTlciImage "tlci: unsupported callback ABI version")
-                (if (not (= declared-size actual-size))
-                  (ErrTlciImage
-                    "tlci: file size field does not match input length")
-                  (if (not
-                    (tlci-section-range-ok? actual-size hash-offset hash-len))
-                    (tlci-section-error "compiler-build-hash")
-                    (if (= hash-len 0)
-                      (ErrTlciImage
-                        "tlci: compiler build hash must not be empty")
-                      (if (not (= hash-offset tlci-header-size))
-                        (ErrTlciImage
-                          "tlci: compiler build hash must start after header")
-                        (if (not
-                          (tlci-section-range-ok?
-                            actual-size
-                            metadata-offset
-                            metadata-len))
-                          (tlci-section-error "metadata")
-                          (if (= metadata-len 0)
-                            (ErrTlciImage
-                              "tlci: metadata section must not be empty")
-                            (if (not
-                              (tlci-section-aligned?
-                                metadata-offset
-                                metadata-len
-                                8))
-                              (ErrTlciImage
-                                "tlci: metadata section must be 8-byte aligned")
-                              (if (not
-                                (tlci-section-ordered?
-                                  hash-end
-                                  metadata-offset
-                                  metadata-len))
-                                (ErrTlciImage
-                                  "tlci: metadata section overlaps previous section")
-                                (if (not
-                                  (tlci-section-range-ok?
-                                    actual-size
-                                    rodata-offset
-                                    rodata-len))
-                                  (tlci-section-error "rodata")
-                                  (if (not
-                                    (tlci-section-aligned?
-                                      rodata-offset
-                                      rodata-len
-                                      tlci-page-align))
-                                    (ErrTlciImage
-                                      "tlci: rodata section must be page-aligned")
-                                    (if (not
-                                      (tlci-section-ordered?
-                                        metadata-end
-                                        rodata-offset
-                                        rodata-len))
-                                      (ErrTlciImage
-                                        "tlci: rodata section overlaps previous section")
-                                      (if (not
-                                        (tlci-section-range-ok?
-                                          actual-size
-                                          code-offset
-                                          code-len))
-                                        (tlci-section-error "code")
-                                        (if (not
-                                          (tlci-section-aligned?
-                                            code-offset
-                                            code-len
-                                            tlci-page-align))
-                                          (ErrTlciImage
-                                            "tlci: code section must be page-aligned")
-                                          (if (not
-                                            (tlci-section-ordered?
-                                              rodata-end
-                                              code-offset
-                                              code-len))
-                                            (ErrTlciImage
-                                              "tlci: code section overlaps previous section")
-                                            (if (not
-                                              (tlci-section-range-ok?
-                                                actual-size
-                                                fixups-offset
-                                                fixups-len))
-                                              (tlci-section-error "fixups")
-                                              (if (not
-                                                (tlci-section-aligned?
-                                                  fixups-offset
-                                                  fixups-len
-                                                  8))
-                                                (ErrTlciImage
-                                                  "tlci: fixup table must be 8-byte aligned")
-                                                (if (not
-                                                  (tlci-section-ordered?
-                                                    code-end
-                                                    fixups-offset
-                                                    fixups-len))
-                                                  (ErrTlciImage
-                                                    "tlci: fixup table overlaps previous section")
-                                                  (if (not
-                                                    (tlci-section-range-ok?
-                                                      actual-size
-                                                      entries-offset
-                                                      entries-len))
-                                                    (tlci-section-error
-                                                      "entries")
-                                                    (if (not
-                                                      (tlci-section-aligned?
-                                                        entries-offset
-                                                        entries-len
-                                                        8))
-                                                      (ErrTlciImage
-                                                        "tlci: entry table must be 8-byte aligned")
-                                                      (if (not
-                                                        (tlci-section-ordered?
-                                                          fixups-end
-                                                          entries-offset
-                                                          entries-len))
-                                                        (ErrTlciImage
-                                                          "tlci: entry table overlaps previous section")
-                                                        (if (not
-                                                          (tlci-section-range-ok?
-                                                            actual-size
-                                                            symbols-offset
-                                                            symbols-len))
-                                                          (tlci-section-error
-                                                            "symbols")
-                                                          (if (not
-                                                            (tlci-section-aligned?
-                                                              symbols-offset
-                                                              symbols-len
-                                                              8))
-                                                            (ErrTlciImage
-                                                              "tlci: symbol table must be 8-byte aligned")
-                                                            (if (not
-                                                              (tlci-section-ordered?
-                                                                entries-end
-                                                                symbols-offset
-                                                                symbols-len))
-                                                              (ErrTlciImage
-                                                                "tlci: symbol table overlaps previous section")
-                                                              (if (not
-                                                                (tlci-table-len-ok?
-                                                                  fixups-len
-                                                                  tlci-section-fixup-record-size))
-                                                                (ErrTlciImage
-                                                                  "tlci: malformed fixup table length")
-                                                                (if (not
-                                                                  (tlci-table-len-ok?
-                                                                    entries-len
-                                                                    tlci-section-entry-record-size))
-                                                                  (ErrTlciImage
-                                                                    "tlci: malformed entry table length")
-                                                                  (if (not
-                                                                    (tlci-table-len-ok?
-                                                                      symbols-len
-                                                                      tlci-section-symbol-record-size))
-                                                                    (ErrTlciImage
-                                                                      "tlci: malformed symbol table length")
-                                                                    (if (not
-                                                                      (=
-                                                                        declared-size
-                                                                        content-end))
-                                                                      (ErrTlciImage
-                                                                        "tlci: file has trailing bytes")
-                                                                      (if (not
-                                                                        (=
-                                                                          expected-hash
-                                                                          (tlci-content-hash
-                                                                            bytes)))
-                                                                        (ErrTlciImage
-                                                                          "tlci: content hash mismatch")
-                                                                        (let
+          (cond
+            [(not (= version tlci-format-version))
+              (ErrTlciImage
+                (str-cat
+                  "tlci: unsupported format version "
+                  (int->string version)))]
+            [(not (= host-arch tlci-host-arch-x86-64))
+              (ErrTlciImage "tlci: unsupported host arch")]
+            [(not (= callback-abi tlci-callback-abi-version))
+              (ErrTlciImage "tlci: unsupported callback ABI version")]
+            [(not (= declared-size actual-size))
+              (ErrTlciImage
+                "tlci: file size field does not match input length")]
+            [(not
+              (tlci-section-range-ok? actual-size hash-offset hash-len))
+              (tlci-section-error "compiler-build-hash")]
+            [(= hash-len 0)
+              (ErrTlciImage
+                "tlci: compiler build hash must not be empty")]
+            [(not (= hash-offset tlci-header-size))
+              (ErrTlciImage
+                "tlci: compiler build hash must start after header")]
+            [(not
+              (tlci-section-range-ok?
+                actual-size
+                metadata-offset
+                metadata-len))
+              (tlci-section-error "metadata")]
+            [(= metadata-len 0)
+              (ErrTlciImage
+                "tlci: metadata section must not be empty")]
+            [(not
+              (tlci-section-aligned?
+                metadata-offset
+                metadata-len
+                8))
+              (ErrTlciImage
+                "tlci: metadata section must be 8-byte aligned")]
+            [(not
+              (tlci-section-ordered?
+                hash-end
+                metadata-offset
+                metadata-len))
+              (ErrTlciImage
+                "tlci: metadata section overlaps previous section")]
+            [(not
+              (tlci-section-range-ok?
+                actual-size
+                rodata-offset
+                rodata-len))
+              (tlci-section-error "rodata")]
+            [(not
+              (tlci-section-aligned?
+                rodata-offset
+                rodata-len
+                tlci-page-align))
+              (ErrTlciImage
+                "tlci: rodata section must be page-aligned")]
+            [(not
+              (tlci-section-ordered?
+                metadata-end
+                rodata-offset
+                rodata-len))
+              (ErrTlciImage
+                "tlci: rodata section overlaps previous section")]
+            [(not
+              (tlci-section-range-ok?
+                actual-size
+                code-offset
+                code-len))
+              (tlci-section-error "code")]
+            [(not
+              (tlci-section-aligned?
+                code-offset
+                code-len
+                tlci-page-align))
+              (ErrTlciImage
+                "tlci: code section must be page-aligned")]
+            [(not
+              (tlci-section-ordered?
+                rodata-end
+                code-offset
+                code-len))
+              (ErrTlciImage
+                "tlci: code section overlaps previous section")]
+            [(not
+              (tlci-section-range-ok?
+                actual-size
+                fixups-offset
+                fixups-len))
+              (tlci-section-error "fixups")]
+            [(not
+              (tlci-section-aligned?
+                fixups-offset
+                fixups-len
+                8))
+              (ErrTlciImage
+                "tlci: fixup table must be 8-byte aligned")]
+            [(not
+              (tlci-section-ordered?
+                code-end
+                fixups-offset
+                fixups-len))
+              (ErrTlciImage
+                "tlci: fixup table overlaps previous section")]
+            [(not
+              (tlci-section-range-ok?
+                actual-size
+                entries-offset
+                entries-len))
+              (tlci-section-error
+                "entries")]
+            [(not
+              (tlci-section-aligned?
+                entries-offset
+                entries-len
+                8))
+              (ErrTlciImage
+                "tlci: entry table must be 8-byte aligned")]
+            [(not
+              (tlci-section-ordered?
+                fixups-end
+                entries-offset
+                entries-len))
+              (ErrTlciImage
+                "tlci: entry table overlaps previous section")]
+            [(not
+              (tlci-section-range-ok?
+                actual-size
+                symbols-offset
+                symbols-len))
+              (tlci-section-error
+                "symbols")]
+            [(not
+              (tlci-section-aligned?
+                symbols-offset
+                symbols-len
+                8))
+              (ErrTlciImage
+                "tlci: symbol table must be 8-byte aligned")]
+            [(not
+              (tlci-section-ordered?
+                entries-end
+                symbols-offset
+                symbols-len))
+              (ErrTlciImage
+                "tlci: symbol table overlaps previous section")]
+            [(not
+              (tlci-table-len-ok?
+                fixups-len
+                tlci-section-fixup-record-size))
+              (ErrTlciImage
+                "tlci: malformed fixup table length")]
+            [(not
+              (tlci-table-len-ok?
+                entries-len
+                tlci-section-entry-record-size))
+              (ErrTlciImage
+                "tlci: malformed entry table length")]
+            [(not
+              (tlci-table-len-ok?
+                symbols-len
+                tlci-section-symbol-record-size))
+              (ErrTlciImage
+                "tlci: malformed symbol table length")]
+            [(not
+              (=
+                declared-size
+                content-end))
+              (ErrTlciImage
+                "tlci: file has trailing bytes")]
+            [(not
+              (=
+                expected-hash
+                (tlci-content-hash
+                  bytes)))
+              (ErrTlciImage
+                "tlci: content hash mismatch")]
+            [else
+              (let
                                                                           [metadata-text : String
                                                                             (tlci-bytes->string
                                                                               bytes
@@ -1175,7 +1184,7 @@
                                                                                   (tlci-slice-bytes
                                                                                     bytes
                                                                                     symbols-offset
-                                                                                    symbols-len)))]))))))))))))))))))))))))))))))))))))))
+                                                                                    symbols-len)))]))]))))))
 
 (define (tlci-test-export-list) : TlciExportList
   (match (tlci-export-list-insert
@@ -1357,19 +1366,14 @@
     "tlci: malformed fixup table length"))
 
 (define (tlci-core-self-test-status) : i64
-  (if (not (tlci-test-metadata-emit-parse?))
-    1
-    (if (not (tlci-test-parse-round-trip? (tlci-test-metadata-only-image)))
-      2
-      (if (not (tlci-test-parse-round-trip? (tlci-test-code-image)))
-        3
-        (if (not (tlci-test-rejections-ok?))
-          4
-          (if (not (tlci-test-metadata-rejections-ok?))
-            5
-            (if (not (tlci-test-emit-rejections-ok?))
-              6
-              0)))))))
+  (cond
+    [(not (tlci-test-metadata-emit-parse?)) 1]
+    [(not (tlci-test-parse-round-trip? (tlci-test-metadata-only-image))) 2]
+    [(not (tlci-test-parse-round-trip? (tlci-test-code-image))) 3]
+    [(not (tlci-test-rejections-ok?)) 4]
+    [(not (tlci-test-metadata-rejections-ok?)) 5]
+    [(not (tlci-test-emit-rejections-ok?)) 6]
+    [else 0]))
 
 (define (tlci-core-self-test-ok?) : bool
   (= (tlci-core-self-test-status) 0))

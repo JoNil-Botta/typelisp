@@ -2024,39 +2024,24 @@
           "offset-of expects exactly one type argument and one field name"))]))
 
 (define (ctfe-reflection-query-name? [name : String]) : bool
-  (if (string-eq name "type-kind")
-    true
-    (if (string-eq name "type-key")
-      true
-      (if (string-eq name "type-nominal-module")
-        true
-        (if (string-eq name "type-nominal-name")
-          true
-          (if (string-eq name "struct-field-count")
-            true
-            (if (string-eq name "struct-field-name")
-              true
-              (if (string-eq name "struct-field-type")
-                true
-                (if (string-eq name "enum-variant-count")
-                  true
-                  (if (string-eq name "enum-variant-name")
-                    true
-                    (if (string-eq name "enum-variant-payload-count")
-                      true
-                      (if (string-eq name "enum-variant-payload-type")
-                        true
-                        (if (string-eq name "array-element-type")
-                          true
-                          (if (string-eq name "array-length")
-                            true
-                            (if (string-eq name "array-dynamic?")
-                              true
-                              (if (string-eq name "function-param-count")
-                                true
-                                (if (string-eq name "function-param-type")
-                                  true
-                                  (string-eq name "function-return-type"))))))))))))))))))
+  (cond
+    [(string-eq name "type-kind") true]
+    [(string-eq name "type-key") true]
+    [(string-eq name "type-nominal-module") true]
+    [(string-eq name "type-nominal-name") true]
+    [(string-eq name "struct-field-count") true]
+    [(string-eq name "struct-field-name") true]
+    [(string-eq name "struct-field-type") true]
+    [(string-eq name "enum-variant-count") true]
+    [(string-eq name "enum-variant-name") true]
+    [(string-eq name "enum-variant-payload-count") true]
+    [(string-eq name "enum-variant-payload-type") true]
+    [(string-eq name "array-element-type") true]
+    [(string-eq name "array-length") true]
+    [(string-eq name "array-dynamic?") true]
+    [(string-eq name "function-param-count") true]
+    [(string-eq name "function-param-type") true]
+    [else (string-eq name "function-return-type")]))
 
 (define (ctfe-eval-one-type-reflection
   [name : String]
@@ -2076,148 +2061,149 @@
               [(OkCtfeTypeArg ty arg-fuel)
                 (let
                   [infos : CtfeReflectInfoList (ctfe-env-reflections env)]
-                  (if (string-eq name "type-kind")
-                    (OkCtfe
-                      (CtfeString (ctfe-type-kind-with-reflections infos ty))
-                      arg-fuel)
-                    (if (string-eq name "type-key")
+                  (cond
+                    [(string-eq name "type-kind")
+                      (OkCtfe
+                        (CtfeString (ctfe-type-kind-with-reflections infos ty))
+                        arg-fuel)]
+                    [(string-eq name "type-key")
                       (OkCtfe
                         (CtfeString (ctfe-type-key-with-reflections infos ty))
-                        arg-fuel)
-                      (if (string-eq name "type-nominal-module")
-                        (match (ctfe-reflect-info-lookup
-                          infos
-                          (ctfe-type-nominal-key ty))
-                          [(CtfeSomeReflectInfo info)
-                            (match info
-                              [(CtfeReflectStruct _ module _ _)
-                                (OkCtfe (CtfeString module) arg-fuel)]
-                              [(CtfeReflectEnum _ module _ _)
-                                (OkCtfe (CtfeString module) arg-fuel)])]
-                          [(CtfeNoReflectInfo)
-                            (ErrCtfe
-                              (ctfe-diagnostic-at-expr
-                                expr
-                                "type-nominal-module requires struct or enum type"))])
-                        (if (string-eq name "type-nominal-name")
-                          (match (ctfe-reflect-info-lookup
-                            infos
-                            (ctfe-type-nominal-key ty))
-                            [(CtfeSomeReflectInfo info)
-                              (match info
-                                [(CtfeReflectStruct _ _ nominal-name _)
-                                  (OkCtfe (CtfeString nominal-name) arg-fuel)]
-                                [(CtfeReflectEnum _ _ nominal-name _)
-                                  (OkCtfe (CtfeString nominal-name) arg-fuel)])]
-                            [(CtfeNoReflectInfo)
+                        arg-fuel)]
+                    [(string-eq name "type-nominal-module")
+                      (match (ctfe-reflect-info-lookup
+                        infos
+                        (ctfe-type-nominal-key ty))
+                        [(CtfeSomeReflectInfo info)
+                          (match info
+                            [(CtfeReflectStruct _ module _ _)
+                              (OkCtfe (CtfeString module) arg-fuel)]
+                            [(CtfeReflectEnum _ module _ _)
+                              (OkCtfe (CtfeString module) arg-fuel)])]
+                        [(CtfeNoReflectInfo)
+                          (ErrCtfe
+                            (ctfe-diagnostic-at-expr
+                              expr
+                              "type-nominal-module requires struct or enum type"))])]
+                    [(string-eq name "type-nominal-name")
+                      (match (ctfe-reflect-info-lookup
+                        infos
+                        (ctfe-type-nominal-key ty))
+                        [(CtfeSomeReflectInfo info)
+                          (match info
+                            [(CtfeReflectStruct _ _ nominal-name _)
+                              (OkCtfe (CtfeString nominal-name) arg-fuel)]
+                            [(CtfeReflectEnum _ _ nominal-name _)
+                              (OkCtfe (CtfeString nominal-name) arg-fuel)])]
+                        [(CtfeNoReflectInfo)
+                          (ErrCtfe
+                            (ctfe-diagnostic-at-expr
+                              expr
+                              "type-nominal-name requires struct or enum type"))])]
+                    [(string-eq name "struct-field-count")
+                      (match (ctfe-reflect-info-lookup
+                        infos
+                        (ctfe-type-nominal-key ty))
+                        [(CtfeSomeReflectInfo info)
+                          (match info
+                            [(CtfeReflectStruct _ _ _ fields)
+                              (OkCtfe
+                                (CtfeI64
+                                  (ctfe-reflect-field-list-count fields))
+                                arg-fuel)]
+                            [_
                               (ErrCtfe
                                 (ctfe-diagnostic-at-expr
                                   expr
-                                  "type-nominal-name requires struct or enum type"))])
-                          (if (string-eq name "struct-field-count")
-                            (match (ctfe-reflect-info-lookup
-                              infos
-                              (ctfe-type-nominal-key ty))
-                              [(CtfeSomeReflectInfo info)
-                                (match info
-                                  [(CtfeReflectStruct _ _ _ fields)
-                                    (OkCtfe
-                                      (CtfeI64
-                                        (ctfe-reflect-field-list-count fields))
-                                      arg-fuel)]
-                                  [_
-                                    (ErrCtfe
-                                      (ctfe-diagnostic-at-expr
-                                        expr
-                                        "struct-field-count requires struct type"))])]
-                              [(CtfeNoReflectInfo)
-                                (ErrCtfe
-                                  (ctfe-diagnostic-at-expr
-                                    expr
-                                    "struct-field-count requires struct type"))])
-                            (if (string-eq name "enum-variant-count")
-                              (match (ctfe-reflect-info-lookup
-                                infos
-                                (ctfe-type-nominal-key ty))
-                                [(CtfeSomeReflectInfo info)
-                                  (match info
-                                    [(CtfeReflectEnum _ _ _ variants)
-                                      (OkCtfe
-                                        (CtfeI64
-                                          (ctfe-reflect-variant-list-count
-                                            variants))
-                                        arg-fuel)]
-                                    [_
-                                      (ErrCtfe
-                                        (ctfe-diagnostic-at-expr
-                                          expr
-                                          "enum-variant-count requires enum type"))])]
-                                [(CtfeNoReflectInfo)
-                                  (ErrCtfe
-                                    (ctfe-diagnostic-at-expr
-                                      expr
-                                      "enum-variant-count requires enum type"))])
-                              (if (string-eq name "array-element-type")
-                                (match ty
-                                  [(AstTyArray elem _)
-                                    (OkCtfe
-                                      (CtfeType (ty-node-get elem))
-                                      arg-fuel)]
-                                  [(AstTyDynArray elem)
-                                    (OkCtfe
-                                      (CtfeType (ty-node-get elem))
-                                      arg-fuel)]
-                                  [_
-                                    (ErrCtfe
-                                      (ctfe-diagnostic-at-expr
-                                        expr
-                                        "array-element-type requires array type"))])
-                                (if (string-eq name "array-length")
-                                  (match ty
-                                    [(AstTyArray _ count)
-                                      (OkCtfe (CtfeI64 count) arg-fuel)]
-                                    [_
-                                      (ErrCtfe
-                                        (ctfe-diagnostic-at-expr
-                                          expr
-                                          "array-length requires fixed array type"))])
-                                  (if (string-eq name "array-dynamic?")
-                                    (match ty
-                                      [(AstTyArray _ _)
-                                        (OkCtfe (CtfeBool false) arg-fuel)]
-                                      [(AstTyDynArray _)
-                                        (OkCtfe (CtfeBool true) arg-fuel)]
-                                      [_
-                                        (ErrCtfe
-                                          (ctfe-diagnostic-at-expr
-                                            expr
-                                            "array-dynamic? requires array type"))])
-                                    (if (string-eq name "function-param-count")
-                                      (match ty
-                                        [(AstTyFunc params _)
-                                          (OkCtfe
-                                            (CtfeI64
-                                              (ctfe-type-list-count params))
-                                            arg-fuel)]
-                                        [_
-                                          (ErrCtfe
-                                            (ctfe-diagnostic-at-expr
-                                              expr
-                                              "function-param-count requires function type"))])
-                                      (if (string-eq
-                                        name
-                                        "function-return-type")
-                                        (match ty
-                                          [(AstTyFunc _ ret)
-                                            (OkCtfe
-                                              (CtfeType (ty-node-get ret))
-                                              arg-fuel)]
-                                          [_
-                                            (ErrCtfe
-                                              (ctfe-diagnostic-at-expr
-                                                expr
-                                                "function-return-type requires function type"))])
-                                        (ctfe-unsupported-form expr)))))))))))))])]
+                                  "struct-field-count requires struct type"))])]
+                        [(CtfeNoReflectInfo)
+                          (ErrCtfe
+                            (ctfe-diagnostic-at-expr
+                              expr
+                              "struct-field-count requires struct type"))])]
+                    [(string-eq name "enum-variant-count")
+                      (match (ctfe-reflect-info-lookup
+                        infos
+                        (ctfe-type-nominal-key ty))
+                        [(CtfeSomeReflectInfo info)
+                          (match info
+                            [(CtfeReflectEnum _ _ _ variants)
+                              (OkCtfe
+                                (CtfeI64
+                                  (ctfe-reflect-variant-list-count
+                                    variants))
+                                arg-fuel)]
+                            [_
+                              (ErrCtfe
+                                (ctfe-diagnostic-at-expr
+                                  expr
+                                  "enum-variant-count requires enum type"))])]
+                        [(CtfeNoReflectInfo)
+                          (ErrCtfe
+                            (ctfe-diagnostic-at-expr
+                              expr
+                              "enum-variant-count requires enum type"))])]
+                    [(string-eq name "array-element-type")
+                      (match ty
+                        [(AstTyArray elem _)
+                          (OkCtfe
+                            (CtfeType (ty-node-get elem))
+                            arg-fuel)]
+                        [(AstTyDynArray elem)
+                          (OkCtfe
+                            (CtfeType (ty-node-get elem))
+                            arg-fuel)]
+                        [_
+                          (ErrCtfe
+                            (ctfe-diagnostic-at-expr
+                              expr
+                              "array-element-type requires array type"))])]
+                    [(string-eq name "array-length")
+                      (match ty
+                        [(AstTyArray _ count)
+                          (OkCtfe (CtfeI64 count) arg-fuel)]
+                        [_
+                          (ErrCtfe
+                            (ctfe-diagnostic-at-expr
+                              expr
+                              "array-length requires fixed array type"))])]
+                    [(string-eq name "array-dynamic?")
+                      (match ty
+                        [(AstTyArray _ _)
+                          (OkCtfe (CtfeBool false) arg-fuel)]
+                        [(AstTyDynArray _)
+                          (OkCtfe (CtfeBool true) arg-fuel)]
+                        [_
+                          (ErrCtfe
+                            (ctfe-diagnostic-at-expr
+                              expr
+                              "array-dynamic? requires array type"))])]
+                    [(string-eq name "function-param-count")
+                      (match ty
+                        [(AstTyFunc params _)
+                          (OkCtfe
+                            (CtfeI64
+                              (ctfe-type-list-count params))
+                            arg-fuel)]
+                        [_
+                          (ErrCtfe
+                            (ctfe-diagnostic-at-expr
+                              expr
+                              "function-param-count requires function type"))])]
+                    [(string-eq
+                        name
+                        "function-return-type")
+                      (match ty
+                        [(AstTyFunc _ ret)
+                          (OkCtfe
+                            (CtfeType (ty-node-get ret))
+                            arg-fuel)]
+                        [_
+                          (ErrCtfe
+                            (ctfe-diagnostic-at-expr
+                              expr
+                              "function-return-type requires function type"))])]
+                    [else (ctfe-unsupported-form expr)]))])]
           [_
             (ErrCtfe
               (ctfe-diagnostic-at-expr
@@ -2616,32 +2602,33 @@
   [expr : AstExpr]
   [env : CtfeEnv]
   [fuel : i64]) : ResultCtfe
-  (if (or
-    (string-eq name "type-kind")
-    (string-eq name "type-key")
-    (string-eq name "type-nominal-module")
-    (string-eq name "type-nominal-name")
-    (string-eq name "struct-field-count")
-    (string-eq name "enum-variant-count")
-    (string-eq name "array-element-type")
-    (string-eq name "array-length")
-    (string-eq name "array-dynamic?")
-    (string-eq name "function-param-count")
-    (string-eq name "function-return-type"))
-    (ctfe-eval-one-type-reflection name args expr env fuel)
-    (if (or
+  (cond
+    [(or
+      (string-eq name "type-kind")
+      (string-eq name "type-key")
+      (string-eq name "type-nominal-module")
+      (string-eq name "type-nominal-name")
+      (string-eq name "struct-field-count")
+      (string-eq name "enum-variant-count")
+      (string-eq name "array-element-type")
+      (string-eq name "array-length")
+      (string-eq name "array-dynamic?")
+      (string-eq name "function-param-count")
+      (string-eq name "function-return-type"))
+      (ctfe-eval-one-type-reflection name args expr env fuel)]
+    [(or
       (string-eq name "struct-field-name")
       (string-eq name "struct-field-type"))
-      (ctfe-eval-struct-field-reflection name args expr env fuel)
-      (if (or
-        (string-eq name "enum-variant-name")
-        (string-eq name "enum-variant-payload-count"))
-        (ctfe-eval-enum-variant-reflection name args expr env fuel)
-        (if (string-eq name "enum-variant-payload-type")
-          (ctfe-eval-enum-payload-type-reflection args expr env fuel)
-          (if (string-eq name "function-param-type")
-            (ctfe-eval-function-param-type-reflection args expr env fuel)
-            (ctfe-unsupported-form expr)))))))
+      (ctfe-eval-struct-field-reflection name args expr env fuel)]
+    [(or
+      (string-eq name "enum-variant-name")
+      (string-eq name "enum-variant-payload-count"))
+      (ctfe-eval-enum-variant-reflection name args expr env fuel)]
+    [(string-eq name "enum-variant-payload-type")
+      (ctfe-eval-enum-payload-type-reflection args expr env fuel)]
+    [(string-eq name "function-param-type")
+      (ctfe-eval-function-param-type-reflection args expr env fuel)]
+    [else (ctfe-unsupported-form expr)]))
 
 (define (ctfe-eval-string-eq-call
   [name : String]
@@ -2985,9 +2972,10 @@
               [(OkCtfe value arg-fuel)
                 (match value
                   [(CtfeExpr node ty)
-                    (if (string-eq name "expr-bool?")
-                      (OkCtfe (CtfeBool (ctfe-expr-bool? node)) arg-fuel)
-                      (if (string-eq name "expr-bool-value")
+                    (cond
+                      [(string-eq name "expr-bool?")
+                        (OkCtfe (CtfeBool (ctfe-expr-bool? node)) arg-fuel)]
+                      [(string-eq name "expr-bool-value")
                         (if (ctfe-expr-bool? node)
                           (OkCtfe
                             (CtfeBool (ctfe-expr-bool-value node))
@@ -2995,27 +2983,29 @@
                           (ErrCtfe
                             (ctfe-diagnostic-at-expr
                               expr
-                              "expr-bool-value expects bool literal Expr")))
-                        (if (string-eq name "expr-if?")
-                          (OkCtfe (CtfeBool (ctfe-expr-if? node)) arg-fuel)
-                          (if (ctfe-expr-if? node)
-                            (if (string-eq name "expr-if-cond")
-                              (OkCtfe
-                                (CtfeExpr (ctfe-expr-if-cond node) (AstTyBool))
-                                arg-fuel)
-                              (if (string-eq name "expr-if-then")
-                                (OkCtfe
-                                  (CtfeExpr (ctfe-expr-if-then node) ty)
-                                  arg-fuel)
-                                (if (string-eq name "expr-if-else")
-                                  (OkCtfe
-                                    (CtfeExpr (ctfe-expr-if-else node) ty)
-                                    arg-fuel)
-                                  (ctfe-unsupported-form expr))))
-                            (ErrCtfe
-                              (ctfe-diagnostic-at-expr
-                                expr
-                                (string-append name " expects if Expr")))))))]
+                              "expr-bool-value expects bool literal Expr")))]
+                      [(string-eq name "expr-if?")
+                        (OkCtfe (CtfeBool (ctfe-expr-if? node)) arg-fuel)]
+                      [(ctfe-expr-if? node)
+                        (cond
+                          [(string-eq name "expr-if-cond")
+                            (OkCtfe
+                              (CtfeExpr (ctfe-expr-if-cond node) (AstTyBool))
+                              arg-fuel)]
+                          [(string-eq name "expr-if-then")
+                            (OkCtfe
+                              (CtfeExpr (ctfe-expr-if-then node) ty)
+                              arg-fuel)]
+                          [(string-eq name "expr-if-else")
+                            (OkCtfe
+                              (CtfeExpr (ctfe-expr-if-else node) ty)
+                              arg-fuel)]
+                          [else (ctfe-unsupported-form expr)])]
+                      [else
+                        (ErrCtfe
+                          (ctfe-diagnostic-at-expr
+                            expr
+                            (string-append name " expects if Expr")))])]
                   [_
                     (ErrCtfe
                       (ctfe-diagnostic-at-expr
@@ -3065,32 +3055,33 @@
                 [(OkCtfe value arg-fuel)
                   (match value
                     [(CtfeExprList nodes)
-                      (if (string-eq name "expr-list-empty?")
-                        (OkCtfe
-                          (CtfeBool (ctfe-expr-list-empty? nodes))
-                          arg-fuel)
-                        (if (string-eq name "expr-list-length")
+                      (cond
+                        [(string-eq name "expr-list-empty?")
+                          (OkCtfe
+                            (CtfeBool (ctfe-expr-list-empty? nodes))
+                            arg-fuel)]
+                        [(string-eq name "expr-list-length")
                           (OkCtfe
                             (CtfeI64 (ctfe-expr-list-length nodes))
-                            arg-fuel)
-                          (if (ctfe-expr-list-empty? nodes)
-                            (ErrCtfe
-                              (ctfe-diagnostic-at-expr
-                                expr
-                                (string-append
-                                  name
-                                  " expects non-empty ExprList")))
-                            (if (string-eq name "expr-list-head")
-                              (OkCtfe
-                                (CtfeExpr
-                                  (ctfe-expr-list-head nodes)
-                                  (AstTyExpr))
-                                arg-fuel)
-                              (if (string-eq name "expr-list-tail")
-                                (OkCtfe
-                                  (CtfeExprList (ctfe-expr-list-tail nodes))
-                                  arg-fuel)
-                                (ctfe-unsupported-form expr))))))]
+                            arg-fuel)]
+                        [(ctfe-expr-list-empty? nodes)
+                          (ErrCtfe
+                            (ctfe-diagnostic-at-expr
+                              expr
+                              (string-append
+                                name
+                                " expects non-empty ExprList")))]
+                        [(string-eq name "expr-list-head")
+                          (OkCtfe
+                            (CtfeExpr
+                              (ctfe-expr-list-head nodes)
+                              (AstTyExpr))
+                            arg-fuel)]
+                        [(string-eq name "expr-list-tail")
+                          (OkCtfe
+                            (CtfeExprList (ctfe-expr-list-tail nodes))
+                            arg-fuel)]
+                        [else (ctfe-unsupported-form expr)])]
                     [_
                       (ErrCtfe
                         (ctfe-diagnostic-at-expr
@@ -3228,37 +3219,38 @@
                 [(OkCtfe value arg-fuel)
                   (match value
                     [(CtfeExprClauseList clauses)
-                      (if (string-eq name "expr-clause-list-empty?")
-                        (OkCtfe
-                          (CtfeBool (ctfe-expr-clause-list-empty? clauses))
-                          arg-fuel)
-                        (if (string-eq name "expr-clause-list-length")
+                      (cond
+                        [(string-eq name "expr-clause-list-empty?")
+                          (OkCtfe
+                            (CtfeBool (ctfe-expr-clause-list-empty? clauses))
+                            arg-fuel)]
+                        [(string-eq name "expr-clause-list-length")
                           (OkCtfe
                             (CtfeI64 (ctfe-expr-clause-list-length clauses))
-                            arg-fuel)
-                          (if (string-eq name "expr-clause-list->expr-list")
-                            (OkCtfe
-                              (CtfeExprList
-                                (ctfe-expr-clause-list->expr-list clauses))
-                              arg-fuel)
-                            (if (ctfe-expr-clause-list-empty? clauses)
-                              (ErrCtfe
-                                (ctfe-diagnostic-at-expr
-                                  expr
-                                  (string-append
-                                    name
-                                    " expects non-empty ExprClauseList")))
-                              (if (string-eq name "expr-clause-list-head")
-                                (OkCtfe
-                                  (CtfeExprClause
-                                    (ctfe-expr-clause-list-head clauses))
-                                  arg-fuel)
-                                (if (string-eq name "expr-clause-list-tail")
-                                  (OkCtfe
-                                    (CtfeExprClauseList
-                                      (ctfe-expr-clause-list-tail clauses))
-                                    arg-fuel)
-                                  (ctfe-unsupported-form expr)))))))]
+                            arg-fuel)]
+                        [(string-eq name "expr-clause-list->expr-list")
+                          (OkCtfe
+                            (CtfeExprList
+                              (ctfe-expr-clause-list->expr-list clauses))
+                            arg-fuel)]
+                        [(ctfe-expr-clause-list-empty? clauses)
+                          (ErrCtfe
+                            (ctfe-diagnostic-at-expr
+                              expr
+                              (string-append
+                                name
+                                " expects non-empty ExprClauseList")))]
+                        [(string-eq name "expr-clause-list-head")
+                          (OkCtfe
+                            (CtfeExprClause
+                              (ctfe-expr-clause-list-head clauses))
+                            arg-fuel)]
+                        [(string-eq name "expr-clause-list-tail")
+                          (OkCtfe
+                            (CtfeExprClauseList
+                              (ctfe-expr-clause-list-tail clauses))
+                            arg-fuel)]
+                        [else (ctfe-unsupported-form expr)])]
                     [_
                       (ErrCtfe
                         (ctfe-diagnostic-at-expr
@@ -3388,80 +3380,81 @@
         [inner : AstExpr (ast-node-get inner-box)]
         (ctfe-eval-call inner args expr env fuel))]
     [(AstExprVar name)
-      (if (or
-        (string-eq (intern-str name) "size-of")
-        (string-eq (intern-str name) "align-of"))
-        (ctfe-eval-size-align-query (intern-str name) args expr env fuel)
-        (if (string-eq (intern-str name) "offset-of")
-          (ctfe-eval-offset-query args expr env fuel)
-          (if (ctfe-reflection-query-name? (intern-str name))
-            (ctfe-eval-reflection-query (intern-str name) args expr env fuel)
-            (if (or
-              (string-eq (intern-str name) "string-eq")
-              (string-eq (intern-str name) "string=?"))
-              (ctfe-eval-string-eq-call (intern-str name) args expr env fuel)
-              (if (or
-                (string-eq (intern-str name) "string-append")
-                (string-eq (intern-str name) "string-concat"))
-                (ctfe-eval-string-append-call
-                  (intern-str name)
-                  args
-                  expr
-                  env
-                  fuel)
-                (if (or
-                  (string-eq (intern-str name) "string-length")
-                  (string-eq (intern-str name) "length"))
-                  (ctfe-eval-string-length-call
-                    (intern-str name)
-                    args
-                    expr
-                    env
-                    fuel)
-                  (if (string-eq (intern-str name) "int->string")
-                    (ctfe-eval-int-to-string-call args expr env fuel)
-                    (if (string-eq (intern-str name) "expr-bool")
-                      (ctfe-eval-expr-bool-call args expr env fuel)
-                      (if (string-eq (intern-str name) "expr-int")
-                        (ctfe-eval-expr-int-call args expr env fuel)
-                        (if (string-eq (intern-str name) "expr-var")
-                          (ctfe-eval-expr-var-call args expr env fuel)
-                          (if (string-eq (intern-str name) "expr-splice")
-                            (ctfe-eval-expr-splice-call args expr env fuel)
-                            (if (string-eq (intern-str name) "expr-if")
-                              (ctfe-eval-expr-if-call args expr env fuel)
-                              (if (ctfe-expr-inspector-name? (intern-str name))
-                                (ctfe-eval-expr-inspector-call
-                                  (intern-str name)
-                                  args
-                                  expr
-                                  env
-                                  fuel)
-                                (if (ctfe-expr-list-inspector-name?
-                                  (intern-str name))
-                                  (ctfe-eval-expr-list-inspector-call
-                                    (intern-str name)
-                                    args
-                                    expr
-                                    env
-                                    fuel)
-                                  (if (ctfe-expr-clause-inspector-name?
-                                    (intern-str name))
-                                    (ctfe-eval-expr-clause-inspector-call
-                                      (intern-str name)
-                                      args
-                                      expr
-                                      env
-                                      fuel)
-                                    (if (ctfe-expr-clause-list-inspector-name?
-                                      (intern-str name))
-                                      (ctfe-eval-expr-clause-list-inspector-call
-                                        (intern-str name)
-                                        args
-                                        expr
-                                        env
-                                        fuel)
-                                      (ctfe-unsupported-form expr)))))))))))))))))]
+      (cond
+        [(or
+          (string-eq (intern-str name) "size-of")
+          (string-eq (intern-str name) "align-of"))
+          (ctfe-eval-size-align-query (intern-str name) args expr env fuel)]
+        [(string-eq (intern-str name) "offset-of")
+          (ctfe-eval-offset-query args expr env fuel)]
+        [(ctfe-reflection-query-name? (intern-str name))
+          (ctfe-eval-reflection-query (intern-str name) args expr env fuel)]
+        [(or
+          (string-eq (intern-str name) "string-eq")
+          (string-eq (intern-str name) "string=?"))
+          (ctfe-eval-string-eq-call (intern-str name) args expr env fuel)]
+        [(or
+          (string-eq (intern-str name) "string-append")
+          (string-eq (intern-str name) "string-concat"))
+          (ctfe-eval-string-append-call
+            (intern-str name)
+            args
+            expr
+            env
+            fuel)]
+        [(or
+          (string-eq (intern-str name) "string-length")
+          (string-eq (intern-str name) "length"))
+          (ctfe-eval-string-length-call
+            (intern-str name)
+            args
+            expr
+            env
+            fuel)]
+        [(string-eq (intern-str name) "int->string")
+          (ctfe-eval-int-to-string-call args expr env fuel)]
+        [(string-eq (intern-str name) "expr-bool")
+          (ctfe-eval-expr-bool-call args expr env fuel)]
+        [(string-eq (intern-str name) "expr-int")
+          (ctfe-eval-expr-int-call args expr env fuel)]
+        [(string-eq (intern-str name) "expr-var")
+          (ctfe-eval-expr-var-call args expr env fuel)]
+        [(string-eq (intern-str name) "expr-splice")
+          (ctfe-eval-expr-splice-call args expr env fuel)]
+        [(string-eq (intern-str name) "expr-if")
+          (ctfe-eval-expr-if-call args expr env fuel)]
+        [(ctfe-expr-inspector-name? (intern-str name))
+          (ctfe-eval-expr-inspector-call
+            (intern-str name)
+            args
+            expr
+            env
+            fuel)]
+        [(ctfe-expr-list-inspector-name?
+          (intern-str name))
+          (ctfe-eval-expr-list-inspector-call
+            (intern-str name)
+            args
+            expr
+            env
+            fuel)]
+        [(ctfe-expr-clause-inspector-name?
+          (intern-str name))
+          (ctfe-eval-expr-clause-inspector-call
+            (intern-str name)
+            args
+            expr
+            env
+            fuel)]
+        [(ctfe-expr-clause-list-inspector-name?
+          (intern-str name))
+          (ctfe-eval-expr-clause-list-inspector-call
+            (intern-str name)
+            args
+            expr
+            env
+            fuel)]
+        [else (ctfe-unsupported-form expr)])]
     [_ (ctfe-unsupported-form expr)]))
 
 ;; Shared "unsupported compile-time form" diagnostic for ordinary calls.

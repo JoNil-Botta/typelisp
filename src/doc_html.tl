@@ -11,15 +11,12 @@
 (define (doc-html-escape-one [text : String] [idx : i64]) : String
   (let
     [c : char (string-ref text idx)]
-    (if (= c #&')
-      "&amp;"
-      (if (= c #<')
-        "&lt;"
-        (if (= c #>')
-          "&gt;"
-          (if (= c #"')
-            "&quot;"
-            (substring text idx 1)))))))
+    (cond
+      [(= c #&') "&amp;"]
+      [(= c #<') "&lt;"]
+      [(= c #>') "&gt;"]
+      [(= c #"') "&quot;"]
+      [else (substring text idx 1)])))
 
 (define (doc-html-escape [text : String]) : String
   (let

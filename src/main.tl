@@ -306,74 +306,76 @@ Options:
     1))
 
 (define (cli-dispatch [command : String] [count : i64]) : i64
-  (if (or
-    (string-eq command "help")
-    (string-eq command "--help")
-    (string-eq command "-h"))
-    (cli-print-help 0)
-    (if (string-eq command "build")
-      (if (cli-subcommand-help-request? count)
-        (cli-print-help-text (cli-build-help-text) 0)
-        (build-run-from 2 count))
-      (if (string-eq command "clean")
-        (if (cli-subcommand-help-request? count)
-          (cli-print-help-text (cli-clean-help-text) 0)
-          (clean-run-from 2 count))
-        (if (string-eq command "run")
-          (if (cli-subcommand-help-request? count)
-            (cli-print-help-text (cli-run-help-text) 0)
-            (run-run-from 2 count))
-          (if (string-eq command "check")
-            (if (cli-subcommand-help-request? count)
-              (cli-print-help-text (cli-check-help-text) 0)
-              (selfhost-check-run-from 2 count))
-            (if (string-eq command "fmt")
-              (if (cli-subcommand-help-request? count)
-                (cli-print-help-text (cli-fmt-help-text) 0)
-                (fmt-run-from 2 count))
-              (if (string-eq command "lint")
-                (if (cli-subcommand-help-request? count)
-                  (cli-print-help-text (cli-lint-help-text) 0)
-                  (selfhost-lint-run-from 2 count))
-                (if (string-eq command "test")
-                  (if (cli-subcommand-help-request? count)
-                    (cli-print-help-text (cli-test-help-text) 0)
-                    (tltest-run-from 2 count))
-                  (if (string-eq command "doc")
-                    (if (cli-subcommand-help-request? count)
-                      (cli-print-help-text (cli-doc-help-text) 0)
-                      (doc-run-from 2 count))
-                    (if (string-eq command "compile")
-                      (if (cli-subcommand-help-request? count)
-                        (cli-print-help-text (cli-compile-help-text) 0)
-                        (compile-cli-run count))
-                      (if (string-eq command "inspect")
-                        (if (cli-subcommand-help-request? count)
-                          (cli-print-help-text (cli-inspect-help-text) 0)
-                          (tlci-inspect-run-from 2 count))
-                        (if (string-eq command "lsp")
-                          (if (cli-subcommand-help-request? count)
-                            (cli-print-help-text (cli-lsp-help-text) 0)
-                            (lsp-frame-run-from 2 count))
-                          (if (string-eq command "repl")
-                            (if (cli-subcommand-help-request? count)
-                              (cli-print-help-text (cli-repl-help-text) 0)
-                              (repl-run-from 2 count))
-                            (if (string-eq command "new")
-                              (if (cli-subcommand-help-request? count)
-                                (cli-print-help-text (cli-new-help-text) 0)
-                                (scaffold-new-run-from 2 count))
-                              (if (string-eq command "init")
-                                (if (cli-subcommand-help-request? count)
-                                  (cli-print-help-text (cli-init-help-text) 0)
-                                  (scaffold-init-run-from 2 count))
-                                (begin
-                                  (print-error
-                                    (string-append
-                                      "typelisp: unknown subcommand "
-                                      command))
-                                  (print-error "\n\n")
-                                  (cli-print-help 1))))))))))))))))))
+  (cond
+    [(or
+      (string-eq command "help")
+      (string-eq command "--help")
+      (string-eq command "-h"))
+     (cli-print-help 0)]
+    [(string-eq command "build")
+     (if (cli-subcommand-help-request? count)
+       (cli-print-help-text (cli-build-help-text) 0)
+       (build-run-from 2 count))]
+    [(string-eq command "clean")
+     (if (cli-subcommand-help-request? count)
+       (cli-print-help-text (cli-clean-help-text) 0)
+       (clean-run-from 2 count))]
+    [(string-eq command "run")
+     (if (cli-subcommand-help-request? count)
+       (cli-print-help-text (cli-run-help-text) 0)
+       (run-run-from 2 count))]
+    [(string-eq command "check")
+     (if (cli-subcommand-help-request? count)
+       (cli-print-help-text (cli-check-help-text) 0)
+       (selfhost-check-run-from 2 count))]
+    [(string-eq command "fmt")
+     (if (cli-subcommand-help-request? count)
+       (cli-print-help-text (cli-fmt-help-text) 0)
+       (fmt-run-from 2 count))]
+    [(string-eq command "lint")
+     (if (cli-subcommand-help-request? count)
+       (cli-print-help-text (cli-lint-help-text) 0)
+       (selfhost-lint-run-from 2 count))]
+    [(string-eq command "test")
+     (if (cli-subcommand-help-request? count)
+       (cli-print-help-text (cli-test-help-text) 0)
+       (tltest-run-from 2 count))]
+    [(string-eq command "doc")
+     (if (cli-subcommand-help-request? count)
+       (cli-print-help-text (cli-doc-help-text) 0)
+       (doc-run-from 2 count))]
+    [(string-eq command "compile")
+     (if (cli-subcommand-help-request? count)
+       (cli-print-help-text (cli-compile-help-text) 0)
+       (compile-cli-run count))]
+    [(string-eq command "inspect")
+     (if (cli-subcommand-help-request? count)
+       (cli-print-help-text (cli-inspect-help-text) 0)
+       (tlci-inspect-run-from 2 count))]
+    [(string-eq command "lsp")
+     (if (cli-subcommand-help-request? count)
+       (cli-print-help-text (cli-lsp-help-text) 0)
+       (lsp-frame-run-from 2 count))]
+    [(string-eq command "repl")
+     (if (cli-subcommand-help-request? count)
+       (cli-print-help-text (cli-repl-help-text) 0)
+       (repl-run-from 2 count))]
+    [(string-eq command "new")
+     (if (cli-subcommand-help-request? count)
+       (cli-print-help-text (cli-new-help-text) 0)
+       (scaffold-new-run-from 2 count))]
+    [(string-eq command "init")
+     (if (cli-subcommand-help-request? count)
+       (cli-print-help-text (cli-init-help-text) 0)
+       (scaffold-init-run-from 2 count))]
+    [else
+     (begin
+       (print-error
+         (string-append
+           "typelisp: unknown subcommand "
+           command))
+       (print-error "\n\n")
+       (cli-print-help 1))]))
 
 (define (main) : i64
   (if (< (arg-count) 2)

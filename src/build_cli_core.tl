@@ -321,13 +321,15 @@
       (ErrBuildTarget (build-unknown-target value)))))
 
 (define (build-parse-opt-level [value : String]) : i64
-  (if (string-eq value "0")
-    0
-    (if (string-eq value "1")
-      1
-      (if (string-eq value "2")
-        2
-        -1))))
+  (cond
+    [(string-eq value "0")
+      0]
+    [(string-eq value "1")
+      1]
+    [(string-eq value "2")
+      2]
+    [else
+      -1]))
 
 (define (build-parse-options
   [idx : i64]
@@ -390,31 +392,32 @@
               stdlib-roots)))))
     (let
       [current : String (arg idx)]
-      (if (string-eq current "-o")
-        (if (>= (+ idx 1) count)
-          (ErrBuildConfig "build: -o requires a value")
-          (if has-output
-            (ErrBuildConfig "build: -o was provided more than once")
-            (build-parse-options
-              (+ idx 2)
-              count
-              source
-              has-source
-              (arg (+ idx 1))
-              true
-              manifest
-              has-manifest
-              target
-              has-target
-              mode
-              profile
-              has-profile
-              opt-level
-              has-opt-level
-              lock-policy
-              stdlib-lines
-              stdlib-roots)))
-        (if (string-eq current "--manifest-path")
+      (cond
+        [(string-eq current "-o")
+          (if (>= (+ idx 1) count)
+            (ErrBuildConfig "build: -o requires a value")
+            (if has-output
+              (ErrBuildConfig "build: -o was provided more than once")
+              (build-parse-options
+                (+ idx 2)
+                count
+                source
+                has-source
+                (arg (+ idx 1))
+                true
+                manifest
+                has-manifest
+                target
+                has-target
+                mode
+                profile
+                has-profile
+                opt-level
+                has-opt-level
+                lock-policy
+                stdlib-lines
+                stdlib-roots)))]
+        [(string-eq current "--manifest-path")
           (if (>= (+ idx 1) count)
             (ErrBuildConfig "build: --manifest-path requires a value")
             (if has-manifest
@@ -438,233 +441,234 @@
                 has-opt-level
                 lock-policy
                 stdlib-lines
-                stdlib-roots)))
-          (if (string-eq current "--stdlib-root")
-            (if (>= (+ idx 1) count)
-              (ErrBuildConfig "build: --stdlib-root requires a value")
-              (build-parse-options
-                (+ idx 2)
-                count
-                source
-                has-source
-                output
-                has-output
-                manifest
-                has-manifest
-                target
-                has-target
-                mode
-                profile
-                has-profile
-                opt-level
-                has-opt-level
-                lock-policy
-                (build-append-stdlib stdlib-lines (arg (+ idx 1)))
-                (string-vec-push stdlib-roots (arg (+ idx 1)))))
-            (if (string-eq current "--target")
-              (if (>= (+ idx 1) count)
-                (ErrBuildConfig "build: --target requires a value")
-                (let
-                  [value : String (arg (+ idx 1))]
-                  (if (host-plan-target-valid? value)
-                    (build-parse-options
-                      (+ idx 2)
-                      count
-                      source
-                      has-source
-                      output
-                      has-output
-                      manifest
-                      has-manifest
-                      value
-                      true
-                      mode
-                      profile
-                      has-profile
-                      opt-level
-                      has-opt-level
-                      lock-policy
-                      stdlib-lines
-                      stdlib-roots)
-                    (ErrBuildConfig (build-unknown-target value)))))
-              (if (string-eq current "--backend-mode")
-                (if (>= (+ idx 1) count)
-                  (ErrBuildConfig "build: --backend-mode requires a value")
-                  (let
-                    [value : String (arg (+ idx 1))]
-                    (if (host-plan-backend-mode-valid? value)
-                      (build-parse-options
-                        (+ idx 2)
-                        count
-                        source
-                        has-source
-                        output
-                        has-output
-                        manifest
-                        has-manifest
-                        target
-                        has-target
-                        value
-                        profile
-                        has-profile
-                        opt-level
-                        has-opt-level
-                        lock-policy
-                        stdlib-lines
-                        stdlib-roots)
-                      (ErrBuildConfig (build-unknown-mode value)))))
-                (if (string-eq current "--profile")
-                  (if (>= (+ idx 1) count)
-                    (ErrBuildConfig "build: --profile requires a value")
-                    (if has-profile
-                      (ErrBuildConfig
-                        "build: profile was provided more than once")
-                      (match (build-parse-profile (arg (+ idx 1)))
-                        [(ErrBuildProfile message) (ErrBuildConfig message)]
-                        [(OkBuildProfile parsed-profile)
-                          (build-parse-options
-                            (+ idx 2)
-                            count
-                            source
-                            has-source
-                            output
-                            has-output
-                            manifest
-                            has-manifest
-                            target
-                            has-target
-                            mode
-                            parsed-profile
-                            true
-                            opt-level
-                            has-opt-level
-                            lock-policy
-                            stdlib-lines
-                            stdlib-roots)])))
-                  (if (string-eq current "--release")
-                    (if has-profile
-                      (ErrBuildConfig
-                        "build: profile was provided more than once")
-                      (build-parse-options
-                        (+ idx 1)
-                        count
-                        source
-                        has-source
-                        output
-                        has-output
-                        manifest
-                        has-manifest
-                        target
-                        has-target
-                        mode
-                        (BuildProfileRelease)
-                        true
-                        opt-level
-                        has-opt-level
-                        lock-policy
-                        stdlib-lines
-                        stdlib-roots))
-                    (if (string-eq current "--opt-level")
-                      (if (>= (+ idx 1) count)
-                        (ErrBuildConfig "build: --opt-level requires a value")
-                        (if has-opt-level
-                          (ErrBuildConfig
-                            "build: --opt-level was provided more than once")
-                          (let
-                            [value : String (arg (+ idx 1))]
-                            [parsed : i64 (build-parse-opt-level value)]
-                            (if (< parsed 0)
-                              (ErrBuildConfig (build-unknown-opt-level value))
-                              (build-parse-options
-                                (+ idx 2)
-                                count
-                                source
-                                has-source
-                                output
-                                has-output
-                                manifest
-                                has-manifest
-                                target
-                                has-target
-                                mode
-                                profile
-                                has-profile
-                                parsed
-                                true
-                                lock-policy
-                                stdlib-lines
-                                stdlib-roots)))))
-                      (if (string-eq current "--locked")
-                        (if (build-package-lock-policy-provided? lock-policy)
-                          (ErrBuildConfig
-                            (build-package-lock-policy-option-error))
-                          (build-parse-options
-                            (+ idx 1)
-                            count
-                            source
-                            has-source
-                            output
-                            has-output
-                            manifest
-                            has-manifest
-                            target
-                            has-target
-                            mode
-                            profile
-                            has-profile
-                            opt-level
-                            has-opt-level
-                            (BuildPackageLockLocked)
-                            stdlib-lines
-                            stdlib-roots))
-                        (if (string-eq current "--update-lock")
-                          (if (build-package-lock-policy-provided? lock-policy)
-                            (ErrBuildConfig
-                              (build-package-lock-policy-option-error))
-                            (build-parse-options
-                              (+ idx 1)
-                              count
-                              source
-                              has-source
-                              output
-                              has-output
-                              manifest
-                              has-manifest
-                              target
-                              has-target
-                              mode
-                              profile
-                              has-profile
-                              opt-level
-                              has-opt-level
-                              (BuildPackageLockUpdate)
-                              stdlib-lines
-                              stdlib-roots))
-                          (if (host-plan-flag? current)
-                            (ErrBuildConfig
-                              (string-append "build: unknown flag " current))
-                            (if has-source
-                              (ErrBuildConfig
-                                "build: accepts only one source file")
-                              (build-parse-options
-                                (+ idx 1)
-                                count
-                                current
-                                true
-                                output
-                                has-output
-                                manifest
-                                has-manifest
-                                target
-                                has-target
-                                mode
-                                profile
-                                has-profile
-                                opt-level
-                                has-opt-level
-                                lock-policy
-                                stdlib-lines
-                                stdlib-roots))))))))))))))))
+                stdlib-roots)))]
+        [(string-eq current "--stdlib-root")
+          (if (>= (+ idx 1) count)
+            (ErrBuildConfig "build: --stdlib-root requires a value")
+            (build-parse-options
+              (+ idx 2)
+              count
+              source
+              has-source
+              output
+              has-output
+              manifest
+              has-manifest
+              target
+              has-target
+              mode
+              profile
+              has-profile
+              opt-level
+              has-opt-level
+              lock-policy
+              (build-append-stdlib stdlib-lines (arg (+ idx 1)))
+              (string-vec-push stdlib-roots (arg (+ idx 1)))))]
+        [(string-eq current "--target")
+          (if (>= (+ idx 1) count)
+            (ErrBuildConfig "build: --target requires a value")
+            (let
+              [value : String (arg (+ idx 1))]
+              (if (host-plan-target-valid? value)
+                (build-parse-options
+                  (+ idx 2)
+                  count
+                  source
+                  has-source
+                  output
+                  has-output
+                  manifest
+                  has-manifest
+                  value
+                  true
+                  mode
+                  profile
+                  has-profile
+                  opt-level
+                  has-opt-level
+                  lock-policy
+                  stdlib-lines
+                  stdlib-roots)
+                (ErrBuildConfig (build-unknown-target value)))))]
+        [(string-eq current "--backend-mode")
+          (if (>= (+ idx 1) count)
+            (ErrBuildConfig "build: --backend-mode requires a value")
+            (let
+              [value : String (arg (+ idx 1))]
+              (if (host-plan-backend-mode-valid? value)
+                (build-parse-options
+                  (+ idx 2)
+                  count
+                  source
+                  has-source
+                  output
+                  has-output
+                  manifest
+                  has-manifest
+                  target
+                  has-target
+                  value
+                  profile
+                  has-profile
+                  opt-level
+                  has-opt-level
+                  lock-policy
+                  stdlib-lines
+                  stdlib-roots)
+                (ErrBuildConfig (build-unknown-mode value)))))]
+        [(string-eq current "--profile")
+          (if (>= (+ idx 1) count)
+            (ErrBuildConfig "build: --profile requires a value")
+            (if has-profile
+              (ErrBuildConfig
+                "build: profile was provided more than once")
+              (match (build-parse-profile (arg (+ idx 1)))
+                [(ErrBuildProfile message) (ErrBuildConfig message)]
+                [(OkBuildProfile parsed-profile)
+                  (build-parse-options
+                    (+ idx 2)
+                    count
+                    source
+                    has-source
+                    output
+                    has-output
+                    manifest
+                    has-manifest
+                    target
+                    has-target
+                    mode
+                    parsed-profile
+                    true
+                    opt-level
+                    has-opt-level
+                    lock-policy
+                    stdlib-lines
+                    stdlib-roots)])))]
+        [(string-eq current "--release")
+          (if has-profile
+            (ErrBuildConfig
+              "build: profile was provided more than once")
+            (build-parse-options
+              (+ idx 1)
+              count
+              source
+              has-source
+              output
+              has-output
+              manifest
+              has-manifest
+              target
+              has-target
+              mode
+              (BuildProfileRelease)
+              true
+              opt-level
+              has-opt-level
+              lock-policy
+              stdlib-lines
+              stdlib-roots))]
+        [(string-eq current "--opt-level")
+          (if (>= (+ idx 1) count)
+            (ErrBuildConfig "build: --opt-level requires a value")
+            (if has-opt-level
+              (ErrBuildConfig
+                "build: --opt-level was provided more than once")
+              (let
+                [value : String (arg (+ idx 1))]
+                [parsed : i64 (build-parse-opt-level value)]
+                (if (< parsed 0)
+                  (ErrBuildConfig (build-unknown-opt-level value))
+                  (build-parse-options
+                    (+ idx 2)
+                    count
+                    source
+                    has-source
+                    output
+                    has-output
+                    manifest
+                    has-manifest
+                    target
+                    has-target
+                    mode
+                    profile
+                    has-profile
+                    parsed
+                    true
+                    lock-policy
+                    stdlib-lines
+                    stdlib-roots)))))]
+        [(string-eq current "--locked")
+          (if (build-package-lock-policy-provided? lock-policy)
+            (ErrBuildConfig
+              (build-package-lock-policy-option-error))
+            (build-parse-options
+              (+ idx 1)
+              count
+              source
+              has-source
+              output
+              has-output
+              manifest
+              has-manifest
+              target
+              has-target
+              mode
+              profile
+              has-profile
+              opt-level
+              has-opt-level
+              (BuildPackageLockLocked)
+              stdlib-lines
+              stdlib-roots))]
+        [(string-eq current "--update-lock")
+          (if (build-package-lock-policy-provided? lock-policy)
+            (ErrBuildConfig
+              (build-package-lock-policy-option-error))
+            (build-parse-options
+              (+ idx 1)
+              count
+              source
+              has-source
+              output
+              has-output
+              manifest
+              has-manifest
+              target
+              has-target
+              mode
+              profile
+              has-profile
+              opt-level
+              has-opt-level
+              (BuildPackageLockUpdate)
+              stdlib-lines
+              stdlib-roots))]
+        [(host-plan-flag? current)
+          (ErrBuildConfig
+            (string-append "build: unknown flag " current))]
+        [else
+          (if has-source
+            (ErrBuildConfig
+              "build: accepts only one source file")
+            (build-parse-options
+              (+ idx 1)
+              count
+              current
+              true
+              output
+              has-output
+              manifest
+              has-manifest
+              target
+              has-target
+              mode
+              profile
+              has-profile
+              opt-level
+              has-opt-level
+              lock-policy
+              stdlib-lines
+              stdlib-roots))]))))
 
 (define (build-config [count : i64]) : ResultBuildConfig
   (build-config-from 1 count))
@@ -718,23 +722,24 @@
         "build: --package-worker requires --manifest-path"))
     (let
       [current : String (arg idx)]
-      (if (string-eq current "--manifest-path")
-        (if (>= (+ idx 1) count)
-          (ErrBuildPackageWorkerConfig
-            "build: --manifest-path requires a value")
-          (build-package-worker-parse-options
-            (+ idx 2)
-            count
-            (arg (+ idx 1))
-            true
-            target
-            mode
-            profile
-            opt-level
-            has-opt-level
-            lock-policy
-            stdlib-roots))
-        (if (string-eq current "--target")
+      (cond
+        [(string-eq current "--manifest-path")
+          (if (>= (+ idx 1) count)
+            (ErrBuildPackageWorkerConfig
+              "build: --manifest-path requires a value")
+            (build-package-worker-parse-options
+              (+ idx 2)
+              count
+              (arg (+ idx 1))
+              true
+              target
+              mode
+              profile
+              opt-level
+              has-opt-level
+              lock-policy
+              stdlib-roots))]
+        [(string-eq current "--target")
           (if (>= (+ idx 1) count)
             (ErrBuildPackageWorkerConfig "build: --target requires a value")
             (let
@@ -754,147 +759,148 @@
                     lock-policy
                     stdlib-roots)]
                 [(ErrSourceToolTarget _)
-                  (ErrBuildPackageWorkerConfig (build-cli-unknown-target value))])))
-          (if (string-eq current "--backend-mode")
-            (if (>= (+ idx 1) count)
-              (ErrBuildPackageWorkerConfig
-                "build: --backend-mode requires a value")
-              (let
-                [value : String (arg (+ idx 1))]
-                (match (source-tool-backend-mode "build" value)
-                  [(OkSourceToolBackendMode parsed-mode)
-                    (build-package-worker-parse-options
-                      (+ idx 2)
-                      count
-                      manifest-path
-                      has-manifest
-                      target
-                      parsed-mode
-                      profile
+                  (ErrBuildPackageWorkerConfig (build-cli-unknown-target value))])))]
+        [(string-eq current "--backend-mode")
+          (if (>= (+ idx 1) count)
+            (ErrBuildPackageWorkerConfig
+              "build: --backend-mode requires a value")
+            (let
+              [value : String (arg (+ idx 1))]
+              (match (source-tool-backend-mode "build" value)
+                [(OkSourceToolBackendMode parsed-mode)
+                  (build-package-worker-parse-options
+                    (+ idx 2)
+                    count
+                    manifest-path
+                    has-manifest
+                    target
+                    parsed-mode
+                    profile
+                    opt-level
+                    has-opt-level
+                    lock-policy
+                    stdlib-roots)]
+                [(ErrSourceToolBackendMode message)
+                  (ErrBuildPackageWorkerConfig message)])))]
+        [(string-eq current "--profile")
+          (if (>= (+ idx 1) count)
+            (ErrBuildPackageWorkerConfig
+              "build: --profile requires a value")
+            (match (build-parse-profile (arg (+ idx 1)))
+              [(ErrBuildProfile message)
+                (ErrBuildPackageWorkerConfig message)]
+              [(OkBuildProfile parsed-profile)
+                (let
+                  [next-opt-level : i64
+                    (if has-opt-level
                       opt-level
-                      has-opt-level
-                      lock-policy
-                      stdlib-roots)]
-                  [(ErrSourceToolBackendMode message)
-                    (ErrBuildPackageWorkerConfig message)])))
-            (if (string-eq current "--profile")
-              (if (>= (+ idx 1) count)
-                (ErrBuildPackageWorkerConfig
-                  "build: --profile requires a value")
-                (match (build-parse-profile (arg (+ idx 1)))
-                  [(ErrBuildProfile message)
-                    (ErrBuildPackageWorkerConfig message)]
-                  [(OkBuildProfile parsed-profile)
-                    (let
-                      [next-opt-level : i64
-                        (if has-opt-level
-                          opt-level
-                          (build-profile-default-opt-level parsed-profile))]
-                      (build-package-worker-parse-options
-                        (+ idx 2)
-                        count
-                        manifest-path
-                        has-manifest
-                        target
-                        mode
-                        parsed-profile
-                        next-opt-level
-                        has-opt-level
-                        lock-policy
-                        stdlib-roots))]))
-              (if (string-eq current "--release")
+                      (build-profile-default-opt-level parsed-profile))]
+                  (build-package-worker-parse-options
+                    (+ idx 2)
+                    count
+                    manifest-path
+                    has-manifest
+                    target
+                    mode
+                    parsed-profile
+                    next-opt-level
+                    has-opt-level
+                    lock-policy
+                    stdlib-roots))]))]
+        [(string-eq current "--release")
+          (build-package-worker-parse-options
+            (+ idx 1)
+            count
+            manifest-path
+            has-manifest
+            target
+            mode
+            (BuildProfileRelease)
+            (if has-opt-level
+              opt-level
+              (build-profile-default-opt-level (BuildProfileRelease)))
+            has-opt-level
+            lock-policy
+            stdlib-roots)]
+        [(string-eq current "--opt-level")
+          (if (>= (+ idx 1) count)
+            (ErrBuildPackageWorkerConfig
+              "build: --opt-level requires a value")
+            (let
+              [value : String (arg (+ idx 1))]
+              (if (source-tool-opt-level-valid? value)
                 (build-package-worker-parse-options
-                  (+ idx 1)
+                  (+ idx 2)
                   count
                   manifest-path
                   has-manifest
                   target
                   mode
-                  (BuildProfileRelease)
-                  (if has-opt-level
-                    opt-level
-                    (build-profile-default-opt-level (BuildProfileRelease)))
-                  has-opt-level
+                  profile
+                  (string->int value)
+                  true
                   lock-policy
                   stdlib-roots)
-                (if (string-eq current "--opt-level")
-                  (if (>= (+ idx 1) count)
-                    (ErrBuildPackageWorkerConfig
-                      "build: --opt-level requires a value")
-                    (let
-                      [value : String (arg (+ idx 1))]
-                      (if (source-tool-opt-level-valid? value)
-                        (build-package-worker-parse-options
-                          (+ idx 2)
-                          count
-                          manifest-path
-                          has-manifest
-                          target
-                          mode
-                          profile
-                          (string->int value)
-                          true
-                          lock-policy
-                          stdlib-roots)
-                        (ErrBuildPackageWorkerConfig
-                          (build-unknown-opt-level value)))))
-                  (if (string-eq current "--locked")
-                    (if (build-package-lock-policy-provided? lock-policy)
-                      (ErrBuildPackageWorkerConfig
-                        (build-package-lock-policy-option-error))
-                      (build-package-worker-parse-options
-                        (+ idx 1)
-                        count
-                        manifest-path
-                        has-manifest
-                        target
-                        mode
-                        profile
-                        opt-level
-                        has-opt-level
-                        (BuildPackageLockLocked)
-                        stdlib-roots))
-                    (if (string-eq current "--update-lock")
-                      (if (build-package-lock-policy-provided? lock-policy)
-                        (ErrBuildPackageWorkerConfig
-                          (build-package-lock-policy-option-error))
-                        (build-package-worker-parse-options
-                          (+ idx 1)
-                          count
-                          manifest-path
-                          has-manifest
-                          target
-                          mode
-                          profile
-                          opt-level
-                          has-opt-level
-                          (BuildPackageLockUpdate)
-                          stdlib-roots))
-                      (if (string-eq current "--stdlib-root")
-                        (if (>= (+ idx 1) count)
-                          (ErrBuildPackageWorkerConfig
-                            "build: --stdlib-root requires a value")
-                          (build-package-worker-parse-options
-                            (+ idx 2)
-                            count
-                            manifest-path
-                            has-manifest
-                            target
-                            mode
-                            profile
-                            opt-level
-                            has-opt-level
-                            lock-policy
-                            (string-vec-push stdlib-roots (arg (+ idx 1)))))
-                        (if (host-plan-flag? current)
-                          (ErrBuildPackageWorkerConfig
-                            (string-append
-                              "build: unknown package worker flag "
-                              current))
-                          (ErrBuildPackageWorkerConfig
-                            (string-append
-                              "build: unexpected package worker argument "
-                              current)))))))))))))))
+                (ErrBuildPackageWorkerConfig
+                  (build-unknown-opt-level value)))))]
+        [(string-eq current "--locked")
+          (if (build-package-lock-policy-provided? lock-policy)
+            (ErrBuildPackageWorkerConfig
+              (build-package-lock-policy-option-error))
+            (build-package-worker-parse-options
+              (+ idx 1)
+              count
+              manifest-path
+              has-manifest
+              target
+              mode
+              profile
+              opt-level
+              has-opt-level
+              (BuildPackageLockLocked)
+              stdlib-roots))]
+        [(string-eq current "--update-lock")
+          (if (build-package-lock-policy-provided? lock-policy)
+            (ErrBuildPackageWorkerConfig
+              (build-package-lock-policy-option-error))
+            (build-package-worker-parse-options
+              (+ idx 1)
+              count
+              manifest-path
+              has-manifest
+              target
+              mode
+              profile
+              opt-level
+              has-opt-level
+              (BuildPackageLockUpdate)
+              stdlib-roots))]
+        [(string-eq current "--stdlib-root")
+          (if (>= (+ idx 1) count)
+            (ErrBuildPackageWorkerConfig
+              "build: --stdlib-root requires a value")
+            (build-package-worker-parse-options
+              (+ idx 2)
+              count
+              manifest-path
+              has-manifest
+              target
+              mode
+              profile
+              opt-level
+              has-opt-level
+              lock-policy
+              (string-vec-push stdlib-roots (arg (+ idx 1)))))]
+        [(host-plan-flag? current)
+          (ErrBuildPackageWorkerConfig
+            (string-append
+              "build: unknown package worker flag "
+              current))]
+        [else
+          (ErrBuildPackageWorkerConfig
+            (string-append
+              "build: unexpected package worker argument "
+              current))]))))
 
 (define (build-package-worker-config-from [idx : i64] [count : i64]) : ResultBuildPackageWorkerConfig
   (build-package-worker-parse-options
@@ -1197,14 +1203,16 @@
 (define (build-git-dep-pin-kind [alias : String] [dep : BuildGitDependency]) : ResultPackageCachePinKind
   (let
     [kind : String (struct-get dep pin-kind)]
-    (if (string-eq kind "rev")
-      (OkPackageCachePinKind (PackageCachePinRev))
-      (if (string-eq kind "tag")
-        (OkPackageCachePinKind (PackageCachePinTag))
-        (if (string-eq kind "branch")
-          (OkPackageCachePinKind (PackageCachePinBranch))
-          (ErrPackageCachePinKind
-            (build-git-dep-error alias "has invalid pin kind")))))))
+    (cond
+      [(string-eq kind "rev")
+        (OkPackageCachePinKind (PackageCachePinRev))]
+      [(string-eq kind "tag")
+        (OkPackageCachePinKind (PackageCachePinTag))]
+      [(string-eq kind "branch")
+        (OkPackageCachePinKind (PackageCachePinBranch))]
+      [else
+        (ErrPackageCachePinKind
+          (build-git-dep-error alias "has invalid pin kind"))])))
 
 (define (build-package-lock-path [manifest-dir : String]) : String
   (compiler-load-join-root-path manifest-dir "typelisp.lock"))
@@ -1426,20 +1434,22 @@
     [target-dir : String (compiler-load-join-root-path manifest-dir "target")]
     [typelisp-dir : String (compiler-load-join-root-path target-dir "typelisp")]
     [deps-dir : String (compiler-load-join-root-path typelisp-dir "git-deps")]
-    (if (not (build-mkdir-ok? target-dir))
-      (ErrBuildString
-        (build-git-dep-error alias "could not create target directory"))
-      (if (not (build-mkdir-ok? typelisp-dir))
+    (cond
+      [(not (build-mkdir-ok? target-dir))
+        (ErrBuildString
+          (build-git-dep-error alias "could not create target directory"))]
+      [(not (build-mkdir-ok? typelisp-dir))
         (ErrBuildString
           (build-git-dep-error
             alias
-            "could not create target/typelisp directory"))
-        (if (not (build-mkdir-ok? deps-dir))
-          (ErrBuildString
-            (build-git-dep-error
-              alias
-              "could not create target/typelisp/git-deps directory"))
-          (OkBuildString deps-dir))))))
+            "could not create target/typelisp directory"))]
+      [(not (build-mkdir-ok? deps-dir))
+        (ErrBuildString
+          (build-git-dep-error
+            alias
+            "could not create target/typelisp/git-deps directory"))]
+      [else
+        (OkBuildString deps-dir)])))
 
 (define (build-github-cache-git-dir [manifest-dir : String] [alias : String]) : String
   (compiler-load-normalize-path
@@ -1477,30 +1487,32 @@
     [cache-dir : String (compiler-load-join-root-path typelisp-dir "cache")]
     [packages-dir : String (compiler-load-join-root-path cache-dir "packages")]
     [root : String (package-cache-default-root manifest-dir)]
-    (if (not (build-mkdir-ok? target-dir))
-      (ErrBuildString
-        (build-git-dep-error alias "could not create target directory"))
-      (if (not (build-mkdir-ok? typelisp-dir))
+    (cond
+      [(not (build-mkdir-ok? target-dir))
+        (ErrBuildString
+          (build-git-dep-error alias "could not create target directory"))]
+      [(not (build-mkdir-ok? typelisp-dir))
         (ErrBuildString
           (build-git-dep-error
             alias
-            "could not create target/typelisp directory"))
-        (if (not (build-mkdir-ok? cache-dir))
-          (ErrBuildString
-            (build-git-dep-error
-              alias
-              "could not create target/typelisp/cache directory"))
-          (if (not (build-mkdir-ok? packages-dir))
-            (ErrBuildString
-              (build-git-dep-error
-                alias
-                "could not create target/typelisp/cache/packages directory"))
-            (if (not (build-mkdir-ok? root))
-              (ErrBuildString
-                (build-git-dep-error
-                  alias
-                  "could not create target/typelisp/cache/packages/v1 directory"))
-              (OkBuildString root))))))))
+            "could not create target/typelisp directory"))]
+      [(not (build-mkdir-ok? cache-dir))
+        (ErrBuildString
+          (build-git-dep-error
+            alias
+            "could not create target/typelisp/cache directory"))]
+      [(not (build-mkdir-ok? packages-dir))
+        (ErrBuildString
+          (build-git-dep-error
+            alias
+            "could not create target/typelisp/cache/packages directory"))]
+      [(not (build-mkdir-ok? root))
+        (ErrBuildString
+          (build-git-dep-error
+            alias
+            "could not create target/typelisp/cache/packages/v1 directory"))]
+      [else
+        (OkBuildString root)])))
 
 (define (build-package-cache-io-error
   [alias : String]
@@ -4261,15 +4273,17 @@
   (BuildCliOptionOther))
 
 (define (build-cli-option-rest6 [current : String]) : BuildCliOption
-  (if (string-eq current "--link-arg")
-    (BuildCliOptionLinkArg)
-    (if (string-eq current "--manifest-path")
-      (BuildCliOptionManifestPath)
-      (if (string-eq current "--locked")
-        (BuildCliOptionLocked)
-        (if (string-eq current "--update-lock")
-          (BuildCliOptionUpdateLock)
-          (BuildCliOptionOther))))))
+  (cond
+    [(string-eq current "--link-arg")
+      (BuildCliOptionLinkArg)]
+    [(string-eq current "--manifest-path")
+      (BuildCliOptionManifestPath)]
+    [(string-eq current "--locked")
+      (BuildCliOptionLocked)]
+    [(string-eq current "--update-lock")
+      (BuildCliOptionUpdateLock)]
+    [else
+      (BuildCliOptionOther)]))
 
 (define (build-cli-option-rest5 [current : String]) : BuildCliOption
   (if (string-eq current "--link-search")

@@ -1883,13 +1883,11 @@
     [(AstExprVar raw-name)
       (let
         [raw-text : String (intern-str raw-name)]
-        (if (lower-string-set-contains? shadowed raw-text)
-          (ErrTcString "")
-          (if (tc-hygiene-global-name? raw-text)
-            (OkTcString (tc-hygiene-global-call-name raw-text))
-            (if (tc-name-qualified? raw-text)
-              (OkTcString raw-text)
-              (tc-source-name-lookup-key ctx type-env raw-text)))))]
+        (cond
+          [(lower-string-set-contains? shadowed raw-text) (ErrTcString "")]
+          [(tc-hygiene-global-name? raw-text) (OkTcString (tc-hygiene-global-call-name raw-text))]
+          [(tc-name-qualified? raw-text) (OkTcString raw-text)]
+          [else (tc-source-name-lookup-key ctx type-env raw-text)]))]
     [_ (ErrTcString "")]))
 
 (define (lower-spmd-inline-helper-lookup
@@ -5565,22 +5563,18 @@
             ty)])]))
 
 (define (lower-copy-chunk-size [remaining : i64]) : i64
-  (if (>= remaining 8)
-    8
-    (if (>= remaining 4)
-      4
-      (if (>= remaining 2)
-        2
-        1))))
+  (cond
+    [(>= remaining 8) 8]
+    [(>= remaining 4) 4]
+    [(>= remaining 2) 2]
+    [else 1]))
 
 (define (lower-copy-chunk-type [chunk : i64]) : AstType
-  (if (= chunk 8)
-    (AstTyU64)
-    (if (= chunk 4)
-      (AstTyU32)
-      (if (= chunk 2)
-        (AstTyU16)
-        (AstTyU8)))))
+  (cond
+    [(= chunk 8) (AstTyU64)]
+    [(= chunk 4) (AstTyU32)]
+    [(= chunk 2) (AstTyU16)]
+    [else (AstTyU8)]))
 
 ;; #2386: the byte address `base + offset` as an IR value (the base itself when
 ;; offset is 0, avoiding a no-op gep).
@@ -5672,19 +5666,19 @@
   [src : CompilerIrValue]
   [src-offset : i64]
   [size : i64]) : LowerState
-  (if (<= size 0)
-    state
-    (if (> size lower-inline-copy-threshold)
-      (lower-emit-memcpy state dst dst-offset src src-offset size)
-      (if (>= size 16)
+  (cond
+    [(<= size 0) state]
+    [(> size lower-inline-copy-threshold)
+      (lower-emit-memcpy state dst dst-offset src src-offset size)]
+    [(>= size 16)
         (match (lower-offset-addr state dst dst-offset)
           [(LowerExpr dst-state dst-addr _)
             (match (lower-offset-addr dst-state src src-offset)
               [(LowerExpr src-state src-addr _)
                 (lower-state-emit
                   src-state
-                  (IrInstrCopyBytes dst-addr src-addr size))])])
-        (let
+                  (IrInstrCopyBytes dst-addr src-addr size))])])]
+    [else (let
           [chunk : i64 (lower-copy-chunk-size size)]
           [chunk-ty : AstType (lower-copy-chunk-type chunk)]
           (match (lower-load-at-offset state src src-offset chunk-ty)
@@ -5695,7 +5689,7 @@
                 (+ dst-offset chunk)
                 src
                 (+ src-offset chunk)
-                (- size chunk))]))))))
+                (- size chunk))]))]))
 
 ;; A value is stored FULL-INLINE (its own bytes, addressed by a pointer) only
 ;; when it is a struct or enum (incl. their generic …Args forms). Tuples,
@@ -5897,23 +5891,16 @@
 ;; to its width before OR-ing it into a packed word. size >= 8 is handled by the
 ;; callers (no mask needed for a full word).
 (define (lower-low-bits-mask [size : i64]) : i64
-  (if (>= size 8)
-    -1
-    (if (= size 1)
-      255
-      (if (= size 2)
-        65535
-        (if (= size 3)
-          16777215
-          (if (= size 4)
-            4294967295
-            (if (= size 5)
-              1099511627775
-              (if (= size 6)
-                281474976710655
-                (if (= size 7)
-                  72057594037927935
-                  -1)))))))))
+  (cond
+    [(>= size 8) -1]
+    [(= size 1) 255]
+    [(= size 2) 65535]
+    [(= size 3) 16777215]
+    [(= size 4) 4294967295]
+    [(= size 5) 1099511627775]
+    [(= size 6) 281474976710655]
+    [(= size 7) 72057594037927935]
+    [else -1]))
 
 ;; Extract a word-class field from the packed word of a register-resident
 ;; aggregate. The field occupies bytes [byte-offset, byte-offset+size) of the
@@ -6519,13 +6506,14 @@
   ;; load), not returned as a pointer into the containing slot. A 2-word
   ;; register-group loads BOTH words and reassembles them with IrInstrPack. Only a
   ;; genuine memory aggregate keeps the pointer-return shape.
-  (if (and
+  (cond
+    [(and
     (lower-mode-inline-aggregates? mode)
     (lower-type-inline-struct-or-enum? ctx ty)
     (not (lower-type-register-resident? ctx ty)))
     (match (lower-gep-byte state base offset)
-      [(LowerExpr ptr-state ptr _) (LowerExpr ptr-state ptr ty)])
-    (if (lower-type-register-group? ctx ty)
+      [(LowerExpr ptr-state ptr _) (LowerExpr ptr-state ptr ty)])]
+    [(lower-type-register-group? ctx ty)
       (match (lower-load-at-offset
         state
         base
@@ -6541,15 +6529,15 @@
               (lower-emit-pack
                 s1
                 (IrValueCons w0 (box (IrValueCons w1 (box IrValueNil))))
-                ty)])])
-      (if (lower-type-register-resident? ctx ty)
+                ty)])])]
+    [(lower-type-register-resident? ctx ty)
         (match (lower-load-at-offset
           state
           base
           offset
           (lower-register-word-type ctx ty 0))
-          [(LowerExpr load-state loaded _) (LowerExpr load-state loaded ty)])
-        (lower-load-at-offset state base offset ty)))))
+          [(LowerExpr load-state loaded _) (LowerExpr load-state loaded ty)])]
+    [else (lower-load-at-offset state base offset ty)]))
 
 (define (lower-copy-bytes-compact
   [state : LowerState]
@@ -6701,13 +6689,11 @@
   [value : CompilerIrValue]
   [from-ty : AstType]
   [to-ty : AstType]) : LowerExpr
-  (if (tc-never-type? from-ty)
-    (LowerExpr state value from-ty)
-    (if (tc-type-eq from-ty to-ty)
-      (LowerExpr state value to-ty)
-      (if (tc-type-compatible? to-ty from-ty)
-        (lower-cast-value state value from-ty to-ty)
-        (LowerExpr state value to-ty)))))
+  (cond
+    [(tc-never-type? from-ty) (LowerExpr state value from-ty)]
+    [(tc-type-eq from-ty to-ty) (LowerExpr state value to-ty)]
+    [(tc-type-compatible? to-ty from-ty) (lower-cast-value state value from-ty to-ty)]
+    [else (LowerExpr state value to-ty)]))
 
 (define (lower-oob-abort [state : LowerState]) : LowerState
   (match (lower-state-alloc-var state)
@@ -6794,13 +6780,11 @@
           (ast-expr-cons (ast-node-push right) AstExprNil))])))
 
 (define (lower-string-concat-runtime-name [count : i64]) : String
-  (if (= count 3)
-    "tl_string_concat3"
-    (if (= count 4)
-      "tl_string_concat4"
-      (if (= count 5)
-        "tl_string_concat5"
-        "tl_string_concat"))))
+  (cond
+    [(= count 3) "tl_string_concat3"]
+    [(= count 4) "tl_string_concat4"]
+    [(= count 5) "tl_string_concat5"]
+    [else "tl_string_concat"]))
 
 (define (lower-string-concat-values-rev
   [ctx : TcContext]
@@ -8860,23 +8844,16 @@
       (lower-atomic-public-name? (tc-qualified-name-base name)))))
 
 (define (lower-atomic-symbol-for-name [name : String]) : String
-  (if (string-eq name "atomic-i64-load")
-    "tl_atomic_i64_load"
-    (if (string-eq name "atomic-i64-store!")
-      "tl_atomic_i64_store"
-      (if (string-eq name "atomic-i64-add!")
-        "tl_atomic_i64_add"
-        (if (string-eq name "atomic-i64-fetch-add!")
-          "tl_atomic_i64_fetch_add"
-          (if (string-eq name "atomic-i32-load")
-            "tl_atomic_i32_load"
-            (if (string-eq name "atomic-i32-store!")
-              "tl_atomic_i32_store"
-              (if (string-eq name "atomic-i32-add!")
-                "tl_atomic_i32_add"
-                (if (string-eq name "atomic-i32-fetch-add!")
-                  "tl_atomic_i32_fetch_add"
-                  "")))))))))
+  (cond
+    [(string-eq name "atomic-i64-load") "tl_atomic_i64_load"]
+    [(string-eq name "atomic-i64-store!") "tl_atomic_i64_store"]
+    [(string-eq name "atomic-i64-add!") "tl_atomic_i64_add"]
+    [(string-eq name "atomic-i64-fetch-add!") "tl_atomic_i64_fetch_add"]
+    [(string-eq name "atomic-i32-load") "tl_atomic_i32_load"]
+    [(string-eq name "atomic-i32-store!") "tl_atomic_i32_store"]
+    [(string-eq name "atomic-i32-add!") "tl_atomic_i32_add"]
+    [(string-eq name "atomic-i32-fetch-add!") "tl_atomic_i32_fetch_add"]
+    [else ""]))
 
 (define (lower-atomic-import-path? [path : String]) : bool
   (or (string-eq path "stdlib/atomic.tl") (string-eq path "atomic.tl")))
@@ -10139,15 +10116,12 @@
   lower-spmd-reduce-current-id-cache)
 
 (define (lower-name-id [name : String]) : i64
-  (if (string-eq name (lower-spmd-reduce-acc-name))
-    (lower-spmd-reduce-acc-id)
-    (if (string-eq name (lower-spmd-reduce-end-name))
-      (lower-spmd-reduce-end-id)
-      (if (string-eq name (lower-spmd-reduce-val-name))
-        (lower-spmd-reduce-val-id)
-        (if (string-eq name (lower-spmd-reduce-current-name))
-          (lower-spmd-reduce-current-id)
-          (intern name))))))
+  (cond
+    [(string-eq name (lower-spmd-reduce-acc-name)) (lower-spmd-reduce-acc-id)]
+    [(string-eq name (lower-spmd-reduce-end-name)) (lower-spmd-reduce-end-id)]
+    [(string-eq name (lower-spmd-reduce-val-name)) (lower-spmd-reduce-val-id)]
+    [(string-eq name (lower-spmd-reduce-current-name)) (lower-spmd-reduce-current-id)]
+    [else (intern name)]))
 
 (define (lower-refresh-marker-ids!) : unit
   (begin
@@ -10840,19 +10814,14 @@
   (lower-arena-builtin-nullary-id? (intern name)))
 
 (define (lower-arena-builtin-symbol-id [name-id : i64]) : String
-  (if (compiler-builtin-lower-arena-make-id? name-id)
-    "tl_arena_make"
-    (if (compiler-builtin-lower-arena-make-atomic-id? name-id)
-      "tl_arena_make_atomic"
-      (if (compiler-builtin-lower-arena-current-id? name-id)
-        "tl_arena_current"
-        (if (compiler-builtin-lower-arena-mark-id? name-id)
-          "tl_region_mark"
-          (if (compiler-builtin-lower-arena-set-id? name-id)
-            "tl_arena_set"
-            (if (compiler-builtin-lower-arena-destroy-id? name-id)
-              "tl_arena_destroy"
-              "tl_region_reset")))))))
+  (cond
+    [(compiler-builtin-lower-arena-make-id? name-id) "tl_arena_make"]
+    [(compiler-builtin-lower-arena-make-atomic-id? name-id) "tl_arena_make_atomic"]
+    [(compiler-builtin-lower-arena-current-id? name-id) "tl_arena_current"]
+    [(compiler-builtin-lower-arena-mark-id? name-id) "tl_region_mark"]
+    [(compiler-builtin-lower-arena-set-id? name-id) "tl_arena_set"]
+    [(compiler-builtin-lower-arena-destroy-id? name-id) "tl_arena_destroy"]
+    [else "tl_region_reset"]))
 
 (define (lower-arena-builtin-symbol [name : String]) : String
   (lower-arena-builtin-symbol-id (intern name)))
@@ -12887,11 +12856,12 @@
               [_ (ErrTcType "lower: call result type is not fast-pathable")])]
           [(ErrTcType message)
             (if (lower-builtin-call-available? ctx env name-text)
-              (if (compiler-builtin-lower-array-length-id? name)
-                (OkTcType (AstTyI64))
-                (if (compiler-builtin-lower-string-ref-call-id? name)
-                  (OkTcType (AstTyChar))
-                  (if (compiler-builtin-lower-clone-id? name)
+              (cond
+                [(compiler-builtin-lower-array-length-id? name)
+                (OkTcType (AstTyI64))]
+                [(compiler-builtin-lower-string-ref-call-id? name)
+                  (OkTcType (AstTyChar))]
+                [(compiler-builtin-lower-clone-id? name)
                     (match args
                       [(AstExprCons arg tail)
                         (let
@@ -12910,8 +12880,8 @@
                                 "lower: call result type is not fast-pathable")]))]
                       [_
                         (ErrTcType
-                          "lower: call result type is not fast-pathable")])
-                    (ErrTcType message))))
+                          "lower: call result type is not fast-pathable")])]
+                [else (ErrTcType message)])
               (ErrTcType message))]))]
     [(AstExprLambda params maybe-ret body-box)
       (let
@@ -14715,7 +14685,8 @@
                 ;; later `match`/`=` would read the address as if it were the tag).
                 ;; A genuine memory aggregate field still returns its in-place
                 ;; pointer. This mirrors `lower-load-inline-value-at-offset`.
-                (if (and
+                (cond
+                  [(and
                   (not (lower-type-register-resident? ctx field-ty))
                   (or
                     (and
@@ -14725,16 +14696,16 @@
                       (lower-mode-inline-aggregates?
                         (lower-state-mode ptr-state))
                       (lower-type-inline-struct-or-enum? ctx field-ty))))
-                  (OkLowerExpr (LowerExpr ptr-state ptr result-ty))
-                  (if (lower-type-register-group? ctx field-ty)
+                  (OkLowerExpr (LowerExpr ptr-state ptr result-ty))]
+                  [(lower-type-register-group? ctx field-ty)
                     (match (lower-load-group-from-ptr
                       ctx
                       ptr-state
                       ptr
                       field-ty)
                       [(LowerExpr g-state g-value _)
-                        (OkLowerExpr (LowerExpr g-state g-value result-ty))])
-                    (if (lower-type-register-resident? ctx field-ty)
+                        (OkLowerExpr (LowerExpr g-state g-value result-ty))])]
+                  [(lower-type-register-resident? ctx field-ty)
                       (match (lower-state-alloc-var ptr-state)
                         [(LowerAlloc allocated var-id)
                           (OkLowerExpr
@@ -14746,8 +14717,8 @@
                                   ptr
                                   (lower-register-word-type ctx field-ty 0)))
                               (IrValueVar var-id)
-                              result-ty))])
-                      (match (lower-state-alloc-var ptr-state)
+                              result-ty))])]
+                  [else (match (lower-state-alloc-var ptr-state)
                         [(LowerAlloc allocated var-id)
                           (OkLowerExpr
                             (LowerExpr
@@ -14755,7 +14726,7 @@
                                 allocated
                                 (IrInstrLoad var-id ptr field-ty))
                               (IrValueVar var-id)
-                              result-ty))]))))]))])]
+                              result-ty))])])]))])]
     [(ErrLowerFieldInfo message) (ErrLowerExpr message)]))
 
 (define (lower-struct-get-through-reference
@@ -15676,13 +15647,11 @@
     (lower-c-abi-inline-fields-integer-only? ctx fields)))
 
 (define (lower-c-abi-integer-scalar-type [size : i64]) : AstType
-  (if (<= size 1)
-    (AstTyU8)
-    (if (<= size 2)
-      (AstTyU16)
-      (if (<= size 4)
-        (AstTyU32)
-        (AstTyU64)))))
+  (cond
+    [(<= size 1) (AstTyU8)]
+    [(<= size 2) (AstTyU16)]
+    [(<= size 4) (AstTyU32)]
+    [else (AstTyU64)]))
 
 (define (lower-c-abi-target-name [mode : CompilerLowerMode]) : String
   (if (lower-mode-windows-c-abi? mode)
@@ -15893,18 +15862,19 @@
   [size : i64]
   [fields : TcInlineFieldLayoutList]
   [allow-return? : bool]) : LowerCAbiAggregate
-  (if (<= size 0)
-    (LowerCAbiUnsupportedAggregate
-      (lower-c-abi-unsupported-message mode resolved))
-    (if (> size 16)
+  (cond
+    [(<= size 0)
+      (LowerCAbiUnsupportedAggregate
+        (lower-c-abi-unsupported-message mode resolved))]
+    [(> size 16)
       (if allow-return?
         (LowerCAbiSretAggregate size)
-        (LowerCAbiMemoryAggregate size))
-      (if (and
+        (LowerCAbiMemoryAggregate size))]
+    [(and
         (lower-c-abi-register-aggregate-size? mode size)
         (lower-c-abi-register-aggregate-fields-ok? ctx mode fields))
-        (LowerCAbiIntegerAggregate (lower-c-abi-integer-scalar-type size) size)
-        (match (lower-c-abi-sysv-classify-fields
+        (LowerCAbiIntegerAggregate (lower-c-abi-integer-scalar-type size) size)]
+    [else (match (lower-c-abi-sysv-classify-fields
           ctx
           fields
           0
@@ -15938,7 +15908,7 @@
                         size))])])]
           [(LowerCAbiSysvSlotsUnsupported)
             (LowerCAbiUnsupportedAggregate
-              (lower-c-abi-unsupported-message mode resolved))])))))
+              (lower-c-abi-unsupported-message mode resolved))])]))
 
 (define (lower-c-abi-win64-aggregate-class
   [mode : CompilerLowerMode]
@@ -15947,16 +15917,17 @@
   [register-ok? : bool]
   [allow-sret? : bool]
   [allow-byref? : bool]) : LowerCAbiAggregate
-  (if (and (lower-c-abi-register-aggregate-size? mode size) register-ok?)
-    (LowerCAbiIntegerAggregate (lower-c-abi-integer-scalar-type size) size)
-    (if (and allow-sret? (> size 8))
-      (LowerCAbiSretAggregate size)
-      (if (and
+  (cond
+    [(and (lower-c-abi-register-aggregate-size? mode size) register-ok?)
+      (LowerCAbiIntegerAggregate (lower-c-abi-integer-scalar-type size) size)]
+    [(and allow-sret? (> size 8))
+      (LowerCAbiSretAggregate size)]
+    [(and
         allow-byref?
         (not (lower-c-abi-register-aggregate-size? mode size)))
-        (LowerCAbiByRefAggregate size)
-        (LowerCAbiUnsupportedAggregate
-          (lower-c-abi-unsupported-message mode resolved))))))
+      (LowerCAbiByRefAggregate size)]
+    [else (LowerCAbiUnsupportedAggregate
+          (lower-c-abi-unsupported-message mode resolved))]))
 
 (define (lower-c-abi-aggregate-class-from-layout
   [ctx : TcContext]
@@ -18496,17 +18467,18 @@
                       (not (lower-top-level-value-defined? ctx name))]
                     [atomic-symbol : String
                       (lower-atomic-extern-symbol-for-name ctx name)]
-                    (if (> (string-length atomic-symbol) 0)
-                      (lower-atomic-call
-                        ctx
-                        state
-                        env
-                        type-env
-                        atomic-symbol
-                        args
-                        result-ty
-                        origin)
-                      (if (and builtin-available (tc-layout-query-name? name))
+                    (cond
+                      [(> (string-length atomic-symbol) 0)
+                        (lower-atomic-call
+                          ctx
+                          state
+                          env
+                          type-env
+                          atomic-symbol
+                          args
+                          result-ty
+                          origin)]
+                      [(and builtin-available (tc-layout-query-name? name))
                         (ErrLowerExpr
                           (lower-diagnostic-at-expr
                             origin
@@ -18514,8 +18486,8 @@
                               "lower: "
                               (string-append
                                 name
-                                " is compile-time only; wrap it in (comptime ...)"))))
-                        (if (and
+                                " is compile-time only; wrap it in (comptime ...)"))))]
+                      [(and
                           builtin-available
                           (compiler-builtin-lower-string-ref-call-id? name-id))
                           (lower-string-ref-call
@@ -18526,8 +18498,8 @@
                             name
                             args
                             result-ty
-                            origin)
-                          (if (and
+                            origin)]
+                      [(and
                             builtin-available
                             (compiler-builtin-lower-length-call-id? name-id))
                             (lower-array-length
@@ -18538,8 +18510,8 @@
                               name
                               args
                               result-ty
-                              origin)
-                            (if (and
+                              origin)]
+                      [(and
                               builtin-available
                               (lower-string-runtime-builtin? name))
                               (lower-string-runtime-call
@@ -18550,8 +18522,8 @@
                                 name
                                 args
                                 result-ty
-                                origin)
-                              (if (and
+                                origin)]
+                      [(and
                                 builtin-available
                                 (compiler-builtin-lower-cpuid-id? name-id))
                                 (lower-cpuid-call
@@ -18561,8 +18533,8 @@
                                   type-env
                                   args
                                   result-ty
-                                  origin)
-                                (if (and
+                                  origin)]
+                      [(and
                                   builtin-available
                                   (compiler-builtin-lower-xgetbv-id? name-id))
                                   (lower-xgetbv-call
@@ -18571,8 +18543,8 @@
                                     env
                                     type-env
                                     args
-                                    origin)
-                                  (if (and
+                                    origin)]
+                      [(and
                                     builtin-available
                                     (compiler-builtin-lower-clone-id? name-id))
                                     (match args
@@ -18595,8 +18567,8 @@
                                       [_
                                         (ErrLowerExpr
                                           (lower-diagnostic
-                                            "lower: clone expects one argument"))])
-                                    (if (and
+                                            "lower: clone expects one argument"))])]
+                      [(and
                                       builtin-available
                                       (lower-arena-builtin-id? name-id))
                                       (lower-arena-builtin-call
@@ -18606,8 +18578,8 @@
                                         type-env
                                         name
                                         args
-                                        result-ty)
-                                      (if (and
+                                        result-ty)]
+                      [(and
                                         builtin-available
                                         (lower-bootstrap-runtime-builtin-id?
                                           name-id))
@@ -18619,8 +18591,8 @@
                                           name
                                           args
                                           result-ty
-                                          origin)
-                                        (lower-call-non-builtin
+                                          origin)]
+                      [else (lower-call-non-builtin
                                           ctx
                                           state
                                           env
@@ -18628,7 +18600,7 @@
                                           name
                                           args
                                           result-ty
-                                          origin))))))))))))]
+                                          origin)]))]
                 [(ErrTcString message)
                   (ErrLowerExpr (lower-diagnostic-at-expr origin message))])])))]
     [_
@@ -19224,21 +19196,15 @@
     (AstTyI64)))
 
 (define (lower-atomic-raw-symbol [symbol : String]) : String
-  (if (string-eq symbol "tl_atomic_i64_load")
-    "tl_atomic_i64_load_ptr"
-    (if (string-eq symbol "tl_atomic_i64_store")
-      "tl_atomic_i64_store_ptr"
-      (if (string-eq symbol "tl_atomic_i64_add")
-        "tl_atomic_i64_add_ptr"
-        (if (string-eq symbol "tl_atomic_i64_fetch_add")
-          "tl_atomic_i64_fetch_add_ptr"
-          (if (string-eq symbol "tl_atomic_i32_load")
-            "tl_atomic_i32_load_ptr"
-            (if (string-eq symbol "tl_atomic_i32_store")
-              "tl_atomic_i32_store_ptr"
-              (if (string-eq symbol "tl_atomic_i32_add")
-                "tl_atomic_i32_add_ptr"
-                "tl_atomic_i32_fetch_add_ptr"))))))))
+  (cond
+    [(string-eq symbol "tl_atomic_i64_load") "tl_atomic_i64_load_ptr"]
+    [(string-eq symbol "tl_atomic_i64_store") "tl_atomic_i64_store_ptr"]
+    [(string-eq symbol "tl_atomic_i64_add") "tl_atomic_i64_add_ptr"]
+    [(string-eq symbol "tl_atomic_i64_fetch_add") "tl_atomic_i64_fetch_add_ptr"]
+    [(string-eq symbol "tl_atomic_i32_load") "tl_atomic_i32_load_ptr"]
+    [(string-eq symbol "tl_atomic_i32_store") "tl_atomic_i32_store_ptr"]
+    [(string-eq symbol "tl_atomic_i32_add") "tl_atomic_i32_add_ptr"]
+    [else "tl_atomic_i32_fetch_add_ptr"]))
 
 (define (lower-atomic-load-symbol? [symbol : String]) : bool
   (or
@@ -19933,11 +19899,11 @@
   [elem-ty : AstType]
   [elem-size : i64]
   [origin : AstExpr]) : ResultLowerState
-  (if (= elem-size 0)
-    (OkLowerState state)
-    (if (lower-make-array-zero-fill-supported? ctx elem-ty)
-      (lower-make-array-zero-fill state buf-value byte-count)
-      (if (lower-init-default-share-safe? ctx elem-ty)
+  (cond
+    [(= elem-size 0) (OkLowerState state)]
+    [(lower-make-array-zero-fill-supported? ctx elem-ty)
+      (lower-make-array-zero-fill state buf-value byte-count)]
+    [(lower-init-default-share-safe? ctx elem-ty)
         (match (lower-init-expr ctx state env type-env elem-ty origin elem-ty)
           [(OkLowerExpr lowered-init)
             (match lowered-init
@@ -19956,8 +19922,8 @@
                     elem-ty
                     elem-size
                     init-value))])]
-          [(ErrLowerExpr message) (ErrLowerState message)])
-        (lower-make-array-init-loop-runtime
+          [(ErrLowerExpr message) (ErrLowerState message)])]
+    [else (lower-make-array-init-loop-runtime
           ctx
           state
           env
@@ -19966,7 +19932,7 @@
           len-i64
           elem-ty
           elem-size
-          origin)))))
+          origin)]))
 
 (define (lower-make-array-init-loop
   [ctx : TcContext]
@@ -23051,17 +23017,13 @@
     [_ -1]))
 
 (define (lower-masked-vector-lanes-merge [left : i64] [right : i64]) : i64
-  (if (< left 0)
-    -1
-    (if (< right 0)
-      -1
-      (if (= left 0)
-        right
-        (if (= right 0)
-          left
-          (if (= left right)
-            left
-            -1))))))
+  (cond
+    [(< left 0) -1]
+    [(< right 0) -1]
+    [(= left 0) right]
+    [(= right 0) left]
+    [(= left right) left]
+    [else -1]))
 
 (define (lower-masked-vector-binop-supported? [op : AstBinOp]) : bool
   (match op
@@ -27252,7 +27214,8 @@
                   index
                   body))]
             [LowerNoMaskedVectorMap
-              (if (lower-masked-vector-body-has-varying-if?
+              (cond
+                [(lower-masked-vector-body-has-varying-if?
                 (lower-state-mode state)
                 env
                 type-env
@@ -27263,8 +27226,8 @@
                     body
                     (if (lower-mode-avx2? (lower-state-mode state))
                       (lower-avx2-masked-if-diagnostic)
-                      "lower: SPMD masked if AVX-512 lowering is not available for this backend mode or branch shape")))
-                (if (and
+                      "lower: SPMD masked if AVX-512 lowering is not available for this backend mode or branch shape")))]
+                [(and
                   (lower-mode-avx2? (lower-state-mode state))
                   (lower-masked-vector-body-has-bool-array-lane?
                     env
@@ -27274,8 +27237,8 @@
                   (ErrLowerExpr
                     (lower-diagnostic-at-expr
                       body
-                      (lower-spmd-bool-lane-diagnostic)))
-                  (if (lower-vector-body-has-array-read? body)
+                      (lower-spmd-bool-lane-diagnostic)))]
+                [(lower-vector-body-has-array-read? body)
                     (if (lower-simple-vector-map-has-unsupported-byte-mul?
                       (lower-state-mode state)
                       env
@@ -27289,8 +27252,8 @@
                       (ErrLowerExpr
                         (lower-diagnostic-at-expr
                           body
-                          (lower-simd-foreach-fallback-diagnostic))))
-                    (lower-scalar-foreach-lowered
+                          (lower-simd-foreach-fallback-diagnostic))))]
+                [else (lower-scalar-foreach-lowered
                       ctx
                       state
                       env
@@ -27299,7 +27262,7 @@
                       index-ty
                       start-value
                       end-value
-                      body))))]))])
+                      body)])]))])
     (lower-scalar-foreach-lowered
       ctx
       state
@@ -28946,7 +28909,8 @@
   [origin : AstExpr]) : ResultLowerState
   (match (ast-expr-unspan callee)
     [(AstExprVar name)
-      (if (and
+      (cond
+        [(and
         (lower-tail-call-var-unshadowed? env name)
         ;; #2357: only suppress TCO when THIS call actually involves inline
         ;; aggregates (sret/by-value risk); a broad inline-aggregates-mode guard
@@ -28986,21 +28950,21 @@
                       (lower-one-word-register-storage-type ctx ret-ty))
                     origin))]
               [(ErrLowerArgs message) (ErrLowerState message)])]
-          [(ErrLowerArgs message) (ErrLowerState message)])
-        (if (lower-tail-call-var-unshadowed? env name)
-          (lower-return-expr ctx state env type-env origin ret-ty sret-var)
-          (if (lower-tail-call-local-indirect-safe? env type-env name)
-            (lower-tail-call-indirect-expr
-              ctx
-              state
-              env
-              type-env
-              callee
-              args
-              ret-ty
-              sret-var
-              origin)
-            (lower-return-expr ctx state env type-env origin ret-ty sret-var))))]
+          [(ErrLowerArgs message) (ErrLowerState message)])]
+        [(lower-tail-call-var-unshadowed? env name)
+          (lower-return-expr ctx state env type-env origin ret-ty sret-var)]
+        [(lower-tail-call-local-indirect-safe? env type-env name)
+          (lower-tail-call-indirect-expr
+            ctx
+            state
+            env
+            type-env
+            callee
+            args
+            ret-ty
+            sret-var
+            origin)]
+        [else (lower-return-expr ctx state env type-env origin ret-ty sret-var)])]
     [_
       (if (lower-tail-call-reference-capturing-lambda? type-env callee)
         (lower-return-expr ctx state env type-env origin ret-ty sret-var)

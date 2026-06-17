@@ -951,9 +951,9 @@
                 [spanned : SpannedToken (array-ref toks i)]
                 [tok : Token (spanned-token-tok spanned)]
                 [tag : i64 (token-tag tok)]
-                (if (= tag (tag-end))
-                  (set! done true)
-                  (if (= tag (tag-lparen))
+                (cond
+                  [(= tag (tag-end)) (set! done true)]
+                  [(= tag (tag-lparen))
                     (let
                       [head-spanned : SpannedToken (array-ref toks (+ i 1))]
                       [head : Token (spanned-token-tok head-spanned)]
@@ -983,8 +983,8 @@
                           unit)
                         (if is-concat
                           (set! concat-depth (+ concat-depth 1))
-                          unit)))
-                    (if (= tag (tag-rparen))
+                          unit)))]
+                  [(= tag (tag-rparen))
                       (if (> depth 0)
                         (begin
                           (if (array-ref loop-stack depth)
@@ -994,8 +994,8 @@
                             (set! concat-depth (- concat-depth 1))
                             unit)
                           (set! depth (- depth 1)))
-                        unit)
-                      unit))))
+                        unit)]
+                  [else unit]))
               (set! i (+ i 1))))
           findings))]))
 
@@ -1022,13 +1022,11 @@
   (let
     [name-len : i64 (string-length name)]
     [qualifier-len : i64 (string-length qualifier)]
-    (if (<= qualifier-len 0)
-      false
-      (if (<= name-len qualifier-len)
-        false
-        (if (not (lint-string-prefix? name qualifier))
-          false
-          (= (string-ref name qualifier-len) separator))))))
+    (cond
+      [(<= qualifier-len 0) false]
+      [(<= name-len qualifier-len) false]
+      [(not (lint-string-prefix? name qualifier)) false]
+      [else (= (string-ref name qualifier-len) separator)])))
 
 (define (lint-name-qualified-by? [name : String] [qualifier : String]) : bool
   (if (lint-name-qualified-by-separator? name qualifier #.')
@@ -1341,23 +1339,18 @@
         true
         (lint-match-arms-use-import? arms alias module-name))]
     [(AstExprForeach _ index-ty start end body)
-      (if (lint-type-uses-import? index-ty alias module-name)
-        true
-        (if (lint-expr-uses-import? (ast-node-get start) alias module-name)
-          true
-          (if (lint-expr-uses-import? (ast-node-get end) alias module-name)
-            true
-            (lint-expr-uses-import? (ast-node-get body) alias module-name))))]
+      (cond
+        [(lint-type-uses-import? index-ty alias module-name) true]
+        [(lint-expr-uses-import? (ast-node-get start) alias module-name) true]
+        [(lint-expr-uses-import? (ast-node-get end) alias module-name) true]
+        [else (lint-expr-uses-import? (ast-node-get body) alias module-name)])]
     [(AstExprSpmdReduce _ _ index-ty start end init value)
-      (if (lint-type-uses-import? index-ty alias module-name)
-        true
-        (if (lint-expr-uses-import? (ast-node-get start) alias module-name)
-          true
-          (if (lint-expr-uses-import? (ast-node-get end) alias module-name)
-            true
-            (if (lint-expr-uses-import? (ast-node-get init) alias module-name)
-              true
-              (lint-expr-uses-import? (ast-node-get value) alias module-name)))))]
+      (cond
+        [(lint-type-uses-import? index-ty alias module-name) true]
+        [(lint-expr-uses-import? (ast-node-get start) alias module-name) true]
+        [(lint-expr-uses-import? (ast-node-get end) alias module-name) true]
+        [(lint-expr-uses-import? (ast-node-get init) alias module-name) true]
+        [else (lint-expr-uses-import? (ast-node-get value) alias module-name)])]
     [(AstExprSpmdBroadcast value lane)
       (if (lint-expr-uses-import? (ast-node-get value) alias module-name)
         true
@@ -2725,7 +2718,8 @@
     [else-return : bool (lint-return-branch? else-branch)]
     [cond-not : bool (lint-not-call? cond)]
     [else-side-effect : bool (lint-side-effect-branch? else-branch)]
-    (if (and
+    (cond
+      [(and
       then-unit
       (not else-unit)
       (or else-return (and cond-not else-side-effect)))
@@ -2735,16 +2729,16 @@
         threshold
         (lint-findings-add
           (lint-unit-if-guard-finding true span)
-          (lint-walk-expr cond threshold acc)))
-      (if (and else-unit (not then-unit) then-return)
+          (lint-walk-expr cond threshold acc)))]
+      [(and else-unit (not then-unit) then-return)
         (lint-walk-unit-if-guard-branch
           then-branch
           tail-return-path
           threshold
           (lint-findings-add
             (lint-unit-if-guard-finding false span)
-            (lint-walk-expr cond threshold acc)))
-        (if (and tail-return-path (>= return-chain threshold))
+            (lint-walk-expr cond threshold acc)))]
+        [(and tail-return-path (>= return-chain threshold))
           (lint-walk-return-path-chain
             (AstExprIf
               (ast-node-push cond)
@@ -2753,13 +2747,13 @@
             threshold
             (lint-findings-add
               (lint-return-path-chain-finding return-chain span)
-              acc))
+              acc))]
           ;; A maximal else-`if` ladder of length >= threshold is flagged once
           ;; at its head, carrying the ladder depth; lint-walk-ladder then
           ;; descends the else-chain (walking each cond/then) without
           ;; re-emitting. #2579's bracket-`cond` seed support has landed, so the
           ;; rule is active.
-          (if (>= ladder threshold)
+          [(>= ladder threshold)
             (lint-walk-ladder
               (AstExprIf
                 (ast-node-push cond)
@@ -2769,8 +2763,8 @@
               tail-return-path
               (lint-findings-add
                 (lint-ladder-finding ladder span)
-                acc))
-            (if tail-return-path
+                acc))]
+            [else (if tail-return-path
               (lint-walk-tail-expr
                 else-branch
                 threshold
@@ -2784,7 +2778,7 @@
                 (lint-walk-expr
                   then-branch
                   threshold
-                  (lint-walk-expr cond threshold acc))))))))))
+                  (lint-walk-expr cond threshold acc))))])))
 
 ;;; Walk a list of expressions where only the final expression is in tail
 ;;; position.

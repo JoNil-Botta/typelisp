@@ -171,14 +171,16 @@
         (str-cat "package-lock: field `" fname "` must have a string value"))]))
 
 (define (package-lock-parse-pin-kind [value : String]) : ResultPackageLockPinKind
-  (if (string-eq value "rev")
-    (OkPackageLockPinKind (PackageCachePinRev))
-    (if (string-eq value "tag")
-      (OkPackageLockPinKind (PackageCachePinTag))
-      (if (string-eq value "branch")
-        (OkPackageLockPinKind (PackageCachePinBranch))
-        (ErrPackageLockPinKind
-          "package-lock: pin kind must be `rev`, `tag`, or `branch`")))))
+  (cond
+    [(string-eq value "rev")
+      (OkPackageLockPinKind (PackageCachePinRev))]
+    [(string-eq value "tag")
+      (OkPackageLockPinKind (PackageCachePinTag))]
+    [(string-eq value "branch")
+      (OkPackageLockPinKind (PackageCachePinBranch))]
+    [else
+      (ErrPackageLockPinKind
+        "package-lock: pin kind must be `rev`, `tag`, or `branch`")]))
 
 (define (package-lock-pin-shape-error) : ResultPackageLockPin
   (ErrPackageLockPin "package-lock: pin must be `(rev|tag|branch \"value\")`"))
@@ -230,38 +232,41 @@
   [has-commit : bool]) : ResultPackageLockEntry
   (match fields
     [(SNil)
-      (if (not has-alias)
-        (ErrPackageLockEntry
-          "package-lock: dependency missing required field `alias`")
-        (if (not has-url)
+      (cond
+        [(not has-alias)
           (ErrPackageLockEntry
-            "package-lock: dependency missing required field `url`")
-          (if (not has-pin)
-            (ErrPackageLockEntry
-              "package-lock: dependency missing required field `pin`")
-            (if (not has-commit)
-              (ErrPackageLockEntry
-                "package-lock: dependency missing required field `commit`")
-              (if (string-eq alias "")
-                (ErrPackageLockEntry
-                  "package-lock: dependency alias must not be empty")
-                (if (not (package-lock-alias-token-valid? alias))
-                  (ErrPackageLockEntry
-                    "package-lock: dependency alias may only contain ASCII letters, digits, '-' and '_'")
-                  (if (string-eq url "")
-                    (ErrPackageLockEntry
-                      "package-lock: dependency url must not be empty")
-                    (if (string-eq commit "")
-                      (ErrPackageLockEntry
-                        "package-lock: dependency commit must not be empty")
-                      (OkPackageLockEntry
-                        (PackageLockEntry alias url pin-kind pin-value commit))))))))))]
+            "package-lock: dependency missing required field `alias`")]
+        [(not has-url)
+          (ErrPackageLockEntry
+            "package-lock: dependency missing required field `url`")]
+        [(not has-pin)
+          (ErrPackageLockEntry
+            "package-lock: dependency missing required field `pin`")]
+        [(not has-commit)
+          (ErrPackageLockEntry
+            "package-lock: dependency missing required field `commit`")]
+        [(string-eq alias "")
+          (ErrPackageLockEntry
+            "package-lock: dependency alias must not be empty")]
+        [(not (package-lock-alias-token-valid? alias))
+          (ErrPackageLockEntry
+            "package-lock: dependency alias may only contain ASCII letters, digits, '-' and '_'")]
+        [(string-eq url "")
+          (ErrPackageLockEntry
+            "package-lock: dependency url must not be empty")]
+        [(string-eq commit "")
+          (ErrPackageLockEntry
+            "package-lock: dependency commit must not be empty")]
+        [else
+          (OkPackageLockEntry
+            (PackageLockEntry alias url pin-kind pin-value commit))])]
     [(SCons field rest)
       (match (box-get field)
         [(SCons fhead ftail)
           (match (box-get fhead)
             [(SSym fname)
-              (if (string-eq fname "alias")
+              (cond
+                [(string-eq fname "alias")
                 (if has-alias
                   (ErrPackageLockEntry
                     "package-lock: duplicate dependency field `alias`")
@@ -279,8 +284,8 @@
                         pin-value
                         has-pin
                         commit
-                        has-commit)]))
-                (if (string-eq fname "url")
+                        has-commit)]))]
+                [(string-eq fname "url")
                   (if has-url
                     (ErrPackageLockEntry
                       "package-lock: duplicate dependency field `url`")
@@ -300,8 +305,8 @@
                           pin-value
                           has-pin
                           commit
-                          has-commit)]))
-                  (if (string-eq fname "pin")
+                          has-commit)]))]
+                [(string-eq fname "pin")
                     (if has-pin
                       (ErrPackageLockEntry
                         "package-lock: duplicate dependency field `pin`")
@@ -319,8 +324,8 @@
                             (struct-get pin value)
                             true
                             commit
-                            has-commit)]))
-                    (if (string-eq fname "commit")
+                            has-commit)]))]
+                [(string-eq fname "commit")
                       (if has-commit
                         (ErrPackageLockEntry
                           "package-lock: duplicate dependency field `commit`")
@@ -340,12 +345,13 @@
                               pin-value
                               has-pin
                               value
-                              true)]))
+                              true)]))]
+                [else
                       (ErrPackageLockEntry
                         (str-cat
                           "package-lock: unknown dependency field `"
                           fname
-                          "`"))))))]
+                          "`"))])]
             [_
               (ErrPackageLockEntry
                 "package-lock: dependency fields must start with a field name")])]
@@ -403,15 +409,17 @@
   [has-deps : bool]) : ResultPackageLockFile
   (match fields
     [(SNil)
-      (if (not has-version)
-        (ErrPackageLockFile "package-lock: missing required field `version`")
-        (if (not (string-eq version package-lock-version))
+      (cond
+        [(not has-version)
+          (ErrPackageLockFile "package-lock: missing required field `version`")]
+        [(not (string-eq version package-lock-version))
           (ErrPackageLockFile
-            (str-cat "package-lock: unsupported version `" version "`"))
-          (if (not has-deps)
-            (ErrPackageLockFile
-              "package-lock: missing required field `dependencies`")
-            (OkPackageLockFile (PackageLockFile version entries)))))]
+            (str-cat "package-lock: unsupported version `" version "`"))]
+        [(not has-deps)
+          (ErrPackageLockFile
+            "package-lock: missing required field `dependencies`")]
+        [else
+          (OkPackageLockFile (PackageLockFile version entries))])]
     [(SCons field rest)
       (match (box-get field)
         [(SCons fhead ftail)
@@ -499,17 +507,19 @@
         (begin
           (let
             [code : i64 (package-lock-char-code-at text i)]
-            (if (= code 34)
-              (set! out (string-append out (string-append slash quote)))
-              (if (= code 92)
-                (set! out (string-append out (string-append slash slash)))
-                (if (= code 10)
-                  (set! out (string-append out (string-append slash "n")))
-                  (if (= code 9)
-                    (set! out (string-append out (string-append slash "t")))
-                    (if (= code 13)
-                      (set! out (string-append out (string-append slash "r")))
-                      (set! out (string-append out (substring text i 1)))))))))
+            (cond
+              [(= code 34)
+                (set! out (string-append out (string-append slash quote)))]
+              [(= code 92)
+                (set! out (string-append out (string-append slash slash)))]
+              [(= code 10)
+                (set! out (string-append out (string-append slash "n")))]
+              [(= code 9)
+                (set! out (string-append out (string-append slash "t")))]
+              [(= code 13)
+                (set! out (string-append out (string-append slash "r")))]
+              [else
+                (set! out (string-append out (substring text i 1)))]))
           (set! i (+ i 1))))
       out)))
 

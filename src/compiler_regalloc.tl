@@ -1835,15 +1835,12 @@
     [(CompilerRegInterval left-var left-start left-end)
       (match right
         [(CompilerRegInterval right-var right-start right-end)
-          (if (< left-start right-start)
-            true
-            (if (> left-start right-start)
-              false
-              (if (< left-end right-end)
-                true
-                (if (> left-end right-end)
-                  false
-                  (< left-var right-var)))))])]))
+          (cond
+            [(< left-start right-start) true]
+            [(> left-start right-start) false]
+            [(< left-end right-end) true]
+            [(> left-end right-end) false]
+            [else (< left-var right-var)])])]))
 
 (define (compiler-reg-candidate-insert
   [candidates : CompilerRegIntervalList]
@@ -2279,35 +2276,36 @@
   (let
     [present : (Array i64) (struct-get assignments present)]
     [items : (Array CompilerRegLocation) (struct-get assignments items)]
-    (if (>= index (array-length present))
-      false
-      (if (= (array-ref present index) 0)
+    (cond
+      [(>= index (array-length present)) false]
+      [(= (array-ref present index) 0)
         (compiler-reg-assignment-table-location-conflicts-from?
           assignments
           intervals
           var
           ignore-var
           location
-          (+ index 1))
-        (if (or (= index var) (= index ignore-var))
-          (compiler-reg-assignment-table-location-conflicts-from?
-            assignments
-            intervals
-            var
-            ignore-var
-            location
-            (+ index 1))
-          (if (and
-            (compiler-reg-location-eq? (array-ref items index) location)
-            (compiler-reg-vars-interfere-index? intervals var index))
-            true
-            (compiler-reg-assignment-table-location-conflicts-from?
-              assignments
-              intervals
-              var
-              ignore-var
-              location
-              (+ index 1))))))))
+          (+ index 1))]
+      [(or (= index var) (= index ignore-var))
+        (compiler-reg-assignment-table-location-conflicts-from?
+          assignments
+          intervals
+          var
+          ignore-var
+          location
+          (+ index 1))]
+      [(and
+        (compiler-reg-location-eq? (array-ref items index) location)
+        (compiler-reg-vars-interfere-index? intervals var index))
+        true]
+      [else
+        (compiler-reg-assignment-table-location-conflicts-from?
+          assignments
+          intervals
+          var
+          ignore-var
+          location
+          (+ index 1))])))
 
 (define (compiler-reg-assignment-table-location-conflicts?
   [assignments : CompilerRegAssignmentTable]
@@ -3538,13 +3536,11 @@
     [_ (- 0 1)]))
 
 (define (compiler-reg-color-merge-root [acc : i64] [root : i64]) : i64
-  (if (< root 0)
-    (- 0 1)
-    (if (< acc 0)
-      root
-      (if (= acc root)
-        root
-        (- 0 2)))))
+  (cond
+    [(< root 0) (- 0 1)]
+    [(< acc 0) root]
+    [(= acc root) root]
+    [else (- 0 2)]))
 
 (define (compiler-reg-color-value-list-root
   [roots : (Array i64)]

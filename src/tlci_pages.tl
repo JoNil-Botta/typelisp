@@ -217,19 +217,21 @@
           (OkTlciPageUnit))))))
 
 (define (tlci-pages-protect-code-executable [region : TlciPageRegion]) : ResultTlciPageRegion
-  (if (not (struct-get region code))
-    (ErrTlciPageRegion "tlci pages: data pages cannot be executable")
-    (if (struct-get region executable)
-      (ErrTlciPageRegion "tlci pages: code page is already executable")
-      (if (tlci-pages-platform-protect-code region)
-        (OkTlciPageRegion
-          (TlciPageRegion
-            (struct-get region addr)
-            (struct-get region size)
-            true
-            false
-            true))
-        (ErrTlciPageRegion "tlci pages: code page protection failed")))))
+  (cond
+    [(not (struct-get region code))
+      (ErrTlciPageRegion "tlci pages: data pages cannot be executable")]
+    [(struct-get region executable)
+      (ErrTlciPageRegion "tlci pages: code page is already executable")]
+    [(tlci-pages-platform-protect-code region)
+      (OkTlciPageRegion
+        (TlciPageRegion
+          (struct-get region addr)
+          (struct-get region size)
+          true
+          false
+          true))]
+    [else
+      (ErrTlciPageRegion "tlci pages: code page protection failed")]))
 
 (define (tlci-pages-protect-data-readonly [region : TlciPageRegion]) : ResultTlciPageRegion
   (if (struct-get region code)

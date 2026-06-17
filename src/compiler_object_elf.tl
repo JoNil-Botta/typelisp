@@ -852,10 +852,7 @@
     [(= index compiler-object-elf-section-symtab-index) 71]
     [(= index compiler-object-elf-section-strtab-index) 79]
     [(= index compiler-object-elf-section-shstrtab-index) 87]
-    [(=
-      index
-      compiler-object-elf-section-note-gnu-stack-index)
-      97]
+    [(= index compiler-object-elf-section-note-gnu-stack-index) 97]
     [else 0]))
 
 (define (compiler-object-elf-push-header!

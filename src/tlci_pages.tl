@@ -230,8 +230,7 @@
           true
           false
           true))]
-    [else
-      (ErrTlciPageRegion "tlci pages: code page protection failed")]))
+    [else (ErrTlciPageRegion "tlci pages: code page protection failed")]))
 
 (define (tlci-pages-protect-data-readonly [region : TlciPageRegion]) : ResultTlciPageRegion
   (if (struct-get region code)

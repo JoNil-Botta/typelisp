@@ -221,14 +221,14 @@
         [(not (string-eq err "")) (LspFrameErr err)]
         [(< content-length 0) (LspFrameErr "lsp: missing Content-Length")]
         [else
-            (let
-              [payload-read : StdinRead (stdin-read-bytes content-length)]
-              [payload : String (stdin-read-text payload-read)]
-              (if (and
-                (stdin-read-eof? payload-read)
-                (< (string-length payload) content-length))
-                (LspFrameErr "lsp: truncated payload")
-                (LspFrameOk payload)))]))))
+          (let
+            [payload-read : StdinRead (stdin-read-bytes content-length)]
+            [payload : String (stdin-read-text payload-read)]
+            (if (and
+              (stdin-read-eof? payload-read)
+              (< (string-length payload) content-length))
+              (LspFrameErr "lsp: truncated payload")
+              (LspFrameOk payload)))]))))
 
 (define (lsp-frame-stdout-write [text : String]) : unit
   (stdout-write (& text)))
@@ -1170,15 +1170,13 @@
             [(= c ##') (set! i (lsp-skip-char-literal text i n))]
             [(= c #"') (set! i (lsp-skip-string text i n))]
             [(= c #(')
-                  (let
-                    [name-off : i64 (lsp-def-name-offset-at text i n)]
-                    (if (>= name-off 0)
-                      (if (string-eq
-                        (lsp-symbol-at-offset text name-off)
-                        needle)
-                        (set! found name-off)
-                        (set! i (+ i 1)))
-                      (set! i (+ i 1))))]
+              (let
+                [name-off : i64 (lsp-def-name-offset-at text i n)]
+                (if (>= name-off 0)
+                  (if (string-eq (lsp-symbol-at-offset text name-off) needle)
+                    (set! found name-off)
+                    (set! i (+ i 1)))
+                  (set! i (+ i 1))))]
             [else (set! i (+ i 1))])))
       found)))
 
@@ -1223,26 +1221,22 @@
             [(= c ##') (set! i (lsp-skip-char-literal text i n))]
             [(= c #"') (set! i (lsp-skip-string text i n))]
             [(= c #(')
+              (let
+                [kw-start : i64 (lsp-skip-space text (+ i 1) n)]
+                [kw-end : i64 (lsp-scan-ident text kw-start n)]
+                (if (string-eq
+                  (substring text kw-start (- kw-end kw-start))
+                  "defenum")
                   (let
-                    [kw-start : i64 (lsp-skip-space text (+ i 1) n)]
-                    [kw-end : i64 (lsp-scan-ident text kw-start n)]
-                    (if (string-eq
-                      (substring text kw-start (- kw-end kw-start))
-                      "defenum")
-                      (let
-                        [name-end : i64
-                          (lsp-scan-ident text (lsp-skip-space text kw-end n) n)]
-                        [form-end : i64 (lsp-skip-paren-group text i n)]
-                        [voff : i64
-                          (lsp-variant-name-offset-in
-                            text
-                            name-end
-                            form-end
-                            needle)]
-                        (if (>= voff 0)
-                          (set! result voff)
-                          (set! i form-end)))
-                      (set! i (+ i 1))))]
+                    [name-end : i64
+                      (lsp-scan-ident text (lsp-skip-space text kw-end n) n)]
+                    [form-end : i64 (lsp-skip-paren-group text i n)]
+                    [voff : i64
+                      (lsp-variant-name-offset-in text name-end form-end needle)]
+                    (if (>= voff 0)
+                      (set! result voff)
+                      (set! i form-end)))
+                  (set! i (+ i 1))))]
             [else (set! i (+ i 1))])))
       result)))
 
@@ -1306,28 +1300,28 @@
             [(= c #;') (set! i (lsp-skip-line text i n))]
             [(= c #"') (set! i (lsp-skip-string text i n))]
             [(= c #(')
-                (let
-                  [kw-start : i64 (lsp-skip-space text (+ i 1) n)]
-                  [kw-end : i64 (lsp-scan-ident text kw-start n)]
-                  (if (and
-                    (> kw-end kw-start)
-                    (string-eq
-                      (substring text kw-start (- kw-end kw-start))
-                      "import"))
-                    (let
-                      [q : i64 (lsp-skip-space text kw-end n)]
-                      (if (and (< q n) (= (string-ref text q) #"'))
-                        (let
-                          [str-end : i64 (lsp-skip-string text q n)]
-                          (begin
-                            (set!
+              (let
+                [kw-start : i64 (lsp-skip-space text (+ i 1) n)]
+                [kw-end : i64 (lsp-scan-ident text kw-start n)]
+                (if (and
+                  (> kw-end kw-start)
+                  (string-eq
+                    (substring text kw-start (- kw-end kw-start))
+                    "import"))
+                  (let
+                    [q : i64 (lsp-skip-space text kw-end n)]
+                    (if (and (< q n) (= (string-ref text q) #"'))
+                      (let
+                        [str-end : i64 (lsp-skip-string text q n)]
+                        (begin
+                          (set!
+                            out
+                            (string-vec-push
                               out
-                              (string-vec-push
-                                out
-                                (substring text (+ q 1) (- str-end (+ q 2)))))
-                            (set! i str-end)))
-                        (set! i (+ i 1))))
-                    (set! i (+ i 1))))]
+                              (substring text (+ q 1) (- str-end (+ q 2)))))
+                          (set! i str-end)))
+                      (set! i (+ i 1))))
+                  (set! i (+ i 1))))]
             [else (set! i (+ i 1))])))
       out)))
 
@@ -1666,17 +1660,15 @@
             [(= c #;') (set! i (lsp-skip-line text i n))]
             [(= c #"') (set! i (lsp-skip-string text i n))]
             [(= c #(')
-                (let
-                  [name-off : i64 (lsp-def-name-offset-at text i n)]
-                  (begin
-                    (if (>= name-off 0)
-                      (set!
-                        out
-                        (string-vec-push
-                          out
-                          (lsp-symbol-at-offset text name-off)))
-                      unit)
-                    (set! i (+ i 1))))]
+              (let
+                [name-off : i64 (lsp-def-name-offset-at text i n)]
+                (begin
+                  (if (>= name-off 0)
+                    (set!
+                      out
+                      (string-vec-push out (lsp-symbol-at-offset text name-off)))
+                    unit)
+                  (set! i (+ i 1))))]
             [else (set! i (+ i 1))])))
       out)))
 
@@ -1907,16 +1899,16 @@
             [(= c ##') (set! j (lsp-skip-char-literal text j n))]
             [(= c #"') (set! j (lsp-skip-string text j n))]
             [(= c #(')
-                  (begin
-                    (set! depth (+ depth 1))
-                    (set! j (+ j 1)))]
+              (begin
+                (set! depth (+ depth 1))
+                (set! j (+ j 1)))]
             [(= c #)')
-                    (begin
-                      (set! depth (- depth 1))
-                      (set! j (+ j 1))
-                      (if (<= depth 0)
-                        (set! done true)
-                        unit))]
+              (begin
+                (set! depth (- depth 1))
+                (set! j (+ j 1))
+                (if (<= depth 0)
+                  (set! done true)
+                  unit))]
             [else (set! j (+ j 1))])))
       j)))
 
@@ -1942,29 +1934,28 @@
             [(= c ##') (set! i (lsp-skip-char-literal text i n))]
             [(= c #"') (set! i (lsp-skip-string text i n))]
             [(= c #[')
-                  (let
-                    [name-start : i64 (lsp-skip-space text (+ i 1) n)]
-                    [name-end : i64 (lsp-scan-ident text name-start n)]
-                    (begin
-                      (if (and
-                        (> name-end name-start)
-                        (<= name-start limit)
-                        (string-eq
-                          (substring text name-start (- name-end name-start))
-                          sym))
+              (let
+                [name-start : i64 (lsp-skip-space text (+ i 1) n)]
+                [name-end : i64 (lsp-scan-ident text name-start n)]
+                (begin
+                  (if (and
+                    (> name-end name-start)
+                    (<= name-start limit)
+                    (string-eq
+                      (substring text name-start (- name-end name-start))
+                      sym))
+                    (let
+                      [after : i64 (lsp-skip-space text name-end n)]
+                      (if (and (< after n) (= (string-ref text after) #:'))
                         (let
-                          [after : i64 (lsp-skip-space text name-end n)]
-                          (if (and (< after n) (= (string-ref text after) #:'))
-                            (let
-                              [ty-start : i64
-                                (lsp-skip-space text (+ after 1) n)]
-                              [ty-end : i64 (lsp-scan-type text ty-start n)]
-                              (set!
-                                result
-                                (substring text ty-start (- ty-end ty-start))))
-                            unit))
-                        unit)
-                      (set! i (+ i 1))))]
+                          [ty-start : i64 (lsp-skip-space text (+ after 1) n)]
+                          [ty-end : i64 (lsp-scan-type text ty-start n)]
+                          (set!
+                            result
+                            (substring text ty-start (- ty-end ty-start))))
+                        unit))
+                    unit)
+                  (set! i (+ i 1))))]
             [else (set! i (+ i 1))])))
       result)))
 
@@ -1983,15 +1974,13 @@
             [(= c ##') (set! i (lsp-skip-char-literal text i n))]
             [(= c #"') (set! i (lsp-skip-string text i n))]
             [(= c #(')
-                  (let
-                    [name-off : i64 (lsp-def-name-offset-at text i n)]
-                    (if (>= name-off 0)
-                      (if (string-eq
-                        (lsp-symbol-at-offset text name-off)
-                        needle)
-                        (set! found i)
-                        (set! i (+ i 1)))
-                      (set! i (+ i 1))))]
+              (let
+                [name-off : i64 (lsp-def-name-offset-at text i n)]
+                (if (>= name-off 0)
+                  (if (string-eq (lsp-symbol-at-offset text name-off) needle)
+                    (set! found i)
+                    (set! i (+ i 1)))
+                  (set! i (+ i 1))))]
             [else (set! i (+ i 1))])))
       found)))
 
@@ -2209,30 +2198,27 @@
             [(= c ##') (set! i (lsp-skip-char-literal text i n))]
             [(= c #"') (set! i (lsp-skip-string text i n))]
             [(= c #(')
+              (let
+                [kw-start : i64 (lsp-skip-space text (+ i 1) n)]
+                [kw-end : i64 (lsp-scan-ident text kw-start n)]
+                (if (string-eq
+                  (substring text kw-start (- kw-end kw-start))
+                  "defenum")
                   (let
-                    [kw-start : i64 (lsp-skip-space text (+ i 1) n)]
-                    [kw-end : i64 (lsp-scan-ident text kw-start n)]
-                    (if (string-eq
-                      (substring text kw-start (- kw-end kw-start))
-                      "defenum")
-                      (let
-                        [name-start : i64 (lsp-skip-space text kw-end n)]
-                        [name-end : i64 (lsp-scan-ident text name-start n)]
-                        [form-end : i64 (lsp-skip-paren-group text i n)]
-                        [variant : String
-                          (lsp-variant-form-in text name-end form-end needle)]
-                        (if (string-eq variant "")
-                          (set! i form-end)
-                          (begin
-                            (set!
-                              enum-name
-                              (substring
-                                text
-                                name-start
-                                (- name-end name-start)))
-                            (set! variant-form variant)
-                            (set! found true))))
-                      (set! i (+ i 1))))]
+                    [name-start : i64 (lsp-skip-space text kw-end n)]
+                    [name-end : i64 (lsp-scan-ident text name-start n)]
+                    [form-end : i64 (lsp-skip-paren-group text i n)]
+                    [variant : String
+                      (lsp-variant-form-in text name-end form-end needle)]
+                    (if (string-eq variant "")
+                      (set! i form-end)
+                      (begin
+                        (set!
+                          enum-name
+                          (substring text name-start (- name-end name-start)))
+                        (set! variant-form variant)
+                        (set! found true))))
+                  (set! i (+ i 1))))]
             [else (set! i (+ i 1))])))
       (if found
         (FoundVariant enum-name variant-form)
@@ -2805,33 +2791,33 @@
             [(= c ##') (set! i (lsp-skip-char-literal text i n))]
             [(= c #"') (set! i (lsp-skip-string text i n))]
             [(= c #(')
+              (let
+                [kw-start : i64 (lsp-skip-space text (+ i 1) n)]
+                [kw-end : i64 (lsp-scan-ident text kw-start n)]
+                (if (and
+                  (> kw-end kw-start)
+                  (string-eq
+                    (substring text kw-start (- kw-end kw-start))
+                    "import"))
                   (let
-                    [kw-start : i64 (lsp-skip-space text (+ i 1) n)]
-                    [kw-end : i64 (lsp-scan-ident text kw-start n)]
-                    (if (and
-                      (> kw-end kw-start)
-                      (string-eq
-                        (substring text kw-start (- kw-end kw-start))
-                        "import"))
+                    [q : i64 (lsp-skip-space text kw-end n)]
+                    (if (and (< q n) (= (string-ref text q) #"'))
                       (let
-                        [q : i64 (lsp-skip-space text kw-end n)]
-                        (if (and (< q n) (= (string-ref text q) #"'))
-                          (let
-                            [str-end : i64 (lsp-skip-string text q n)]
-                            (begin
-                              (set!
-                                acc
-                                (lsp-json-list-cons
-                                  (lsp-document-link-json
-                                    text
-                                    path
-                                    stdlib-roots
-                                    (+ q 1)
-                                    (- str-end 1))
-                                  acc))
-                              (set! i str-end)))
-                          (set! i (+ i 1))))
-                      (set! i (+ i 1))))]
+                        [str-end : i64 (lsp-skip-string text q n)]
+                        (begin
+                          (set!
+                            acc
+                            (lsp-json-list-cons
+                              (lsp-document-link-json
+                                text
+                                path
+                                stdlib-roots
+                                (+ q 1)
+                                (- str-end 1))
+                              acc))
+                          (set! i str-end)))
+                      (set! i (+ i 1))))
+                  (set! i (+ i 1))))]
             [else (set! i (+ i 1))])))
       acc)))
 

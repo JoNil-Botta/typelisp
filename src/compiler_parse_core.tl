@@ -1193,42 +1193,24 @@
       (let
         [tag : i64 (compiler-parse-dispatch-tag dispatch name)]
         (cond
-          [(= tag (compiler-parse-tag-ty-i64))
-            (OkAstType (AstTyI64))]
-          [(= tag (compiler-parse-tag-ty-i32))
-            (OkAstType (AstTyI32))]
-          [(= tag (compiler-parse-tag-ty-i16))
-            (OkAstType (AstTyI16))]
-          [(= tag (compiler-parse-tag-ty-i8))
-            (OkAstType (AstTyI8))]
-          [(= tag (compiler-parse-tag-ty-u64))
-            (OkAstType (AstTyU64))]
-          [(= tag (compiler-parse-tag-ty-u32))
-            (OkAstType (AstTyU32))]
-          [(= tag (compiler-parse-tag-ty-u16))
-            (OkAstType (AstTyU16))]
-          [(= tag (compiler-parse-tag-ty-u8))
-            (OkAstType (AstTyU8))]
-          [(= tag (compiler-parse-tag-ty-f64))
-            (OkAstType (AstTyF64))]
-          [(= tag (compiler-parse-tag-ty-f32))
-            (OkAstType (AstTyF32))]
-          [(= tag (compiler-parse-tag-ty-bool))
-            (OkAstType (AstTyBool))]
-          [(= tag (compiler-parse-tag-ty-char))
-            (OkAstType (AstTyChar))]
-          [(= tag (compiler-parse-tag-ty-string))
-            (OkAstType (AstTyString))]
-          [(= tag (compiler-parse-tag-ty-str))
-            (OkAstType (AstTyStr))]
-          [(= tag (compiler-parse-tag-ty-bytes))
-            (OkAstType (AstTyBytes))]
-          [(= tag (compiler-parse-tag-unit))
-            (OkAstType (AstTyUnit))]
-          [(= tag (compiler-parse-tag-ty-never))
-            (OkAstType (AstTyNever))]
-          [(= tag (compiler-parse-tag-ty-expr))
-            (OkAstType (AstTyExpr))]
+          [(= tag (compiler-parse-tag-ty-i64)) (OkAstType (AstTyI64))]
+          [(= tag (compiler-parse-tag-ty-i32)) (OkAstType (AstTyI32))]
+          [(= tag (compiler-parse-tag-ty-i16)) (OkAstType (AstTyI16))]
+          [(= tag (compiler-parse-tag-ty-i8)) (OkAstType (AstTyI8))]
+          [(= tag (compiler-parse-tag-ty-u64)) (OkAstType (AstTyU64))]
+          [(= tag (compiler-parse-tag-ty-u32)) (OkAstType (AstTyU32))]
+          [(= tag (compiler-parse-tag-ty-u16)) (OkAstType (AstTyU16))]
+          [(= tag (compiler-parse-tag-ty-u8)) (OkAstType (AstTyU8))]
+          [(= tag (compiler-parse-tag-ty-f64)) (OkAstType (AstTyF64))]
+          [(= tag (compiler-parse-tag-ty-f32)) (OkAstType (AstTyF32))]
+          [(= tag (compiler-parse-tag-ty-bool)) (OkAstType (AstTyBool))]
+          [(= tag (compiler-parse-tag-ty-char)) (OkAstType (AstTyChar))]
+          [(= tag (compiler-parse-tag-ty-string)) (OkAstType (AstTyString))]
+          [(= tag (compiler-parse-tag-ty-str)) (OkAstType (AstTyStr))]
+          [(= tag (compiler-parse-tag-ty-bytes)) (OkAstType (AstTyBytes))]
+          [(= tag (compiler-parse-tag-unit)) (OkAstType (AstTyUnit))]
+          [(= tag (compiler-parse-tag-ty-never)) (OkAstType (AstTyNever))]
+          [(= tag (compiler-parse-tag-ty-expr)) (OkAstType (AstTyExpr))]
           [else (OkAstType (AstTyVar (intern name)))]))]
     [(SCons head-node rest-box)
       (match (box-get head-node)
@@ -1238,122 +1220,99 @@
             [tag : i64 (compiler-parse-dispatch-tag dispatch head)]
             (cond
               [(= tag (compiler-parse-tag-ty-func))
-              (match (parse-ast-func-type-parts dispatch rest)
-                [(OkAstFuncTypeParts args ret)
-                  (OkAstType (ast-ty-func args ret))]
-                [(ErrAstFuncTypeParts message) (ErrAstType message)])]
+                (match (parse-ast-func-type-parts dispatch rest)
+                  [(OkAstFuncTypeParts args ret)
+                    (OkAstType (ast-ty-func args ret))]
+                  [(ErrAstFuncTypeParts message) (ErrAstType message)])]
               [(= tag (compiler-parse-tag-ty-tuple))
                 (match (parse-ast-type-list dispatch rest)
                   [(OkAstTypeList elems) (OkAstType (AstTyTuple elems))]
                   [(ErrAstTypeList message) (ErrAstType message)])]
               [(= tag (compiler-parse-tag-ty-array))
-                  (match rest
-                    [(SCons elem tail)
-                      (match (box-get tail)
-                        [(SNil)
-                          (match (parse-ast-type dispatch (box-get elem))
-                            [(OkAstType elem-ty)
-                              (OkAstType (ast-ty-dyn-array elem-ty))]
-                            [(ErrAstType message) (ErrAstType message)])]
-                        [(SCons size-node end)
-                          (match (box-get end)
-                            [(SNil)
-                              (match (box-get size-node)
-                                [(SInt size)
-                                  (match (parse-ast-type
-                                    dispatch
-                                    (box-get elem))
-                                    [(OkAstType elem-ty)
-                                      (OkAstType (ast-ty-array elem-ty size))]
-                                    [(ErrAstType message) (ErrAstType message)])]
-                                [_
-                                  (ErrAstType
-                                    "parse: array size must be integer")])]
-                            [_ (ErrAstType "parse: malformed array type")])]
-                        [_ (ErrAstType "parse: malformed array type")])]
-                    [_ (ErrAstType "parse: malformed array type")])]
-              [(= tag (compiler-parse-tag-ty-ptr))
-                    (match rest
-                      [(SCons elem tail)
-                        (match (box-get tail)
+                (match rest
+                  [(SCons elem tail)
+                    (match (box-get tail)
+                      [(SNil)
+                        (match (parse-ast-type dispatch (box-get elem))
+                          [(OkAstType elem-ty)
+                            (OkAstType (ast-ty-dyn-array elem-ty))]
+                          [(ErrAstType message) (ErrAstType message)])]
+                      [(SCons size-node end)
+                        (match (box-get end)
                           [(SNil)
-                            (match (parse-ast-type dispatch (box-get elem))
-                              [(OkAstType elem-ty)
-                                (OkAstType (ast-ty-ptr elem-ty))]
-                              [(ErrAstType message) (ErrAstType message)])]
-                          [_ (ErrAstType "parse: Ptr expects exactly one type")])]
-                      [_ (ErrAstType "parse: Ptr expects exactly one type")])]
-              [(= tag (compiler-parse-tag-ty-mut-ptr))
-                      (match rest
-                        [(SCons elem tail)
-                          (match (box-get tail)
-                            [(SNil)
-                              (match (parse-ast-type dispatch (box-get elem))
-                                [(OkAstType elem-ty)
-                                  (OkAstType (ast-ty-mut-ptr elem-ty))]
-                                [(ErrAstType message) (ErrAstType message)])]
-                            [_
-                              (ErrAstType
-                                "parse: MutPtr expects exactly one type")])]
-                        [_
-                          (ErrAstType "parse: MutPtr expects exactly one type")])]
-              [(= tag (compiler-parse-tag-ty-box))
-                        (match rest
-                          [(SCons elem tail)
-                            (match (box-get tail)
-                              [(SNil)
+                            (match (box-get size-node)
+                              [(SInt size)
                                 (match (parse-ast-type dispatch (box-get elem))
                                   [(OkAstType elem-ty)
-                                    (OkAstType (ast-ty-box elem-ty))]
+                                    (OkAstType (ast-ty-array elem-ty size))]
+                                  [(ErrAstType message) (ErrAstType message)])]
+                              [_
+                                (ErrAstType "parse: array size must be integer")])]
+                          [_ (ErrAstType "parse: malformed array type")])]
+                      [_ (ErrAstType "parse: malformed array type")])]
+                  [_ (ErrAstType "parse: malformed array type")])]
+              [(= tag (compiler-parse-tag-ty-ptr))
+                (match rest
+                  [(SCons elem tail)
+                    (match (box-get tail)
+                      [(SNil)
+                        (match (parse-ast-type dispatch (box-get elem))
+                          [(OkAstType elem-ty) (OkAstType (ast-ty-ptr elem-ty))]
+                          [(ErrAstType message) (ErrAstType message)])]
+                      [_ (ErrAstType "parse: Ptr expects exactly one type")])]
+                  [_ (ErrAstType "parse: Ptr expects exactly one type")])]
+              [(= tag (compiler-parse-tag-ty-mut-ptr))
+                (match rest
+                  [(SCons elem tail)
+                    (match (box-get tail)
+                      [(SNil)
+                        (match (parse-ast-type dispatch (box-get elem))
+                          [(OkAstType elem-ty)
+                            (OkAstType (ast-ty-mut-ptr elem-ty))]
+                          [(ErrAstType message) (ErrAstType message)])]
+                      [_ (ErrAstType "parse: MutPtr expects exactly one type")])]
+                  [_ (ErrAstType "parse: MutPtr expects exactly one type")])]
+              [(= tag (compiler-parse-tag-ty-box))
+                (match rest
+                  [(SCons elem tail)
+                    (match (box-get tail)
+                      [(SNil)
+                        (match (parse-ast-type dispatch (box-get elem))
+                          [(OkAstType elem-ty) (OkAstType (ast-ty-box elem-ty))]
+                          [(ErrAstType message) (ErrAstType message)])]
+                      [_ (ErrAstType "parse: Box expects exactly one type")])]
+                  [_ (ErrAstType "parse: Box expects exactly one type")])]
+              [(= tag (compiler-parse-tag-ty-ref))
+                (parse-ast-reference-type dispatch rest false)]
+              [(= tag (compiler-parse-tag-ty-mut-ref))
+                (parse-ast-reference-type dispatch rest true)]
+              [(= tag (compiler-parse-tag-ty-region))
+                (match rest
+                  [(SCons region-node tail)
+                    (match (box-get tail)
+                      [(SCons inner end)
+                        (match (box-get end)
+                          [(SNil)
+                            (match (box-get region-node)
+                              [(SSym region)
+                                (match (parse-ast-type dispatch (box-get inner))
+                                  [(OkAstType inner-ty)
+                                    (OkAstType (ast-ty-region region inner-ty))]
                                   [(ErrAstType message) (ErrAstType message)])]
                               [_
                                 (ErrAstType
-                                  "parse: Box expects exactly one type")])]
-                          [_ (ErrAstType "parse: Box expects exactly one type")])]
-              [(= tag (compiler-parse-tag-ty-ref))
-                          (parse-ast-reference-type dispatch rest false)]
-              [(= tag (compiler-parse-tag-ty-mut-ref))
-                            (parse-ast-reference-type dispatch rest true)]
-              [(= tag (compiler-parse-tag-ty-region))
-                              (match rest
-                                [(SCons region-node tail)
-                                  (match (box-get tail)
-                                    [(SCons inner end)
-                                      (match (box-get end)
-                                        [(SNil)
-                                          (match (box-get region-node)
-                                            [(SSym region)
-                                              (match (parse-ast-type
-                                                dispatch
-                                                (box-get inner))
-                                                [(OkAstType inner-ty)
-                                                  (OkAstType
-                                                    (ast-ty-region
-                                                      region
-                                                      inner-ty))]
-                                                [(ErrAstType message)
-                                                  (ErrAstType message)])]
-                                            [_
-                                              (ErrAstType
-                                                "parse: region name must be an identifier")])]
-                                        [_
-                                          (ErrAstType
-                                            "parse: malformed region type")])]
-                                    [_
-                                      (ErrAstType
-                                        "parse: malformed region type")])]
-                                [_ (ErrAstType "parse: malformed region type")])]
+                                  "parse: region name must be an identifier")])]
+                          [_ (ErrAstType "parse: malformed region type")])]
+                      [_ (ErrAstType "parse: malformed region type")])]
+                  [_ (ErrAstType "parse: malformed region type")])]
               [else
-                              (match (parse-ast-lifetime-list-nonempty
-                                dispatch
-                                rest
-                                (compiler-parse-generic-type-policy-message
-                                  head))
-                                [(OkAstLifetimeList lifetimes)
-                                  (OkAstType
-                                    (AstTyVarArgs (intern head) lifetimes))]
-                                [(ErrAstLifetimeList message)
-                                  (ErrAstType message)])]))]
+                (match (parse-ast-lifetime-list-nonempty
+                  dispatch
+                  rest
+                  (compiler-parse-generic-type-policy-message head))
+                  [(OkAstLifetimeList lifetimes)
+                    (OkAstType (AstTyVarArgs (intern head) lifetimes))]
+                  [(ErrAstLifetimeList message) (ErrAstType message)])]))]
         [_ (ErrAstType "parse: expected type")])]
     [_ (ErrAstType "parse: expected type")]))
 
@@ -1512,31 +1471,32 @@
         [(SSym key)
           (cond
             [(string-eq key ":cleanup")
-            (match (box-get tail)
-              [(SCons cleanup-node end)
-                (match (box-get end)
-                  [(SNil)
-                    (match (box-get cleanup-node)
-                      [(SSym cleanup-fn)
-                        (OkAstFieldCleanup (ast-field-cleanup-fn cleanup-fn))]
-                      [_
-                        (ErrAstFieldCleanup
-                          "parse: malformed field :cleanup metadata")])]
-                  [_
-                    (ErrAstFieldCleanup
-                      "parse: malformed field :cleanup metadata")])]
-              [_
-                (ErrAstFieldCleanup "parse: malformed field :cleanup metadata")])]
+              (match (box-get tail)
+                [(SCons cleanup-node end)
+                  (match (box-get end)
+                    [(SNil)
+                      (match (box-get cleanup-node)
+                        [(SSym cleanup-fn)
+                          (OkAstFieldCleanup (ast-field-cleanup-fn cleanup-fn))]
+                        [_
+                          (ErrAstFieldCleanup
+                            "parse: malformed field :cleanup metadata")])]
+                    [_
+                      (ErrAstFieldCleanup
+                        "parse: malformed field :cleanup metadata")])]
+                [_
+                  (ErrAstFieldCleanup
+                    "parse: malformed field :cleanup metadata")])]
             [(string-eq key ":owned")
               (match (box-get tail)
                 [(SNil) (OkAstFieldCleanup (AstFieldOwnedCleanup))]
                 [_
                   (ErrAstFieldCleanup "parse: malformed field :owned metadata")])]
             [(compiler-parse-metadata-key? key)
-                (ErrAstFieldCleanup
-                  (string-append "parse: unknown field metadata " key))]
+              (ErrAstFieldCleanup
+                (string-append "parse: unknown field metadata " key))]
             [else
-                (ErrAstFieldCleanup "parse: malformed field cleanup metadata")])]
+              (ErrAstFieldCleanup "parse: malformed field cleanup metadata")])]
         [_ (ErrAstFieldCleanup "parse: malformed field cleanup metadata")])]
     [_ (ErrAstFieldCleanup "parse: malformed field cleanup metadata")]))
 
@@ -1547,23 +1507,23 @@
         [(SSym key)
           (cond
             [(string-eq key ":cleanup")
-            (match (box-get tail)
-              [(SCons cleanup-node end)
-                (match (box-get end)
-                  [(SNil)
-                    (match (box-get cleanup-node)
-                      [(SSym cleanup-fn)
-                        (OkAstVariantPayloadCleanup
-                          (ast-variant-payload-cleanup-fn cleanup-fn))]
-                      [_
-                        (ErrAstVariantPayloadCleanup
-                          "parse: malformed enum payload :cleanup metadata")])]
-                  [_
-                    (ErrAstVariantPayloadCleanup
-                      "parse: malformed enum payload :cleanup metadata")])]
-              [_
-                (ErrAstVariantPayloadCleanup
-                  "parse: malformed enum payload :cleanup metadata")])]
+              (match (box-get tail)
+                [(SCons cleanup-node end)
+                  (match (box-get end)
+                    [(SNil)
+                      (match (box-get cleanup-node)
+                        [(SSym cleanup-fn)
+                          (OkAstVariantPayloadCleanup
+                            (ast-variant-payload-cleanup-fn cleanup-fn))]
+                        [_
+                          (ErrAstVariantPayloadCleanup
+                            "parse: malformed enum payload :cleanup metadata")])]
+                    [_
+                      (ErrAstVariantPayloadCleanup
+                        "parse: malformed enum payload :cleanup metadata")])]
+                [_
+                  (ErrAstVariantPayloadCleanup
+                    "parse: malformed enum payload :cleanup metadata")])]
             [(string-eq key ":owned")
               (match (box-get tail)
                 [(SNil)
@@ -1572,11 +1532,11 @@
                   (ErrAstVariantPayloadCleanup
                     "parse: malformed enum payload :owned metadata")])]
             [(compiler-parse-metadata-key? key)
-                (ErrAstVariantPayloadCleanup
-                  (string-append "parse: unknown enum payload metadata " key))]
+              (ErrAstVariantPayloadCleanup
+                (string-append "parse: unknown enum payload metadata " key))]
             [else
-                (ErrAstVariantPayloadCleanup
-                  "parse: malformed enum payload cleanup metadata")])]
+              (ErrAstVariantPayloadCleanup
+                "parse: malformed enum payload cleanup metadata")])]
         [_
           (ErrAstVariantPayloadCleanup
             "parse: malformed enum payload cleanup metadata")])]
@@ -1752,27 +1712,27 @@
             [(SSym key)
               (cond
                 [(string-eq key ":lifetimes")
-                (if seen-field
-                  (ErrAstStructDefParts
-                    "parse: defstruct metadata must appear before fields")
-                  (if seen-lifetimes
+                  (if seen-field
                     (ErrAstStructDefParts
-                      "parse: duplicate defstruct :lifetimes metadata")
-                    (match (parse-ast-aggregate-lifetimes-tail
-                      (box-get after-key))
-                      [(OkAstLifetimeList next-lifetimes)
-                        (parse-ast-defstruct-items
-                          dispatch
-                          (sp-node-get tail)
-                          next-lifetimes
-                          repr
-                          cleanup
-                          true
-                          seen-repr
-                          seen-cleanup
-                          false)]
-                      [(ErrAstLifetimeList message)
-                        (ErrAstStructDefParts message)])))]
+                      "parse: defstruct metadata must appear before fields")
+                    (if seen-lifetimes
+                      (ErrAstStructDefParts
+                        "parse: duplicate defstruct :lifetimes metadata")
+                      (match (parse-ast-aggregate-lifetimes-tail
+                        (box-get after-key))
+                        [(OkAstLifetimeList next-lifetimes)
+                          (parse-ast-defstruct-items
+                            dispatch
+                            (sp-node-get tail)
+                            next-lifetimes
+                            repr
+                            cleanup
+                            true
+                            seen-repr
+                            seen-cleanup
+                            false)]
+                        [(ErrAstLifetimeList message)
+                          (ErrAstStructDefParts message)])))]
                 [(string-eq key ":repr")
                   (if seen-field
                     (ErrAstStructDefParts
@@ -1800,52 +1760,49 @@
                         [(ErrAstStructRepr message)
                           (ErrAstStructDefParts message)])))]
                 [(string-eq key ":cleanup")
-                    (if seen-field
+                  (if seen-field
+                    (ErrAstStructDefParts
+                      "parse: defstruct metadata must appear before fields")
+                    (if seen-cleanup
                       (ErrAstStructDefParts
-                        "parse: defstruct metadata must appear before fields")
-                      (if seen-cleanup
-                        (ErrAstStructDefParts
-                          "parse: duplicate defstruct :cleanup metadata")
-                        (match (parse-ast-defstruct-cleanup-tail
-                          (box-get after-key))
-                          [(OkAstStructCleanup next-cleanup)
-                            (if (ast-struct-repr-c? repr)
-                              (ErrAstStructDefParts
-                                "parse: defstruct cannot combine :repr c with :cleanup metadata")
-                              (parse-ast-defstruct-items
-                                dispatch
-                                (sp-node-get tail)
-                                lifetimes
-                                repr
-                                next-cleanup
-                                seen-lifetimes
-                                seen-repr
-                                true
-                                false))]
-                          [(ErrAstStructCleanup message)
-                            (ErrAstStructDefParts message)])))]
+                        "parse: duplicate defstruct :cleanup metadata")
+                      (match (parse-ast-defstruct-cleanup-tail
+                        (box-get after-key))
+                        [(OkAstStructCleanup next-cleanup)
+                          (if (ast-struct-repr-c? repr)
+                            (ErrAstStructDefParts
+                              "parse: defstruct cannot combine :repr c with :cleanup metadata")
+                            (parse-ast-defstruct-items
+                              dispatch
+                              (sp-node-get tail)
+                              lifetimes
+                              repr
+                              next-cleanup
+                              seen-lifetimes
+                              seen-repr
+                              true
+                              false))]
+                        [(ErrAstStructCleanup message)
+                          (ErrAstStructDefParts message)])))]
                 [(compiler-parse-metadata-key? key)
-                      (if seen-field
-                        (ErrAstStructDefParts
-                          "parse: defstruct metadata must appear before fields")
-                        (if (string-eq key ":packed")
-                          (ErrAstStructDefParts
-                            "parse: packed repr is reserved")
-                          (ErrAstStructDefParts
-                            (string-append
-                              "parse: unknown defstruct metadata "
-                              key))))]
+                  (if seen-field
+                    (ErrAstStructDefParts
+                      "parse: defstruct metadata must appear before fields")
+                    (if (string-eq key ":packed")
+                      (ErrAstStructDefParts "parse: packed repr is reserved")
+                      (ErrAstStructDefParts
+                        (string-append "parse: unknown defstruct metadata " key))))]
                 [else
-                      (parse-ast-defstruct-field-item
-                        dispatch
-                        (sp-node-get head)
-                        (sp-node-get tail)
-                        lifetimes
-                        repr
-                        cleanup
-                        seen-lifetimes
-                        seen-repr
-                        seen-cleanup)])]
+                  (parse-ast-defstruct-field-item
+                    dispatch
+                    (sp-node-get head)
+                    (sp-node-get tail)
+                    lifetimes
+                    repr
+                    cleanup
+                    seen-lifetimes
+                    seen-repr
+                    seen-cleanup)])]
             [_
               (parse-ast-defstruct-field-item
                 dispatch
@@ -2005,15 +1962,11 @@
 
 (define (parse-ast-dispatch-isa [name : String]) : ResultAstDispatchIsa
   (cond
-    [(string-eq name "scalar")
-      (OkAstDispatchIsa (AstDispatchScalar))]
-    [(string-eq name "avx2")
-      (OkAstDispatchIsa (AstDispatchAvx2))]
-    [(string-eq name "avx512")
-      (OkAstDispatchIsa (AstDispatchAvx512))]
+    [(string-eq name "scalar") (OkAstDispatchIsa (AstDispatchScalar))]
+    [(string-eq name "avx2") (OkAstDispatchIsa (AstDispatchAvx2))]
+    [(string-eq name "avx512") (OkAstDispatchIsa (AstDispatchAvx512))]
     [else
-      (ErrAstDispatchIsa
-        (string-append "parse: unknown defdispatch ISA " name))]))
+      (ErrAstDispatchIsa (string-append "parse: unknown defdispatch ISA " name))]))
 
 (define (parse-ast-dispatch-variant [s : SpannedSexpr]) : ResultAstDispatchVariant
   (match s
@@ -2102,54 +2055,52 @@
             [(SSym key)
               (cond
                 [(not (compiler-parse-metadata-key? key))
-                (parse-ast-defenum-variant-item
-                  dispatch
-                  (sp-node-get head)
-                  (sp-node-get tail)
-                  lifetimes
-                  cleanup
-                  seen-lifetimes
-                  seen-cleanup)]
+                  (parse-ast-defenum-variant-item
+                    dispatch
+                    (sp-node-get head)
+                    (sp-node-get tail)
+                    lifetimes
+                    cleanup
+                    seen-lifetimes
+                    seen-cleanup)]
                 [seen-variant
                   (ErrAstEnumDefParts
                     "parse: defenum metadata must appear before variants")]
                 [(string-eq key ":lifetimes")
-                    (if seen-lifetimes
-                      (ErrAstEnumDefParts
-                        "parse: duplicate defenum :lifetimes metadata")
-                      (match (parse-ast-aggregate-lifetimes-tail
-                        (box-get after-key))
-                        [(OkAstLifetimeList next-lifetimes)
-                          (parse-ast-defenum-items
-                            dispatch
-                            (sp-node-get tail)
-                            next-lifetimes
-                            cleanup
-                            true
-                            seen-cleanup
-                            false)]
-                        [(ErrAstLifetimeList message)
-                          (ErrAstEnumDefParts message)]))]
+                  (if seen-lifetimes
+                    (ErrAstEnumDefParts
+                      "parse: duplicate defenum :lifetimes metadata")
+                    (match (parse-ast-aggregate-lifetimes-tail
+                      (box-get after-key))
+                      [(OkAstLifetimeList next-lifetimes)
+                        (parse-ast-defenum-items
+                          dispatch
+                          (sp-node-get tail)
+                          next-lifetimes
+                          cleanup
+                          true
+                          seen-cleanup
+                          false)]
+                      [(ErrAstLifetimeList message)
+                        (ErrAstEnumDefParts message)]))]
                 [(string-eq key ":cleanup")
-                      (if seen-cleanup
-                        (ErrAstEnumDefParts
-                          "parse: duplicate defenum :cleanup metadata")
-                        (match (parse-ast-defenum-cleanup-tail
-                          (box-get after-key))
-                          [(OkAstEnumCleanup next-cleanup)
-                            (parse-ast-defenum-items
-                              dispatch
-                              (sp-node-get tail)
-                              lifetimes
-                              next-cleanup
-                              seen-lifetimes
-                              true
-                              false)]
-                          [(ErrAstEnumCleanup message)
-                            (ErrAstEnumDefParts message)]))]
+                  (if seen-cleanup
+                    (ErrAstEnumDefParts
+                      "parse: duplicate defenum :cleanup metadata")
+                    (match (parse-ast-defenum-cleanup-tail (box-get after-key))
+                      [(OkAstEnumCleanup next-cleanup)
+                        (parse-ast-defenum-items
+                          dispatch
+                          (sp-node-get tail)
+                          lifetimes
+                          next-cleanup
+                          seen-lifetimes
+                          true
+                          false)]
+                      [(ErrAstEnumCleanup message) (ErrAstEnumDefParts message)]))]
                 [else
-                      (ErrAstEnumDefParts
-                        (string-append "parse: unknown defenum metadata " key))])]
+                  (ErrAstEnumDefParts
+                    (string-append "parse: unknown defenum metadata " key))])]
             [_
               (parse-ast-defenum-variant-item
                 dispatch
@@ -2872,23 +2823,16 @@
 
 (define (parse-ast-reduce-op [name : String]) : ResultAstReduceOp
   (cond
-    [(string-eq name "sum")
-      (OkAstReduceOp (AstReduceSum))]
-    [(string-eq name "min")
-      (OkAstReduceOp (AstReduceMin))]
-    [(string-eq name "max")
-      (OkAstReduceOp (AstReduceMax))]
-    [(string-eq name "all")
-      (OkAstReduceOp (AstReduceAll))]
-    [(string-eq name "any")
-      (OkAstReduceOp (AstReduceAny))]
+    [(string-eq name "sum") (OkAstReduceOp (AstReduceSum))]
+    [(string-eq name "min") (OkAstReduceOp (AstReduceMin))]
+    [(string-eq name "max") (OkAstReduceOp (AstReduceMax))]
+    [(string-eq name "all") (OkAstReduceOp (AstReduceAll))]
+    [(string-eq name "any") (OkAstReduceOp (AstReduceAny))]
     [else
       (ErrAstReduceOp
         (string-append
           "parse: unsupported spmd-reduce operator `"
-          (string-append
-            name
-            "`; expected one of sum, min, max, all, any")))]))
+          (string-append name "`; expected one of sum, min, max, all, any")))]))
 
 (define (parse-ast-spmd-reduce-binding
   [dispatch : SymI64Env]
@@ -3731,30 +3675,21 @@
   [head : SpannedSexpr]
   [rest : SpannedSexpr]) : ResultAstExpr
   (cond
-    [(= tag (compiler-parse-tag-expr-if))
-      (parse-ast-if dispatch rest)]
-    [(= tag (compiler-parse-tag-expr-let))
-      (parse-ast-let dispatch rest)]
-    [(= tag (compiler-parse-tag-expr-lambda))
-      (parse-ast-lambda dispatch rest)]
-    [(= tag (compiler-parse-tag-expr-while))
-      (parse-ast-while dispatch rest)]
-    [(= tag (compiler-parse-tag-expr-begin))
-      (parse-ast-begin dispatch rest)]
-    [(= tag (compiler-parse-tag-expr-unsafe))
-      (parse-ast-unsafe dispatch rest)]
-    [(= tag (compiler-parse-tag-expr-set))
-      (parse-ast-set dispatch rest)]
+    [(= tag (compiler-parse-tag-expr-if)) (parse-ast-if dispatch rest)]
+    [(= tag (compiler-parse-tag-expr-let)) (parse-ast-let dispatch rest)]
+    [(= tag (compiler-parse-tag-expr-lambda)) (parse-ast-lambda dispatch rest)]
+    [(= tag (compiler-parse-tag-expr-while)) (parse-ast-while dispatch rest)]
+    [(= tag (compiler-parse-tag-expr-begin)) (parse-ast-begin dispatch rest)]
+    [(= tag (compiler-parse-tag-expr-unsafe)) (parse-ast-unsafe dispatch rest)]
+    [(= tag (compiler-parse-tag-expr-set)) (parse-ast-set dispatch rest)]
     [(= tag (compiler-parse-tag-expr-ann))
       (parse-ast-ann-like dispatch false rest)]
     [(= tag (compiler-parse-tag-expr-cast))
       (parse-ast-ann-like dispatch true rest)]
-    [(= tag (compiler-parse-tag-expr-tuple))
-      (parse-ast-tuple dispatch rest)]
+    [(= tag (compiler-parse-tag-expr-tuple)) (parse-ast-tuple dispatch rest)]
     [(= tag (compiler-parse-tag-expr-tuple-ref))
       (parse-ast-tuple-ref dispatch rest)]
-    [(= tag (compiler-parse-tag-expr-array))
-      (parse-ast-array dispatch rest)]
+    [(= tag (compiler-parse-tag-expr-array)) (parse-ast-array dispatch rest)]
     [(= tag (compiler-parse-tag-expr-make-array))
       (parse-ast-make-array dispatch rest)]
     [(= tag (compiler-parse-tag-expr-array-ref))
@@ -3763,171 +3698,89 @@
       (parse-ast-array-set dispatch rest)]
     [(= tag (compiler-parse-tag-expr-array-push))
       (parse-ast-array-push dispatch rest)]
-    [(= tag (compiler-parse-tag-expr-match))
-      (parse-ast-match dispatch rest)]
+    [(= tag (compiler-parse-tag-expr-match)) (parse-ast-match dispatch rest)]
     [(= tag (compiler-parse-tag-expr-foreach))
       (parse-ast-foreach dispatch rest)]
     [(= tag (compiler-parse-tag-expr-spmd-reduce))
       (parse-ast-spmd-reduce dispatch rest)]
     [(= tag (compiler-parse-tag-expr-spmd-broadcast))
-      (parse-ast-spmd-broadcast
-        dispatch
-        rest)]
+      (parse-ast-spmd-broadcast dispatch rest)]
     [(= tag (compiler-parse-tag-expr-struct-get))
       (parse-ast-struct-get dispatch rest)]
     [(= tag (compiler-parse-tag-expr-comptime))
       (parse-ast-comptime dispatch rest)]
     [(= tag (compiler-parse-tag-expr-type-literal))
-      (parse-ast-type-literal
-        dispatch
-        rest)]
+      (parse-ast-type-literal dispatch rest)]
     [(= tag (compiler-parse-tag-expr-with-region))
-      (parse-ast-with-region
-        dispatch
-        rest)]
+      (parse-ast-with-region dispatch rest)]
     [(= tag (compiler-parse-tag-expr-with-escape))
-      (parse-ast-with-escape
-        dispatch
-        rest)]
+      (parse-ast-with-escape dispatch rest)]
     [(= tag (compiler-parse-tag-expr-with-scratch))
-      (parse-ast-with-scratch
-        dispatch
-        rest)]
+      (parse-ast-with-scratch dispatch rest)]
     [(= tag (compiler-parse-tag-expr-in-arena))
-      (parse-ast-in-arena
-        dispatch
-        rest)]
+      (parse-ast-in-arena dispatch rest)]
     [(= tag (compiler-parse-tag-expr-with-resource))
-      (parse-ast-with-resource
-        dispatch
-        rest)]
+      (parse-ast-with-resource dispatch rest)]
     [(= tag (compiler-parse-tag-expr-quote))
-      (parse-ast-quote-like
-        dispatch
-        tag
-        rest)]
+      (parse-ast-quote-like dispatch tag rest)]
     [(= tag (compiler-parse-tag-expr-quasiquote))
-      (parse-ast-quote-like
-        dispatch
-        tag
-        rest)]
+      (parse-ast-quote-like dispatch tag rest)]
     [(= tag (compiler-parse-tag-expr-unquote))
-      (parse-ast-quote-like
-        dispatch
-        tag
-        rest)]
+      (parse-ast-quote-like dispatch tag rest)]
     [(= tag (compiler-parse-tag-expr-unquote-splicing))
-      (parse-ast-quote-like
-        dispatch
-        tag
-        rest)]
-    [(= tag (compiler-parse-tag-expr-try))
-      (parse-ast-try
-        dispatch
-        rest)]
-    [(= tag (compiler-parse-tag-expr-return))
-      (parse-ast-return
-        dispatch
-        rest)]
+      (parse-ast-quote-like dispatch tag rest)]
+    [(= tag (compiler-parse-tag-expr-try)) (parse-ast-try dispatch rest)]
+    [(= tag (compiler-parse-tag-expr-return)) (parse-ast-return dispatch rest)]
     [(= tag (compiler-parse-tag-expr-box))
-      (parse-ast-box-like
-        dispatch
-        rest
-        false
-        false)]
+      (parse-ast-box-like dispatch rest false false)]
     [(= tag (compiler-parse-tag-expr-box-get))
-      (parse-ast-box-like
-        dispatch
-        rest
-        true
-        false)]
+      (parse-ast-box-like dispatch rest true false)]
     [(= tag (compiler-parse-tag-expr-box-take))
-      (parse-ast-box-like
-        dispatch
-        rest
-        false
-        true)]
+      (parse-ast-box-like dispatch rest false true)]
     [(= tag (compiler-parse-tag-expr-string-data))
-      (parse-ast-string-data
-        dispatch
-        rest)]
+      (parse-ast-string-data dispatch rest)]
     [(= tag (compiler-parse-tag-expr-string-from-bytes))
-      (parse-ast-string-from-bytes
-        dispatch
-        rest)]
+      (parse-ast-string-from-bytes dispatch rest)]
     [(= tag (compiler-parse-tag-expr-array-data))
-      (parse-ast-array-data
-        dispatch
-        rest)]
+      (parse-ast-array-data dispatch rest)]
     [(= tag (compiler-parse-tag-expr-program-argc))
       (parse-ast-no-arg-low-level
         rest
         "program-argc"
-        (ast-node-push
-          (AstExprProgramArgc)))]
+        (ast-node-push (AstExprProgramArgc)))]
     [(= tag (compiler-parse-tag-expr-program-argv))
       (parse-ast-no-arg-low-level
         rest
         "program-argv"
-        (ast-node-push
-          (AstExprProgramArgv)))]
+        (ast-node-push (AstExprProgramArgv)))]
     [(= tag (compiler-parse-tag-expr-program-envp))
       (parse-ast-no-arg-low-level
         rest
         "program-envp"
-        (ast-node-push
-          (AstExprProgramEnvp)))]
+        (ast-node-push (AstExprProgramEnvp)))]
     [(= tag (compiler-parse-tag-expr-cpuid-eax))
-      (parse-ast-cpuid-like
-        dispatch
-        tag
-        rest)]
+      (parse-ast-cpuid-like dispatch tag rest)]
     [(= tag (compiler-parse-tag-expr-cpuid-ebx))
-      (parse-ast-cpuid-like
-        dispatch
-        tag
-        rest)]
+      (parse-ast-cpuid-like dispatch tag rest)]
     [(= tag (compiler-parse-tag-expr-cpuid-ecx))
-      (parse-ast-cpuid-like
-        dispatch
-        tag
-        rest)]
+      (parse-ast-cpuid-like dispatch tag rest)]
     [(= tag (compiler-parse-tag-expr-cpuid-edx))
-      (parse-ast-cpuid-like
-        dispatch
-        tag
-        rest)]
-    [(= tag (compiler-parse-tag-expr-xgetbv))
-      (parse-ast-xgetbv
-        dispatch
-        rest)]
+      (parse-ast-cpuid-like dispatch tag rest)]
+    [(= tag (compiler-parse-tag-expr-xgetbv)) (parse-ast-xgetbv dispatch rest)]
     [(= tag (compiler-parse-tag-expr-syscall))
-      (parse-ast-syscall
-        dispatch
-        rest)]
-    [(= tag (compiler-parse-tag-expr-init))
-      (parse-ast-init
-        dispatch
-        rest)]
+      (parse-ast-syscall dispatch rest)]
+    [(= tag (compiler-parse-tag-expr-init)) (parse-ast-init dispatch rest)]
     [(= tag (compiler-parse-tag-expr-ptr-null))
-      (parse-ast-ptr-null
-        dispatch
-        rest)]
+      (parse-ast-ptr-null dispatch rest)]
     [(= tag (compiler-parse-tag-expr-ptr-null-check))
-      (parse-ast-ptr-null-check
-        dispatch
-        rest)]
+      (parse-ast-ptr-null-check dispatch rest)]
     [(= tag (compiler-parse-tag-decl-comptime-decl))
       (ErrAstExpr
         "parse: comptime-decl is only valid as a top-level declaration")]
     [(= tag (compiler-parse-tag-decl-comptime-decls))
       (ErrAstExpr
         "parse: comptime-decls is only valid as a top-level declaration")]
-    [else
-      (parse-ast-call
-        dispatch
-        head
-        rest)]))
+    [else (parse-ast-call dispatch head rest)]))
 
 (define (parse-ast-list-expr
   [dispatch : SymI64Env]
@@ -3961,15 +3814,9 @@
             [(= tag (compiler-parse-tag-expr-int-to-ptr))
               (parse-ast-ptr-cast-like dispatch true rest)]
             [(ast-unop-tag? tag)
-              (parse-ast-unary
-                dispatch
-                (ast-unop-from-tag tag)
-                rest)]
+              (parse-ast-unary dispatch (ast-unop-from-tag tag) rest)]
             [(ast-binop-tag? tag)
-              (parse-ast-binary
-                dispatch
-                (ast-binop-from-tag tag)
-                rest)]
+              (parse-ast-binary dispatch (ast-binop-from-tag tag) rest)]
             [(= tag (compiler-parse-tag-ty-ref))
               (parse-ast-borrow dispatch false rest)]
             [(= tag (compiler-parse-tag-ty-mut-ref))
@@ -4000,25 +3847,21 @@
         [tag : i64 (compiler-parse-dispatch-tag dispatch name)]
         (cond
           [(= tag (compiler-parse-tag-lit-true))
-          (OkAstExpr
-            (ast-expr-wrap-span
-              (ast-node-push (AstExprLiteral (AstLitBool true)))
-              s))]
+            (OkAstExpr
+              (ast-expr-wrap-span
+                (ast-node-push (AstExprLiteral (AstLitBool true)))
+                s))]
           [(= tag (compiler-parse-tag-lit-false))
             (OkAstExpr
               (ast-expr-wrap-span
                 (ast-node-push (AstExprLiteral (AstLitBool false)))
                 s))]
           [(= tag (compiler-parse-tag-unit))
-              (OkAstExpr
-                (ast-expr-wrap-span
-                  (ast-node-push (AstExprLiteral AstLitUnit))
-                  s))]
+            (OkAstExpr
+              (ast-expr-wrap-span (ast-node-push (AstExprLiteral AstLitUnit)) s))]
           [else
-              (OkAstExpr
-                (ast-expr-wrap-span
-                  (ast-node-push (AstExprVar (intern name)))
-                  s))]))]
+            (OkAstExpr
+              (ast-expr-wrap-span (ast-node-push (AstExprVar (intern name))) s))]))]
     [(SpSCons head rest _)
       (match (sp-node-get head)
         [(SpSSym op _)
@@ -4511,19 +4354,20 @@
               [(SSym key)
                 (cond
                   [(string-eq key ":abi")
-                  (if seen-abi
-                    (ErrAstExternParts "parse: duplicate extern :abi metadata")
-                    (match (parse-ast-extern-abi-tail (box-get after-key))
-                      [(OkAstExternAbi parsed-abi)
-                        (parse-ast-extern-items
-                          dispatch
-                          (sp-node-get tail)
-                          parsed-abi
-                          symbol
-                          link-inputs
-                          true
-                          seen-symbol)]
-                      [(ErrAstExternAbi message) (ErrAstExternParts message)]))]
+                    (if seen-abi
+                      (ErrAstExternParts
+                        "parse: duplicate extern :abi metadata")
+                      (match (parse-ast-extern-abi-tail (box-get after-key))
+                        [(OkAstExternAbi parsed-abi)
+                          (parse-ast-extern-items
+                            dispatch
+                            (sp-node-get tail)
+                            parsed-abi
+                            symbol
+                            link-inputs
+                            true
+                            seen-symbol)]
+                        [(ErrAstExternAbi message) (ErrAstExternParts message)]))]
                   [(string-eq key ":symbol")
                     (if seen-symbol
                       (ErrAstExternParts
@@ -4541,61 +4385,56 @@
                         [(ErrAstExternSymbol message)
                           (ErrAstExternParts message)]))]
                   [(string-eq key ":link-lib")
-                      (match (parse-ast-extern-string-tail
-                        ":link-lib"
-                        (box-get after-key))
-                        [(OkAstExternSymbol value)
-                          (parse-ast-extern-items
-                            dispatch
-                            (sp-node-get tail)
-                            abi
-                            symbol
-                            (ast-extern-link-input-list-append
-                              link-inputs
-                              (AstExternLinkLib value))
-                            seen-abi
-                            seen-symbol)]
-                        [(ErrAstExternSymbol message)
-                          (ErrAstExternParts message)])]
+                    (match (parse-ast-extern-string-tail
+                      ":link-lib"
+                      (box-get after-key))
+                      [(OkAstExternSymbol value)
+                        (parse-ast-extern-items
+                          dispatch
+                          (sp-node-get tail)
+                          abi
+                          symbol
+                          (ast-extern-link-input-list-append
+                            link-inputs
+                            (AstExternLinkLib value))
+                          seen-abi
+                          seen-symbol)]
+                      [(ErrAstExternSymbol message) (ErrAstExternParts message)])]
                   [(string-eq key ":link-search")
-                        (match (parse-ast-extern-string-tail
-                          ":link-search"
-                          (box-get after-key))
-                          [(OkAstExternSymbol value)
-                            (parse-ast-extern-items
-                              dispatch
-                              (sp-node-get tail)
-                              abi
-                              symbol
-                              (ast-extern-link-input-list-append
-                                link-inputs
-                                (AstExternLinkSearch value))
-                              seen-abi
-                              seen-symbol)]
-                          [(ErrAstExternSymbol message)
-                            (ErrAstExternParts message)])]
+                    (match (parse-ast-extern-string-tail
+                      ":link-search"
+                      (box-get after-key))
+                      [(OkAstExternSymbol value)
+                        (parse-ast-extern-items
+                          dispatch
+                          (sp-node-get tail)
+                          abi
+                          symbol
+                          (ast-extern-link-input-list-append
+                            link-inputs
+                            (AstExternLinkSearch value))
+                          seen-abi
+                          seen-symbol)]
+                      [(ErrAstExternSymbol message) (ErrAstExternParts message)])]
                   [(string-eq key ":link-arg")
-                          (match (parse-ast-extern-string-tail
-                            ":link-arg"
-                            (box-get after-key))
-                            [(OkAstExternSymbol value)
-                              (parse-ast-extern-items
-                                dispatch
-                                (sp-node-get tail)
-                                abi
-                                symbol
-                                (ast-extern-link-input-list-append
-                                  link-inputs
-                                  (AstExternLinkArg value))
-                                seen-abi
-                                seen-symbol)]
-                            [(ErrAstExternSymbol message)
-                              (ErrAstExternParts message)])]
+                    (match (parse-ast-extern-string-tail
+                      ":link-arg"
+                      (box-get after-key))
+                      [(OkAstExternSymbol value)
+                        (parse-ast-extern-items
+                          dispatch
+                          (sp-node-get tail)
+                          abi
+                          symbol
+                          (ast-extern-link-input-list-append
+                            link-inputs
+                            (AstExternLinkArg value))
+                          seen-abi
+                          seen-symbol)]
+                      [(ErrAstExternSymbol message) (ErrAstExternParts message)])]
                   [(compiler-parse-metadata-key? key)
-                            (ErrAstExternParts
-                              (string-append
-                                "parse: unknown extern metadata "
-                                key))]
+                    (ErrAstExternParts
+                      (string-append "parse: unknown extern metadata " key))]
                   [else (ErrAstExternParts "parse: expected ':' in extern")])]
               [_ (ErrAstExternParts "parse: expected ':' in extern")])]
           [_ (ErrAstExternParts "parse: expected ':' in extern")]))]
@@ -4638,24 +4477,25 @@
             [(SSym key)
               (cond
                 [(string-eq key ":abi")
-                (if seen-abi
-                  (ErrAstExternParts "parse: duplicate extern :abi metadata")
-                  (match (parse-ast-extern-abi-tail (box-get after-key))
-                    [(OkAstExternAbi parsed-abi)
-                      (match (parse-ast-extern-abi-combine abi parsed-abi)
-                        [(OkAstExternAbi combined-abi)
-                          (parse-ast-extern-head-post-ret
-                            dispatch
-                            (sp-node-get tail)
-                            combined-abi
-                            symbol
-                            link-inputs
-                            true
-                            seen-symbol
-                            param-types
-                            ret)]
-                        [(ErrAstExternAbi message) (ErrAstExternParts message)])]
-                    [(ErrAstExternAbi message) (ErrAstExternParts message)]))]
+                  (if seen-abi
+                    (ErrAstExternParts "parse: duplicate extern :abi metadata")
+                    (match (parse-ast-extern-abi-tail (box-get after-key))
+                      [(OkAstExternAbi parsed-abi)
+                        (match (parse-ast-extern-abi-combine abi parsed-abi)
+                          [(OkAstExternAbi combined-abi)
+                            (parse-ast-extern-head-post-ret
+                              dispatch
+                              (sp-node-get tail)
+                              combined-abi
+                              symbol
+                              link-inputs
+                              true
+                              seen-symbol
+                              param-types
+                              ret)]
+                          [(ErrAstExternAbi message)
+                            (ErrAstExternParts message)])]
+                      [(ErrAstExternAbi message) (ErrAstExternParts message)]))]
                 [(string-eq key ":symbol")
                   (if seen-symbol
                     (ErrAstExternParts
@@ -4674,66 +4514,62 @@
                           ret)]
                       [(ErrAstExternSymbol message) (ErrAstExternParts message)]))]
                 [(string-eq key ":link-lib")
-                    (match (parse-ast-extern-string-tail
-                      ":link-lib"
-                      (box-get after-key))
-                      [(OkAstExternSymbol value)
-                        (parse-ast-extern-head-post-ret
-                          dispatch
-                          (sp-node-get tail)
-                          abi
-                          symbol
-                          (ast-extern-link-input-list-append
-                            link-inputs
-                            (AstExternLinkLib value))
-                          seen-abi
-                          seen-symbol
-                          param-types
-                          ret)]
-                      [(ErrAstExternSymbol message) (ErrAstExternParts message)])]
+                  (match (parse-ast-extern-string-tail
+                    ":link-lib"
+                    (box-get after-key))
+                    [(OkAstExternSymbol value)
+                      (parse-ast-extern-head-post-ret
+                        dispatch
+                        (sp-node-get tail)
+                        abi
+                        symbol
+                        (ast-extern-link-input-list-append
+                          link-inputs
+                          (AstExternLinkLib value))
+                        seen-abi
+                        seen-symbol
+                        param-types
+                        ret)]
+                    [(ErrAstExternSymbol message) (ErrAstExternParts message)])]
                 [(string-eq key ":link-search")
-                      (match (parse-ast-extern-string-tail
-                        ":link-search"
-                        (box-get after-key))
-                        [(OkAstExternSymbol value)
-                          (parse-ast-extern-head-post-ret
-                            dispatch
-                            (sp-node-get tail)
-                            abi
-                            symbol
-                            (ast-extern-link-input-list-append
-                              link-inputs
-                              (AstExternLinkSearch value))
-                            seen-abi
-                            seen-symbol
-                            param-types
-                            ret)]
-                        [(ErrAstExternSymbol message)
-                          (ErrAstExternParts message)])]
+                  (match (parse-ast-extern-string-tail
+                    ":link-search"
+                    (box-get after-key))
+                    [(OkAstExternSymbol value)
+                      (parse-ast-extern-head-post-ret
+                        dispatch
+                        (sp-node-get tail)
+                        abi
+                        symbol
+                        (ast-extern-link-input-list-append
+                          link-inputs
+                          (AstExternLinkSearch value))
+                        seen-abi
+                        seen-symbol
+                        param-types
+                        ret)]
+                    [(ErrAstExternSymbol message) (ErrAstExternParts message)])]
                 [(string-eq key ":link-arg")
-                        (match (parse-ast-extern-string-tail
-                          ":link-arg"
-                          (box-get after-key))
-                          [(OkAstExternSymbol value)
-                            (parse-ast-extern-head-post-ret
-                              dispatch
-                              (sp-node-get tail)
-                              abi
-                              symbol
-                              (ast-extern-link-input-list-append
-                                link-inputs
-                                (AstExternLinkArg value))
-                              seen-abi
-                              seen-symbol
-                              param-types
-                              ret)]
-                          [(ErrAstExternSymbol message)
-                            (ErrAstExternParts message)])]
+                  (match (parse-ast-extern-string-tail
+                    ":link-arg"
+                    (box-get after-key))
+                    [(OkAstExternSymbol value)
+                      (parse-ast-extern-head-post-ret
+                        dispatch
+                        (sp-node-get tail)
+                        abi
+                        symbol
+                        (ast-extern-link-input-list-append
+                          link-inputs
+                          (AstExternLinkArg value))
+                        seen-abi
+                        seen-symbol
+                        param-types
+                        ret)]
+                    [(ErrAstExternSymbol message) (ErrAstExternParts message)])]
                 [(compiler-parse-metadata-key? key)
-                          (ErrAstExternParts
-                            (string-append
-                              "parse: unknown extern metadata "
-                              key))]
+                  (ErrAstExternParts
+                    (string-append "parse: unknown extern metadata " key))]
                 [else (ErrAstExternParts "parse: malformed extern")])]
             [_ (ErrAstExternParts "parse: malformed extern")])]
         [_ (ErrAstExternParts "parse: malformed extern")])]
@@ -4790,24 +4626,25 @@
               [(SSym key)
                 (cond
                   [(string-eq key ":abi")
-                  (if seen-abi
-                    (ErrAstExternParts "parse: duplicate extern :abi metadata")
-                    (match (parse-ast-extern-abi-tail (box-get after-key))
-                      [(OkAstExternAbi parsed-abi)
-                        (match (parse-ast-extern-abi-combine abi parsed-abi)
-                          [(OkAstExternAbi combined-abi)
-                            (parse-ast-extern-head-rest
-                              dispatch
-                              (sp-node-get tail)
-                              combined-abi
-                              symbol
-                              link-inputs
-                              true
-                              seen-symbol
-                              param-types)]
-                          [(ErrAstExternAbi message)
-                            (ErrAstExternParts message)])]
-                      [(ErrAstExternAbi message) (ErrAstExternParts message)]))]
+                    (if seen-abi
+                      (ErrAstExternParts
+                        "parse: duplicate extern :abi metadata")
+                      (match (parse-ast-extern-abi-tail (box-get after-key))
+                        [(OkAstExternAbi parsed-abi)
+                          (match (parse-ast-extern-abi-combine abi parsed-abi)
+                            [(OkAstExternAbi combined-abi)
+                              (parse-ast-extern-head-rest
+                                dispatch
+                                (sp-node-get tail)
+                                combined-abi
+                                symbol
+                                link-inputs
+                                true
+                                seen-symbol
+                                param-types)]
+                            [(ErrAstExternAbi message)
+                              (ErrAstExternParts message)])]
+                        [(ErrAstExternAbi message) (ErrAstExternParts message)]))]
                   [(string-eq key ":symbol")
                     (if seen-symbol
                       (ErrAstExternParts
@@ -4826,64 +4663,59 @@
                         [(ErrAstExternSymbol message)
                           (ErrAstExternParts message)]))]
                   [(string-eq key ":link-lib")
-                      (match (parse-ast-extern-string-tail
-                        ":link-lib"
-                        (box-get after-key))
-                        [(OkAstExternSymbol value)
-                          (parse-ast-extern-head-rest
-                            dispatch
-                            (sp-node-get tail)
-                            abi
-                            symbol
-                            (ast-extern-link-input-list-append
-                              link-inputs
-                              (AstExternLinkLib value))
-                            seen-abi
-                            seen-symbol
-                            param-types)]
-                        [(ErrAstExternSymbol message)
-                          (ErrAstExternParts message)])]
+                    (match (parse-ast-extern-string-tail
+                      ":link-lib"
+                      (box-get after-key))
+                      [(OkAstExternSymbol value)
+                        (parse-ast-extern-head-rest
+                          dispatch
+                          (sp-node-get tail)
+                          abi
+                          symbol
+                          (ast-extern-link-input-list-append
+                            link-inputs
+                            (AstExternLinkLib value))
+                          seen-abi
+                          seen-symbol
+                          param-types)]
+                      [(ErrAstExternSymbol message) (ErrAstExternParts message)])]
                   [(string-eq key ":link-search")
-                        (match (parse-ast-extern-string-tail
-                          ":link-search"
-                          (box-get after-key))
-                          [(OkAstExternSymbol value)
-                            (parse-ast-extern-head-rest
-                              dispatch
-                              (sp-node-get tail)
-                              abi
-                              symbol
-                              (ast-extern-link-input-list-append
-                                link-inputs
-                                (AstExternLinkSearch value))
-                              seen-abi
-                              seen-symbol
-                              param-types)]
-                          [(ErrAstExternSymbol message)
-                            (ErrAstExternParts message)])]
+                    (match (parse-ast-extern-string-tail
+                      ":link-search"
+                      (box-get after-key))
+                      [(OkAstExternSymbol value)
+                        (parse-ast-extern-head-rest
+                          dispatch
+                          (sp-node-get tail)
+                          abi
+                          symbol
+                          (ast-extern-link-input-list-append
+                            link-inputs
+                            (AstExternLinkSearch value))
+                          seen-abi
+                          seen-symbol
+                          param-types)]
+                      [(ErrAstExternSymbol message) (ErrAstExternParts message)])]
                   [(string-eq key ":link-arg")
-                          (match (parse-ast-extern-string-tail
-                            ":link-arg"
-                            (box-get after-key))
-                            [(OkAstExternSymbol value)
-                              (parse-ast-extern-head-rest
-                                dispatch
-                                (sp-node-get tail)
-                                abi
-                                symbol
-                                (ast-extern-link-input-list-append
-                                  link-inputs
-                                  (AstExternLinkArg value))
-                                seen-abi
-                                seen-symbol
-                                param-types)]
-                            [(ErrAstExternSymbol message)
-                              (ErrAstExternParts message)])]
+                    (match (parse-ast-extern-string-tail
+                      ":link-arg"
+                      (box-get after-key))
+                      [(OkAstExternSymbol value)
+                        (parse-ast-extern-head-rest
+                          dispatch
+                          (sp-node-get tail)
+                          abi
+                          symbol
+                          (ast-extern-link-input-list-append
+                            link-inputs
+                            (AstExternLinkArg value))
+                          seen-abi
+                          seen-symbol
+                          param-types)]
+                      [(ErrAstExternSymbol message) (ErrAstExternParts message)])]
                   [(compiler-parse-metadata-key? key)
-                            (ErrAstExternParts
-                              (string-append
-                                "parse: unknown extern metadata "
-                                key))]
+                    (ErrAstExternParts
+                      (string-append "parse: unknown extern metadata " key))]
                   [else (ErrAstExternParts "parse: expected ':' in extern")])]
               [_ (ErrAstExternParts "parse: expected ':' in extern")])]
           [_ (ErrAstExternParts "parse: expected ':' in extern")]))]
@@ -5305,7 +5137,8 @@
                   (match (sp-node-get end)
                     [(SpSNil _)
                       (match (sp-node-get name-node)
-                        [(SpSSym name _) (OkAstExportItem (AstExportValue name))]
+                        [(SpSSym name _)
+                          (OkAstExportItem (AstExportValue name))]
                         [_ (ErrAstExportItem "parse: malformed export item")])]
                     [_ (ErrAstExportItem "parse: malformed export item")])]
                 [_ (ErrAstExportItem "parse: malformed export item")])]
@@ -5338,8 +5171,7 @@
                       (match (sp-node-get name-node)
                         [(SpSSym name _)
                           (OkAstExportItem (AstExportConstructor name))]
-                        [_
-                          (ErrAstExportItem "parse: malformed export item")])]
+                        [_ (ErrAstExportItem "parse: malformed export item")])]
                     [_ (ErrAstExportItem "parse: malformed export item")])]
                 [_ (ErrAstExportItem "parse: malformed export item")])]
             [(string-eq kind "field")
@@ -5359,11 +5191,8 @@
                                   (ErrAstExportItem
                                     "parse: malformed export item")])]
                             [_
-                              (ErrAstExportItem
-                                "parse: malformed export item")])]
-                        [_
-                          (ErrAstExportItem
-                            "parse: malformed export item")])]
+                              (ErrAstExportItem "parse: malformed export item")])]
+                        [_ (ErrAstExportItem "parse: malformed export item")])]
                     [_ (ErrAstExportItem "parse: malformed export item")])]
                 [_ (ErrAstExportItem "parse: malformed export item")])]
             [(string-eq kind "variant")
@@ -5374,11 +5203,8 @@
                       (match (sp-node-get name-node)
                         [(SpSSym name _)
                           (OkAstExportItem (AstExportVariant name))]
-                        [_
-                          (ErrAstExportItem
-                            "parse: malformed export item")])]
-                    [_
-                      (ErrAstExportItem "parse: malformed export item")])]
+                        [_ (ErrAstExportItem "parse: malformed export item")])]
+                    [_ (ErrAstExportItem "parse: malformed export item")])]
                 [_ (ErrAstExportItem "parse: malformed export item")])]
             [else (ErrAstExportItem "parse: unknown export item kind")])]
         [_ (ErrAstExportItem "parse: malformed export item")])]
@@ -5714,8 +5540,7 @@
                 (parse-ast-import
                   dispatch
                   (sp-node-get rest)
-                  (ast-source-span-from-source-span
-                    (spanned-sexpr-span s)))]
+                  (ast-source-span-from-source-span (spanned-sexpr-span s)))]
               [(= tag (compiler-parse-tag-decl-include-str))
                 (parse-ast-include-str (sp-node-get rest))]
               [(= tag (compiler-parse-tag-decl-include-bin))
@@ -5724,29 +5549,18 @@
                 (parse-ast-module (sp-node-get rest))]
               [(= tag (compiler-parse-tag-decl-export))
                 (parse-ast-export (sp-node-get rest))]
-              [(=
-                tag
-                (compiler-parse-tag-decl-comptime-decl))
-                (parse-ast-comptime-decl
-                  dispatch
-                  (sp-node-get rest))]
+              [(= tag (compiler-parse-tag-decl-comptime-decl))
+                (parse-ast-comptime-decl dispatch (sp-node-get rest))]
               [(= tag (compiler-parse-tag-expr-unsafe))
-                (parse-ast-unsafe-decl
-                  dispatch
-                  (sp-node-get rest))]
+                (parse-ast-unsafe-decl dispatch (sp-node-get rest))]
               [(= tag (compiler-parse-tag-decl-test))
                 (parse-ast-test
                   dispatch
                   (sp-node-get rest)
-                  (ast-source-span-from-source-span
-                    (spanned-sexpr-span s)))]
+                  (ast-source-span-from-source-span (spanned-sexpr-span s)))]
               [(compiler-parse-policy-form? head)
-                (ErrAstDecl
-                  (compiler-parse-abstraction-policy-message))]
-              [else
-                (parse-ast-module-macro-call
-                  dispatch
-                  s)]))]
+                (ErrAstDecl (compiler-parse-abstraction-policy-message))]
+              [else (parse-ast-module-macro-call dispatch s)]))]
         [_ (ErrAstDecl "parse: malformed declaration")])]
     [_ (ErrAstDecl "parse: malformed declaration")]))
 
@@ -8444,25 +8258,26 @@
     [(not (compiler-parse-repr-c-error-tests-ok?)) false]
     [(not (compiler-parse-cleanup-error-tests-ok?)) false]
     [(not
-      (compiler-parse-error-ok?
-        (compiler-parse-malformed-module-source)
-        "parse: malformed module")) false]
+        (compiler-parse-error-ok?
+          (compiler-parse-malformed-module-source)
+          "parse: malformed module"))
+      false]
     [(not
-      (compiler-parse-error-ok?
-        (compiler-parse-malformed-import-source)
-        "parse: malformed import")) false]
+        (compiler-parse-error-ok?
+          (compiler-parse-malformed-import-source)
+          "parse: malformed import"))
+      false]
     [(not
-      (compiler-parse-error-ok?
-        (compiler-parse-empty-test-source)
-        "parse: test needs at least one expression")) false]
+        (compiler-parse-error-ok?
+          (compiler-parse-empty-test-source)
+          "parse: test needs at least one expression"))
+      false]
     [(not (compiler-parse-let-error-tests-ok?)) false]
     [(not (compiler-parse-abstraction-policy-tests-ok?)) false]
     [(not (compiler-parse-raw-pointer-error-tests-ok?)) false]
-    [(not
-      (compiler-parse-extern-metadata-error-tests-ok?)) false]
+    [(not (compiler-parse-extern-metadata-error-tests-ok?)) false]
     [(not (compiler-parse-box-error-tests-ok?)) false]
-    [(not
-      (compiler-parse-reference-error-tests-ok?)) false]
+    [(not (compiler-parse-reference-error-tests-ok?)) false]
     [else true]))
 
 ;; Top-level declaration parsing (#1072 / #1041): accept value/function `define`,

@@ -2984,11 +2984,11 @@
 (define (compiler-backend-symbol-char [text : String] [idx : i64] [c : char]) : String
   (cond
     [(or
-    (and (>= c #A') (<= c #Z'))
-    (and (>= c #a') (<= c #z'))
-    (and (>= c #0') (<= c #9'))
-    (= c #_'))
-    (substring text idx 1)]
+        (and (>= c #A') (<= c #Z'))
+        (and (>= c #a') (<= c #z'))
+        (and (>= c #0') (<= c #9'))
+        (= c #_'))
+      (substring text idx 1)]
     [(= c #-') "_"]
     [(= c #?') "_question"]
     [(= c #!') "_bang"]
@@ -3000,10 +3000,9 @@
     [(= c #>') "_gt"]
     [(= c #:') "_colon"]
     [else
-                        (string-append
-                          "_u"
-                          (compiler-backend-hex-byte
-                            (compiler-backend-char-code c)))]))
+      (string-append
+        "_u"
+        (compiler-backend-hex-byte (compiler-backend-char-code c)))]))
 
 (define (compiler-backend-symbol-safe-char? [c : char]) : bool
   (or
@@ -3296,7 +3295,7 @@
   [index : CompilerBackendProgramIndex]) : String
   (cond
     [(compiler-backend-index-extern-provided? index name)
-    (compiler-backend-index-extern-link-symbol index name)]
+      (compiler-backend-index-extern-link-symbol index name)]
     [(compiler-backend-index-extern-references? index name)
       (let
         [link-symbol : String
@@ -3309,14 +3308,13 @@
             (compiler-backend-user-symbol name)
             name)
           (compiler-backend-link-symbol link-symbol plan)))]
-      [(and
+    [(and
         (compiler-backend-call-raw-symbol? plan name)
         (not (compiler-backend-index-function-defines? index name)))
-        (if (compiler-backend-runtime-user-symbol? name)
-          (compiler-backend-user-symbol name)
-          name)]
-        [else
-        (compiler-backend-function-symbol-index index name)]))
+      (if (compiler-backend-runtime-user-symbol? name)
+        (compiler-backend-user-symbol name)
+        name)]
+    [else (compiler-backend-function-symbol-index index name)]))
 
 (define (compiler-backend-function-label-scope
   [index : CompilerBackendProgramIndex]
@@ -3794,13 +3792,13 @@
           (str-cat "    movslq " addr ", %rax\n")
           (str-cat "    movl " addr ", %eax\n"))]
       [(= size 2)
-          (if (compiler-backend-type-signed? ty)
-            (str-cat "    movswq " addr ", %rax\n")
-            (str-cat "    movzwq " addr ", %rax\n"))]
+        (if (compiler-backend-type-signed? ty)
+          (str-cat "    movswq " addr ", %rax\n")
+          (str-cat "    movzwq " addr ", %rax\n"))]
       [(= size 1)
-            (if (compiler-backend-type-signed? ty)
-              (str-cat "    movsbq " addr ", %rax\n")
-              (str-cat "    movzbq " addr ", %rax\n"))]
+        (if (compiler-backend-type-signed? ty)
+          (str-cat "    movsbq " addr ", %rax\n")
+          (str-cat "    movzbq " addr ", %rax\n"))]
       [else ""])))
 
 (define (compiler-backend-emit-load-float-memory
@@ -3815,21 +3813,96 @@
 (define (compiler-backend-reg-part [reg : String] [size : i64]) : String
   (cond
     [(= size 8) reg]
-    [(string-eq reg "%rax") (if (= size 4) "%eax" (if (= size 2) "%ax" "%al"))]
-    [(string-eq reg "%rbx") (if (= size 4) "%ebx" (if (= size 2) "%bx" "%bl"))]
-    [(string-eq reg "%rcx") (if (= size 4) "%ecx" (if (= size 2) "%cx" "%cl"))]
-    [(string-eq reg "%rdx") (if (= size 4) "%edx" (if (= size 2) "%dx" "%dl"))]
-    [(string-eq reg "%rdi") (if (= size 4) "%edi" (if (= size 2) "%di" "%dil"))]
-    [(string-eq reg "%rsi") (if (= size 4) "%esi" (if (= size 2) "%si" "%sil"))]
-    [(string-eq reg "%r12") (if (= size 4) "%r12d" (if (= size 2) "%r12w" "%r12b"))]
-    [(string-eq reg "%r13") (if (= size 4) "%r13d" (if (= size 2) "%r13w" "%r13b"))]
-    [(string-eq reg "%r14") (if (= size 4) "%r14d" (if (= size 2) "%r14w" "%r14b"))]
-    [(string-eq reg "%r15") (if (= size 4) "%r15d" (if (= size 2) "%r15w" "%r15b"))]
-    [(string-eq reg "%r8") (if (= size 4) "%r8d" (if (= size 2) "%r8w" "%r8b"))]
-    [(string-eq reg "%r9") (if (= size 4) "%r9d" (if (= size 2) "%r9w" "%r9b"))]
-    [(string-eq reg "%r10") (if (= size 4) "%r10d" (if (= size 2) "%r10w" "%r10b"))]
-    [(string-eq reg "%r11") (if (= size 4) "%r11d" (if (= size 2) "%r11w" "%r11b"))]
-    [else (if (= size 4) "%r15d" (if (= size 2) "%r15w" "%r15b"))]))
+    [(string-eq reg "%rax")
+      (if (= size 4)
+        "%eax"
+        (if (= size 2)
+          "%ax"
+          "%al"))]
+    [(string-eq reg "%rbx")
+      (if (= size 4)
+        "%ebx"
+        (if (= size 2)
+          "%bx"
+          "%bl"))]
+    [(string-eq reg "%rcx")
+      (if (= size 4)
+        "%ecx"
+        (if (= size 2)
+          "%cx"
+          "%cl"))]
+    [(string-eq reg "%rdx")
+      (if (= size 4)
+        "%edx"
+        (if (= size 2)
+          "%dx"
+          "%dl"))]
+    [(string-eq reg "%rdi")
+      (if (= size 4)
+        "%edi"
+        (if (= size 2)
+          "%di"
+          "%dil"))]
+    [(string-eq reg "%rsi")
+      (if (= size 4)
+        "%esi"
+        (if (= size 2)
+          "%si"
+          "%sil"))]
+    [(string-eq reg "%r12")
+      (if (= size 4)
+        "%r12d"
+        (if (= size 2)
+          "%r12w"
+          "%r12b"))]
+    [(string-eq reg "%r13")
+      (if (= size 4)
+        "%r13d"
+        (if (= size 2)
+          "%r13w"
+          "%r13b"))]
+    [(string-eq reg "%r14")
+      (if (= size 4)
+        "%r14d"
+        (if (= size 2)
+          "%r14w"
+          "%r14b"))]
+    [(string-eq reg "%r15")
+      (if (= size 4)
+        "%r15d"
+        (if (= size 2)
+          "%r15w"
+          "%r15b"))]
+    [(string-eq reg "%r8")
+      (if (= size 4)
+        "%r8d"
+        (if (= size 2)
+          "%r8w"
+          "%r8b"))]
+    [(string-eq reg "%r9")
+      (if (= size 4)
+        "%r9d"
+        (if (= size 2)
+          "%r9w"
+          "%r9b"))]
+    [(string-eq reg "%r10")
+      (if (= size 4)
+        "%r10d"
+        (if (= size 2)
+          "%r10w"
+          "%r10b"))]
+    [(string-eq reg "%r11")
+      (if (= size 4)
+        "%r11d"
+        (if (= size 2)
+          "%r11w"
+          "%r11b"))]
+    [else
+      (if (= size 4)
+        "%r15d"
+        (if (= size 2)
+          "%r15w"
+          "%r15b"))]))
 
 (define (compiler-backend-emit-load-memory-to-reg
   [addr : String]
@@ -3844,13 +3917,13 @@
           (str-cat "    movslq " addr ", " reg "\n")
           (str-cat "    movl " addr ", " (compiler-backend-reg-part reg 4) "\n"))]
       [(= size 2)
-          (if (compiler-backend-type-signed? ty)
-            (str-cat "    movswq " addr ", " reg "\n")
-            (str-cat "    movzwq " addr ", " reg "\n"))]
+        (if (compiler-backend-type-signed? ty)
+          (str-cat "    movswq " addr ", " reg "\n")
+          (str-cat "    movzwq " addr ", " reg "\n"))]
       [(= size 1)
-            (if (compiler-backend-type-signed? ty)
-              (str-cat "    movsbq " addr ", " reg "\n")
-              (str-cat "    movzbq " addr ", " reg "\n"))]
+        (if (compiler-backend-type-signed? ty)
+          (str-cat "    movsbq " addr ", " reg "\n")
+          (str-cat "    movzbq " addr ", " reg "\n"))]
       [else ""])))
 
 (define (compiler-backend-emit-load-register-to-reg
@@ -3861,9 +3934,9 @@
     [size : i64 (compiler-backend-type-size ty)]
     (cond
       [(= size 8)
-      (if (string-eq src-reg dst-reg)
-        ""
-        (str-cat "    movq " src-reg ", " dst-reg "\n"))]
+        (if (string-eq src-reg dst-reg)
+          ""
+          (str-cat "    movq " src-reg ", " dst-reg "\n"))]
       [(= size 4)
         (if (compiler-backend-type-signed? ty)
           (str-cat
@@ -3879,33 +3952,33 @@
             (compiler-backend-reg-part dst-reg size)
             "\n"))]
       [(= size 2)
-          (if (compiler-backend-type-signed? ty)
-            (str-cat
-              "    movswq "
-              (compiler-backend-reg-part src-reg size)
-              ", "
-              dst-reg
-              "\n")
-            (str-cat
-              "    movzwq "
-              (compiler-backend-reg-part src-reg size)
-              ", "
-              dst-reg
-              "\n"))]
+        (if (compiler-backend-type-signed? ty)
+          (str-cat
+            "    movswq "
+            (compiler-backend-reg-part src-reg size)
+            ", "
+            dst-reg
+            "\n")
+          (str-cat
+            "    movzwq "
+            (compiler-backend-reg-part src-reg size)
+            ", "
+            dst-reg
+            "\n"))]
       [(= size 1)
-            (if (compiler-backend-type-signed? ty)
-              (str-cat
-                "    movsbq "
-                (compiler-backend-reg-part src-reg size)
-                ", "
-                dst-reg
-                "\n")
-              (str-cat
-                "    movzbq "
-                (compiler-backend-reg-part src-reg size)
-                ", "
-                dst-reg
-                "\n"))]
+        (if (compiler-backend-type-signed? ty)
+          (str-cat
+            "    movsbq "
+            (compiler-backend-reg-part src-reg size)
+            ", "
+            dst-reg
+            "\n")
+          (str-cat
+            "    movzbq "
+            (compiler-backend-reg-part src-reg size)
+            ", "
+            dst-reg
+            "\n"))]
       [else ""])))
 
 (define (compiler-backend-emit-load-register [reg : String] [ty : AstType]) : String
@@ -3924,15 +3997,12 @@
     [size : i64 (compiler-backend-type-size ty)]
     (cond
       [(= size 8) (str-cat "    movq " reg ", " addr "\n")]
-      [(= size 4) (str-cat "    movl " (compiler-backend-reg-part reg 4) ", " addr "\n")]
-      [(= size 2) (str-cat "    movw " (compiler-backend-reg-part reg 2) ", " addr "\n")]
+      [(= size 4)
+        (str-cat "    movl " (compiler-backend-reg-part reg 4) ", " addr "\n")]
+      [(= size 2)
+        (str-cat "    movw " (compiler-backend-reg-part reg 2) ", " addr "\n")]
       [(= size 1)
-            (str-cat
-              "    movb "
-              (compiler-backend-reg-part reg 1)
-              ", "
-              addr
-              "\n")]
+        (str-cat "    movb " (compiler-backend-reg-part reg 1) ", " addr "\n")]
       [else ""])))
 
 (define (compiler-backend-emit-store-xmm-to-memory
@@ -5289,11 +5359,7 @@
 (define (compiler-backend-int-instruction-suffix [ty : AstType]) : String
   (let
     [size : i64 (compiler-backend-type-size ty)]
-    (cond
-      [(= size 1) "b"]
-      [(= size 2) "w"]
-      [(= size 4) "l"]
-      [else "q"])))
+    (cond [(= size 1) "b"] [(= size 2) "w"] [(= size 4) "l"] [else "q"])))
 
 (define (compiler-backend-sized-reg [reg : String] [ty : AstType]) : String
   (compiler-backend-reg-part reg (compiler-backend-type-size ty)))
@@ -5395,13 +5461,13 @@
     [signed : bool (compiler-backend-type-signed? ty)]
     (cond
       [(= size 1)
-      (string-append
-        (if signed
-          "    cbw\n    idivb %r8b\n"
-          "    andw $0x00ff, %ax\n    divb %r8b\n")
-        (if want-remainder
-          "    movb %ah, %al\n"
-          ""))]
+        (string-append
+          (if signed
+            "    cbw\n    idivb %r8b\n"
+            "    andw $0x00ff, %ax\n    divb %r8b\n")
+          (if want-remainder
+            "    movb %ah, %al\n"
+            ""))]
       [(= size 2)
         (string-append
           (if signed
@@ -5410,22 +5476,22 @@
           (if want-remainder
             "    movw %dx, %ax\n"
             ""))]
-        [(= size 4)
-          (string-append
-            (if signed
-              "    cdq\n    idivl %r8d\n"
-              "    xorl %edx, %edx\n    divl %r8d\n")
-            (if want-remainder
-              "    movl %edx, %eax\n"
-              ""))]
-          [else
-          (string-append
-            (if signed
-              "    cqto\n    idivq %r8\n"
-              "    xorq %rdx, %rdx\n    divq %r8\n")
-            (if want-remainder
-              "    movq %rdx, %rax\n"
-              ""))])))
+      [(= size 4)
+        (string-append
+          (if signed
+            "    cdq\n    idivl %r8d\n"
+            "    xorl %edx, %edx\n    divl %r8d\n")
+          (if want-remainder
+            "    movl %edx, %eax\n"
+            ""))]
+      [else
+        (string-append
+          (if signed
+            "    cqto\n    idivq %r8\n"
+            "    xorq %rdx, %rdx\n    divq %r8\n")
+          (if want-remainder
+            "    movq %rdx, %rax\n"
+            ""))])))
 
 (define (compiler-backend-binop-divmod-asm
   [ty : AstType]
@@ -5860,14 +5926,35 @@
   [want-remainder : bool]) : CompilerBackendMaybeAsm
   (cond
     [(not (compiler-backend-divmod-safe-literal-i64? n ty))
-    (CompilerBackendNoAsm)]
+      (CompilerBackendNoAsm)]
     [(not (= (compiler-backend-type-size ty) 8))
       (CompilerBackendSomeAsm
         (compiler-backend-constant-divmod-unguarded-asm n ty want-remainder))]
-      [(compiler-backend-type-signed? ty)
-        (let
-          [divisor : i64 (compiler-backend-normalized-signed-immediate n ty)]
-          (match (compiler-backend-signed-constant-divmod-strength-asm
+    [(compiler-backend-type-signed? ty)
+      (let
+        [divisor : i64 (compiler-backend-normalized-signed-immediate n ty)]
+        (match (compiler-backend-signed-constant-divmod-strength-asm
+          divisor
+          want-remainder)
+          [(CompilerBackendSomeAsm asm) (CompilerBackendSomeAsm asm)]
+          [(CompilerBackendNoAsm)
+            (CompilerBackendSomeAsm
+              (compiler-backend-constant-divmod-unguarded-asm
+                n
+                ty
+                want-remainder))]))]
+    [else
+      (let
+        [divisor : u64 (compiler-backend-normalized-unsigned-immediate n ty)]
+        ;; The 64-bit magic search below assumes divisor < 2^63 so rem*2 cannot
+        ;; overflow while generating constants. Wider unsigned literals reduce to
+        ;; a compare because the quotient can only be 0 or 1.
+        (if (compiler-backend-u64-high-bit? divisor)
+          (CompilerBackendSomeAsm
+            (compiler-backend-unsigned-high-bit-divmod-asm
+              divisor
+              want-remainder))
+          (match (compiler-backend-unsigned-constant-divmod-strength-asm
             divisor
             want-remainder)
             [(CompilerBackendSomeAsm asm) (CompilerBackendSomeAsm asm)]
@@ -5876,28 +5963,7 @@
                 (compiler-backend-constant-divmod-unguarded-asm
                   n
                   ty
-                  want-remainder))]))]
-        [else
-        (let
-          [divisor : u64 (compiler-backend-normalized-unsigned-immediate n ty)]
-          ;; The 64-bit magic search below assumes divisor < 2^63 so rem*2 cannot
-          ;; overflow while generating constants. Wider unsigned literals reduce to
-          ;; a compare because the quotient can only be 0 or 1.
-          (if (compiler-backend-u64-high-bit? divisor)
-            (CompilerBackendSomeAsm
-              (compiler-backend-unsigned-high-bit-divmod-asm
-                divisor
-                want-remainder))
-            (match (compiler-backend-unsigned-constant-divmod-strength-asm
-              divisor
-              want-remainder)
-              [(CompilerBackendSomeAsm asm) (CompilerBackendSomeAsm asm)]
-              [(CompilerBackendNoAsm)
-                (CompilerBackendSomeAsm
-                  (compiler-backend-constant-divmod-unguarded-asm
-                    n
-                    ty
-                    want-remainder))])))]))
+                  want-remainder))])))]))
 
 (define (compiler-backend-constant-safe-divmod-asm
   [n : i64]
@@ -7898,11 +7964,7 @@
     (str-cat (int->string disp) "(" reg ")")))
 
 (define (compiler-backend-copy-chunk-size [remaining : i64]) : i64
-  (cond
-    [(>= remaining 8) 8]
-    [(>= remaining 4) 4]
-    [(>= remaining 2) 2]
-    [else 1]))
+  (cond [(>= remaining 8) 8] [(>= remaining 4) 4] [(>= remaining 2) 2] [else 1]))
 
 (define (compiler-backend-copy-chunk-type [chunk : i64]) : AstType
   (cond
@@ -8621,12 +8683,12 @@
       [to-is-float : bool (compiler-backend-float-type? to-ty)]
       (cond
         [(and from-is-float to-is-float)
-        (compiler-backend-emit-float-to-float-cast
-          assignments
-          dst
-          src
-          from-ty
-          to-ty)]
+          (compiler-backend-emit-float-to-float-cast
+            assignments
+            dst
+            src
+            from-ty
+            to-ty)]
         [(and (not from-is-float) to-is-float)
           (compiler-backend-emit-int-to-float-cast
             function
@@ -8637,71 +8699,39 @@
             from-ty
             to-ty
             program-index)]
-          [(and from-is-float (not to-is-float))
-            (compiler-backend-emit-float-to-int-cast
-              assignments
-              dst
-              src
-              from-ty
-              to-ty)]
-            [else
-            (let
-              [dst-home : String
-                (compiler-backend-var-register-home assignments dst)]
-              [from-size : i64 (compiler-backend-type-size from-ty)]
-              [to-size : i64 (compiler-backend-type-size to-ty)]
-              (if (if (string-eq dst-home "")
-                false
-                (and
-                  (compiler-backend-intlike-scalar-type? from-ty)
-                  (compiler-backend-intlike-scalar-type? to-ty)
-                  (< from-size to-size)
-                  (< from-size 8)))
-                (match src
-                  [(IrValueVar src-id)
-                    ;; #2981: widening int/char/bool casts can extend straight
-                    ;; into the destination register home. This preserves the
-                    ;; typed sign/zero-extension load while skipping the
-                    ;; %rax store round-trip.
-                    (OkCompilerBackend
-                      (compiler-backend-emit-load-typed-var-to-reg-with-plan
-                        assignments
-                        src-id
-                        from-ty
-                        dst-home))]
-                  [_
-                    (match (compiler-backend-emit-load-typed-value-with-plan
+        [(and from-is-float (not to-is-float))
+          (compiler-backend-emit-float-to-int-cast
+            assignments
+            dst
+            src
+            from-ty
+            to-ty)]
+        [else
+          (let
+            [dst-home : String
+              (compiler-backend-var-register-home assignments dst)]
+            [from-size : i64 (compiler-backend-type-size from-ty)]
+            [to-size : i64 (compiler-backend-type-size to-ty)]
+            (if (if (string-eq dst-home "")
+              false
+              (and
+                (compiler-backend-intlike-scalar-type? from-ty)
+                (compiler-backend-intlike-scalar-type? to-ty)
+                (< from-size to-size)
+                (< from-size 8)))
+              (match src
+                [(IrValueVar src-id)
+                  ;; #2981: widening int/char/bool casts can extend straight
+                  ;; into the destination register home. This preserves the
+                  ;; typed sign/zero-extension load while skipping the
+                  ;; %rax store round-trip.
+                  (OkCompilerBackend
+                    (compiler-backend-emit-load-typed-var-to-reg-with-plan
                       assignments
-                      src
+                      src-id
                       from-ty
-                      program-index)
-                      [(OkCompilerBackend load)
-                        (OkCompilerBackend
-                          (string-append
-                            load
-                            (compiler-backend-emit-store-typed-var-with-plan
-                              assignments
-                              dst
-                              (if to-is-float
-                                "%xmm0"
-                                "%rax")
-                              to-ty)))]
-                      [(ErrCompilerBackend message)
-                        (ErrCompilerBackend message)])])
-                (if (if (string-eq dst-home "")
-                  false
-                  (= from-size to-size))
-                  ;; #2981: a same-width int/char cast only reinterprets
-                  ;; signedness; it needs neither extension nor narrowing, so
-                  ;; copy the source straight into the destination register
-                  ;; home (which holds the full normalized 64-bit value),
-                  ;; skipping the %rax round-trip. Width-changing casts keep
-                  ;; the typed load+store below so sign/zero extension is
-                  ;; applied.
-                  (compiler-backend-emit-load-value-with-plan
-                    assignments
-                    src
-                    dst-home)
+                      dst-home))]
+                [_
                   (match (compiler-backend-emit-load-typed-value-with-plan
                     assignments
                     src
@@ -8718,7 +8748,38 @@
                               "%xmm0"
                               "%rax")
                             to-ty)))]
-                    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))]))))
+                    [(ErrCompilerBackend message) (ErrCompilerBackend message)])])
+              (if (if (string-eq dst-home "")
+                false
+                (= from-size to-size))
+                ;; #2981: a same-width int/char cast only reinterprets
+                ;; signedness; it needs neither extension nor narrowing, so
+                ;; copy the source straight into the destination register
+                ;; home (which holds the full normalized 64-bit value),
+                ;; skipping the %rax round-trip. Width-changing casts keep
+                ;; the typed load+store below so sign/zero extension is
+                ;; applied.
+                (compiler-backend-emit-load-value-with-plan
+                  assignments
+                  src
+                  dst-home)
+                (match (compiler-backend-emit-load-typed-value-with-plan
+                  assignments
+                  src
+                  from-ty
+                  program-index)
+                  [(OkCompilerBackend load)
+                    (OkCompilerBackend
+                      (string-append
+                        load
+                        (compiler-backend-emit-store-typed-var-with-plan
+                          assignments
+                          dst
+                          (if to-is-float
+                            "%xmm0"
+                            "%rax")
+                          to-ty)))]
+                  [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))]))))
 
 (define (compiler-backend-bitcast-width [ty : AstType]) : i64
   (match ty
@@ -8778,20 +8839,20 @@
     [to-int : bool (compiler-backend-bitcast-int-type? to-ty)]
     (cond
       [(or
-      (= from-width 0)
-      (= to-width 0)
-      (not
-        (compiler-backend-bitcast-compatible?
-          from-ty
-          to-ty
-          from-width
-          to-width
-          from-float
-          to-float
-          from-int
-          to-int)))
-      (ErrCompilerBackend
-        (compiler-diagnostic-at-start "" "backend: unsupported bitcast width"))]
+          (= from-width 0)
+          (= to-width 0)
+          (not
+            (compiler-backend-bitcast-compatible?
+              from-ty
+              to-ty
+              from-width
+              to-width
+              from-float
+              to-float
+              from-int
+              to-int)))
+        (ErrCompilerBackend
+          (compiler-diagnostic-at-start "" "backend: unsupported bitcast width"))]
       [(and from-float to-int)
         (match (compiler-backend-emit-load-float-value-with-plan
           assignments
@@ -8810,61 +8871,59 @@
                     "%rax"
                     to-ty))))]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-        [(and from-int to-float)
-          (match (compiler-backend-emit-load-typed-value-with-plan
-            assignments
-            src
-            from-ty
-            program-index)
-            [(OkCompilerBackend load)
-              (OkCompilerBackend
+      [(and from-int to-float)
+        (match (compiler-backend-emit-load-typed-value-with-plan
+          assignments
+          src
+          from-ty
+          program-index)
+          [(OkCompilerBackend load)
+            (OkCompilerBackend
+              (string-append
+                load
                 (string-append
-                  load
-                  (string-append
-                    (compiler-backend-int-to-float-bitcast-asm to-ty)
-                    (compiler-backend-emit-store-float-var-with-plan
-                      assignments
-                      dst
-                      "%xmm0"
-                      to-ty))))]
-            [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-          [(and from-int to-int)
-            (match (compiler-backend-emit-load-typed-value-with-plan
-              assignments
-              src
-              from-ty
-              program-index)
-              [(OkCompilerBackend load)
-                (OkCompilerBackend
-                  (string-append
-                    load
-                    (compiler-backend-emit-store-typed-var-with-plan
-                      assignments
-                      dst
-                      "%rax"
-                      to-ty)))]
-              [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-            [(and from-float to-float)
-              (match (compiler-backend-emit-load-float-value-with-plan
-                assignments
-                src
-                from-ty
-                "%xmm0")
-                [(OkCompilerBackend load)
-                  (OkCompilerBackend
-                    (string-append
-                      load
-                      (compiler-backend-emit-store-float-var-with-plan
-                        assignments
-                        dst
-                        "%xmm0"
-                        to-ty)))]
-                [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-              [else
-              (ErrCompilerBackend
-                (compiler-diagnostic-at-start
-                  ""
-                  "backend: unsupported bitcast type"))])))
+                  (compiler-backend-int-to-float-bitcast-asm to-ty)
+                  (compiler-backend-emit-store-float-var-with-plan
+                    assignments
+                    dst
+                    "%xmm0"
+                    to-ty))))]
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+      [(and from-int to-int)
+        (match (compiler-backend-emit-load-typed-value-with-plan
+          assignments
+          src
+          from-ty
+          program-index)
+          [(OkCompilerBackend load)
+            (OkCompilerBackend
+              (string-append
+                load
+                (compiler-backend-emit-store-typed-var-with-plan
+                  assignments
+                  dst
+                  "%rax"
+                  to-ty)))]
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+      [(and from-float to-float)
+        (match (compiler-backend-emit-load-float-value-with-plan
+          assignments
+          src
+          from-ty
+          "%xmm0")
+          [(OkCompilerBackend load)
+            (OkCompilerBackend
+              (string-append
+                load
+                (compiler-backend-emit-store-float-var-with-plan
+                  assignments
+                  dst
+                  "%xmm0"
+                  to-ty)))]
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+      [else
+        (ErrCompilerBackend
+          (compiler-diagnostic-at-start "" "backend: unsupported bitcast type"))])))
 
 (define (compiler-backend-ir-value-list-count [args : CompilerIrValueList]) : i64
   (match args
@@ -9777,10 +9836,10 @@
               (compiler-backend-function-symbol-index index name)]
             (cond
               [(and
-              (string-eq name "main")
-              (compiler-backend-index-extern-provided? index name))
-              (compiler-backend-symbol-validation-error
-                "backend: main cannot use :export-symbol")]
+                  (string-eq name "main")
+                  (compiler-backend-index-extern-provided? index name))
+                (compiler-backend-symbol-validation-error
+                  "backend: main cannot use :export-symbol")]
               [(string-i64-map-contains? seen symbol)
                 (compiler-backend-symbol-validation-error
                   (string-append
@@ -9789,23 +9848,23 @@
               [(and
                   (compiler-backend-index-extern-provided? index name)
                   (not (compiler-backend-valid-export-symbol? symbol)))
-                  (compiler-backend-symbol-validation-error
-                    (string-append
-                      "backend: invalid exported function symbol "
-                      symbol))]
+                (compiler-backend-symbol-validation-error
+                  (string-append
+                    "backend: invalid exported function symbol "
+                    symbol))]
               [(and
-                    (compiler-backend-index-extern-provided? index name)
-                    (compiler-backend-runtime-helper-known? symbol))
-                    (compiler-backend-symbol-validation-error
-                      (string-append
-                        "backend: exported function symbol collides with runtime symbol "
-                        symbol))]
+                  (compiler-backend-index-extern-provided? index name)
+                  (compiler-backend-runtime-helper-known? symbol))
+                (compiler-backend-symbol-validation-error
+                  (string-append
+                    "backend: exported function symbol collides with runtime symbol "
+                    symbol))]
               [else
-                    (compiler-backend-validate-function-symbols-into
-                      (box-get rest)
-                      _plan
-                      index
-                      (string-i64-map-put seen symbol 1))]))])]
+                (compiler-backend-validate-function-symbols-into
+                  (box-get rest)
+                  _plan
+                  index
+                  (string-i64-map-put seen symbol 1))]))])]
     [(IrFunctionArray seq)
       (compiler-backend-validate-function-symbols-into
         (compiler-ir-function-seq-to-list seq)
@@ -9890,17 +9949,17 @@
     [name-id : i64 (compiler-backend-runtime-helper-name-id name)]
     (cond
       [(compiler-builtin-backend-tl-print-char-id? name-id)
-      (ast-type-cons (AstTyChar) AstTypeNil)]
+        (ast-type-cons (AstTyChar) AstTypeNil)]
       [(compiler-builtin-backend-tl-print-f64-id? name-id)
         (ast-type-cons (AstTyF64) AstTypeNil)]
       [(compiler-builtin-backend-tl-array-fill8-id? name-id)
-          (ast-type-cons
-            (ast-ty-mut-ptr (AstTyU8))
-            (ast-type-cons (AstTyI64) (ast-type-cons (AstTyU64) AstTypeNil)))]
+        (ast-type-cons
+          (ast-ty-mut-ptr (AstTyU8))
+          (ast-type-cons (AstTyI64) (ast-type-cons (AstTyU64) AstTypeNil)))]
       [(compiler-builtin-backend-tl-array-zero-id? name-id)
-            (ast-type-cons
-              (ast-ty-mut-ptr (AstTyU8))
-              (ast-type-cons (AstTyI64) AstTypeNil))]
+        (ast-type-cons
+          (ast-ty-mut-ptr (AstTyU8))
+          (ast-type-cons (AstTyI64) AstTypeNil))]
       [else AstTypeNil])))
 
 (define (compiler-backend-call-param-types
@@ -10937,31 +10996,33 @@
       ;; convention with a %rax:%rdx return is self-consistent on both targets.
       (cond
         [(> memory-size 0)
-        (match (compiler-backend-emit-c-memory-stack-arg
-          target
-          assignments
-          value
-          stack-idx
-          memory-size)
-          [(OkCompilerBackend head)
-            (match (compiler-backend-emit-call-args
-              target
-              assignments
-              args
-              (compiler-backend-skip-c-memory-marker-types rest-types)
-              c-abi?
-              (+ arg-index 3)
-              int-idx
-              float-idx
-              (+ position 1)
-              (+ stack-idx (compiler-backend-stack-slots-for-size memory-size))
-              func-diag
-              program-index
-              vars)
-              [(OkCompilerBackend tail)
-                (OkCompilerBackend (string-append head tail))]
-              [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-          [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+          (match (compiler-backend-emit-c-memory-stack-arg
+            target
+            assignments
+            value
+            stack-idx
+            memory-size)
+            [(OkCompilerBackend head)
+              (match (compiler-backend-emit-call-args
+                target
+                assignments
+                args
+                (compiler-backend-skip-c-memory-marker-types rest-types)
+                c-abi?
+                (+ arg-index 3)
+                int-idx
+                float-idx
+                (+ position 1)
+                (+
+                  stack-idx
+                  (compiler-backend-stack-slots-for-size memory-size))
+                func-diag
+                program-index
+                vars)
+                [(OkCompilerBackend tail)
+                  (OkCompilerBackend (string-append head tail))]
+                [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+            [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
         [(compiler-backend-group-type? program-index arg-ty)
           (let
             [w0-sse : bool
@@ -11049,84 +11110,83 @@
                         (ErrCompilerBackend message)])]
                   [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
               [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
-          [(compiler-backend-stack-call-arg-for-banks?
+        [(compiler-backend-stack-call-arg-for-banks?
             target
             is-float
             int-idx
             float-idx
             position)
-            (match (compiler-backend-emit-scalar-stack-call-arg
+          (match (compiler-backend-emit-scalar-stack-call-arg
+            target
+            assignments
+            value
+            arg-ty
+            is-float
+            stack-idx)
+            [(OkCompilerBackend head)
+              (match (compiler-backend-emit-call-args
+                target
+                assignments
+                args
+                rest-types
+                c-abi?
+                (+ arg-index 1)
+                next-int
+                next-float
+                (+ position 1)
+                (+ stack-idx 1)
+                func-diag
+                program-index
+                vars)
+                [(OkCompilerBackend tail)
+                  (OkCompilerBackend (string-append head tail))]
+                [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+            [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+        [else
+          (match (if is-float
+            (compiler-backend-target-float-arg-reg
               target
-              assignments
-              value
-              arg-ty
-              is-float
-              stack-idx)
-              [(OkCompilerBackend head)
-                (match (compiler-backend-emit-call-args
-                  target
+              (if (compiler-backend-target-windows? target)
+                position
+                float-idx))
+            (compiler-backend-target-arg-reg
+              target
+              (if (compiler-backend-target-windows? target)
+                position
+                int-idx)))
+            [(OkBackendReg reg)
+              (match (if is-float
+                (compiler-backend-emit-load-float-value-with-plan
                   assignments
-                  args
-                  rest-types
-                  c-abi?
-                  (+ arg-index 1)
-                  next-int
-                  next-float
-                  (+ position 1)
-                  (+ stack-idx 1)
-                  func-diag
-                  program-index
-                  vars)
-                  [(OkCompilerBackend tail)
-                    (OkCompilerBackend (string-append head tail))]
-                  [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-              [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-            [else
-            (match (if is-float
-              (compiler-backend-target-float-arg-reg
-                target
-                (if (compiler-backend-target-windows? target)
-                  position
-                  float-idx))
-              (compiler-backend-target-arg-reg
-                target
-                (if (compiler-backend-target-windows? target)
-                  position
-                  int-idx)))
-              [(OkBackendReg reg)
-                (match (if is-float
-                  (compiler-backend-emit-load-float-value-with-plan
+                  value
+                  arg-ty
+                  reg)
+                (compiler-backend-emit-load-value-with-plan
+                  assignments
+                  value
+                  reg))
+                [(OkCompilerBackend head)
+                  (match (compiler-backend-emit-call-args
+                    target
                     assignments
-                    value
-                    arg-ty
-                    reg)
-                  (compiler-backend-emit-load-value-with-plan
-                    assignments
-                    value
-                    reg))
-                  [(OkCompilerBackend head)
-                    (match (compiler-backend-emit-call-args
-                      target
-                      assignments
-                      args
-                      rest-types
-                      c-abi?
-                      (+ arg-index 1)
-                      next-int
-                      next-float
-                      (+ position 1)
-                      stack-idx
-                      func-diag
-                      program-index
-                      vars)
-                      [(OkCompilerBackend tail)
-                        (OkCompilerBackend (string-append head tail))]
-                      [(ErrCompilerBackend message)
-                        (ErrCompilerBackend message)])]
-                  [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-              [(ErrBackendReg message)
-                (ErrCompilerBackend
-                  (compiler-diagnostic-with-message func-diag message))])]))))
+                    args
+                    rest-types
+                    c-abi?
+                    (+ arg-index 1)
+                    next-int
+                    next-float
+                    (+ position 1)
+                    stack-idx
+                    func-diag
+                    program-index
+                    vars)
+                    [(OkCompilerBackend tail)
+                      (OkCompilerBackend (string-append head tail))]
+                    [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+                [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+            [(ErrBackendReg message)
+              (ErrCompilerBackend
+                (compiler-diagnostic-with-message func-diag message))])]))))
 
 (define (compiler-backend-tail-final-stack-slot
   [target : CompilerBackendTarget]
@@ -12923,103 +12983,103 @@
   [vars : i64]) : ResultCompilerBackend
   (cond
     [(compiler-backend-group-type? program-index ty)
-    (match (compiler-backend-emit-group-load
-      assignments
-      src
-      (compiler-backend-group-return-reg program-index ty 0)
-      (compiler-backend-group-return-reg program-index ty 1)
-      vars
-      ty
-      program-index)
-      [(OkCompilerBackend load)
-        (match (compiler-backend-emit-group-store
-          assignments
-          dst
-          (compiler-backend-group-return-reg program-index ty 0)
-          (compiler-backend-group-return-reg program-index ty 1)
-          vars
-          ty
-          program-index)
-          [(OkCompilerBackend store)
-            (OkCompilerBackend (string-append load store))]
-          [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-      [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+      (match (compiler-backend-emit-group-load
+        assignments
+        src
+        (compiler-backend-group-return-reg program-index ty 0)
+        (compiler-backend-group-return-reg program-index ty 1)
+        vars
+        ty
+        program-index)
+        [(OkCompilerBackend load)
+          (match (compiler-backend-emit-group-store
+            assignments
+            dst
+            (compiler-backend-group-return-reg program-index ty 0)
+            (compiler-backend-group-return-reg program-index ty 1)
+            vars
+            ty
+            program-index)
+            [(OkCompilerBackend store)
+              (OkCompilerBackend (string-append load store))]
+            [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
     [(compiler-backend-value-same-home? assignments dst src)
       (OkCompilerBackend "")]
     [(compiler-backend-float-type? ty)
-        (match (compiler-backend-emit-load-typed-value-with-plan
-          assignments
-          src
-          ty
-          program-index)
-          [(OkCompilerBackend load)
-            (OkCompilerBackend
-              (string-append
-                load
-                (compiler-backend-emit-store-typed-var-with-plan
-                  assignments
-                  dst
-                  "%xmm0"
-                  ty)))]
-          [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-        [else
-        (match (compiler-backend-emit-store-immediate-to-var-home
-          assignments
-          dst
-          src)
-          [(CompilerBackendSomeAsm asm) (OkCompilerBackend asm)]
-          [(CompilerBackendNoAsm)
-            (let
-              [dst-home : String
-                (compiler-backend-var-register-home assignments dst)]
-              ;; Load src straight into the destination register home (a plain movq
-              ;; / leaq), skipping the %rax staging store. emit-load-value-with-plan
-              ;; handles var/global/global-addr sources and elides the move when src
-              ;; already lives in dst's home.
-              ;;
-              ;; #2981: a var source can always take this path regardless of `ty`
-              ;; width. Register and spill homes always hold the full normalized
-              ;; 64-bit value (emit-store-var-with-plan stores every scalar with a
-              ;; bare `movq`, and narrowing/extension happens when the value is first
-              ;; produced), so a `movq src-home, dst-home` copy needs no per-type
-              ;; reload. Non-var sources (globals/global-addr loaded from memory)
-              ;; still require the typed narrowing path unless they are 8 bytes.
-              (if (if (string-eq dst-home "")
-                false
-                (match src
-                  [(IrValueVar _) true]
-                  [_ (= (compiler-backend-type-size ty) 8)]))
-                (compiler-backend-emit-load-value-with-plan
-                  assignments
-                  src
-                  dst-home)
-                (match (match src
-                  [(IrValueGlobalAddr name)
-                    (OkCompilerBackend
-                      (str-cat
-                        "    leaq "
-                        (compiler-backend-function-or-global-addr-symbol
-                          program-index
-                          name)
-                        "(%rip), %rax\n"
-                        ""
-                        ""))]
-                  [_
-                    (compiler-backend-emit-load-typed-value-with-plan
-                      assignments
-                      src
-                      ty
-                      program-index)])
-                  [(OkCompilerBackend load)
-                    (OkCompilerBackend
-                      (string-append
-                        load
-                        (compiler-backend-emit-store-typed-var-with-plan
-                          assignments
-                          dst
-                          "%rax"
-                          ty)))]
-                  [(ErrCompilerBackend message) (ErrCompilerBackend message)])))])]))
+      (match (compiler-backend-emit-load-typed-value-with-plan
+        assignments
+        src
+        ty
+        program-index)
+        [(OkCompilerBackend load)
+          (OkCompilerBackend
+            (string-append
+              load
+              (compiler-backend-emit-store-typed-var-with-plan
+                assignments
+                dst
+                "%xmm0"
+                ty)))]
+        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+    [else
+      (match (compiler-backend-emit-store-immediate-to-var-home
+        assignments
+        dst
+        src)
+        [(CompilerBackendSomeAsm asm) (OkCompilerBackend asm)]
+        [(CompilerBackendNoAsm)
+          (let
+            [dst-home : String
+              (compiler-backend-var-register-home assignments dst)]
+            ;; Load src straight into the destination register home (a plain movq
+            ;; / leaq), skipping the %rax staging store. emit-load-value-with-plan
+            ;; handles var/global/global-addr sources and elides the move when src
+            ;; already lives in dst's home.
+            ;;
+            ;; #2981: a var source can always take this path regardless of `ty`
+            ;; width. Register and spill homes always hold the full normalized
+            ;; 64-bit value (emit-store-var-with-plan stores every scalar with a
+            ;; bare `movq`, and narrowing/extension happens when the value is first
+            ;; produced), so a `movq src-home, dst-home` copy needs no per-type
+            ;; reload. Non-var sources (globals/global-addr loaded from memory)
+            ;; still require the typed narrowing path unless they are 8 bytes.
+            (if (if (string-eq dst-home "")
+              false
+              (match src
+                [(IrValueVar _) true]
+                [_ (= (compiler-backend-type-size ty) 8)]))
+              (compiler-backend-emit-load-value-with-plan
+                assignments
+                src
+                dst-home)
+              (match (match src
+                [(IrValueGlobalAddr name)
+                  (OkCompilerBackend
+                    (str-cat
+                      "    leaq "
+                      (compiler-backend-function-or-global-addr-symbol
+                        program-index
+                        name)
+                      "(%rip), %rax\n"
+                      ""
+                      ""))]
+                [_
+                  (compiler-backend-emit-load-typed-value-with-plan
+                    assignments
+                    src
+                    ty
+                    program-index)])
+                [(OkCompilerBackend load)
+                  (OkCompilerBackend
+                    (string-append
+                      load
+                      (compiler-backend-emit-store-typed-var-with-plan
+                        assignments
+                        dst
+                        "%rax"
+                        ty)))]
+                [(ErrCompilerBackend message) (ErrCompilerBackend message)])))])]))
 
 (define (compiler-backend-emit-call-result-store
   [assignments : CompilerRegAssignmentList]
@@ -20545,11 +20605,16 @@
 
 (define (compiler-backend-runtime-helper-owner-id [name-id : i64]) : CompilerBackendRuntimeHelperOwner
   (cond
-    [(compiler-backend-runtime-helper-core-id? name-id) (BackendRuntimeOwnerCore)]
-    [(compiler-backend-runtime-helper-stdlib-ffi-id? name-id) (BackendRuntimeOwnerStdlibFfi)]
-    [(compiler-backend-runtime-helper-stdlib-type-lisp-id? name-id) (BackendRuntimeOwnerStdlibTypeLisp)]
-    [(compiler-backend-runtime-helper-compatibility-alias-id? name-id) (BackendRuntimeOwnerCompatibilityAlias)]
-    [(compiler-backend-runtime-helper-deprecated-id? name-id) (BackendRuntimeOwnerDeprecated)]
+    [(compiler-backend-runtime-helper-core-id? name-id)
+      (BackendRuntimeOwnerCore)]
+    [(compiler-backend-runtime-helper-stdlib-ffi-id? name-id)
+      (BackendRuntimeOwnerStdlibFfi)]
+    [(compiler-backend-runtime-helper-stdlib-type-lisp-id? name-id)
+      (BackendRuntimeOwnerStdlibTypeLisp)]
+    [(compiler-backend-runtime-helper-compatibility-alias-id? name-id)
+      (BackendRuntimeOwnerCompatibilityAlias)]
+    [(compiler-backend-runtime-helper-deprecated-id? name-id)
+      (BackendRuntimeOwnerDeprecated)]
     [else (BackendRuntimeOwnerUnknown)]))
 
 (define (compiler-backend-runtime-helper-owner [name : String]) : CompilerBackendRuntimeHelperOwner
@@ -26903,23 +26968,23 @@ tl_atomic_i32_fetch_add_ptr:
           [(CompilerBackendPeepholeMove next-src next-dst)
             (cond
               [(compiler-backend-peephole-overwritten-frame-store-operands?
-              src
-              dst
-              next-src
-              next-dst)
-              1]
+                  src
+                  dst
+                  next-src
+                  next-dst)
+                1]
               [(compiler-backend-peephole-redundant-move-operands?
-                src
-                dst
-                next-src
-                next-dst)
+                  src
+                  dst
+                  next-src
+                  next-dst)
                 2]
               [(compiler-backend-peephole-forward-frame-load-operands?
                   src
                   dst
                   next-src
                   next-dst)
-                  3]
+                3]
               [else 0])]
           [(CompilerBackendPeepholeNoMove) 0]))]
     [(CompilerBackendPeepholeNoMove) 0]))
@@ -26950,83 +27015,82 @@ tl_atomic_i32_fetch_add_ptr:
                   (compiler-backend-peephole-pair-action pending-line line)]
                 (cond
                   [(= action 1)
-                  (begin
-                    (set! pending-line line)
-                    (set! pending-newline line-newline))]
-                  [(= action 2)
-                    unit]
+                    (begin
+                      (set! pending-line line)
+                      (set! pending-newline line-newline))]
+                  [(= action 2) unit]
                   [(= action 3)
-                      (begin
-                        (match (compiler-backend-peephole-movq pending-line)
-                          [(CompilerBackendPeepholeMove src dst)
-                            (begin
-                              (if (and
-                                (string-eq dst "%rax")
-                                (string-eq src rax-owner)
-                                (compiler-backend-peephole-stack-slot-operand?
-                                  src))
-                                unit
-                                (set!
-                                  out
-                                  (compiler-backend-peephole-append-line
-                                    out
-                                    pending-line
-                                    pending-newline)))
-                              (set!
-                                rax-owner
-                                (compiler-backend-peephole-rax-slot-next-owner
-                                  rax-owner
-                                  src
-                                  dst)))]
-                          [(CompilerBackendPeepholeNoMove)
-                            (begin
-                              (set! rax-owner "")
+                    (begin
+                      (match (compiler-backend-peephole-movq pending-line)
+                        [(CompilerBackendPeepholeMove src dst)
+                          (begin
+                            (if (and
+                              (string-eq dst "%rax")
+                              (string-eq src rax-owner)
+                              (compiler-backend-peephole-stack-slot-operand?
+                                src))
+                              unit
                               (set!
                                 out
                                 (compiler-backend-peephole-append-line
                                   out
                                   pending-line
-                                  pending-newline)))])
-                        (set!
+                                  pending-newline)))
+                            (set!
+                              rax-owner
+                              (compiler-backend-peephole-rax-slot-next-owner
+                                rax-owner
+                                src
+                                dst)))]
+                        [(CompilerBackendPeepholeNoMove)
+                          (begin
+                            (set! rax-owner "")
+                            (set!
+                              out
+                              (compiler-backend-peephole-append-line
+                                out
+                                pending-line
+                                pending-newline)))])
+                      (set!
+                        pending-line
+                        (compiler-backend-peephole-forward-frame-load-line
                           pending-line
-                          (compiler-backend-peephole-forward-frame-load-line
-                            pending-line
-                            line))
-                        (set! pending-newline line-newline))]
+                          line))
+                      (set! pending-newline line-newline))]
                   [else
-                      (begin
-                        (match (compiler-backend-peephole-movq pending-line)
-                          [(CompilerBackendPeepholeMove src dst)
-                            (begin
-                              (if (and
-                                (string-eq dst "%rax")
-                                (string-eq src rax-owner)
-                                (compiler-backend-peephole-stack-slot-operand?
-                                  src))
-                                unit
-                                (set!
-                                  out
-                                  (compiler-backend-peephole-append-line
-                                    out
-                                    pending-line
-                                    pending-newline)))
-                              (set!
-                                rax-owner
-                                (compiler-backend-peephole-rax-slot-next-owner
-                                  rax-owner
-                                  src
-                                  dst)))]
-                          [(CompilerBackendPeepholeNoMove)
-                            (begin
-                              (set! rax-owner "")
+                    (begin
+                      (match (compiler-backend-peephole-movq pending-line)
+                        [(CompilerBackendPeepholeMove src dst)
+                          (begin
+                            (if (and
+                              (string-eq dst "%rax")
+                              (string-eq src rax-owner)
+                              (compiler-backend-peephole-stack-slot-operand?
+                                src))
+                              unit
                               (set!
                                 out
                                 (compiler-backend-peephole-append-line
                                   out
                                   pending-line
-                                  pending-newline)))])
-                        (set! pending-line line)
-                        (set! pending-newline line-newline))]))
+                                  pending-newline)))
+                            (set!
+                              rax-owner
+                              (compiler-backend-peephole-rax-slot-next-owner
+                                rax-owner
+                                src
+                                dst)))]
+                        [(CompilerBackendPeepholeNoMove)
+                          (begin
+                            (set! rax-owner "")
+                            (set!
+                              out
+                              (compiler-backend-peephole-append-line
+                                out
+                                pending-line
+                                pending-newline)))])
+                      (set! pending-line line)
+                      (set! pending-newline line-newline))]))
               (begin
                 (set! has-pending true)
                 (set! pending-line line)

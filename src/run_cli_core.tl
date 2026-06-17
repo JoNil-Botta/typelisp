@@ -320,9 +320,7 @@
               stdlib-roots
               runtime-args
               opt-level
-              (source-tool-link-inputs-add-lib
-                link-inputs
-                (arg (+ idx 1)))))]
+              (source-tool-link-inputs-add-lib link-inputs (arg (+ idx 1)))))]
         [(string-eq current "--link-search")
           (if (>= (+ idx 1) count)
             (ErrRunCliConfig "run: --link-search requires a value")
@@ -350,9 +348,7 @@
               stdlib-roots
               runtime-args
               opt-level
-              (source-tool-link-inputs-add-raw-arg
-                link-inputs
-                (arg (+ idx 1)))))]
+              (source-tool-link-inputs-add-raw-arg link-inputs (arg (+ idx 1)))))]
         [else
           (OkRunCliConfig
             (RunCliConfig

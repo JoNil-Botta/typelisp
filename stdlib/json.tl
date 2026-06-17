@@ -522,7 +522,10 @@
                   (begin
                     (text-buf-append!
                       out
-                      (substring-borrowed text segment-start (- i segment-start)))
+                      (substring-borrowed
+                        text
+                        segment-start
+                        (- i segment-start)))
                     (set! i (+ i 1))
                     (set! done true))]
                 [(= code 92)
@@ -1027,8 +1030,7 @@
           [(= code 123) (json-parse-object text i)]
           [(or (= code 45) (json-digit-code? code)) (json-parse-number text i)]
           [else
-            (ErrJsonParseValue
-              "json: unexpected character while parsing value")])))))
+            (ErrJsonParseValue "json: unexpected character while parsing value")])))))
 
 ;: Parse an entire JSON document with recoverable errors.
 ;:

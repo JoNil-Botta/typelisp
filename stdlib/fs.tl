@@ -1030,14 +1030,10 @@
             (string-append
               (substring-borrowed path 0 2)
               (string-append "/" body))]
-          [(and rooted (= (string-length body) 0))
-            "/"]
-          [rooted
-            (string-append "/" body)]
-          [(= (string-length body) 0)
-            "."]
-          [else
-            body])))))
+          [(and rooted (= (string-length body) 0)) "/"]
+          [rooted (string-append "/" body)]
+          [(= (string-length body) 0) "."]
+          [else body])))))
 
 ;: Return true when a normalized relative path still escapes via leading `..`.
 (define (fs-path-normalized-escapes? [normalized : (& normalized str)]) : bool
@@ -1072,10 +1068,8 @@
 ;: Empty sides are returned without allocating an extra separator.
 (define (fs-path-join [left : (& left str)] [right : (& right str)]) : String
   (cond
-    [(= (string-length left) 0)
-      (string-copy-borrowed right)]
-    [(= (string-length right) 0)
-      (string-copy-borrowed left)]
+    [(= (string-length left) 0) (string-copy-borrowed right)]
+    [(= (string-length right) 0) (string-copy-borrowed left)]
     [(fs-path-separator? (string-ref left (- (string-length left) 1)))
       (if (fs-path-separator? (string-ref right 0))
         (let
@@ -1190,14 +1184,10 @@
 ;: Convert a runtime file-kind status into a structured result.
 (define (fs-file-kind-status-result [path : (& path str)] [status : i64]) : ResultFsFileKind
   (cond
-    [(= status fs-file-kind-regular-code)
-      (OkFsFileKind (FsFileRegular))]
-    [(= status fs-file-kind-directory-code)
-      (OkFsFileKind (FsFileDirectory))]
-    [(= status fs-file-kind-other-code)
-      (OkFsFileKind (FsFileOther))]
-    [else
-      (ErrFsFileKind (io-error-from-status path status))]))
+    [(= status fs-file-kind-regular-code) (OkFsFileKind (FsFileRegular))]
+    [(= status fs-file-kind-directory-code) (OkFsFileKind (FsFileDirectory))]
+    [(= status fs-file-kind-other-code) (OkFsFileKind (FsFileOther))]
+    [else (ErrFsFileKind (io-error-from-status path status))]))
 
 ;: Create `path` as a directory, returning a structured status.
 ;:
@@ -1444,12 +1434,9 @@
       [name : String (fs-temp-name prefix pid attempt)]
       [path : String
         (cond
-          [(= (string-length root) 0)
-            name]
-          [(= (string-length name) 0)
-            (string-copy-borrowed root)]
-          [(fs-path-separator?
-              (string-ref root (- (string-length root) 1)))
+          [(= (string-length root) 0) name]
+          [(= (string-length name) 0) (string-copy-borrowed root)]
+          [(fs-path-separator? (string-ref root (- (string-length root) 1)))
             (if (fs-path-separator? (string-ref name 0))
               (let
                 [trimmed-name : String

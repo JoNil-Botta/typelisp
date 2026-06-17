@@ -579,18 +579,15 @@
       (format-rules-inline-form-doc "include-str" rest)]
     [(format-rules-node-symbol? head "extern")
       (format-rules-inline-form-doc "extern" rest)]
-    [(format-rules-node-symbol? head "define")
-      (format-rules-define-doc rest)]
+    [(format-rules-node-symbol? head "define") (format-rules-define-doc rest)]
     [(format-rules-node-symbol? head "defmacro")
       (format-rules-defmacro-doc rest)]
     [(format-rules-node-symbol? head "defenum")
       (format-rules-first-or-line-form-doc "defenum" rest)]
     [(format-rules-node-symbol? head "defstruct")
       (format-rules-first-or-line-form-doc "defstruct" rest)]
-    [(format-rules-node-symbol? head "lambda")
-      (format-rules-lambda-doc rest)]
-    [(format-rules-node-symbol? head "let")
-      (format-rules-let-doc rest)]
+    [(format-rules-node-symbol? head "lambda") (format-rules-lambda-doc rest)]
+    [(format-rules-node-symbol? head "let") (format-rules-let-doc rest)]
     [(format-rules-node-symbol? head "if")
       (format-rules-first-or-line-form-doc "if" rest)]
     [(format-rules-node-symbol? head "while")
@@ -601,11 +598,7 @@
       (format-rules-line-form-doc "unsafe" rest)]
     [(format-rules-node-symbol? head "match")
       (format-rules-first-or-line-form-doc "match" rest)]
-    [else
-      (format-rules-delimited-doc
-        "("
-        (FmtCstCons head (box rest))
-        ")")]))
+    [else (format-rules-delimited-doc "(" (FmtCstCons head (box rest)) ")")]))
 
 (define (format-rules-colon-list-doc [rest : FormatCstList]) : Doc
   (match rest

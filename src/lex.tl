@@ -668,8 +668,7 @@
                       (array-set!
                         toks
                         count
-                        (TStr
-                          (unescape-string-literal src start end)))
+                        (TStr (unescape-string-literal src start end)))
                       (set! count (+ count 1))
                       (set! i (+ end 1)))]
                   [(ErrLexI64 err)
@@ -698,9 +697,7 @@
                     (set! ok false)
                     (set! message err)
                     (set! err-pos i))])]
-            [(or
-              (is-digit c)
-              (negative-number-start? src i n))
+            [(or (is-digit c) (negative-number-start? src i n))
               (match (scan-number-end-result src i n)
                 [(OkLexI64 end)
                   (begin
@@ -713,8 +710,7 @@
                       (array-set!
                         toks
                         count
-                        (TInt
-                          (number-int-value src i end n))))
+                        (TInt (number-int-value src i end n))))
                     (set! count (+ count 1))
                     (set! i end))]
                 [(ErrLexI64 err)
@@ -727,18 +723,13 @@
                 [end : i64 (scan-symbol-end src i n)]
                 (begin
                   (array-set! starts count i)
-                  (array-set!
-                    toks
-                    count
-                    (TSym (intern-slice src i (- end i))))
+                  (array-set! toks count (TSym (intern-slice src i (- end i))))
                   (set! count (+ count 1))
                   (set! i end)))]
             [else
               (begin
                 (set! ok false)
-                (set!
-                  message
-                  "lexer: unexpected character")
+                (set! message "lexer: unexpected character")
                 (set! err-pos i))])))
       (if ok
         (begin
@@ -840,10 +831,7 @@
                 (set! col (+ col 1)))]
             [(= c #`')
               (begin
-                (array-set!
-                  stoks
-                  count
-                  (SpannedToken TBacktick line col))
+                (array-set! stoks count (SpannedToken TBacktick line col))
                 (set! count (+ count 1))
                 (set! i (+ i 1))
                 (set! col (+ col 1)))]
@@ -852,24 +840,15 @@
                 (if (< (+ i 1) n)
                   (if (= (string-ref src (+ i 1)) #@')
                     (begin
-                      (array-set!
-                        stoks
-                        count
-                        (SpannedToken TCommaAt line col))
+                      (array-set! stoks count (SpannedToken TCommaAt line col))
                       (set! i (+ i 2))
                       (set! col (+ col 2)))
                     (begin
-                      (array-set!
-                        stoks
-                        count
-                        (SpannedToken TComma line col))
+                      (array-set! stoks count (SpannedToken TComma line col))
                       (set! i (+ i 1))
                       (set! col (+ col 1))))
                   (begin
-                    (array-set!
-                      stoks
-                      count
-                      (SpannedToken TComma line col))
+                    (array-set! stoks count (SpannedToken TComma line col))
                     (set! i (+ i 1))
                     (set! col (+ col 1))))
                 (set! count (+ count 1)))]
@@ -885,20 +864,11 @@
                         stoks
                         count
                         (SpannedToken
-                          (TStr
-                            (unescape-string-literal
-                              src
-                              start
-                              end))
+                          (TStr (unescape-string-literal src start end))
                           token-line
                           token-col))
                       (set! count (+ count 1))
-                      (match (lex-advance-position
-                        src
-                        i
-                        (+ end 1)
-                        line
-                        col)
+                      (match (lex-advance-position src i (+ end 1) line col)
                         [(LexPosition next-line next-col)
                           (begin
                             (set! line next-line)
@@ -927,10 +897,7 @@
                           (array-set!
                             stoks
                             count
-                            (SpannedToken
-                              (TChar value)
-                              token-line
-                              token-col))
+                            (SpannedToken (TChar value) token-line token-col))
                           (set! count (+ count 1))
                           (set! col (+ col (- end i)))
                           (set! i end))]
@@ -944,9 +911,7 @@
                       (set! ok false)
                       (set! message err)
                       (set! err-pos i))]))]
-            [(or
-              (is-digit c)
-              (negative-number-start? src i n))
+            [(or (is-digit c) (negative-number-start? src i n))
               (match (scan-number-end-result src i n)
                 [(OkLexI64 end)
                   (let
@@ -958,16 +923,14 @@
                           stoks
                           count
                           (SpannedToken
-                            (TFloat
-                              (substring src i (- end i)))
+                            (TFloat (substring src i (- end i)))
                             token-line
                             token-col))
                         (array-set!
                           stoks
                           count
                           (SpannedToken
-                            (TInt
-                              (number-int-value src i end n))
+                            (TInt (number-int-value src i end n))
                             token-line
                             token-col)))
                       (set! count (+ count 1))
@@ -986,8 +949,7 @@
                     stoks
                     count
                     (SpannedToken
-                      (TSym
-                        (intern-slice src i (- end i)))
+                      (TSym (intern-slice src i (- end i)))
                       line
                       col))
                   (set! count (+ count 1))
@@ -996,9 +958,7 @@
             [else
               (begin
                 (set! ok false)
-                (set!
-                  message
-                  "lexer: unexpected character")
+                (set! message "lexer: unexpected character")
                 (set! err-pos i))])))
       (if ok
         (begin

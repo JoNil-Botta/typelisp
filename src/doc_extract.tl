@@ -280,10 +280,8 @@
             (cond
               [(= c #;')
                 (set! i (doc-next-line-start src (doc-line-end src i n) n))]
-              [(= c #"')
-                (set! i (doc-scan-string-end src i n))]
-              [(= c ##')
-                (set! i (doc-scan-char-literal-end src i n))]
+              [(= c #"') (set! i (doc-scan-string-end src i n))]
+              [(= c ##') (set! i (doc-scan-char-literal-end src i n))]
               [(or (= c #(') (= c #['))
                 (begin
                   (set! depth (+ depth 1))
@@ -337,8 +335,7 @@
                   (if (= depth 0)
                     (set! done true)
                     unit))]
-              [(= tag (fmt-tag-end))
-                (set! done true)]
+              [(= tag (fmt-tag-end)) (set! done true)]
               [else unit])
             (set! i (+ i 1)))))
       i)))

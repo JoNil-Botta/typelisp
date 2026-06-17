@@ -951,10 +951,8 @@
       (cond
         [(or (opt-i64-zero? resolved-lhs) (opt-i64-zero? resolved-rhs))
           (IrSomeValue (IrValueI64 0))]
-        [(opt-i64-one? resolved-rhs)
-          (IrSomeValue lhs)]
-        [(opt-i64-one? resolved-lhs)
-          (IrSomeValue rhs)]
+        [(opt-i64-one? resolved-rhs) (IrSomeValue lhs)]
+        [(opt-i64-one? resolved-lhs) (IrSomeValue rhs)]
         [else (IrNoValue)])]
     [_ (IrNoValue)]))
 
@@ -969,19 +967,15 @@
       (cond
         [(or (opt-bool-false? resolved-lhs) (opt-bool-false? resolved-rhs))
           (IrSomeValue (IrValueBool false))]
-        [(opt-bool-true? resolved-rhs)
-          (IrSomeValue lhs)]
-        [(opt-bool-true? resolved-lhs)
-          (IrSomeValue rhs)]
+        [(opt-bool-true? resolved-rhs) (IrSomeValue lhs)]
+        [(opt-bool-true? resolved-lhs) (IrSomeValue rhs)]
         [else (IrNoValue)])]
     [(IrBinOr)
       (cond
         [(or (opt-bool-true? resolved-lhs) (opt-bool-true? resolved-rhs))
           (IrSomeValue (IrValueBool true))]
-        [(opt-bool-false? resolved-rhs)
-          (IrSomeValue lhs)]
-        [(opt-bool-false? resolved-lhs)
-          (IrSomeValue rhs)]
+        [(opt-bool-false? resolved-rhs) (IrSomeValue lhs)]
+        [(opt-bool-false? resolved-lhs) (IrSomeValue rhs)]
         [else (IrNoValue)])]
     [_ (IrNoValue)]))
 
@@ -7042,9 +7036,7 @@
           (ErrCompilerOptimizeVerify
             "optimizer verify: duplicate var definition")]
         [else
-          (opt-verify-function-with-context
-            func
-            (opt-cfg-context-build blocks))])]))
+          (opt-verify-function-with-context func (opt-cfg-context-build blocks))])]))
 
 (define (opt-verify-function-list [functions : CompilerIrFunctionList]) : ResultCompilerOptimizeVerify
   (match functions
@@ -18838,10 +18830,8 @@
 
 (define (opt-inline-staged-args [np : i64] [base : i64]) : CompilerIrCallArgs
   (cond
-    [(= np 0)
-      (IrCallArgsNil)]
-    [(= np 1)
-      (IrCallArgsOne (opt-inline-stage-arg-var base 0))]
+    [(= np 0) (IrCallArgsNil)]
+    [(= np 1) (IrCallArgsOne (opt-inline-stage-arg-var base 0))]
     [(= np 2)
       (IrCallArgsTwo
         (opt-inline-stage-arg-var base 0)
@@ -22804,32 +22794,21 @@
 
 (define (compiler-optimize-aggregate-candidate-self-test) : i64
   (cond
-    [(not (opt-aggregate-positive-classified?))
-      1]
-    [(not (opt-aggregate-no-candidates? (opt-aggregate-returned-instrs)))
-      2]
-    [(not (opt-aggregate-no-candidates? (opt-aggregate-passed-instrs)))
-      3]
+    [(not (opt-aggregate-positive-classified?)) 1]
+    [(not (opt-aggregate-no-candidates? (opt-aggregate-returned-instrs))) 2]
+    [(not (opt-aggregate-no-candidates? (opt-aggregate-passed-instrs))) 3]
+    [(not (opt-aggregate-no-candidates? (opt-aggregate-global-store-instrs))) 4]
     [(not
-      (opt-aggregate-no-candidates? (opt-aggregate-global-store-instrs)))
-      4]
-    [(not
-      (opt-aggregate-no-candidates?
-        (opt-aggregate-store-through-other-instrs)))
+        (opt-aggregate-no-candidates?
+          (opt-aggregate-store-through-other-instrs)))
       5]
-    [(not
-      (opt-aggregate-no-candidates?
-        (opt-aggregate-unknown-offset-instrs)))
+    [(not (opt-aggregate-no-candidates? (opt-aggregate-unknown-offset-instrs)))
       6]
-    [(not
-      (opt-aggregate-no-candidates?
-        (opt-aggregate-call-separated-instrs)))
+    [(not (opt-aggregate-no-candidates? (opt-aggregate-call-separated-instrs)))
       7]
-    [(not (opt-aggregate-phi-flowed-rejected?))
-      8]
+    [(not (opt-aggregate-phi-flowed-rejected?)) 8]
     [(not
-      (opt-aggregate-no-candidates?
-        (opt-aggregate-predicated-memory-instrs)))
+        (opt-aggregate-no-candidates? (opt-aggregate-predicated-memory-instrs)))
       9]
     [else 42]))
 
@@ -22930,40 +22909,23 @@
         (opt-spans-program (opt-aggregate-positive-instrs))
         2)]
     (cond
-      [(not (= (opt-count-tl-alloc-calls positive) 0))
-        1]
-      [(not (= (opt-count-ir-alloc-instrs positive) 1))
-        2]
-      [(not (= (opt-count-addr-of-instrs positive) 1))
-        3]
+      [(not (= (opt-count-tl-alloc-calls positive) 0)) 1]
+      [(not (= (opt-count-ir-alloc-instrs positive) 1)) 2]
+      [(not (= (opt-count-addr-of-instrs positive) 1)) 3]
       [(not
-        (=
-          (opt-aggregate-promote-test-frame (opt-aggregate-positive-instrs))
-          6))
+          (=
+            (opt-aggregate-promote-test-frame (opt-aggregate-positive-instrs))
+            6))
         4]
-      [(not (= (opt-count-tl-alloc-calls returned) 1))
-        5]
-      [(not (= (opt-count-tl-alloc-calls passed) 1))
-        6]
-      [(not (= (opt-count-tl-alloc-calls stored) 1))
-        7]
-      [(not (= (opt-count-tl-alloc-calls unknown-offset) 1))
-        8]
-      [(not (= (opt-count-tl-alloc-calls call-separated) 1))
-        9]
-      [(not (= (opt-count-tl-alloc-calls array-local) 1))
-        10]
-      [(not
-        (=
-          (opt-count-tl-alloc-calls
-            (opt-program-first-instrs level0))
-          1))
+      [(not (= (opt-count-tl-alloc-calls returned) 1)) 5]
+      [(not (= (opt-count-tl-alloc-calls passed) 1)) 6]
+      [(not (= (opt-count-tl-alloc-calls stored) 1)) 7]
+      [(not (= (opt-count-tl-alloc-calls unknown-offset) 1)) 8]
+      [(not (= (opt-count-tl-alloc-calls call-separated) 1)) 9]
+      [(not (= (opt-count-tl-alloc-calls array-local) 1)) 10]
+      [(not (= (opt-count-tl-alloc-calls (opt-program-first-instrs level0)) 1))
         11]
-      [(not
-        (=
-          (opt-count-tl-alloc-calls
-            (opt-program-first-instrs level2))
-          0))
+      [(not (= (opt-count-tl-alloc-calls (opt-program-first-instrs level2)) 0))
         12]
       [else 42])))
 
@@ -23172,41 +23134,21 @@
     [branched : CompilerIrBlockList
       (opt-aggregate-sroa-test-blocks (opt-aggregate-branch-load-blocks))]
     (cond
-      [(not (= (opt-count-load-dst-instrs positive 5) 0))
-        1]
-      [(not (= (opt-mov-dst-i64-value positive 5 -1) 10))
-        2]
-      [(not (= (opt-count-load-dst-instrs repeated 4) 0))
-        3]
-      [(not (= (opt-count-load-dst-instrs repeated 6) 0))
-        4]
-      [(not (= (opt-count-mov-i64-value repeated 10) 2))
-        5]
-      [(not (= (opt-count-load-dst-instrs overwritten 4) 0))
-        6]
-      [(not (= (opt-mov-dst-i64-value overwritten 4 -1) 20))
-        7]
-      [(not (= (opt-count-mov-i64-value overwritten 10) 0))
-        8]
-      [(not (= (opt-count-load-dst-instrs barrier 4) 1))
-        9]
-      [(not (= (opt-count-mov-i64-value barrier 10) 0))
-        10]
-      [(not (= (opt-count-load-dst-instrs escaped 4) 1))
-        11]
-      [(not (= (opt-count-mov-i64-value escaped 10) 0))
-        12]
-      [(not
-        (= (opt-count-load-dst-instrs array-typed 4) 1))
-        13]
-      [(not
-        (= (opt-count-load-dst-blocks branched 4) 1))
-        14]
-      [(not
-        (=
-          (opt-count-mov-i64-value-blocks branched 10)
-          0))
-        15]
+      [(not (= (opt-count-load-dst-instrs positive 5) 0)) 1]
+      [(not (= (opt-mov-dst-i64-value positive 5 -1) 10)) 2]
+      [(not (= (opt-count-load-dst-instrs repeated 4) 0)) 3]
+      [(not (= (opt-count-load-dst-instrs repeated 6) 0)) 4]
+      [(not (= (opt-count-mov-i64-value repeated 10) 2)) 5]
+      [(not (= (opt-count-load-dst-instrs overwritten 4) 0)) 6]
+      [(not (= (opt-mov-dst-i64-value overwritten 4 -1) 20)) 7]
+      [(not (= (opt-count-mov-i64-value overwritten 10) 0)) 8]
+      [(not (= (opt-count-load-dst-instrs barrier 4) 1)) 9]
+      [(not (= (opt-count-mov-i64-value barrier 10) 0)) 10]
+      [(not (= (opt-count-load-dst-instrs escaped 4) 1)) 11]
+      [(not (= (opt-count-mov-i64-value escaped 10) 0)) 12]
+      [(not (= (opt-count-load-dst-instrs array-typed 4) 1)) 13]
+      [(not (= (opt-count-load-dst-blocks branched 4) 1)) 14]
+      [(not (= (opt-count-mov-i64-value-blocks branched 10) 0)) 15]
       [else 42])))
 
 (define (opt-count-cast-instrs [instrs : CompilerIrInstrList]) : i64
@@ -23436,31 +23378,18 @@
     [mask-reduce-copy : CompilerIrInstrList
       (opt-copy-instrs (OptCopyNil) (opt-mask-reduce-copy-instrs))]
     (cond
-      [(not (opt-instr-list-eq folded instrs))
-        1]
-      [(not (= (compiler-ir-instr-list-count dce) 8))
-        2]
-      [(not (= (compiler-ir-instr-list-count bounds) 8))
-        3]
-      [(not (= (opt-count-vector-binop-instrs vector-cse) 2))
-        4]
-      [(not (= (opt-mov-dst-type-tag vector-cse 3) 0))
-        5]
-      [(not (= (opt-count-vector-reduce-instrs vector-reduce-cse) 2))
-        6]
-      [(not (= (opt-mov-dst-type-tag vector-reduce-cse 2) 0))
-        7]
-      [(not (= (opt-count-arith-instrs vector-stale) 1))
-        8]
-      [(not (= (opt-count-mov-i64-value vector-stale 11) 0))
-        9]
-      [(not (= (opt-vector-binop-lhs-var vector-copy 3) 2))
-        10]
-      [(not (= (opt-mask-binop-lhs-var mask-copy 3) 2))
-        11]
-      [(not
-        (= (opt-mask-reduce-src-var mask-reduce-copy 2) 1))
-        12]
+      [(not (opt-instr-list-eq folded instrs)) 1]
+      [(not (= (compiler-ir-instr-list-count dce) 8)) 2]
+      [(not (= (compiler-ir-instr-list-count bounds) 8)) 3]
+      [(not (= (opt-count-vector-binop-instrs vector-cse) 2)) 4]
+      [(not (= (opt-mov-dst-type-tag vector-cse 3) 0)) 5]
+      [(not (= (opt-count-vector-reduce-instrs vector-reduce-cse) 2)) 6]
+      [(not (= (opt-mov-dst-type-tag vector-reduce-cse 2) 0)) 7]
+      [(not (= (opt-count-arith-instrs vector-stale) 1)) 8]
+      [(not (= (opt-count-mov-i64-value vector-stale 11) 0)) 9]
+      [(not (= (opt-vector-binop-lhs-var vector-copy 3) 2)) 10]
+      [(not (= (opt-mask-binop-lhs-var mask-copy 3) 2)) 11]
+      [(not (= (opt-mask-reduce-src-var mask-reduce-copy 2) 1)) 12]
       [else 42])))
 
 ;; Returns 42 when folding turns the one arithmetic instruction into a `Mov`
@@ -23776,21 +23705,13 @@
     [neg : CompilerIrInstrList
       (opt-strength-instrs (OptConstNil) (opt-strength-negative-instrs))]
     (cond
-      [(not (= (opt-count-arith-instrs pos) 0))
-        1]
-      [(not (= (opt-sum-mov-var-src pos) 49))
-        2]
-      [(not (= (opt-count-mov-i64-value pos 0) 2))
-        3]
-      [(not (= (opt-count-mov-bool-value pos false) 2))
-        4]
-      [(not (= (opt-count-mov-bool-value pos true) 2))
-        5]
-      [(not
-        (= (opt-mov-dst-type-tag pos 10) (ast-type-tag (AstTyU8))))
-        6]
-      [(not (= (opt-count-arith-instrs neg) 5))
-        7]
+      [(not (= (opt-count-arith-instrs pos) 0)) 1]
+      [(not (= (opt-sum-mov-var-src pos) 49)) 2]
+      [(not (= (opt-count-mov-i64-value pos 0) 2)) 3]
+      [(not (= (opt-count-mov-bool-value pos false) 2)) 4]
+      [(not (= (opt-count-mov-bool-value pos true) 2)) 5]
+      [(not (= (opt-mov-dst-type-tag pos 10) (ast-type-tag (AstTyU8)))) 6]
+      [(not (= (opt-count-arith-instrs neg) 5)) 7]
       [else 42])))
 
 ;; Builds `[Mov v0=99 (unused), Call v1 = noop(), Pack v2 (unused), Return v1]`.
@@ -23830,18 +23751,12 @@
         (i64-i64-map-with-capacity 4)
         (IrInstrWord 3 (IrValueVar 2) 0 (AstTyI64)))]
     (cond
-      [(not (opt-used-contains used 1))
-        0]
-      [(opt-used-contains used 0)
-        1]
-      [(not (= (compiler-ir-instr-list-count instrs) 4))
-        2]
-      [(not (= (compiler-ir-instr-list-count cleaned) 2))
-        3]
-      [(not (= (compiler-ir-instr-list-count again) 2))
-        4]
-      [(not unused-word-dead)
-        5]
+      [(not (opt-used-contains used 1)) 0]
+      [(opt-used-contains used 0) 1]
+      [(not (= (compiler-ir-instr-list-count instrs) 4)) 2]
+      [(not (= (compiler-ir-instr-list-count cleaned) 2)) 3]
+      [(not (= (compiler-ir-instr-list-count again) 2)) 4]
+      [(not unused-word-dead) 5]
       [else 42])))
 
 ;; Builds `[Mov v0=4096 (an address), Load v1 = *v0, Return v1]`. `v0` feeds a
@@ -24723,39 +24638,18 @@
     [pack-dst-redef : CompilerIrInstrList
       (opt-copy-instrs (OptCopyNil) (opt-copy-pack-dst-redef-instrs))]
     (cond
-      [(not (= (opt-copy-binop-lhs-var pos 2) 0))
-        1]
-      [(not (= (opt-copy-binop-lhs-var src-redef 2) 1))
-        2]
-      [(not (= (opt-copy-binop-lhs-var dst-redef 2) 1))
-        3]
-      [(not (= (opt-copy-binop-lhs-var cse 4) 2))
-        4]
-      [(not (= (compiler-ir-instr-list-count cse-dce) 3))
-        5]
-      [(not (= (opt-copy-binop-lhs-var f64 2) 1))
-        6]
-      [(not (= (opt-phi-dst-first-input-var phi 2 (- 0 1)) 1))
-        7]
-      [(not (= (opt-copy-mov-src-var pack-word 3 (- 0 1)) 0))
-        8]
-      [(not (= (opt-copy-mov-src-var pack-word 4 (- 0 1)) 1))
-        9]
-      [(not
-        (=
-          (opt-copy-word-src-var pack-source-redef 3 (- 0 1))
-          2))
-        10]
-      [(not
-        (=
-          (opt-copy-mov-src-var pack-source-redef 4 (- 0 1))
-          1))
-        11]
-      [(not
-        (=
-          (opt-copy-word-src-var pack-dst-redef 3 (- 0 1))
-          2))
-        12]
+      [(not (= (opt-copy-binop-lhs-var pos 2) 0)) 1]
+      [(not (= (opt-copy-binop-lhs-var src-redef 2) 1)) 2]
+      [(not (= (opt-copy-binop-lhs-var dst-redef 2) 1)) 3]
+      [(not (= (opt-copy-binop-lhs-var cse 4) 2)) 4]
+      [(not (= (compiler-ir-instr-list-count cse-dce) 3)) 5]
+      [(not (= (opt-copy-binop-lhs-var f64 2) 1)) 6]
+      [(not (= (opt-phi-dst-first-input-var phi 2 (- 0 1)) 1)) 7]
+      [(not (= (opt-copy-mov-src-var pack-word 3 (- 0 1)) 0)) 8]
+      [(not (= (opt-copy-mov-src-var pack-word 4 (- 0 1)) 1)) 9]
+      [(not (= (opt-copy-word-src-var pack-source-redef 3 (- 0 1)) 2)) 10]
+      [(not (= (opt-copy-mov-src-var pack-source-redef 4 (- 0 1)) 1)) 11]
+      [(not (= (opt-copy-word-src-var pack-dst-redef 3 (- 0 1)) 2)) 12]
       [else 42])))
 
 ;; Count explicit trapping bounds checks after the dedicated bounds pass.
@@ -25357,50 +25251,28 @@
         (opt-loop-bce-string-test-split-blocks)
         (opt-loop-bce-test-summaries false false))]
     (cond
-      [(not (= (opt-count-bounds-instrs duplicate) 1))
-        1]
-      [(not (= (opt-count-bounds-instrs different) 2))
-        2]
-      [(not (= (opt-count-bounds-instrs redef) 2))
-        3]
-      [(not (= (opt-count-bounds-instrs call) 2))
-        4]
-      [(not (= (opt-count-bounds-instrs branch) 2))
-        5]
-      [(not (= (opt-count-bounds-instrs copy) 1))
-        6]
-      [(not (= (compiler-ir-instr-list-count dce) 3))
-        7]
-      [(not (= (opt-count-bounds-blocks cross) 2))
-        8]
-      [(not (= loop-positive 0))
-        9]
-      [(not (= loop-negative-init 1))
-        10]
-      [(not (= loop-unknown-call 1))
-        11]
-      [(not (= loop-clean-call 0))
-        12]
-      [(not (= loop-argc 0))
-        13]
-      [(not (= loop-nested 0))
-        14]
-      [(not (= string-positive 0))
-        15]
-      [(not (= string-mismatch 1))
-        16]
-      [(not (= string-call 1))
-        17]
-      [(not (= string-store 1))
-        18]
-      [(not (= string-negative-init 1))
-        19]
-      [(not (= string-off-by-one 1))
-        20]
-      [(not (= string-reassign 1))
-        21]
-      [(not (= string-split 0))
-        22]
+      [(not (= (opt-count-bounds-instrs duplicate) 1)) 1]
+      [(not (= (opt-count-bounds-instrs different) 2)) 2]
+      [(not (= (opt-count-bounds-instrs redef) 2)) 3]
+      [(not (= (opt-count-bounds-instrs call) 2)) 4]
+      [(not (= (opt-count-bounds-instrs branch) 2)) 5]
+      [(not (= (opt-count-bounds-instrs copy) 1)) 6]
+      [(not (= (compiler-ir-instr-list-count dce) 3)) 7]
+      [(not (= (opt-count-bounds-blocks cross) 2)) 8]
+      [(not (= loop-positive 0)) 9]
+      [(not (= loop-negative-init 1)) 10]
+      [(not (= loop-unknown-call 1)) 11]
+      [(not (= loop-clean-call 0)) 12]
+      [(not (= loop-argc 0)) 13]
+      [(not (= loop-nested 0)) 14]
+      [(not (= string-positive 0)) 15]
+      [(not (= string-mismatch 1)) 16]
+      [(not (= string-call 1)) 17]
+      [(not (= string-store 1)) 18]
+      [(not (= string-negative-init 1)) 19]
+      [(not (= string-off-by-one 1)) 20]
+      [(not (= string-reassign 1)) 21]
+      [(not (= string-split 0)) 22]
       [else 42])))
 
 ;; Copy propagation can expose a repeated expression only after CSE has already
@@ -25509,25 +25381,15 @@
     [level2-fixed-instrs : CompilerIrInstrList
       (opt-program-first-instrs level2-fixed)]
     (cond
-      [(not (opt-program-eq program level0))
-        false]
-      [(not (= (opt-count-arith-instrs level0-instrs) 1))
-        false]
-      [(not (= (compiler-ir-instr-list-count level1-instrs) 0))
-        false]
-      [(not (= (compiler-ir-instr-list-count level2-instrs) 0))
-        false]
-      [(not (opt-program-eq level1 defaulted))
-        false]
-      [(not (= (compiler-ir-instr-list-count level1-fixed-instrs) 4))
-        false]
-      [(not (= (opt-count-arith-instrs level1-fixed-instrs) 3))
-        false]
-      [(not
-        (= (compiler-ir-instr-list-count level2-fixed-instrs) 3))
-        false]
-      [(not (= (opt-count-arith-instrs level2-fixed-instrs) 2))
-        false]
+      [(not (opt-program-eq program level0)) false]
+      [(not (= (opt-count-arith-instrs level0-instrs) 1)) false]
+      [(not (= (compiler-ir-instr-list-count level1-instrs) 0)) false]
+      [(not (= (compiler-ir-instr-list-count level2-instrs) 0)) false]
+      [(not (opt-program-eq level1 defaulted)) false]
+      [(not (= (compiler-ir-instr-list-count level1-fixed-instrs) 4)) false]
+      [(not (= (opt-count-arith-instrs level1-fixed-instrs) 3)) false]
+      [(not (= (compiler-ir-instr-list-count level2-fixed-instrs) 3)) false]
+      [(not (= (opt-count-arith-instrs level2-fixed-instrs) 2)) false]
       [else true])))
 
 (define (compiler-optimize-level-self-test) : i64
@@ -25693,37 +25555,18 @@
     [index : OptFunctionIndex (opt-function-index-build functions)]
     [graph : OptCallGraph (opt-callgraph-build index)]
     (cond
-      [(not (= (struct-get graph count) 5))
-        false]
-      [(not (= (opt-callgraph-test-edge-count index graph "main") 2))
-        false]
-      [(not (opt-callgraph-test-edge? index graph "main" "a"))
-        false]
-      [(not (opt-callgraph-test-edge? index graph "main" "b"))
-        false]
-      [(opt-callgraph-test-edge? index graph "main" "c")
-        false]
-      [(opt-callgraph-test-edge? index graph "main" "address_taken")
-        false]
-      [(not (= (opt-callgraph-test-edge-count index graph "a") 1))
-        false]
-      [(not (opt-callgraph-test-edge? index graph "a" "c"))
-        false]
-      [(not
-        (= (opt-callgraph-test-edge-count index graph "b") 0))
-        false]
-      [(not
-        (= (opt-callgraph-test-edge-count index graph "c") 1))
-        false]
-      [(not (opt-callgraph-test-edge? index graph "c" "b"))
-        false]
-      [(not
-        (=
-          (opt-callgraph-test-edge-count
-            index
-            graph
-            "address_taken")
-          0))
+      [(not (= (struct-get graph count) 5)) false]
+      [(not (= (opt-callgraph-test-edge-count index graph "main") 2)) false]
+      [(not (opt-callgraph-test-edge? index graph "main" "a")) false]
+      [(not (opt-callgraph-test-edge? index graph "main" "b")) false]
+      [(opt-callgraph-test-edge? index graph "main" "c") false]
+      [(opt-callgraph-test-edge? index graph "main" "address_taken") false]
+      [(not (= (opt-callgraph-test-edge-count index graph "a") 1)) false]
+      [(not (opt-callgraph-test-edge? index graph "a" "c")) false]
+      [(not (= (opt-callgraph-test-edge-count index graph "b") 0)) false]
+      [(not (= (opt-callgraph-test-edge-count index graph "c") 1)) false]
+      [(not (opt-callgraph-test-edge? index graph "c" "b")) false]
+      [(not (= (opt-callgraph-test-edge-count index graph "address_taken") 0))
         false]
       [else true])))
 
@@ -25733,23 +25576,13 @@
     [index : OptFunctionIndex (opt-function-index-build functions)]
     [graph : OptCallGraph (opt-callgraph-build index)]
     (cond
-      [(not (= (struct-get graph count) 3))
-        false]
-      [(not (= (opt-callgraph-test-edge-count index graph "rec_even") 1))
-        false]
-      [(not (opt-callgraph-test-edge? index graph "rec_even" "rec_odd"))
-        false]
-      [(opt-callgraph-test-edge? index graph "rec_even" "rec_even")
-        false]
-      [(not
-        (= (opt-callgraph-test-edge-count index graph "rec_odd") 1))
-        false]
-      [(not
-        (opt-callgraph-test-edge? index graph "rec_odd" "rec_even"))
-        false]
-      [(not
-        (= (opt-callgraph-test-edge-count index graph "lonely") 0))
-        false]
+      [(not (= (struct-get graph count) 3)) false]
+      [(not (= (opt-callgraph-test-edge-count index graph "rec_even") 1)) false]
+      [(not (opt-callgraph-test-edge? index graph "rec_even" "rec_odd")) false]
+      [(opt-callgraph-test-edge? index graph "rec_even" "rec_even") false]
+      [(not (= (opt-callgraph-test-edge-count index graph "rec_odd") 1)) false]
+      [(not (opt-callgraph-test-edge? index graph "rec_odd" "rec_even")) false]
+      [(not (= (opt-callgraph-test-edge-count index graph "lonely") 0)) false]
       [else true])))
 
 (define (opt-scc-result-component [result : OptSccResult] [slot : i64]) : i64
@@ -25809,18 +25642,12 @@
     [self-scc : i64 (opt-scc-result-component result self-slot)]
     [leaf-scc : i64 (opt-scc-result-component result leaf-slot)]
     (cond
-      [(not (opt-callgraph-has-edge? graph self-slot self-slot))
-        false]
-      [(< self-scc 0)
-        false]
-      [(< leaf-scc 0)
-        false]
-      [(= self-scc leaf-scc)
-        false]
-      [(not (= (opt-scc-component-size result self-scc) 1))
-        false]
-      [(not (= (opt-scc-component-size result leaf-scc) 1))
-        false]
+      [(not (opt-callgraph-has-edge? graph self-slot self-slot)) false]
+      [(< self-scc 0) false]
+      [(< leaf-scc 0) false]
+      [(= self-scc leaf-scc) false]
+      [(not (= (opt-scc-component-size result self-scc) 1)) false]
+      [(not (= (opt-scc-component-size result leaf-scc) 1)) false]
       [else true])))
 
 (define (compiler-optimize-scc-mutual-recursive-ok?) : bool
@@ -25836,16 +25663,11 @@
     [odd-scc : i64 (opt-scc-result-component result odd-slot)]
     [lonely-scc : i64 (opt-scc-result-component result lonely-slot)]
     (cond
-      [(< even-scc 0)
-        false]
-      [(not (= even-scc odd-scc))
-        false]
-      [(= even-scc lonely-scc)
-        false]
-      [(not (= (opt-scc-component-size result even-scc) 2))
-        false]
-      [(not (= (opt-scc-component-size result lonely-scc) 1))
-        false]
+      [(< even-scc 0) false]
+      [(not (= even-scc odd-scc)) false]
+      [(= even-scc lonely-scc) false]
+      [(not (= (opt-scc-component-size result even-scc) 2)) false]
+      [(not (= (opt-scc-component-size result lonely-scc) 1)) false]
       [else true])))
 
 (define (compiler-optimize-scc-reverse-topo-ok?) : bool
@@ -25868,36 +25690,23 @@
         result
         (opt-callgraph-test-slot index "address_taken"))]
     (cond
-      [(not (= (array-length order) 5))
-        false]
-      [(not (= (array-ref order 0) b-scc))
-        false]
-      [(not (= (array-ref order 1) c-scc))
-        false]
-      [(not (= (array-ref order 2) a-scc))
-        false]
-      [(not (= (array-ref order 3) main-scc))
-        false]
-      [(not (= (array-ref order 4) address-scc))
-        false]
-      [(not (opt-scc-before? result b-scc c-scc))
-        false]
-      [(not (opt-scc-before? result c-scc a-scc))
-        false]
-      [(not (opt-scc-before? result a-scc main-scc))
-        false]
-      [(not (opt-scc-before? result b-scc main-scc))
-        false]
+      [(not (= (array-length order) 5)) false]
+      [(not (= (array-ref order 0) b-scc)) false]
+      [(not (= (array-ref order 1) c-scc)) false]
+      [(not (= (array-ref order 2) a-scc)) false]
+      [(not (= (array-ref order 3) main-scc)) false]
+      [(not (= (array-ref order 4) address-scc)) false]
+      [(not (opt-scc-before? result b-scc c-scc)) false]
+      [(not (opt-scc-before? result c-scc a-scc)) false]
+      [(not (opt-scc-before? result a-scc main-scc)) false]
+      [(not (opt-scc-before? result b-scc main-scc)) false]
       [else true])))
 
 (define (compiler-optimize-scc-self-test) : i64
   (cond
-    [(not (compiler-optimize-scc-self-recursive-ok?))
-      1]
-    [(not (compiler-optimize-scc-mutual-recursive-ok?))
-      2]
-    [(not (compiler-optimize-scc-reverse-topo-ok?))
-      3]
+    [(not (compiler-optimize-scc-self-recursive-ok?)) 1]
+    [(not (compiler-optimize-scc-mutual-recursive-ok?)) 2]
+    [(not (compiler-optimize-scc-reverse-topo-ok?)) 3]
     [else 42]))
 
 (define (compiler-optimize-callgraph-self-test) : i64
@@ -26517,20 +26326,13 @@
     [instrs : CompilerIrInstrList (opt-inline-function-instrs optimized "main")]
     [frame : i64 (opt-inline-function-frame optimized "main")]
     (cond
-      [(not (= frame 8))
-        false]
-      [(not (= (compiler-ir-instr-list-count instrs) 7))
-        false]
-      [(not (= (opt-count-direct-call-name instrs "inline_add") 0))
-        false]
-      [(not (= (opt-inline-count-binop-dst instrs 6) 1))
-        false]
-      [(not (= (opt-inline-count-binop-dst instrs 7) 1))
-        false]
-      [(not (opt-inline-mov-dst-src? instrs 2 6))
-        false]
-      [(not (opt-inline-mov-dst-src? instrs 3 7))
-        false]
+      [(not (= frame 8)) false]
+      [(not (= (compiler-ir-instr-list-count instrs) 7)) false]
+      [(not (= (opt-count-direct-call-name instrs "inline_add") 0)) false]
+      [(not (= (opt-inline-count-binop-dst instrs 6) 1)) false]
+      [(not (= (opt-inline-count-binop-dst instrs 7) 1)) false]
+      [(not (opt-inline-mov-dst-src? instrs 2 6)) false]
+      [(not (opt-inline-mov-dst-src? instrs 3 7)) false]
       [else true])))
 
 (define (compiler-optimize-inline-bottom-up-writeback-ok?) : bool
@@ -27444,19 +27246,13 @@
     [rewritten-instrs : CompilerIrInstrList
       (opt-function-first-instrs rewritten)]
     (cond
-      [(not (= (opt-function-frame rewritten) 4))
-        1]
-      [(not
-        (opt-instr-list-eq rewritten-instrs (opt-tailrec-expected-instrs)))
+      [(not (= (opt-function-frame rewritten) 4)) 1]
+      [(not (opt-instr-list-eq rewritten-instrs (opt-tailrec-expected-instrs)))
         2]
-      [(not (= (opt-count-tail-call-blocks rewritten-blocks) 0))
-        3]
-      [(not (= (opt-count-jump-to-blocks rewritten-blocks "entry") 1))
-        4]
-      [(not (= (opt-count-tail-call-blocks once-blocks) 0))
-        5]
-      [(not (= (opt-count-jump-to-blocks once-blocks "entry") 1))
-        6]
+      [(not (= (opt-count-tail-call-blocks rewritten-blocks) 0)) 3]
+      [(not (= (opt-count-jump-to-blocks rewritten-blocks "entry") 1)) 4]
+      [(not (= (opt-count-tail-call-blocks once-blocks) 0)) 5]
+      [(not (= (opt-count-jump-to-blocks once-blocks "entry") 1)) 6]
       [else 42])))
 
 (define (opt-count-phi-instrs [instrs : CompilerIrInstrList]) : i64
@@ -28346,125 +28142,38 @@
             (AstTyI64)
             (opt-gvn-global-gep-call-blocks))))]
     (cond
-      [(not (= (opt-count-arith-blocks dominated) 1))
-        1]
-      [(not (= (opt-blocks-mov-src-var dominated 4 (- 0 1)) 3))
-        2]
-      [(not (= (opt-blocks-mov-src-var dominated 5 (- 0 1)) 3))
-        3]
-      [(not (= (opt-count-arith-blocks sibling) 2))
-        4]
-      [(not (= (opt-count-arith-blocks loop) 1))
-        5]
-      [(not (= (opt-blocks-mov-src-var loop 4 (- 0 1)) 3))
-        6]
-      [(not (= (opt-count-load-blocks load-safe) 1))
-        7]
-      [(not (= (opt-blocks-mov-src-var load-safe 4 (- 0 1)) 3))
-        8]
-      [(not (= (opt-count-load-blocks load-join-safe) 1))
-        9]
-      [(not
-        (= (opt-blocks-mov-src-var load-join-safe 4 (- 0 1)) 3))
-        10]
-      [(not (= (opt-count-load-blocks load-store-path) 2))
-        11]
-      [(not
-        (=
-          (opt-blocks-mov-src-var load-store-path 4 (- 0 1))
-          (- 0 1)))
-        12]
-      [(not
-        (= (opt-count-load-blocks load-call-path) 2))
-        13]
-      [(not
-        (=
-          (opt-blocks-mov-src-var
-            load-call-path
-            4
-            (- 0 1))
-          (- 0 1)))
-        14]
-      [(not
-        (=
-          (opt-count-load-blocks load-address-redef)
-          2))
-        15]
-      [(not
-        (=
-          (opt-blocks-mov-src-var
-            load-address-redef
-            4
-            (- 0 1))
-          (- 0 1)))
+      [(not (= (opt-count-arith-blocks dominated) 1)) 1]
+      [(not (= (opt-blocks-mov-src-var dominated 4 (- 0 1)) 3)) 2]
+      [(not (= (opt-blocks-mov-src-var dominated 5 (- 0 1)) 3)) 3]
+      [(not (= (opt-count-arith-blocks sibling) 2)) 4]
+      [(not (= (opt-count-arith-blocks loop) 1)) 5]
+      [(not (= (opt-blocks-mov-src-var loop 4 (- 0 1)) 3)) 6]
+      [(not (= (opt-count-load-blocks load-safe) 1)) 7]
+      [(not (= (opt-blocks-mov-src-var load-safe 4 (- 0 1)) 3)) 8]
+      [(not (= (opt-count-load-blocks load-join-safe) 1)) 9]
+      [(not (= (opt-blocks-mov-src-var load-join-safe 4 (- 0 1)) 3)) 10]
+      [(not (= (opt-count-load-blocks load-store-path) 2)) 11]
+      [(not (= (opt-blocks-mov-src-var load-store-path 4 (- 0 1)) (- 0 1))) 12]
+      [(not (= (opt-count-load-blocks load-call-path) 2)) 13]
+      [(not (= (opt-blocks-mov-src-var load-call-path 4 (- 0 1)) (- 0 1))) 14]
+      [(not (= (opt-count-load-blocks load-address-redef) 2)) 15]
+      [(not (= (opt-blocks-mov-src-var load-address-redef 4 (- 0 1)) (- 0 1)))
         16]
-      [(not
-        (=
-          (opt-count-load-blocks
-            load-type-mismatch)
-          2))
-        17]
-      [(not
-        (=
-          (opt-blocks-binop-lhs-var
-            copy
-            4
-            (- 0 1))
-          1))
-        18]
-      [(not
-        (=
-          (opt-count-mov-dst-blocks copy 3)
-          0))
-        19]
-      [(not
-        (= (opt-count-cast-blocks cast) 0))
-        20]
-      [(not
-        (=
-          (opt-count-mov-dst-blocks
-            cast
-            4)
-          0))
-        21]
-      [(not
-        (= (opt-count-gep-blocks gep) 1))
-        22]
-      [(not
-        (=
-          (opt-count-mov-dst-blocks
-            gep
-            4)
-          0))
-        23]
-      [(not
-        (opt-global-expr-hash-collision-guard-ok?))
-        24]
-      [(not
-        (opt-gvn-hash-collision-guard-ok?))
-        25]
-      [(not
-        (opt-gvn-scoped-nearest-dominator-ok?))
-        26]
-      [(not
-        (=
-          (opt-count-gep-label-blocks
-            global-gep
-            "use")
-          1))
-        27]
+      [(not (= (opt-count-load-blocks load-type-mismatch) 2)) 17]
+      [(not (= (opt-blocks-binop-lhs-var copy 4 (- 0 1)) 1)) 18]
+      [(not (= (opt-count-mov-dst-blocks copy 3) 0)) 19]
+      [(not (= (opt-count-cast-blocks cast) 0)) 20]
+      [(not (= (opt-count-mov-dst-blocks cast 4) 0)) 21]
+      [(not (= (opt-count-gep-blocks gep) 1)) 22]
+      [(not (= (opt-count-mov-dst-blocks gep 4) 0)) 23]
+      [(not (opt-global-expr-hash-collision-guard-ok?)) 24]
+      [(not (opt-gvn-hash-collision-guard-ok?)) 25]
+      [(not (opt-gvn-scoped-nearest-dominator-ok?)) 26]
+      [(not (= (opt-count-gep-label-blocks global-gep "use") 1)) 27]
       [(match (opt-global-key-for-instr
-        (IrInstrGep
-          9
-          (IrValueGlobal
-            "pool")
-          (IrValueI64 8)
-          (AstTyI64)))
-        [(OptSomeGlobalExprKey
-            _)
-          true]
-        [(OptNoGlobalExprKey)
-          false])
+          (IrInstrGep 9 (IrValueGlobal "pool") (IrValueI64 8) (AstTyI64)))
+          [(OptSomeGlobalExprKey _) true]
+          [(OptNoGlobalExprKey) false])
         28]
       [else 42])))
 
@@ -28685,46 +28394,24 @@
     [group : CompilerIrBlockList
       (opt-sccp-blocks (IrParamNil) (opt-sccp-group-word-branch-blocks))]
     (cond
-      [(not (= (opt-count-arith-blocks cross) 0))
-        1]
-      [(not (= (opt-blocks-mov-dst-i64-value cross 1 (- 0 999)) 42))
-        2]
-      [(not (= (opt-count-phi-blocks diamond) 0))
-        3]
-      [(not (= (opt-blocks-mov-dst-i64-value diamond 3 (- 0 999)) 7))
-        4]
-      [(not (= (compiler-ir-block-list-count branch) 2))
-        5]
-      [(opt-block-list-has-label? branch "else")
-        6]
-      [(not (= (opt-count-branches-blocks branch) 0))
-        7]
-      [(not (= (opt-count-jump-to-blocks branch "then") 1))
-        8]
-      [(not (= (compiler-ir-block-list-count loop) 4))
-        9]
-      [(not (= (opt-count-phi-blocks loop) 1))
-        10]
-      [(not (= (opt-count-mov-dst-blocks loop 1) 0))
-        11]
-      [(not (= (opt-count-arith-blocks loop) 1))
-        12]
-      [(not (= (opt-count-arith-blocks trap) 1))
-        13]
-      [(not (= (opt-count-mov-dst-blocks trap 1) 0))
-        14]
-      [(not
-        (= (compiler-ir-block-list-count group) 4))
-        15]
-      [(not
-        (= (opt-count-branches-blocks group) 1))
-        16]
-      [(not
-        (opt-block-list-has-label? group "then"))
-        17]
-      [(not
-        (opt-block-list-has-label? group "else"))
-        18]
+      [(not (= (opt-count-arith-blocks cross) 0)) 1]
+      [(not (= (opt-blocks-mov-dst-i64-value cross 1 (- 0 999)) 42)) 2]
+      [(not (= (opt-count-phi-blocks diamond) 0)) 3]
+      [(not (= (opt-blocks-mov-dst-i64-value diamond 3 (- 0 999)) 7)) 4]
+      [(not (= (compiler-ir-block-list-count branch) 2)) 5]
+      [(opt-block-list-has-label? branch "else") 6]
+      [(not (= (opt-count-branches-blocks branch) 0)) 7]
+      [(not (= (opt-count-jump-to-blocks branch "then") 1)) 8]
+      [(not (= (compiler-ir-block-list-count loop) 4)) 9]
+      [(not (= (opt-count-phi-blocks loop) 1)) 10]
+      [(not (= (opt-count-mov-dst-blocks loop 1) 0)) 11]
+      [(not (= (opt-count-arith-blocks loop) 1)) 12]
+      [(not (= (opt-count-arith-blocks trap) 1)) 13]
+      [(not (= (opt-count-mov-dst-blocks trap 1) 0)) 14]
+      [(not (= (compiler-ir-block-list-count group) 4)) 15]
+      [(not (= (opt-count-branches-blocks group) 1)) 16]
+      [(not (opt-block-list-has-label? group "then")) 17]
+      [(not (opt-block-list-has-label? group "else")) 18]
       [else 42])))
 
 (define (opt-cfg-constant-if-blocks) : CompilerIrBlockList
@@ -29800,115 +29487,35 @@
       (opt-licm-optimized-function (opt-licm-load-varying-address-blocks))]
     [load-varying : CompilerIrBlockList (opt-function-blocks load-varying-func)]
     (cond
-      [(not (opt-verify-ok? (opt-verify-function arith-func)))
-        1]
-      [(not (= (opt-count-arith-label-blocks arith "entry") 2))
-        2]
-      [(not (= (opt-count-arith-label-blocks arith "loop") 0))
-        3]
-      [(not (= (opt-count-arith-label-blocks arith "body") 1))
-        4]
-      [(not (opt-verify-ok? (opt-verify-function trap-func)))
-        5]
-      [(not (= (opt-count-arith-label-blocks trap "loop") 1))
-        6]
-      [(not (opt-verify-ok? (opt-verify-function call-func)))
-        7]
-      [(not
-        (= (opt-count-arith-label-blocks call-blocks "loop") 1))
-        8]
-      [(not
-        (opt-verify-ok? (opt-verify-function no-preheader-func)))
-        9]
-      [(not
-        (= (opt-count-arith-label-blocks no-preheader "loop") 1))
-        10]
-      [(not (= (opt-count-arith-blocks no-preheader) 1))
-        11]
-      [(not
-        (opt-verify-ok? (opt-verify-function nested-func)))
-        12]
-      [(not
-        (=
-          (opt-count-arith-label-blocks nested "inner")
-          0))
-        13]
-      [(not (= (opt-count-arith-blocks nested) 1))
-        14]
-      [(not
-        (opt-verify-ok?
-          (opt-verify-function load-func)))
-        15]
-      [(not
-        (=
-          (opt-count-gep-label-blocks
-            load-blocks
-            "entry")
-          1))
-        16]
-      [(not
-        (=
-          (opt-count-load-label-blocks
-            load-blocks
-            "entry")
-          1))
-        17]
-      [(not
-        (=
-          (opt-count-load-label-blocks
-            load-blocks
-            "loop")
-          0))
-        18]
-      [(not
-        (opt-verify-ok?
-          (opt-verify-function
-            load-store-func)))
-        19]
-      [(not
-        (=
-          (opt-count-load-label-blocks
-            load-store
-            "loop")
-          1))
-        20]
-      [(not
-        (=
-          (opt-count-load-label-blocks
-            load-store
-            "entry")
-          0))
-        21]
-      [(not
-        (opt-verify-ok?
-          (opt-verify-function
-            load-call-func)))
-        22]
-      [(not
-        (=
-          (opt-count-load-label-blocks
-            load-call
-            "loop")
-          1))
-        23]
-      [(not
-        (opt-verify-ok?
-          (opt-verify-function
-            load-varying-func)))
-        24]
-      [(not
-        (=
-          (opt-count-load-label-blocks
-            load-varying
-            "loop")
-          1))
-        25]
+      [(not (opt-verify-ok? (opt-verify-function arith-func))) 1]
+      [(not (= (opt-count-arith-label-blocks arith "entry") 2)) 2]
+      [(not (= (opt-count-arith-label-blocks arith "loop") 0)) 3]
+      [(not (= (opt-count-arith-label-blocks arith "body") 1)) 4]
+      [(not (opt-verify-ok? (opt-verify-function trap-func))) 5]
+      [(not (= (opt-count-arith-label-blocks trap "loop") 1)) 6]
+      [(not (opt-verify-ok? (opt-verify-function call-func))) 7]
+      [(not (= (opt-count-arith-label-blocks call-blocks "loop") 1)) 8]
+      [(not (opt-verify-ok? (opt-verify-function no-preheader-func))) 9]
+      [(not (= (opt-count-arith-label-blocks no-preheader "loop") 1)) 10]
+      [(not (= (opt-count-arith-blocks no-preheader) 1)) 11]
+      [(not (opt-verify-ok? (opt-verify-function nested-func))) 12]
+      [(not (= (opt-count-arith-label-blocks nested "inner") 0)) 13]
+      [(not (= (opt-count-arith-blocks nested) 1)) 14]
+      [(not (opt-verify-ok? (opt-verify-function load-func))) 15]
+      [(not (= (opt-count-gep-label-blocks load-blocks "entry") 1)) 16]
+      [(not (= (opt-count-load-label-blocks load-blocks "entry") 1)) 17]
+      [(not (= (opt-count-load-label-blocks load-blocks "loop") 0)) 18]
+      [(not (opt-verify-ok? (opt-verify-function load-store-func))) 19]
+      [(not (= (opt-count-load-label-blocks load-store "loop") 1)) 20]
+      [(not (= (opt-count-load-label-blocks load-store "entry") 0)) 21]
+      [(not (opt-verify-ok? (opt-verify-function load-call-func))) 22]
+      [(not (= (opt-count-load-label-blocks load-call "loop") 1)) 23]
+      [(not (opt-verify-ok? (opt-verify-function load-varying-func))) 24]
+      [(not (= (opt-count-load-label-blocks load-varying "loop") 1)) 25]
       [(opt-licm-value-invariant?
-        (i64-i64-map-with-capacity
-          4)
-        (i64-i64-map-with-capacity
-          4)
-        (IrValueGlobal "g"))
+          (i64-i64-map-with-capacity 4)
+          (i64-i64-map-with-capacity 4)
+          (IrValueGlobal "g"))
         26]
       [else 42])))
 
@@ -30252,111 +29859,31 @@
       (opt-induction-optimized-function (opt-induction-no-preheader-blocks))]
     [no-preheader : CompilerIrBlockList (opt-function-blocks no-preheader-func)]
     (cond
-      [(not (opt-verify-ok? (opt-verify-function func)))
-        1]
-      [(not (= (opt-count-phi-blocks out) 2))
-        2]
-      [(not (= (opt-blocks-mov-src-var out 4 (- 0 1)) 33))
-        3]
-      [(not (= (opt-count-mul-label-blocks out "body") 0))
-        4]
-      [(not (opt-verify-ok? (opt-verify-function nonunit-func)))
-        5]
-      [(not (= (opt-blocks-mov-src-var nonunit 4 (- 0 1)) 33))
-        6]
-      [(not (= (opt-count-mul-label-blocks nonunit "body") 0))
-        7]
-      [(not (opt-verify-ok? (opt-verify-function negative-func)))
-        8]
-      [(not (= (opt-blocks-mov-src-var negative 4 (- 0 1)) 33))
-        9]
-      [(not
-        (= (opt-count-mul-label-blocks negative "body") 0))
-        10]
-      [(not
-        (opt-verify-ok? (opt-verify-function gep-func)))
-        11]
-      [(not
-        (= (opt-count-gep-label-blocks gep "body") 1))
-        12]
-      [(not
-        (= (opt-blocks-mov-src-var gep 4 (- 0 1)) 33))
-        13]
-      [(not
-        (opt-verify-ok?
-          (opt-verify-function unsupported-func)))
-        14]
-      [(not
-        (=
-          (opt-blocks-mov-src-var
-            unsupported
-            4
-            (- 0 1))
-          (- 0 1)))
-        15]
-      [(not
-        (=
-          (opt-count-mul-label-blocks
-            unsupported
-            "body")
-          2))
-        16]
-      [(not
-        (opt-verify-ok?
-          (opt-verify-function call-func)))
-        17]
-      [(not
-        (=
-          (opt-blocks-mov-src-var
-            call-blocks
-            4
-            (- 0 1))
-          (- 0 1)))
-        18]
-      [(not
-        (=
-          (opt-count-mul-label-blocks
-            call-blocks
-            "body")
-          1))
-        19]
-      [(not
-        (opt-verify-ok?
-          (opt-verify-function store-func)))
-        20]
-      [(not
-        (=
-          (opt-blocks-mov-src-var
-            store-blocks
-            4
-            (- 0 1))
-          (- 0 1)))
-        21]
-      [(not
-        (=
-          (opt-count-mul-label-blocks
-            store-blocks
-            "body")
-          1))
-        22]
-      [(not
-        (opt-verify-ok?
-          (opt-verify-function
-            no-preheader-func)))
-        23]
-      [(not
-        (=
-          (opt-count-phi-blocks
-            no-preheader)
-          1))
-        24]
-      [(not
-        (=
-          (opt-count-mul-label-blocks
-            no-preheader
-            "body")
-          1))
-        25]
+      [(not (opt-verify-ok? (opt-verify-function func))) 1]
+      [(not (= (opt-count-phi-blocks out) 2)) 2]
+      [(not (= (opt-blocks-mov-src-var out 4 (- 0 1)) 33)) 3]
+      [(not (= (opt-count-mul-label-blocks out "body") 0)) 4]
+      [(not (opt-verify-ok? (opt-verify-function nonunit-func))) 5]
+      [(not (= (opt-blocks-mov-src-var nonunit 4 (- 0 1)) 33)) 6]
+      [(not (= (opt-count-mul-label-blocks nonunit "body") 0)) 7]
+      [(not (opt-verify-ok? (opt-verify-function negative-func))) 8]
+      [(not (= (opt-blocks-mov-src-var negative 4 (- 0 1)) 33)) 9]
+      [(not (= (opt-count-mul-label-blocks negative "body") 0)) 10]
+      [(not (opt-verify-ok? (opt-verify-function gep-func))) 11]
+      [(not (= (opt-count-gep-label-blocks gep "body") 1)) 12]
+      [(not (= (opt-blocks-mov-src-var gep 4 (- 0 1)) 33)) 13]
+      [(not (opt-verify-ok? (opt-verify-function unsupported-func))) 14]
+      [(not (= (opt-blocks-mov-src-var unsupported 4 (- 0 1)) (- 0 1))) 15]
+      [(not (= (opt-count-mul-label-blocks unsupported "body") 2)) 16]
+      [(not (opt-verify-ok? (opt-verify-function call-func))) 17]
+      [(not (= (opt-blocks-mov-src-var call-blocks 4 (- 0 1)) (- 0 1))) 18]
+      [(not (= (opt-count-mul-label-blocks call-blocks "body") 1)) 19]
+      [(not (opt-verify-ok? (opt-verify-function store-func))) 20]
+      [(not (= (opt-blocks-mov-src-var store-blocks 4 (- 0 1)) (- 0 1))) 21]
+      [(not (= (opt-count-mul-label-blocks store-blocks "body") 1)) 22]
+      [(not (opt-verify-ok? (opt-verify-function no-preheader-func))) 23]
+      [(not (= (opt-count-phi-blocks no-preheader) 1)) 24]
+      [(not (= (opt-count-mul-label-blocks no-preheader "body") 1)) 25]
       [else 42])))
 
 (define (opt-ssa-unreachable-blocks) : CompilerIrBlockList
@@ -30572,309 +30099,119 @@
     [induction-after-preheader-blocks : CompilerIrBlockList
       (opt-function-blocks induction-after-preheader)]
     (cond
-      [(not (= (opt-natural-loop-list-count single-loops) 1))
-        1]
-      [(not (= (opt-natural-loop-maybe-body-count single) 2))
-        2]
-      [(not (opt-natural-loop-maybe-body-contains? single "loop"))
-        3]
-      [(not (opt-natural-loop-maybe-body-contains? single "body"))
-        4]
-      [(not (opt-natural-loop-maybe-preheader-label? single "entry"))
-        5]
-      [(not (= (opt-natural-loop-list-count nested-loops) 2))
-        6]
-      [(not (= (opt-natural-loop-maybe-body-count inner) 2))
-        7]
+      [(not (= (opt-natural-loop-list-count single-loops) 1)) 1]
+      [(not (= (opt-natural-loop-maybe-body-count single) 2)) 2]
+      [(not (opt-natural-loop-maybe-body-contains? single "loop")) 3]
+      [(not (opt-natural-loop-maybe-body-contains? single "body")) 4]
+      [(not (opt-natural-loop-maybe-preheader-label? single "entry")) 5]
+      [(not (= (opt-natural-loop-list-count nested-loops) 2)) 6]
+      [(not (= (opt-natural-loop-maybe-body-count inner) 2)) 7]
+      [(not (opt-natural-loop-maybe-body-contains? inner "inner")) 8]
+      [(not (opt-natural-loop-maybe-body-contains? inner "inner-body")) 9]
+      [(not (opt-natural-loop-maybe-preheader-label? inner "outer")) 10]
+      [(not (= (opt-natural-loop-maybe-body-count outer) 4)) 11]
+      [(not (opt-natural-loop-maybe-body-contains? outer "outer")) 12]
+      [(not (opt-natural-loop-maybe-body-contains? outer "inner")) 13]
+      [(not (opt-natural-loop-maybe-body-contains? outer "inner-body")) 14]
+      [(not (opt-natural-loop-maybe-body-contains? outer "outer-latch")) 15]
+      [(not (opt-natural-loop-maybe-preheader-label? outer "entry")) 16]
+      [(not (= (opt-natural-loop-list-count diamond-loops) 0)) 17]
+      [(not (= (opt-natural-loop-list-count irreducible-loops) 0)) 18]
+      [(not (= (opt-natural-loop-list-count no-preheader-loops) 1)) 19]
+      [(not (= (opt-natural-loop-maybe-body-count no-preheader) 2)) 20]
+      [(not (opt-natural-loop-maybe-no-preheader? no-preheader)) 21]
+      [(not (= (opt-natural-loop-list-count multi-loops) 2)) 22]
+      [(not (= (opt-natural-loop-maybe-body-count multi-left) 2)) 23]
+      [(not (opt-natural-loop-maybe-body-contains? multi-left "left")) 24]
+      [(not (opt-natural-loop-maybe-body-contains? multi-left "loop")) 25]
+      [(not (= (opt-natural-loop-maybe-body-count multi-right) 2)) 26]
+      [(not (opt-natural-loop-maybe-body-contains? multi-right "right")) 27]
+      [(not (opt-natural-loop-maybe-body-contains? multi-right "loop")) 28]
+      [(not (= (opt-natural-loop-maybe-body-block-count single) 2)) 29]
+      [(not (opt-natural-loop-maybe-body-block-label-at? single 0 "loop")) 30]
+      [(not (opt-natural-loop-maybe-body-block-label-at? single 1 "body")) 31]
       [(not
-        (opt-natural-loop-maybe-body-contains? inner "inner"))
-        8]
-      [(not
-        (opt-natural-loop-maybe-body-contains? inner "inner-body"))
-        9]
-      [(not
-        (opt-natural-loop-maybe-preheader-label? inner "outer"))
-        10]
-      [(not
-        (= (opt-natural-loop-maybe-body-count outer) 4))
-        11]
-      [(not
-        (opt-natural-loop-maybe-body-contains?
-          outer
-          "outer"))
-        12]
-      [(not
-        (opt-natural-loop-maybe-body-contains?
-          outer
-          "inner"))
-        13]
-      [(not
-        (opt-natural-loop-maybe-body-contains?
-          outer
-          "inner-body"))
-        14]
-      [(not
-        (opt-natural-loop-maybe-body-contains?
-          outer
-          "outer-latch"))
-        15]
-      [(not
-        (opt-natural-loop-maybe-preheader-label?
-          outer
-          "entry"))
-        16]
-      [(not
-        (=
-          (opt-natural-loop-list-count
-            diamond-loops)
-          0))
-        17]
-      [(not
-        (=
-          (opt-natural-loop-list-count
-            irreducible-loops)
-          0))
-        18]
-      [(not
-        (=
-          (opt-natural-loop-list-count
-            no-preheader-loops)
-          1))
-        19]
-      [(not
-        (=
-          (opt-natural-loop-maybe-body-count
-            no-preheader)
-          2))
-        20]
-      [(not
-        (opt-natural-loop-maybe-no-preheader?
-          no-preheader))
-        21]
-      [(not
-        (=
-          (opt-natural-loop-list-count
-            multi-loops)
-          2))
-        22]
-      [(not
-        (=
-          (opt-natural-loop-maybe-body-count
-            multi-left)
-          2))
-        23]
-      [(not
-        (opt-natural-loop-maybe-body-contains?
-          multi-left
-          "left"))
-        24]
-      [(not
-        (opt-natural-loop-maybe-body-contains?
-          multi-left
-          "loop"))
-        25]
-      [(not
-        (=
-          (opt-natural-loop-maybe-body-count
-            multi-right)
-          2))
-        26]
-      [(not
-        (opt-natural-loop-maybe-body-contains?
-          multi-right
-          "right"))
-        27]
-      [(not
-        (opt-natural-loop-maybe-body-contains?
-          multi-right
-          "loop"))
-        28]
-      [(not
-        (=
-          (opt-natural-loop-maybe-body-block-count
-            single)
-          2))
-        29]
-      [(not
-        (opt-natural-loop-maybe-body-block-label-at?
-          single
-          0
-          "loop"))
-        30]
-      [(not
-        (opt-natural-loop-maybe-body-block-label-at?
-          single
-          1
-          "body"))
-        31]
-      [(not
-        (opt-natural-loop-maybe-body-contains-id?
-          single-index
-          single
-          "loop"))
+          (opt-natural-loop-maybe-body-contains-id? single-index single "loop"))
         32]
       [(not
-        (opt-natural-loop-maybe-body-contains-id?
-          single-index
-          single
-          "body"))
+          (opt-natural-loop-maybe-body-contains-id? single-index single "body"))
         33]
-      [(opt-natural-loop-maybe-body-contains-id?
-        single-index
-        single
-        "entry")
+      [(opt-natural-loop-maybe-body-contains-id? single-index single "entry")
         34]
-      [(not
-        (=
-          (opt-natural-loop-maybe-body-block-count
-            outer)
-          4))
-        35]
-      [(not
-        (opt-natural-loop-maybe-body-block-label-at?
-          outer
-          0
-          "outer"))
-        36]
-      [(not
-        (opt-natural-loop-maybe-body-block-label-at?
-          outer
-          1
-          "inner"))
-        37]
-      [(not
-        (opt-natural-loop-maybe-body-block-label-at?
-          outer
-          2
-          "inner-body"))
+      [(not (= (opt-natural-loop-maybe-body-block-count outer) 4)) 35]
+      [(not (opt-natural-loop-maybe-body-block-label-at? outer 0 "outer")) 36]
+      [(not (opt-natural-loop-maybe-body-block-label-at? outer 1 "inner")) 37]
+      [(not (opt-natural-loop-maybe-body-block-label-at? outer 2 "inner-body"))
         38]
-      [(not
-        (opt-natural-loop-maybe-body-block-label-at?
-          outer
-          3
-          "outer-latch"))
+      [(not (opt-natural-loop-maybe-body-block-label-at? outer 3 "outer-latch"))
         39]
       [(not
-        (opt-natural-loop-maybe-body-contains-id?
-          nested-index
-          outer
-          "outer-latch"))
+          (opt-natural-loop-maybe-body-contains-id?
+            nested-index
+            outer
+            "outer-latch"))
         40]
-      [(not
-        (=
-          (opt-natural-loop-maybe-body-block-count
-            multi-left)
-          2))
-        41]
-      [(not
-        (opt-natural-loop-maybe-body-block-label-at?
-          multi-left
-          0
-          "loop"))
+      [(not (= (opt-natural-loop-maybe-body-block-count multi-left) 2)) 41]
+      [(not (opt-natural-loop-maybe-body-block-label-at? multi-left 0 "loop"))
         43]
-      [(not
-        (opt-natural-loop-maybe-body-block-label-at?
-          multi-left
-          1
-          "left"))
+      [(not (opt-natural-loop-maybe-body-block-label-at? multi-left 1 "left"))
         44]
-      [(not
-        (=
-          (opt-natural-loop-maybe-body-block-count
-            multi-right)
-          2))
-        45]
-      [(not
-        (opt-natural-loop-maybe-body-block-label-at?
-          multi-right
-          0
-          "loop"))
+      [(not (= (opt-natural-loop-maybe-body-block-count multi-right) 2)) 45]
+      [(not (opt-natural-loop-maybe-body-block-label-at? multi-right 0 "loop"))
         46]
-      [(not
-        (opt-natural-loop-maybe-body-block-label-at?
-          multi-right
-          1
-          "right"))
+      [(not (opt-natural-loop-maybe-body-block-label-at? multi-right 1 "right"))
         47]
       [(not
-        (opt-natural-loop-maybe-body-contains-id?
-          multi-index
-          multi-right
-          "right"))
+          (opt-natural-loop-maybe-body-contains-id?
+            multi-index
+            multi-right
+            "right"))
         48]
-      [(not
-        (opt-block-list-eq
-          preheadered-single-blocks
-          (opt-ssa-loop-blocks)))
+      [(not (opt-block-list-eq preheadered-single-blocks (opt-ssa-loop-blocks)))
         49]
       [(not
-        (opt-block-list-eq
-          preheadered-nested-blocks
-          (opt-natural-loop-nested-blocks)))
+          (opt-block-list-eq
+            preheadered-nested-blocks
+            (opt-natural-loop-nested-blocks)))
         50]
       [(not
-        (opt-block-list-eq
-          preheadered-multi-blocks
-          (opt-natural-loop-multi-backedge-blocks)))
+          (opt-block-list-eq
+            preheadered-multi-blocks
+            (opt-natural-loop-multi-backedge-blocks)))
         51]
+      [(not (= (compiler-ir-block-list-count synth-blocks) 7)) 52]
+      [(not (opt-block-list-has-label? synth-blocks "loop__preheader")) 53]
       [(not
-        (=
-          (compiler-ir-block-list-count
-            synth-blocks)
-          7))
-        52]
-      [(not
-        (opt-block-list-has-label?
-          synth-blocks
-          "loop__preheader"))
-        53]
-      [(not
-        (opt-natural-loop-maybe-preheader-label?
-          synth-loop
-          "loop__preheader"))
+          (opt-natural-loop-maybe-preheader-label? synth-loop "loop__preheader"))
         54]
       [(not
-        (opt-label-contains
-          (opt-cfg-index-successors
-            synth-index
-            "pre-one")
-          "loop__preheader"))
+          (opt-label-contains
+            (opt-cfg-index-successors synth-index "pre-one")
+            "loop__preheader"))
         55]
       [(opt-label-contains
-        (opt-cfg-index-successors
-          synth-index
-          "pre-one")
-        "loop")
+          (opt-cfg-index-successors synth-index "pre-one")
+          "loop")
         56]
       [(not
-        (opt-label-contains
-          (opt-cfg-index-successors
-            synth-index
-            "loop__preheader")
-          "loop"))
+          (opt-label-contains
+            (opt-cfg-index-successors synth-index "loop__preheader")
+            "loop"))
         57]
       [(not
-        (opt-verify-ok?
-          (opt-verify-function
-            (opt-cfg-test-function
-              synth-blocks))))
+          (opt-verify-ok?
+            (opt-verify-function (opt-cfg-test-function synth-blocks))))
         58]
+      [(not (opt-verify-ok? (opt-verify-function preheadered-induction))) 59]
       [(not
-        (opt-verify-ok?
-          (opt-verify-function
-            preheadered-induction)))
-        59]
-      [(not
-        (opt-block-list-has-label?
-          preheadered-induction-blocks
-          "loop__preheader"))
+          (opt-block-list-has-label?
+            preheadered-induction-blocks
+            "loop__preheader"))
         60]
       [(not
-        (=
-          (opt-count-mul-label-blocks
-            induction-after-preheader-blocks
-            "body")
-          0))
+          (=
+            (opt-count-mul-label-blocks induction-after-preheader-blocks "body")
+            0))
         61]
       [else 42])))
 
@@ -30895,50 +30232,35 @@
       (opt-natural-loop-multi-backedge-blocks)]
     [with-phi : CompilerIrBlockList (opt-ssa-loop-blocks)]
     (cond
-      [(not (= (compiler-ir-block-list-count rotated) 3))
-        1]
-      [(opt-block-list-has-label? rotated "loop")
-        2]
-      [(not (opt-loop-rotation-successors? rotated "entry" "body" "exit"))
-        3]
-      [(not (opt-loop-rotation-successors? rotated "body" "body" "exit"))
-        4]
-      [(not (= (opt-count-jump-to-blocks rotated "loop") 0))
-        5]
-      [(not (= (opt-count-branches-blocks rotated) 2))
-        6]
-      [(opt-block-list-has-label? false-body-rotated "loop")
-        7]
+      [(not (= (compiler-ir-block-list-count rotated) 3)) 1]
+      [(opt-block-list-has-label? rotated "loop") 2]
+      [(not (opt-loop-rotation-successors? rotated "entry" "body" "exit")) 3]
+      [(not (opt-loop-rotation-successors? rotated "body" "body" "exit")) 4]
+      [(not (= (opt-count-jump-to-blocks rotated "loop") 0)) 5]
+      [(not (= (opt-count-branches-blocks rotated) 2)) 6]
+      [(opt-block-list-has-label? false-body-rotated "loop") 7]
       [(not
-        (opt-loop-rotation-successors?
-          false-body-rotated
-          "entry"
-          "body"
-          "exit"))
+          (opt-loop-rotation-successors?
+            false-body-rotated
+            "entry"
+            "body"
+            "exit"))
         8]
-      [(not (opt-verify-ok? (opt-verify-function ssa)))
-        9]
-      [(not (> (opt-count-phi-blocks ssa-blocks) 0))
-        10]
-      [(opt-block-list-has-label? optimized-blocks "loop")
-        11]
+      [(not (opt-verify-ok? (opt-verify-function ssa))) 9]
+      [(not (> (opt-count-phi-blocks ssa-blocks) 0)) 10]
+      [(opt-block-list-has-label? optimized-blocks "loop") 11]
+      [(not (opt-cfg-successor-targets-known? optimized-blocks)) 12]
       [(not
-        (opt-cfg-successor-targets-known? optimized-blocks))
-        12]
-      [(not
-        (opt-block-list-eq
-          (opt-loop-rotation-blocks no-preheader)
-          no-preheader))
+          (opt-block-list-eq
+            (opt-loop-rotation-blocks no-preheader)
+            no-preheader))
         13]
       [(not
-        (opt-block-list-eq
-          (opt-loop-rotation-blocks multi-backedge)
-          multi-backedge))
+          (opt-block-list-eq
+            (opt-loop-rotation-blocks multi-backedge)
+            multi-backedge))
         14]
-      [(not
-        (opt-block-list-eq
-          (opt-loop-rotation-blocks with-phi)
-          with-phi))
+      [(not (opt-block-list-eq (opt-loop-rotation-blocks with-phi) with-phi))
         15]
       [else 42])))
 
@@ -30989,234 +30311,104 @@
       (opt-ssa-construct-function (opt-ssa-entry-backedge-function))]
     (cond
       [(not
-        (= (opt-label-count (opt-cfg-predecessors diamond-blocks "join")) 2))
+          (= (opt-label-count (opt-cfg-predecessors diamond-blocks "join")) 2))
         1]
-      [(not (= (opt-cfg-index-block-count diamond-index) 4))
-        2]
-      [(not
-        (opt-verify-ok? (opt-verify-function (opt-ssa-diamond-function))))
+      [(not (= (opt-cfg-index-block-count diamond-index) 4)) 2]
+      [(not (opt-verify-ok? (opt-verify-function (opt-ssa-diamond-function))))
         3]
       [(not
-        (opt-label-set-eq?
-          (opt-cfg-index-predecessors diamond-index "join")
-          (opt-cfg-predecessors-scan diamond-blocks "join")))
+          (opt-label-set-eq?
+            (opt-cfg-index-predecessors diamond-index "join")
+            (opt-cfg-predecessors-scan diamond-blocks "join")))
         4]
       [(not
-        (opt-label-set-eq?
-          (opt-cfg-index-successors diamond-index "entry")
-          (opt-cfg-blocks-successors-scan diamond-blocks "entry")))
+          (opt-label-set-eq?
+            (opt-cfg-index-successors diamond-index "entry")
+            (opt-cfg-blocks-successors-scan diamond-blocks "entry")))
         5]
-      [(not (= (struct-get unreachable-index reach-count) 1))
-        6]
-      [(not (opt-cfg-index-reachable? unreachable-index "entry"))
-        7]
-      [(opt-cfg-index-reachable? unreachable-index "dead")
-        8]
-      [(not
-        (string-eq
-          (opt-cfg-index-rpo-label unreachable-index 0)
-          "entry"))
+      [(not (= (struct-get unreachable-index reach-count) 1)) 6]
+      [(not (opt-cfg-index-reachable? unreachable-index "entry")) 7]
+      [(opt-cfg-index-reachable? unreachable-index "dead") 8]
+      [(not (string-eq (opt-cfg-index-rpo-label unreachable-index 0) "entry"))
         9]
+      [(not (string-eq (opt-cfg-index-rpo-label loop-index 0) "entry")) 10]
+      [(not (opt-dom-dominates? diamond-doms "entry" "join")) 11]
+      [(opt-dom-dominates? diamond-doms "then" "join") 12]
+      [(not (opt-label-contains then-frontier "join")) 13]
+      [(not (opt-label-contains else-frontier "join")) 14]
+      [(not (opt-dom-dominates? loop-doms "loop" "body")) 15]
+      [(not (opt-label-contains loop-frontier "loop")) 16]
+      [(not (= (compiler-ir-block-list-count unreachable-order) 1)) 17]
+      [(not (opt-block-list-has-label? unreachable-order "entry")) 18]
+      [(not (opt-verify-ok? (opt-verify-function (opt-ssa-loop-function)))) 19]
       [(not
-        (string-eq
-          (opt-cfg-index-rpo-label loop-index 0)
-          "entry"))
-        10]
-      [(not
-        (opt-dom-dominates? diamond-doms "entry" "join"))
-        11]
-      [(opt-dom-dominates? diamond-doms "then" "join")
-        12]
-      [(not (opt-label-contains then-frontier "join"))
-        13]
-      [(not
-        (opt-label-contains else-frontier "join"))
-        14]
-      [(not
-        (opt-dom-dominates? loop-doms "loop" "body"))
-        15]
-      [(not
-        (opt-label-contains loop-frontier "loop"))
-        16]
-      [(not
-        (=
-          (compiler-ir-block-list-count
-            unreachable-order)
-          1))
-        17]
-      [(not
-        (opt-block-list-has-label?
-          unreachable-order
-          "entry"))
-        18]
-      [(not
-        (opt-verify-ok?
-          (opt-verify-function
-            (opt-ssa-loop-function))))
-        19]
-      [(not
-        (opt-verify-ok?
-          (opt-verify-function
-            (opt-ssa-unreachable-function))))
+          (opt-verify-ok? (opt-verify-function (opt-ssa-unreachable-function))))
         20]
       [(not
-        (opt-verify-error-ok?
-          (opt-verify-function
-            (opt-ssa-duplicate-label-function))
-          "optimizer verify: duplicate block label"))
+          (opt-verify-error-ok?
+            (opt-verify-function (opt-ssa-duplicate-label-function))
+            "optimizer verify: duplicate block label"))
         21]
       [(not
-        (opt-verify-error-ok?
-          (opt-verify-function
-            (opt-ssa-unknown-successor-function))
-          "optimizer verify: unknown successor label"))
+          (opt-verify-error-ok?
+            (opt-verify-function (opt-ssa-unknown-successor-function))
+            "optimizer verify: unknown successor label"))
         22]
       [(not
-        (opt-verify-error-ok?
-          (opt-verify-function
-            (opt-ssa-bad-phi-function))
-          "optimizer verify: phi predecessor mismatch"))
+          (opt-verify-error-ok?
+            (opt-verify-function (opt-ssa-bad-phi-function))
+            "optimizer verify: phi predecessor mismatch"))
         23]
       [(not
-        (opt-verify-error-ok?
-          (opt-verify-function
-            (opt-ssa-duplicate-def-function))
-          "optimizer verify: duplicate var definition"))
+          (opt-verify-error-ok?
+            (opt-verify-function (opt-ssa-duplicate-def-function))
+            "optimizer verify: duplicate var definition"))
         24]
       [(not
-        (opt-verify-error-ok?
-          (opt-verify-function
-            (opt-ssa-use-before-def-function))
-          "optimizer verify: use before definition"))
+          (opt-verify-error-ok?
+            (opt-verify-function (opt-ssa-use-before-def-function))
+            "optimizer verify: use before definition"))
         25]
       [(not
-        (opt-verify-error-ok?
-          (opt-verify-function
-            (opt-ssa-dominance-fail-function))
-          "optimizer verify: use is not dominated by definition"))
+          (opt-verify-error-ok?
+            (opt-verify-function (opt-ssa-dominance-fail-function))
+            "optimizer verify: use is not dominated by definition"))
         26]
       [(not
-        (=
-          (opt-cfg-index-rpo-num
-            loop-index
-            (opt-cfg-index-rpo-id
+          (=
+            (opt-cfg-index-rpo-num
               loop-index
-              0))
-          0))
+              (opt-cfg-index-rpo-id loop-index 0))
+            0))
         27]
+      [(not (opt-cfg-dominators-match-legacy? diamond-blocks)) 28]
+      [(not (opt-cfg-dominators-match-legacy? loop-blocks)) 29]
+      [(not (opt-cfg-dominators-match-legacy? (opt-ssa-unreachable-blocks))) 30]
       [(not
-        (opt-cfg-dominators-match-legacy?
-          diamond-blocks))
-        28]
-      [(not
-        (opt-cfg-dominators-match-legacy?
-          loop-blocks))
-        29]
-      [(not
-        (opt-cfg-dominators-match-legacy?
-          (opt-ssa-unreachable-blocks)))
-        30]
-      [(not
-        (opt-cfg-dominators-match-legacy?
-          (opt-natural-loop-irreducible-blocks)))
+          (opt-cfg-dominators-match-legacy?
+            (opt-natural-loop-irreducible-blocks)))
         31]
+      [(not (opt-cfg-dominators-match-bitset? diamond-blocks)) 32]
+      [(not (opt-cfg-dominators-match-bitset? loop-blocks)) 33]
+      [(not (opt-cfg-dominators-match-bitset? (opt-ssa-unreachable-blocks))) 34]
       [(not
-        (opt-cfg-dominators-match-bitset?
-          diamond-blocks))
-        32]
-      [(not
-        (opt-cfg-dominators-match-bitset?
-          loop-blocks))
-        33]
-      [(not
-        (opt-cfg-dominators-match-bitset?
-          (opt-ssa-unreachable-blocks)))
-        34]
-      [(not
-        (opt-cfg-dominators-match-bitset?
-          (opt-natural-loop-irreducible-blocks)))
+          (opt-cfg-dominators-match-bitset?
+            (opt-natural-loop-irreducible-blocks)))
         35]
-      [(not
-        (opt-verify-ok?
-          (opt-verify-function
-            constructed-diamond)))
-        36]
-      [(not
-        (=
-          (opt-count-phi-blocks
-            constructed-diamond-blocks)
-          1))
-        37]
-      [(not
-        (=
-          (opt-count-mov-dst-blocks
-            constructed-diamond-blocks
-            1)
-          0))
-        38]
-      [(not
-        (opt-verify-ok?
-          (opt-verify-function
-            constructed-loop)))
-        39]
-      [(not
-        (=
-          (opt-count-phi-blocks
-            constructed-loop-blocks)
-          1))
-        40]
-      [(not
-        (=
-          (opt-count-mov-dst-blocks
-            constructed-loop-blocks
-            1)
-          0))
-        41]
-      [(not
-        (opt-verify-ok?
-          (opt-verify-function
-            constructed-param)))
-        46]
-      [(not
-        (=
-          (opt-count-phi-blocks
-            constructed-param-blocks)
-          1))
-        47]
-      [(not
-        (=
-          (opt-count-mov-dst-blocks
-            constructed-param-blocks
-            0)
-          0))
-        48]
-      [(not
-        (opt-function-eq
-          address-taken
-          address-taken-out))
-        49]
-      [(not
-        (opt-function-eq
-          existing-phi
-          existing-phi-out))
-        50]
-      [(not
-        (opt-verify-ok?
-          (opt-verify-function
-            pipeline-loop)))
-        51]
-      [(not
-        (=
-          (opt-count-mov-dst-blocks
-            pipeline-loop-blocks
-            1)
-          0))
-        52]
-      [(not
-        (opt-function-eq
-          entry-backedge
-          entry-backedge-out))
-        53]
+      [(not (opt-verify-ok? (opt-verify-function constructed-diamond))) 36]
+      [(not (= (opt-count-phi-blocks constructed-diamond-blocks) 1)) 37]
+      [(not (= (opt-count-mov-dst-blocks constructed-diamond-blocks 1) 0)) 38]
+      [(not (opt-verify-ok? (opt-verify-function constructed-loop))) 39]
+      [(not (= (opt-count-phi-blocks constructed-loop-blocks) 1)) 40]
+      [(not (= (opt-count-mov-dst-blocks constructed-loop-blocks 1) 0)) 41]
+      [(not (opt-verify-ok? (opt-verify-function constructed-param))) 46]
+      [(not (= (opt-count-phi-blocks constructed-param-blocks) 1)) 47]
+      [(not (= (opt-count-mov-dst-blocks constructed-param-blocks 0) 0)) 48]
+      [(not (opt-function-eq address-taken address-taken-out)) 49]
+      [(not (opt-function-eq existing-phi existing-phi-out)) 50]
+      [(not (opt-verify-ok? (opt-verify-function pipeline-loop))) 51]
+      [(not (= (opt-count-mov-dst-blocks pipeline-loop-blocks 1) 0)) 52]
+      [(not (opt-function-eq entry-backedge entry-backedge-out)) 53]
       [else 42])))
 
 (define (compiler-optimize-cfg-self-test) : i64
@@ -31267,16 +30459,11 @@
     [again-program : CompilerIrProgram
       (optimize-program-with-level optimized-program 3)]
     (cond
-      [(not (= (compiler-ir-instr-list-count once-instrs) 4))
-        1]
-      [(not (= (opt-count-arith-instrs once-instrs) 3))
-        2]
-      [(not (= (compiler-ir-instr-list-count fixed-instrs) 3))
-        3]
-      [(not (= (opt-count-arith-instrs fixed-instrs) 2))
-        4]
-      [(not (opt-program-eq optimized-program again-program))
-        5]
+      [(not (= (compiler-ir-instr-list-count once-instrs) 4)) 1]
+      [(not (= (opt-count-arith-instrs once-instrs) 3)) 2]
+      [(not (= (compiler-ir-instr-list-count fixed-instrs) 3)) 3]
+      [(not (= (opt-count-arith-instrs fixed-instrs) 2)) 4]
+      [(not (opt-program-eq optimized-program again-program)) 5]
       [else 42])))
 
 ;; --- noalias / alias fact model (#1510) -------------------------------------
@@ -31330,12 +30517,9 @@
 
 (define (opt-alias-kind-decode [value : i64]) : OptAliasKind
   (cond
-    [(>= value 0)
-      (OptAliasDerived value)]
-    [(= value -1)
-      (OptAliasUnique)]
-    [(= value -2)
-      (OptAliasMayAlias)]
+    [(>= value 0) (OptAliasDerived value)]
+    [(= value -1) (OptAliasUnique)]
+    [(= value -2) (OptAliasMayAlias)]
     [else (OptAliasInvalidated)]))
 
 (defenum OptMaybeAliasKind
@@ -32217,34 +31401,14 @@
     [return-blocked : OptScratchScopeReport
       (opt-scratch-scope-report-instrs (opt-scratch-returned-instrs))]
     (cond
-      [(not (opt-scratch-report-candidate? positive 1 32))
-        1]
-      [(not loop-positive)
-        2]
-      [(not (opt-scratch-report-blocked? call-blocked 1 32 "call"))
-        3]
-      [(not
-        (opt-scratch-report-blocked? extern-blocked 1 32 "extern_call"))
-        4]
-      [(not
-        (opt-scratch-report-blocked? raw-blocked 1 32 "raw_pointer"))
-        5]
-      [(not
-        (opt-scratch-report-blocked? store-blocked 1 32 "store_outer"))
-        6]
-      [(not
-        (opt-scratch-report-blocked?
-          arena-blocked
-          1
-          32
-          "arena_helper"))
-        7]
-      [(not
-        (opt-scratch-report-blocked?
-          return-blocked
-          1
-          32
-          "return_escape"))
+      [(not (opt-scratch-report-candidate? positive 1 32)) 1]
+      [(not loop-positive) 2]
+      [(not (opt-scratch-report-blocked? call-blocked 1 32 "call")) 3]
+      [(not (opt-scratch-report-blocked? extern-blocked 1 32 "extern_call")) 4]
+      [(not (opt-scratch-report-blocked? raw-blocked 1 32 "raw_pointer")) 5]
+      [(not (opt-scratch-report-blocked? store-blocked 1 32 "store_outer")) 6]
+      [(not (opt-scratch-report-blocked? arena-blocked 1 32 "arena_helper")) 7]
+      [(not (opt-scratch-report-blocked? return-blocked 1 32 "return_escape"))
         8]
       [else 42])))
 
@@ -32824,59 +31988,24 @@
     [invalidated : OptAliasFacts
       (opt-alias-mark-invalidated (opt-alias-mark-unique (opt-alias-empty) 0) 0)]
     (cond
-      [(not (opt-alias-contains? unique 0 (OptAliasUnique)))
-        1]
-      [(not (opt-alias-contains? unique 1 (OptAliasDerived 0)))
-        2]
-      [(not (opt-alias-absent? unique 2))
-        3]
-      [(not (= (opt-alias-facts-len unique) 2))
-        4]
-      [(not (opt-alias-contains? transitive 2 (OptAliasDerived 0)))
-        5]
-      [(not (opt-alias-contains? loaded 0 (OptAliasUnique)))
-        6]
-      [(not (opt-alias-contains? loaded 1 (OptAliasMayAlias)))
-        7]
-      [(not (= (opt-alias-facts-len stored) 0))
-        8]
-      [(not
-        (opt-alias-instr-clears-all? (opt-alias-sample-store)))
-        9]
-      [(not (= (opt-alias-facts-len called) 0))
-        10]
-      [(not
-        (opt-alias-instr-clears-all?
-          (opt-alias-sample-tail-call)))
-        11]
-      [(not
-        (opt-alias-contains? copied 1 (OptAliasUnique)))
-        12]
-      [(not
-        (opt-alias-contains? copied 2 (OptAliasMayAlias)))
-        13]
-      [(not (= (opt-alias-facts-len joined) 1))
-        14]
-      [(not
-        (opt-alias-contains?
-          joined
-          0
-          (OptAliasUnique)))
-        15]
-      [(opt-alias-contains?
-        joined
-        1
-        (OptAliasDerived 0))
-        16]
-      [(opt-alias-instr-clears-all?
-        (opt-alias-sample-binop))
-        17]
-      [(not
-        (opt-alias-contains?
-          invalidated
-          0
-          (OptAliasInvalidated)))
-        18]
+      [(not (opt-alias-contains? unique 0 (OptAliasUnique))) 1]
+      [(not (opt-alias-contains? unique 1 (OptAliasDerived 0))) 2]
+      [(not (opt-alias-absent? unique 2)) 3]
+      [(not (= (opt-alias-facts-len unique) 2)) 4]
+      [(not (opt-alias-contains? transitive 2 (OptAliasDerived 0))) 5]
+      [(not (opt-alias-contains? loaded 0 (OptAliasUnique))) 6]
+      [(not (opt-alias-contains? loaded 1 (OptAliasMayAlias))) 7]
+      [(not (= (opt-alias-facts-len stored) 0)) 8]
+      [(not (opt-alias-instr-clears-all? (opt-alias-sample-store))) 9]
+      [(not (= (opt-alias-facts-len called) 0)) 10]
+      [(not (opt-alias-instr-clears-all? (opt-alias-sample-tail-call))) 11]
+      [(not (opt-alias-contains? copied 1 (OptAliasUnique))) 12]
+      [(not (opt-alias-contains? copied 2 (OptAliasMayAlias))) 13]
+      [(not (= (opt-alias-facts-len joined) 1)) 14]
+      [(not (opt-alias-contains? joined 0 (OptAliasUnique))) 15]
+      [(opt-alias-contains? joined 1 (OptAliasDerived 0)) 16]
+      [(opt-alias-instr-clears-all? (opt-alias-sample-binop)) 17]
+      [(not (opt-alias-contains? invalidated 0 (OptAliasInvalidated))) 18]
       [else 42])))
 
 (define (opt-load-cse-run [instrs : CompilerIrInstrList]) : CompilerIrInstrList
@@ -33023,54 +32152,22 @@
       (match pipeline
         [(IrBlock _ instrs) (compiler-ir-instr-seq-to-list instrs)])]
     (cond
-      [(not (= (opt-count-load-instrs positive) 1))
-        1]
-      [(not (= (opt-count-mov-dst-instrs positive 3) 1))
-        2]
-      [(not store)
-        3]
-      [(not global-store)
-        4]
-      [(not vector-store)
-        5]
-      [(not pred-store)
-        6]
-      [(not direct-call)
-        7]
-      [(not indirect-call)
-        8]
-      [(not tail-call)
-        9]
-      [(not syscall)
-        10]
-      [(not (= (opt-count-load-instrs address-redef) 2))
-        11]
-      [(not
-        (= (opt-count-mov-dst-instrs address-redef 3) 0))
-        12]
-      [(not (= (opt-count-load-instrs result-redef) 2))
-        13]
-      [(not
-        (= (opt-count-mov-dst-instrs result-redef 3) 0))
-        14]
-      [(not
-        (= (opt-count-load-instrs type-mismatch) 2))
-        15]
-      [(not
-        (=
-          (opt-count-load-instrs different-address)
-          2))
-        16]
-      [(not
-        (=
-          (opt-count-load-instrs pipeline-instrs)
-          1))
-        17]
-      [(not
-        (=
-          (opt-count-mov-dst-instrs
-            pipeline-instrs
-            3)
-          1))
-        18]
+      [(not (= (opt-count-load-instrs positive) 1)) 1]
+      [(not (= (opt-count-mov-dst-instrs positive 3) 1)) 2]
+      [(not store) 3]
+      [(not global-store) 4]
+      [(not vector-store) 5]
+      [(not pred-store) 6]
+      [(not direct-call) 7]
+      [(not indirect-call) 8]
+      [(not tail-call) 9]
+      [(not syscall) 10]
+      [(not (= (opt-count-load-instrs address-redef) 2)) 11]
+      [(not (= (opt-count-mov-dst-instrs address-redef 3) 0)) 12]
+      [(not (= (opt-count-load-instrs result-redef) 2)) 13]
+      [(not (= (opt-count-mov-dst-instrs result-redef 3) 0)) 14]
+      [(not (= (opt-count-load-instrs type-mismatch) 2)) 15]
+      [(not (= (opt-count-load-instrs different-address) 2)) 16]
+      [(not (= (opt-count-load-instrs pipeline-instrs) 1)) 17]
+      [(not (= (opt-count-mov-dst-instrs pipeline-instrs 3) 1)) 18]
       [else 42])))

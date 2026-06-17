@@ -1885,7 +1885,8 @@
         [raw-text : String (intern-str raw-name)]
         (cond
           [(lower-string-set-contains? shadowed raw-text) (ErrTcString "")]
-          [(tc-hygiene-global-name? raw-text) (OkTcString (tc-hygiene-global-call-name raw-text))]
+          [(tc-hygiene-global-name? raw-text)
+            (OkTcString (tc-hygiene-global-call-name raw-text))]
           [(tc-name-qualified? raw-text) (OkTcString raw-text)]
           [else (tc-source-name-lookup-key ctx type-env raw-text)]))]
     [_ (ErrTcString "")]))
@@ -5563,11 +5564,7 @@
             ty)])]))
 
 (define (lower-copy-chunk-size [remaining : i64]) : i64
-  (cond
-    [(>= remaining 8) 8]
-    [(>= remaining 4) 4]
-    [(>= remaining 2) 2]
-    [else 1]))
+  (cond [(>= remaining 8) 8] [(>= remaining 4) 4] [(>= remaining 2) 2] [else 1]))
 
 (define (lower-copy-chunk-type [chunk : i64]) : AstType
   (cond
@@ -5671,25 +5668,26 @@
     [(> size lower-inline-copy-threshold)
       (lower-emit-memcpy state dst dst-offset src src-offset size)]
     [(>= size 16)
-        (match (lower-offset-addr state dst dst-offset)
-          [(LowerExpr dst-state dst-addr _)
-            (match (lower-offset-addr dst-state src src-offset)
-              [(LowerExpr src-state src-addr _)
-                (lower-state-emit
-                  src-state
-                  (IrInstrCopyBytes dst-addr src-addr size))])])]
-    [else (let
-          [chunk : i64 (lower-copy-chunk-size size)]
-          [chunk-ty : AstType (lower-copy-chunk-type chunk)]
-          (match (lower-load-at-offset state src src-offset chunk-ty)
-            [(LowerExpr loaded value _)
-              (lower-copy-bytes
-                (lower-store-at-offset loaded dst dst-offset value chunk-ty)
-                dst
-                (+ dst-offset chunk)
-                src
-                (+ src-offset chunk)
-                (- size chunk))]))]))
+      (match (lower-offset-addr state dst dst-offset)
+        [(LowerExpr dst-state dst-addr _)
+          (match (lower-offset-addr dst-state src src-offset)
+            [(LowerExpr src-state src-addr _)
+              (lower-state-emit
+                src-state
+                (IrInstrCopyBytes dst-addr src-addr size))])])]
+    [else
+      (let
+        [chunk : i64 (lower-copy-chunk-size size)]
+        [chunk-ty : AstType (lower-copy-chunk-type chunk)]
+        (match (lower-load-at-offset state src src-offset chunk-ty)
+          [(LowerExpr loaded value _)
+            (lower-copy-bytes
+              (lower-store-at-offset loaded dst dst-offset value chunk-ty)
+              dst
+              (+ dst-offset chunk)
+              src
+              (+ src-offset chunk)
+              (- size chunk))]))]))
 
 ;; A value is stored FULL-INLINE (its own bytes, addressed by a pointer) only
 ;; when it is a struct or enum (incl. their generic …Args forms). Tuples,
@@ -6508,11 +6506,11 @@
   ;; genuine memory aggregate keeps the pointer-return shape.
   (cond
     [(and
-    (lower-mode-inline-aggregates? mode)
-    (lower-type-inline-struct-or-enum? ctx ty)
-    (not (lower-type-register-resident? ctx ty)))
-    (match (lower-gep-byte state base offset)
-      [(LowerExpr ptr-state ptr _) (LowerExpr ptr-state ptr ty)])]
+        (lower-mode-inline-aggregates? mode)
+        (lower-type-inline-struct-or-enum? ctx ty)
+        (not (lower-type-register-resident? ctx ty)))
+      (match (lower-gep-byte state base offset)
+        [(LowerExpr ptr-state ptr _) (LowerExpr ptr-state ptr ty)])]
     [(lower-type-register-group? ctx ty)
       (match (lower-load-at-offset
         state
@@ -6531,12 +6529,12 @@
                 (IrValueCons w0 (box (IrValueCons w1 (box IrValueNil))))
                 ty)])])]
     [(lower-type-register-resident? ctx ty)
-        (match (lower-load-at-offset
-          state
-          base
-          offset
-          (lower-register-word-type ctx ty 0))
-          [(LowerExpr load-state loaded _) (LowerExpr load-state loaded ty)])]
+      (match (lower-load-at-offset
+        state
+        base
+        offset
+        (lower-register-word-type ctx ty 0))
+        [(LowerExpr load-state loaded _) (LowerExpr load-state loaded ty)])]
     [else (lower-load-at-offset state base offset ty)]))
 
 (define (lower-copy-bytes-compact
@@ -6692,7 +6690,8 @@
   (cond
     [(tc-never-type? from-ty) (LowerExpr state value from-ty)]
     [(tc-type-eq from-ty to-ty) (LowerExpr state value to-ty)]
-    [(tc-type-compatible? to-ty from-ty) (lower-cast-value state value from-ty to-ty)]
+    [(tc-type-compatible? to-ty from-ty)
+      (lower-cast-value state value from-ty to-ty)]
     [else (LowerExpr state value to-ty)]))
 
 (define (lower-oob-abort [state : LowerState]) : LowerState
@@ -10120,7 +10119,8 @@
     [(string-eq name (lower-spmd-reduce-acc-name)) (lower-spmd-reduce-acc-id)]
     [(string-eq name (lower-spmd-reduce-end-name)) (lower-spmd-reduce-end-id)]
     [(string-eq name (lower-spmd-reduce-val-name)) (lower-spmd-reduce-val-id)]
-    [(string-eq name (lower-spmd-reduce-current-name)) (lower-spmd-reduce-current-id)]
+    [(string-eq name (lower-spmd-reduce-current-name))
+      (lower-spmd-reduce-current-id)]
     [else (intern name)]))
 
 (define (lower-refresh-marker-ids!) : unit
@@ -10816,7 +10816,8 @@
 (define (lower-arena-builtin-symbol-id [name-id : i64]) : String
   (cond
     [(compiler-builtin-lower-arena-make-id? name-id) "tl_arena_make"]
-    [(compiler-builtin-lower-arena-make-atomic-id? name-id) "tl_arena_make_atomic"]
+    [(compiler-builtin-lower-arena-make-atomic-id? name-id)
+      "tl_arena_make_atomic"]
     [(compiler-builtin-lower-arena-current-id? name-id) "tl_arena_current"]
     [(compiler-builtin-lower-arena-mark-id? name-id) "tl_region_mark"]
     [(compiler-builtin-lower-arena-set-id? name-id) "tl_arena_set"]
@@ -12858,29 +12859,28 @@
             (if (lower-builtin-call-available? ctx env name-text)
               (cond
                 [(compiler-builtin-lower-array-length-id? name)
-                (OkTcType (AstTyI64))]
+                  (OkTcType (AstTyI64))]
                 [(compiler-builtin-lower-string-ref-call-id? name)
                   (OkTcType (AstTyChar))]
                 [(compiler-builtin-lower-clone-id? name)
-                    (match args
-                      [(AstExprCons arg tail)
-                        (let
-                          [arg : AstExpr (ast-node-get arg)]
-                          [tail : AstExprList (box-get tail)]
-                          (match tail
-                            [(AstExprNil)
-                              (lower-expr-result-type-fast
-                                ctx
-                                env
-                                type-env
-                                type-cache
-                                arg)]
-                            [_
-                              (ErrTcType
-                                "lower: call result type is not fast-pathable")]))]
-                      [_
-                        (ErrTcType
-                          "lower: call result type is not fast-pathable")])]
+                  (match args
+                    [(AstExprCons arg tail)
+                      (let
+                        [arg : AstExpr (ast-node-get arg)]
+                        [tail : AstExprList (box-get tail)]
+                        (match tail
+                          [(AstExprNil)
+                            (lower-expr-result-type-fast
+                              ctx
+                              env
+                              type-env
+                              type-cache
+                              arg)]
+                          [_
+                            (ErrTcType
+                              "lower: call result type is not fast-pathable")]))]
+                    [_
+                      (ErrTcType "lower: call result type is not fast-pathable")])]
                 [else (ErrTcType message)])
               (ErrTcType message))]))]
     [(AstExprLambda params maybe-ret body-box)
@@ -14687,16 +14687,16 @@
                 ;; pointer. This mirrors `lower-load-inline-value-at-offset`.
                 (cond
                   [(and
-                  (not (lower-type-register-resident? ctx field-ty))
-                  (or
-                    (and
-                      (lower-struct-repr-c? ctx struct-name)
-                      (lower-repr-c-inline-field? ctx field-ty))
-                    (and
-                      (lower-mode-inline-aggregates?
-                        (lower-state-mode ptr-state))
-                      (lower-type-inline-struct-or-enum? ctx field-ty))))
-                  (OkLowerExpr (LowerExpr ptr-state ptr result-ty))]
+                      (not (lower-type-register-resident? ctx field-ty))
+                      (or
+                        (and
+                          (lower-struct-repr-c? ctx struct-name)
+                          (lower-repr-c-inline-field? ctx field-ty))
+                        (and
+                          (lower-mode-inline-aggregates?
+                            (lower-state-mode ptr-state))
+                          (lower-type-inline-struct-or-enum? ctx field-ty))))
+                    (OkLowerExpr (LowerExpr ptr-state ptr result-ty))]
                   [(lower-type-register-group? ctx field-ty)
                     (match (lower-load-group-from-ptr
                       ctx
@@ -14706,27 +14706,28 @@
                       [(LowerExpr g-state g-value _)
                         (OkLowerExpr (LowerExpr g-state g-value result-ty))])]
                   [(lower-type-register-resident? ctx field-ty)
-                      (match (lower-state-alloc-var ptr-state)
-                        [(LowerAlloc allocated var-id)
-                          (OkLowerExpr
-                            (LowerExpr
-                              (lower-state-emit
-                                allocated
-                                (IrInstrLoad
-                                  var-id
-                                  ptr
-                                  (lower-register-word-type ctx field-ty 0)))
-                              (IrValueVar var-id)
-                              result-ty))])]
-                  [else (match (lower-state-alloc-var ptr-state)
-                        [(LowerAlloc allocated var-id)
-                          (OkLowerExpr
-                            (LowerExpr
-                              (lower-state-emit
-                                allocated
-                                (IrInstrLoad var-id ptr field-ty))
-                              (IrValueVar var-id)
-                              result-ty))])])]))])]
+                    (match (lower-state-alloc-var ptr-state)
+                      [(LowerAlloc allocated var-id)
+                        (OkLowerExpr
+                          (LowerExpr
+                            (lower-state-emit
+                              allocated
+                              (IrInstrLoad
+                                var-id
+                                ptr
+                                (lower-register-word-type ctx field-ty 0)))
+                            (IrValueVar var-id)
+                            result-ty))])]
+                  [else
+                    (match (lower-state-alloc-var ptr-state)
+                      [(LowerAlloc allocated var-id)
+                        (OkLowerExpr
+                          (LowerExpr
+                            (lower-state-emit
+                              allocated
+                              (IrInstrLoad var-id ptr field-ty))
+                            (IrValueVar var-id)
+                            result-ty))])])]))])]
     [(ErrLowerFieldInfo message) (ErrLowerExpr message)]))
 
 (define (lower-struct-get-through-reference
@@ -15873,42 +15874,41 @@
     [(and
         (lower-c-abi-register-aggregate-size? mode size)
         (lower-c-abi-register-aggregate-fields-ok? ctx mode fields))
-        (LowerCAbiIntegerAggregate (lower-c-abi-integer-scalar-type size) size)]
-    [else (match (lower-c-abi-sysv-classify-fields
-          ctx
-          fields
-          0
-          (LowerCAbiSysvSlots
-            (LowerCAbiEightbyteEmpty)
-            (LowerCAbiEightbyteEmpty)))
-          [(LowerCAbiSysvSlots first second)
-            (match first
-              [(LowerCAbiEightbyteUnsupported)
-                (LowerCAbiUnsupportedAggregate
-                  (lower-c-abi-unsupported-message mode resolved))]
-              [_
-                (match second
-                  [(LowerCAbiEightbyteUnsupported)
-                    (LowerCAbiUnsupportedAggregate
-                      (lower-c-abi-unsupported-message mode resolved))]
-                  [_
-                    (if (> size 8)
-                      (LowerCAbiRegisterAggregate
-                        (LowerCAbiSlotCons
-                          (lower-c-abi-sysv-slot-from-class first size 0)
-                          (box
-                            (LowerCAbiSlotCons
-                              (lower-c-abi-sysv-slot-from-class second size 1)
-                              (box (LowerCAbiSlotNil)))))
-                        size)
-                      (LowerCAbiRegisterAggregate
-                        (LowerCAbiSlotCons
-                          (lower-c-abi-sysv-slot-from-class first size 0)
-                          (box (LowerCAbiSlotNil)))
-                        size))])])]
-          [(LowerCAbiSysvSlotsUnsupported)
-            (LowerCAbiUnsupportedAggregate
-              (lower-c-abi-unsupported-message mode resolved))])]))
+      (LowerCAbiIntegerAggregate (lower-c-abi-integer-scalar-type size) size)]
+    [else
+      (match (lower-c-abi-sysv-classify-fields
+        ctx
+        fields
+        0
+        (LowerCAbiSysvSlots (LowerCAbiEightbyteEmpty) (LowerCAbiEightbyteEmpty)))
+        [(LowerCAbiSysvSlots first second)
+          (match first
+            [(LowerCAbiEightbyteUnsupported)
+              (LowerCAbiUnsupportedAggregate
+                (lower-c-abi-unsupported-message mode resolved))]
+            [_
+              (match second
+                [(LowerCAbiEightbyteUnsupported)
+                  (LowerCAbiUnsupportedAggregate
+                    (lower-c-abi-unsupported-message mode resolved))]
+                [_
+                  (if (> size 8)
+                    (LowerCAbiRegisterAggregate
+                      (LowerCAbiSlotCons
+                        (lower-c-abi-sysv-slot-from-class first size 0)
+                        (box
+                          (LowerCAbiSlotCons
+                            (lower-c-abi-sysv-slot-from-class second size 1)
+                            (box (LowerCAbiSlotNil)))))
+                      size)
+                    (LowerCAbiRegisterAggregate
+                      (LowerCAbiSlotCons
+                        (lower-c-abi-sysv-slot-from-class first size 0)
+                        (box (LowerCAbiSlotNil)))
+                      size))])])]
+        [(LowerCAbiSysvSlotsUnsupported)
+          (LowerCAbiUnsupportedAggregate
+            (lower-c-abi-unsupported-message mode resolved))])]))
 
 (define (lower-c-abi-win64-aggregate-class
   [mode : CompilerLowerMode]
@@ -15920,14 +15920,12 @@
   (cond
     [(and (lower-c-abi-register-aggregate-size? mode size) register-ok?)
       (LowerCAbiIntegerAggregate (lower-c-abi-integer-scalar-type size) size)]
-    [(and allow-sret? (> size 8))
-      (LowerCAbiSretAggregate size)]
-    [(and
-        allow-byref?
-        (not (lower-c-abi-register-aggregate-size? mode size)))
+    [(and allow-sret? (> size 8)) (LowerCAbiSretAggregate size)]
+    [(and allow-byref? (not (lower-c-abi-register-aggregate-size? mode size)))
       (LowerCAbiByRefAggregate size)]
-    [else (LowerCAbiUnsupportedAggregate
-          (lower-c-abi-unsupported-message mode resolved))]))
+    [else
+      (LowerCAbiUnsupportedAggregate
+        (lower-c-abi-unsupported-message mode resolved))]))
 
 (define (lower-c-abi-aggregate-class-from-layout
   [ctx : TcContext]
@@ -18490,117 +18488,104 @@
                       [(and
                           builtin-available
                           (compiler-builtin-lower-string-ref-call-id? name-id))
-                          (lower-string-ref-call
-                            ctx
-                            state
-                            env
-                            type-env
-                            name
-                            args
-                            result-ty
-                            origin)]
+                        (lower-string-ref-call
+                          ctx
+                          state
+                          env
+                          type-env
+                          name
+                          args
+                          result-ty
+                          origin)]
                       [(and
-                            builtin-available
-                            (compiler-builtin-lower-length-call-id? name-id))
-                            (lower-array-length
-                              ctx
-                              state
-                              env
-                              type-env
-                              name
-                              args
-                              result-ty
-                              origin)]
+                          builtin-available
+                          (compiler-builtin-lower-length-call-id? name-id))
+                        (lower-array-length
+                          ctx
+                          state
+                          env
+                          type-env
+                          name
+                          args
+                          result-ty
+                          origin)]
                       [(and
-                              builtin-available
-                              (lower-string-runtime-builtin? name))
-                              (lower-string-runtime-call
-                                ctx
-                                state
-                                env
-                                type-env
-                                name
-                                args
-                                result-ty
-                                origin)]
+                          builtin-available
+                          (lower-string-runtime-builtin? name))
+                        (lower-string-runtime-call
+                          ctx
+                          state
+                          env
+                          type-env
+                          name
+                          args
+                          result-ty
+                          origin)]
                       [(and
-                                builtin-available
-                                (compiler-builtin-lower-cpuid-id? name-id))
-                                (lower-cpuid-call
-                                  ctx
-                                  state
-                                  env
-                                  type-env
-                                  args
-                                  result-ty
-                                  origin)]
+                          builtin-available
+                          (compiler-builtin-lower-cpuid-id? name-id))
+                        (lower-cpuid-call
+                          ctx
+                          state
+                          env
+                          type-env
+                          args
+                          result-ty
+                          origin)]
                       [(and
-                                  builtin-available
-                                  (compiler-builtin-lower-xgetbv-id? name-id))
-                                  (lower-xgetbv-call
-                                    ctx
-                                    state
-                                    env
-                                    type-env
-                                    args
-                                    origin)]
+                          builtin-available
+                          (compiler-builtin-lower-xgetbv-id? name-id))
+                        (lower-xgetbv-call ctx state env type-env args origin)]
                       [(and
-                                    builtin-available
-                                    (compiler-builtin-lower-clone-id? name-id))
-                                    (match args
-                                      [(AstExprCons arg tail)
-                                        (let
-                                          [arg : AstExpr (ast-node-get arg)]
-                                          [tail : AstExprList (box-get tail)]
-                                          (match tail
-                                            [(AstExprNil)
-                                              (lower-clone-call
-                                                ctx
-                                                state
-                                                env
-                                                type-env
-                                                arg)]
-                                            [_
-                                              (ErrLowerExpr
-                                                (lower-diagnostic
-                                                  "lower: clone expects one argument"))]))]
-                                      [_
-                                        (ErrLowerExpr
-                                          (lower-diagnostic
-                                            "lower: clone expects one argument"))])]
+                          builtin-available
+                          (compiler-builtin-lower-clone-id? name-id))
+                        (match args
+                          [(AstExprCons arg tail)
+                            (let
+                              [arg : AstExpr (ast-node-get arg)]
+                              [tail : AstExprList (box-get tail)]
+                              (match tail
+                                [(AstExprNil)
+                                  (lower-clone-call ctx state env type-env arg)]
+                                [_
+                                  (ErrLowerExpr
+                                    (lower-diagnostic
+                                      "lower: clone expects one argument"))]))]
+                          [_
+                            (ErrLowerExpr
+                              (lower-diagnostic
+                                "lower: clone expects one argument"))])]
+                      [(and builtin-available (lower-arena-builtin-id? name-id))
+                        (lower-arena-builtin-call
+                          ctx
+                          state
+                          env
+                          type-env
+                          name
+                          args
+                          result-ty)]
                       [(and
-                                      builtin-available
-                                      (lower-arena-builtin-id? name-id))
-                                      (lower-arena-builtin-call
-                                        ctx
-                                        state
-                                        env
-                                        type-env
-                                        name
-                                        args
-                                        result-ty)]
-                      [(and
-                                        builtin-available
-                                        (lower-bootstrap-runtime-builtin-id?
-                                          name-id))
-                                        (lower-bootstrap-runtime-call
-                                          ctx
-                                          state
-                                          env
-                                          type-env
-                                          name
-                                          args
-                                          result-ty
-                                          origin)]
-                      [else (lower-call-non-builtin
-                                          ctx
-                                          state
-                                          env
-                                          type-env
-                                          name
-                                          args
-                                          result-ty
-                                          origin)]))]
+                          builtin-available
+                          (lower-bootstrap-runtime-builtin-id? name-id))
+                        (lower-bootstrap-runtime-call
+                          ctx
+                          state
+                          env
+                          type-env
+                          name
+                          args
+                          result-ty
+                          origin)]
+                      [else
+                        (lower-call-non-builtin
+                          ctx
+                          state
+                          env
+                          type-env
+                          name
+                          args
+                          result-ty
+                          origin)]))]
                 [(ErrTcString message)
                   (ErrLowerExpr (lower-diagnostic-at-expr origin message))])])))]
     [_
@@ -19904,35 +19889,32 @@
     [(lower-make-array-zero-fill-supported? ctx elem-ty)
       (lower-make-array-zero-fill state buf-value byte-count)]
     [(lower-init-default-share-safe? ctx elem-ty)
-        (match (lower-init-expr ctx state env type-env elem-ty origin elem-ty)
-          [(OkLowerExpr lowered-init)
-            (match lowered-init
-              [(LowerExpr init-state init-value _)
-                (if (lower-make-array-fill8-supported? ctx elem-ty)
-                  (lower-make-array-fill8
-                    init-state
-                    buf-value
-                    len-i64
-                    init-value)
-                  (lower-make-array-store-init-loop-runtime
-                    ctx
-                    init-state
-                    buf-value
-                    len-i64
-                    elem-ty
-                    elem-size
-                    init-value))])]
-          [(ErrLowerExpr message) (ErrLowerState message)])]
-    [else (lower-make-array-init-loop-runtime
-          ctx
-          state
-          env
-          type-env
-          buf-value
-          len-i64
-          elem-ty
-          elem-size
-          origin)]))
+      (match (lower-init-expr ctx state env type-env elem-ty origin elem-ty)
+        [(OkLowerExpr lowered-init)
+          (match lowered-init
+            [(LowerExpr init-state init-value _)
+              (if (lower-make-array-fill8-supported? ctx elem-ty)
+                (lower-make-array-fill8 init-state buf-value len-i64 init-value)
+                (lower-make-array-store-init-loop-runtime
+                  ctx
+                  init-state
+                  buf-value
+                  len-i64
+                  elem-ty
+                  elem-size
+                  init-value))])]
+        [(ErrLowerExpr message) (ErrLowerState message)])]
+    [else
+      (lower-make-array-init-loop-runtime
+        ctx
+        state
+        env
+        type-env
+        buf-value
+        len-i64
+        elem-ty
+        elem-size
+        origin)]))
 
 (define (lower-make-array-init-loop
   [ctx : TcContext]
@@ -27216,53 +27198,54 @@
             [LowerNoMaskedVectorMap
               (cond
                 [(lower-masked-vector-body-has-varying-if?
-                (lower-state-mode state)
-                env
-                type-env
-                index
-                body)
-                (ErrLowerExpr
-                  (lower-diagnostic-at-expr
-                    body
-                    (if (lower-mode-avx2? (lower-state-mode state))
-                      (lower-avx2-masked-if-diagnostic)
-                      "lower: SPMD masked if AVX-512 lowering is not available for this backend mode or branch shape")))]
-                [(and
-                  (lower-mode-avx2? (lower-state-mode state))
-                  (lower-masked-vector-body-has-bool-array-lane?
+                    (lower-state-mode state)
                     env
                     type-env
                     index
-                    body))
+                    body)
+                  (ErrLowerExpr
+                    (lower-diagnostic-at-expr
+                      body
+                      (if (lower-mode-avx2? (lower-state-mode state))
+                        (lower-avx2-masked-if-diagnostic)
+                        "lower: SPMD masked if AVX-512 lowering is not available for this backend mode or branch shape")))]
+                [(and
+                    (lower-mode-avx2? (lower-state-mode state))
+                    (lower-masked-vector-body-has-bool-array-lane?
+                      env
+                      type-env
+                      index
+                      body))
                   (ErrLowerExpr
                     (lower-diagnostic-at-expr
                       body
                       (lower-spmd-bool-lane-diagnostic)))]
                 [(lower-vector-body-has-array-read? body)
-                    (if (lower-simple-vector-map-has-unsupported-byte-mul?
-                      (lower-state-mode state)
-                      env
-                      type-env
-                      index
-                      body)
-                      (ErrLowerExpr
-                        (lower-diagnostic-at-expr
-                          body
-                          (lower-spmd-byte-mul-diagnostic)))
-                      (ErrLowerExpr
-                        (lower-diagnostic-at-expr
-                          body
-                          (lower-simd-foreach-fallback-diagnostic))))]
-                [else (lower-scalar-foreach-lowered
-                      ctx
-                      state
-                      env
-                      type-env
-                      index
-                      index-ty
-                      start-value
-                      end-value
-                      body)])]))])
+                  (if (lower-simple-vector-map-has-unsupported-byte-mul?
+                    (lower-state-mode state)
+                    env
+                    type-env
+                    index
+                    body)
+                    (ErrLowerExpr
+                      (lower-diagnostic-at-expr
+                        body
+                        (lower-spmd-byte-mul-diagnostic)))
+                    (ErrLowerExpr
+                      (lower-diagnostic-at-expr
+                        body
+                        (lower-simd-foreach-fallback-diagnostic))))]
+                [else
+                  (lower-scalar-foreach-lowered
+                    ctx
+                    state
+                    env
+                    type-env
+                    index
+                    index-ty
+                    start-value
+                    end-value
+                    body)])]))])
     (lower-scalar-foreach-lowered
       ctx
       state
@@ -28911,46 +28894,52 @@
     [(AstExprVar name)
       (cond
         [(and
-        (lower-tail-call-var-unshadowed? env name)
-        ;; #2357: only suppress TCO when THIS call actually involves inline
-        ;; aggregates (sret/by-value risk); a broad inline-aggregates-mode guard
-        ;; disabled tail-call optimization for every call (mode is always on),
-        ;; losing TCO entirely (deep self-recursion, smoke shape failure).
-        (not
-          (lower-tail-call-inline-aggregate-risk?
+            (lower-tail-call-var-unshadowed? env name)
+            ;; #2357: only suppress TCO when THIS call actually involves inline
+            ;; aggregates (sret/by-value risk); a broad inline-aggregates-mode guard
+            ;; disabled tail-call optimization for every call (mode is always on),
+            ;; losing TCO entirely (deep self-recursion, smoke shape failure).
+            (not
+              (lower-tail-call-inline-aggregate-risk?
+                ctx
+                state
+                env
+                type-env
+                args
+                ret-ty
+                sret-var))
+            (lower-tail-call-direct-supported?
+              ctx
+              state
+              env
+              type-env
+              name
+              ret-ty))
+          (match (lower-tail-call-args-for-target
             ctx
             state
             env
             type-env
-            args
-            ret-ty
-            sret-var))
-        (lower-tail-call-direct-supported? ctx state env type-env name ret-ty))
-        (match (lower-tail-call-args-for-target
-          ctx
-          state
-          env
-          type-env
-          name
-          args)
-          [(OkLowerArgs args-state values)
-            (match (lower-tail-call-append-current-sret-arg
-              ctx
-              args-state
-              values
-              ret-ty
-              sret-var)
-              [(OkLowerArgs tail-state tail-values)
-                (OkLowerState
-                  (lower-state-emit-at-expr
-                    tail-state
-                    (IrInstrTailCall
-                      (lower-resolve-name tail-state (intern-str name))
-                      (compiler-ir-call-args-from-list tail-values)
-                      (lower-one-word-register-storage-type ctx ret-ty))
-                    origin))]
-              [(ErrLowerArgs message) (ErrLowerState message)])]
-          [(ErrLowerArgs message) (ErrLowerState message)])]
+            name
+            args)
+            [(OkLowerArgs args-state values)
+              (match (lower-tail-call-append-current-sret-arg
+                ctx
+                args-state
+                values
+                ret-ty
+                sret-var)
+                [(OkLowerArgs tail-state tail-values)
+                  (OkLowerState
+                    (lower-state-emit-at-expr
+                      tail-state
+                      (IrInstrTailCall
+                        (lower-resolve-name tail-state (intern-str name))
+                        (compiler-ir-call-args-from-list tail-values)
+                        (lower-one-word-register-storage-type ctx ret-ty))
+                      origin))]
+                [(ErrLowerArgs message) (ErrLowerState message)])]
+            [(ErrLowerArgs message) (ErrLowerState message)])]
         [(lower-tail-call-var-unshadowed? env name)
           (lower-return-expr ctx state env type-env origin ret-ty sret-var)]
         [(lower-tail-call-local-indirect-safe? env type-env name)

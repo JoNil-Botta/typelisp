@@ -73,12 +73,9 @@
 
 (define (package-cache-parse-pin-kind [value : String]) : ResultPackageCachePinKind
   (cond
-    [(string-eq value "rev")
-      (OkPackageCachePinKind (PackageCachePinRev))]
-    [(string-eq value "tag")
-      (OkPackageCachePinKind (PackageCachePinTag))]
-    [(string-eq value "branch")
-      (OkPackageCachePinKind (PackageCachePinBranch))]
+    [(string-eq value "rev") (OkPackageCachePinKind (PackageCachePinRev))]
+    [(string-eq value "tag") (OkPackageCachePinKind (PackageCachePinTag))]
+    [(string-eq value "branch") (OkPackageCachePinKind (PackageCachePinBranch))]
     [else
       (ErrPackageCachePinKind
         (str-cat "package-cache: unsupported remote pin kind '" value "'"))]))
@@ -292,12 +289,9 @@
           [(ErrIoString error)
             (PackageCachePartialOrCorrupt
               entry-path
-              (string-append
-                "metadata read failed: "
-                (io-error-message error)))]
+              (string-append "metadata read failed: " (io-error-message error)))]
           [(OkIoString metadata)
-            (if (not
-              (string-eq metadata (package-cache-metadata-content key)))
+            (if (not (string-eq metadata (package-cache-metadata-content key)))
               (PackageCachePartialOrCorrupt entry-path "metadata mismatch")
               (match (try-read-file (& marker-path))
                 [(ErrIoString error)
@@ -307,9 +301,7 @@
                       "completion marker read failed: "
                       (io-error-message error)))]
                 [(OkIoString marker)
-                  (if (string-eq
-                    marker
-                    (package-cache-complete-marker-content))
+                  (if (string-eq marker (package-cache-complete-marker-content))
                     (PackageCacheCompleteHit entry-path)
                     (PackageCachePartialOrCorrupt
                       entry-path

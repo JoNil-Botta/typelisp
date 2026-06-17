@@ -100,12 +100,9 @@
   (let
     [n : i64 (string-length text)]
     (cond
-      [(< start 0)
-        (tl_oob_abort)]
-      [(< len 0)
-        (tl_oob_abort)]
-      [(> start n)
-        (tl_oob_abort)]
+      [(< start 0) (tl_oob_abort)]
+      [(< len 0) (tl_oob_abort)]
+      [(> start n) (tl_oob_abort)]
       [else
         (let
           [remaining : i64 (- n start)]

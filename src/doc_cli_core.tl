@@ -299,7 +299,8 @@
         [has-manifest
           (ErrDocTestCliConfig
             "doc: cannot combine input paths with --manifest-path")]
-        [else (OkDocTestCliConfig (DocTestCliFileConfig input-paths stdlib-roots))])]))
+        [else
+          (OkDocTestCliConfig (DocTestCliFileConfig input-paths stdlib-roots))])]))
 
 (define (doc-test-parse-options
   [idx : i64]
@@ -347,8 +348,7 @@
           (if (>= (+ idx 1) count)
             (ErrDocTestCliConfig "doc: --batch requires a value")
             (match batch-list
-              [(DocSomeString _)
-                (ErrDocTestCliConfig "doc: duplicate --batch")]
+              [(DocSomeString _) (ErrDocTestCliConfig "doc: duplicate --batch")]
               [(DocNoString)
                 (doc-test-parse-options
                   (+ idx 2)
@@ -370,8 +370,7 @@
               stdlib-roots
               batch-list))]
         [(doc-flag? current)
-          (ErrDocTestCliConfig
-            (string-append "doc: unknown flag " current))]
+          (ErrDocTestCliConfig (string-append "doc: unknown flag " current))]
         [else
           (doc-test-parse-options
             (+ idx 1)
@@ -548,8 +547,7 @@
                 true
                 stdlib-roots)))]
         [(doc-flag? current)
-          (ErrDocDefaultCliConfig
-            (string-append "doc: unknown flag " current))]
+          (ErrDocDefaultCliConfig (string-append "doc: unknown flag " current))]
         [else
           (doc-default-parse-options
             (+ idx 1)

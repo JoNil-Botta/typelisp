@@ -73,15 +73,12 @@
 
 (define (source-tool-backend-mode [command : String] [value : String]) : ResultSourceToolBackendMode
   (cond
-    [(string-eq value "scalar")
-     (OkSourceToolBackendMode (BackendModeScalar))]
-    [(string-eq value "avx2")
-     (OkSourceToolBackendMode (BackendModeAvx2))]
-    [(string-eq value "avx512")
-     (OkSourceToolBackendMode (BackendModeAvx512))]
+    [(string-eq value "scalar") (OkSourceToolBackendMode (BackendModeScalar))]
+    [(string-eq value "avx2") (OkSourceToolBackendMode (BackendModeAvx2))]
+    [(string-eq value "avx512") (OkSourceToolBackendMode (BackendModeAvx512))]
     [else
-     (ErrSourceToolBackendMode
-       (str-cat command ": unknown backend mode " value))]))
+      (ErrSourceToolBackendMode
+        (str-cat command ": unknown backend mode " value))]))
 
 (define (source-tool-opt-level-valid? [value : String]) : bool
   (or (string-eq value "0") (string-eq value "1") (string-eq value "2")))

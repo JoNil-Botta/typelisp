@@ -985,16 +985,16 @@
                           (set! concat-depth (+ concat-depth 1))
                           unit)))]
                   [(= tag (tag-rparen))
-                      (if (> depth 0)
-                        (begin
-                          (if (array-ref loop-stack depth)
-                            (set! loop-depth (- loop-depth 1))
-                            unit)
-                          (if (array-ref concat-stack depth)
-                            (set! concat-depth (- concat-depth 1))
-                            unit)
-                          (set! depth (- depth 1)))
-                        unit)]
+                    (if (> depth 0)
+                      (begin
+                        (if (array-ref loop-stack depth)
+                          (set! loop-depth (- loop-depth 1))
+                          unit)
+                        (if (array-ref concat-stack depth)
+                          (set! concat-depth (- concat-depth 1))
+                          unit)
+                        (set! depth (- depth 1)))
+                      unit)]
                   [else unit]))
               (set! i (+ i 1))))
           findings))]))
@@ -2720,16 +2720,16 @@
     [else-side-effect : bool (lint-side-effect-branch? else-branch)]
     (cond
       [(and
-      then-unit
-      (not else-unit)
-      (or else-return (and cond-not else-side-effect)))
-      (lint-walk-unit-if-guard-branch
-        else-branch
-        tail-return-path
-        threshold
-        (lint-findings-add
-          (lint-unit-if-guard-finding true span)
-          (lint-walk-expr cond threshold acc)))]
+          then-unit
+          (not else-unit)
+          (or else-return (and cond-not else-side-effect)))
+        (lint-walk-unit-if-guard-branch
+          else-branch
+          tail-return-path
+          threshold
+          (lint-findings-add
+            (lint-unit-if-guard-finding true span)
+            (lint-walk-expr cond threshold acc)))]
       [(and else-unit (not then-unit) then-return)
         (lint-walk-unit-if-guard-branch
           then-branch
@@ -2738,47 +2738,46 @@
           (lint-findings-add
             (lint-unit-if-guard-finding false span)
             (lint-walk-expr cond threshold acc)))]
-        [(and tail-return-path (>= return-chain threshold))
-          (lint-walk-return-path-chain
-            (AstExprIf
-              (ast-node-push cond)
-              (ast-node-push then-branch)
-              (ast-node-push else-branch))
+      [(and tail-return-path (>= return-chain threshold))
+        (lint-walk-return-path-chain
+          (AstExprIf
+            (ast-node-push cond)
+            (ast-node-push then-branch)
+            (ast-node-push else-branch))
+          threshold
+          (lint-findings-add
+            (lint-return-path-chain-finding return-chain span)
+            acc))]
+      ;; A maximal else-`if` ladder of length >= threshold is flagged once
+      ;; at its head, carrying the ladder depth; lint-walk-ladder then
+      ;; descends the else-chain (walking each cond/then) without
+      ;; re-emitting. #2579's bracket-`cond` seed support has landed, so the
+      ;; rule is active.
+      [(>= ladder threshold)
+        (lint-walk-ladder
+          (AstExprIf
+            (ast-node-push cond)
+            (ast-node-push then-branch)
+            (ast-node-push else-branch))
+          threshold
+          tail-return-path
+          (lint-findings-add (lint-ladder-finding ladder span) acc))]
+      [else
+        (if tail-return-path
+          (lint-walk-tail-expr
+            else-branch
             threshold
-            (lint-findings-add
-              (lint-return-path-chain-finding return-chain span)
-              acc))]
-          ;; A maximal else-`if` ladder of length >= threshold is flagged once
-          ;; at its head, carrying the ladder depth; lint-walk-ladder then
-          ;; descends the else-chain (walking each cond/then) without
-          ;; re-emitting. #2579's bracket-`cond` seed support has landed, so the
-          ;; rule is active.
-          [(>= ladder threshold)
-            (lint-walk-ladder
-              (AstExprIf
-                (ast-node-push cond)
-                (ast-node-push then-branch)
-                (ast-node-push else-branch))
+            (lint-walk-tail-expr
+              then-branch
               threshold
-              tail-return-path
-              (lint-findings-add
-                (lint-ladder-finding ladder span)
-                acc))]
-            [else (if tail-return-path
-              (lint-walk-tail-expr
-                else-branch
-                threshold
-                (lint-walk-tail-expr
-                  then-branch
-                  threshold
-                  (lint-walk-expr cond threshold acc)))
-              (lint-walk-expr
-                else-branch
-                threshold
-                (lint-walk-expr
-                  then-branch
-                  threshold
-                  (lint-walk-expr cond threshold acc))))])))
+              (lint-walk-expr cond threshold acc)))
+          (lint-walk-expr
+            else-branch
+            threshold
+            (lint-walk-expr
+              then-branch
+              threshold
+              (lint-walk-expr cond threshold acc))))])))
 
 ;;; Walk a list of expressions where only the final expression is in tail
 ;;; position.
@@ -3719,7 +3718,8 @@
                 (struct-get finding rule-id)
                 (lint-rule-nested-if-ladder-id)))
               unit
-              (panic "lint: spanned ladder finding should carry rule id and span")))]
+              (panic
+                "lint: spanned ladder finding should carry rule id and span")))]
         [(LintNoFinding)
           (panic "lint: spanned ladder should produce a finding")])
       (if (=

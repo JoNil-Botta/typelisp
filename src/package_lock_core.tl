@@ -172,12 +172,9 @@
 
 (define (package-lock-parse-pin-kind [value : String]) : ResultPackageLockPinKind
   (cond
-    [(string-eq value "rev")
-      (OkPackageLockPinKind (PackageCachePinRev))]
-    [(string-eq value "tag")
-      (OkPackageLockPinKind (PackageCachePinTag))]
-    [(string-eq value "branch")
-      (OkPackageLockPinKind (PackageCachePinBranch))]
+    [(string-eq value "rev") (OkPackageLockPinKind (PackageCachePinRev))]
+    [(string-eq value "tag") (OkPackageLockPinKind (PackageCachePinTag))]
+    [(string-eq value "branch") (OkPackageLockPinKind (PackageCachePinBranch))]
     [else
       (ErrPackageLockPinKind
         "package-lock: pin kind must be `rev`, `tag`, or `branch`")]))
@@ -252,8 +249,7 @@
           (ErrPackageLockEntry
             "package-lock: dependency alias may only contain ASCII letters, digits, '-' and '_'")]
         [(string-eq url "")
-          (ErrPackageLockEntry
-            "package-lock: dependency url must not be empty")]
+          (ErrPackageLockEntry "package-lock: dependency url must not be empty")]
         [(string-eq commit "")
           (ErrPackageLockEntry
             "package-lock: dependency commit must not be empty")]
@@ -267,24 +263,26 @@
             [(SSym fname)
               (cond
                 [(string-eq fname "alias")
-                (if has-alias
-                  (ErrPackageLockEntry
-                    "package-lock: duplicate dependency field `alias`")
-                  (match (package-lock-field-string-value (box-get ftail) fname)
-                    [(ErrPackageLockString message)
-                      (ErrPackageLockEntry message)]
-                    [(OkPackageLockString value)
-                      (package-lock-entry-fields
-                        (box-get rest)
-                        value
-                        true
-                        url
-                        has-url
-                        pin-kind
-                        pin-value
-                        has-pin
-                        commit
-                        has-commit)]))]
+                  (if has-alias
+                    (ErrPackageLockEntry
+                      "package-lock: duplicate dependency field `alias`")
+                    (match (package-lock-field-string-value
+                      (box-get ftail)
+                      fname)
+                      [(ErrPackageLockString message)
+                        (ErrPackageLockEntry message)]
+                      [(OkPackageLockString value)
+                        (package-lock-entry-fields
+                          (box-get rest)
+                          value
+                          true
+                          url
+                          has-url
+                          pin-kind
+                          pin-value
+                          has-pin
+                          commit
+                          has-commit)]))]
                 [(string-eq fname "url")
                   (if has-url
                     (ErrPackageLockEntry
@@ -307,51 +305,51 @@
                           commit
                           has-commit)]))]
                 [(string-eq fname "pin")
-                    (if has-pin
-                      (ErrPackageLockEntry
-                        "package-lock: duplicate dependency field `pin`")
-                      (match (package-lock-field-pin-value (box-get ftail))
-                        [(ErrPackageLockPin message)
-                          (ErrPackageLockEntry message)]
-                        [(OkPackageLockPin pin)
-                          (package-lock-entry-fields
-                            (box-get rest)
-                            alias
-                            has-alias
-                            url
-                            has-url
-                            (struct-get pin kind)
-                            (struct-get pin value)
-                            true
-                            commit
-                            has-commit)]))]
+                  (if has-pin
+                    (ErrPackageLockEntry
+                      "package-lock: duplicate dependency field `pin`")
+                    (match (package-lock-field-pin-value (box-get ftail))
+                      [(ErrPackageLockPin message)
+                        (ErrPackageLockEntry message)]
+                      [(OkPackageLockPin pin)
+                        (package-lock-entry-fields
+                          (box-get rest)
+                          alias
+                          has-alias
+                          url
+                          has-url
+                          (struct-get pin kind)
+                          (struct-get pin value)
+                          true
+                          commit
+                          has-commit)]))]
                 [(string-eq fname "commit")
-                      (if has-commit
-                        (ErrPackageLockEntry
-                          "package-lock: duplicate dependency field `commit`")
-                        (match (package-lock-field-string-value
-                          (box-get ftail)
-                          fname)
-                          [(ErrPackageLockString message)
-                            (ErrPackageLockEntry message)]
-                          [(OkPackageLockString value)
-                            (package-lock-entry-fields
-                              (box-get rest)
-                              alias
-                              has-alias
-                              url
-                              has-url
-                              pin-kind
-                              pin-value
-                              has-pin
-                              value
-                              true)]))]
+                  (if has-commit
+                    (ErrPackageLockEntry
+                      "package-lock: duplicate dependency field `commit`")
+                    (match (package-lock-field-string-value
+                      (box-get ftail)
+                      fname)
+                      [(ErrPackageLockString message)
+                        (ErrPackageLockEntry message)]
+                      [(OkPackageLockString value)
+                        (package-lock-entry-fields
+                          (box-get rest)
+                          alias
+                          has-alias
+                          url
+                          has-url
+                          pin-kind
+                          pin-value
+                          has-pin
+                          value
+                          true)]))]
                 [else
-                      (ErrPackageLockEntry
-                        (str-cat
-                          "package-lock: unknown dependency field `"
-                          fname
-                          "`"))])]
+                  (ErrPackageLockEntry
+                    (str-cat
+                      "package-lock: unknown dependency field `"
+                      fname
+                      "`"))])]
             [_
               (ErrPackageLockEntry
                 "package-lock: dependency fields must start with a field name")])]
@@ -418,8 +416,7 @@
         [(not has-deps)
           (ErrPackageLockFile
             "package-lock: missing required field `dependencies`")]
-        [else
-          (OkPackageLockFile (PackageLockFile version entries))])]
+        [else (OkPackageLockFile (PackageLockFile version entries))])]
     [(SCons field rest)
       (match (box-get field)
         [(SCons fhead ftail)
@@ -518,8 +515,7 @@
                 (set! out (string-append out (string-append slash "t")))]
               [(= code 13)
                 (set! out (string-append out (string-append slash "r")))]
-              [else
-                (set! out (string-append out (substring text i 1)))]))
+              [else (set! out (string-append out (substring text i 1)))]))
           (set! i (+ i 1))))
       out)))
 

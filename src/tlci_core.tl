@@ -395,8 +395,8 @@
         [(string-eq name "")
           (ErrTlciExport "tlci metadata: export name must not be empty")]
         [(or
-          (tlci-export-kind-eq? kind (TlciExportValue))
-          (tlci-export-kind-eq? kind (TlciExportMacro)))
+            (tlci-export-kind-eq? kind (TlciExportValue))
+            (tlci-export-kind-eq? kind (TlciExportMacro)))
           (cond
             [has-layout
               (ErrTlciExport
@@ -414,8 +414,7 @@
         [(not has-layout)
           (ErrTlciExport "tlci metadata: type exports require `layout`")]
         [(string-eq layout "")
-          (ErrTlciExport
-            "tlci metadata: export layout must not be empty")]
+          (ErrTlciExport "tlci metadata: export layout must not be empty")]
         [else (OkTlciExport (TlciExport kind name "" layout))])]
     [(SCons field rest)
       (match (box-get field)
@@ -425,7 +424,8 @@
               (cond
                 [(string-eq fname "name")
                   (if has-name
-                    (ErrTlciExport "tlci metadata: duplicate export field `name`")
+                    (ErrTlciExport
+                      "tlci metadata: duplicate export field `name`")
                     (match (tlci-field-string-value (box-get ftail) fname)
                       [(ErrTlciString message) (ErrTlciExport message)]
                       [(OkTlciString value)
@@ -472,10 +472,7 @@
                           true)]))]
                 [else
                   (ErrTlciExport
-                    (str-cat
-                      "tlci metadata: unknown export field `"
-                      fname
-                      "`"))])]
+                    (str-cat "tlci metadata: unknown export field `" fname "`"))])]
             [_
               (ErrTlciExport
                 "tlci metadata: export fields must start with a name")])]
@@ -524,15 +521,15 @@
     [(SNil)
       (cond
         [(not has-name)
-          (ErrTlciMetadata "tlci metadata: package missing required field `name`")]
+          (ErrTlciMetadata
+            "tlci metadata: package missing required field `name`")]
         [(not has-version)
           (ErrTlciMetadata
             "tlci metadata: package missing required field `version`")]
         [(string-eq name "")
           (ErrTlciMetadata "tlci metadata: package name must not be empty")]
         [(string-eq version "")
-          (ErrTlciMetadata
-            "tlci metadata: package version must not be empty")]
+          (ErrTlciMetadata "tlci metadata: package version must not be empty")]
         [else
           (OkTlciMetadata
             (TlciMetadata tlci-metadata-version name version TlciExportNil))])]
@@ -598,8 +595,7 @@
         [(not has-package)
           (ErrTlciMetadata "tlci metadata: missing required field `package`")]
         [(not has-exports)
-          (ErrTlciMetadata
-            "tlci metadata: missing required field `exports`")]
+          (ErrTlciMetadata "tlci metadata: missing required field `exports`")]
         [else
           (OkTlciMetadata
             (TlciMetadata version package-name package-version exports))])]
@@ -641,8 +637,7 @@
                           has-exports)]))]
                 [(string-eq fname "exports")
                   (if has-exports
-                    (ErrTlciMetadata
-                      "tlci metadata: duplicate field `exports`")
+                    (ErrTlciMetadata "tlci metadata: duplicate field `exports`")
                     (match (tlci-export-forms (box-get ftail) TlciExportNil)
                       [(ErrTlciExportList message) (ErrTlciMetadata message)]
                       [(OkTlciExportList parsed)
@@ -787,120 +782,112 @@
     [(string-eq (struct-get image compiler-build-hash) "")
       (ErrTlciBytes "tlci: compiler build hash must not be empty")]
     [(not
-      (=
-        (%
-          (array-length (struct-get image fixups))
-          tlci-section-fixup-record-size)
-        0))
+        (=
+          (%
+            (array-length (struct-get image fixups))
+            tlci-section-fixup-record-size)
+          0))
       (ErrTlciBytes "tlci: malformed fixup table length")]
     [(not
-      (=
-        (%
-          (array-length (struct-get image entries))
-          tlci-section-entry-record-size)
-        0))
+        (=
+          (%
+            (array-length (struct-get image entries))
+            tlci-section-entry-record-size)
+          0))
       (ErrTlciBytes "tlci: malformed entry table length")]
     [(not
-      (=
-        (%
-          (array-length (struct-get image symbols))
-          tlci-section-symbol-record-size)
-        0))
+        (=
+          (%
+            (array-length (struct-get image symbols))
+            tlci-section-symbol-record-size)
+          0))
       (ErrTlciBytes "tlci: malformed symbol table length")]
     [else
       (let
-            [compiler-hash-bytes : (Array u8)
-              (tlci-string->bytes (struct-get image compiler-build-hash))]
-            [metadata-text : String
-              (tlci-metadata-emit (struct-get image metadata))]
-            [metadata-bytes : (Array u8) (tlci-string->bytes metadata-text)]
-            [hash-offset : i64 tlci-header-size]
-            [metadata-offset : i64
-              (tlci-align-offset
-                (+ hash-offset (array-length compiler-hash-bytes))
-                8)]
-            [after-metadata : i64
-              (+ metadata-offset (array-length metadata-bytes))]
-            [rodata-len : i64 (array-length (struct-get image rodata))]
-            [code-len : i64 (array-length (struct-get image code))]
-            [fixups-len : i64 (array-length (struct-get image fixups))]
-            [entries-len : i64 (array-length (struct-get image entries))]
-            [symbols-len : i64 (array-length (struct-get image symbols))]
-            [rodata-offset : i64
-              (tlci-section-offset after-metadata rodata-len tlci-page-align)]
-            [after-rodata : i64
-              (tlci-section-end after-metadata rodata-offset rodata-len)]
-            [code-offset : i64
-              (tlci-section-offset after-rodata code-len tlci-page-align)]
-            [after-code : i64
-              (tlci-section-end after-rodata code-offset code-len)]
-            [fixups-offset : i64 (tlci-section-offset after-code fixups-len 8)]
-            [after-fixups : i64
-              (tlci-section-end after-code fixups-offset fixups-len)]
-            [entries-offset : i64
-              (tlci-section-offset after-fixups entries-len 8)]
-            [after-entries : i64
-              (tlci-section-end after-fixups entries-offset entries-len)]
-            [symbols-offset : i64
-              (tlci-section-offset after-entries symbols-len 8)]
-            [file-size : i64
-              (tlci-section-end after-entries symbols-offset symbols-len)]
-            [out : (Array u8) (make-array u8 0)]
+        [compiler-hash-bytes : (Array u8)
+          (tlci-string->bytes (struct-get image compiler-build-hash))]
+        [metadata-text : String
+          (tlci-metadata-emit (struct-get image metadata))]
+        [metadata-bytes : (Array u8) (tlci-string->bytes metadata-text)]
+        [hash-offset : i64 tlci-header-size]
+        [metadata-offset : i64
+          (tlci-align-offset
+            (+ hash-offset (array-length compiler-hash-bytes))
+            8)]
+        [after-metadata : i64 (+ metadata-offset (array-length metadata-bytes))]
+        [rodata-len : i64 (array-length (struct-get image rodata))]
+        [code-len : i64 (array-length (struct-get image code))]
+        [fixups-len : i64 (array-length (struct-get image fixups))]
+        [entries-len : i64 (array-length (struct-get image entries))]
+        [symbols-len : i64 (array-length (struct-get image symbols))]
+        [rodata-offset : i64
+          (tlci-section-offset after-metadata rodata-len tlci-page-align)]
+        [after-rodata : i64
+          (tlci-section-end after-metadata rodata-offset rodata-len)]
+        [code-offset : i64
+          (tlci-section-offset after-rodata code-len tlci-page-align)]
+        [after-code : i64 (tlci-section-end after-rodata code-offset code-len)]
+        [fixups-offset : i64 (tlci-section-offset after-code fixups-len 8)]
+        [after-fixups : i64
+          (tlci-section-end after-code fixups-offset fixups-len)]
+        [entries-offset : i64 (tlci-section-offset after-fixups entries-len 8)]
+        [after-entries : i64
+          (tlci-section-end after-fixups entries-offset entries-len)]
+        [symbols-offset : i64 (tlci-section-offset after-entries symbols-len 8)]
+        [file-size : i64
+          (tlci-section-end after-entries symbols-offset symbols-len)]
+        [out : (Array u8) (make-array u8 0)]
+        (begin
+          (tlci-push-magic! out)
+          (tlci-push-u64! out tlci-format-version)
+          (tlci-push-u64! out (struct-get image host-arch))
+          (tlci-push-u64! out (struct-get image callback-abi-version))
+          (tlci-push-u64! out hash-offset)
+          (tlci-push-u64! out (array-length compiler-hash-bytes))
+          (tlci-push-u64! out 0)
+          (tlci-push-u64! out metadata-offset)
+          (tlci-push-u64! out (array-length metadata-bytes))
+          (tlci-push-u64! out rodata-offset)
+          (tlci-push-u64! out rodata-len)
+          (tlci-push-u64! out code-offset)
+          (tlci-push-u64! out code-len)
+          (tlci-push-u64! out fixups-offset)
+          (tlci-push-u64! out (/ fixups-len tlci-section-fixup-record-size))
+          (tlci-push-u64! out entries-offset)
+          (tlci-push-u64! out (/ entries-len tlci-section-entry-record-size))
+          (tlci-push-u64! out symbols-offset)
+          (tlci-push-u64! out (/ symbols-len tlci-section-symbol-record-size))
+          (tlci-push-u64! out file-size)
+          (tlci-append-bytes! out compiler-hash-bytes)
+          (tlci-pad-to! out metadata-offset)
+          (tlci-append-bytes! out metadata-bytes)
+          (if (> rodata-len 0)
             (begin
-              (tlci-push-magic! out)
-              (tlci-push-u64! out tlci-format-version)
-              (tlci-push-u64! out (struct-get image host-arch))
-              (tlci-push-u64! out (struct-get image callback-abi-version))
-              (tlci-push-u64! out hash-offset)
-              (tlci-push-u64! out (array-length compiler-hash-bytes))
-              (tlci-push-u64! out 0)
-              (tlci-push-u64! out metadata-offset)
-              (tlci-push-u64! out (array-length metadata-bytes))
-              (tlci-push-u64! out rodata-offset)
-              (tlci-push-u64! out rodata-len)
-              (tlci-push-u64! out code-offset)
-              (tlci-push-u64! out code-len)
-              (tlci-push-u64! out fixups-offset)
-              (tlci-push-u64! out (/ fixups-len tlci-section-fixup-record-size))
-              (tlci-push-u64! out entries-offset)
-              (tlci-push-u64!
-                out
-                (/ entries-len tlci-section-entry-record-size))
-              (tlci-push-u64! out symbols-offset)
-              (tlci-push-u64!
-                out
-                (/ symbols-len tlci-section-symbol-record-size))
-              (tlci-push-u64! out file-size)
-              (tlci-append-bytes! out compiler-hash-bytes)
-              (tlci-pad-to! out metadata-offset)
-              (tlci-append-bytes! out metadata-bytes)
-              (if (> rodata-len 0)
-                (begin
-                  (tlci-pad-to! out rodata-offset)
-                  (tlci-append-bytes! out (struct-get image rodata)))
-                unit)
-              (if (> code-len 0)
-                (begin
-                  (tlci-pad-to! out code-offset)
-                  (tlci-append-bytes! out (struct-get image code)))
-                unit)
-              (if (> fixups-len 0)
-                (begin
-                  (tlci-pad-to! out fixups-offset)
-                  (tlci-append-bytes! out (struct-get image fixups)))
-                unit)
-              (if (> entries-len 0)
-                (begin
-                  (tlci-pad-to! out entries-offset)
-                  (tlci-append-bytes! out (struct-get image entries)))
-                unit)
-              (if (> symbols-len 0)
-                (begin
-                  (tlci-pad-to! out symbols-offset)
-                  (tlci-append-bytes! out (struct-get image symbols)))
-                unit)
-              (tlci-set-u64! out tlci-hash-field-offset (tlci-content-hash out))
-              (OkTlciBytes out)))]))
+              (tlci-pad-to! out rodata-offset)
+              (tlci-append-bytes! out (struct-get image rodata)))
+            unit)
+          (if (> code-len 0)
+            (begin
+              (tlci-pad-to! out code-offset)
+              (tlci-append-bytes! out (struct-get image code)))
+            unit)
+          (if (> fixups-len 0)
+            (begin
+              (tlci-pad-to! out fixups-offset)
+              (tlci-append-bytes! out (struct-get image fixups)))
+            unit)
+          (if (> entries-len 0)
+            (begin
+              (tlci-pad-to! out entries-offset)
+              (tlci-append-bytes! out (struct-get image entries)))
+            unit)
+          (if (> symbols-len 0)
+            (begin
+              (tlci-pad-to! out symbols-offset)
+              (tlci-append-bytes! out (struct-get image symbols)))
+            unit)
+          (tlci-set-u64! out tlci-hash-field-offset (tlci-content-hash out))
+          (OkTlciBytes out)))]))
 
 (define (tlci-section-range-ok? [file-size : i64] [offset : i64] [len : i64]) : bool
   (if (= len 0)
@@ -972,219 +959,92 @@
             [(not (= callback-abi tlci-callback-abi-version))
               (ErrTlciImage "tlci: unsupported callback ABI version")]
             [(not (= declared-size actual-size))
-              (ErrTlciImage
-                "tlci: file size field does not match input length")]
-            [(not
-              (tlci-section-range-ok? actual-size hash-offset hash-len))
+              (ErrTlciImage "tlci: file size field does not match input length")]
+            [(not (tlci-section-range-ok? actual-size hash-offset hash-len))
               (tlci-section-error "compiler-build-hash")]
             [(= hash-len 0)
-              (ErrTlciImage
-                "tlci: compiler build hash must not be empty")]
+              (ErrTlciImage "tlci: compiler build hash must not be empty")]
             [(not (= hash-offset tlci-header-size))
-              (ErrTlciImage
-                "tlci: compiler build hash must start after header")]
+              (ErrTlciImage "tlci: compiler build hash must start after header")]
             [(not
-              (tlci-section-range-ok?
-                actual-size
-                metadata-offset
-                metadata-len))
+                (tlci-section-range-ok?
+                  actual-size
+                  metadata-offset
+                  metadata-len))
               (tlci-section-error "metadata")]
             [(= metadata-len 0)
-              (ErrTlciImage
-                "tlci: metadata section must not be empty")]
-            [(not
-              (tlci-section-aligned?
-                metadata-offset
-                metadata-len
-                8))
-              (ErrTlciImage
-                "tlci: metadata section must be 8-byte aligned")]
-            [(not
-              (tlci-section-ordered?
-                hash-end
-                metadata-offset
-                metadata-len))
-              (ErrTlciImage
-                "tlci: metadata section overlaps previous section")]
-            [(not
-              (tlci-section-range-ok?
-                actual-size
-                rodata-offset
-                rodata-len))
+              (ErrTlciImage "tlci: metadata section must not be empty")]
+            [(not (tlci-section-aligned? metadata-offset metadata-len 8))
+              (ErrTlciImage "tlci: metadata section must be 8-byte aligned")]
+            [(not (tlci-section-ordered? hash-end metadata-offset metadata-len))
+              (ErrTlciImage "tlci: metadata section overlaps previous section")]
+            [(not (tlci-section-range-ok? actual-size rodata-offset rodata-len))
               (tlci-section-error "rodata")]
             [(not
-              (tlci-section-aligned?
-                rodata-offset
-                rodata-len
-                tlci-page-align))
-              (ErrTlciImage
-                "tlci: rodata section must be page-aligned")]
-            [(not
-              (tlci-section-ordered?
-                metadata-end
-                rodata-offset
-                rodata-len))
-              (ErrTlciImage
-                "tlci: rodata section overlaps previous section")]
-            [(not
-              (tlci-section-range-ok?
-                actual-size
-                code-offset
-                code-len))
+                (tlci-section-aligned? rodata-offset rodata-len tlci-page-align))
+              (ErrTlciImage "tlci: rodata section must be page-aligned")]
+            [(not (tlci-section-ordered? metadata-end rodata-offset rodata-len))
+              (ErrTlciImage "tlci: rodata section overlaps previous section")]
+            [(not (tlci-section-range-ok? actual-size code-offset code-len))
               (tlci-section-error "code")]
-            [(not
-              (tlci-section-aligned?
-                code-offset
-                code-len
-                tlci-page-align))
-              (ErrTlciImage
-                "tlci: code section must be page-aligned")]
-            [(not
-              (tlci-section-ordered?
-                rodata-end
-                code-offset
-                code-len))
-              (ErrTlciImage
-                "tlci: code section overlaps previous section")]
-            [(not
-              (tlci-section-range-ok?
-                actual-size
-                fixups-offset
-                fixups-len))
+            [(not (tlci-section-aligned? code-offset code-len tlci-page-align))
+              (ErrTlciImage "tlci: code section must be page-aligned")]
+            [(not (tlci-section-ordered? rodata-end code-offset code-len))
+              (ErrTlciImage "tlci: code section overlaps previous section")]
+            [(not (tlci-section-range-ok? actual-size fixups-offset fixups-len))
               (tlci-section-error "fixups")]
+            [(not (tlci-section-aligned? fixups-offset fixups-len 8))
+              (ErrTlciImage "tlci: fixup table must be 8-byte aligned")]
+            [(not (tlci-section-ordered? code-end fixups-offset fixups-len))
+              (ErrTlciImage "tlci: fixup table overlaps previous section")]
             [(not
-              (tlci-section-aligned?
-                fixups-offset
-                fixups-len
-                8))
-              (ErrTlciImage
-                "tlci: fixup table must be 8-byte aligned")]
+                (tlci-section-range-ok? actual-size entries-offset entries-len))
+              (tlci-section-error "entries")]
+            [(not (tlci-section-aligned? entries-offset entries-len 8))
+              (ErrTlciImage "tlci: entry table must be 8-byte aligned")]
+            [(not (tlci-section-ordered? fixups-end entries-offset entries-len))
+              (ErrTlciImage "tlci: entry table overlaps previous section")]
             [(not
-              (tlci-section-ordered?
-                code-end
-                fixups-offset
-                fixups-len))
-              (ErrTlciImage
-                "tlci: fixup table overlaps previous section")]
+                (tlci-section-range-ok? actual-size symbols-offset symbols-len))
+              (tlci-section-error "symbols")]
+            [(not (tlci-section-aligned? symbols-offset symbols-len 8))
+              (ErrTlciImage "tlci: symbol table must be 8-byte aligned")]
             [(not
-              (tlci-section-range-ok?
-                actual-size
-                entries-offset
-                entries-len))
-              (tlci-section-error
-                "entries")]
+                (tlci-section-ordered? entries-end symbols-offset symbols-len))
+              (ErrTlciImage "tlci: symbol table overlaps previous section")]
             [(not
-              (tlci-section-aligned?
-                entries-offset
-                entries-len
-                8))
-              (ErrTlciImage
-                "tlci: entry table must be 8-byte aligned")]
+                (tlci-table-len-ok? fixups-len tlci-section-fixup-record-size))
+              (ErrTlciImage "tlci: malformed fixup table length")]
             [(not
-              (tlci-section-ordered?
-                fixups-end
-                entries-offset
-                entries-len))
-              (ErrTlciImage
-                "tlci: entry table overlaps previous section")]
+                (tlci-table-len-ok? entries-len tlci-section-entry-record-size))
+              (ErrTlciImage "tlci: malformed entry table length")]
             [(not
-              (tlci-section-range-ok?
-                actual-size
-                symbols-offset
-                symbols-len))
-              (tlci-section-error
-                "symbols")]
-            [(not
-              (tlci-section-aligned?
-                symbols-offset
-                symbols-len
-                8))
-              (ErrTlciImage
-                "tlci: symbol table must be 8-byte aligned")]
-            [(not
-              (tlci-section-ordered?
-                entries-end
-                symbols-offset
-                symbols-len))
-              (ErrTlciImage
-                "tlci: symbol table overlaps previous section")]
-            [(not
-              (tlci-table-len-ok?
-                fixups-len
-                tlci-section-fixup-record-size))
-              (ErrTlciImage
-                "tlci: malformed fixup table length")]
-            [(not
-              (tlci-table-len-ok?
-                entries-len
-                tlci-section-entry-record-size))
-              (ErrTlciImage
-                "tlci: malformed entry table length")]
-            [(not
-              (tlci-table-len-ok?
-                symbols-len
-                tlci-section-symbol-record-size))
-              (ErrTlciImage
-                "tlci: malformed symbol table length")]
-            [(not
-              (=
-                declared-size
-                content-end))
-              (ErrTlciImage
-                "tlci: file has trailing bytes")]
-            [(not
-              (=
-                expected-hash
-                (tlci-content-hash
-                  bytes)))
-              (ErrTlciImage
-                "tlci: content hash mismatch")]
+                (tlci-table-len-ok? symbols-len tlci-section-symbol-record-size))
+              (ErrTlciImage "tlci: malformed symbol table length")]
+            [(not (= declared-size content-end))
+              (ErrTlciImage "tlci: file has trailing bytes")]
+            [(not (= expected-hash (tlci-content-hash bytes)))
+              (ErrTlciImage "tlci: content hash mismatch")]
             [else
               (let
-                                                                          [metadata-text : String
-                                                                            (tlci-bytes->string
-                                                                              bytes
-                                                                              metadata-offset
-                                                                              metadata-len)]
-                                                                          (match (tlci-metadata-parse
-                                                                            metadata-text)
-                                                                            [(ErrTlciMetadata
-                                                                                message)
-                                                                              (ErrTlciImage
-                                                                                (str-cat
-                                                                                  "tlci: malformed metadata: "
-                                                                                  message))]
-                                                                            [(OkTlciMetadata
-                                                                                metadata)
-                                                                              (OkTlciImage
-                                                                                (TlciImage
-                                                                                  host-arch
-                                                                                  callback-abi
-                                                                                  (tlci-bytes->string
-                                                                                    bytes
-                                                                                    hash-offset
-                                                                                    hash-len)
-                                                                                  metadata
-                                                                                  (tlci-slice-bytes
-                                                                                    bytes
-                                                                                    rodata-offset
-                                                                                    rodata-len)
-                                                                                  (tlci-slice-bytes
-                                                                                    bytes
-                                                                                    code-offset
-                                                                                    code-len)
-                                                                                  (tlci-slice-bytes
-                                                                                    bytes
-                                                                                    fixups-offset
-                                                                                    fixups-len)
-                                                                                  (tlci-slice-bytes
-                                                                                    bytes
-                                                                                    entries-offset
-                                                                                    entries-len)
-                                                                                  (tlci-slice-bytes
-                                                                                    bytes
-                                                                                    symbols-offset
-                                                                                    symbols-len)))]))]))))))
+                [metadata-text : String
+                  (tlci-bytes->string bytes metadata-offset metadata-len)]
+                (match (tlci-metadata-parse metadata-text)
+                  [(ErrTlciMetadata message)
+                    (ErrTlciImage
+                      (str-cat "tlci: malformed metadata: " message))]
+                  [(OkTlciMetadata metadata)
+                    (OkTlciImage
+                      (TlciImage
+                        host-arch
+                        callback-abi
+                        (tlci-bytes->string bytes hash-offset hash-len)
+                        metadata
+                        (tlci-slice-bytes bytes rodata-offset rodata-len)
+                        (tlci-slice-bytes bytes code-offset code-len)
+                        (tlci-slice-bytes bytes fixups-offset fixups-len)
+                        (tlci-slice-bytes bytes entries-offset entries-len)
+                        (tlci-slice-bytes bytes symbols-offset symbols-len)))]))]))))))
 
 (define (tlci-test-export-list) : TlciExportList
   (match (tlci-export-list-insert

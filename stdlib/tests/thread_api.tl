@@ -175,6 +175,7 @@
       [(not (= safe-code 42)) safe-code]
       [(not (thread-api-negative-semaphore-rejected?)) 11]
       [(not (thread-api-large-semaphore-rejected?)) 12]
-      [else (match (thread-semaphore-create 0)
-              [(ThreadSemaphoreErr _) 13]
-              [(ThreadSemaphoreOk sem) (thread-api-run-with-semaphore sem)])])))
+      [else
+        (match (thread-semaphore-create 0)
+          [(ThreadSemaphoreErr _) 13]
+          [(ThreadSemaphoreOk sem) (thread-api-run-with-semaphore sem)])])))

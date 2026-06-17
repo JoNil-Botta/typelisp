@@ -343,8 +343,7 @@
           (if (>= (+ idx 1) count)
             (ErrTestConfig "test: --batch requires a value")
             (match batch-list
-              [(TestSomeString _)
-                (ErrTestConfig "test: duplicate --batch")]
+              [(TestSomeString _) (ErrTestConfig "test: duplicate --batch")]
               [(TestNoString)
                 (tltest-parse-options
                   (+ idx 2)
@@ -364,8 +363,7 @@
           (if (>= (+ idx 1) count)
             (ErrTestConfig "test: --opt-level requires a value")
             (if has-opt-level
-              (ErrTestConfig
-                "test: --opt-level was provided more than once")
+              (ErrTestConfig "test: --opt-level was provided more than once")
               (let
                 [value : String (arg (+ idx 1))]
                 (match (compiler-optimize-parse-level value)
@@ -404,10 +402,8 @@
               test-mode
               batch-list))]
         [(source-tool-flag? current)
-          (ErrTestConfig
-            (string-append "test: unknown flag " current))]
-        [has-source
-          (ErrTestConfig "test: accepts only one source file")]
+          (ErrTestConfig (string-append "test: unknown flag " current))]
+        [has-source (ErrTestConfig "test: accepts only one source file")]
         [else
           (tltest-parse-options
             (+ idx 1)
@@ -2028,8 +2024,7 @@
               (begin
                 (set! i (+ i 1))
                 (set! open true))]
-            [(and open (tltest-inline-marker-at? source i n))
-              (set! found true)]
+            [(and open (tltest-inline-marker-at? source i n)) (set! found true)]
             [(tltest-source-line-break? c)
               (begin
                 (set! i (+ i 1))

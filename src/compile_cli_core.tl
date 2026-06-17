@@ -155,12 +155,9 @@
 
 (define (compile-cli-backend-mode [value : String]) : ResultCompileCliBackendMode
   (cond
-    [(string-eq value "scalar")
-      (OkCompileCliBackendMode (BackendModeScalar))]
-    [(string-eq value "avx2")
-      (OkCompileCliBackendMode (BackendModeAvx2))]
-    [(string-eq value "avx512")
-      (OkCompileCliBackendMode (BackendModeAvx512))]
+    [(string-eq value "scalar") (OkCompileCliBackendMode (BackendModeScalar))]
+    [(string-eq value "avx2") (OkCompileCliBackendMode (BackendModeAvx2))]
+    [(string-eq value "avx512") (OkCompileCliBackendMode (BackendModeAvx512))]
     [else
       (ErrCompileCliBackendMode
         (str-cat
@@ -204,25 +201,25 @@
       [current : String (arg idx)]
       (cond
         [(string-eq current "-o")
-        (if (>= (+ idx 1) count)
-          (ErrCompileCliConfig "compile: -o requires a value")
-          (if has-output
-            (ErrCompileCliConfig "compile: -o was provided more than once")
-            (compile-cli-parse-options
-              (+ idx 2)
-              count
-              input-path
-              (arg (+ idx 1))
-              true
-              has-target
-              target
-              stdlib-roots
-              cfg-names
-              emit-ir
-              pic
-              has-opt-level
-              opt-level
-              backend-mode)))]
+          (if (>= (+ idx 1) count)
+            (ErrCompileCliConfig "compile: -o requires a value")
+            (if has-output
+              (ErrCompileCliConfig "compile: -o was provided more than once")
+              (compile-cli-parse-options
+                (+ idx 2)
+                count
+                input-path
+                (arg (+ idx 1))
+                true
+                has-target
+                target
+                stdlib-roots
+                cfg-names
+                emit-ir
+                pic
+                has-opt-level
+                opt-level
+                backend-mode)))]
         [(string-eq current "--stdlib-root")
           (if (>= (+ idx 1) count)
             (ErrCompileCliConfig "compile: --stdlib-root requires a value")
@@ -242,102 +239,59 @@
               opt-level
               backend-mode))]
         [(string-eq current "--cfg")
-            (if (>= (+ idx 1) count)
-              (ErrCompileCliConfig "compile: --cfg requires a value")
-              (compile-cli-parse-options
-                (+ idx 2)
-                count
-                input-path
-                output-path
-                has-output
-                has-target
-                target
-                stdlib-roots
-                (string-vec-push cfg-names (arg (+ idx 1)))
-                emit-ir
-                pic
-                has-opt-level
-                opt-level
-                backend-mode))]
+          (if (>= (+ idx 1) count)
+            (ErrCompileCliConfig "compile: --cfg requires a value")
+            (compile-cli-parse-options
+              (+ idx 2)
+              count
+              input-path
+              output-path
+              has-output
+              has-target
+              target
+              stdlib-roots
+              (string-vec-push cfg-names (arg (+ idx 1)))
+              emit-ir
+              pic
+              has-opt-level
+              opt-level
+              backend-mode))]
         [(string-eq current "--target")
-              (if (>= (+ idx 1) count)
-                (ErrCompileCliConfig "compile: --target requires a value")
-                (if has-target
-                  (ErrCompileCliConfig
-                    "compile: --target was provided more than once")
-                  (match (compile-cli-target (arg (+ idx 1)))
-                    [(OkCompileCliTarget parsed-target)
-                      (compile-cli-parse-options
-                        (+ idx 2)
-                        count
-                        input-path
-                        output-path
-                        has-output
-                        true
-                        parsed-target
-                        stdlib-roots
-                        cfg-names
-                        emit-ir
-                        pic
-                        has-opt-level
-                        opt-level
-                        backend-mode)]
-                    [(ErrCompileCliTarget message)
-                      (ErrCompileCliConfig message)])))]
+          (if (>= (+ idx 1) count)
+            (ErrCompileCliConfig "compile: --target requires a value")
+            (if has-target
+              (ErrCompileCliConfig
+                "compile: --target was provided more than once")
+              (match (compile-cli-target (arg (+ idx 1)))
+                [(OkCompileCliTarget parsed-target)
+                  (compile-cli-parse-options
+                    (+ idx 2)
+                    count
+                    input-path
+                    output-path
+                    has-output
+                    true
+                    parsed-target
+                    stdlib-roots
+                    cfg-names
+                    emit-ir
+                    pic
+                    has-opt-level
+                    opt-level
+                    backend-mode)]
+                [(ErrCompileCliTarget message) (ErrCompileCliConfig message)])))]
         [(string-eq current "--opt-level")
-                (if (>= (+ idx 1) count)
-                  (ErrCompileCliConfig "compile: --opt-level requires a value")
-                  (if has-opt-level
-                    (ErrCompileCliConfig
-                      "compile: --opt-level was provided more than once")
-                    (let
-                      [value : String (arg (+ idx 1))]
-                      (match (compiler-optimize-parse-level value)
-                        [(OkCompilerOptimizeLevel parsed-level)
-                          (compile-cli-parse-options
-                            (+ idx 2)
-                            count
-                            input-path
-                            output-path
-                            has-output
-                            has-target
-                            target
-                            stdlib-roots
-                            cfg-names
-                            emit-ir
-                            pic
-                            true
-                            parsed-level
-                            backend-mode)]
-                        [(ErrCompilerOptimizeLevel)
-                          (ErrCompileCliConfig
-                            (compile-cli-invalid-opt-level value))]))))]
-        [(string-eq current "--backend-mode")
-                  (if (>= (+ idx 1) count)
-                    (ErrCompileCliConfig
-                      "compile: --backend-mode requires a value")
-                    (match (compile-cli-backend-mode (arg (+ idx 1)))
-                      [(OkCompileCliBackendMode parsed-mode)
-                        (compile-cli-parse-options
-                          (+ idx 2)
-                          count
-                          input-path
-                          output-path
-                          has-output
-                          has-target
-                          target
-                          stdlib-roots
-                          cfg-names
-                          emit-ir
-                          pic
-                          has-opt-level
-                          opt-level
-                          parsed-mode)]
-                      [(ErrCompileCliBackendMode message)
-                        (ErrCompileCliConfig message)]))]
-        [(string-eq current "--pic")
+          (if (>= (+ idx 1) count)
+            (ErrCompileCliConfig "compile: --opt-level requires a value")
+            (if has-opt-level
+              (ErrCompileCliConfig
+                "compile: --opt-level was provided more than once")
+              (let
+                [value : String (arg (+ idx 1))]
+                (match (compiler-optimize-parse-level value)
+                  [(OkCompilerOptimizeLevel parsed-level)
                     (compile-cli-parse-options
-                      (+ idx 1)
+                      (+ idx 2)
                       count
                       input-path
                       output-path
@@ -347,34 +301,71 @@
                       stdlib-roots
                       cfg-names
                       emit-ir
+                      pic
                       true
-                      has-opt-level
-                      opt-level
+                      parsed-level
                       backend-mode)]
+                  [(ErrCompilerOptimizeLevel)
+                    (ErrCompileCliConfig (compile-cli-invalid-opt-level value))]))))]
+        [(string-eq current "--backend-mode")
+          (if (>= (+ idx 1) count)
+            (ErrCompileCliConfig "compile: --backend-mode requires a value")
+            (match (compile-cli-backend-mode (arg (+ idx 1)))
+              [(OkCompileCliBackendMode parsed-mode)
+                (compile-cli-parse-options
+                  (+ idx 2)
+                  count
+                  input-path
+                  output-path
+                  has-output
+                  has-target
+                  target
+                  stdlib-roots
+                  cfg-names
+                  emit-ir
+                  pic
+                  has-opt-level
+                  opt-level
+                  parsed-mode)]
+              [(ErrCompileCliBackendMode message) (ErrCompileCliConfig message)]))]
+        [(string-eq current "--pic")
+          (compile-cli-parse-options
+            (+ idx 1)
+            count
+            input-path
+            output-path
+            has-output
+            has-target
+            target
+            stdlib-roots
+            cfg-names
+            emit-ir
+            true
+            has-opt-level
+            opt-level
+            backend-mode)]
         [(string-eq current "--emit-ir")
-                      (compile-cli-parse-options
-                        (+ idx 1)
-                        count
-                        input-path
-                        output-path
-                        has-output
-                        has-target
-                        target
-                        stdlib-roots
-                        cfg-names
-                        true
-                        pic
-                        has-opt-level
-                        opt-level
-                        backend-mode)]
+          (compile-cli-parse-options
+            (+ idx 1)
+            count
+            input-path
+            output-path
+            has-output
+            has-target
+            target
+            stdlib-roots
+            cfg-names
+            true
+            pic
+            has-opt-level
+            opt-level
+            backend-mode)]
         [else
-                      (if (compile-cli-flag? current)
-                        (ErrCompileCliConfig
-                          (string-append "compile: unknown flag " current))
-                        (ErrCompileCliConfig
-                          (string-append
-                            "compile: unexpected argument "
-                            current)))]))))
+          (if (compile-cli-flag? current)
+            (ErrCompileCliConfig
+              (string-append "compile: unknown flag " current))
+            (ErrCompileCliConfig
+              (string-append "compile: unexpected argument " current)))]))))
 
 (define (compile-cli-batch-parse-options
   [idx : i64]
@@ -403,134 +394,129 @@
       [current : String (arg idx)]
       (cond
         [(string-eq current "-o")
-        (ErrCompileCliBatchConfig
-          "compile: --batch reads output paths from the batch file")]
+          (ErrCompileCliBatchConfig
+            "compile: --batch reads output paths from the batch file")]
         [(string-eq current "--emit-ir")
           (ErrCompileCliBatchConfig
             "compile: --batch does not support --emit-ir")]
         [(string-eq current "--pic")
-            (ErrCompileCliBatchConfig "compile: --batch does not support --pic")]
+          (ErrCompileCliBatchConfig "compile: --batch does not support --pic")]
         [(string-eq current "--stdlib-root")
-              (if (>= (+ idx 1) count)
-                (ErrCompileCliBatchConfig
-                  "compile: --stdlib-root requires a value")
+          (if (>= (+ idx 1) count)
+            (ErrCompileCliBatchConfig "compile: --stdlib-root requires a value")
+            (compile-cli-batch-parse-options
+              (+ idx 2)
+              count
+              batch-path
+              has-target
+              target
+              (string-vec-push stdlib-roots (arg (+ idx 1)))
+              cfg-names
+              has-opt-level
+              opt-level
+              backend-mode
+              prefix-cache-stats))]
+        [(string-eq current "--cfg")
+          (if (>= (+ idx 1) count)
+            (ErrCompileCliBatchConfig "compile: --cfg requires a value")
+            (compile-cli-batch-parse-options
+              (+ idx 2)
+              count
+              batch-path
+              has-target
+              target
+              stdlib-roots
+              (string-vec-push cfg-names (arg (+ idx 1)))
+              has-opt-level
+              opt-level
+              backend-mode
+              prefix-cache-stats))]
+        [(string-eq current "--target")
+          (if (>= (+ idx 1) count)
+            (ErrCompileCliBatchConfig "compile: --target requires a value")
+            (if has-target
+              (ErrCompileCliBatchConfig
+                "compile: --target was provided more than once")
+              (match (compile-cli-target (arg (+ idx 1)))
+                [(OkCompileCliTarget parsed-target)
+                  (compile-cli-batch-parse-options
+                    (+ idx 2)
+                    count
+                    batch-path
+                    true
+                    parsed-target
+                    stdlib-roots
+                    cfg-names
+                    has-opt-level
+                    opt-level
+                    backend-mode
+                    prefix-cache-stats)]
+                [(ErrCompileCliTarget message)
+                  (ErrCompileCliBatchConfig message)])))]
+        [(string-eq current "--opt-level")
+          (if (>= (+ idx 1) count)
+            (ErrCompileCliBatchConfig "compile: --opt-level requires a value")
+            (if has-opt-level
+              (ErrCompileCliBatchConfig
+                "compile: --opt-level was provided more than once")
+              (let
+                [value : String (arg (+ idx 1))]
+                (match (compiler-optimize-parse-level value)
+                  [(OkCompilerOptimizeLevel parsed-level)
+                    (compile-cli-batch-parse-options
+                      (+ idx 2)
+                      count
+                      batch-path
+                      has-target
+                      target
+                      stdlib-roots
+                      cfg-names
+                      true
+                      parsed-level
+                      backend-mode
+                      prefix-cache-stats)]
+                  [(ErrCompilerOptimizeLevel)
+                    (ErrCompileCliBatchConfig
+                      (compile-cli-invalid-opt-level value))]))))]
+        [(string-eq current "--backend-mode")
+          (if (>= (+ idx 1) count)
+            (ErrCompileCliBatchConfig
+              "compile: --backend-mode requires a value")
+            (match (compile-cli-backend-mode (arg (+ idx 1)))
+              [(OkCompileCliBackendMode parsed-mode)
                 (compile-cli-batch-parse-options
                   (+ idx 2)
                   count
                   batch-path
                   has-target
                   target
-                  (string-vec-push stdlib-roots (arg (+ idx 1)))
+                  stdlib-roots
                   cfg-names
                   has-opt-level
                   opt-level
-                  backend-mode
-                  prefix-cache-stats))]
-        [(string-eq current "--cfg")
-                (if (>= (+ idx 1) count)
-                  (ErrCompileCliBatchConfig "compile: --cfg requires a value")
-                  (compile-cli-batch-parse-options
-                    (+ idx 2)
-                    count
-                    batch-path
-                    has-target
-                    target
-                    stdlib-roots
-                    (string-vec-push cfg-names (arg (+ idx 1)))
-                    has-opt-level
-                    opt-level
-                    backend-mode
-                    prefix-cache-stats))]
-        [(string-eq current "--target")
-                  (if (>= (+ idx 1) count)
-                    (ErrCompileCliBatchConfig
-                      "compile: --target requires a value")
-                    (if has-target
-                      (ErrCompileCliBatchConfig
-                        "compile: --target was provided more than once")
-                      (match (compile-cli-target (arg (+ idx 1)))
-                        [(OkCompileCliTarget parsed-target)
-                          (compile-cli-batch-parse-options
-                            (+ idx 2)
-                            count
-                            batch-path
-                            true
-                            parsed-target
-                            stdlib-roots
-                            cfg-names
-                            has-opt-level
-                            opt-level
-                            backend-mode
-                            prefix-cache-stats)]
-                        [(ErrCompileCliTarget message)
-                          (ErrCompileCliBatchConfig message)])))]
-        [(string-eq current "--opt-level")
-                    (if (>= (+ idx 1) count)
-                      (ErrCompileCliBatchConfig
-                        "compile: --opt-level requires a value")
-                      (if has-opt-level
-                        (ErrCompileCliBatchConfig
-                          "compile: --opt-level was provided more than once")
-                        (let
-                          [value : String (arg (+ idx 1))]
-                          (match (compiler-optimize-parse-level value)
-                            [(OkCompilerOptimizeLevel parsed-level)
-                              (compile-cli-batch-parse-options
-                                (+ idx 2)
-                                count
-                                batch-path
-                                has-target
-                                target
-                                stdlib-roots
-                                cfg-names
-                                true
-                                parsed-level
-                                backend-mode
-                                prefix-cache-stats)]
-                            [(ErrCompilerOptimizeLevel)
-                              (ErrCompileCliBatchConfig
-                                (compile-cli-invalid-opt-level value))]))))]
-        [(string-eq current "--backend-mode")
-                      (if (>= (+ idx 1) count)
-                        (ErrCompileCliBatchConfig
-                          "compile: --backend-mode requires a value")
-                        (match (compile-cli-backend-mode (arg (+ idx 1)))
-                          [(OkCompileCliBackendMode parsed-mode)
-                            (compile-cli-batch-parse-options
-                              (+ idx 2)
-                              count
-                              batch-path
-                              has-target
-                              target
-                              stdlib-roots
-                              cfg-names
-                              has-opt-level
-                              opt-level
-                              parsed-mode
-                              prefix-cache-stats)]
-                          [(ErrCompileCliBackendMode message)
-                            (ErrCompileCliBatchConfig message)]))]
+                  parsed-mode
+                  prefix-cache-stats)]
+              [(ErrCompileCliBackendMode message)
+                (ErrCompileCliBatchConfig message)]))]
         [(string-eq current "--prefix-cache-stats")
-                        (compile-cli-batch-parse-options
-                          (+ idx 1)
-                          count
-                          batch-path
-                          has-target
-                          target
-                          stdlib-roots
-                          cfg-names
-                          has-opt-level
-                          opt-level
-                          backend-mode
-                          true)]
+          (compile-cli-batch-parse-options
+            (+ idx 1)
+            count
+            batch-path
+            has-target
+            target
+            stdlib-roots
+            cfg-names
+            has-opt-level
+            opt-level
+            backend-mode
+            true)]
         [else
-                        (if (compile-cli-flag? current)
-                          (ErrCompileCliBatchConfig
-                            (string-append "compile: unknown flag " current))
-                          (ErrCompileCliBatchConfig
-                            (string-append
-                              "compile: unexpected argument "
-                              current)))]))))
+          (if (compile-cli-flag? current)
+            (ErrCompileCliBatchConfig
+              (string-append "compile: unknown flag " current))
+            (ErrCompileCliBatchConfig
+              (string-append "compile: unexpected argument " current)))]))))
 
 (define (compile-cli-config-from [input-idx : i64] [count : i64]) : ResultCompileCliConfig
   (if (>= input-idx count)
@@ -638,21 +624,20 @@
       [command : String (arg 1)]
       (cond
         [(or
-        (string-eq command "help")
-        (string-eq command "--help")
-        (string-eq command "-h"))
-        (CompileCliHelp)]
-        [(string-eq command "compile")
-          (compile-cli-command-action count)]
+            (string-eq command "help")
+            (string-eq command "--help")
+            (string-eq command "-h"))
+          (CompileCliHelp)]
+        [(string-eq command "compile") (compile-cli-command-action count)]
         [(string-eq command "check")
-            (match (compile-cli-top-level-check-config count)
-              [(OkCompileCliCheckConfig input-path roots)
-                (CompileCliCheck input-path roots)]
-              [(ErrCompileCliCheckConfig message) (CompileCliError message)])]
+          (match (compile-cli-top-level-check-config count)
+            [(OkCompileCliCheckConfig input-path roots)
+              (CompileCliCheck input-path roots)]
+            [(ErrCompileCliCheckConfig message) (CompileCliError message)])]
         [else
-            (CompileCliError
-              (compile-cli-message-with-usage
-                (string-append "Unknown command: " command)))]))))
+          (CompileCliError
+            (compile-cli-message-with-usage
+              (string-append "Unknown command: " command)))]))))
 
 (define (compile-cli-cfg-names-to-env-from
   [cfg-names : StringVec]

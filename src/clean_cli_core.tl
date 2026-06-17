@@ -437,8 +437,7 @@
                 dry-run)))]
         [(clean-flag? current)
           (ErrCleanConfig (string-append "clean: unknown flag " current))]
-        [has-source
-          (ErrCleanConfig "clean: accepts only one source file")]
+        [has-source (ErrCleanConfig "clean: accepts only one source file")]
         [else
           (clean-parse-options
             (+ idx 1)

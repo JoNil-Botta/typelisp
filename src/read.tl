@@ -306,18 +306,14 @@
             (advance cur)
             (match (read-form-spanned-result toks cur)
               [(OkSpannedSexpr form)
-                (OkSpannedSexpr
-                  (read-prefix-spanned-form name span form))]
+                (OkSpannedSexpr (read-prefix-spanned-form name span form))]
               [(ErrSpannedSexpr err) (ErrSpannedSexpr err)])))]
       [(= t (tag-rparen))
-        (ErrSpannedSexpr
-          (SourceError "reader: unexpected ')'" span))]
+        (ErrSpannedSexpr (SourceError "reader: unexpected ')'" span))]
       [(= t (tag-rbracket))
-        (ErrSpannedSexpr
-          (SourceError "reader: unexpected ']'" span))]
+        (ErrSpannedSexpr (SourceError "reader: unexpected ']'" span))]
       [else
-        (ErrSpannedSexpr
-          (SourceError "reader: unexpected end of input" span))])))
+        (ErrSpannedSexpr (SourceError "reader: unexpected end of input" span))])))
 
 (define (read-list-spanned-items-result
   [toks : (Array SpannedToken)]
@@ -426,15 +422,11 @@
           (begin
             (advance cur)
             (match (read-form-result toks cur)
-              [(OkSexpr form)
-                (OkSexpr (read-prefix-form name form))]
+              [(OkSexpr form) (OkSexpr (read-prefix-form name form))]
               [(ErrSexpr message) (ErrSexpr message)])))]
-      [(= t (tag-rparen))
-        (ErrSexpr "reader: unexpected ')'")]
-      [(= t (tag-rbracket))
-        (ErrSexpr "reader: unexpected ']'")]
-      [else
-        (ErrSexpr "reader: unexpected end of input")])))
+      [(= t (tag-rparen)) (ErrSexpr "reader: unexpected ')'")]
+      [(= t (tag-rbracket)) (ErrSexpr "reader: unexpected ']'")]
+      [else (ErrSexpr "reader: unexpected end of input")])))
 
 ;; read-list: the cursor is positioned just AFTER an opening '('. Read forms
 ;; until the matching ')', returning the proper list `(SCons f1 (SCons f2 ...

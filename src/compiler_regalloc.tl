@@ -2295,8 +2295,8 @@
           location
           (+ index 1))]
       [(and
-        (compiler-reg-location-eq? (array-ref items index) location)
-        (compiler-reg-vars-interfere-index? intervals var index))
+          (compiler-reg-location-eq? (array-ref items index) location)
+          (compiler-reg-vars-interfere-index? intervals var index))
         true]
       [else
         (compiler-reg-assignment-table-location-conflicts-from?

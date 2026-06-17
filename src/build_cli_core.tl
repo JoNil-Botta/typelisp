@@ -322,14 +322,10 @@
 
 (define (build-parse-opt-level [value : String]) : i64
   (cond
-    [(string-eq value "0")
-      0]
-    [(string-eq value "1")
-      1]
-    [(string-eq value "2")
-      2]
-    [else
-      -1]))
+    [(string-eq value "0") 0]
+    [(string-eq value "1") 1]
+    [(string-eq value "2") 2]
+    [else -1]))
 
 (define (build-parse-options
   [idx : i64]
@@ -520,8 +516,7 @@
           (if (>= (+ idx 1) count)
             (ErrBuildConfig "build: --profile requires a value")
             (if has-profile
-              (ErrBuildConfig
-                "build: profile was provided more than once")
+              (ErrBuildConfig "build: profile was provided more than once")
               (match (build-parse-profile (arg (+ idx 1)))
                 [(ErrBuildProfile message) (ErrBuildConfig message)]
                 [(OkBuildProfile parsed-profile)
@@ -546,8 +541,7 @@
                     stdlib-roots)])))]
         [(string-eq current "--release")
           (if has-profile
-            (ErrBuildConfig
-              "build: profile was provided more than once")
+            (ErrBuildConfig "build: profile was provided more than once")
             (build-parse-options
               (+ idx 1)
               count
@@ -571,8 +565,7 @@
           (if (>= (+ idx 1) count)
             (ErrBuildConfig "build: --opt-level requires a value")
             (if has-opt-level
-              (ErrBuildConfig
-                "build: --opt-level was provided more than once")
+              (ErrBuildConfig "build: --opt-level was provided more than once")
               (let
                 [value : String (arg (+ idx 1))]
                 [parsed : i64 (build-parse-opt-level value)]
@@ -599,8 +592,7 @@
                     stdlib-roots)))))]
         [(string-eq current "--locked")
           (if (build-package-lock-policy-provided? lock-policy)
-            (ErrBuildConfig
-              (build-package-lock-policy-option-error))
+            (ErrBuildConfig (build-package-lock-policy-option-error))
             (build-parse-options
               (+ idx 1)
               count
@@ -622,8 +614,7 @@
               stdlib-roots))]
         [(string-eq current "--update-lock")
           (if (build-package-lock-policy-provided? lock-policy)
-            (ErrBuildConfig
-              (build-package-lock-policy-option-error))
+            (ErrBuildConfig (build-package-lock-policy-option-error))
             (build-parse-options
               (+ idx 1)
               count
@@ -644,12 +635,10 @@
               stdlib-lines
               stdlib-roots))]
         [(host-plan-flag? current)
-          (ErrBuildConfig
-            (string-append "build: unknown flag " current))]
+          (ErrBuildConfig (string-append "build: unknown flag " current))]
         [else
           (if has-source
-            (ErrBuildConfig
-              "build: accepts only one source file")
+            (ErrBuildConfig "build: accepts only one source file")
             (build-parse-options
               (+ idx 1)
               count
@@ -784,11 +773,9 @@
                   (ErrBuildPackageWorkerConfig message)])))]
         [(string-eq current "--profile")
           (if (>= (+ idx 1) count)
-            (ErrBuildPackageWorkerConfig
-              "build: --profile requires a value")
+            (ErrBuildPackageWorkerConfig "build: --profile requires a value")
             (match (build-parse-profile (arg (+ idx 1)))
-              [(ErrBuildProfile message)
-                (ErrBuildPackageWorkerConfig message)]
+              [(ErrBuildProfile message) (ErrBuildPackageWorkerConfig message)]
               [(OkBuildProfile parsed-profile)
                 (let
                   [next-opt-level : i64
@@ -824,8 +811,7 @@
             stdlib-roots)]
         [(string-eq current "--opt-level")
           (if (>= (+ idx 1) count)
-            (ErrBuildPackageWorkerConfig
-              "build: --opt-level requires a value")
+            (ErrBuildPackageWorkerConfig "build: --opt-level requires a value")
             (let
               [value : String (arg (+ idx 1))]
               (if (source-tool-opt-level-valid? value)
@@ -841,8 +827,7 @@
                   true
                   lock-policy
                   stdlib-roots)
-                (ErrBuildPackageWorkerConfig
-                  (build-unknown-opt-level value)))))]
+                (ErrBuildPackageWorkerConfig (build-unknown-opt-level value)))))]
         [(string-eq current "--locked")
           (if (build-package-lock-policy-provided? lock-policy)
             (ErrBuildPackageWorkerConfig
@@ -893,14 +878,10 @@
               (string-vec-push stdlib-roots (arg (+ idx 1)))))]
         [(host-plan-flag? current)
           (ErrBuildPackageWorkerConfig
-            (string-append
-              "build: unknown package worker flag "
-              current))]
+            (string-append "build: unknown package worker flag " current))]
         [else
           (ErrBuildPackageWorkerConfig
-            (string-append
-              "build: unexpected package worker argument "
-              current))]))))
+            (string-append "build: unexpected package worker argument " current))]))))
 
 (define (build-package-worker-config-from [idx : i64] [count : i64]) : ResultBuildPackageWorkerConfig
   (build-package-worker-parse-options
@@ -1204,10 +1185,8 @@
   (let
     [kind : String (struct-get dep pin-kind)]
     (cond
-      [(string-eq kind "rev")
-        (OkPackageCachePinKind (PackageCachePinRev))]
-      [(string-eq kind "tag")
-        (OkPackageCachePinKind (PackageCachePinTag))]
+      [(string-eq kind "rev") (OkPackageCachePinKind (PackageCachePinRev))]
+      [(string-eq kind "tag") (OkPackageCachePinKind (PackageCachePinTag))]
       [(string-eq kind "branch")
         (OkPackageCachePinKind (PackageCachePinBranch))]
       [else
@@ -1448,8 +1427,7 @@
           (build-git-dep-error
             alias
             "could not create target/typelisp/git-deps directory"))]
-      [else
-        (OkBuildString deps-dir)])))
+      [else (OkBuildString deps-dir)])))
 
 (define (build-github-cache-git-dir [manifest-dir : String] [alias : String]) : String
   (compiler-load-normalize-path
@@ -1511,8 +1489,7 @@
           (build-git-dep-error
             alias
             "could not create target/typelisp/cache/packages/v1 directory"))]
-      [else
-        (OkBuildString root)])))
+      [else (OkBuildString root)])))
 
 (define (build-package-cache-io-error
   [alias : String]
@@ -4274,16 +4251,11 @@
 
 (define (build-cli-option-rest6 [current : String]) : BuildCliOption
   (cond
-    [(string-eq current "--link-arg")
-      (BuildCliOptionLinkArg)]
-    [(string-eq current "--manifest-path")
-      (BuildCliOptionManifestPath)]
-    [(string-eq current "--locked")
-      (BuildCliOptionLocked)]
-    [(string-eq current "--update-lock")
-      (BuildCliOptionUpdateLock)]
-    [else
-      (BuildCliOptionOther)]))
+    [(string-eq current "--link-arg") (BuildCliOptionLinkArg)]
+    [(string-eq current "--manifest-path") (BuildCliOptionManifestPath)]
+    [(string-eq current "--locked") (BuildCliOptionLocked)]
+    [(string-eq current "--update-lock") (BuildCliOptionUpdateLock)]
+    [else (BuildCliOptionOther)]))
 
 (define (build-cli-option-rest5 [current : String]) : BuildCliOption
   (if (string-eq current "--link-search")

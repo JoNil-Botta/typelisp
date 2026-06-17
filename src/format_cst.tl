@@ -132,9 +132,7 @@
                     (match parsed-rest
                       [(FmtParsedCstList rest final)
                         (OkFormatParsedCstList
-                          (FmtParsedCstList
-                            (FmtCstCons node (box rest))
-                            final))])]
+                          (FmtParsedCstList (FmtCstCons node (box rest)) final))])]
                   [(ErrFormatParsedCstList err) (ErrFormatParsedCstList err)])])]
           [(ErrFormatParsedCst err) (ErrFormatParsedCstList err)])])))
 

@@ -2047,11 +2047,11 @@
   [c : char]) : String
   (cond
     [(or
-    (and (>= c #A') (<= c #Z'))
-    (and (>= c #a') (<= c #z'))
-    (and (>= c #0') (<= c #9'))
-    (= c #_'))
-    (substring text idx 1)]
+        (and (>= c #A') (<= c #Z'))
+        (and (>= c #a') (<= c #z'))
+        (and (>= c #0') (<= c #9'))
+        (= c #_'))
+      (substring text idx 1)]
     [(= c #-') "_"]
     [(= c #?') "_question"]
     [(= c #!') "_bang"]
@@ -2063,10 +2063,9 @@
     [(= c #>') "_gt"]
     [(= c #:') "_colon"]
     [else
-                        (string-append
-                          "_u"
-                          (compiler-load-package-hex-byte
-                            (compiler-load-char-code-at text idx)))]))
+      (string-append
+        "_u"
+        (compiler-load-package-hex-byte (compiler-load-char-code-at text idx)))]))
 
 (define (compiler-load-package-asm-safe-symbol [name : String]) : String
   (let
@@ -4352,18 +4351,18 @@
           [(not (compiler-load-github-component-valid? repo))
             (compiler-load-github-address-error alias)]
           [else
-              (OkPkgString
+            (OkPkgString
+              (string-append
+                "https://github.com/"
                 (string-append
-                  "https://github.com/"
+                  owner
                   (string-append
-                    owner
+                    "/"
                     (string-append
-                      "/"
+                      repo
                       (string-append
-                        repo
-                        (string-append
-                          ".git#"
-                          (string-append pin-kind (string-append "=" pin-value))))))))])))))
+                        ".git#"
+                        (string-append pin-kind (string-append "=" pin-value))))))))])))))
 
 (define (compiler-load-normal-relative-entry? [path : String]) : bool
   (compiler-load-safe-relative? path))
@@ -4582,25 +4581,25 @@
   [rest : Sexpr]) : ResultCompilerPkgDeps
   (cond
     [(string-eq alias "")
-    (ErrCompilerPkgDeps "dependency alias must not be empty")]
+      (ErrCompilerPkgDeps "dependency alias must not be empty")]
     [(not (compiler-load-package-token-valid? alias))
       (ErrCompilerPkgDeps
         "dependency alias may only contain ASCII letters, digits, '-' and '_'")]
     [(string-eq path "")
-        (ErrCompilerPkgDeps
-          (string-append
-            "manifest dependency `"
-            (string-append alias "` path must not be empty")))]
+      (ErrCompilerPkgDeps
+        (string-append
+          "manifest dependency `"
+          (string-append alias "` path must not be empty")))]
     [else
-        (match (compiler-load-manifest-parse-deps rest)
-          [(ErrCompilerPkgDeps m) (ErrCompilerPkgDeps m)]
-          [(OkCompilerPkgDeps tail-deps)
-            (if (compiler-pkg-deps-alias-seen? tail-deps alias)
-              (ErrCompilerPkgDeps
-                (string-append
-                  "duplicate dependency alias `"
-                  (string-append alias "`")))
-              (OkCompilerPkgDeps (compiler-pkg-deps-cons alias path tail-deps)))])]))
+      (match (compiler-load-manifest-parse-deps rest)
+        [(ErrCompilerPkgDeps m) (ErrCompilerPkgDeps m)]
+        [(OkCompilerPkgDeps tail-deps)
+          (if (compiler-pkg-deps-alias-seen? tail-deps alias)
+            (ErrCompilerPkgDeps
+              (string-append
+                "duplicate dependency alias `"
+                (string-append alias "`")))
+            (OkCompilerPkgDeps (compiler-pkg-deps-cons alias path tail-deps)))])]))
 
 ;: Parse the `(alias "path") ...` entries of a `(dependencies ...)` field.
 (define (compiler-load-manifest-parse-deps [entries : Sexpr]) : ResultCompilerPkgDeps
@@ -4864,29 +4863,21 @@
           [(string-eq name "")
             (ErrCompilerPkgManifest "manifest field `name` must not be empty")]
           [(not (compiler-load-package-token-valid? name))
-              (ErrCompilerPkgManifest
-                "manifest field `name` may only contain ASCII letters, digits, '-' and '_'")]
+            (ErrCompilerPkgManifest
+              "manifest field `name` may only contain ASCII letters, digits, '-' and '_'")]
           [(not has-version)
-                (ErrCompilerPkgManifest
-                  "manifest missing required field `version`")]
+            (ErrCompilerPkgManifest "manifest missing required field `version`")]
           [(string-eq version "")
-                  (ErrCompilerPkgManifest
-                    "manifest field `version` must not be empty")]
+            (ErrCompilerPkgManifest
+              "manifest field `version` must not be empty")]
           [(string-eq final-entry "")
-                    (ErrCompilerPkgManifest
-                      "manifest field `entry` must not be empty")]
+            (ErrCompilerPkgManifest "manifest field `entry` must not be empty")]
           [(not (compiler-load-normal-relative-entry? final-entry))
-                      (ErrCompilerPkgManifest
-                        "manifest field `entry` must be a normal relative path below the manifest directory")]
+            (ErrCompilerPkgManifest
+              "manifest field `entry` must be a normal relative path below the manifest directory")]
           [else
-                      (OkCompilerPkgManifest
-                        (CompilerPkgManifest
-                          name
-                          version
-                          kind
-                          final-entry
-                          deps
-                          link))]))]
+            (OkCompilerPkgManifest
+              (CompilerPkgManifest name version kind final-entry deps link))]))]
     [(SCons field rest)
       (match (box-get field)
         [(SCons fhead ftail)
@@ -4894,26 +4885,26 @@
             [(SSym fname)
               (cond
                 [(string-eq fname "dependencies")
-                (if has-deps
-                  (ErrCompilerPkgManifest
-                    "duplicate manifest field `dependencies`")
-                  (match (compiler-load-manifest-parse-deps (box-get ftail))
-                    [(ErrCompilerPkgDeps m) (ErrCompilerPkgManifest m)]
-                    [(OkCompilerPkgDeps parsed-deps)
-                      (compiler-load-manifest-fields
-                        (box-get rest)
-                        name
-                        has-name
-                        version
-                        has-version
-                        kind
-                        has-kind
-                        entry
-                        has-entry
-                        true
-                        parsed-deps
-                        has-link
-                        link)]))]
+                  (if has-deps
+                    (ErrCompilerPkgManifest
+                      "duplicate manifest field `dependencies`")
+                    (match (compiler-load-manifest-parse-deps (box-get ftail))
+                      [(ErrCompilerPkgDeps m) (ErrCompilerPkgManifest m)]
+                      [(OkCompilerPkgDeps parsed-deps)
+                        (compiler-load-manifest-fields
+                          (box-get rest)
+                          name
+                          has-name
+                          version
+                          has-version
+                          kind
+                          has-kind
+                          entry
+                          has-entry
+                          true
+                          parsed-deps
+                          has-link
+                          link)]))]
                 [(string-eq fname "link")
                   (if has-link
                     (ErrCompilerPkgManifest "duplicate manifest field `link`")
@@ -4935,100 +4926,97 @@
                           true
                           parsed-link)]))]
                 [(string-eq fname "name")
-                    (if has-name
-                      (ErrCompilerPkgManifest "duplicate manifest field `name`")
-                      (match (compiler-load-manifest-string-value
-                        (box-get ftail)
-                        fname)
-                        [(ErrPkgString m) (ErrCompilerPkgManifest m)]
-                        [(OkPkgString val)
-                          (compiler-load-manifest-fields
-                            (box-get rest)
-                            val
-                            true
-                            version
-                            has-version
-                            kind
-                            has-kind
-                            entry
-                            has-entry
-                            has-deps
-                            deps
-                            has-link
-                            link)]))]
+                  (if has-name
+                    (ErrCompilerPkgManifest "duplicate manifest field `name`")
+                    (match (compiler-load-manifest-string-value
+                      (box-get ftail)
+                      fname)
+                      [(ErrPkgString m) (ErrCompilerPkgManifest m)]
+                      [(OkPkgString val)
+                        (compiler-load-manifest-fields
+                          (box-get rest)
+                          val
+                          true
+                          version
+                          has-version
+                          kind
+                          has-kind
+                          entry
+                          has-entry
+                          has-deps
+                          deps
+                          has-link
+                          link)]))]
                 [(string-eq fname "version")
-                      (if has-version
-                        (ErrCompilerPkgManifest
-                          "duplicate manifest field `version`")
-                        (match (compiler-load-manifest-string-value
-                          (box-get ftail)
-                          fname)
-                          [(ErrPkgString m) (ErrCompilerPkgManifest m)]
-                          [(OkPkgString val)
-                            (compiler-load-manifest-fields
-                              (box-get rest)
-                              name
-                              has-name
-                              val
-                              true
-                              kind
-                              has-kind
-                              entry
-                              has-entry
-                              has-deps
-                              deps
-                              has-link
-                              link)]))]
+                  (if has-version
+                    (ErrCompilerPkgManifest
+                      "duplicate manifest field `version`")
+                    (match (compiler-load-manifest-string-value
+                      (box-get ftail)
+                      fname)
+                      [(ErrPkgString m) (ErrCompilerPkgManifest m)]
+                      [(OkPkgString val)
+                        (compiler-load-manifest-fields
+                          (box-get rest)
+                          name
+                          has-name
+                          val
+                          true
+                          kind
+                          has-kind
+                          entry
+                          has-entry
+                          has-deps
+                          deps
+                          has-link
+                          link)]))]
                 [(string-eq fname "kind")
-                        (if has-kind
-                          (ErrCompilerPkgManifest
-                            "duplicate manifest field `kind`")
-                          (match (compiler-load-manifest-kind-value
-                            (box-get ftail))
-                            [(ErrCompilerPkgKind m) (ErrCompilerPkgManifest m)]
-                            [(OkCompilerPkgKind val)
-                              (compiler-load-manifest-fields
-                                (box-get rest)
-                                name
-                                has-name
-                                version
-                                has-version
-                                val
-                                true
-                                entry
-                                has-entry
-                                has-deps
-                                deps
-                                has-link
-                                link)]))]
+                  (if has-kind
+                    (ErrCompilerPkgManifest "duplicate manifest field `kind`")
+                    (match (compiler-load-manifest-kind-value (box-get ftail))
+                      [(ErrCompilerPkgKind m) (ErrCompilerPkgManifest m)]
+                      [(OkCompilerPkgKind val)
+                        (compiler-load-manifest-fields
+                          (box-get rest)
+                          name
+                          has-name
+                          version
+                          has-version
+                          val
+                          true
+                          entry
+                          has-entry
+                          has-deps
+                          deps
+                          has-link
+                          link)]))]
                 [(string-eq fname "entry")
-                          (if has-entry
-                            (ErrCompilerPkgManifest
-                              "duplicate manifest field `entry`")
-                            (match (compiler-load-manifest-string-value
-                              (box-get ftail)
-                              fname)
-                              [(ErrPkgString m) (ErrCompilerPkgManifest m)]
-                              [(OkPkgString val)
-                                (compiler-load-manifest-fields
-                                  (box-get rest)
-                                  name
-                                  has-name
-                                  version
-                                  has-version
-                                  kind
-                                  has-kind
-                                  val
-                                  true
-                                  has-deps
-                                  deps
-                                  has-link
-                                  link)]))]
+                  (if has-entry
+                    (ErrCompilerPkgManifest "duplicate manifest field `entry`")
+                    (match (compiler-load-manifest-string-value
+                      (box-get ftail)
+                      fname)
+                      [(ErrPkgString m) (ErrCompilerPkgManifest m)]
+                      [(OkPkgString val)
+                        (compiler-load-manifest-fields
+                          (box-get rest)
+                          name
+                          has-name
+                          version
+                          has-version
+                          kind
+                          has-kind
+                          val
+                          true
+                          has-deps
+                          deps
+                          has-link
+                          link)]))]
                 [else
-                          (ErrCompilerPkgManifest
-                            (string-append
-                              "unknown manifest field `"
-                              (string-append fname "`")))])]
+                  (ErrCompilerPkgManifest
+                    (string-append
+                      "unknown manifest field `"
+                      (string-append fname "`")))])]
             [_
               (ErrCompilerPkgManifest
                 "package fields must start with a field name")])]
@@ -5114,10 +5102,8 @@
       (file-exists?
         (compiler-load-manifest-convention-path manifest-path "src/lib.tl"))]
     (cond
-      [(and has-main (not has-lib))
-        (OkCompilerPkgKind (CompilerPkgKindBin))]
-      [(and has-lib (not has-main))
-        (OkCompilerPkgKind (CompilerPkgKindLib))]
+      [(and has-main (not has-lib)) (OkCompilerPkgKind (CompilerPkgKindBin))]
+      [(and has-lib (not has-main)) (OkCompilerPkgKind (CompilerPkgKindLib))]
       [(and has-main has-lib)
         (ErrCompilerPkgKind
           "manifest omits `kind` and `entry`, but both `src/main.tl` and `src/lib.tl` exist; add explicit `kind` or `entry`")]

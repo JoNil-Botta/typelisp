@@ -149,32 +149,32 @@
         (string-vec-new)
         true)]
     (cond
-      [(not (= (lint-findings-count string-concat-reported) 1))
-        20]
+      [(not (= (lint-findings-count string-concat-reported) 1)) 20]
       [(not
-        (lint-driver-smoke-string-concat-finding-ok? string-concat-reported 0 0))
+          (lint-driver-smoke-string-concat-finding-ok?
+            string-concat-reported
+            0
+            0))
         21]
-      [(not (= (lint-findings-count loop-string-concat-reported) 1))
-        22]
+      [(not (= (lint-findings-count loop-string-concat-reported) 1)) 22]
       [(not
-        (lint-driver-smoke-string-concat-finding-ok?
-          loop-string-concat-reported
-          0
-          2))
+          (lint-driver-smoke-string-concat-finding-ok?
+            loop-string-concat-reported
+            0
+            2))
         23]
-      [(not (= (lint-findings-count nested-string-concat-reported) 2))
-        24]
+      [(not (= (lint-findings-count nested-string-concat-reported) 2)) 24]
       [(not
-        (lint-driver-smoke-string-concat-finding-ok?
-          nested-string-concat-reported
-          1
-          1))
+          (lint-driver-smoke-string-concat-finding-ok?
+            nested-string-concat-reported
+            1
+            1))
         25]
       [(not
-        (=
-          (lint-driver-smoke-source-finding-count-with-deprecated-string-concat
-            (lint-driver-smoke-suppressed-string-concat-source))
-          0))
+          (=
+            (lint-driver-smoke-source-finding-count-with-deprecated-string-concat
+              (lint-driver-smoke-suppressed-string-concat-source))
+            0))
         26]
       [else 42])))
 
@@ -199,15 +199,15 @@
         (string-vec-new)
         true)]
     (cond
-      [(not (= (lint-findings-count reported) 4))
-        30]
+      [(not (= (lint-findings-count reported) 4)) 30]
       [(not
-        (lint-driver-smoke-finding-rule-ok? reported 0 (lint-rule-no-effect-id)))
+          (lint-driver-smoke-finding-rule-ok?
+            reported
+            0
+            (lint-rule-no-effect-id)))
         31]
-      [(not (= (lint-findings-count clean) 0))
-        32]
-      [(not (= (lint-findings-count suppressed) 0))
-        33]
+      [(not (= (lint-findings-count clean) 0)) 32]
+      [(not (= (lint-findings-count suppressed) 0)) 33]
       [else 42])))
 
 (define (lint-driver-smoke-unreachable-self-test) : i64
@@ -231,18 +231,15 @@
         (string-vec-new)
         true)]
     (cond
-      [(not (= (lint-findings-count reported) 5))
-        40]
+      [(not (= (lint-findings-count reported) 5)) 40]
       [(not
-        (lint-driver-smoke-finding-rule-ok?
-          reported
-          0
-          (lint-rule-unreachable-code-id)))
+          (lint-driver-smoke-finding-rule-ok?
+            reported
+            0
+            (lint-rule-unreachable-code-id)))
         41]
-      [(not (= (lint-findings-count clean) 0))
-        44]
-      [(not (= (lint-findings-count suppressed) 0))
-        45]
+      [(not (= (lint-findings-count clean) 0)) 44]
+      [(not (= (lint-findings-count suppressed) 0)) 45]
       [else 42])))
 
 (define (main) : i64

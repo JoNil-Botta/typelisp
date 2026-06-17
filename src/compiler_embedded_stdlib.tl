@@ -73,82 +73,59 @@
     [(string-eq suffix "comptime.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-comptime)]
     [(string-eq suffix "core_macros.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-core-macros)]
+      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-core-macros)]
     [(string-eq suffix "env.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-env)]
     [(string-eq suffix "ffi.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-ffi)]
+      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-ffi)]
     [(string-eq suffix "fs.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-fs)]
+      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-fs)]
     [(string-eq suffix "hash.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-hash)]
+      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-hash)]
     [(string-eq suffix "hashmap.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-hashmap)]
+      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-hashmap)]
     [(string-eq suffix "io.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-io)]
+      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-io)]
     [(string-eq suffix "json.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-json)]
+      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-json)]
     [(string-eq suffix "list.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-list)]
+      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-list)]
     [(string-eq suffix "math.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-math)]
+      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-math)]
     [(string-eq suffix "msvc.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-msvc)]
+      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-msvc)]
     [(string-eq suffix "process.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-process)]
+      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-process)]
     [(string-eq suffix "process_borrowed.tl")
       (CompilerEmbeddedStdlibSomeSource
         compiler-embedded-stdlib-process-borrowed)]
     [(string-eq suffix "profile.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-profile)]
+      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-profile)]
     [(string-eq suffix "queue.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-queue)]
+      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-queue)]
     [(string-eq suffix "random.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-random)]
+      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-random)]
     [(string-eq suffix "runtime.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-runtime)]
+      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-runtime)]
     [(string-eq suffix "sort.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-sort)]
+      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-sort)]
     [(string-eq suffix "sync.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-sync)]
+      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-sync)]
     [(string-eq suffix "string.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-string)]
+      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-string)]
     [(string-eq suffix "test.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-test)]
+      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-test)]
     [(string-eq suffix "thread.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-thread)]
+      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-thread)]
     [(string-eq suffix "time.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-time)]
+      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-time)]
     [(string-eq suffix "text_buf.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-text-buf)]
+      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-text-buf)]
     [(string-eq suffix "text_buf_borrowed.tl")
       (CompilerEmbeddedStdlibSomeSource
         compiler-embedded-stdlib-text-buf-borrowed)]
     [(string-eq suffix "vector.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-vector)]
+      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-vector)]
     [else (CompilerEmbeddedStdlibNoSource)]))
 
 (define (compiler-embedded-stdlib-lookup-tests [suffix : String]) : CompilerEmbeddedStdlibSource

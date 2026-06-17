@@ -2108,8 +2108,7 @@
                           (match info
                             [(CtfeReflectStruct _ _ _ fields)
                               (OkCtfe
-                                (CtfeI64
-                                  (ctfe-reflect-field-list-count fields))
+                                (CtfeI64 (ctfe-reflect-field-list-count fields))
                                 arg-fuel)]
                             [_
                               (ErrCtfe
@@ -2130,8 +2129,7 @@
                             [(CtfeReflectEnum _ _ _ variants)
                               (OkCtfe
                                 (CtfeI64
-                                  (ctfe-reflect-variant-list-count
-                                    variants))
+                                  (ctfe-reflect-variant-list-count variants))
                                 arg-fuel)]
                             [_
                               (ErrCtfe
@@ -2146,13 +2144,9 @@
                     [(string-eq name "array-element-type")
                       (match ty
                         [(AstTyArray elem _)
-                          (OkCtfe
-                            (CtfeType (ty-node-get elem))
-                            arg-fuel)]
+                          (OkCtfe (CtfeType (ty-node-get elem)) arg-fuel)]
                         [(AstTyDynArray elem)
-                          (OkCtfe
-                            (CtfeType (ty-node-get elem))
-                            arg-fuel)]
+                          (OkCtfe (CtfeType (ty-node-get elem)) arg-fuel)]
                         [_
                           (ErrCtfe
                             (ctfe-diagnostic-at-expr
@@ -2160,8 +2154,7 @@
                               "array-element-type requires array type"))])]
                     [(string-eq name "array-length")
                       (match ty
-                        [(AstTyArray _ count)
-                          (OkCtfe (CtfeI64 count) arg-fuel)]
+                        [(AstTyArray _ count) (OkCtfe (CtfeI64 count) arg-fuel)]
                         [_
                           (ErrCtfe
                             (ctfe-diagnostic-at-expr
@@ -2169,10 +2162,8 @@
                               "array-length requires fixed array type"))])]
                     [(string-eq name "array-dynamic?")
                       (match ty
-                        [(AstTyArray _ _)
-                          (OkCtfe (CtfeBool false) arg-fuel)]
-                        [(AstTyDynArray _)
-                          (OkCtfe (CtfeBool true) arg-fuel)]
+                        [(AstTyArray _ _) (OkCtfe (CtfeBool false) arg-fuel)]
+                        [(AstTyDynArray _) (OkCtfe (CtfeBool true) arg-fuel)]
                         [_
                           (ErrCtfe
                             (ctfe-diagnostic-at-expr
@@ -2182,22 +2173,17 @@
                       (match ty
                         [(AstTyFunc params _)
                           (OkCtfe
-                            (CtfeI64
-                              (ctfe-type-list-count params))
+                            (CtfeI64 (ctfe-type-list-count params))
                             arg-fuel)]
                         [_
                           (ErrCtfe
                             (ctfe-diagnostic-at-expr
                               expr
                               "function-param-count requires function type"))])]
-                    [(string-eq
-                        name
-                        "function-return-type")
+                    [(string-eq name "function-return-type")
                       (match ty
                         [(AstTyFunc _ ret)
-                          (OkCtfe
-                            (CtfeType (ty-node-get ret))
-                            arg-fuel)]
+                          (OkCtfe (CtfeType (ty-node-get ret)) arg-fuel)]
                         [_
                           (ErrCtfe
                             (ctfe-diagnostic-at-expr
@@ -2604,25 +2590,25 @@
   [fuel : i64]) : ResultCtfe
   (cond
     [(or
-      (string-eq name "type-kind")
-      (string-eq name "type-key")
-      (string-eq name "type-nominal-module")
-      (string-eq name "type-nominal-name")
-      (string-eq name "struct-field-count")
-      (string-eq name "enum-variant-count")
-      (string-eq name "array-element-type")
-      (string-eq name "array-length")
-      (string-eq name "array-dynamic?")
-      (string-eq name "function-param-count")
-      (string-eq name "function-return-type"))
+        (string-eq name "type-kind")
+        (string-eq name "type-key")
+        (string-eq name "type-nominal-module")
+        (string-eq name "type-nominal-name")
+        (string-eq name "struct-field-count")
+        (string-eq name "enum-variant-count")
+        (string-eq name "array-element-type")
+        (string-eq name "array-length")
+        (string-eq name "array-dynamic?")
+        (string-eq name "function-param-count")
+        (string-eq name "function-return-type"))
       (ctfe-eval-one-type-reflection name args expr env fuel)]
     [(or
-      (string-eq name "struct-field-name")
-      (string-eq name "struct-field-type"))
+        (string-eq name "struct-field-name")
+        (string-eq name "struct-field-type"))
       (ctfe-eval-struct-field-reflection name args expr env fuel)]
     [(or
-      (string-eq name "enum-variant-name")
-      (string-eq name "enum-variant-payload-count"))
+        (string-eq name "enum-variant-name")
+        (string-eq name "enum-variant-payload-count"))
       (ctfe-eval-enum-variant-reflection name args expr env fuel)]
     [(string-eq name "enum-variant-payload-type")
       (ctfe-eval-enum-payload-type-reflection args expr env fuel)]
@@ -3068,14 +3054,10 @@
                           (ErrCtfe
                             (ctfe-diagnostic-at-expr
                               expr
-                              (string-append
-                                name
-                                " expects non-empty ExprList")))]
+                              (string-append name " expects non-empty ExprList")))]
                         [(string-eq name "expr-list-head")
                           (OkCtfe
-                            (CtfeExpr
-                              (ctfe-expr-list-head nodes)
-                              (AstTyExpr))
+                            (CtfeExpr (ctfe-expr-list-head nodes) (AstTyExpr))
                             arg-fuel)]
                         [(string-eq name "expr-list-tail")
                           (OkCtfe
@@ -3382,35 +3364,25 @@
     [(AstExprVar name)
       (cond
         [(or
-          (string-eq (intern-str name) "size-of")
-          (string-eq (intern-str name) "align-of"))
+            (string-eq (intern-str name) "size-of")
+            (string-eq (intern-str name) "align-of"))
           (ctfe-eval-size-align-query (intern-str name) args expr env fuel)]
         [(string-eq (intern-str name) "offset-of")
           (ctfe-eval-offset-query args expr env fuel)]
         [(ctfe-reflection-query-name? (intern-str name))
           (ctfe-eval-reflection-query (intern-str name) args expr env fuel)]
         [(or
-          (string-eq (intern-str name) "string-eq")
-          (string-eq (intern-str name) "string=?"))
+            (string-eq (intern-str name) "string-eq")
+            (string-eq (intern-str name) "string=?"))
           (ctfe-eval-string-eq-call (intern-str name) args expr env fuel)]
         [(or
-          (string-eq (intern-str name) "string-append")
-          (string-eq (intern-str name) "string-concat"))
-          (ctfe-eval-string-append-call
-            (intern-str name)
-            args
-            expr
-            env
-            fuel)]
+            (string-eq (intern-str name) "string-append")
+            (string-eq (intern-str name) "string-concat"))
+          (ctfe-eval-string-append-call (intern-str name) args expr env fuel)]
         [(or
-          (string-eq (intern-str name) "string-length")
-          (string-eq (intern-str name) "length"))
-          (ctfe-eval-string-length-call
-            (intern-str name)
-            args
-            expr
-            env
-            fuel)]
+            (string-eq (intern-str name) "string-length")
+            (string-eq (intern-str name) "length"))
+          (ctfe-eval-string-length-call (intern-str name) args expr env fuel)]
         [(string-eq (intern-str name) "int->string")
           (ctfe-eval-int-to-string-call args expr env fuel)]
         [(string-eq (intern-str name) "expr-bool")
@@ -3424,30 +3396,22 @@
         [(string-eq (intern-str name) "expr-if")
           (ctfe-eval-expr-if-call args expr env fuel)]
         [(ctfe-expr-inspector-name? (intern-str name))
-          (ctfe-eval-expr-inspector-call
-            (intern-str name)
-            args
-            expr
-            env
-            fuel)]
-        [(ctfe-expr-list-inspector-name?
-          (intern-str name))
+          (ctfe-eval-expr-inspector-call (intern-str name) args expr env fuel)]
+        [(ctfe-expr-list-inspector-name? (intern-str name))
           (ctfe-eval-expr-list-inspector-call
             (intern-str name)
             args
             expr
             env
             fuel)]
-        [(ctfe-expr-clause-inspector-name?
-          (intern-str name))
+        [(ctfe-expr-clause-inspector-name? (intern-str name))
           (ctfe-eval-expr-clause-inspector-call
             (intern-str name)
             args
             expr
             env
             fuel)]
-        [(ctfe-expr-clause-list-inspector-name?
-          (intern-str name))
+        [(ctfe-expr-clause-list-inspector-name? (intern-str name))
           (ctfe-eval-expr-clause-list-inspector-call
             (intern-str name)
             args

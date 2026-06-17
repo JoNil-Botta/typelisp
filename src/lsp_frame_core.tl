@@ -68,6 +68,15 @@
   (FoundVariant String String)
   (MissingVariant))
 
+
+(defenum LspEditResult
+  (OkLspEdit String)
+  (ErrLspEdit String))
+
+(defenum LspFunctionList
+  (OkLspFunctionList (Array String))
+  (ErrLspFunctionList String))
+
 (define (lsp-frame-space? [c : char]) : bool
   (or (= c #\space') (= c #\tab')))
 
@@ -2881,6 +2890,100 @@
       [(JsonFound id) (lsp-write-error id -32601 "Method not found")]
       [(JsonMissing) unit])))
 
+
+;; tl/listFunctions - List all top-level function names in a document
+(define (lsp-handle-tl-list-functions
+  [id : Json]
+  [params : Json]
+  [docs : LspDocuments]) : LspHandleResult
+  (match (lsp-get-document params docs)
+    [(FoundLspDocument uri path text)
+      (let
+        [functions : (Array String) (array-new String)]
+        (begin
+          ;; TODO: Implement by scanning the document for (define ...) forms
+          ;; For now, return empty array
+          (lsp-write-response id (lsp-json-array functions))
+          (LspContinue docs)))]
+    [(MissingLspDocument)
+      (begin
+        (lsp-write-error id -32600 "Document not found")
+        (LspContinue docs))]))
+
+;; tl/structuralReplace - Replace a pattern in a document
+(define (lsp-handle-tl-structural-replace
+  [id : Json]
+  [params : Json]
+  [docs : LspDocuments]) : LspHandleResult
+  (match (lsp-get-document params docs)
+    [(FoundLspDocument uri path text)
+      (let
+        [result : LspEditResult (ErrLspEdit "Not yet implemented")]
+        (match result
+          [(OkLspEdit new-text)
+            (begin
+              (lsp-write-response id (lsp-json-object2
+                "success" (JsonBool true)
+                "text" (JsonString new-text)))
+              (LspContinue docs))]
+          [(ErrLspEdit message)
+            (begin
+              (lsp-write-error id -32600 message)
+              (LspContinue docs))]))]
+    [(MissingLspDocument)
+      (begin
+        (lsp-write-error id -32600 "Document not found")
+        (LspContinue docs))]))
+
+;; tl/insertFunction - Insert a function after another
+(define (lsp-handle-tl-insert-function
+  [id : Json]
+  [params : Json]
+  [docs : LspDocuments]) : LspHandleResult
+  (match (lsp-get-document params docs)
+    [(FoundLspDocument uri path text)
+      (let
+        [result : LspEditResult (ErrLspEdit "Not yet implemented")]
+        (match result
+          [(OkLspEdit new-text)
+            (begin
+              (lsp-write-response id (lsp-json-object2
+                "success" (JsonBool true)
+                "text" (JsonString new-text)))
+              (LspContinue docs))]
+          [(ErrLspEdit message)
+            (begin
+              (lsp-write-error id -32600 message)
+              (LspContinue docs))]))]
+    [(MissingLspDocument)
+      (begin
+        (lsp-write-error id -32600 "Document not found")
+        (LspContinue docs))]))
+
+;; tl/deleteFunction - Delete a function by name
+(define (lsp-handle-tl-delete-function
+  [id : Json]
+  [params : Json]
+  [docs : LspDocuments]) : LspHandleResult
+  (match (lsp-get-document params docs)
+    [(FoundLspDocument uri path text)
+      (let
+        [result : LspEditResult (ErrLspEdit "Not yet implemented")]
+        (match result
+          [(OkLspEdit new-text)
+            (begin
+              (lsp-write-response id (lsp-json-object2
+                "success" (JsonBool true)
+                "text" (JsonString new-text)))
+              (LspContinue docs))]
+          [(ErrLspEdit message)
+            (begin
+              (lsp-write-error id -32600 message)
+              (LspContinue docs))]))]
+    [(MissingLspDocument)
+      (begin
+        (lsp-write-error id -32600 "Document not found")
+        (LspContinue docs))]))
 (define (lsp-handle-message
   [message : Json]
   [docs : LspDocuments]

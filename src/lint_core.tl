@@ -985,6 +985,7 @@
     [(AstTyChar) false]
     [(AstTyString) false]
     [(AstTyStr) false]
+    [(AstTyBytes) false]
     [(AstTyUnit) false]
     [(AstTyNever) false]
     [(AstTyExpr) false]

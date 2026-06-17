@@ -2695,6 +2695,7 @@
     [(AstTyChar) "char"]
     [(AstTyString) "String"]
     [(AstTyStr) "str"]
+    [(AstTyBytes) "bytes"]
     [(AstTyUnit) "unit"]
     [(AstTyNever) "never"]
     [(AstTyExpr) "Expr"]
@@ -5595,6 +5596,9 @@
 (define (tc-source-str-mut-ref-policy-message) : String
   "typecheck: mutable references to str are reserved; use immutable (& lifetime str)")
 
+(define (tc-source-bytes-value-policy-message) : String
+  "typecheck: bytes is a borrowed byte-slice referent; use (& lifetime bytes) or (&mut lifetime bytes)")
+
 (define (tc-source-type-policy-message [name : String]) : String
   (if (string-eq name "varying")
     "typecheck: public SPMD varying source types are deferred; varying is inferred inside foreach (#2764)"
@@ -5696,14 +5700,17 @@
           [(AstTyRef _ inner)
             (match (tc-resolve-type ctx (ty-node-get inner))
               [(AstTyStr) OkTcUnit]
+              [(AstTyBytes) OkTcUnit]
               [_ (tc-source-type-policy-ok ctx (ty-node-get inner))])]
           [(AstTyMutRef _ inner)
             (match (tc-resolve-type ctx (ty-node-get inner))
               [(AstTyStr) (ErrTcUnit (tc-source-str-mut-ref-policy-message))]
+              [(AstTyBytes) OkTcUnit]
               [_ (tc-source-type-policy-ok ctx (ty-node-get inner))])]
           [(AstTyRegion _ inner)
             (tc-source-type-policy-ok ctx (ty-node-get inner))]
           [(AstTyStr) (ErrTcUnit (tc-source-str-value-policy-message))]
+          [(AstTyBytes) (ErrTcUnit (tc-source-bytes-value-policy-message))]
           [(AstTyEnum name)
             (match (tc-qualified-type-visible-ok ctx (intern-str name))
               [(OkTcUnit)
@@ -6908,6 +6915,10 @@
       (match b
         [(AstTyStr) true]
         [_ false])]
+    [(AstTyBytes)
+      (match b
+        [(AstTyBytes) true]
+        [_ false])]
     [(AstTyUnit)
       (match b
         [(AstTyUnit) true]
@@ -7215,6 +7226,7 @@
     [(AstTyRegion _ inner) (tc-type-move-kind (ty-node-get inner))]
     [(AstTyString) (TcMoveOnly)]
     [(AstTyStr) (TcMoveOnly)]
+    [(AstTyBytes) (TcMoveOnly)]
     [(AstTyTuple _) (TcMoveOnly)]
     [(AstTyArray _ _) (TcMoveOnly)]
     [(AstTyDynArray _) (TcMoveOnly)]
@@ -16620,6 +16632,9 @@
       (tc-inline-aggregate-type-layout-with-stack ctx (ty-node-get inner) stack)]
     [(AstTyString) (OkTcLayoutInfo (tc-inline-aggregate-pointer-layout-info))]
     [(AstTyStr) (OkTcLayoutInfo (tc-inline-aggregate-pointer-layout-info))]
+    [(AstTyBytes)
+      (ErrTcLayoutInfo
+        "typecheck: bytes has no by-value layout; use (& lifetime bytes) or (&mut lifetime bytes)")]
     [(AstTyVar _) (OkTcLayoutInfo (tc-inline-aggregate-pointer-layout-info))]
     [(AstTyVarArgs _ _)
       (OkTcLayoutInfo (tc-inline-aggregate-pointer-layout-info))]

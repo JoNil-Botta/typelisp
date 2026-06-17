@@ -3872,6 +3872,12 @@
       (string-eq (tc-type-render (ast-ty-ref "r" (AstTyString))) "(& r String)")]
     [str-ref-render-ok : bool
       (string-eq (tc-type-render (ast-ty-ref "r" (AstTyStr))) "(& r str)")]
+    [bytes-ref-render-ok : bool
+      (string-eq (tc-type-render (ast-ty-ref "r" (AstTyBytes))) "(& r bytes)")]
+    [bytes-mut-ref-render-ok : bool
+      (string-eq
+        (tc-type-render (ast-ty-mut-ref "r" (AstTyBytes)))
+        "(&mut r bytes)")]
     [mut-ref-render-ok : bool
       (string-eq
         (tc-type-render (ast-ty-mut-ref "phase" (ast-ty-dyn-array (AstTyI64))))
@@ -3885,6 +3891,8 @@
         "(RefBox n)")]
     [str-eq-ok : bool (tc-type-eq (AstTyStr) (AstTyStr))]
     [str-distinct-ok : bool (not (tc-type-eq (AstTyStr) (AstTyString)))]
+    [bytes-eq-ok : bool (tc-type-eq (AstTyBytes) (AstTyBytes))]
+    [bytes-distinct-ok : bool (not (tc-type-eq (AstTyBytes) (AstTyStr)))]
     [nominal-lifetime-distinct-ok : bool
       (not
         (tc-type-eq
@@ -3895,8 +3903,11 @@
             (intern "RefBox")
             (ast-lifetime-cons "m" AstLifetimeNil))))]
     [str-move-kind-ok : bool (tc-type-move-only? (AstTyStr))]
+    [bytes-move-kind-ok : bool (tc-type-move-only? (AstTyBytes))]
     [str-ref-move-kind-ok : bool
       (tc-type-copyable? (ast-ty-ref "r" (AstTyStr)))]
+    [bytes-ref-move-kind-ok : bool
+      (tc-type-copyable? (ast-ty-ref "r" (AstTyBytes)))]
     [region-erased-eq-ok : bool
       (tc-type-eq
         (ast-ty-ref "r" (ast-ty-region "inner" (AstTyI64)))
@@ -3915,13 +3926,19 @@
     (and
       string-ref-render-ok
       str-ref-render-ok
+      bytes-ref-render-ok
+      bytes-mut-ref-render-ok
       mut-ref-render-ok
       str-eq-ok
       str-distinct-ok
+      bytes-eq-ok
+      bytes-distinct-ok
       nominal-lifetime-render-ok
       nominal-lifetime-distinct-ok
       str-move-kind-ok
+      bytes-move-kind-ok
       str-ref-move-kind-ok
+      bytes-ref-move-kind-ok
       region-erased-eq-ok
       region-distinct-ok
       mut-distinct-ok

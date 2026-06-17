@@ -5287,6 +5287,7 @@
       (lower-inline-layout-size-or ctx (AstTyStructArgs name lifetimes) 8)]
     [(AstTyString) 8]
     [(AstTyStr) 8]
+    [(AstTyBytes) 8]
     [(AstTyVar _) 8]
     [(AstTyVarArgs _ _) 8]))
 
@@ -5326,6 +5327,7 @@
       (lower-inline-layout-align-or ctx (AstTyStructArgs name lifetimes) 8)]
     [(AstTyString) 8]
     [(AstTyStr) 8]
+    [(AstTyBytes) 8]
     [(AstTyVar _) 8]
     [(AstTyVarArgs _ _) 8]))
 

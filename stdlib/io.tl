@@ -2271,36 +2271,6 @@
     [newline : String "\n"]
     (print-error (string-append-borrowed text (& newline)))))
 
-(define (io-core-macros-test-fail) : unit
-  (begin
-    (/ 1 0)
-    unit))
-
-(define (io-core-macros-test-assert-true [condition : bool]) : unit
-  (if condition
-    unit
-    (io-core-macros-test-fail)))
-
-(define (io-core-macros-test-assert-false [condition : bool]) : unit
-  (io-core-macros-test-assert-true (not condition)))
-
-(define (io-core-macros-test-assert-i64-eq [actual : i64] [expected : i64]) : unit
-  (io-core-macros-test-assert-true (= actual expected)))
-
-(define (io-core-macros-sc-and [n : i64]) : bool
-  (and (!= n 0) (= (/ 100 n) 100)))
-
-(define (io-core-macros-sc-or [n : i64]) : bool
-  (or (= n 0) (= (/ 100 n) 100)))
-
-(define (io-core-macros-guard-score [n : i64]) : i64
-  (let
-    [value : i64 0]
-    (begin
-      (when (= n 0) (set! value 11))
-      (unless (!= n 0) (set! value (+ value 31)))
-      value)))
-
 (test
   io-core-macros-prelude
   (let
@@ -2308,7 +2278,22 @@
       (if (> (arg-count) 0)
         0
         0)]
+    [value : i64 0]
     (begin
-      (io-core-macros-test-assert-false (io-core-macros-sc-and zero))
-      (io-core-macros-test-assert-true (io-core-macros-sc-or zero))
-      (io-core-macros-test-assert-i64-eq (io-core-macros-guard-score zero) 42))))
+      (if (not (and (!= zero 0) (= (/ 100 zero) 100)))
+        unit
+        (begin
+          (/ 1 0)
+          unit))
+      (if (or (= zero 0) (= (/ 100 zero) 100))
+        unit
+        (begin
+          (/ 1 0)
+          unit))
+      (when (= zero 0) (set! value 11))
+      (unless (!= zero 0) (set! value (+ value 31)))
+      (if (= value 42)
+        unit
+        (begin
+          (/ 1 0)
+          unit)))))

@@ -432,7 +432,7 @@ contains|_tl_compiler_intern_intern_str:
 contains|_tl_compiler_intern_intern_slice:
 end
 
-decision|src/compiler_intern_state.tl|explicit worker-owned intern table API for future driver threading (#2917); kept out of the current selfhost import graph so existing single-compile intern wrappers and instruction counts stay unchanged, covered by compiler_intern_state_isolation integration
+decision|src/compiler_intern_state.tl|explicit worker-owned intern table API for future driver threading (#2917/#2919); kept out of the current selfhost import graph while compile jobs thread CompilerDriverState over the currently isolated pools/session flag, covered by compiler_intern_state_isolation and compiler_driver_state_smoke integration
 
 decision|src/compiler_builtin_ids.tl|reset-aware interned builtin/runtime id predicates (#2380/#2464): imports only src/compiler_intern.tl; used by src/compiler_lower.tl dispatch, src/compiler_typecheck_core.tl dispatch, backend runtime-plan id dispatch, and backend target-lowering cache resets
 

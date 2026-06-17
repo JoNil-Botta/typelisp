@@ -97,6 +97,19 @@
       (msvc-tool-lib tool)
       (process-env-cons "INCLUDE" (msvc-tool-include tool) (process-env-empty)))))
 
+;: Return vector-backed process environment overrides for invoking the tool.
+(define (msvc-tool-process-env-vec [tool : MsvcTool]) : ProcessEnvVec
+  (process-env-vec-append
+    (process-env-vec-append
+      (process-env-vec-append
+        (process-env-vec-new)
+        "PATH"
+        (msvc-tool-path tool))
+      "LIB"
+      (msvc-tool-lib tool))
+    "INCLUDE"
+    (msvc-tool-include tool)))
+
 ;: Render a discovery error as a diagnostic message.
 (define (msvc-error-message [error : MsvcError]) : String
   (match error

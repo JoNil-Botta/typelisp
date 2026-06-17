@@ -2940,12 +2940,96 @@
     [got : String (compiler-backend-peephole-asm input)]
     (string-eq got want)))
 
+(define (compiler-backend-rax-forward-chain-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (IrInstrBinOp 0 (IrBinMul) (IrValueI64 2) (IrValueI64 3) (AstTyI64))
+    (compiler-ir-instr-cons
+      (IrInstrBinOp 1 (IrBinAdd) (IrValueVar 0) (IrValueI64 7) (AstTyI64))
+      (compiler-ir-instr-cons
+        (IrInstrBinOp 2 (IrBinAdd) (IrValueI64 11) (IrValueVar 1) (AstTyI64))
+        (compiler-ir-instr-cons
+          (IrInstrReturn (IrSomeValue (IrValueVar 2)))
+          IrInstrNil)))))
+
+(define (compiler-backend-rax-forward-multiple-use-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (IrInstrBinOp 0 (IrBinAdd) (IrValueI64 1) (IrValueI64 2) (AstTyI64))
+    (compiler-ir-instr-cons
+      (IrInstrBinOp 1 (IrBinAdd) (IrValueVar 0) (IrValueI64 3) (AstTyI64))
+      (compiler-ir-instr-cons
+        (IrInstrBinOp 2 (IrBinAdd) (IrValueVar 0) (IrValueI64 4) (AstTyI64))
+        (compiler-ir-instr-cons
+          (IrInstrReturn (IrSomeValue (IrValueVar 2)))
+          IrInstrNil)))))
+
+(define (compiler-backend-emit-rax-forward-test-instrs
+  [instrs : CompilerIrInstrList]
+  [vars : i64]) : ResultCompilerBackend
+  (let
+    [blocks : CompilerIrBlockList
+      (compiler-ir-block-cons (compiler-ir-block "entry" instrs) IrBlockNil)]
+    [use-counts : (Array i64)
+      (compiler-backend-function-use-counts vars blocks)]
+    (compiler-backend-emit-instrs
+      (BackendTargetLinux)
+      "_tl_test"
+      "test"
+      blocks
+      "entry"
+      (CompilerBackendNoLabel)
+      instrs
+      CompilerRegAssignmentNil
+      vars
+      CompilerRegVarTypeNil
+      (CompilerBackendGlobalTypeNil)
+      (AstTyI64)
+      (compiler-backend-runtime-helper-full-plan)
+      IrFunctionNil
+      IrExternNil
+      (compiler-backend-program-index-build IrFunctionNil IrExternNil)
+      (compiler-source-spans-empty)
+      (compiler-diagnostic-at-start "" "")
+      use-counts
+      (text-buf-empty))))
+
+(define (compiler-backend-rax-forwarding-ok?) : bool
+  (match (compiler-backend-emit-rax-forward-test-instrs
+    (compiler-backend-rax-forward-chain-instrs)
+    3)
+    [(OkCompilerBackend chain-asm)
+      (match (compiler-backend-emit-rax-forward-test-instrs
+        (compiler-backend-rax-forward-multiple-use-instrs)
+        3)
+        [(OkCompilerBackend multi-use-asm)
+          (and
+            (compiler-backend-string-contains? chain-asm "    imulq $3, %rax\n")
+            (compiler-backend-string-contains? chain-asm "    addq $7, %rax\n")
+            (compiler-backend-string-contains? chain-asm "    addq $11, %rax\n")
+            (not
+              (compiler-backend-string-contains?
+                chain-asm
+                "    movq %rax, -8(%rbp)\n"))
+            (not
+              (compiler-backend-string-contains?
+                chain-asm
+                "    movq %rax, -16(%rbp)\n"))
+            (not
+              (compiler-backend-string-contains?
+                chain-asm
+                "    movq %rax, -24(%rbp)\n"))
+            (compiler-backend-string-contains?
+              multi-use-asm
+              "    movq %rax, -8(%rbp)\n"))]
+        [(ErrCompilerBackend _) false])]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-peephole-ok?) : bool
   (and
     (compiler-backend-peephole-register-moves-ok?)
     (compiler-backend-direct-immediate-mov-ok?)
     (compiler-backend-peephole-asm-ok?)
     (compiler-backend-post-regalloc-peephole-ok?)
+    (compiler-backend-rax-forwarding-ok?)
     (compiler-backend-fallthrough-jump-ok?)
     (compiler-backend-branch-fallthrough-ok?)
     (compiler-backend-zero-load-ok?)

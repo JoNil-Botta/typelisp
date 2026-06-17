@@ -97,6 +97,32 @@
         "echo stdout=ok&& 1>&2 echo stderr=err&& exit /b 7"
         (process-args-empty)))))
 
+(define (windows-env-command) : ProcessCommand
+  (process-command-with-env
+    (process-command
+      "C:\\Windows\\System32\\cmd.exe"
+      (process-args-cons
+        "/C"
+        (process-args-cons
+          "echo %TYPELISP_PROCESS_RUNTIME_ENV%"
+          (process-args-empty))))
+    "TYPELISP_PROCESS_RUNTIME_ENV"
+    "process-env-value"))
+
+(define (windows-env-vec-command) : ProcessCommand
+  (process-command-with-env-vec
+    (process-command
+      "C:\\Windows\\System32\\cmd.exe"
+      (process-args-cons
+        "/C"
+        (process-args-cons
+          "echo %TYPELISP_PROCESS_RUNTIME_ENV_VEC%"
+          (process-args-empty))))
+    (process-env-vec-append
+      (process-env-vec-new)
+      "TYPELISP_PROCESS_RUNTIME_ENV_VEC"
+      "process-env-vec-value")))
+
 (define (windows-missing-command) : ProcessCommand
   (process-command
     "C:\\Windows\\System32\\definitely-missing-typelisp.exe"
@@ -104,6 +130,24 @@
 
 (define (linux-process-command) : ProcessCommand
   (process-command "/usr/bin/printf" (process-args-single "stdout=ok")))
+
+(define (linux-env-command) : ProcessCommand
+  (process-command-with-env
+    (process-command
+      "/usr/bin/printenv"
+      (process-args-single "TYPELISP_PROCESS_RUNTIME_ENV"))
+    "TYPELISP_PROCESS_RUNTIME_ENV"
+    "process-env-value"))
+
+(define (linux-env-vec-command) : ProcessCommand
+  (process-command-with-env-vec
+    (process-command
+      "/usr/bin/printenv"
+      (process-args-single "TYPELISP_PROCESS_RUNTIME_ENV_VEC"))
+    (process-env-vec-append
+      (process-env-vec-new)
+      "TYPELISP_PROCESS_RUNTIME_ENV_VEC"
+      "process-env-vec-value")))
 
 (define (linux-async-process-command [text : String]) : ProcessCommand
   (process-command "/usr/bin/printf" (process-args-single text)))
@@ -127,6 +171,16 @@
         7
         "stdout=ok\r\n"
         "stderr=err\r\n")
+      (assert-process-output-result
+        (process-output (windows-env-command))
+        0
+        "process-env-value\r\n"
+        "")
+      (assert-process-output-result
+        (process-output (windows-env-vec-command))
+        0
+        "process-env-vec-value\r\n"
+        "")
       (assert-process-spawn-failed (process-output (windows-missing-command)))
       (assert-process-child-unsupported
         (process-start (windows-process-command)))
@@ -137,6 +191,16 @@
         (process-output (linux-process-command))
         0
         "stdout=ok"
+        "")
+      (assert-process-output-result
+        (process-output (linux-env-command))
+        0
+        "process-env-value\n"
+        "")
+      (assert-process-output-result
+        (process-output (linux-env-vec-command))
+        0
+        "process-env-vec-value\n"
         "")
       (assert-process-output-result
         (linux-borrowed-process-output "/usr/bin/printf" "borrowed-stdout=ok")

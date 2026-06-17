@@ -156,6 +156,16 @@
     "TYPELISP_STDLIB_TEST_VALUE"
     "process-override"))
 
+(define (process-runtime-env-vec-command) : ProcessCommand
+  (process-command-with-env-vec
+    (process-command
+      "/usr/bin/printenv"
+      (process-args-single "TYPELISP_PROCESS_RUNTIME_ENV_VEC"))
+    (process-env-vec-append
+      (process-env-vec-new)
+      "TYPELISP_PROCESS_RUNTIME_ENV_VEC"
+      "process-env-vec-value")))
+
 (define (process-runtime-stdin-command) : ProcessCommand
   (process-command-with-stdin
     (process-command "/usr/bin/cat" (process-args-empty))
@@ -186,6 +196,32 @@
         "echo stdout=ok&& 1>&2 echo stderr=err&& exit /b 7"
         (process-args-empty)))))
 
+(define (process-runtime-windows-env-command) : ProcessCommand
+  (process-command-with-env
+    (process-command
+      "C:\\Windows\\System32\\cmd.exe"
+      (process-args-cons
+        "/C"
+        (process-args-cons
+          "echo %TYPELISP_PROCESS_RUNTIME_ENV%"
+          (process-args-empty))))
+    "TYPELISP_PROCESS_RUNTIME_ENV"
+    "process-env-value"))
+
+(define (process-runtime-windows-env-vec-command) : ProcessCommand
+  (process-command-with-env-vec
+    (process-command
+      "C:\\Windows\\System32\\cmd.exe"
+      (process-args-cons
+        "/C"
+        (process-args-cons
+          "echo %TYPELISP_PROCESS_RUNTIME_ENV_VEC%"
+          (process-args-empty))))
+    (process-env-vec-append
+      (process-env-vec-new)
+      "TYPELISP_PROCESS_RUNTIME_ENV_VEC"
+      "process-env-vec-value")))
+
 (define (process-runtime-windows-missing-command) : ProcessCommand
   (process-command
     "C:\\Windows\\System32\\definitely-missing-typelisp.exe"
@@ -200,6 +236,18 @@
         "stdout=ok\r\n"
         "stderr=err\r\n"
         "windows process output capture")
+      (assert-process-ok
+        (process-output (process-runtime-windows-env-command))
+        0
+        "process-env-value\r\n"
+        ""
+        "windows process env list override")
+      (assert-process-ok
+        (process-output (process-runtime-windows-env-vec-command))
+        0
+        "process-env-vec-value\r\n"
+        ""
+        "windows process env vec override")
       (assert-process-spawn-failed
         (process-output (process-runtime-windows-missing-command))
         "windows process missing executable")
@@ -235,6 +283,12 @@
         "process-override\n"
         ""
         "process env override replaces inherited")
+      (assert-process-ok
+        (process-output (process-runtime-env-vec-command))
+        0
+        "process-env-vec-value\n"
+        ""
+        "process env vec override")
       (assert-process-ok
         (process-output (process-runtime-stdin-command))
         0

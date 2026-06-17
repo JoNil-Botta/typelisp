@@ -7,9 +7,15 @@
 ;# routing through Rust host actions or shell-tokenized command strings.
 ;# Linux execution preserves inherited environment entries except names
 ;# provided by `ProcessEnvList`, which are replaced by the override value.
+;# `ProcessEnvVec` is a vector-backed companion that converts to the same
+;# list-backed runtime boundary: inherited entries matching any override name
+;# are removed, overrides are emitted in vector order, and duplicate override
+;# names are preserved in vector order.
 ;#
 ;# Usage: `(import "stdlib/process.tl")`
 ;#
+(import "vector.tl")
+
 ;: Immutable list of process argument strings in argv order.
 (defenum ProcessStringList
   (ProcessStringNil)
@@ -24,6 +30,14 @@
 (defenum ProcessEnvList
   (ProcessEnvNil)
   (ProcessEnvCons String String (Box ProcessEnvList)))
+
+;: Vector-backed process environment overrides. `names` and `values` are
+;: parallel `StringVec` buffers with the invariant that their live lengths are
+;: equal. Runtime execution still consumes `ProcessEnvList`; converting this
+;: representation preserves vector order and keeps duplicate names.
+(defstruct ProcessEnvVec
+  (names StringVec)
+  (values StringVec))
 
 ;: Process command data: executable path, argv, cwd, env, and stdin.
 (defstruct ProcessCommand
@@ -131,6 +145,103 @@
           (set! i (+ i 1))))
       found)))
 
+;: Return the name buffer from a vector-backed env override set.
+(define (process-env-vec-names [env : ProcessEnvVec]) : StringVec
+  (struct-get env names))
+
+;: Return the value buffer from a vector-backed env override set.
+(define (process-env-vec-values [env : ProcessEnvVec]) : StringVec
+  (struct-get env values))
+
+;: Create an empty vector-backed env override set with at least `capacity`
+;: backing slots in each parallel buffer.
+(define (process-env-vec-with-capacity [capacity : i64]) : ProcessEnvVec
+  (let
+    [cap : i64
+      (if (< capacity 1)
+        1
+        capacity)]
+    (ProcessEnvVec
+      (string-vec-with-capacity cap)
+      (string-vec-with-capacity cap))))
+
+;: Create an empty vector-backed env override set.
+(define (process-env-vec-new) : ProcessEnvVec
+  (process-env-vec-with-capacity 4))
+
+;: Return the number of vector-backed env overrides. Helper-created values keep
+;: this equal to the live length of both buffers; manually constructed values
+;: should be checked with `process-env-vec-validation-error`.
+(define (process-env-vec-count [env : ProcessEnvVec]) : i64
+  (string-vec-len (process-env-vec-names env)))
+
+;: Append one owned environment override at the end of the vector-backed set.
+;: Duplicate names are preserved in append order.
+(define (process-env-vec-append
+  [env : ProcessEnvVec]
+  [name : String]
+  [value : String]) : ProcessEnvVec
+  (ProcessEnvVec
+    (string-vec-push (process-env-vec-names env) name)
+    (string-vec-push (process-env-vec-values env) value)))
+
+;: Convert vector-backed env overrides to a list, preserving vector order at
+;: the existing runtime boundary.
+(define (process-env-vec-to-list-from
+  [env : ProcessEnvVec]
+  [index : i64]
+  [out : ProcessEnvList]) : ProcessEnvList
+  (if (< index 0)
+    out
+    (process-env-vec-to-list-from
+      env
+      (- index 1)
+      (ProcessEnvCons
+        (string-vec-get (process-env-vec-names env) index "")
+        (string-vec-get (process-env-vec-values env) index "")
+        (box out)))))
+
+;: Convert vector-backed env overrides to the list representation consumed by
+;: `ProcessCommand` and the process runtime.
+(define (process-env-vec-to-list [env : ProcessEnvVec]) : ProcessEnvList
+  (process-env-vec-to-list-from
+    env
+    (- (process-env-vec-count env) 1)
+    (ProcessEnvNil)))
+
+;: Return the first vector-backed env validation error, or `ProcessNoString`.
+(define (process-env-vec-validation-error-from
+  [env : ProcessEnvVec]
+  [index : i64]) : ProcessMaybeString
+  (if (>= index (process-env-vec-count env))
+    (ProcessNoString)
+    (let
+      [name : String (string-vec-get (process-env-vec-names env) index "")]
+      (if (string-eq name "")
+        (ProcessSomeString "process: environment variable name is empty")
+        (if (process-string-contains-char? (& name) #=')
+          (ProcessSomeString "process: environment variable name contains '='")
+          (process-env-vec-validation-error-from env (+ index 1)))))))
+
+;: Return the first vector-backed env validation error, or `ProcessNoString`.
+;: The inherited environment is filtered by names that appear in the override
+;: set, then override entries are emitted in vector order. Duplicate override
+;: names are preserved in vector order.
+(define (process-env-vec-validation-error [env : ProcessEnvVec]) : ProcessMaybeString
+  (if (not
+    (=
+      (string-vec-len (process-env-vec-names env))
+      (string-vec-len (process-env-vec-values env))))
+    (ProcessSomeString "process: environment vector name/value counts differ")
+    (process-env-vec-validation-error-from env 0)))
+
+;: Return true when vector-backed env overrides satisfy the public invariant and
+;: all override names are valid.
+(define (process-env-vec-valid? [env : ProcessEnvVec]) : bool
+  (match (process-env-vec-validation-error env)
+    [(ProcessNoString) true]
+    [(ProcessSomeString _) false]))
+
 ;: Return a command stdin value that provides no input.
 (define (process-no-stdin) : ProcessMaybeString
   (ProcessNoString))
@@ -220,6 +331,13 @@
     (process-command-cwd command)
     env
     (process-command-stdin command)))
+
+;: Return a copy of `command` with env overrides replaced by vector-backed
+;: storage converted to the existing list-backed runtime boundary.
+(define (process-command-with-env-vec
+  [command : ProcessCommand]
+  [env : ProcessEnvVec]) : ProcessCommand
+  (process-command-with-env-list command (process-env-vec-to-list env)))
 
 ;: Return a copy of `command` with stdin set to `stdin`.
 (define (process-command-with-stdin [command : ProcessCommand] [stdin : String]) : ProcessCommand

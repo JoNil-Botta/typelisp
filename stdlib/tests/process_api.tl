@@ -1,5 +1,6 @@
 (import "stdlib/process.tl")
 (import "stdlib/test.tl")
+(import "stdlib/vector.tl")
 
 (define (assert-owned-string-eq
   [actual : String]
@@ -75,6 +76,38 @@
         (assert-owned-string-eq name expected-name message)
         (assert-owned-string-eq value expected-value message))]
     [(ProcessEnvNil) (panic message)]))
+
+(define (assert-process-env-list2
+  [env : ProcessEnvList]
+  [first-name : String]
+  [first-value : String]
+  [second-name : String]
+  [second-value : String]
+  [message : String]) : unit
+  (match env
+    [(ProcessEnvCons name value rest)
+      (begin
+        (assert-owned-string-eq name first-name message)
+        (assert-owned-string-eq value first-value message)
+        (match (box-get rest)
+          [(ProcessEnvCons next-name next-value tail)
+            (begin
+              (assert-owned-string-eq next-name second-name message)
+              (assert-owned-string-eq next-value second-value message)
+              (match (box-get tail)
+                [(ProcessEnvNil) unit]
+                [_ (panic message)]))]
+          [(ProcessEnvNil) (panic message)]))]
+    [(ProcessEnvNil) (panic message)]))
+
+(define (assert-process-env-validation
+  [value : ProcessMaybeString]
+  [expected : String]
+  [message : String]) : unit
+  (match value
+    [(ProcessSomeString actual)
+      (assert-owned-string-eq actual expected message)]
+    [(ProcessNoString) (panic message)]))
 
 (define (assert-process-invalid-command
   [result : ResultProcessOutput]
@@ -158,6 +191,82 @@
         "TL_REPLACED"
         "yes"
         "process env list")
+      (let
+        [env-vec-empty : ProcessEnvVec (process-env-vec-new)]
+        [env-vec : ProcessEnvVec
+          (process-env-vec-append
+            (process-env-vec-append (process-env-vec-new) "TL_FIRST" "one")
+            "TL_SECOND"
+            "two")]
+        [env-dup : ProcessEnvVec
+          (process-env-vec-append
+            (process-env-vec-append (process-env-vec-new) "TL_DUP" "first")
+            "TL_DUP"
+            "second")]
+        [bad-shape : ProcessEnvVec
+          (ProcessEnvVec
+            (string-vec-push (string-vec-new) "ONLY_NAME")
+            (string-vec-new))]
+        (begin
+          (assert-i64-eq
+            (process-env-vec-count env-vec-empty)
+            0
+            "process env vec empty count")
+          (assert-true
+            (process-env-vec-valid? env-vec-empty)
+            "process env vec empty valid")
+          (assert-i64-eq
+            (process-env-vec-count env-vec)
+            2
+            "process env vec count")
+          (assert-true (process-env-vec-valid? env-vec) "process env vec valid")
+          (assert-process-env-list2
+            (process-env-vec-to-list env-vec)
+            "TL_FIRST"
+            "one"
+            "TL_SECOND"
+            "two"
+            "process env vec order")
+          (assert-process-env-list2
+            (process-command-env (process-command-with-env-vec command env-vec))
+            "TL_FIRST"
+            "one"
+            "TL_SECOND"
+            "two"
+            "process command env vec order")
+          (assert-process-env-list2
+            (process-env-vec-to-list env-dup)
+            "TL_DUP"
+            "first"
+            "TL_DUP"
+            "second"
+            "process env vec duplicate order")
+          (assert-process-env-validation
+            (process-env-vec-validation-error
+              (process-env-vec-append (process-env-vec-new) "" "bad"))
+            "process: environment variable name is empty"
+            "process env vec empty name")
+          (assert-process-env-validation
+            (process-env-vec-validation-error
+              (process-env-vec-append (process-env-vec-new) "BAD=NAME" "bad"))
+            "process: environment variable name contains '='"
+            "process env vec bad name")
+          (assert-process-env-validation
+            (process-env-vec-validation-error bad-shape)
+            "process: environment vector name/value counts differ"
+            "process env vec shape")
+          (assert-process-invalid-command
+            (process-output
+              (process-command-with-env-vec
+                command
+                (process-env-vec-append (process-env-vec-new) "" "bad")))
+            "process: environment variable name is empty")
+          (assert-process-child-invalid-command
+            (process-start
+              (process-command-with-env-vec
+                command
+                (process-env-vec-append (process-env-vec-new) "BAD=NAME" "bad")))
+            "process: environment variable name contains '='")))
       (assert-process-no-string
         (process-command-cwd (process-command "echo" (process-args-empty)))
         "process default cwd")

@@ -1001,14 +1001,11 @@
 (defenum DocTestRunFailure
   (DocTestRunFailure String i64 i64 String))
 
-(defenum DocTestRunFailureList
-  (DocTestRunFailureNil)
-  (DocTestRunFailureCons DocTestRunFailure (Box DocTestRunFailureList)))
-
-(define (doc-test-run-failure-cons
-  [failure : DocTestRunFailure]
-  [rest : DocTestRunFailureList]) : DocTestRunFailureList
-  (DocTestRunFailureCons failure (box rest)))
+(comptime-decl
+  (:generated vector-family DocTestRunFailureList "DocTestRunFailure")
+  (defstruct DocTestRunFailureList
+    (slots (Array DocTestRunFailure))
+    (len i64)))
 
 ;; Outcome of running a source: how many examples were checked and which failed.
 (defenum DocTestRunReport
@@ -1042,27 +1039,29 @@
   (match report
     [(DocTestRunReport _ failures) failures]))
 
+(define (doc-test-run-failure-list-empty) : DocTestRunFailureList
+  (DocTestRunFailureList (make-array DocTestRunFailure 0) 0))
+
 (define (doc-test-run-failure-list-count [failures : DocTestRunFailureList]) : i64
-  (match failures
-    [(DocTestRunFailureNil) 0]
-    [(DocTestRunFailureCons _ rest)
-      (+ 1 (doc-test-run-failure-list-count (box-get rest)))]))
+  (struct-get failures len))
+
+(define (doc-test-run-failure-list-ref
+  [failures : DocTestRunFailureList]
+  [index : i64]) : DocTestRunFailure
+  (array-ref (struct-get failures slots) index))
 
 (define (doc-test-run-report-ok? [report : DocTestRunReport]) : bool
-  (match (doc-test-run-report-failures report)
-    [(DocTestRunFailureNil) true]
-    [(DocTestRunFailureCons _ _) false]))
+  (= (doc-test-run-failure-list-count (doc-test-run-report-failures report)) 0))
 
 (define (doc-test-run-failure-list-append
   [failures : DocTestRunFailureList]
   [failure : DocTestRunFailure]) : DocTestRunFailureList
-  (match failures
-    [(DocTestRunFailureNil)
-      (doc-test-run-failure-cons failure DocTestRunFailureNil)]
-    [(DocTestRunFailureCons head rest)
-      (doc-test-run-failure-cons
-        head
-        (doc-test-run-failure-list-append (box-get rest) failure))]))
+  (let
+    [n : i64 (struct-get failures len)]
+    [slots : (Array DocTestRunFailure) (struct-get failures slots)]
+    (begin
+      (array-push! slots failure)
+      (DocTestRunFailureList slots (+ n 1)))))
 
 ;; Render a failure as `path:line: message`. Fence-level extraction
 ;; errors use index `-1`; example failures include the example number in their
@@ -1823,7 +1822,10 @@
         (doc-test-run-examples-with-roots
           path
           examples
-          (doc-test-errors-to-failures path errors DocTestRunFailureNil)
+          (doc-test-errors-to-failures
+            path
+            errors
+            (doc-test-run-failure-list-empty))
           stdlib-roots))]))
 
 (define (doc-test-run-file [path : String]) : DocTestRunReport
@@ -1848,7 +1850,10 @@
         (doc-test-typecheck-examples-with-roots
           path
           examples
-          (doc-test-errors-to-failures path errors DocTestRunFailureNil)
+          (doc-test-errors-to-failures
+            path
+            errors
+            (doc-test-run-failure-list-empty))
           stdlib-roots))]))
 
 (define (doc-test-typecheck-package-source-with-roots
@@ -1864,7 +1869,10 @@
         (doc-test-typecheck-package-examples-with-roots
           path
           examples
-          (doc-test-errors-to-failures path errors DocTestRunFailureNil)
+          (doc-test-errors-to-failures
+            path
+            errors
+            (doc-test-run-failure-list-empty))
           stdlib-roots
           manifest-dir
           deps))]))
@@ -1897,13 +1905,20 @@
     1))
 
 ;; Render every failure as `path:line: ...`, one per line, in extraction order.
-(define (doc-test-run-failures-render [failures : DocTestRunFailureList]) : String
-  (match failures
-    [(DocTestRunFailureNil) ""]
-    [(DocTestRunFailureCons failure rest)
+(define (doc-test-run-failures-render-from
+  [failures : DocTestRunFailureList]
+  [index : i64]) : String
+  (if (>= index (doc-test-run-failure-list-count failures))
+    ""
+    (string-append
       (string-append
-        (string-append (doc-test-run-failure-render failure) "\n")
-        (doc-test-run-failures-render (box-get rest)))]))
+        (doc-test-run-failure-render
+          (doc-test-run-failure-list-ref failures index))
+        "\n")
+      (doc-test-run-failures-render-from failures (+ index 1)))))
+
+(define (doc-test-run-failures-render [failures : DocTestRunFailureList]) : String
+  (doc-test-run-failures-render-from failures 0))
 
 ;; Human-readable report text. Success mirrors the Rust CLI's
 ;; `Doc tests passed: N example(s)` line; failure mirrors its
@@ -1912,20 +1927,18 @@
 (define (doc-test-run-report-render [report : DocTestRunReport]) : String
   (match report
     [(DocTestRunReport count failures)
-      (match failures
-        [(DocTestRunFailureNil)
-          (string-append
-            "Doc tests passed: "
-            (string-append (int->string count) " example(s)"))]
-        [(DocTestRunFailureCons _ _)
-          (string-append
-            (str-cat
-              "doc tests failed: "
-              (int->string (doc-test-run-failure-list-count failures))
-              " failure(s) across "
-              (int->string count)
-              " example(s)\n")
-            (doc-test-run-failures-render failures))])]))
+      (if (= (doc-test-run-failure-list-count failures) 0)
+        (string-append
+          "Doc tests passed: "
+          (string-append (int->string count) " example(s)"))
+        (string-append
+          (str-cat
+            "doc tests failed: "
+            (int->string (doc-test-run-failure-list-count failures))
+            " failure(s) across "
+            (int->string count)
+            " example(s)\n")
+          (doc-test-run-failures-render failures)))]))
 
 (define (doc-test-smoke-source) : String
   ";# Module docs
@@ -2354,36 +2367,33 @@
   (let
     [report : DocTestRunReport
       (doc-test-run-source "docs/bad.tl" (doc-test-run-unexpected-error-source))]
-    (match (doc-test-run-report-failures report)
-      [(DocTestRunFailureCons failure rest)
-        (match (box-get rest)
-          [(DocTestRunFailureNil)
-            (begin
-              (unless (= (doc-test-run-failure-index failure) 1) (return false))
-              (unless (= (doc-test-run-failure-line failure) 1) (return false))
-              (unless
-                (string-eq (doc-test-run-failure-path failure) "docs/bad.tl")
-                (return false))
-              (doc-test-string-contains?
-                (doc-test-run-failure-message failure)
-                "return type mismatch"))]
-          [_ false])]
-      [_ false])))
+    [failures : DocTestRunFailureList (doc-test-run-report-failures report)]
+    (if (= (doc-test-run-failure-list-count failures) 1)
+      (let
+        [failure : DocTestRunFailure (doc-test-run-failure-list-ref failures 0)]
+        (begin
+          (unless (= (doc-test-run-failure-index failure) 1) (return false))
+          (unless (= (doc-test-run-failure-line failure) 1) (return false))
+          (unless
+            (string-eq (doc-test-run-failure-path failure) "docs/bad.tl")
+            (return false))
+          (doc-test-string-contains?
+            (doc-test-run-failure-message failure)
+            "return type mismatch")))
+      false)))
 
 ;; An `expect-error` example that checks successfully is a failure.
 (define (doc-test-run-smoke-unexpected-pass-ok?) : bool
   (let
     [report : DocTestRunReport
       (doc-test-run-source "docs/bad.tl" (doc-test-run-unexpected-pass-source))]
-    (match (doc-test-run-report-failures report)
-      [(DocTestRunFailureCons failure rest)
-        (match (box-get rest)
-          [(DocTestRunFailureNil)
-            (doc-test-string-contains?
-              (doc-test-run-failure-message failure)
-              "was expected to fail")]
-          [_ false])]
-      [_ false])))
+    [failures : DocTestRunFailureList (doc-test-run-report-failures report)]
+    (if (= (doc-test-run-failure-list-count failures) 1)
+      (doc-test-string-contains?
+        (doc-test-run-failure-message
+          (doc-test-run-failure-list-ref failures 0))
+        "was expected to fail")
+      false)))
 
 ;; Malformed fences (the shared malformed source's three extraction errors)
 ;; become three runner failures with no examples.
@@ -2413,23 +2423,21 @@
         "docs/run.tl"
         (doc-test-runnable-source)
         (doc-test-run-smoke-stdlib-roots))]
+    [failures : DocTestRunFailureList (doc-test-run-report-failures report)]
     (if (= (doc-test-run-report-count report) 2)
-      (match (doc-test-run-report-failures report)
-        [(DocTestRunFailureCons first rest-first)
-          (match (box-get rest-first)
-            [(DocTestRunFailureCons second rest-second)
-              (match (box-get rest-second)
-                [(DocTestRunFailureNil)
-                  (if (doc-test-string-contains?
-                    (doc-test-run-failure-message first)
-                    "unsupported")
-                    (doc-test-string-contains?
-                      (doc-test-run-failure-message second)
-                      "unsupported")
-                    false)]
-                [_ false])]
-            [_ false])]
-        [_ false])
+      (if (= (doc-test-run-failure-list-count failures) 2)
+        (let
+          [first : DocTestRunFailure (doc-test-run-failure-list-ref failures 0)]
+          [second : DocTestRunFailure
+            (doc-test-run-failure-list-ref failures 1)]
+          (if (doc-test-string-contains?
+            (doc-test-run-failure-message first)
+            "unsupported")
+            (doc-test-string-contains?
+              (doc-test-run-failure-message second)
+              "unsupported")
+            false))
+        false)
       false)))
 
 (define (doc-test-run-smoke-runnable-exec-pass-ok?) : bool
@@ -2463,16 +2471,14 @@
         "docs/run.tl"
         source
         (doc-test-run-smoke-stdlib-roots))]
+    [failures : DocTestRunFailureList (doc-test-run-report-failures report)]
     (if (= (doc-test-run-report-count report) 1)
-      (match (doc-test-run-report-failures report)
-        [(DocTestRunFailureCons failure rest)
-          (match (box-get rest)
-            [(DocTestRunFailureNil)
-              (doc-test-string-contains?
-                (doc-test-run-failure-message failure)
-                fragment)]
-            [_ false])]
-        [_ false])
+      (if (= (doc-test-run-failure-list-count failures) 1)
+        (doc-test-string-contains?
+          (doc-test-run-failure-message
+            (doc-test-run-failure-list-ref failures 0))
+          fragment)
+        false)
       false)))
 
 (define (doc-test-run-smoke-runnable-failures-ok?) : bool
@@ -2531,15 +2537,13 @@
       (doc-test-typecheck-source
         "docs/bad.tl"
         (doc-test-run-unexpected-pass-source))]
-    (match (doc-test-run-report-failures report)
-      [(DocTestRunFailureCons failure rest)
-        (match (box-get rest)
-          [(DocTestRunFailureNil)
-            (doc-test-string-contains?
-              (doc-test-run-failure-message failure)
-              "was expected to fail")]
-          [_ false])]
-      [_ false])))
+    [failures : DocTestRunFailureList (doc-test-run-report-failures report)]
+    (if (= (doc-test-run-failure-list-count failures) 1)
+      (doc-test-string-contains?
+        (doc-test-run-failure-message
+          (doc-test-run-failure-list-ref failures 0))
+        "was expected to fail")
+      false)))
 
 (define (doc-test-typecheck-smoke-malformed-ok?) : bool
   (let

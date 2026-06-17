@@ -2636,9 +2636,9 @@
           mut-entry-info
           " found present entry-key entry-hash)))))\n"))
       (set! buf (gen-tb3 buf "(define (" prefix "-mut-entry-from-info\n"))
+      (set! buf (gen-tb3 buf "  [info : " mut-entry-info "]\n"))
       (set! buf (gen-tb3 buf "  [slots : (Array " slot ")]\n"))
-      (set! buf (gen-tb3 buf "  [borrow : (&mut map (Array " slot "))]\n"))
-      (set! buf (gen-tb3 buf "  [info : " mut-entry-info "]) : ("))
+      (set! buf (gen-tb3 buf "  [borrow : (&mut map (Array " slot "))]) : ("))
       (set! buf (gen-tb3 buf mut-entry " map)\n  (" mut-entry))
       (set!
         buf
@@ -2656,18 +2656,13 @@
       (set!
         buf
         (gen-tb3 buf "  :\n  Expr\n  `(" prefix "-mut-entry-from-info\n"))
-      (set!
-        buf
-        (gen-tb3
-          buf
-          "    (struct-get ,map slots)\n    (&mut (struct-get ,map slots))\n    ("
-          prefix
-          "-mut-entry-info\n"))
+      (set! buf (gen-tb2 buf "    (" ""))
+      (set! buf (gen-tb2 buf prefix "-mut-entry-info\n"))
       (set!
         buf
         (gen-tb2
           buf
-          "      (struct-get ,map slots)\n      (array-length (struct-get ,map slots))\n      ,key)))\n"
+          "      (struct-get ,map slots)\n      (array-length (struct-get ,map slots))\n      ,key)\n    (struct-get ,map slots)\n    (&mut (struct-get ,map slots))))\n"
           ""))
       (set!
         buf
@@ -3925,9 +3920,9 @@
           mut-entry-info
           " found present entry-key entry-hash)))))\n"))
       (set! buf (gen-tb3 buf "(define (" prefix "-mut-entry-from-info\n"))
+      (set! buf (gen-tb3 buf "  [info : " mut-entry-info "]\n"))
       (set! buf (gen-tb3 buf "  [slots : (Array " slot ")]\n"))
-      (set! buf (gen-tb3 buf "  [borrow : (&mut map (Array " slot "))]\n"))
-      (set! buf (gen-tb3 buf "  [info : " mut-entry-info "]) : ("))
+      (set! buf (gen-tb3 buf "  [borrow : (&mut map (Array " slot "))]) : ("))
       (set! buf (gen-tb3 buf mut-entry " map)\n  (" mut-entry))
       (set!
         buf
@@ -3945,18 +3940,13 @@
       (set!
         buf
         (gen-tb3 buf "  :\n  Expr\n  `(" prefix "-mut-entry-from-info\n"))
-      (set!
-        buf
-        (gen-tb3
-          buf
-          "    (struct-get ,map slots)\n    (&mut (struct-get ,map slots))\n    ("
-          prefix
-          "-mut-entry-info\n"))
+      (set! buf (gen-tb2 buf "    (" ""))
+      (set! buf (gen-tb2 buf prefix "-mut-entry-info\n"))
       (set!
         buf
         (gen-tb2
           buf
-          "      (struct-get ,map slots)\n      (array-length (struct-get ,map slots))\n      ,key)))\n"
+          "      (struct-get ,map slots)\n      (array-length (struct-get ,map slots))\n      ,key)\n    (struct-get ,map slots)\n    (&mut (struct-get ,map slots))))\n"
           ""))
       (set!
         buf

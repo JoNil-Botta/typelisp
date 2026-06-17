@@ -1542,14 +1542,16 @@ immutable borrows of the same place are allowed.
 
 While a mutable borrow is live, later immutable or mutable borrows and writes of
 the same tracked path, any ancestor path, or any descendant path are rejected.
-Sibling aggregate projections remain independent when the checker can name both
-paths, for example simultaneous mutable borrows of two different struct fields
-rooted in the same local. Lexical mutable reborrowing is supported: a nested
-scope may borrow a descendant through an existing mutable reference, and the
-outer mutable reference becomes usable again after that nested scope ends.
-Using or mutating through the outer reference while the inner reborrow is still
-live remains rejected. This is still lexical; `begin` does not shorten either
-borrow, and non-lexical last-use shortening remains deferred to #810.
+Ordinary direct reads/accesses of those paths are rejected too; reads through the
+mutable reference value itself remain accepted. Sibling aggregate projections
+remain independent when the checker can name both paths, for example
+simultaneous mutable borrows of two different struct fields rooted in the same
+local. Lexical mutable reborrowing is supported: a nested scope may borrow a
+descendant through an existing mutable reference, and the outer mutable
+reference becomes usable again after that nested scope ends. Using or mutating
+through the outer reference while the inner reborrow is still live remains
+rejected. This is still lexical; `begin` does not shorten either borrow, and
+non-lexical last-use shortening remains deferred to #810.
 
 **Invalid escapes in v1.** The checker rejects references that would outlive
 their owner or arena:

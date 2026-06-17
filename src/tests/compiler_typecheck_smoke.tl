@@ -391,6 +391,64 @@
 (define (main [items : (Array i64)]) : unit
   (bad (&mut items)))")
 
+(define (compiler-typecheck-mut-borrow-read-array-length-source) : String
+  "(define (main) : i64
+  (let
+    [items : (Array i64) (make-array i64 1)]
+    [borrowed : (&mut items (Array i64)) (&mut items)]
+    [n : i64 (array-length items)]
+    (begin
+      (array-set! borrowed 0 41)
+      (+ n 1))))")
+
+(define (compiler-typecheck-mut-borrow-read-array-ref-source) : String
+  "(define (main) : i64
+  (let
+    [items : (Array i64) (make-array i64 1)]
+    [borrowed : (&mut items (Array i64)) (&mut items)]
+    [n : i64 (array-ref items 0)]
+    (begin
+      (array-set! borrowed 0 41)
+      n)))")
+
+(define (compiler-typecheck-mut-borrow-read-struct-get-source) : String
+  "(defstruct Bag
+  (left (Array i64))
+  (right i64))
+(define (main) : i64
+  (let
+    [items : (Array i64) (make-array i64 1)]
+    [bag : Bag (Bag items 42)]
+    [borrowed : (&mut bag (Array i64)) (&mut (struct-get bag left))]
+    [copy : (Array i64) (struct-get bag left)]
+    (begin
+      (array-set! borrowed 0 41)
+      (array-length copy))))")
+
+(define (compiler-typecheck-mut-borrow-read-disjoint-source) : String
+  "(defstruct Bag
+  (left (Array i64))
+  (right i64))
+(define (main) : i64
+  (let
+    [items : (Array i64) (make-array i64 1)]
+    [bag : Bag (Bag items 42)]
+    [borrowed : (&mut bag (Array i64)) (&mut (struct-get bag left))]
+    [right : i64 (struct-get bag right)]
+    (begin
+      (array-set! borrowed 0 41)
+      right)))")
+
+(define (compiler-typecheck-mut-borrow-read-through-ref-source) : String
+  "(define (main) : i64
+  (let
+    [items : (Array i64) (make-array i64 1)]
+    [borrowed : (&mut items (Array i64)) (&mut items)]
+    [n : i64 (array-length borrowed)]
+    (begin
+      (array-set! borrowed 0 41)
+      n)))")
+
 (define (compiler-typecheck-secondary-label-contains?
   [labels : CompilerDiagnosticLabelList]
   [needle : String]) : bool
@@ -447,7 +505,7 @@
       "typecheck: cannot mutably borrow borrowed place")
     (compiler-typecheck-labeled-borrow-error-ok?
       (compiler-typecheck-borrow-immut-after-mut-source)
-      "typecheck: cannot immutably borrow mutably borrowed place")
+      "typecheck: cannot read mutably borrowed place `items.#array.0`")
     (compiler-typecheck-labeled-borrow-error-ok?
       (compiler-typecheck-borrow-returned-call-source)
       "typecheck: cannot move borrowed place `text`")
@@ -457,15 +515,28 @@
       (compiler-typecheck-mut-borrow-disjoint-fields-source))
     (compiler-typecheck-labeled-borrow-error-ok?
       (compiler-typecheck-mut-borrow-same-field-source)
-      "typecheck: cannot mutably borrow borrowed place `bags.left`")
+      "typecheck: cannot read mutably borrowed place `bags.left`")
     (compiler-typecheck-labeled-borrow-error-ok?
       (compiler-typecheck-mut-borrow-ancestor-descendant-source)
-      "typecheck: cannot mutably borrow borrowed place")
+      "typecheck: cannot read mutably borrowed place `bags.left.#array.0`")
     (compiler-typecheck-ok?
       (compiler-typecheck-mut-reborrow-bound-subscope-source))
     (compiler-typecheck-labeled-borrow-error-ok?
       (compiler-typecheck-mut-reborrow-same-scope-use-source)
-      "typecheck: cannot assign to borrowed place `items.#array.0`")))
+      "typecheck: cannot assign to borrowed place `items.#array.0`")
+    (compiler-typecheck-labeled-borrow-error-ok?
+      (compiler-typecheck-mut-borrow-read-array-length-source)
+      "typecheck: cannot read mutably borrowed place `items`")
+    (compiler-typecheck-labeled-borrow-error-ok?
+      (compiler-typecheck-mut-borrow-read-array-ref-source)
+      "typecheck: cannot read mutably borrowed place `items.#array.0`")
+    (compiler-typecheck-labeled-borrow-error-ok?
+      (compiler-typecheck-mut-borrow-read-struct-get-source)
+      "typecheck: cannot read mutably borrowed place `bag.left`")
+    (compiler-typecheck-ok?
+      (compiler-typecheck-mut-borrow-read-disjoint-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-mut-borrow-read-through-ref-source))))
 
 (define (compiler-typecheck-reference-return-container-tests-ok?) : bool
   (and

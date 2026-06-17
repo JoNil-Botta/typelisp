@@ -1475,3 +1475,1253 @@
     (let
       [root : String (fs-temp-root)]
       (fs-create-temp-dir-loop (& root) prefix (fs-process-id) 0))))
+
+;; Inline coverage migrated from stdlib/tests/fs_api.tl and
+;; stdlib/tests/fs_path_join_many_api.tl (#3085).
+(cfg
+  test
+  (define (fs-test-fail [message : String]) : unit
+    (panic message)))
+
+(cfg
+  test
+  (define (fs-test-assert-true [condition : bool] [message : String]) : unit
+    (if condition
+      unit
+      (fs-test-fail message))))
+
+(cfg
+  test
+  (define (fs-test-assert-false [condition : bool] [message : String]) : unit
+    (fs-test-assert-true (not condition) message)))
+
+(cfg
+  test
+  (define (fs-test-assert-bool-eq
+    [actual : bool]
+    [expected : bool]
+    [message : String]) : unit
+    (fs-test-assert-true (= actual expected) message)))
+
+(cfg
+  test
+  (define (fs-test-assert-i64-eq
+    [actual : i64]
+    [expected : i64]
+    [message : String]) : unit
+    (fs-test-assert-true (= actual expected) message)))
+
+(cfg
+  test
+  (define (fs-test-assert-string-eq
+    [actual : (& actual str)]
+    [expected : (& expected str)]
+    [message : String]) : unit
+    (fs-test-assert-true (string-eq-borrowed actual expected) message)))
+
+(cfg
+  test
+  (define (fs-path-join-many-api-assert
+    [got : String]
+    [want : String]
+    [message : String]) : unit
+    (fs-test-assert-string-eq (& got) (& want) message)))
+
+(cfg
+  test
+  (define (fs-path-join-many-api-expected3
+    [a : String]
+    [b : String]
+    [c : String]) : String
+    (string-append
+      (string-append (string-append a (fs-path-separator)) b)
+      (string-append (fs-path-separator) c))))
+
+(cfg
+  test
+  (define (fs-path-join-many-api-expected4
+    [a : String]
+    [b : String]
+    [c : String]
+    [d : String]) : String
+    (string-append
+      (fs-path-join-many-api-expected3 a b c)
+      (string-append (fs-path-separator) d))))
+
+(cfg
+  test
+  (define (fs-test-path-join-many-main) : i64
+    (begin
+      (fs-path-join-many-api-assert
+        (fs-path-join-many)
+        ""
+        "fs-path-join-many zero")
+      (fs-path-join-many-api-assert
+        (fs-path-join-many "solo")
+        "solo"
+        "fs-path-join-many one")
+      (fs-path-join-many-api-assert
+        (fs-path-join-many "left path" "right file")
+        (string-append
+          (string-append "left path" (fs-path-separator))
+          "right file")
+        "fs-path-join-many two")
+      (fs-path-join-many-api-assert
+        (fs-path-join-many "left" "middle" "right")
+        (fs-path-join-many-api-expected3 "left" "middle" "right")
+        "fs-path-join-many three")
+      (fs-path-join-many-api-assert
+        (fs-path-join-many "left" "middle" "right" "leaf")
+        (fs-path-join-many-api-expected4 "left" "middle" "right" "leaf")
+        "fs-path-join-many four")
+      (fs-path-join-many-api-assert
+        (fs-path-join-many "left/" "/right" "leaf")
+        (string-append "left/right" (string-append (fs-path-separator) "leaf"))
+        "fs-path-join-many duplicate separator")
+      42)))
+
+(cfg
+  test
+  (test
+    fs-path-join-many-api
+    (if (= (fs-test-path-join-many-main) 42)
+      unit
+      (fs-test-fail "fs-path-join-many-api did not return 42"))))
+
+(cfg
+  test
+  (define (fs-test-assert-owned-string-eq
+    [actual : String]
+    [expected : String]
+    [message : String]) : unit
+    (fs-test-assert-string-eq (& actual) (& expected) message)))
+
+(cfg
+  test
+  (define (fs-test-assert-ok-unit [result : ResultIoUnit] [message : String]) : unit
+    (match result
+      [(OkIoUnit) unit]
+      [(ErrIoUnit error)
+        (panic (string-append message (io-error-message error)))])))
+
+(cfg
+  test
+  (define (fs-test-assert-not-found-unit
+    [result : ResultIoUnit]
+    [message : String]) : unit
+    (match result
+      [(OkIoUnit) (panic (string-append message "unexpected success"))]
+      [(ErrIoUnit error)
+        (fs-test-assert-true (io-error-not-found? error) message)])))
+
+(cfg
+  test
+  (define (fs-test-assert-invalid-unit
+    [result : ResultIoUnit]
+    [message : String]) : unit
+    (match result
+      [(OkIoUnit) (panic (string-append message "unexpected success"))]
+      [(ErrIoUnit error)
+        (fs-test-assert-true (io-error-invalid-path? error) message)])))
+
+(cfg
+  test
+  (define (fs-test-assert-unsupported-unit
+    [result : ResultIoUnit]
+    [message : String]) : unit
+    (match result
+      [(OkIoUnit) (panic (string-append message "unexpected success"))]
+      [(ErrIoUnit error)
+        (fs-test-assert-true (io-error-unsupported? error) message)])))
+
+(cfg
+  test
+  (define (fs-test-expect-ok-string
+    [result : ResultIoString]
+    [message : String]) : String
+    (match result
+      [(OkIoString value) value]
+      [(ErrIoString error)
+        (panic (string-append message (io-error-message error)))])))
+
+(cfg
+  test
+  (define (fs-test-expect-ok-string-list
+    [result : ResultIoStringList]
+    [message : String]) : StringList
+    (match result
+      [(OkIoStringList value) value]
+      [(ErrIoStringList error)
+        (panic (string-append message (io-error-message error)))])))
+
+(cfg
+  test
+  (define (fs-test-expect-ok-string-vec
+    [result : ResultIoStringVec]
+    [message : String]) : StringVec
+    (match result
+      [(OkIoStringVec value) value]
+      [(ErrIoStringVec error)
+        (panic (string-append message (io-error-message error)))])))
+
+(cfg
+  test
+  (define (fs-test-assert-unsupported-string-list
+    [result : ResultIoStringList]
+    [message : String]) : unit
+    (match result
+      [(OkIoStringList _) (panic (string-append message "unexpected success"))]
+      [(ErrIoStringList error)
+        (fs-test-assert-true (io-error-unsupported? error) message)])))
+
+(cfg
+  test
+  (define (fs-test-assert-not-found-string-list
+    [result : ResultIoStringList]
+    [message : String]) : unit
+    (match result
+      [(OkIoStringList _) (panic (string-append message "unexpected success"))]
+      [(ErrIoStringList error)
+        (fs-test-assert-true (io-error-not-found? error) message)])))
+
+(cfg
+  test
+  (define (fs-test-assert-invalid-string-list
+    [result : ResultIoStringList]
+    [message : String]) : unit
+    (match result
+      [(OkIoStringList _) (panic (string-append message "unexpected success"))]
+      [(ErrIoStringList error)
+        (fs-test-assert-true (io-error-invalid-path? error) message)])))
+
+(cfg
+  test
+  (define (fs-test-assert-error-string-list
+    [result : ResultIoStringList]
+    [message : String]) : unit
+    (match result
+      [(OkIoStringList _) (panic (string-append message "unexpected success"))]
+      [(ErrIoStringList _) unit])))
+
+(cfg
+  test
+  (define (fs-api-test-try-file-exists? [path : String]) : ResultIoBool
+    (try-file-exists? (& path))))
+
+(cfg
+  test
+  (define (fs-api-test-try-read-file [path : String]) : ResultIoString
+    (try-read-file (& path))))
+
+(cfg
+  test
+  (define (fs-api-test-try-write-file [path : String] [contents : String]) : ResultIoUnit
+    (try-write-file (& path) (& contents))))
+
+(cfg
+  test
+  (define (fs-api-test-fs-path-join [left : String] [right : String]) : String
+    (fs-path-join (& left) (& right))))
+
+(cfg
+  test
+  (define (fs-api-test-fs-path-join-many0) : String
+    (fs-path-join-many)))
+
+(cfg
+  test
+  (define (fs-api-test-fs-path-join-many1 [a : String]) : String
+    (fs-path-join-many a)))
+
+(cfg
+  test
+  (define (fs-api-test-fs-path-join-many2 [a : String] [b : String]) : String
+    (fs-path-join-many a b)))
+
+(cfg
+  test
+  (define (fs-api-test-fs-path-join-many3
+    [a : String]
+    [b : String]
+    [c : String]) : String
+    (fs-path-join-many a b c)))
+
+(cfg
+  test
+  (define (fs-api-test-fs-path-join-many4
+    [a : String]
+    [b : String]
+    [c : String]
+    [d : String]) : String
+    (fs-path-join-many a b c d)))
+
+(cfg
+  test
+  (define (fs-api-test-fs-path-starts-separator? [path : String]) : bool
+    (fs-path-starts-separator? (& path))))
+
+(cfg
+  test
+  (define (fs-api-test-fs-dirname [path : String]) : String
+    (fs-dirname (& path))))
+
+(cfg
+  test
+  (define (fs-api-test-fs-basename [path : String]) : String
+    (fs-basename (& path))))
+
+(cfg
+  test
+  (define (fs-api-test-fs-extension [path : String]) : String
+    (fs-extension (& path))))
+
+(cfg
+  test
+  (define (fs-api-test-fs-path-normalize [path : String]) : String
+    (fs-path-normalize (& path))))
+
+(cfg
+  test
+  (define (fs-api-test-fs-path-absolute? [path : String]) : bool
+    (fs-path-absolute? (& path))))
+
+(cfg
+  test
+  (define (fs-api-test-fs-path-safe-relative? [path : String]) : bool
+    (fs-path-safe-relative? (& path))))
+
+(cfg
+  test
+  (define (fs-api-test-try-mkdir [path : String]) : ResultIoUnit
+    (try-mkdir (& path))))
+
+(cfg
+  test
+  (define (fs-api-test-try-mkdir-if-missing [path : String]) : ResultIoUnit
+    (try-mkdir-if-missing (& path))))
+
+(cfg
+  test
+  (define (fs-api-test-try-remove-file [path : String]) : ResultIoUnit
+    (try-remove-file (& path))))
+
+(cfg
+  test
+  (define (fs-api-test-try-remove-dir [path : String]) : ResultIoUnit
+    (try-remove-dir (& path))))
+
+(cfg
+  test
+  (define (fs-api-test-try-rename [source : String] [destination : String]) : ResultIoUnit
+    (try-rename (& source) (& destination))))
+
+(cfg
+  test
+  (define (fs-api-test-try-read-dir [path : String]) : ResultIoStringList
+    (try-read-dir (& path))))
+
+(cfg
+  test
+  (define (fs-api-test-try-read-dir-vec [path : String]) : ResultIoStringVec
+    (try-read-dir-vec (& path))))
+
+(cfg
+  test
+  (define (fs-api-test-try-file-kind [path : String]) : ResultFsFileKind
+    (try-file-kind (& path))))
+
+(cfg
+  test
+  (define (fs-api-test-try-file-metadata [path : String]) : ResultFsMetadata
+    (try-file-metadata (& path))))
+
+(cfg
+  test
+  (define (fs-api-test-fs-file-kind-status [path : String]) : i64
+    (fs-file-kind-status path)))
+
+(cfg
+  test
+  (define (fs-api-test-fs-file-size-status [path : String]) : i64
+    (fs-file-size-status path)))
+
+(cfg
+  test
+  (define (fs-api-test-fs-file-size [path : String]) : i64
+    (fs-file-size path)))
+
+(cfg
+  test
+  (define (fs-api-test-try-remove-file-if-exists [path : String]) : ResultIoUnit
+    (try-remove-file-if-exists (& path))))
+
+(cfg
+  test
+  (define (fs-api-test-try-remove-dir-if-exists [path : String]) : ResultIoUnit
+    (try-remove-dir-if-exists (& path))))
+
+(cfg
+  test
+  (define (fs-api-test-try-create-temp-dir [prefix : String]) : ResultIoString
+    (try-create-temp-dir (& prefix))))
+
+(cfg
+  test
+  (define (fs-test-assert-exists
+    [path : String]
+    [expected : bool]
+    [message : String]) : unit
+    (match (fs-api-test-try-file-exists? path)
+      [(OkIoBool exists) (fs-test-assert-bool-eq exists expected message)]
+      [(ErrIoBool error)
+        (panic (string-append message (io-error-message error)))])))
+
+(cfg
+  test
+  (define (fs-test-expect-file-kind
+    [result : ResultFsFileKind]
+    [message : String]) : FsFileKind
+    (match result
+      [(OkFsFileKind kind) kind]
+      [(ErrFsFileKind error)
+        (panic (string-append message (io-error-message error)))])))
+
+(cfg
+  test
+  (define (fs-test-expect-file-metadata
+    [result : ResultFsMetadata]
+    [message : String]) : FsMetadata
+    (match result
+      [(OkFsMetadata metadata) metadata]
+      [(ErrFsMetadata error)
+        (panic (string-append message (io-error-message error)))])))
+
+(cfg
+  test
+  (define (fs-test-assert-file-kind-regular [path : String] [message : String]) : unit
+    (match (fs-test-expect-file-kind (fs-api-test-try-file-kind path) message)
+      [(FsFileRegular) unit]
+      [_ (panic message)])))
+
+(cfg
+  test
+  (define (fs-test-assert-file-kind-directory
+    [path : String]
+    [message : String]) : unit
+    (match (fs-test-expect-file-kind (fs-api-test-try-file-kind path) message)
+      [(FsFileDirectory) unit]
+      [_ (panic message)])))
+
+(cfg
+  test
+  (define (fs-test-assert-file-kind-not-found
+    [path : String]
+    [message : String]) : unit
+    (match (fs-api-test-try-file-kind path)
+      [(ErrFsFileKind error)
+        (fs-test-assert-true (io-error-not-found? error) message)]
+      [(OkFsFileKind _) (panic message)])))
+
+(cfg
+  test
+  (define (fs-test-assert-file-kind-invalid [path : String] [message : String]) : unit
+    (match (fs-api-test-try-file-kind path)
+      [(ErrFsFileKind error)
+        (fs-test-assert-true (io-error-invalid-path? error) message)]
+      [(OkFsFileKind _) (panic message)])))
+
+(cfg
+  test
+  (define (fs-test-assert-file-kind-unsupported
+    [path : String]
+    [message : String]) : unit
+    (match (fs-api-test-try-file-kind path)
+      [(ErrFsFileKind error)
+        (fs-test-assert-true (io-error-unsupported? error) message)]
+      [(OkFsFileKind _) (panic message)])))
+
+(cfg
+  test
+  (define (fs-test-assert-file-metadata-regular-size
+    [path : String]
+    [expected-size : i64]
+    [message : String]) : unit
+    (let
+      [metadata : FsMetadata
+        (fs-test-expect-file-metadata
+          (fs-api-test-try-file-metadata path)
+          message)]
+      (begin
+        (match (fs-metadata-kind metadata)
+          [(FsFileRegular) unit]
+          [_ (panic message)])
+        (fs-test-assert-i64-eq
+          (fs-metadata-size metadata)
+          expected-size
+          message)))))
+
+(cfg
+  test
+  (define (fs-test-assert-file-metadata-directory
+    [path : String]
+    [message : String]) : unit
+    (match (fs-metadata-kind
+      (fs-test-expect-file-metadata
+        (fs-api-test-try-file-metadata path)
+        message))
+      [(FsFileDirectory) unit]
+      [_ (panic message)])))
+
+(cfg
+  test
+  (define (fs-test-assert-file-metadata-not-found
+    [path : String]
+    [message : String]) : unit
+    (match (fs-api-test-try-file-metadata path)
+      [(ErrFsMetadata error)
+        (fs-test-assert-true (io-error-not-found? error) message)]
+      [(OkFsMetadata _) (panic message)])))
+
+(cfg
+  test
+  (define (fs-test-assert-file-metadata-invalid
+    [path : String]
+    [message : String]) : unit
+    (match (fs-api-test-try-file-metadata path)
+      [(ErrFsMetadata error)
+        (fs-test-assert-true (io-error-invalid-path? error) message)]
+      [(OkFsMetadata _) (panic message)])))
+
+(cfg
+  test
+  (define (fs-test-assert-file-metadata-unsupported
+    [path : String]
+    [message : String]) : unit
+    (match (fs-api-test-try-file-metadata path)
+      [(ErrFsMetadata error)
+        (fs-test-assert-true (io-error-unsupported? error) message)]
+      [(OkFsMetadata _) (panic message)])))
+
+(cfg
+  test
+  (define (fs-test-assert-runtime-metadata-regular
+    [path : String]
+    [expected-size : i64]
+    [message : String]) : unit
+    (begin
+      (fs-test-assert-i64-eq
+        (fs-api-test-fs-file-kind-status path)
+        fs-file-kind-regular-code
+        message)
+      (fs-test-assert-i64-eq
+        (fs-api-test-fs-file-size-status path)
+        io-status-ok
+        message)
+      (fs-test-assert-i64-eq
+        (fs-api-test-fs-file-size path)
+        expected-size
+        message))))
+
+(cfg
+  test
+  (define (fs-test-assert-runtime-metadata-directory
+    [path : String]
+    [message : String]) : unit
+    (begin
+      (fs-test-assert-i64-eq
+        (fs-api-test-fs-file-kind-status path)
+        fs-file-kind-directory-code
+        message)
+      (fs-test-assert-i64-eq
+        (fs-api-test-fs-file-size-status path)
+        io-status-ok
+        message)
+      (fs-test-assert-i64-eq (fs-api-test-fs-file-size path) 0 message))))
+
+(cfg
+  test
+  (define (fs-test-assert-runtime-metadata-not-found
+    [path : String]
+    [message : String]) : unit
+    (begin
+      (fs-test-assert-i64-eq
+        (fs-api-test-fs-file-kind-status path)
+        io-status-not-found
+        message)
+      (fs-test-assert-i64-eq
+        (fs-api-test-fs-file-size-status path)
+        io-status-not-found
+        message)
+      (fs-test-assert-i64-eq (fs-api-test-fs-file-size path) 0 message))))
+
+(cfg
+  test
+  (define (fs-test-assert-string-vec3
+    [items : StringVec]
+    [first : String]
+    [second : String]
+    [third : String]
+    [message : String]) : unit
+    (begin
+      (fs-test-assert-i64-eq (string-vec-len items) 3 message)
+      (fs-test-assert-owned-string-eq
+        (string-vec-get items 0 "missing")
+        first
+        message)
+      (fs-test-assert-owned-string-eq
+        (string-vec-get items 1 "missing")
+        second
+        message)
+      (fs-test-assert-owned-string-eq
+        (string-vec-get items 2 "missing")
+        third
+        message))))
+
+(cfg
+  test
+  (define (fs-test-assert-file-contents
+    [path : String]
+    [expected : String]
+    [message : String]) : unit
+    (match (fs-api-test-try-read-file path)
+      [(OkIoString contents)
+        (fs-test-assert-owned-string-eq contents expected message)]
+      [(ErrIoString error)
+        (panic (string-append message (io-error-message error)))])))
+
+(cfg
+  test
+  (define (fs-test-assert-created-temp-dir) : unit
+    (let
+      [dir-a : String
+        (fs-test-expect-ok-string
+          (fs-api-test-try-create-temp-dir "typelisp fs test")
+          "create temp dir a: ")]
+      [dir-b : String
+        (fs-test-expect-ok-string
+          (fs-api-test-try-create-temp-dir "typelisp fs test")
+          "create temp dir b: ")]
+      (begin
+        (fs-test-assert-true
+          (not (string-eq dir-a dir-b))
+          "temp directories are unique")
+        (fs-test-assert-exists dir-a true "temp dir a exists")
+        (fs-test-assert-exists dir-b true "temp dir b exists")))))
+
+(cfg
+  test
+  (define (fs-test-assert-invalid-temp-dir) : unit
+    (match (fs-api-test-try-create-temp-dir "")
+      [(ErrIoString error)
+        (fs-test-assert-true
+          (io-error-invalid-path? error)
+          "empty temp prefix invalid")]
+      [(OkIoString _) (panic "empty temp prefix unexpectedly succeeded")])))
+
+(cfg
+  test
+  (define (fs-test-assert-mkdir-if-missing [parent : String] [cleanup : bool]) : unit
+    (let
+      [dir : String (fs-api-test-fs-path-join parent "mkdir-if-missing")]
+      (begin
+        (fs-test-assert-ok-unit
+          (fs-api-test-try-mkdir-if-missing dir)
+          "mkdir-if-missing new dir: ")
+        (fs-test-assert-exists dir true "mkdir-if-missing dir exists")
+        (fs-test-assert-ok-unit
+          (fs-api-test-try-mkdir-if-missing dir)
+          "mkdir-if-missing existing dir: ")
+        (if cleanup
+          (fs-test-assert-ok-unit
+            (fs-api-test-try-remove-dir dir)
+            "mkdir-if-missing cleanup dir: ")
+          unit)))))
+
+(cfg
+  test
+  (define (fs-test-assert-linux-rename-api [root : String]) : unit
+    (let
+      [file-source : String
+        (fs-api-test-fs-path-join root "rename source with space.txt")]
+      [file-destination : String
+        (fs-api-test-fs-path-join root "rename destination with space.txt")]
+      [replace-source : String
+        (fs-api-test-fs-path-join root "replace source.txt")]
+      [replace-destination : String
+        (fs-api-test-fs-path-join root "replace destination.txt")]
+      [dir-source : String
+        (fs-api-test-fs-path-join root "dir source with space")]
+      [dir-destination : String
+        (fs-api-test-fs-path-join root "dir destination with space")]
+      [missing-source : String
+        (fs-api-test-fs-path-join root "missing source.txt")]
+      [missing-destination : String
+        (fs-api-test-fs-path-join root "missing destination.txt")]
+      (begin
+        (fs-test-assert-ok-unit
+          (fs-api-test-try-write-file file-source "alpha")
+          "write rename source: ")
+        (fs-test-assert-ok-unit
+          (fs-api-test-try-rename file-source file-destination)
+          "rename file with spaces: ")
+        (fs-test-assert-exists file-source false "renamed source is gone")
+        (fs-test-assert-exists
+          file-destination
+          true
+          "renamed destination exists")
+        (fs-test-assert-file-contents
+          file-destination
+          "alpha"
+          "renamed destination preserves contents")
+        (fs-test-assert-not-found-unit
+          (fs-api-test-try-rename missing-source missing-destination)
+          "missing rename source is not found")
+        (fs-test-assert-invalid-unit
+          (fs-api-test-try-rename "" file-destination)
+          "empty rename source is invalid")
+        (fs-test-assert-invalid-unit
+          (fs-api-test-try-rename file-destination "")
+          "empty rename destination is invalid")
+        (fs-test-assert-ok-unit
+          (fs-api-test-try-write-file replace-source "replacement")
+          "write replacement source: ")
+        (fs-test-assert-ok-unit
+          (fs-api-test-try-write-file replace-destination "old")
+          "write replacement destination: ")
+        (fs-test-assert-ok-unit
+          (fs-api-test-try-rename replace-source replace-destination)
+          "rename replaces existing file: ")
+        (fs-test-assert-exists
+          replace-source
+          false
+          "replacement source is gone")
+        (fs-test-assert-file-contents
+          replace-destination
+          "replacement"
+          "rename replacement policy overwrites destination")
+        (fs-test-assert-ok-unit
+          (fs-api-test-try-mkdir dir-source)
+          "create rename dir source: ")
+        (fs-test-assert-ok-unit
+          (fs-api-test-try-rename dir-source dir-destination)
+          "rename directory with spaces: ")
+        (fs-test-assert-exists
+          dir-source
+          false
+          "renamed directory source is gone")
+        (fs-test-assert-exists
+          dir-destination
+          true
+          "renamed directory destination exists")
+        (fs-test-assert-ok-unit
+          (fs-api-test-try-remove-file file-destination)
+          "cleanup renamed file: ")
+        (fs-test-assert-ok-unit
+          (fs-api-test-try-remove-file replace-destination)
+          "cleanup replacement file: ")
+        (fs-test-assert-ok-unit
+          (fs-api-test-try-remove-dir dir-destination)
+          "cleanup renamed directory: ")))))
+
+(cfg
+  test
+  (define (fs-test-assert-windows-rename-api) : unit
+    (begin
+      (fs-test-assert-not-found-unit
+        (fs-api-test-try-rename "windows source" "windows destination")
+        "windows missing rename source reports not found")
+      (fs-test-assert-invalid-unit
+        (fs-api-test-try-rename "" "windows destination")
+        "windows empty rename source is invalid")
+      (fs-test-assert-invalid-unit
+        (fs-api-test-try-rename "windows source" "")
+        "windows empty rename destination is invalid"))))
+
+(cfg
+  test
+  (define (fs-test-assert-read-dir-api [root : String]) : unit
+    (let
+      [file-a : String (fs-api-test-fs-path-join root "alpha.txt")]
+      [file-b : String (fs-api-test-fs-path-join root "beta data.txt")]
+      [child-dir : String (fs-api-test-fs-path-join root "child-dir")]
+      [missing : String (fs-api-test-fs-path-join root "missing")]
+      (begin
+        (fs-test-assert-ok-unit
+          (fs-api-test-try-write-file file-a "alpha")
+          "read-dir file a: ")
+        (fs-test-assert-ok-unit
+          (fs-api-test-try-write-file file-b "beta")
+          "read-dir file b: ")
+        (fs-test-assert-ok-unit
+          (fs-api-test-try-mkdir child-dir)
+          "read-dir child dir: ")
+        (let
+          [entries : StringList
+            (fs-test-expect-ok-string-list
+              (fs-api-test-try-read-dir root)
+              "read dir: ")]
+          [entries-vec : StringVec
+            (fs-test-expect-ok-string-vec
+              (fs-api-test-try-read-dir-vec root)
+              "read dir vec: ")]
+          (begin
+            (fs-test-assert-true
+              (string-list-contains? entries "alpha.txt")
+              "read-dir includes first file name")
+            (fs-test-assert-true
+              (string-list-contains? entries "beta data.txt")
+              "read-dir includes second file name")
+            (fs-test-assert-true
+              (string-list-contains? entries "child-dir")
+              "read-dir includes subdirectory name")
+            (fs-test-assert-false
+              (string-list-contains? entries ".")
+              "read-dir filters dot")
+            (fs-test-assert-false
+              (string-list-contains? entries "..")
+              "read-dir filters dotdot")
+            (fs-test-assert-true
+              (string-vec-contains? entries-vec "alpha.txt")
+              "read-dir vec includes first file name")
+            (fs-test-assert-true
+              (string-vec-contains? entries-vec "beta data.txt")
+              "read-dir vec includes second file name")
+            (fs-test-assert-true
+              (string-vec-contains? entries-vec "child-dir")
+              "read-dir vec includes subdirectory name")
+            (fs-test-assert-false
+              (string-vec-contains? entries-vec ".")
+              "read-dir vec filters dot")
+            (fs-test-assert-false
+              (string-vec-contains? entries-vec "..")
+              "read-dir vec filters dotdot")
+            (fs-test-assert-not-found-string-list
+              (fs-api-test-try-read-dir missing)
+              "read-dir missing path reports not found")
+            (fs-test-assert-error-string-list
+              (fs-api-test-try-read-dir file-a)
+              "read-dir file path reports an IoError")
+            (fs-test-assert-invalid-string-list
+              (fs-api-test-try-read-dir "")
+              "read-dir empty path invalid")
+            (fs-test-assert-ok-unit
+              (fs-api-test-try-remove-file file-a)
+              "cleanup read-dir file a: ")
+            (fs-test-assert-ok-unit
+              (fs-api-test-try-remove-file file-b)
+              "cleanup read-dir file b: ")
+            (fs-test-assert-ok-unit
+              (fs-api-test-try-remove-dir child-dir)
+              "cleanup read-dir child: ")))))))
+
+(cfg
+  test
+  (define (fs-test-drive-absolute? [path : String]) : bool
+    (and
+      (> (string-length path) 2)
+      (= (string-ref path 1) #:')
+      (fs-path-separator? (string-ref path 2)))))
+
+(cfg
+  test
+  (define (fs-test-assert-current-dir-api) : unit
+    (begin
+      (fs-test-assert-i64-eq
+        (fs-current-dir-status)
+        io-status-ok
+        "current dir status ok")
+      (let
+        [direct-cwd : String (fs-current-dir)]
+        (fs-test-assert-true
+          (> (string-length direct-cwd) 0)
+          "direct current dir is non-empty"))
+      (match (try-current-dir)
+        [(OkIoString cwd)
+          (begin
+            (fs-test-assert-true
+              (> (string-length cwd) 0)
+              "current dir is non-empty")
+            (fs-test-assert-true
+              (if (fs-windows?)
+                (or
+                  (fs-api-test-fs-path-starts-separator? cwd)
+                  (fs-test-drive-absolute? cwd))
+                (fs-api-test-fs-path-starts-separator? cwd))
+              "current dir has rooted shape"))]
+        [(ErrIoString error)
+          (fs-test-assert-true
+            false
+            (string-append
+              "current dir unexpectedly failed: "
+              (io-error-message error)))]))))
+
+(cfg
+  test
+  (define (fs-test-api-main) : i64
+    (let
+      [joined : String (fs-api-test-fs-path-join "left path" "right file")]
+      [expected-join : String
+        (string-append
+          (string-append "left path" (fs-path-separator))
+          "right file")]
+      (begin
+        (fs-test-assert-owned-string-eq
+          joined
+          expected-join
+          "path join inserts separator")
+        (fs-test-assert-owned-string-eq
+          (fs-api-test-fs-path-join "left/" "/right")
+          "left/right"
+          "path join avoids duplicate separator")
+        (fs-test-assert-owned-string-eq
+          (fs-api-test-fs-path-join-many0)
+          ""
+          "path join many zero segments")
+        (fs-test-assert-owned-string-eq
+          (fs-api-test-fs-path-join-many1 "solo")
+          "solo"
+          "path join many one segment")
+        (fs-test-assert-owned-string-eq
+          (fs-api-test-fs-path-join-many2 "left path" "right file")
+          expected-join
+          "path join many two segments")
+        (fs-test-assert-owned-string-eq
+          (fs-api-test-fs-path-join-many3 "left" "middle" "right")
+          (string-append
+            (string-append (string-append "left" (fs-path-separator)) "middle")
+            (string-append (fs-path-separator) "right"))
+          "path join many three segments")
+        (fs-test-assert-owned-string-eq
+          (fs-api-test-fs-path-join-many4 "left" "middle" "right" "leaf")
+          (string-append
+            (string-append
+              (string-append
+                (string-append "left" (fs-path-separator))
+                "middle")
+              (string-append (fs-path-separator) "right"))
+            (string-append (fs-path-separator) "leaf"))
+          "path join many four segments")
+        (fs-test-assert-owned-string-eq
+          (fs-api-test-fs-path-join-many3 "left/" "/right" "leaf")
+          (string-append
+            "left/right"
+            (string-append (fs-path-separator) "leaf"))
+          "path join many avoids duplicate separator")
+        (fs-test-assert-string-vec3
+          (fs-read-dir-split-vec "first\nsecond\nthird\n")
+          "first"
+          "second"
+          "third"
+          "read-dir split vec preserves payload order")
+        ;; #822: pure path-string helpers (separator-agnostic; `/` cases are
+        ;; stable on both Linux and Windows).
+        (fs-test-assert-owned-string-eq
+          (fs-api-test-fs-dirname "src/app/main.tl")
+          "src/app"
+          "dirname strips final component")
+        (fs-test-assert-owned-string-eq
+          (fs-api-test-fs-dirname "main.tl")
+          "."
+          "dirname of bare name is dot")
+        (fs-test-assert-owned-string-eq
+          (fs-api-test-fs-basename "src/app/main.tl")
+          "main.tl"
+          "basename is final component")
+        (fs-test-assert-owned-string-eq
+          (fs-api-test-fs-basename "main.tl")
+          "main.tl"
+          "basename of bare name is itself")
+        (fs-test-assert-owned-string-eq
+          (fs-api-test-fs-extension "src/main.tl")
+          "tl"
+          "extension after last dot")
+        (fs-test-assert-owned-string-eq
+          (fs-api-test-fs-extension "archive.tar.gz")
+          "gz"
+          "extension uses last dot")
+        (fs-test-assert-owned-string-eq
+          (fs-api-test-fs-extension "Makefile")
+          ""
+          "no dot means no extension")
+        (fs-test-assert-owned-string-eq
+          (fs-api-test-fs-extension ".gitignore")
+          ""
+          "leading-dot name has no extension")
+        (fs-test-assert-owned-string-eq
+          (fs-api-test-fs-path-normalize "")
+          "."
+          "normalize empty path to dot")
+        (fs-test-assert-owned-string-eq
+          (fs-api-test-fs-path-normalize ".")
+          "."
+          "normalize dot path")
+        (fs-test-assert-owned-string-eq
+          (fs-api-test-fs-path-normalize "src/./x/../compiler_load.tl")
+          "src/compiler_load.tl"
+          "normalize dot and parent segments")
+        (fs-test-assert-owned-string-eq
+          (fs-api-test-fs-path-normalize "target\\loader\\..\\dep.tl")
+          "target/dep.tl"
+          "normalize windows separators to slash")
+        (fs-test-assert-owned-string-eq
+          (fs-api-test-fs-path-normalize "src//./app\\../main.tl")
+          "src/main.tl"
+          "normalize repeated and mixed separators")
+        (fs-test-assert-owned-string-eq
+          (fs-api-test-fs-path-normalize "../pkg/lib.tl")
+          "../pkg/lib.tl"
+          "normalize preserves leading relative parent")
+        (fs-test-assert-owned-string-eq
+          (fs-api-test-fs-path-normalize "a/../../b")
+          "../b"
+          "normalize preserves escaping relative parent")
+        (fs-test-assert-owned-string-eq
+          (fs-api-test-fs-path-normalize "/a/..")
+          "/"
+          "normalize preserves root")
+        (fs-test-assert-owned-string-eq
+          (fs-api-test-fs-path-normalize "\\a\\..\\b")
+          "/b"
+          "normalize rooted windows separators")
+        (fs-test-assert-owned-string-eq
+          (fs-api-test-fs-path-normalize "C:\\tmp\\..\\file.tl")
+          "C:/file.tl"
+          "normalize drive absolute path")
+        (fs-test-assert-bool-eq
+          (fs-api-test-fs-path-absolute? "/root")
+          true
+          "slash-rooted path is absolute")
+        (fs-test-assert-bool-eq
+          (fs-api-test-fs-path-absolute? "\\root")
+          true
+          "backslash-rooted path is absolute")
+        (fs-test-assert-bool-eq
+          (fs-api-test-fs-path-absolute? "C:/root")
+          true
+          "drive slash path is absolute")
+        (fs-test-assert-bool-eq
+          (fs-api-test-fs-path-absolute? "C:\\root")
+          true
+          "drive backslash path is absolute")
+        (fs-test-assert-bool-eq
+          (fs-api-test-fs-path-absolute? "C:root")
+          false
+          "drive-relative path is not absolute")
+        (fs-test-assert-bool-eq
+          (fs-api-test-fs-path-absolute? "src/main.tl")
+          false
+          "relative path is not absolute")
+        (fs-test-assert-bool-eq
+          (fs-api-test-fs-path-safe-relative? "src/main.tl")
+          true
+          "normal relative path is safe")
+        (fs-test-assert-bool-eq
+          (fs-api-test-fs-path-safe-relative? "src//./lib/../main.tl")
+          true
+          "normalizing relative path below root is safe")
+        (fs-test-assert-bool-eq
+          (fs-api-test-fs-path-safe-relative? "")
+          false
+          "empty path is not a safe suffix")
+        (fs-test-assert-bool-eq
+          (fs-api-test-fs-path-safe-relative? ".")
+          false
+          "dot path is not a safe suffix")
+        (fs-test-assert-bool-eq
+          (fs-api-test-fs-path-safe-relative? "..")
+          false
+          "parent path is not a safe suffix")
+        (fs-test-assert-bool-eq
+          (fs-api-test-fs-path-safe-relative? "../escape.tl")
+          false
+          "leading parent traversal is not safe")
+        (fs-test-assert-bool-eq
+          (fs-api-test-fs-path-safe-relative? "a/../../escape.tl")
+          false
+          "normalized parent traversal is not safe")
+        (fs-test-assert-bool-eq
+          (fs-api-test-fs-path-safe-relative? "/abs.tl")
+          false
+          "rooted path is not a safe suffix")
+        (fs-test-assert-bool-eq
+          (fs-api-test-fs-path-safe-relative? "C:/abs.tl")
+          false
+          "drive absolute path is not a safe suffix")
+        (fs-test-assert-bool-eq
+          (fs-api-test-fs-path-safe-relative? "C:relative.tl")
+          false
+          "drive-relative path is not a safe suffix")
+        (fs-test-assert-current-dir-api)
+        (if (fs-windows?)
+          (begin
+            (fs-test-assert-created-temp-dir)
+            (let
+              [dir : String
+                (fs-test-expect-ok-string
+                  (fs-api-test-try-create-temp-dir "typelisp fs mkdir test")
+                  "create temp dir mkdir: ")]
+              [dir-d : String
+                (fs-test-expect-ok-string
+                  (fs-api-test-try-create-temp-dir "typelisp fs read dir test")
+                  "create temp dir read dir: ")]
+              [file-a : String
+                (fs-api-test-fs-path-join dir "artifact with space.s")]
+              (begin
+                (fs-test-assert-mkdir-if-missing dir true)
+                (fs-test-assert-file-kind-directory
+                  dir
+                  "windows temp dir is directory")
+                (fs-test-assert-file-metadata-directory
+                  dir
+                  "windows temp dir metadata is directory")
+                (fs-test-assert-runtime-metadata-directory
+                  dir
+                  "windows runtime metadata dir")
+                (fs-test-assert-ok-unit
+                  (fs-api-test-try-write-file file-a "assembly")
+                  "windows write temp artifact: ")
+                (fs-test-assert-file-kind-regular
+                  file-a
+                  "windows temp artifact is regular")
+                (fs-test-assert-file-metadata-regular-size
+                  file-a
+                  8
+                  "windows temp artifact metadata size")
+                (fs-test-assert-runtime-metadata-regular
+                  file-a
+                  8
+                  "windows runtime metadata file")
+                (fs-test-assert-file-kind-not-found
+                  (fs-api-test-fs-path-join dir "missing artifact.s")
+                  "windows missing file kind is not found")
+                (fs-test-assert-file-metadata-not-found
+                  (fs-api-test-fs-path-join dir "missing artifact.s")
+                  "windows missing file metadata is not found")
+                (fs-test-assert-runtime-metadata-not-found
+                  (fs-api-test-fs-path-join dir "missing artifact.s")
+                  "windows runtime metadata missing")
+                (fs-test-assert-ok-unit
+                  (fs-api-test-try-remove-file file-a)
+                  "windows remove temp artifact: ")
+                (fs-test-assert-read-dir-api dir-d)
+                (fs-test-assert-ok-unit
+                  (fs-api-test-try-remove-dir dir-d)
+                  "windows cleanup read-dir temp dir: ")
+                (fs-test-assert-ok-unit
+                  (fs-api-test-try-remove-dir dir)
+                  "windows cleanup mkdir temp dir: ")))
+            (fs-test-assert-windows-rename-api)
+            (fs-test-assert-file-kind-invalid
+              ""
+              "windows empty file-kind path invalid")
+            (fs-test-assert-file-metadata-invalid
+              ""
+              "windows empty metadata path invalid")
+            42)
+          (let
+            [dir-a : String
+              (fs-test-expect-ok-string
+                (fs-api-test-try-create-temp-dir "typelisp fs test")
+                "create temp dir a: ")]
+            [dir-b : String
+              (fs-test-expect-ok-string
+                (fs-api-test-try-create-temp-dir "typelisp fs test")
+                "create temp dir b: ")]
+            [dir-c : String
+              (fs-test-expect-ok-string
+                (fs-api-test-try-create-temp-dir "typelisp fs rename test")
+                "create temp dir c: ")]
+            [dir-d : String
+              (fs-test-expect-ok-string
+                (fs-api-test-try-create-temp-dir "typelisp fs read dir test")
+                "create temp dir d: ")]
+            [file-a : String
+              (fs-api-test-fs-path-join dir-a "artifact with space.s")]
+            [file-b : String (fs-api-test-fs-path-join dir-b "cleanup.obj")]
+            (begin
+              (fs-test-assert-true
+                (not (string-eq dir-a dir-b))
+                "temp directories are unique")
+              (fs-test-assert-exists dir-a true "temp dir a exists")
+              (fs-test-assert-exists dir-b true "temp dir b exists")
+              (fs-test-assert-file-kind-directory
+                dir-a
+                "temp dir a is directory")
+              (fs-test-assert-file-metadata-directory
+                dir-a
+                "temp dir a metadata is directory")
+              (fs-test-assert-runtime-metadata-directory
+                dir-a
+                "runtime metadata dir")
+              (fs-test-assert-ok-unit
+                (fs-api-test-try-write-file file-a "assembly")
+                "write temp artifact a: ")
+              (fs-test-assert-ok-unit
+                (fs-api-test-try-write-file file-b "object")
+                "write temp artifact b: ")
+              (fs-test-assert-mkdir-if-missing dir-a true)
+              (fs-test-assert-exists file-a true "temp artifact a exists")
+              (fs-test-assert-file-kind-regular
+                file-a
+                "temp artifact a is regular")
+              (fs-test-assert-file-metadata-regular-size
+                file-a
+                8
+                "temp artifact a metadata size")
+              (fs-test-assert-runtime-metadata-regular
+                file-a
+                8
+                "runtime metadata file")
+              (fs-test-assert-file-kind-not-found
+                (fs-api-test-fs-path-join dir-a "missing artifact.s")
+                "missing file kind is not found")
+              (fs-test-assert-file-metadata-not-found
+                (fs-api-test-fs-path-join dir-a "missing artifact.s")
+                "missing file metadata is not found")
+              (fs-test-assert-runtime-metadata-not-found
+                (fs-api-test-fs-path-join dir-a "missing artifact.s")
+                "runtime metadata missing")
+              (fs-test-assert-ok-unit
+                (fs-api-test-try-remove-file file-a)
+                "remove temp artifact a: ")
+              (fs-test-assert-exists file-a false "temp artifact a removed")
+              (fs-test-assert-ok-unit
+                (fs-api-test-try-remove-dir dir-a)
+                "remove temp dir a: ")
+              (fs-test-assert-exists dir-a false "temp dir a removed")
+              (fs-test-assert-ok-unit
+                (fs-api-test-try-remove-file-if-exists file-b)
+                "cleanup temp artifact b: ")
+              (fs-test-assert-ok-unit
+                (fs-api-test-try-remove-file-if-exists file-b)
+                "cleanup missing temp artifact b: ")
+              (fs-test-assert-ok-unit
+                (fs-api-test-try-remove-dir-if-exists dir-b)
+                "cleanup temp dir b: ")
+              (fs-test-assert-ok-unit
+                (fs-api-test-try-remove-dir-if-exists dir-b)
+                "cleanup missing temp dir b: ")
+              (fs-test-assert-invalid-temp-dir)
+              (fs-test-assert-file-kind-invalid
+                ""
+                "empty file-kind path invalid")
+              (fs-test-assert-file-metadata-invalid
+                ""
+                "empty metadata path invalid")
+              (fs-test-assert-linux-rename-api dir-c)
+              (fs-test-assert-ok-unit
+                (fs-api-test-try-remove-dir dir-c)
+                "cleanup rename temp dir: ")
+              (fs-test-assert-read-dir-api dir-d)
+              (fs-test-assert-ok-unit
+                (fs-api-test-try-remove-dir dir-d)
+                "cleanup read-dir temp dir: ")
+              42)))))))
+
+(cfg
+  test
+  (test
+    fs-api
+    (if (= (fs-test-api-main) 42)
+      unit
+      (fs-test-fail "fs-api did not return 42"))))

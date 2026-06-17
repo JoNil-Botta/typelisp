@@ -321,7 +321,7 @@
 ;: Spawn a compiler-checked direct nullary closure returning `i64`.
 ;:
 ;: Safe calls must pass a direct lambda. The typechecker rejects captures that
-;: are not copyable scalar values and rejects calls from scoped arenas.
+;: are not structurally transferable and rejects calls from scoped arenas.
 (define (thread-spawn-i64 [task : (-> i64)]) : ThreadI64SpawnResult
   (match (thread-spawn
     (lambda ([ignored : i64]) : i64

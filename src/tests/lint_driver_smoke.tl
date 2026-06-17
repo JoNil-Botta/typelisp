@@ -28,6 +28,34 @@
   ;; lint-allow: deprecated-string-concat
   (string-length (string-append \"a\" \"b\")))")
 
+(define (lint-driver-smoke-no-effect-source) : String
+  "(define (main) : i64
+  (let
+    [x : i64 1]
+    (begin
+      1
+      x
+      (+ x 2)
+      (cast x : i64)
+      x)))")
+
+(define (lint-driver-smoke-clean-no-effect-source) : String
+  "(define (touch [x : i64]) : i64 x)
+(define (main) : i64
+  (let
+    [x : i64 0]
+    (begin
+      (touch x)
+      (set! x 1)
+      x)))")
+
+(define (lint-driver-smoke-suppressed-no-effect-source) : String
+  "(define (main) : i64
+  (begin
+    ;; lint-allow: no-effect
+    1
+    42))")
+
 (define (lint-driver-smoke-source-finding-count-with-deprecated-string-concat
   [source : String]) : i64
   (lint-findings-count
@@ -51,6 +79,19 @@
           (string-eq
             (struct-get finding rule-id)
             (lint-rule-deprecated-string-concat-id))))]
+    [(LintNoFinding) false]))
+
+(define (lint-driver-smoke-finding-rule-ok?
+  [findings : LintFindings]
+  [index : i64]
+  [rule-id : String]) : bool
+  (match (lint-findings-get findings index)
+    [(LintSomeFinding finding)
+      (let
+        [fspan : AstSourceSpan (struct-get finding span)]
+        (and
+          (> (struct-get fspan start-line) 0)
+          (string-eq (struct-get finding rule-id) rule-id)))]
     [(LintNoFinding) false]))
 
 (define (lint-driver-smoke-deprecated-string-concat-self-test) : i64
@@ -102,6 +143,37 @@
                   26
                   42)))))))))
 
+(define (lint-driver-smoke-no-effect-self-test) : i64
+  (let
+    [reported : LintFindings
+      (selfhost-lint-source-with-roots-and-options
+        "lint_driver_no_effect.tl"
+        (lint-driver-smoke-no-effect-source)
+        (string-vec-new)
+        true)]
+    [clean : LintFindings
+      (selfhost-lint-source-with-roots-and-options
+        "lint_driver_no_effect_clean.tl"
+        (lint-driver-smoke-clean-no-effect-source)
+        (string-vec-new)
+        true)]
+    [suppressed : LintFindings
+      (selfhost-lint-source-with-roots-and-options
+        "lint_driver_no_effect_suppressed.tl"
+        (lint-driver-smoke-suppressed-no-effect-source)
+        (string-vec-new)
+        true)]
+    (if (not (= (lint-findings-count reported) 4))
+      30
+      (if (not
+        (lint-driver-smoke-finding-rule-ok? reported 0 (lint-rule-no-effect-id)))
+        31
+        (if (not (= (lint-findings-count clean) 0))
+          32
+          (if (not (= (lint-findings-count suppressed) 0))
+            33
+            42))))))
+
 (define (main) : i64
   (begin
     ;; The imported driver core defines printing helpers; keep the print-string
@@ -113,6 +185,11 @@
         (let
           [unused-import-result : i64 (selfhost-lint-unused-imports-self-test)]
           (if (= unused-import-result 42)
-            (lint-driver-smoke-deprecated-string-concat-self-test)
+            (let
+              [concat-result : i64
+                (lint-driver-smoke-deprecated-string-concat-self-test)]
+              (if (= concat-result 42)
+                (lint-driver-smoke-no-effect-self-test)
+                concat-result))
             unused-import-result))
         core-result))))

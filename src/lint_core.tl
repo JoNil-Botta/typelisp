@@ -2,8 +2,9 @@
 ;#
 ;# A selfhost lint pass: walk the parsed AST, run registered rules, and collect
 ;# findings. The rules flag body-only nested `let` forms, nested success-path
-;# `if` return chains, unit-branch return guards, nested `str-cat` calls, and
-;# deprecated user-facing string concatenation primitives.
+;# `if` return chains, unit-branch return guards, no-effect expression
+;# statements, nested `str-cat` calls, and deprecated user-facing string
+;# concatenation primitives.
 ;#
 ;# The `typelisp lint` CLI driver consumes the rule id attached to each finding
 ;# for suppression (`;; lint-allow: <rule-id>`). This module owns stable rule
@@ -61,6 +62,15 @@
 
 (define (lint-rule-unit-if-guard-suggestion) : String
   "prefer when/unless for unit guard branches")
+
+(define (lint-rule-no-effect-id) : String
+  "no-effect")
+
+(define (lint-rule-no-effect-message) : String
+  "no-effect expression: value is discarded")
+
+(define (lint-rule-no-effect-suggestion) : String
+  "remove the expression or use its value")
 
 (define (lint-rule-deprecated-string-concat-id) : String
   "deprecated-string-concat")
@@ -139,6 +149,12 @@
     (lint-rule-unit-if-guard-message)
     (lint-rule-unit-if-guard-suggestion)))
 
+(define (lint-rule-no-effect) : LintRule
+  (LintRule
+    (lint-rule-no-effect-id)
+    (lint-rule-no-effect-message)
+    (lint-rule-no-effect-suggestion)))
+
 (define (lint-rule-deprecated-string-concat) : LintRule
   (LintRule
     (lint-rule-deprecated-string-concat-id)
@@ -178,12 +194,14 @@
         (lint-rule-cons
           (lint-rule-unit-if-guard)
           (lint-rule-cons
-            (lint-rule-deprecated-string-concat)
+            (lint-rule-no-effect)
             (lint-rule-cons
-              (lint-rule-nested-str-cat)
+              (lint-rule-deprecated-string-concat)
               (lint-rule-cons
-                (lint-rule-cascading-and-or)
-                (lint-rule-cons (lint-rule-unused-import) LintRuleNil)))))))))
+                (lint-rule-nested-str-cat)
+                (lint-rule-cons
+                  (lint-rule-cascading-and-or)
+                  (lint-rule-cons (lint-rule-unused-import) LintRuleNil))))))))))
 
 (define (lint-rule-find-in [rules : LintRuleList] [rule-id : String]) : LintMaybeRule
   (match rules
@@ -440,6 +458,65 @@
     (lint-rule-unit-if-guard-id)
     1
     span))
+
+(define (lint-no-effect-finding [span : AstSourceSpan]) : LintFinding
+  (LintFinding
+    (lint-rule-message (lint-rule-no-effect-id))
+    (lint-rule-no-effect-id)
+    0
+    span))
+
+(define (lint-no-effect-span [expr : AstExpr]) : AstSourceSpan
+  (match expr
+    [(AstExprSpanned _ span) span]
+    [_ (lint-no-span)]))
+
+(define (lint-no-effect-pure-binop? [op : AstBinOp]) : bool
+  (match op
+    ;; These operators can intentionally trap, so keep the syntactic rule
+    ;; conservative until typed/effect metadata can prove safety.
+    [(AstBinDiv) false]
+    [(AstBinMod) false]
+    [(AstBinShl) false]
+    [(AstBinShr) false]
+    [_ true]))
+
+(define (lint-no-effect-pure-literal? [lit : AstLiteral]) : bool
+  (match lit
+    [(AstLitUnit) false]
+    [_ true]))
+
+(define (lint-no-effect-pure-expr? [expr : AstExpr]) : bool
+  (match expr
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lint-no-effect-pure-expr? inner))]
+    [(AstExprLiteral lit) (lint-no-effect-pure-literal? lit)]
+    [(AstExprVar _) true]
+    [(AstExprTypeLiteral _) true]
+    [(AstExprBinary op left-box right-box)
+      (let
+        [left : AstExpr (ast-node-get left-box)]
+        [right : AstExpr (ast-node-get right-box)]
+        (and
+          (lint-no-effect-pure-binop? op)
+          (lint-no-effect-pure-expr? left)
+          (lint-no-effect-pure-expr? right)))]
+    [(AstExprUnary _ inner-box)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lint-no-effect-pure-expr? inner))]
+    [(AstExprAnn inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lint-no-effect-pure-expr? inner))]
+    [(AstExprCast inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lint-no-effect-pure-expr? inner))]
+    [(AstExprPtrNull _) true]
+    [_ false]))
 
 (define (lint-deprecated-string-concat-name? [name : String]) : bool
   (or
@@ -1610,6 +1687,78 @@
         [rest : AstExprList (box-get rest)]
         (lint-walk-expr-list rest threshold (lint-walk-expr head threshold acc)))]))
 
+(define (lint-walk-discarded-nonsequence-expr
+  [expr : AstExpr]
+  [threshold : i64]
+  [acc : LintFindings]) : LintFindings
+  (let
+    [walked : LintFindings (lint-walk-expr expr threshold acc)]
+    (if (lint-no-effect-pure-expr? expr)
+      (lint-findings-add
+        (lint-no-effect-finding (lint-no-effect-span expr))
+        walked)
+      walked)))
+
+(define (lint-walk-discarded-expr
+  [expr : AstExpr]
+  [threshold : i64]
+  [acc : LintFindings]) : LintFindings
+  (match expr
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (match inner
+          [(AstExprBegin _) (lint-walk-expr expr threshold acc)]
+          [(AstExprWithRegion _ _) (lint-walk-expr expr threshold acc)]
+          [(AstExprWithEscape _ _) (lint-walk-expr expr threshold acc)]
+          [(AstExprWithScratch _) (lint-walk-expr expr threshold acc)]
+          [(AstExprInArena _ _) (lint-walk-expr expr threshold acc)]
+          [(AstExprWithResource _ _) (lint-walk-expr expr threshold acc)]
+          [_ (lint-walk-discarded-nonsequence-expr expr threshold acc)]))]
+    [(AstExprBegin _) (lint-walk-expr expr threshold acc)]
+    [(AstExprWithRegion _ _) (lint-walk-expr expr threshold acc)]
+    [(AstExprWithEscape _ _) (lint-walk-expr expr threshold acc)]
+    [(AstExprWithScratch _) (lint-walk-expr expr threshold acc)]
+    [(AstExprInArena _ _) (lint-walk-expr expr threshold acc)]
+    [(AstExprWithResource _ _) (lint-walk-expr expr threshold acc)]
+    [_ (lint-walk-discarded-nonsequence-expr expr threshold acc)]))
+
+(define (lint-walk-value-sequence-expr-list
+  [exprs : AstExprList]
+  [threshold : i64]
+  [acc : LintFindings]) : LintFindings
+  (match exprs
+    [(AstExprNil) acc]
+    [(AstExprCons head rest)
+      (let
+        [head : AstExpr (ast-node-get head)]
+        [rest : AstExprList (box-get rest)]
+        (match rest
+          [(AstExprNil) (lint-walk-expr head threshold acc)]
+          [_
+            (lint-walk-value-sequence-expr-list
+              rest
+              threshold
+              (lint-walk-discarded-expr head threshold acc))]))]))
+
+(define (lint-walk-tail-sequence-expr-list
+  [exprs : AstExprList]
+  [threshold : i64]
+  [acc : LintFindings]) : LintFindings
+  (match exprs
+    [(AstExprNil) acc]
+    [(AstExprCons head rest)
+      (let
+        [head : AstExpr (ast-node-get head)]
+        [rest : AstExprList (box-get rest)]
+        (match rest
+          [(AstExprNil) (lint-walk-tail-expr head threshold acc)]
+          [_
+            (lint-walk-tail-sequence-expr-list
+              rest
+              threshold
+              (lint-walk-discarded-expr head threshold acc))]))]))
+
 ;: Walk each binding initializer in `bindings`.
 (define (lint-walk-let-bindings
   [bindings : AstLetBindingList]
@@ -1996,7 +2145,8 @@
       (let
         [body : AstExpr (ast-node-get body-box)]
         (lint-walk-tail-expr body threshold acc))]
-    [(AstExprBegin exprs) (lint-walk-tail-expr-list exprs threshold acc)]
+    [(AstExprBegin exprs)
+      (lint-walk-tail-sequence-expr-list exprs threshold acc)]
     [(AstExprUnsafe exprs) (lint-walk-tail-expr-list exprs threshold acc)]
     [(AstExprAnn inner-box _)
       (let
@@ -2013,17 +2163,19 @@
           arms
           threshold
           (lint-walk-expr scrutinee threshold acc)))]
-    [(AstExprWithRegion _ body) (lint-walk-tail-expr-list body threshold acc)]
-    [(AstExprWithScratch body) (lint-walk-tail-expr-list body threshold acc)]
+    [(AstExprWithRegion _ body)
+      (lint-walk-tail-sequence-expr-list body threshold acc)]
+    [(AstExprWithScratch body)
+      (lint-walk-tail-sequence-expr-list body threshold acc)]
     [(AstExprInArena arena-box body)
       (let
         [arena : AstExpr (ast-node-get arena-box)]
-        (lint-walk-tail-expr-list
+        (lint-walk-tail-sequence-expr-list
           body
           threshold
           (lint-walk-expr arena threshold acc)))]
     [(AstExprWithResource bindings body)
-      (lint-walk-tail-expr-list
+      (lint-walk-tail-sequence-expr-list
         body
         threshold
         (lint-walk-resource-bindings bindings threshold acc))]
@@ -2205,7 +2357,8 @@
         [cond : AstExpr (ast-node-get cond-box)]
         [body : AstExpr (ast-node-get body-box)]
         (lint-walk-expr body threshold (lint-walk-expr cond threshold acc)))]
-    [(AstExprBegin exprs) (lint-walk-expr-list exprs threshold acc)]
+    [(AstExprBegin exprs)
+      (lint-walk-value-sequence-expr-list exprs threshold acc)]
     [(AstExprUnsafe exprs) (lint-walk-expr-list exprs threshold acc)]
     [(AstExprSet _ value-box)
       (let
@@ -2266,24 +2419,26 @@
         [receiver : AstExpr (ast-node-get receiver-box)]
         [value : AstExpr (ast-node-get value-box)]
         (lint-walk-expr value threshold (lint-walk-expr receiver threshold acc)))]
-    [(AstExprWithRegion _ body) (lint-walk-expr-list body threshold acc)]
+    [(AstExprWithRegion _ body)
+      (lint-walk-value-sequence-expr-list body threshold acc)]
     [(AstExprWithEscape scratch-box body)
       (let
         [scratch : AstExpr (ast-node-get scratch-box)]
-        (lint-walk-expr-list
+        (lint-walk-value-sequence-expr-list
           body
           threshold
           (lint-walk-expr scratch threshold acc)))]
-    [(AstExprWithScratch body) (lint-walk-expr-list body threshold acc)]
+    [(AstExprWithScratch body)
+      (lint-walk-value-sequence-expr-list body threshold acc)]
     [(AstExprInArena arena-box body)
       (let
         [arena : AstExpr (ast-node-get arena-box)]
-        (lint-walk-expr-list
+        (lint-walk-value-sequence-expr-list
           body
           threshold
           (lint-walk-expr arena threshold acc)))]
     [(AstExprWithResource bindings body)
-      (lint-walk-expr-list
+      (lint-walk-value-sequence-expr-list
         body
         threshold
         (lint-walk-resource-bindings bindings threshold acc))]
@@ -2579,6 +2734,43 @@
       (ast-expr-call and-callee (lint-test-expr-list2 and-xy and-yz))]
     [spanned-and-cascade : i64
       (ast-expr-spanned and-cascade (AstSourceSpan 21 7 21 30))]
+    [discarded-add : i64 (ast-expr-binary (AstBinAdd) one vx)]
+    [discarded-cast : i64 (ast-expr-cast one (AstTyI64))]
+    [discarded-call : i64
+      (ast-expr-call (lint-test-var "side-effect?") AstExprNil)]
+    [no-effect-literal-begin : i64
+      (ast-node-push
+        (AstExprBegin (ast-expr-cons one (ast-expr-cons vx AstExprNil))))]
+    [no-effect-var-begin : i64
+      (ast-node-push
+        (AstExprBegin (ast-expr-cons vx (ast-expr-cons one AstExprNil))))]
+    [no-effect-add-begin : i64
+      (ast-node-push
+        (AstExprBegin
+          (ast-expr-cons discarded-add (ast-expr-cons vx AstExprNil))))]
+    [no-effect-cast-begin : i64
+      (ast-node-push
+        (AstExprBegin
+          (ast-expr-cons discarded-cast (ast-expr-cons vx AstExprNil))))]
+    [no-effect-tail-begin : i64
+      (ast-node-push (AstExprBegin (ast-expr-cons one AstExprNil)))]
+    [no-effect-clean-call-begin : i64
+      (ast-node-push
+        (AstExprBegin
+          (ast-expr-cons discarded-call (ast-expr-cons vx AstExprNil))))]
+    [no-effect-clean-mutation-begin : i64
+      (ast-node-push
+        (AstExprBegin
+          (ast-expr-cons set-ok-false (ast-expr-cons vx AstExprNil))))]
+    [no-effect-unsafe-begin : i64
+      (ast-node-push
+        (AstExprUnsafe (ast-expr-cons one (ast-expr-cons vx AstExprNil))))]
+    [spanned-no-effect-var : i64
+      (ast-node-push
+        (AstExprBegin
+          (ast-expr-cons
+            (ast-expr-spanned vx (AstSourceSpan 31 9 31 10))
+            (ast-expr-cons one AstExprNil))))]
     (begin
       ;; ladder length math
       (if (= (lint-test-ladder-length ladder3) 3)
@@ -2856,6 +3048,94 @@
             (panic "lint: core/and cascade should preserve callee spelling"))]
         [(LintNoFinding)
           (panic "lint: core/and cascade should produce a finding")])
+      (if (=
+        (lint-findings-count
+          (lint-test-walk-tail
+            no-effect-literal-begin
+            (lint-default-ladder-threshold)
+            (lint-findings-empty)))
+        1)
+        unit
+        (panic "lint: discarded literal should be flagged"))
+      (match (lint-findings-get
+        (lint-test-walk-tail
+          spanned-no-effect-var
+          (lint-default-ladder-threshold)
+          (lint-findings-empty))
+        0)
+        [(LintSomeFinding finding)
+          (let
+            [fspan : AstSourceSpan (struct-get finding span)]
+            (if (and
+              (= (struct-get fspan start-line) 31)
+              (string-eq (struct-get finding rule-id) (lint-rule-no-effect-id)))
+              unit
+              (panic "lint: no-effect finding should carry rule id and span")))]
+        [(LintNoFinding)
+          (panic "lint: discarded variable should produce a no-effect finding")])
+      (if (=
+        (lint-findings-count
+          (lint-test-walk-tail
+            no-effect-var-begin
+            (lint-default-ladder-threshold)
+            (lint-findings-empty)))
+        1)
+        unit
+        (panic "lint: discarded variable should be flagged"))
+      (if (=
+        (lint-findings-count
+          (lint-test-walk-tail
+            no-effect-add-begin
+            (lint-default-ladder-threshold)
+            (lint-findings-empty)))
+        1)
+        unit
+        (panic "lint: discarded arithmetic should be flagged"))
+      (if (=
+        (lint-findings-count
+          (lint-test-walk-tail
+            no-effect-cast-begin
+            (lint-default-ladder-threshold)
+            (lint-findings-empty)))
+        1)
+        unit
+        (panic "lint: discarded cast should be flagged"))
+      (if (=
+        (lint-findings-count
+          (lint-test-walk-tail
+            no-effect-tail-begin
+            (lint-default-ladder-threshold)
+            (lint-findings-empty)))
+        0)
+        unit
+        (panic "lint: tail expression should not be flagged as no-effect"))
+      (if (=
+        (lint-findings-count
+          (lint-test-walk-tail
+            no-effect-clean-call-begin
+            (lint-default-ladder-threshold)
+            (lint-findings-empty)))
+        0)
+        unit
+        (panic "lint: discarded call should not be flagged as no-effect"))
+      (if (=
+        (lint-findings-count
+          (lint-test-walk-tail
+            no-effect-clean-mutation-begin
+            (lint-default-ladder-threshold)
+            (lint-findings-empty)))
+        0)
+        unit
+        (panic "lint: discarded mutation should not be flagged as no-effect"))
+      (if (=
+        (lint-findings-count
+          (lint-test-walk-tail
+            no-effect-unsafe-begin
+            (lint-default-ladder-threshold)
+            (lint-findings-empty)))
+        0)
+        unit
+        (panic "lint: unsafe block should not be flagged as no-effect"))
       (if (string-eq
         (lint-rule-suggestion (lint-rule-nested-if-ladder-id))
         "prefer cond (value/guard ladders) or match (variant dispatch)")
@@ -2898,6 +3178,16 @@
         "prefer when/unless for unit guard branches")
         unit
         (panic "lint: unit-if-guard suggestion should be registered"))
+      (if (string-eq
+        (lint-rule-suggestion (lint-rule-no-effect-id))
+        "remove the expression or use its value")
+        unit
+        (panic "lint: no-effect suggestion should be registered"))
+      (if (string-eq
+        (lint-rule-message (lint-rule-no-effect-id))
+        "no-effect expression: value is discarded")
+        unit
+        (panic "lint: no-effect message should be registered"))
       (if (string-eq
         (lint-rule-suggestion (lint-rule-deprecated-string-concat-id))
         "import stdlib/str_cat.tl and use str-cat, or use stdlib/text_buf.tl in accumulation loops")

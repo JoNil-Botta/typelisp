@@ -35,6 +35,8 @@ auto_borrow_shared_lifetime_reject|check-fail|tests/safety/auto_borrow_shared_li
 auto_borrow_mutable_param_reject|check-fail|tests/safety/auto_borrow_mutable_param_reject.tl|-|typecheck: argument type mismatch
 auto_borrow_assignment_live_reject|check-fail|tests/safety/auto_borrow_assignment_live_reject.tl|-|cannot assign to borrowed place `n`
 auto_borrow_move_live_reject|check-fail|tests/safety/auto_borrow_move_live_reject.tl|-|cannot move borrowed place `text`
+substring_view_move_live_reject|check-fail|tests/safety/substring_view_move_live_reject.tl|-|cannot move borrowed place `text`
+substring_view_arena_escape_reject|check-fail|tests/safety/substring_view_arena_escape_reject.tl|-|cannot escape with-arena
 safe_raw_pointer_read_reject|check-fail|tests/safety/safe_raw_pointer_read_reject.tl|-|ptr-read requires unsafe context
 safe_syscall_reject|check-fail|tests/safety/safe_syscall_reject.tl|-|syscall requires unsafe context
 manual_arena_reset_unsafe_reject|check-fail|tests/safety/manual_arena_reset_unsafe_reject.tl|-|arena-rewind requires unsafe context

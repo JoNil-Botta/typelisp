@@ -1654,6 +1654,40 @@
     (compiler-driver-target-cfgs backend-target (compiler-cfg-empty))
     "test"))
 
+(define (tltest-roots-for-self-test) : StringVec
+  (string-vec-push (string-vec-push (string-vec-new) "stdlib") "src"))
+
+(define (tltest-package-cfg-inline-load-self-test?) : bool
+  (match (source-tool-create-temp-dir "tltest-package-cfg")
+    [(ErrSourceToolString _) false]
+    [(OkSourceToolString dir)
+      (let
+        [source : String (source-tool-fs-path-join dir "cfg_inline.tl")]
+        [roots : StringVec (tltest-roots-for-self-test)]
+        (begin
+          (write-file source "(cfg test (test package-cfg-inline unit))\n")
+          (match (compiler-driver-load-package-file-with-runtime-owned-cfg
+            source
+            roots
+            "."
+            "tltest"
+            (compiler-pkg-deps-empty)
+            true
+            (tltest-cfgs (BackendTargetLinux)))
+            [(ErrCompilerLoadWithPaths _) false]
+            [(OkCompilerLoadWithPaths decls paths _ _)
+              (let
+                [owned-source : String
+                  (compiler-load-package-owned-path "tltest" "." roots source)]
+                (match (tltest-build-harness owned-source decls paths)
+                  [(InlineHarness _ _ count) (= count 1)]))])))]))
+
+(test
+  test-cli-package-loader-enables-test-cfg
+  (unless
+    (tltest-package-cfg-inline-load-self-test?)
+    (panic "test CLI package loader did not enable test cfg")))
+
 (define (tltest-typecheck-cache-scope
   [roots : StringVec]
   [backend-target : CompilerBackendTarget]) : String
@@ -2279,14 +2313,14 @@
   [manifest-dir : String]
   [package-owner : String]
   [deps : CompilerPkgDeps]) : ResultTestPackageTotals
-  (match (compiler-driver-load-package-file-with-runtime-owned
+  (match (compiler-driver-load-package-file-with-runtime-owned-cfg
     source
-    backend-target
     roots
     manifest-dir
     package-owner
     deps
-    true)
+    true
+    (tltest-cfgs backend-target))
     [(OkCompilerLoadWithPaths decls paths _ _)
       (match test-mode
         [(TestModeCheck)
@@ -2316,14 +2350,14 @@
   [package-owner : String]
   [deps : CompilerPkgDeps]) : ResultTestPackageTotals
   (if (tltest-source-has-inline-tests? source)
-    (match (compiler-driver-load-package-file-with-runtime-owned
+    (match (compiler-driver-load-package-file-with-runtime-owned-cfg
       source
-      backend-target
       roots
       manifest-dir
       package-owner
       deps
-      true)
+      true
+      (tltest-cfgs backend-target))
       [(OkCompilerLoadWithPaths decls paths _ _)
         (let
           [owned-source : String

@@ -1941,6 +1941,7 @@ inputs while preserving owned `String` results for allocation sites.
 | Non-consuming text inspection | `string-length`/`length`, `string-ref`/`char-at`, `string-eq`/`string=?`, `string->int`, stdlib predicates such as `string-contains`, `string-contains-char`, and `is-string-prefix-at` | Accept borrowed `(& r str)` inputs and return scalars. They do not move or allocate text. |
 | Text output and diagnostics | `print-string`/`print-str`, `print-error`, `panic`/`error`, `stdout-write`, `stderr-write`, `write-file`, append/write status helpers, process stdin strings | Accept borrowed `(& r str)` text/path/message inputs. Host I/O may copy bytes outside the language heap but does not take TypeLisp ownership. |
 | Active-arena owned string results | `arg`, `read-file`, `file-read-chunk-bytes`, `read-stdin-line`, `read-stdin-bytes`, `int->string`, `str-cat`/low-level concat primitives, `substring`/`string-slice`, stdlib trim/replacement helpers when they build text, env/path split/join helpers | Return owned `String` storage allocated in the active arena. Results created inside a scoped arena cannot escape that arena. |
+| Borrowed string views | `substring-view`/`string-slice-view`, stdlib trim `*-view` helpers | Return `(& r str)` views tied to the input lifetime. Bounds traps match the owned-copy APIs. They do not copy bytes; a runtime helper may allocate fixed metadata for the view record, but it does not take ownership of or extend the backing bytes. |
 | Caller-provided fallback/result values | `stdlib/string.tl` `string-replace` when no match is found, `stdlib/io.tl` `read-file-or` fallback paths; check-only companion modules `stdlib/string_caller_result.tl` and `stdlib/io_caller_result.tl` | Preserve the caller-owned value instead of allocating. The companion modules expose source/typecheck-only lifetime-preserving aggregate shapes: branch-composed `StringReplaceResult` for replacement helpers and `ReadFileOrResult` for fallback reads. Ordinary runnable wrappers remain conservatively owned-compatible until reference-typed aggregate lowering and fuller branch lifetime unification land (#1722/#804). |
 | Mutable or binary byte storage | `ByteBuf`, `(& r bytes)`, `(&mut r bytes)`; dynamic `(Array u8)` compatibility code today | Not modeled as `str`. New binary APIs should use the explicit byte-buffer family once implemented; mutable byte views are exclusive borrowed `bytes`, not mutable strings. |
 
@@ -1953,10 +1954,10 @@ The record may describe static literal bytes or active-arena storage.
 `(& lifetime str)` is a pointer-sized reference/provenance value whose referent
 is an immutable 16-byte `(data_ptr, length)` string view. Borrowing a `String`
 place may point the reference at the owned `String` record itself; borrowing a
-future substring/slice view may point at a compiler-created view record. The
-reference does not own, free, or extend the lifetime of the bytes. Its lifetime
-is enforced only by the source checker, and the runtime representation carries
-no NUL terminator guarantee.
+substring/slice view may point at a runtime-created view record whose metadata
+is stable independently of the active arena. The reference does not own, free,
+or extend the lifetime of the bytes. Its lifetime is enforced only by the source
+checker, and the runtime representation carries no NUL terminator guarantee.
 
 Lowering may pass `(& lifetime str)` to runtime helpers using the same
 pointer-sized reference slot shape as other immutable references. Runtime
@@ -4567,6 +4568,8 @@ stdlib extern wrappers.
 | `string=?` | `String String → bool` | Alias for `string-eq` |
 | `substring` | `String i64 i64 → String` | Fresh string of `len` bytes starting at byte offset `start` (a `[start, start+len)` slice). Bounds checked. |
 | `string-slice` | `String i64 i64 → String` | Alias for `substring` |
+| `substring-view` | `(& r str) i64 i64 → (& r str)` | Borrowed string view of `len` bytes starting at byte offset `start`. Bounds checked; does not copy bytes. |
+| `string-slice-view` | `(& r str) i64 i64 → (& r str)` | Alias for `substring-view` |
 | `string->int` | `String → i64` | Parse decimal integer from string |
 | `int->string` | `i64 → String` | Format integer as decimal string |
 | `panic` | `String → never` (internal) | Print message to stderr and abort |
@@ -4637,6 +4640,7 @@ arena control symbols: `tl_alloc`, `tl_region_mark`, `tl_region_reset`,
 | `tl_region_reset` | Restore a region mark; mark `0` clears all current arenas |
 | `tl_string_concat` | String concatenation |
 | `tl_substring` | String slicing |
+| `tl_str_view` | Borrowed string slice view metadata construction |
 | `tl_int_to_string` | Format integer |
 | `tl_oob_abort` | Bounds-check trap |
 | `tl_div_abort` | Integer division/remainder trap |

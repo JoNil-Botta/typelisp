@@ -449,6 +449,17 @@
 (define (lower-reference-support-message) : String
   "lower: reference-typed programs require borrow/reference lowering support (#803/#806/#804)")
 
+(define (lower-supported-reference-extern?
+  [ctx : TcContext]
+  [name : i64]
+  [ty : AstType]) : bool
+  (let
+    [_ : TcContext ctx]
+    [_ty : AstType ty]
+    (or
+      (compiler-builtin-backend-tl-str-view-id? name)
+      (string-eq (intern-str name) "tl_str_view"))))
+
 (define (lower-instr-list-fill-array-reversed
   [instrs : CompilerIrInstrList]
   [slots : (Array CompilerIrInstr)]
@@ -30705,8 +30716,14 @@
                   (let
                     [decl-ctx : TcContext
                       (tc-context-with-module ctx cur-module)]
-                    (if (tc-type-contains-reference?
-                      (tc-resolve-type decl-ctx ty))
+                    [resolved-ty : AstType (tc-resolve-type decl-ctx ty)]
+                    (if (and
+                      (tc-type-contains-reference? resolved-ty)
+                      (not
+                        (lower-supported-reference-extern?
+                          decl-ctx
+                          name
+                          resolved-ty)))
                       (begin
                         (set!
                           result
@@ -30719,8 +30736,7 @@
                           (compiler-ir-extern-cons
                             (IrExtern
                               (intern-str name)
-                              (tc-type-without-regions
-                                (tc-resolve-type decl-ctx ty))
+                              (tc-type-without-regions resolved-ty)
                               (ast-extern-metadata-abi metadata)
                               (ast-extern-metadata-symbol metadata)
                               (ast-extern-metadata-link-inputs metadata)

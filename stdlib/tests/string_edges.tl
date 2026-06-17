@@ -61,6 +61,47 @@
 (define (string-test-slice-borrowed [text : String] [start : i64] [len : i64]) : String
   (string-slice-borrowed (& text) start len))
 
+(cfg
+  feature-str-view
+  (define (string-test-substring-view-eq
+    [text : String]
+    [start : i64]
+    [len : i64]
+    [expected : String]) : bool
+    (string-eq-borrowed (substring-view (& text) start len) (& expected))))
+
+(cfg
+  feature-str-view
+  (define (string-test-substring-view-len
+    [text : String]
+    [start : i64]
+    [len : i64]) : i64
+    (string-length (substring-view (& text) start len))))
+
+(cfg
+  feature-str-view
+  (define (string-test-slice-view-eq
+    [text : String]
+    [start : i64]
+    [len : i64]
+    [expected : String]) : bool
+    (string-eq-borrowed (string-slice-view (& text) start len) (& expected))))
+
+(cfg
+  feature-str-view
+  (define (string-test-trim-left-view-eq [s : String] [expected : String]) : bool
+    (string-eq-borrowed (string-trim-left-view (& s)) (& expected))))
+
+(cfg
+  feature-str-view
+  (define (string-test-trim-right-view-eq [s : String] [expected : String]) : bool
+    (string-eq-borrowed (string-trim-right-view (& s)) (& expected))))
+
+(cfg
+  feature-str-view
+  (define (string-test-trim-view-eq [s : String] [expected : String]) : bool
+    (string-eq-borrowed (string-trim-view (& s)) (& expected))))
+
 (define (string-test-prefix-at
   [haystack : String]
   [needle : String]
@@ -195,6 +236,20 @@
         40)
       "klmnopqrstuvwxyz0123456789ABCDEFGHIJKLMN"
       "borrowed substring copies long slice")
+    (cfg
+      feature-str-view
+      (begin
+        (assert-true
+          (string-test-substring-view-eq "abcdef" 2 3 "cde")
+          "substring-view borrows middle slice")
+        (assert-i64-eq
+          (string-test-substring-view-len "abcdef" 6 0)
+          0
+          "substring-view borrows empty boundary slice")
+        (assert-true
+          (string-test-slice-view-eq "abcdef" 5 1 "f")
+          "string-slice-view aliases borrowed substring view"))
+      unit)
     (assert-owned-string-eq
       (string-test-trim-left "  hello")
       "hello"
@@ -219,6 +274,22 @@
       (string-test-trim "")
       ""
       "trim handles empty strings")
+    (cfg
+      feature-str-view
+      (begin
+        (assert-true
+          (string-test-trim-left-view-eq "  hello" "hello")
+          "trim-left-view removes leading spaces")
+        (assert-true
+          (string-test-trim-right-view-eq "hello  " "hello")
+          "trim-right-view removes trailing spaces")
+        (assert-true
+          (string-test-trim-view-eq "  hello  " "hello")
+          "trim-view removes both sides")
+        (assert-true
+          (string-test-trim-view-eq "   " "")
+          "trim-view handles all-space strings"))
+      unit)
     (assert-true
       (string-test-contains "hello" "ell")
       "contains finds middle needle")

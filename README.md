@@ -651,9 +651,12 @@ used as `(& lifetime str)`, and borrowing a `String` place produces a borrowed
 parameters, including `String` places passed to `(& lifetime str)`. The `str`
 frontend and stdlib API migration are implemented
 (#1453, #1454); several compiler builtins keep compatibility `String`
-signatures. Mutable binary storage is specified separately as owned `ByteBuf`
-plus `(& lifetime bytes)` / `(&mut lifetime bytes)` borrowed views; conversions
-between text, arrays, and byte buffers are explicit copy or borrow boundaries.
+signatures. `substring`/`string-slice` keep returning fresh owned `String`
+copies, while `substring-view`/`string-slice-view` return bounds-checked
+borrowed `(& lifetime str)` slices without copying bytes. Mutable binary storage
+is specified separately as owned `ByteBuf` plus `(& lifetime bytes)` /
+`(&mut lifetime bytes)` borrowed views; conversions between text, arrays, and
+byte buffers are explicit copy or borrow boundaries.
 
 Lifetime-parameterized named aggregates are specified with declaration metadata
 such as `(:lifetimes r)` on `defstruct`/`defenum` and type uses such as

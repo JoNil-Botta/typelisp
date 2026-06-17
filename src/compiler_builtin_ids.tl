@@ -35,6 +35,8 @@
   -1)
 (define compiler-builtin-id-tl-substring : i64
   -1)
+(define compiler-builtin-id-tl-str-view : i64
+  -1)
 (define compiler-builtin-id-tl-string-concat : i64
   -1)
 (define compiler-builtin-id-tl-string-concat3 : i64
@@ -147,6 +149,7 @@
         compiler-builtin-id-tl-profile-alloc-reset-peak
         (intern "tl_profile_alloc_reset_peak"))
       (set! compiler-builtin-id-tl-substring (intern "tl_substring"))
+      (set! compiler-builtin-id-tl-str-view (intern "tl_str_view"))
       (set! compiler-builtin-id-tl-string-concat (intern "tl_string_concat"))
       (set! compiler-builtin-id-tl-string-concat3 (intern "tl_string_concat3"))
       (set! compiler-builtin-id-tl-string-concat4 (intern "tl_string_concat4"))
@@ -245,14 +248,14 @@
       (compiler-builtin-id-any4?
         name-id
         compiler-builtin-id-tl-substring
+        compiler-builtin-id-tl-str-view
         compiler-builtin-id-tl-string-concat
-        compiler-builtin-id-tl-string-concat3
-        compiler-builtin-id-tl-string-concat4)
+        compiler-builtin-id-tl-string-concat3)
       (compiler-builtin-id-any4?
         name-id
+        compiler-builtin-id-tl-string-concat4
         compiler-builtin-id-tl-string-concat5
         compiler-builtin-id-tl-int-to-string
-        -1
         -1))))
 
 (define (compiler-builtin-backend-runtime-compatibility-alias-id?
@@ -331,6 +334,11 @@
   (begin
     (compiler-builtin-refresh!)
     (= name-id compiler-builtin-id-tl-substring)))
+
+(define (compiler-builtin-backend-tl-str-view-id? [name-id : i64]) : bool
+  (begin
+    (compiler-builtin-refresh!)
+    (= name-id compiler-builtin-id-tl-str-view)))
 
 (define (compiler-builtin-backend-tl-string-eq-id? [name-id : i64]) : bool
   (begin

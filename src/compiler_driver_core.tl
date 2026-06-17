@@ -320,7 +320,9 @@
     "os-windows"))
 
 (define (compiler-driver-enable-language-cfgs [cfgs : SymI64Env]) : SymI64Env
-  (compiler-cfg-enable cfgs "feature-ptr-addr-of"))
+  (compiler-cfg-enable
+    (compiler-cfg-enable cfgs "feature-ptr-addr-of")
+    "feature-str-view"))
 
 (define (compiler-driver-target-cfgs
   [target : CompilerBackendTarget]

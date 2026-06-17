@@ -4880,6 +4880,7 @@
       false
       false
       false
+      false
       (CompilerBackendRuntimeTailPlan false false))
     IrFunctionNil
     IrExternNil
@@ -4934,6 +4935,7 @@
 
 (define (compiler-backend-runtime-helper-full-plan) : CompilerBackendRuntimePlan
   (BackendRuntimePlan
+    true
     true
     true
     true
@@ -8479,6 +8481,7 @@
       (compiler-backend-optimizer-rewrite-diagnostic-ok?)
       (and
         (compiler-backend-runtime-helper-asm-ok?)
+        (compiler-backend-str-view-runtime-helper-asm-ok?)
         (compiler-backend-runtime-helper-inventory-ok?)
         (compiler-backend-runtime-page-call-inventory-ok?)
         (compiler-backend-profile-runtime-split-ok?))

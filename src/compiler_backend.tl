@@ -261,6 +261,7 @@
     bool
     bool
     bool
+    bool
     CompilerBackendRuntimeTailPlan))
 
 (defstruct CompilerBackendRuntimeIndex
@@ -20582,6 +20583,7 @@
         alloc
         oob
         substring
+        str-view
         concat
         _
         _
@@ -20630,8 +20632,8 @@
               (compiler-builtin-backend-tl-region-reset-id? name-id))
             false
             (and substring (compiler-builtin-backend-tl-substring-id? name-id))
+            (and str-view (compiler-builtin-backend-tl-str-view-id? name-id))
             (and concat (compiler-builtin-backend-runtime-concat-id? name-id))
-            false
             false)
           (backend-or8
             (and
@@ -20677,6 +20679,8 @@
       (compiler-backend-runtime-index-defines? index "tl_shift_abort")]
     [defines-substring : bool
       (compiler-backend-runtime-index-defines? index "tl_substring")]
+    [defines-str-view : bool
+      (compiler-backend-runtime-index-defines? index "tl_str_view")]
     [defines-concat : bool
       (compiler-backend-runtime-index-defines-concat? index)]
     [defines-string-eq : bool
@@ -20727,6 +20731,8 @@
       (compiler-backend-runtime-index-extern? index "tl_shift_abort")]
     [extern-substring : bool
       (compiler-backend-runtime-index-extern? index "tl_substring")]
+    [extern-str-view : bool
+      (compiler-backend-runtime-index-extern? index "tl_str_view")]
     [extern-concat : bool (compiler-backend-runtime-index-extern-concat? index)]
     [extern-string-eq : bool
       (compiler-backend-runtime-index-extern? index "tl_string_eq")]
@@ -20846,6 +20852,8 @@
       (compiler-backend-runtime-index-calls? index "tl_shift_abort")]
     [calls-substring : bool
       (compiler-backend-runtime-index-calls? index "tl_substring")]
+    [calls-str-view : bool
+      (compiler-backend-runtime-index-calls? index "tl_str_view")]
     [calls-concat : bool (compiler-backend-runtime-index-calls-concat? index)]
     [calls-string-eq : bool
       (compiler-backend-runtime-index-calls? index "tl_string_eq")]
@@ -20955,6 +20963,8 @@
           (or extern-shift-abort calls-shift-abort)))]
     [needs-substring : bool
       (and (not defines-substring) (or extern-substring calls-substring))]
+    [needs-str-view : bool
+      (and (not defines-str-view) (or extern-str-view calls-str-view))]
     [needs-concat : bool
       (and (not defines-concat) (or extern-concat calls-concat))]
     [needs-string-eq : bool false]
@@ -21010,7 +21020,7 @@
           direct-alloc
           needs-int-to-string
           needs-substring
-          needs-concat
+          needs-str-view
           needs-arg
           needs-read-file
           needs-write-file
@@ -21048,6 +21058,7 @@
         needs-alloc
         needs-oob
         needs-substring
+        needs-str-view
         needs-concat
         false
         false
@@ -21233,6 +21244,7 @@ tl_profile_alloc_peak_bytes:
     [(BackendRuntimePlan
         alloc
         oob
+        _
         _
         _
         _
@@ -23141,6 +23153,106 @@ tl_substring:
 
 ")
 
+(define (compiler-backend-runtime-str-view-functions) : String
+  "    .section .bss
+    .balign 8
+.L_tl_str_view_arena:
+    .zero 8
+
+    .text
+    .globl tl_str_view
+tl_str_view:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    push %r14
+    push %r15
+    sub $8, %rsp
+    movq 0(%rdi), %r12
+    addq %rsi, %r12
+    movq %rdx, %r13
+    call tl_arena_current
+    movq %rax, %r14
+    movq .L_tl_str_view_arena(%rip), %r15
+    testq %r15, %r15
+    jnz .L_tl_str_view_arena_ready
+    call tl_arena_make_atomic
+    movq %rax, %r15
+    movq %rax, .L_tl_str_view_arena(%rip)
+.L_tl_str_view_arena_ready:
+    movq %r15, %rdi
+    call tl_arena_set
+    movq $16, %rdi
+    call tl_alloc
+    movq %rax, %rbx
+    movq %r14, %rdi
+    call tl_arena_set
+    movq %r12, 0(%rbx)
+    movq %r13, 8(%rbx)
+    movq %rbx, %rax
+    add $8, %rsp
+    pop %r15
+    pop %r14
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
+")
+
+(define (compiler-backend-runtime-windows-str-view-functions) : String
+  "    .data
+    .balign 8
+.L_tl_str_view_arena:
+    .quad 0
+
+    .text
+    .globl tl_str_view
+tl_str_view:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    push %r14
+    push %r15
+    sub $40, %rsp
+    movq 0(%rcx), %r12
+    addq %rdx, %r12
+    movq %r8, %r13
+    call tl_arena_current
+    movq %rax, %r14
+    movq .L_tl_str_view_arena(%rip), %r15
+    testq %r15, %r15
+    jnz .L_tl_str_view_arena_ready
+    call tl_arena_make_atomic
+    movq %rax, %r15
+    movq %rax, .L_tl_str_view_arena(%rip)
+.L_tl_str_view_arena_ready:
+    movq %r15, %rcx
+    call tl_arena_set
+    movq $16, %rcx
+    call tl_alloc
+    movq %rax, %rbx
+    movq %r14, %rcx
+    call tl_arena_set
+    movq %r12, 0(%rbx)
+    movq %r13, 8(%rbx)
+    movq %rbx, %rax
+    add $40, %rsp
+    pop %r15
+    pop %r14
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
+")
+
 (define (compiler-backend-runtime-concat-functions) : String
   "    .globl tl_string_concat
 tl_string_concat:
@@ -23516,6 +23628,7 @@ tl_memcpy:
         alloc
         oob
         substring
+        str-view
         concat
         _
         _
@@ -23577,6 +23690,12 @@ tl_memcpy:
               (compiler-backend-runtime-windows-substring-functions)
               (compiler-backend-runtime-substring-functions))
             "")]
+        [str-view-asm : String
+          (if str-view
+            (if (compiler-backend-target-windows? target)
+              (compiler-backend-runtime-windows-str-view-functions)
+              (compiler-backend-runtime-str-view-functions))
+            "")]
         [concat-asm : String
           (if concat
             (if (compiler-backend-target-windows? target)
@@ -23631,7 +23750,7 @@ tl_memcpy:
                   div-abort-asm))))]
         [runtime-string-asm : String
           (string-append
-            (str-cat shift-abort-asm substring-asm concat-asm "" "")
+            (str-cat shift-abort-asm substring-asm str-view-asm concat-asm "")
             (string-append int-to-string-asm abort-asm))]
         [env-var-exists-asm : String
           (if env-var-exists
@@ -23845,6 +23964,7 @@ tl_memcpy:
         alloc
         oob
         substring
+        str-view
         concat
         string-eq
         string-to-int
@@ -23882,11 +24002,11 @@ tl_memcpy:
             alloc
             oob
             substring
+            str-view
             concat
             string-eq
             string-to-int
-            int-to-string
-            abort)]
+            (or int-to-string abort))]
         [io-runtime : bool
           (backend-or8
             print-err
@@ -27472,6 +27592,41 @@ tl_memcpy:
           (not (compiler-backend-string-contains? asm "_errno:\n"))
           (not (compiler-backend-string-contains? asm "tl_errno:\n"))
           (compiler-backend-no-stdlib-forwarding-labels? asm)))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-str-view-helper-source) : String
+  "(unsafe
+  (extern (tl_str_view [text : (& text str)] [start : i64] [len : i64]) : (& text str)))
+(define (view-length [text : (& text str)]) : i64
+  (let
+    [view : (& text str) (unsafe (tl_str_view text 1 2))]
+    (string-length view)))
+(define (main) : i64
+  (let
+    [text : String \"abcdef\"]
+    (view-length (& text))))")
+
+(define (compiler-backend-str-view-runtime-helper-asm-ok?) : bool
+  (match (compiler-backend-emit-source
+    (compiler-backend-str-view-helper-source))
+    [(OkCompilerBackend asm)
+      (and
+        (backend-and8
+          (compiler-backend-string-contains? asm ".globl tl_alloc\n")
+          (compiler-backend-string-contains? asm "tl_alloc:\n")
+          (compiler-backend-string-contains? asm ".globl tl_str_view\n")
+          (compiler-backend-string-contains? asm "tl_str_view:\n")
+          (compiler-backend-string-contains? asm ".L_tl_str_view_arena:\n")
+          (compiler-backend-string-contains? asm "    call tl_str_view\n")
+          (compiler-backend-string-contains?
+            asm
+            "    call tl_arena_make_atomic\n")
+          (compiler-backend-string-contains? asm "    call tl_arena_set\n"))
+        (backend-and4
+          (not (compiler-backend-string-contains? asm ".extern tl_str_view\n"))
+          (not (compiler-backend-string-contains? asm ".globl tl_substring\n"))
+          (not (compiler-backend-string-contains? asm "tl_substring:\n"))
+          (not (compiler-backend-string-contains? asm ".extern tl_substring\n"))))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-file-handle-open-close-runtime-ok?) : bool

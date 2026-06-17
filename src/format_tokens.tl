@@ -360,6 +360,7 @@
     [(ErrFmtI64 err)
       (begin
         (panic (format-source-error-message err))
+        ;; lint-allow: unreachable-code
         start)]))
 
 (define (fmt-scan-decimal-number-end [src : String] [start : i64] [n : i64]) : i64
@@ -396,6 +397,7 @@
     [(ErrFmtI64 err)
       (begin
         (panic (format-source-error-message err))
+        ;; lint-allow: unreachable-code
         start)]))
 
 (define (fmt-scan-symbol-end [src : String] [start : i64] [n : i64]) : i64
@@ -462,6 +464,7 @@
     [(ErrFmtI64 err)
       (begin
         (panic (format-source-error-message err))
+        ;; lint-allow: unreachable-code
         start)]))
 
 (define (fmt-scan-char-end-result [src : String] [start : i64] [n : i64]) : ResultFmtI64
@@ -498,6 +501,7 @@
     [(ErrFmtI64 err)
       (begin
         (panic (format-source-error-message err))
+        ;; lint-allow: unreachable-code
         start)]))
 
 (define (fmt-store-token
@@ -717,4 +721,5 @@
     [(ErrFormatTokenStream err)
       (begin
         (panic (format-source-error-message err))
+        ;; lint-allow: unreachable-code
         (format-empty-token-stream))]))

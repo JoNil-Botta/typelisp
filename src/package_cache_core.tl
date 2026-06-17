@@ -442,6 +442,7 @@
     [(ErrPackageCacheKey message)
       (begin
         (panic message)
+        ;; lint-allow: unreachable-code
         (PackageCacheKey "" ""))]))
 
 (define (package-cache-expect-ok [result : ResultIoUnit] [message : String]) : unit
@@ -458,6 +459,7 @@
           (string-append
             "package-cache: temp dir failed: "
             (io-error-message error)))
+        ;; lint-allow: unreachable-code
         "")]))
 
 (define (package-cache-pure-self-test-ok?) : bool
@@ -576,6 +578,7 @@
     42
     (begin
       (panic "package-cache: self-test mismatch")
+      ;; lint-allow: unreachable-code
       1)))
 
 (test

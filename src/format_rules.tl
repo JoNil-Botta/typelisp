@@ -690,6 +690,7 @@
     [(ErrFormatString err)
       (begin
         (panic (format-source-error-message err))
+        ;; lint-allow: unreachable-code
         "")]))
 
 (define (format-rules-decls-source) : String

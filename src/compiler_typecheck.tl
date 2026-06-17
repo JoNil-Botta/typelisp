@@ -6970,6 +6970,7 @@
       [(ErrCompilerTypecheck diag)
         (begin
           (panic (compiler-diagnostic-message diag))
+          ;; lint-allow: unreachable-code
           unit)])
     unit))
 
@@ -9008,16 +9009,19 @@
       unit
       (begin
         (panic "typecheck: layout query tests failed")
+        ;; lint-allow: unreachable-code
         unit))
     (if (compiler-typecheck-defmacro-tests-ok?)
       unit
       (begin
         (panic "typecheck: defmacro tests failed")
+        ;; lint-allow: unreachable-code
         unit))
     (if (compiler-typecheck-macro-expand-tests-ok?)
       unit
       (begin
         (panic "typecheck: macro expansion tests failed")
+        ;; lint-allow: unreachable-code
         unit))))
 
 (define (compiler-typecheck-self-test) : i64

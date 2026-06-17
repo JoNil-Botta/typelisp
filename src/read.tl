@@ -492,6 +492,7 @@
     [(ErrSexpr message)
       (begin
         (panic message)
+        ;; lint-allow: unreachable-code
         SNil)]))
 
 (define (read-list [toks : (Array Token)] [cur : (Array i64)]) : Sexpr
@@ -500,6 +501,7 @@
     [(ErrSexpr message)
       (begin
         (panic message)
+        ;; lint-allow: unreachable-code
         SNil)]))
 
 ;; read: the public entry point. Read a single top-level form from the front of
@@ -526,6 +528,7 @@
     [(ErrSpannedSexpr err)
       (begin
         (panic (source-error-message err))
+        ;; lint-allow: unreachable-code
         (SpSNil (source-error-span err)))]))
 
 (define (read [toks : (Array Token)]) : Sexpr
@@ -534,4 +537,5 @@
     [(ErrSexpr message)
       (begin
         (panic message)
+        ;; lint-allow: unreachable-code
         SNil)]))

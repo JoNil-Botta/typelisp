@@ -328,7 +328,9 @@ _No documented declarations._
         42
         (begin
           (panic "doc-render: empty markdown smoke mismatch")
+          ;; lint-allow: unreachable-code
           0))
       (begin
         (panic "doc-render: markdown smoke mismatch")
+        ;; lint-allow: unreachable-code
         0))))

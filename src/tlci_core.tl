@@ -1379,6 +1379,7 @@
     42
     (begin
       (panic "tlci-core: self-test mismatch")
+      ;; lint-allow: unreachable-code
       1)))
 
 (test

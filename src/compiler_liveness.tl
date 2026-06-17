@@ -1516,4 +1516,5 @@
     42
     (begin
       (panic "liveness: smoke mismatch")
+      ;; lint-allow: unreachable-code
       0)))

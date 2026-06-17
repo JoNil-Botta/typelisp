@@ -176,6 +176,7 @@
         (begin
           (panic "parser: expected an integer or '('")
           ;; Dead code: `panic` never returns, but the `if` needs an `Expr`.
+          ;; lint-allow: unreachable-code
           (ENum 0))))))
 
 ;; term := factor (('*' | '/') factor)*  (left-associative '*' / '/').

@@ -676,24 +676,28 @@
           (return
             (begin
               (panic "doc-extract: module doc smoke mismatch")
+              ;; lint-allow: unreachable-code
               0)))
         (unless
           (= (doc-item-list-count items) 6)
           (return
             (begin
               (panic "doc-extract: item count smoke mismatch")
+              ;; lint-allow: unreachable-code
               0)))
         (unless
           (doc-extract-smoke-items-ok? items)
           (return
             (begin
               (panic "doc-extract: item doc smoke mismatch")
+              ;; lint-allow: unreachable-code
               0)))
         (unless
           (doc-extract-generated-smoke-ok?)
           (return
             (begin
               (panic "doc-extract: generated item mismatch")
+              ;; lint-allow: unreachable-code
               0)))
         (match (doc-extract-source (doc-extract-legacy-smoke-source))
           [(DocExtraction legacy-module legacy-items)
@@ -703,12 +707,14 @@
                 (return
                   (begin
                     (panic "doc-extract: legacy module doc mismatch")
+                    ;; lint-allow: unreachable-code
                     0)))
               (unless
                 (= (doc-item-list-count legacy-items) 1)
                 (return
                   (begin
                     (panic "doc-extract: legacy item count mismatch")
+                    ;; lint-allow: unreachable-code
                     0)))
               (match legacy-items
                 [(DocItemCons legacy legacy-rest)
@@ -725,6 +731,7 @@
                           (return
                             (begin
                               (panic "doc-extract: legacy item mismatch")
+                              ;; lint-allow: unreachable-code
                               0)))
                         42)]
                     [_ 0])]

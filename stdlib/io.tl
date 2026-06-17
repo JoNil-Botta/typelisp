@@ -1616,6 +1616,7 @@
         false
         (begin
           (panic "tl: file-exists? failed\n")
+          ;; lint-allow: unreachable-code
           false)))))
 
 ;: Return true when `raw` names an open stdlib file handle.
@@ -2200,6 +2201,7 @@
     [(ErrIoUnit error)
       (begin
         (panic (io-error-message error))
+        ;; lint-allow: unreachable-code
         unit)]))
 
 ;: Return true when `path` exists and its contents are non-empty.

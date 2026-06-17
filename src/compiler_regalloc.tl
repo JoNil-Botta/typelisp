@@ -5796,4 +5796,5 @@
     42
     (begin
       (panic "regalloc: smoke mismatch")
+      ;; lint-allow: unreachable-code
       0)))

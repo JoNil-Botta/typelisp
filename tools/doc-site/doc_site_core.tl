@@ -446,6 +446,7 @@
 (define (doc-site-panic-unit [message : String]) : unit
   (begin
     (panic message)
+    ;; lint-allow: unreachable-code
     unit))
 
 (define (doc-site-empty-docs) : DocExtraction
@@ -1105,6 +1106,7 @@ pre {
       (doc-extract-source (read-file source))
       (begin
         (panic (string-append "doc-site: missing input module: " source))
+        ;; lint-allow: unreachable-code
         (doc-site-empty-docs)))))
 
 (define (doc-site-read-markdown [source : String]) : String
@@ -1114,6 +1116,7 @@ pre {
       (read-file source)
       (begin
         (panic (string-append "doc-site: missing language reference: " source))
+        ;; lint-allow: unreachable-code
         ""))))
 
 (define (doc-site-write-file [path : String] [contents : String]) : unit
@@ -1327,6 +1330,7 @@ See [the spec](SPEC.md), [the second module](stdlib/second.tl), and [the builder
     true
     (begin
       (panic message)
+      ;; lint-allow: unreachable-code
       false)))
 
 (define (doc-site-smoke) : i64

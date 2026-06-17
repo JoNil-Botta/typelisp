@@ -544,53 +544,62 @@
       (return
         (begin
           (panic "compiler-check: loader smoke mismatch")
+          ;; lint-allow: unreachable-code
           0)))
     (unless
       (compiler-check-virtual-import-ok?)
       (return
         (begin
           (panic "compiler-check: virtual import smoke mismatch")
+          ;; lint-allow: unreachable-code
           0)))
     (unless
       (compiler-check-virtual-import-inline-layout-ok?)
       (return
         (begin
           (panic "compiler-check: virtual import inline layout smoke mismatch")
+          ;; lint-allow: unreachable-code
           0)))
     (unless
       (compiler-check-export-ok?)
       (return
         (begin
           (panic "compiler-check: export smoke mismatch")
+          ;; lint-allow: unreachable-code
           0)))
     (unless
       (compiler-check-virtual-error-ok?)
       (return
         (begin
           (panic "compiler-check: virtual diagnostic smoke mismatch")
+          ;; lint-allow: unreachable-code
           0)))
     (unless
       (compiler-check-runtime-stdlib-boundary-ok?)
       (return
         (begin
           (panic "compiler-check: runtime stdlib boundary smoke mismatch")
+          ;; lint-allow: unreachable-code
           0)))
     (unless
       (compiler-check-implicit-core-prelude-ok?)
       (return
         (begin
           (panic "compiler-check: implicit core prelude smoke mismatch")
+          ;; lint-allow: unreachable-code
           0)))
     (unless
       (compiler-check-seen-root-ok?)
       (return
         (begin
           (panic "compiler-check: seen root smoke mismatch")
+          ;; lint-allow: unreachable-code
           0)))
     (unless
       (compiler-check-pool-reset-ok?)
       (return
         (begin
           (panic "compiler-check: pool reset smoke mismatch")
+          ;; lint-allow: unreachable-code
           0)))
     42))

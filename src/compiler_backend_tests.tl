@@ -8242,4 +8242,5 @@
     42
     (begin
       (panic "backend: smoke output mismatch")
+      ;; lint-allow: unreachable-code
       0)))

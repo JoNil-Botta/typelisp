@@ -55,6 +55,10 @@ spmd_public_vector_type_reject|check-fail|tests/safety/spmd_public_vector_type_r
 spmd_public_mask_type_reject|check-fail|tests/safety/spmd_public_mask_type_reject.tl|-|public SPMD mask source types are deferred
 spmd_varying_type_reject|check-fail|tests/safety/spmd_varying_type_reject.tl|-|public SPMD varying source types are deferred
 spmd_varying_call_reject|check-fail|tests/safety/spmd_varying_call_reject.tl|-|foreach calls with varying arguments are not supported
+spmd_atomic_order_arg_reject|check-fail|tests/safety/spmd_atomic_order_arg_reject.tl|-|call arity mismatch
+spmd_atomic_reduce_call_reject|check-fail|tests/safety/spmd_atomic_reduce_call_reject.tl|-|function calls are not allowed inside a spmd-reduce value expression
+spmd_atomic_shadow_call_reject|check-fail|tests/safety/spmd_atomic_shadow_call_reject.tl|-|foreach does not support gather/scatter-like array indexes
+spmd_atomic_u64_reject|check-fail|tests/safety/spmd_atomic_u64_reject.tl|-|typecheck: argument type mismatch
 spmd_unmasked_gather_index_reject|check-fail|tests/safety/spmd_unmasked_gather_index_reject.tl|-|foreach does not support gather/scatter-like array indexes
 spmd_unmasked_scatter_index_reject|check-fail|tests/safety/spmd_unmasked_scatter_index_reject.tl|-|foreach does not support gather/scatter-like array indexes
 spmd_masked_if_while_reject|check-fail|tests/safety/spmd_masked_if_while_reject.tl|-|SPMD masked if does not support varying while

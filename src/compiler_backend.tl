@@ -23610,6 +23610,80 @@ tl_memcpy:
     ret
 "))
 
+(define (compiler-backend-runtime-atomic-functions
+  [target : CompilerBackendTarget]) : String
+  (if (compiler-backend-target-windows? target)
+    "    .globl tl_atomic_i64_load_ptr
+tl_atomic_i64_load_ptr:
+    movq (%rcx), %rax
+    ret
+    .globl tl_atomic_i64_store_ptr
+tl_atomic_i64_store_ptr:
+    xchgq %rdx, (%rcx)
+    ret
+    .globl tl_atomic_i64_add_ptr
+tl_atomic_i64_add_ptr:
+    lock addq %rdx, (%rcx)
+    ret
+    .globl tl_atomic_i64_fetch_add_ptr
+tl_atomic_i64_fetch_add_ptr:
+    movq %rdx, %rax
+    lock xaddq %rax, (%rcx)
+    ret
+    .globl tl_atomic_i32_load_ptr
+tl_atomic_i32_load_ptr:
+    movl (%rcx), %eax
+    ret
+    .globl tl_atomic_i32_store_ptr
+tl_atomic_i32_store_ptr:
+    xchgl %edx, (%rcx)
+    ret
+    .globl tl_atomic_i32_add_ptr
+tl_atomic_i32_add_ptr:
+    lock addl %edx, (%rcx)
+    ret
+    .globl tl_atomic_i32_fetch_add_ptr
+tl_atomic_i32_fetch_add_ptr:
+    movl %edx, %eax
+    lock xaddl %eax, (%rcx)
+    ret
+"
+    "    .globl tl_atomic_i64_load_ptr
+tl_atomic_i64_load_ptr:
+    movq (%rdi), %rax
+    ret
+    .globl tl_atomic_i64_store_ptr
+tl_atomic_i64_store_ptr:
+    xchgq %rsi, (%rdi)
+    ret
+    .globl tl_atomic_i64_add_ptr
+tl_atomic_i64_add_ptr:
+    lock addq %rsi, (%rdi)
+    ret
+    .globl tl_atomic_i64_fetch_add_ptr
+tl_atomic_i64_fetch_add_ptr:
+    movq %rsi, %rax
+    lock xaddq %rax, (%rdi)
+    ret
+    .globl tl_atomic_i32_load_ptr
+tl_atomic_i32_load_ptr:
+    movl (%rdi), %eax
+    ret
+    .globl tl_atomic_i32_store_ptr
+tl_atomic_i32_store_ptr:
+    xchgl %esi, (%rdi)
+    ret
+    .globl tl_atomic_i32_add_ptr
+tl_atomic_i32_add_ptr:
+    lock addl %esi, (%rdi)
+    ret
+    .globl tl_atomic_i32_fetch_add_ptr
+tl_atomic_i32_fetch_add_ptr:
+    movl %esi, %eax
+    lock xaddl %eax, (%rdi)
+    ret
+"))
+
 (define (compiler-backend-runtime-linux-only
   [target : CompilerBackendTarget]
   [enabled : bool]
@@ -23735,19 +23809,22 @@ tl_memcpy:
         [profile-asm : String
           (compiler-backend-runtime-profile-functions-for-target target profile)]
         [memcpy-asm : String (compiler-backend-runtime-memcpy-functions target)]
+        [atomic-asm : String (compiler-backend-runtime-atomic-functions target)]
         [runtime-front-asm : String
           (string-append
             memcpy-asm
             (string-append
-              arena-asm
+              atomic-asm
               (string-append
-                profile-asm
-                (str-cat
-                  alloc-asm
-                  region-mark-asm
-                  region-reset-asm
-                  oob-asm
-                  div-abort-asm))))]
+                arena-asm
+                (string-append
+                  profile-asm
+                  (str-cat
+                    alloc-asm
+                    region-mark-asm
+                    region-reset-asm
+                    oob-asm
+                    div-abort-asm)))))]
         [runtime-string-asm : String
           (string-append
             (str-cat shift-abort-asm substring-asm str-view-asm concat-asm "")
@@ -25866,15 +25943,39 @@ tl_memcpy:
             plan)])]))
 
 (define (compiler-backend-object-runtime-symbols-list) : BackendStringList
-  (compiler-backend-string-cons
-    "tl_alloc"
-    (compiler-backend-string-cons
-      "tl_region_mark"
-      (compiler-backend-string-cons
-        "tl_region_reset"
-        (compiler-backend-string-cons
-          "tl_div_abort"
-          (compiler-backend-string-cons "tl_shift_abort" BackendStringNil))))))
+  (let
+    [symbols : BackendStringList BackendStringNil]
+    (begin
+      (set!
+        symbols
+        (compiler-backend-string-cons "tl_atomic_i32_fetch_add_ptr" symbols))
+      (set!
+        symbols
+        (compiler-backend-string-cons "tl_atomic_i32_add_ptr" symbols))
+      (set!
+        symbols
+        (compiler-backend-string-cons "tl_atomic_i32_store_ptr" symbols))
+      (set!
+        symbols
+        (compiler-backend-string-cons "tl_atomic_i32_load_ptr" symbols))
+      (set!
+        symbols
+        (compiler-backend-string-cons "tl_atomic_i64_fetch_add_ptr" symbols))
+      (set!
+        symbols
+        (compiler-backend-string-cons "tl_atomic_i64_add_ptr" symbols))
+      (set!
+        symbols
+        (compiler-backend-string-cons "tl_atomic_i64_store_ptr" symbols))
+      (set!
+        symbols
+        (compiler-backend-string-cons "tl_atomic_i64_load_ptr" symbols))
+      (set! symbols (compiler-backend-string-cons "tl_shift_abort" symbols))
+      (set! symbols (compiler-backend-string-cons "tl_div_abort" symbols))
+      (set! symbols (compiler-backend-string-cons "tl_region_reset" symbols))
+      (set! symbols (compiler-backend-string-cons "tl_region_mark" symbols))
+      (set! symbols (compiler-backend-string-cons "tl_alloc" symbols))
+      symbols)))
 
 (define (compiler-backend-object-runtime-symbols
   [parts : CompilerBackendObjectParts]

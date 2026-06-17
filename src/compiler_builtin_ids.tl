@@ -25,6 +25,22 @@
   -1)
 (define compiler-builtin-id-tl-thread-init : i64
   -1)
+(define compiler-builtin-id-tl-atomic-i64-load-ptr : i64
+  -1)
+(define compiler-builtin-id-tl-atomic-i64-store-ptr : i64
+  -1)
+(define compiler-builtin-id-tl-atomic-i64-add-ptr : i64
+  -1)
+(define compiler-builtin-id-tl-atomic-i64-fetch-add-ptr : i64
+  -1)
+(define compiler-builtin-id-tl-atomic-i32-load-ptr : i64
+  -1)
+(define compiler-builtin-id-tl-atomic-i32-store-ptr : i64
+  -1)
+(define compiler-builtin-id-tl-atomic-i32-add-ptr : i64
+  -1)
+(define compiler-builtin-id-tl-atomic-i32-fetch-add-ptr : i64
+  -1)
 (define compiler-builtin-id-tl-profile-alloc-total : i64
   -1)
 (define compiler-builtin-id-tl-profile-alloc-live : i64
@@ -137,6 +153,30 @@
         (intern "tl_thread_entry_ptr"))
       (set! compiler-builtin-id-tl-thread-init (intern "tl_thread_init"))
       (set!
+        compiler-builtin-id-tl-atomic-i64-load-ptr
+        (intern "tl_atomic_i64_load_ptr"))
+      (set!
+        compiler-builtin-id-tl-atomic-i64-store-ptr
+        (intern "tl_atomic_i64_store_ptr"))
+      (set!
+        compiler-builtin-id-tl-atomic-i64-add-ptr
+        (intern "tl_atomic_i64_add_ptr"))
+      (set!
+        compiler-builtin-id-tl-atomic-i64-fetch-add-ptr
+        (intern "tl_atomic_i64_fetch_add_ptr"))
+      (set!
+        compiler-builtin-id-tl-atomic-i32-load-ptr
+        (intern "tl_atomic_i32_load_ptr"))
+      (set!
+        compiler-builtin-id-tl-atomic-i32-store-ptr
+        (intern "tl_atomic_i32_store_ptr"))
+      (set!
+        compiler-builtin-id-tl-atomic-i32-add-ptr
+        (intern "tl_atomic_i32_add_ptr"))
+      (set!
+        compiler-builtin-id-tl-atomic-i32-fetch-add-ptr
+        (intern "tl_atomic_i32_fetch_add_ptr"))
+      (set!
         compiler-builtin-id-tl-profile-alloc-total
         (intern "tl_profile_alloc_total"))
       (set!
@@ -229,7 +269,19 @@
         name-id
         compiler-builtin-id-tl-arena-poison-enable
         compiler-builtin-id-tl-thread-entry-ptr
-        compiler-builtin-id-tl-thread-init))))
+        compiler-builtin-id-tl-thread-init)
+      (compiler-builtin-id-any4?
+        name-id
+        compiler-builtin-id-tl-atomic-i64-load-ptr
+        compiler-builtin-id-tl-atomic-i64-store-ptr
+        compiler-builtin-id-tl-atomic-i64-add-ptr
+        compiler-builtin-id-tl-atomic-i64-fetch-add-ptr)
+      (compiler-builtin-id-any4?
+        name-id
+        compiler-builtin-id-tl-atomic-i32-load-ptr
+        compiler-builtin-id-tl-atomic-i32-store-ptr
+        compiler-builtin-id-tl-atomic-i32-add-ptr
+        compiler-builtin-id-tl-atomic-i32-fetch-add-ptr))))
 
 (define (compiler-builtin-backend-runtime-stdlib-ffi-id? [name-id : i64]) : bool
   (begin
@@ -302,7 +354,19 @@
         name-id
         compiler-builtin-id-tl-arena-set
         compiler-builtin-id-tl-thread-entry-ptr
-        compiler-builtin-id-tl-thread-init))))
+        compiler-builtin-id-tl-thread-init)
+      (compiler-builtin-id-any4?
+        name-id
+        compiler-builtin-id-tl-atomic-i64-load-ptr
+        compiler-builtin-id-tl-atomic-i64-store-ptr
+        compiler-builtin-id-tl-atomic-i64-add-ptr
+        compiler-builtin-id-tl-atomic-i64-fetch-add-ptr)
+      (compiler-builtin-id-any4?
+        name-id
+        compiler-builtin-id-tl-atomic-i32-load-ptr
+        compiler-builtin-id-tl-atomic-i32-store-ptr
+        compiler-builtin-id-tl-atomic-i32-add-ptr
+        compiler-builtin-id-tl-atomic-i32-fetch-add-ptr))))
 
 (define (compiler-builtin-backend-runtime-always-provided-tail-id?
   [name-id : i64]) : bool

@@ -756,12 +756,11 @@
   (ErrCompilerBackend
     (compiler-diagnostic-with-message
       instr-diag
-      (backend-cat5
+      (str-cat
         "backend: unsupported AVX2 vector shape "
         (int->string lanes)
         " x "
-        (compiler-ir-type-name elem-ty)
-        ""))))
+        (compiler-ir-type-name elem-ty)))))
 
 (define (compiler-backend-vector-home-to-ymm [home : String]) : String
   (if (string-eq home "%vec6")
@@ -821,13 +820,13 @@
                   "")))))))))
 
 (define (compiler-backend-vector-home-unavailable [role : String]) : String
-  (backend-cat3
+  (str-cat
     "backend: vector register home unavailable for "
     role
     "; unsupported spill, call, or ABI lifetime"))
 
 (define (compiler-backend-mask-home-unavailable [role : String]) : String
-  (backend-cat3
+  (str-cat
     "backend: mask register home unavailable for "
     role
     "; unsupported spill, call, or ABI lifetime"))
@@ -956,12 +955,7 @@
         [_ ""])]))
 
 (define (compiler-backend-avx2-indexed-addr [elem-ty : AstType]) : String
-  (backend-cat5
-    "(%rax,%rcx,"
-    (int->string (compiler-backend-type-size elem-ty))
-    ")"
-    ""
-    ""))
+  (str-cat "(%rax,%rcx," (int->string (compiler-backend-type-size elem-ty)) ")"))
 
 (define (compiler-backend-emit-avx2-base-index
   [assignments : CompilerRegAssignmentList]
@@ -997,12 +991,14 @@
             (OkCompilerBackend
               (string-append
                 addr-asm
-                (backend-cat5
-                  "    "
-                  (compiler-backend-avx2-vector-move elem-ty)
-                  " "
-                  (compiler-backend-avx2-indexed-addr elem-ty)
-                  (backend-cat5 ", " dst-reg "\n" "" ""))))]
+                (string-append
+                  (str-cat
+                    "    "
+                    (compiler-backend-avx2-vector-move elem-ty)
+                    " "
+                    (compiler-backend-avx2-indexed-addr elem-ty)
+                    ", ")
+                  (str-cat dst-reg "\n"))))]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
               (compiler-backend-apply-instr-diagnostic message instr-diag))])]
@@ -1124,7 +1120,7 @@
       [(OkBackendReg dst-reg)
         (match (compiler-backend-avx2-splat-load assignments value elem-ty)
           [(OkCompilerBackend load-asm)
-            (OkCompilerBackend (backend-cat3 load-asm dst-reg "\n"))]
+            (OkCompilerBackend (str-cat load-asm dst-reg "\n"))]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
               (compiler-backend-apply-instr-diagnostic message instr-diag))])]
@@ -1150,37 +1146,26 @@
             "ymm")
             [(OkBackendReg dst-reg)
               (OkCompilerBackend
-                (backend-cat5
-                  (backend-cat5 "    vpsrlq $32, " lhs-reg ", %ymm0\n" "" "")
-                  (backend-cat5
-                    "    vpmuludq "
-                    rhs-reg
-                    ", %ymm0, %ymm0\n"
-                    ""
-                    "")
-                  (backend-cat5 "    vpsrlq $32, " rhs-reg ", %ymm1\n" "" "")
-                  (backend-cat5
-                    "    vpmuludq "
-                    lhs-reg
-                    ", %ymm1, %ymm1\n"
-                    ""
-                    "")
-                  (backend-cat5
-                    "    vpaddq %ymm1, %ymm0, %ymm0\n"
-                    "    vpsllq $32, %ymm0, %ymm0\n"
-                    (backend-cat5
-                      "    vpmuludq "
-                      rhs-reg
-                      ", "
-                      lhs-reg
-                      (backend-cat3 ", " dst-reg "\n"))
-                    (backend-cat5
-                      "    vpaddq %ymm0, "
-                      dst-reg
-                      ", "
-                      dst-reg
-                      "\n")
-                    "")))]
+                (string-append
+                  (str-cat "    vpsrlq $32, " lhs-reg ", %ymm0\n")
+                  (string-append
+                    (str-cat "    vpmuludq " rhs-reg ", %ymm0, %ymm0\n")
+                    (string-append
+                      (str-cat "    vpsrlq $32, " rhs-reg ", %ymm1\n")
+                      (string-append
+                        (str-cat "    vpmuludq " lhs-reg ", %ymm1, %ymm1\n")
+                        (string-append
+                          "    vpaddq %ymm1, %ymm0, %ymm0\n    vpsllq $32, %ymm0, %ymm0\n"
+                          (string-append
+                            (str-cat "    vpmuludq " rhs-reg ", " lhs-reg ", ")
+                            (string-append
+                              (str-cat dst-reg "\n")
+                              (str-cat
+                                "    vpaddq %ymm0, "
+                                dst-reg
+                                ", "
+                                dst-reg
+                                "\n")))))))))]
             [(ErrBackendReg message)
               (ErrCompilerBackend
                 (compiler-diagnostic-with-message instr-diag message))])]
@@ -1229,12 +1214,9 @@
                     "ymm")
                     [(OkBackendReg dst-reg)
                       (OkCompilerBackend
-                        (backend-cat5
-                          "    "
-                          mnemonic
-                          " "
-                          rhs-reg
-                          (backend-cat5 ", " lhs-reg ", " dst-reg "\n")))]
+                        (string-append
+                          (str-cat "    " mnemonic " " rhs-reg ", ")
+                          (str-cat lhs-reg ", " dst-reg "\n")))]
                     [(ErrBackendReg message)
                       (ErrCompilerBackend
                         (compiler-diagnostic-with-message instr-diag message))])]
@@ -1265,17 +1247,14 @@
             (OkCompilerBackend
               (string-append
                 addr-asm
-                (backend-cat5
-                  "    "
-                  (compiler-backend-avx2-vector-move elem-ty)
-                  " "
-                  value-reg
-                  (backend-cat5
-                    ", "
-                    (compiler-backend-avx2-indexed-addr elem-ty)
-                    "\n"
-                    ""
-                    ""))))]
+                (string-append
+                  (str-cat
+                    "    "
+                    (compiler-backend-avx2-vector-move elem-ty)
+                    " "
+                    value-reg
+                    ", ")
+                  (str-cat (compiler-backend-avx2-indexed-addr elem-ty) "\n"))))]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
               (compiler-backend-apply-instr-diagnostic message instr-diag))])]
@@ -1305,12 +1284,11 @@
   (ErrCompilerBackend
     (compiler-diagnostic-with-message
       instr-diag
-      (backend-cat5
+      (str-cat
         "backend: unsupported AVX-512 vector shape "
         (int->string lanes)
         " x "
-        (compiler-ir-type-name elem-ty)
-        ""))))
+        (compiler-ir-type-name elem-ty)))))
 
 (define (compiler-backend-avx512-vector-value-reg
   [assignments : CompilerRegAssignmentList]
@@ -1572,7 +1550,7 @@
   [suffix : String]) : String
   (compiler-backend-asm-label
     function
-    (backend-cat5 "tail_mask_" current-label "_v" (int->string dst) suffix)))
+    (str-cat "tail_mask_" current-label "_v" (int->string dst) suffix)))
 
 (define (compiler-backend-lane-id-label
   [function : String]
@@ -1581,7 +1559,7 @@
   [suffix : String]) : String
   (compiler-backend-asm-label
     function
-    (backend-cat5 "lane_id_" current-label "_v" (int->string dst) suffix)))
+    (str-cat "lane_id_" current-label "_v" (int->string dst) suffix)))
 
 (define (compiler-backend-lane-id-avx512-i64-shape-ok?
   [elem-ty : AstType]
@@ -1620,15 +1598,12 @@
             (compiler-backend-lane-id-label function current-label dst "_done")]
           (OkCompilerBackend
             (string-append
-              (backend-cat5 "    jmp " done-label "\n" data-label ":\n")
+              (str-cat "    jmp " done-label "\n" data-label ":\n")
               (string-append
                 (compiler-backend-avx512-i64-lane-id-data)
-                (backend-cat5
-                  done-label
-                  ":\n    vmovdqu64 "
-                  data-label
-                  (backend-cat5 "(%rip), " dst-reg "\n" "" "")
-                  "")))))]
+                (string-append
+                  (str-cat done-label ":\n    vmovdqu64 " data-label "(%rip), ")
+                  (str-cat dst-reg "\n"))))))]
       [(ErrBackendReg message)
         (ErrCompilerBackend
           (compiler-diagnostic-with-message instr-diag message))])
@@ -1650,12 +1625,14 @@
             (OkCompilerBackend
               (string-append
                 addr-asm
-                (backend-cat5
-                  "    "
-                  (compiler-backend-avx512-vector-move elem-ty)
-                  " "
-                  (compiler-backend-avx2-indexed-addr elem-ty)
-                  (backend-cat5 ", " dst-reg "\n" "" ""))))]
+                (string-append
+                  (str-cat
+                    "    "
+                    (compiler-backend-avx512-vector-move elem-ty)
+                    " "
+                    (compiler-backend-avx2-indexed-addr elem-ty)
+                    ", ")
+                  (str-cat dst-reg "\n"))))]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
               (compiler-backend-apply-instr-diagnostic message instr-diag))])]
@@ -1676,7 +1653,7 @@
       [(OkBackendReg dst-reg)
         (match (compiler-backend-avx512-splat-load assignments value elem-ty)
           [(OkCompilerBackend load-asm)
-            (OkCompilerBackend (backend-cat3 load-asm dst-reg "\n"))]
+            (OkCompilerBackend (str-cat load-asm dst-reg "\n"))]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
               (compiler-backend-apply-instr-diagnostic message instr-diag))])]
@@ -1740,12 +1717,9 @@
                   "zmm")
                   [(OkBackendReg dst-reg)
                     (OkCompilerBackend
-                      (backend-cat5
-                        "    "
-                        mnemonic
-                        " "
-                        rhs-reg
-                        (backend-cat5 ", " lhs-reg ", " dst-reg "\n")))]
+                      (string-append
+                        (str-cat "    " mnemonic " " rhs-reg ", ")
+                        (str-cat lhs-reg ", " dst-reg "\n")))]
                   [(ErrBackendReg message)
                     (ErrCompilerBackend
                       (compiler-diagnostic-with-message instr-diag message))])]
@@ -1789,17 +1763,16 @@
                 (match (compiler-backend-mask-var-reg assignments dst "cmp dst")
                   [(OkBackendReg dst-reg)
                     (OkCompilerBackend
-                      (backend-cat5
-                        "    "
-                        mnemonic
-                        " $"
-                        (backend-cat5
+                      (string-append
+                        (str-cat
+                          "    "
+                          mnemonic
+                          " $"
                           (int->string predicate)
-                          ", "
-                          rhs-reg
-                          (backend-cat5 ", " lhs-reg ", " dst-reg "\n")
-                          "")
-                        ""))]
+                          ", ")
+                        (string-append
+                          (str-cat rhs-reg ", " lhs-reg ", ")
+                          (str-cat dst-reg "\n"))))]
                   [(ErrBackendReg message)
                     (ErrCompilerBackend
                       (compiler-diagnostic-with-message instr-diag message))])]
@@ -1830,17 +1803,14 @@
             (OkCompilerBackend
               (string-append
                 addr-asm
-                (backend-cat5
-                  "    "
-                  (compiler-backend-avx512-vector-move elem-ty)
-                  " "
-                  value-reg
-                  (backend-cat5
-                    ", "
-                    (compiler-backend-avx2-indexed-addr elem-ty)
-                    "\n"
-                    ""
-                    ""))))]
+                (string-append
+                  (str-cat
+                    "    "
+                    (compiler-backend-avx512-vector-move elem-ty)
+                    " "
+                    value-reg
+                    ", ")
+                  (str-cat (compiler-backend-avx2-indexed-addr elem-ty) "\n"))))]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
               (compiler-backend-apply-instr-diagnostic message instr-diag))])]
@@ -2011,86 +1981,80 @@
                       (compiler-backend-avx512-mask-sub-mnemonic lanes)]
                     [xor : String
                       (compiler-backend-avx512-mask-xor-mnemonic lanes)]
+                    [body-range : String
+                      (str-cat
+                        "    subq %rax, %rcx\n    cmpq $"
+                        (int->string lanes)
+                        ", %rcx\n    jge "
+                        full-label
+                        "\n")]
+                    [body-nonzero-a : String
+                      (str-cat
+                        "    testq %rcx, %rcx\n    jle "
+                        zero-label
+                        "\n    "
+                        mov-imm
+                        " $1, ")]
+                    [body-nonzero-b : String
+                      (str-cat mask-gpr "\n    " shift " %cl, " mask-gpr "\n")]
+                    [body-mask-a : String
+                      (str-cat "    " sub " $1, " mask-gpr "\n    ")]
+                    [body-mask-b : String
+                      (str-cat mask-move " " mask-gpr ", " dst-reg)]
+                    [body-mask-c : String
+                      (str-cat
+                        "\n    jmp "
+                        done-label
+                        "\n"
+                        full-label
+                        ":\n    ")]
+                    [body-full-a : String
+                      (str-cat
+                        mov-imm
+                        " $"
+                        (int->string full-mask)
+                        ", "
+                        mask-gpr)]
+                    [body-full-b : String
+                      (str-cat "\n    " mask-move " " mask-gpr ", ")]
+                    [body-full-c : String
+                      (str-cat
+                        dst-reg
+                        "\n    jmp "
+                        done-label
+                        "\n"
+                        zero-label
+                        ":\n")]
+                    [body-zero-a : String
+                      (str-cat "    " xor " " mask-gpr ", ")]
+                    [body-zero-b : String
+                      (str-cat mask-gpr "\n    " mask-move " " mask-gpr)]
+                    [body-zero-c : String
+                      (str-cat ", " dst-reg "\n" done-label ":\n")]
                     [body-asm : String
                       (string-append
-                        (backend-cat5
-                          "    subq %rax, %rcx\n    cmpq $"
-                          (int->string lanes)
-                          ", %rcx\n    jge "
-                          full-label
-                          "\n")
+                        body-range
                         (string-append
+                          body-nonzero-a
                           (string-append
-                            (backend-cat5
-                              "    testq %rcx, %rcx\n    jle "
-                              zero-label
-                              "\n    "
-                              mov-imm
-                              " $1, ")
-                            (backend-cat5
-                              mask-gpr
-                              "\n    "
-                              shift
-                              " %cl, "
-                              (string-append mask-gpr "\n")))
-                          (string-append
-                            (backend-cat5
-                              "    "
-                              sub
-                              " $1, "
-                              mask-gpr
-                              (backend-cat5
-                                "\n    "
-                                mask-move
-                                " "
-                                mask-gpr
-                                (backend-cat5
-                                  ", "
-                                  dst-reg
-                                  "\n    jmp "
-                                  done-label
-                                  "\n")))
+                            body-nonzero-b
                             (string-append
+                              body-mask-a
                               (string-append
-                                (backend-cat5
-                                  full-label
-                                  ":\n    "
-                                  mov-imm
-                                  " $"
-                                  (int->string full-mask))
-                                (backend-cat5
-                                  ", "
-                                  mask-gpr
-                                  "\n    "
-                                  mask-move
-                                  (backend-cat3 " " mask-gpr ", ")))
-                              (string-append
+                                body-mask-b
                                 (string-append
-                                  (backend-cat5
-                                    dst-reg
-                                    "\n    jmp "
-                                    done-label
-                                    "\n"
-                                    zero-label)
-                                  ":\n")
-                                (string-append
-                                  (backend-cat5
-                                    "    "
-                                    xor
-                                    " "
-                                    mask-gpr
-                                    (backend-cat5
-                                      ", "
-                                      mask-gpr
-                                      "\n    "
-                                      mask-move
-                                      (backend-cat3 " " mask-gpr ", ")))
-                                  (backend-cat5
-                                    dst-reg
-                                    "\n"
-                                    done-label
-                                    ":\n"
-                                    "")))))))]
+                                  body-mask-c
+                                  (string-append
+                                    body-full-a
+                                    (string-append
+                                      body-full-b
+                                      (string-append
+                                        body-full-c
+                                        (string-append
+                                          body-zero-a
+                                          (string-append
+                                            body-zero-b
+                                            body-zero-c)))))))))))]
                     (OkCompilerBackend
                       (string-append index-asm (string-append end-asm body-asm))))]
                 [(ErrCompilerBackend message)
@@ -2526,38 +2490,21 @@
                             (string-eq dst-reg true-reg)
                             (not (string-eq true-reg false-reg)))
                             (string-append
-                              (backend-cat5
-                                "    "
-                                move
-                                " "
-                                true-reg
-                                ", %zmm15\n")
+                              (str-cat "    " move " " true-reg ", %zmm15\n")
                               (string-append
-                                (backend-cat5
-                                  "    "
-                                  move
-                                  " "
-                                  false-reg
-                                  (backend-cat3 ", " dst-reg "\n"))
-                                (backend-cat5
-                                  "    "
-                                  move
-                                  " %zmm15, "
-                                  dst-reg
-                                  (backend-cat3 "{" mask-reg "}\n"))))
+                                (string-append
+                                  (str-cat "    " move " " false-reg ", ")
+                                  (str-cat dst-reg "\n"))
+                                (string-append
+                                  (str-cat "    " move " %zmm15, " dst-reg "{")
+                                  (str-cat mask-reg "}\n"))))
                             (string-append
-                              (backend-cat5
-                                "    "
-                                move
-                                " "
-                                false-reg
-                                (backend-cat3 ", " dst-reg "\n"))
-                              (backend-cat5
-                                "    "
-                                move
-                                " "
-                                true-reg
-                                (backend-cat5 ", " dst-reg "{" mask-reg "}\n")))))]
+                              (string-append
+                                (str-cat "    " move " " false-reg ", ")
+                                (str-cat dst-reg "\n"))
+                              (string-append
+                                (str-cat "    " move " " true-reg ", ")
+                                (str-cat dst-reg "{" mask-reg "}\n")))))]
                       [(ErrBackendReg message)
                         (ErrCompilerBackend
                           (compiler-diagnostic-with-message instr-diag message))])]

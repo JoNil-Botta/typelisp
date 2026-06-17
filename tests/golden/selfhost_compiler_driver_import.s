@@ -222,7 +222,6 @@ tl_array_fill8:
     movq %rax, (%r10,%r8,8)
     movq -48(%rbp), %rax
     addq $1, %rax
-    movq %rax, -88(%rbp)
     movq %rax, -48(%rbp)
     jmp .Lf8_while_header.0
 .Lf8_while_exit.2:
@@ -249,7 +248,6 @@ tl_array_zero:
     movb $0, (%r10,%r8,1)
     movq -32(%rbp), %rax
     addq $1, %rax
-    movq %rax, -88(%rbp)
     movq %rax, -32(%rbp)
     jmp .Lf9_while_header.0
 .Lf9_while_exit.2:
@@ -295,7 +293,6 @@ _tl_helper_helper:
     movl $38, %eax
     movq _tl_shared_shared(%rip), %r8
     addq %r8, %rax
-    movq %rax, -16(%rbp)
     leave
     ret
 
@@ -309,7 +306,6 @@ main:
     movq %rax, -8(%rbp)
     movq _tl_shared_shared(%rip), %r8
     addq %r8, %rax
-    movq %rax, -16(%rbp)
     leave
     ret
 

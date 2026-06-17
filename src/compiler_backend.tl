@@ -6691,6 +6691,202 @@
                         (ErrCompilerBackend message)])])])]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)])))))
 
+(define (compiler-backend-empty-assignments?
+  [assignments : CompilerRegAssignmentList]) : bool
+  (match assignments
+    [(CompilerRegAssignmentNil) true]
+    [_ false]))
+
+(define (compiler-backend-commutative-binop? [op : CompilerIrBinOp]) : bool
+  (match op
+    [(IrBinAdd) true]
+    [(IrBinMul) true]
+    [(IrBinAnd) true]
+    [(IrBinOr) true]
+    [(IrBinBitAnd) true]
+    [(IrBinBitOr) true]
+    [(IrBinBitXor) true]
+    [_ false]))
+
+(define (compiler-backend-rax-forwardable-binop?
+  [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
+  [assignments : CompilerRegAssignmentList]
+  [op : CompilerIrBinOp]
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]
+  [ty : AstType]) : bool
+  (and
+    (compiler-backend-empty-assignments? assignments)
+    (not (compiler-backend-compare-op? op))
+    (not (compiler-backend-binop-f64? types global-types lhs rhs ty))))
+
+(define (compiler-backend-binop-result-store
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [ty : AstType]
+  [store-result : bool]) : String
+  (if store-result
+    (compiler-backend-emit-store-typed-var-with-plan assignments dst "%rax" ty)
+    ""))
+
+(define (compiler-backend-emit-binop-rax-rhs
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [op : CompilerIrBinOp]
+  [rhs : CompilerIrValue]
+  [operand-ty : AstType]
+  [result-ty : AstType]
+  [store-result : bool]) : ResultCompilerBackend
+  (let
+    [store : String
+      (compiler-backend-binop-result-store
+        assignments
+        dst
+        result-ty
+        store-result)]
+    (match (compiler-backend-binop-literal-divmod-asm op rhs operand-ty)
+      [(CompilerBackendSomeAsm op-asm)
+        (OkCompilerBackend (string-append op-asm store))]
+      [(CompilerBackendNoAsm)
+        (match (compiler-backend-immediate-operand rhs)
+          [(CompilerBackendSomeImmediate imm)
+            (match (compiler-backend-binop-immediate-asm op imm operand-ty)
+              [(CompilerBackendSomeAsm op-asm)
+                (OkCompilerBackend (string-append op-asm store))]
+              [(CompilerBackendNoAsm)
+                (match (compiler-backend-emit-load-value-with-plan
+                  assignments
+                  rhs
+                  "%r8")
+                  [(OkCompilerBackend rhs-asm)
+                    (OkCompilerBackend
+                      (string-append
+                        rhs-asm
+                        (string-append
+                          (compiler-backend-binop-asm op operand-ty)
+                          store)))]
+                  [(ErrCompilerBackend message) (ErrCompilerBackend message)])])]
+          [(CompilerBackendNoImmediate)
+            (match (compiler-backend-emit-load-value-with-plan
+              assignments
+              rhs
+              "%r8")
+              [(OkCompilerBackend rhs-asm)
+                (OkCompilerBackend
+                  (string-append
+                    rhs-asm
+                    (string-append
+                      (compiler-backend-binop-asm op operand-ty)
+                      store)))]
+              [(ErrCompilerBackend message) (ErrCompilerBackend message)])])])))
+
+(define (compiler-backend-emit-binop-to-rax
+  [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [op : CompilerIrBinOp]
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]
+  [ty : AstType]
+  [store-result : bool]) : ResultCompilerBackend
+  (if (compiler-backend-rax-forwardable-binop?
+    types
+    global-types
+    assignments
+    op
+    lhs
+    rhs
+    ty)
+    (let
+      [operand-ty : AstType
+        (compiler-backend-binop-operand-ty types global-types op lhs rhs ty)]
+      (match (compiler-backend-emit-load-value-with-plan assignments lhs "%rax")
+        [(OkCompilerBackend lhs-asm)
+          (match (compiler-backend-emit-binop-rax-rhs
+            assignments
+            dst
+            op
+            rhs
+            operand-ty
+            ty
+            store-result)
+            [(OkCompilerBackend op-asm)
+              (OkCompilerBackend (string-append lhs-asm op-asm))]
+            [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+        [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+    (compiler-backend-emit-binop
+      types
+      global-types
+      assignments
+      dst
+      op
+      lhs
+      rhs
+      ty)))
+
+(define (compiler-backend-emit-binop-with-rax-value
+  [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
+  [assignments : CompilerRegAssignmentList]
+  [rax-var : i64]
+  [dst : i64]
+  [op : CompilerIrBinOp]
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]
+  [ty : AstType]
+  [store-result : bool]) : ResultCompilerBackend
+  (if (compiler-backend-rax-forwardable-binop?
+    types
+    global-types
+    assignments
+    op
+    lhs
+    rhs
+    ty)
+    (let
+      [operand-ty : AstType
+        (compiler-backend-binop-operand-ty types global-types op lhs rhs ty)]
+      (if (compiler-backend-branch-uses-var? lhs rax-var)
+        (compiler-backend-emit-binop-rax-rhs
+          assignments
+          dst
+          op
+          rhs
+          operand-ty
+          ty
+          store-result)
+        (if (and
+          (compiler-backend-branch-uses-var? rhs rax-var)
+          (compiler-backend-commutative-binop? op))
+          (compiler-backend-emit-binop-rax-rhs
+            assignments
+            dst
+            op
+            lhs
+            operand-ty
+            ty
+            store-result)
+          (compiler-backend-emit-binop
+            types
+            global-types
+            assignments
+            dst
+            op
+            lhs
+            rhs
+            ty))))
+    (compiler-backend-emit-binop
+      types
+      global-types
+      assignments
+      dst
+      op
+      lhs
+      rhs
+      ty)))
+
 (define (compiler-backend-emit-binop-return
   [source-function : String]
   [blocks : CompilerIrBlockList]
@@ -14130,6 +14326,394 @@
         (text-buf-append buf head))]
     [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
 
+(define (compiler-backend-rax-forwardable-consumer?
+  [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
+  [assignments : CompilerRegAssignmentList]
+  [rax-var : i64]
+  [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(IrInstrBinOp _ op lhs rhs ty)
+      (and
+        (compiler-backend-rax-forwardable-binop?
+          types
+          global-types
+          assignments
+          op
+          lhs
+          rhs
+          ty)
+        (or
+          (compiler-backend-branch-uses-var? lhs rax-var)
+          (and
+            (compiler-backend-branch-uses-var? rhs rax-var)
+            (compiler-backend-commutative-binop? op))))]
+    [(IrInstrMov _ src _) (compiler-backend-branch-uses-var? src rax-var)]
+    [(IrInstrReturn maybe)
+      (match maybe
+        [(IrSomeValue value) (compiler-backend-branch-uses-var? value rax-var)]
+        [(IrNoValue) false])]
+    [_ false]))
+
+(define (compiler-backend-rest-starts-rax-forwardable-consumer?
+  [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
+  [assignments : CompilerRegAssignmentList]
+  [rax-var : i64]
+  [rest : CompilerIrInstrList]) : bool
+  (match rest
+    [(IrInstrCons instr _)
+      (compiler-backend-rax-forwardable-consumer?
+        types
+        global-types
+        assignments
+        rax-var
+        instr)]
+    [(IrInstrNil) false]))
+
+(define (compiler-backend-emit-instrs-materialize-rax
+  [target : CompilerBackendTarget]
+  [function : String]
+  [source-function : String]
+  [blocks : CompilerIrBlockList]
+  [current-label : String]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [rax-var : i64]
+  [rax-ty : AstType]
+  [instrs : CompilerIrInstrList]
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]
+  [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
+  [ret-ty : AstType]
+  [plan : CompilerBackendRuntimePlan]
+  [functions : CompilerIrFunctionList]
+  [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
+  [spans : CompilerSourceSpans]
+  [func-diag : CompilerDiagnostic]
+  [use-counts : (Array i64)]
+  [buf : TextBuf]) : ResultCompilerBackend
+  (compiler-backend-emit-instrs
+    target
+    function
+    source-function
+    blocks
+    current-label
+    fallthrough
+    instrs
+    assignments
+    vars
+    types
+    global-types
+    ret-ty
+    plan
+    functions
+    externs
+    program-index
+    spans
+    func-diag
+    use-counts
+    (text-buf-append
+      buf
+      (compiler-backend-emit-store-typed-var-with-plan
+        assignments
+        rax-var
+        "%rax"
+        rax-ty))))
+
+(define (compiler-backend-emit-instrs-with-rax
+  [target : CompilerBackendTarget]
+  [function : String]
+  [source-function : String]
+  [blocks : CompilerIrBlockList]
+  [current-label : String]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [rax-var : i64]
+  [rax-ty : AstType]
+  [instrs : CompilerIrInstrList]
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]
+  [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
+  [ret-ty : AstType]
+  [plan : CompilerBackendRuntimePlan]
+  [functions : CompilerIrFunctionList]
+  [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
+  [spans : CompilerSourceSpans]
+  [func-diag : CompilerDiagnostic]
+  [use-counts : (Array i64)]
+  [buf : TextBuf]) : ResultCompilerBackend
+  (match instrs
+    [(IrInstrNil)
+      (OkCompilerBackend
+        (text-buf-render
+          (text-buf-append
+            buf
+            (compiler-backend-emit-store-typed-var-with-plan
+              assignments
+              rax-var
+              "%rax"
+              rax-ty))))]
+    [(IrInstrCons instr rest)
+      (match instr
+        [(IrInstrBinOp dst op lhs rhs ty)
+          (if (compiler-backend-rax-forwardable-consumer?
+            types
+            global-types
+            assignments
+            rax-var
+            instr)
+            (let
+              [keep-live : bool
+                (compiler-backend-var-single-use? use-counts dst)]
+              (match (compiler-backend-emit-binop-with-rax-value
+                types
+                global-types
+                assignments
+                rax-var
+                dst
+                op
+                lhs
+                rhs
+                ty
+                (not keep-live))
+                [(OkCompilerBackend head)
+                  (if keep-live
+                    (compiler-backend-emit-instrs-with-rax
+                      target
+                      function
+                      source-function
+                      blocks
+                      current-label
+                      fallthrough
+                      dst
+                      ty
+                      (box-get rest)
+                      assignments
+                      vars
+                      types
+                      global-types
+                      ret-ty
+                      plan
+                      functions
+                      externs
+                      program-index
+                      spans
+                      func-diag
+                      use-counts
+                      (text-buf-append buf head))
+                    (compiler-backend-emit-instrs
+                      target
+                      function
+                      source-function
+                      blocks
+                      current-label
+                      fallthrough
+                      (box-get rest)
+                      assignments
+                      vars
+                      types
+                      global-types
+                      ret-ty
+                      plan
+                      functions
+                      externs
+                      program-index
+                      spans
+                      func-diag
+                      use-counts
+                      (text-buf-append buf head)))]
+                [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+            (compiler-backend-emit-instrs-materialize-rax
+              target
+              function
+              source-function
+              blocks
+              current-label
+              fallthrough
+              rax-var
+              rax-ty
+              instrs
+              assignments
+              vars
+              types
+              global-types
+              ret-ty
+              plan
+              functions
+              externs
+              program-index
+              spans
+              func-diag
+              use-counts
+              buf))]
+        [(IrInstrMov dst src ty)
+          (if (compiler-backend-branch-uses-var? src rax-var)
+            (if (compiler-backend-var-single-use? use-counts dst)
+              (compiler-backend-emit-instrs-with-rax
+                target
+                function
+                source-function
+                blocks
+                current-label
+                fallthrough
+                dst
+                ty
+                (box-get rest)
+                assignments
+                vars
+                types
+                global-types
+                ret-ty
+                plan
+                functions
+                externs
+                program-index
+                spans
+                func-diag
+                use-counts
+                buf)
+              (compiler-backend-emit-instrs
+                target
+                function
+                source-function
+                blocks
+                current-label
+                fallthrough
+                (box-get rest)
+                assignments
+                vars
+                types
+                global-types
+                ret-ty
+                plan
+                functions
+                externs
+                program-index
+                spans
+                func-diag
+                use-counts
+                (text-buf-append
+                  buf
+                  (compiler-backend-emit-store-typed-var-with-plan
+                    assignments
+                    dst
+                    "%rax"
+                    ty))))
+            (compiler-backend-emit-instrs-materialize-rax
+              target
+              function
+              source-function
+              blocks
+              current-label
+              fallthrough
+              rax-var
+              rax-ty
+              instrs
+              assignments
+              vars
+              types
+              global-types
+              ret-ty
+              plan
+              functions
+              externs
+              program-index
+              spans
+              func-diag
+              use-counts
+              buf))]
+        [(IrInstrReturn maybe)
+          (match maybe
+            [(IrSomeValue value)
+              (if (and
+                (compiler-backend-branch-uses-var? value rax-var)
+                (match (box-get rest)
+                  [(IrInstrNil) true]
+                  [_ false]))
+                (OkCompilerBackend
+                  (text-buf-render
+                    (text-buf-append
+                      buf
+                      (compiler-backend-return-tail
+                        source-function
+                        assignments
+                        vars
+                        blocks))))
+                (compiler-backend-emit-instrs-materialize-rax
+                  target
+                  function
+                  source-function
+                  blocks
+                  current-label
+                  fallthrough
+                  rax-var
+                  rax-ty
+                  instrs
+                  assignments
+                  vars
+                  types
+                  global-types
+                  ret-ty
+                  plan
+                  functions
+                  externs
+                  program-index
+                  spans
+                  func-diag
+                  use-counts
+                  buf))]
+            [(IrNoValue)
+              (compiler-backend-emit-instrs-materialize-rax
+                target
+                function
+                source-function
+                blocks
+                current-label
+                fallthrough
+                rax-var
+                rax-ty
+                instrs
+                assignments
+                vars
+                types
+                global-types
+                ret-ty
+                plan
+                functions
+                externs
+                program-index
+                spans
+                func-diag
+                use-counts
+                buf)])]
+        [_
+          (compiler-backend-emit-instrs-materialize-rax
+            target
+            function
+            source-function
+            blocks
+            current-label
+            fallthrough
+            rax-var
+            rax-ty
+            instrs
+            assignments
+            vars
+            types
+            global-types
+            ret-ty
+            plan
+            functions
+            externs
+            program-index
+            spans
+            func-diag
+            use-counts
+            buf)])]))
+
 (define (compiler-backend-emit-fused-compare-branch-rest
   [target : CompilerBackendTarget]
   [function : String]
@@ -17287,31 +17871,105 @@
               buf))]
         [(IrInstrBinOp dst op lhs rhs ty)
           (if (and
-            (compiler-backend-compare-op? op)
             (compiler-backend-var-single-use? use-counts dst)
-            (not (compiler-backend-binop-f64? types global-types lhs rhs ty)))
-            (match (box-get rest)
-              [(IrInstrCons next after-branch)
-                (match next
-                  [(IrInstrReturn maybe)
-                    (match (box-get after-branch)
-                      [(IrInstrNil)
-                        (match maybe
-                          [(IrSomeValue value)
-                            (if (compiler-backend-branch-uses-var? value dst)
-                              (compiler-backend-emit-terminator-into
-                                (compiler-backend-emit-binop-return
+            (compiler-backend-rax-forwardable-binop?
+              types
+              global-types
+              assignments
+              op
+              lhs
+              rhs
+              ty)
+            (compiler-backend-rest-starts-rax-forwardable-consumer?
+              types
+              global-types
+              assignments
+              dst
+              (box-get rest)))
+            (match (compiler-backend-emit-binop-to-rax
+              types
+              global-types
+              assignments
+              dst
+              op
+              lhs
+              rhs
+              ty
+              false)
+              [(OkCompilerBackend head)
+                (compiler-backend-emit-instrs-with-rax
+                  target
+                  function
+                  source-function
+                  blocks
+                  current-label
+                  fallthrough
+                  dst
+                  ty
+                  (box-get rest)
+                  assignments
+                  vars
+                  types
+                  global-types
+                  ret-ty
+                  plan
+                  functions
+                  externs
+                  program-index
+                  spans
+                  func-diag
+                  use-counts
+                  (text-buf-append buf head))]
+              [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+            (if (and
+              (compiler-backend-compare-op? op)
+              (compiler-backend-var-single-use? use-counts dst)
+              (not (compiler-backend-binop-f64? types global-types lhs rhs ty)))
+              (match (box-get rest)
+                [(IrInstrCons next after-branch)
+                  (match next
+                    [(IrInstrReturn maybe)
+                      (match (box-get after-branch)
+                        [(IrInstrNil)
+                          (match maybe
+                            [(IrSomeValue value)
+                              (if (compiler-backend-branch-uses-var? value dst)
+                                (compiler-backend-emit-terminator-into
+                                  (compiler-backend-emit-binop-return
+                                    source-function
+                                    blocks
+                                    types
+                                    global-types
+                                    assignments
+                                    vars
+                                    op
+                                    lhs
+                                    rhs
+                                    ty)
+                                  buf)
+                                (compiler-backend-emit-instrs-normal
+                                  target
+                                  function
                                   source-function
                                   blocks
-                                  types
-                                  global-types
+                                  current-label
+                                  fallthrough
+                                  instr
+                                  (box-get rest)
                                   assignments
                                   vars
-                                  op
-                                  lhs
-                                  rhs
-                                  ty)
-                                buf)
+                                  types
+                                  global-types
+                                  ret-ty
+                                  plan
+                                  functions
+                                  externs
+                                  program-index
+                                  spans
+                                  func-diag
+                                  use-counts
+                                  buf))]
+                            [(IrNoValue)
                               (compiler-backend-emit-instrs-normal
                                 target
                                 function
@@ -17333,31 +17991,60 @@
                                 spans
                                 func-diag
                                 use-counts
-                                buf))]
-                          [(IrNoValue)
-                            (compiler-backend-emit-instrs-normal
-                              target
-                              function
-                              source-function
-                              blocks
-                              current-label
-                              fallthrough
-                              instr
-                              (box-get rest)
-                              assignments
-                              vars
-                              types
-                              global-types
-                              ret-ty
-                              plan
-                              functions
-                              externs
-                              program-index
-                              spans
-                              func-diag
-                              use-counts
-                              buf)])]
-                      [_
+                                buf)])]
+                        [_
+                          (compiler-backend-emit-instrs-normal
+                            target
+                            function
+                            source-function
+                            blocks
+                            current-label
+                            fallthrough
+                            instr
+                            (box-get rest)
+                            assignments
+                            vars
+                            types
+                            global-types
+                            ret-ty
+                            plan
+                            functions
+                            externs
+                            program-index
+                            spans
+                            func-diag
+                            use-counts
+                            buf)])]
+                    [(IrInstrBranch cond true-label false-label)
+                      (if (compiler-backend-branch-uses-var? cond dst)
+                        (compiler-backend-emit-fused-compare-branch-rest
+                          target
+                          function
+                          source-function
+                          blocks
+                          current-label
+                          fallthrough
+                          dst
+                          op
+                          lhs
+                          rhs
+                          ty
+                          true-label
+                          false-label
+                          (box-get after-branch)
+                          assignments
+                          vars
+                          types
+                          global-types
+                          ret-ty
+                          plan
+                          functions
+                          externs
+                          program-index
+                          spans
+                          func-diag
+                          use-counts
+                          buf)
                         (compiler-backend-emit-instrs-normal
                           target
                           function
@@ -17379,37 +18066,8 @@
                           spans
                           func-diag
                           use-counts
-                          buf)])]
-                  [(IrInstrBranch cond true-label false-label)
-                    (if (compiler-backend-branch-uses-var? cond dst)
-                      (compiler-backend-emit-fused-compare-branch-rest
-                        target
-                        function
-                        source-function
-                        blocks
-                        current-label
-                        fallthrough
-                        dst
-                        op
-                        lhs
-                        rhs
-                        ty
-                        true-label
-                        false-label
-                        (box-get after-branch)
-                        assignments
-                        vars
-                        types
-                        global-types
-                        ret-ty
-                        plan
-                        functions
-                        externs
-                        program-index
-                        spans
-                        func-diag
-                        use-counts
-                        buf)
+                          buf))]
+                    [_
                       (compiler-backend-emit-instrs-normal
                         target
                         function
@@ -17431,75 +18089,52 @@
                         spans
                         func-diag
                         use-counts
-                        buf))]
-                  [_
-                    (compiler-backend-emit-instrs-normal
-                      target
-                      function
-                      source-function
-                      blocks
-                      current-label
-                      fallthrough
-                      instr
-                      (box-get rest)
-                      assignments
-                      vars
-                      types
-                      global-types
-                      ret-ty
-                      plan
-                      functions
-                      externs
-                      program-index
-                      spans
-                      func-diag
-                      use-counts
-                      buf)])]
-              [_
-                (compiler-backend-emit-instrs-normal
-                  target
-                  function
-                  source-function
-                  blocks
-                  current-label
-                  fallthrough
-                  instr
-                  (box-get rest)
-                  assignments
-                  vars
-                  types
-                  global-types
-                  ret-ty
-                  plan
-                  functions
-                  externs
-                  program-index
-                  spans
-                  func-diag
-                  use-counts
-                  buf)])
-            (compiler-backend-emit-instrs-normal
-              target
-              function
-              source-function
-              blocks
-              current-label
-              fallthrough
-              instr
-              (box-get rest)
-              assignments
-              vars
-              types
-              global-types
-              ret-ty
-              plan
-              functions
-              externs
-              program-index
-              spans
-              func-diag
-              use-counts
-              buf))]
+                        buf)])]
+                [_
+                  (compiler-backend-emit-instrs-normal
+                    target
+                    function
+                    source-function
+                    blocks
+                    current-label
+                    fallthrough
+                    instr
+                    (box-get rest)
+                    assignments
+                    vars
+                    types
+                    global-types
+                    ret-ty
+                    plan
+                    functions
+                    externs
+                    program-index
+                    spans
+                    func-diag
+                    use-counts
+                    buf)])
+              (compiler-backend-emit-instrs-normal
+                target
+                function
+                source-function
+                blocks
+                current-label
+                fallthrough
+                instr
+                (box-get rest)
+                assignments
+                vars
+                types
+                global-types
+                ret-ty
+                plan
+                functions
+                externs
+                program-index
+                spans
+                func-diag
+                use-counts
+                buf)))]
         [_
           (compiler-backend-emit-instrs-normal
             target

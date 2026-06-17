@@ -943,13 +943,6 @@ assert_success
 assert_stderr_empty
 assert_contains "$out" "hello from stdin"
 
-PATH_SEP=:
-[ "$HOST_OS" = windows ] && PATH_SEP=';'
-run_cmd run-env-fixture env -u TYPELISP_STDLIB_TEST_MISSING_854 TYPELISP_STDLIB_TEST_EMPTY= TYPELISP_STDLIB_TEST_VALUE=env-value-854 TYPELISP_STDLIB_TEST_PATH="one${PATH_SEP}two${PATH_SEP}three" "$COMPILER" run stdlib/tests/env_api.tl --stdlib-root "$ROOT/stdlib"
-assert_code 42
-assert_stdout_empty
-assert_stderr_empty
-
 # Public `compile --backend-mode ...` still emits SIMD-targeted assembly above.
 # Public `run`/`build` now route non-scalar modes through the selfhost source
 # tools when that lane is active, so execution is gated only by host ISA support.

@@ -27,6 +27,13 @@ case "$(uname -s)" in
         ;;
 esac
 
+PATH_SEP=:
+[ "$HOST_OS" = windows ] && PATH_SEP=';'
+unset TYPELISP_STDLIB_TEST_MISSING_854
+export TYPELISP_STDLIB_TEST_EMPTY=
+export TYPELISP_STDLIB_TEST_VALUE=env-value-854
+export TYPELISP_STDLIB_TEST_PATH="one${PATH_SEP}two${PATH_SEP}three"
+
 if [ -n "${TYPELISP_BIN:-}" ]; then
     COMPILER=$TYPELISP_BIN
 else

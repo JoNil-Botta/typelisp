@@ -531,3 +531,318 @@
 ;: Parse process argv from `start` through `(arg-count)`.
 (define (args-parse-argv [specs : ArgsOptionSpecList] [start : i64]) : ResultArgsParsed
   (args-parse-argv-range specs start (arg-count)))
+
+;: Inline test assertion for boolean predicates.
+(define (args-test-assert-true [condition : bool] [message : String]) : unit
+  (if condition
+    unit
+    (panic message)))
+
+;: Inline test assertion for `i64` equality.
+(define (args-test-assert-i64-eq
+  [actual : i64]
+  [expected : i64]
+  [message : String]) : unit
+  (args-test-assert-true (= actual expected) message))
+
+;: Inline test assertion for owned string equality.
+(define (args-test-assert-owned-string-eq
+  [actual : String]
+  [expected : String]
+  [message : String]) : unit
+  (args-test-assert-true (string-eq actual expected) message))
+
+;: Build the option specs used by argv parser inline tests.
+(define (args-test-specs) : ArgsOptionSpecList
+  (args-option-spec-cons
+    (args-value-option "output" "output" "o")
+    (args-option-spec-cons
+      (args-value-option "include" "include" "I")
+      (args-option-spec-cons
+        (args-flag-option "verbose" "verbose" "v")
+        (args-option-spec-empty)))))
+
+;: Build a zero-length argv array for inline tests.
+(define (args-test-array0) : (Array String)
+  (make-array String 0))
+
+;: Build a one-item argv array for inline tests.
+(define (args-test-array1 [a : String]) : (Array String)
+  (let
+    [items : (Array String) (make-array String 1)]
+    (begin
+      (array-set! items 0 a)
+      items)))
+
+;: Build a three-item argv array for inline tests.
+(define (args-test-array3 [a : String] [b : String] [c : String]) : (Array
+    String)
+  (let
+    [items : (Array String) (make-array String 3)]
+    (begin
+      (array-set! items 0 a)
+      (array-set! items 1 b)
+      (array-set! items 2 c)
+      items)))
+
+;: Build a five-item argv array for inline tests.
+(define (args-test-array5
+  [a : String]
+  [b : String]
+  [c : String]
+  [d : String]
+  [e : String]) : (Array String)
+  (let
+    [items : (Array String) (make-array String 5)]
+    (begin
+      (array-set! items 0 a)
+      (array-set! items 1 b)
+      (array-set! items 2 c)
+      (array-set! items 3 d)
+      (array-set! items 4 e)
+      items)))
+
+;: Build a six-item argv array for inline tests.
+(define (args-test-array6
+  [a : String]
+  [b : String]
+  [c : String]
+  [d : String]
+  [e : String]
+  [f : String]) : (Array String)
+  (let
+    [items : (Array String) (make-array String 6)]
+    (begin
+      (array-set! items 0 a)
+      (array-set! items 1 b)
+      (array-set! items 2 c)
+      (array-set! items 3 d)
+      (array-set! items 4 e)
+      (array-set! items 5 f)
+      items)))
+
+;: Unwrap a successful argv parse result for inline tests.
+(define (args-test-expect-ok [result : ResultArgsParsed] [message : String]) : ArgsParsed
+  (match result
+    [(OkArgsParsed parsed) parsed]
+    [(ErrArgsParsed _) (panic message)]))
+
+;: Unwrap a failed argv parse result for inline tests.
+(define (args-test-expect-error [result : ResultArgsParsed] [message : String]) : ArgsError
+  (match result
+    [(OkArgsParsed _) (panic message)]
+    [(ErrArgsParsed error) error]))
+
+;: Assert that a string list is empty.
+(define (args-test-assert-string-list-empty
+  [items : StringList]
+  [message : String]) : unit
+  (match items
+    [(StringNil) unit]
+    [_ (panic message)]))
+
+;: Assert that a string list contains exactly two strings.
+(define (args-test-assert-string-list2
+  [items : StringList]
+  [first : String]
+  [second : String]
+  [message : String]) : unit
+  (match items
+    [(StringCons a rest)
+      (match (box-get rest)
+        [(StringCons b tail)
+          (match (box-get tail)
+            [(StringNil)
+              (begin
+                (args-test-assert-owned-string-eq a first message)
+                (args-test-assert-owned-string-eq b second message))]
+            [_ (panic message)])]
+        [_ (panic message)])]
+    [_ (panic message)]))
+
+;: Assert that a string list contains exactly three strings.
+(define (args-test-assert-string-list3
+  [items : StringList]
+  [first : String]
+  [second : String]
+  [third : String]
+  [message : String]) : unit
+  (match items
+    [(StringCons a rest)
+      (match (box-get rest)
+        [(StringCons b more)
+          (match (box-get more)
+            [(StringCons c tail)
+              (match (box-get tail)
+                [(StringNil)
+                  (begin
+                    (args-test-assert-owned-string-eq a first message)
+                    (args-test-assert-owned-string-eq b second message)
+                    (args-test-assert-owned-string-eq c third message))]
+                [_ (panic message)])]
+            [_ (panic message)])]
+        [_ (panic message)])]
+    [_ (panic message)]))
+
+;: Exercise an empty argv sequence.
+(define (args-test-empty-argv) : unit
+  (let
+    [parsed : ArgsParsed
+      (args-test-expect-ok
+        (args-parse-array (args-test-specs) (args-test-array0))
+        "empty argv should parse")]
+    (begin
+      (args-test-assert-string-list-empty
+        (args-parsed-positionals parsed)
+        "empty argv has no positionals")
+      (args-test-assert-i64-eq
+        (args-option-count parsed "verbose")
+        0
+        "empty argv has no flags"))))
+
+;: Exercise positional-only argv parsing.
+(define (args-test-positionals-only) : unit
+  (let
+    [parsed : ArgsParsed
+      (args-test-expect-ok
+        (args-parse-array
+          (args-test-specs)
+          (args-test-array3 "src.tl" "out.s" "-"))
+        "positional-only argv should parse")]
+    (args-test-assert-string-list3
+      (args-parsed-positionals parsed)
+      "src.tl"
+      "out.s"
+      "-"
+      "positionals preserve input order")))
+
+;: Exercise options interleaved with positionals.
+(define (args-test-flags-around-positionals) : unit
+  (let
+    [parsed : ArgsParsed
+      (args-test-expect-ok
+        (args-parse-array
+          (args-test-specs)
+          (args-test-array5 "input.tl" "--verbose" "-o" "out.s" "rest"))
+        "flags around positionals should parse")]
+    (begin
+      (args-test-assert-true
+        (args-option-present? parsed "verbose")
+        "long boolean flag present")
+      (args-test-assert-i64-eq
+        (args-option-count parsed "output")
+        1
+        "short value flag counted")
+      (args-test-assert-owned-string-eq
+        (args-option-value-or parsed "output" "missing")
+        "out.s"
+        "short value flag consumes next argv")
+      (args-test-assert-string-list2
+        (args-parsed-positionals parsed)
+        "input.tl"
+        "rest"
+        "positionals before and after flags preserved"))))
+
+;: Exercise `--` end-of-options handling.
+(define (args-test-end-of-options) : unit
+  (let
+    [parsed : ArgsParsed
+      (args-test-expect-ok
+        (args-parse-array
+          (args-test-specs)
+          (args-test-array3 "--" "--verbose" "-o"))
+        "end-of-options should parse")]
+    (begin
+      (args-test-assert-i64-eq
+        (args-option-count parsed "verbose")
+        0
+        "options after -- are positionals")
+      (args-test-assert-string-list2
+        (args-parsed-positionals parsed)
+        "--verbose"
+        "-o"
+        "-- preserves following tokens as positionals"))))
+
+;: Exercise missing-value diagnostics.
+(define (args-test-missing-value) : unit
+  (let
+    [error : ArgsError
+      (args-test-expect-error
+        (args-parse-array (args-test-specs) (args-test-array1 "--output"))
+        "missing value should fail")]
+    (begin
+      (args-test-assert-true
+        (args-error-missing-value? error)
+        "missing value error kind")
+      (args-test-assert-owned-string-eq
+        (args-error-option error)
+        "--output"
+        "missing value carries token"))))
+
+;: Exercise unknown-option diagnostics.
+(define (args-test-unknown-option) : unit
+  (let
+    [error : ArgsError
+      (args-test-expect-error
+        (args-parse-array (args-test-specs) (args-test-array1 "--missing"))
+        "unknown option should fail")]
+    (begin
+      (args-test-assert-true
+        (args-error-unknown-option? error)
+        "unknown option error kind")
+      (args-test-assert-owned-string-eq
+        (args-error-option error)
+        "--missing"
+        "unknown option carries token"))))
+
+;: Exercise repeated short and long options.
+(define (args-test-repeated-options) : unit
+  (let
+    [parsed : ArgsParsed
+      (args-test-expect-ok
+        (args-parse-array
+          (args-test-specs)
+          (args-test-array6 "-I" "inc1" "--include" "inc2" "-v" "-v"))
+        "repeated options should parse")]
+    (begin
+      (args-test-assert-i64-eq
+        (args-option-count parsed "include")
+        2
+        "repeated value option count")
+      (args-test-assert-owned-string-eq
+        (args-option-value-or parsed "include" "missing")
+        "inc2"
+        "last repeated value returned")
+      (args-test-assert-i64-eq
+        (args-option-count parsed "verbose")
+        2
+        "repeated boolean flag count"))))
+
+;: Exercise intentionally unsupported `--name=value` spelling.
+(define (args-test-equals-spelling-unsupported) : unit
+  (let
+    [error : ArgsError
+      (args-test-expect-error
+        (args-parse-array (args-test-specs) (args-test-array1 "--output=file"))
+        "equals spelling should be rejected in v1")]
+    (begin
+      (args-test-assert-true
+        (args-error-unknown-option? error)
+        "equals spelling is intentionally unknown")
+      (args-test-assert-owned-string-eq
+        (args-error-option error)
+        "--output=file"
+        "equals spelling carries original token"))))
+
+(test
+  args-api
+  (begin
+    (args-test-empty-argv)
+    (args-test-positionals-only)
+    (args-test-flags-around-positionals)
+    (args-test-end-of-options)
+    (args-test-missing-value)
+    (args-test-unknown-option)
+    (args-test-repeated-options)
+    (args-test-equals-spelling-unsupported)
+    unit))

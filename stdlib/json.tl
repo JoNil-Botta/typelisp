@@ -1077,3 +1077,747 @@
           (OkJson value)
           (ErrJson "json: trailing characters after JSON value")))]
     [(ErrJsonParseValue message) (ErrJson message)]))
+
+;: Inline test assertion for boolean predicates.
+(define (json-stdlib-inline-test-assert-true
+  [condition : bool]
+  [message : String]) : unit
+  (if condition
+    unit
+    (panic message)))
+
+;: Inline test assertion for false predicates.
+(define (json-stdlib-inline-test-assert-false
+  [condition : bool]
+  [message : String]) : unit
+  (json-stdlib-inline-test-assert-true (not condition) message))
+
+;: Inline test assertion for `bool` equality.
+(define (json-stdlib-inline-test-assert-bool-eq
+  [actual : bool]
+  [expected : bool]
+  [message : String]) : unit
+  (json-stdlib-inline-test-assert-true (= actual expected) message))
+
+;: Inline test assertion for `i64` equality.
+(define (json-stdlib-inline-test-assert-i64-eq
+  [actual : i64]
+  [expected : i64]
+  [message : String]) : unit
+  (json-stdlib-inline-test-assert-true (= actual expected) message))
+
+;: Inline test assertion for `f64` equality.
+(define (json-stdlib-inline-test-assert-f64-eq
+  [actual : f64]
+  [expected : f64]
+  [message : String]) : unit
+  (json-stdlib-inline-test-assert-true (= actual expected) message))
+
+;: Inline test assertion for owned string equality.
+(define (json-stdlib-inline-test-assert-owned-string-eq
+  [actual : String]
+  [expected : String]
+  [message : String]) : unit
+  (json-stdlib-inline-test-assert-true (string-eq actual expected) message))
+
+;: Assert that a lookup found the expected JSON number text.
+(define (json-stdlib-inline-test-assert-found-number
+  [lookup : JsonLookup]
+  [expected : String]
+  [message : String]) : unit
+  (match lookup
+    [(JsonFound value)
+      (match value
+        [(JsonNumber text)
+          (json-stdlib-inline-test-assert-owned-string-eq text expected message)]
+        [_ (panic message)])]
+    [(JsonMissing) (panic message)]))
+
+;: Assert that a lookup is missing.
+(define (json-stdlib-inline-test-assert-missing
+  [lookup : JsonLookup]
+  [message : String]) : unit
+  (match lookup
+    [(JsonMissing) unit]
+    [(JsonFound _) (panic message)]))
+
+;: Build a JSON list node for inline tests.
+(define (json-stdlib-inline-test-list-cons [value : Json] [rest : JsonList]) : JsonList
+  (JsonListCons value (box rest)))
+
+;: Build a JSON member-list node for inline tests.
+(define (json-stdlib-inline-test-member-cons
+  [key : String]
+  [value : Json]
+  [rest : JsonMemberList]) : JsonMemberList
+  (JsonMemberListCons key value (box rest)))
+
+;: Build a JSON array for inline tests.
+(define (json-stdlib-inline-test-array [items : JsonList]) : Json
+  (JsonArray (box items)))
+
+;: Build a JSON object for inline tests.
+(define (json-stdlib-inline-test-object [members : JsonMemberList]) : Json
+  (JsonObject (box members)))
+
+;: Assert a successful parsed string and next position.
+(define (json-stdlib-inline-test-assert-parse-string
+  [result : JsonParseStringResult]
+  [expected : String]
+  [next : i64]
+  [message : String]) : unit
+  (match result
+    [(OkJsonParseString value pos)
+      (begin
+        (json-stdlib-inline-test-assert-owned-string-eq value expected message)
+        (json-stdlib-inline-test-assert-i64-eq pos next message))]
+    [(ErrJsonParseString _) (panic message)]))
+
+;: Assert a successful parsed escape and next position.
+(define (json-stdlib-inline-test-assert-parse-escape
+  [result : JsonParseEscapeResult]
+  [expected : String]
+  [next : i64]
+  [message : String]) : unit
+  (match result
+    [(OkJsonParseEscape value pos)
+      (begin
+        (json-stdlib-inline-test-assert-owned-string-eq value expected message)
+        (json-stdlib-inline-test-assert-i64-eq pos next message))]
+    [(ErrJsonParseEscape _) (panic message)]))
+
+;: Assert a successful JSON codepoint string.
+(define (json-stdlib-inline-test-assert-codepoint
+  [result : JsonCodepointStringResult]
+  [expected : String]
+  [message : String]) : unit
+  (match result
+    [(OkJsonCodepointString value)
+      (json-stdlib-inline-test-assert-owned-string-eq value expected message)]
+    [(ErrJsonCodepointString _) (panic message)]))
+
+;: Assert a successful JSON number-to-f64 conversion.
+(define (json-stdlib-inline-test-assert-json-f64
+  [result : JsonNumberF64Result]
+  [expected : f64]
+  [message : String]) : unit
+  (match result
+    [(OkJsonNumberF64 value)
+      (json-stdlib-inline-test-assert-f64-eq value expected message)]
+    [(ErrJsonNumberF64 _) (panic message)]))
+
+;: Assert a successful JSON number-to-f32 conversion as f64.
+(define (json-stdlib-inline-test-assert-json-f32-as-f64
+  [result : JsonNumberF32Result]
+  [expected : f64]
+  [message : String]) : unit
+  (match result
+    [(OkJsonNumberF32 value)
+      (json-stdlib-inline-test-assert-f64-eq
+        (cast value : f64)
+        expected
+        message)]
+    [(ErrJsonNumberF32 _) (panic message)]))
+
+;: Assert a JSON number-to-f64 conversion error.
+(define (json-stdlib-inline-test-assert-json-f64-error
+  [result : JsonNumberF64Result]
+  [message : String]) : unit
+  (match result
+    [(ErrJsonNumberF64 _) unit]
+    [(OkJsonNumberF64 _) (panic message)]))
+
+;: Assert a JSON number-to-f32 conversion error.
+(define (json-stdlib-inline-test-assert-json-f32-error
+  [result : JsonNumberF32Result]
+  [message : String]) : unit
+  (match result
+    [(ErrJsonNumberF32 _) unit]
+    [(OkJsonNumberF32 _) (panic message)]))
+
+;: Assert a successful JSON number text rendering.
+(define (json-stdlib-inline-test-assert-json-number-text
+  [result : JsonNumberTextResult]
+  [expected : String]
+  [message : String]) : unit
+  (match result
+    [(OkJsonNumberText text)
+      (json-stdlib-inline-test-assert-owned-string-eq text expected message)]
+    [(ErrJsonNumberText _) (panic message)]))
+
+;: Assert a parsed JSON number and next position.
+(define (json-stdlib-inline-test-assert-parse-value-number
+  [result : JsonParseValueResult]
+  [expected : String]
+  [next : i64]
+  [message : String]) : unit
+  (match result
+    [(OkJsonParseValue value pos)
+      (match value
+        [(JsonNumber text)
+          (begin
+            (json-stdlib-inline-test-assert-owned-string-eq
+              text
+              expected
+              message)
+            (json-stdlib-inline-test-assert-i64-eq pos next message))]
+        [_ (panic message)])]
+    [(ErrJsonParseValue _) (panic message)]))
+
+;: Assert a parsed JSON bool and next position.
+(define (json-stdlib-inline-test-assert-parse-value-bool
+  [result : JsonParseValueResult]
+  [expected : bool]
+  [next : i64]
+  [message : String]) : unit
+  (match result
+    [(OkJsonParseValue value pos)
+      (match value
+        [(JsonBool actual)
+          (begin
+            (json-stdlib-inline-test-assert-bool-eq actual expected message)
+            (json-stdlib-inline-test-assert-i64-eq pos next message))]
+        [_ (panic message)])]
+    [(ErrJsonParseValue _) (panic message)]))
+
+;: Assert a parsed JSON array element count and next position.
+(define (json-stdlib-inline-test-assert-parse-array-count
+  [result : JsonParseValueResult]
+  [expected-count : i64]
+  [next : i64]
+  [message : String]) : unit
+  (match result
+    [(OkJsonParseValue value pos)
+      (match value
+        [(JsonArray items)
+          (begin
+            (json-stdlib-inline-test-assert-i64-eq
+              (json-list-count (box-get items))
+              expected-count
+              message)
+            (json-stdlib-inline-test-assert-i64-eq pos next message))]
+        [_ (panic message)])]
+    [(ErrJsonParseValue _) (panic message)]))
+
+;: Assert a parsed JSON object member count and next position.
+(define (json-stdlib-inline-test-assert-parse-object-count
+  [result : JsonParseValueResult]
+  [expected-count : i64]
+  [next : i64]
+  [message : String]) : unit
+  (match result
+    [(OkJsonParseValue value pos)
+      (match value
+        [(JsonObject members)
+          (begin
+            (json-stdlib-inline-test-assert-i64-eq
+              (json-member-list-count (box-get members))
+              expected-count
+              message)
+            (json-stdlib-inline-test-assert-i64-eq pos next message))]
+        [_ (panic message)])]
+    [(ErrJsonParseValue _) (panic message)]))
+
+;: Borrowing wrapper for `json-char-code-at` inline tests.
+(define (json-stdlib-inline-test-char-code-at [text : String] [idx : i64]) : i64
+  (json-char-code-at (& text) idx))
+
+;: Borrowing wrapper for `json-char-code-eq-at` inline tests.
+(define (json-stdlib-inline-test-char-code-eq-at
+  [text : String]
+  [idx : i64]
+  [code : i64]) : bool
+  (json-char-code-eq-at (& text) idx code))
+
+;: Borrowing wrapper for `json-digit-at?` inline tests.
+(define (json-stdlib-inline-test-digit-at? [text : String] [idx : i64]) : bool
+  (json-digit-at? (& text) idx))
+
+;: Borrowing wrapper for `json-skip-ws` inline tests.
+(define (json-stdlib-inline-test-skip-ws [text : String] [pos : i64]) : i64
+  (json-skip-ws (& text) pos))
+
+;: Borrowing wrapper for `json-string-prefix-at?` inline tests.
+(define (json-stdlib-inline-test-prefix-at?
+  [text : String]
+  [prefix : String]
+  [start : i64]) : bool
+  (json-string-prefix-at? (& text) (& prefix) start))
+
+;: Borrowing wrapper for `json-member-list-get` inline tests.
+(define (json-stdlib-inline-test-member-list-get
+  [items : JsonMemberList]
+  [key : String]) : JsonLookup
+  (json-member-list-get items (& key)))
+
+;: Borrowing wrapper for `json-object-get` inline tests.
+(define (json-stdlib-inline-test-object-get [value : Json] [key : String]) : JsonLookup
+  (json-object-get value (& key)))
+
+;: Borrowing wrapper for `json-escape-string` inline tests.
+(define (json-stdlib-inline-test-escape-string [text : String]) : String
+  (json-escape-string (& text)))
+
+;: Borrowing wrapper for `json-parse-unicode-escape` inline tests.
+(define (json-stdlib-inline-test-parse-unicode-escape
+  [text : String]
+  [pos : i64]) : JsonParseEscapeResult
+  (json-parse-unicode-escape (& text) pos))
+
+;: Borrowing wrapper for `json-parse-escape` inline tests.
+(define (json-stdlib-inline-test-parse-escape [text : String] [pos : i64]) : JsonParseEscapeResult
+  (json-parse-escape (& text) pos))
+
+;: Borrowing wrapper for `json-parse-string` inline tests.
+(define (json-stdlib-inline-test-parse-string [text : String] [pos : i64]) : JsonParseStringResult
+  (json-parse-string (& text) pos))
+
+;: Borrowing wrapper for `json-consume-digits` inline tests.
+(define (json-stdlib-inline-test-consume-digits [text : String] [pos : i64]) : i64
+  (json-consume-digits (& text) pos))
+
+;: Borrowing wrapper for `json-parse-number` inline tests.
+(define (json-stdlib-inline-test-parse-number [text : String] [pos : i64]) : JsonParseValueResult
+  (json-parse-number (& text) pos))
+
+;: Borrowing wrapper for `json-number->f64` inline tests.
+(define (json-stdlib-inline-test-number-f64 [text : String]) : JsonNumberF64Result
+  (json-number->f64 (& text)))
+
+;: Borrowing wrapper for `json-number->f32` inline tests.
+(define (json-stdlib-inline-test-number-f32 [text : String]) : JsonNumberF32Result
+  (json-number->f32 (& text)))
+
+;: Borrowing wrapper for `json-parse-keyword` inline tests.
+(define (json-stdlib-inline-test-parse-keyword
+  [text : String]
+  [pos : i64]
+  [keyword : String]
+  [value : Json]) : JsonParseValueResult
+  (json-parse-keyword (& text) pos keyword value))
+
+;: Borrowing wrapper for `json-parse-array` inline tests.
+(define (json-stdlib-inline-test-parse-array [text : String] [pos : i64]) : JsonParseValueResult
+  (json-parse-array (& text) pos))
+
+;: Borrowing wrapper for `json-parse-object` inline tests.
+(define (json-stdlib-inline-test-parse-object [text : String] [pos : i64]) : JsonParseValueResult
+  (json-parse-object (& text) pos))
+
+;: Borrowing wrapper for `json-parse-value` inline tests.
+(define (json-stdlib-inline-test-parse-value [text : String] [pos : i64]) : JsonParseValueResult
+  (json-parse-value (& text) pos))
+
+;: Assert a parsed document has the expected name member.
+(define (json-stdlib-inline-test-name [doc : Json]) : unit
+  (let
+    [key : String "name"]
+    (match (json-object-get doc (& key))
+      [(JsonFound value)
+        (match value
+          [(JsonString text)
+            (json-stdlib-inline-test-assert-owned-string-eq
+              text
+              "tl"
+              "json name lookup")]
+          [_ (panic "json name lookup")])]
+      [(JsonMissing) (panic "json name lookup")])))
+
+;: Assert a parsed document has the expected array member.
+(define (json-stdlib-inline-test-numbers [doc : Json]) : unit
+  (let
+    [key : String "items"]
+    (match (json-object-get doc (& key))
+      [(JsonFound value)
+        (match value
+          [(JsonArray items)
+            (begin
+              (json-stdlib-inline-test-assert-i64-eq
+                (json-list-count (box-get items))
+                5
+                "json array count")
+              (json-stdlib-inline-test-assert-owned-string-eq
+                (json-stringify-list (box-get items))
+                "1,-2.5e3,true,false,null"
+                "json array stringify"))]
+          [_ (panic "json array lookup")])]
+      [(JsonMissing) (panic "json array lookup")])))
+
+;: Assert a parsed document has the expected nested object member.
+(define (json-stdlib-inline-test-nested [doc : Json]) : unit
+  (let
+    [key : String "nested"]
+    (match (json-object-get doc (& key))
+      [(JsonFound value)
+        (match value
+          [(JsonObject members)
+            (begin
+              (json-stdlib-inline-test-assert-i64-eq
+                (json-member-list-count (box-get members))
+                2
+                "json nested object count")
+              (let
+                [key : String "ok"]
+                (match (json-member-list-get (box-get members) (& key))
+                  [(JsonFound ok-value)
+                    (match ok-value
+                      [(JsonBool ok)
+                        (json-stdlib-inline-test-assert-true
+                          ok
+                          "json nested bool")]
+                      [_ (panic "json nested bool")])]
+                  [(JsonMissing) (panic "json nested bool")])))]
+          [_ (panic "json nested object")])]
+      [(JsonMissing) (panic "json nested object")])))
+
+;: Assert a parsed document has the expected escaped string member.
+(define (json-stdlib-inline-test-escaped [doc : Json]) : unit
+  (let
+    [key : String "escaped"]
+    (match (json-object-get doc (& key))
+      [(JsonFound value)
+        (match value
+          [(JsonString text)
+            (json-stdlib-inline-test-assert-owned-string-eq
+              text
+              "a\nb\tc"
+              "json escaped string")]
+          [_ (panic "json escaped string")])]
+      [(JsonMissing) (panic "json escaped string")])))
+
+;: Assert that parsing `text` fails.
+(define (json-stdlib-inline-test-assert-parse-error
+  [text : String]
+  [message : String]) : unit
+  (match (json-parse (& text))
+    [(OkJson _) (panic message)]
+    [(ErrJson _) unit]))
+
+(test
+  json-helpers-api
+  (begin
+    (json-stdlib-inline-test-assert-owned-string-eq
+      (str-cat "a" "b" "c")
+      "abc"
+      "json-cat3")
+    (json-stdlib-inline-test-assert-owned-string-eq
+      (str-cat "a" "b" "c" "d")
+      "abcd"
+      "json-cat4")
+    (json-stdlib-inline-test-assert-i64-eq
+      (json-char-code #A')
+      65
+      "json-char-code")
+    (json-stdlib-inline-test-assert-i64-eq
+      (json-stdlib-inline-test-char-code-at "AZ" 1)
+      90
+      "json-char-code-at")
+    (json-stdlib-inline-test-assert-true
+      (json-stdlib-inline-test-char-code-eq-at "AZ" 0 65)
+      "json-char-code-eq-at true")
+    (json-stdlib-inline-test-assert-false
+      (json-stdlib-inline-test-char-code-eq-at "AZ" 2 65)
+      "json-char-code-eq-at out of range")
+    (json-stdlib-inline-test-assert-true
+      (json-space-code? 32)
+      "json-space-code? space")
+    (json-stdlib-inline-test-assert-false
+      (json-space-code? 65)
+      "json-space-code? false")
+    (json-stdlib-inline-test-assert-true
+      (json-digit-code? 57)
+      "json-digit-code? true")
+    (json-stdlib-inline-test-assert-false
+      (json-digit-code? 65)
+      "json-digit-code? false")
+    (json-stdlib-inline-test-assert-true
+      (json-stdlib-inline-test-digit-at? "a5" 1)
+      "json-digit-at? true")
+    (json-stdlib-inline-test-assert-false
+      (json-stdlib-inline-test-digit-at? "a5" 0)
+      "json-digit-at? false")
+    (json-stdlib-inline-test-assert-false
+      (json-stdlib-inline-test-digit-at? "a5" 2)
+      "json-digit-at? out of range")
+    (json-stdlib-inline-test-assert-i64-eq
+      (json-stdlib-inline-test-skip-ws "   X" 0)
+      3
+      "json-skip-ws")
+    (json-stdlib-inline-test-assert-true
+      (json-stdlib-inline-test-prefix-at? "abcdef" "cd" 2)
+      "json-string-prefix-at? true")
+    (json-stdlib-inline-test-assert-false
+      (json-stdlib-inline-test-prefix-at? "abcdef" "cd" 5)
+      "json-string-prefix-at? false")
+    (json-stdlib-inline-test-assert-i64-eq
+      (json-list-count
+        (json-stdlib-inline-test-list-cons
+          JsonNull
+          (json-stdlib-inline-test-list-cons (JsonBool true) JsonListNil)))
+      2
+      "json-list-count")
+    (json-stdlib-inline-test-assert-owned-string-eq
+      (json-stringify-list
+        (json-list-reverse
+          (json-stdlib-inline-test-list-cons
+            (JsonNumber "2")
+            (json-stdlib-inline-test-list-cons (JsonNumber "1") JsonListNil))))
+      "1,2"
+      "json-list-reverse")
+    (json-stdlib-inline-test-assert-i64-eq
+      (json-member-list-count
+        (json-stdlib-inline-test-member-cons
+          "a"
+          JsonNull
+          (json-stdlib-inline-test-member-cons
+            "b"
+            (JsonBool true)
+            JsonMemberListNil)))
+      2
+      "json-member-list-count")
+    (json-stdlib-inline-test-assert-found-number
+      (json-stdlib-inline-test-member-list-get
+        (json-stdlib-inline-test-member-cons
+          "a"
+          (JsonNumber "1")
+          (json-stdlib-inline-test-member-cons
+            "b"
+            (JsonNumber "2")
+            JsonMemberListNil))
+        "b")
+      "2"
+      "json-member-list-get")
+    (json-stdlib-inline-test-assert-missing
+      (json-stdlib-inline-test-member-list-get
+        (json-stdlib-inline-test-member-cons
+          "a"
+          (JsonNumber "1")
+          JsonMemberListNil)
+        "z")
+      "json-member-list-get missing")
+    (json-stdlib-inline-test-assert-owned-string-eq
+      (json-stringify-members
+        (json-member-list-reverse
+          (json-stdlib-inline-test-member-cons
+            "b"
+            (JsonBool true)
+            (json-stdlib-inline-test-member-cons "a" JsonNull JsonMemberListNil))))
+      "\"a\":null,\"b\":true"
+      "json-member-list-reverse")
+    (json-stdlib-inline-test-assert-found-number
+      (json-stdlib-inline-test-object-get
+        (json-stdlib-inline-test-object
+          (json-stdlib-inline-test-member-cons
+            "n"
+            (JsonNumber "7")
+            JsonMemberListNil))
+        "n")
+      "7"
+      "json-object-get")
+    (json-stdlib-inline-test-assert-missing
+      (json-stdlib-inline-test-object-get JsonNull "n")
+      "json-object-get non-object")
+    (json-stdlib-inline-test-assert-i64-eq
+      (json-hex-value #A')
+      10
+      "json-hex-value upper")
+    (json-stdlib-inline-test-assert-i64-eq
+      (json-hex-value #f')
+      15
+      "json-hex-value lower")
+    (json-stdlib-inline-test-assert-i64-eq
+      (json-hex-value #g')
+      -1
+      "json-hex-value invalid")
+    (json-stdlib-inline-test-assert-owned-string-eq
+      (json-hex-digit 15)
+      "f"
+      "json-hex-digit")
+    (json-stdlib-inline-test-assert-owned-string-eq
+      (json-control-escape 10)
+      "\\n"
+      "json-control-escape newline")
+    (json-stdlib-inline-test-assert-owned-string-eq
+      (json-control-escape 1)
+      "\\u0001"
+      "json-control-escape unicode")
+    (json-stdlib-inline-test-assert-owned-string-eq
+      (json-escape-char 34)
+      "\\\""
+      "json-escape-char quote")
+    (json-stdlib-inline-test-assert-owned-string-eq
+      (json-escape-char 92)
+      "\\\\"
+      "json-escape-char slash")
+    (json-stdlib-inline-test-assert-owned-string-eq
+      (json-stdlib-inline-test-escape-string "a\n\"\\")
+      "a\\n\\\"\\\\"
+      "json-escape-string")
+    (json-stdlib-inline-test-assert-owned-string-eq
+      (json-stringify
+        (json-stdlib-inline-test-array
+          (json-stdlib-inline-test-list-cons
+            (JsonNumber "1")
+            (json-stdlib-inline-test-list-cons JsonNull JsonListNil))))
+      "[1,null]"
+      "json-stringify array")
+    (json-stdlib-inline-test-assert-codepoint
+      (json-codepoint-string 65)
+      "A"
+      "json-codepoint-string")
+    (match (json-codepoint-string 200)
+      [(ErrJsonCodepointString _) unit]
+      [(OkJsonCodepointString _)
+        (panic "json-codepoint-string rejects unsupported")])
+    (json-stdlib-inline-test-assert-parse-escape
+      (json-stdlib-inline-test-parse-unicode-escape "0041" 0)
+      "A"
+      4
+      "json-parse-unicode-escape")
+    (match (json-stdlib-inline-test-parse-unicode-escape "00xz" 0)
+      [(ErrJsonParseEscape _) unit]
+      [(OkJsonParseEscape _ _)
+        (panic "json-parse-unicode-escape rejects invalid")])
+    (json-stdlib-inline-test-assert-parse-escape
+      (json-stdlib-inline-test-parse-escape "\\n" 1)
+      "\n"
+      2
+      "json-parse-escape")
+    (match (json-stdlib-inline-test-parse-escape "\\x" 1)
+      [(ErrJsonParseEscape _) unit]
+      [(OkJsonParseEscape _ _) (panic "json-parse-escape rejects invalid")])
+    (json-stdlib-inline-test-assert-parse-string
+      (json-stdlib-inline-test-parse-string "\"a\\n\"" 0)
+      "a\n"
+      5
+      "json-parse-string")
+    (match (json-stdlib-inline-test-parse-string "\"unterminated" 0)
+      [(ErrJsonParseString _) unit]
+      [(OkJsonParseString _ _) (panic "json-parse-string rejects invalid")])
+    (json-stdlib-inline-test-assert-i64-eq
+      (json-stdlib-inline-test-consume-digits "123abc" 0)
+      3
+      "json-consume-digits")
+    (json-stdlib-inline-test-assert-parse-value-number
+      (json-stdlib-inline-test-parse-number "-2.5e3" 0)
+      "-2.5e3"
+      6
+      "json-parse-number")
+    (match (json-stdlib-inline-test-parse-number "01" 0)
+      [(ErrJsonParseValue _) unit]
+      [(OkJsonParseValue _ _) (panic "json-parse-number rejects leading zero")])
+    (json-stdlib-inline-test-assert-json-f64
+      (json-stdlib-inline-test-number-f64 "42")
+      42.0
+      "json-number->f64 int")
+    (json-stdlib-inline-test-assert-json-f64
+      (json-stdlib-inline-test-number-f64 "-2.5e3")
+      -2500.0
+      "json-number->f64 exponent")
+    (json-stdlib-inline-test-assert-json-f64
+      (json-stdlib-inline-test-number-f64 "6.25E-1")
+      0.625
+      "json-number->f64 fraction exponent")
+    (match (json-stdlib-inline-test-number-f64 "-0")
+      [(OkJsonNumberF64 value)
+        (json-stdlib-inline-test-assert-json-number-text
+          (json-f64->number-text value)
+          "-0"
+          "json-number->f64 preserves negative zero")]
+      [(ErrJsonNumberF64 _) (panic "json-number->f64 negative zero")])
+    (match (json-stdlib-inline-test-number-f64 "1e+17")
+      [(OkJsonNumberF64 value)
+        (json-stdlib-inline-test-assert-json-number-text
+          (json-f64->number-text value)
+          "1e+17"
+          "json-number->f64 large magnitude")]
+      [(ErrJsonNumberF64 _) (panic "json-number->f64 large magnitude")])
+    (json-stdlib-inline-test-assert-json-f64-error
+      (json-stdlib-inline-test-number-f64 "1x")
+      "json-number->f64 trailing")
+    (json-stdlib-inline-test-assert-json-f64-error
+      (json-stdlib-inline-test-number-f64 "01")
+      "json-number->f64 leading")
+    (json-stdlib-inline-test-assert-json-f64-error
+      (json-stdlib-inline-test-number-f64 "1e309")
+      "json-number->f64 overflow")
+    (json-stdlib-inline-test-assert-json-f64-error
+      (json-stdlib-inline-test-number-f64 "1e-400")
+      "json-number->f64 underflow")
+    (json-stdlib-inline-test-assert-json-f32-as-f64
+      (json-stdlib-inline-test-number-f32 "1.5")
+      1.5
+      "json-number->f32")
+    (json-stdlib-inline-test-assert-json-f32-error
+      (json-stdlib-inline-test-number-f32 "1e39")
+      "json-number->f32 overflow")
+    (json-stdlib-inline-test-assert-json-f32-error
+      (json-stdlib-inline-test-number-f32 "1e-50")
+      "json-number->f32 underflow")
+    (json-stdlib-inline-test-assert-json-number-text
+      (json-f64->number-text 0.125)
+      "0.125"
+      "json-f64->number-text")
+    (json-stdlib-inline-test-assert-json-number-text
+      (json-f32->number-text (cast 1.25 : f32))
+      "1.25"
+      "json-f32->number-text")
+    (json-stdlib-inline-test-assert-parse-value-bool
+      (json-stdlib-inline-test-parse-keyword "true" 0 "true" (JsonBool true))
+      true
+      4
+      "json-parse-keyword")
+    (json-stdlib-inline-test-assert-parse-array-count
+      (json-stdlib-inline-test-parse-array "[1,true]" 0)
+      2
+      8
+      "json-parse-array")
+    (json-stdlib-inline-test-assert-parse-object-count
+      (json-stdlib-inline-test-parse-object "{\"a\":1}" 0)
+      1
+      7
+      "json-parse-object")
+    (json-stdlib-inline-test-assert-parse-value-bool
+      (json-stdlib-inline-test-parse-value " false" 0)
+      false
+      6
+      "json-parse-value")
+    unit))
+
+(test
+  json-parse-stringify-api
+  (let
+    [text : String
+      " { \"name\" : \"tl\", \"items\" : [1, -2.5e3, true, false, null], \"nested\" : { \"ok\" : true, \"empty\" : [] }, \"escaped\" : \"a\\nb\\tc\" } "]
+    (match (json-parse (& text))
+      [(OkJson doc)
+        (begin
+          (json-stdlib-inline-test-name doc)
+          (json-stdlib-inline-test-numbers doc)
+          (json-stdlib-inline-test-nested doc)
+          (json-stdlib-inline-test-escaped doc)
+          (json-stdlib-inline-test-assert-owned-string-eq
+            (json-stringify doc)
+            "{\"name\":\"tl\",\"items\":[1,-2.5e3,true,false,null],\"nested\":{\"ok\":true,\"empty\":[]},\"escaped\":\"a\\nb\\tc\"}"
+            "json stringify document")
+          (json-stdlib-inline-test-assert-owned-string-eq
+            (json-stringify (JsonString "a\n\"\\"))
+            "\"a\\n\\\"\\\\\""
+            "json stringify escapes")
+          (json-stdlib-inline-test-assert-parse-error
+            "{\"bad\":[1,]}"
+            "json rejects trailing comma")
+          (json-stdlib-inline-test-assert-parse-error
+            "{\"bad\" 1}"
+            "json rejects missing colon")
+          (json-stdlib-inline-test-assert-parse-error
+            "\"unterminated"
+            "json rejects unterminated string")
+          (json-stdlib-inline-test-assert-parse-error
+            "01"
+            "json rejects leading zero")
+          (json-stdlib-inline-test-assert-parse-error
+            "true false"
+            "json rejects trailing text")
+          unit)]
+      [(ErrJson _) (panic "json document should parse")])))

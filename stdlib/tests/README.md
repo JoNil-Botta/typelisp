@@ -12,25 +12,21 @@ for exact expected output bytes. Check-only rows map a fixture path to `pass` or
 
 Coverage notes:
 
+Fixture rows in this directory remain for checks that need a standalone entry
+point, exact process I/O, stdin, host fixture setup, negative checker behavior,
+or external runtime orchestration. Pure stdlib API coverage that can run through
+`typelisp test` lives inline in the owning stdlib module.
+
 - `arena_patterns.tl` covers the standard safe scratch workflows: temporary
   scalar-only work inside `with-arena` and clone-out from a reusable
   first-class scratch arena through `with-escape`. The row remains a runnable
   fixture while its `requires-stage0-symbol:with-escape` constraint is needed.
   The `arena_policy_escape_*.tl` fixtures are check-only negative cases proving
   active-arena stdlib results cannot escape their scoped arena.
-- `args_api.tl` covers the reusable argv parser for empty argv, positional-only
-  argv, flags before and after positionals, `--` end-of-options handling,
-  missing-value diagnostics, unknown-option diagnostics, repeated short/long
-  options, and the intentionally unsupported `--name=value` spelling.
 - `string_edges.tl` covers the public string equality/parsing predicates,
   trimming helpers, replacement paths, and prefix checks, including empty
   strings, empty needles, misses, prefix positions, legacy `string->int` edge
   cases, and replacement edge cases.
-- `json_helpers.tl` exercises the JSON data model, list/member helpers, escape
-  helpers, parser subroutines, deterministic finite f64/f32 number conversion,
-  and serializer helpers directly.
-- `json_parse_stringify.tl` covers end-to-end parsing and stringifying for
-  invalid input, escapes, nesting, arrays, objects, lookup, and number forms.
 - `list_api.tl` covers the monomorphic `StringList` and `StringListBuilder`
   helpers: empty/single lists, count, reverse, append, build-onto order, array
   conversion with count clamping, and `StringVec` bridge round trips.
@@ -66,9 +62,6 @@ Coverage notes:
 - `io_stdio_pipe_short_read.tl` is typechecked like the other witnesses and is
   also run by `scripts/verify-stdlib.sh` through a native pipe to ensure
   positive short pipe reads do not report EOF before all bytes arrive.
-- `env_api.tl` covers missing, empty, and present environment variables,
-  host-separator PATH splitting/joining, vector-backed PATH split/list/join
-  helpers, and explicit Windows `;` path-list behavior.
 - `fs_path_join_many_api.tl` covers the variadic path-join macro for zero,
   single, two, three, four, and duplicate-separator joins.
 - `fs_api.tl` covers path joins, dirname/basename/extension helpers, temp-dir
@@ -108,9 +101,6 @@ Coverage notes:
 - `process_runtime.tl` covers backend process execution for stdout, stderr,
   nonzero status, failed spawn, and async start/wait on Linux, plus the
   structured unsupported async result on Windows.
-- `random_api.tl` covers deterministic seed normalization and MINSTD sequences,
-  bounded draws, invalid bounds, list/array/vector weighted-index edge cases,
-  zero-weight skipping, storage parity, and stable picks for fixed seeds.
 - `thread_api.tl` covers worker count fallback shape, invalid semaphore
   creation, two native worker threads, semaphore signaling, and join return
   values.
@@ -131,6 +121,24 @@ Coverage notes:
 
 Inline stdlib coverage:
 
+- `args.tl` owns inline tests for reusable argv parsing: empty argv,
+  positional-only argv, flags before and after positionals, `--`
+  end-of-options handling, missing-value and unknown-option diagnostics,
+  repeated short/long options, and the intentionally unsupported
+  `--name=value` spelling.
+- `json.tl` owns inline tests for the JSON data model, list/member helpers,
+  escape helpers, parser subroutines, deterministic finite f64/f32 number
+  conversion, serializer helpers, and end-to-end parse/stringify behavior for
+  invalid input, escapes, nesting, arrays, objects, lookup, and number forms.
+- `env.tl` owns inline tests for missing, empty, and present environment
+  variables, host-separator PATH splitting/joining, vector-backed PATH
+  split/list/join helpers, and explicit Windows `;` path-list behavior. The
+  inline-test verifier sets the `TYPELISP_STDLIB_TEST_*` environment variables
+  used by this coverage.
+- `random.tl` owns inline tests for deterministic seed normalization and
+  MINSTD sequences, bounded draws, invalid bounds, list/array/vector
+  weighted-index edge cases, zero-weight skipping, storage parity, stable picks
+  for fixed seeds, and system-seed result payloads.
 - `math.tl` owns inline tests for the pure scalar helpers for `i64` and `f64`:
   negative/zero/positive absolute values and sign predicates, min/max order,
   clamp low/high/inside cases, reversed bounds, and explicit signed-min

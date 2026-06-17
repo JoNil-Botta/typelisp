@@ -14,6 +14,15 @@
 ;# panicking, so the module typechecks on every stage0 regardless of the
 ;# never-type.
 ;#
+;# Generated vector-family metadata is type-agnostic. Struct and enum element
+;# instantiations use the same `(Array T)` storage and `array-ref`/`array-set!`
+;# move pattern as scalar and `String` families: `push`/`set!` move the element
+;# into a live slot, `pop` moves the last live element out with the shrunk
+;# vector, and copying/growth/snapshot helpers move the live prefix into fresh
+;# arrays. On the current handle representation aggregate elements occupy
+;# handle slots; after the inline-aggregate representation flip (#1867/#2357)
+;# the same source API stores aggregate elements inline in the backing array.
+;#
 ;# Compiler code should use generated vectors for append-heavy private sequences
 ;# that are not part of the user-facing AST shape, such as IR instructions,
 ;# tool discovery buffers, or temporary ordered worklists. Recursive enum lists

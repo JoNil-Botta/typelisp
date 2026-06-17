@@ -254,15 +254,20 @@
           [unused-import-result : i64 (selfhost-lint-unused-imports-self-test)]
           (if (= unused-import-result 42)
             (let
-              [concat-result : i64
-                (lint-driver-smoke-deprecated-string-concat-self-test)]
-              (if (= concat-result 42)
+              [dead-code-result : i64
+                (selfhost-lint-package-dead-code-self-test)]
+              (if (= dead-code-result 42)
                 (let
-                  [no-effect-result : i64
-                    (lint-driver-smoke-no-effect-self-test)]
-                  (if (= no-effect-result 42)
-                    (lint-driver-smoke-unreachable-self-test)
-                    no-effect-result))
-                concat-result))
+                  [concat-result : i64
+                    (lint-driver-smoke-deprecated-string-concat-self-test)]
+                  (if (= concat-result 42)
+                    (let
+                      [no-effect-result : i64
+                        (lint-driver-smoke-no-effect-self-test)]
+                      (if (= no-effect-result 42)
+                        (lint-driver-smoke-unreachable-self-test)
+                        no-effect-result))
+                    concat-result))
+                dead-code-result))
             unused-import-result))
         core-result))))

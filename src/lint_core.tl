@@ -117,6 +117,15 @@
 (define (lint-rule-unused-import-suggestion) : String
   "remove the import or prefix an intentionally unused alias with _")
 
+(define (lint-rule-dead-code-id) : String
+  "dead-code")
+
+(define (lint-rule-dead-code-message) : String
+  "dead code: private top-level declaration is never referenced")
+
+(define (lint-rule-dead-code-suggestion) : String
+  "remove the declaration or export/reference it intentionally")
+
 ;: Metadata for one lint rule. Rule id is stable public API for suppressions;
 ;: message is the rendered finding text; suggestion is structured helper text
 ;: that drivers or tooling can render separately from the message.
@@ -194,6 +203,12 @@
     (lint-rule-unused-import-message)
     (lint-rule-unused-import-suggestion)))
 
+(define (lint-rule-dead-code) : LintRule
+  (LintRule
+    (lint-rule-dead-code-id)
+    (lint-rule-dead-code-message)
+    (lint-rule-dead-code-suggestion)))
+
 (define (lint-rule-cons [rule : LintRule] [rest : LintRuleList]) : LintRuleList
   (LintRuleCons rule (box rest)))
 
@@ -218,7 +233,9 @@
                   (lint-rule-nested-str-cat)
                   (lint-rule-cons
                     (lint-rule-cascading-and-or)
-                    (lint-rule-cons (lint-rule-unused-import) LintRuleNil)))))))))))
+                    (lint-rule-cons
+                      (lint-rule-unused-import)
+                      (lint-rule-cons (lint-rule-dead-code) LintRuleNil))))))))))))
 
 (define (lint-rule-find-in [rules : LintRuleList] [rule-id : String]) : LintMaybeRule
   (match rules
@@ -487,6 +504,15 @@
   (LintFinding
     (lint-rule-message (lint-rule-unreachable-code-id))
     (lint-rule-unreachable-code-id)
+    0
+    span))
+
+(define (lint-dead-code-finding [name : String] [span : AstSourceSpan]) : LintFinding
+  (LintFinding
+    (string-append
+      "dead code: private top-level declaration "
+      (string-append name " is never referenced"))
+    (lint-rule-dead-code-id)
     0
     span))
 

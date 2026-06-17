@@ -24751,6 +24751,357 @@ tl_memcpy:
         site
         (box-get rest))]))
 
+(define (compiler-backend-object-byte [value : i64]) : u8
+  (cast (bit-and value 0xff) : u8))
+
+(define (compiler-backend-object-push-u8! [out : (Array u8)] [value : i64]) : unit
+  (array-push! out (compiler-backend-object-byte value)))
+
+(define (compiler-backend-object-push-u32! [out : (Array u8)] [value : i64]) : unit
+  (begin
+    (compiler-backend-object-push-u8! out value)
+    (compiler-backend-object-push-u8! out (shr value 8))
+    (compiler-backend-object-push-u8! out (shr value 16))
+    (compiler-backend-object-push-u8! out (shr value 24))))
+
+(define (compiler-backend-object-bytes-finish [out : (Array u8)]) : String
+  (unsafe
+    (string-from-bytes
+      (ptr-cast (array-data out) : (Ptr u8))
+      (array-length out))))
+
+(define (compiler-backend-object-add-nonempty-bytes
+  [parts : CompilerBackendObjectParts]
+  [bytes : String]) : CompilerBackendObjectParts
+  (if (= (string-length bytes) 0)
+    parts
+    (compiler-backend-object-add-text parts (ObjectX64Bytes bytes))))
+
+(define (compiler-backend-object-reg-low-code [reg : String]) : i64
+  (if (or (string-eq reg "%rax") (string-eq reg "%r8"))
+    0
+    (if (or (string-eq reg "%rcx") (string-eq reg "%r9"))
+      1
+      (if (or (string-eq reg "%rdx") (string-eq reg "%r10"))
+        2
+        (if (or (string-eq reg "%rbx") (string-eq reg "%r11"))
+          3
+          (if (or (string-eq reg "%rsp") (string-eq reg "%r12"))
+            4
+            (if (or (string-eq reg "%rbp") (string-eq reg "%r13"))
+              5
+              (if (or (string-eq reg "%rsi") (string-eq reg "%r14"))
+                6
+                7))))))))
+
+(define (compiler-backend-object-reg-high? [reg : String]) : bool
+  (or
+    (string-eq reg "%r8")
+    (string-eq reg "%r9")
+    (string-eq reg "%r10")
+    (string-eq reg "%r11")
+    (string-eq reg "%r12")
+    (string-eq reg "%r13")
+    (string-eq reg "%r14")
+    (string-eq reg "%r15")))
+
+(define (compiler-backend-object-slot-disp [var-id : i64]) : i64
+  (- 0 (* 8 (+ var-id 1))))
+
+(define (compiler-backend-object-disp8? [disp : i64]) : bool
+  (and (>= disp -128) (<= disp 127)))
+
+(define (compiler-backend-object-load-slot-bytes [var-id : i64] [reg : String]) : String
+  (let
+    [out : (Array u8) (make-array u8 0)]
+    [disp : i64 (compiler-backend-object-slot-disp var-id)]
+    [reg-code : i64 (compiler-backend-object-reg-low-code reg)]
+    [rex : i64
+      (+
+        0x48
+        (if (compiler-backend-object-reg-high? reg)
+          4
+          0))]
+    (begin
+      (compiler-backend-object-push-u8! out rex)
+      (compiler-backend-object-push-u8! out 0x8b)
+      (if (compiler-backend-object-disp8? disp)
+        (begin
+          (compiler-backend-object-push-u8! out (+ 0x45 (* reg-code 8)))
+          (compiler-backend-object-push-u8! out disp))
+        (begin
+          (compiler-backend-object-push-u8! out (+ 0x85 (* reg-code 8)))
+          (compiler-backend-object-push-u32! out disp)))
+      (compiler-backend-object-bytes-finish out))))
+
+(define (compiler-backend-object-store-slot-bytes [var-id : i64] [reg : String]) : String
+  (let
+    [out : (Array u8) (make-array u8 0)]
+    [disp : i64 (compiler-backend-object-slot-disp var-id)]
+    [reg-code : i64 (compiler-backend-object-reg-low-code reg)]
+    [rex : i64
+      (+
+        0x48
+        (if (compiler-backend-object-reg-high? reg)
+          4
+          0))]
+    (begin
+      (compiler-backend-object-push-u8! out rex)
+      (compiler-backend-object-push-u8! out 0x89)
+      (if (compiler-backend-object-disp8? disp)
+        (begin
+          (compiler-backend-object-push-u8! out (+ 0x45 (* reg-code 8)))
+          (compiler-backend-object-push-u8! out disp))
+        (begin
+          (compiler-backend-object-push-u8! out (+ 0x85 (* reg-code 8)))
+          (compiler-backend-object-push-u32! out disp)))
+      (compiler-backend-object-bytes-finish out))))
+
+(define (compiler-backend-object-mov-imm32-reg-bytes
+  [value : i64]
+  [reg : String]) : String
+  (let
+    [out : (Array u8) (make-array u8 0)]
+    [reg-code : i64 (compiler-backend-object-reg-low-code reg)]
+    [rex : i64
+      (+
+        0x48
+        (if (compiler-backend-object-reg-high? reg)
+          1
+          0))]
+    (begin
+      (compiler-backend-object-push-u8! out rex)
+      (compiler-backend-object-push-u8! out 0xc7)
+      (compiler-backend-object-push-u8! out (+ 0xc0 reg-code))
+      (compiler-backend-object-push-u32! out value)
+      (compiler-backend-object-bytes-finish out))))
+
+(define (compiler-backend-object-mov-reg-reg-bytes
+  [src : String]
+  [dst : String]) : String
+  (if (string-eq src dst)
+    ""
+    (let
+      [out : (Array u8) (make-array u8 0)]
+      [src-code : i64 (compiler-backend-object-reg-low-code src)]
+      [dst-code : i64 (compiler-backend-object-reg-low-code dst)]
+      [rex : i64
+        (+
+          0x48
+          (+
+            (if (compiler-backend-object-reg-high? src)
+              4
+              0)
+            (if (compiler-backend-object-reg-high? dst)
+              1
+              0)))]
+      (begin
+        (compiler-backend-object-push-u8! out rex)
+        (compiler-backend-object-push-u8! out 0x89)
+        (compiler-backend-object-push-u8!
+          out
+          (+ 0xc0 (+ (* src-code 8) dst-code)))
+        (compiler-backend-object-bytes-finish out)))))
+
+(define (compiler-backend-object-prologue-bytes [frame-size : i64]) : String
+  (let
+    [out : (Array u8) (make-array u8 0)]
+    (begin
+      (compiler-backend-object-push-u8! out 0x55)
+      (compiler-backend-object-push-u8! out 0x48)
+      (compiler-backend-object-push-u8! out 0x89)
+      (compiler-backend-object-push-u8! out 0xe5)
+      (if (= frame-size 0)
+        unit
+        (if (<= frame-size 127)
+          (begin
+            (compiler-backend-object-push-u8! out 0x48)
+            (compiler-backend-object-push-u8! out 0x83)
+            (compiler-backend-object-push-u8! out 0xec)
+            (compiler-backend-object-push-u8! out frame-size))
+          (begin
+            (compiler-backend-object-push-u8! out 0x48)
+            (compiler-backend-object-push-u8! out 0x81)
+            (compiler-backend-object-push-u8! out 0xec)
+            (compiler-backend-object-push-u32! out frame-size))))
+      (compiler-backend-object-bytes-finish out))))
+
+(define (compiler-backend-object-leave-ret-bytes) : String
+  (compiler-backend-object-bytes-from-hex "c9c3"))
+
+(define (compiler-backend-object-leave-bytes) : String
+  (compiler-backend-object-bytes-from-hex "c9"))
+
+(define (compiler-backend-object-load-value-to-reg
+  [parts : CompilerBackendObjectParts]
+  [site : String]
+  [value : CompilerIrValue]
+  [reg : String]) : CompilerBackendObjectParts
+  (match value
+    [(IrValueVar id)
+      (compiler-backend-object-add-nonempty-bytes
+        parts
+        (compiler-backend-object-load-slot-bytes id reg))]
+    [(IrValueI64 n)
+      (compiler-backend-object-add-nonempty-bytes
+        parts
+        (compiler-backend-object-mov-imm32-reg-bytes n reg))]
+    [(IrValueBool b)
+      (compiler-backend-object-add-nonempty-bytes
+        parts
+        (compiler-backend-object-mov-imm32-reg-bytes
+          (if b
+            1
+            0)
+          reg))]
+    [(IrValueChar c)
+      (compiler-backend-object-add-nonempty-bytes
+        parts
+        (compiler-backend-object-mov-imm32-reg-bytes
+          (compiler-backend-char-code c)
+          reg))]
+    [(IrValueUnit)
+      (compiler-backend-object-add-nonempty-bytes
+        parts
+        (compiler-backend-object-mov-imm32-reg-bytes 0 reg))]
+    [(IrValueGlobal _)
+      (compiler-backend-object-add-nonempty-bytes
+        (compiler-backend-object-value-ref parts site value)
+        (compiler-backend-object-mov-reg-reg-bytes "%rax" reg))]
+    [(IrValueGlobalAddr _)
+      (compiler-backend-object-add-nonempty-bytes
+        (compiler-backend-object-value-ref parts site value)
+        (compiler-backend-object-mov-reg-reg-bytes "%rax" reg))]
+    [(IrValueString _)
+      (compiler-backend-object-add-nonempty-bytes
+        (compiler-backend-object-value-ref parts site value)
+        (compiler-backend-object-mov-reg-reg-bytes "%rax" reg))]
+    [(IrValueBytes _)
+      (compiler-backend-object-add-nonempty-bytes
+        (compiler-backend-object-value-ref parts site value)
+        (compiler-backend-object-mov-reg-reg-bytes "%rax" reg))]
+    [(IrValueFunction _)
+      (compiler-backend-object-add-nonempty-bytes
+        (compiler-backend-object-value-ref parts site value)
+        (compiler-backend-object-mov-reg-reg-bytes "%rax" reg))]
+    [(IrValueF64 _)
+      (compiler-backend-object-add-nonempty-bytes
+        (compiler-backend-object-value-ref parts site value)
+        (compiler-backend-object-mov-reg-reg-bytes "%rax" reg))]))
+
+(define (compiler-backend-object-store-reg-to-var
+  [parts : CompilerBackendObjectParts]
+  [dst : i64]
+  [reg : String]) : CompilerBackendObjectParts
+  (compiler-backend-object-add-nonempty-bytes
+    parts
+    (compiler-backend-object-store-slot-bytes dst reg)))
+
+(define (compiler-backend-object-move-value-to-var
+  [parts : CompilerBackendObjectParts]
+  [site : String]
+  [dst : i64]
+  [src : CompilerIrValue]) : CompilerBackendObjectParts
+  (compiler-backend-object-store-reg-to-var
+    (compiler-backend-object-load-value-to-reg parts site src "%rax")
+    dst
+    "%rax"))
+
+(define (compiler-backend-object-binop-bytes [op : CompilerIrBinOp]) : String
+  (match op
+    [(IrBinAdd) (compiler-backend-object-bytes-from-hex "4c01c0")]
+    [(IrBinSub) (compiler-backend-object-bytes-from-hex "4c29c0")]
+    [(IrBinMul) (compiler-backend-object-bytes-from-hex "490fafc0")]
+    [(IrBinEq) (compiler-backend-object-bytes-from-hex "4c39c00f94c0480fb6c0")]
+    [(IrBinNe) (compiler-backend-object-bytes-from-hex "4c39c00f95c0480fb6c0")]
+    [(IrBinLt) (compiler-backend-object-bytes-from-hex "4c39c00f9cc0480fb6c0")]
+    [(IrBinLe) (compiler-backend-object-bytes-from-hex "4c39c00f9ec0480fb6c0")]
+    [(IrBinGt) (compiler-backend-object-bytes-from-hex "4c39c00f9fc0480fb6c0")]
+    [(IrBinGe) (compiler-backend-object-bytes-from-hex "4c39c00f9dc0480fb6c0")]
+    [(IrBinAnd) (compiler-backend-object-bytes-from-hex "4c21c0")]
+    [(IrBinOr) (compiler-backend-object-bytes-from-hex "4c09c0")]
+    [(IrBinBitAnd) (compiler-backend-object-bytes-from-hex "4c21c0")]
+    [(IrBinBitOr) (compiler-backend-object-bytes-from-hex "4c09c0")]
+    [(IrBinBitXor) (compiler-backend-object-bytes-from-hex "4c31c0")]
+    [_ ""]))
+
+(define (compiler-backend-object-binop
+  [parts : CompilerBackendObjectParts]
+  [site : String]
+  [dst : i64]
+  [op : CompilerIrBinOp]
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]
+  [ty : AstType]) : CompilerBackendObjectParts
+  (let
+    [op-bytes : String (compiler-backend-object-binop-bytes op)]
+    (if (or (= (string-length op-bytes) 0) (compiler-backend-float-type? ty))
+      (compiler-backend-object-value-ref
+        (compiler-backend-object-value-ref parts site lhs)
+        site
+        rhs)
+      (compiler-backend-object-store-reg-to-var
+        (compiler-backend-object-add-nonempty-bytes
+          (compiler-backend-object-load-value-to-reg
+            (compiler-backend-object-load-value-to-reg parts site lhs "%rax")
+            site
+            rhs
+            "%r8")
+          op-bytes)
+        dst
+        "%rax"))))
+
+(define (compiler-backend-object-call-arg-reg [index : i64]) : String
+  (match (compiler-backend-arg-reg index)
+    [(OkBackendReg reg) reg]
+    [(ErrBackendReg _) "%rax"]))
+
+(define (compiler-backend-object-call-arg-moves
+  [parts : CompilerBackendObjectParts]
+  [site : String]
+  [args : CompilerIrCallArgs]
+  [index : i64]) : CompilerBackendObjectParts
+  (if (>= index (compiler-backend-call-args-count args))
+    parts
+    (if (>= index 6)
+      parts
+      (compiler-backend-object-call-arg-moves
+        (compiler-backend-object-load-value-to-reg
+          parts
+          site
+          (compiler-backend-call-arg-at args index)
+          (compiler-backend-object-call-arg-reg index))
+        site
+        args
+        (+ index 1)))))
+
+(define (compiler-backend-object-param-spills
+  [parts : CompilerBackendObjectParts]
+  [params : CompilerIrParamList]
+  [int-index : i64]) : CompilerBackendObjectParts
+  (match params
+    [(IrParamNil) parts]
+    [(IrParamCons param rest)
+      (match param
+        [(IrParam _ ty var-id)
+          (if (compiler-backend-float-type? ty)
+            (compiler-backend-object-param-spills
+              parts
+              (box-get rest)
+              int-index)
+            (if (>= int-index 6)
+              (compiler-backend-object-param-spills
+                parts
+                (box-get rest)
+                (+ int-index 1))
+              (compiler-backend-object-param-spills
+                (compiler-backend-object-store-reg-to-var
+                  parts
+                  var-id
+                  (compiler-backend-object-call-arg-reg int-index))
+                (box-get rest)
+                (+ int-index 1))))])]))
+
 (define (compiler-backend-object-instr
   [parts : CompilerBackendObjectParts]
   [function : String]
@@ -24759,13 +25110,10 @@ tl_memcpy:
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]) : CompilerBackendObjectParts
   (match instr
-    [(IrInstrMov _ src _)
-      (compiler-backend-object-value-ref parts function src)]
-    [(IrInstrBinOp _ _ lhs rhs _)
-      (compiler-backend-object-value-ref
-        (compiler-backend-object-value-ref parts function lhs)
-        function
-        rhs)]
+    [(IrInstrMov dst src _)
+      (compiler-backend-object-move-value-to-var parts function dst src)]
+    [(IrInstrBinOp dst op lhs rhs ty)
+      (compiler-backend-object-binop parts function dst op lhs rhs ty)]
     [(IrInstrUnOp _ op src ty)
       (let
         [with-src : CompilerBackendObjectParts
@@ -24781,17 +25129,20 @@ tl_memcpy:
                 (ObjectX64XorpdRip (compiler-backend-f64-sign-bit-label)))
               with-src)]
           [_ with-src]))]
-    [(IrInstrCall _ name args _)
+    [(IrInstrCall dst name args _)
       (let
         [target : String
           (compiler-backend-call-symbol-index name plan program-index)]
-        (compiler-backend-object-add-text
-          (compiler-backend-object-add-text-relocation
-            (compiler-backend-object-call-args parts function args 0)
-            function
-            (ObjectRelocCall)
-            target)
-          (ObjectX64Call target)))]
+        (compiler-backend-object-store-reg-to-var
+          (compiler-backend-object-add-text
+            (compiler-backend-object-add-text-relocation
+              (compiler-backend-object-call-arg-moves parts function args 0)
+              function
+              (ObjectRelocCall)
+              target)
+            (ObjectX64Call target))
+          dst
+          "%rax"))]
     [(IrInstrCallIndirect _ callee args _)
       (compiler-backend-object-call-args
         (compiler-backend-object-value-ref parts function callee)
@@ -24834,7 +25185,9 @@ tl_memcpy:
           (compiler-backend-call-symbol-index name plan program-index)]
         (compiler-backend-object-add-text
           (compiler-backend-object-add-text-relocation
-            (compiler-backend-object-call-args parts function args 0)
+            (compiler-backend-object-add-nonempty-bytes
+              (compiler-backend-object-call-arg-moves parts function args 0)
+              (compiler-backend-object-leave-bytes))
             function
             (ObjectRelocTailCall)
             target)
@@ -24877,7 +25230,16 @@ tl_memcpy:
             false-symbol)
           (ObjectX64Branch true-symbol false-symbol)))]
     [(IrInstrReturn value)
-      (compiler-backend-object-maybe-value-ref parts function value)]
+      (compiler-backend-object-add-nonempty-bytes
+        (match value
+          [(IrNoValue) parts]
+          [(IrSomeValue inner)
+            (compiler-backend-object-load-value-to-reg
+              parts
+              function
+              inner
+              "%rax")])
+        (compiler-backend-object-leave-ret-bytes))]
     [(IrInstrPhi _ inputs _)
       (compiler-backend-object-phi-inputs parts function inputs)]
     [(IrInstrGep _ base offset _)
@@ -25079,7 +25441,7 @@ tl_memcpy:
     [(IrFunctionNil) parts]
     [(IrFunctionCons func rest)
       (match func
-        [(IrFunction name _ _ _ blocks)
+        [(IrFunction name params _ vars blocks)
           (let
             [symbol : String
               (compiler-backend-function-symbol-index program-index name)]
@@ -25087,13 +25449,19 @@ tl_memcpy:
               (compiler-backend-function-label-scope program-index name)]
             (compiler-backend-object-functions
               (compiler-backend-object-blocks
-                (compiler-backend-object-add-text
-                  (compiler-backend-object-symbol-export-section
-                    parts
-                    symbol
-                    (ObjectSectionText)
-                    (ObjectSymbolFunction))
-                  (ObjectX64Label symbol))
+                (compiler-backend-object-param-spills
+                  (compiler-backend-object-add-nonempty-bytes
+                    (compiler-backend-object-add-text
+                      (compiler-backend-object-symbol-export-section
+                        parts
+                        symbol
+                        (ObjectSectionText)
+                        (ObjectSymbolFunction))
+                      (ObjectX64Label symbol))
+                    (compiler-backend-object-prologue-bytes
+                      (compiler-backend-frame-size vars)))
+                  params
+                  0)
                 symbol
                 label-scope
                 blocks
@@ -25566,6 +25934,27 @@ tl_memcpy:
       target)
     (ObjectX64Call target)))
 
+(define (compiler-backend-object-linux-exit-bytes) : String
+  (compiler-backend-object-bytes-from-hex "4889c748c7c03c0000000f05"))
+
+(define (compiler-backend-object-add-linux-entry
+  [parts : CompilerBackendObjectParts]) : CompilerBackendObjectParts
+  (let
+    [entry : String "_tl_start"]
+    [with-symbol : CompilerBackendObjectParts
+      (compiler-backend-object-symbol-export-section
+        parts
+        entry
+        (ObjectSectionText)
+        (ObjectSymbolFunction))]
+    [with-label : CompilerBackendObjectParts
+      (compiler-backend-object-add-text with-symbol (ObjectX64Label entry))]
+    [with-main-call : CompilerBackendObjectParts
+      (compiler-backend-object-add-call-instr with-label entry "main")]
+    (compiler-backend-object-add-text-bytes
+      with-main-call
+      (compiler-backend-object-linux-exit-bytes))))
+
 (define (compiler-backend-object-add-rip-instr
   [parts : CompilerBackendObjectParts]
   [site : String]
@@ -25826,11 +26215,7 @@ tl_memcpy:
       [(BackendTargetLinux)
         (if crt-entry
           parts
-          (compiler-backend-object-symbol-export-section
-            parts
-            "_tl_start"
-            (ObjectSectionText)
-            (ObjectSymbolFunction)))]
+          (compiler-backend-object-add-linux-entry parts))]
       [(BackendTargetWindows)
         (if crt-entry
           parts

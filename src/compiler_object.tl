@@ -582,6 +582,57 @@
     [(ObjectSection _ _ instrs)
       (compiler-object-instr-list-contains-call? instrs target)]))
 
+(define (compiler-object-string-prefix-at?
+  [haystack : String]
+  [needle : String]
+  [start : i64]
+  [index : i64]) : bool
+  (if (>= index (string-length needle))
+    true
+    (if (>= (+ start index) (string-length haystack))
+      false
+      (if (char-eq
+        (string-ref haystack (+ start index))
+        (string-ref needle index))
+        (compiler-object-string-prefix-at? haystack needle start (+ index 1))
+        false))))
+
+(define (compiler-object-string-contains?
+  [haystack : String]
+  [needle : String]
+  [start : i64]) : bool
+  (if (= (string-length needle) 0)
+    true
+    (if (> (+ start (string-length needle)) (string-length haystack))
+      false
+      (if (compiler-object-string-prefix-at? haystack needle start 0)
+        true
+        (compiler-object-string-contains? haystack needle (+ start 1))))))
+
+(define (compiler-object-instr-list-contains-bytes?
+  [instrs : CompilerObjectX64InstrList]
+  [bytes : String]) : bool
+  (match instrs
+    [(ObjectInstrNil) false]
+    [(ObjectInstrCons instr rest)
+      (match instr
+        [(ObjectX64Bytes found)
+          (if (compiler-object-string-contains? found bytes 0)
+            true
+            (compiler-object-instr-list-contains-bytes? (box-get rest) bytes))]
+        [(ObjectX64Raw found)
+          (if (compiler-object-string-contains? found bytes 0)
+            true
+            (compiler-object-instr-list-contains-bytes? (box-get rest) bytes))]
+        [_ (compiler-object-instr-list-contains-bytes? (box-get rest) bytes)])]))
+
+(define (compiler-object-section-contains-bytes?
+  [sections : CompilerObjectSectionList]
+  [bytes : String]) : bool
+  (match (compiler-object-section-list-find sections (ObjectSectionText))
+    [(ObjectSection _ _ instrs)
+      (compiler-object-instr-list-contains-bytes? instrs bytes)]))
+
 (define (compiler-object-instr-list-contains-xorpd-rip?
   [instrs : CompilerObjectX64InstrList]
   [target : String]) : bool

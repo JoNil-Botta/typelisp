@@ -48,6 +48,7 @@ make_array_init|tests/integration/make_array_init.tl|42|-|-|-
 make_array_zero|tests/integration/make_array_zero.tl|0|-|-|-
 mutable_reference_array|tests/integration/mutable_reference_array.tl|42|-|-|-
 mutable_reference_by_value_writeback|tests/integration/mutable_reference_by_value_writeback.tl|42|-|-|-
+mutable_reference_disjoint_fields|tests/integration/mutable_reference_disjoint_fields.tl|42|-|-|-
 enum_string_payload|tests/integration/enum_string_payload.tl|5|-|-|-
 f32_scalar|tests/integration/f32_scalar.tl|42|-|-|-
 f64_negation|tests/integration/f64_negation.tl|42|-|-|-

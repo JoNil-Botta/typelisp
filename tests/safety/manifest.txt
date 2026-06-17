@@ -22,12 +22,16 @@ bounds_spmd_comptime_defined|run-exit|tests/safety/bounds_spmd_comptime_defined.
 reference_region_defined|check-ok|tests/safety/reference_region_defined.tl|-|-
 raw_pointer_values_defined|check-ok|tests/safety/raw_pointer_values_defined.tl|-|-
 unsafe_syscall_defined|check-ok|tests/safety/unsafe_syscall_defined.tl|-|-
+mutable_reference_reborrow_subscope_ok|check-ok|tests/safety/mutable_reference_reborrow_subscope_ok.tl|-|-
 
 # Static rejection areas.
 unsupported_cast_reject|check-fail|tests/safety/unsupported_cast_reject.tl|-|cast requires
 unbound_variable_reject|check-fail|tests/safety/unbound_variable_reject.tl|-|unbound name missing
 region_escape_reject|check-fail|tests/safety/region_escape_reject.tl|-|cannot escape with-arena
 mutable_reference_reject|check-fail|tests/safety/mutable_reference_reject.tl|-|cannot mutably borrow borrowed place
+mutable_reference_same_field_reject|check-fail|tests/safety/mutable_reference_same_field_reject.tl|-|cannot mutably borrow borrowed place `bags.left`
+mutable_reference_field_element_reject|check-fail|tests/safety/mutable_reference_field_element_reject.tl|-|cannot mutably borrow borrowed place
+mutable_reference_reborrow_outer_live_reject|check-fail|tests/safety/mutable_reference_reborrow_outer_live_reject.tl|-|cannot assign to borrowed place `items.#array.0`
 mutable_reference_by_value_binding_reject|check-fail|tests/safety/mutable_reference_by_value_binding_reject.tl|-|mutable borrow of by-value place is only supported as an immediate call argument
 mutable_reference_scalar_binding_reject|check-fail|tests/safety/mutable_reference_scalar_binding_reject.tl|-|mutable borrow of by-value place is only supported as an immediate call argument
 auto_borrow_temporary_reject|check-fail|tests/safety/auto_borrow_temporary_reject.tl|-|borrow requires a local, parameter, or aggregate place

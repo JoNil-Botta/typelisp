@@ -3277,6 +3277,22 @@
         (lsp-write-error id -32600 "Document not found")
         (LspContinue docs))]))
 
+;; Helper: get offset from LspDeclEntry start position
+(define (lsp-offset-from-entry-start
+  [text : String]
+  [entry : LspDeclEntry]) : i64
+  (lsp-offset-at-position text
+    (- (struct-get entry form-start-line) 1)
+    (- (struct-get entry form-start-col) 1)))
+
+;; Helper: get offset from LspDeclEntry end position
+(define (lsp-offset-from-entry-end
+  [text : String]
+  [entry : LspDeclEntry]) : i64
+  (lsp-offset-at-position text
+    (- (struct-get entry form-end-line) 1)
+    (- (struct-get entry form-end-col) 1)))
+
 ;; tl/structuralMove - Move a form up/down in the file
 (define (lsp-handle-tl-structural-move
   [id : Json]
@@ -3284,19 +3300,76 @@
   [docs : LspDocuments]) : LspHandleResult
   (match (lsp-get-document params docs)
     [(FoundLspDocument uri path text)
-      (let
-        [result : LspEditResult (ErrLspEdit "Not yet implemented")]
-        (match result
-          [(OkLspEdit new-text)
-            (begin
-              (lsp-write-response id (lsp-json-object2
-                "success" (JsonBool true)
-                "text" (JsonString new-text)))
-              (LspContinue docs))]
-          [(ErrLspEdit message)
-            (begin
-              (lsp-write-error id -32600 message)
-              (LspContinue docs))]))]
+      (match (lsp-json-string-field params "name")
+        [(OkLspJsonText name)
+          (match (lsp-json-string-field params "direction")
+            [(OkLspJsonText direction)
+              (let
+                [text-copy : String (string-copy-borrowed (& text))]
+                [decls : LspDeclList (lsp-scan-decls text-copy)]
+                [i : i64 0]
+                [n : i64 (lsp-decl-list-len decls)]
+                [found-idx : i64 -1]
+                (begin
+                  (while (and (< i n) (= found-idx -1))
+                    (let
+                      [entry : LspDeclEntry (lsp-decl-list-get decls i)]
+                      (if (string-eq (struct-get entry name) name)
+                        (set! found-idx i)
+                        (set! i (+ i 1)))))
+                  (if (= found-idx -1)
+                    (begin
+                      (lsp-write-error id -32600 "Declaration not found")
+                      (LspContinue docs))
+                    (let
+                      [target-idx : i64
+                        (if (string-eq direction "up")
+                          (- found-idx 1)
+                          (if (string-eq direction "down")
+                            (+ found-idx 1)
+                            -1))]
+                      (if (or (< target-idx 0) (>= target-idx n) (= target-idx -1))
+                        (begin
+                          (lsp-write-error id -32600 "Invalid direction or cannot move further")
+                          (LspContinue docs))
+                        (let
+                          [found-entry : LspDeclEntry (lsp-decl-list-get decls found-idx)]
+                          [target-entry : LspDeclEntry (lsp-decl-list-get decls target-idx)]
+                          [found-first : bool (< found-idx target-idx)]
+                          [first-entry : LspDeclEntry (if found-first found-entry target-entry)]
+                          [second-entry : LspDeclEntry (if found-first target-entry found-entry)]
+                          [first-start : i64 (lsp-offset-from-entry-start text first-entry)]
+                          [first-end : i64 (lsp-offset-from-entry-end text first-entry)]
+                          [second-start : i64 (lsp-offset-from-entry-start text second-entry)]
+                          [second-end : i64 (lsp-offset-from-entry-end text second-entry)]
+                          [text-before : String (substring text 0 first-start)]
+                          [second-text : String (substring text second-start (- second-end second-start))]
+                          [middle : String (substring text first-end (- second-start first-end))]
+                          [first-text : String (substring text first-start (- first-end first-start))]
+                          [text-after : String (substring text second-end (- (string-length text) second-end))]
+                          [result : String ""]
+                          (begin
+                            (set! result text-before)
+                            (set! result (string-append result second-text))
+                            (set! result (string-append result middle))
+                            (set! result (string-append result first-text))
+                            (set! result (string-append result text-after))
+                            (let
+                              [formatted : String (format-rules-render-source-width result 80)]
+                              (begin
+                                (lsp-write-response id
+                                  (lsp-json-object2
+                                    "success" (JsonBool true)
+                                    "text" (JsonString formatted)))
+                                (LspContinue docs))))))))))]
+            [(MissingLspJsonText)
+              (begin
+                (lsp-write-error id -32600 "Missing direction parameter")
+                (LspContinue docs))])]
+        [(MissingLspJsonText)
+          (begin
+            (lsp-write-error id -32600 "Missing name parameter")
+            (LspContinue docs))])]
     [(MissingLspDocument)
       (begin
         (lsp-write-error id -32600 "Document not found")

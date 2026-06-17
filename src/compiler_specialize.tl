@@ -8,6 +8,11 @@
 (import "../stdlib/string.tl")
 (import "../stdlib/hashmap.tl")
 
+(defstruct GenRegistry
+  (index StringI64Map)
+  (decls (Array AstDecl))
+  (len i64))
+
 (defenum SpecTemplate
   (SpecTemplate String AstParamList AstType AstExpr))
 
@@ -127,10 +132,6 @@
 (defenum ResultSpecSubMatchArmList
   (OkSpecSubMatchArmList AstMatchArmList)
   (ErrSpecSubMatchArmList CompilerDiagnostic))
-
-(defenum GenRegistry
-  (GenRegistryNil)
-  (GenRegistryCons String AstDecl (Box GenRegistry)))
 
 (defenum GenMaybeEntry
   (GenNoEntry)
@@ -543,16 +544,61 @@
     "__tl_specialized_"
     (string-append name (string-append "_" (spec-values-key values)))))
 
-(define (gen-registry-cons [key : String] [decl : AstDecl] [rest : GenRegistry]) : GenRegistry
-  (GenRegistryCons key decl (box rest)))
+(define (gen-registry-empty) : GenRegistry
+  (let
+    [capacity : i64 64]
+    [decls : (Array AstDecl) (make-array AstDecl capacity)]
+    (GenRegistry (string-i64-map-with-capacity capacity) decls 0)))
 
 (define (gen-registry-lookup [registry : GenRegistry] [key : String]) : GenMaybeEntry
-  (match registry
-    [(GenRegistryNil) (GenNoEntry)]
-    [(GenRegistryCons cached-key decl rest)
-      (if (string-eq cached-key key)
-        (GenSomeEntry decl)
-        (gen-registry-lookup (box-get rest) key))]))
+  (match (string-i64-map-get (struct-get registry index) key)
+    [(StringI64MapFound slot)
+      (GenSomeEntry (array-ref (struct-get registry decls) slot))]
+    [(StringI64MapMissing) (GenNoEntry)]))
+
+(define (gen-registry-copy-decls
+  [src : (Array AstDecl)]
+  [dst : (Array AstDecl)]
+  [index : i64]
+  [count : i64]) : unit
+  (if (>= index count)
+    unit
+    (begin
+      (array-set! dst index (array-ref src index))
+      (gen-registry-copy-decls src dst (+ index 1) count))))
+
+(define (gen-registry-grow [registry : GenRegistry]) : GenRegistry
+  (let
+    [old-index : StringI64Map (struct-get registry index)]
+    [old-decls : (Array AstDecl) (struct-get registry decls)]
+    [old-len : i64 (struct-get registry len)]
+    [old-capacity : i64 (array-length old-decls)]
+    [new-capacity : i64
+      (if (< old-capacity 1)
+        1
+        (* old-capacity 2))]
+    [new-decls : (Array AstDecl) (make-array AstDecl new-capacity)]
+    (begin
+      (gen-registry-copy-decls old-decls new-decls 0 old-len)
+      (GenRegistry old-index new-decls old-len))))
+
+(define (gen-registry-insert
+  [registry : GenRegistry]
+  [key : String]
+  [decl : AstDecl]) : GenRegistry
+  (let
+    [ready : GenRegistry
+      (if (>=
+        (struct-get registry len)
+        (array-length (struct-get registry decls)))
+        (gen-registry-grow registry)
+        registry)]
+    [slot : i64 (struct-get ready len)]
+    [decls : (Array AstDecl) (struct-get ready decls)]
+    [index : StringI64Map (struct-get ready index)]
+    (begin
+      (array-set! decls slot decl)
+      (GenRegistry (string-i64-map-put index key slot) decls (+ slot 1)))))
 
 (define (gen-decl-visible-name [decl : AstDecl]) : SpecMaybeString
   (match decl
@@ -5761,7 +5807,7 @@
             (ast-decl-comptime-decl-with-meta
               (AstSomeGeneratedDeclMeta generator item args key)
               template))
-          (gen-registry-cons key template registry)
+          (gen-registry-insert registry key template)
           module)]
       [(GenSomeEntry existing)
         (if (gen-decl-eq? existing template)
@@ -5837,7 +5883,7 @@
       [(GenNoEntry)
         (OkGenDecl
           (gen-single-decl-list template)
-          (gen-registry-cons key template registry)
+          (gen-registry-insert registry key template)
           module)]
       [(GenSomeEntry existing)
         (if (gen-decl-eq? existing template)
@@ -6188,7 +6234,7 @@
         [decls : AstDeclList (box-get decls-box)]
         [env : CtfeEnv
           (ctfe-env-with-reflections (ctfe-reflections-from-program program))]
-        (match (gen-rewrite-decls decls "" GenRegistryNil env)
+        (match (gen-rewrite-decls decls "" (gen-registry-empty) env)
           [(OkGenDecls rewritten _ _) (OkGenProgram (ast-program rewritten))]
           [(ErrGenDecls diag) (ErrGenProgram diag)]))]))
 
@@ -6207,7 +6253,7 @@
           paths
           fallback-path
           ""
-          GenRegistryNil
+          (gen-registry-empty)
           env)
           [(OkGenDeclsWithPaths rewritten rewritten-paths _ _)
             (OkGenProgramWithPaths (ast-program rewritten) rewritten-paths)]
@@ -10352,6 +10398,20 @@
         [(ErrSpecProgram _) false])]
     [(ErrAstProgram _) false]))
 
+(define (compiler-generated-registry-map-ok?) : bool
+  (let
+    [decl : AstDecl
+      (ast-decl-def-struct
+        "RegistryBox"
+        AstStructReprDefault
+        AstStructNoCleanup
+        AstFieldDefNil)]
+    [registry : GenRegistry
+      (gen-registry-insert (gen-registry-empty) "generated-key" decl)]
+    (match (gen-registry-lookup registry "generated-key")
+      [(GenSomeEntry found) (gen-decl-eq? found decl)]
+      [(GenNoEntry) false])))
+
 (define (compiler-specialize-self-test) : i64
   (begin
     (unless (compiler-specialize-type-param-ok?) (return 0))
@@ -10403,4 +10463,5 @@
     (unless (compiler-generated-json-derive-bundle-ok?) (return 0))
     (unless (compiler-generated-json-derive-unsupported-rejected?) (return 0))
     (unless (compiler-generated-decl-origin-preserved-ok?) (return 0))
+    (unless (compiler-generated-registry-map-ok?) (return 0))
     1))

@@ -38,17 +38,18 @@ if [ ! -x "$COMPILER" ]; then
     exit 1
 fi
 
-# Retry transient Windows crashes (#1204): the typelisp build and the
-# native/selfhost programs run on Windows intermittently SEGFAULT with no useful
-# output. `is_crash_code` (132/134/139) lets us retry ONLY those transient
-# crashes, never a genuine non-zero exit (so an expected failure still fails).
+# Retry transient compiler crashes (#1204, #3150): long manifest runs can hit
+# signal-shaped failures that pass immediately in isolation. `is_crash_code`
+# (132/134/139 and Windows NTSTATUS crash codes) lets us retry ONLY those
+# transient crashes, never a genuine non-zero exit (so an expected failure still
+# fails).
 . "$ROOT/scripts/lib-retry.sh"
 # Default 6 (not 3): large corpus binaries like compiler_lower_smoke hit the
-# #1204 Windows segfault at a high enough rate that 3 attempts can all crash
-# (observed 3/3 on PR #1225), so the crash-only retry needs more headroom.
+# crash path at a high enough rate that 3 attempts can all crash (observed 3/3
+# on PR #1225), so the crash-only retry needs more headroom.
 INTEGRATION_ATTEMPTS="${VERIFY_INTEGRATION_ATTEMPTS:-6}"
 
-# Run a `typelisp build`/`compile` invocation, retrying a transient #1204 crash.
+# Run a `typelisp build`/`compile` invocation, retrying a transient crash.
 # Output flows to the caller's streams; sets `build_rc` to the final exit code.
 build_with_retry() {
     _bwr_attempt=0
@@ -59,7 +60,7 @@ build_with_retry() {
         build_rc=$?
         set -e
         if is_crash_code "$build_rc" && [ "$_bwr_attempt" -lt "$INTEGRATION_ATTEMPTS" ]; then
-            echo "  retry ($_bwr_attempt/$INTEGRATION_ATTEMPTS): build crash exit $build_rc — likely transient (#1204)" >&2
+            echo "  retry ($_bwr_attempt/$INTEGRATION_ATTEMPTS): build crash exit $build_rc — likely transient (#1204/#3150)" >&2
         else
             break
         fi
@@ -67,7 +68,7 @@ build_with_retry() {
 }
 
 # Run a `$COMPILER run <fixture.tl> …` emit step, retrying ONLY a transient
-# #1204 crash (these fixtures emit assembly deterministically, so a retry safely
+# crash (these fixtures emit assembly deterministically, so a retry safely
 # re-emits) and aborting on a real non-crash failure or exhausted retries — the
 # same fail-fast behavior the bare `set -e` invocations had before guarding.
 run_fixture_with_retry() {
@@ -1252,8 +1253,9 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
         # The compile-only bootstrapped stage1 has `compile` but not `build`, so
         # emit Windows asm then assemble (clang) + link (lld-link), mirroring the
         # Linux compile->as->ld path below.
-        if ! "$COMPILER" compile "$work_src" --target windows-x86_64 --cfg windows -o "$asm" \
-            > "$build_stdout" 2> "$build_stderr"; then
+        build_with_retry "$COMPILER" compile "$work_src" --target windows-x86_64 --cfg windows -o "$asm" \
+            > "$build_stdout" 2> "$build_stderr"
+        if [ "$build_rc" -ne 0 ]; then
             if should_skip_staged "$requires_symbol" "$build_stderr"; then
                 echo "[integration] SKIP $name (awaiting stage0 compiler support for '$requires_symbol')"
                 skipped=$((skipped + 1))
@@ -1315,7 +1317,8 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
             continue
         fi
     else
-        if ! "$COMPILER" compile "$work_src" -o "$asm" > "$build_stdout" 2> "$build_stderr"; then
+        build_with_retry "$COMPILER" compile "$work_src" -o "$asm" > "$build_stdout" 2> "$build_stderr"
+        if [ "$build_rc" -ne 0 ]; then
             if should_skip_staged "$requires_symbol" "$build_stderr"; then
                 echo "[integration] SKIP $name (awaiting stage0 compiler support for '$requires_symbol')"
                 skipped=$((skipped + 1))

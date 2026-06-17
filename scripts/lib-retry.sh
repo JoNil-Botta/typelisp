@@ -1,12 +1,13 @@
 # lib-retry.sh — shared POSIX-sh retry helper for CI verify-* scripts.
 #
-# The Windows `typelisp` build intermittently SEGFAULTs mid-compile (#1204): an
-# arbitrary `typelisp` invocation crashes with a non-zero exit and no useful
-# output. Scripts that loop one invocation per fixture therefore have a high
-# cumulative chance of a spurious failure on an otherwise-green PR. This helper
-# retries an invocation that exits non-zero: a transient segfault clears on a
-# later attempt, while a genuine failure reproduces across every attempt and
-# still fails (retries only mask transients, never real failures).
+# Long verify-* loops can hit transient compiler/process crashes (#1204, #3150):
+# an arbitrary `typelisp` invocation exits non-zero with no useful output, then
+# passes immediately in isolation. Scripts that loop one invocation per fixture
+# therefore have a high cumulative chance of a spurious failure on an
+# otherwise-green PR. This helper retries an invocation that exits non-zero: a
+# transient crash clears on a later attempt, while a genuine failure reproduces
+# across every attempt and still fails (retries only mask transients, never real
+# failures).
 #
 # Source it (not exec): `. "$ROOT/scripts/lib-retry.sh"`. POSIX sh only — no
 # `local`, arrays, or bashisms.

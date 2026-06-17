@@ -18,6 +18,15 @@
 ;: Runtime bounds-check trap shared with array/string indexing.
 (extern (tl_oob_abort) : never)
 
+;: Runtime helper that builds a borrowed string view record without copying
+;: bytes. The public wrappers below perform bounds checks before calling it.
+(cfg
+  feature-str-view
+  (unsafe
+    (extern (tl_str_view [text : (& text str)] [start : i64] [len : i64]) : (&
+      text
+      str))))
+
 ;: Runtime active-arena allocator used by integer rendering.
 (extern (string-runtime-alloc [arg0 : i64]) : (MutPtr u8) (:symbol "tl_alloc"))
 
@@ -310,6 +319,17 @@
     (substring-bounds-check text start len)
     (substring-copy-checked text start len)))
 
+;: Return a checked borrowed substring view without copying bytes.
+(cfg
+  feature-str-view
+  (define (substring-view [text : (& text str)] [start : i64] [len : i64]) : (&
+      text
+      str)
+    (begin
+      (substring-bounds-check text start len)
+      (unsafe
+        (tl_str_view text start len)))))
+
 ;: Return a fresh active-arena owned substring copied from owned text.
 (define (substring [text : String] [start : i64] [len : i64]) : String
   (substring-borrowed (& text) start len))
@@ -317,6 +337,14 @@
 ;: Borrowed alias for `substring-borrowed`.
 (define (string-slice-borrowed [text : (& text str)] [start : i64] [len : i64]) : String
   (substring-borrowed text start len))
+
+;: Borrowed alias for `substring-view`.
+(cfg
+  feature-str-view
+  (define (string-slice-view [text : (& text str)] [start : i64] [len : i64]) : (&
+      text
+      str)
+    (substring-view text start len)))
 
 ;: Alias for `substring`.
 (define (string-slice [text : String] [start : i64] [len : i64]) : String
@@ -406,6 +434,21 @@
 (define (string->int [text : String]) : i64
   (string->int-borrowed (& text)))
 
+;: Return a borrowed view of text with leading whitespace removed.
+(cfg
+  feature-str-view
+  (define (string-trim-left-view [s : (& s str)]) : (& s str)
+    (let
+      [n : i64 (string-length s)]
+      [i : i64 0]
+      [done : bool false]
+      (begin
+        (while (and (not done) (< i n))
+          (if (is-char-whitespace (string-ref s i))
+            (set! i (+ i 1))
+            (set! done true)))
+        (substring-view s i (- n i))))))
+
 ;: Trim leading whitespace from borrowed text.
 (define (string-trim-left [s : (& s str)]) : String
   (let
@@ -419,6 +462,21 @@
           (set! done true)))
       (substring-borrowed s i (- n i)))))
 
+;: Return a borrowed view of text with trailing whitespace removed.
+(cfg
+  feature-str-view
+  (define (string-trim-right-view [s : (& s str)]) : (& s str)
+    (let
+      [n : i64 (string-length s)]
+      [i : i64 (- n 1)]
+      [done : bool false]
+      (begin
+        (while (and (not done) (>= i 0))
+          (if (is-char-whitespace (string-ref s i))
+            (set! i (- i 1))
+            (set! done true)))
+        (substring-view s 0 (+ i 1))))))
+
 ;: Trim trailing whitespace from borrowed text.
 (define (string-trim-right [s : (& s str)]) : String
   (let
@@ -431,6 +489,27 @@
           (set! i (- i 1))
           (set! done true)))
       (substring-borrowed s 0 (+ i 1)))))
+
+;: Return a borrowed view of text with leading and trailing whitespace removed.
+(cfg
+  feature-str-view
+  (define (string-trim-view [s : (& s str)]) : (& s str)
+    (let
+      [n : i64 (string-length s)]
+      [start : i64 0]
+      [end : i64 (- n 1)]
+      [done-left : bool false]
+      [done-right : bool false]
+      (begin
+        (while (and (not done-left) (< start n))
+          (if (is-char-whitespace (string-ref s start))
+            (set! start (+ start 1))
+            (set! done-left true)))
+        (while (and (not done-right) (>= end start))
+          (if (is-char-whitespace (string-ref s end))
+            (set! end (- end 1))
+            (set! done-right true)))
+        (substring-view s start (- (+ end 1) start))))))
 
 ;: Trim whitespace from both ends of borrowed text.
 (define (string-trim [s : (& s str)]) : String

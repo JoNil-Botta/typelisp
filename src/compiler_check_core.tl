@@ -33,6 +33,11 @@
               (int->string (- (profile-now-ms) compiler-check-profile-start-ms))
               "|0|0|0\n")))))))
 
+(define (compiler-check-language-cfgs) : SymI64Env
+  (compiler-cfg-enable
+    (compiler-cfg-enable (compiler-cfg-empty) "feature-ptr-addr-of")
+    "feature-str-view"))
+
 (define (compiler-check-diagnostic-with-fallback-path
   [diag : CompilerDiagnostic]
   [path : String]) : CompilerDiagnostic
@@ -125,12 +130,16 @@
         path
         prelude-decls
         prelude-paths
-        (compiler-load-file-with-paths-and-roots path prelude-seen stdlib-roots)
+        (compiler-load-file-with-paths-and-roots-cfg
+          path
+          prelude-seen
+          stdlib-roots
+          (compiler-check-language-cfgs))
         stdlib-roots
         (compiler-typecheck-prefix-cache-scope
           "typecheck-prefix-check"
           stdlib-roots
-          (compiler-cfg-empty)))]
+          (compiler-check-language-cfgs)))]
     [(ErrCompilerLoadWithPaths diag)
       (begin
         (cfg compile-profile (compiler-check-profile-finish "load"))
@@ -143,9 +152,10 @@
     (compiler-check-file-loaded-with-prelude
       path
       (string-vec-new)
-      (compiler-load-core-macro-prelude-with-roots
+      (compiler-load-core-macro-prelude-with-roots-cfg
         (sym-i64-empty)
-        (string-vec-new)))))
+        (string-vec-new)
+        (compiler-check-language-cfgs)))))
 
 (define (compiler-check-file-with-roots
   [path : String]
@@ -156,7 +166,10 @@
     (compiler-check-file-loaded-with-prelude
       path
       stdlib-roots
-      (compiler-load-core-macro-prelude-with-roots (sym-i64-empty) stdlib-roots))))
+      (compiler-load-core-macro-prelude-with-roots-cfg
+        (sym-i64-empty)
+        stdlib-roots
+        (compiler-check-language-cfgs)))))
 
 (define (compiler-check-package-file-with-roots
   [path : String]
@@ -171,23 +184,24 @@
       stdlib-roots
       manifest-dir
       deps
-      (compiler-cfg-empty))
+      (compiler-check-language-cfgs))
       [(OkCompilerLoadWithPaths prelude-decls prelude-paths _ prelude-seen)
         (compiler-check-loaded-with-prelude-cache
           path
           prelude-decls
           prelude-paths
-          (compiler-load-package-file-with-paths-and-roots
+          (compiler-load-package-file-with-paths-and-roots-cfg
             path
             prelude-seen
             stdlib-roots
             manifest-dir
-            deps)
+            deps
+            (compiler-check-language-cfgs))
           stdlib-roots
           (compiler-typecheck-prefix-cache-scope
             "typecheck-prefix-check"
             stdlib-roots
-            (compiler-cfg-empty)))]
+            (compiler-check-language-cfgs)))]
       [(ErrCompilerLoadWithPaths diag)
         (begin
           (cfg compile-profile (compiler-check-profile-finish "load"))
@@ -207,12 +221,12 @@
       stdlib-roots
       manifest-dir
       deps
-      (compiler-cfg-empty))
+      (compiler-check-language-cfgs))
       [(OkCompilerLoadWithPaths prelude-decls prelude-paths _ prelude-seen)
         (match (compiler-load-parse-source-diagnostic-escaping
           path
           source
-          (compiler-cfg-empty))
+          (compiler-check-language-cfgs))
           [(OkAstProgramDiagnostic program)
             (compiler-check-loaded-with-prelude-cache
               path
@@ -226,12 +240,12 @@
                 AstNoModuleName
                 manifest-dir
                 deps
-                (compiler-cfg-empty))
+                (compiler-check-language-cfgs))
               stdlib-roots
               (compiler-typecheck-prefix-cache-scope
                 "typecheck-prefix-check"
                 stdlib-roots
-                (compiler-cfg-empty)))]
+                (compiler-check-language-cfgs)))]
           [(ErrAstProgramDiagnostic diag)
             (begin
               (cfg compile-profile (compiler-check-profile-finish "load"))
@@ -245,24 +259,26 @@
   (begin
     (compiler-check-reset-pools!)
     (cfg compile-profile (compiler-check-profile-start))
-    (match (compiler-load-core-macro-prelude-with-roots
+    (match (compiler-load-core-macro-prelude-with-roots-cfg
       (sym-i64-empty)
-      (string-vec-new))
+      (string-vec-new)
+      (compiler-check-language-cfgs))
       [(OkCompilerLoadWithPaths prelude-decls prelude-paths _ prelude-seen)
         (compiler-check-loaded-with-prelude-cache
           path
           prelude-decls
           prelude-paths
-          (compiler-load-source-with-paths-and-roots
+          (compiler-load-source-with-paths-and-roots-cfg
             path
             source
             prelude-seen
-            (string-vec-new))
+            (string-vec-new)
+            (compiler-check-language-cfgs))
           (string-vec-new)
           (compiler-typecheck-prefix-cache-scope
             "typecheck-prefix-check"
             (string-vec-new)
-            (compiler-cfg-empty)))]
+            (compiler-check-language-cfgs)))]
       [(ErrCompilerLoadWithPaths diag)
         (begin
           (cfg compile-profile (compiler-check-profile-finish "load"))
@@ -275,24 +291,26 @@
   (begin
     (compiler-check-reset-pools!)
     (cfg compile-profile (compiler-check-profile-start))
-    (match (compiler-load-core-macro-prelude-with-roots
+    (match (compiler-load-core-macro-prelude-with-roots-cfg
       (sym-i64-empty)
-      stdlib-roots)
+      stdlib-roots
+      (compiler-check-language-cfgs))
       [(OkCompilerLoadWithPaths prelude-decls prelude-paths _ prelude-seen)
         (compiler-check-loaded-with-prelude-cache
           path
           prelude-decls
           prelude-paths
-          (compiler-load-source-with-paths-and-roots
+          (compiler-load-source-with-paths-and-roots-cfg
             path
             source
             prelude-seen
-            stdlib-roots)
+            stdlib-roots
+            (compiler-check-language-cfgs))
           stdlib-roots
           (compiler-typecheck-prefix-cache-scope
             "typecheck-prefix-check"
             stdlib-roots
-            (compiler-cfg-empty)))]
+            (compiler-check-language-cfgs)))]
       [(ErrCompilerLoadWithPaths diag)
         (begin
           (cfg compile-profile (compiler-check-profile-finish "load"))

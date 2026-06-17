@@ -806,9 +806,7 @@
     true
     (if (>= (+ start index) (string-length haystack))
       false
-      (if (char-eq
-        (string-ref haystack (+ start index))
-        (string-ref needle index))
+      (if (= (string-ref haystack (+ start index)) (string-ref needle index))
         (compiler-object-string-prefix-at? haystack needle start (+ index 1))
         false))))
 

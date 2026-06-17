@@ -29968,12 +29968,14 @@
     ";"))
 
 (define (tc-prefix-key-start [scope : String]) : String
-  (str-cat "tc-prefix-v2;" (int->string (string-length scope)) ":" scope ";"))
+  (str-cat "tc-prefix-v3;" (int->string (string-length scope)) ":" scope ";"))
 
 (define (tc-prefix-default-cache-scope) : String
   "direct")
 
-(define (tc-prefix-cache-safe-path? [path : String] [stdlib-roots : StringVec]) : bool
+(define (tc-prefix-cache-stdlib-path?
+  [path : String]
+  [stdlib-roots : StringVec]) : bool
   (if (compiler-load-stdlib-import? path)
     true
     (let
@@ -29986,6 +29988,20 @@
           0
           (string-vec-len stdlib-roots))))))
 
+(define (tc-prefix-cache-module-marker? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDeclModule name) (> (string-length (intern-str name)) 0)]
+    [_ false]))
+
+(define (tc-prefix-cache-decl-safe?
+  [decl-path : String]
+  [decl : AstDecl]
+  [stdlib-roots : StringVec]
+  [same-path-module-safe : bool]) : bool
+  (if (tc-prefix-cache-stdlib-path? decl-path stdlib-roots)
+    true
+    (or same-path-module-safe (tc-prefix-cache-module-marker? decl))))
+
 (define (tc-prefix-candidate-from
   [decls : AstDeclList]
   [paths : AstDeclPathList]
@@ -29993,6 +30009,8 @@
   [entry-path : String]
   [count : i64]
   [module : String]
+  [active-path : String]
+  [active-path-module-safe : bool]
   [key : String]) : TcPrefixCandidate
   (match decls
     [(AstDeclNil) (TcNoPrefixCandidate)]
@@ -30010,11 +30028,22 @@
                 [path-rest : AstDeclPathList (box-get path-rest)]
                 path-rest)]
             [(AstDeclPathNil) AstDeclPathNil])]
+        [same-path : bool (string-eq active-path decl-path)]
+        [same-path-module-safe : bool
+          (if same-path
+            active-path-module-safe
+            false)]
+        [decl-module-safe : bool
+          (or same-path-module-safe (tc-prefix-cache-module-marker? decl))]
         (if (string-eq decl-path entry-path)
           (if (> count 0)
             (TcSomePrefixCandidate key count module)
             (TcNoPrefixCandidate))
-          (if (tc-prefix-cache-safe-path? decl-path stdlib-roots)
+          (if (tc-prefix-cache-decl-safe?
+            decl-path
+            decl
+            stdlib-roots
+            same-path-module-safe)
             (let
               [next-module : String
                 (match decl
@@ -30027,6 +30056,8 @@
                 entry-path
                 (+ count 1)
                 next-module
+                decl-path
+                decl-module-safe
                 (tc-prefix-key-add key decl-path decl)))
             (if (> count 0)
               (TcSomePrefixCandidate key count module)
@@ -30049,6 +30080,8 @@
         entry-path
         0
         ""
+        ""
+        false
         (tc-prefix-key-start cache-scope)))))
 
 (define (tc-decl-list-take [decls : AstDeclList] [count : i64]) : AstDeclList

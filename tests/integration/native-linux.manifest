@@ -10,6 +10,7 @@ auto_borrow_call|tests/integration/auto_borrow_call.tl|42|-|-|-
 implicit_core_prelude|tests/integration/implicit_core_prelude.tl|42|-|-|-
 macro_forward_order|tests/integration/macro_forward_order.tl|42|-|-|-
 compile_profile_macro_detail|tests/integration/compile_profile_macro_detail.tl|42|-|-|stdlib/string.tl stdlib/core_macros.tl stdlib/str_cat.tl
+call_eval_order|tests/integration/call_eval_order.tl|42|-|-|-
 include_bin|tests/integration/include_bin.tl|42|-|-|include_bin_payload.bin
 c_abi_aggregate_color|tests/integration/c_abi_aggregate_color.tl|42|-|-|benchmarks/c_abi_aggregate_color/baseline.c
 c_abi_f32_scalar|tests/integration/c_abi_f32_scalar.tl|42|-|-|benchmarks/c_abi_f32_scalar/baseline.c
@@ -179,6 +180,7 @@ register_resident_reference|tests/integration/register_resident_reference.tl|95|
 register_float_aggregate_f64|tests/integration/register_float_aggregate_f64.tl|42|-|-|-
 register_float_aggregate_f32|tests/integration/register_float_aggregate_f32.tl|42|-|-|-
 in_arena|tests/integration/in_arena.tl|42|-|-|-
+resource_with_order|tests/integration/resource_with_order.tl|42|-|-|-
 sync_channel_thread_runtime|tests/integration/sync_channel_thread_runtime.tl|42|-|-|stdlib/sync.tl stdlib/thread.tl
 sync_mutex_thread_runtime|tests/integration/sync_mutex_thread_runtime.tl|42|-|-|stdlib/sync.tl stdlib/thread.tl
 box_take_set|tests/integration/box_take_set.tl|42|-|-|-|requires-stage0-diagnostic:parse: set! target must be a name or struct field place

@@ -76,6 +76,27 @@
     [(Escaped bundle) (bundle-ok? bundle seed)]
     [NoEscape false]))
 
+(define (scratch-rewound? [scratch : i64] [seed : i64]) : bool
+  (let
+    [home : i64 (arena-current)]
+    [before : i64 0]
+    [after : i64 0]
+    (begin
+      (unsafe
+        (arena-set! scratch))
+      (set! before (arena-mark))
+      (unsafe
+        (arena-set! home))
+      (let
+        [items : (Array String) (escape-items scratch seed)]
+        (begin
+          (unsafe
+            (arena-set! scratch))
+          (set! after (arena-mark))
+          (unsafe
+            (arena-set! home))
+          (and (= before after) (items-ok? items seed)))))))
+
 (define (main) : i64
   (let
     [scratch : i64 (arena-make)]
@@ -93,6 +114,7 @@
       (outcome-ok? noise 99)
       (items-ok? scratch-items-out 110)
       (cell-ok? scratch-cell-out 120 3)
-      (outcome-ok? scratch-bundle-out 130))
+      (outcome-ok? scratch-bundle-out 130)
+      (scratch-rewound? scratch 140))
       42
       1)))

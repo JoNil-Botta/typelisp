@@ -6,6 +6,7 @@
 (import "compiler_object_coff.tl")
 (import "compiler_object_elf.tl")
 (import "../stdlib/string.tl")
+(import "../stdlib/str_cat.tl")
 
 (define (compiler-backend-smoke-source) : String
   "(define answer : i64 40)
@@ -385,12 +386,8 @@
 
 (define (compiler-backend-call-or-jmp-ok? [asm : String] [symbol : String]) : bool
   (or
-    (compiler-backend-string-contains?
-      asm
-      (backend-cat3 "    call " symbol "\n"))
-    (compiler-backend-string-contains?
-      asm
-      (backend-cat3 "    jmp " symbol "\n"))))
+    (compiler-backend-string-contains? asm (str-cat "    call " symbol "\n"))
+    (compiler-backend-string-contains? asm (str-cat "    jmp " symbol "\n"))))
 
 (define (compiler-backend-asm-ok? [asm : String]) : bool
   (and
@@ -412,14 +409,10 @@
       true)))
 
 (define (compiler-backend-alloc-generic-call-text [size : i64] [reg : String]) : String
-  (backend-cat4
-    "    movq $"
-    (int->string size)
-    (backend-cat3 ", " reg "\n    call tl_alloc\n")
-    ""))
+  (str-cat "    movq $" (int->string size) ", " reg "\n    call tl_alloc\n" ""))
 
 (define (compiler-backend-alloc-fixed-call-text [size : i64]) : String
-  (backend-cat3 "    call .L_tl_alloc" (int->string size) "\n"))
+  (str-cat "    call .L_tl_alloc" (int->string size) "\n"))
 
 (define (compiler-backend-string-contains-inline-alloc-size?
   [asm : String]
@@ -627,12 +620,12 @@
           (backend-and8
             (compiler-backend-string-contains?
               asm
-              (backend-cat3 base-label ":\n" ""))
+              (str-cat base-label ":\n" ""))
             (>= (compiler-backend-string-count asm "    .quad 0\n") 2)
             (not
               (compiler-backend-string-contains?
                 asm
-                (backend-cat3 " - " base-label "\n")))
+                (str-cat " - " base-label "\n")))
             (not
               (compiler-backend-string-contains?
                 asm
@@ -1281,7 +1274,7 @@
     (compiler-backend-print-runtime-target-ok? (BackendTargetWindows))))
 
 (define (compiler-backend-varargs-ffi-common-source [symbol : String]) : String
-  (backend-cat3
+  (str-cat
     "(extern (tl_alloc [arg0 : i64]) : (MutPtr u8))
 (extern (snprintf [buf : (MutPtr u8)] [len : i64] [fmt : (Ptr u8)] [value : ...f64]) : i32 (:symbol \""
     symbol
@@ -2062,30 +2055,28 @@
         (or
           (compiler-backend-string-contains?
             asm
-            (backend-cat3 "    .comm " symbol ", 8, 8\n"))
+            (str-cat "    .comm " symbol ", 8, 8\n"))
           (compiler-backend-string-contains?
             asm
-            (backend-cat3 "    .comm " symbol ", 16, 8\n")))
+            (str-cat "    .comm " symbol ", 16, 8\n")))
         (compiler-backend-string-contains?
           asm
-          (backend-cat3 "    call " init-symbol "\n"))
+          (str-cat "    call " init-symbol "\n"))
         (compiler-backend-string-contains?
           asm
-          (backend-cat3 "    movq %rax, " symbol "(%rip)\n"))
-        (compiler-backend-string-contains?
-          asm
-          (backend-cat3 init-symbol ":\n" "")))
+          (str-cat "    movq %rax, " symbol "(%rip)\n"))
+        (compiler-backend-string-contains? asm (str-cat init-symbol ":\n" "")))
       (or
         (compiler-backend-string-contains?
           asm
-          (backend-cat3 "    movq " symbol "(%rip), %rax\n"))
+          (str-cat "    movq " symbol "(%rip), %rax\n"))
         (compiler-backend-string-contains?
           asm
-          (backend-cat3 "    movq " symbol "(%rip), %r10\n"))
+          (str-cat "    movq " symbol "(%rip), %r10\n"))
         ;; #2386: a register-group global is read via its address.
         (compiler-backend-string-contains?
           asm
-          (backend-cat3 "    leaq " symbol "(%rip), %r10\n"))))))
+          (str-cat "    leaq " symbol "(%rip), %r10\n"))))))
 
 (define (compiler-backend-aggregate-global-init-shape-ok?) : bool
   (match (compiler-backend-emit-source
@@ -3982,34 +3973,32 @@
       13)))
 
 (define (compiler-backend-avx2-map-source [elem : String]) : String
-  (backend-cat5
+  (str-cat
     "(define (fill [a : (Array "
     elem
     ")] [b : (Array "
     elem
-    (backend-cat3
-      ")] [out : (Array "
-      elem
-      ")] [n : i64]) : unit
+    ")] [out : (Array "
+    elem
+    ")] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (+ (array-ref a i) (array-ref b i)))))")))
+    (array-set! out i (+ (array-ref a i) (array-ref b i)))))"))
 
 (define (compiler-backend-uniform-map-source [elem : String]) : String
-  (backend-cat5
+  (str-cat
     "(define (fill [a : (Array "
     elem
     ")] [b : (Array "
     elem
-    (backend-cat5
-      ")] [out : (Array "
-      elem
-      ")] [n : i64] [r : "
-      elem
-      "]) : unit
+    ")] [out : (Array "
+    elem
+    ")] [n : i64] [r : "
+    elem
+    "]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (+ (+ (array-ref a i) (array-ref b i)) r))))")))
+    (array-set! out i (+ (+ (array-ref a i) (array-ref b i)) r))))"))
 
 (define (compiler-backend-uniform-zip-source) : String
   "(define (fill [a : (Array i64)] [b : (Array i64)] [c : (Array i64)] [out : (Array i64)] [n : i64] [r : i64]) : unit
@@ -6197,9 +6186,8 @@
   [asm : String]
   [name : String]) : bool
   (and
-    (not
-      (compiler-backend-string-contains? asm (backend-cat3 ".globl " name "\n")))
-    (not (compiler-backend-string-contains? asm (backend-cat3 "\n" name ":\n")))))
+    (not (compiler-backend-string-contains? asm (str-cat ".globl " name "\n")))
+    (not (compiler-backend-string-contains? asm (str-cat "\n" name ":\n")))))
 
 (define (compiler-backend-no-public-io-fs-runtime-symbols? [asm : String]) : bool
   (and

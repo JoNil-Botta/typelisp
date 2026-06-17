@@ -1,5 +1,5 @@
 {
   "exit": 0,
-  "stdout_contains": ["i64"],
+  "stdout_contains": ["i32", "i64"],
   "stderr_exact": ""
 }

@@ -9534,6 +9534,29 @@
                 (OkTcType (tc-contextual-result-type expected actual))
                 (OkTcType actual))]
             [(ErrTcType message) (ErrTcType message)])])]
+    [(AstExprBox inner-box)
+      (match (tc-type-strip-region (tc-resolve-type ctx expected))
+        [(AstTyBox inner-ty)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            [want : AstType (ty-node-get inner-ty)]
+            (match (tc-ensure-cleanup-resource-not-stored-expr env inner)
+              [(OkTcUnit)
+                (match (tc-expr-with-expected-or-actual ctx env inner want)
+                  [(OkTcType got)
+                    (match (tc-expect
+                      got
+                      want
+                      "typecheck: box inner type mismatch")
+                      [(OkTcUnit)
+                        (OkTcType
+                          (tc-tag-active-region
+                            env
+                            (ast-ty-box (tc-contextual-result-type want got))))]
+                      [(ErrTcUnit message) (ErrTcType message)])]
+                  [(ErrTcType message) (ErrTcType message)])]
+              [(ErrTcUnit message) (ErrTcType message)]))]
+        [_ (tc-expr ctx env expr)])]
     [_
       (if (tc-integer-literal-expr? expr)
         (tc-integer-literal-expr-with-expected ctx expr expected)
@@ -19208,7 +19231,21 @@
             (match (tc-merge-branch-type want got)
               [(OkTcType merged)
                 (tc-match-rest-types ctx env scrut-ty rest merged)]
-              [(ErrTcType _) (ErrTcType (tc-match-arm-merge-message want got))])]
+              [(ErrTcType _)
+                (match (tc-match-arm-type-with-expected
+                  ctx
+                  env
+                  scrut-ty
+                  arm
+                  want)
+                  [(OkTcType contextual)
+                    (match (tc-merge-branch-type want contextual)
+                      [(OkTcType merged)
+                        (tc-match-rest-types ctx env scrut-ty rest merged)]
+                      [(ErrTcType _)
+                        (ErrTcType (tc-match-arm-merge-message want got))])]
+                  [(ErrTcType _)
+                    (ErrTcType (tc-match-arm-merge-message want got))])])]
           [(ErrTcType message) (ErrTcType message)]))]))
 
 (define (tc-check-match-arm-types
@@ -19890,6 +19927,81 @@
               (match (tc-spmd-value-pure-at init in-index)
                 [(OkTcUnit) (tc-spmd-value-let-bindings-pure-at rest in-index)]
                 [(ErrTcUnit message) (ErrTcUnit message)]))]))]))
+
+(define (tc-spmd-reduce-type-from-value
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [value-env : TcTypeEnv]
+  [op : AstReduceOp]
+  [init : AstExpr]
+  [value : AstExpr]) : ResultTcType
+  (match (tc-expr ctx value-env value)
+    [(OkTcType value-ty)
+      (if (tc-reduce-op-type-ok? op (tc-resolve-type ctx value-ty))
+        (match (tc-expr-with-expected-or-actual ctx env init value-ty)
+          [(OkTcType init-ty)
+            (match (tc-expect
+              init-ty
+              value-ty
+              "typecheck: spmd-reduce init and value type mismatch")
+              [(OkTcUnit) (OkTcType value-ty)]
+              [(ErrTcUnit message) (ErrTcType message)])]
+          [(ErrTcType message) (ErrTcType message)])
+        (ErrTcType (tc-reduce-op-type-msg op)))]
+    [(ErrTcType message) (ErrTcType message)]))
+
+(define (tc-spmd-reduce-type-from-value-or-message
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [value-env : TcTypeEnv]
+  [op : AstReduceOp]
+  [init : AstExpr]
+  [value : AstExpr]
+  [fallback-message : String]) : ResultTcType
+  (match (tc-spmd-reduce-type-from-value ctx env value-env op init value)
+    [(OkTcType ty) (OkTcType ty)]
+    [(ErrTcType _) (ErrTcType fallback-message)]))
+
+(define (tc-spmd-reduce-init-value-type
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [value-env : TcTypeEnv]
+  [op : AstReduceOp]
+  [init : AstExpr]
+  [value : AstExpr]) : ResultTcType
+  (match (tc-expr ctx env init)
+    [(OkTcType init-ty)
+      (if (tc-reduce-op-type-ok? op (tc-resolve-type ctx init-ty))
+        (match (tc-spmd-value-pure value)
+          [(OkTcUnit)
+            (match (tc-expr-with-expected-or-actual ctx value-env value init-ty)
+              [(OkTcType value-ty)
+                (match (tc-expect
+                  value-ty
+                  init-ty
+                  "typecheck: spmd-reduce init and value type mismatch")
+                  [(OkTcUnit) (OkTcType init-ty)]
+                  [(ErrTcUnit message)
+                    (tc-spmd-reduce-type-from-value-or-message
+                      ctx
+                      env
+                      value-env
+                      op
+                      init
+                      value
+                      message)])]
+              [(ErrTcType message)
+                (tc-spmd-reduce-type-from-value-or-message
+                  ctx
+                  env
+                  value-env
+                  op
+                  init
+                  value
+                  message)])]
+          [(ErrTcUnit message) (ErrTcType message)])
+        (ErrTcType (tc-reduce-op-type-msg op)))]
+    [(ErrTcType message) (ErrTcType message)]))
 
 (define (tc-ptr-addr-of-expr
   [ctx : TcContext]
@@ -21347,42 +21459,26 @@
                 (match (tc-expr ctx env end)
                   [(OkTcType end-ty)
                     (if (tc-integer-type? end-ty)
-                      (match (tc-expr ctx env init)
-                        [(OkTcType init-ty)
-                          (if (tc-reduce-op-type-ok?
-                            op
-                            (tc-resolve-type ctx init-ty))
-                            (match (tc-spmd-value-pure value)
-                              [(OkTcUnit)
-                                (let
-                                  [value-env : TcTypeEnv
-                                    (tc-bind-id env index resolved-index-ty)]
-                                  (match (tc-expr-with-expected-or-actual
-                                    ctx
-                                    value-env
-                                    value
-                                    init-ty)
-                                    [(OkTcType value-ty)
-                                      (match (tc-expect
-                                        value-ty
-                                        init-ty
-                                        "typecheck: spmd-reduce init and value type mismatch")
-                                        [(OkTcUnit)
-                                          (match (tc-spmd-check-reduce-value-broadcasts
-                                            ctx
-                                            env
-                                            (intern-str index)
-                                            resolved-index-ty
-                                            value)
-                                            [(OkTcUnit) (OkTcType init-ty)]
-                                            [(ErrTcUnit message)
-                                              (ErrTcType message)])]
-                                        [(ErrTcUnit message)
-                                          (ErrTcType message)])]
-                                    [(ErrTcType message) (ErrTcType message)]))]
-                              [(ErrTcUnit message) (ErrTcType message)])
-                            (ErrTcType (tc-reduce-op-type-msg op)))]
-                        [(ErrTcType message) (ErrTcType message)])
+                      (let
+                        [value-env : TcTypeEnv
+                          (tc-bind-id env index resolved-index-ty)]
+                        (match (tc-spmd-reduce-init-value-type
+                          ctx
+                          env
+                          value-env
+                          op
+                          init
+                          value)
+                          [(OkTcType result-ty)
+                            (match (tc-spmd-check-reduce-value-broadcasts
+                              ctx
+                              env
+                              (intern-str index)
+                              resolved-index-ty
+                              value)
+                              [(OkTcUnit) (OkTcType result-ty)]
+                              [(ErrTcUnit message) (ErrTcType message)])]
+                          [(ErrTcType message) (ErrTcType message)]))
                       (ErrTcType
                         "typecheck: spmd-reduce end expression must be integer"))]
                   [(ErrTcType message) (ErrTcType message)])
@@ -21394,7 +21490,7 @@
       (let
         [value : AstExpr (ast-node-get value-box)]
         [lane : AstExpr (ast-node-get lane-box)]
-        (match (tc-expr ctx env lane)
+        (match (tc-expr-with-expected-or-actual ctx env lane (AstTyI64))
           [(OkTcType lane-ty)
             (match (tc-expect
               (tc-resolve-type ctx lane-ty)

@@ -15760,23 +15760,20 @@
                     (LowerCAbiUnsupportedAggregate
                       (lower-c-abi-unsupported-message mode resolved))]
                   [_
-                    (if (and allow-return? (> size 8))
-                      (LowerCAbiUnsupportedAggregate
-                        (lower-c-abi-two-register-return-message resolved))
-                      (if (> size 8)
-                        (LowerCAbiRegisterAggregate
-                          (LowerCAbiSlotCons
-                            (lower-c-abi-sysv-slot-from-class first size 0)
-                            (box
-                              (LowerCAbiSlotCons
-                                (lower-c-abi-sysv-slot-from-class second size 1)
-                                (box (LowerCAbiSlotNil)))))
-                          size)
-                        (LowerCAbiRegisterAggregate
-                          (LowerCAbiSlotCons
-                            (lower-c-abi-sysv-slot-from-class first size 0)
-                            (box (LowerCAbiSlotNil)))
-                          size)))])])]
+                    (if (> size 8)
+                      (LowerCAbiRegisterAggregate
+                        (LowerCAbiSlotCons
+                          (lower-c-abi-sysv-slot-from-class first size 0)
+                          (box
+                            (LowerCAbiSlotCons
+                              (lower-c-abi-sysv-slot-from-class second size 1)
+                              (box (LowerCAbiSlotNil)))))
+                        size)
+                      (LowerCAbiRegisterAggregate
+                        (LowerCAbiSlotCons
+                          (lower-c-abi-sysv-slot-from-class first size 0)
+                          (box (LowerCAbiSlotNil)))
+                        size))])])]
           [(LowerCAbiSysvSlotsUnsupported)
             (LowerCAbiUnsupportedAggregate
               (lower-c-abi-unsupported-message mode resolved))])))))
@@ -16151,6 +16148,25 @@
         head
         (lower-value-list-append (box-get rest) tail))]))
 
+(define (lower-c-abi-ir-return-slots [slots : LowerCAbiSlotList]) : CompilerIrCAbiReturnSlotList
+  (match slots
+    [(LowerCAbiSlotNil) (IrCAbiReturnSlotNil)]
+    [(LowerCAbiSlotCons slot rest)
+      (match slot
+        [(LowerCAbiSlot scalar-ty offset)
+          (IrCAbiReturnSlotCons
+            (IrCAbiReturnSlot scalar-ty offset)
+            (box (lower-c-abi-ir-return-slots (box-get rest))))])]))
+
+(define (lower-c-abi-materialize-stored-register-result
+  [ctx : TcContext]
+  [state : LowerState]
+  [base : CompilerIrValue]
+  [result-ty : AstType]) : LowerExpr
+  (if (lower-type-register-group? ctx result-ty)
+    (lower-load-group-from-ptr ctx state base result-ty)
+    (LowerExpr state base result-ty)))
+
 (define (lower-c-abi-finish-call-result
   [ctx : TcContext]
   [state : LowerState]
@@ -16318,10 +16334,22 @@
                               (LowerCAbiRegisterAggregate slots size)
                               origin))])])]
                 [_
-                  (ErrLowerExpr
-                    (lower-diagnostic-at-expr
-                      origin
-                      (lower-c-abi-two-register-return-message result-ty)))])]
+                  (match (lower-reserve-heap-storage args-state size result-ty)
+                    [(LowerExpr base-state base _)
+                      (let
+                        [instr : CompilerIrInstr
+                          (IrInstrCallCAbiStoreResult
+                            base
+                            (lower-resolve-call-name base-state env name)
+                            (compiler-ir-call-args-from-list values)
+                            (lower-c-abi-ir-return-slots slots))]
+                        (match (lower-c-abi-materialize-stored-register-result
+                          ctx
+                          (lower-state-emit-at-expr base-state instr origin)
+                          base
+                          result-ty)
+                          [(LowerExpr out-state out-value out-ty)
+                            (OkLowerExpr (LowerExpr out-state out-value out-ty))]))])])]
             [(LowerCAbiSlotNil)
               (ErrLowerExpr
                 (lower-diagnostic-at-expr
@@ -16444,10 +16472,22 @@
                           (LowerCAbiRegisterAggregate slots size)
                           origin))])])]
             [_
-              (ErrLowerExpr
-                (lower-diagnostic-at-expr
-                  origin
-                  (lower-c-abi-two-register-return-message result-ty)))])]
+              (match (lower-reserve-heap-storage state size result-ty)
+                [(LowerExpr base-state base _)
+                  (let
+                    [instr : CompilerIrInstr
+                      (IrInstrCallIndirectCAbiStoreResult
+                        base
+                        func-value
+                        (compiler-ir-call-args-from-list values)
+                        (lower-c-abi-ir-return-slots slots))]
+                    (match (lower-c-abi-materialize-stored-register-result
+                      ctx
+                      (lower-state-emit-at-expr base-state instr origin)
+                      base
+                      result-ty)
+                      [(LowerExpr out-state out-value out-ty)
+                        (OkLowerExpr (LowerExpr out-state out-value out-ty))]))])])]
         [(LowerCAbiSlotNil)
           (ErrLowerExpr
             (lower-diagnostic-at-expr

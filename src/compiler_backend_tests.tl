@@ -1711,20 +1711,65 @@
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-c-abi-sysv-two-register-return-source) : String
-  "(defstruct Big (lo i64) (hi i64))
-(extern (big-make) : Big (:symbol \"tl_cabi_big_make\"))
+  "(defstruct PairI64 (:repr c) (lo i64) (hi i64))
+(defstruct MixIF (:repr c) (tag u64) (value f64))
+(defstruct PairF64 (:repr c) (x f64) (y f64))
+(extern (pair-i64-make [seed : i64]) : PairI64 (:symbol \"tl_cabi_pair_i64_make\"))
+(extern pair-i64-maker (:symbol \"tl_cabi_pair_i64_make_ptr\") : (-> i64 PairI64))
+(extern (mix-if-make [seed : i64]) : MixIF (:symbol \"tl_cabi_mix_if_make\"))
+(extern (pair-f64-make [seed : i64]) : PairF64 (:symbol \"tl_cabi_pair_f64_make\"))
 (define (main) : i64
-  (struct-get (big-make) lo))")
+  (let
+    [pair : PairI64 (pair-i64-make 1)]
+    [pair2 : PairI64 (pair-i64-maker 4)]
+    [mixed : MixIF (mix-if-make 2)]
+    [floats : PairF64 (pair-f64-make 3)]
+    (+ (struct-get pair lo)
+      (+ (struct-get pair hi)
+        (+ (struct-get pair2 lo)
+          (+ (struct-get pair2 hi)
+            (+ (cast (struct-get mixed tag) : i64)
+              (+ (cast (struct-get mixed value) : i64)
+                (+ (cast (struct-get floats x) : i64)
+                   (cast (struct-get floats y) : i64))))))))))")
 
-(define (compiler-backend-c-abi-sysv-two-register-return-error-ok?) : bool
+(define (compiler-backend-c-abi-sysv-two-register-return-linux-ok?) : bool
   (match (compiler-backend-emit-source-for-target
     (compiler-backend-c-abi-sysv-two-register-return-source)
     (BackendTargetLinux))
-    [(ErrCompilerBackend message)
-      (string-eq
-        (compiler-diagnostic-message message)
-        "lower: unsupported linux-x86_64 C two-register aggregate return ABI for Big; see #1995")]
-    [(OkCompilerBackend _) false]))
+    [(OkCompilerBackend asm)
+      (backend-and8
+        (compiler-backend-string-contains?
+          asm
+          ".extern tl_cabi_pair_i64_make\n")
+        (compiler-backend-string-contains?
+          asm
+          ".extern tl_cabi_pair_i64_make_ptr\n")
+        (compiler-backend-string-contains? asm ".extern tl_cabi_mix_if_make\n")
+        (compiler-backend-string-contains?
+          asm
+          ".extern tl_cabi_pair_f64_make\n")
+        (compiler-backend-string-contains?
+          asm
+          "    call tl_cabi_pair_i64_make\n")
+        (compiler-backend-string-contains? asm "    call *%rax\n")
+        (backend-and8
+          (compiler-backend-string-contains? asm "    movq %rdx, 8(%r11)\n")
+          (compiler-backend-string-contains? asm "    movsd %xmm0, 8(%r11)\n")
+          (compiler-backend-string-contains? asm "    movsd %xmm1, 8(%r11)\n")
+          (not
+            (compiler-backend-string-contains?
+              asm
+              "two-register aggregate return ABI"))
+          (not
+            (compiler-backend-string-contains?
+              asm
+              (compiler-backend-todo-marker)))
+          true
+          true
+          true)
+        true)]
+    [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-varargs-ffi-ok?) : bool
   (and
@@ -8400,7 +8445,7 @@
     (compiler-backend-c-abi-win64-enum-aggregate-ok?)
     (compiler-backend-c-abi-sysv-register-aggregate-arg-linux-ok?)
     (compiler-backend-c-abi-sysv-memory-aggregate-arg-linux-ok?)
-    (compiler-backend-c-abi-sysv-two-register-return-error-ok?)
+    (compiler-backend-c-abi-sysv-two-register-return-linux-ok?)
     (backend-and4
       (compiler-backend-string-ref-shape-ok?)
       (compiler-backend-fixed-array-shape-ok?)

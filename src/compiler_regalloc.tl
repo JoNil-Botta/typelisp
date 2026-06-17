@@ -1608,6 +1608,14 @@
                 (compiler-live-set-union
                   out
                   (compiler-live-after liveness label instr-index))]
+              [(IrInstrCallCAbiStoreResult _ _ _ _)
+                (compiler-live-set-union
+                  out
+                  (compiler-live-after liveness label instr-index))]
+              [(IrInstrCallIndirectCAbiStoreResult _ _ _ _)
+                (compiler-live-set-union
+                  out
+                  (compiler-live-after liveness label instr-index))]
               [(IrInstrTailCall _ _ _)
                 (compiler-live-set-union
                   out
@@ -1658,6 +1666,20 @@
                 (compiler-live-set-union
                   out
                   (compiler-live-call-args-vars args))]
+              [(IrInstrCallCAbiStoreResult base _ args _)
+                (compiler-live-set-union
+                  out
+                  (compiler-live-value-vars-into
+                    (compiler-live-call-args-vars args)
+                    base))]
+              [(IrInstrCallIndirectCAbiStoreResult base func args _)
+                (compiler-live-set-union
+                  out
+                  (compiler-live-value-vars-into
+                    (compiler-live-value-vars-into
+                      (compiler-live-call-args-vars args)
+                      base)
+                    func))]
               [(IrInstrTailCall _ args _)
                 (compiler-live-set-union
                   out
@@ -2544,6 +2566,10 @@
               [(IrInstrCall _ _ _ _) (compiler-live-set-insert out p)]
               [(IrInstrCallIndirect _ _ _ _) (compiler-live-set-insert out p)]
               [(IrInstrCallIndirectC _ _ _ _) (compiler-live-set-insert out p)]
+              [(IrInstrCallCAbiStoreResult _ _ _ _)
+                (compiler-live-set-insert out p)]
+              [(IrInstrCallIndirectCAbiStoreResult _ _ _ _)
+                (compiler-live-set-insert out p)]
               [(IrInstrTailCall _ _ _) (compiler-live-set-insert out p)]
               [(IrInstrTailCallIndirect _ _ _) (compiler-live-set-insert out p)]
               [_ out]))
@@ -3768,6 +3794,15 @@
       (begin
         (compiler-reg-color-invalidate-value! roots invalid callee)
         (compiler-reg-color-invalidate-call-args! roots invalid args))]
+    [(IrInstrCallCAbiStoreResult base _ args _)
+      (begin
+        (compiler-reg-color-invalidate-value! roots invalid base)
+        (compiler-reg-color-invalidate-call-args! roots invalid args))]
+    [(IrInstrCallIndirectCAbiStoreResult base callee args _)
+      (begin
+        (compiler-reg-color-invalidate-value! roots invalid base)
+        (compiler-reg-color-invalidate-value! roots invalid callee)
+        (compiler-reg-color-invalidate-call-args! roots invalid args))]
     [(IrInstrTailCall _ args _)
       (compiler-reg-color-invalidate-call-args! roots invalid args)]
     [(IrInstrStore _ value _)
@@ -4590,6 +4625,18 @@
         (compiler-reg-remap-value remap callee)
         (compiler-reg-remap-call-args remap args)
         ty)]
+    [(IrInstrCallCAbiStoreResult base name args slots)
+      (IrInstrCallCAbiStoreResult
+        (compiler-reg-remap-value remap base)
+        name
+        (compiler-reg-remap-call-args remap args)
+        slots)]
+    [(IrInstrCallIndirectCAbiStoreResult base callee args slots)
+      (IrInstrCallIndirectCAbiStoreResult
+        (compiler-reg-remap-value remap base)
+        (compiler-reg-remap-value remap callee)
+        (compiler-reg-remap-call-args remap args)
+        slots)]
     [(IrInstrTailCall name args ty)
       (IrInstrTailCall name (compiler-reg-remap-call-args remap args) ty)]
     [(IrInstrTailCallIndirect callee args ty)

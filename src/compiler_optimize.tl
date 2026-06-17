@@ -1240,6 +1240,12 @@
       (opt-collect-call-args-uses (opt-collect-value-uses set func) args)]
     [(IrInstrCallIndirectC _ func args _)
       (opt-collect-call-args-uses (opt-collect-value-uses set func) args)]
+    [(IrInstrCallCAbiStoreResult base _ args _)
+      (opt-collect-call-args-uses (opt-collect-value-uses set base) args)]
+    [(IrInstrCallIndirectCAbiStoreResult base func args _)
+      (opt-collect-call-args-uses
+        (opt-collect-value-uses (opt-collect-value-uses set base) func)
+        args)]
     [(IrInstrTailCall _ args _) (opt-collect-call-args-uses set args)]
     [(IrInstrStore _ value _) (opt-collect-value-uses set value)]
     ;; Pointer/memory ops carry operand uses too; missing any of these would let
@@ -1537,6 +1543,15 @@
         (opt-collect-call-args-uses-array items args))]
     [(IrInstrCallIndirectC _ func args _)
       (begin
+        (opt-collect-value-uses-array items func)
+        (opt-collect-call-args-uses-array items args))]
+    [(IrInstrCallCAbiStoreResult base _ args _)
+      (begin
+        (opt-collect-value-uses-array items base)
+        (opt-collect-call-args-uses-array items args))]
+    [(IrInstrCallIndirectCAbiStoreResult base func args _)
+      (begin
+        (opt-collect-value-uses-array items base)
         (opt-collect-value-uses-array items func)
         (opt-collect-call-args-uses-array items args))]
     [(IrInstrTailCall _ args _) (opt-collect-call-args-uses-array items args)]
@@ -1951,6 +1966,15 @@
       (opt-aggregate-call-args-has-pointer? base ptrs args)]
     [(IrInstrCall _ _ args _)
       (opt-aggregate-call-args-has-pointer? base ptrs args)]
+    [(IrInstrCallCAbiStoreResult store-base _ args _)
+      (or
+        (opt-aggregate-value-has-pointer? base ptrs store-base)
+        (opt-aggregate-call-args-has-pointer? base ptrs args))]
+    [(IrInstrCallIndirectCAbiStoreResult store-base func args _)
+      (or
+        (opt-aggregate-value-has-pointer? base ptrs store-base)
+        (opt-aggregate-value-has-pointer? base ptrs func)
+        (opt-aggregate-call-args-has-pointer? base ptrs args))]
     [(IrInstrTailCall _ args _)
       (opt-aggregate-call-args-has-pointer? base ptrs args)]
     [(IrInstrStore _ value _)
@@ -3268,6 +3292,31 @@
             (opt-phi-input-list-eq (box-get at) (box-get bt)))]
         [_ false])]))
 
+(define (opt-c-abi-return-slot-eq
+  [a : CompilerIrCAbiReturnSlot]
+  [b : CompilerIrCAbiReturnSlot]) : bool
+  (match a
+    [(IrCAbiReturnSlot aty aoffset)
+      (match b
+        [(IrCAbiReturnSlot bty boffset)
+          (and (= aoffset boffset) (opt-type-eq aty bty))])]))
+
+(define (opt-c-abi-return-slot-list-eq
+  [a : CompilerIrCAbiReturnSlotList]
+  [b : CompilerIrCAbiReturnSlotList]) : bool
+  (match a
+    [(IrCAbiReturnSlotNil)
+      (match b
+        [(IrCAbiReturnSlotNil) true]
+        [_ false])]
+    [(IrCAbiReturnSlotCons aslot arest)
+      (match b
+        [(IrCAbiReturnSlotCons bslot brest)
+          (and
+            (opt-c-abi-return-slot-eq aslot bslot)
+            (opt-c-abi-return-slot-list-eq (box-get arest) (box-get brest)))]
+        [_ false])]))
+
 (define (opt-instr-eq [a : CompilerIrInstr] [b : CompilerIrInstr]) : bool
   (match a
     [(IrInstrMov ad av aty)
@@ -3538,6 +3587,24 @@
             (opt-value-eq afunc bfunc)
             (opt-call-args-eq aargs bargs)
             (opt-type-eq aty bty))]
+        [_ false])]
+    [(IrInstrCallCAbiStoreResult abase aname aargs aslots)
+      (match b
+        [(IrInstrCallCAbiStoreResult bbase bname bargs bslots)
+          (and
+            (opt-value-eq abase bbase)
+            (string-eq aname bname)
+            (opt-call-args-eq aargs bargs)
+            (opt-c-abi-return-slot-list-eq aslots bslots))]
+        [_ false])]
+    [(IrInstrCallIndirectCAbiStoreResult abase afunc aargs aslots)
+      (match b
+        [(IrInstrCallIndirectCAbiStoreResult bbase bfunc bargs bslots)
+          (and
+            (opt-value-eq abase bbase)
+            (opt-value-eq afunc bfunc)
+            (opt-call-args-eq aargs bargs)
+            (opt-c-abi-return-slot-list-eq aslots bslots))]
         [_ false])]
     [(IrInstrTailCall aname aargs aty)
       (match b
@@ -3890,6 +3957,9 @@
     [(IrInstrCall _ _ _ _) (OptCseResult (OptExprNil) instr)]
     [(IrInstrCallIndirect _ _ _ _) (OptCseResult (OptExprNil) instr)]
     [(IrInstrCallIndirectC _ _ _ _) (OptCseResult (OptExprNil) instr)]
+    [(IrInstrCallCAbiStoreResult _ _ _ _) (OptCseResult (OptExprNil) instr)]
+    [(IrInstrCallIndirectCAbiStoreResult _ _ _ _)
+      (OptCseResult (OptExprNil) instr)]
     [(IrInstrTailCall _ _ _) (OptCseResult (OptExprNil) instr)]
     [(IrInstrStore _ _ _) (OptCseResult (OptExprNil) instr)]
     [(IrInstrStorePtr _ _ _) (OptCseResult (OptExprNil) instr)]
@@ -4139,6 +4209,18 @@
         (opt-copy-resolve env func)
         (opt-copy-subst-call-args env args)
         ty)]
+    [(IrInstrCallCAbiStoreResult base name args slots)
+      (IrInstrCallCAbiStoreResult
+        (opt-copy-resolve env base)
+        name
+        (opt-copy-subst-call-args env args)
+        slots)]
+    [(IrInstrCallIndirectCAbiStoreResult base func args slots)
+      (IrInstrCallIndirectCAbiStoreResult
+        (opt-copy-resolve env base)
+        (opt-copy-resolve env func)
+        (opt-copy-subst-call-args env args)
+        slots)]
     [(IrInstrTailCall name args ty)
       (IrInstrTailCall name (opt-copy-subst-call-args env args) ty)]
     [(IrInstrStore name value ty)
@@ -4416,6 +4498,8 @@
     [(IrInstrCall _ _ _ _) (OptBoundsNil)]
     [(IrInstrCallIndirect _ _ _ _) (OptBoundsNil)]
     [(IrInstrCallIndirectC _ _ _ _) (OptBoundsNil)]
+    [(IrInstrCallCAbiStoreResult _ _ _ _) (OptBoundsNil)]
+    [(IrInstrCallIndirectCAbiStoreResult _ _ _ _) (OptBoundsNil)]
     [(IrInstrTailCall _ _ _) (OptBoundsNil)]
     [(IrInstrStore _ _ _) (OptBoundsNil)]
     [(IrInstrStorePtr _ _ _) (OptBoundsNil)]
@@ -6724,6 +6808,16 @@
       (opt-verify-two
         (opt-verify-value-use defs doms func block-label pos)
         (opt-verify-call-args-uses defs doms args block-label pos))]
+    [(IrInstrCallCAbiStoreResult base _ args _)
+      (opt-verify-two
+        (opt-verify-value-use defs doms base block-label pos)
+        (opt-verify-call-args-uses defs doms args block-label pos))]
+    [(IrInstrCallIndirectCAbiStoreResult base func args _)
+      (opt-verify-two
+        (opt-verify-value-use defs doms base block-label pos)
+        (opt-verify-two
+          (opt-verify-value-use defs doms func block-label pos)
+          (opt-verify-call-args-uses defs doms args block-label pos)))]
     [(IrInstrTailCall _ args _)
       (opt-verify-call-args-uses defs doms args block-label pos)]
     [(IrInstrStore _ value _)
@@ -7639,6 +7733,24 @@
               ty)
             next-env
             out-next)])]
+    [(IrInstrCallCAbiStoreResult base name args slots)
+      (OptSsaInstrResult
+        (IrInstrCallCAbiStoreResult
+          (opt-ssa-rewrite-value env base)
+          name
+          (opt-ssa-rewrite-call-args env args)
+          slots)
+        env
+        next-var)]
+    [(IrInstrCallIndirectCAbiStoreResult base func args slots)
+      (OptSsaInstrResult
+        (IrInstrCallIndirectCAbiStoreResult
+          (opt-ssa-rewrite-value env base)
+          (opt-ssa-rewrite-value env func)
+          (opt-ssa-rewrite-call-args env args)
+          slots)
+        env
+        next-var)]
     [(IrInstrEntryArgc dst)
       (match (opt-ssa-rename-dst facts env next-var dst)
         [(OptSsaDstResult out-dst next-env out-next)
@@ -8920,6 +9032,18 @@
         (opt-global-copy-resolve facts doms block-id pos func)
         (opt-global-copy-subst-call-args facts doms block-id pos args)
         ty)]
+    [(IrInstrCallCAbiStoreResult base name args slots)
+      (IrInstrCallCAbiStoreResult
+        (opt-global-copy-resolve facts doms block-id pos base)
+        name
+        (opt-global-copy-subst-call-args facts doms block-id pos args)
+        slots)]
+    [(IrInstrCallIndirectCAbiStoreResult base func args slots)
+      (IrInstrCallIndirectCAbiStoreResult
+        (opt-global-copy-resolve facts doms block-id pos base)
+        (opt-global-copy-resolve facts doms block-id pos func)
+        (opt-global-copy-subst-call-args facts doms block-id pos args)
+        slots)]
     [(IrInstrTailCall name args ty)
       (IrInstrTailCall
         name
@@ -11575,6 +11699,8 @@
     [(IrInstrCall _ _ _ _) true]
     [(IrInstrCallIndirect _ _ _ _) true]
     [(IrInstrCallIndirectC _ _ _ _) true]
+    [(IrInstrCallCAbiStoreResult _ _ _ _) true]
+    [(IrInstrCallIndirectCAbiStoreResult _ _ _ _) true]
     [(IrInstrTailCall _ _ _) true]
     [(IrInstrStore _ _ _) true]
     [(IrInstrTailCallIndirect _ _ _) true]
@@ -12902,6 +13028,18 @@
         (opt-sccp-rewrite-value env callee)
         (opt-sccp-rewrite-call-args env args)
         ty)]
+    [(IrInstrCallCAbiStoreResult base name args slots)
+      (IrInstrCallCAbiStoreResult
+        (opt-sccp-rewrite-value env base)
+        name
+        (opt-sccp-rewrite-call-args env args)
+        slots)]
+    [(IrInstrCallIndirectCAbiStoreResult base callee args slots)
+      (IrInstrCallIndirectCAbiStoreResult
+        (opt-sccp-rewrite-value env base)
+        (opt-sccp-rewrite-value env callee)
+        (opt-sccp-rewrite-call-args env args)
+        slots)]
     [(IrInstrTailCall name args ty)
       (IrInstrTailCall name (opt-sccp-rewrite-call-args env args) ty)]
     [(IrInstrStore name value ty)
@@ -13220,6 +13358,8 @@
     [(IrInstrCall dst _ _ _) dst]
     [(IrInstrCallIndirect dst _ _ _) dst]
     [(IrInstrCallIndirectC dst _ _ _) dst]
+    [(IrInstrCallCAbiStoreResult _ _ _ _) (- 0 1)]
+    [(IrInstrCallIndirectCAbiStoreResult _ _ _ _) (- 0 1)]
     [(IrInstrPhi dst _ _) dst]
     [(IrInstrStorePtr _ _ _) (- 0 1)]
     [(IrInstrCopyBytes _ _ _) (- 0 1)]
@@ -15748,6 +15888,10 @@
     [(IrInstrCallIndirectC dst _ _ _)
       (opt-loop-bce-state-clear-lengths
         (opt-loop-bce-state-invalidate-def state dst))]
+    [(IrInstrCallCAbiStoreResult _ _ _ _)
+      (opt-loop-bce-state-clear-lengths state)]
+    [(IrInstrCallIndirectCAbiStoreResult _ _ _ _)
+      (opt-loop-bce-state-clear-lengths state)]
     [(IrInstrStorePtr ptr value _)
       (opt-loop-bce-update-storeptr state sources ptr value)]
     [(IrInstrCopyBytes _ _ _) (opt-loop-bce-state-clear-lengths state)]
@@ -17404,6 +17548,8 @@
   [instr : CompilerIrInstr]) : OptSlotList
   (match instr
     [(IrInstrCall _ name _ _) (opt-callgraph-add-callee index callees name)]
+    [(IrInstrCallCAbiStoreResult _ name _ _)
+      (opt-callgraph-add-callee index callees name)]
     [(IrInstrTailCall name _ _) (opt-callgraph-add-callee index callees name)]
     [_ callees]))
 
@@ -17701,6 +17847,14 @@
         index
         (opt-inline-census-args index census args)
         name)]
+    [(IrInstrCallCAbiStoreResult base name args _)
+      (opt-inline-census-add-ref
+        index
+        (opt-inline-census-args
+          index
+          (opt-inline-census-value index census base)
+          args)
+        name)]
     [(IrInstrCallIndirect _ func args _)
       (opt-inline-census-args
         index
@@ -17710,6 +17864,14 @@
       (opt-inline-census-args
         index
         (opt-inline-census-value index census func)
+        args)]
+    [(IrInstrCallIndirectCAbiStoreResult base func args _)
+      (opt-inline-census-args
+        index
+        (opt-inline-census-value
+          index
+          (opt-inline-census-value index census base)
+          func)
         args)]
     [(IrInstrTailCall name args _)
       (opt-inline-census-add-ref
@@ -18756,6 +18918,18 @@
         (opt-inline-remap-value callee sa np base)
         (opt-inline-remap-args a sa np base)
         (clone ty))]
+    [(IrInstrCallCAbiStoreResult call-base name a slots)
+      (IrInstrCallCAbiStoreResult
+        (opt-inline-remap-value call-base sa np base)
+        (clone name)
+        (opt-inline-remap-args a sa np base)
+        slots)]
+    [(IrInstrCallIndirectCAbiStoreResult call-base callee a slots)
+      (IrInstrCallIndirectCAbiStoreResult
+        (opt-inline-remap-value call-base sa np base)
+        (opt-inline-remap-value callee sa np base)
+        (opt-inline-remap-args a sa np base)
+        slots)]
     [_ instr]))
 
 (define (opt-inline-return->mov
@@ -20797,10 +20971,20 @@
     [(IrInstrSyscall _ args) (opt-reach-call-args index state args)]
     [(IrInstrCall _ name args _)
       (opt-reach-add-function index (opt-reach-call-args index state args) name)]
+    [(IrInstrCallCAbiStoreResult base name args _)
+      (opt-reach-add-function
+        index
+        (opt-reach-call-args index (opt-reach-value index state base) args)
+        name)]
     [(IrInstrCallIndirect _ func args _)
       (opt-reach-call-args index (opt-reach-value index state func) args)]
     [(IrInstrCallIndirectC _ func args _)
       (opt-reach-call-args index (opt-reach-value index state func) args)]
+    [(IrInstrCallIndirectCAbiStoreResult base func args _)
+      (opt-reach-call-args
+        index
+        (opt-reach-value index (opt-reach-value index state base) func)
+        args)]
     [(IrInstrTailCall name args _)
       (opt-reach-add-function index (opt-reach-call-args index state args) name)]
     [(IrInstrStore _ value _) (opt-reach-value index state value)]
@@ -21197,6 +21381,10 @@
             (OptLoopBceCleanScan
               (opt-loop-bce-state-invalidate-def state dst)
               false)]
+          [(IrInstrCallCAbiStoreResult _ _ _ _)
+            (OptLoopBceCleanScan state false)]
+          [(IrInstrCallIndirectCAbiStoreResult _ _ _ _)
+            (OptLoopBceCleanScan state false)]
           [(IrInstrTailCallIndirect _ _ _) (OptLoopBceCleanScan state false)]
           [(IrInstrSyscall dst _)
             (OptLoopBceCleanScan
@@ -30951,6 +31139,8 @@
     [(IrInstrCall _ _ _ _) true]
     [(IrInstrCallIndirect _ _ _ _) true]
     [(IrInstrCallIndirectC _ _ _ _) true]
+    [(IrInstrCallCAbiStoreResult _ _ _ _) true]
+    [(IrInstrCallIndirectCAbiStoreResult _ _ _ _) true]
     [(IrInstrTailCall _ _ _) true]
     [(IrInstrTailCallIndirect _ _ _) true]
     [_ (opt-alias-effect-clears-facts? (compiler-ir-instr-effect instr))]))
@@ -31158,6 +31348,9 @@
             (OptScratchBlocked "call"))]
         [(IrInstrCallIndirect _ _ _ _) (OptScratchBlocked "call")]
         [(IrInstrCallIndirectC _ _ _ _) (OptScratchBlocked "extern_call")]
+        [(IrInstrCallCAbiStoreResult _ _ _ _) (OptScratchBlocked "extern_call")]
+        [(IrInstrCallIndirectCAbiStoreResult _ _ _ _)
+          (OptScratchBlocked "extern_call")]
         [(IrInstrSyscall _ _) (OptScratchBlocked "extern_call")]
         [(IrInstrTailCall _ _ _) (OptScratchBlocked "tail_call")]
         [(IrInstrTailCallIndirect _ _ _) (OptScratchBlocked "tail_call")]

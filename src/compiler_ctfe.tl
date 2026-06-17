@@ -31,7 +31,10 @@
   (CtfeExpr i64 AstType)
   (CtfeExprList AstExprList)
   (CtfeExprClause AstExprClause)
-  (CtfeExprClauseList AstExprClauseList))
+  (CtfeExprClauseList AstExprClauseList)
+  ;; Module-scope macro return values (#3075)
+  (CtfeModule AstDecl)
+  (CtfeDecls AstDeclList))
 
 (defenum CtfeValueList
   (CtfeValueNil)
@@ -801,7 +804,9 @@
     [(CtfeExpr _ _) "Expr"]
     [(CtfeExprList _) "expr-list"]
     [(CtfeExprClause _) "ExprClause"]
-    [(CtfeExprClauseList _) "ExprClauseList"]))
+    [(CtfeExprClauseList _) "ExprClauseList"]
+    [(CtfeModule _) "Module"]
+    [(CtfeDecls _) "Decls"]))
 
 ;; Promote a char to its i64 code point so the i64 comparison primitives drive
 ;; char ordering/equality, matching Rust's code-point comparison.
@@ -1170,7 +1175,17 @@
           (ErrCtfe
             (ctfe-diagnostic-at-expr
               expr
-              "binary operation in comptime requires matching operand types"))])]))
+              "binary operation in comptime requires matching operand types"))])]
+    [(CtfeModule _)
+      (ErrCtfe
+        (ctfe-diagnostic-at-expr
+          expr
+          "binary operation in comptime requires matching operand types"))]
+    [(CtfeDecls _)
+      (ErrCtfe
+        (ctfe-diagnostic-at-expr
+          expr
+          "binary operation in comptime requires matching operand types"))]))
 
 ;; --- unary operators --------------------------------------------------------
 (define (ctfe-apply-unop
@@ -1387,6 +1402,8 @@
     [(AstTyStr) "str"]
     [(AstTyExpr) "Expr"]
     [(AstTyExprList) "ExprList"]
+    [(AstTyModule) "Module"]
+    [(AstTyDecls) "Decls"]
     [(AstTyUnit) "unit"]
     [(AstTyNever) "never"]
     [(AstTyFunc args ret)
@@ -1490,6 +1507,8 @@
     [(AstTyStr) "str"]
     [(AstTyExpr) "expr"]
     [(AstTyExprList) "expr-list"]
+    [(AstTyModule) "module"]
+    [(AstTyDecls) "decls"]
     [(AstTyUnit) "unit"]
     [(AstTyNever) "never"]
     [(AstTyFunc _ _) "function"]
@@ -1752,6 +1771,8 @@
     [(AstTyStr) -1]
     [(AstTyExpr) -1]
     [(AstTyExprList) -1]
+    [(AstTyModule) -1]
+    [(AstTyDecls) -1]
     [(AstTyFunc _ _) 8]
     [(AstTyTuple _) 8]
     [(AstTyArray elem count)
@@ -1814,6 +1835,8 @@
     [(AstTyStr) -1]
     [(AstTyExpr) -1]
     [(AstTyExprList) -1]
+    [(AstTyModule) -1]
+    [(AstTyDecls) -1]
     [(AstTyFunc _ _) 8]
     [(AstTyTuple _) 8]
     [(AstTyArray elem _) (ctfe-type-align layouts (ty-node-get elem))]
@@ -6040,7 +6063,9 @@
     [(CtfeExpr _ _) (AstLitUnit)]
     [(CtfeExprList _) (AstLitUnit)]
     [(CtfeExprClause _) (AstLitUnit)]
-    [(CtfeExprClauseList _) (AstLitUnit)]))
+    [(CtfeExprClauseList _) (AstLitUnit)]
+    [(CtfeModule _) (AstLitUnit)]
+    [(CtfeDecls _) (AstLitUnit)]))
 
 (define (ctfe-value-to-literal-for-type
   [value : CompilerCtfeValue]
@@ -6147,6 +6172,14 @@
     [(AstTyExprList)
       (match b
         [(AstTyExprList) true]
+        [_ false])]
+    [(AstTyModule)
+      (match b
+        [(AstTyModule) true]
+        [_ false])]
+    [(AstTyDecls)
+      (match b
+        [(AstTyDecls) true]
         [_ false])]
     [(AstTyFunc a-args a-ret)
       (match b

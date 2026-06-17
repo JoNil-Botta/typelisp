@@ -3422,6 +3422,8 @@
     [(AstTyNever) 0]
     [(AstTyExpr) 0]
     [(AstTyExprList) 0]
+    [(AstTyModule) 0]
+    [(AstTyDecls) 0]
     [(AstTyFunc _ _) 8]
     [(AstTyTuple _) 8]
     [(AstTyArray _ _) 8]

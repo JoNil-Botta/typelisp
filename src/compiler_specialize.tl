@@ -444,6 +444,8 @@
     [(AstTyNever) "never"]
     [(AstTyExpr) "Expr"]
     [(AstTyExprList) "ExprList"]
+    [(AstTyModule) "Module"]
+    [(AstTyDecls) "Decls"]
     [(AstTyFunc args ret)
       (string-append
         "fn_"
@@ -524,7 +526,9 @@
     [(CtfeExpr _ _) "Expr"]
     [(CtfeExprList _) "expr-list"]
     [(CtfeExprClause _) "expr-clause"]
-    [(CtfeExprClauseList _) "expr-clause-list"]))
+    [(CtfeExprClauseList _) "expr-clause-list"]
+    [(CtfeModule _) "module"]
+    [(CtfeDecls _) "decls"]))
 
 (define (spec-values-key [values : SpecValueList]) : String
   (match values
@@ -6227,7 +6231,9 @@
     [(CtfeExprList _) (ctfe-type-eq ty (AstTyExprList))]
     [(CtfeExprClause _) (ctfe-type-eq ty (AstTyVar (intern "ExprClause")))]
     [(CtfeExprClauseList _)
-      (ctfe-type-eq ty (AstTyVar (intern "ExprClauseList")))]))
+      (ctfe-type-eq ty (AstTyVar (intern "ExprClauseList")))]
+    [(CtfeModule _) (ctfe-type-eq ty (AstTyModule))]
+    [(CtfeDecls _) (ctfe-type-eq ty (AstTyDecls))]))
 
 (define (spec-value-type-label [value : CompilerCtfeValue]) : String
   (match value
@@ -6242,7 +6248,9 @@
     [(CtfeExpr _ _) "Expr"]
     [(CtfeExprList _) "expr-list"]
     [(CtfeExprClause _) "ExprClause"]
-    [(CtfeExprClauseList _) "ExprClauseList"]))
+    [(CtfeExprClauseList _) "ExprClauseList"]
+    [(CtfeModule _) "Module"]
+    [(CtfeDecls _) "Decls"]))
 
 (define (spec-type-subst-lookup [subs : SpecTypeSubst] [name : String]) : SpecMaybeString
   (match subs
@@ -6526,7 +6534,17 @@
       (ErrSpecSubExpr
         (spec-diagnostic-at-expr
           origin
-          "cannot substitute compile-time ExprClauseList value into runtime expression"))]))
+          "cannot substitute compile-time ExprClauseList value into runtime expression"))]
+    [(CtfeModule _)
+      (ErrSpecSubExpr
+        (spec-diagnostic-at-expr
+          origin
+          "cannot substitute compile-time Module value into runtime expression"))]
+    [(CtfeDecls _)
+      (ErrSpecSubExpr
+        (spec-diagnostic-at-expr
+          origin
+          "cannot substitute compile-time Decls value into runtime expression"))]))
 
 (define (spec-expr-var-name [expr : AstExpr]) : SpecMaybeString
   (match (ast-expr-unspan expr)

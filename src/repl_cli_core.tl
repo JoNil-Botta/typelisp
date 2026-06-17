@@ -198,6 +198,8 @@
     [(AstTyNever) "never"]
     [(AstTyExpr) "Expr"]
     [(AstTyExprList) "ExprList"]
+    [(AstTyModule) "Module"]
+    [(AstTyDecls) "Decls"]
     [(AstTyFunc args ret)
       (string-append
         "(->"

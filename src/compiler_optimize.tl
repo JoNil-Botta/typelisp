@@ -2978,6 +2978,14 @@
       (match b
         [(AstTyExprList) true]
         [_ false])]
+    [(AstTyModule)
+      (match b
+        [(AstTyModule) true]
+        [_ false])]
+    [(AstTyDecls)
+      (match b
+        [(AstTyDecls) true]
+        [_ false])]
     [(AstTyFunc a-params a-ret)
       (match b
         [(AstTyFunc b-params b-ret)
@@ -3132,6 +3140,10 @@
     [(AstTyNever) (hash-i64 16)]
     [(AstTyExpr) (hash-i64 17)]
     [(AstTyExprList) (hash-i64 18)]
+    [(AstTyModule) (hash-i64 35)]
+    [(AstTyDecls) (hash-i64 36)]
+    [(AstTyModule) (hash-i64 35)]
+    [(AstTyDecls) (hash-i64 36)]
     [(AstTyFunc params ret)
       (hash-combine
         19

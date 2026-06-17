@@ -495,6 +495,12 @@
 (define (compiler-parse-tag-ty-expr) : i64
   115)
 
+(define (compiler-parse-tag-ty-module) : i64
+  139)
+
+(define (compiler-parse-tag-ty-decls) : i64
+  140)
+
 (define (compiler-parse-tag-ty-func) : i64
   130)
 

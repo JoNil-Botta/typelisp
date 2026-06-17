@@ -2699,6 +2699,8 @@
     [(AstTyNever) "never"]
     [(AstTyExpr) "Expr"]
     [(AstTyExprList) "ExprList"]
+    [(AstTyModule) "Module"]
+    [(AstTyDecls) "Decls"]
     [(AstTyFunc args ret)
       (str-cat
         "(-> "
@@ -6924,6 +6926,14 @@
       (match b
         [(AstTyExprList) true]
         [_ false])]
+    [(AstTyModule)
+      (match b
+        [(AstTyModule) true]
+        [_ false])]
+    [(AstTyDecls)
+      (match b
+        [(AstTyDecls) true]
+        [_ false])]
     [(AstTyFunc a-args a-ret)
       (match b
         [(AstTyFunc b-args b-ret)
@@ -7154,6 +7164,8 @@
     [(AstTyNever) (TcCopyable)]
     [(AstTyExpr) (TcCopyable)]
     [(AstTyExprList) (TcCopyable)]
+    [(AstTyModule) (TcCopyable)]
+    [(AstTyDecls) (TcCopyable)]
     [(AstTyFunc _ _) (TcCopyable)]
     [(AstTyPtr _) (TcCopyable)]
     [(AstTyMutPtr _) (TcCopyable)]
@@ -9124,7 +9136,9 @@
             " is compile-time only")))]
     [(CtfeExprList _) (OkTcType (AstTyExprList))]
     [(CtfeExprClause _) (OkTcType (tc-macro-expr-clause-type))]
-    [(CtfeExprClauseList _) (OkTcType (tc-macro-expr-clause-list-type))]))
+    [(CtfeExprClauseList _) (OkTcType (tc-macro-expr-clause-list-type))]
+    [(CtfeModule _) (ErrTcType "Module value is compile-time only")]
+    [(CtfeDecls _) (ErrTcType "Decls value is compile-time only")]))
 
 (define (tc-ctfe-float-value? [value : CompilerCtfeValue]) : bool
   (match value
@@ -16500,6 +16514,8 @@
     [(AstTyNever) (OkTcLayoutInfo (tc-inline-aggregate-zero-layout-info))]
     [(AstTyExpr) (OkTcLayoutInfo (tc-inline-aggregate-zero-layout-info))]
     [(AstTyExprList) (OkTcLayoutInfo (tc-inline-aggregate-zero-layout-info))]
+    [(AstTyModule) (OkTcLayoutInfo (tc-inline-aggregate-zero-layout-info))]
+    [(AstTyDecls) (OkTcLayoutInfo (tc-inline-aggregate-zero-layout-info))]
     [(AstTyFunc _ _) (OkTcLayoutInfo (tc-inline-aggregate-pointer-layout-info))]
     [(AstTyDynArray _)
       (OkTcLayoutInfo (tc-inline-aggregate-pointer-layout-info))]
@@ -22568,7 +22584,7 @@
   (string-append (string-append base ".") field))
 
 (define (tc-move-tuple-index-path [base : String] [index : i64]) : String
-  (string-append (string-append base ".#tuple.") (int->string index)))
+  (string-append (string-append base ".trueuple.") (int->string index)))
 
 (define (tc-move-array-index-path [base : String] [index : i64]) : String
   (string-append (string-append base ".#array.") (int->string index)))
@@ -27212,6 +27228,86 @@
         [(ErrMacroEnv diag) (ErrMacroExpr diag)])]
     [(ErrMacroExprList diag) (ErrMacroExpr diag)]))
 
+(define (macro-expand-module-macro-call
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [decls : AstDeclList]
+  [call-expr-id : i64]
+  [is-module : bool]) : ResultMacroDecls
+  (let
+    [call-expr : AstExpr (ast-node-get call-expr-id)]
+    (match (ast-expr-unspan call-expr)
+      [(AstExprCall func-box args)
+        (let
+          [func : AstExpr (ast-node-get func-box)]
+          (match (macro-call-decl ctx func decls call-expr)
+            [(OkMacroCallDecl maybe-decl)
+              (match maybe-decl
+                [(MacroSomeDecl macro-name definition-module params ret body)
+                  (let
+                    [expanded-result (macro-expand-exprs ctx env decls 0 args)]
+                    (match expanded-result
+                      [(OkMacroExprList expanded-args)
+                        (let
+                          [bound-result
+                            (macro-bind-params
+                              ctx
+                              env
+                              params
+                              expanded-args
+                              (tc-ctfe-env ctx)
+                              call-expr)]
+                          (match bound-result
+                            [(OkMacroEnv env)
+                              (let
+                                [eval-result
+                                  (ctfe-eval-node
+                                    body
+                                    (ctfe-env-extend
+                                      env
+                                      (ctfe-hygiene-enabled-name)
+                                      (CtfeBool true))
+                                    (ctfe-fuel-limit))]
+                                (match eval-result
+                                  [(OkCtfe value _)
+                                    (match value
+                                      [(CtfeModule decl)
+                                        (if is-module
+                                          (OkMacroDecls
+                                            (AstDeclCons
+                                              decl
+                                              (box (AstDeclNil))))
+                                          (ErrMacroDecls
+                                            (ctfe-diagnostic-at-expr
+                                              call-expr
+                                              "typecheck: decls macro call produced Module")))]
+                                      [(CtfeDecls ndecls)
+                                        (if is-module
+                                          (ErrMacroDecls
+                                            (ctfe-diagnostic-at-expr
+                                              call-expr
+                                              "typecheck: module macro import produced Decls"))
+                                          (OkMacroDecls ndecls))]
+                                      [_
+                                        (ErrMacroDecls
+                                          (ctfe-diagnostic-at-expr
+                                            call-expr
+                                            "macro transformer did not produce Module or Decls"))])]
+                                  [(ErrCtfe diag) (ErrMacroDecls diag)]))]
+                            [(ErrMacroEnv diag) (ErrMacroDecls diag)]))]
+                      [(ErrMacroExprList diag) (ErrMacroDecls diag)]))]
+                [(MacroNoDecl)
+                  (ErrMacroDecls
+                    (ctfe-diagnostic-at-expr
+                      call-expr
+                      (if is-module
+                        "import macro is not a macro"
+                        "module-scope call is not a macro")))])]
+            [(ErrMacroCallDecl diag) (ErrMacroDecls diag)]))]
+      [_
+        (ErrMacroDecls
+          (ctfe-diagnostic-at-expr call-expr "expected macro call"))])))
+
 (define (macro-expand-exprs
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -28127,6 +28223,9 @@
     [(AstDeclTest _ expr-box _) (macro-node-uses-macro? ctx decls expr-box)]
     [(AstDeclUnsafe inner-box)
       (macro-decl-uses-macro? ctx decls (box-get inner-box))]
+    [(AstDeclImport (AstImportSpec (AstImportMacro _) _ _ _)) true]
+    [(AstDeclImport (AstImportSpec (AstImportMacroDecls _) _ _ _)) true]
+    [(AstDeclImport _) false]
     [_ false]))
 
 ;; Whether the program contains any `(type T)` literal (AstExprTypeLiteral). ALL
@@ -28320,6 +28419,29 @@
                 compat-only)
                 [(OkMacroDecls nrest) (OkMacroDecls (ast-decl-cons decl nrest))]
                 [(ErrMacroDecls diag) (ErrMacroDecls diag)]))]
+          [(AstDeclImport ispec)
+            (match ispec
+              [(AstImportSpec (AstImportMacro expr-id) _ _ _)
+                (match (macro-expand-module-macro-call
+                  ctx
+                  top-env
+                  orig-decls
+                  expr-id
+                  false)
+                  [(OkMacroDecls ndecls)
+                    (OkMacroDecls (ast-decl-list-append ndecls rest))]
+                  [(ErrMacroDecls diag) (ErrMacroDecls diag)])]
+              [(AstImportSpec (AstImportMacroDecls expr-id) _ _ _)
+                (match (macro-expand-module-macro-call
+                  ctx
+                  top-env
+                  orig-decls
+                  expr-id
+                  true)
+                  [(OkMacroDecls ndecls)
+                    (OkMacroDecls (ast-decl-list-append ndecls rest))]
+                  [(ErrMacroDecls diag) (ErrMacroDecls diag)])]
+              [_ (OkMacroDecls (AstDeclCons decl (box rest)))])]
           [_
             (let
               [decl-ctx : TcContext
@@ -28375,6 +28497,9 @@
       (let
         [template : AstDecl (box-get template-box)]
         (macro-decl-needs-expansion? template))]
+    [(AstDeclImport (AstImportSpec (AstImportMacro _) _ _ _)) true]
+    [(AstDeclImport (AstImportSpec (AstImportMacroDecls _) _ _ _)) true]
+    [(AstDeclImport _) false]
     [_ false]))
 
 (define (macro-decl-has-defmacro? [decl : AstDecl]) : bool

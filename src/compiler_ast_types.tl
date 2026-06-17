@@ -88,6 +88,9 @@
   ;; CTFE values, not as a source-level type parameter.
   (AstTyExpr)
   (AstTyExprList)
+  ;; Module-scope macro return types (#3075)
+  (AstTyModule)
+  (AstTyDecls)
   (AstTyFunc AstTypeList i64)
   (AstTyTuple AstTypeList)
   (AstTyArray i64 i64)
@@ -917,6 +920,8 @@
     [(AstTyNever) 16]
     [(AstTyExpr) 17]
     [(AstTyExprList) 18]
+    [(AstTyModule) 35]
+    [(AstTyDecls) 36]
     [(AstTyFunc args ret) (hash-combine (ty-type-list-hash args 19) ret)]
     [(AstTyTuple elems) (ty-type-list-hash elems 20)]
     [(AstTyArray elem count) (hash-combine (hash-combine 21 elem) count)]
@@ -1043,6 +1048,14 @@
     [(AstTyExprList)
       (match b
         [(AstTyExprList) true]
+        [_ false])]
+    [(AstTyModule)
+      (match b
+        [(AstTyModule) true]
+        [_ false])]
+    [(AstTyDecls)
+      (match b
+        [(AstTyDecls) true]
         [_ false])]
     [(AstTyFunc a-args a-ret)
       (match b
@@ -1686,6 +1699,12 @@
 (define (ast-decl-cons [head : AstDecl] [rest : AstDeclList]) : AstDeclList
   (AstDeclCons head (box rest)))
 
+(define (ast-decl-list-append [a : AstDeclList] [b : AstDeclList]) : AstDeclList
+  (match a
+    [(AstDeclNil) b]
+    [(AstDeclCons head rest)
+      (AstDeclCons head (box (ast-decl-list-append (box-get rest) b)))]))
+
 (define (ast-decl-module [name : String]) : AstDecl
   (AstDeclModule (intern name)))
 
@@ -1868,6 +1887,8 @@
     [(AstTyNever) 15]
     [(AstTyExpr) 16]
     [(AstTyExprList) 29]
+    [(AstTyModule) 35]
+    [(AstTyDecls) 36]
     [(AstTyFunc _ _) 17]
     [(AstTyTuple _) 18]
     [(AstTyArray _ _) 19]
@@ -2117,6 +2138,14 @@
     [(AstTyExprList)
       (match b
         [(AstTyExprList) true]
+        [_ false])]
+    [(AstTyModule)
+      (match b
+        [(AstTyModule) true]
+        [_ false])]
+    [(AstTyDecls)
+      (match b
+        [(AstTyDecls) true]
         [_ false])]
     [(AstTyFunc a-args a-ret)
       (match b

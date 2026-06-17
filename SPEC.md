@@ -1260,9 +1260,12 @@ The selfhost compiler accepts written lifetime-bearing reference type forms:
   copy the referent.
 - Mutable references are exclusive, non-copying handles to the same referent.
   The lexical checker enforces many immutable borrows or one mutable borrow for
-  tracked local/place paths. Non-lexical lifetimes, reference-capturing closure
-  relaxation, and general dereference/update operations remain follow-up
-  borrow-checker work.
+  tracked local/place paths. Tracked aggregate-place paths conflict only when
+  they are the same path or one is an ancestor of the other, so mutable borrows
+  of disjoint sibling fields may coexist while overlapping whole-field,
+  same-field, and field-element borrows are rejected. Non-lexical lifetimes,
+  reference-capturing closure relaxation, and general dereference/update
+  operations remain follow-up borrow-checker work.
 - Lowering supports reference values for scalar referents, borrowed `str`, and
   array referents used by `array-ref`, `array-set!`, and `array-push!`.
   Borrowed `str` source semantics are specified in section 3.11.
@@ -1536,6 +1539,17 @@ While an immutable borrow is live, later move-only by-value moves, `set!`
 assignment to the borrowed place, and mutable borrows/mutations of the same
 place are rejected by the relevant move/borrow slices (#806/#1050). Multiple
 immutable borrows of the same place are allowed.
+
+While a mutable borrow is live, later immutable or mutable borrows and writes of
+the same tracked path, any ancestor path, or any descendant path are rejected.
+Sibling aggregate projections remain independent when the checker can name both
+paths, for example simultaneous mutable borrows of two different struct fields
+rooted in the same local. Lexical mutable reborrowing is supported: a nested
+scope may borrow a descendant through an existing mutable reference, and the
+outer mutable reference becomes usable again after that nested scope ends.
+Using or mutating through the outer reference while the inner reborrow is still
+live remains rejected. This is still lexical; `begin` does not shorten either
+borrow, and non-lexical last-use shortening remains deferred to #810.
 
 **Invalid escapes in v1.** The checker rejects references that would outlive
 their owner or arena:

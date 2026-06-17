@@ -330,6 +330,67 @@
     (set! n 2)
     n))")
 
+(define (compiler-typecheck-mut-borrow-disjoint-fields-source) : String
+  "(defstruct Bags
+  (left (Array i64))
+  (right (Array i64)))
+(define (main) : unit
+  (let
+    [left-items : (Array i64) (make-array i64 1)]
+    [right-items : (Array i64) (make-array i64 1)]
+    [bags : Bags (Bags left-items right-items)]
+    (let
+      [left : (&mut bags (Array i64)) (&mut (struct-get bags left))]
+      [right : (&mut bags (Array i64)) (&mut (struct-get bags right))]
+      unit)))")
+
+(define (compiler-typecheck-mut-borrow-same-field-source) : String
+  "(defstruct Bags
+  (left (Array i64))
+  (right (Array i64)))
+(define (main) : unit
+  (let
+    [left-items : (Array i64) (make-array i64 1)]
+    [right-items : (Array i64) (make-array i64 1)]
+    [bags : Bags (Bags left-items right-items)]
+    (let
+      [first : (&mut bags (Array i64)) (&mut (struct-get bags left))]
+      [second : (&mut bags (Array i64)) (&mut (struct-get bags left))]
+      unit)))")
+
+(define (compiler-typecheck-mut-borrow-ancestor-descendant-source) : String
+  "(defstruct Bags
+  (left (Array i64))
+  (right (Array i64)))
+(define (main) : unit
+  (let
+    [left-items : (Array i64) (make-array i64 1)]
+    [right-items : (Array i64) (make-array i64 1)]
+    [bags : Bags (Bags left-items right-items)]
+    (let
+      [whole-left : (&mut bags (Array i64)) (&mut (struct-get bags left))]
+      [first-item : (&mut bags i64) (&mut (array-ref (struct-get bags left) 0))]
+      unit)))")
+
+(define (compiler-typecheck-mut-reborrow-bound-subscope-source) : String
+  "(define (touch [slot : (&mut items i64)]) : unit unit)
+(define (use [items : (&mut items (Array i64))]) : unit
+  (begin
+    (let
+      [slot : (&mut items i64) (&mut (array-ref items 0))]
+      (touch slot))
+    (array-set! items 0 7)))
+(define (main [items : (Array i64)]) : unit
+  (use (&mut items)))")
+
+(define (compiler-typecheck-mut-reborrow-same-scope-use-source) : String
+  "(define (bad [items : (&mut items (Array i64))]) : unit
+  (let
+    [slot : (&mut items i64) (&mut (array-ref items 0))]
+    (array-set! items 0 7)))
+(define (main [items : (Array i64)]) : unit
+  (bad (&mut items)))")
+
 (define (compiler-typecheck-secondary-label-contains?
   [labels : CompilerDiagnosticLabelList]
   [needle : String]) : bool
@@ -391,7 +452,20 @@
       (compiler-typecheck-borrow-returned-call-source)
       "typecheck: cannot move borrowed place `text`")
     (compiler-typecheck-ok?
-      (compiler-typecheck-borrow-narrow-lexical-ok-source))))
+      (compiler-typecheck-borrow-narrow-lexical-ok-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-mut-borrow-disjoint-fields-source))
+    (compiler-typecheck-labeled-borrow-error-ok?
+      (compiler-typecheck-mut-borrow-same-field-source)
+      "typecheck: cannot mutably borrow borrowed place `bags.left`")
+    (compiler-typecheck-labeled-borrow-error-ok?
+      (compiler-typecheck-mut-borrow-ancestor-descendant-source)
+      "typecheck: cannot mutably borrow borrowed place")
+    (compiler-typecheck-ok?
+      (compiler-typecheck-mut-reborrow-bound-subscope-source))
+    (compiler-typecheck-labeled-borrow-error-ok?
+      (compiler-typecheck-mut-reborrow-same-scope-use-source)
+      "typecheck: cannot assign to borrowed place `items.#array.0`")))
 
 (define (compiler-typecheck-reference-return-container-tests-ok?) : bool
   (and

@@ -40575,4 +40575,5 @@
     42
     (begin
       (panic "lower: smoke score mismatch")
+      ;; lint-allow: unreachable-code
       0)))

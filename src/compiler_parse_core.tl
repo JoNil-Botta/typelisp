@@ -9379,11 +9379,14 @@
           42
           (begin
             (panic "parse: error-path self-tests failed")
+            ;; lint-allow: unreachable-code
             0))
         (begin
           (panic "parse: compiler AST smoke score mismatch")
+          ;; lint-allow: unreachable-code
           0))]
     [(ErrAstProgram message)
       (begin
         (panic message)
+        ;; lint-allow: unreachable-code
         0)]))

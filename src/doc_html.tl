@@ -275,6 +275,7 @@
     true
     (begin
       (panic message)
+      ;; lint-allow: unreachable-code
       false)))
 
 (define (doc-html-smoke) : i64

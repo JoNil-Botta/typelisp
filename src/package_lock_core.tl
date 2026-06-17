@@ -713,6 +713,7 @@
     42
     (begin
       (panic "package-lock: self-test mismatch")
+      ;; lint-allow: unreachable-code
       1)))
 
 (test

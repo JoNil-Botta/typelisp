@@ -56,6 +56,40 @@
     1
     42))")
 
+(define (lint-driver-smoke-unreachable-source) : String
+  "(define (cleanup [x : i64]) : unit unit)
+(define (main [arena : i64]) : i64
+  (begin
+    (begin
+      (return 1)
+      (set! arena 2))
+    (unsafe
+      (panic \"stop\")
+      (set! arena 3))
+    (with-arena r
+      (error \"stop\")
+      (set! arena 4))
+    (in-arena arena
+      (return 2)
+      (set! arena 5))
+    (with ([handle 1 cleanup])
+      (return 3)
+      (set! arena 6))
+    arena))")
+
+(define (lint-driver-smoke-clean-unreachable-source) : String
+  "(define (main [ok : bool]) : i64
+  (begin
+    (if ok (return 1) (return 2))
+    3))")
+
+(define (lint-driver-smoke-suppressed-unreachable-source) : String
+  "(define (main) : i64
+  (begin
+    (return 1)
+    ;; lint-allow: unreachable-code
+    2))")
+
 (define (lint-driver-smoke-source-finding-count-with-deprecated-string-concat
   [source : String]) : i64
   (lint-findings-count
@@ -174,6 +208,40 @@
             33
             42))))))
 
+(define (lint-driver-smoke-unreachable-self-test) : i64
+  (let
+    [reported : LintFindings
+      (selfhost-lint-source-with-roots-and-options
+        "lint_driver_unreachable.tl"
+        (lint-driver-smoke-unreachable-source)
+        (string-vec-new)
+        true)]
+    [clean : LintFindings
+      (selfhost-lint-source-with-roots-and-options
+        "lint_driver_unreachable_clean.tl"
+        (lint-driver-smoke-clean-unreachable-source)
+        (string-vec-new)
+        true)]
+    [suppressed : LintFindings
+      (selfhost-lint-source-with-roots-and-options
+        "lint_driver_unreachable_suppressed.tl"
+        (lint-driver-smoke-suppressed-unreachable-source)
+        (string-vec-new)
+        true)]
+    (if (not (= (lint-findings-count reported) 5))
+      40
+      (if (not
+        (lint-driver-smoke-finding-rule-ok?
+          reported
+          0
+          (lint-rule-unreachable-code-id)))
+        41
+        (if (not (= (lint-findings-count clean) 0))
+          44
+          (if (not (= (lint-findings-count suppressed) 0))
+            45
+            42))))))
+
 (define (main) : i64
   (begin
     ;; The imported driver core defines printing helpers; keep the print-string
@@ -189,7 +257,12 @@
               [concat-result : i64
                 (lint-driver-smoke-deprecated-string-concat-self-test)]
               (if (= concat-result 42)
-                (lint-driver-smoke-no-effect-self-test)
+                (let
+                  [no-effect-result : i64
+                    (lint-driver-smoke-no-effect-self-test)]
+                  (if (= no-effect-result 42)
+                    (lint-driver-smoke-unreachable-self-test)
+                    no-effect-result))
                 concat-result))
             unused-import-result))
         core-result))))

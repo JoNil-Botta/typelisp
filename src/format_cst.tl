@@ -145,6 +145,7 @@
     [(ErrFormatParsedCstList err)
       (begin
         (panic (format-source-error-message err))
+        ;; lint-allow: unreachable-code
         (FmtParsedCstList FmtCstNil idx))]))
 
 (define (fmt-parse-one-result [stream : FormatTokenStream] [idx : i64]) : ResultFormatParsedCst
@@ -195,6 +196,7 @@
     [(ErrFormatParsedCst err)
       (begin
         (panic (format-source-error-message err))
+        ;; lint-allow: unreachable-code
         (FmtParsedCst (FmtCstAtom (format-token-at stream idx)) idx))]))
 
 (define (parse-format-tokens-result [stream : FormatTokenStream]) : ResultFormatCst
@@ -210,6 +212,7 @@
     [(ErrFormatCst err)
       (begin
         (panic (format-source-error-message err))
+        ;; lint-allow: unreachable-code
         (FmtCstForms (box FmtCstNil)))]))
 
 (define (parse-format-source-result [src : String]) : ResultFormatCst
@@ -223,6 +226,7 @@
     [(ErrFormatCst err)
       (begin
         (panic (format-source-error-message err))
+        ;; lint-allow: unreachable-code
         (FmtCstForms (box FmtCstNil)))]))
 
 (define (format-cst-fixture) : String

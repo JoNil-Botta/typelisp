@@ -72,6 +72,15 @@
 (define (lint-rule-no-effect-suggestion) : String
   "remove the expression or use its value")
 
+(define (lint-rule-unreachable-code-id) : String
+  "unreachable-code")
+
+(define (lint-rule-unreachable-code-message) : String
+  "unreachable code: expression follows a terminal expression")
+
+(define (lint-rule-unreachable-code-suggestion) : String
+  "remove the unreachable expression or move it before the terminal expression")
+
 (define (lint-rule-deprecated-string-concat-id) : String
   "deprecated-string-concat")
 
@@ -155,6 +164,12 @@
     (lint-rule-no-effect-message)
     (lint-rule-no-effect-suggestion)))
 
+(define (lint-rule-unreachable-code) : LintRule
+  (LintRule
+    (lint-rule-unreachable-code-id)
+    (lint-rule-unreachable-code-message)
+    (lint-rule-unreachable-code-suggestion)))
+
 (define (lint-rule-deprecated-string-concat) : LintRule
   (LintRule
     (lint-rule-deprecated-string-concat-id)
@@ -196,12 +211,14 @@
           (lint-rule-cons
             (lint-rule-no-effect)
             (lint-rule-cons
-              (lint-rule-deprecated-string-concat)
+              (lint-rule-unreachable-code)
               (lint-rule-cons
-                (lint-rule-nested-str-cat)
+                (lint-rule-deprecated-string-concat)
                 (lint-rule-cons
-                  (lint-rule-cascading-and-or)
-                  (lint-rule-cons (lint-rule-unused-import) LintRuleNil))))))))))
+                  (lint-rule-nested-str-cat)
+                  (lint-rule-cons
+                    (lint-rule-cascading-and-or)
+                    (lint-rule-cons (lint-rule-unused-import) LintRuleNil)))))))))))
 
 (define (lint-rule-find-in [rules : LintRuleList] [rule-id : String]) : LintMaybeRule
   (match rules
@@ -466,10 +483,50 @@
     0
     span))
 
+(define (lint-unreachable-code-finding [span : AstSourceSpan]) : LintFinding
+  (LintFinding
+    (lint-rule-message (lint-rule-unreachable-code-id))
+    (lint-rule-unreachable-code-id)
+    0
+    span))
+
 (define (lint-no-effect-span [expr : AstExpr]) : AstSourceSpan
   (match expr
     [(AstExprSpanned _ span) span]
     [_ (lint-no-span)]))
+
+(define (lint-terminal-callee? [expr : AstExpr]) : bool
+  (match expr
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lint-terminal-callee? inner))]
+    [(AstExprVar name)
+      (let
+        [text : String (intern-str name)]
+        (or (string-eq text "panic") (string-eq text "error")))]
+    [_ false]))
+
+(define (lint-terminal-expr? [expr : AstExpr]) : bool
+  (match expr
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lint-terminal-expr? inner))]
+    [(AstExprAnn inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lint-terminal-expr? inner))]
+    [(AstExprCast inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lint-terminal-expr? inner))]
+    [(AstExprReturn _) true]
+    [(AstExprCall func-box _)
+      (let
+        [func : AstExpr (ast-node-get func-box)]
+        (lint-terminal-callee? func))]
+    [_ false]))
 
 (define (lint-no-effect-pure-binop? [op : AstBinOp]) : bool
   (match op
@@ -1688,6 +1745,33 @@
         [rest : AstExprList (box-get rest)]
         (lint-walk-expr-list rest threshold (lint-walk-expr head threshold acc)))]))
 
+(define (lint-walk-plain-sequence-expr-list
+  [exprs : AstExprList]
+  [threshold : i64]
+  [acc : LintFindings]) : LintFindings
+  (lint-walk-plain-sequence-expr-list-after-terminal exprs threshold acc false))
+
+(define (lint-walk-plain-sequence-expr-list-after-terminal
+  [exprs : AstExprList]
+  [threshold : i64]
+  [acc : LintFindings]
+  [after-terminal : bool]) : LintFindings
+  (match exprs
+    [(AstExprNil) acc]
+    [(AstExprCons head rest)
+      (let
+        [head : AstExpr (ast-node-get head)]
+        [rest : AstExprList (box-get rest)]
+        (if after-terminal
+          (lint-findings-add
+            (lint-unreachable-code-finding (lint-no-effect-span head))
+            acc)
+          (lint-walk-plain-sequence-expr-list-after-terminal
+            rest
+            threshold
+            (lint-walk-expr head threshold acc)
+            (lint-terminal-expr? head))))]))
+
 (define (lint-walk-discarded-nonsequence-expr
   [expr : AstExpr]
   [threshold : i64]
@@ -1728,37 +1812,65 @@
   [exprs : AstExprList]
   [threshold : i64]
   [acc : LintFindings]) : LintFindings
+  (lint-walk-value-sequence-expr-list-after-terminal exprs threshold acc false))
+
+(define (lint-walk-value-sequence-expr-list-after-terminal
+  [exprs : AstExprList]
+  [threshold : i64]
+  [acc : LintFindings]
+  [after-terminal : bool]) : LintFindings
   (match exprs
     [(AstExprNil) acc]
     [(AstExprCons head rest)
       (let
         [head : AstExpr (ast-node-get head)]
         [rest : AstExprList (box-get rest)]
-        (match rest
-          [(AstExprNil) (lint-walk-expr head threshold acc)]
-          [_
-            (lint-walk-value-sequence-expr-list
+        (if after-terminal
+          (lint-findings-add
+            (lint-unreachable-code-finding (lint-no-effect-span head))
+            acc)
+          (let
+            [walked : LintFindings
+              (match rest
+                [(AstExprNil) (lint-walk-expr head threshold acc)]
+                [_ (lint-walk-discarded-expr head threshold acc)])]
+            (lint-walk-value-sequence-expr-list-after-terminal
               rest
               threshold
-              (lint-walk-discarded-expr head threshold acc))]))]))
+              walked
+              (lint-terminal-expr? head)))))]))
 
 (define (lint-walk-tail-sequence-expr-list
   [exprs : AstExprList]
   [threshold : i64]
   [acc : LintFindings]) : LintFindings
+  (lint-walk-tail-sequence-expr-list-after-terminal exprs threshold acc false))
+
+(define (lint-walk-tail-sequence-expr-list-after-terminal
+  [exprs : AstExprList]
+  [threshold : i64]
+  [acc : LintFindings]
+  [after-terminal : bool]) : LintFindings
   (match exprs
     [(AstExprNil) acc]
     [(AstExprCons head rest)
       (let
         [head : AstExpr (ast-node-get head)]
         [rest : AstExprList (box-get rest)]
-        (match rest
-          [(AstExprNil) (lint-walk-tail-expr head threshold acc)]
-          [_
-            (lint-walk-tail-sequence-expr-list
+        (if after-terminal
+          (lint-findings-add
+            (lint-unreachable-code-finding (lint-no-effect-span head))
+            acc)
+          (let
+            [walked : LintFindings
+              (match rest
+                [(AstExprNil) (lint-walk-tail-expr head threshold acc)]
+                [_ (lint-walk-discarded-expr head threshold acc)])]
+            (lint-walk-tail-sequence-expr-list-after-terminal
               rest
               threshold
-              (lint-walk-discarded-expr head threshold acc))]))]))
+              walked
+              (lint-terminal-expr? head)))))]))
 
 ;: Walk each binding initializer in `bindings`.
 (define (lint-walk-let-bindings
@@ -2058,19 +2170,33 @@
   [exprs : AstExprList]
   [threshold : i64]
   [acc : LintFindings]) : LintFindings
+  (lint-walk-tail-expr-list-after-terminal exprs threshold acc false))
+
+(define (lint-walk-tail-expr-list-after-terminal
+  [exprs : AstExprList]
+  [threshold : i64]
+  [acc : LintFindings]
+  [after-terminal : bool]) : LintFindings
   (match exprs
     [(AstExprNil) acc]
     [(AstExprCons head rest)
       (let
         [head : AstExpr (ast-node-get head)]
         [rest : AstExprList (box-get rest)]
-        (match rest
-          [(AstExprNil) (lint-walk-tail-expr head threshold acc)]
-          [_
-            (lint-walk-tail-expr-list
+        (if after-terminal
+          (lint-findings-add
+            (lint-unreachable-code-finding (lint-no-effect-span head))
+            acc)
+          (let
+            [walked : LintFindings
+              (match rest
+                [(AstExprNil) (lint-walk-tail-expr head threshold acc)]
+                [_ (lint-walk-expr head threshold acc)])]
+            (lint-walk-tail-expr-list-after-terminal
               rest
               threshold
-              (lint-walk-expr head threshold acc))]))]))
+              walked
+              (lint-terminal-expr? head)))))]))
 
 ;;; Walk match arms whose bodies are in tail position.
 (define (lint-walk-tail-match-arms
@@ -2166,6 +2292,13 @@
           (lint-walk-expr scrutinee threshold acc)))]
     [(AstExprWithRegion _ body)
       (lint-walk-tail-sequence-expr-list body threshold acc)]
+    [(AstExprWithEscape scratch-box body)
+      (let
+        [scratch : AstExpr (ast-node-get scratch-box)]
+        (lint-walk-tail-sequence-expr-list
+          body
+          threshold
+          (lint-walk-expr scratch threshold acc)))]
     [(AstExprWithScratch body)
       (lint-walk-tail-sequence-expr-list body threshold acc)]
     [(AstExprInArena arena-box body)
@@ -2360,7 +2493,8 @@
         (lint-walk-expr body threshold (lint-walk-expr cond threshold acc)))]
     [(AstExprBegin exprs)
       (lint-walk-value-sequence-expr-list exprs threshold acc)]
-    [(AstExprUnsafe exprs) (lint-walk-expr-list exprs threshold acc)]
+    [(AstExprUnsafe exprs)
+      (lint-walk-plain-sequence-expr-list exprs threshold acc)]
     [(AstExprSet _ value-box)
       (let
         [value : AstExpr (ast-node-get value-box)]
@@ -2772,6 +2906,27 @@
           (ast-expr-cons
             (ast-expr-spanned vx (AstSourceSpan 31 9 31 10))
             (ast-expr-cons one AstExprNil))))]
+    [spanned-unreachable-var : i64
+      (ast-expr-spanned vx (AstSourceSpan 41 9 41 10))]
+    [unreachable-return-begin : i64
+      (ast-node-push
+        (AstExprBegin
+          (ast-expr-cons
+            return-one
+            (ast-expr-cons
+              spanned-unreachable-var
+              (ast-expr-cons vy AstExprNil)))))]
+    [panic-call : i64
+      (ast-expr-call (lint-test-var "panic") (ast-expr-cons one AstExprNil))]
+    [unreachable-panic-unsafe : i64
+      (ast-node-push
+        (AstExprUnsafe (ast-expr-cons panic-call (ast-expr-cons vx AstExprNil))))]
+    [branch-local-return-begin : i64
+      (ast-node-push
+        (AstExprBegin
+          (ast-expr-cons
+            (ast-expr-if vx return-one return-one)
+            (ast-expr-cons vx AstExprNil))))]
     (begin
       ;; ladder length math
       (if (= (lint-test-ladder-length ladder3) 3)
@@ -3137,6 +3292,53 @@
         0)
         unit
         (panic "lint: unsafe block should not be flagged as no-effect"))
+      (if (=
+        (lint-findings-count
+          (lint-test-walk-tail
+            unreachable-return-begin
+            (lint-default-ladder-threshold)
+            (lint-findings-empty)))
+        1)
+        unit
+        (panic "lint: return should flag following unreachable expression once"))
+      (match (lint-findings-get
+        (lint-test-walk-tail
+          unreachable-return-begin
+          (lint-default-ladder-threshold)
+          (lint-findings-empty))
+        0)
+        [(LintSomeFinding finding)
+          (let
+            [fspan : AstSourceSpan (struct-get finding span)]
+            (if (and
+              (= (struct-get fspan start-line) 41)
+              (string-eq
+                (struct-get finding rule-id)
+                (lint-rule-unreachable-code-id)))
+              unit
+              (panic
+                "lint: unreachable-code finding should carry rule id and span")))]
+        [(LintNoFinding)
+          (panic "lint: unreachable-code should produce a finding")])
+      (if (=
+        (lint-findings-count
+          (lint-test-walk-tail
+            unreachable-panic-unsafe
+            (lint-default-ladder-threshold)
+            (lint-findings-empty)))
+        1)
+        unit
+        (panic "lint: panic in unsafe should flag following unreachable code"))
+      (if (=
+        (lint-findings-count
+          (lint-test-walk-tail
+            branch-local-return-begin
+            (lint-default-ladder-threshold)
+            (lint-findings-empty)))
+        0)
+        unit
+        (panic
+          "lint: branch-local return should not make following code unreachable"))
       (if (string-eq
         (lint-rule-suggestion (lint-rule-nested-if-ladder-id))
         "prefer cond (value/guard ladders) or match (variant dispatch)")
@@ -3189,6 +3391,16 @@
         "no-effect expression: value is discarded")
         unit
         (panic "lint: no-effect message should be registered"))
+      (if (string-eq
+        (lint-rule-suggestion (lint-rule-unreachable-code-id))
+        "remove the unreachable expression or move it before the terminal expression")
+        unit
+        (panic "lint: unreachable-code suggestion should be registered"))
+      (if (string-eq
+        (lint-rule-message (lint-rule-unreachable-code-id))
+        "unreachable code: expression follows a terminal expression")
+        unit
+        (panic "lint: unreachable-code message should be registered"))
       (if (string-eq
         (lint-rule-suggestion (lint-rule-deprecated-string-concat-id))
         "import stdlib/str_cat.tl and use str-cat, or use stdlib/text_buf.tl in accumulation loops")

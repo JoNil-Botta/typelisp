@@ -340,6 +340,7 @@
     [(ErrLexI64 message)
       (begin
         (panic message)
+        ;; lint-allow: unreachable-code
         n)]))
 
 (define (string-escape-piece [src : String] [idx : i64]) : String
@@ -458,6 +459,7 @@
     [(ErrLexChar message)
       (begin
         (panic message)
+        ;; lint-allow: unreachable-code
         #\nul')]))
 
 ;; Map single-character escapes after `#\`; unknown escapes read as the literal
@@ -506,6 +508,7 @@
     [(ErrLexChar message)
       (begin
         (panic message)
+        ;; lint-allow: unreachable-code
         #\nul')]))
 
 ;; Index just after the closing `'` for a char literal beginning at `i`.
@@ -541,6 +544,7 @@
     [(ErrLexI64 message)
       (begin
         (panic message)
+        ;; lint-allow: unreachable-code
         n)]))
 
 (define (lex-check-char-end [src : String] [i : i64] [n : i64]) : ResultLexI64
@@ -783,6 +787,7 @@
     [(ErrLexIntoSpanned err)
       (begin
         (panic (source-error-message err))
+        ;; lint-allow: unreachable-code
         0)]))
 
 (defenum LexPosition
@@ -1049,6 +1054,7 @@
     [(ErrTokens message)
       (begin
         (panic message)
+        ;; lint-allow: unreachable-code
         (make-array Token 1))]))
 
 ;; ---- Spanned token stream (#599) --------------------------------------------
@@ -1127,6 +1133,7 @@
     [(ErrSpannedTokens err)
       (begin
         (panic (source-error-message err))
+        ;; lint-allow: unreachable-code
         (make-array SpannedToken 1))]))
 
 (define (lex-percent-symbol-ok?) : bool

@@ -39,6 +39,7 @@
     [_
       (begin
         (panic "eval: car of a non-cons")
+        ;; lint-allow: unreachable-code
         (AInt 0))]))
 
 (define (sexpr-tail [s : Sexpr]) : Sexpr
@@ -47,6 +48,7 @@
     [_
       (begin
         (panic "eval: cdr of a non-cons")
+        ;; lint-allow: unreachable-code
         SNil)]))
 
 (define (eval-atom [a : SexprAtom]) : i64
@@ -56,6 +58,7 @@
     [_
       (begin
         (panic "eval: not an evaluable atom")
+        ;; lint-allow: unreachable-code
         0)]))
 
 ;; eval-sexpr: the tree-walking interpreter. The SCons arm uses the nested
@@ -79,6 +82,7 @@
           [else
             (begin
               (panic "eval: unknown operator")
+              ;; lint-allow: unreachable-code
               0)]))]
     ;; Any other shape (bare symbol, empty list, non-symbol operator head) is
     ;; not an evaluable call: the nested SSym above did not match, so we land
@@ -86,6 +90,7 @@
     [_
       (begin
         (panic "eval: not an evaluable expression")
+        ;; lint-allow: unreachable-code
         0)]))
 
 ;; Build `(+ 1 (* 2 3))` as an Sexpr tree:

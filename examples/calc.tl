@@ -107,6 +107,7 @@
     [else
       (begin
         (panic "lexer: unexpected character")
+        ;; lint-allow: unreachable-code
         TEnd)]))
 
 ;; Lex `src`, recording each emitted `Token` value into `toks` (which must be
@@ -208,6 +209,7 @@
         (begin
           (panic "parser: expected an integer or '('")
           ;; Dead code: `panic` never returns, but the `if` needs an `Expr`.
+          ;; lint-allow: unreachable-code
           (ENum 0))))))
 
 ;; term := factor (('*' | '/') factor)*  (left-associative '*' / '/').

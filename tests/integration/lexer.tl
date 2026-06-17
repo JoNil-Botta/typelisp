@@ -97,6 +97,7 @@
     [else
       (begin
         (panic "lexer: unexpected character")
+        ;; lint-allow: unreachable-code
         TEnd)]))
 
 ;; Return the end index (exclusive) of the identifier that starts at `start`

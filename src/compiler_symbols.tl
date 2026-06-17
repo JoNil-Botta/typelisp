@@ -4488,16 +4488,20 @@
                     42
                     (begin
                       (panic "symbols: smoke score mismatch")
+                      ;; lint-allow: unreachable-code
                       0))))]
             [(ErrCompilerRegistries message)
               (begin
                 (panic message)
+                ;; lint-allow: unreachable-code
                 0)])]
         [(ErrCompilerSymbols message)
           (begin
             (panic message)
+            ;; lint-allow: unreachable-code
             0)])]
     [(ErrAstProgram message)
       (begin
         (panic message)
+        ;; lint-allow: unreachable-code
         0)]))

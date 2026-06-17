@@ -10513,6 +10513,47 @@
       [(BackendTargetLinux) (compiler-backend-outgoing-shadow-space target)])
     0))
 
+(define (compiler-backend-emit-scalar-stack-call-arg
+  [target : CompilerBackendTarget]
+  [assignments : CompilerRegAssignmentList]
+  [value : CompilerIrValue]
+  [arg-ty : AstType]
+  [is-float : bool]
+  [stack-idx : i64]) : ResultCompilerBackend
+  (let
+    [slot : String
+      (backend-cat3
+        (int->string
+          (compiler-backend-outgoing-stack-arg-offset target stack-idx))
+        "(%rsp)\n"
+        "")]
+    (if is-float
+      (match (compiler-backend-emit-load-float-value-with-plan
+        assignments
+        value
+        arg-ty
+        "%xmm15")
+        [(OkCompilerBackend head)
+          (OkCompilerBackend
+            (backend-cat5
+              head
+              "    "
+              (compiler-backend-float-move arg-ty)
+              " %xmm15, "
+              slot))]
+        [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+      (match (compiler-backend-immediate-operand value)
+        [(CompilerBackendSomeImmediate imm)
+          (OkCompilerBackend (backend-cat4 "    movq " imm ", " slot))]
+        [(CompilerBackendNoImmediate)
+          (match (compiler-backend-emit-load-value-with-plan
+            assignments
+            value
+            "%r11")
+            [(OkCompilerBackend head)
+              (OkCompilerBackend (backend-cat4 head "    movq %r11, " slot ""))]
+            [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))))
+
 (define (compiler-backend-emit-call-args
   [target : CompilerBackendTarget]
   [assignments : CompilerRegAssignmentList]
@@ -10681,16 +10722,13 @@
             int-idx
             float-idx
             position)
-            (match (if is-float
-              (compiler-backend-emit-load-float-value-with-plan
-                assignments
-                value
-                arg-ty
-                "%xmm15")
-              (compiler-backend-emit-load-value-with-plan
-                assignments
-                value
-                "%r11"))
+            (match (compiler-backend-emit-scalar-stack-call-arg
+              target
+              assignments
+              value
+              arg-ty
+              is-float
+              stack-idx)
               [(OkCompilerBackend head)
                 (match (compiler-backend-emit-call-args
                   target
@@ -10707,22 +10745,7 @@
                   program-index
                   vars)
                   [(OkCompilerBackend tail)
-                    (OkCompilerBackend
-                      (backend-cat5
-                        head
-                        (if is-float
-                          (backend-cat4
-                            "    "
-                            (compiler-backend-float-move arg-ty)
-                            " %xmm15, "
-                            "")
-                          "    movq %r11, ")
-                        (int->string
-                          (compiler-backend-outgoing-stack-arg-offset
-                            target
-                            stack-idx))
-                        "(%rsp)\n"
-                        tail))]
+                    (OkCompilerBackend (string-append head tail))]
                   [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
               [(ErrCompilerBackend message) (ErrCompilerBackend message)])
             (match (if is-float
@@ -10771,16 +10794,6 @@
                 (ErrCompilerBackend
                   (compiler-diagnostic-with-message func-diag message))])))))))
 
-(define (compiler-backend-tail-stage-slot-offset
-  [arg-count : i64]
-  [arg-index : i64]) : i64
-  (* (- (- arg-count 1) arg-index) 8))
-
-(define (compiler-backend-tail-stage-slot [arg-count : i64] [arg-index : i64]) : String
-  (string-append
-    (int->string (compiler-backend-tail-stage-slot-offset arg-count arg-index))
-    "(%rsp)"))
-
 (define (compiler-backend-tail-final-stack-slot
   [target : CompilerBackendTarget]
   [stack-idx : i64]) : String
@@ -10788,11 +10801,54 @@
     (int->string (compiler-backend-incoming-stack-arg-offset target stack-idx))
     "(%rbp)"))
 
-(define (compiler-backend-emit-tail-stage-args
+(define (compiler-backend-emit-direct-tail-stack-call-arg
+  [target : CompilerBackendTarget]
+  [assignments : CompilerRegAssignmentList]
+  [value : CompilerIrValue]
+  [arg-ty : AstType]
+  [is-float : bool]
+  [stack-idx : i64]) : ResultCompilerBackend
+  (let
+    [slot : String (compiler-backend-tail-final-stack-slot target stack-idx)]
+    (if is-float
+      (match (compiler-backend-emit-load-float-value-with-plan
+        assignments
+        value
+        arg-ty
+        "%xmm15")
+        [(OkCompilerBackend head)
+          (OkCompilerBackend
+            (backend-cat5
+              head
+              "    "
+              (compiler-backend-float-move arg-ty)
+              " %xmm15, "
+              (string-append slot "\n")))]
+        [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+      (match (compiler-backend-immediate-operand value)
+        [(CompilerBackendSomeImmediate imm)
+          (OkCompilerBackend (backend-cat5 "    movq " imm ", " slot "\n"))]
+        [(CompilerBackendNoImmediate)
+          (match (compiler-backend-emit-load-value-with-plan
+            assignments
+            value
+            "%r11")
+            [(OkCompilerBackend head)
+              (OkCompilerBackend
+                (backend-cat5 head "    movq %r11, " slot "\n" ""))]
+            [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))))
+
+(define (compiler-backend-emit-direct-tail-call-args-from
+  [target : CompilerBackendTarget]
   [assignments : CompilerRegAssignmentList]
   [args : CompilerIrCallArgs]
   [types : AstTypeList]
-  [arg-index : i64]) : ResultCompilerBackend
+  [arg-index : i64]
+  [int-idx : i64]
+  [float-idx : i64]
+  [position : i64]
+  [stack-idx : i64]
+  [func-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (>= arg-index (compiler-backend-call-args-count args))
     (OkCompilerBackend "")
     (let
@@ -10809,96 +10865,6 @@
               tail)]
           [(AstTypeNil) AstTypeNil])]
       [is-float : bool (compiler-backend-float-type? arg-ty)]
-      (match (if is-float
-        (compiler-backend-emit-load-float-value-with-plan
-          assignments
-          value
-          arg-ty
-          "%xmm15")
-        (compiler-backend-emit-load-value-with-plan assignments value "%r11"))
-        [(OkCompilerBackend head)
-          (match (compiler-backend-emit-tail-stage-args
-            assignments
-            args
-            rest-types
-            (+ arg-index 1))
-            [(OkCompilerBackend tail)
-              (OkCompilerBackend
-                (string-append
-                  head
-                  (string-append
-                    (if is-float
-                      (backend-cat5
-                        "    subq $8, %rsp\n    "
-                        (compiler-backend-float-move arg-ty)
-                        " %xmm15, (%rsp)\n"
-                        ""
-                        "")
-                      "    pushq %r11\n")
-                    tail)))]
-            [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))
-
-(define (compiler-backend-tail-staged-stack-move
-  [arg-ty : AstType]
-  [src : String]
-  [dst : String]) : String
-  (if (compiler-backend-float-type? arg-ty)
-    (string-append
-      (backend-cat5
-        "    "
-        (compiler-backend-float-move arg-ty)
-        " "
-        src
-        ", %xmm15\n")
-      (backend-cat5
-        "    "
-        (compiler-backend-float-move arg-ty)
-        " %xmm15, "
-        dst
-        "\n"))
-    (backend-cat5 "    movq " src ", %r11\n    movq %r11, " dst "\n")))
-
-(define (compiler-backend-tail-staged-register-move
-  [arg-ty : AstType]
-  [src : String]
-  [dst : String]) : String
-  (if (compiler-backend-float-type? arg-ty)
-    (backend-cat5
-      "    "
-      (compiler-backend-float-move arg-ty)
-      " "
-      src
-      (string-append ", " (string-append dst "\n")))
-    (backend-cat5 "    movq " src ", " dst "\n")))
-
-(define (compiler-backend-emit-tail-staged-args
-  [target : CompilerBackendTarget]
-  [args : CompilerIrCallArgs]
-  [types : AstTypeList]
-  [arg-index : i64]
-  [int-idx : i64]
-  [float-idx : i64]
-  [position : i64]
-  [stack-idx : i64]
-  [arg-count : i64]
-  [func-diag : CompilerDiagnostic]) : ResultCompilerBackend
-  (if (>= arg-index arg-count)
-    (OkCompilerBackend "")
-    (let
-      [arg-ty : AstType
-        (match types
-          [(AstTypeCons ty _) (ty-node-get ty)]
-          [(AstTypeNil) (AstTyI64)])]
-      [rest-types : AstTypeList
-        (match types
-          [(AstTypeCons _ tail)
-            (let
-              [tail : AstTypeList (box-get tail)]
-              tail)]
-          [(AstTypeNil) AstTypeNil])]
-      [is-float : bool (compiler-backend-float-type? arg-ty)]
-      [src : String (compiler-backend-tail-stage-slot arg-count arg-index)]
       [next-int : i64
         (if is-float
           int-idx
@@ -10913,25 +10879,28 @@
         int-idx
         float-idx
         position)
-        (match (compiler-backend-emit-tail-staged-args
+        (match (compiler-backend-emit-direct-tail-stack-call-arg
           target
-          args
-          rest-types
-          (+ arg-index 1)
-          next-int
-          next-float
-          (+ position 1)
-          (+ stack-idx 1)
-          arg-count
-          func-diag)
-          [(OkCompilerBackend tail)
-            (OkCompilerBackend
-              (string-append
-                (compiler-backend-tail-staged-stack-move
-                  arg-ty
-                  src
-                  (compiler-backend-tail-final-stack-slot target stack-idx))
-                tail))]
+          assignments
+          value
+          arg-ty
+          is-float
+          stack-idx)
+          [(OkCompilerBackend head)
+            (match (compiler-backend-emit-direct-tail-call-args-from
+              target
+              assignments
+              args
+              rest-types
+              (+ arg-index 1)
+              next-int
+              next-float
+              (+ position 1)
+              (+ stack-idx 1)
+              func-diag)
+              [(OkCompilerBackend tail)
+                (OkCompilerBackend (string-append head tail))]
+              [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)])
         (match (if is-float
           (compiler-backend-target-float-arg-reg
@@ -10945,22 +10914,28 @@
               position
               int-idx)))
           [(OkBackendReg reg)
-            (match (compiler-backend-emit-tail-staged-args
-              target
-              args
-              rest-types
-              (+ arg-index 1)
-              next-int
-              next-float
-              (+ position 1)
-              stack-idx
-              arg-count
-              func-diag)
-              [(OkCompilerBackend tail)
-                (OkCompilerBackend
-                  (string-append
-                    (compiler-backend-tail-staged-register-move arg-ty src reg)
-                    tail))]
+            (match (if is-float
+              (compiler-backend-emit-load-float-value-with-plan
+                assignments
+                value
+                arg-ty
+                reg)
+              (compiler-backend-emit-load-value-with-plan assignments value reg))
+              [(OkCompilerBackend head)
+                (match (compiler-backend-emit-direct-tail-call-args-from
+                  target
+                  assignments
+                  args
+                  rest-types
+                  (+ arg-index 1)
+                  next-int
+                  next-float
+                  (+ position 1)
+                  stack-idx
+                  func-diag)
+                  [(OkCompilerBackend tail)
+                    (OkCompilerBackend (string-append head tail))]
+                  [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
               [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
           [(ErrBackendReg message)
             (ErrCompilerBackend
@@ -10972,25 +10947,17 @@
   [args : CompilerIrCallArgs]
   [types : AstTypeList]
   [func-diag : CompilerDiagnostic]) : ResultCompilerBackend
-  (let
-    [arg-count : i64 (compiler-backend-call-args-count args)]
-    (match (compiler-backend-emit-tail-stage-args assignments args types 0)
-      [(OkCompilerBackend stage-asm)
-        (match (compiler-backend-emit-tail-staged-args
-          target
-          args
-          types
-          0
-          0
-          0
-          0
-          0
-          arg-count
-          func-diag)
-          [(OkCompilerBackend move-asm)
-            (OkCompilerBackend (string-append stage-asm move-asm))]
-          [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-      [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
+  (compiler-backend-emit-direct-tail-call-args-from
+    target
+    assignments
+    args
+    types
+    0
+    0
+    0
+    0
+    0
+    func-diag))
 
 (define (compiler-backend-phi-input-value
   [inputs : CompilerIrPhiInputList]
@@ -14956,7 +14923,7 @@
                             (backend-cat5
                               "    movq 8(%r11), "
                               env-reg
-                              "\n    movq (%r11), %rax\n    call *%rax\n"
+                              "\n    call *(%r11)\n"
                               (string-append
                                 (compiler-backend-emit-call-space-add
                                   call-space)
@@ -15035,12 +15002,7 @@
               [(OkBackendReg env-reg)
                 (let
                   [descriptor-asm : String
-                    (backend-cat5
-                      func-asm
-                      "    movq 8(%r11), "
-                      env-reg
-                      "\n    movq (%r11), %rax\n"
-                      "")]
+                    (backend-cat5 func-asm "    movq 8(%r11), " env-reg "\n" "")]
                   (if register-only
                     (OkCompilerBackend
                       (string-append
@@ -15050,7 +15012,7 @@
                           (compiler-backend-tail-jump-tail
                             assignments
                             vars
-                            "*%rax"))))
+                            "*(%r11)"))))
                     (OkCompilerBackend
                       (string-append
                         (compiler-backend-emit-call-space-sub call-space)
@@ -15059,7 +15021,7 @@
                           (string-append
                             descriptor-asm
                             (backend-cat5
-                              "    call *%rax\n"
+                              "    call *(%r11)\n"
                               (compiler-backend-emit-call-space-add call-space)
                               (string-append
                                 (compiler-backend-tail-call-return-normalize ty)

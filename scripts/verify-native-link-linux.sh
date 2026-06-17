@@ -383,7 +383,7 @@ EOF
     assert_not_contains "$_asm" "backend: too many call args" compiler-driver-stack-args
     for _snippet in \
         "subq \$16, %rsp" \
-        "movq %r11, 0(%rsp)" \
+        "movq \$7, 0(%rsp)" \
         "addq \$16, %rsp" \
         "call f"
     do

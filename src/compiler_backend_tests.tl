@@ -2120,8 +2120,9 @@
           (compiler-backend-string-contains?
             asm
             "    leaq .L_tl_fn_desc___tl_lambda_main_0(%rip), ")
-          (compiler-backend-call-or-jmp-ok? asm "*%rax")
-          (compiler-backend-string-contains? asm "    movq (%r11), %rax\n"))
+          (compiler-backend-call-or-jmp-ok? asm "*(%r11)")
+          (not
+            (compiler-backend-string-contains? asm "    movq (%r11), %rax\n")))
         (compiler-backend-string-contains? asm "    movq 8(%r11), %rdi\n")
         (not
           (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
@@ -2134,7 +2135,7 @@
       (backend-and4
         (compiler-backend-string-contains? asm "_tl_f")
         (compiler-backend-string-contains? asm "    call _tl_f")
-        (compiler-backend-call-or-jmp-ok? asm "*%rax")
+        (compiler-backend-call-or-jmp-ok? asm "*(%r11)")
         (not
           (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
     [(ErrCompilerBackend _) false]))
@@ -2186,20 +2187,25 @@
           (compiler-backend-string-contains?
             asm
             "    .quad .L_tl_fn_entry___tl_lambda_main_3\n"))
-        (backend-and4
+        (backend-and8
           (compiler-backend-string-contains? asm "tl_alloc:\n")
           ;; #1867 sret ABI: only the heap-backed (Array) closure return
           ;; still allocates; Box/Pair/String returns use sret/static data.
           (>= (compiler-backend-alloc-call-count asm) 1)
           (>=
             (+
-              (compiler-backend-string-count asm "    call *%rax\n")
-              (compiler-backend-string-count asm "    jmp *%rax\n"))
+              (compiler-backend-string-count asm "    call *(%r11)\n")
+              (compiler-backend-string-count asm "    jmp *(%r11)\n"))
             4)
+          (not
+            (compiler-backend-string-contains? asm "    movq (%r11), %rax\n"))
           (not
             (compiler-backend-string-contains?
               asm
-              (compiler-backend-todo-marker))))
+              (compiler-backend-todo-marker)))
+          true
+          true
+          true)
         true)]
     [(ErrCompilerBackend _) false]))
 
@@ -7396,9 +7402,9 @@
     (compiler-backend-register-f32-aggregate-target-ok? (BackendTargetWindows))))
 
 ;; #750: a SysV call with seven integer args no longer rejects as "too many
-;; call args". The 7th arg spills: 16-byte call space is reserved, the spilled
-;; value is staged through %r11 and stored at 0(%rsp), and `add8` reads its
-;; stack-passed params back from 16(%rbp)/24(%rbp).
+;; call args". Source-level numeric literals are lowered into locals before
+;; call-arg emission, so the 7th and 8th args still exercise the variable
+;; stack-store path while `add8` reads them back from 16(%rbp)/24(%rbp).
 (define (compiler-backend-stack-add-call-ok? [asm : String]) : bool
   (or
     (compiler-backend-string-contains? asm "    call _tl_add8")
@@ -7466,12 +7472,68 @@
         (compiler-backend-string-contains? asm "    movq 48(%rbp), %rax\n"))]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-i64-type-list8) : AstTypeList
+  (ast-type-cons
+    (AstTyI64)
+    (ast-type-cons
+      (AstTyI64)
+      (ast-type-cons
+        (AstTyI64)
+        (ast-type-cons
+          (AstTyI64)
+          (ast-type-cons
+            (AstTyI64)
+            (ast-type-cons
+              (AstTyI64)
+              (ast-type-cons (AstTyI64) (ast-type-cons (AstTyI64) AstTypeNil)))))))))
+
+(define (compiler-backend-i64-immediate-call-args8) : CompilerIrCallArgs
+  (compiler-ir-call-args-from-list
+    (compiler-ir-value-cons
+      (IrValueI64 1)
+      (compiler-ir-value-cons
+        (IrValueI64 2)
+        (compiler-ir-value-cons
+          (IrValueI64 3)
+          (compiler-ir-value-cons
+            (IrValueI64 4)
+            (compiler-ir-value-cons
+              (IrValueI64 5)
+              (compiler-ir-value-cons
+                (IrValueI64 6)
+                (compiler-ir-value-cons
+                  (IrValueI64 7)
+                  (compiler-ir-value-cons (IrValueI64 8) IrValueNil))))))))))
+
+(define (compiler-backend-immediate-stack-call-args-ok?) : bool
+  (match (compiler-backend-emit-call-args
+    (BackendTargetLinux)
+    CompilerRegAssignmentNil
+    (compiler-backend-i64-immediate-call-args8)
+    (compiler-backend-i64-type-list8)
+    false
+    0
+    0
+    0
+    0
+    0
+    (compiler-diagnostic-at-start "" "")
+    (compiler-backend-program-index-build IrFunctionNil IrExternNil)
+    0)
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "    movq $7, 0(%rsp)\n")
+        (compiler-backend-string-contains? asm "    movq $8, 8(%rsp)\n")
+        (not (compiler-backend-string-contains? asm "    movq %r11, 0(%rsp)\n")))]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-stack-args-ok?) : bool
   (and
     (compiler-backend-stack-int-args-ok?)
     (compiler-backend-stack-f64-args-ok?)
     (compiler-backend-stack-mixed-args-ok?)
-    (compiler-backend-stack-windows-args-ok?)))
+    (compiler-backend-stack-windows-args-ok?)
+    (compiler-backend-immediate-stack-call-args-ok?)))
 
 (define (compiler-backend-direct-tail-call-target-ok?
   [target : CompilerBackendTarget]) : bool
@@ -7500,10 +7562,30 @@
         (compiler-backend-string-contains? asm "    jmp _tl_finishstack\n")
         (not
           (compiler-backend-string-contains? asm "    call _tl_finishstack\n"))
-        (compiler-backend-string-contains? asm "    pushq %r11\n")
+        (not (compiler-backend-string-contains? asm "    pushq %r11\n"))
         (compiler-backend-string-contains?
           asm
           (compiler-backend-direct-tail-call-stack-slot target)))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-direct-tail-immediate-stack-target-ok?
+  [target : CompilerBackendTarget]) : bool
+  (match (compiler-backend-emit-direct-tail-call-args
+    target
+    CompilerRegAssignmentNil
+    (compiler-backend-i64-immediate-call-args8)
+    (compiler-backend-i64-type-list8)
+    (compiler-diagnostic-at-start "" ""))
+    [(OkCompilerBackend asm)
+      (if (compiler-backend-target-windows? target)
+        (and
+          (compiler-backend-string-contains? asm "    movq $5, 48(%rbp)\n")
+          (compiler-backend-string-contains? asm "    movq $8, 72(%rbp)\n")
+          (not (compiler-backend-string-contains? asm "    pushq %r11\n")))
+        (and
+          (compiler-backend-string-contains? asm "    movq $7, 16(%rbp)\n")
+          (compiler-backend-string-contains? asm "    movq $8, 24(%rbp)\n")
+          (not (compiler-backend-string-contains? asm "    pushq %r11\n"))))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-direct-tail-call-mixed-slot
@@ -7522,7 +7604,7 @@
         (compiler-backend-string-contains? asm "    jmp _tl_finishmixed\n")
         (not
           (compiler-backend-string-contains? asm "    call _tl_finishmixed\n"))
-        (compiler-backend-string-contains? asm "    subq $8, %rsp\n")
+        (not (compiler-backend-string-contains? asm "    subq $8, %rsp\n"))
         (compiler-backend-string-contains?
           asm
           (compiler-backend-direct-tail-call-mixed-slot target)))]
@@ -7534,6 +7616,10 @@
     (compiler-backend-direct-tail-call-target-ok? (BackendTargetWindows))
     (compiler-backend-direct-tail-call-stack-target-ok? (BackendTargetLinux))
     (compiler-backend-direct-tail-call-stack-target-ok? (BackendTargetWindows))
+    (compiler-backend-direct-tail-immediate-stack-target-ok?
+      (BackendTargetLinux))
+    (compiler-backend-direct-tail-immediate-stack-target-ok?
+      (BackendTargetWindows))
     (compiler-backend-direct-tail-call-mixed-target-ok? (BackendTargetLinux))
     (compiler-backend-direct-tail-call-mixed-target-ok? (BackendTargetWindows))))
 
@@ -7544,8 +7630,9 @@
     target)
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains? asm "    jmp *%rax\n")
-        (not (compiler-backend-string-contains? asm "    call *%rax\n")))]
+        (compiler-backend-string-contains? asm "    jmp *(%r11)\n")
+        (not (compiler-backend-string-contains? asm "    jmp *%rax\n"))
+        (not (compiler-backend-string-contains? asm "    movq (%r11), %rax\n")))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-indirect-tail-call-stack-target-ok?
@@ -7555,8 +7642,10 @@
     target)
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains? asm "    call *%rax\n")
-        (not (compiler-backend-string-contains? asm "    jmp *%rax\n")))]
+        (compiler-backend-string-contains? asm "    call *(%r11)\n")
+        (not (compiler-backend-string-contains? asm "    jmp *(%r11)\n"))
+        (not (compiler-backend-string-contains? asm "    call *%rax\n"))
+        (not (compiler-backend-string-contains? asm "    movq (%r11), %rax\n")))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-indirect-tail-call-ok?) : bool
@@ -7951,7 +8040,7 @@
           (compiler-backend-string-contains? asm "__tl_dispatch_variant_avx512")
           (compiler-backend-string-contains? asm "    cpuid\n")
           (compiler-backend-string-contains? asm "    xgetbv\n")
-          (compiler-backend-string-contains? asm "    call *%rax\n")
+          (compiler-backend-string-contains? asm "    call *(%r11)\n")
           (compiler-backend-string-contains? asm "    vzeroupper\n")
           (compiler-backend-string-contains? asm "main:\n"))
         (not

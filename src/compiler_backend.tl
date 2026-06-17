@@ -5507,13 +5507,13 @@
   [rhs : String]
   [lhs : String]) : String
   (string-append
-    (backend-cat5
+    (str-cat
       "    "
       mnemonic
       (compiler-backend-int-instruction-suffix ty)
       " "
       rhs)
-    (backend-cat3 ", " lhs "\n")))
+    (str-cat ", " lhs "\n")))
 
 (define (compiler-backend-binop-cmp-set-asm
   [ty : AstType]
@@ -5521,7 +5521,7 @@
   [lhs : String]
   [setcc : String]) : String
   (string-append
-    (backend-cat5
+    (str-cat
       "    cmp"
       (compiler-backend-int-instruction-suffix ty)
       " "
@@ -5529,14 +5529,14 @@
       ", ")
     (string-append
       lhs
-      (backend-cat4 "\n    " setcc " %al\n    movzbl %al, %eax\n" ""))))
+      (str-cat "\n    " setcc " %al\n    movzbl %al, %eax\n" ""))))
 
 (define (compiler-backend-binop-cmp-reg-asm
   [ty : AstType]
   [rhs : String]
   [lhs : String]) : String
   (string-append
-    (backend-cat5
+    (str-cat
       "    cmp"
       (compiler-backend-int-instruction-suffix ty)
       " "
@@ -5545,7 +5545,7 @@
     (string-append lhs "\n")))
 
 (define (compiler-backend-emit-load-i64-absolute [n : i64] [reg : String]) : String
-  (backend-cat5 "    movabsq $" (int->string n) ", " reg "\n"))
+  (str-cat "    movabsq $" (int->string n) ", " reg "\n"))
 
 (define (compiler-backend-signed-min-value [ty : AstType]) : i64
   (let
@@ -5833,7 +5833,7 @@
 (define (compiler-backend-divmod-shift-rax [mnemonic : String] [shift : i64]) : String
   (if (= shift 0)
     ""
-    (backend-cat5 "    " mnemonic "q $" (int->string shift) ", %rax\n")))
+    (str-cat "    " mnemonic "q $" (int->string shift) ", %rax\n")))
 
 (define (compiler-backend-divmod-shift-reg
   [mnemonic : String]
@@ -5841,19 +5841,14 @@
   [reg : String]) : String
   (if (= shift 0)
     ""
-    (backend-cat5
-      "    "
-      mnemonic
-      "q $"
-      (int->string shift)
-      (backend-cat3 ", " reg "\n"))))
+    (str-cat "    " mnemonic "q $" (int->string shift) ", " reg "\n")))
 
 (define (compiler-backend-divmod-remainder-from-quotient-reg
   [divisor : u64]
   [quotient-reg : String]) : String
   (string-append
     (compiler-backend-emit-load-u64-absolute divisor "%r8")
-    (backend-cat5
+    (str-cat
       "    imulq "
       quotient-reg
       ", %r8\n"
@@ -6155,7 +6150,7 @@
 (define (compiler-backend-shift-guard-asm [ty : AstType]) : String
   (string-append
     "    testq %r8, %r8\n    jge 1f\n    call tl_shift_abort\n1:\n"
-    (backend-cat5
+    (str-cat
       "    cmpq $"
       (int->string (compiler-backend-shift-count-width ty))
       ", %r8\n    jb 1f\n    call tl_shift_abort\n1:\n"
@@ -6170,12 +6165,13 @@
     (compiler-backend-shift-guard-asm ty)
     (string-append
       "    movq %r8, %rcx\n"
-      (backend-cat5
+      (str-cat
         "    "
         mnemonic
         (compiler-backend-int-instruction-suffix ty)
         " %cl, "
-        (backend-cat3 lhs "\n" "")))))
+        lhs
+        "\n"))))
 
 (define (compiler-backend-binop-asm [op : CompilerIrBinOp] [ty : AstType]) : String
   (let
@@ -6246,7 +6242,7 @@
     [lhs : String (compiler-backend-sized-reg "%rax" ty)]
     (string-append
       (compiler-backend-binop-reg-asm "test" ty lhs lhs)
-      (backend-cat4 "    " setcc " %al\n    movzbl %al, %eax\n" ""))))
+      (str-cat "    " setcc " %al\n    movzbl %al, %eax\n" ""))))
 
 (define (compiler-backend-binop-immediate-cmp-asm
   [ty : AstType]
@@ -6267,13 +6263,13 @@
     (if (compiler-backend-shift-count-valid? count ty)
       (CompilerBackendSomeAsm
         (string-append
-          (backend-cat5
+          (str-cat
             "    "
             mnemonic
             (compiler-backend-int-instruction-suffix ty)
             " "
             imm)
-          (backend-cat3 ", " (compiler-backend-sized-reg "%rax" ty) "\n")))
+          (str-cat ", " (compiler-backend-sized-reg "%rax" ty) "\n")))
       (CompilerBackendNoAsm))))
 
 (define (compiler-backend-binop-immediate-reg-asm
@@ -6300,7 +6296,7 @@
     [(IrBinMul)
       (CompilerBackendSomeAsm
         (if (= (compiler-backend-type-size ty) 1)
-          (backend-cat3 "    imulq " imm ", %rax\n")
+          (str-cat "    imulq " imm ", %rax\n")
           (compiler-backend-binop-immediate-reg-asm "imul" ty imm)))]
     [(IrBinEq)
       (CompilerBackendSomeAsm
@@ -6377,9 +6373,9 @@
 
 (define (compiler-backend-unop-reg-asm [op : CompilerIrUnOp] [reg : String]) : String
   (match op
-    [(IrUnNeg) (backend-cat3 "    negq " reg "\n")]
-    [(IrUnNot) (backend-cat3 "    xorq $1, " reg "\n")]
-    [(IrUnBitNot) (backend-cat3 "    notq " reg "\n")]))
+    [(IrUnNeg) (str-cat "    negq " reg "\n")]
+    [(IrUnNot) (str-cat "    xorq $1, " reg "\n")]
+    [(IrUnBitNot) (str-cat "    notq " reg "\n")]))
 
 ;; Scalar floating-point binary ops. `fty` selects single (`ss`, f32) vs double
 ;; (`sd`, f64) precision; comparisons use ucomiss/ucomisd accordingly. Operands
@@ -6590,7 +6586,7 @@
                 (OkCompilerBackend
                   (string-append
                     lhs-asm
-                    (backend-cat5
+                    (str-cat
                       "    "
                       mnem
                       " "
@@ -6612,7 +6608,7 @@
                         rhs-asm
                         (string-append
                           lhs-asm
-                          (backend-cat5 "    " mnem " %r8, " dst-home "\n"))))]
+                          (str-cat "    " mnem " %r8, " dst-home "\n"))))]
                   [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
               [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
         (match (compiler-backend-emit-load-value-with-plan
@@ -6988,7 +6984,7 @@
           [(ErrCompilerBackend message) (ErrCompilerBackend message)])))))
 
 (define (compiler-backend-jump-label [function : String] [label : String]) : String
-  (backend-cat4 "    jmp " (compiler-backend-asm-label function label) "\n" ""))
+  (str-cat "    jmp " (compiler-backend-asm-label function label) "\n" ""))
 
 (define (compiler-backend-jump-target-is-fallthrough?
   [target : String]
@@ -7003,18 +6999,18 @@
   [false-label : String]
   [fallthrough : CompilerBackendMaybeLabel]) : String
   (if (compiler-backend-jump-target-is-fallthrough? false-label fallthrough)
-    (backend-cat4
+    (str-cat
       "    jne "
       (compiler-backend-asm-label function true-label)
       "\n"
       "")
     (if (compiler-backend-jump-target-is-fallthrough? true-label fallthrough)
-      (backend-cat4
+      (str-cat
         "    je "
         (compiler-backend-asm-label function false-label)
         "\n"
         "")
-      (backend-cat5
+      (str-cat
         "    jne "
         (compiler-backend-asm-label function true-label)
         "\n    jmp "
@@ -7117,7 +7113,7 @@
                 (if (compiler-backend-jump-target-is-fallthrough?
                   false-label
                   fallthrough)
-                  (backend-cat4
+                  (str-cat
                     "    jne "
                     (compiler-backend-asm-label function true-label)
                     "\n"
@@ -7125,12 +7121,12 @@
                   (if (compiler-backend-jump-target-is-fallthrough?
                     true-label
                     fallthrough)
-                    (backend-cat4
+                    (str-cat
                       "    je "
                       (compiler-backend-asm-label function false-label)
                       "\n"
                       "")
-                    (backend-cat5
+                    (str-cat
                       "    jne "
                       (compiler-backend-asm-label function true-label)
                       "\n    jmp "
@@ -7208,7 +7204,7 @@
   [jcc : String]
   [function : String]
   [label : String]) : String
-  (backend-cat5 "    " jcc " " (compiler-backend-asm-label function label) "\n"))
+  (str-cat "    " jcc " " (compiler-backend-asm-label function label) "\n"))
 
 (define (compiler-backend-emit-compare-branch-jumps
   [function : String]
@@ -7242,13 +7238,13 @@
       (compiler-backend-sized-reg "%rax" ty)
       (compiler-backend-sized-reg "%rax" ty))
     (string-append
-      (backend-cat5
+      (str-cat
         "    cmp"
         (compiler-backend-int-instruction-suffix ty)
         " "
         rhs
         ", ")
-      (backend-cat3 (compiler-backend-sized-reg "%rax" ty) "\n" ""))))
+      (str-cat (compiler-backend-sized-reg "%rax" ty) "\n" ""))))
 
 ;; A scalar register-homed var IS its own cmp source operand, so a comparison can
 ;; emit `cmp <home>, %rax` directly instead of `movq <home>, %r8; cmp %r8, %rax`
@@ -7357,7 +7353,7 @@
 (define (compiler-backend-emit-compare-memory-address-flags
   [rhs : String]
   [addr : String]) : String
-  (backend-cat5 "    cmpq " rhs ", " addr "\n"))
+  (str-cat "    cmpq " rhs ", " addr "\n"))
 
 (define (compiler-backend-emit-compare-memory-flags [rhs : String]) : String
   (compiler-backend-emit-compare-memory-address-flags rhs "(%r10)"))
@@ -7529,14 +7525,10 @@
                 (string-append
                   length-asm
                   (string-append
-                    (backend-cat4
-                      "    cmpq %r11, %rax\n    jb "
-                      ok-symbol
-                      "\n"
-                      "")
+                    (str-cat "    cmpq %r11, %rax\n    jb " ok-symbol "\n" "")
                     (string-append
                       (compiler-backend-emit-call-space-sub call-space)
-                      (backend-cat5
+                      (str-cat
                         "    call "
                         (compiler-backend-call-symbol-index
                           "tl_oob_abort"
@@ -7545,7 +7537,7 @@
                         "\n"
                         (string-append
                           (compiler-backend-emit-call-space-add call-space)
-                          (backend-cat4 ok-symbol ":\n" "" ""))
+                          (str-cat ok-symbol ":\n" "" ""))
                         "")))))))]
         [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
     [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
@@ -7617,13 +7609,13 @@
           [(CompilerRegSomeLocation location)
             (match location
               [(CompilerRegRegister home)
-                (backend-cat5 "    leaq " slot ", " home "\n")]
+                (str-cat "    leaq " slot ", " home "\n")]
               [(CompilerRegRegisterPair home _)
-                (backend-cat5 "    leaq " slot ", " home "\n")]
+                (str-cat "    leaq " slot ", " home "\n")]
               [(CompilerRegSpill offset)
                 (string-append
-                  (backend-cat5 "    leaq " slot ", " "%rax" "\n")
-                  (backend-cat5
+                  (str-cat "    leaq " slot ", " "%rax" "\n")
+                  (str-cat
                     "    movq %rax, "
                     (compiler-backend-frame-offset offset)
                     "\n"
@@ -7631,35 +7623,35 @@
                     ""))])]
           [(CompilerRegNoLocation)
             (string-append
-              (backend-cat5 "    leaq " slot ", " "%rax" "\n")
+              (str-cat "    leaq " slot ", " "%rax" "\n")
               (compiler-backend-emit-store-var-with-plan assignments dst "%rax"))])))))
 
 (define (compiler-backend-gep-index-asm [scale : i64]) : String
   (if (= scale 1)
     "    addq %r8, %rax\n"
     (if (or (= scale 2) (= scale 4) (= scale 8))
-      (backend-cat4 "    leaq (%rax,%r8," (int->string scale) "), %rax\n" "")
+      (str-cat "    leaq (%rax,%r8," (int->string scale) "), %rax\n" "")
       (string-append
-        (backend-cat5 "    imulq $" (int->string scale) ", " "%r8" "\n")
+        (str-cat "    imulq $" (int->string scale) ", " "%r8" "\n")
         "    addq %r8, %rax\n"))))
 
 (define (compiler-backend-gep-index-r10-asm [scale : i64]) : String
   (if (= scale 1)
     "    addq %r8, %r10\n"
     (if (or (= scale 2) (= scale 4) (= scale 8))
-      (backend-cat4 "    leaq (%r10,%r8," (int->string scale) "), %r10\n" "")
+      (str-cat "    leaq (%r10,%r8," (int->string scale) "), %r10\n" "")
       (string-append
-        (backend-cat5 "    imulq $" (int->string scale) ", " "%r8" "\n")
+        (str-cat "    imulq $" (int->string scale) ", " "%r8" "\n")
         "    addq %r8, %r10\n"))))
 
 (define (compiler-backend-gep-index-address-r10 [scale : i64]) : String
   (if (or (= scale 1) (= scale 2) (= scale 4) (= scale 8))
-    (backend-cat4 "(%r10,%r8," (int->string scale) ")" "")
+    (str-cat "(%r10,%r8," (int->string scale) ")" "")
     ""))
 
 (define (compiler-backend-gep-index-address [base-reg : String] [scale : i64]) : String
   (if (or (= scale 1) (= scale 2) (= scale 4) (= scale 8))
-    (backend-cat5 "(" base-reg ",%r8," (int->string scale) ")")
+    (str-cat "(" base-reg ",%r8," (int->string scale) ")")
     ""))
 
 (define (compiler-backend-gep-immediate-asm [disp : i64]) : CompilerBackendMaybeAsm
@@ -7667,7 +7659,7 @@
     (CompilerBackendSomeAsm "")
     (if (compiler-backend-imm32? disp)
       (CompilerBackendSomeAsm
-        (backend-cat4 "    addq $" (int->string disp) ", %rax\n" ""))
+        (str-cat "    addq $" (int->string disp) ", %rax\n" ""))
       (CompilerBackendNoAsm))))
 
 (define (compiler-backend-gep-immediate-r10-asm [disp : i64]) : CompilerBackendMaybeAsm
@@ -7675,7 +7667,7 @@
     (CompilerBackendSomeAsm "")
     (if (compiler-backend-imm32? disp)
       (CompilerBackendSomeAsm
-        (backend-cat4 "    addq $" (int->string disp) ", %r10\n" ""))
+        (str-cat "    addq $" (int->string disp) ", %r10\n" ""))
       (CompilerBackendNoAsm))))
 
 (define (compiler-backend-emit-gep
@@ -7767,12 +7759,12 @@
 (define (compiler-backend-r10-address [disp : i64]) : String
   (if (= disp 0)
     "(%r10)"
-    (backend-cat4 (int->string disp) "(%r10)" "" "")))
+    (str-cat (int->string disp) "(%r10)" "" "")))
 
 (define (compiler-backend-copy-address [disp : i64] [reg : String]) : String
   (if (= disp 0)
-    (backend-cat4 "(" reg ")" "")
-    (backend-cat4 (int->string disp) "(" reg ")")))
+    (str-cat "(" reg ")" "")
+    (str-cat (int->string disp) "(" reg ")")))
 
 (define (compiler-backend-copy-chunk-size [remaining : i64]) : i64
   (if (>= remaining 8)
@@ -7805,13 +7797,13 @@
       ;; inline aggregates and halves the instruction count of large copies
       ;; versus unrolled 8-byte mov pairs (#2371).
       (string-append
-        (backend-cat4
+        (str-cat
           "    movups "
           (compiler-backend-copy-address offset src-reg)
           ", %xmm15\n"
           "")
         (string-append
-          (backend-cat4
+          (str-cat
             "    movups %xmm15, "
             (compiler-backend-copy-address offset dst-reg)
             "\n"
@@ -7826,7 +7818,7 @@
         [chunk-ty : AstType (compiler-backend-copy-chunk-type chunk)]
         [reg : String (compiler-backend-sized-reg "%rax" chunk-ty)]
         (string-append
-          (backend-cat5
+          (str-cat
             "    mov"
             (compiler-backend-int-instruction-suffix chunk-ty)
             " "
@@ -7837,7 +7829,7 @@
             (string-append
               "\n"
               (string-append
-                (backend-cat5
+                (str-cat
                   "    mov"
                   (compiler-backend-int-instruction-suffix chunk-ty)
                   " "
@@ -7978,7 +7970,7 @@
         (string-append
           src-asm
           (string-append
-            (backend-cat3
+            (str-cat
               "    leaq "
               (int->string
                 (compiler-backend-outgoing-stack-arg-offset target stack-idx))

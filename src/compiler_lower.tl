@@ -24558,12 +24558,21 @@
     [(AstExprLiteral lit)
       (let
         [lit-ty : AstType (tc-literal-type lit)]
-        (if (and
-          (> (lower-simd-lanes-for-elem mode lit-ty) 0)
-          (tc-type-eq lit-ty dst-elem))
-          (LowerSomeVectorMapValue
-            (LowerVectorMapUniform (lower-literal-value lit)))
-          LowerNoVectorMapValue))]
+        (match lit
+          [(AstLitInt _)
+            (if (and
+              (> (lower-simd-lanes-for-elem mode dst-elem) 0)
+              (tc-integer-type? dst-elem))
+              (LowerSomeVectorMapValue
+                (LowerVectorMapUniform (lower-literal-value lit)))
+              LowerNoVectorMapValue)]
+          [_
+            (if (and
+              (> (lower-simd-lanes-for-elem mode lit-ty) 0)
+              (tc-type-eq lit-ty dst-elem))
+              (LowerSomeVectorMapValue
+                (LowerVectorMapUniform (lower-literal-value lit)))
+              LowerNoVectorMapValue)]))]
     [(AstExprBinary op lhs-box rhs-box)
       (if (lower-simple-vector-map-binop-supported? mode dst-elem op)
         (let
@@ -26560,7 +26569,7 @@
         [(OkLowerExpr left-lowered)
           (match left-lowered
             [(LowerExpr left-state left-value left-ty)
-              (match (lower-avx512-masked-expr
+              (match (lower-avx512-masked-expr-expected
                 ctx
                 left-state
                 env
@@ -26570,7 +26579,8 @@
                 index-var
                 active-mask
                 lanes
-                right)
+                right
+                left-ty)
                 [(OkLowerExpr right-lowered)
                   (match right-lowered
                     [(LowerExpr right-state right-value _)
@@ -26739,7 +26749,7 @@
     [(OkLowerExpr left-lowered)
       (match left-lowered
         [(LowerExpr left-state left-value left-ty)
-          (match (lower-avx512-masked-expr
+          (match (lower-avx512-masked-expr-expected
             ctx
             left-state
             env
@@ -26749,7 +26759,8 @@
             index-var
             active-mask
             lanes
-            right)
+            right
+            left-ty)
             [(OkLowerExpr right-lowered)
               (match right-lowered
                 [(LowerExpr right-state right-value _)

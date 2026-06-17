@@ -6876,10 +6876,10 @@
     (compiler-typecheck-ok? (compiler-typecheck-macro-prelude-and-or-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-macro-prelude-and-bad-source)
-      "typecheck: macro operand type mismatch: expected bool, got i64")
+      "typecheck: macro operand type mismatch: expected bool, got i32")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-macro-prelude-or-bad-source)
-      "typecheck: macro operand type mismatch: expected bool, got i64")
+      "typecheck: macro operand type mismatch: expected bool, got i32")
     (compiler-typecheck-ok? (compiler-typecheck-compat-guards-source))))
 
 (define (compiler-typecheck-macro-export-tests-ok?) : bool
@@ -6911,10 +6911,10 @@
       "macro call has too few arguments")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-macro-expand-operand-source)
-      "typecheck: macro operand type mismatch: expected bool, got i64")
+      "typecheck: macro operand type mismatch: expected bool, got i32")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-macro-expand-variadic-operand-source)
-      "typecheck: macro operand type mismatch: expected bool, got i64")
+      "typecheck: macro operand type mismatch: expected bool, got i32")
     (compiler-typecheck-ok?
       (compiler-typecheck-macro-expr-wildcard-operand-source))
     (compiler-typecheck-ok? (compiler-typecheck-macro-expr-shadow-source))

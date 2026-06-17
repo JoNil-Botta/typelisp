@@ -2,7 +2,7 @@
 ;; The signed cvtsi2s{s,d}q path turns these into negative floats; a correct
 ;; unsigned lowering keeps them at or above 2^63.
 (define (u64-high) : u64
-  (+ (cast 9223372036854775807 : u64) (cast 1 : u64)))
+  (+ 9223372036854775807 (cast 1 : u64)))
 
 (define (u64-max) : u64
   (cast -1 : u64))

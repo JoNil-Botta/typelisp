@@ -43,16 +43,167 @@
   (VecApiTagA i64)
   (VecApiTagB i64))
 
+(defstruct VecApiPoint
+  (x i64)
+  (y i64))
+
 (define (vec-api-tag-score [tag : VecApiTag]) : i64
   (match tag
     [(VecApiTagA value) value]
     [(VecApiTagB value) (+ value 100)]))
+
+(define (vec-api-point-score [point : VecApiPoint]) : i64
+  (+ (struct-get point x) (* (struct-get point y) 10)))
 
 (define (vec-api-fold-decimal [acc : i64] [value : i64]) : i64
   (+ (* acc 10) value))
 
 (define (vec-api-double [value : i64]) : i64
   (* value 2))
+
+(comptime-decl
+  (:generated vector-family VecApiPointVec "VecApiPoint")
+  (defstruct VecApiPointVec
+    (slots (Array VecApiPoint))
+    (len i64)))
+
+(comptime-decl
+  (:generated vector-family VecApiPointVecPop "VecApiPoint")
+  (defenum VecApiPointVecPop
+    (VecApiPointVecPopEmpty)
+    (VecApiPointVecPopOk VecApiPoint VecApiPointVec)))
+
+(comptime-decl
+  (:generated vector-family vec-api-point-vec-slots "VecApiPoint")
+  (define (vec-api-point-vec-slots [v : VecApiPointVec]) : (Array VecApiPoint)
+    (struct-get v slots)))
+
+(comptime-decl
+  (:generated vector-family vec-api-point-vec-len "VecApiPoint")
+  (define (vec-api-point-vec-len [v : VecApiPointVec]) : i64
+    (struct-get v len)))
+
+(comptime-decl
+  (:generated vector-family vec-api-point-vec-capacity "VecApiPoint")
+  (define (vec-api-point-vec-capacity [v : VecApiPointVec]) : i64
+    (array-length (struct-get v slots))))
+
+(comptime-decl
+  (:generated vector-family vec-api-point-vec-with-capacity "VecApiPoint")
+  (define (vec-api-point-vec-with-capacity [capacity : i64]) : VecApiPointVec
+    (let
+      [cap : i64
+        (if (< capacity 1)
+          1
+          capacity)]
+      (VecApiPointVec (make-array VecApiPoint cap) 0))))
+
+(comptime-decl
+  (:generated vector-family vec-api-point-vec-get "VecApiPoint")
+  (define (vec-api-point-vec-get
+    [v : VecApiPointVec]
+    [index : i64]
+    [fallback : VecApiPoint]) : VecApiPoint
+    (if (if (>= index 0)
+      (< index (vec-api-point-vec-len v))
+      false)
+      (array-ref (vec-api-point-vec-slots v) index)
+      fallback)))
+
+(comptime-decl
+  (:generated vector-family vec-api-point-vec-set! "VecApiPoint")
+  (define (vec-api-point-vec-set!
+    [v : VecApiPointVec]
+    [index : i64]
+    [value : VecApiPoint]) : VecApiPointVec
+    (begin
+      (if (if (>= index 0)
+        (< index (vec-api-point-vec-len v))
+        false)
+        (array-set! (vec-api-point-vec-slots v) index value)
+        unit)
+      v)))
+
+(comptime-decl
+  (:generated vector-family vec-api-point-vec-copy-range "VecApiPoint")
+  (define (vec-api-point-vec-copy-range
+    [dst : (Array VecApiPoint)]
+    [src : (Array VecApiPoint)]
+    [index : i64]
+    [count : i64]) : unit
+    (if (>= index count)
+      unit
+      (begin
+        (array-set! dst index (array-ref src index))
+        (vec-api-point-vec-copy-range dst src (+ index 1) count)))))
+
+(comptime-decl
+  (:generated vector-family vec-api-point-vec-grow "VecApiPoint")
+  (define (vec-api-point-vec-grow [v : VecApiPointVec]) : VecApiPointVec
+    (let
+      [n : i64 (vec-api-point-vec-len v)]
+      [bigger : (Array VecApiPoint)
+        (make-array VecApiPoint (* (vec-api-point-vec-capacity v) 2))]
+      (begin
+        (vec-api-point-vec-copy-range bigger (vec-api-point-vec-slots v) 0 n)
+        (set! (struct-get v slots) bigger)
+        v))))
+
+(comptime-decl
+  (:generated vector-family vec-api-point-vec-push "VecApiPoint")
+  (define (vec-api-point-vec-push [v : VecApiPointVec] [value : VecApiPoint]) : VecApiPointVec
+    (if (< (vec-api-point-vec-len v) (vec-api-point-vec-capacity v))
+      (let
+        [slots : (Array VecApiPoint) (vec-api-point-vec-slots v)]
+        [index : i64 (vec-api-point-vec-len v)]
+        (begin
+          (array-set! slots index value)
+          (set! (struct-get v len) (+ index 1))
+          v))
+      (vec-api-point-vec-push (vec-api-point-vec-grow v) value))))
+
+(comptime-decl
+  (:generated vector-family vec-api-point-vec-pop "VecApiPoint")
+  (define (vec-api-point-vec-pop [v : VecApiPointVec]) : VecApiPointVecPop
+    (if (<= (vec-api-point-vec-len v) 0)
+      (VecApiPointVecPopEmpty)
+      (let
+        [last-index : i64 (- (vec-api-point-vec-len v) 1)]
+        [value : VecApiPoint (array-ref (vec-api-point-vec-slots v) last-index)]
+        (begin
+          (set! (struct-get v len) last-index)
+          (VecApiPointVecPopOk value v))))))
+
+(comptime-decl
+  (:generated vector-family vec-api-point-vec-to-array "VecApiPoint")
+  (define (vec-api-point-vec-to-array [v : VecApiPointVec]) : (Array
+      VecApiPoint)
+    (let
+      [n : i64 (vec-api-point-vec-len v)]
+      [out : (Array VecApiPoint) (make-array VecApiPoint n)]
+      (begin
+        (vec-api-point-vec-copy-range out (vec-api-point-vec-slots v) 0 n)
+        out))))
+
+(comptime-decl
+  (:generated vector-family vec-api-point-vec-score-from "VecApiPoint")
+  (define (vec-api-point-vec-score-from
+    [v : VecApiPointVec]
+    [index : i64]
+    [acc : i64]) : i64
+    (if (>= index (vec-api-point-vec-len v))
+      acc
+      (vec-api-point-vec-score-from
+        v
+        (+ index 1)
+        (+
+          acc
+          (vec-api-point-score (array-ref (vec-api-point-vec-slots v) index)))))))
+
+(comptime-decl
+  (:generated vector-family vec-api-point-vec-score "VecApiPoint")
+  (define (vec-api-point-vec-score [v : VecApiPointVec]) : i64
+    (vec-api-point-vec-score-from v 0 0)))
 
 (comptime-decl
   (:generated vector-family VecApiTagVec "VecApiTag")
@@ -191,6 +342,21 @@
   (match p
     [(VecApiTagVecPopOk _ rest) rest]
     [(VecApiTagVecPopEmpty) fallback]))
+
+(define (point-pop-ok? [p : VecApiPointVecPop]) : bool
+  (match p
+    [(VecApiPointVecPopOk _ _) true]
+    [(VecApiPointVecPopEmpty) false]))
+
+(define (point-pop-score-or [p : VecApiPointVecPop] [fallback : i64]) : i64
+  (match p
+    [(VecApiPointVecPopOk value _) (vec-api-point-score value)]
+    [(VecApiPointVecPopEmpty) fallback]))
+
+(define (point-pop-vec-or [p : VecApiPointVecPop] [fallback : VecApiPointVec]) : VecApiPointVec
+  (match p
+    [(VecApiPointVecPopOk _ rest) rest]
+    [(VecApiPointVecPopEmpty) fallback]))
 
 (define (main) : i64
   (begin
@@ -535,4 +701,77 @@
                             (vec-api-tag-vec-get rest 0 (VecApiTagA 0)))
                           107
                           "tag snapshot independent")))))))))))
+    ;; --- generated nominal struct element vector witness (#2564) ---
+    (let
+      [pv2 : VecApiPointVec
+        (vec-api-point-vec-push
+          (vec-api-point-vec-push
+            (vec-api-point-vec-with-capacity 1)
+            (VecApiPoint 1 2))
+          (VecApiPoint 3 4))]
+      (begin
+        (assert-i64-eq (vec-api-point-vec-len pv2) 2 "point vec len")
+        (assert-i64-eq (vec-api-point-vec-capacity pv2) 2 "point vec grew")
+        (assert-i64-eq
+          (vec-api-point-score (vec-api-point-vec-get pv2 1 (VecApiPoint 0 0)))
+          43
+          "point vec get")
+        (assert-i64-eq
+          (vec-api-point-vec-score pv2)
+          64
+          "point vec index iteration")
+        (let
+          [pv3 : VecApiPointVec
+            (vec-api-point-vec-set! pv2 0 (VecApiPoint 5 6))]
+          (begin
+            (assert-i64-eq
+              (vec-api-point-score
+                (vec-api-point-vec-get pv3 0 (VecApiPoint 0 0)))
+              65
+              "point vec set!")
+            (assert-i64-eq
+              (vec-api-point-vec-score pv3)
+              108
+              "point vec iteration after set!")
+            (let
+              [pv4 : VecApiPointVec
+                (vec-api-point-vec-set! pv3 99 (VecApiPoint 9 9))]
+              (begin
+                (assert-i64-eq
+                  (vec-api-point-vec-score pv4)
+                  108
+                  "point vec out-of-range set! no-op")
+                (let
+                  [popped : VecApiPointVecPop (vec-api-point-vec-pop pv4)]
+                  (begin
+                    (assert-true (point-pop-ok? popped) "point pop ok")
+                    (assert-i64-eq
+                      (point-pop-score-or popped -1)
+                      43
+                      "point pop value")
+                    (let
+                      [rest : VecApiPointVec (point-pop-vec-or popped pv4)]
+                      (begin
+                        (assert-i64-eq
+                          (vec-api-point-vec-len rest)
+                          1
+                          "point pop len")
+                        (let
+                          [snap : (Array VecApiPoint)
+                            (vec-api-point-vec-to-array rest)]
+                          (begin
+                            (assert-i64-eq
+                              (array-length snap)
+                              1
+                              "point snapshot length")
+                            (assert-i64-eq
+                              (vec-api-point-score (array-ref snap 0))
+                              65
+                              "point snapshot value")
+                            (array-set! snap 0 (VecApiPoint 9 9))
+                            (assert-i64-eq
+                              (vec-api-point-score
+                                (vec-api-point-vec-get rest 0 (VecApiPoint 0 0)))
+                              65
+                              "point snapshot independent")))))))))))))
     42))

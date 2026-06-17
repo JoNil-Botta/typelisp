@@ -212,7 +212,13 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   and conversion/iteration helpers `-from-array` / `-to-array` / `-extend` /
   `-reverse!` / `-contains?`; `I64Vec` also keeps `-sum` and adds owned-vector
   higher-order `i64-vec-fold*` / `i64-vec-map*` helpers that take function
-  values. Use generated vectors for append-heavy private sequences and keep
+  values. The family metadata is not scalar-only: checked fixtures cover
+  nominal enum and struct element types, with `push`/`set!` moving values into
+  array slots, `pop` moving the last element out, and growth/snapshot helpers
+  copying the live prefix through the same move semantics. Current aggregate
+  slots use the handle representation; after the inline-aggregate flip
+  (#1867/#2357), the same API stores aggregate elements inline in the backing
+  array. Use generated vectors for append-heavy private sequences and keep
   recursive enum lists for AST/list structures where the cons shape is the
   modeled data. Import it with `(import "stdlib/vector.tl")`.
 - `vector_slice.tl`: lifetime-scoped `I64Slice` views over `I64Vec` and

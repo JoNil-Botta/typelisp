@@ -74,6 +74,15 @@
   (IrCallArgsTwo CompilerIrValue CompilerIrValue)
   (IrCallArgsArray (Array CompilerIrValue)))
 
+(defenum CompilerIrCAbiReturnSlot
+  (IrCAbiReturnSlot AstType i64))
+
+(defenum CompilerIrCAbiReturnSlotList
+  (IrCAbiReturnSlotNil)
+  (IrCAbiReturnSlotCons
+    CompilerIrCAbiReturnSlot
+    (Box CompilerIrCAbiReturnSlotList)))
+
 (defenum CompilerIrPhiInputList
   (IrPhiInputNil)
   (IrPhiInputCons CompilerIrValue String (Box CompilerIrPhiInputList)))
@@ -151,6 +160,19 @@
   (IrInstrCall i64 String CompilerIrCallArgs AstType)
   (IrInstrCallIndirect i64 CompilerIrValue CompilerIrCallArgs AstType)
   (IrInstrCallIndirectC i64 CompilerIrValue CompilerIrCallArgs AstType)
+  ;; System V C aggregate returns can arrive in two ABI result registers. These
+  ;; instructions emit the call and immediately store those result slots into the
+  ;; provided aggregate buffer, preserving the classifier's slot offsets.
+  (IrInstrCallCAbiStoreResult
+    CompilerIrValue
+    String
+    CompilerIrCallArgs
+    CompilerIrCAbiReturnSlotList)
+  (IrInstrCallIndirectCAbiStoreResult
+    CompilerIrValue
+    CompilerIrValue
+    CompilerIrCallArgs
+    CompilerIrCAbiReturnSlotList)
   (IrInstrTailCall String CompilerIrCallArgs AstType)
   (IrInstrStore String CompilerIrValue AstType)
   (IrInstrJump String)
@@ -540,6 +562,20 @@
       (IrCallArgsTwo (compiler-ir-clone-value a) (compiler-ir-clone-value b))]
     [(IrCallArgsArray values) (IrCallArgsArray (clone values))]))
 
+(define (compiler-ir-clone-c-abi-return-slot [slot : CompilerIrCAbiReturnSlot]) : CompilerIrCAbiReturnSlot
+  (match slot
+    [(IrCAbiReturnSlot ty offset)
+      (IrCAbiReturnSlot (compiler-ir-clone-type ty) offset)]))
+
+(define (compiler-ir-clone-c-abi-return-slots
+  [slots : CompilerIrCAbiReturnSlotList]) : CompilerIrCAbiReturnSlotList
+  (match slots
+    [(IrCAbiReturnSlotNil) (IrCAbiReturnSlotNil)]
+    [(IrCAbiReturnSlotCons slot rest)
+      (IrCAbiReturnSlotCons
+        (compiler-ir-clone-c-abi-return-slot slot)
+        (box (compiler-ir-clone-c-abi-return-slots (box-get rest))))]))
+
 (define (compiler-ir-clone-phi-input-list-acc
   [inputs : CompilerIrPhiInputList]
   [acc : CompilerIrPhiInputList]) : CompilerIrPhiInputList
@@ -792,6 +828,18 @@
         (compiler-ir-clone-value callee)
         (compiler-ir-clone-call-args args)
         (compiler-ir-clone-type ty))]
+    [(IrInstrCallCAbiStoreResult base name args slots)
+      (IrInstrCallCAbiStoreResult
+        (compiler-ir-clone-value base)
+        (clone name)
+        (compiler-ir-clone-call-args args)
+        (compiler-ir-clone-c-abi-return-slots slots))]
+    [(IrInstrCallIndirectCAbiStoreResult base callee args slots)
+      (IrInstrCallIndirectCAbiStoreResult
+        (compiler-ir-clone-value base)
+        (compiler-ir-clone-value callee)
+        (compiler-ir-clone-call-args args)
+        (compiler-ir-clone-c-abi-return-slots slots))]
     [(IrInstrTailCall name args ty)
       (IrInstrTailCall
         (clone name)
@@ -1411,6 +1459,8 @@
     [(IrInstrCall _ name _ _) (compiler-ir-direct-call-effect name)]
     [(IrInstrCallIndirect _ _ _ _) IrEffectUnknown]
     [(IrInstrCallIndirectC _ _ _ _) IrEffectUnknown]
+    [(IrInstrCallCAbiStoreResult _ _ _ _) IrEffectUnknown]
+    [(IrInstrCallIndirectCAbiStoreResult _ _ _ _) IrEffectUnknown]
     [(IrInstrBoundsCheck _ _ _) IrEffectControlFlow]
     [(IrInstrTailCall _ _ _) IrEffectControlFlow]
     [(IrInstrJump _) IrEffectControlFlow]
@@ -1693,6 +1743,8 @@
         spans
         (compiler-source-spans-value-key function dst)
         span)]
+    [(IrInstrCallCAbiStoreResult _ _ _ _) spans]
+    [(IrInstrCallIndirectCAbiStoreResult _ _ _ _) spans]
     [(IrInstrPack dst _ _)
       (compiler-source-spans-insert-instr-entry
         spans
@@ -1844,6 +1896,8 @@
           (compiler-source-spans-entry-list-lookup
             instr-entries
             (compiler-source-spans-value-key function dst))]
+        [(IrInstrCallCAbiStoreResult _ _ _ _) (CompilerNoSourceSpan)]
+        [(IrInstrCallIndirectCAbiStoreResult _ _ _ _) (CompilerNoSourceSpan)]
         [(IrInstrPack dst _ _)
           (compiler-source-spans-entry-list-lookup
             instr-entries
@@ -1989,6 +2043,9 @@
     [(IrInstrCall _ _ args _) (compiler-ir-call-args-count args)]
     [(IrInstrCallIndirect _ _ args _) (compiler-ir-call-args-count args)]
     [(IrInstrCallIndirectC _ _ args _) (compiler-ir-call-args-count args)]
+    [(IrInstrCallCAbiStoreResult _ _ args _) (compiler-ir-call-args-count args)]
+    [(IrInstrCallIndirectCAbiStoreResult _ _ args _)
+      (compiler-ir-call-args-count args)]
     [(IrInstrTailCall _ args _) (compiler-ir-call-args-count args)]
     [(IrInstrTailCallIndirect _ args _) (compiler-ir-call-args-count args)]
     [_ 0]))

@@ -4109,16 +4109,27 @@
 (define (compiler-backend-emit-store-rax-to-memory
   [addr : String]
   [ty : AstType]) : String
+  (compiler-backend-emit-store-reg-to-memory addr "%rax" ty))
+
+(define (compiler-backend-emit-store-reg-to-memory
+  [addr : String]
+  [reg : String]
+  [ty : AstType]) : String
   (let
     [size : i64 (compiler-backend-type-size ty)]
     (if (= size 8)
-      (str-cat "    movq %rax, " addr "\n")
+      (str-cat "    movq " reg ", " addr "\n")
       (if (= size 4)
-        (str-cat "    movl %eax, " addr "\n")
+        (str-cat "    movl " (compiler-backend-reg-part reg 4) ", " addr "\n")
         (if (= size 2)
-          (str-cat "    movw %ax, " addr "\n")
+          (str-cat "    movw " (compiler-backend-reg-part reg 2) ", " addr "\n")
           (if (= size 1)
-            (str-cat "    movb %al, " addr "\n")
+            (str-cat
+              "    movb "
+              (compiler-backend-reg-part reg 1)
+              ", "
+              addr
+              "\n")
             ""))))))
 
 (define (compiler-backend-emit-store-xmm-to-memory
@@ -10394,6 +10405,8 @@
     [(IrInstrCall _ _ _ _) true]
     [(IrInstrCallIndirect _ _ _ _) true]
     [(IrInstrCallIndirectC _ _ _ _) true]
+    [(IrInstrCallCAbiStoreResult _ _ _ _) true]
+    [(IrInstrCallIndirectCAbiStoreResult _ _ _ _) true]
     [(IrInstrTailCall _ _ _) true]
     [(IrInstrTailCallIndirect _ _ _) true]
     [(IrInstrBoundsCheck _ _ _) true]
@@ -10448,6 +10461,15 @@
         program-index)]
     [(IrInstrCallIndirectC _ _ args _)
       (compiler-backend-windows-closure-stack-arg-space args)]
+    [(IrInstrCallCAbiStoreResult _ name args _)
+      (+
+        (compiler-backend-windows-stack-arg-space
+          args
+          (compiler-backend-call-param-types-index name program-index)
+          program-index)
+        16)]
+    [(IrInstrCallIndirectCAbiStoreResult _ _ args _)
+      (+ (compiler-backend-windows-closure-stack-arg-space args) 16)]
     [(IrInstrTailCallIndirect _ args _)
       (compiler-backend-windows-closure-stack-arg-space args)]
     [_ 0]))
@@ -12714,6 +12736,87 @@
           "%rax")
         ty))))
 
+(define (compiler-backend-c-abi-return-int-reg [idx : i64]) : String
+  (if (= idx 0)
+    "%rax"
+    "%rdx"))
+
+(define (compiler-backend-c-abi-return-sse-reg [idx : i64]) : String
+  (if (= idx 0)
+    "%xmm0"
+    "%xmm1"))
+
+(define (compiler-backend-c-abi-return-slot-addr
+  [base-reg : String]
+  [offset : i64]) : String
+  (str-cat (int->string offset) "(" base-reg ")"))
+
+(define (compiler-backend-emit-c-abi-return-slot-store
+  [base-reg : String]
+  [slot : CompilerIrCAbiReturnSlot]
+  [int-idx : i64]
+  [sse-idx : i64]) : String
+  (match slot
+    [(IrCAbiReturnSlot ty offset)
+      (let
+        [sse? : bool (compiler-backend-float-type? ty)]
+        [reg : String
+          (if sse?
+            (compiler-backend-c-abi-return-sse-reg sse-idx)
+            (compiler-backend-c-abi-return-int-reg int-idx))]
+        [addr : String
+          (compiler-backend-c-abi-return-slot-addr base-reg offset)]
+        (if sse?
+          (compiler-backend-emit-store-xmm-to-memory addr reg ty)
+          (compiler-backend-emit-store-reg-to-memory addr reg ty)))]))
+
+(define (compiler-backend-emit-c-abi-return-slot-stores
+  [base-reg : String]
+  [slots : CompilerIrCAbiReturnSlotList]
+  [int-idx : i64]
+  [sse-idx : i64]) : String
+  (match slots
+    [(IrCAbiReturnSlotNil) ""]
+    [(IrCAbiReturnSlotCons slot rest)
+      (match slot
+        [(IrCAbiReturnSlot ty _)
+          (let
+            [sse? : bool (compiler-backend-float-type? ty)]
+            (string-append
+              (compiler-backend-emit-c-abi-return-slot-store
+                base-reg
+                slot
+                int-idx
+                sse-idx)
+              (compiler-backend-emit-c-abi-return-slot-stores
+                base-reg
+                (box-get rest)
+                (if sse?
+                  int-idx
+                  (+ int-idx 1))
+                (if sse?
+                  (+ sse-idx 1)
+                  sse-idx))))])]))
+
+(define (compiler-backend-emit-c-abi-return-base-save
+  [assignments : CompilerRegAssignmentList]
+  [base : CompilerIrValue]
+  [save-offset : i64]) : ResultCompilerBackend
+  (match (compiler-backend-emit-load-value-with-plan assignments base "%r11")
+    [(OkCompilerBackend base-asm)
+      (OkCompilerBackend
+        (string-append
+          base-asm
+          (str-cat "    movq %r11, " (int->string save-offset) "(%rsp)\n")))]
+    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+
+(define (compiler-backend-emit-c-abi-return-stores
+  [save-offset : i64]
+  [slots : CompilerIrCAbiReturnSlotList]) : String
+  (string-append
+    (str-cat "    movq " (int->string save-offset) "(%rsp), %r11\n")
+    (compiler-backend-emit-c-abi-return-slot-stores "%r11" slots 0 0)))
+
 (define (compiler-backend-emit-entry-load
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
@@ -13300,6 +13403,35 @@
           program-index
           vars
           instr-diag)]
+      [(IrInstrCallCAbiStoreResult base name args slots)
+        (compiler-backend-emit-c-abi-store-result-call
+          target
+          base
+          name
+          args
+          slots
+          assignments
+          types
+          global-types
+          plan
+          externs
+          program-index
+          vars
+          instr-diag)]
+      [(IrInstrCallIndirectCAbiStoreResult base func args slots)
+        (compiler-backend-emit-indirect-c-abi-store-result-call
+          target
+          base
+          func
+          args
+          slots
+          assignments
+          types
+          functions
+          externs
+          program-index
+          vars
+          instr-diag)]
       [(IrInstrTailCall name args ty)
         (match (compiler-backend-emit-tail-call
           target
@@ -13662,6 +13794,15 @@
         (compiler-backend-count-call-args-uses counts args))]
     [(IrInstrCallIndirectC _ callee args _)
       (begin
+        (compiler-backend-count-value-use counts callee)
+        (compiler-backend-count-call-args-uses counts args))]
+    [(IrInstrCallCAbiStoreResult base _ args _)
+      (begin
+        (compiler-backend-count-value-use counts base)
+        (compiler-backend-count-call-args-uses counts args))]
+    [(IrInstrCallIndirectCAbiStoreResult base callee args _)
+      (begin
+        (compiler-backend-count-value-use counts base)
         (compiler-backend-count-value-use counts callee)
         (compiler-backend-count-call-args-uses counts args))]
     [(IrInstrTailCall _ args _)
@@ -15128,6 +15269,187 @@
                         ty)
                       ""
                       "")))))]
+          [(ErrCompilerBackend message)
+            (ErrCompilerBackend
+              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+      [(ErrCompilerBackend message)
+        (ErrCompilerBackend
+          (compiler-backend-apply-instr-diagnostic message instr-diag))])))
+
+(define (compiler-backend-emit-c-abi-store-result-call
+  [target : CompilerBackendTarget]
+  [base : CompilerIrValue]
+  [name : String]
+  [args : CompilerIrCallArgs]
+  [slots : CompilerIrCAbiReturnSlotList]
+  [assignments : CompilerRegAssignmentList]
+  [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
+  [plan : CompilerBackendRuntimePlan]
+  [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
+  [vars : i64]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (let
+    [param-types : AstTypeList
+      (compiler-backend-call-param-types-for-call
+        name
+        args
+        types
+        global-types
+        externs
+        program-index)]
+    [c-abi? : bool (compiler-backend-c-aggregate-extern-call? externs name)]
+    [call-space : i64
+      (compiler-backend-call-arg-space
+        target
+        args
+        param-types
+        c-abi?
+        program-index)]
+    [total-space : i64 (+ call-space 16)]
+    [call-symbol : String
+      (compiler-backend-call-symbol-index name plan program-index)]
+    (match (compiler-backend-emit-call-args
+      target
+      assignments
+      args
+      param-types
+      c-abi?
+      0
+      0
+      0
+      0
+      0
+      instr-diag
+      program-index
+      vars)
+      [(OkCompilerBackend args-asm)
+        (match (compiler-backend-emit-c-abi-return-base-save
+          assignments
+          base
+          call-space)
+          [(OkCompilerBackend base-save)
+            (OkCompilerBackend
+              (string-append
+                (compiler-backend-emit-call-space-sub total-space)
+                (string-append
+                  args-asm
+                  (string-append
+                    base-save
+                    (string-append
+                      (compiler-backend-varargs-pre-call
+                        target
+                        name
+                        externs
+                        param-types)
+                      (backend-cat5
+                        "    call "
+                        call-symbol
+                        "\n"
+                        (string-append
+                          (compiler-backend-emit-c-abi-return-stores
+                            call-space
+                            slots)
+                          (compiler-backend-emit-call-space-add total-space))
+                        ""))))))]
+          [(ErrCompilerBackend message)
+            (ErrCompilerBackend
+              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+      [(ErrCompilerBackend message)
+        (ErrCompilerBackend
+          (compiler-backend-apply-instr-diagnostic message instr-diag))])))
+
+(define (compiler-backend-emit-indirect-c-abi-store-result-call
+  [target : CompilerBackendTarget]
+  [base : CompilerIrValue]
+  [func : CompilerIrValue]
+  [args : CompilerIrCallArgs]
+  [slots : CompilerIrCAbiReturnSlotList]
+  [assignments : CompilerRegAssignmentList]
+  [types : CompilerRegVarTypeList]
+  [functions : CompilerIrFunctionList]
+  [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
+  [vars : i64]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (let
+    [declared-param-types : AstTypeList
+      (compiler-backend-indirect-call-param-types
+        types
+        func
+        functions
+        externs
+        program-index)]
+    [param-types : AstTypeList
+      (if (compiler-backend-type-list-has-aggregate? declared-param-types)
+        (compiler-backend-call-c-abi-param-types
+          types
+          (CompilerBackendGlobalTypeNil)
+          args
+          declared-param-types
+          program-index)
+        (if (=
+          (compiler-backend-call-args-count args)
+          (compiler-backend-type-list-count declared-param-types))
+          declared-param-types
+          (compiler-backend-call-actual-param-types
+            types
+            (CompilerBackendGlobalTypeNil)
+            args)))]
+    [call-space : i64
+      (compiler-backend-call-arg-space
+        target
+        args
+        param-types
+        true
+        program-index)]
+    [total-space : i64 (+ call-space 16)]
+    (match (compiler-backend-emit-call-args
+      target
+      assignments
+      args
+      param-types
+      true
+      0
+      0
+      0
+      0
+      0
+      instr-diag
+      program-index
+      vars)
+      [(OkCompilerBackend args-asm)
+        (match (compiler-backend-emit-c-abi-return-base-save
+          assignments
+          base
+          call-space)
+          [(OkCompilerBackend base-save)
+            (match (compiler-backend-emit-load-value-with-plan
+              assignments
+              func
+              "%rax")
+              [(OkCompilerBackend func-asm)
+                (OkCompilerBackend
+                  (string-append
+                    (compiler-backend-emit-call-space-sub total-space)
+                    (string-append
+                      args-asm
+                      (string-append
+                        base-save
+                        (string-append
+                          func-asm
+                          (backend-cat5
+                            "    call *%rax\n"
+                            (compiler-backend-emit-c-abi-return-stores
+                              call-space
+                              slots)
+                            (compiler-backend-emit-call-space-add total-space)
+                            ""
+                            ""))))))]
+              [(ErrCompilerBackend message)
+                (ErrCompilerBackend
+                  (compiler-backend-apply-instr-diagnostic message instr-diag))])]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
               (compiler-backend-apply-instr-diagnostic message instr-diag))])]
@@ -18566,6 +18888,16 @@
       (compiler-backend-collect-call-args-collections
         (compiler-backend-collect-value-collections collections func)
         args)]
+    [(IrInstrCallCAbiStoreResult base _ args _)
+      (compiler-backend-collect-call-args-collections
+        (compiler-backend-collect-value-collections collections base)
+        args)]
+    [(IrInstrCallIndirectCAbiStoreResult base func args _)
+      (compiler-backend-collect-call-args-collections
+        (compiler-backend-collect-value-collections
+          (compiler-backend-collect-value-collections collections base)
+          func)
+        args)]
     [(IrInstrTailCall _ args _)
       (compiler-backend-collect-call-args-collections collections args)]
     [(IrInstrStore _ value _)
@@ -19268,6 +19600,8 @@
   [instr : CompilerIrInstr]) : CompilerBackendRuntimeIndex
   (match instr
     [(IrInstrCall _ call-name _ _)
+      (compiler-backend-runtime-index-add-call index call-name)]
+    [(IrInstrCallCAbiStoreResult _ call-name _ _)
       (compiler-backend-runtime-index-add-call index call-name)]
     [(IrInstrTailCall call-name _ _)
       (compiler-backend-runtime-index-add-call index call-name)]
@@ -23832,6 +24166,30 @@ tl_memcpy:
     [(IrInstrCallIndirectC _ callee args _)
       (compiler-backend-object-call-args
         (compiler-backend-object-value-ref parts function callee)
+        function
+        args
+        0)]
+    [(IrInstrCallCAbiStoreResult base name args _)
+      (let
+        [target : String
+          (compiler-backend-call-symbol-index name plan program-index)]
+        (compiler-backend-object-add-text
+          (compiler-backend-object-add-text-relocation
+            (compiler-backend-object-call-args
+              (compiler-backend-object-value-ref parts function base)
+              function
+              args
+              0)
+            function
+            (ObjectRelocCall)
+            target)
+          (ObjectX64Call target)))]
+    [(IrInstrCallIndirectCAbiStoreResult base callee args _)
+      (compiler-backend-object-call-args
+        (compiler-backend-object-value-ref
+          (compiler-backend-object-value-ref parts function base)
+          function
+          callee)
         function
         args
         0)]

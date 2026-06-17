@@ -6,4 +6,4 @@ benchmark/hashmap_get	1931584521
 benchmark/hashmap_grow	19611428
 benchmark/hashmap_insert	384339215
 benchmark/spmd_reduce	36871235088
-self_compile/compile_cli_opt1	76024507422
+self_compile/compile_cli_opt1	78988591297

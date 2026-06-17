@@ -338,6 +338,7 @@ arena_poison_stale_array_trap
 c_abi_sysv_register_aggregate_args
 c_abi_sysv_memory_aggregate
 c_abi_sysv_tag_only_enum
+c_abi_sysv_two_register_return
 EOF
 }
 

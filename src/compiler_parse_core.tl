@@ -486,6 +486,9 @@
 (define (compiler-parse-tag-ty-str) : i64
   116)
 
+(define (compiler-parse-tag-ty-bytes) : i64
+  117)
+
 (define (compiler-parse-tag-unit) : i64
   113)
 
@@ -802,6 +805,7 @@
       (set! out (sym-i64-bind out "char" (compiler-parse-tag-ty-char)))
       (set! out (sym-i64-bind out "String" (compiler-parse-tag-ty-string)))
       (set! out (sym-i64-bind out "str" (compiler-parse-tag-ty-str)))
+      (set! out (sym-i64-bind out "bytes" (compiler-parse-tag-ty-bytes)))
       (set! out (sym-i64-bind out "unit" (compiler-parse-tag-unit)))
       (set! out (sym-i64-bind out "never" (compiler-parse-tag-ty-never)))
       (set! out (sym-i64-bind out "->" (compiler-parse-tag-ty-func)))
@@ -1109,7 +1113,7 @@
       (or
         (and
           (>= tag (compiler-parse-tag-ty-i64))
-          (<= tag (compiler-parse-tag-ty-str)))
+          (<= tag (compiler-parse-tag-ty-bytes)))
         (and
           (>= tag (compiler-parse-tag-ty-func))
           (<= tag (compiler-parse-tag-ty-box)))))))
@@ -1231,13 +1235,19 @@
                                   (OkAstType (AstTyString))
                                   (if (= tag (compiler-parse-tag-ty-str))
                                     (OkAstType (AstTyStr))
-                                    (if (= tag (compiler-parse-tag-unit))
-                                      (OkAstType (AstTyUnit))
-                                      (if (= tag (compiler-parse-tag-ty-never))
-                                        (OkAstType (AstTyNever))
-                                        (if (= tag (compiler-parse-tag-ty-expr))
-                                          (OkAstType (AstTyExpr))
-                                          (OkAstType (AstTyVar (intern name)))))))))))))))))))))]
+                                    (if (= tag (compiler-parse-tag-ty-bytes))
+                                      (OkAstType (AstTyBytes))
+                                      (if (= tag (compiler-parse-tag-unit))
+                                        (OkAstType (AstTyUnit))
+                                        (if (=
+                                          tag
+                                          (compiler-parse-tag-ty-never))
+                                          (OkAstType (AstTyNever))
+                                          (if (=
+                                            tag
+                                            (compiler-parse-tag-ty-expr))
+                                            (OkAstType (AstTyExpr))
+                                            (OkAstType (AstTyVar (intern name))))))))))))))))))))))]
     [(SCons head-node rest-box)
       (match (box-get head-node)
         [(SSym head)

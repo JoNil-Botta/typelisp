@@ -1385,6 +1385,7 @@
     [(AstTyChar) "char"]
     [(AstTyString) "String"]
     [(AstTyStr) "str"]
+    [(AstTyBytes) "bytes"]
     [(AstTyExpr) "Expr"]
     [(AstTyExprList) "ExprList"]
     [(AstTyUnit) "unit"]
@@ -1488,6 +1489,7 @@
     [(AstTyChar) "char"]
     [(AstTyString) "string"]
     [(AstTyStr) "str"]
+    [(AstTyBytes) "bytes"]
     [(AstTyExpr) "expr"]
     [(AstTyExprList) "expr-list"]
     [(AstTyUnit) "unit"]
@@ -1750,6 +1752,7 @@
     [(AstTyUnit) 0]
     [(AstTyNever) 0]
     [(AstTyStr) -1]
+    [(AstTyBytes) -1]
     [(AstTyExpr) -1]
     [(AstTyExprList) -1]
     [(AstTyFunc _ _) 8]
@@ -1812,6 +1815,7 @@
     [(AstTyUnit) 1]
     [(AstTyNever) 1]
     [(AstTyStr) -1]
+    [(AstTyBytes) -1]
     [(AstTyExpr) -1]
     [(AstTyExprList) -1]
     [(AstTyFunc _ _) 8]
@@ -6131,6 +6135,10 @@
     [(AstTyStr)
       (match b
         [(AstTyStr) true]
+        [_ false])]
+    [(AstTyBytes)
+      (match b
+        [(AstTyBytes) true]
         [_ false])]
     [(AstTyUnit)
       (match b

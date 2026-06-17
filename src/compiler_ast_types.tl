@@ -81,6 +81,7 @@
   (AstTyChar)
   (AstTyString)
   (AstTyStr)
+  (AstTyBytes)
   (AstTyUnit)
   (AstTyNever)
   ;; User-facing macro code-as-data type (#1135). This is a single concrete
@@ -913,6 +914,7 @@
     [(AstTyChar) 12]
     [(AstTyString) 13]
     [(AstTyStr) 14]
+    [(AstTyBytes) 35]
     [(AstTyUnit) 15]
     [(AstTyNever) 16]
     [(AstTyExpr) 17]
@@ -1027,6 +1029,10 @@
     [(AstTyStr)
       (match b
         [(AstTyStr) true]
+        [_ false])]
+    [(AstTyBytes)
+      (match b
+        [(AstTyBytes) true]
         [_ false])]
     [(AstTyUnit)
       (match b
@@ -1869,6 +1875,7 @@
     [(AstTyChar) 12]
     [(AstTyString) 13]
     [(AstTyStr) 30]
+    [(AstTyBytes) 35]
     [(AstTyUnit) 14]
     [(AstTyNever) 15]
     [(AstTyExpr) 16]
@@ -2106,6 +2113,10 @@
     [(AstTyStr)
       (match b
         [(AstTyStr) true]
+        [_ false])]
+    [(AstTyBytes)
+      (match b
+        [(AstTyBytes) true]
         [_ false])]
     [(AstTyUnit)
       (match b
@@ -2570,6 +2581,12 @@
       [array-len : i64 (ty-node-pool-len)]
       [second-array : i64 (ty-node-push (ast-ty-array (AstTyI64) 4))]
       [final-len : i64 (ty-node-pool-len)]
+      [first-bytes : i64 (ty-node-push (AstTyBytes))]
+      [bytes-len : i64 (ty-node-pool-len)]
+      [second-bytes : i64 (ty-node-push (AstTyBytes))]
+      [second-bytes-len : i64 (ty-node-pool-len)]
+      [str-ty : i64 (ty-node-push (AstTyStr))]
+      [str-len : i64 (ty-node-pool-len)]
       [ok : bool
         (and
           (= first-i64 second-i64)
@@ -2577,7 +2594,12 @@
           (= second-len 1)
           (= first-array second-array)
           (= array-len 2)
-          (= final-len 2))]
+          (= final-len 2)
+          (= first-bytes second-bytes)
+          (= bytes-len 3)
+          (= second-bytes-len 3)
+          (not (= first-bytes str-ty))
+          (= str-len 4))]
       (begin
         (ty-node-pool-reset!)
         ok))))

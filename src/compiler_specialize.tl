@@ -440,6 +440,7 @@
     [(AstTyChar) "char"]
     [(AstTyString) "String"]
     [(AstTyStr) "str"]
+    [(AstTyBytes) "bytes"]
     [(AstTyUnit) "unit"]
     [(AstTyNever) "never"]
     [(AstTyExpr) "Expr"]

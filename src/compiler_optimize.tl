@@ -2962,6 +2962,10 @@
       (match b
         [(AstTyStr) true]
         [_ false])]
+    [(AstTyBytes)
+      (match b
+        [(AstTyBytes) true]
+        [_ false])]
     [(AstTyUnit)
       (match b
         [(AstTyUnit) true]
@@ -3128,6 +3132,7 @@
     [(AstTyChar) (hash-i64 12)]
     [(AstTyString) (hash-i64 13)]
     [(AstTyStr) (hash-i64 14)]
+    [(AstTyBytes) (hash-i64 35)]
     [(AstTyUnit) (hash-i64 15)]
     [(AstTyNever) (hash-i64 16)]
     [(AstTyExpr) (hash-i64 17)]

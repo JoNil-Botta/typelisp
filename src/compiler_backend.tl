@@ -3438,6 +3438,7 @@
     [(AstTyStructArgs _ _) 8]
     [(AstTyString) 8]
     [(AstTyStr) 8]
+    [(AstTyBytes) 8]
     [(AstTyVar _) 8]
     [(AstTyVarArgs _ _) 8]))
 

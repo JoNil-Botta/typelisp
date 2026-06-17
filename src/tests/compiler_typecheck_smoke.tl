@@ -190,6 +190,32 @@
   "(define (main) : unit
   (let [items : (Array (& n i64)) (make-array (& n i64) 0)] unit))")
 
+(define (compiler-typecheck-bytes-borrowed-source) : String
+  "(defstruct ByteViews
+  (:lifetimes data)
+  (ro (& data bytes))
+  (rw (&mut data bytes)))
+(define (take [ro : (& data bytes)] [rw : (&mut data bytes)]) : unit unit)
+(define (main [ro : (& data bytes)] [rw : (&mut data bytes)]) : unit
+  (take ro rw))")
+
+(define (compiler-typecheck-bytes-bare-param-source) : String
+  "(define (main [raw : bytes]) : unit unit)")
+
+(define (compiler-typecheck-bytes-bare-local-source) : String
+  "(define (main) : unit
+  (let [raw : bytes (init : bytes)] unit))")
+
+(define (compiler-typecheck-bytes-bare-struct-source) : String
+  "(defstruct BadBytes (payload bytes))
+(define (main) : unit unit)")
+
+(define (compiler-typecheck-bytes-bare-array-source) : String
+  "(define (main [items : (Array bytes)]) : unit unit)")
+
+(define (compiler-typecheck-bytes-policy-message) : String
+  "typecheck: bytes is a borrowed byte-slice referent; use (& lifetime bytes) or (&mut lifetime bytes)")
+
 (define (compiler-typecheck-zero-make-array-recursive-source) : String
   "(defenum Loop (LoopBox (Box Loop)))
 (define (main) : unit
@@ -404,6 +430,22 @@
       (compiler-typecheck-reference-dyn-array-hidden-source)
       "typecheck: make-array element type is not supported")))
 
+(define (compiler-typecheck-bytes-referent-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok? (compiler-typecheck-bytes-borrowed-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-bytes-bare-param-source)
+      (compiler-typecheck-bytes-policy-message))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-bytes-bare-local-source)
+      (compiler-typecheck-bytes-policy-message))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-bytes-bare-struct-source)
+      (compiler-typecheck-bytes-policy-message))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-bytes-bare-array-source)
+      (compiler-typecheck-bytes-policy-message))))
+
 (define (compiler-typecheck-reference-lambda-capture-tests-ok?) : bool
   (and
     (compiler-typecheck-ok?
@@ -459,7 +501,8 @@
       "typecheck: lambda cannot capture immutable reference; reference value would escape lexical scope")
     (compiler-typecheck-reference-lambda-capture-tests-ok?)
     (compiler-typecheck-reference-return-container-tests-ok?)
-    (compiler-typecheck-reference-dyn-array-tests-ok?)))
+    (compiler-typecheck-reference-dyn-array-tests-ok?)
+    (compiler-typecheck-bytes-referent-tests-ok?)))
 
 (define (compiler-typecheck-macro-alias-cache-collision-ok?) : bool
   (begin

@@ -69,21 +69,54 @@
           (with
             ([guard (mutex-i64-lock loaded) mutex-i64-unlock])
             (mutex-i64-get guard))]
+        [live-close-code : i64
+          (with
+            ([guard (mutex-i64-lock loaded) mutex-i64-unlock])
+            (let
+              [blocked-close : bool (mutex-i64-close loaded)]
+              [after : i64 (mutex-i64-add! guard 1)]
+              (if (not blocked-close)
+                (if (= after 43)
+                  42
+                  6)
+                6)))]
+        [third : i64
+          (with
+            ([guard (mutex-i64-lock loaded) mutex-i64-unlock])
+            (mutex-i64-get guard))]
         [closed : bool (mutex-i64-close loaded)]
-        (if (and closed (= first 42) (= second 42))
+        [closed-again : bool (mutex-i64-close loaded)]
+        (if (and
+          closed
+          (not closed-again)
+          (= first 42)
+          (= second 42)
+          (= live-close-code 42)
+          (= third 43))
           42
           4)))))
 
+(define (sync-api-close-fresh-mutex?) : bool
+  (match (mutex-i64-create 9)
+    [(MutexI64CreateErr _) false]
+    [(MutexI64CreateOk mutex)
+      (let
+        [closed : bool (mutex-i64-close mutex)]
+        [closed-again : bool (mutex-i64-close mutex)]
+        (and closed (not closed-again)))]))
+
 (define (main) : i64
-  (if (not (sync-api-create-rejects-invalid?))
-    1
-    (match (channel-i64-create 2)
-      [(ChannelI64CreateErr _) 3]
-      [(ChannelI64CreateOk channel)
-        (let
-          [channel-code : i64 (sync-api-run-channel channel)]
-          (if (not (= channel-code 42))
-            channel-code
-            (match (mutex-i64-create 5)
-              [(MutexI64CreateErr _) 5]
-              [(MutexI64CreateOk mutex) (sync-api-run-mutex mutex)])))])))
+  (cond
+    [(not (sync-api-create-rejects-invalid?)) 1]
+    [(not (sync-api-close-fresh-mutex?)) 7]
+    [else
+      (match (channel-i64-create 2)
+        [(ChannelI64CreateErr _) 3]
+        [(ChannelI64CreateOk channel)
+          (let
+            [channel-code : i64 (sync-api-run-channel channel)]
+            (if (not (= channel-code 42))
+              channel-code
+              (match (mutex-i64-create 5)
+                [(MutexI64CreateErr _) 5]
+                [(MutexI64CreateOk mutex) (sync-api-run-mutex mutex)])))])]))

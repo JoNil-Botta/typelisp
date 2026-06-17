@@ -156,12 +156,20 @@
 (define (compiler-object-elf-data-records-size-from
   [records : CompilerObjectDataRecordList]
   [offset : i64]) : i64
-  (match records
-    [(ObjectDataNil) offset]
-    [(ObjectDataCons record rest)
-      (compiler-object-elf-data-records-size-from
-        (box-get rest)
-        (compiler-object-elf-data-record-end-offset record offset))]))
+  (let
+    [count : i64 (compiler-object-data-record-list-count records)]
+    [index : i64 0]
+    [cur-offset : i64 offset]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            cur-offset
+            (compiler-object-elf-data-record-end-offset
+              (compiler-object-data-record-list-ref records index)
+              cur-offset))
+          (set! index (+ index 1))))
+      cur-offset)))
 
 (define (compiler-object-elf-data-records-size
   [records : CompilerObjectDataRecordList]) : i64
@@ -215,22 +223,40 @@
 
 (define (compiler-object-elf-instrs-relocation-count
   [instrs : CompilerObjectX64InstrList]) : i64
-  (match instrs
-    [(ObjectInstrNil) 0]
-    [(ObjectInstrCons instr rest)
-      (+
-        (compiler-object-elf-instr-relocation-count instr)
-        (compiler-object-elf-instrs-relocation-count (box-get rest)))]))
+  (let
+    [count : i64 (compiler-object-instr-list-count instrs)]
+    [index : i64 0]
+    [total : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            total
+            (+
+              total
+              (compiler-object-elf-instr-relocation-count
+                (compiler-object-instr-list-ref instrs index))))
+          (set! index (+ index 1))))
+      total)))
 
 (define (compiler-object-elf-instrs-size-from
   [instrs : CompilerObjectX64InstrList]
   [offset : i64]) : i64
-  (match instrs
-    [(ObjectInstrNil) offset]
-    [(ObjectInstrCons instr rest)
-      (compiler-object-elf-instrs-size-from
-        (box-get rest)
-        (+ offset (compiler-object-elf-instr-size instr)))]))
+  (let
+    [count : i64 (compiler-object-instr-list-count instrs)]
+    [index : i64 0]
+    [cur-offset : i64 offset]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            cur-offset
+            (+
+              cur-offset
+              (compiler-object-elf-instr-size
+                (compiler-object-instr-list-ref instrs index))))
+          (set! index (+ index 1))))
+      cur-offset)))
 
 (define (compiler-object-elf-instrs-size [instrs : CompilerObjectX64InstrList]) : i64
   (compiler-object-elf-instrs-size-from instrs 0))
@@ -278,74 +304,68 @@
 
 (define (compiler-object-elf-relocation-list-supported?
   [relocs : CompilerObjectRelocationList]) : bool
-  (match relocs
-    [(ObjectRelocationNil) true]
-    [(ObjectRelocationCons reloc rest)
-      (if (compiler-object-elf-relocation-supported? reloc)
-        (compiler-object-elf-relocation-list-supported? (box-get rest))
-        false)]))
+  (let
+    [count : i64 (compiler-object-relocation-list-count relocs)]
+    [index : i64 0]
+    [ok : bool true]
+    (begin
+      (while (and ok (< index count))
+        (if (compiler-object-elf-relocation-supported?
+          (compiler-object-relocation-list-ref relocs index))
+          (set! index (+ index 1))
+          (set! ok false)))
+      ok)))
 
 (define (compiler-object-elf-instrs-supported?
   [instrs : CompilerObjectX64InstrList]) : bool
-  (match instrs
-    [(ObjectInstrNil) true]
-    [(ObjectInstrCons instr rest)
-      (match instr
-        [(ObjectX64Label _)
-          (compiler-object-elf-instrs-supported? (box-get rest))]
-        [(ObjectX64Call _)
-          (compiler-object-elf-instrs-supported? (box-get rest))]
-        [(ObjectX64TailCall _)
-          (compiler-object-elf-instrs-supported? (box-get rest))]
-        [(ObjectX64Jump _)
-          (compiler-object-elf-instrs-supported? (box-get rest))]
-        [(ObjectX64Branch _ _)
-          (compiler-object-elf-instrs-supported? (box-get rest))]
-        [(ObjectX64LoadRip _)
-          (compiler-object-elf-instrs-supported? (box-get rest))]
-        [(ObjectX64LoadRipAddress _)
-          (compiler-object-elf-instrs-supported? (box-get rest))]
-        [(ObjectX64StoreRip _)
-          (compiler-object-elf-instrs-supported? (box-get rest))]
-        [(ObjectX64SubRspImm8 _)
-          (compiler-object-elf-instrs-supported? (box-get rest))]
-        [(ObjectX64MovRcxRip _)
-          (compiler-object-elf-instrs-supported? (box-get rest))]
-        [(ObjectX64MovRdxRip _)
-          (compiler-object-elf-instrs-supported? (box-get rest))]
-        [(ObjectX64LoadRipAddressRdx _)
-          (compiler-object-elf-instrs-supported? (box-get rest))]
-        [(ObjectX64StoreR14Rip _)
-          (compiler-object-elf-instrs-supported? (box-get rest))]
-        [(ObjectX64StoreR15Rip _)
-          (compiler-object-elf-instrs-supported? (box-get rest))]
-        [(ObjectX64AddRcxRip _)
-          (compiler-object-elf-instrs-supported? (box-get rest))]
-        [(ObjectX64MovRcxRax)
-          (compiler-object-elf-instrs-supported? (box-get rest))]
-        [(ObjectX64XorpdRip _)
-          (compiler-object-elf-instrs-supported? (box-get rest))]
-        [(ObjectX64Bytes _)
-          (compiler-object-elf-instrs-supported? (box-get rest))]
-        [(ObjectX64Raw _)
-          (compiler-object-elf-instrs-supported? (box-get rest))]
-        [_ false])]))
+  (let
+    [count : i64 (compiler-object-instr-list-count instrs)]
+    [index : i64 0]
+    [ok : bool true]
+    (begin
+      (while (and ok (< index count))
+        (match (compiler-object-instr-list-ref instrs index)
+          [(ObjectX64Label _) (set! index (+ index 1))]
+          [(ObjectX64Call _) (set! index (+ index 1))]
+          [(ObjectX64TailCall _) (set! index (+ index 1))]
+          [(ObjectX64Jump _) (set! index (+ index 1))]
+          [(ObjectX64Branch _ _) (set! index (+ index 1))]
+          [(ObjectX64LoadRip _) (set! index (+ index 1))]
+          [(ObjectX64LoadRipAddress _) (set! index (+ index 1))]
+          [(ObjectX64StoreRip _) (set! index (+ index 1))]
+          [(ObjectX64SubRspImm8 _) (set! index (+ index 1))]
+          [(ObjectX64MovRcxRip _) (set! index (+ index 1))]
+          [(ObjectX64MovRdxRip _) (set! index (+ index 1))]
+          [(ObjectX64LoadRipAddressRdx _) (set! index (+ index 1))]
+          [(ObjectX64StoreR14Rip _) (set! index (+ index 1))]
+          [(ObjectX64StoreR15Rip _) (set! index (+ index 1))]
+          [(ObjectX64AddRcxRip _) (set! index (+ index 1))]
+          [(ObjectX64MovRcxRax) (set! index (+ index 1))]
+          [(ObjectX64XorpdRip _) (set! index (+ index 1))]
+          [(ObjectX64Bytes _) (set! index (+ index 1))]
+          [(ObjectX64Raw _) (set! index (+ index 1))]
+          [_ (set! ok false)]))
+      ok)))
 
 (define (compiler-object-elf-sections-supported?
   [sections : CompilerObjectSectionList]) : bool
-  (match sections
-    [(ObjectSectionNil) true]
-    [(ObjectSectionCons section rest)
-      (match section
-        [(ObjectSection kind _ instrs)
-          (if (and
-            (match kind
-              [(ObjectSectionPdata) false]
-              [(ObjectSectionXdata) false]
-              [_ true])
-            (compiler-object-elf-instrs-supported? instrs))
-            (compiler-object-elf-sections-supported? (box-get rest))
-            false)])]))
+  (let
+    [count : i64 (compiler-object-section-list-count sections)]
+    [index : i64 0]
+    [ok : bool true]
+    (begin
+      (while (and ok (< index count))
+        (match (compiler-object-section-list-ref sections index)
+          [(ObjectSection kind _ instrs)
+            (if (and
+              (match kind
+                [(ObjectSectionPdata) false]
+                [(ObjectSectionXdata) false]
+                [_ true])
+              (compiler-object-elf-instrs-supported? instrs))
+              (set! index (+ index 1))
+              (set! ok false))]))
+      ok)))
 
 (define (compiler-object-elf-symbol-binding-local?
   [binding : CompilerObjectSymbolBinding]) : bool
@@ -355,58 +375,70 @@
 
 (define (compiler-object-elf-local-symbol-count
   [symbols : CompilerObjectSymbolList]) : i64
-  (match symbols
-    [(ObjectSymbolNil) 0]
-    [(ObjectSymbolCons symbol rest)
-      (match symbol
-        [(ObjectSymbol _ binding _ _)
-          (+
-            (if (compiler-object-elf-symbol-binding-local? binding)
-              1
-              0)
-            (compiler-object-elf-local-symbol-count (box-get rest)))])]))
+  (let
+    [count : i64 (compiler-object-symbol-list-count symbols)]
+    [index : i64 0]
+    [total : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (match (compiler-object-symbol-list-ref symbols index)
+            [(ObjectSymbol _ binding _ _)
+              (if (compiler-object-elf-symbol-binding-local? binding)
+                (set! total (+ total 1))
+                unit)])
+          (set! index (+ index 1))))
+      total)))
 
 (define (compiler-object-elf-local-symbol-index-from
   [symbols : CompilerObjectSymbolList]
   [name : String]
   [index : i64]) : i64
-  (match symbols
-    [(ObjectSymbolNil) -1]
-    [(ObjectSymbolCons symbol rest)
-      (match symbol
-        [(ObjectSymbol found binding _ _)
-          (if (compiler-object-elf-symbol-binding-local? binding)
-            (if (string-eq found name)
-              index
-              (compiler-object-elf-local-symbol-index-from
-                (box-get rest)
-                name
-                (+ index 1)))
-            (compiler-object-elf-local-symbol-index-from
-              (box-get rest)
-              name
-              index))])]))
+  (let
+    [count : i64 (compiler-object-symbol-list-count symbols)]
+    [slot : i64 0]
+    [cur-index : i64 index]
+    [result : i64 -1]
+    [done : bool false]
+    (begin
+      (while (and (not done) (< slot count))
+        (match (compiler-object-symbol-list-ref symbols slot)
+          [(ObjectSymbol found binding _ _)
+            (if (compiler-object-elf-symbol-binding-local? binding)
+              (if (string-eq found name)
+                (begin
+                  (set! result cur-index)
+                  (set! done true))
+                (begin
+                  (set! cur-index (+ cur-index 1))
+                  (set! slot (+ slot 1))))
+              (set! slot (+ slot 1)))]))
+      result)))
 
 (define (compiler-object-elf-global-symbol-index-from
   [symbols : CompilerObjectSymbolList]
   [name : String]
   [index : i64]) : i64
-  (match symbols
-    [(ObjectSymbolNil) -1]
-    [(ObjectSymbolCons symbol rest)
-      (match symbol
-        [(ObjectSymbol found binding _ _)
-          (if (compiler-object-elf-symbol-binding-local? binding)
-            (compiler-object-elf-global-symbol-index-from
-              (box-get rest)
-              name
-              index)
-            (if (string-eq found name)
-              index
-              (compiler-object-elf-global-symbol-index-from
-                (box-get rest)
-                name
-                (+ index 1))))])]))
+  (let
+    [count : i64 (compiler-object-symbol-list-count symbols)]
+    [slot : i64 0]
+    [cur-index : i64 index]
+    [result : i64 -1]
+    [done : bool false]
+    (begin
+      (while (and (not done) (< slot count))
+        (match (compiler-object-symbol-list-ref symbols slot)
+          [(ObjectSymbol found binding _ _)
+            (if (compiler-object-elf-symbol-binding-local? binding)
+              (set! slot (+ slot 1))
+              (if (string-eq found name)
+                (begin
+                  (set! result cur-index)
+                  (set! done true))
+                (begin
+                  (set! cur-index (+ cur-index 1))
+                  (set! slot (+ slot 1)))))]))
+      result)))
 
 (define (compiler-object-elf-symbol-index
   [image : CompilerObjectImage]
@@ -425,43 +457,61 @@
   [records : CompilerObjectDataRecordList]
   [label : String]
   [offset : i64]) : i64
-  (match records
-    [(ObjectDataNil) -1]
-    [(ObjectDataCons record rest)
-      (match record
-        [(ObjectDataLabel found)
-          (if (string-eq found label)
-            offset
-            (compiler-object-elf-data-label-offset-from
-              (box-get rest)
-              label
-              offset))]
-        [_
-          (compiler-object-elf-data-label-offset-from
-            (box-get rest)
-            label
-            (compiler-object-elf-data-record-end-offset record offset))])]))
+  (let
+    [count : i64 (compiler-object-data-record-list-count records)]
+    [index : i64 0]
+    [cur-offset : i64 offset]
+    [result : i64 -1]
+    [done : bool false]
+    (begin
+      (while (and (not done) (< index count))
+        (let
+          [record : CompilerObjectDataRecord
+            (compiler-object-data-record-list-ref records index)]
+          (match record
+            [(ObjectDataLabel found)
+              (if (string-eq found label)
+                (begin
+                  (set! result cur-offset)
+                  (set! done true))
+                (set! index (+ index 1)))]
+            [_
+              (begin
+                (set!
+                  cur-offset
+                  (compiler-object-elf-data-record-end-offset record cur-offset))
+                (set! index (+ index 1)))])))
+      result)))
 
 (define (compiler-object-elf-instr-label-offset-from
   [instrs : CompilerObjectX64InstrList]
   [label : String]
   [offset : i64]) : i64
-  (match instrs
-    [(ObjectInstrNil) -1]
-    [(ObjectInstrCons instr rest)
-      (match instr
-        [(ObjectX64Label found)
-          (if (string-eq found label)
-            offset
-            (compiler-object-elf-instr-label-offset-from
-              (box-get rest)
-              label
-              offset))]
-        [_
-          (compiler-object-elf-instr-label-offset-from
-            (box-get rest)
-            label
-            (+ offset (compiler-object-elf-instr-size instr)))])]))
+  (let
+    [count : i64 (compiler-object-instr-list-count instrs)]
+    [index : i64 0]
+    [cur-offset : i64 offset]
+    [result : i64 -1]
+    [done : bool false]
+    (begin
+      (while (and (not done) (< index count))
+        (let
+          [instr : CompilerObjectX64Instr
+            (compiler-object-instr-list-ref instrs index)]
+          (match instr
+            [(ObjectX64Label found)
+              (if (string-eq found label)
+                (begin
+                  (set! result cur-offset)
+                  (set! done true))
+                (set! index (+ index 1)))]
+            [_
+              (begin
+                (set!
+                  cur-offset
+                  (+ cur-offset (compiler-object-elf-instr-size instr)))
+                (set! index (+ index 1)))])))
+      result)))
 
 (define (compiler-object-elf-section-label-offset
   [image : CompilerObjectImage]
@@ -477,63 +527,97 @@
 (define (compiler-object-elf-relocation-sites-known?
   [image : CompilerObjectImage]
   [relocs : CompilerObjectRelocationList]) : bool
-  (match relocs
-    [(ObjectRelocationNil) true]
-    [(ObjectRelocationCons reloc rest)
-      (match reloc
-        [(ObjectRelocation section site _ target)
-          (if (and
-            (>= (compiler-object-elf-section-label-offset image section site) 0)
-            (>= (compiler-object-elf-symbol-index image target) 0))
-            (compiler-object-elf-relocation-sites-known? image (box-get rest))
-            false)])]))
+  (let
+    [count : i64 (compiler-object-relocation-list-count relocs)]
+    [index : i64 0]
+    [ok : bool true]
+    (begin
+      (while (and ok (< index count))
+        (match (compiler-object-relocation-list-ref relocs index)
+          [(ObjectRelocation section site _ target)
+            (if (and
+              (>=
+                (compiler-object-elf-section-label-offset image section site)
+                0)
+              (>= (compiler-object-elf-symbol-index image target) 0))
+              (set! index (+ index 1))
+              (set! ok false))]))
+      ok)))
 
 (define (compiler-object-elf-instr-targets-known?
   [image : CompilerObjectImage]
   [instrs : CompilerObjectX64InstrList]) : bool
-  (match instrs
-    [(ObjectInstrNil) true]
-    [(ObjectInstrCons instr rest)
-      (let
-        [tail-ok : bool
-          (compiler-object-elf-instr-targets-known? image (box-get rest))]
-        (match instr
-          [(ObjectX64Label _) tail-ok]
+  (let
+    [count : i64 (compiler-object-instr-list-count instrs)]
+    [index : i64 0]
+    [ok : bool true]
+    (begin
+      (while (and ok (< index count))
+        (match (compiler-object-instr-list-ref instrs index)
+          [(ObjectX64Label _) (set! index (+ index 1))]
           [(ObjectX64Call target)
-            (and (>= (compiler-object-elf-symbol-index image target) 0) tail-ok)]
+            (if (>= (compiler-object-elf-symbol-index image target) 0)
+              (set! index (+ index 1))
+              (set! ok false))]
           [(ObjectX64TailCall target)
-            (and (>= (compiler-object-elf-symbol-index image target) 0) tail-ok)]
+            (if (>= (compiler-object-elf-symbol-index image target) 0)
+              (set! index (+ index 1))
+              (set! ok false))]
           [(ObjectX64Jump target)
-            (and (>= (compiler-object-elf-symbol-index image target) 0) tail-ok)]
+            (if (>= (compiler-object-elf-symbol-index image target) 0)
+              (set! index (+ index 1))
+              (set! ok false))]
           [(ObjectX64Branch true-target false-target)
-            (and
+            (if (and
               (>= (compiler-object-elf-symbol-index image true-target) 0)
-              (>= (compiler-object-elf-symbol-index image false-target) 0)
-              tail-ok)]
+              (>= (compiler-object-elf-symbol-index image false-target) 0))
+              (set! index (+ index 1))
+              (set! ok false))]
           [(ObjectX64LoadRip target)
-            (and (>= (compiler-object-elf-symbol-index image target) 0) tail-ok)]
+            (if (>= (compiler-object-elf-symbol-index image target) 0)
+              (set! index (+ index 1))
+              (set! ok false))]
           [(ObjectX64LoadRipAddress target)
-            (and (>= (compiler-object-elf-symbol-index image target) 0) tail-ok)]
+            (if (>= (compiler-object-elf-symbol-index image target) 0)
+              (set! index (+ index 1))
+              (set! ok false))]
           [(ObjectX64StoreRip target)
-            (and (>= (compiler-object-elf-symbol-index image target) 0) tail-ok)]
-          [(ObjectX64SubRspImm8 _) tail-ok]
+            (if (>= (compiler-object-elf-symbol-index image target) 0)
+              (set! index (+ index 1))
+              (set! ok false))]
+          [(ObjectX64SubRspImm8 _) (set! index (+ index 1))]
           [(ObjectX64MovRcxRip target)
-            (and (>= (compiler-object-elf-symbol-index image target) 0) tail-ok)]
+            (if (>= (compiler-object-elf-symbol-index image target) 0)
+              (set! index (+ index 1))
+              (set! ok false))]
           [(ObjectX64MovRdxRip target)
-            (and (>= (compiler-object-elf-symbol-index image target) 0) tail-ok)]
+            (if (>= (compiler-object-elf-symbol-index image target) 0)
+              (set! index (+ index 1))
+              (set! ok false))]
           [(ObjectX64LoadRipAddressRdx target)
-            (and (>= (compiler-object-elf-symbol-index image target) 0) tail-ok)]
+            (if (>= (compiler-object-elf-symbol-index image target) 0)
+              (set! index (+ index 1))
+              (set! ok false))]
           [(ObjectX64StoreR14Rip target)
-            (and (>= (compiler-object-elf-symbol-index image target) 0) tail-ok)]
+            (if (>= (compiler-object-elf-symbol-index image target) 0)
+              (set! index (+ index 1))
+              (set! ok false))]
           [(ObjectX64StoreR15Rip target)
-            (and (>= (compiler-object-elf-symbol-index image target) 0) tail-ok)]
+            (if (>= (compiler-object-elf-symbol-index image target) 0)
+              (set! index (+ index 1))
+              (set! ok false))]
           [(ObjectX64AddRcxRip target)
-            (and (>= (compiler-object-elf-symbol-index image target) 0) tail-ok)]
-          [(ObjectX64MovRcxRax) tail-ok]
+            (if (>= (compiler-object-elf-symbol-index image target) 0)
+              (set! index (+ index 1))
+              (set! ok false))]
+          [(ObjectX64MovRcxRax) (set! index (+ index 1))]
           [(ObjectX64XorpdRip target)
-            (and (>= (compiler-object-elf-symbol-index image target) 0) tail-ok)]
-          [(ObjectX64Bytes _) tail-ok]
-          [(ObjectX64Raw _) tail-ok]))]))
+            (if (>= (compiler-object-elf-symbol-index image target) 0)
+              (set! index (+ index 1))
+              (set! ok false))]
+          [(ObjectX64Bytes _) (set! index (+ index 1))]
+          [(ObjectX64Raw _) (set! index (+ index 1))]))
+      ok)))
 
 (define (compiler-object-elf-text-targets-known? [image : CompilerObjectImage]) : bool
   (match (compiler-object-section-list-find
@@ -572,16 +656,20 @@
 (define (compiler-object-elf-relocation-count
   [relocs : CompilerObjectRelocationList]
   [kind : CompilerObjectSectionKind]) : i64
-  (match relocs
-    [(ObjectRelocationNil) 0]
-    [(ObjectRelocationCons reloc rest)
-      (match reloc
-        [(ObjectRelocation section _ _ _)
-          (+
-            (if (compiler-object-section-kind-eq? section kind)
-              1
-              0)
-            (compiler-object-elf-relocation-count (box-get rest) kind))])]))
+  (let
+    [count : i64 (compiler-object-relocation-list-count relocs)]
+    [index : i64 0]
+    [total : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (match (compiler-object-relocation-list-ref relocs index)
+            [(ObjectRelocation section _ _ _)
+              (if (compiler-object-section-kind-eq? section kind)
+                (set! total (+ total 1))
+                unit)])
+          (set! index (+ index 1))))
+      total)))
 
 (define (compiler-object-elf-section-relocation-count
   [image : CompilerObjectImage]
@@ -607,14 +695,18 @@
 (define (compiler-object-elf-string-table-size-from
   [symbols : CompilerObjectSymbolList]
   [size : i64]) : i64
-  (match symbols
-    [(ObjectSymbolNil) size]
-    [(ObjectSymbolCons symbol rest)
-      (match symbol
-        [(ObjectSymbol name _ _ _)
-          (compiler-object-elf-string-table-size-from
-            (box-get rest)
-            (+ size (+ (string-length name) 1)))])]))
+  (let
+    [count : i64 (compiler-object-symbol-list-count symbols)]
+    [index : i64 0]
+    [total : i64 size]
+    (begin
+      (while (< index count)
+        (begin
+          (match (compiler-object-symbol-list-ref symbols index)
+            [(ObjectSymbol name _ _ _)
+              (set! total (+ total (+ (string-length name) 1)))])
+          (set! index (+ index 1))))
+      total)))
 
 (define (compiler-object-elf-string-table-size
   [symbols : CompilerObjectSymbolList]) : i64
@@ -854,13 +946,21 @@
   [out : (Array u8)]
   [records : CompilerObjectDataRecordList]
   [offset : i64]) : i64
-  (match records
-    [(ObjectDataNil) offset]
-    [(ObjectDataCons record rest)
-      (compiler-object-elf-render-data-records!
-        out
-        (box-get rest)
-        (compiler-object-elf-render-data-record! out record offset))]))
+  (let
+    [count : i64 (compiler-object-data-record-list-count records)]
+    [index : i64 0]
+    [cur-offset : i64 offset]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            cur-offset
+            (compiler-object-elf-render-data-record!
+              out
+              (compiler-object-data-record-list-ref records index)
+              cur-offset))
+          (set! index (+ index 1))))
+      cur-offset)))
 
 (define (compiler-object-elf-push-rel32-placeholder! [out : (Array u8)]) : unit
   (compiler-object-elf-push-u32! out 0))
@@ -971,12 +1071,17 @@
 (define (compiler-object-elf-render-instrs!
   [out : (Array u8)]
   [instrs : CompilerObjectX64InstrList]) : unit
-  (match instrs
-    [(ObjectInstrNil) unit]
-    [(ObjectInstrCons instr rest)
-      (begin
-        (compiler-object-elf-render-instr! out instr)
-        (compiler-object-elf-render-instrs! out (box-get rest)))]))
+  (let
+    [count : i64 (compiler-object-instr-list-count instrs)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (compiler-object-elf-render-instr!
+            out
+            (compiler-object-instr-list-ref instrs index))
+          (set! index (+ index 1))))
+      unit)))
 
 (define (compiler-object-elf-render-section!
   [out : (Array u8)]
@@ -1064,126 +1169,132 @@
   [image : CompilerObjectImage]
   [instrs : CompilerObjectX64InstrList]
   [offset : i64]) : unit
-  (match instrs
-    [(ObjectInstrNil) unit]
-    [(ObjectInstrCons instr rest)
-      (begin
-        (match instr
-          [(ObjectX64Label _) unit]
-          [(ObjectX64Call target)
-            (compiler-object-elf-render-relocation-record!
-              out
-              image
-              (+ offset 1)
-              (ObjectRelocCall)
-              target)]
-          [(ObjectX64TailCall target)
-            (compiler-object-elf-render-relocation-record!
-              out
-              image
-              (+ offset 1)
-              (ObjectRelocTailCall)
-              target)]
-          [(ObjectX64Jump target)
-            (compiler-object-elf-render-relocation-record!
-              out
-              image
-              (+ offset 1)
-              (ObjectRelocBranch)
-              target)]
-          [(ObjectX64Branch true-target false-target)
-            (begin
-              (compiler-object-elf-render-relocation-record!
-                out
-                image
-                (+ offset 5)
-                (ObjectRelocBranch)
-                true-target)
-              (compiler-object-elf-render-relocation-record!
-                out
-                image
-                (+ offset 10)
-                (ObjectRelocBranch)
-                false-target))]
-          [(ObjectX64LoadRip target)
-            (compiler-object-elf-render-relocation-record!
-              out
-              image
-              (+ offset 3)
-              (ObjectRelocRipValue)
-              target)]
-          [(ObjectX64LoadRipAddress target)
-            (compiler-object-elf-render-relocation-record!
-              out
-              image
-              (+ offset 3)
-              (ObjectRelocRipAddress)
-              target)]
-          [(ObjectX64StoreRip target)
-            (compiler-object-elf-render-relocation-record!
-              out
-              image
-              (+ offset 3)
-              (ObjectRelocRipAddress)
-              target)]
-          [(ObjectX64SubRspImm8 _) unit]
-          [(ObjectX64MovRcxRip target)
-            (compiler-object-elf-render-relocation-record!
-              out
-              image
-              (+ offset 3)
-              (ObjectRelocRipValue)
-              target)]
-          [(ObjectX64MovRdxRip target)
-            (compiler-object-elf-render-relocation-record!
-              out
-              image
-              (+ offset 3)
-              (ObjectRelocRipValue)
-              target)]
-          [(ObjectX64LoadRipAddressRdx target)
-            (compiler-object-elf-render-relocation-record!
-              out
-              image
-              (+ offset 3)
-              (ObjectRelocRipAddress)
-              target)]
-          [(ObjectX64StoreR14Rip target)
-            (compiler-object-elf-render-relocation-record!
-              out
-              image
-              (+ offset 3)
-              (ObjectRelocRipAddress)
-              target)]
-          [(ObjectX64StoreR15Rip target)
-            (compiler-object-elf-render-relocation-record!
-              out
-              image
-              (+ offset 3)
-              (ObjectRelocRipAddress)
-              target)]
-          [(ObjectX64AddRcxRip target)
-            (compiler-object-elf-render-relocation-record!
-              out
-              image
-              (+ offset 3)
-              (ObjectRelocRipAddress)
-              target)]
-          [(ObjectX64MovRcxRax) unit]
-          [(ObjectX64XorpdRip target)
-            (compiler-object-elf-render-relocation-record!
-              out
-              image
-              (+ offset 4)
-              (ObjectRelocRipValue)
-              target)]
-          [(ObjectX64Bytes _) unit]
-          [(ObjectX64Raw _) unit])
-        (compiler-object-elf-render-text-instr-relocations!
-          out
-          image
-          (box-get rest)
-          (+ offset (compiler-object-elf-instr-size instr))))]))
+  (let
+    [count : i64 (compiler-object-instr-list-count instrs)]
+    [index : i64 0]
+    [cur-offset : i64 offset]
+    (begin
+      (while (< index count)
+        (let
+          [instr : CompilerObjectX64Instr
+            (compiler-object-instr-list-ref instrs index)]
+          (begin
+            (match instr
+              [(ObjectX64Label _) unit]
+              [(ObjectX64Call target)
+                (compiler-object-elf-render-relocation-record!
+                  out
+                  image
+                  (+ cur-offset 1)
+                  (ObjectRelocCall)
+                  target)]
+              [(ObjectX64TailCall target)
+                (compiler-object-elf-render-relocation-record!
+                  out
+                  image
+                  (+ cur-offset 1)
+                  (ObjectRelocTailCall)
+                  target)]
+              [(ObjectX64Jump target)
+                (compiler-object-elf-render-relocation-record!
+                  out
+                  image
+                  (+ cur-offset 1)
+                  (ObjectRelocBranch)
+                  target)]
+              [(ObjectX64Branch true-target false-target)
+                (begin
+                  (compiler-object-elf-render-relocation-record!
+                    out
+                    image
+                    (+ cur-offset 5)
+                    (ObjectRelocBranch)
+                    true-target)
+                  (compiler-object-elf-render-relocation-record!
+                    out
+                    image
+                    (+ cur-offset 10)
+                    (ObjectRelocBranch)
+                    false-target))]
+              [(ObjectX64LoadRip target)
+                (compiler-object-elf-render-relocation-record!
+                  out
+                  image
+                  (+ cur-offset 3)
+                  (ObjectRelocRipValue)
+                  target)]
+              [(ObjectX64LoadRipAddress target)
+                (compiler-object-elf-render-relocation-record!
+                  out
+                  image
+                  (+ cur-offset 3)
+                  (ObjectRelocRipAddress)
+                  target)]
+              [(ObjectX64StoreRip target)
+                (compiler-object-elf-render-relocation-record!
+                  out
+                  image
+                  (+ cur-offset 3)
+                  (ObjectRelocRipAddress)
+                  target)]
+              [(ObjectX64SubRspImm8 _) unit]
+              [(ObjectX64MovRcxRip target)
+                (compiler-object-elf-render-relocation-record!
+                  out
+                  image
+                  (+ cur-offset 3)
+                  (ObjectRelocRipValue)
+                  target)]
+              [(ObjectX64MovRdxRip target)
+                (compiler-object-elf-render-relocation-record!
+                  out
+                  image
+                  (+ cur-offset 3)
+                  (ObjectRelocRipValue)
+                  target)]
+              [(ObjectX64LoadRipAddressRdx target)
+                (compiler-object-elf-render-relocation-record!
+                  out
+                  image
+                  (+ cur-offset 3)
+                  (ObjectRelocRipAddress)
+                  target)]
+              [(ObjectX64StoreR14Rip target)
+                (compiler-object-elf-render-relocation-record!
+                  out
+                  image
+                  (+ cur-offset 3)
+                  (ObjectRelocRipAddress)
+                  target)]
+              [(ObjectX64StoreR15Rip target)
+                (compiler-object-elf-render-relocation-record!
+                  out
+                  image
+                  (+ cur-offset 3)
+                  (ObjectRelocRipAddress)
+                  target)]
+              [(ObjectX64AddRcxRip target)
+                (compiler-object-elf-render-relocation-record!
+                  out
+                  image
+                  (+ cur-offset 3)
+                  (ObjectRelocRipAddress)
+                  target)]
+              [(ObjectX64MovRcxRax) unit]
+              [(ObjectX64XorpdRip target)
+                (compiler-object-elf-render-relocation-record!
+                  out
+                  image
+                  (+ cur-offset 4)
+                  (ObjectRelocRipValue)
+                  target)]
+              [(ObjectX64Bytes _) unit]
+              [(ObjectX64Raw _) unit])
+            (set!
+              cur-offset
+              (+ cur-offset (compiler-object-elf-instr-size instr)))
+            (set! index (+ index 1)))))
+      unit)))
 
 (define (compiler-object-elf-render-text-relocations!
   [out : (Array u8)]
@@ -1199,20 +1310,22 @@
   [image : CompilerObjectImage]
   [relocs : CompilerObjectRelocationList]
   [kind : CompilerObjectSectionKind]) : unit
-  (match relocs
-    [(ObjectRelocationNil) unit]
-    [(ObjectRelocationCons reloc rest)
-      (begin
-        (match reloc
-          [(ObjectRelocation section _ _ _)
-            (if (compiler-object-section-kind-eq? section kind)
-              (compiler-object-elf-render-relocation! out image reloc)
-              unit)])
-        (compiler-object-elf-render-relocations-for-section!
-          out
-          image
-          (box-get rest)
-          kind))]))
+  (let
+    [count : i64 (compiler-object-relocation-list-count relocs)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (let
+          [reloc : CompilerObjectRelocation
+            (compiler-object-relocation-list-ref relocs index)]
+          (begin
+            (match reloc
+              [(ObjectRelocation section _ _ _)
+                (if (compiler-object-section-kind-eq? section kind)
+                  (compiler-object-elf-render-relocation! out image reloc)
+                  unit)])
+            (set! index (+ index 1)))))
+      unit)))
 
 (define (compiler-object-elf-render-relocation-section!
   [out : (Array u8)]
@@ -1236,17 +1349,24 @@
   [symbols : CompilerObjectSymbolList]
   [name : String]
   [offset : i64]) : i64
-  (match symbols
-    [(ObjectSymbolNil) 0]
-    [(ObjectSymbolCons symbol rest)
-      (match symbol
-        [(ObjectSymbol found _ _ _)
-          (if (string-eq found name)
-            offset
-            (compiler-object-elf-symbol-string-offset-from
-              (box-get rest)
-              name
-              (+ offset (+ (string-length found) 1))))])]))
+  (let
+    [count : i64 (compiler-object-symbol-list-count symbols)]
+    [index : i64 0]
+    [cur-offset : i64 offset]
+    [result : i64 0]
+    [done : bool false]
+    (begin
+      (while (and (not done) (< index count))
+        (match (compiler-object-symbol-list-ref symbols index)
+          [(ObjectSymbol found _ _ _)
+            (if (string-eq found name)
+              (begin
+                (set! result cur-offset)
+                (set! done true))
+              (begin
+                (set! cur-offset (+ cur-offset (+ (string-length found) 1)))
+                (set! index (+ index 1))))]))
+      result)))
 
 (define (compiler-object-elf-symbol-string-offset
   [image : CompilerObjectImage]
@@ -1326,22 +1446,24 @@
   [image : CompilerObjectImage]
   [symbols : CompilerObjectSymbolList]
   [want-local : bool]) : unit
-  (match symbols
-    [(ObjectSymbolNil) unit]
-    [(ObjectSymbolCons symbol rest)
-      (begin
-        (match symbol
-          [(ObjectSymbol _ binding _ _)
-            (if (=
-              (compiler-object-elf-symbol-binding-local? binding)
-              want-local)
-              (compiler-object-elf-render-symbol! out image symbol)
-              unit)])
-        (compiler-object-elf-render-symbols-by-locality!
-          out
-          image
-          (box-get rest)
-          want-local))]))
+  (let
+    [count : i64 (compiler-object-symbol-list-count symbols)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (let
+          [symbol : CompilerObjectSymbol
+            (compiler-object-symbol-list-ref symbols index)]
+          (begin
+            (match symbol
+              [(ObjectSymbol _ binding _ _)
+                (if (=
+                  (compiler-object-elf-symbol-binding-local? binding)
+                  want-local)
+                  (compiler-object-elf-render-symbol! out image symbol)
+                  unit)])
+            (set! index (+ index 1)))))
+      unit)))
 
 (define (compiler-object-elf-render-symbol-table!
   [out : (Array u8)]
@@ -1365,16 +1487,19 @@
 (define (compiler-object-elf-render-string-table-symbols!
   [out : (Array u8)]
   [symbols : CompilerObjectSymbolList]) : unit
-  (match symbols
-    [(ObjectSymbolNil) unit]
-    [(ObjectSymbolCons symbol rest)
-      (begin
-        (match symbol
-          [(ObjectSymbol name _ _ _)
-            (begin
-              (compiler-object-elf-push-string-bytes! out name)
-              (compiler-object-elf-push-u8! out 0))])
-        (compiler-object-elf-render-string-table-symbols! out (box-get rest)))]))
+  (let
+    [count : i64 (compiler-object-symbol-list-count symbols)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (match (compiler-object-symbol-list-ref symbols index)
+            [(ObjectSymbol name _ _ _)
+              (begin
+                (compiler-object-elf-push-string-bytes! out name)
+                (compiler-object-elf-push-u8! out 0))])
+          (set! index (+ index 1))))
+      unit)))
 
 (define (compiler-object-elf-render-string-tables!
   [out : (Array u8)]

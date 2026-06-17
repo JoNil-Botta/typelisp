@@ -26432,63 +26432,69 @@ tl_atomic_i32_fetch_add_ptr:
   [parts : CompilerBackendObjectParts]
   [target : CompilerBackendTarget]) : CompilerObjectSectionList
   (let
+    [empty-data : CompilerObjectDataRecordList
+      (compiler-object-data-list-reverse ObjectDataNil)]
+    [empty-instrs : CompilerObjectX64InstrList
+      (compiler-object-instr-list-reverse ObjectInstrNil)]
     [base : CompilerObjectSectionList
       (compiler-object-section-cons
         (ObjectSection
           (ObjectSectionText)
-          ObjectDataNil
+          empty-data
           (compiler-object-instr-list-reverse (struct-get parts text)))
         (compiler-object-section-cons
           (ObjectSection
             (ObjectSectionData)
             (compiler-object-data-list-reverse (struct-get parts data))
-            ObjectInstrNil)
+            empty-instrs)
           (compiler-object-section-cons
             (ObjectSection
               (ObjectSectionRodata)
               (compiler-object-data-list-reverse (struct-get parts rodata))
-              ObjectInstrNil)
+              empty-instrs)
             (compiler-object-section-cons
               (ObjectSection
                 (ObjectSectionBss)
                 (compiler-object-data-list-reverse (struct-get parts bss))
-                ObjectInstrNil)
+                empty-instrs)
               ObjectSectionNil))))]
     (match target
-      [(BackendTargetLinux) base]
+      [(BackendTargetLinux) (compiler-object-section-list-dense base)]
       [(BackendTargetWindows)
-        (compiler-object-section-cons
-          (ObjectSection
-            (ObjectSectionText)
-            ObjectDataNil
-            (compiler-object-instr-list-reverse (struct-get parts text)))
+        (compiler-object-section-list-dense
           (compiler-object-section-cons
             (ObjectSection
-              (ObjectSectionData)
-              (compiler-object-data-list-reverse (struct-get parts data))
-              ObjectInstrNil)
+              (ObjectSectionText)
+              empty-data
+              (compiler-object-instr-list-reverse (struct-get parts text)))
             (compiler-object-section-cons
               (ObjectSection
-                (ObjectSectionRodata)
-                (compiler-object-data-list-reverse (struct-get parts rodata))
-                ObjectInstrNil)
+                (ObjectSectionData)
+                (compiler-object-data-list-reverse (struct-get parts data))
+                empty-instrs)
               (compiler-object-section-cons
                 (ObjectSection
-                  (ObjectSectionBss)
-                  (compiler-object-data-list-reverse (struct-get parts bss))
-                  ObjectInstrNil)
+                  (ObjectSectionRodata)
+                  (compiler-object-data-list-reverse (struct-get parts rodata))
+                  empty-instrs)
                 (compiler-object-section-cons
                   (ObjectSection
-                    (ObjectSectionPdata)
-                    (compiler-object-data-list-reverse (struct-get parts pdata))
-                    ObjectInstrNil)
+                    (ObjectSectionBss)
+                    (compiler-object-data-list-reverse (struct-get parts bss))
+                    empty-instrs)
                   (compiler-object-section-cons
                     (ObjectSection
-                      (ObjectSectionXdata)
+                      (ObjectSectionPdata)
                       (compiler-object-data-list-reverse
-                        (struct-get parts xdata))
-                      ObjectInstrNil)
-                    ObjectSectionNil))))))])))
+                        (struct-get parts pdata))
+                      empty-instrs)
+                    (compiler-object-section-cons
+                      (ObjectSection
+                        (ObjectSectionXdata)
+                        (compiler-object-data-list-reverse
+                          (struct-get parts xdata))
+                        empty-instrs)
+                      ObjectSectionNil)))))))])))
 
 (define (compiler-backend-object-image-from-parts
   [parts : CompilerBackendObjectParts]
@@ -27248,17 +27254,21 @@ tl_atomic_i32_fetch_add_ptr:
 (define (compiler-backend-pic-rewrite-relocs
   [asm : String]
   [relocs : CompilerObjectRelocationList]) : String
-  (match relocs
-    [(ObjectRelocationNil) asm]
-    [(ObjectRelocationCons reloc rest)
-      (match reloc
-        [(ObjectRelocation _ _ kind target)
-          (compiler-backend-pic-rewrite-relocs
-            (match kind
-              [(ObjectRelocAbs64)
-                (compiler-backend-pic-rewrite-target asm target)]
-              [_ asm])
-            (box-get rest))])]))
+  (let
+    [count : i64 (compiler-object-relocation-list-count relocs)]
+    [index : i64 0]
+    [out : String asm]
+    (begin
+      (while (< index count)
+        (begin
+          (match (compiler-object-relocation-list-ref relocs index)
+            [(ObjectRelocation _ _ kind target)
+              (match kind
+                [(ObjectRelocAbs64)
+                  (set! out (compiler-backend-pic-rewrite-target out target))]
+                [_ unit])])
+          (set! index (+ index 1))))
+      out)))
 
 (define (compiler-backend-pic-align-offset [offset : i64] [align : i64]) : i64
   (if (<= align 1)
@@ -27287,22 +27297,33 @@ tl_atomic_i32_fetch_add_ptr:
   [records : CompilerObjectDataRecordList]
   [label : String]
   [offset : i64]) : i64
-  (match records
-    [(ObjectDataNil) -1]
-    [(ObjectDataCons record rest)
-      (match record
-        [(ObjectDataLabel found)
-          (if (string-eq found label)
-            offset
-            (compiler-backend-pic-data-label-offset-from
-              (box-get rest)
-              label
-              offset))]
-        [_
-          (compiler-backend-pic-data-label-offset-from
-            (box-get rest)
-            label
-            (compiler-backend-pic-data-record-end-offset record offset))])]))
+  (let
+    [count : i64 (compiler-object-data-record-list-count records)]
+    [index : i64 0]
+    [cur-offset : i64 offset]
+    [result : i64 -1]
+    [done : bool false]
+    (begin
+      (while (and (not done) (< index count))
+        (let
+          [record : CompilerObjectDataRecord
+            (compiler-object-data-record-list-ref records index)]
+          (match record
+            [(ObjectDataLabel found)
+              (if (string-eq found label)
+                (begin
+                  (set! result cur-offset)
+                  (set! done true))
+                (set! index (+ index 1)))]
+            [_
+              (begin
+                (set!
+                  cur-offset
+                  (compiler-backend-pic-data-record-end-offset
+                    record
+                    cur-offset))
+                (set! index (+ index 1)))])))
+      result)))
 
 (define (compiler-backend-pic-section-label-offset
   [image : CompilerObjectImage]
@@ -27341,32 +27362,37 @@ tl_atomic_i32_fetch_add_ptr:
   [image : CompilerObjectImage]
   [relocs : CompilerObjectRelocationList]
   [buf : TextBuf]) : TextBuf
-  (match relocs
-    [(ObjectRelocationNil) buf]
-    [(ObjectRelocationCons reloc rest)
-      (match reloc
-        [(ObjectRelocation section site kind target)
-          (compiler-backend-pic-fixup-table-relocs
-            image
-            (box-get rest)
-            (match kind
-              [(ObjectRelocAbs64)
-                (let
-                  [offset : i64
-                    (compiler-backend-pic-section-label-offset
-                      image
-                      section
-                      site)]
-                  (if (>= offset 0)
-                    (text-buf-append
-                      buf
-                      (compiler-backend-pic-fixup-line
+  (let
+    [count : i64 (compiler-object-relocation-list-count relocs)]
+    [index : i64 0]
+    [out : TextBuf buf]
+    (begin
+      (while (< index count)
+        (begin
+          (match (compiler-object-relocation-list-ref relocs index)
+            [(ObjectRelocation section site kind target)
+              (match kind
+                [(ObjectRelocAbs64)
+                  (let
+                    [offset : i64
+                      (compiler-backend-pic-section-label-offset
+                        image
                         section
-                        offset
-                        site
-                        target))
-                    buf))]
-              [_ buf]))])]))
+                        site)]
+                    (if (>= offset 0)
+                      (set!
+                        out
+                        (text-buf-append
+                          out
+                          (compiler-backend-pic-fixup-line
+                            section
+                            offset
+                            site
+                            target)))
+                      unit))]
+                [_ unit])])
+          (set! index (+ index 1))))
+      out)))
 
 (define (compiler-backend-pic-fixup-table [image : CompilerObjectImage]) : String
   (text-buf-render
@@ -27377,31 +27403,44 @@ tl_atomic_i32_fetch_add_ptr:
 
 (define (compiler-backend-pic-symbols-have-extern?
   [symbols : CompilerObjectSymbolList]) : bool
-  (match symbols
-    [(ObjectSymbolNil) false]
-    [(ObjectSymbolCons symbol rest)
-      (match symbol
-        [(ObjectSymbol _ binding _ _)
-          (match binding
-            [(ObjectSymbolExtern) true]
-            [_ (compiler-backend-pic-symbols-have-extern? (box-get rest))])])]))
+  (let
+    [count : i64 (compiler-object-symbol-list-count symbols)]
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< index count))
+        (match (compiler-object-symbol-list-ref symbols index)
+          [(ObjectSymbol _ binding _ _)
+            (match binding
+              [(ObjectSymbolExtern) (set! found true)]
+              [_ (set! index (+ index 1))])]))
+      found)))
 
 (define (compiler-backend-pic-target-symbol-internal?
   [symbols : CompilerObjectSymbolList]
   [target : String]) : bool
-  (match symbols
-    [(ObjectSymbolNil) false]
-    [(ObjectSymbolCons symbol rest)
-      (match symbol
-        [(ObjectSymbol name binding _ section)
-          (if (string-eq name target)
-            (match binding
-              [(ObjectSymbolExtern) false]
-              [_
-                (match section
-                  [(ObjectNoSection) false]
-                  [_ true])])
-            (compiler-backend-pic-target-symbol-internal? (box-get rest) target))])]))
+  (let
+    [count : i64 (compiler-object-symbol-list-count symbols)]
+    [index : i64 0]
+    [result : bool false]
+    [done : bool false]
+    (begin
+      (while (and (not done) (< index count))
+        (match (compiler-object-symbol-list-ref symbols index)
+          [(ObjectSymbol name binding _ section)
+            (if (string-eq name target)
+              (begin
+                (set!
+                  result
+                  (match binding
+                    [(ObjectSymbolExtern) false]
+                    [_
+                      (match section
+                        [(ObjectNoSection) false]
+                        [_ true])]))
+                (set! done true))
+              (set! index (+ index 1)))]))
+      result)))
 
 (define (compiler-backend-pic-reloc-site-valid?
   [image : CompilerObjectImage]
@@ -27437,12 +27476,18 @@ tl_atomic_i32_fetch_add_ptr:
 (define (compiler-backend-pic-relocs-valid?
   [image : CompilerObjectImage]
   [relocs : CompilerObjectRelocationList]) : bool
-  (match relocs
-    [(ObjectRelocationNil) true]
-    [(ObjectRelocationCons reloc rest)
-      (and
-        (compiler-backend-pic-reloc-site-valid? image reloc)
-        (compiler-backend-pic-relocs-valid? image (box-get rest)))]))
+  (let
+    [count : i64 (compiler-object-relocation-list-count relocs)]
+    [index : i64 0]
+    [ok : bool true]
+    (begin
+      (while (and ok (< index count))
+        (if (compiler-backend-pic-reloc-site-valid?
+          image
+          (compiler-object-relocation-list-ref relocs index))
+          (set! index (+ index 1))
+          (set! ok false)))
+      ok)))
 
 (define (compiler-backend-pic-asm [asm : String] [image : CompilerObjectImage]) : String
   (string-append

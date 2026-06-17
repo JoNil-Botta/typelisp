@@ -495,6 +495,7 @@
         [symbols : CompilerObjectSymbolList (struct-get image symbols)]
         [relocs : CompilerObjectRelocationList (struct-get image relocations)]
         (and
+          (compiler-object-image-dense? image)
           (backend-and8
             (= (compiler-object-section-list-count sections) 4)
             (>
@@ -726,6 +727,7 @@
         [relocs : CompilerObjectRelocationList (struct-get image relocations)]
         [shape-ok : bool
           (and
+            (compiler-object-image-dense? image)
             (backend-and8
               (= (compiler-object-section-list-count sections) 6)
               (compiler-object-symbol-list-contains?

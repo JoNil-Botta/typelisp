@@ -745,20 +745,23 @@
 
 (define (source-tool-windows-direct-object-symbols-linkable?
   [symbols : CompilerObjectSymbolList]) : bool
-  (match symbols
-    [(ObjectSymbolNil) true]
-    [(ObjectSymbolCons symbol rest)
-      (match symbol
-        [(ObjectSymbol name binding kind _)
-          (match binding
-            [(ObjectSymbolExtern)
-              (and
-                (source-tool-windows-direct-object-extern-linkable? name kind)
-                (source-tool-windows-direct-object-symbols-linkable?
-                  (box-get rest)))]
-            [_
-              (source-tool-windows-direct-object-symbols-linkable?
-                (box-get rest))])])]))
+  (let
+    [count : i64 (compiler-object-symbol-list-count symbols)]
+    [index : i64 0]
+    [ok : bool true]
+    (begin
+      (while (and ok (< index count))
+        (match (compiler-object-symbol-list-ref symbols index)
+          [(ObjectSymbol name binding kind _)
+            (match binding
+              [(ObjectSymbolExtern)
+                (if (source-tool-windows-direct-object-extern-linkable?
+                  name
+                  kind)
+                  (set! index (+ index 1))
+                  (set! ok false))]
+              [_ (set! index (+ index 1))])]))
+      ok)))
 
 (define (source-tool-windows-direct-object-linkable?
   [image : CompilerObjectImage]) : bool

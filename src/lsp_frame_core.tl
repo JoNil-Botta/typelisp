@@ -3026,6 +3026,33 @@
           [(MissingLspJsonText) MissingLspDocument])]
       [(JsonMissing) MissingLspDocument])))
 
+;; Helper: build JSON array of declaration names from LspDeclList
+(define (lsp-decls-to-name-list [decls : LspDeclList] [idx : i64]) : JsonList
+  (if (>= idx (lsp-decl-list-len decls))
+    JsonListNil
+    (let
+      [entry : LspDeclEntry (lsp-decl-list-get decls idx)]
+      [name : String (struct-get entry name)]
+      (lsp-json-list-cons (JsonString name)
+        (lsp-decls-to-name-list decls (+ idx 1))))))
+
+;; Helper: build JSON array of all declarations with metadata
+(define (lsp-decls-to-json-list [decls : LspDeclList] [idx : i64]) : JsonList
+  (if (>= idx (lsp-decl-list-len decls))
+    JsonListNil
+    (let
+      [entry : LspDeclEntry (lsp-decl-list-get decls idx)]
+      [obj : Json
+        (lsp-json-object
+          (lsp-json-member "kind" (JsonString (struct-get entry kind))
+            (lsp-json-member "name" (JsonString (struct-get entry name))
+              (lsp-json-member "line" (lsp-json-number (struct-get entry name-line))
+                (lsp-json-member "column" (lsp-json-number (struct-get entry name-col))
+                  (lsp-json-member "length" (lsp-json-number (struct-get entry name-len))
+                    JsonMemberListNil))))))]
+      (lsp-json-list-cons obj
+        (lsp-decls-to-json-list decls (+ idx 1))))))
+
 ;; tl/listFunctions - List all top-level function names in a document
 (define (lsp-handle-tl-list-functions
   [id : Json]
@@ -3034,11 +3061,28 @@
   (match (lsp-get-document params docs)
     [(FoundLspDocument uri path text)
       (let
-        [functions : (Array String) (make-array String 0)]
+        [decls : LspDeclList (lsp-scan-decls text)]
+        [items : JsonList (lsp-decls-to-name-list decls 0)]
         (begin
-          ;; TODO: Implement by scanning the document for (define ...) forms
-          ;; For now, return empty array
-          (lsp-write-response id (lsp-json-array JsonListNil))
+          (lsp-write-response id (lsp-json-array items))
+          (LspContinue docs)))]
+    [(MissingLspDocument)
+      (begin
+        (lsp-write-error id -32600 "Document not found")
+        (LspContinue docs))]))
+
+;; tl/astDump - Return full declaration metadata
+(define (lsp-handle-tl-ast-dump
+  [id : Json]
+  [params : Json]
+  [docs : LspDocuments]) : LspHandleResult
+  (match (lsp-get-document params docs)
+    [(FoundLspDocument uri path text)
+      (let
+        [decls : LspDeclList (lsp-scan-decls text)]
+        [items : JsonList (lsp-decls-to-json-list decls 0)]
+        (begin
+          (lsp-write-response id (lsp-json-array items))
           (LspContinue docs)))]
     [(MissingLspDocument)
       (begin
@@ -3281,6 +3325,81 @@
                           (lsp-write-response id (lsp-json-array JsonListNil))]))]
                   [(JsonMissing) unit]))
               (set! result (LspContinue docs)))
+            unit)
+          (if (and (not handled) (string-eq method "tl/astDump"))
+            (begin
+              (set! handled true)
+              (let
+                [id-key : String "id"]
+                (match (json-object-get message (& id-key))
+                  [(JsonFound id)
+                    (let
+                      [params-key : String "params"]
+                      (match (json-object-get message (& params-key))
+                        [(JsonFound params)
+                          (set! result (lsp-handle-tl-ast-dump id params docs))]
+                        [(JsonMissing) (lsp-write-response id (lsp-json-array JsonListNil))]))]
+                  [(JsonMissing) unit])))
+            unit)
+          (if (and (not handled) (string-eq method "tl/listFunctions"))
+            (begin
+              (set! handled true)
+              (let
+                [id-key : String "id"]
+                (match (json-object-get message (& id-key))
+                  [(JsonFound id)
+                    (let
+                      [params-key : String "params"]
+                      (match (json-object-get message (& params-key))
+                        [(JsonFound params)
+                          (set! result (lsp-handle-tl-list-functions id params docs))]
+                        [(JsonMissing) (lsp-write-response id (lsp-json-array JsonListNil))]))]
+                  [(JsonMissing) unit])))
+            unit)
+          (if (and (not handled) (string-eq method "tl/structuralReplace"))
+            (begin
+              (set! handled true)
+              (let
+                [id-key : String "id"]
+                (match (json-object-get message (& id-key))
+                  [(JsonFound id)
+                    (let
+                      [params-key : String "params"]
+                      (match (json-object-get message (& params-key))
+                        [(JsonFound params)
+                          (set! result (lsp-handle-tl-structural-replace id params docs))]
+                        [(JsonMissing) (lsp-write-error id -32600 "Missing params")]))]
+                  [(JsonMissing) unit])))
+            unit)
+          (if (and (not handled) (string-eq method "tl/insertFunction"))
+            (begin
+              (set! handled true)
+              (let
+                [id-key : String "id"]
+                (match (json-object-get message (& id-key))
+                  [(JsonFound id)
+                    (let
+                      [params-key : String "params"]
+                      (match (json-object-get message (& params-key))
+                        [(JsonFound params)
+                          (set! result (lsp-handle-tl-insert-function id params docs))]
+                        [(JsonMissing) (lsp-write-error id -32600 "Missing params")]))]
+                  [(JsonMissing) unit])))
+            unit)
+          (if (and (not handled) (string-eq method "tl/deleteFunction"))
+            (begin
+              (set! handled true)
+              (let
+                [id-key : String "id"]
+                (match (json-object-get message (& id-key))
+                  [(JsonFound id)
+                    (let
+                      [params-key : String "params"]
+                      (match (json-object-get message (& params-key))
+                        [(JsonFound params)
+                          (set! result (lsp-handle-tl-delete-function id params docs))]
+                        [(JsonMissing) (lsp-write-error id -32600 "Missing params")]))]
+                  [(JsonMissing) unit])))
             unit)
           (if (not handled)
             (begin

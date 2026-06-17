@@ -1645,13 +1645,22 @@
     unit
     (panic "test CLI inline harness dropped macro quasiquote dependency")))
 
+(test
+  test-cli-enables-test-cfg
+  (cfg test unit (panic "test CLI did not enable test cfg")))
+
+(define (tltest-cfgs [backend-target : CompilerBackendTarget]) : SymI64Env
+  (compiler-cfg-enable
+    (compiler-driver-target-cfgs backend-target (compiler-cfg-empty))
+    "test"))
+
 (define (tltest-typecheck-cache-scope
   [roots : StringVec]
   [backend-target : CompilerBackendTarget]) : String
   (compiler-typecheck-prefix-cache-scope
     "typecheck-prefix-test-cli"
     roots
-    (compiler-driver-target-cfgs backend-target (compiler-cfg-empty))))
+    (tltest-cfgs backend-target)))
 
 (define (tltest-check-only
   [program : AstProgram]
@@ -2616,7 +2625,7 @@
   (match (compiler-driver-load-file-with-runtime
     source
     roots
-    (compiler-driver-target-cfgs backend-target (compiler-cfg-empty)))
+    (tltest-cfgs backend-target))
     [(OkCompilerLoadWithPaths decls paths _ _)
       (tltest-check-file-loaded source decls paths backend-target roots)]
     [(ErrCompilerLoadWithPaths diag)
@@ -2716,7 +2725,7 @@
           (match (compiler-driver-load-file-with-runtime
             source
             roots
-            (compiler-driver-target-cfgs backend-target (compiler-cfg-empty)))
+            (tltest-cfgs backend-target))
             [(OkCompilerLoadWithPaths decls paths _ _)
               (match (tltest-build-harness source decls paths)
                 [(InlineHarness program harness-paths count)

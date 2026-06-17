@@ -234,13 +234,11 @@ stdlib/tests/io_stdio_bytes.tl|42|-|-|literal:abcdef
 stdlib/tests/cpu_api.tl|42|-|-
 stdlib/tests/fs_path_join_many_api.tl|42|-|-
 stdlib/tests/fs_api.tl|42|-|-|-
-stdlib/tests/hashmap_api.tl|42|-|-
 stdlib/tests/list_api.tl|42|-|-
 stdlib/tests/msvc_api.tl|42|-|-
 stdlib/tests/process_api.tl|42|-|-|-|requires-stage0-symbol:tl_process_start,tl_process_wait
 stdlib/tests/process_runtime.tl|42|-|-
 stdlib/tests/profile_api.tl|42|-|-
-stdlib/tests/set_api.tl|42|-|-
 stdlib/tests/sort_api.tl|42|-|-
 stdlib/tests/sync_api.tl|42|-|-
 stdlib/tests/thread_api.tl|42|-|-

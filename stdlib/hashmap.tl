@@ -1069,3 +1069,2281 @@
     (type i64)) "stdlib/hashmap/i64-key-v1")
   (defstruct I64I64Map
     (__hashmap_family_request i64)))
+
+;; Inline coverage migrated from stdlib/tests/hashmap_api.tl (#3083).
+(cfg test (import "test.tl"))
+
+(cfg
+  test
+  (define (hashmap-test-assert-owned-string-eq
+    [actual : String]
+    [expected : String]
+    [message : String]) : unit
+    (assert-string-eq (& actual) (& expected) message)))
+
+(cfg
+  test
+  (defstruct HashPayload
+    (score i64)
+    (weight i64)))
+
+(cfg
+  test
+  (defenum HashState
+    (HashReady i64)
+    (HashFailed)
+    (HashPaused i64)))
+
+(cfg
+  test
+  (defstruct HashPoint
+    (x i64)
+    (enabled bool)
+    (label String)
+    (code char)))
+
+(cfg
+  test
+  (defenum HashTag
+    (HashTagNone)
+    (HashTagNumber i64)
+    (HashTagOtherNumber i64)
+    (HashTagText bool String char)))
+
+(cfg
+  test
+  (defstruct HashNestedKey
+    (point HashPoint)
+    (tag HashTag)))
+
+(cfg
+  test
+  (comptime-decl
+    (:generated stdlib/hashmap-family I64StringMap (type-key (type i64)) (type-key
+      (type String)) "stdlib/hashmap/i64-key-v1")
+    (defstruct I64StringMap
+      (__hashmap_family_request i64))))
+
+(cfg
+  test
+  (comptime-decl
+    (:generated stdlib/hashmap-family StringHashPayloadMap (type-key
+      (type String)) (type-key (type HashPayload)) "stdlib/hashmap/string-key-v1")
+    (defstruct StringHashPayloadMap
+      (__hashmap_family_request i64))))
+
+(cfg
+  test
+  (comptime-decl
+    (:generated stdlib/hashmap-family I64HashStateMap (type-key (type i64)) (type-key
+      (type HashState)) "stdlib/hashmap/i64-key-v1")
+    (defstruct I64HashStateMap
+      (__hashmap_family_request i64))))
+
+(cfg
+  test
+  (comptime-decl
+    (:generated stdlib/hashmap-family HashNestedKeyI64Map (type-key
+      (type HashNestedKey)) (type-key (type i64)) "stdlib/hashmap/aggregate-key-v1")
+    (defstruct HashNestedKeyI64Map
+      (__hashmap_family_request i64))))
+
+(cfg
+  test
+  (define (hash-key-alpha) : HashNestedKey
+    (HashNestedKey (HashPoint 1 true "alpha" #A') (HashTagNumber 7))))
+
+(cfg
+  test
+  (define (hash-key-alpha-copy) : HashNestedKey
+    (HashNestedKey (HashPoint 1 true "alpha" #A') (HashTagNumber 7))))
+
+(cfg
+  test
+  (define (hash-key-beta) : HashNestedKey
+    (HashNestedKey (HashPoint 1 true "alpha" #A') (HashTagOtherNumber 7))))
+
+(cfg
+  test
+  (define (hash-key-gamma) : HashNestedKey
+    (HashNestedKey
+      (HashPoint 3 false "gamma" #G')
+      (HashTagText true "payload" #P'))))
+
+(cfg
+  test
+  (define (hash-key-delta) : HashNestedKey
+    (HashNestedKey (HashPoint 4 true "delta" #D') (HashTagNone))))
+
+(cfg
+  test
+  (define (hash-key-missing) : HashNestedKey
+    (HashNestedKey (HashPoint 99 false "missing" #M') (HashTagNumber 7))))
+
+;; Predicate/extractor helpers return concrete bool/i64 (no panic in a match
+;; arm) so the module typechecks on every stage0, independent of never-type.
+(cfg
+  test
+  (define (probe-found? [p : StringI64MapProbe]) : bool
+    (match p
+      [(StringI64MapProbeFound _) true]
+      [(StringI64MapProbeAbsent _) false]
+      [(StringI64MapProbeFull) false])))
+
+(cfg
+  test
+  (define (probe-absent? [p : StringI64MapProbe]) : bool
+    (match p
+      [(StringI64MapProbeAbsent _) true]
+      [(StringI64MapProbeFound _) false]
+      [(StringI64MapProbeFull) false])))
+
+(cfg
+  test
+  (define (probe-full? [p : StringI64MapProbe]) : bool
+    (match p
+      [(StringI64MapProbeFull) true]
+      [(StringI64MapProbeFound _) false]
+      [(StringI64MapProbeAbsent _) false])))
+
+;; Slot index carried by Found/Absent; `fallback` for Full.
+(cfg
+  test
+  (define (probe-index-or [p : StringI64MapProbe] [fallback : i64]) : i64
+    (match p
+      [(StringI64MapProbeFound i) i]
+      [(StringI64MapProbeAbsent i) i]
+      [(StringI64MapProbeFull) fallback])))
+
+;; Fill every slot of an `n`-length array with `StringI64MapEmpty`.
+(cfg
+  test
+  (define (fill-empty [slots : (Array StringI64MapSlot)] [n : i64]) : (Array
+      StringI64MapSlot)
+    (let
+      [i : i64 0]
+      (begin
+        (while (< i n)
+          (begin
+            (array-set! slots i (StringI64MapEmpty))
+            (set! i (+ i 1))))
+        slots))))
+
+(cfg
+  test
+  (define (new-slots [n : i64]) : (Array StringI64MapSlot)
+    (fill-empty (make-array StringI64MapSlot n) n)))
+
+;; Lookup/insert-result extractors (concrete returns, no panic in a match arm).
+(cfg
+  test
+  (define (lookup-value-or [l : StringI64MapLookup] [fallback : i64]) : i64
+    (match l
+      [(StringI64MapFound v) v]
+      [(StringI64MapMissing) fallback])))
+
+(cfg
+  test
+  (define (string-i64-borrowed-value-found?
+    [l : (StringI64MapBorrowedValueLookup map)]) : bool
+    (match l
+      [(StringI64MapBorrowedValueFound _) true]
+      [(StringI64MapBorrowedValueMissing) false])))
+
+(cfg
+  test
+  (define (insert-ok? [r : StringI64MapInsertResult]) : bool
+    (match r
+      [(StringI64MapInsertOk _) true]
+      [(StringI64MapInsertFull _) false])))
+
+(cfg
+  test
+  (define (insert-result-map [r : StringI64MapInsertResult]) : StringI64Map
+    (match r
+      [(StringI64MapInsertOk m) m]
+      [(StringI64MapInsertFull m) m])))
+
+(cfg
+  test
+  (define (remove-ok? [r : StringI64MapRemoveResult]) : bool
+    (match r
+      [(StringI64MapRemoveOk _) true]
+      [(StringI64MapRemoveMissing _) false])))
+
+(cfg
+  test
+  (define (remove-result-map [r : StringI64MapRemoveResult]) : StringI64Map
+    (match r
+      [(StringI64MapRemoveOk m) m]
+      [(StringI64MapRemoveMissing m) m])))
+
+(cfg
+  test
+  (define (update-ok? [r : StringI64MapUpdateResult]) : bool
+    (match r
+      [(StringI64MapUpdateOk _) true]
+      [(StringI64MapUpdateMissing _) false])))
+
+(cfg
+  test
+  (define (update-result-map [r : StringI64MapUpdateResult]) : StringI64Map
+    (match r
+      [(StringI64MapUpdateOk m) m]
+      [(StringI64MapUpdateMissing m) m])))
+
+(cfg
+  test
+  (define (entry-or-insert-inserted? [r : StringI64MapEntryOrInsertResult]) : bool
+    (match r
+      [(StringI64MapEntryOrInsertInserted _ _) true]
+      [(StringI64MapEntryOrInsertFound _ _) false])))
+
+(cfg
+  test
+  (define (entry-or-insert-result-map [r : StringI64MapEntryOrInsertResult]) : StringI64Map
+    (match r
+      [(StringI64MapEntryOrInsertFound m _) m]
+      [(StringI64MapEntryOrInsertInserted m _) m])))
+
+(cfg
+  test
+  (define (entry-or-insert-value-or
+    [r : StringI64MapEntryOrInsertResult]
+    [fallback : i64]) : i64
+    (match r
+      [(StringI64MapEntryOrInsertFound _ v) v]
+      [(StringI64MapEntryOrInsertInserted _ v) v])))
+
+;; Iteration entry extractors (concrete returns, no panic in a match arm).
+(cfg
+  test
+  (define (entry-none? [e : StringI64MapEntry]) : bool
+    (match e
+      [(StringI64MapEntryNone) true]
+      [(StringI64MapEntrySome _ _) false])))
+
+(cfg
+  test
+  (define (entry-value-or [e : StringI64MapEntry] [fallback : i64]) : i64
+    (match e
+      [(StringI64MapEntrySome _ v) v]
+      [(StringI64MapEntryNone) fallback])))
+
+;; Generated `String -> String` map helpers.
+(cfg
+  test
+  (define (string-string-lookup-value-or
+    [l : StringStringMapLookup]
+    [fallback : String]) : String
+    (match l
+      [(StringStringMapFound v) v]
+      [(StringStringMapMissing) fallback])))
+
+(cfg
+  test
+  (define (string-string-borrowed-value-length-or
+    [l : (StringStringMapBorrowedValueLookup map)]
+    [fallback : i64]) : i64
+    (match l
+      [(StringStringMapBorrowedValueFound v) (string-length v)]
+      [(StringStringMapBorrowedValueMissing) fallback])))
+
+(cfg
+  test
+  (define (string-string-insert-result-map [r : StringStringMapInsertResult]) : StringStringMap
+    (match r
+      [(StringStringMapInsertOk m) m]
+      [(StringStringMapInsertFull m) m])))
+
+(cfg
+  test
+  (define (string-string-remove-ok? [r : StringStringMapRemoveResult]) : bool
+    (match r
+      [(StringStringMapRemoveOk _) true]
+      [(StringStringMapRemoveMissing _) false])))
+
+(cfg
+  test
+  (define (string-string-remove-result-map [r : StringStringMapRemoveResult]) : StringStringMap
+    (match r
+      [(StringStringMapRemoveOk m) m]
+      [(StringStringMapRemoveMissing m) m])))
+
+(cfg
+  test
+  (define (string-string-update-ok? [r : StringStringMapUpdateResult]) : bool
+    (match r
+      [(StringStringMapUpdateOk _) true]
+      [(StringStringMapUpdateMissing _) false])))
+
+(cfg
+  test
+  (define (string-string-update-result-map [r : StringStringMapUpdateResult]) : StringStringMap
+    (match r
+      [(StringStringMapUpdateOk m) m]
+      [(StringStringMapUpdateMissing m) m])))
+
+(cfg
+  test
+  (define (string-string-entry-or-insert-inserted?
+    [r : StringStringMapEntryOrInsertResult]) : bool
+    (match r
+      [(StringStringMapEntryOrInsertInserted _ _) true]
+      [(StringStringMapEntryOrInsertFound _ _) false])))
+
+(cfg
+  test
+  (define (string-string-entry-or-insert-result-map
+    [r : StringStringMapEntryOrInsertResult]) : StringStringMap
+    (match r
+      [(StringStringMapEntryOrInsertFound m _) m]
+      [(StringStringMapEntryOrInsertInserted m _) m])))
+
+(cfg
+  test
+  (define (string-string-entry-or-insert-value-or
+    [r : StringStringMapEntryOrInsertResult]
+    [fallback : String]) : String
+    (match r
+      [(StringStringMapEntryOrInsertFound _ v) v]
+      [(StringStringMapEntryOrInsertInserted _ v) v])))
+
+(cfg
+  test
+  (define (string-string-entry-value-length-or
+    [e : StringStringMapEntry]
+    [fallback : i64]) : i64
+    (match e
+      [(StringStringMapEntrySome _ v) (string-length v)]
+      [(StringStringMapEntryNone) fallback])))
+
+;; Generated `i64 -> i64` map helpers.
+(cfg
+  test
+  (define (i64-i64-lookup-value-or [l : I64I64MapLookup] [fallback : i64]) : i64
+    (match l
+      [(I64I64MapFound v) v]
+      [(I64I64MapMissing) fallback])))
+
+(cfg
+  test
+  (define (i64-i64-borrowed-value-found?
+    [l : (I64I64MapBorrowedValueLookup map)]) : bool
+    (match l
+      [(I64I64MapBorrowedValueFound _) true]
+      [(I64I64MapBorrowedValueMissing) false])))
+
+(cfg
+  test
+  (define (i64-string-borrowed-value-length-or
+    [l : (I64StringMapBorrowedValueLookup map)]
+    [fallback : i64]) : i64
+    (match l
+      [(I64StringMapBorrowedValueFound v) (string-length v)]
+      [(I64StringMapBorrowedValueMissing) fallback])))
+
+(cfg
+  test
+  (define (i64-i64-insert-result-map [r : I64I64MapInsertResult]) : I64I64Map
+    (match r
+      [(I64I64MapInsertOk m) m]
+      [(I64I64MapInsertFull m) m])))
+
+(cfg
+  test
+  (define (i64-i64-remove-ok? [r : I64I64MapRemoveResult]) : bool
+    (match r
+      [(I64I64MapRemoveOk _) true]
+      [(I64I64MapRemoveMissing _) false])))
+
+(cfg
+  test
+  (define (i64-i64-remove-result-map [r : I64I64MapRemoveResult]) : I64I64Map
+    (match r
+      [(I64I64MapRemoveOk m) m]
+      [(I64I64MapRemoveMissing m) m])))
+
+(cfg
+  test
+  (define (i64-i64-update-ok? [r : I64I64MapUpdateResult]) : bool
+    (match r
+      [(I64I64MapUpdateOk _) true]
+      [(I64I64MapUpdateMissing _) false])))
+
+(cfg
+  test
+  (define (i64-i64-update-result-map [r : I64I64MapUpdateResult]) : I64I64Map
+    (match r
+      [(I64I64MapUpdateOk m) m]
+      [(I64I64MapUpdateMissing m) m])))
+
+(cfg
+  test
+  (define (i64-i64-entry-or-insert-inserted? [r : I64I64MapEntryOrInsertResult]) : bool
+    (match r
+      [(I64I64MapEntryOrInsertInserted _ _) true]
+      [(I64I64MapEntryOrInsertFound _ _) false])))
+
+(cfg
+  test
+  (define (i64-i64-entry-or-insert-result-map
+    [r : I64I64MapEntryOrInsertResult]) : I64I64Map
+    (match r
+      [(I64I64MapEntryOrInsertFound m _) m]
+      [(I64I64MapEntryOrInsertInserted m _) m])))
+
+(cfg
+  test
+  (define (i64-i64-entry-or-insert-value-or
+    [r : I64I64MapEntryOrInsertResult]
+    [fallback : i64]) : i64
+    (match r
+      [(I64I64MapEntryOrInsertFound _ v) v]
+      [(I64I64MapEntryOrInsertInserted _ v) v])))
+
+(cfg
+  test
+  (define (i64-i64-entry-value-or [e : I64I64MapEntry] [fallback : i64]) : i64
+    (match e
+      [(I64I64MapEntrySome _ v) v]
+      [(I64I64MapEntryNone) fallback])))
+
+;; Generated aggregate-key `HashNestedKey -> i64` map helpers.
+(cfg
+  test
+  (define (hash-nested-key-i64-lookup-value-or
+    [l : HashNestedKeyI64MapLookup]
+    [fallback : i64]) : i64
+    (match l
+      [(HashNestedKeyI64MapFound v) v]
+      [(HashNestedKeyI64MapMissing) fallback])))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-borrowed-value-found?
+    [l : (HashNestedKeyI64MapBorrowedValueLookup map)]) : bool
+    (match l
+      [(HashNestedKeyI64MapBorrowedValueFound _) true]
+      [(HashNestedKeyI64MapBorrowedValueMissing) false])))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-insert-full?
+    [r : HashNestedKeyI64MapInsertResult]) : bool
+    (match r
+      [(HashNestedKeyI64MapInsertOk _) false]
+      [(HashNestedKeyI64MapInsertFull _) true])))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-remove-ok? [r : HashNestedKeyI64MapRemoveResult]) : bool
+    (match r
+      [(HashNestedKeyI64MapRemoveOk _) true]
+      [(HashNestedKeyI64MapRemoveMissing _) false])))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-remove-result-map
+    [r : HashNestedKeyI64MapRemoveResult]) : HashNestedKeyI64Map
+    (match r
+      [(HashNestedKeyI64MapRemoveOk m) m]
+      [(HashNestedKeyI64MapRemoveMissing m) m])))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-update-ok? [r : HashNestedKeyI64MapUpdateResult]) : bool
+    (match r
+      [(HashNestedKeyI64MapUpdateOk _) true]
+      [(HashNestedKeyI64MapUpdateMissing _) false])))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-update-result-map
+    [r : HashNestedKeyI64MapUpdateResult]) : HashNestedKeyI64Map
+    (match r
+      [(HashNestedKeyI64MapUpdateOk m) m]
+      [(HashNestedKeyI64MapUpdateMissing m) m])))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-entry-or-insert-inserted?
+    [r : HashNestedKeyI64MapEntryOrInsertResult]) : bool
+    (match r
+      [(HashNestedKeyI64MapEntryOrInsertInserted _ _) true]
+      [(HashNestedKeyI64MapEntryOrInsertFound _ _) false])))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-entry-or-insert-result-map
+    [r : HashNestedKeyI64MapEntryOrInsertResult]) : HashNestedKeyI64Map
+    (match r
+      [(HashNestedKeyI64MapEntryOrInsertFound m _) m]
+      [(HashNestedKeyI64MapEntryOrInsertInserted m _) m])))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-entry-or-insert-value-or
+    [r : HashNestedKeyI64MapEntryOrInsertResult]
+    [fallback : i64]) : i64
+    (match r
+      [(HashNestedKeyI64MapEntryOrInsertFound _ v) v]
+      [(HashNestedKeyI64MapEntryOrInsertInserted _ v) v])))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-entry-value-or
+    [e : HashNestedKeyI64MapEntry]
+    [fallback : i64]) : i64
+    (match e
+      [(HashNestedKeyI64MapEntrySome _ v) v]
+      [(HashNestedKeyI64MapEntryNone) fallback])))
+
+;; Generated `String -> HashPayload` aggregate-value map helpers.
+(cfg
+  test
+  (define (hash-payload-score [value : HashPayload]) : i64
+    (+ (struct-get value score) (struct-get value weight))))
+
+(cfg
+  test
+  (define (string-hash-payload-lookup-score-or
+    [l : StringHashPayloadMapLookup]
+    [fallback : i64]) : i64
+    (match l
+      [(StringHashPayloadMapFound v) (hash-payload-score v)]
+      [(StringHashPayloadMapMissing) fallback])))
+
+(cfg
+  test
+  (define (string-hash-payload-borrowed-score-or
+    [l : (StringHashPayloadMapBorrowedValueLookup map)]
+    [fallback : i64]) : i64
+    (match l
+      [(StringHashPayloadMapBorrowedValueFound v)
+        (+ (struct-get v score) (struct-get v weight))]
+      [(StringHashPayloadMapBorrowedValueMissing) fallback])))
+
+(cfg
+  test
+  (define (string-hash-payload-remove-ok?
+    [r : StringHashPayloadMapRemoveResult]) : bool
+    (match r
+      [(StringHashPayloadMapRemoveOk _) true]
+      [(StringHashPayloadMapRemoveMissing _) false])))
+
+(cfg
+  test
+  (define (string-hash-payload-remove-result-map
+    [r : StringHashPayloadMapRemoveResult]) : StringHashPayloadMap
+    (match r
+      [(StringHashPayloadMapRemoveOk m) m]
+      [(StringHashPayloadMapRemoveMissing m) m])))
+
+(cfg
+  test
+  (define (string-hash-payload-update-ok?
+    [r : StringHashPayloadMapUpdateResult]) : bool
+    (match r
+      [(StringHashPayloadMapUpdateOk _) true]
+      [(StringHashPayloadMapUpdateMissing _) false])))
+
+(cfg
+  test
+  (define (string-hash-payload-update-result-map
+    [r : StringHashPayloadMapUpdateResult]) : StringHashPayloadMap
+    (match r
+      [(StringHashPayloadMapUpdateOk m) m]
+      [(StringHashPayloadMapUpdateMissing m) m])))
+
+(cfg
+  test
+  (define (string-hash-payload-entry-score-or
+    [e : StringHashPayloadMapEntry]
+    [fallback : i64]) : i64
+    (match e
+      [(StringHashPayloadMapEntrySome _ v) (hash-payload-score v)]
+      [(StringHashPayloadMapEntryNone) fallback])))
+
+;; Generated `i64 -> HashState` aggregate-value map helpers.
+(cfg
+  test
+  (define (hash-state-score [value : HashState]) : i64
+    (match value
+      [(HashReady n) n]
+      [(HashFailed) -100]
+      [(HashPaused n) (- 0 n)])))
+
+(cfg
+  test
+  (define (i64-hash-state-lookup-score-or
+    [l : I64HashStateMapLookup]
+    [fallback : i64]) : i64
+    (match l
+      [(I64HashStateMapFound v) (hash-state-score v)]
+      [(I64HashStateMapMissing) fallback])))
+
+(cfg
+  test
+  (define (i64-hash-state-remove-ok? [r : I64HashStateMapRemoveResult]) : bool
+    (match r
+      [(I64HashStateMapRemoveOk _) true]
+      [(I64HashStateMapRemoveMissing _) false])))
+
+(cfg
+  test
+  (define (i64-hash-state-remove-result-map [r : I64HashStateMapRemoveResult]) : I64HashStateMap
+    (match r
+      [(I64HashStateMapRemoveOk m) m]
+      [(I64HashStateMapRemoveMissing m) m])))
+
+(cfg
+  test
+  (define (i64-hash-state-update-ok? [r : I64HashStateMapUpdateResult]) : bool
+    (match r
+      [(I64HashStateMapUpdateOk _) true]
+      [(I64HashStateMapUpdateMissing _) false])))
+
+(cfg
+  test
+  (define (i64-hash-state-update-result-map [r : I64HashStateMapUpdateResult]) : I64HashStateMap
+    (match r
+      [(I64HashStateMapUpdateOk m) m]
+      [(I64HashStateMapUpdateMissing m) m])))
+
+(cfg
+  test
+  (define (i64-hash-state-entry-or-insert-inserted?
+    [r : I64HashStateMapEntryOrInsertResult]) : bool
+    (match r
+      [(I64HashStateMapEntryOrInsertInserted _ _) true]
+      [(I64HashStateMapEntryOrInsertFound _ _) false])))
+
+(cfg
+  test
+  (define (i64-hash-state-entry-or-insert-result-map
+    [r : I64HashStateMapEntryOrInsertResult]) : I64HashStateMap
+    (match r
+      [(I64HashStateMapEntryOrInsertFound m _) m]
+      [(I64HashStateMapEntryOrInsertInserted m _) m])))
+
+(cfg
+  test
+  (define (i64-hash-state-entry-or-insert-score-or
+    [r : I64HashStateMapEntryOrInsertResult]) : i64
+    (match r
+      [(I64HashStateMapEntryOrInsertFound _ v) (hash-state-score v)]
+      [(I64HashStateMapEntryOrInsertInserted _ v) (hash-state-score v)])))
+
+(cfg
+  test
+  (define (i64-hash-state-entry-score-or
+    [e : I64HashStateMapEntry]
+    [fallback : i64]) : i64
+    (match e
+      [(I64HashStateMapEntrySome _ v) (hash-state-score v)]
+      [(I64HashStateMapEntryNone) fallback])))
+
+;; Iteration walkers (deterministic bucket order, #829). No first-class
+;; functions yet, so each walk is its own tail-recursive helper started at
+;; `(string-i64-map-next-occupied m 0)` and advanced with the cursor.
+;; Number of live entries the cursor visits (should equal the map's len).
+(cfg
+  test
+  (define (iter-count [m : StringI64Map] [i : i64] [acc : i64]) : i64
+    (if (>= i (string-i64-map-capacity m))
+      acc
+      (iter-count m (string-i64-map-next-occupied m (+ i 1)) (+ acc 1)))))
+
+;; Sum of every live value, visiting entries once in bucket order.
+(cfg
+  test
+  (define (iter-sum-values [m : StringI64Map] [i : i64] [acc : i64]) : i64
+    (if (>= i (string-i64-map-capacity m))
+      acc
+      (iter-sum-values
+        m
+        (string-i64-map-next-occupied m (+ i 1))
+        (match (string-i64-map-entry-at m i)
+          [(StringI64MapEntrySome _ v) (+ acc v)]
+          [(StringI64MapEntryNone) acc])))))
+
+;; True when the cursor visits strictly increasing indices: bucket order is
+;; deterministic and monotonic, so each next index exceeds the current one.
+(cfg
+  test
+  (define (iter-monotonic? [m : StringI64Map] [i : i64]) : bool
+    (if (>= i (string-i64-map-capacity m))
+      true
+      (let
+        [nxt : i64 (string-i64-map-next-occupied m (+ i 1))]
+        (if (> nxt i)
+          (iter-monotonic? m nxt)
+          false)))))
+
+(cfg
+  test
+  (define (string-string-iter-count [m : StringStringMap] [i : i64] [acc : i64]) : i64
+    (if (>= i (string-string-map-capacity m))
+      acc
+      (string-string-iter-count
+        m
+        (string-string-map-next-occupied m (+ i 1))
+        (+ acc 1)))))
+
+(cfg
+  test
+  (define (string-string-iter-value-length-sum
+    [m : StringStringMap]
+    [i : i64]
+    [acc : i64]) : i64
+    (if (>= i (string-string-map-capacity m))
+      acc
+      (string-string-iter-value-length-sum
+        m
+        (string-string-map-next-occupied m (+ i 1))
+        (+
+          acc
+          (string-string-entry-value-length-or
+            (string-string-map-entry-at m i)
+            0))))))
+
+(cfg
+  test
+  (define (i64-i64-iter-count [m : I64I64Map] [i : i64] [acc : i64]) : i64
+    (if (>= i (i64-i64-map-capacity m))
+      acc
+      (i64-i64-iter-count m (i64-i64-map-next-occupied m (+ i 1)) (+ acc 1)))))
+
+(cfg
+  test
+  (define (i64-i64-iter-value-sum [m : I64I64Map] [i : i64] [acc : i64]) : i64
+    (if (>= i (i64-i64-map-capacity m))
+      acc
+      (i64-i64-iter-value-sum
+        m
+        (i64-i64-map-next-occupied m (+ i 1))
+        (+ acc (i64-i64-entry-value-or (i64-i64-map-entry-at m i) 0))))))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-iter-count
+    [m : HashNestedKeyI64Map]
+    [i : i64]
+    [acc : i64]) : i64
+    (if (>= i (hash-nested-key-i64-map-capacity m))
+      acc
+      (hash-nested-key-i64-iter-count
+        m
+        (hash-nested-key-i64-map-next-occupied m (+ i 1))
+        (+ acc 1)))))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-iter-value-sum
+    [m : HashNestedKeyI64Map]
+    [i : i64]
+    [acc : i64]) : i64
+    (if (>= i (hash-nested-key-i64-map-capacity m))
+      acc
+      (hash-nested-key-i64-iter-value-sum
+        m
+        (hash-nested-key-i64-map-next-occupied m (+ i 1))
+        (+
+          acc
+          (hash-nested-key-i64-entry-value-or
+            (hash-nested-key-i64-map-entry-at m i)
+            0))))))
+
+(cfg
+  test
+  (define (hash-nested-key-i64-iter-monotonic?
+    [m : HashNestedKeyI64Map]
+    [i : i64]) : bool
+    (if (>= i (hash-nested-key-i64-map-capacity m))
+      true
+      (let
+        [nxt : i64 (hash-nested-key-i64-map-next-occupied m (+ i 1))]
+        (if (> nxt i)
+          (hash-nested-key-i64-iter-monotonic? m nxt)
+          false)))))
+
+(cfg
+  test
+  (define (string-hash-payload-iter-count
+    [m : StringHashPayloadMap]
+    [i : i64]
+    [acc : i64]) : i64
+    (if (>= i (string-hash-payload-map-capacity m))
+      acc
+      (string-hash-payload-iter-count
+        m
+        (string-hash-payload-map-next-occupied m (+ i 1))
+        (+ acc 1)))))
+
+(cfg
+  test
+  (define (string-hash-payload-iter-score-sum
+    [m : StringHashPayloadMap]
+    [i : i64]
+    [acc : i64]) : i64
+    (if (>= i (string-hash-payload-map-capacity m))
+      acc
+      (string-hash-payload-iter-score-sum
+        m
+        (string-hash-payload-map-next-occupied m (+ i 1))
+        (+
+          acc
+          (string-hash-payload-entry-score-or
+            (string-hash-payload-map-entry-at m i)
+            0))))))
+
+(cfg
+  test
+  (define (i64-hash-state-iter-count
+    [m : I64HashStateMap]
+    [i : i64]
+    [acc : i64]) : i64
+    (if (>= i (i64-hash-state-map-capacity m))
+      acc
+      (i64-hash-state-iter-count
+        m
+        (i64-hash-state-map-next-occupied m (+ i 1))
+        (+ acc 1)))))
+
+(cfg
+  test
+  (define (i64-hash-state-iter-score-sum
+    [m : I64HashStateMap]
+    [i : i64]
+    [acc : i64]) : i64
+    (if (>= i (i64-hash-state-map-capacity m))
+      acc
+      (i64-hash-state-iter-score-sum
+        m
+        (i64-hash-state-map-next-occupied m (+ i 1))
+        (+
+          acc
+          (i64-hash-state-entry-score-or (i64-hash-state-map-entry-at m i) 0))))))
+
+(cfg
+  test
+  (test
+    hashmap-descriptor-contract
+    (begin
+      ;; --- hashmap-family key descriptor contract (#2056) ---
+      (hashmap-test-assert-owned-string-eq
+        (hashmap-string-key-descriptor-key)
+        "stdlib/hashmap/string-key-v1"
+        "String key descriptor identity")
+      (hashmap-test-assert-owned-string-eq
+        (hashmap-i64-key-descriptor-key)
+        "stdlib/hashmap/i64-key-v1"
+        "i64 key descriptor identity")
+      (hashmap-test-assert-owned-string-eq
+        (hashmap-aggregate-key-descriptor-key)
+        "stdlib/hashmap/aggregate-key-v1"
+        "aggregate key descriptor identity")
+      unit)))
+
+(cfg
+  test
+  (test
+    hashmap-aggregate-key-fixtures
+    (begin
+      ;; --- hashmap-family aggregate key fixtures (#2729) ---
+      (let
+        [c0 : HashNestedKeyI64Map (hash-nested-key-i64-map-with-capacity 1)]
+        [c1r : HashNestedKeyI64MapInsertResult
+          (hash-nested-key-i64-map-insert c0 (hash-key-alpha) 1)]
+        [c1 : HashNestedKeyI64Map
+          (match c1r
+            [(HashNestedKeyI64MapInsertOk m) m]
+            [(HashNestedKeyI64MapInsertFull m) m])]
+        [c2r : HashNestedKeyI64MapInsertResult
+          (hash-nested-key-i64-map-insert c1 (hash-key-beta) 2)]
+        (begin
+          (assert-true
+            (hash-nested-key-i64-insert-full? c2r)
+            "aggregate key fixed-capacity insert reports full collision")))
+      (let
+        [ak0 : HashNestedKeyI64Map (hash-nested-key-i64-map-with-capacity 2)]
+        [ak1 : HashNestedKeyI64Map
+          (hash-nested-key-i64-map-put ak0 (hash-key-alpha) 10)]
+        [ak2 : HashNestedKeyI64Map
+          (hash-nested-key-i64-map-put ak1 (hash-key-beta) 20)]
+        [ak3 : HashNestedKeyI64Map
+          (hash-nested-key-i64-map-put ak2 (hash-key-gamma) 30)]
+        [ak4 : HashNestedKeyI64Map
+          (hash-nested-key-i64-map-put ak3 (hash-key-alpha-copy) 15)]
+        (begin
+          (assert-i64-eq
+            (hash-nested-key-i64-map-len ak4)
+            3
+            "aggregate key equal copy updates existing entry")
+          (assert-true
+            (> (hash-nested-key-i64-map-capacity ak4) 2)
+            "aggregate key map grows and rehashes")
+          (assert-i64-eq
+            (hash-nested-key-i64-lookup-value-or
+              (hash-nested-key-i64-map-get ak4 (hash-key-alpha))
+              -1)
+            15
+            "aggregate key get finds updated struct key")
+          (assert-i64-eq
+            (hash-nested-key-i64-lookup-value-or
+              (hash-nested-key-i64-map-get ak4 (hash-key-beta))
+              -1)
+            20
+            "aggregate key enum tag participates in equality")
+          (assert-i64-eq
+            (hash-nested-key-i64-lookup-value-or
+              (hash-nested-key-i64-map-get ak4 (hash-key-missing))
+              -1)
+            -1
+            "aggregate key missing lookup")
+          (assert-true
+            (hash-nested-key-i64-map-contains? ak4 (hash-key-gamma))
+            "aggregate key contains nested enum payload")
+          (assert-false
+            (hash-nested-key-i64-map-contains? ak4 (hash-key-missing))
+            "aggregate key contains rejects missing")
+          (assert-true
+            (hash-nested-key-i64-borrowed-value-found?
+              (hash-nested-key-i64-map-get-value-borrowed
+                (& ak4)
+                (hash-key-beta)))
+            "aggregate key borrowed value lookup finds beta")
+          (let
+            [removed : HashNestedKeyI64MapRemoveResult
+              (hash-nested-key-i64-map-remove ak4 (hash-key-beta))]
+            (begin
+              (assert-true
+                (hash-nested-key-i64-remove-ok? removed)
+                "aggregate key remove finds beta")
+              (let
+                [ak5 : HashNestedKeyI64Map
+                  (hash-nested-key-i64-remove-result-map removed)]
+                [ak5-len : i64 (hash-nested-key-i64-map-len ak5)]
+                [ak5-deleted : i64 (hash-nested-key-i64-map-deleted ak5)]
+                [ak6 : HashNestedKeyI64Map
+                  (hash-nested-key-i64-map-put ak5 (hash-key-delta) 40)]
+                [ak6-delta-value : i64
+                  (hash-nested-key-i64-lookup-value-or
+                    (hash-nested-key-i64-map-get ak6 (hash-key-delta))
+                    -1)]
+                [hit : HashNestedKeyI64MapUpdateResult
+                  (hash-nested-key-i64-map-update-if-present
+                    ak6
+                    (hash-key-gamma)
+                    31)]
+                [ak7 : HashNestedKeyI64Map
+                  (hash-nested-key-i64-update-result-map hit)]
+                [miss : HashNestedKeyI64MapUpdateResult
+                  (hash-nested-key-i64-map-update-if-present
+                    ak7
+                    (hash-key-missing)
+                    99)]
+                [ak8 : HashNestedKeyI64Map
+                  (hash-nested-key-i64-update-result-map miss)]
+                [removed-delta : HashNestedKeyI64MapRemoveResult
+                  (hash-nested-key-i64-map-remove ak8 (hash-key-delta))]
+                [ak9 : HashNestedKeyI64Map
+                  (hash-nested-key-i64-remove-result-map removed-delta)]
+                [inserted : HashNestedKeyI64MapEntryOrInsertResult
+                  (hash-nested-key-i64-map-entry-or-insert
+                    ak9
+                    (hash-key-delta)
+                    44)]
+                [ak10 : HashNestedKeyI64Map
+                  (hash-nested-key-i64-entry-or-insert-result-map inserted)]
+                [found : HashNestedKeyI64MapEntryOrInsertResult
+                  (hash-nested-key-i64-map-entry-or-insert
+                    ak10
+                    (hash-key-alpha)
+                    99)]
+                [ak11 : HashNestedKeyI64Map
+                  (hash-nested-key-i64-entry-or-insert-result-map found)]
+                (begin
+                  (assert-i64-eq ak5-len 2 "aggregate key len after remove")
+                  (assert-i64-eq
+                    ak5-deleted
+                    1
+                    "aggregate key tombstone after remove")
+                  (assert-i64-eq
+                    ak6-delta-value
+                    40
+                    "aggregate key put reuses or clears tombstone")
+                  (assert-true
+                    (hash-nested-key-i64-update-ok? hit)
+                    "aggregate key update hit")
+                  (assert-false
+                    (hash-nested-key-i64-update-ok? miss)
+                    "aggregate key update miss")
+                  (assert-i64-eq
+                    (hash-nested-key-i64-lookup-value-or
+                      (hash-nested-key-i64-map-get ak8 (hash-key-gamma))
+                      -1)
+                    31
+                    "aggregate key update writes value")
+                  (assert-true
+                    (hash-nested-key-i64-entry-or-insert-inserted? inserted)
+                    "aggregate key entry-or-insert inserts removed key")
+                  (assert-i64-eq
+                    (hash-nested-key-i64-entry-or-insert-value-or inserted -1)
+                    44
+                    "aggregate key entry-or-insert returns inserted value")
+                  (assert-false
+                    (hash-nested-key-i64-entry-or-insert-inserted? found)
+                    "aggregate key entry-or-insert finds existing key")
+                  (assert-i64-eq
+                    (hash-nested-key-i64-entry-or-insert-value-or found -1)
+                    15
+                    "aggregate key entry-or-insert returns existing value")
+                  (assert-i64-eq
+                    (hash-nested-key-i64-iter-count
+                      ak11
+                      (hash-nested-key-i64-map-next-occupied ak11 0)
+                      0)
+                    (hash-nested-key-i64-map-len ak11)
+                    "aggregate key iteration count matches len")
+                  (assert-i64-eq
+                    (hash-nested-key-i64-iter-value-sum
+                      ak11
+                      (hash-nested-key-i64-map-next-occupied ak11 0)
+                      0)
+                    90
+                    "aggregate key iteration sums live values")
+                  (assert-true
+                    (hash-nested-key-i64-iter-monotonic?
+                      ak11
+                      (hash-nested-key-i64-map-next-occupied ak11 0))
+                    "aggregate key iteration order is deterministic")))))))
+      unit)))
+
+(cfg
+  test
+  (test
+    hashmap-extra-family-requests
+    (begin
+      ;; --- hashmap-family marker request fixture beyond shipped families ---
+      (let
+        [fixture0 : I64StringMap (i64-string-map-with-capacity 2)]
+        [fixture1 : I64StringMap (i64-string-map-put fixture0 7 "seven")]
+        (begin
+          (assert-i64-eq
+            (i64-string-map-len fixture1)
+            1
+            "i64->String fixture generated len helper")
+          (hashmap-test-assert-owned-string-eq
+            (match (i64-string-map-get fixture1 7)
+              [(I64StringMapFound value) value]
+              [(I64StringMapMissing) "missing"])
+            "seven"
+            "i64->String fixture generated get helper")
+          (assert-i64-eq
+            (i64-string-borrowed-value-length-or
+              (i64-string-map-get-value-borrowed (& fixture1) 7)
+              -1)
+            5
+            "i64->String fixture borrowed value helper")
+          (assert-false
+            (i64-string-map-contains? fixture1 9)
+            "i64->String fixture generated contains helper")))
+      unit)))
+
+(cfg
+  test
+  (test
+    hashmap-aggregate-value-fixtures
+    (begin
+      ;; --- hashmap-family aggregate value fixtures (#2728) ---
+      (let
+        [alpha : String "alpha"]
+        [payload0 : StringHashPayloadMap
+          (string-hash-payload-map-with-capacity 2)]
+        [payload1 : StringHashPayloadMap
+          (string-hash-payload-map-put payload0 "alpha" (HashPayload 3 4))]
+        [payload2 : StringHashPayloadMap
+          (string-hash-payload-map-put payload1 "beta" (HashPayload 5 6))]
+        [payload3 : StringHashPayloadMap
+          (string-hash-payload-map-put payload2 "gamma" (HashPayload 7 8))]
+        [payload-hit : StringHashPayloadMapUpdateResult
+          (string-hash-payload-map-update-borrowed-if-present
+            payload3
+            (& alpha)
+            (HashPayload 20 1))]
+        [payload4 : StringHashPayloadMap
+          (string-hash-payload-update-result-map payload-hit)]
+        (begin
+          (assert-true
+            (> (string-hash-payload-map-capacity payload4) 2)
+            "StringHashPayload grows aggregate values")
+          (assert-true
+            (string-hash-payload-update-ok? payload-hit)
+            "StringHashPayload borrowed update hit")
+          (assert-i64-eq
+            (string-hash-payload-lookup-score-or
+              (string-hash-payload-map-get payload4 "alpha")
+              -1)
+            21
+            "StringHashPayload owned get updated aggregate")
+          (assert-i64-eq
+            (string-hash-payload-borrowed-score-or
+              (string-hash-payload-map-get-value-borrowed
+                (& payload4)
+                (& alpha))
+              -1)
+            21
+            "StringHashPayload borrowed value exposes fields")
+          (let
+            [payload-remove : StringHashPayloadMapRemoveResult
+              (string-hash-payload-map-remove payload4 "beta")]
+            [payload5 : StringHashPayloadMap
+              (string-hash-payload-remove-result-map payload-remove)]
+            (begin
+              (assert-true
+                (string-hash-payload-remove-ok? payload-remove)
+                "StringHashPayload remove aggregate")
+              (assert-false
+                (string-hash-payload-map-contains? payload5 "beta")
+                "StringHashPayload removed key absent")
+              (assert-i64-eq
+                (string-hash-payload-iter-count
+                  payload5
+                  (string-hash-payload-map-next-occupied payload5 0)
+                  0)
+                2
+                "StringHashPayload iteration count")
+              (assert-i64-eq
+                (string-hash-payload-iter-score-sum
+                  payload5
+                  (string-hash-payload-map-next-occupied payload5 0)
+                  0)
+                36
+                "StringHashPayload iteration score sum")))))
+      (let
+        [states0 : I64HashStateMap (i64-hash-state-map-with-capacity 2)]
+        [states1 : I64HashStateMap
+          (i64-hash-state-map-put states0 1 (HashReady 10))]
+        [states2 : I64HashStateMap
+          (i64-hash-state-map-put states1 2 (HashFailed))]
+        [states3 : I64HashStateMap
+          (i64-hash-state-map-put states2 3 (HashPaused 7))]
+        [state-hit : I64HashStateMapUpdateResult
+          (i64-hash-state-map-update-if-present states3 2 (HashReady 22))]
+        [states4 : I64HashStateMap (i64-hash-state-update-result-map state-hit)]
+        (begin
+          (assert-true
+            (> (i64-hash-state-map-capacity states4) 2)
+            "I64HashState grows enum values")
+          (assert-true
+            (i64-hash-state-update-ok? state-hit)
+            "I64HashState update hit")
+          (assert-i64-eq
+            (i64-hash-state-lookup-score-or
+              (i64-hash-state-map-get states4 2)
+              -1)
+            22
+            "I64HashState get updated enum")
+          (assert-i64-eq
+            (i64-hash-state-lookup-score-or
+              (i64-hash-state-map-get states4 99)
+              -1)
+            -1
+            "I64HashState missing enum")
+          (let
+            [state-remove : I64HashStateMapRemoveResult
+              (i64-hash-state-map-remove states4 1)]
+            [states5 : I64HashStateMap
+              (i64-hash-state-remove-result-map state-remove)]
+            [state-inserted : I64HashStateMapEntryOrInsertResult
+              (i64-hash-state-map-entry-or-insert states5 4 (HashReady 40))]
+            [states6 : I64HashStateMap
+              (i64-hash-state-entry-or-insert-result-map state-inserted)]
+            [state-found : I64HashStateMapEntryOrInsertResult
+              (i64-hash-state-map-entry-or-insert states6 2 (HashFailed))]
+            [states7 : I64HashStateMap
+              (i64-hash-state-entry-or-insert-result-map state-found)]
+            (begin
+              (assert-true
+                (i64-hash-state-remove-ok? state-remove)
+                "I64HashState remove enum")
+              (assert-true
+                (i64-hash-state-entry-or-insert-inserted? state-inserted)
+                "I64HashState entry-or-insert inserted")
+              (assert-i64-eq
+                (i64-hash-state-entry-or-insert-score-or state-inserted)
+                40
+                "I64HashState entry-or-insert default enum")
+              (assert-false
+                (i64-hash-state-entry-or-insert-inserted? state-found)
+                "I64HashState entry-or-insert found")
+              (assert-i64-eq
+                (i64-hash-state-entry-or-insert-score-or state-found)
+                22
+                "I64HashState entry-or-insert existing enum")
+              (assert-i64-eq
+                (i64-hash-state-iter-count
+                  states7
+                  (i64-hash-state-map-next-occupied states7 0)
+                  0)
+                3
+                "I64HashState iteration count")
+              (assert-i64-eq
+                (i64-hash-state-iter-score-sum
+                  states7
+                  (i64-hash-state-map-next-occupied states7 0)
+                  0)
+                55
+                "I64HashState iteration score sum")))))
+      unit)))
+
+(cfg
+  test
+  (test
+    hashmap-bucket-index
+    (begin
+      ;; --- bucket-index math + wraparound ---
+      (assert-i64-eq (string-i64-map-bucket-index 5 4) 1 "bucket 5 mask 4")
+      (assert-i64-eq (string-i64-map-bucket-index 8 4) 0 "bucket 8 mask 4")
+      ;; negative hash is normalized into [0, modulus) first: -1 -> 2147483646,
+      ;; and 2147483646 & 3 = 2.
+      (assert-i64-eq (string-i64-map-bucket-index -1 4) 2 "bucket negative")
+      (assert-true
+        (string-i64-map-power-two-capacity? 8)
+        "power-of-two capacity recognized")
+      (assert-false
+        (string-i64-map-power-two-capacity? 10)
+        "non-power-of-two capacity rejected")
+      (assert-i64-eq
+        (string-i64-map-round-capacity 0)
+        1
+        "zero requested capacity rounds to one")
+      (assert-i64-eq
+        (string-i64-map-round-capacity 3)
+        4
+        "capacity 3 rounds to 4")
+      (assert-i64-eq
+        (string-i64-map-round-capacity 10)
+        16
+        "capacity 10 rounds to 16")
+      (assert-i64-eq
+        (string-i64-map-normalized-bucket-index 13 8)
+        5
+        "normalized bucket masks capacity")
+      (assert-i64-eq (string-i64-map-next-index 3 4) 0 "next wraps 3 -> 0")
+      (assert-i64-eq (string-i64-map-next-index 1 4) 2 "next 1 -> 2")
+      unit)))
+
+(cfg
+  test
+  (test
+    hashmap-probe-zero-one-capacity
+    (begin
+      ;; --- zero / one capacity ---
+      (assert-true
+        (probe-full? (string-i64-map-probe (new-slots 1) 0 "k" 5))
+        "zero capacity is full")
+      (let
+        [one : (Array StringI64MapSlot) (new-slots 1)]
+        (begin
+          (assert-true
+            (probe-absent? (string-i64-map-probe one 1 "k" 5))
+            "capacity one empty is absent")
+          (assert-i64-eq
+            (probe-index-or (string-i64-map-probe one 1 "k" 5) -1)
+            0
+            "capacity one absent slot 0")))
+      unit)))
+
+(cfg
+  test
+  (test
+    hashmap-probe-empty-table
+    (begin
+      ;; --- empty table: absent at the start bucket ---
+      (let
+        [empty : (Array StringI64MapSlot) (new-slots 4)]
+        (begin
+          (assert-true
+            (probe-absent? (string-i64-map-probe empty 4 "k" 5))
+            "empty table absent")
+          (assert-i64-eq
+            (probe-index-or (string-i64-map-probe empty 4 "k" 5) -1)
+            1
+            "empty absent at bucket 1")))
+      unit)))
+
+(cfg
+  test
+  (test
+    hashmap-probe-found
+    (begin
+      ;; --- found: occupied slot with matching hash + key ---
+      (let
+        [found : (Array StringI64MapSlot) (new-slots 4)]
+        (begin
+          (array-set! found 1 (StringI64MapOccupied "k" 7 5))
+          (assert-true
+            (probe-found? (string-i64-map-probe found 4 "k" 5))
+            "occupied key found")
+          (assert-i64-eq
+            (probe-index-or (string-i64-map-probe found 4 "k" 5) -1)
+            1
+            "found at slot 1")))
+      unit)))
+
+(cfg
+  test
+  (test
+    hashmap-probe-collision-walk
+    (begin
+      ;; --- collision walk: same hash, different key, walk to next empty ---
+      (let
+        [collide : (Array StringI64MapSlot) (new-slots 4)]
+        (begin
+          (array-set! collide 1 (StringI64MapOccupied "other" 9 5))
+          (assert-true
+            (probe-absent? (string-i64-map-probe collide 4 "k" 5))
+            "collision then absent")
+          (assert-i64-eq
+            (probe-index-or (string-i64-map-probe collide 4 "k" 5) -1)
+            2
+            "collision walks to slot 2")))
+      unit)))
+
+(cfg
+  test
+  (test
+    hashmap-probe-wraparound
+    (begin
+      ;; --- wraparound: bucket 3 occupied, walk wraps to slot 0 ---
+      (let
+        [wrap : (Array StringI64MapSlot) (new-slots 4)]
+        (begin
+          (array-set! wrap 3 (StringI64MapOccupied "o" 9 3))
+          (assert-i64-eq
+            (probe-index-or (string-i64-map-probe wrap 4 "k" 3) -1)
+            0
+            "wraparound walks 3 -> 0")))
+      unit)))
+
+(cfg
+  test
+  (test
+    hashmap-probe-tombstone-reuse
+    (begin
+      ;; --- tombstone reuse: insert position is the tombstone, not the empty ---
+      (let
+        [tomb : (Array StringI64MapSlot) (new-slots 4)]
+        (begin
+          (array-set! tomb 1 (StringI64MapTombstone))
+          (assert-true
+            (probe-absent? (string-i64-map-probe tomb 4 "k" 5))
+            "tombstone path absent")
+          (assert-i64-eq
+            (probe-index-or (string-i64-map-probe tomb 4 "k" 5) -1)
+            1
+            "tombstone reused at slot 1")))
+      unit)))
+
+(cfg
+  test
+  (test
+    hashmap-probe-through-tombstone
+    (begin
+      ;; --- found after a tombstone: probing does not stop at a tombstone ---
+      (let
+        [tf : (Array StringI64MapSlot) (new-slots 4)]
+        (begin
+          (array-set! tf 1 (StringI64MapTombstone))
+          (array-set! tf 2 (StringI64MapOccupied "k" 7 5))
+          (assert-true
+            (probe-found? (string-i64-map-probe tf 4 "k" 5))
+            "found past tombstone")
+          (assert-i64-eq
+            (probe-index-or (string-i64-map-probe tf 4 "k" 5) -1)
+            2
+            "found at slot 2 past tombstone")))
+      unit)))
+
+(cfg
+  test
+  (test
+    hashmap-probe-full-table
+    (begin
+      ;; --- full table, no tombstone: probe terminates as full ---
+      (let
+        [full : (Array StringI64MapSlot) (new-slots 2)]
+        (begin
+          (array-set! full 0 (StringI64MapOccupied "a" 1 10))
+          (array-set! full 1 (StringI64MapOccupied "b" 2 11))
+          (assert-true
+            (probe-full? (string-i64-map-probe full 2 "k" 4))
+            "full table is full")))
+      unit)))
+
+(cfg
+  test
+  (test
+    hashmap-probe-full-table-with-tombstone
+    (begin
+      ;; --- full table with a tombstone: absent at the tombstone, not full ---
+      (let
+        [fulltomb : (Array StringI64MapSlot) (new-slots 2)]
+        (begin
+          (array-set! fulltomb 0 (StringI64MapOccupied "a" 1 10))
+          (array-set! fulltomb 1 (StringI64MapTombstone))
+          (assert-true
+            (probe-absent? (string-i64-map-probe fulltomb 2 "k" 4))
+            "full-with-tombstone is absent")
+          (assert-i64-eq
+            (probe-index-or (string-i64-map-probe fulltomb 2 "k" 4) -1)
+            1
+            "absent at the tombstone slot")))
+      unit)))
+
+(cfg
+  test
+  (test
+    hashmap-string-i64-api
+    (begin
+      ;; --- map API (#826): with-capacity / insert / get / contains? / len ---
+      (let
+        [alpha-key : String "alpha"]
+        [missing-key : String "missing"]
+        [m0 : StringI64Map (string-i64-map-with-capacity 8)]
+        (begin
+          (assert-i64-eq (string-i64-map-len m0) 0 "fresh map len 0")
+          (assert-i64-eq
+            (string-i64-map-capacity (string-i64-map-with-capacity 10))
+            16
+            "manual map rounds requested capacity")
+          (assert-false
+            (string-i64-map-contains? m0 "x")
+            "fresh map has no key")
+          (let
+            [m1 : StringI64Map
+              (insert-result-map (string-i64-map-insert m0 "alpha" 11))]
+            [m2 : StringI64Map
+              (insert-result-map (string-i64-map-insert m1 "beta" 22))]
+            [m3 : StringI64Map
+              (insert-result-map (string-i64-map-insert m2 "gamma" 33))]
+            (begin
+              (assert-i64-eq
+                (string-i64-map-len m3)
+                3
+                "len after three inserts")
+              (assert-i64-eq
+                (lookup-value-or (string-i64-map-get m3 "alpha") -1)
+                11
+                "get alpha")
+              (assert-true
+                (string-i64-borrowed-value-found?
+                  (string-i64-map-get-value-borrowed (& m3) (& alpha-key)))
+                "StringI64 borrowed value get finds alpha")
+              (assert-i64-eq
+                (lookup-value-or (string-i64-map-get m3 "beta") -1)
+                22
+                "get beta")
+              (assert-i64-eq
+                (lookup-value-or (string-i64-map-get m3 "gamma") -1)
+                33
+                "get gamma")
+              (assert-true (string-i64-map-contains? m3 "beta") "contains beta")
+              (assert-false
+                (string-i64-map-contains? m3 "missing")
+                "missing key absent")
+              (assert-i64-eq
+                (lookup-value-or (string-i64-map-get m3 "missing") -1)
+                -1
+                "get missing -> fallback")
+              (assert-false
+                (string-i64-borrowed-value-found?
+                  (string-i64-map-get-value-borrowed (& m3) (& missing-key)))
+                "StringI64 missing borrowed value get")
+              ;; updating an existing key keeps len and changes the value
+              (let
+                [m4 : StringI64Map
+                  (insert-result-map (string-i64-map-insert m3 "alpha" 99))]
+                (begin
+                  (assert-i64-eq
+                    (string-i64-map-len m4)
+                    3
+                    "len unchanged on update")
+                  (assert-i64-eq
+                    (lookup-value-or (string-i64-map-get m4 "alpha") -1)
+                    99
+                    "alpha updated to 99")))
+              ;; a fixed capacity-1 table is full for a second distinct key
+              (let
+                [s0 : StringI64Map (string-i64-map-with-capacity 1)]
+                [s1 : StringI64Map
+                  (insert-result-map (string-i64-map-insert s0 "only" 7))]
+                (begin
+                  (assert-i64-eq
+                    (lookup-value-or (string-i64-map-get s1 "only") -1)
+                    7
+                    "capacity-1 get only")
+                  (assert-false
+                    (insert-ok? (string-i64-map-insert s1 "second" 8))
+                    "capacity-1 second insert is full")))))))
+      unit)))
+
+(cfg
+  test
+  (test
+    hashmap-string-i64-removal
+    (begin
+      ;; --- removal + tombstone accounting (#829) ---
+      (let
+        [r0 : StringI64Map (string-i64-map-with-capacity 8)]
+        [r1 : StringI64Map
+          (insert-result-map (string-i64-map-insert r0 "k1" 10))]
+        [r2 : StringI64Map
+          (insert-result-map (string-i64-map-insert r1 "k2" 20))]
+        (begin
+          (assert-i64-eq (string-i64-map-len r2) 2 "removal: two inserts len 2")
+          (assert-i64-eq
+            (string-i64-map-deleted r2)
+            0
+            "removal: no tombstones yet")
+          ;; remove-miss: absent key leaves the map unchanged and untouched.
+          (let
+            [miss : StringI64MapRemoveResult
+              (string-i64-map-remove r2 "absent")]
+            (begin
+              (assert-false (remove-ok? miss) "remove-miss is not ok")
+              (assert-i64-eq
+                (string-i64-map-len (remove-result-map miss))
+                2
+                "remove-miss keeps len")
+              (assert-i64-eq
+                (string-i64-map-deleted (remove-result-map miss))
+                0
+                "remove-miss adds no tombstone")))
+          ;; remove-hit: k1 becomes a tombstone; len-1, deleted+1, k2 survives.
+          (let
+            [hit : StringI64MapRemoveResult (string-i64-map-remove r2 "k1")]
+            (begin
+              (assert-true (remove-ok? hit) "remove-hit is ok")
+              (let
+                [r3 : StringI64Map (remove-result-map hit)]
+                (begin
+                  (assert-i64-eq (string-i64-map-len r3) 1 "remove-hit len 1")
+                  (assert-i64-eq
+                    (string-i64-map-deleted r3)
+                    1
+                    "remove-hit deleted 1")
+                  (assert-i64-eq
+                    (lookup-value-or (string-i64-map-get r3 "k1") -1)
+                    -1
+                    "k1 missing after remove")
+                  (assert-true
+                    (string-i64-map-contains? r3 "k2")
+                    "k2 survives k1 removal")
+                  ;; reinsert after delete reuses the tombstone: len back to 2,
+                  ;; deleted back to 0, new value visible.
+                  (let
+                    [r4 : StringI64Map
+                      (insert-result-map (string-i64-map-insert r3 "k1" 111))]
+                    (begin
+                      (assert-i64-eq (string-i64-map-len r4) 2 "reinsert len 2")
+                      (assert-i64-eq
+                        (string-i64-map-deleted r4)
+                        0
+                        "reinsert reuses tombstone (deleted 0)")
+                      (assert-i64-eq
+                        (lookup-value-or (string-i64-map-get r4 "k1") -1)
+                        111
+                        "k1 reinserted value")))))))))
+      unit)))
+
+(cfg
+  test
+  (test
+    hashmap-string-i64-update-entry
+    (begin
+      ;; --- update / entry-or-insert API (#888) ---
+      (let
+        [u0 : StringI64Map (string-i64-map-with-capacity 4)]
+        [u1 : StringI64Map (string-i64-map-insert-or-update u0 "alpha" 10)]
+        [u2 : StringI64Map (string-i64-map-insert-or-update u1 "beta" 20)]
+        [hit : StringI64MapUpdateResult
+          (string-i64-map-update-if-present u2 "alpha" 70)]
+        [u3 : StringI64Map (update-result-map hit)]
+        (begin
+          (assert-true (update-ok? hit) "update-if-present hit is ok")
+          (assert-i64-eq (string-i64-map-len u3) 2 "update hit keeps len")
+          (assert-i64-eq
+            (lookup-value-or (string-i64-map-get u3 "alpha") -1)
+            70
+            "update hit overwrites alpha")))
+      (let
+        [u0 : StringI64Map (string-i64-map-with-capacity 4)]
+        [u1 : StringI64Map (string-i64-map-insert-or-update u0 "alpha" 10)]
+        [miss : StringI64MapUpdateResult
+          (string-i64-map-update-if-present u1 "missing" 999)]
+        [u2 : StringI64Map (update-result-map miss)]
+        (begin
+          (assert-false (update-ok? miss) "update missing is not ok")
+          (assert-i64-eq (string-i64-map-len u2) 1 "update missing keeps len")
+          (assert-i64-eq
+            (lookup-value-or (string-i64-map-get u2 "missing") -1)
+            -1
+            "update missing does not insert")))
+      (let
+        [u0 : StringI64Map (string-i64-map-with-capacity 4)]
+        [u1 : StringI64Map (string-i64-map-insert-or-update u0 "beta" 20)]
+        [borrow-key : String "beta"]
+        [borrow-hit : StringI64MapUpdateResult
+          (string-i64-map-update-borrowed-if-present u1 (& borrow-key) 80)]
+        [u2 : StringI64Map (update-result-map borrow-hit)]
+        (begin
+          (assert-true
+            (update-ok? borrow-hit)
+            "borrowed update-if-present hit is ok")
+          (assert-i64-eq
+            (lookup-value-or (string-i64-map-get u2 "beta") -1)
+            80
+            "borrowed update overwrites beta")))
+      (let
+        [u0 : StringI64Map (string-i64-map-with-capacity 4)]
+        [u1 : StringI64Map (string-i64-map-insert-or-update u0 "alpha" 10)]
+        [u2 : StringI64Map (string-i64-map-insert-or-update u1 "beta" 20)]
+        [removed : StringI64MapRemoveResult (string-i64-map-remove u2 "alpha")]
+        [u6 : StringI64Map (remove-result-map removed)]
+        (begin
+          (assert-i64-eq
+            (string-i64-map-deleted u6)
+            1
+            "entry test starts with one tombstone")
+          (let
+            [inserted : StringI64MapEntryOrInsertResult
+              (string-i64-map-entry-or-insert u6 "alpha" 111)]
+            [u7 : StringI64Map (entry-or-insert-result-map inserted)]
+            [found : StringI64MapEntryOrInsertResult
+              (string-i64-map-entry-or-insert u7 "alpha" 222)]
+            [u8 : StringI64Map (entry-or-insert-result-map found)]
+            (begin
+              (assert-true
+                (entry-or-insert-inserted? inserted)
+                "entry-or-insert inserts missing key")
+              (assert-i64-eq
+                (entry-or-insert-value-or inserted -1)
+                111
+                "entry-or-insert returns inserted default")
+              (assert-i64-eq
+                (string-i64-map-deleted u7)
+                0
+                "entry-or-insert reuses tombstone")
+              (assert-false
+                (entry-or-insert-inserted? found)
+                "entry-or-insert finds existing key")
+              (assert-i64-eq
+                (entry-or-insert-value-or found -1)
+                111
+                "entry-or-insert returns existing value")
+              (assert-i64-eq
+                (lookup-value-or (string-i64-map-get u8 "alpha") -1)
+                111
+                "entry-or-insert found does not overwrite")))))
+      (let
+        [u0 : StringI64Map (string-i64-map-with-capacity 4)]
+        [u1 : StringI64Map (string-i64-map-insert-or-update u0 "alpha" 111)]
+        [u9 : StringI64Map (string-i64-map-insert-or-update u1 "alpha" 333)]
+        [grow0 : StringI64Map (string-i64-map-with-capacity 1)]
+        [grow1 : StringI64Map (string-i64-map-insert-or-update grow0 "a" 1)]
+        [grow2 : StringI64Map (string-i64-map-insert-or-update grow1 "b" 2)]
+        [grow3 : StringI64Map (string-i64-map-insert-or-update grow2 "c" 3)]
+        (begin
+          (assert-i64-eq
+            (lookup-value-or (string-i64-map-get u9 "alpha") -1)
+            333
+            "insert-or-update overwrites existing key")
+          (assert-i64-eq
+            (string-i64-map-len grow3)
+            3
+            "insert-or-update inserts multiple keys")
+          (assert-true
+            (> (string-i64-map-capacity grow3) 1)
+            "insert-or-update grows tiny table")))
+      (let
+        [key : String "alpha"]
+        [u0 : StringI64Map (string-i64-map-with-capacity 4)]
+        [u1 : StringI64Map (string-i64-map-insert-or-update u0 "alpha" 10)]
+        (begin
+          (let
+            [entry : (StringI64MapMutEntry u1)
+              (string-i64-map-get-mut-entry-borrowed u1 (& key))]
+            (begin
+              (assert-true
+                (string-i64-map-mut-entry-present? entry)
+                "mut entry finds existing key")
+              (assert-i64-eq
+                (string-i64-map-mut-entry-value-or entry -1)
+                10
+                "mut entry reads existing value")
+              (string-i64-map-mut-entry-set! entry 77)))
+          (assert-i64-eq
+            (lookup-value-or (string-i64-map-get u1 "alpha") -1)
+            77
+            "mut entry set updates map storage")))
+      (let
+        [key : String "missing"]
+        [u0 : StringI64Map (string-i64-map-with-capacity 4)]
+        [u1 : StringI64Map (string-i64-map-insert-or-update u0 "alpha" 10)]
+        (begin
+          (let
+            [entry : (StringI64MapMutEntry u1)
+              (string-i64-map-get-mut-entry-borrowed u1 (& key))]
+            (begin
+              (assert-false
+                (string-i64-map-mut-entry-present? entry)
+                "mut entry reports missing key")
+              (assert-i64-eq
+                (string-i64-map-mut-entry-value-or entry -1)
+                -1
+                "missing mut entry returns fallback")
+              (string-i64-map-mut-entry-set! entry 99)))
+          (assert-i64-eq (string-i64-map-len u1) 1 "missing mut entry no-op")
+          (assert-i64-eq
+            (lookup-value-or (string-i64-map-get u1 "alpha") -1)
+            10
+            "missing mut entry leaves map unchanged")))
+      unit)))
+
+(cfg
+  test
+  (test
+    hashmap-string-i64-resize-rehash
+    (begin
+      ;; --- resize / rehash (#827) ---
+      ;; needs-grow? threshold: a fresh capacity-4 table is below the 3/4 load.
+      (assert-false
+        (string-i64-map-needs-grow? (string-i64-map-with-capacity 4))
+        "fresh cap-4 below load threshold")
+      (assert-false
+        (string-i64-map-needs-grow? (string-i64-map-with-capacity 0))
+        "zero requested capacity rounds to a fresh cap-1 table")
+      ;; string-i64-map-put auto-grows past the fixed capacity and preserves every
+      ;; entry across the rehash (collision preservation + lookup after rehash).
+      (let
+        [g0 : StringI64Map (string-i64-map-with-capacity 4)]
+        [g1 : StringI64Map (string-i64-map-put g0 "a" 1)]
+        [g2 : StringI64Map (string-i64-map-put g1 "b" 2)]
+        [g3 : StringI64Map (string-i64-map-put g2 "c" 3)]
+        [g4 : StringI64Map (string-i64-map-put g3 "d" 4)]
+        [g5 : StringI64Map (string-i64-map-put g4 "e" 5)]
+        [g6 : StringI64Map (string-i64-map-put g5 "f" 6)]
+        (begin
+          (assert-i64-eq (string-i64-map-len g6) 6 "put six -> len 6")
+          (assert-true
+            (> (string-i64-map-capacity g6) 4)
+            "table grew past the seed capacity")
+          (assert-i64-eq
+            (string-i64-map-deleted g6)
+            0
+            "grown table has no tombstones")
+          (assert-i64-eq
+            (lookup-value-or (string-i64-map-get g6 "a") -1)
+            1
+            "get a after grow")
+          (assert-i64-eq
+            (lookup-value-or (string-i64-map-get g6 "c") -1)
+            3
+            "get c after grow")
+          (assert-i64-eq
+            (lookup-value-or (string-i64-map-get g6 "f") -1)
+            6
+            "get f after grow")
+          (assert-i64-eq
+            (lookup-value-or (string-i64-map-get g6 "missing") -1)
+            -1
+            "absent key after grow")
+          ;; overwrite across resize: updating an existing key keeps len.
+          (let
+            [g7 : StringI64Map (string-i64-map-put g6 "a" 99)]
+            (begin
+              (assert-i64-eq
+                (string-i64-map-len g7)
+                6
+                "update keeps len after grow")
+              (assert-i64-eq
+                (lookup-value-or (string-i64-map-get g7 "a") -1)
+                99
+                "a updated to 99 after grow")))))
+      ;; resized drops tombstones: insert 3, remove 1 (deleted=1), resize to 16.
+      (let
+        [t0 : StringI64Map (string-i64-map-with-capacity 8)]
+        [t1 : StringI64Map
+          (insert-result-map (string-i64-map-insert t0 "x" 10))]
+        [t2 : StringI64Map
+          (insert-result-map (string-i64-map-insert t1 "y" 20))]
+        [t3 : StringI64Map
+          (insert-result-map (string-i64-map-insert t2 "z" 30))]
+        [t4 : StringI64Map (remove-result-map (string-i64-map-remove t3 "y"))]
+        (begin
+          (assert-i64-eq
+            (string-i64-map-deleted t4)
+            1
+            "one tombstone before resize")
+          (let
+            [t5 : StringI64Map (string-i64-map-resized t4 16)]
+            [t6 : StringI64Map (string-i64-map-resized t4 10)]
+            (begin
+              (assert-i64-eq
+                (string-i64-map-capacity t5)
+                16
+                "resized capacity 16")
+              (assert-i64-eq
+                (string-i64-map-capacity t6)
+                16
+                "resized capacity rounds to power of two")
+              (assert-i64-eq (string-i64-map-len t5) 2 "resized len 2")
+              (assert-i64-eq
+                (string-i64-map-deleted t5)
+                0
+                "resize drops tombstones")
+              (assert-i64-eq
+                (lookup-value-or (string-i64-map-get t5 "x") -1)
+                10
+                "x survives resize")
+              (assert-i64-eq
+                (lookup-value-or (string-i64-map-get t5 "z") -1)
+                30
+                "z survives resize")
+              (assert-i64-eq
+                (lookup-value-or (string-i64-map-get t5 "y") -1)
+                -1
+                "removed y absent after resize")))))
+      unit)))
+
+(cfg
+  test
+  (test
+    hashmap-string-i64-iteration
+    (begin
+      ;; --- deterministic bucket-order iteration (#829) ---
+      ;; empty map: the cursor starts at the capacity; count and sum are zero.
+      (let
+        [e0 : StringI64Map (string-i64-map-with-capacity 8)]
+        (begin
+          (assert-i64-eq
+            (string-i64-map-next-occupied e0 0)
+            8
+            "empty map cursor starts at capacity")
+          (assert-i64-eq
+            (iter-count e0 (string-i64-map-next-occupied e0 0) 0)
+            0
+            "empty map iterates zero entries")
+          (assert-i64-eq
+            (iter-sum-values e0 (string-i64-map-next-occupied e0 0) 0)
+            0
+            "empty map sum is zero")))
+      ;; non-empty map: the cursor visits exactly `len` entries, sums every value
+      ;; once, and walks strictly increasing (deterministic bucket) indices.
+      (let
+        [i0 : StringI64Map (string-i64-map-with-capacity 8)]
+        [i1 : StringI64Map (string-i64-map-put i0 "a" 1)]
+        [i2 : StringI64Map (string-i64-map-put i1 "b" 2)]
+        [i3 : StringI64Map (string-i64-map-put i2 "c" 4)]
+        [i4 : StringI64Map (string-i64-map-put i3 "d" 8)]
+        (begin
+          (assert-i64-eq
+            (string-i64-map-len i4)
+            4
+            "iteration map has four entries")
+          (assert-i64-eq
+            (iter-count i4 (string-i64-map-next-occupied i4 0) 0)
+            4
+            "cursor visits exactly len entries")
+          (assert-i64-eq
+            (iter-sum-values i4 (string-i64-map-next-occupied i4 0) 0)
+            15
+            "cursor sums every value once (1+2+4+8)")
+          (assert-true
+            (iter-monotonic? i4 (string-i64-map-next-occupied i4 0))
+            "cursor visits strictly increasing indices")
+          ;; a removed key is skipped: its tombstone is not iterated.
+          (let
+            [i5 : StringI64Map
+              (remove-result-map (string-i64-map-remove i4 "b"))]
+            (begin
+              (assert-i64-eq (string-i64-map-len i5) 3 "len 3 after removing b")
+              (assert-i64-eq
+                (iter-count i5 (string-i64-map-next-occupied i5 0) 0)
+                3
+                "cursor skips the tombstone (count 3)")
+              (assert-i64-eq
+                (iter-sum-values i5 (string-i64-map-next-occupied i5 0) 0)
+                13
+                "cursor sum excludes the removed value (1+4+8)")))))
+      ;; entry-at: out-of-range -> None, the only occupied slot -> Some value.
+      (let
+        [b0 : StringI64Map (string-i64-map-with-capacity 4)]
+        [b1 : StringI64Map (string-i64-map-put b0 "only" 7)]
+        (begin
+          (assert-true
+            (entry-none? (string-i64-map-entry-at b1 -1))
+            "entry-at negative index is None")
+          (assert-true
+            (entry-none? (string-i64-map-entry-at b1 4))
+            "entry-at out-of-range index is None")
+          (assert-i64-eq
+            (entry-value-or
+              (string-i64-map-entry-at b1 (string-i64-map-next-occupied b1 0))
+              -1)
+            7
+            "entry-at the only occupied slot is Some 7")))
+      unit)))
+
+(cfg
+  test
+  (test
+    hashmap-string-string-family
+    (begin
+      ;; --- generated String -> String map family (#817) ---
+      (let
+        [alpha : String "alpha"]
+        [beta : String "beta"]
+        [missing : String "missing"]
+        [ss0 : StringStringMap (string-string-map-with-capacity 4)]
+        [ss1 : StringStringMap (string-string-map-put ss0 "alpha" "red")]
+        [ss2 : StringStringMap (string-string-map-put ss1 "beta" "amber")]
+        [ss3 : StringStringMap (string-string-map-put ss2 "gamma" "blue")]
+        [ss4 : StringStringMap (string-string-map-put ss3 "delta" "gold")]
+        [ss5 : StringStringMap (string-string-map-put ss4 "alpha" "green")]
+        (begin
+          (assert-i64-eq (string-string-map-len ss5) 4 "StringString len")
+          (assert-true
+            (> (string-string-map-capacity ss5) 4)
+            "StringString grew past seed capacity")
+          (hashmap-test-assert-owned-string-eq
+            (string-string-lookup-value-or
+              (string-string-map-get-borrowed ss5 (& alpha))
+              "fallback")
+            "green"
+            "StringString borrowed get updated alpha")
+          (assert-i64-eq
+            (string-string-borrowed-value-length-or
+              (string-string-map-get-value-borrowed (& ss5) (& alpha))
+              -1)
+            5
+            "StringString borrowed value get returns alpha by reference")
+          (hashmap-test-assert-owned-string-eq
+            (string-string-lookup-value-or
+              (string-string-map-get ss5 "gamma")
+              "fallback")
+            "blue"
+            "StringString owned get gamma")
+          (hashmap-test-assert-owned-string-eq
+            (string-string-lookup-value-or
+              (string-string-map-get-borrowed ss5 (& missing))
+              "fallback")
+            "fallback"
+            "StringString missing borrowed get")
+          (assert-i64-eq
+            (string-string-borrowed-value-length-or
+              (string-string-map-get-value-borrowed (& ss5) (& missing))
+              -1)
+            -1
+            "StringString missing borrowed value get")
+          (assert-true
+            (string-string-map-contains-borrowed? ss5 (& beta))
+            "StringString borrowed contains beta")
+          (let
+            [removed : StringStringMapRemoveResult
+              (string-string-map-remove-borrowed ss5 (& beta))]
+            (begin
+              (assert-true
+                (string-string-remove-ok? removed)
+                "StringString remove borrowed beta")
+              (let
+                [ss6 : StringStringMap
+                  (string-string-remove-result-map removed)]
+                (begin
+                  (assert-i64-eq
+                    (string-string-map-len ss6)
+                    3
+                    "StringString len after remove")
+                  (assert-i64-eq
+                    (string-string-map-deleted ss6)
+                    1
+                    "StringString tombstone after remove")
+                  (assert-false
+                    (string-string-map-contains-borrowed? ss6 (& beta))
+                    "StringString beta absent after remove")
+                  (assert-i64-eq
+                    (string-string-iter-count
+                      ss6
+                      (string-string-map-next-occupied ss6 0)
+                      0)
+                    3
+                    "StringString iteration count")
+                  (assert-i64-eq
+                    (string-string-iter-value-length-sum
+                      ss6
+                      (string-string-map-next-occupied ss6 0)
+                      0)
+                    13
+                    "StringString iteration value length sum")))))))
+      unit)))
+
+(cfg
+  test
+  (test
+    hashmap-string-string-update-entry
+    (begin
+      ;; --- generated String -> String update / entry-or-insert API (#888) ---
+      (let
+        [alpha-update : String "alpha"]
+        [ssu0 : StringStringMap (string-string-map-with-capacity 4)]
+        [ssu1 : StringStringMap
+          (string-string-map-insert-or-update ssu0 "alpha" "red")]
+        [ssu2 : StringStringMap
+          (string-string-map-insert-or-update ssu1 "beta" "amber")]
+        [ssu-hit : StringStringMapUpdateResult
+          (string-string-map-update-borrowed-if-present
+            ssu2
+            (& alpha-update)
+            "green")]
+        [ssu3 : StringStringMap (string-string-update-result-map ssu-hit)]
+        (begin
+          (assert-true
+            (string-string-update-ok? ssu-hit)
+            "StringString borrowed update hit")
+          (hashmap-test-assert-owned-string-eq
+            (string-string-lookup-value-or
+              (string-string-map-get ssu3 "alpha")
+              "fallback")
+            "green"
+            "StringString update overwrites alpha")))
+      (let
+        [ssu0 : StringStringMap (string-string-map-with-capacity 4)]
+        [ssu1 : StringStringMap
+          (string-string-map-insert-or-update ssu0 "alpha" "red")]
+        [ssu-miss : StringStringMapUpdateResult
+          (string-string-map-update-if-present ssu1 "missing" "black")]
+        [ssu2 : StringStringMap (string-string-update-result-map ssu-miss)]
+        (begin
+          (assert-false
+            (string-string-update-ok? ssu-miss)
+            "StringString update miss")
+          (assert-i64-eq
+            (string-string-map-len ssu2)
+            1
+            "StringString update miss keeps len")))
+      (let
+        [ssu0 : StringStringMap (string-string-map-with-capacity 4)]
+        [ssu1 : StringStringMap
+          (string-string-map-insert-or-update ssu0 "alpha" "green")]
+        [ssu2 : StringStringMap
+          (string-string-map-insert-or-update ssu1 "beta" "amber")]
+        [ssu-removed : StringStringMapRemoveResult
+          (string-string-map-remove ssu2 "beta")]
+        [ssu3 : StringStringMap (string-string-remove-result-map ssu-removed)]
+        [ssu-inserted : StringStringMapEntryOrInsertResult
+          (string-string-map-entry-or-insert ssu3 "beta" "gold")]
+        [ssu4 : StringStringMap
+          (string-string-entry-or-insert-result-map ssu-inserted)]
+        [ssu-found : StringStringMapEntryOrInsertResult
+          (string-string-map-entry-or-insert ssu4 "alpha" "purple")]
+        [ssu5 : StringStringMap
+          (string-string-entry-or-insert-result-map ssu-found)]
+        (begin
+          (assert-true
+            (string-string-entry-or-insert-inserted? ssu-inserted)
+            "StringString entry-or-insert inserted")
+          (hashmap-test-assert-owned-string-eq
+            (string-string-entry-or-insert-value-or ssu-inserted "fallback")
+            "gold"
+            "StringString entry-or-insert returns default")
+          (assert-i64-eq
+            (string-string-map-deleted ssu4)
+            0
+            "StringString entry-or-insert reuses tombstone")
+          (assert-false
+            (string-string-entry-or-insert-inserted? ssu-found)
+            "StringString entry-or-insert found")
+          (hashmap-test-assert-owned-string-eq
+            (string-string-entry-or-insert-value-or ssu-found "fallback")
+            "green"
+            "StringString entry-or-insert returns existing")
+          (hashmap-test-assert-owned-string-eq
+            (string-string-lookup-value-or
+              (string-string-map-get ssu5 "alpha")
+              "fallback")
+            "green"
+            "StringString entry-or-insert found does not overwrite")))
+      (let
+        [ssu0 : StringStringMap (string-string-map-with-capacity 2)]
+        [ssu1 : StringStringMap
+          (string-string-map-insert-or-update ssu0 "alpha" "green")]
+        [ssu2 : StringStringMap
+          (string-string-map-insert-or-update ssu1 "beta" "gold")]
+        [ssu3 : StringStringMap
+          (string-string-map-insert-or-update ssu2 "gamma" "blue")]
+        (begin
+          (hashmap-test-assert-owned-string-eq
+            (string-string-lookup-value-or
+              (string-string-map-get ssu3 "gamma")
+              "fallback")
+            "blue"
+            "StringString insert-or-update inserts new key")
+          (assert-true
+            (> (string-string-map-capacity ssu3) 2)
+            "StringString insert-or-update grows")))
+      unit)))
+
+(cfg
+  test
+  (test
+    hashmap-i64-i64-family
+    (begin
+      ;; --- generated i64 -> i64 map family (#817) ---
+      (let
+        [ii0 : I64I64Map (i64-i64-map-with-capacity 4)]
+        [ii1 : I64I64Map (i64-i64-map-put ii0 1 10)]
+        [ii2 : I64I64Map (i64-i64-map-put ii1 2 20)]
+        [ii3 : I64I64Map (i64-i64-map-put ii2 3 30)]
+        [ii4 : I64I64Map (i64-i64-map-put ii3 4 40)]
+        [ii5 : I64I64Map (i64-i64-map-put ii4 1 99)]
+        (begin
+          (assert-i64-eq (i64-i64-map-len ii5) 4 "I64I64 len")
+          (assert-true
+            (> (i64-i64-map-capacity ii5) 4)
+            "I64I64 grew past seed capacity")
+          (assert-i64-eq
+            (i64-i64-lookup-value-or (i64-i64-map-get ii5 1) -1)
+            99
+            "I64I64 updated key 1")
+          (assert-true
+            (i64-i64-borrowed-value-found?
+              (i64-i64-map-get-value-borrowed (& ii5) 1))
+            "I64I64 borrowed value get finds key 1")
+          (assert-i64-eq
+            (i64-i64-lookup-value-or (i64-i64-map-get ii5 3) -1)
+            30
+            "I64I64 get key 3")
+          (assert-i64-eq
+            (i64-i64-lookup-value-or (i64-i64-map-get ii5 99) -1)
+            -1
+            "I64I64 missing key")
+          (assert-false
+            (i64-i64-borrowed-value-found?
+              (i64-i64-map-get-value-borrowed (& ii5) 99))
+            "I64I64 missing borrowed value get")
+          (assert-true (i64-i64-map-contains? ii5 2) "I64I64 contains key 2")
+          (let
+            [removed : I64I64MapRemoveResult (i64-i64-map-remove ii5 2)]
+            (begin
+              (assert-true (i64-i64-remove-ok? removed) "I64I64 remove key 2")
+              (let
+                [ii6 : I64I64Map (i64-i64-remove-result-map removed)]
+                (begin
+                  (assert-i64-eq
+                    (i64-i64-map-len ii6)
+                    3
+                    "I64I64 len after remove")
+                  (assert-i64-eq
+                    (i64-i64-map-deleted ii6)
+                    1
+                    "I64I64 tombstone after remove")
+                  (assert-false
+                    (i64-i64-map-contains? ii6 2)
+                    "I64I64 removed key absent")
+                  (assert-i64-eq
+                    (i64-i64-iter-count ii6 (i64-i64-map-next-occupied ii6 0) 0)
+                    3
+                    "I64I64 iteration count")
+                  (assert-i64-eq
+                    (i64-i64-iter-value-sum
+                      ii6
+                      (i64-i64-map-next-occupied ii6 0)
+                      0)
+                    169
+                    "I64I64 iteration value sum")))))))
+      unit)))
+
+(cfg
+  test
+  (test
+    hashmap-i64-i64-update-entry
+    (begin
+      ;; --- generated i64 -> i64 update / entry-or-insert API (#888) ---
+      (let
+        [iiu0 : I64I64Map (i64-i64-map-with-capacity 4)]
+        [iiu1 : I64I64Map (i64-i64-map-insert-or-update iiu0 1 10)]
+        [iiu2 : I64I64Map (i64-i64-map-insert-or-update iiu1 2 20)]
+        [iiu-hit : I64I64MapUpdateResult
+          (i64-i64-map-update-if-present iiu2 1 70)]
+        [iiu3 : I64I64Map (i64-i64-update-result-map iiu-hit)]
+        (begin
+          (assert-true (i64-i64-update-ok? iiu-hit) "I64I64 update hit")
+          (assert-i64-eq
+            (i64-i64-lookup-value-or (i64-i64-map-get iiu3 1) -1)
+            70
+            "I64I64 update overwrites key 1")))
+      (let
+        [iiu0 : I64I64Map (i64-i64-map-with-capacity 4)]
+        [iiu1 : I64I64Map (i64-i64-map-insert-or-update iiu0 1 10)]
+        [iiu-miss : I64I64MapUpdateResult
+          (i64-i64-map-update-if-present iiu1 99 990)]
+        [iiu2 : I64I64Map (i64-i64-update-result-map iiu-miss)]
+        (begin
+          (assert-false (i64-i64-update-ok? iiu-miss) "I64I64 update miss")
+          (assert-i64-eq
+            (i64-i64-map-len iiu2)
+            1
+            "I64I64 update miss keeps len")))
+      (let
+        [iiu0 : I64I64Map (i64-i64-map-with-capacity 4)]
+        [iiu1 : I64I64Map (i64-i64-map-insert-or-update iiu0 1 70)]
+        [iiu2 : I64I64Map (i64-i64-map-insert-or-update iiu1 2 20)]
+        [iiu-removed : I64I64MapRemoveResult (i64-i64-map-remove iiu2 2)]
+        [iiu5 : I64I64Map (i64-i64-remove-result-map iiu-removed)]
+        [iiu-inserted : I64I64MapEntryOrInsertResult
+          (i64-i64-map-entry-or-insert iiu5 2 222)]
+        [iiu6 : I64I64Map (i64-i64-entry-or-insert-result-map iiu-inserted)]
+        [iiu-found : I64I64MapEntryOrInsertResult
+          (i64-i64-map-entry-or-insert iiu6 1 111)]
+        [iiu7 : I64I64Map (i64-i64-entry-or-insert-result-map iiu-found)]
+        (begin
+          (assert-true
+            (i64-i64-entry-or-insert-inserted? iiu-inserted)
+            "I64I64 entry-or-insert inserted")
+          (assert-i64-eq
+            (i64-i64-entry-or-insert-value-or iiu-inserted -1)
+            222
+            "I64I64 entry-or-insert returns default")
+          (assert-i64-eq
+            (i64-i64-map-deleted iiu6)
+            0
+            "I64I64 entry-or-insert reuses tombstone")
+          (assert-false
+            (i64-i64-entry-or-insert-inserted? iiu-found)
+            "I64I64 entry-or-insert found")
+          (assert-i64-eq
+            (i64-i64-entry-or-insert-value-or iiu-found -1)
+            70
+            "I64I64 entry-or-insert returns existing")
+          (assert-i64-eq
+            (i64-i64-lookup-value-or (i64-i64-map-get iiu7 1) -1)
+            70
+            "I64I64 entry-or-insert found does not overwrite")))
+      (let
+        [iiu0 : I64I64Map (i64-i64-map-with-capacity 2)]
+        [iiu1 : I64I64Map (i64-i64-map-insert-or-update iiu0 1 70)]
+        [iiu2 : I64I64Map (i64-i64-map-insert-or-update iiu1 2 222)]
+        [iiu8 : I64I64Map (i64-i64-map-insert-or-update iiu2 3 30)]
+        (begin
+          (assert-i64-eq
+            (i64-i64-lookup-value-or (i64-i64-map-get iiu8 3) -1)
+            30
+            "I64I64 insert-or-update inserts key 3")
+          (assert-true
+            (> (i64-i64-map-capacity iiu8) 2)
+            "I64I64 insert-or-update grows")))
+      unit)))

@@ -4067,6 +4067,19 @@
           buf
           "(define ("
           prefix
+          "-string-hash [key : (& key str)]) : i64\n"))
+      (set!
+        buf
+        (gen-tb2
+          buf
+          "  (let\n    [n : i64 (string-length key)]\n    [i : i64 0]\n    [hash : i64 0]\n    (begin\n      (while (< i n)\n        (begin\n          (set!\n            hash\n            (%\n              (+ (+ (* hash 131) (cast (string-ref key i) : i64)) 1)\n              2147483647))\n          (set! i (+ i 1))))\n      hash)))\n"
+          ""))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "(define ("
+          prefix
           "-string-key-eq? [left : (& left str)] [right : (& right str)]) : bool\n"))
       (set!
         buf
@@ -4210,7 +4223,11 @@
               (string-append expr " : i64))"))))]
       [(AstTyString)
         (OkGenHashmapSource
-          (string-append "(hash-string (& " (string-append expr "))")))]
+          (string-append
+            "("
+            (string-append
+              prefix
+              (string-append "-string-hash (& " (string-append expr "))")))))]
       [(AstTyStruct name)
         (match (ctfe-reflect-info-lookup infos (ctfe-type-nominal-key resolved))
           [(CtfeSomeReflectInfo info)

@@ -217,6 +217,17 @@ default output root is repo-relative so the measured self-compile `-o` argument
 is stable across machines; use a repo-relative `--output` when collecting counts
 intended for baseline comparison.
 
+`scripts/measure-typecheck-prefix-cache.sh` reports the opt-in typecheck prefix
+snapshot cache counters for the batch workloads the cache is meant to help:
+repeated stdlib imports, one selfhost compile-manifest chunk, and doctests.
+
+```sh
+TYPELISP_BIN=target/stage0/typelisp scripts/measure-typecheck-prefix-cache.sh
+```
+
+Each line includes elapsed time plus `hits`, `misses`, `stores`, `lookups`, and
+integer `hit-rate-per-mille` from the compiler's `--prefix-cache-stats` report.
+
 ### Coverage policy
 
 New behavior should get TypeLisp-owned coverage: a module-local self-test, a

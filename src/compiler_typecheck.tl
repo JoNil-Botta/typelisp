@@ -400,6 +400,24 @@
       (tc-prefix-snapshot-cache-clear!)
       ok)))
 
+(define (compiler-typecheck-prefix-cache-stats-smoke-ok?) : bool
+  (begin
+    (tc-prefix-snapshot-cache-clear!)
+    (tc-prefix-snapshot-cache-note-hit!)
+    (tc-prefix-snapshot-cache-note-miss!)
+    (tc-prefix-snapshot-cache-note-store!)
+    (let
+      [line : String (tc-prefix-snapshot-cache-stats-line "smoke")]
+      (begin
+        (tc-prefix-snapshot-cache-stats-reset!)
+        (and
+          (string-eq
+            line
+            "typecheck-prefix-cache|smoke|hits=1|misses=1|stores=1|lookups=2|hit-rate-per-mille=500")
+          (string-eq
+            (tc-prefix-snapshot-cache-stats-line "reset")
+            "typecheck-prefix-cache|reset|hits=0|misses=0|stores=0|lookups=0|hit-rate-per-mille=0"))))))
+
 (define (compiler-typecheck-ok-score? [src : String] [want : i64]) : bool
   (match (typecheck-compiler-source src)
     [(OkCompilerTypecheck summary)
@@ -8643,6 +8661,9 @@
     (if (compiler-typecheck-prefix-cache-smoke-ok?)
       unit
       (panic "typecheck: prefix snapshot cache smoke test failed"))
+    (if (compiler-typecheck-prefix-cache-stats-smoke-ok?)
+      unit
+      (panic "typecheck: prefix snapshot cache stats smoke test failed"))
     (if (compiler-typecheck-error-ok?
       (compiler-typecheck-unbound-source)
       "typecheck: unbound name missing")

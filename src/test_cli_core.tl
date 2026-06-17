@@ -58,6 +58,9 @@
   (OkTestFileCheck i64)
   (ErrTestFileCheck i64))
 
+(define tltest-prefix-cache-stats : bool
+  false)
+
 (define (tltest-unknown-target [value : String]) : String
   (str-cat "test: unknown target " value ""))
 
@@ -183,21 +186,23 @@
                         test-mode)))]
                 [(ErrTestBatchPaths message) (ErrTestConfig message)])])))]
     [(TestNoString)
-      (if has-source
-        (if has-manifest
-          (ErrTestConfig
-            "test: cannot combine source path with --manifest-path")
+      (if tltest-prefix-cache-stats
+        (ErrTestConfig "test: --prefix-cache-stats requires --batch")
+        (if has-source
+          (if has-manifest
+            (ErrTestConfig
+              "test: cannot combine source path with --manifest-path")
+            (OkTestConfig
+              (TestFileConfig source target mode roots opt-level test-mode)))
           (OkTestConfig
-            (TestFileConfig source target mode roots opt-level test-mode)))
-        (OkTestConfig
-          (TestPackageConfig
-            manifest-path
-            has-manifest
-            target
-            mode
-            roots
-            opt-level
-            test-mode)))]))
+            (TestPackageConfig
+              manifest-path
+              has-manifest
+              target
+              mode
+              roots
+              opt-level
+              test-mode))))]))
 
 (define (tltest-target-valid? [value : String]) : bool
   (match (source-tool-target value)
@@ -380,16 +385,14 @@
                                 batch-list)]
                             [(ErrCompilerOptimizeLevel)
                               (ErrTestConfig (tltest-invalid-opt-level value))]))))
-                    (if (source-tool-flag? current)
-                      (ErrTestConfig
-                        (string-append "test: unknown flag " current))
-                      (if has-source
-                        (ErrTestConfig "test: accepts only one source file")
+                    (if (string-eq current "--prefix-cache-stats")
+                      (begin
+                        (set! tltest-prefix-cache-stats true)
                         (tltest-parse-options
                           (+ idx 1)
                           count
-                          current
-                          true
+                          source
+                          has-source
                           manifest-path
                           has-manifest
                           target
@@ -398,25 +401,46 @@
                           has-opt-level
                           opt-level
                           test-mode
-                          batch-list)))))))))))))
+                          batch-list))
+                      (if (source-tool-flag? current)
+                        (ErrTestConfig
+                          (string-append "test: unknown flag " current))
+                        (if has-source
+                          (ErrTestConfig "test: accepts only one source file")
+                          (tltest-parse-options
+                            (+ idx 1)
+                            count
+                            current
+                            true
+                            manifest-path
+                            has-manifest
+                            target
+                            mode
+                            roots
+                            has-opt-level
+                            opt-level
+                            test-mode
+                            batch-list))))))))))))))
 
 ;; Parse the `test` config from arguments starting at `start` (the index of the
 ;; first argument after any subcommand name). `count` is `(arg-count)`.
 (define (tltest-config-from [start : i64] [count : i64]) : ResultTestConfig
-  (tltest-parse-options
-    start
-    count
-    ""
-    false
-    ""
-    false
-    "linux-x86_64"
-    "scalar"
-    (string-vec-new)
-    false
-    (compiler-optimize-default-level)
-    TestModeRun
-    (TestNoString)))
+  (begin
+    (set! tltest-prefix-cache-stats false)
+    (tltest-parse-options
+      start
+      count
+      ""
+      false
+      ""
+      false
+      "linux-x86_64"
+      "scalar"
+      (string-vec-new)
+      false
+      (compiler-optimize-default-level)
+      TestModeRun
+      (TestNoString))))
 
 (define (tltest-decls-onto
   [items : (Array AstDecl)]
@@ -2745,7 +2769,18 @@
           (print-error (tltest-unknown-target target))
           1)]
       [(OkSourceToolTarget backend-target)
-        (tltest-run-batch-check-paths paths roots backend-target 0 0)])))
+        (let
+          [status : i64
+            (begin
+              (if tltest-prefix-cache-stats
+                (tc-prefix-snapshot-cache-clear!)
+                unit)
+              (tltest-run-batch-check-paths paths roots backend-target 0 0))]
+          (begin
+            (if tltest-prefix-cache-stats
+              (tc-prefix-snapshot-cache-print-stats "test-check-batch")
+              unit)
+            status))])))
 
 (define (tltest-run-config [config : TestConfig]) : i64
   (match config

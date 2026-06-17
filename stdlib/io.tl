@@ -2297,3 +2297,752 @@
         (begin
           (/ 1 0)
           unit)))))
+
+;; Inline coverage migrated from stdlib/tests/io_edges.tl (#3085).
+(cfg
+  test
+  (define (io-edges-test-fail [message : String]) : unit
+    (panic message)))
+
+(cfg
+  test
+  (define (io-edges-test-assert-true [condition : bool] [message : String]) : unit
+    (if condition
+      unit
+      (io-edges-test-fail message))))
+
+(cfg
+  test
+  (define (io-edges-test-assert-false [condition : bool] [message : String]) : unit
+    (io-edges-test-assert-true (not condition) message)))
+
+(cfg
+  test
+  (define (io-edges-test-assert-string-eq
+    [actual : (& actual str)]
+    [expected : (& expected str)]
+    [message : String]) : unit
+    (io-edges-test-assert-true (string-eq-borrowed actual expected) message)))
+
+(cfg
+  test
+  (define (io-edges-test-assert-owned-string-eq
+    [actual : String]
+    [expected : String]
+    [message : String]) : unit
+    (io-edges-test-assert-string-eq (& actual) (& expected) message)))
+
+(cfg
+  test
+  (define io-file : String
+    "target/io_edges_file.txt"))
+(cfg
+  test
+  (define io-empty-file : String
+    "target/io_edges_empty.txt"))
+(cfg
+  test
+  (define io-created-file : String
+    "target/io_edges_created_"))
+(cfg
+  test
+  (define io-missing-file : String
+    "target/io_edges_missing.txt"))
+(cfg
+  test
+  (define io-missing-parent-file : String
+    "target/stdlib-inline-missing-parent/io_edges.txt"))
+(cfg
+  test
+  (define io-directory-path : String
+    "target"))
+
+(cfg
+  test
+  (define (io-edges-test-expect-try-read-ok [path : String] [expected : String]) : unit
+    (match (try-read-file (& path))
+      [(OkIoString contents)
+        (io-edges-test-assert-owned-string-eq
+          contents
+          expected
+          "try-read-file returned contents")]
+      [(ErrIoString error) (panic (io-error-message error))])))
+
+(cfg
+  test
+  (define (io-edges-test-expect-try-read-missing [path : String]) : unit
+    (match (try-read-file (& path))
+      [(OkIoString _) (panic "try-read-file unexpectedly read missing file")]
+      [(ErrIoString error)
+        (begin
+          (io-edges-test-assert-true
+            (io-error-not-found? error)
+            "missing read error kind")
+          (io-edges-test-assert-owned-string-eq
+            (io-error-message error)
+            (string-append "io: not found: " path)
+            "missing read error render"))])))
+
+(cfg
+  test
+  (define (io-edges-test-expect-try-write-ok
+    [path : String]
+    [contents : String]) : unit
+    (match (try-write-file (& path) (& contents))
+      [(OkIoUnit) unit]
+      [(ErrIoUnit error) (panic (io-error-message error))])))
+
+(cfg
+  test
+  (define (io-edges-test-expect-try-read-error [path : String]) : unit
+    (match (try-read-file (& path))
+      [(OkIoString _) (panic "try-read-file unexpectedly succeeded")]
+      [(ErrIoString _) unit])))
+
+(cfg
+  test
+  (define (io-edges-test-expect-try-write-error [path : String]) : unit
+    (let
+      [contents : String "bad"]
+      (match (try-write-file (& path) (& contents))
+        [(OkIoUnit) (panic "try-write-file unexpectedly succeeded")]
+        [(ErrIoUnit _) unit]))))
+
+(cfg
+  test
+  (define (io-edges-test-expect-try-append-error [path : String]) : unit
+    (let
+      [contents : String "bad"]
+      (match (try-append-file (& path) (& contents))
+        [(OkIoUnit) (panic "try-append-file unexpectedly succeeded")]
+        [(ErrIoUnit _) unit]))))
+
+(cfg
+  test
+  (define (io-edges-test-try-file-exists? [path : String]) : ResultIoBool
+    (try-file-exists? (& path))))
+
+(cfg
+  test
+  (define (io-edges-test-missing-path [prefix : String]) : String
+    (let
+      [index : i64 0]
+      [candidate : String (string-copy-borrowed (& prefix))]
+      [done : bool false]
+      (begin
+        (while (not done)
+          (let
+            [suffix : String (int->string index)]
+            [path : String (string-append-borrowed (& prefix) (& suffix))]
+            (match (io-edges-test-try-file-exists? path)
+              [(OkIoBool exists)
+                (if exists
+                  (set! index (+ index 1))
+                  (begin
+                    (set! candidate path)
+                    (set! done true)))]
+              [(ErrIoBool error) (panic (io-error-message error))])))
+        candidate))))
+
+(cfg
+  test
+  (define (io-edges-test-read-file-or [path : String] [fallback : String]) : String
+    (read-file-or (& path) fallback)))
+
+(cfg
+  test
+  (define (io-edges-test-file-nonempty? [path : String]) : bool
+    (file-nonempty? (& path))))
+
+(cfg
+  test
+  (define (io-edges-test-try-append-file [path : String] [contents : String]) : ResultIoUnit
+    (try-append-file (& path) (& contents))))
+
+(cfg
+  test
+  (define (io-edges-test-append-file [path : String] [contents : String]) : unit
+    (append-file (& path) (& contents))))
+
+(cfg
+  test
+  (define (io-edges-test-expect-invalid-path [error : IoError]) : unit
+    (begin
+      (io-edges-test-assert-true
+        (io-error-invalid-path? error)
+        "invalid path error kind")
+      (io-edges-test-assert-owned-string-eq
+        (io-error-message error)
+        "io: invalid path: "
+        "invalid path error render"))))
+
+(cfg
+  test
+  (define (io-edges-test-main) : i64
+    (begin
+      (io-edges-test-expect-try-read-missing io-missing-file)
+      (match (io-edges-test-try-file-exists? io-missing-file)
+        [(OkIoBool exists)
+          (io-edges-test-assert-false exists "missing file does not exist")]
+        [(ErrIoBool error) (panic (io-error-message error))])
+      (let
+        [path : String ""]
+        (match (try-read-file (& path))
+          [(OkIoString _) (panic "empty path read should fail")]
+          [(ErrIoString error) (io-edges-test-expect-invalid-path error)]))
+      (let
+        [path : String ""]
+        [contents : String "bad"]
+        (match (try-write-file (& path) (& contents))
+          [(OkIoUnit) (panic "empty path write should fail")]
+          [(ErrIoUnit error) (io-edges-test-expect-invalid-path error)]))
+      (let
+        [path : String ""]
+        [contents : String "bad"]
+        (match (try-append-file (& path) (& contents))
+          [(OkIoUnit) (panic "empty path append should fail")]
+          [(ErrIoUnit error) (io-edges-test-expect-invalid-path error)]))
+      (io-edges-test-expect-try-read-error io-directory-path)
+      (io-edges-test-expect-try-write-error io-missing-parent-file)
+      (io-edges-test-expect-try-append-error io-missing-parent-file)
+      (io-edges-test-assert-owned-string-eq
+        (io-edges-test-read-file-or io-missing-file "fallback")
+        "fallback"
+        "missing file fallback")
+      (io-edges-test-assert-false
+        (io-edges-test-file-nonempty? io-missing-file)
+        "missing file is not nonempty")
+      (write-file io-empty-file "")
+      (io-edges-test-assert-false
+        (io-edges-test-file-nonempty? io-empty-file)
+        "empty file is not nonempty")
+      (io-edges-test-expect-try-write-ok io-file "alpha")
+      (io-edges-test-expect-try-read-ok io-file "alpha")
+      (io-edges-test-assert-owned-string-eq
+        (io-edges-test-read-file-or io-file "fallback")
+        "alpha"
+        "read existing file")
+      (io-edges-test-assert-true
+        (io-edges-test-file-nonempty? io-file)
+        "written file is nonempty")
+      (let
+        [contents : String "-beta"]
+        (match (io-edges-test-try-append-file io-file contents)
+          [(OkIoUnit) unit]
+          [(ErrIoUnit error) (panic (io-error-message error))]))
+      (io-edges-test-assert-owned-string-eq
+        (read-file io-file)
+        "alpha-beta"
+        "append existing file")
+      (let
+        [created-file : String (io-edges-test-missing-path io-created-file)]
+        [contents : String "created"]
+        (begin
+          (io-edges-test-append-file created-file contents)
+          (io-edges-test-assert-owned-string-eq
+            (read-file created-file)
+            "created"
+            "append creates missing file")))
+      42)))
+
+(cfg
+  test
+  (test
+    io-edges-api
+    (if (= (io-edges-test-main) 42)
+      unit
+      (io-edges-test-fail "io-edges-api did not return 42"))))
+
+;; Inline coverage migrated from stdlib/tests/io_file_handle.tl (#3085).
+(cfg
+  test
+  (define (io-handle-test-fail [message : String]) : unit
+    (panic message)))
+
+(cfg
+  test
+  (define (io-handle-test-assert-true [condition : bool] [message : String]) : unit
+    (if condition
+      unit
+      (io-handle-test-fail message))))
+
+(cfg
+  test
+  (define (io-handle-test-assert-false [condition : bool] [message : String]) : unit
+    (io-handle-test-assert-true (not condition) message)))
+
+(cfg
+  test
+  (define (io-handle-test-assert-bool-eq
+    [actual : bool]
+    [expected : bool]
+    [message : String]) : unit
+    (io-handle-test-assert-true (= actual expected) message)))
+
+(cfg
+  test
+  (define (io-handle-test-assert-string-eq
+    [actual : (& actual str)]
+    [expected : (& expected str)]
+    [message : String]) : unit
+    (io-handle-test-assert-true (string-eq-borrowed actual expected) message)))
+
+(cfg
+  test
+  (define (io-handle-test-assert-owned-string-eq
+    [actual : String]
+    [expected : String]
+    [message : String]) : unit
+    (io-handle-test-assert-string-eq (& actual) (& expected) message)))
+
+(cfg
+  test
+  (define handle-read-file : String
+    "target/io_file_handle_read.txt"))
+(cfg
+  test
+  (define handle-truncate-file : String
+    "target/io_file_handle_truncate.txt"))
+(cfg
+  test
+  (define handle-append-file : String
+    "target/io_file_handle_append.txt"))
+(cfg
+  test
+  (define handle-created-file-prefix : String
+    "target/io_file_handle_created_"))
+(cfg
+  test
+  (define handle-missing-file : String
+    "target/io_file_handle_missing.txt"))
+
+(cfg
+  test
+  (define (io-handle-test-assert-ok-unit
+    [result : ResultIoUnit]
+    [message : String]) : unit
+    (match result
+      [(OkIoUnit) unit]
+      [(ErrIoUnit error)
+        (panic (string-append message (io-error-message error)))])))
+
+(cfg
+  test
+  (define (io-handle-test-expect-open-ok
+    [result : ResultIoFile]
+    [message : String]) : FileHandle
+    (match result
+      [(OkIoFile handle) handle]
+      [(ErrIoFile error)
+        (panic (string-append message (io-error-message error)))])))
+
+(cfg
+  test
+  (define (io-handle-test-assert-close-unsupported
+    [result : ResultIoUnit]
+    [message : String]) : unit
+    (match result
+      [(OkIoUnit)
+        (panic (string-append message "close unexpectedly succeeded"))]
+      [(ErrIoUnit error)
+        (io-handle-test-assert-true (io-error-unsupported? error) message)])))
+
+(cfg
+  test
+  (define (io-handle-test-assert-unit-unsupported
+    [result : ResultIoUnit]
+    [operation : String]
+    [message : String]) : unit
+    (match result
+      [(OkIoUnit)
+        (panic
+          (string-append
+            message
+            (string-append operation " unexpectedly succeeded")))]
+      [(ErrIoUnit error)
+        (io-handle-test-assert-true (io-error-unsupported? error) message)])))
+
+(cfg
+  test
+  (define (io-handle-test-assert-open-unsupported
+    [result : ResultIoFile]
+    [message : String]) : unit
+    (match result
+      [(OkIoFile _)
+        (panic (string-append message "open unexpectedly succeeded"))]
+      [(ErrIoFile error)
+        (io-handle-test-assert-true (io-error-unsupported? error) message)])))
+
+(cfg
+  test
+  (define (io-handle-test-assert-open-invalid
+    [result : ResultIoFile]
+    [message : String]) : unit
+    (match result
+      [(OkIoFile _)
+        (panic (string-append message "open unexpectedly succeeded"))]
+      [(ErrIoFile error)
+        (io-handle-test-assert-true (io-error-invalid-path? error) message)])))
+
+(cfg
+  test
+  (define (io-handle-test-assert-open-not-found
+    [result : ResultIoFile]
+    [message : String]) : unit
+    (match result
+      [(OkIoFile _)
+        (panic (string-append message "open unexpectedly succeeded"))]
+      [(ErrIoFile error)
+        (io-handle-test-assert-true (io-error-not-found? error) message)])))
+
+(cfg
+  test
+  (define (io-handle-test-assert-read-ok
+    [result : ResultIoRead]
+    [expected-bytes : String]
+    [expected-eof : bool]
+    [message : String]) : unit
+    (match result
+      [(OkIoRead read)
+        (begin
+          (io-handle-test-assert-owned-string-eq
+            (file-read-bytes read)
+            expected-bytes
+            (string-append message " bytes"))
+          (io-handle-test-assert-bool-eq
+            (file-read-eof? read)
+            expected-eof
+            (string-append message " eof")))]
+      [(ErrIoRead error)
+        (panic (string-append message (io-error-message error)))])))
+
+(cfg
+  test
+  (define (io-handle-test-assert-read-unsupported
+    [result : ResultIoRead]
+    [message : String]) : unit
+    (match result
+      [(OkIoRead _)
+        (panic (string-append message "read unexpectedly succeeded"))]
+      [(ErrIoRead error)
+        (io-handle-test-assert-true (io-error-unsupported? error) message)])))
+
+(cfg
+  test
+  (define (io-handle-test-assert-read-invalid
+    [result : ResultIoRead]
+    [message : String]) : unit
+    (match result
+      [(OkIoRead _)
+        (panic (string-append message "read unexpectedly succeeded"))]
+      [(ErrIoRead error)
+        (io-handle-test-assert-true (io-error-invalid-path? error) message)])))
+
+(cfg
+  test
+  (define (io-handle-test-try-read-file [path : String]) : ResultIoString
+    (try-read-file (& path))))
+
+(cfg
+  test
+  (define (io-handle-test-try-file-exists? [path : String]) : ResultIoBool
+    (try-file-exists? (& path))))
+
+(cfg
+  test
+  (define (io-handle-test-missing-path [prefix : String]) : String
+    (let
+      [index : i64 0]
+      [candidate : String (string-copy-borrowed (& prefix))]
+      [done : bool false]
+      (begin
+        (while (not done)
+          (let
+            [suffix : String (int->string index)]
+            [path : String (string-append-borrowed (& prefix) (& suffix))]
+            (match (io-handle-test-try-file-exists? path)
+              [(OkIoBool exists)
+                (if exists
+                  (set! index (+ index 1))
+                  (begin
+                    (set! candidate path)
+                    (set! done true)))]
+              [(ErrIoBool error) (panic (io-error-message error))])))
+        candidate))))
+
+(cfg
+  test
+  (define (io-handle-test-try-write-file [path : String] [contents : String]) : ResultIoUnit
+    (try-write-file (& path) (& contents))))
+
+(cfg
+  test
+  (define (io-handle-test-file-open [path : String] [mode : OpenMode]) : ResultIoFile
+    (file-open (& path) mode)))
+
+(cfg
+  test
+  (define (io-handle-test-file-write [handle : FileHandle] [contents : String]) : ResultIoUnit
+    (file-write handle (& contents))))
+
+(cfg
+  test
+  (define (io-handle-test-assert-file-contents
+    [path : String]
+    [expected : String]
+    [message : String]) : unit
+    (match (io-handle-test-try-read-file path)
+      [(OkIoString contents)
+        (io-handle-test-assert-owned-string-eq contents expected message)]
+      [(ErrIoString error)
+        (panic (string-append message (io-error-message error)))])))
+
+(cfg
+  test
+  (define (io-handle-test-assert-file-exists
+    [path : String]
+    [expected : bool]
+    [message : String]) : unit
+    (match (io-handle-test-try-file-exists? path)
+      [(OkIoBool exists)
+        (io-handle-test-assert-bool-eq exists expected message)]
+      [(ErrIoBool error)
+        (panic (string-append message (io-error-message error)))])))
+
+(cfg
+  test
+  (define (exercise-linux-file-handles) : unit
+    (let
+      [read-handle : FileHandle
+        (begin
+          (io-handle-test-assert-ok-unit
+            (io-handle-test-try-write-file handle-read-file "abcdef")
+            "seed read handle file: ")
+          (io-handle-test-expect-open-ok
+            (io-handle-test-file-open handle-read-file OpenRead)
+            "open read: "))]
+      (begin
+        (io-handle-test-assert-read-invalid
+          (file-read-chunk read-handle -1)
+          "negative read count returns invalid path")
+        (io-handle-test-assert-read-ok
+          (file-read-chunk read-handle 0)
+          ""
+          false
+          "zero read keeps current eof")
+        (io-handle-test-assert-read-ok
+          (file-read-chunk read-handle 2)
+          "ab"
+          false
+          "first fixed chunk")
+        (io-handle-test-assert-read-ok
+          (file-read-chunk read-handle 3)
+          "cde"
+          false
+          "second fixed chunk")
+        (io-handle-test-assert-read-ok
+          (file-read-chunk read-handle 10)
+          "f"
+          false
+          "short read before eof")
+        (io-handle-test-assert-read-ok
+          (file-read-chunk read-handle 10)
+          ""
+          true
+          "empty read observes eof")
+        (io-handle-test-assert-read-ok
+          (file-read-chunk read-handle 10)
+          ""
+          true
+          "eof remains sticky")
+        (io-handle-test-assert-ok-unit
+          (file-close read-handle)
+          "close read handle: ")
+        (io-handle-test-assert-read-unsupported
+          (file-read-chunk read-handle 1)
+          "read after close returns unsupported")
+        (io-handle-test-assert-close-unsupported
+          (file-close read-handle)
+          "double close returns unsupported")
+        (io-handle-test-assert-read-unsupported
+          (file-read-chunk (FileHandle 999) 1)
+          "invalid read handle returns unsupported")
+        (io-handle-test-assert-close-unsupported
+          (file-close (FileHandle 999))
+          "invalid handle returns unsupported")
+        (io-handle-test-assert-unit-unsupported
+          (io-handle-test-file-write (FileHandle 999) "x")
+          "write"
+          "invalid write handle returns unsupported")
+        (io-handle-test-assert-unit-unsupported
+          (file-flush (FileHandle 999))
+          "flush"
+          "invalid flush handle returns unsupported")
+        (io-handle-test-assert-open-not-found
+          (io-handle-test-file-open handle-missing-file OpenRead)
+          "missing read open")
+        (io-handle-test-assert-open-invalid
+          (io-handle-test-file-open "" OpenRead)
+          "empty path open")
+        (io-handle-test-assert-ok-unit
+          (io-handle-test-try-write-file handle-truncate-file "payload")
+          "seed truncate file: ")
+        (let
+          [truncate-handle : FileHandle
+            (io-handle-test-expect-open-ok
+              (io-handle-test-file-open handle-truncate-file OpenWriteTruncate)
+              "open truncate: ")]
+          (begin
+            (io-handle-test-assert-read-unsupported
+              (file-read-chunk truncate-handle 1)
+              "write-only handle read returns unsupported")
+            (io-handle-test-assert-ok-unit
+              (io-handle-test-file-write truncate-handle "alpha")
+              "write truncate alpha: ")
+            (io-handle-test-assert-ok-unit
+              (io-handle-test-file-write truncate-handle "")
+              "write truncate empty chunk: ")
+            (io-handle-test-assert-ok-unit
+              (io-handle-test-file-write truncate-handle "-beta")
+              "write truncate beta: ")
+            (io-handle-test-assert-ok-unit
+              (file-flush truncate-handle)
+              "flush truncate handle: ")
+            (io-handle-test-assert-ok-unit
+              (file-close truncate-handle)
+              "close truncate handle: ")
+            (io-handle-test-assert-file-contents
+              handle-truncate-file
+              "alpha-beta"
+              "truncate writes replace existing file")
+            (io-handle-test-assert-unit-unsupported
+              (io-handle-test-file-write truncate-handle "after-close")
+              "write"
+              "write after close returns unsupported")
+            (io-handle-test-assert-unit-unsupported
+              (file-flush truncate-handle)
+              "flush"
+              "flush after close returns unsupported")))
+        (io-handle-test-assert-ok-unit
+          (io-handle-test-try-write-file handle-truncate-file "readonly")
+          "seed read-only write test file: ")
+        (let
+          [read-only-handle : FileHandle
+            (io-handle-test-expect-open-ok
+              (io-handle-test-file-open handle-truncate-file OpenRead)
+              "open read-only for write test: ")]
+          (begin
+            (io-handle-test-assert-unit-unsupported
+              (io-handle-test-file-write read-only-handle "x")
+              "write"
+              "read-only handle write returns unsupported")
+            (io-handle-test-assert-unit-unsupported
+              (file-flush read-only-handle)
+              "flush"
+              "read-only handle flush returns unsupported")
+            (io-handle-test-assert-ok-unit
+              (file-close read-only-handle)
+              "close read-only handle: ")))
+        (io-handle-test-assert-ok-unit
+          (io-handle-test-try-write-file handle-append-file "seed")
+          "seed append file: ")
+        (let
+          [append-handle : FileHandle
+            (io-handle-test-expect-open-ok
+              (io-handle-test-file-open handle-append-file OpenWriteAppend)
+              "open append existing: ")]
+          (begin
+            (io-handle-test-assert-ok-unit
+              (io-handle-test-file-write append-handle "-tail")
+              "write append tail: ")
+            (io-handle-test-assert-ok-unit
+              (file-flush append-handle)
+              "flush append handle: ")
+            (io-handle-test-assert-ok-unit
+              (file-close append-handle)
+              "close append handle: ")
+            (io-handle-test-assert-file-contents
+              handle-append-file
+              "seed-tail"
+              "append mode writes at end of file")))
+        (let
+          [created-path : String
+            (io-handle-test-missing-path handle-created-file-prefix)]
+          [created-handle : FileHandle
+            (io-handle-test-expect-open-ok
+              (io-handle-test-file-open created-path OpenWriteAppend)
+              "open append create: ")]
+          (begin
+            (io-handle-test-assert-ok-unit
+              (io-handle-test-file-write created-handle "created")
+              "write append-created file: ")
+            (io-handle-test-assert-ok-unit
+              (file-flush created-handle)
+              "flush created handle: ")
+            (io-handle-test-assert-ok-unit
+              (file-close created-handle)
+              "close created handle: ")
+            (io-handle-test-assert-file-exists
+              created-path
+              true
+              "append mode creates a missing file")
+            (io-handle-test-assert-file-contents
+              created-path
+              "created"
+              "append-created file contains written bytes")))))))
+
+(cfg
+  test
+  (define (exercise-linux-file-handle-reuse) : unit
+    (let
+      [i : i64 0]
+      (begin
+        (io-handle-test-assert-ok-unit
+          (io-handle-test-try-write-file handle-read-file "reuse")
+          "seed reusable handle file: ")
+        (while (< i 1100)
+          (let
+            [handle : FileHandle
+              (io-handle-test-expect-open-ok
+                (io-handle-test-file-open handle-read-file OpenRead)
+                "reopen reusable read handle: ")]
+            (begin
+              (io-handle-test-assert-ok-unit
+                (file-close handle)
+                "close reusable handle: ")
+              (set! i (+ i 1)))))
+        unit))))
+
+(cfg
+  test
+  (define (io-handle-test-main) : i64
+    (begin
+      (cfg
+        windows
+        (begin
+          (io-handle-test-assert-open-not-found
+            (io-handle-test-file-open handle-missing-file OpenRead)
+            "windows missing read handle reports not found")
+          (io-handle-test-assert-read-unsupported
+            (file-read-chunk (FileHandle 1) 1)
+            "windows file reads are unsupported")
+          (io-handle-test-assert-unit-unsupported
+            (io-handle-test-file-write (FileHandle 1) "x")
+            "write"
+            "windows file writes are unsupported")
+          (io-handle-test-assert-unit-unsupported
+            (file-flush (FileHandle 1))
+            "flush"
+            "windows file flush is unsupported"))
+        (begin
+          (exercise-linux-file-handles)
+          (exercise-linux-file-handle-reuse)))
+      42)))
+
+(cfg
+  test
+  (test
+    io-file-handle-api
+    (if (= (io-handle-test-main) 42)
+      unit
+      (io-handle-test-fail "io-file-handle-api did not return 42"))))

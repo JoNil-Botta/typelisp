@@ -49,16 +49,6 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
   macro behavior lives inline in `core_macros.tl` and `io.tl`. The adjacent
   `core_macros_cond_*` check fixtures cover flat-syntax rejection and
   post-expansion `cond` diagnostics.
-- `io_edges.tl` covers `IoError` rendering, `try-read-file`,
-  `try-write-file`, `try-file-exists?`, `try-append-file`, `read-file-or`,
-  `append-file`, and `file-nonempty?` on missing, empty-path, directory-read,
-  missing-parent write, empty-file, and existing-file paths without masking host
-  I/O failures.
-- `io_file_handle.tl` covers `FileHandle` open/close success, streaming chunk
-  reads, streaming writes/flush, zero-byte reads, EOF stickiness, negative
-  counts, invalid/read-after-close and mode-mismatch failures, empty-path and
-  missing-file open failures, write-truncate writes, write-append writes and
-  creation, and the Windows unsupported result.
 - `io_stdio_lines.tl` covers stdin line wrappers, blank-line vs EOF state,
   stdout/stderr write-line helpers, and stdout flushing with fixture stdin.
 - `io_stdio_bytes.tl` covers fixed-byte stdin wrappers, short reads at EOF, and
@@ -66,13 +56,6 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
 - `io_stdio_pipe_short_read.tl` is typechecked like the other witnesses and is
   also run by `scripts/verify-stdlib.sh` through a native pipe to ensure
   positive short pipe reads do not report EOF before all bytes arrive.
-- `fs_path_join_many_api.tl` covers the variadic path-join macro for zero,
-  single, two, three, four, and duplicate-separator joins.
-- `fs_api.tl` covers path joins, dirname/basename/extension helpers, temp-dir
-  creation, recoverable cleanup helpers, Linux file/directory rename behavior,
-  directory iteration through list and vector wrappers, read-dir split order,
-  missing and empty rename paths, and Windows unsupported rename/read-dir
-  results.
 - `stdlib/hashmap.tl` inline tests cover the compatibility `StringI64Map`,
   generated `StringStringMap`, `I64I64Map`, and aggregate key/value map
   families, key descriptor identities, borrowed string-key wrappers,
@@ -140,7 +123,10 @@ Inline stdlib coverage:
   `and`/`or`, guard macros, bracket-arm `cond` result types, and
   short-circuiting.
 - `io.tl` owns inline coverage that bare prelude `and`/`or`/`when`/`unless`
-  macros remain available beside a runtime stdlib module.
+  macros remain available beside a runtime stdlib module, plus recoverable
+  `IoError` rendering, `try-read-file`, `try-write-file`, `try-file-exists?`,
+  `try-append-file`, `read-file-or`, `append-file`, `file-nonempty?`, and
+  `FileHandle` open/close/read/write/flush/EOF/mode-mismatch behavior.
 - `json.tl` owns inline tests for the JSON data model, list/member helpers,
   escape helpers, parser subroutines, deterministic finite f64/f32 number
   conversion, serializer helpers, and end-to-end parse/stringify behavior for
@@ -177,6 +163,11 @@ Inline stdlib coverage:
   exact-capacity caller-owned copies, trailing NUL writes, too-small buffers,
   interior NUL rejection, and active-arena pointer allocation through
   `ffi-c-string-alloc` / `ffi-cstr`.
+- `fs.tl` owns inline tests for variadic path joins, dirname/basename/extension
+  helpers, path normalization, safe relative paths, temp-dir creation,
+  recoverable cleanup helpers, Linux file/directory rename behavior, directory
+  iteration through list and vector wrappers, read-dir split order, metadata
+  helpers, current directory helpers, and Windows rename coverage.
 - `string_caller_result.tl` owns inline tests for borrowed no-match results,
   owned replacement results, the branch-selecting `string-replace-result`
   helper, and explicit owned materialization.

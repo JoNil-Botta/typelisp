@@ -38,11 +38,7 @@
 (include-str compiler-embedded-stdlib-tests-cpu-api "stdlib/tests/cpu_api.tl")
 (include-str compiler-embedded-stdlib-tests-core-macros-api "stdlib/tests/core_macros_api.tl")
 (include-str compiler-embedded-stdlib-tests-comptime-api "stdlib/tests/comptime_api.tl")
-(include-str compiler-embedded-stdlib-tests-fs-api "stdlib/tests/fs_api.tl")
-(include-str compiler-embedded-stdlib-tests-fs-path-join-many-api "stdlib/tests/fs_path_join_many_api.tl")
 (include-str compiler-embedded-stdlib-tests-hashmap-mut-borrow-insert-or-update-live "stdlib/tests/hashmap_mut_borrow_insert_or_update_live.tl")
-(include-str compiler-embedded-stdlib-tests-io-edges "stdlib/tests/io_edges.tl")
-(include-str compiler-embedded-stdlib-tests-io-file-handle "stdlib/tests/io_file_handle.tl")
 (include-str compiler-embedded-stdlib-tests-io-stdio-bytes "stdlib/tests/io_stdio_bytes.tl")
 (include-str compiler-embedded-stdlib-tests-io-stdio-lines "stdlib/tests/io_stdio_lines.tl")
 (include-str compiler-embedded-stdlib-tests-io-stdio-pipe-short-read "stdlib/tests/io_stdio_pipe_short_read.tl")
@@ -215,35 +211,11 @@
           (CompilerEmbeddedStdlibSomeSource
             compiler-embedded-stdlib-tests-core-macros-api))
         unit)
-      (if (string-eq suffix "tests/fs_api.tl")
-        (set!
-          source
-          (CompilerEmbeddedStdlibSomeSource
-            compiler-embedded-stdlib-tests-fs-api))
-        unit)
-      (if (string-eq suffix "tests/fs_path_join_many_api.tl")
-        (set!
-          source
-          (CompilerEmbeddedStdlibSomeSource
-            compiler-embedded-stdlib-tests-fs-path-join-many-api))
-        unit)
       (if (string-eq suffix "tests/hashmap_mut_borrow_insert_or_update_live.tl")
         (set!
           source
           (CompilerEmbeddedStdlibSomeSource
             compiler-embedded-stdlib-tests-hashmap-mut-borrow-insert-or-update-live))
-        unit)
-      (if (string-eq suffix "tests/io_edges.tl")
-        (set!
-          source
-          (CompilerEmbeddedStdlibSomeSource
-            compiler-embedded-stdlib-tests-io-edges))
-        unit)
-      (if (string-eq suffix "tests/io_file_handle.tl")
-        (set!
-          source
-          (CompilerEmbeddedStdlibSomeSource
-            compiler-embedded-stdlib-tests-io-file-handle))
         unit)
       (if (string-eq suffix "tests/io_stdio_bytes.tl")
         (set!

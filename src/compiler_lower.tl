@@ -8818,6 +8818,157 @@
           false)]
       [(NoneI64) false])))
 
+(define (lower-atomic-public-symbol? [symbol : String]) : bool
+  (or
+    (string-eq symbol "tl_atomic_i64_load")
+    (string-eq symbol "tl_atomic_i64_store")
+    (string-eq symbol "tl_atomic_i64_add")
+    (string-eq symbol "tl_atomic_i64_fetch_add")
+    (string-eq symbol "tl_atomic_i32_load")
+    (string-eq symbol "tl_atomic_i32_store")
+    (string-eq symbol "tl_atomic_i32_add")
+    (string-eq symbol "tl_atomic_i32_fetch_add")))
+
+(define (lower-atomic-public-name? [name : String]) : bool
+  (or
+    (string-eq name "atomic-i64-load")
+    (string-eq name "atomic-i64-store!")
+    (string-eq name "atomic-i64-add!")
+    (string-eq name "atomic-i64-fetch-add!")
+    (string-eq name "atomic-i32-load")
+    (string-eq name "atomic-i32-store!")
+    (string-eq name "atomic-i32-add!")
+    (string-eq name "atomic-i32-fetch-add!")))
+
+(define (lower-atomic-name-candidate? [name : String]) : bool
+  (or
+    (lower-atomic-public-name? name)
+    (lower-atomic-public-symbol? name)
+    (and
+      (tc-name-qualified? name)
+      (lower-atomic-public-name? (tc-qualified-name-base name)))))
+
+(define (lower-atomic-symbol-for-name [name : String]) : String
+  (if (string-eq name "atomic-i64-load")
+    "tl_atomic_i64_load"
+    (if (string-eq name "atomic-i64-store!")
+      "tl_atomic_i64_store"
+      (if (string-eq name "atomic-i64-add!")
+        "tl_atomic_i64_add"
+        (if (string-eq name "atomic-i64-fetch-add!")
+          "tl_atomic_i64_fetch_add"
+          (if (string-eq name "atomic-i32-load")
+            "tl_atomic_i32_load"
+            (if (string-eq name "atomic-i32-store!")
+              "tl_atomic_i32_store"
+              (if (string-eq name "atomic-i32-add!")
+                "tl_atomic_i32_add"
+                (if (string-eq name "atomic-i32-fetch-add!")
+                  "tl_atomic_i32_fetch_add"
+                  "")))))))))
+
+(define (lower-atomic-import-path? [path : String]) : bool
+  (or (string-eq path "stdlib/atomic.tl") (string-eq path "atomic.tl")))
+
+(define (lower-program-imports-atomic? [decls : AstDeclList]) : bool
+  (match decls
+    [(AstDeclNil) false]
+    [(AstDeclCons decl rest)
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (match decl
+          [(AstDeclImport (AstImportSpec _ path _ _ _))
+            (or
+              (lower-atomic-import-path? path)
+              (lower-program-imports-atomic? rest))]
+          [_ (lower-program-imports-atomic? rest)]))]))
+
+(define (lower-context-imports-atomic? [ctx : TcContext]) : bool
+  (match ctx
+    [(TcContext program _ _ _)
+      (match program
+        [(AstProgram decls-box)
+          (lower-program-imports-atomic? (box-get decls-box))])]))
+
+(define (lower-atomic-imported-symbol-for-name
+  [ctx : TcContext]
+  [name : String]) : String
+  (if (and (lower-atomic-public-name? name) (lower-context-imports-atomic? ctx))
+    (lower-atomic-symbol-for-name name)
+    ""))
+
+(define (lower-atomic-extern-symbol-from-handle
+  [symbols : CompilerSymbols]
+  [handle : i64]) : String
+  (if (= (compiler-symbol-handle-kind handle) (compiler-symbol-kind-extern))
+    (match (compiler-symbols-decl-at-index
+      symbols
+      (compiler-symbol-handle-index handle))
+      [(OkAstDecl decl)
+        (match decl
+          [(AstDeclExtern _ kind metadata _)
+            (match kind
+              [(AstExternFunction)
+                (let
+                  [symbol : String (ast-extern-metadata-symbol metadata)]
+                  (if (lower-atomic-public-symbol? symbol)
+                    symbol
+                    ""))]
+              [(AstExternValue) ""])]
+          [_ ""])]
+      [(ErrAstDecl _) ""])
+    ""))
+
+(define (lower-atomic-extern-symbol-lookup
+  [symbols : CompilerSymbols]
+  [lookup-name : String]) : String
+  (match (lower-symbols-lookup-value-hygiene symbols lookup-name)
+    [(SomeI64 handle) (lower-atomic-extern-symbol-from-handle symbols handle)]
+    [(NoneI64) ""]))
+
+(define (lower-atomic-extern-symbol-for-name [ctx : TcContext] [name : String]) : String
+  (if (not (lower-atomic-name-candidate? name))
+    ""
+    (let
+      [symbols : CompilerSymbols (tc-context-symbols ctx)]
+      [direct : String (lower-atomic-extern-symbol-lookup symbols name)]
+      [source-name : String (tc-hygiene-global-symbol-name name)]
+      [module : String (tc-context-module ctx)]
+      [lookup-name : String
+        (if (and
+          (> (string-length module) 0)
+          (not (tc-name-qualified? source-name)))
+          (compiler-symbol-module-key module source-name)
+          source-name)]
+      [found : String (lower-atomic-extern-symbol-lookup symbols lookup-name)]
+      (if (> (string-length direct) 0)
+        direct
+        (if (or (> (string-length found) 0) (string-eq lookup-name source-name))
+          (if (> (string-length found) 0)
+            found
+            (lower-atomic-imported-symbol-for-name ctx source-name))
+          (lower-atomic-extern-symbol-lookup symbols source-name))))))
+
+(define (lower-atomic-extern-symbol-for-func
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [func : AstExpr]) : String
+  (match (ast-expr-unspan func)
+    [(AstExprVar raw-name)
+      (let
+        [raw-text : String (intern-str raw-name)]
+        (if (tc-hygiene-global-name? raw-text)
+          (lower-atomic-extern-symbol-for-name
+            ctx
+            (tc-hygiene-global-call-name raw-text))
+          (if (tc-name-qualified? raw-text)
+            (lower-atomic-extern-symbol-for-name ctx raw-text)
+            (match (tc-source-name-lookup-key ctx type-env raw-text)
+              [(OkTcString lookup-name)
+                (lower-atomic-extern-symbol-for-name ctx lookup-name)]
+              [(ErrTcString _) ""]))))]
+    [_ ""]))
+
 ;; The symbol table is keyed by the module key (module/name) and the bare source
 ;; name alias, never by the `::` logical/mangled name returned by
 ;; lower-resolve-name. Look up the bare source name so a function used as a value
@@ -18332,31 +18483,31 @@
                     [name-id : i64 (intern name)]
                     [builtin-available : bool
                       (not (lower-top-level-value-defined? ctx name))]
-                    (if (and builtin-available (tc-layout-query-name? name))
-                      (ErrLowerExpr
-                        (lower-diagnostic-at-expr
-                          origin
-                          (string-append
-                            "lower: "
+                    [atomic-symbol : String
+                      (lower-atomic-extern-symbol-for-name ctx name)]
+                    (if (> (string-length atomic-symbol) 0)
+                      (lower-atomic-call
+                        ctx
+                        state
+                        env
+                        type-env
+                        atomic-symbol
+                        args
+                        result-ty
+                        origin)
+                      (if (and builtin-available (tc-layout-query-name? name))
+                        (ErrLowerExpr
+                          (lower-diagnostic-at-expr
+                            origin
                             (string-append
-                              name
-                              " is compile-time only; wrap it in (comptime ...)"))))
-                      (if (and
-                        builtin-available
-                        (compiler-builtin-lower-string-ref-call-id? name-id))
-                        (lower-string-ref-call
-                          ctx
-                          state
-                          env
-                          type-env
-                          name
-                          args
-                          result-ty
-                          origin)
+                              "lower: "
+                              (string-append
+                                name
+                                " is compile-time only; wrap it in (comptime ...)"))))
                         (if (and
                           builtin-available
-                          (compiler-builtin-lower-length-call-id? name-id))
-                          (lower-array-length
+                          (compiler-builtin-lower-string-ref-call-id? name-id))
+                          (lower-string-ref-call
                             ctx
                             state
                             env
@@ -18367,8 +18518,8 @@
                             origin)
                           (if (and
                             builtin-available
-                            (lower-string-runtime-builtin? name))
-                            (lower-string-runtime-call
+                            (compiler-builtin-lower-length-call-id? name-id))
+                            (lower-array-length
                               ctx
                               state
                               env
@@ -18379,82 +18530,94 @@
                               origin)
                             (if (and
                               builtin-available
-                              (compiler-builtin-lower-cpuid-id? name-id))
-                              (lower-cpuid-call
+                              (lower-string-runtime-builtin? name))
+                              (lower-string-runtime-call
                                 ctx
                                 state
                                 env
                                 type-env
+                                name
                                 args
                                 result-ty
                                 origin)
                               (if (and
                                 builtin-available
-                                (compiler-builtin-lower-xgetbv-id? name-id))
-                                (lower-xgetbv-call
+                                (compiler-builtin-lower-cpuid-id? name-id))
+                                (lower-cpuid-call
                                   ctx
                                   state
                                   env
                                   type-env
                                   args
+                                  result-ty
                                   origin)
                                 (if (and
                                   builtin-available
-                                  (compiler-builtin-lower-clone-id? name-id))
-                                  (match args
-                                    [(AstExprCons arg tail)
-                                      (let
-                                        [arg : AstExpr (ast-node-get arg)]
-                                        [tail : AstExprList (box-get tail)]
-                                        (match tail
-                                          [(AstExprNil)
-                                            (lower-clone-call
-                                              ctx
-                                              state
-                                              env
-                                              type-env
-                                              arg)]
-                                          [_
-                                            (ErrLowerExpr
-                                              (lower-diagnostic
-                                                "lower: clone expects one argument"))]))]
-                                    [_
-                                      (ErrLowerExpr
-                                        (lower-diagnostic
-                                          "lower: clone expects one argument"))])
+                                  (compiler-builtin-lower-xgetbv-id? name-id))
+                                  (lower-xgetbv-call
+                                    ctx
+                                    state
+                                    env
+                                    type-env
+                                    args
+                                    origin)
                                   (if (and
                                     builtin-available
-                                    (lower-arena-builtin-id? name-id))
-                                    (lower-arena-builtin-call
-                                      ctx
-                                      state
-                                      env
-                                      type-env
-                                      name
-                                      args
-                                      result-ty)
+                                    (compiler-builtin-lower-clone-id? name-id))
+                                    (match args
+                                      [(AstExprCons arg tail)
+                                        (let
+                                          [arg : AstExpr (ast-node-get arg)]
+                                          [tail : AstExprList (box-get tail)]
+                                          (match tail
+                                            [(AstExprNil)
+                                              (lower-clone-call
+                                                ctx
+                                                state
+                                                env
+                                                type-env
+                                                arg)]
+                                            [_
+                                              (ErrLowerExpr
+                                                (lower-diagnostic
+                                                  "lower: clone expects one argument"))]))]
+                                      [_
+                                        (ErrLowerExpr
+                                          (lower-diagnostic
+                                            "lower: clone expects one argument"))])
                                     (if (and
                                       builtin-available
-                                      (lower-bootstrap-runtime-builtin-id?
-                                        name-id))
-                                      (lower-bootstrap-runtime-call
+                                      (lower-arena-builtin-id? name-id))
+                                      (lower-arena-builtin-call
                                         ctx
                                         state
                                         env
                                         type-env
                                         name
                                         args
-                                        result-ty
-                                        origin)
-                                      (lower-call-non-builtin
-                                        ctx
-                                        state
-                                        env
-                                        type-env
-                                        name
-                                        args
-                                        result-ty
-                                        origin)))))))))))]
+                                        result-ty)
+                                      (if (and
+                                        builtin-available
+                                        (lower-bootstrap-runtime-builtin-id?
+                                          name-id))
+                                        (lower-bootstrap-runtime-call
+                                          ctx
+                                          state
+                                          env
+                                          type-env
+                                          name
+                                          args
+                                          result-ty
+                                          origin)
+                                        (lower-call-non-builtin
+                                          ctx
+                                          state
+                                          env
+                                          type-env
+                                          name
+                                          args
+                                          result-ty
+                                          origin))))))))))))]
                 [(ErrTcString message)
                   (ErrLowerExpr (lower-diagnostic-at-expr origin message))])])))]
     [_
@@ -19039,6 +19202,269 @@
                         arr-value
                         idx-off
                         elem-ty)])])])])]))
+
+(define (lower-atomic-elem-type [symbol : String]) : AstType
+  (if (or
+    (string-eq symbol "tl_atomic_i32_load")
+    (string-eq symbol "tl_atomic_i32_store")
+    (string-eq symbol "tl_atomic_i32_add")
+    (string-eq symbol "tl_atomic_i32_fetch_add"))
+    (AstTyI32)
+    (AstTyI64)))
+
+(define (lower-atomic-raw-symbol [symbol : String]) : String
+  (if (string-eq symbol "tl_atomic_i64_load")
+    "tl_atomic_i64_load_ptr"
+    (if (string-eq symbol "tl_atomic_i64_store")
+      "tl_atomic_i64_store_ptr"
+      (if (string-eq symbol "tl_atomic_i64_add")
+        "tl_atomic_i64_add_ptr"
+        (if (string-eq symbol "tl_atomic_i64_fetch_add")
+          "tl_atomic_i64_fetch_add_ptr"
+          (if (string-eq symbol "tl_atomic_i32_load")
+            "tl_atomic_i32_load_ptr"
+            (if (string-eq symbol "tl_atomic_i32_store")
+              "tl_atomic_i32_store_ptr"
+              (if (string-eq symbol "tl_atomic_i32_add")
+                "tl_atomic_i32_add_ptr"
+                "tl_atomic_i32_fetch_add_ptr"))))))))
+
+(define (lower-atomic-load-symbol? [symbol : String]) : bool
+  (or
+    (string-eq symbol "tl_atomic_i64_load")
+    (string-eq symbol "tl_atomic_i32_load")))
+
+(define (lower-atomic-emit-load
+  [ctx : TcContext]
+  [state : LowerState]
+  [ptr : CompilerIrValue]
+  [symbol : String]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc allocated var-id)
+      (OkLowerExpr
+        (LowerExpr
+          (lower-state-emit-at-expr
+            allocated
+            (IrInstrCall
+              var-id
+              (lower-atomic-raw-symbol symbol)
+              (IrCallArgsOne ptr)
+              (lower-one-word-register-storage-type ctx result-ty))
+            origin)
+          (IrValueVar var-id)
+          result-ty))]))
+
+(define (lower-atomic-emit-update
+  [ctx : TcContext]
+  [state : LowerState]
+  [ptr : CompilerIrValue]
+  [value : CompilerIrValue]
+  [symbol : String]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc allocated var-id)
+      (OkLowerExpr
+        (LowerExpr
+          (lower-state-emit-at-expr
+            allocated
+            (IrInstrCall
+              var-id
+              (lower-atomic-raw-symbol symbol)
+              (IrCallArgsTwo ptr value)
+              (lower-one-word-register-storage-type ctx result-ty))
+            origin)
+          (IrValueVar var-id)
+          result-ty))]))
+
+(define (lower-atomic-array-element-address
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [array : AstExpr]
+  [index : AstExpr]
+  [elem-ty : AstType]) : ResultLowerExpr
+  (match (lower-expr-expected
+    ctx
+    state
+    env
+    type-env
+    array
+    (ast-ty-dyn-array elem-ty)
+    array)
+    [(OkLowerExpr arr-lowered)
+      (match arr-lowered
+        [(LowerExpr arr-state arr-value _)
+          (match (lower-index-result-type-or-check
+            ctx
+            env
+            type-env
+            (lower-state-type-cache arr-state)
+            index)
+            [(OkTcType idx-ty)
+              (match (lower-expr ctx arr-state env type-env index)
+                [(OkLowerExpr idx-lowered)
+                  (match idx-lowered
+                    [(LowerExpr idx-state idx-value _)
+                      (OkLowerExpr
+                        (lower-array-element-addr
+                          ctx
+                          idx-state
+                          arr-value
+                          idx-value
+                          idx-ty
+                          elem-ty))])]
+                [(ErrLowerExpr message) (ErrLowerExpr message)])]
+            [(ErrTcType message)
+              (ErrLowerExpr (lower-diagnostic-at-expr index message))])])]
+    [(ErrLowerExpr message) (ErrLowerExpr message)]))
+
+(define (lower-atomic-call-load
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [symbol : String]
+  [array : AstExpr]
+  [index : AstExpr]
+  [elem-ty : AstType]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match (lower-atomic-array-element-address
+    ctx
+    state
+    env
+    type-env
+    array
+    index
+    elem-ty)
+    [(OkLowerExpr addr)
+      (match addr
+        [(LowerExpr addr-state ptr _)
+          (lower-atomic-emit-load ctx addr-state ptr symbol result-ty origin)])]
+    [(ErrLowerExpr message) (ErrLowerExpr message)]))
+
+(define (lower-atomic-call-update
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [symbol : String]
+  [array : AstExpr]
+  [index : AstExpr]
+  [value : AstExpr]
+  [elem-ty : AstType]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match (lower-atomic-array-element-address
+    ctx
+    state
+    env
+    type-env
+    array
+    index
+    elem-ty)
+    [(OkLowerExpr addr)
+      (match addr
+        [(LowerExpr addr-state ptr _)
+          (match (lower-expr-expected
+            ctx
+            addr-state
+            env
+            type-env
+            value
+            elem-ty
+            value)
+            [(OkLowerExpr value-lowered)
+              (match value-lowered
+                [(LowerExpr value-state value-ir _)
+                  (lower-atomic-emit-update
+                    ctx
+                    value-state
+                    ptr
+                    value-ir
+                    symbol
+                    result-ty
+                    origin)])]
+            [(ErrLowerExpr message) (ErrLowerExpr message)])])]
+    [(ErrLowerExpr message) (ErrLowerExpr message)]))
+
+(define (lower-atomic-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [symbol : String]
+  [args : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (let
+    [elem-ty : AstType (lower-atomic-elem-type symbol)]
+    (match args
+      [(AstExprCons array-node tail0)
+        (let
+          [array : AstExpr (ast-node-get array-node)]
+          [tail0 : AstExprList (box-get tail0)]
+          (match tail0
+            [(AstExprCons index-node tail1)
+              (let
+                [index : AstExpr (ast-node-get index-node)]
+                [tail1 : AstExprList (box-get tail1)]
+                (if (lower-atomic-load-symbol? symbol)
+                  (match tail1
+                    [(AstExprNil)
+                      (lower-atomic-call-load
+                        ctx
+                        state
+                        env
+                        type-env
+                        symbol
+                        array
+                        index
+                        elem-ty
+                        result-ty
+                        origin)]
+                    [_
+                      (ErrLowerExpr
+                        (lower-diagnostic
+                          "lower: atomic load expects two arguments"))])
+                  (match tail1
+                    [(AstExprCons value-node tail2)
+                      (let
+                        [value : AstExpr (ast-node-get value-node)]
+                        [tail2 : AstExprList (box-get tail2)]
+                        (match tail2
+                          [(AstExprNil)
+                            (lower-atomic-call-update
+                              ctx
+                              state
+                              env
+                              type-env
+                              symbol
+                              array
+                              index
+                              value
+                              elem-ty
+                              result-ty
+                              origin)]
+                          [_
+                            (ErrLowerExpr
+                              (lower-diagnostic
+                                "lower: atomic update expects three arguments"))]))]
+                    [(AstExprNil)
+                      (ErrLowerExpr
+                        (lower-diagnostic
+                          "lower: atomic update expects three arguments"))])))]
+            [(AstExprNil)
+              (ErrLowerExpr
+                (lower-diagnostic
+                  "lower: atomic helper expects at least two arguments"))]))]
+      [(AstExprNil)
+        (ErrLowerExpr
+          (lower-diagnostic "lower: atomic helper expects arguments"))])))
 
 ;; Fixed arrays are inline element storage. Bounds check against the static
 ;; length, then Gep directly from the array handle without loading dynamic-array
@@ -23393,6 +23819,117 @@
                 (lower-vector-body-has-array-read? init)
                 (lower-vector-let-bindings-have-array-read? next)))]))]))
 
+(define (lower-vector-body-has-atomic-call?
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [expr : AstExpr]) : bool
+  (match expr
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lower-vector-body-has-atomic-call? ctx type-env inner))]
+    [(AstExprAnn inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lower-vector-body-has-atomic-call? ctx type-env inner))]
+    [(AstExprCast inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lower-vector-body-has-atomic-call? ctx type-env inner))]
+    [(AstExprUnary _ inner-box)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lower-vector-body-has-atomic-call? ctx type-env inner))]
+    [(AstExprBinary _ left-box right-box)
+      (let
+        [left : AstExpr (ast-node-get left-box)]
+        [right : AstExpr (ast-node-get right-box)]
+        (or
+          (lower-vector-body-has-atomic-call? ctx type-env left)
+          (lower-vector-body-has-atomic-call? ctx type-env right)))]
+    [(AstExprIf cond-box then-box else-box)
+      (let
+        [cond : AstExpr (ast-node-get cond-box)]
+        [then-branch : AstExpr (ast-node-get then-box)]
+        [else-branch : AstExpr (ast-node-get else-box)]
+        (or
+          (lower-vector-body-has-atomic-call? ctx type-env cond)
+          (lower-vector-body-has-atomic-call? ctx type-env then-branch)
+          (lower-vector-body-has-atomic-call? ctx type-env else-branch)))]
+    [(AstExprLet bindings body-box)
+      (let
+        [body : AstExpr (ast-node-get body-box)]
+        (or
+          (lower-vector-let-bindings-have-atomic-call? ctx type-env bindings)
+          (lower-vector-body-has-atomic-call? ctx type-env body)))]
+    [(AstExprBegin exprs)
+      (lower-vector-expr-list-has-atomic-call? ctx type-env exprs)]
+    [(AstExprCall func-box args)
+      (let
+        [func : AstExpr (ast-node-get func-box)]
+        (or
+          (>
+            (string-length
+              (lower-atomic-extern-symbol-for-func ctx type-env func))
+            0)
+          (lower-vector-body-has-atomic-call? ctx type-env func)
+          (lower-vector-expr-list-has-atomic-call? ctx type-env args)))]
+    [(AstExprArrayRef arr-box idx-box)
+      (let
+        [arr : AstExpr (ast-node-get arr-box)]
+        [idx : AstExpr (ast-node-get idx-box)]
+        (or
+          (lower-vector-body-has-atomic-call? ctx type-env arr)
+          (lower-vector-body-has-atomic-call? ctx type-env idx)))]
+    [(AstExprArraySet arr-box idx-box value-box)
+      (let
+        [arr : AstExpr (ast-node-get arr-box)]
+        [idx : AstExpr (ast-node-get idx-box)]
+        [value : AstExpr (ast-node-get value-box)]
+        (or
+          (lower-vector-body-has-atomic-call? ctx type-env arr)
+          (lower-vector-body-has-atomic-call? ctx type-env idx)
+          (lower-vector-body-has-atomic-call? ctx type-env value)))]
+    [(AstExprStructSet receiver-box _ value-box)
+      (let
+        [receiver : AstExpr (ast-node-get receiver-box)]
+        [value : AstExpr (ast-node-get value-box)]
+        (or
+          (lower-vector-body-has-atomic-call? ctx type-env receiver)
+          (lower-vector-body-has-atomic-call? ctx type-env value)))]
+    [_ false]))
+
+(define (lower-vector-expr-list-has-atomic-call?
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [exprs : AstExprList]) : bool
+  (match exprs
+    [(AstExprNil) false]
+    [(AstExprCons expr rest)
+      (let
+        [inner : AstExpr (ast-node-get expr)]
+        [next : AstExprList (box-get rest)]
+        (or
+          (lower-vector-body-has-atomic-call? ctx type-env inner)
+          (lower-vector-expr-list-has-atomic-call? ctx type-env next)))]))
+
+(define (lower-vector-let-bindings-have-atomic-call?
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [bindings : AstLetBindingList]) : bool
+  (match bindings
+    [(AstLetBindingNil) false]
+    [(AstLetBindingCons binding rest)
+      (let
+        [next : AstLetBindingList (box-get rest)]
+        (match binding
+          [(AstLetBinding _ _ init-box)
+            (let
+              [init : AstExpr (ast-node-get init-box)]
+              (or
+                (lower-vector-body-has-atomic-call? ctx type-env init)
+                (lower-vector-let-bindings-have-atomic-call? ctx type-env next)))]))]))
+
 (define (lower-simple-vector-map-binop-supported?
   [mode : CompilerLowerMode]
   [elem-ty : AstType]
@@ -26669,78 +27206,89 @@
             index
             body))]
       [LowerNoVectorMap
-        (match (lower-masked-vector-map
-          (lower-state-mode state)
-          env
-          type-env
-          index
-          body)
-          [(LowerSomeMaskedVectorMap _)
-            (lower-avx512-masked-foreach-lowered
-              ctx
-              state
-              env
-              type-env
-              index
-              index-ty
-              start-value
-              end-value
-              body
-              (lower-masked-vector-map
+        (if (lower-vector-body-has-atomic-call? ctx type-env body)
+          (lower-scalar-foreach-lowered
+            ctx
+            state
+            env
+            type-env
+            index
+            index-ty
+            start-value
+            end-value
+            body)
+          (match (lower-masked-vector-map
+            (lower-state-mode state)
+            env
+            type-env
+            index
+            body)
+            [(LowerSomeMaskedVectorMap _)
+              (lower-avx512-masked-foreach-lowered
+                ctx
+                state
+                env
+                type-env
+                index
+                index-ty
+                start-value
+                end-value
+                body
+                (lower-masked-vector-map
+                  (lower-state-mode state)
+                  env
+                  type-env
+                  index
+                  body))]
+            [LowerNoMaskedVectorMap
+              (if (lower-masked-vector-body-has-varying-if?
                 (lower-state-mode state)
                 env
                 type-env
                 index
-                body))]
-          [LowerNoMaskedVectorMap
-            (if (lower-masked-vector-body-has-varying-if?
-              (lower-state-mode state)
-              env
-              type-env
-              index
-              body)
-              (ErrLowerExpr
-                (lower-diagnostic-at-expr
-                  body
-                  (if (lower-mode-avx2? (lower-state-mode state))
-                    (lower-avx2-masked-if-diagnostic)
-                    "lower: SPMD masked if AVX-512 lowering is not available for this backend mode or branch shape")))
-              (if (and
-                (lower-mode-avx2? (lower-state-mode state))
-                (lower-masked-vector-body-has-bool-array-lane?
-                  env
-                  type-env
-                  index
-                  body))
+                body)
                 (ErrLowerExpr
                   (lower-diagnostic-at-expr
                     body
-                    (lower-spmd-bool-lane-diagnostic)))
-                (if (lower-vector-body-has-array-read? body)
-                  (if (lower-simple-vector-map-has-unsupported-byte-mul?
-                    (lower-state-mode state)
+                    (if (lower-mode-avx2? (lower-state-mode state))
+                      (lower-avx2-masked-if-diagnostic)
+                      "lower: SPMD masked if AVX-512 lowering is not available for this backend mode or branch shape")))
+                (if (and
+                  (lower-mode-avx2? (lower-state-mode state))
+                  (lower-masked-vector-body-has-bool-array-lane?
                     env
                     type-env
                     index
-                    body)
-                    (ErrLowerExpr
-                      (lower-diagnostic-at-expr
-                        body
-                        (lower-spmd-byte-mul-diagnostic)))
-                    (ErrLowerExpr
-                      (lower-diagnostic-at-expr
-                        body
-                        (lower-simd-foreach-fallback-diagnostic))))
-                  (lower-scalar-foreach-lowered
-                    ctx
-                    state
-                    env
-                    type-env
-                    index
-                    index-ty
-                    start-value
-                    end-value
-                    body))))])])
+                    body))
+                  (ErrLowerExpr
+                    (lower-diagnostic-at-expr
+                      body
+                      (lower-spmd-bool-lane-diagnostic)))
+                  (if (lower-vector-body-has-array-read? body)
+                    (if (lower-simple-vector-map-has-unsupported-byte-mul?
+                      (lower-state-mode state)
+                      env
+                      type-env
+                      index
+                      body)
+                      (ErrLowerExpr
+                        (lower-diagnostic-at-expr
+                          body
+                          (lower-spmd-byte-mul-diagnostic)))
+                      (ErrLowerExpr
+                        (lower-diagnostic-at-expr
+                          body
+                          (lower-simd-foreach-fallback-diagnostic))))
+                    (lower-scalar-foreach-lowered
+                      ctx
+                      state
+                      env
+                      type-env
+                      index
+                      index-ty
+                      start-value
+                      end-value
+                      body))))]))])
     (lower-scalar-foreach-lowered
       ctx
       state

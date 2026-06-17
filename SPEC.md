@@ -3513,7 +3513,9 @@ Initial dynamic-array use cases:
 - Contiguous map and zip-style kernels over dynamic arrays.
 - Reads through `array-ref` and writes through `array-set!`.
 - Array indexes must be the loop index or a simple uniform offset from it, such
-  as `i` or `(+ base i)`. Gather/scatter through an index array is deferred.
+  as `i` or `(+ base i)`. Ordinary gather/scatter through an index array is
+  deferred; the only overlap-tolerant scatter write surface is the explicit
+  atomic integer helper API described below.
 - Supported lane element types for the first contiguous map/zip slice are
   `i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `i64`, `u64`, `f32`, and `f64`,
   plus an
@@ -3547,9 +3549,9 @@ Uniform and varying rules:
   inference. `set!` to a binding declared outside the `foreach` is rejected;
   reductions must use `spmd-reduce`, and other cross-lane updates are deferred.
 - Calls with varying arguments are rejected until an SPMD function ABI is
-  designed. The first implemented slice only permits built-in
-  arithmetic/comparison operators and array operations over supported lane
-  types.
+  designed, except for the explicit `stdlib/atomic.tl` integer element helpers.
+  The implemented non-atomic slice permits built-in arithmetic/comparison
+  operators and array operations over supported lane types.
 - In the current implemented slice, `if` and `while` conditions must be
   uniform. The v2 masked-control-flow slice admits varying `if` with the
   restrictions below; `while` remains uniform-only.
@@ -3661,22 +3663,47 @@ Masked varying `if` (v2):
   the `foreach` index or a simple uniform offset from it.
 - `array-set!` in a masked branch writes only active lanes. `array-ref` in a
   masked branch reads and checks bounds only for active lanes.
-- Side effects other than supported contiguous `array-set!` are rejected in
-  masked branches. This includes `set!` to bindings declared outside the
-  `foreach`, `print*`, file/process I/O, `panic`/`error`, allocation whose
-  result escapes the branch, nested `foreach`, nested `spmd-reduce`, and
-  user-defined calls with varying arguments or varying returns.
+- Side effects other than supported contiguous `array-set!` and explicit
+  `stdlib/atomic.tl` integer element operations are rejected in masked branches.
+  This includes `set!` to bindings declared outside the `foreach`, `print*`,
+  file/process I/O, `panic`/`error`, allocation whose result escapes the branch,
+  nested `foreach`, nested `spmd-reduce`, and user-defined calls with varying
+  arguments or varying returns.
 - Varying `match` is not part of this slice. `match` on a varying scrutinee is
   rejected; a `match` whose scrutinee is uniform follows ordinary scalar
   control-flow rules.
 - Varying `while`, early exits, `return` from inside `foreach`, `break`,
-  `continue`, public mask values, gathers/scatters through index arrays,
-  overlapping writes, atomics, and user-defined SPMD calls remain deferred.
+  `continue`, public mask values, non-atomic gathers/scatters through index
+  arrays, overlapping ordinary writes, general atomics, and user-defined SPMD
+  calls remain deferred.
 - Diagnostics must reject unsupported constructs in masked branches at
   type-check/lowering time and name the SPMD masked-control-flow restriction.
   Scalar backend modes must not silently accept a broader source surface than
   SIMD backend modes, and SIMD backend modes must not silently scalarize an
   unsupported masked branch.
+
+Explicit SPMD atomic scatter:
+
+- `(import "stdlib/atomic.tl")` provides sequentially consistent atomic helpers
+  for dynamic-array elements of type `i32` and `i64`:
+  `atomic-i32-load`, `atomic-i32-store!`, `atomic-i32-add!`,
+  `atomic-i32-fetch-add!`, and the corresponding `i64` helpers.
+- The array argument is a normal dynamic array, the index is an `i64`, and add
+  or store values use the element type. There is no public memory-order
+  parameter; all helpers are sequentially consistent.
+- Inside `foreach`, the helper index and value arguments may be varying. This is
+  the only safe overlap-tolerant scatter update in the current source surface.
+  Ordinary `array-set!` with a varying non-contiguous index remains rejected.
+- Atomic helpers synchronize only the exact element location they operate on.
+  They do not make surrounding non-atomic data race-free and do not permit
+  unsynchronized mutation of other fields or array elements.
+- Scalar fallback is the reference order: logical iterations execute
+  left-to-right. SIMD backend modes may scalarize atomic scatter bodies. Masked
+  branches and inactive tail lanes execute an atomic operation only for active
+  logical instances and must not perform bounds checks or memory accesses for
+  inactive lanes.
+- `spmd-reduce` value expressions remain pure: atomic helper calls are rejected
+  there along with other function calls and side effects.
 
 ```lisp test=ignore name=spmd-masked-if-scalar-fallback reason="masked varying if is specified before compiler implementation"
 (define (clamp-positive [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
@@ -5002,6 +5029,12 @@ arena is allocator synchronization only. Programs that need shared mutable
 ordinary data must use mutex guards, channel ownership transfer, an accepted
 atomic helper for that exact field, or `(unsafe ...)`.
 
+`stdlib/atomic.tl` is the first accepted safe atomic helper surface. It is
+limited to one indexed dynamic-array element of type `i32` or `i64` and exposes
+only load, store, add, and fetch-add operations with sequentially consistent
+ordering. It has no public relaxed/acquire/release ordering parameter and does
+not protect unrelated non-atomic locations.
+
 ---
 
 ## 7. Memory model
@@ -5542,8 +5575,8 @@ not the future safe reference/borrow model (#182), not a replacement for
 | `(with ...)` scoped non-memory resource cleanup | Implemented (#907): parser/typechecker/lowering with LIFO cleanup order |
 | `(in-arena ...)` first-class arena target | Implemented (#2625): safe dynamic active-arena switch with restoration on normal and early exits, no mark/rewind/destroy/clone |
 | Cleanup-owning aggregate declarations | Implemented for structs (#907); cleanup-owning enums remain reserved |
-| SPMD / SIMD `foreach` and `spmd-reduce` | Scalar reference lowering implemented; AVX2/AVX-512 support a first contiguous `foreach` map/zip subset over `i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `i64`, `u64`, `f32`, and `f64`; AVX-512 also supports bool dynamic-array copies and bool-valued map results through private mask conversion; eligible `spmd-reduce` folds and direct array-value `spmd-broadcast` maps are implemented; masked varying `if` is in flight (#2131/#2205/#2207) |
-| Public cross-lane ops beyond `spmd-reduce`/`spmd-broadcast` | Scans/prefix reductions, shuffles, public lane indices/counts, gathers/scatters, atomics, and public vector/mask values remain deferred; split across #2761, #2762, #2764, #2765, and #2766 |
+| SPMD / SIMD `foreach` and `spmd-reduce` | Scalar reference lowering implemented; AVX2/AVX-512 support a first contiguous `foreach` map/zip subset over `i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `i64`, `u64`, `f32`, and `f64`; AVX-512 also supports bool dynamic-array copies and bool-valued map results through private mask conversion; eligible `spmd-reduce` folds and direct array-value `spmd-broadcast` maps are implemented; explicit `stdlib/atomic.tl` i32/i64 element helpers provide the first overlap-tolerant SPMD scatter write surface; masked varying `if` is in flight (#2131/#2205/#2207) |
+| Public cross-lane ops beyond `spmd-reduce`/`spmd-broadcast` | Scans/prefix reductions, shuffles, public lane indices/counts, non-atomic gathers/scatters, general atomics, and public vector/mask values remain deferred; split across #2761, #2762, #2764, #2765, and #2766 |
 | Runtime SIMD dispatch (`defdispatch`) | Implemented for scalar/AVX2/AVX-512 variants with cached runtime selection and end-to-end selection verification |
 | Windows region helpers | Implemented for `tl_region_mark`/`tl_region_reset` and `with-arena` scoped reclamation |
 | Complete source locations for all semantic errors | Partial |

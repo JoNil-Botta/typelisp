@@ -16,6 +16,11 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   control. `arena-make`, `arena-current`, and `arena-mark` are safe; switching,
   destroying, and rewinding arenas require `(unsafe ...)`. Import it with
   `(import "stdlib/arena.tl")`.
+- `atomic.tl`: explicit sequentially consistent atomic integer operations on
+  one dynamic-array element. The first surface supports `i32` and `i64`
+  load/store/add/fetch-add helpers and is the only safe overlap-tolerant SPMD
+  scatter write path; ordinary `array-set!` remains non-atomic. Import it with
+  `(import "stdlib/atomic.tl")`.
 - `args.tl`: reusable argv option parser over explicit specs. It supports
   short/long boolean flags, short/long value flags, repeated options,
   positional preservation, and `--` end-of-options handling, with structured

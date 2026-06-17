@@ -12872,6 +12872,213 @@
             [(ErrTcSpmdExprListInfo message) (ErrTcSpmdExprInfo message)])])]
     [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))
 
+(define (tc-spmd-atomic-public-symbol? [symbol : String]) : bool
+  (or
+    (string-eq symbol "tl_atomic_i64_load")
+    (string-eq symbol "tl_atomic_i64_store")
+    (string-eq symbol "tl_atomic_i64_add")
+    (string-eq symbol "tl_atomic_i64_fetch_add")
+    (string-eq symbol "tl_atomic_i32_load")
+    (string-eq symbol "tl_atomic_i32_store")
+    (string-eq symbol "tl_atomic_i32_add")
+    (string-eq symbol "tl_atomic_i32_fetch_add")))
+
+(define (tc-spmd-atomic-public-name? [name : String]) : bool
+  (or
+    (string-eq name "atomic-i64-load")
+    (string-eq name "atomic-i64-store!")
+    (string-eq name "atomic-i64-add!")
+    (string-eq name "atomic-i64-fetch-add!")
+    (string-eq name "atomic-i32-load")
+    (string-eq name "atomic-i32-store!")
+    (string-eq name "atomic-i32-add!")
+    (string-eq name "atomic-i32-fetch-add!")))
+
+(define (tc-spmd-atomic-name-candidate? [name : String]) : bool
+  (or
+    (tc-spmd-atomic-public-name? name)
+    (tc-spmd-atomic-public-symbol? name)
+    (and
+      (tc-name-qualified? name)
+      (tc-spmd-atomic-public-name? (tc-qualified-name-base name)))))
+
+(define (tc-spmd-atomic-symbol-for-name [name : String]) : String
+  (if (string-eq name "atomic-i64-load")
+    "tl_atomic_i64_load"
+    (if (string-eq name "atomic-i64-store!")
+      "tl_atomic_i64_store"
+      (if (string-eq name "atomic-i64-add!")
+        "tl_atomic_i64_add"
+        (if (string-eq name "atomic-i64-fetch-add!")
+          "tl_atomic_i64_fetch_add"
+          (if (string-eq name "atomic-i32-load")
+            "tl_atomic_i32_load"
+            (if (string-eq name "atomic-i32-store!")
+              "tl_atomic_i32_store"
+              (if (string-eq name "atomic-i32-add!")
+                "tl_atomic_i32_add"
+                (if (string-eq name "atomic-i32-fetch-add!")
+                  "tl_atomic_i32_fetch_add"
+                  "")))))))))
+
+(define (tc-spmd-atomic-import-path? [path : String]) : bool
+  (or (string-eq path "stdlib/atomic.tl") (string-eq path "atomic.tl")))
+
+(define (tc-spmd-program-imports-atomic? [decls : AstDeclList]) : bool
+  (match decls
+    [(AstDeclNil) false]
+    [(AstDeclCons decl rest)
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (match decl
+          [(AstDeclImport (AstImportSpec _ path _ _ _))
+            (or
+              (tc-spmd-atomic-import-path? path)
+              (tc-spmd-program-imports-atomic? rest))]
+          [_ (tc-spmd-program-imports-atomic? rest)]))]))
+
+(define (tc-spmd-context-imports-atomic? [ctx : TcContext]) : bool
+  (match ctx
+    [(TcContext program _ _ _)
+      (match program
+        [(AstProgram decls-box)
+          (tc-spmd-program-imports-atomic? (box-get decls-box))])]))
+
+(define (tc-spmd-atomic-imported-symbol-for-name
+  [ctx : TcContext]
+  [name : String]) : TcMaybeString
+  (if (and
+    (tc-spmd-atomic-public-name? name)
+    (tc-spmd-context-imports-atomic? ctx))
+    (TcSomeString (tc-spmd-atomic-symbol-for-name name))
+    (TcNoString)))
+
+(define (tc-spmd-atomic-value-result? [symbol : String]) : bool
+  (or
+    (string-eq symbol "tl_atomic_i64_load")
+    (string-eq symbol "tl_atomic_i64_fetch_add")
+    (string-eq symbol "tl_atomic_i32_load")
+    (string-eq symbol "tl_atomic_i32_fetch_add")))
+
+(define (tc-spmd-atomic-extern-symbol-from-handle
+  [symbols : CompilerSymbols]
+  [handle : i64]) : TcMaybeString
+  (if (= (compiler-symbol-handle-kind handle) (compiler-symbol-kind-extern))
+    (match (compiler-symbols-decl-at-index
+      symbols
+      (compiler-symbol-handle-index handle))
+      [(OkAstDecl decl)
+        (match decl
+          [(AstDeclExtern _ kind metadata _)
+            (match kind
+              [(AstExternFunction)
+                (let
+                  [symbol : String (ast-extern-metadata-symbol metadata)]
+                  (if (tc-spmd-atomic-public-symbol? symbol)
+                    (TcSomeString symbol)
+                    (TcNoString)))]
+              [(AstExternValue) (TcNoString)])]
+          [_ (TcNoString)])]
+      [(ErrAstDecl _) (TcNoString)])
+    (TcNoString)))
+
+(define (tc-spmd-atomic-extern-symbol-lookup
+  [symbols : CompilerSymbols]
+  [lookup-name : String]) : TcMaybeString
+  (match (compiler-symbols-lookup-value symbols lookup-name)
+    [(SomeI64 handle) (tc-spmd-atomic-extern-symbol-from-handle symbols handle)]
+    [(NoneI64) (TcNoString)]))
+
+(define (tc-spmd-atomic-extern-symbol-for-name
+  [ctx : TcContext]
+  [name : String]) : TcMaybeString
+  (if (not (tc-spmd-atomic-name-candidate? name))
+    (TcNoString)
+    (let
+      [symbols : CompilerSymbols (tc-context-symbols ctx)]
+      [direct : TcMaybeString
+        (tc-spmd-atomic-extern-symbol-lookup symbols name)]
+      [source-name : String (tc-hygiene-global-symbol-name name)]
+      [module : String (tc-context-module ctx)]
+      [lookup-name : String
+        (if (and
+          (> (string-length module) 0)
+          (not (tc-name-qualified? source-name)))
+          (compiler-symbol-module-key module source-name)
+          source-name)]
+      (match direct
+        [(TcSomeString symbol) (TcSomeString symbol)]
+        [(TcNoString)
+          (match (tc-spmd-atomic-extern-symbol-lookup symbols lookup-name)
+            [(TcSomeString symbol) (TcSomeString symbol)]
+            [(TcNoString)
+              (if (string-eq lookup-name source-name)
+                (tc-spmd-atomic-imported-symbol-for-name ctx source-name)
+                (tc-spmd-atomic-extern-symbol-lookup symbols source-name))])]))))
+
+(define (tc-spmd-atomic-call-symbol
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [func : AstExpr]) : ResultTcString
+  (match (tc-spmd-inline-helper-resolve-name ctx env spmd-env func)
+    [(OkTcString lookup-name)
+      (if (string-eq lookup-name "")
+        (OkTcString "")
+        (match (tc-spmd-atomic-extern-symbol-for-name ctx lookup-name)
+          [(TcSomeString symbol) (OkTcString symbol)]
+          [(TcNoString) (OkTcString "")]))]
+    [(ErrTcString message)
+      (if (string-eq message "")
+        (OkTcString "")
+        (ErrTcString message))]))
+
+(define (tc-spmd-atomic-call-with-symbol
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [expr-ty : AstType]
+  [func : AstExpr]
+  [args : AstExprList]
+  [symbol : String]) : ResultTcSpmdExprInfo
+  (match (tc-spmd-expr ctx env spmd-env func)
+    [(OkTcSpmdExprInfo func-info)
+      (match func-info
+        [(TcSpmdExprInfo _ _ func-env)
+          (match (tc-spmd-expr-list ctx env func-env args)
+            [(OkTcSpmdExprListInfo args-info)
+              (match args-info
+                [(TcSpmdExprListInfo args-class args-env)
+                  (tc-spmd-finish
+                    expr-ty
+                    (if (tc-spmd-atomic-value-result? symbol)
+                      args-class
+                      TcSpmdUniform)
+                    args-env)])]
+            [(ErrTcSpmdExprListInfo message) (ErrTcSpmdExprInfo message)])])]
+    [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))
+
+(define (tc-spmd-atomic-call
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [expr-ty : AstType]
+  [func : AstExpr]
+  [args : AstExprList]) : ResultTcSpmdExprInfo
+  (match (tc-spmd-atomic-call-symbol ctx env spmd-env func)
+    [(OkTcString symbol)
+      (if (string-eq symbol "")
+        (tc-spmd-inline-call ctx env spmd-env expr-ty func args)
+        (tc-spmd-atomic-call-with-symbol
+          ctx
+          env
+          spmd-env
+          expr-ty
+          func
+          args
+          symbol))]
+    [(ErrTcString message) (ErrTcSpmdExprInfo message)]))
+
 (define (tc-spmd-inline-call
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -12980,6 +13187,31 @@
         [(TcSpmdNoInlineHelper)
           (tc-spmd-masked-if-unsupported "varying calls inside masked branches")])]
     [(ErrTcSpmdInlineHelper message) (ErrTcUnit message)]))
+
+(define (tc-spmd-masked-if-call
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [func : AstExpr]
+  [args : AstExprList]
+  [expr : AstExpr]) : ResultTcUnit
+  (match (tc-spmd-atomic-call-symbol ctx env spmd-env func)
+    [(OkTcString symbol)
+      (if (string-eq symbol "")
+        (tc-spmd-masked-if-inline-call ctx env spmd-env func args)
+        (match (tc-spmd-atomic-call-with-symbol
+          ctx
+          env
+          spmd-env
+          (match (tc-expr ctx env expr)
+            [(OkTcType ty) ty]
+            [(ErrTcType _) (AstTyUnit)])
+          func
+          args
+          symbol)
+          [(OkTcSpmdExprInfo _) OkTcUnit]
+          [(ErrTcSpmdExprInfo message) (ErrTcUnit message)]))]
+    [(ErrTcString message) (ErrTcUnit message)]))
 
 (define (tc-spmd-masked-if-unsupported [detail : String]) : ResultTcUnit
   (ErrTcUnit
@@ -13326,7 +13558,7 @@
     [(AstExprCall func-box args)
       (let
         [func : AstExpr (ast-node-get func-box)]
-        (tc-spmd-masked-if-inline-call ctx env spmd-env func args))]
+        (tc-spmd-masked-if-call ctx env spmd-env func args expr))]
     [(AstExprSyscall _)
       (tc-spmd-masked-if-unsupported "varying calls inside masked branches")]
     [(AstExprWhile _ _)
@@ -13874,7 +14106,7 @@
     [(AstExprCall func-box args)
       (let
         [func : AstExpr (ast-node-get func-box)]
-        (tc-spmd-inline-call ctx env spmd-env expr-ty func args))]
+        (tc-spmd-atomic-call ctx env spmd-env expr-ty func args))]
     [(AstExprBracketClause items)
       (match (tc-spmd-expr-list ctx env spmd-env items)
         [(OkTcSpmdExprListInfo info)

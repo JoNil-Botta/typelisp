@@ -405,7 +405,7 @@
     [result : (Array String) (in-arena owner (make-array String 1))]
     [result-addr : i64 (thread-array-string-addr result)]
     (match (thread-spawn
-      (lambda ([ignored : i64]) : i64
+      (lambda ([_ignored : i64]) : i64
         (let
           [value : String (in-arena owner (task))]
           [copied : String (in-arena owner (string-copy-borrowed (& value)))]

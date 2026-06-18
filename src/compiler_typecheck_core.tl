@@ -10679,16 +10679,15 @@
   (or
     (tc-thread-spawn-i64-name? name)
     (tc-thread-spawn-bool-name? name)
-    (or (tc-thread-spawn-unit-name? name) (tc-thread-spawn-string-name? name))))
+    (tc-thread-spawn-unit-name? name)
+    (tc-thread-spawn-string-name? name)))
 
 (define (tc-thread-safe-handle-type-name? [name : String]) : bool
   (or
     (tc-thread-name-base-eq? name "ThreadI64")
-    (or
-      (tc-thread-name-base-eq? name "ThreadBool")
-      (or
-        (tc-thread-name-base-eq? name "ThreadUnit")
-        (tc-thread-name-base-eq? name "ThreadString")))))
+    (tc-thread-name-base-eq? name "ThreadBool")
+    (tc-thread-name-base-eq? name "ThreadUnit")
+    (tc-thread-name-base-eq? name "ThreadString")))
 
 (define (tc-thread-safe-spawn-call-name [func : AstExpr]) : TcMaybeString
   (match (tc-expr-var-name func)

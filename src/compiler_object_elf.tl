@@ -361,6 +361,7 @@
               (match kind
                 [(ObjectSectionPdata) false]
                 [(ObjectSectionXdata) false]
+                [(ObjectSectionRsrc) false]
                 [_ true])
               (compiler-object-elf-instrs-supported? instrs))
               (set! index (+ index 1))
@@ -815,7 +816,8 @@
     [(ObjectSectionRodata) compiler-object-elf-section-rodata-index]
     [(ObjectSectionBss) compiler-object-elf-section-bss-index]
     [(ObjectSectionPdata) compiler-object-elf-section-null-index]
-    [(ObjectSectionXdata) compiler-object-elf-section-null-index]))
+    [(ObjectSectionXdata) compiler-object-elf-section-null-index]
+    [(ObjectSectionRsrc) compiler-object-elf-section-null-index]))
 
 (define (compiler-object-elf-section-file-offset
   [image : CompilerObjectImage]
@@ -826,7 +828,8 @@
     [(ObjectSectionRodata) (compiler-object-elf-rodata-offset image)]
     [(ObjectSectionBss) (compiler-object-elf-bss-offset image)]
     [(ObjectSectionPdata) 0]
-    [(ObjectSectionXdata) 0]))
+    [(ObjectSectionXdata) 0]
+    [(ObjectSectionRsrc) 0]))
 
 (define (compiler-object-elf-relocation-section-offset
   [image : CompilerObjectImage]
@@ -837,7 +840,8 @@
     [(ObjectSectionRodata) (compiler-object-elf-rela-rodata-offset image)]
     [(ObjectSectionBss) (compiler-object-elf-rela-bss-offset image)]
     [(ObjectSectionPdata) 0]
-    [(ObjectSectionXdata) 0]))
+    [(ObjectSectionXdata) 0]
+    [(ObjectSectionRsrc) 0]))
 
 (define (compiler-object-elf-section-name-offset [index : i64]) : i64
   (cond
@@ -1514,7 +1518,8 @@
     [(ObjectSectionBss)
       (bit-or compiler-object-elf-shf-alloc compiler-object-elf-shf-write)]
     [(ObjectSectionPdata) 0]
-    [(ObjectSectionXdata) 0]))
+    [(ObjectSectionXdata) 0]
+    [(ObjectSectionRsrc) 0]))
 
 (define (compiler-object-elf-push-section-header!
   [out : (Array u8)]
@@ -1571,7 +1576,8 @@
     [(ObjectSectionRodata) compiler-object-elf-section-rela-rodata-index]
     [(ObjectSectionBss) compiler-object-elf-section-rela-bss-index]
     [(ObjectSectionPdata) compiler-object-elf-section-null-index]
-    [(ObjectSectionXdata) compiler-object-elf-section-null-index]))
+    [(ObjectSectionXdata) compiler-object-elf-section-null-index]
+    [(ObjectSectionRsrc) compiler-object-elf-section-null-index]))
 
 (define (compiler-object-elf-push-rela-section-header!
   [out : (Array u8)]

@@ -26219,6 +26219,42 @@ tl_atomic_i32_fetch_add_ptr:
       (unsafe
         (string-from-bytes (ptr-cast (array-data out) : (Ptr u8)) 8)))))
 
+(define compiler-backend-object-windows-manifest-label : String
+  ".L_tl_manifest")
+(define compiler-backend-object-windows-rsrc-data-label : String
+  ".L_tl_rsrc_data")
+(define compiler-backend-object-windows-utf8-manifest : String
+  "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n<assembly xmlns=\"urn:schemas-microsoft-com:asm.v1\" manifestVersion=\"1.0\">\r\n  <application xmlns=\"urn:schemas-microsoft-com:asm.v3\">\r\n    <windowsSettings>\r\n      <activeCodePage xmlns=\"http://schemas.microsoft.com/SMI/2019/WindowsSettings\">UTF-8</activeCodePage>\r\n    </windowsSettings>\r\n  </application>\r\n</assembly>\r\n")
+
+(define (compiler-backend-object-windows-manifest-resource-records) : CompilerObjectDataRecordList
+  (compiler-object-data-list-dense-reversed
+    (compiler-object-data-cons
+      (ObjectDataLabel ".L_tl_manifest_end")
+      (compiler-object-data-cons
+        (ObjectDataBytes compiler-backend-object-windows-utf8-manifest)
+        (compiler-object-data-cons
+          (ObjectDataLabel compiler-backend-object-windows-manifest-label)
+          (compiler-object-data-cons
+            (ObjectDataAlign 4)
+            (compiler-object-data-cons
+              ;; Manifest size is 376 bytes (0x178), followed by codepage/reserved zeros.
+              (ObjectDataBytes
+                (compiler-backend-object-bytes-from-hex
+                  "780100000000000000000000"))
+              (compiler-object-data-cons
+                (ObjectDataSymbolRva32
+                  compiler-backend-object-windows-manifest-label)
+                (compiler-object-data-cons
+                  (ObjectDataLabel
+                    compiler-backend-object-windows-rsrc-data-label)
+                  (compiler-object-data-cons
+                    (ObjectDataBytes
+                      (compiler-backend-object-bytes-from-hex
+                        "000000000000000000000000000001001800000018000080000000000000000000000000000001000100000030000080000000000000000000000000000001000904000048000000"))
+                    (compiler-object-data-cons
+                      (ObjectDataLabel ".L_tl_rsrc_base")
+                      ObjectDataNil)))))))))))
+
 (define (compiler-backend-object-add-windows-entry-data
   [parts : CompilerBackendObjectParts]) : CompilerBackendObjectParts
   (let
@@ -26579,7 +26615,9 @@ tl_atomic_i32_fetch_add_ptr:
 
 (define (compiler-backend-object-image-sections
   [parts : CompilerBackendObjectParts]
-  [target : CompilerBackendTarget]) : CompilerObjectSectionList
+  [target : CompilerBackendTarget]
+  [emit-entry : bool]
+  [crt-entry : bool]) : CompilerObjectSectionList
   (let
     [empty-data : CompilerObjectDataRecordList
       (compiler-object-data-list-reverse ObjectDataNil)]
@@ -26643,15 +26681,55 @@ tl_atomic_i32_fetch_add_ptr:
                         (compiler-object-data-list-reverse
                           (struct-get parts xdata))
                         empty-instrs)
-                      ObjectSectionNil)))))))])))
+                      (compiler-object-section-cons
+                        (ObjectSection
+                          (ObjectSectionRsrc)
+                          (if (and emit-entry (not crt-entry))
+                            (compiler-backend-object-windows-manifest-resource-records)
+                            empty-data)
+                          empty-instrs)
+                        ObjectSectionNil))))))))])))
+
+(define (compiler-backend-object-image-symbols
+  [parts : CompilerBackendObjectParts]
+  [emit-manifest-resource : bool]) : CompilerObjectSymbolList
+  (compiler-object-symbol-list-reverse
+    (if emit-manifest-resource
+      (compiler-object-symbol-cons
+        (ObjectSymbol
+          compiler-backend-object-windows-manifest-label
+          (ObjectSymbolLocal)
+          (ObjectSymbolData)
+          (ObjectSomeSection (ObjectSectionRsrc)))
+        (struct-get parts symbols))
+      (struct-get parts symbols))))
+
+(define (compiler-backend-object-image-relocations
+  [parts : CompilerBackendObjectParts]
+  [emit-manifest-resource : bool]) : CompilerObjectRelocationList
+  (compiler-object-relocation-list-reverse
+    (if emit-manifest-resource
+      (compiler-object-relocation-cons
+        (ObjectRelocation
+          (ObjectSectionRsrc)
+          compiler-backend-object-windows-rsrc-data-label
+          (ObjectRelocAddr32Nb)
+          compiler-backend-object-windows-manifest-label)
+        (struct-get parts relocations))
+      (struct-get parts relocations))))
 
 (define (compiler-backend-object-image-from-parts
   [parts : CompilerBackendObjectParts]
-  [target : CompilerBackendTarget]) : CompilerObjectImage
-  (CompilerObjectImage
-    (compiler-backend-object-image-sections parts target)
-    (compiler-object-symbol-list-reverse (struct-get parts symbols))
-    (compiler-object-relocation-list-reverse (struct-get parts relocations))))
+  [target : CompilerBackendTarget]
+  [emit-entry : bool]
+  [crt-entry : bool]) : CompilerObjectImage
+  (let
+    [emit-manifest-resource : bool
+      (and emit-entry (not crt-entry) (compiler-backend-target-windows? target))]
+    (CompilerObjectImage
+      (compiler-backend-object-image-sections parts target emit-entry crt-entry)
+      (compiler-backend-object-image-symbols parts emit-manifest-resource)
+      (compiler-backend-object-image-relocations parts emit-manifest-resource))))
 
 (define (compiler-backend-object-image-after-index
   [program : CompilerIrProgram]
@@ -26709,7 +26787,9 @@ tl_atomic_i32_fetch_add_ptr:
         crt-entry)]
     (compiler-backend-object-image-from-parts
       (compiler-backend-object-add-bss seed (ObjectDataZero 0))
-      target)))
+      target
+      emit-entry
+      crt-entry)))
 
 (define (compiler-backend-emit-program-object-image-target-with-mode-and-crt
   [program : CompilerIrProgram]
@@ -27493,7 +27573,8 @@ tl_atomic_i32_fetch_add_ptr:
     [(ObjectSectionRodata) "rodata"]
     [(ObjectSectionBss) "bss"]
     [(ObjectSectionPdata) "pdata"]
-    [(ObjectSectionXdata) "xdata"]))
+    [(ObjectSectionXdata) "xdata"]
+    [(ObjectSectionRsrc) "rsrc"]))
 
 (define (compiler-backend-pic-fixup-line
   [section : CompilerObjectSectionKind]

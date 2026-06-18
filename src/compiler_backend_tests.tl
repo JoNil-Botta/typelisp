@@ -716,6 +716,110 @@
         [(ErrCompilerObjectElf _) false])]
     [(ErrCompilerBackendObject _) false]))
 
+(define (compiler-backend-windows-object-manifest-resource-ok?
+  [image : CompilerObjectImage]) : bool
+  (let
+    [sections : CompilerObjectSectionList (struct-get image sections)]
+    [symbols : CompilerObjectSymbolList (struct-get image symbols)]
+    [relocs : CompilerObjectRelocationList (struct-get image relocations)]
+    [manifest : String compiler-backend-object-windows-utf8-manifest]
+    [manifest-size : i64 (string-length manifest)]
+    [manifest-label : String compiler-backend-object-windows-manifest-label]
+    [rsrc-data-label : String compiler-backend-object-windows-rsrc-data-label]
+    [manifest-offset : i64
+      (compiler-object-coff-section-label-offset
+        image
+        (ObjectSectionRsrc)
+        manifest-label)]
+    [data-offset : i64
+      (compiler-object-coff-section-label-offset
+        image
+        (ObjectSectionRsrc)
+        rsrc-data-label)]
+    (match (compiler-object-coff-render image)
+      [(OkCompilerObjectCoff obj)
+        (let
+          [rsrc-header : i64
+            (compiler-object-coff-section-header-offset (ObjectSectionRsrc))]
+          [rsrc-size : i64 (compiler-object-coff-u32-at obj (+ rsrc-header 16))]
+          [rsrc-ptr : i64 (compiler-object-coff-u32-at obj (+ rsrc-header 20))]
+          [rsrc-reloc-ptr : i64
+            (compiler-object-coff-u32-at obj (+ rsrc-header 24))]
+          [rsrc-reloc-count : i64
+            (compiler-object-coff-u16-at obj (+ rsrc-header 32))]
+          [rsrc-flags : i64
+            (compiler-object-coff-u32-at obj (+ rsrc-header 36))]
+          (and
+            (backend-and8
+              (= rsrc-size (+ 88 manifest-size))
+              (> rsrc-ptr 0)
+              (= rsrc-reloc-count 1)
+              (= rsrc-flags 0x40400040)
+              (= manifest-size 376)
+              (= data-offset 72)
+              (= manifest-offset 88)
+              (compiler-object-section-contains-label?
+                sections
+                (ObjectSectionRsrc)
+                ".L_tl_rsrc_base"))
+            (backend-and8
+              (compiler-object-section-contains-label?
+                sections
+                (ObjectSectionRsrc)
+                manifest-label)
+              (compiler-object-symbol-list-contains?
+                symbols
+                manifest-label
+                (ObjectSymbolLocal)
+                (ObjectSymbolData))
+              (compiler-object-relocation-list-contains?
+                relocs
+                (ObjectRelocAddr32Nb)
+                manifest-label)
+              (compiler-object-coff-reloc-entry-ok?
+                obj
+                rsrc-reloc-ptr
+                0
+                data-offset
+                (compiler-object-coff-symbol-index image manifest-label)
+                compiler-object-coff-reloc-amd64-addr32nb)
+              (= (compiler-object-coff-u32-at obj (+ rsrc-ptr data-offset)) 0)
+              (=
+                (compiler-object-coff-u32-at obj (+ rsrc-ptr (+ data-offset 4)))
+                manifest-size)
+              (=
+                (compiler-object-coff-u32-at obj (+ rsrc-ptr (+ data-offset 8)))
+                0)
+              (=
+                (compiler-object-coff-u32-at
+                  obj
+                  (+ rsrc-ptr (+ data-offset 12)))
+                0))
+            (backend-and8
+              (=
+                (compiler-object-coff-u8-at obj (+ rsrc-ptr manifest-offset))
+                0x3c)
+              (=
+                (compiler-object-coff-u8-at
+                  obj
+                  (+ rsrc-ptr (+ manifest-offset 1)))
+                0x3f)
+              (=
+                (compiler-object-coff-u8-at
+                  obj
+                  (+ rsrc-ptr (+ manifest-offset 2)))
+                0x78)
+              (=
+                (compiler-object-coff-u8-at
+                  obj
+                  (+ rsrc-ptr (+ manifest-offset 3)))
+                0x6d)
+              (compiler-object-coff-contains? obj "activeCodePage")
+              (compiler-object-coff-contains? obj "UTF-8</activeCodePage>")
+              (compiler-object-coff-contains? obj ".rsrc")
+              true)))]
+      [(ErrCompilerObjectCoff _) false])))
+
 (define (compiler-backend-windows-object-entry-unwind-ok?) : bool
   (match (compiler-backend-emit-source-object-image-for-target
     "(define (main) : i64 0)"
@@ -729,7 +833,7 @@
           (and
             (compiler-object-image-dense? image)
             (backend-and8
-              (= (compiler-object-section-list-count sections) 6)
+              (= (compiler-object-section-list-count sections) 7)
               (compiler-object-symbol-list-contains?
                 symbols
                 "_tl_start"
@@ -871,7 +975,9 @@
                 (ObjectRelocAddr32Nb)
                 ".L_tl_start_xdata")
               true))]
-        (if shape-ok
+        (if (and
+          shape-ok
+          (compiler-backend-windows-object-manifest-resource-ok? image))
           (match (compiler-object-coff-render image)
             [(OkCompilerObjectCoff obj)
               (let

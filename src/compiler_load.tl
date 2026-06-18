@@ -5385,9 +5385,9 @@
     (compiler-load-manifest-diagnostic-rejects?
       "pkg/typelisp.pkg"
       "("
-      "manifest: reader: unterminated list (missing ')')"
+      "manifest: reader: unterminated list: reached end of input before ')'"
       1
-      2)
+      1)
     (compiler-load-manifest-diagnostic-rejects?
       "pkg/typelisp.pkg"
       "(module foo)"

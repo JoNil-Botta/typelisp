@@ -240,6 +240,47 @@
       (spanned-sexpr-cons form (SpSNil (spanned-sexpr-span form)) span)
       span)))
 
+(define (read-close-delimiter-text [tag : i64]) : String
+  (if (= tag (tag-rparen))
+    ")"
+    (if (= tag (tag-rbracket))
+      "]"
+      "?")))
+
+(define (read-quoted-close-delimiter [tag : i64]) : String
+  (string-append "'" (string-append (read-close-delimiter-text tag) "'")))
+
+(define (read-opposite-close-delimiter? [tag : i64] [expected : i64]) : bool
+  (if (= expected (tag-rparen))
+    (= tag (tag-rbracket))
+    (if (= expected (tag-rbracket))
+      (= tag (tag-rparen))
+      false)))
+
+(define (read-span-location [span : SourceSpan]) : String
+  (string-append
+    (int->string (span-start-line span))
+    (string-append ":" (int->string (span-start-col span)))))
+
+(define (read-unterminated-list-message [expected : i64]) : String
+  (string-append
+    "reader: unterminated list: reached end of input before "
+    (read-quoted-close-delimiter expected)))
+
+(define (read-mismatched-close-message
+  [expected : i64]
+  [actual : i64]
+  [actual-span : SourceSpan]) : String
+  (string-append
+    "reader: mismatched delimiter: expected "
+    (string-append
+      (read-quoted-close-delimiter expected)
+      (string-append
+        " but found "
+        (string-append
+          (read-quoted-close-delimiter actual)
+          (string-append " at " (read-span-location actual-span)))))))
+
 ;; --------------------------------------------------------------------------
 ;; The reader proper: `read-form` and `read-list`, mutually recursive.
 ;; --------------------------------------------------------------------------
@@ -324,8 +365,7 @@
   [toks : (Array SpannedToken)]
   [cur : (Array i64)]
   [open-span : SourceSpan]
-  [close-tag : i64]
-  [unterminated-message : String]) : ResultSpannedSexpr
+  [close-tag : i64]) : ResultSpannedSexpr
   (let
     [st : SpannedToken (peek-spanned-token toks cur)]
     [span : SourceSpan (spanned-token-span st)]
@@ -335,45 +375,40 @@
         (advance cur)
         (OkSpannedSexpr (SpSNil (merge-spans open-span span))))
       (if (= t (tag-end))
-        (ErrSpannedSexpr (SourceError unterminated-message span))
-        (match (read-form-spanned-result toks cur)
-          [(OkSpannedSexpr head)
-            (match (read-list-spanned-items-result
-              toks
-              cur
-              open-span
-              close-tag
-              unterminated-message)
-              [(OkSpannedSexpr tail)
-                (OkSpannedSexpr
-                  (spanned-sexpr-cons
-                    head
-                    tail
-                    (merge-spans open-span (spanned-sexpr-span tail))))]
-              [(ErrSpannedSexpr err) (ErrSpannedSexpr err)])]
-          [(ErrSpannedSexpr err) (ErrSpannedSexpr err)])))))
+        (ErrSpannedSexpr
+          (SourceError (read-unterminated-list-message close-tag) open-span))
+        (if (read-opposite-close-delimiter? t close-tag)
+          (ErrSpannedSexpr
+            (SourceError
+              (read-mismatched-close-message close-tag t span)
+              open-span))
+          (match (read-form-spanned-result toks cur)
+            [(OkSpannedSexpr head)
+              (match (read-list-spanned-items-result
+                toks
+                cur
+                open-span
+                close-tag)
+                [(OkSpannedSexpr tail)
+                  (OkSpannedSexpr
+                    (spanned-sexpr-cons
+                      head
+                      tail
+                      (merge-spans open-span (spanned-sexpr-span tail))))]
+                [(ErrSpannedSexpr err) (ErrSpannedSexpr err)])]
+            [(ErrSpannedSexpr err) (ErrSpannedSexpr err)]))))))
 
 (define (read-list-spanned-result
   [toks : (Array SpannedToken)]
   [cur : (Array i64)]
   [open-span : SourceSpan]) : ResultSpannedSexpr
-  (read-list-spanned-items-result
-    toks
-    cur
-    open-span
-    (tag-rparen)
-    "reader: unterminated list (missing ')')"))
+  (read-list-spanned-items-result toks cur open-span (tag-rparen)))
 
 (define (read-bracket-list-spanned-result
   [toks : (Array SpannedToken)]
   [cur : (Array i64)]
   [open-span : SourceSpan]) : ResultSpannedSexpr
-  (match (read-list-spanned-items-result
-    toks
-    cur
-    open-span
-    (tag-rbracket)
-    "reader: unterminated list (missing ']')")
+  (match (read-list-spanned-items-result toks cur open-span (tag-rbracket))
     [(OkSpannedSexpr items)
       (OkSpannedSexpr
         (spanned-sexpr-bracket-list items (spanned-sexpr-span items)))]

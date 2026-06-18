@@ -4344,6 +4344,22 @@
                           (lsp-write-error id -32600 "Missing params")]))]
                   [(JsonMissing) unit])))
             unit)
+          (if (and (not handled) (string-eq method "tl/rename"))
+            (begin
+              (set! handled true)
+              (let
+                [id-key : String "id"]
+                (match (json-object-get message (& id-key))
+                  [(JsonFound id)
+                    (let
+                      [params-key : String "params"]
+                      (match (json-object-get message (& params-key))
+                        [(JsonFound params)
+                          (set! result (lsp-handle-tl-rename id params docs))]
+                        [(JsonMissing)
+                          (lsp-write-error id -32600 "Missing params")]))]
+                  [(JsonMissing) unit])))
+            unit)
           (if (not handled)
             (begin
               (lsp-maybe-write-method-not-found message)
@@ -4416,3 +4432,71 @@
 
 (define (lsp-frame-run) : i64
   (lsp-frame-run-from 1 (arg-count)))
+
+(define (lsp-replace-all-words [text : String] [old : String] [new : String]) : String
+  (let
+    [n : i64 (string-length text)]
+    [old-len : i64 (string-length old)]
+    [result : String ""]
+    [i : i64 0]
+    (begin
+      (while (<= i (- n old-len))
+        (if (and
+          (string-eq (substring text i old-len) old)
+          (or (= i 0) (not (lsp-ident-char? (string-ref text (- i 1)))))
+          (or
+            (>= (+ i old-len) n)
+            (not (lsp-ident-char? (string-ref text (+ i old-len))))))
+          (begin
+            (set! result (string-append result new))
+            (set! i (+ i old-len)))
+          (begin
+            (set! result (string-append result (substring text i 1)))
+            (set! i (+ i 1)))))
+      (while (< i n)
+        (begin
+          (set! result (string-append result (substring text i 1)))
+          (set! i (+ i 1))))
+      result)))
+
+(define (lsp-handle-tl-rename [id : Json] [params : Json] [docs : LspDocuments]) : LspHandleResult
+  (match (lsp-get-document params docs)
+    [(FoundLspDocument path text _)
+      (match (lsp-json-string-field params "oldName")
+        [(OkLspJsonText old-name)
+          (match (lsp-json-string-field params "newName")
+            [(OkLspJsonText new-name)
+              (if (string-eq old-name "")
+                (begin
+                  (lsp-write-error id -32600 "oldName cannot be empty")
+                  (LspContinue docs))
+                (if (string-eq new-name "")
+                  (begin
+                    (lsp-write-error id -32600 "newName cannot be empty")
+                    (LspContinue docs))
+                  (let
+                    [result : String
+                      (lsp-replace-all-words text old-name new-name)]
+                    [formatted : String
+                      (format-rules-render-source-width result 80)]
+                    (begin
+                      (lsp-write-response
+                        id
+                        (lsp-json-object2
+                          "success"
+                          (JsonBool true)
+                          "text"
+                          (JsonString formatted)))
+                      (LspContinue docs)))))]
+            [(MissingLspJsonText)
+              (begin
+                (lsp-write-error id -32600 "Missing newName parameter")
+                (LspContinue docs))])]
+        [(MissingLspJsonText)
+          (begin
+            (lsp-write-error id -32600 "Missing oldName parameter")
+            (LspContinue docs))])]
+    [(MissingLspDocument)
+      (begin
+        (lsp-write-error id -32600 "Document not found")
+        (LspContinue docs))]))

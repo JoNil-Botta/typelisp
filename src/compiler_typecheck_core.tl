@@ -27660,25 +27660,6 @@
   (MacroNoGeneratedIdentity)
   (MacroSomeGeneratedIdentity String))
 
-(defenum MacroMaybeBinding
-  (MacroNoBinding)
-  (MacroSomeBinding bool String String))
-
-(defenum MacroBindingList
-  (MacroBindingNil)
-  (MacroBindingCons
-    String
-    String
-    String
-    bool
-    String
-    String
-    (Box MacroBindingList)))
-
-(defenum ResultMacroBindingList
-  (OkMacroBindingList MacroBindingList)
-  (ErrMacroBindingList CompilerDiagnostic))
-
 (defenum MacroHygieneEnv
   (MacroHygieneNil)
   (MacroHygieneBind String String (Box MacroHygieneEnv)))
@@ -27985,177 +27966,6 @@
                 (macro-param-list-eq? a-rest b-rest)))]
           [_ false]))]))
 
-(define (macro-macro-param-eq? [a : AstMacroParam] [b : AstMacroParam]) : bool
-  (match a
-    [(AstMacroParam a-name a-ty a-variadic?)
-      (match b
-        [(AstMacroParam b-name b-ty b-variadic?)
-          (and
-            (= a-name b-name)
-            (tc-type-eq a-ty b-ty)
-            (= a-variadic? b-variadic?))])]))
-
-(define (macro-macro-param-list-eq?
-  [a : AstMacroParamList]
-  [b : AstMacroParamList]) : bool
-  (match a
-    [(AstMacroParamNil)
-      (match b
-        [(AstMacroParamNil) true]
-        [_ false])]
-    [(AstMacroParamCons a-head a-rest)
-      (let
-        [a-rest : AstMacroParamList (box-get a-rest)]
-        (match b
-          [(AstMacroParamCons b-head b-rest)
-            (let
-              [b-rest : AstMacroParamList (box-get b-rest)]
-              (and
-                (macro-macro-param-eq? a-head b-head)
-                (macro-macro-param-list-eq? a-rest b-rest)))]
-          [_ false]))]))
-
-(define (macro-field-cleanup-eq? [a : AstFieldCleanup] [b : AstFieldCleanup]) : bool
-  (match a
-    [(AstFieldNoCleanup)
-      (match b
-        [(AstFieldNoCleanup) true]
-        [_ false])]
-    [(AstFieldCleanupFn a-name)
-      (match b
-        [(AstFieldCleanupFn b-name) (= a-name b-name)]
-        [_ false])]
-    [(AstFieldOwnedCleanup)
-      (match b
-        [(AstFieldOwnedCleanup) true]
-        [_ false])]))
-
-(define (macro-field-def-eq? [a : AstFieldDef] [b : AstFieldDef]) : bool
-  (match a
-    [(AstFieldDef a-name a-ty a-cleanup)
-      (match b
-        [(AstFieldDef b-name b-ty b-cleanup)
-          (and
-            (= a-name b-name)
-            (tc-type-eq a-ty b-ty)
-            (macro-field-cleanup-eq? a-cleanup b-cleanup))])]))
-
-(define (macro-field-list-eq? [a : AstFieldDefList] [b : AstFieldDefList]) : bool
-  (match a
-    [(AstFieldDefNil)
-      (match b
-        [(AstFieldDefNil) true]
-        [_ false])]
-    [(AstFieldDefCons a-head a-rest)
-      (let
-        [a-rest : AstFieldDefList (box-get a-rest)]
-        (match b
-          [(AstFieldDefCons b-head b-rest)
-            (let
-              [b-rest : AstFieldDefList (box-get b-rest)]
-              (and
-                (macro-field-def-eq? a-head b-head)
-                (macro-field-list-eq? a-rest b-rest)))]
-          [_ false]))]))
-
-(define (macro-struct-repr-eq? [a : AstStructRepr] [b : AstStructRepr]) : bool
-  (match a
-    [(AstStructReprDefault)
-      (match b
-        [(AstStructReprDefault) true]
-        [_ false])]
-    [(AstStructReprC)
-      (match b
-        [(AstStructReprC) true]
-        [_ false])]))
-
-(define (macro-struct-cleanup-eq? [a : AstStructCleanup] [b : AstStructCleanup]) : bool
-  (match a
-    [(AstStructNoCleanup)
-      (match b
-        [(AstStructNoCleanup) true]
-        [_ false])]
-    [(AstStructCleanupFn a-name)
-      (match b
-        [(AstStructCleanupFn b-name) (= a-name b-name)]
-        [_ false])]))
-
-(define (macro-enum-cleanup-eq? [a : AstEnumCleanup] [b : AstEnumCleanup]) : bool
-  (match a
-    [(AstEnumNoCleanup)
-      (match b
-        [(AstEnumNoCleanup) true]
-        [_ false])]
-    [(AstEnumCleanupFn a-name)
-      (match b
-        [(AstEnumCleanupFn b-name) (= a-name b-name)]
-        [_ false])]))
-
-(define (macro-variant-payload-cleanup-eq?
-  [a : AstVariantPayloadCleanup]
-  [b : AstVariantPayloadCleanup]) : bool
-  (match a
-    [(AstVariantPayloadNoCleanup)
-      (match b
-        [(AstVariantPayloadNoCleanup) true]
-        [_ false])]
-    [(AstVariantPayloadCleanupFn a-name)
-      (match b
-        [(AstVariantPayloadCleanupFn b-name) (= a-name b-name)]
-        [_ false])]
-    [(AstVariantPayloadOwnedCleanup)
-      (match b
-        [(AstVariantPayloadOwnedCleanup) true]
-        [_ false])]))
-
-(define (macro-variant-payload-cleanup-list-eq?
-  [a : AstVariantPayloadCleanupList]
-  [b : AstVariantPayloadCleanupList]) : bool
-  (match a
-    [(AstVariantPayloadCleanupNil)
-      (match b
-        [(AstVariantPayloadCleanupNil) true]
-        [_ false])]
-    [(AstVariantPayloadCleanupCons a-head a-rest)
-      (let
-        [a-rest : AstVariantPayloadCleanupList (box-get a-rest)]
-        (match b
-          [(AstVariantPayloadCleanupCons b-head b-rest)
-            (let
-              [b-rest : AstVariantPayloadCleanupList (box-get b-rest)]
-              (and
-                (macro-variant-payload-cleanup-eq? a-head b-head)
-                (macro-variant-payload-cleanup-list-eq? a-rest b-rest)))]
-          [_ false]))]))
-
-(define (macro-variant-def-eq? [a : AstVariantDef] [b : AstVariantDef]) : bool
-  (match a
-    [(AstVariantDef a-name a-payloads a-cleanups)
-      (match b
-        [(AstVariantDef b-name b-payloads b-cleanups)
-          (and
-            (= a-name b-name)
-            (tc-type-list-eq a-payloads b-payloads)
-            (macro-variant-payload-cleanup-list-eq? a-cleanups b-cleanups))])]))
-
-(define (macro-variant-list-eq? [a : AstVariantDefList] [b : AstVariantDefList]) : bool
-  (match a
-    [(AstVariantDefNil)
-      (match b
-        [(AstVariantDefNil) true]
-        [_ false])]
-    [(AstVariantDefCons a-head a-rest)
-      (let
-        [a-rest : AstVariantDefList (box-get a-rest)]
-        (match b
-          [(AstVariantDefCons b-head b-rest)
-            (let
-              [b-rest : AstVariantDefList (box-get b-rest)]
-              (and
-                (macro-variant-def-eq? a-head b-head)
-                (macro-variant-list-eq? a-rest b-rest)))]
-          [_ false]))]))
-
 (define (macro-fn-export-eq? [a : AstFnExport] [b : AstFnExport]) : bool
   (match a
     [(AstFnNoExport)
@@ -28166,126 +27976,6 @@
       (match b
         [(AstFnExport b-symbol) (= a-symbol b-symbol)]
         [_ false])]))
-
-(define (macro-extern-kind-eq? [a : AstExternKind] [b : AstExternKind]) : bool
-  (match a
-    [(AstExternValue)
-      (match b
-        [(AstExternValue) true]
-        [_ false])]
-    [(AstExternFunction)
-      (match b
-        [(AstExternFunction) true]
-        [_ false])]))
-
-(define (macro-extern-abi-eq? [a : AstExternAbi] [b : AstExternAbi]) : bool
-  (match a
-    [(AstExternAbiC)
-      (match b
-        [(AstExternAbiC) true]
-        [_ false])]
-    [(AstExternAbiCVarargsOpen)
-      (match b
-        [(AstExternAbiCVarargsOpen) true]
-        [_ false])]
-    [(AstExternAbiCVarargsTyped a-ty)
-      (match b
-        [(AstExternAbiCVarargsTyped b-ty) (tc-type-eq a-ty b-ty)]
-        [_ false])]))
-
-(define (macro-extern-link-input-eq?
-  [a : AstExternLinkInput]
-  [b : AstExternLinkInput]) : bool
-  (match a
-    [(AstExternLinkLib a-name)
-      (match b
-        [(AstExternLinkLib b-name) (string-eq a-name b-name)]
-        [_ false])]
-    [(AstExternLinkSearch a-name)
-      (match b
-        [(AstExternLinkSearch b-name) (string-eq a-name b-name)]
-        [_ false])]
-    [(AstExternLinkArg a-name)
-      (match b
-        [(AstExternLinkArg b-name) (string-eq a-name b-name)]
-        [_ false])]))
-
-(define (macro-extern-link-input-list-eq?
-  [a : AstExternLinkInputList]
-  [b : AstExternLinkInputList]) : bool
-  (match a
-    [(AstExternLinkInputNil)
-      (match b
-        [(AstExternLinkInputNil) true]
-        [_ false])]
-    [(AstExternLinkInputCons a-head a-rest)
-      (let
-        [a-rest : AstExternLinkInputList (box-get a-rest)]
-        (match b
-          [(AstExternLinkInputCons b-head b-rest)
-            (let
-              [b-rest : AstExternLinkInputList (box-get b-rest)]
-              (and
-                (macro-extern-link-input-eq? a-head b-head)
-                (macro-extern-link-input-list-eq? a-rest b-rest)))]
-          [_ false]))]))
-
-(define (macro-extern-metadata-eq?
-  [a : AstExternMetadata]
-  [b : AstExternMetadata]) : bool
-  (match a
-    [(AstExternMetadata a-abi a-symbol a-inputs a-explicit?)
-      (match b
-        [(AstExternMetadata b-abi b-symbol b-inputs b-explicit?)
-          (and
-            (macro-extern-abi-eq? a-abi b-abi)
-            (string-eq a-symbol b-symbol)
-            (macro-extern-link-input-list-eq? a-inputs b-inputs)
-            (= a-explicit? b-explicit?))])]))
-
-(define (macro-dispatch-isa-eq? [a : AstDispatchIsa] [b : AstDispatchIsa]) : bool
-  (match a
-    [(AstDispatchScalar)
-      (match b
-        [(AstDispatchScalar) true]
-        [_ false])]
-    [(AstDispatchAvx2)
-      (match b
-        [(AstDispatchAvx2) true]
-        [_ false])]
-    [(AstDispatchAvx512)
-      (match b
-        [(AstDispatchAvx512) true]
-        [_ false])]))
-
-(define (macro-dispatch-variant-eq?
-  [a : AstDispatchVariant]
-  [b : AstDispatchVariant]) : bool
-  (match a
-    [(AstDispatchVariant a-isa a-name)
-      (match b
-        [(AstDispatchVariant b-isa b-name)
-          (and (macro-dispatch-isa-eq? a-isa b-isa) (string-eq a-name b-name))])]))
-
-(define (macro-dispatch-variant-list-eq?
-  [a : AstDispatchVariantList]
-  [b : AstDispatchVariantList]) : bool
-  (match a
-    [(AstDispatchVariantNil)
-      (match b
-        [(AstDispatchVariantNil) true]
-        [_ false])]
-    [(AstDispatchVariantCons a-head a-rest)
-      (let
-        [a-rest : AstDispatchVariantList (box-get a-rest)]
-        (match b
-          [(AstDispatchVariantCons b-head b-rest)
-            (let
-              [b-rest : AstDispatchVariantList (box-get b-rest)]
-              (and
-                (macro-dispatch-variant-eq? a-head b-head)
-                (macro-dispatch-variant-list-eq? a-rest b-rest)))]
-          [_ false]))]))
 
 (define (macro-export-item-eq? [a : AstExportItem] [b : AstExportItem]) : bool
   (match a
@@ -28419,69 +28109,6 @@
                 (ctfe-expr-eq a-body b-body)
                 (macro-fn-export-eq? a-export b-export)))]
           [_ false]))]
-    [(AstDeclDefMacro a-name a-params a-ret a-body-box)
-      (let
-        [a-body : AstExpr (ast-node-get a-body-box)]
-        (match b
-          [(AstDeclDefMacro b-name b-params b-ret b-body-box)
-            (let
-              [b-body : AstExpr (ast-node-get b-body-box)]
-              (and
-                (= a-name b-name)
-                (macro-macro-param-list-eq? a-params b-params)
-                (tc-type-eq a-ret b-ret)
-                (ctfe-expr-eq a-body b-body)))]
-          [_ false]))]
-    [(AstDeclExtern a-name a-kind a-metadata a-ty)
-      (match b
-        [(AstDeclExtern b-name b-kind b-metadata b-ty)
-          (and
-            (= a-name b-name)
-            (macro-extern-kind-eq? a-kind b-kind)
-            (macro-extern-metadata-eq? a-metadata b-metadata)
-            (tc-type-eq a-ty b-ty))]
-        [_ false])]
-    [(AstDeclDefEnum a-name a-cleanup a-variants)
-      (match b
-        [(AstDeclDefEnum b-name b-cleanup b-variants)
-          (and
-            (= a-name b-name)
-            (macro-enum-cleanup-eq? a-cleanup b-cleanup)
-            (macro-variant-list-eq? a-variants b-variants))]
-        [_ false])]
-    [(AstDeclDefEnumLifetimes a-name a-lifetimes a-cleanup a-variants)
-      (match b
-        [(AstDeclDefEnumLifetimes b-name b-lifetimes b-cleanup b-variants)
-          (and
-            (= a-name b-name)
-            (tc-lifetime-list-eq a-lifetimes b-lifetimes)
-            (macro-enum-cleanup-eq? a-cleanup b-cleanup)
-            (macro-variant-list-eq? a-variants b-variants))]
-        [_ false])]
-    [(AstDeclDefStruct a-name a-repr a-cleanup a-fields)
-      (match b
-        [(AstDeclDefStruct b-name b-repr b-cleanup b-fields)
-          (and
-            (= a-name b-name)
-            (macro-struct-repr-eq? a-repr b-repr)
-            (macro-struct-cleanup-eq? a-cleanup b-cleanup)
-            (macro-field-list-eq? a-fields b-fields))]
-        [_ false])]
-    [(AstDeclDefStructLifetimes a-name a-lifetimes a-repr a-cleanup a-fields)
-      (match b
-        [(AstDeclDefStructLifetimes
-            b-name
-            b-lifetimes
-            b-repr
-            b-cleanup
-            b-fields)
-          (and
-            (= a-name b-name)
-            (tc-lifetime-list-eq a-lifetimes b-lifetimes)
-            (macro-struct-repr-eq? a-repr b-repr)
-            (macro-struct-cleanup-eq? a-cleanup b-cleanup)
-            (macro-field-list-eq? a-fields b-fields))]
-        [_ false])]
     [(AstDeclImport a-spec)
       (match b
         [(AstDeclImport b-spec) (macro-import-spec-eq? a-spec b-spec)]
@@ -28499,13 +28126,6 @@
     [(AstDeclExport a-items)
       (match b
         [(AstDeclExport b-items) (macro-export-item-list-eq? a-items b-items)]
-        [_ false])]
-    [(AstDeclDefDispatch a-name a-variants)
-      (match b
-        [(AstDeclDefDispatch b-name b-variants)
-          (and
-            (= a-name b-name)
-            (macro-dispatch-variant-list-eq? a-variants b-variants))]
         [_ false])]
     [(AstDeclTest a-name a-body-box _)
       (let
@@ -31064,12 +30684,21 @@
       [(MacroSomeDeclList existing-body)
         (if (macro-decls-contain-generated-key? existing-body identity)
           (if (macro-decl-list-structural-eq? existing-body generated-body)
-            (let
-              [expanded : AstDeclList
-                (macro-module-import-marker-decls target-module alias span)]
-              (OkMacroDeclExpansion
-                expanded
-                (macro-paths-for-decls expanded decl-path)))
+            (match (macro-check-generated-import-collisions
+              orig-decls
+              generated-body
+              module
+              alias
+              span
+              identity)
+              [(OkMacroImportCollision)
+                (let
+                  [expanded : AstDeclList
+                    (macro-module-import-marker-decls target-module alias span)]
+                  (OkMacroDeclExpansion
+                    expanded
+                    (macro-paths-for-decls expanded decl-path)))]
+              [(ErrMacroImportCollision diag) (ErrMacroDeclExpansion diag)])
             (ErrMacroDeclExpansion
               (macro-module-incompatible-output-diag call-expr identity)))
           (ErrMacroDeclExpansion
@@ -31078,16 +30707,25 @@
               target-module
               identity)))]
       [(MacroNoDeclList)
-        (let
-          [expanded : AstDeclList
-            (macro-decl-list-append
-              materialized
-              (ast-decl-cons
-                (ast-decl-module module)
-                (macro-module-import-marker-decls target-module alias span)))]
-          (OkMacroDeclExpansion
-            expanded
-            (macro-paths-for-decls expanded decl-path)))])))
+        (match (macro-check-generated-import-collisions
+          orig-decls
+          generated-body
+          module
+          alias
+          span
+          identity)
+          [(OkMacroImportCollision)
+            (let
+              [expanded : AstDeclList
+                (macro-decl-list-append
+                  materialized
+                  (ast-decl-cons
+                    (ast-decl-module module)
+                    (macro-module-import-marker-decls target-module alias span)))]
+              (OkMacroDeclExpansion
+                expanded
+                (macro-paths-for-decls expanded decl-path)))]
+          [(ErrMacroImportCollision diag) (ErrMacroDeclExpansion diag)])])))
 
 (define (macro-expand-module-generated-decls
   [orig-decls : AstDeclList]
@@ -31317,12 +30955,24 @@
               (macro-single-decl-expansion expanded decl-path)]
             [(ErrMacroDecl diag) (ErrMacroDeclExpansion diag)])))]))
 
+(define (macro-module-generated-key? [key : String]) : bool
+  (let
+    [prefix : String "generated:"]
+    [prefix-len : i64 (string-length prefix)]
+    [key-len : i64 (string-length key)]
+    (and
+      (> key-len 0)
+      (not
+        (and
+          (>= key-len prefix-len)
+          (string-eq (substring key 0 prefix-len) prefix))))))
+
 (define (macro-decl-generated-identity [decl : AstDecl]) : MacroMaybeGeneratedIdentity
   (match decl
     [(AstDeclComptimeDecl meta template-box)
       (match meta
         [(AstSomeGeneratedDeclMeta _ _ _ key)
-          (if (> (string-length key) 0)
+          (if (macro-module-generated-key? key)
             (MacroSomeGeneratedIdentity key)
             (macro-decl-generated-identity (box-get template-box)))]
         [(AstNoGeneratedDeclMeta)
@@ -31364,539 +31014,316 @@
   [target-module : String]) : MacroMaybeGeneratedIdentity
   (macro-module-generated-identity-in decls target-module ""))
 
-(define (macro-export-item-list-append
-  [front : AstExportItemList]
-  [back : AstExportItemList]) : AstExportItemList
-  (match front
-    [(AstExportItemNil) back]
-    [(AstExportItemCons head rest)
-      (ast-export-item-cons
-        head
-        (macro-export-item-list-append (box-get rest) back))]))
-
-(define (macro-module-export-items-in
-  [decls : AstDeclList]
-  [target-module : String]
-  [module : String]) : AstExportItemList
-  (match decls
-    [(AstDeclNil) AstExportItemNil]
-    [(AstDeclCons decl rest-box)
-      (match decl
-        [(AstDeclModule next-module)
-          (macro-module-export-items-in
-            (box-get rest-box)
-            target-module
-            (intern-str next-module))]
-        [(AstDeclExport items)
-          (if (string-eq module target-module)
-            (macro-export-item-list-append
-              items
-              (macro-module-export-items-in
-                (box-get rest-box)
-                target-module
-                module))
-            (macro-module-export-items-in
-              (box-get rest-box)
-              target-module
-              module))]
-        [_
-          (macro-module-export-items-in (box-get rest-box) target-module module)])]))
-
-(define (macro-module-export-items
-  [decls : AstDeclList]
-  [target-module : String]) : AstExportItemList
-  (macro-module-export-items-in decls target-module ""))
-
-(define (macro-binding-lookup
-  [bindings : MacroBindingList]
-  [module : String]
-  [namespace : String]
-  [name : String]) : MacroMaybeBinding
-  (match bindings
-    [(MacroBindingNil) (MacroNoBinding)]
-    [(MacroBindingCons bmodule bnamespace bname generated identity source rest)
-      (if (and
-        (string-eq bmodule module)
-        (string-eq bnamespace namespace)
-        (string-eq bname name))
-        (MacroSomeBinding generated identity source)
-        (macro-binding-lookup (box-get rest) module namespace name))]))
-
-(define (macro-binding-conflicts?
-  [existing-generated : bool]
-  [existing-identity : String]
-  [current-generated : bool]
-  [current-identity : String]) : bool
-  (if current-generated
-    (if existing-generated
-      (not (string-eq existing-identity current-identity))
-      true)
-    existing-generated))
-
-(define (macro-generated-import-collision-message
-  [namespace : String]
-  [name : String]
-  [existing-generated : bool]
-  [existing-identity : String]
-  [existing-source : String]
-  [current-generated : bool]
-  [current-identity : String]
-  [current-source : String]) : String
-  (let
-    [subject : String (str-cat namespace " " name)]
-    [suggestion : String
-      "; use an explicit alias or full generated-module access"]
-    (if (and existing-generated current-generated)
-      (str-cat
-        "typecheck: generated import collision for "
-        subject
-        " between generated identities "
-        existing-identity
-        " and "
-        current-identity
-        suggestion)
-      (if current-generated
-        (str-cat
-          "typecheck: generated import collision for "
-          subject
-          " from generated identity "
-          current-identity
-          " with ordinary binding "
-          existing-source
-          suggestion)
-        (str-cat
-          "typecheck: generated import collision for "
-          subject
-          " from generated identity "
-          existing-identity
-          " with ordinary binding "
-          current-source
-          suggestion)))))
-
-(define (macro-generated-import-collision-diag
-  [span : TcMaybeAstSourceSpan]
-  [namespace : String]
-  [name : String]
-  [existing-generated : bool]
-  [existing-identity : String]
-  [existing-source : String]
-  [current-generated : bool]
-  [current-identity : String]
-  [current-source : String]) : CompilerDiagnostic
-  (let
-    [message : String
-      (macro-generated-import-collision-message
-        namespace
-        name
-        existing-generated
-        existing-identity
-        existing-source
-        current-generated
-        current-identity
-        current-source)]
-    (match span
-      [(TcSomeAstSourceSpan actual-span)
-        (tc-canonical-diagnostic
-          (compiler-diagnostic-from-ast-span "" actual-span message))]
-      [(TcNoAstSourceSpan) (tc-diag-at-start message)])))
-
-(define (macro-binding-check-add
-  [bindings : MacroBindingList]
-  [module : String]
-  [namespace : String]
-  [name : String]
-  [generated : bool]
-  [identity : String]
-  [source : String]
-  [span : TcMaybeAstSourceSpan]) : ResultMacroBindingList
-  (match (macro-binding-lookup bindings module namespace name)
-    [(MacroNoBinding)
-      (OkMacroBindingList
-        (MacroBindingCons
-          module
-          namespace
-          name
-          generated
-          identity
-          source
-          (box bindings)))]
-    [(MacroSomeBinding existing-generated existing-identity existing-source)
-      (if (macro-binding-conflicts?
-        existing-generated
-        existing-identity
-        generated
-        identity)
-        (ErrMacroBindingList
-          (macro-generated-import-collision-diag
-            span
-            namespace
-            name
-            existing-generated
-            existing-identity
-            existing-source
-            generated
-            identity
-            source))
-        (OkMacroBindingList
-          (MacroBindingCons
-            module
-            namespace
-            name
-            generated
-            identity
-            source
-            (box bindings))))]))
-
-(define (macro-check-add-export-item-binding
-  [bindings : MacroBindingList]
-  [module : String]
-  [item : AstExportItem]
-  [generated : bool]
-  [identity : String]
-  [source : String]
-  [span : TcMaybeAstSourceSpan]) : ResultMacroBindingList
-  (match item
-    [(AstExportValue name)
-      (macro-binding-check-add
-        bindings
-        module
-        "value"
-        name
-        generated
-        identity
-        source
-        span)]
-    [(AstExportType name)
-      (macro-binding-check-add
-        bindings
-        module
-        "type"
-        name
-        generated
-        identity
-        source
-        span)]
-    [(AstExportMacro name)
-      (macro-binding-check-add
-        bindings
-        module
-        "macro"
-        name
-        generated
-        identity
-        source
-        span)]
-    [(AstExportConstructor name)
-      (macro-binding-check-add
-        bindings
-        module
-        "value"
-        name
-        generated
-        identity
-        source
-        span)]
-    [(AstExportField type-name field-name)
-      (macro-binding-check-add
-        bindings
-        module
-        "field"
-        (compiler-export-field-name type-name field-name)
-        generated
-        identity
-        source
-        span)]
-    [(AstExportVariant name)
-      (macro-binding-check-add
-        bindings
-        module
-        "value"
-        name
-        generated
-        identity
-        source
-        span)]))
-
-(define (macro-check-add-export-bindings
-  [bindings : MacroBindingList]
-  [module : String]
-  [items : AstExportItemList]
-  [generated : bool]
-  [identity : String]
-  [source : String]
-  [span : TcMaybeAstSourceSpan]) : ResultMacroBindingList
-  (match items
-    [(AstExportItemNil) (OkMacroBindingList bindings)]
-    [(AstExportItemCons item rest)
-      (match (macro-check-add-export-item-binding
-        bindings
-        module
-        item
-        generated
-        identity
-        source
-        span)
-        [(OkMacroBindingList next-bindings)
-          (macro-check-add-export-bindings
-            next-bindings
-            module
-            (box-get rest)
-            generated
-            identity
-            source
-            span)]
-        [(ErrMacroBindingList diag) (ErrMacroBindingList diag)])]))
-
 (define (macro-import-unqualified? [alias : AstMaybeImportAlias]) : bool
   (match alias
     [(AstSomeImportAlias alias-name) (string-eq alias-name "")]
     [(AstNoImportAlias) false]))
 
-(define (macro-check-add-unqualified-import-bindings
-  [all-decls : AstDeclList]
-  [bindings : MacroBindingList]
-  [module : String]
-  [target-module : String]
-  [span : AstSourceSpan]) : ResultMacroBindingList
-  (let
-    [items : AstExportItemList
-      (macro-module-export-items all-decls target-module)]
-    (match (macro-module-generated-identity all-decls target-module)
-      [(MacroSomeGeneratedIdentity identity)
-        (macro-check-add-export-bindings
-          bindings
-          module
-          items
-          true
-          identity
-          target-module
-          (TcSomeAstSourceSpan span))]
-      [(MacroNoGeneratedIdentity)
-        (macro-check-add-export-bindings
-          bindings
-          module
-          items
-          false
-          ""
-          (str-cat "import " target-module)
-          (TcSomeAstSourceSpan span))])))
+(define (macro-module-import-request-unqualified? [alias : AstMaybeImportAlias]) : bool
+  (match alias
+    [(AstSomeImportAlias alias-name) (string-eq alias-name "")]
+    [(AstNoImportAlias) true]))
 
-(define (macro-check-add-variant-bindings
-  [bindings : MacroBindingList]
-  [module : String]
-  [variants : AstVariantDefList]) : ResultMacroBindingList
-  (match variants
-    [(AstVariantDefNil) (OkMacroBindingList bindings)]
-    [(AstVariantDefCons variant rest)
-      (let
-        [rest : AstVariantDefList (box-get rest)]
-        (match variant
-          [(AstVariantDef name _ _)
-            (match (macro-binding-check-add
-              bindings
-              module
-              "value"
-              (intern-str name)
-              false
-              ""
-              "local declaration"
-              (TcNoAstSourceSpan))
-              [(OkMacroBindingList next-bindings)
-                (macro-check-add-variant-bindings next-bindings module rest)]
-              [(ErrMacroBindingList diag) (ErrMacroBindingList diag)])]))]))
+(defenum ResultMacroImportCollision
+  (OkMacroImportCollision)
+  (ErrMacroImportCollision CompilerDiagnostic))
 
-(define (macro-check-add-local-decl-bindings
-  [bindings : MacroBindingList]
-  [module : String]
-  [decl : AstDecl]) : ResultMacroBindingList
-  (match decl
-    [(AstDeclDef name _ _)
-      (macro-binding-check-add
-        bindings
-        module
-        "value"
-        (intern-str name)
-        false
-        ""
-        "local declaration"
-        (TcNoAstSourceSpan))]
-    [(AstDeclDefFn name _ _ _ _)
-      (macro-binding-check-add
-        bindings
-        module
-        "value"
-        (intern-str name)
-        false
-        ""
-        "local declaration"
-        (TcNoAstSourceSpan))]
-    [(AstDeclDefMacro name _ _ _)
-      (macro-binding-check-add
-        bindings
-        module
-        "macro"
-        (intern-str name)
-        false
-        ""
-        "local declaration"
-        (TcNoAstSourceSpan))]
-    [(AstDeclExtern name _ _ _)
-      (macro-binding-check-add
-        bindings
-        module
-        "value"
-        (intern-str name)
-        false
-        ""
-        "local declaration"
-        (TcNoAstSourceSpan))]
-    [(AstDeclDefDispatch name _)
-      (macro-binding-check-add
-        bindings
-        module
-        "value"
-        (intern-str name)
-        false
-        ""
-        "local declaration"
-        (TcNoAstSourceSpan))]
-    [(AstDeclDefEnum name _ variants)
-      (match (macro-binding-check-add
-        bindings
-        module
-        "type"
-        (intern-str name)
-        false
-        ""
-        "local declaration"
-        (TcNoAstSourceSpan))
-        [(OkMacroBindingList next-bindings)
-          (macro-check-add-variant-bindings next-bindings module variants)]
-        [(ErrMacroBindingList diag) (ErrMacroBindingList diag)])]
-    [(AstDeclDefEnumLifetimes name _ _ variants)
-      (match (macro-binding-check-add
-        bindings
-        module
-        "type"
-        (intern-str name)
-        false
-        ""
-        "local declaration"
-        (TcNoAstSourceSpan))
-        [(OkMacroBindingList next-bindings)
-          (macro-check-add-variant-bindings next-bindings module variants)]
-        [(ErrMacroBindingList diag) (ErrMacroBindingList diag)])]
-    [(AstDeclDefStruct name _ _ _)
-      (match (macro-binding-check-add
-        bindings
-        module
-        "type"
-        (intern-str name)
-        false
-        ""
-        "local declaration"
-        (TcNoAstSourceSpan))
-        [(OkMacroBindingList next-bindings)
-          (macro-binding-check-add
-            next-bindings
-            module
-            "value"
-            (intern-str name)
-            false
-            ""
-            "local declaration"
-            (TcNoAstSourceSpan))]
-        [(ErrMacroBindingList diag) (ErrMacroBindingList diag)])]
-    [(AstDeclDefStructLifetimes name _ _ _ _)
-      (match (macro-binding-check-add
-        bindings
-        module
-        "type"
-        (intern-str name)
-        false
-        ""
-        "local declaration"
-        (TcNoAstSourceSpan))
-        [(OkMacroBindingList next-bindings)
-          (macro-binding-check-add
-            next-bindings
-            module
-            "value"
-            (intern-str name)
-            false
-            ""
-            "local declaration"
-            (TcNoAstSourceSpan))]
-        [(ErrMacroBindingList diag) (ErrMacroBindingList diag)])]
-    [(AstDeclUnsafe inner-box)
-      (macro-check-add-local-decl-bindings bindings module (box-get inner-box))]
-    [(AstDeclComptimeDecl _ template-box)
-      (macro-check-add-local-decl-bindings
-        bindings
-        module
-        (box-get template-box))]
-    [_ (OkMacroBindingList bindings)]))
+(define (macro-export-value-name [item : AstExportItem]) : TcMaybeString
+  (match item
+    [(AstExportValue name) (TcSomeString name)]
+    [(AstExportConstructor name) (TcSomeString name)]
+    [(AstExportVariant name) (TcSomeString name)]
+    [_ (TcNoString)]))
 
-(define (macro-validate-generated-import-collisions-list
-  [all-decls : AstDeclList]
+(define (macro-export-items-contain-value?
+  [items : AstExportItemList]
+  [name : String]) : bool
+  (match items
+    [(AstExportItemNil) false]
+    [(AstExportItemCons item rest-box)
+      (match (macro-export-value-name item)
+        [(TcSomeString item-name)
+          (or
+            (string-eq item-name name)
+            (macro-export-items-contain-value? (box-get rest-box) name))]
+        [(TcNoString)
+          (macro-export-items-contain-value? (box-get rest-box) name)])]))
+
+(define (macro-module-exports-value-in?
   [decls : AstDeclList]
-  [bindings : MacroBindingList]
-  [module : String]) : ResultMacroBindingList
+  [target-module : String]
+  [module : String]
+  [name : String]) : bool
   (match decls
-    [(AstDeclNil) (OkMacroBindingList bindings)]
+    [(AstDeclNil) false]
     [(AstDeclCons decl rest-box)
       (match decl
         [(AstDeclModule next-module)
-          (macro-validate-generated-import-collisions-list
+          (macro-module-exports-value-in?
+            (box-get rest-box)
+            target-module
+            (intern-str next-module)
+            name)]
+        [(AstDeclExport items)
+          (or
+            (and
+              (string-eq module target-module)
+              (macro-export-items-contain-value? items name))
+            (macro-module-exports-value-in?
+              (box-get rest-box)
+              target-module
+              module
+              name))]
+        [_
+          (macro-module-exports-value-in?
+            (box-get rest-box)
+            target-module
+            module
+            name)])]))
+
+(define (macro-module-exports-value?
+  [decls : AstDeclList]
+  [target-module : String]
+  [name : String]) : bool
+  (macro-module-exports-value-in? decls target-module "" name))
+
+(define (macro-variant-list-contains-value?
+  [variants : AstVariantDefList]
+  [name : String]) : bool
+  (match variants
+    [(AstVariantDefNil) false]
+    [(AstVariantDefCons variant rest)
+      (match variant
+        [(AstVariantDef variant-name _ _)
+          (or
+            (string-eq (intern-str variant-name) name)
+            (macro-variant-list-contains-value? (box-get rest) name))])]))
+
+(define (macro-local-decl-has-value? [decl : AstDecl] [name : String]) : bool
+  (match decl
+    [(AstDeclDef local-name _ _) (string-eq (intern-str local-name) name)]
+    [(AstDeclDefFn local-name _ _ _ _) (string-eq (intern-str local-name) name)]
+    [(AstDeclDefMacro _ _ _ _) false]
+    [(AstDeclExtern local-name _ _ _) (string-eq (intern-str local-name) name)]
+    [(AstDeclDefDispatch local-name _) (string-eq (intern-str local-name) name)]
+    [(AstDeclDefEnum _ _ variants)
+      (macro-variant-list-contains-value? variants name)]
+    [(AstDeclDefEnumLifetimes _ _ _ variants)
+      (macro-variant-list-contains-value? variants name)]
+    [(AstDeclDefStruct local-name _ _ _)
+      (string-eq (intern-str local-name) name)]
+    [(AstDeclDefStructLifetimes local-name _ _ _ _)
+      (string-eq (intern-str local-name) name)]
+    [(AstDeclUnsafe inner-box)
+      (macro-local-decl-has-value? (box-get inner-box) name)]
+    [(AstDeclComptimeDecl _ template-box)
+      (macro-local-decl-has-value? (box-get template-box) name)]
+    [_ false]))
+
+(define (macro-generated-import-diag [span : AstSourceSpan] [message : String]) : CompilerDiagnostic
+  (tc-canonical-diagnostic (compiler-diagnostic-from-ast-span "" span message)))
+
+(define (macro-generated-generated-collision-diag
+  [span : AstSourceSpan]
+  [name : String]
+  [existing-identity : String]
+  [current-identity : String]) : CompilerDiagnostic
+  (macro-generated-import-diag
+    span
+    (str-cat
+      "typecheck: generated import collision for value "
+      name
+      " between generated identities "
+      existing-identity
+      " and "
+      current-identity
+      "; use an explicit alias or full generated-module access")))
+
+(define (macro-generated-local-collision-diag
+  [span : AstSourceSpan]
+  [name : String]
+  [identity : String]) : CompilerDiagnostic
+  (macro-generated-import-diag
+    span
+    (str-cat
+      "typecheck: generated import collision for value "
+      name
+      " from generated identity "
+      identity
+      " with ordinary binding local declaration; use an explicit alias or full generated-module access")))
+
+(define (macro-check-generated-import-value-collision-in
+  [all-decls : AstDeclList]
+  [decls : AstDeclList]
+  [module : String]
+  [import-module : String]
+  [identity : String]
+  [span : AstSourceSpan]
+  [name : String]) : ResultMacroImportCollision
+  (match decls
+    [(AstDeclNil) (OkMacroImportCollision)]
+    [(AstDeclCons decl rest-box)
+      (match decl
+        [(AstDeclModule next-module)
+          (macro-check-generated-import-value-collision-in
             all-decls
             (box-get rest-box)
-            bindings
-            (intern-str next-module))]
+            (intern-str next-module)
+            import-module
+            identity
+            span
+            name)]
         [(AstDeclImport
-            (AstImportSpec _ _ (AstSomeModuleName target-module) alias span))
-          (if (macro-import-unqualified? alias)
-            (match (macro-check-add-unqualified-import-bindings
-              all-decls
-              bindings
-              module
-              target-module
-              span)
-              [(OkMacroBindingList next-bindings)
-                (macro-validate-generated-import-collisions-list
-                  all-decls
-                  (box-get rest-box)
-                  next-bindings
-                  module)]
-              [(ErrMacroBindingList diag) (ErrMacroBindingList diag)])
-            (macro-validate-generated-import-collisions-list
-              all-decls
-              (box-get rest-box)
-              bindings
-              module))]
-        [_
-          (match (macro-check-add-local-decl-bindings bindings module decl)
-            [(OkMacroBindingList next-bindings)
-              (macro-validate-generated-import-collisions-list
+            (AstImportSpec
+              _
+              _
+              (AstSomeModuleName target-module)
+              alias
+              import-span))
+          (if (string-eq module import-module)
+            (if (macro-import-unqualified? alias)
+              (match (macro-module-generated-identity all-decls target-module)
+                [(MacroSomeGeneratedIdentity existing-identity)
+                  (if (and
+                    (not (string-eq existing-identity identity))
+                    (macro-module-exports-value? all-decls target-module name))
+                    (ErrMacroImportCollision
+                      (macro-generated-generated-collision-diag
+                        import-span
+                        name
+                        existing-identity
+                        identity))
+                    (macro-check-generated-import-value-collision-in
+                      all-decls
+                      (box-get rest-box)
+                      module
+                      import-module
+                      identity
+                      span
+                      name))]
+                [(MacroNoGeneratedIdentity)
+                  (macro-check-generated-import-value-collision-in
+                    all-decls
+                    (box-get rest-box)
+                    module
+                    import-module
+                    identity
+                    span
+                    name)])
+              (macro-check-generated-import-value-collision-in
                 all-decls
                 (box-get rest-box)
-                next-bindings
-                module)]
-            [(ErrMacroBindingList diag) (ErrMacroBindingList diag)])])]))
+                module
+                import-module
+                identity
+                span
+                name))
+            (macro-check-generated-import-value-collision-in
+              all-decls
+              (box-get rest-box)
+              module
+              import-module
+              identity
+              span
+              name))]
+        [_
+          (if (and
+            (string-eq module import-module)
+            (macro-local-decl-has-value? decl name))
+            (ErrMacroImportCollision
+              (macro-generated-local-collision-diag span name identity))
+            (macro-check-generated-import-value-collision-in
+              all-decls
+              (box-get rest-box)
+              module
+              import-module
+              identity
+              span
+              name))])]))
 
-(define (macro-validate-generated-import-collisions
-  [program : AstProgram]
-  [paths : AstDeclPathList]) : ResultMacroExpand
-  (match program
-    [(AstProgram decls-box)
-      (let
-        [decls : AstDeclList (box-get decls-box)]
-        (match (macro-validate-generated-import-collisions-list
-          decls
-          decls
-          (MacroBindingNil)
-          "")
-          [(OkMacroBindingList _) (OkMacroExpand program paths)]
-          [(ErrMacroBindingList diag) (ErrMacroExpand diag)]))]))
+(define (macro-check-generated-export-item-collisions
+  [all-decls : AstDeclList]
+  [items : AstExportItemList]
+  [import-module : String]
+  [identity : String]
+  [span : AstSourceSpan]) : ResultMacroImportCollision
+  (match items
+    [(AstExportItemNil) (OkMacroImportCollision)]
+    [(AstExportItemCons item rest-box)
+      (match (macro-export-value-name item)
+        [(TcSomeString name)
+          (match (macro-check-generated-import-value-collision-in
+            all-decls
+            all-decls
+            ""
+            import-module
+            identity
+            span
+            name)
+            [(OkMacroImportCollision)
+              (macro-check-generated-export-item-collisions
+                all-decls
+                (box-get rest-box)
+                import-module
+                identity
+                span)]
+            [(ErrMacroImportCollision diag) (ErrMacroImportCollision diag)])]
+        [(TcNoString)
+          (macro-check-generated-export-item-collisions
+            all-decls
+            (box-get rest-box)
+            import-module
+            identity
+            span)])]))
+
+(define (macro-check-generated-import-collisions-in
+  [all-decls : AstDeclList]
+  [generated-body : AstDeclList]
+  [import-module : String]
+  [identity : String]
+  [span : AstSourceSpan]) : ResultMacroImportCollision
+  (match generated-body
+    [(AstDeclNil) (OkMacroImportCollision)]
+    [(AstDeclCons decl rest-box)
+      (match decl
+        [(AstDeclExport items)
+          (match (macro-check-generated-export-item-collisions
+            all-decls
+            items
+            import-module
+            identity
+            span)
+            [(OkMacroImportCollision)
+              (macro-check-generated-import-collisions-in
+                all-decls
+                (box-get rest-box)
+                import-module
+                identity
+                span)]
+            [(ErrMacroImportCollision diag) (ErrMacroImportCollision diag)])]
+        [_
+          (macro-check-generated-import-collisions-in
+            all-decls
+            (box-get rest-box)
+            import-module
+            identity
+            span)])]))
+
+(define (macro-check-generated-import-collisions
+  [all-decls : AstDeclList]
+  [generated-body : AstDeclList]
+  [import-module : String]
+  [alias : AstMaybeImportAlias]
+  [span : AstSourceSpan]
+  [identity : String]) : ResultMacroImportCollision
+  (if (macro-module-import-request-unqualified? alias)
+    (macro-check-generated-import-collisions-in
+      all-decls
+      generated-body
+      import-module
+      identity
+      span)
+    (OkMacroImportCollision)))
 
 ;; Macro-expansion skip analysis (#2350-regression fix). Once any module defines
 ;; a macro, `has-defmacro` forces the full macro-expand walk over EVERY decl in
@@ -32701,13 +32128,10 @@
 (define (macro-expand-program-with-paths
   [program : AstProgram]
   [paths : AstDeclPathList]) : ResultMacroExpand
-  (match (macro-expand-program-with-paths-loop
+  (macro-expand-program-with-paths-loop
     program
     paths
-    (macro-expand-fixed-point-limit))
-    [(OkMacroExpand expanded expanded-paths)
-      (macro-validate-generated-import-collisions expanded expanded-paths)]
-    [(ErrMacroExpand diag) (ErrMacroExpand diag)]))
+    (macro-expand-fixed-point-limit)))
 
 (define (macro-expand-program [program : AstProgram]) : ResultMacroExpand
   (macro-expand-program-with-paths program AstDeclPathNil))

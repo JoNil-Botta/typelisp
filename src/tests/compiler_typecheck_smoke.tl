@@ -659,6 +659,74 @@
       (= (macro-alias-cache-get 1 262144) 11)
       (= (macro-alias-cache-get 2 0) 22))))
 
+(define (compiler-typecheck-smoke-module-macro-import-evaluated-key-source) : String
+  "(defmacro (gen [key : String]) : Module
+  `(begin
+    (module generated.module)
+    (define (answer) : i64 42)
+    (export (value answer))))
+(import (gen \"same\"))
+(import (gen (if true \"same\" \"other\")))
+(define (main) : i64 (answer))")
+
+(define (compiler-typecheck-smoke-module-macro-import-incompatible-key-source) : String
+  "(defmacro (gen [key : Expr]) : Module
+  (match key
+    [(ExprCall _ _)
+      `(begin
+      (module generated.module)
+      (define (answer) : i64 99)
+      (export (value answer)))]
+    [_
+      `(begin
+      (module generated.module)
+      (define (answer) : i64 42)
+      (export (value answer)))]))
+(defmacro (later) : Decls
+  `(import (gen (string-append \"sa\" \"me\"))))
+(import (gen \"same\"))
+(later)
+(define (main) : i64 (answer))")
+
+(define (compiler-typecheck-smoke-module-macro-generated-collision-source) : String
+  "(defmacro (gen-a [key : String]) : Module
+  `(begin
+    (module generated.a)
+    (define (answer) : i64 42)
+    (export (value answer))))
+(defmacro (gen-b [key : String]) : Module
+  `(begin
+    (module generated.b)
+    (define (answer) : i64 99)
+    (export (value answer))))
+(import (gen-a \"a\"))
+(import (gen-b \"b\"))
+(define (main) : i64 (answer))")
+
+(define (compiler-typecheck-smoke-module-macro-local-collision-source) : String
+  "(defmacro (gen [key : String]) : Module
+  `(begin
+    (module generated.module)
+    (define (answer) : i64 42)
+    (export (value answer))))
+(define (answer) : i64 0)
+(import (gen \"x\"))
+(define (main) : i64 (answer))")
+
+(define (compiler-typecheck-smoke-module-macro-identity-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok?
+      (compiler-typecheck-smoke-module-macro-import-evaluated-key-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-smoke-module-macro-import-incompatible-key-source)
+      "typecheck: Module macro output for generated identity :gen(string_4_115_97_109_101) has incompatible payload")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-smoke-module-macro-generated-collision-source)
+      "typecheck: generated import collision for value answer between generated identities :gen-a(string_1_97) and :gen-b(string_1_98); use an explicit alias or full generated-module access")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-smoke-module-macro-local-collision-source)
+      "typecheck: generated import collision for value answer from generated identity :gen(string_1_120) with ordinary binding local declaration; use an explicit alias or full generated-module access")))
+
 (define (compiler-typecheck-smoke-prefix-cache-cfg-source) : String
   "(cfg feature (define (shared-helper [x : i64]) : i64 (+ x 2)))
 (cfg (not feature) (define (shared-helper [x : i64]) : i64 (+ x 1)))
@@ -919,6 +987,9 @@
     (unless
       (compiler-typecheck-macro-alias-cache-collision-ok?)
       (panic "typecheck: macro alias cache collision test failed"))
+    (unless
+      (compiler-typecheck-smoke-module-macro-identity-tests-ok?)
+      (panic "typecheck: module macro identity smoke failed"))
     (unless
       (compiler-typecheck-smoke-prefix-cache-root-isolation-ok?)
       (panic "typecheck: prefix cache root smoke failed"))

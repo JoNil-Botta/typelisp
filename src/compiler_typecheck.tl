@@ -6707,35 +6707,6 @@
 (import (gen))
 (define (main) : i64 (answer))")
 
-(define (compiler-typecheck-module-macro-import-evaluated-key-source) : String
-  "(defmacro (gen [key : String]) : Module
-  `(begin
-    (module generated.module)
-    (define (answer) : i64 42)
-    (export (value answer))))
-(import (gen \"same\"))
-(import (gen (if true \"same\" \"other\")))
-(define (main) : i64 (answer))")
-
-(define (compiler-typecheck-module-macro-import-incompatible-key-source) : String
-  "(defmacro (gen [key : Expr]) : Module
-  (match key
-    [(ExprCall _ _)
-      `(begin
-      (module generated.module)
-      (define (answer) : i64 99)
-      (export (value answer)))]
-    [_
-      `(begin
-      (module generated.module)
-      (define (answer) : i64 42)
-      (export (value answer)))]))
-(defmacro (later) : Decls
-  `(import (gen (string-append \"sa\" \"me\"))))
-(import (gen \"same\"))
-(later)
-(define (main) : i64 (answer))")
-
 (define (compiler-typecheck-module-macro-import-target-collision-source) : String
   "(defmacro (gen-a) : Module
   `(begin
@@ -6749,31 +6720,6 @@
     (export (value answer))))
 (import (gen-a))
 (import (gen-b))
-(define (main) : i64 (answer))")
-
-(define (compiler-typecheck-module-macro-generated-collision-source) : String
-  "(defmacro (gen-a [key : String]) : Module
-  `(begin
-    (module generated.a)
-    (define (answer) : i64 42)
-    (export (value answer))))
-(defmacro (gen-b [key : String]) : Module
-  `(begin
-    (module generated.b)
-    (define (answer) : i64 99)
-    (export (value answer))))
-(import (gen-a \"a\"))
-(import (gen-b \"b\"))
-(define (main) : i64 (answer))")
-
-(define (compiler-typecheck-module-macro-local-collision-source) : String
-  "(defmacro (gen [key : String]) : Module
-  `(begin
-    (module generated.module)
-    (define (answer) : i64 42)
-    (export (value answer))))
-(define (answer) : i64 0)
-(import (gen \"x\"))
 (define (main) : i64 (answer))")
 
 (define (compiler-typecheck-module-macro-import-missing-module-source) : String
@@ -7096,20 +7042,9 @@
       (compiler-typecheck-module-macro-import-alias-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-module-macro-import-duplicate-source))
-    (compiler-typecheck-ok?
-      (compiler-typecheck-module-macro-import-evaluated-key-source))
-    (compiler-typecheck-error-ok?
-      (compiler-typecheck-module-macro-import-incompatible-key-source)
-      "typecheck: Module macro output for generated identity :gen(string_4_115_97_109_101) has incompatible payload")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-module-macro-import-target-collision-source)
       "typecheck: Module macro output collides with existing module generated.module for generated identity :gen-b()")
-    (compiler-typecheck-error-ok?
-      (compiler-typecheck-module-macro-generated-collision-source)
-      "typecheck: generated import collision for value answer between generated identities :gen-a(string_1_97) and :gen-b(string_1_98); use an explicit alias or full generated-module access")
-    (compiler-typecheck-error-ok?
-      (compiler-typecheck-module-macro-local-collision-source)
-      "typecheck: generated import collision for value answer from generated identity :gen(string_1_120) with ordinary binding local declaration; use an explicit alias or full generated-module access")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-module-macro-import-missing-module-source)
       "typecheck: Module macro output must include a module declaration")

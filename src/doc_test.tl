@@ -13,7 +13,6 @@
 ;; source path, the fence's source line, the example index, and the rendered
 ;; diagnostic when one is available.
 (import "../stdlib/io.tl")
-(import "../stdlib/vector.tl")
 (import "compiler_check_core.tl")
 (import "compiler_load.tl")
 (import "build_run_core.tl")
@@ -1066,33 +1065,6 @@
       (array-push! slots failure)
       (DocTestRunFailureList slots (+ n 1)))))
 
-(define (doc-test-run-failure-list-append-all-from
-  [failures : DocTestRunFailureList]
-  [more : DocTestRunFailureList]
-  [index : i64]) : DocTestRunFailureList
-  (if (>= index (doc-test-run-failure-list-count more))
-    failures
-    (doc-test-run-failure-list-append-all-from
-      (doc-test-run-failure-list-append
-        failures
-        (doc-test-run-failure-list-ref more index))
-      more
-      (+ index 1))))
-
-(define (doc-test-run-failure-list-append-all
-  [failures : DocTestRunFailureList]
-  [more : DocTestRunFailureList]) : DocTestRunFailureList
-  (doc-test-run-failure-list-append-all-from failures more 0))
-
-(define (doc-test-run-report-merge
-  [left : DocTestRunReport]
-  [right : DocTestRunReport]) : DocTestRunReport
-  (DocTestRunReport
-    (+ (doc-test-run-report-count left) (doc-test-run-report-count right))
-    (doc-test-run-failure-list-append-all
-      (doc-test-run-report-failures left)
-      (doc-test-run-report-failures right))))
-
 ;; Render a failure as `path:line: message`. Fence-level extraction
 ;; errors use index `-1`; example failures include the example number in their
 ;; message so the public CLI text matches the stage0 Rust runner.
@@ -1927,53 +1899,89 @@
     manifest-dir
     deps))
 
-(define (doc-test-string-vec-contains-from
-  [items : StringVec]
-  [value : String]
-  [index : i64]) : bool
-  (if (>= index (string-vec-len items))
-    false
-    (if (string-eq (string-vec-get items index "") value)
-      true
-      (doc-test-string-vec-contains-from items value (+ index 1)))))
+(define (doc-test-path-under-root? [path : String] [root : String]) : bool
+  (let
+    [normalized-path : String (compiler-load-normalize-path path)]
+    [normalized-root : String (compiler-load-normalize-path root)]
+    (and
+      (> (string-length normalized-root) 0)
+      (if (string-eq normalized-root ".")
+        (not (compiler-load-path-escapes? normalized-path))
+        (compiler-load-path-under-root? normalized-path normalized-root)))))
 
-(define (doc-test-string-vec-contains? [items : StringVec] [value : String]) : bool
-  (doc-test-string-vec-contains-from items value 0))
+(define (doc-test-dep-list-path?
+  [path : String]
+  [manifest-dir : String]
+  [deps : CompilerPkgDepList]) : bool
+  (match deps
+    [(CompilerPkgDepNil) false]
+    [(CompilerPkgDepCons dep rest)
+      (let
+        [rest : CompilerPkgDepList (box-get rest)]
+        [dep-path : String (struct-get dep path)]
+        [dep-root : String
+          (compiler-load-normalize-path
+            (if (compiler-load-absolute-path? dep-path)
+              dep-path
+              (compiler-load-join-root-path manifest-dir dep-path)))]
+        (if (and
+          (not (compiler-load-github-dependency-path? dep-path))
+          (doc-test-path-under-root? path dep-root))
+          true
+          (doc-test-dep-list-path? path manifest-dir rest)))]))
 
-(define (doc-test-path-list-append-unique [items : StringVec] [path : String]) : StringVec
-  (if (or (= (string-length path) 0) (doc-test-string-vec-contains? items path))
-    items
-    (string-vec-push items path)))
-
-(define (doc-test-path-list-files-from
+(define (doc-test-typecheck-package-path-list-with-roots
   [paths : AstDeclPathList]
-  [items : StringVec]
   [stdlib-roots : StringVec]
-  [manifest-dir : String]) : StringVec
+  [manifest-dir : String]
+  [deps : CompilerPkgDeps]) : DocTestRunReport
   (match paths
-    [(AstDeclPathNil) items]
+    [(AstDeclPathNil) (DocTestRunReport 0 (doc-test-run-failure-list-empty))]
     [(AstDeclPathCons path rest)
       (let
         [rest : AstDeclPathList (box-get rest)]
-        [manifest-root : String (compiler-load-normalize-path manifest-dir)]
+        [normalized : String (compiler-load-normalize-path path)]
+        [rooted : String
+          (if (or
+            (compiler-load-absolute-path? path)
+            (doc-test-path-under-root? normalized manifest-dir))
+            normalized
+            (compiler-load-normalize-path
+              (compiler-load-join-root-path manifest-dir normalized)))]
         [stdlib-path : String
-          (if (compiler-load-stdlib-import? path)
-            path
-            (compiler-load-stdlib-owned-path-from-roots path stdlib-roots))]
+          (if (compiler-load-stdlib-import? normalized)
+            normalized
+            (compiler-load-stdlib-owned-path-from-roots rooted stdlib-roots))]
         [package-local : bool
           (and
             (> (string-length path) 0)
             (not (compiler-load-stdlib-import? stdlib-path))
-            (if (string-eq manifest-root ".")
-              (not (compiler-load-path-escapes? path))
-              (compiler-load-path-under-root? path manifest-root)))]
-        (doc-test-path-list-files-from
-          rest
-          (if package-local
-            (doc-test-path-list-append-unique items path)
-            items)
-          stdlib-roots
-          manifest-dir))]))
+            (not
+              (doc-test-dep-list-path?
+                rooted
+                manifest-dir
+                (compiler-pkg-deps-list deps)))
+            (doc-test-path-under-root? rooted manifest-dir))]
+        (if package-local
+          (let
+            [report : DocTestRunReport
+              (doc-test-typecheck-package-file-text-with-roots
+                rooted
+                stdlib-roots
+                manifest-dir
+                deps)]
+            (if (doc-test-run-report-ok? report)
+              (doc-test-typecheck-package-path-list-with-roots
+                rest
+                stdlib-roots
+                manifest-dir
+                deps)
+              report))
+          (doc-test-typecheck-package-path-list-with-roots
+            rest
+            stdlib-roots
+            manifest-dir
+            deps)))]))
 
 (define (doc-test-typecheck-package-file-text-with-roots
   [path : String]
@@ -1990,46 +1998,13 @@
         manifest-dir
         deps)]))
 
-(define (doc-test-typecheck-package-file-vec-with-roots-from
-  [paths : StringVec]
-  [index : i64]
-  [report : DocTestRunReport]
-  [stdlib-roots : StringVec]
-  [manifest-dir : String]
-  [deps : CompilerPkgDeps]) : DocTestRunReport
-  (if (>= index (string-vec-len paths))
-    report
-    (let
-      [path : String (string-vec-get paths index "")]
-      [next-report : DocTestRunReport
-        (doc-test-run-report-merge
-          report
-          (doc-test-typecheck-package-file-text-with-roots
-            path
-            stdlib-roots
-            manifest-dir
-            deps))]
-      (doc-test-typecheck-package-file-vec-with-roots-from
-        paths
-        (+ index 1)
-        next-report
-        stdlib-roots
-        manifest-dir
-        deps))))
-
 (define (doc-test-typecheck-package-paths-with-roots
   [paths : AstDeclPathList]
   [stdlib-roots : StringVec]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : DocTestRunReport
-  (doc-test-typecheck-package-file-vec-with-roots-from
-    (doc-test-path-list-files-from
-      paths
-      (string-vec-new)
-      stdlib-roots
-      manifest-dir)
-    0
-    (DocTestRunReport 0 (doc-test-run-failure-list-empty))
+  (doc-test-typecheck-package-path-list-with-roots
+    paths
     stdlib-roots
     manifest-dir
     deps))

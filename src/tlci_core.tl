@@ -66,6 +66,26 @@
   (OkTlciBytes (Array u8))
   (ErrTlciBytes String))
 
+(defstruct TlciHostCallbackTable
+  (magic i64)
+  (abi-version i64)
+  (byte-size i64)
+  (host-context i64)
+  (reserved0 i64)
+  (reserved1 i64))
+
+(defstruct TlciImageRegistration
+  (magic i64)
+  (abi-version i64)
+  (byte-size i64)
+  (image-context i64)
+  (reserved0 i64)
+  (reserved1 i64))
+
+(defenum ResultTlciHostAbi
+  (OkTlciHostAbi)
+  (ErrTlciHostAbi String))
+
 (define tlci-format-version : i64
   1)
 (define tlci-metadata-version : String
@@ -74,6 +94,46 @@
   1)
 (define tlci-callback-abi-version : i64
   1)
+(define tlci-host-abi-version : i64
+  1)
+(define tlci-image-entry-symbol : String
+  "tlci_image_entry")
+(define tlci-image-entry-param-count : i64
+  2)
+(define tlci-image-entry-success : i64
+  0)
+(define tlci-host-callback-table-magic : i64
+  6076287494138317908)
+(define tlci-image-registration-magic : i64
+  5134470027336174676)
+(define tlci-host-callback-table-size : i64
+  48)
+(define tlci-image-registration-size : i64
+  48)
+(define tlci-host-callback-table-magic-offset : i64
+  0)
+(define tlci-host-callback-table-abi-version-offset : i64
+  8)
+(define tlci-host-callback-table-byte-size-offset : i64
+  16)
+(define tlci-host-callback-table-host-context-offset : i64
+  24)
+(define tlci-host-callback-table-reserved0-offset : i64
+  32)
+(define tlci-host-callback-table-reserved1-offset : i64
+  40)
+(define tlci-image-registration-magic-offset : i64
+  0)
+(define tlci-image-registration-abi-version-offset : i64
+  8)
+(define tlci-image-registration-byte-size-offset : i64
+  16)
+(define tlci-image-registration-image-context-offset : i64
+  24)
+(define tlci-image-registration-reserved0-offset : i64
+  32)
+(define tlci-image-registration-reserved1-offset : i64
+  40)
 (define tlci-header-size : i64
   160)
 (define tlci-page-align : i64
@@ -88,6 +148,46 @@
   24)
 (define tlci-section-symbol-record-size : i64
   40)
+
+(define (tlci-host-abi-version-error [actual : i64]) : String
+  (str-cat
+    "tlci host ABI: unsupported callback ABI version "
+    (int->string actual)))
+
+(define (tlci-validate-host-callback-table [table : TlciHostCallbackTable]) : ResultTlciHostAbi
+  (if (not (= (struct-get table magic) tlci-host-callback-table-magic))
+    (ErrTlciHostAbi "tlci host ABI: bad host callback table magic")
+    (if (not (= (struct-get table abi-version) tlci-host-abi-version))
+      (ErrTlciHostAbi
+        (tlci-host-abi-version-error (struct-get table abi-version)))
+      (if (< (struct-get table byte-size) tlci-host-callback-table-size)
+        (ErrTlciHostAbi
+          "tlci host ABI: host callback table byte-size is smaller than v1")
+        (if (not (= (struct-get table reserved0) 0))
+          (ErrTlciHostAbi
+            "tlci host ABI: host callback table reserved0 must be zero")
+          (if (not (= (struct-get table reserved1) 0))
+            (ErrTlciHostAbi
+              "tlci host ABI: host callback table reserved1 must be zero")
+            (OkTlciHostAbi)))))))
+
+(define (tlci-validate-image-registration
+  [registration : TlciImageRegistration]) : ResultTlciHostAbi
+  (if (not (= (struct-get registration magic) tlci-image-registration-magic))
+    (ErrTlciHostAbi "tlci host ABI: bad image registration magic")
+    (if (not (= (struct-get registration abi-version) tlci-host-abi-version))
+      (ErrTlciHostAbi
+        (tlci-host-abi-version-error (struct-get registration abi-version)))
+      (if (< (struct-get registration byte-size) tlci-image-registration-size)
+        (ErrTlciHostAbi
+          "tlci host ABI: image registration byte-size is smaller than v1")
+        (if (not (= (struct-get registration reserved0) 0))
+          (ErrTlciHostAbi
+            "tlci host ABI: image registration reserved0 must be zero")
+          (if (not (= (struct-get registration reserved1) 0))
+            (ErrTlciHostAbi
+              "tlci host ABI: image registration reserved1 must be zero")
+            (OkTlciHostAbi)))))))
 
 (define (tlci-empty-bytes) : (Array u8)
   (make-array u8 0))
@@ -1249,6 +1349,122 @@
     (tlci-empty-bytes)
     (tlci-empty-bytes)))
 
+(define (tlci-test-host-callback-table) : TlciHostCallbackTable
+  (TlciHostCallbackTable
+    tlci-host-callback-table-magic
+    tlci-host-abi-version
+    tlci-host-callback-table-size
+    1234
+    0
+    0))
+
+(define (tlci-test-image-registration) : TlciImageRegistration
+  (TlciImageRegistration
+    tlci-image-registration-magic
+    tlci-host-abi-version
+    tlci-image-registration-size
+    5678
+    0
+    0))
+
+(define (tlci-test-host-abi-rejects?
+  [result : ResultTlciHostAbi]
+  [expected : String]) : bool
+  (match result
+    [(ErrTlciHostAbi message) (string-eq message expected)]
+    [(OkTlciHostAbi) false]))
+
+(define (tlci-test-host-abi-layout-ok?) : bool
+  (and
+    (= tlci-host-abi-version tlci-callback-abi-version)
+    (string-eq tlci-image-entry-symbol "tlci_image_entry")
+    (= tlci-image-entry-param-count 2)
+    (= tlci-image-entry-success 0)
+    (= tlci-host-callback-table-size 48)
+    (= tlci-image-registration-size 48)
+    (= tlci-host-callback-table-magic-offset 0)
+    (= tlci-host-callback-table-abi-version-offset 8)
+    (= tlci-host-callback-table-byte-size-offset 16)
+    (= tlci-host-callback-table-host-context-offset 24)
+    (= tlci-host-callback-table-reserved0-offset 32)
+    (= tlci-host-callback-table-reserved1-offset 40)
+    (= tlci-image-registration-magic-offset 0)
+    (= tlci-image-registration-abi-version-offset 8)
+    (= tlci-image-registration-byte-size-offset 16)
+    (= tlci-image-registration-image-context-offset 24)
+    (= tlci-image-registration-reserved0-offset 32)
+    (= tlci-image-registration-reserved1-offset 40)))
+
+(define (tlci-test-host-abi-ok?) : bool
+  (and
+    (tlci-test-host-abi-layout-ok?)
+    (match (tlci-validate-host-callback-table (tlci-test-host-callback-table))
+      [(OkTlciHostAbi) true]
+      [(ErrTlciHostAbi _) false])
+    (match (tlci-validate-image-registration (tlci-test-image-registration))
+      [(OkTlciHostAbi) true]
+      [(ErrTlciHostAbi _) false])
+    (tlci-test-host-abi-rejects?
+      (tlci-validate-host-callback-table
+        (TlciHostCallbackTable
+          0
+          tlci-host-abi-version
+          tlci-host-callback-table-size
+          0
+          0
+          0))
+      "tlci host ABI: bad host callback table magic")
+    (tlci-test-host-abi-rejects?
+      (tlci-validate-host-callback-table
+        (TlciHostCallbackTable
+          tlci-host-callback-table-magic
+          (+ tlci-host-abi-version 1)
+          tlci-host-callback-table-size
+          0
+          0
+          0))
+      "tlci host ABI: unsupported callback ABI version 2")
+    (tlci-test-host-abi-rejects?
+      (tlci-validate-host-callback-table
+        (TlciHostCallbackTable
+          tlci-host-callback-table-magic
+          tlci-host-abi-version
+          (- tlci-host-callback-table-size 1)
+          0
+          0
+          0))
+      "tlci host ABI: host callback table byte-size is smaller than v1")
+    (tlci-test-host-abi-rejects?
+      (tlci-validate-image-registration
+        (TlciImageRegistration
+          0
+          tlci-host-abi-version
+          tlci-image-registration-size
+          0
+          0
+          0))
+      "tlci host ABI: bad image registration magic")
+    (tlci-test-host-abi-rejects?
+      (tlci-validate-image-registration
+        (TlciImageRegistration
+          tlci-image-registration-magic
+          (+ tlci-host-abi-version 1)
+          tlci-image-registration-size
+          0
+          0
+          0))
+      "tlci host ABI: unsupported callback ABI version 2")
+    (tlci-test-host-abi-rejects?
+      (tlci-validate-image-registration
+        (TlciImageRegistration
+          tlci-image-registration-magic
+          tlci-host-abi-version
+          (- tlci-image-registration-size 1)
+          0
+          0
+          0))
+      "tlci host ABI: image registration byte-size is smaller than v1")))
+
 (define (tlci-test-parse-round-trip? [image : TlciImage]) : bool
   (match (tlci-emit-image image)
     [(ErrTlciBytes _) false]
@@ -1369,7 +1585,9 @@
             5
             (if (not (tlci-test-emit-rejections-ok?))
               6
-              0)))))))
+              (if (not (tlci-test-host-abi-ok?))
+                7
+                0))))))))
 
 (define (tlci-core-self-test-ok?) : bool
   (= (tlci-core-self-test-status) 0))

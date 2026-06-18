@@ -53,6 +53,11 @@
   (raw Thread)
   (result-addr i64))
 
+;: Typed handle returned by `thread-spawn-array-i64`.
+(defstruct ThreadArrayI64
+  (raw Thread)
+  (result-addr i64))
+
 ;: Result returned by `thread-spawn-i64`.
 (defenum ThreadI64SpawnResult
   (ThreadI64SpawnOk ThreadI64)
@@ -73,6 +78,11 @@
   (ThreadStringSpawnOk ThreadString)
   (ThreadStringSpawnErr String))
 
+;: Result returned by `thread-spawn-array-i64`.
+(defenum ThreadArrayI64SpawnResult
+  (ThreadArrayI64SpawnOk ThreadArrayI64)
+  (ThreadArrayI64SpawnErr String))
+
 ;: Result returned by `thread-join-i64`.
 (defenum ThreadI64JoinResult
   (ThreadI64JoinOk i64)
@@ -92,6 +102,11 @@
 (defenum ThreadStringJoinResult
   (ThreadStringJoinOk String)
   (ThreadStringJoinErr String))
+
+;: Result returned by `thread-join-array-i64`.
+(defenum ThreadArrayI64JoinResult
+  (ThreadArrayI64JoinOk (Array i64))
+  (ThreadArrayI64JoinErr String))
 
 ;: Opaque counting semaphore handle.
 (defstruct ThreadSemaphore
@@ -193,6 +208,11 @@
   (unsafe
     (cast (ptr->int (ptr-cast (array-data buf) : (Ptr u8))) : i64)))
 
+;: Return the integer address of an `Array (Array i64)` backing buffer.
+(define (thread-array-array-i64-addr [buf : (Array (Array i64))]) : i64
+  (unsafe
+    (cast (ptr->int (ptr-cast (array-data buf) : (Ptr u8))) : i64)))
+
 ;: Convert an integer address into a mutable i32 pointer.
 (define (thread-addr->mut-i32 [addr : i64]) : (MutPtr i32)
   (unsafe
@@ -207,6 +227,11 @@
 (define (thread-addr->mut-string [addr : i64]) : (MutPtr String)
   (unsafe
     (int->ptr (cast addr : u64) : (MutPtr String))))
+
+;: Convert an integer address into a mutable `(Array i64)` pointer.
+(define (thread-addr->mut-array-i64 [addr : i64]) : (MutPtr (Array i64))
+  (unsafe
+    (int->ptr (cast addr : u64) : (MutPtr (Array i64)))))
 
 ;: Read an i32 from `addr`.
 (define (thread-read-i32 [addr : i64]) : i32
@@ -237,6 +262,29 @@
 (define (thread-write-string! [addr : i64] [value : String]) : unit
   (unsafe
     (ptr-write! (thread-addr->mut-string addr) value)))
+
+;: Read an `(Array i64)` from `addr`.
+(define (thread-read-array-i64 [addr : i64]) : (Array i64)
+  (unsafe
+    (ptr-read (ptr-cast (thread-addr->mut-array-i64 addr) : (Ptr (Array i64))))))
+
+;: Write an `(Array i64)` to `addr`.
+(define (thread-write-array-i64! [addr : i64] [value : (Array i64)]) : unit
+  (unsafe
+    (ptr-write! (thread-addr->mut-array-i64 addr) value)))
+
+;: Copy a dynamic `i64` array into fresh active-arena storage.
+(define (thread-array-i64-copy [src : (Array i64)]) : (Array i64)
+  (let
+    [n : i64 (array-length src)]
+    [out : (Array i64) (make-array i64 n)]
+    [i : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (array-set! out i (array-ref src i))
+          (set! i (+ i 1))))
+      out)))
 
 ;: Linux raw clone flags for same-process worker threads.
 (define (thread-linux-clone-flags) : i64
@@ -416,6 +464,29 @@
       [(ThreadSpawnOk raw) (ThreadStringSpawnOk (ThreadString raw result-addr))]
       [(ThreadSpawnErr message) (ThreadStringSpawnErr message)])))
 
+;: Spawn a compiler-checked direct nullary closure returning `(Array i64)`.
+;:
+;: The task runs with a fresh atomic arena as the active allocation target, then
+;: copies the returned dynamic array into that arena before publishing it to the
+;: joiner. The handle must be joined exactly once.
+(define (thread-spawn-array-i64 [task : (-> (Array i64))]) : ThreadArrayI64SpawnResult
+  (let
+    [owner : i64 (arena-make-atomic)]
+    [result : (Array (Array i64)) (in-arena owner (make-array (Array i64) 1))]
+    [result-addr : i64 (thread-array-array-i64-addr result)]
+    (match (thread-spawn
+      (lambda ([_ignored : i64]) : i64
+        (let
+          [value : (Array i64) (in-arena owner (task))]
+          [copied : (Array i64) (in-arena owner (thread-array-i64-copy value))]
+          (begin
+            (thread-write-array-i64! result-addr copied)
+            0)))
+      0)
+      [(ThreadSpawnOk raw)
+        (ThreadArrayI64SpawnOk (ThreadArrayI64 raw result-addr))]
+      [(ThreadSpawnErr message) (ThreadArrayI64SpawnErr message)])))
+
 ;: Wait for a Linux raw-clone thread to clear its join cell.
 (define (thread-linux-join [thread : Thread]) : ThreadJoinResult
   (let
@@ -468,6 +539,14 @@
     [(ThreadJoinOk _)
       (ThreadStringJoinOk (thread-read-string (struct-get thread result-addr)))]
     [(ThreadJoinErr message) (ThreadStringJoinErr message)]))
+
+;: Join a typed `(Array i64)` thread and return its closure result.
+(define (thread-join-array-i64 [thread : ThreadArrayI64]) : ThreadArrayI64JoinResult
+  (match (thread-join (struct-get thread raw))
+    [(ThreadJoinOk _)
+      (ThreadArrayI64JoinOk
+        (thread-read-array-i64 (struct-get thread result-addr)))]
+    [(ThreadJoinErr message) (ThreadArrayI64JoinErr message)]))
 
 ;: Count set bits in a positive byte value.
 (define (thread-count-byte-bits [byte : i64]) : i64

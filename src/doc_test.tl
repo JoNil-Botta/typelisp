@@ -1945,13 +1945,6 @@
     items
     (string-vec-push items path)))
 
-(define (doc-test-rooted-path [root : String] [path : String]) : String
-  (if (compiler-load-absolute-path? path)
-    path
-    (if (doc-test-path-under-root? path root)
-      path
-      (compiler-load-join-root-path root path))))
-
 (define (doc-test-path-under-root? [path : String] [root : String]) : bool
   (let
     [normalized-path : String (compiler-load-normalize-path path)]
@@ -1972,7 +1965,11 @@
       (let
         [rest : CompilerPkgDepList (box-get rest)]
         [dep-path : String (struct-get dep path)]
-        [dep-root : String (doc-test-rooted-path manifest-dir dep-path)]
+        [dep-root : String
+          (compiler-load-normalize-path
+            (if (compiler-load-absolute-path? dep-path)
+              dep-path
+              (compiler-load-join-root-path manifest-dir dep-path)))]
         (if (and
           (not (compiler-load-github-dependency-path? dep-path))
           (doc-test-path-under-root? path dep-root))
@@ -1990,9 +1987,18 @@
     [(AstDeclPathCons path rest)
       (let
         [rest : AstDeclPathList (box-get rest)]
-        [rooted : String (doc-test-rooted-path manifest-dir path)]
+        [normalized : String (compiler-load-normalize-path path)]
+        [rooted : String
+          (if (or
+            (compiler-load-absolute-path? path)
+            (doc-test-path-under-root? normalized manifest-dir))
+            normalized
+            (compiler-load-normalize-path
+              (compiler-load-join-root-path manifest-dir normalized)))]
         [stdlib-path : String
-          (compiler-load-stdlib-owned-path-from-roots rooted stdlib-roots)]
+          (if (compiler-load-stdlib-import? normalized)
+            normalized
+            (compiler-load-stdlib-owned-path-from-roots rooted stdlib-roots))]
         [package-local : bool
           (and
             (> (string-length path) 0)
@@ -2011,18 +2017,6 @@
           stdlib-roots
           manifest-dir
           deps))]))
-
-(define (doc-test-path-list-files
-  [paths : AstDeclPathList]
-  [stdlib-roots : StringVec]
-  [manifest-dir : String]
-  [deps : CompilerPkgDeps]) : StringVec
-  (doc-test-path-list-files-from
-    paths
-    (string-vec-new)
-    stdlib-roots
-    manifest-dir
-    deps))
 
 (define (doc-test-typecheck-package-file-text-with-roots
   [path : String]
@@ -2072,7 +2066,12 @@
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : DocTestRunReport
   (doc-test-typecheck-package-file-vec-with-roots-from
-    (doc-test-path-list-files paths stdlib-roots manifest-dir deps)
+    (doc-test-path-list-files-from
+      paths
+      (string-vec-new)
+      stdlib-roots
+      manifest-dir
+      deps)
     0
     (DocTestRunReport 0 (doc-test-run-failure-list-empty))
     stdlib-roots

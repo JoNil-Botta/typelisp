@@ -27,6 +27,12 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   missing-value and unknown-option diagnostics. The intended CLI migration path
   is for selfhost command modules to define local specs and replace hand-rolled
   flag loops incrementally. Import it with `(import "stdlib/args.tl")`.
+- `byte_buf.tl`: owned mutable binary byte buffers backed by active-arena
+  `(Array u8)` storage. The `byte-buf-*` API covers construction, capacity
+  inspection, reserve/growth, push, append/copy from arrays and strings, live
+  range reads/writes, clear/reuse, and copy-out to arrays or strings. Borrowed
+  `bytes` views remain pending. Import it with
+  `(import "stdlib/byte_buf.tl")`.
 - `comptime.tl`: public stdlib-owned declarations for well-known macro syntax
   and reflection values (`Expr`, `ExprList`, `ExprClause`, `ExprClauseList`,
   `TypeInfo`, and dense sequence wrappers). The compiler verifies these shapes
@@ -319,11 +325,11 @@ conservatively tags aggregate results from stdlib calls made inside a scoped
 arena as arena-owned, which prevents those values from escaping the scope. The
 v1 `String`/`str` contract in `SPEC.md` classifies which future signatures
 should take borrowed text and which should return owned active-arena strings.
-`SPEC.md` also reserves the binary-storage family: the eventual
-`stdlib/byte_buf.tl` module should expose owned `ByteBuf` helpers and borrowed
-`bytes` views for mutable or binary data. `TextBuf` remains an append/render text
-builder, and `vector_slice.tl` remains a generated typed collection-slice
-precedent; neither is the raw byte-slice contract.
+`SPEC.md` also reserves the binary-storage family: `stdlib/byte_buf.tl` exposes
+owned `ByteBuf` helpers for mutable binary data, while borrowed `bytes` views
+remain pending. `TextBuf` remains an append/render text builder, and
+`vector_slice.tl` remains a generated typed collection-slice precedent; neither
+is the raw byte-slice contract.
 The `string_caller_result.tl`, `io_caller_result.tl`, and
 `process_borrowed.tl` companion modules expose lifetime-preserving shapes.
 Borrowed process runtime wrappers copy at the owned boundary, while ordinary
@@ -361,7 +367,7 @@ owned stdlib imports keep the compatibility wrappers.
 | `ChannelI64` helpers in `sync.tl` | Channel creation allocates runtime-owned OS memory for the fixed ring buffer and head/tail state, plus three OS semaphore handles. Send/recv do not allocate; they block through the semaphore substrate and move/copy one scalar `i64` message through the synchronized queue. `channel-i64-close` releases the OS memory and semaphore handles after all users are done. |
 | `MutexI64` helpers in `sync.tl` | Mutex creation allocates one runtime-owned scalar slot, one small close-state/live-user control cell, and one OS semaphore handle. `mutex-i64-lock` blocks on the semaphore and returns a cleanup-owned `MutexI64Guard`; guarded get/set/add do not allocate and `mutex-i64-unlock` releases the semaphore automatically when the `with` scope exits. `mutex-i64-close` returns `false` while guards or lock attempts are live and releases the protected scalar storage and semaphore only when it can permanently mark the mutex closed. The control cell is retained after successful close so copied handles fail closed instead of touching freed storage. |
 | `i64-slice-*` helpers in `vector_slice.tl` | `I64Slice` constructors, `get`, `len`, `is-empty?`, and sub-slicing are non-allocating views tied to a source owner borrow; invalid ranges/counts produce an empty view. `i64-slice-to-array` and `i64-slice-to-vec` are explicit owned-copy boundaries that allocate active-arena storage. |
-| Future `byte-buf-*` / `bytes-*` helpers in `byte_buf.tl` | `ByteBuf` construction, copy-in, reserve, growth, and copy-out allocate in the active arena. Borrowing a buffer's live range as `(& r bytes)` or `(&mut r bytes)` is non-allocating; mutable views are exclusive and fixed-length. String/`str`/`(Array u8)` conversion boundaries are explicit copies unless a helper explicitly returns an immutable borrowed byte view. |
+| `byte-buf-*` helpers in `byte_buf.tl`; future `bytes-*` helpers | `ByteBuf` construction, copy-in, reserve, growth, and copy-out allocate in the active arena. `byte-buf-ref`, `byte-buf-get`, length/capacity inspection, clear, and in-place set are non-allocating. Borrowing a buffer's live range as `(& r bytes)` or `(&mut r bytes)` remains pending; when implemented, borrowed views are non-allocating, exclusive when mutable, and fixed-length. String/`str`/`(Array u8)` conversion boundaries are explicit copies unless a helper explicitly returns an immutable borrowed byte view. |
 | `arena-*` helpers in `arena.tl` | First-class arena control does not allocate returned aggregate storage. `arena-make` creates an independent ordinary arena handle, `arena-make-atomic` creates an independent atomic arena handle, `arena-current` observes the active arena, and `arena-mark` observes the current bump mark. `arena-set!`, `arena-destroy`, and `arena-rewind` can invalidate live heap handles and require `(unsafe ...)`. |
 | `args-*` helpers in `args.tl` | Option specs, parse results, occurrence lists, positional list spines, diagnostic payloads, and helper substrings allocate in the active arena. Token classification, option lookup, count/presence checks, and value accessors are non-allocating aside from caller-provided owned strings and existing result storage. |
 | `json-*` helpers | Parser, lookup, escaping, and JSON number parsing helpers borrow source text or keys. Object lookup compares borrowed keys without allocating. Parsed JSON aggregates, decoded strings, escaped strings, stringified output, float number text, validation copies, and list/member spines allocate owned results in the active arena. Float conversion is deterministic, finite-only, host-locale independent, and currently accepts up to 300 non-zero significant decimal digits; longer non-zero number text is rejected rather than rounded through an unbounded scratch representation. |
@@ -420,6 +426,7 @@ Stdlib modules are imported explicitly:
 ```lisp
 (import "stdlib/arena.tl")
 (import "stdlib/args.tl")
+(import "stdlib/byte_buf.tl")
 (import "stdlib/env.tl")
 (import "stdlib/ffi.tl")
 (import "stdlib/fs.tl")

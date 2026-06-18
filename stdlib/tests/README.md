@@ -38,6 +38,9 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
   stdout/stderr write-line helpers, and stdout flushing with fixture stdin.
 - `io_stdio_bytes.tl` covers fixed-byte stdin wrappers, short reads at EOF, and
   zero-byte reads preserving the sticky EOF state.
+- `byte_buf_api.tl` covers the standalone import/build/run path for the owned
+  `ByteBuf` core, including array and string append/copy boundaries, binary
+  NUL/high-byte storage, snapshot independence, and clear/reuse behavior.
 - `io_stdio_pipe_short_read.tl` is typechecked like the other witnesses and is
   also run by `scripts/verify-stdlib.sh` through a native pipe to ensure
   positive short pipe reads do not report EOF before all bytes arrive.
@@ -96,6 +99,10 @@ Inline stdlib coverage:
   end-of-options handling, missing-value and unknown-option diagnostics,
   repeated short/long options, and the intentionally unsupported
   `--name=value` spelling.
+- `byte_buf.tl` owns inline tests for the owned mutable byte-buffer core:
+  construction and capacity clamping, growth and reserve, push, set/ref/get,
+  append from arrays and strings, live range copy, clear/reuse, copy-out
+  snapshots, string round trips, and NUL/high-byte binary storage.
 - `comptime_api.tl` owns inline tests for expression macro operand values,
   variadic `Expr` lists, syntax matching, and generated expression results
   while preserving the explicit `stdlib.comptime` module-alias import shape.

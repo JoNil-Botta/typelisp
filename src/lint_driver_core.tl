@@ -390,7 +390,7 @@
   [source : String]
   [program : AstProgram]
   [stdlib-roots : StringVec]) : LintFindings
-  (if (lint-program-has-unsafe? program)
+  (if (lint-program-has-unused-unsafe-candidate? program)
     (begin
       (tc-unused-unsafe-tracking-reset!)
       (match (compiler-check-source-with-roots path source stdlib-roots)

@@ -5648,7 +5648,7 @@ not the future safe reference/borrow model (#182), not a replacement for
 | Tuple/Struct/Enum/String globals | Implemented, including runtime initializers (#331) |
 | Reference captures in lambdas | Implemented for local non-escaping immutable captures (#808/#2280); escaping closures still reject reference captures. By-value captures work for scalars, String, dynamic arrays, tuples/structs/enums, and fixed arrays, including nested aggregate/fixed-array contents |
 | Mutable captures (`set!` to captured names) in lambdas | Rejected by design (#2552): closure captures are by-value snapshots; assign lambda parameters/locals or mutate explicit captured storage instead |
-| Tail call optimization | Direct/self tail jumps implemented (#2506); indirect and closure tail calls tracked by #2363 |
+| Tail call optimization | Direct/self and supported indirect function-value tail jumps implemented (#2506/#2363); ABI shapes that cannot be tail-jumped are conservatively emitted as ordinary calls |
 | Raw pointer types, `(unsafe ...)`, and unsafe function/extern declarations | Implemented v1 parser/typechecker/lowering/backend surface |
 | Raw pointer dereference/write/offset/cast | Implemented unsafe v1 operations; address-of, C-string helpers, volatile/atomic access, and borrow-checked references remain follow-ups |
 | Garbage collection / general `free` | Not implemented; allocation is process-lifetime by default with unsafe explicit region reset for tool-owned phase boundaries |
@@ -5656,8 +5656,8 @@ not the future safe reference/borrow model (#182), not a replacement for
 | `(with ...)` scoped non-memory resource cleanup | Implemented (#907): parser/typechecker/lowering with LIFO cleanup order |
 | `(in-arena ...)` first-class arena target | Implemented (#2625): safe dynamic active-arena switch with restoration on normal and early exits, no mark/rewind/destroy/clone |
 | Cleanup-owning aggregate declarations | Implemented for structs (#907); cleanup-owning enums remain reserved |
-| SPMD / SIMD `foreach` and `spmd-reduce` | Scalar reference lowering implemented; AVX2/AVX-512 support a first contiguous `foreach` map/zip subset over `i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `i64`, `u64`, `f32`, and `f64`; AVX-512 also supports bool dynamic-array copies and bool-valued map results through private mask conversion; scalar gather-only dynamic-array reads are implemented with ordinary bounds checks while explicit SIMD modes reject non-contiguous gather shapes; eligible `spmd-reduce` folds and direct array-value `spmd-broadcast` maps are implemented; explicit `stdlib/atomic.tl` i32/i64 element helpers provide the first overlap-tolerant SPMD scatter write surface; masked varying `if` is in flight (#2131/#2205/#2207) |
-| Public cross-lane ops beyond `spmd-reduce`/`spmd-broadcast` | Scans/prefix reductions, shuffles, public lane indices/counts, vector gather/scatter lowering, non-atomic scatter writes, general atomics, and public vector/mask values remain deferred; split across #2761, #2764, #2765, and #2766 |
+| SPMD / SIMD `foreach` and `spmd-reduce` | Scalar reference lowering implemented; AVX2/AVX-512 support a first contiguous `foreach` map/zip subset over `i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `i64`, `u64`, `f32`, and `f64`; AVX-512 also supports bool dynamic-array copies and bool-valued map results through private mask conversion; scalar gather-only dynamic-array reads are implemented with ordinary bounds checks while explicit SIMD modes reject non-contiguous gather shapes; eligible `spmd-reduce` folds and direct array-value `spmd-broadcast` maps are implemented; explicit `stdlib/atomic.tl` i32/i64 element helpers provide the first overlap-tolerant SPMD scatter write surface; masked varying `if` remains in flight (#2131/#2207) |
+| Public cross-lane/source SPMD gaps beyond implemented `spmd-reduce`/`spmd-broadcast` and explicit atomic helpers | Public lane identities, scans/prefix reductions, general shuffles, remaining masked/control-flow forms, and out-of-line varying calls remain deferred; public vector/mask/varying source type deferral is pinned (#2903), with live work split across #2761, #2207/#2767, #2852, #2884, and #2905 |
 | Runtime SIMD dispatch (`defdispatch`) | Implemented for scalar/AVX2/AVX-512 variants with cached runtime selection and end-to-end selection verification |
 | Windows region helpers | Implemented for `tl_region_mark`/`tl_region_reset` and `with-arena` scoped reclamation |
 | Complete source locations for all semantic errors | Partial |
@@ -5869,8 +5869,9 @@ result-returning branch:
 Current implementation status: selfhost has explicit `comptime-decl` generated
 concrete Option/Result family declarations and helper `define`s through the
 generated-declaration registry. `(try expr)` supports the Result-like convention
-of a concrete enum with one `Ok*` payload variant and one `Err*` payload variant;
-Option-like `(try expr)` propagation is tracked separately by #1979.
+of a concrete enum with one `Ok*` payload variant and one `Err*` payload variant,
+and the Option-like convention of one `Some*` payload variant with one `None*`
+absence variant.
 
 ---
 

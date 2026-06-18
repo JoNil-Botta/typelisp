@@ -7,7 +7,9 @@
 ;# owned `String` in the active arena.
 ;#
 ;# The borrowed-chunk companion surface lives in
-;# `stdlib/text_buf_borrowed.tl` while `TextBuf` keeps the owned chunk API.
+;# `stdlib/text_buf_borrowed.tl` while `TextBuf` keeps the owned chunk API. Both
+;# modules share the owned ordered-chunk render helper so the final materialize
+;# path stays in one place.
 ;#
 ;# Usage: `(import "stdlib/text_buf.tl")`
 ;#
@@ -283,23 +285,25 @@
                     (set! cursor (box-get rest))))))]))
       unit)))
 
-;: Render the buffer in O(total length): allocate the exact byte count once and
-;: copy each chunk into place (the cached length makes this a single allocation
-;: plus linear copies, vs the O(n^2) prefix concatenation of the fallbacks).
+;: Render reversed owned chunks in O(total length): allocate the exact byte
+;: count once and copy each chunk into place. This helper is the shared final
+;: materialization path for owned and borrowed text buffers.
+(define (text-buf-render-chunks [chunks : TextBufChunkList] [len : i64]) : String
+  (if (= len 0)
+    ""
+    (let
+      [out : (Array u8) (make-array u8 len)]
+      [dst : (MutPtr u8)
+        (unsafe
+          (array-data out))]
+      (begin
+        (text-buf-fill-rev-into chunks dst len)
+        (unsafe
+          (string-from-bytes (ptr-cast dst : (Ptr u8)) len))))))
+
+;: Render the buffer to an owned String allocated in the active arena.
 (define (text-buf-render [buf : TextBuf]) : String
-  (let
-    [len : i64 (struct-get buf len)]
-    (if (= len 0)
-      ""
-      (let
-        [out : (Array u8) (make-array u8 len)]
-        [dst : (MutPtr u8)
-          (unsafe
-            (array-data out))]
-        (begin
-          (text-buf-fill-rev-into (struct-get buf chunks) dst len)
-          (unsafe
-            (string-from-bytes (ptr-cast dst : (Ptr u8)) len)))))))
+  (text-buf-render-chunks (struct-get buf chunks) (struct-get buf len)))
 
 ;: Write chunks in insertion order to an open raw file handle.
 (define (text-buf-write-chunks-rev [raw : i64] [chunks : TextBufChunkList]) : i64

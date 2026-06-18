@@ -221,12 +221,14 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   `ResultTimeMs`. Calendar conversion, formatting, time zones, locale,
   sleeping, and timers are deferred. Import it with `(import "stdlib/time.tl")`.
 - `text_buf.tl`: arena-aware text buffer helpers for incremental String
-  construction with owned `TextBuf` chunks. Import it with
+  construction with owned `TextBuf` chunks and the shared ordered-chunk render
+  helper used by the borrowed companion. Import it with
   `(import "stdlib/text_buf.tl")`.
 - `text_buf_borrowed.tl`: lifetime-parameterized `TextBufBorrowed`
   borrowed-chunk companion surface. Import it with
   `(import "stdlib/text_buf_borrowed.tl")`; it remains separate from
-  `text_buf.tl` while the compatibility surface keeps owned chunk storage.
+  `text_buf.tl` while the compatibility surface keeps owned chunk storage, but
+  adapts to the owned render helper at explicit materialization boundaries.
 - `vector.tl`: generated concrete vector family (collections v1, #835/#1989)
   over `(Array T)`, with `I64Vec` preserved as the compatibility template and
   `StringVec` added as the first non-i64 stdlib instantiation. Both provide
@@ -388,7 +390,7 @@ owned stdlib imports keep the compatibility wrappers.
 | `thread-*` helpers in `thread.tl` | Thread spawning allocates a small active-arena context, join/result cells, and on Linux a raw worker stack before the OS thread starts. Each worker initializes a fresh per-thread default arena before calling user code. `thread-spawn-string`, `thread-spawn-array-i64`, and `thread-spawn-box-i64` also allocate a fresh atomic arena and one result cell so the joined aggregate storage can safely outlive the worker. Semaphore handles are OS resources and do not allocate TypeLisp heap storage beyond result aggregates. The raw `i64` context/result surface still does not transfer ownership; callers that pass addresses through it remain responsible for synchronization in unsafe code. |
 | `random-*` helpers | Construct deterministic RNG state, draw/result aggregates, and compatibility weight-list cons nodes in the active arena. Array and `I64Vec` weighted-index helpers scan existing storage without cons nodes; the legacy list helper copies weights into an active-arena array wrapper before selection. Draws are deterministic from caller-provided seeds and do not read host entropy. `random-system-seed` reads a platform seed through FFI, normalizes it, and returns a `ResultSystemSeed` aggregate in the active arena; `random-from-system` constructs and returns a new `RandomState` aggregate in the active arena. |
 | `assert-*` helpers in `test.tl` | Non-allocating checks on success; `assert-string-eq` borrows compared text inputs while assertion messages remain owned `String` values for the current `panic` API. |
-| `text-buf-*` helpers in `text_buf.tl` / `text_buf_borrowed.tl` | Owned `TextBuf` chunks and rendered strings allocate in the active arena. Append helpers avoid concatenating the accumulated prefix until `text-buf-render`; `text-buf-clear`/`text-buf-reset` return a fresh empty immutable buffer value. `TextBufBorrowed` carries one source lifetime, stores `(& text str)` chunks without copying at append time, and also accepts owned chunks through `text-buf-borrowed-append-owned`. `text-buf-borrowed-append-copy` copies unrelated borrowed chunks into owned active-arena storage before appending, while `text-buf-borrowed-render` materializes the final owned `String`. |
+| `text-buf-*` helpers in `text_buf.tl` / `text_buf_borrowed.tl` | Owned `TextBuf` chunks and rendered strings allocate in the active arena. Append helpers avoid concatenating the accumulated prefix until `text-buf-render`; `text-buf-clear`/`text-buf-reset` return a fresh empty immutable buffer value. `TextBufBorrowed` carries one source lifetime, stores `(& text str)` chunks without copying at append time, and also accepts owned chunks through `text-buf-borrowed-append-owned`. `text-buf-borrowed-append-copy` copies unrelated borrowed chunks into owned active-arena storage before appending, while `text-buf-borrowed-render` adapts borrowed chunks to owned chunk nodes at the materialization boundary and reuses the shared ordered-chunk render path. |
 | `msvc-*` helpers | Non-owning target/tool/version/path inputs are borrowed `str` values. Discovery results store owned executable, PATH, LIB, and INCLUDE strings. PATH, Visual Studio toolset, and Windows SDK candidate scans use `StringVec` storage internally. Some internal path probes copy borrowed paths until the lower-level `io/fs` APIs are fully borrowed. |
 
 The recoverable I/O API maps the runtime's integer status codes into the public

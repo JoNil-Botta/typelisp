@@ -11552,14 +11552,25 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [func : AstExpr]
+  [args : AstExprList]
   [params : AstTypeList]
   [ret : AstType]) : ResultTcUnit
   (match (tc-thread-channel-send-call-name func)
     [(TcSomeString send-name)
       (if (tc-thread-channel-send-result-type? ctx ret)
         (match (tc-thread-channel-send-message-param params)
-          [(OkTcType message-ty)
-            (tc-thread-channel-send-message send-name ctx env message-ty)]
+          [(OkTcType _)
+            (match (tc-thread-channel-send-message-arg args)
+              [(OkTcExpr message-expr)
+                (match (tc-expr ctx env message-expr)
+                  [(OkTcType message-ty)
+                    (tc-thread-channel-send-message
+                      send-name
+                      ctx
+                      env
+                      message-ty)]
+                  [(ErrTcType message) (ErrTcUnit message)])]
+              [(ErrTcExpr message) (ErrTcUnit message)])]
           [(ErrTcType message) (ErrTcUnit message)])
         OkTcUnit)]
     [(TcNoString) OkTcUnit]))
@@ -11650,6 +11661,7 @@
                             ctx
                             env
                             func
+                            args
                             params
                             ret)
                             [(OkTcUnit)

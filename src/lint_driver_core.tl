@@ -341,7 +341,10 @@
               source
               (ast-program decls)
               (lint-default-ladder-threshold))
-            (lint-program (ast-program decls) (lint-default-ladder-threshold)))))]))
+            (lint-program-with-source
+              source
+              (ast-program decls)
+              (lint-default-ladder-threshold)))))]))
 
 (define (selfhost-lint-program-findings
   [source : String]
@@ -351,7 +354,7 @@
 (define (selfhost-lint-source-with-roots-and-options
   [path : String]
   [source : String]
-  [stdlib-roots : StringVec]
+  [_stdlib-roots : StringVec]
   [deprecated-string-concat : bool]) : LintFindings
   (match (parse-ast-source-diagnostic path source)
     [(OkAstProgramDiagnostic program)
@@ -1470,7 +1473,7 @@
 
 (define (selfhost-lint-file
   [input-path : String]
-  [stdlib-roots : StringVec]
+  [_stdlib-roots : StringVec]
   [enforcing : bool]
   [deprecated-string-concat : bool]) : i64
   (let
@@ -1501,7 +1504,7 @@
 
 (define (selfhost-lint-file-with-package-dead
   [input-path : String]
-  [stdlib-roots : StringVec]
+  [_stdlib-roots : StringVec]
   [enforcing : bool]
   [deprecated-string-concat : bool]
   [dead-decls : SelfhostLintDeadDecls]) : i64
@@ -1937,7 +1940,7 @@
   (let
     [a : i64 1]
     (let
-      [a : i64 2]
+      [a : i64 (+ a 1)]
       a)))")
 
 (define (selfhost-lint-begin-inner-let-source) : String

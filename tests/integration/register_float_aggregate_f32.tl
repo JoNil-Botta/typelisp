@@ -34,12 +34,12 @@
 ;; also put `v` past Win64's four positional register slots.
 (define (stack-vec
   [a : f32]
-  [b : f32]
-  [c : f32]
-  [d : f32]
-  [e : f32]
-  [f : f32]
-  [g : f32]
+  [_b : f32]
+  [_c : f32]
+  [_d : f32]
+  [_e : f32]
+  [_f : f32]
+  [_g : f32]
   [h : f32]
   [v : Vec2]) : f32
   (+ (+ a h) (vec-sum v)))

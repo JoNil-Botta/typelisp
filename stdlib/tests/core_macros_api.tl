@@ -15,7 +15,9 @@
       (core/or flag false false)
       (core/when flag (set! value 1))
       (core/unless flag (set! value 2))
-      unit)))
+      (let
+        [_observed : i64 value]
+        unit))))
 
 (define (stdlib-core-cond-i64 [value : i64]) : i64
   (core/cond [(< value 0) 0] [(= value 0) 1] [else (+ value 1)]))

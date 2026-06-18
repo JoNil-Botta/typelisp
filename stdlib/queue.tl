@@ -115,7 +115,7 @@
 ;: Grow `q` to twice the capacity and reset `head` to 0.
 (define (i64-deque-grow [q : I64Deque]) : I64Deque
   (let
-    [n : i64 (i64-deque-len q)]
+    [_n : i64 (i64-deque-len q)]
     [bigger : (Array i64) (make-array i64 (* (i64-deque-capacity q) 2))]
     (begin
       (i64-deque-copy-live bigger q 0)

@@ -13,7 +13,7 @@
 (define (sum-pair [p : (& p Pair)]) : i64
   (+ (struct-get p left) (struct-get p right)))
 
-(define (accept-tuple [t : (& t (Tuple i64 i64))]) : i64
+(define (accept-tuple [_t : (& t (Tuple i64 i64))]) : i64
   5)
 
 (define (array-second [a : (& a (Array i64))]) : i64
@@ -22,7 +22,7 @@
 (define (text-len [text : (& text str)]) : i64
   (string-length text))
 
-(define (ref-score [n : (& n i64)]) : i64
+(define (ref-score [_n : (& n i64)]) : i64
   2)
 
 (define (call-pair-f [f : (-> (& p Pair) i64)] [p : Pair]) : i64
@@ -37,7 +37,7 @@
 (define (scoped-use-after-auto-borrow [text : String]) : i64
   (begin
     (let
-      [n : i64 (text-len text)]
+      [_n : i64 (text-len text)]
       unit)
     (string-length text)))
 

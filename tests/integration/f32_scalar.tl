@@ -27,14 +27,14 @@
 ;; More than eight f32 arguments forces the ninth arg onto the System V stack
 ;; (and past the fourth positional Win64 register slot).
 (define (ninthf
-  [a : f32]
-  [b : f32]
-  [c : f32]
-  [d : f32]
-  [e : f32]
-  [f : f32]
-  [g : f32]
-  [h : f32]
+  [_a : f32]
+  [_b : f32]
+  [_c : f32]
+  [_d : f32]
+  [_e : f32]
+  [_f : f32]
+  [_g : f32]
+  [_h : f32]
   [i : f32]) : f32
   i)
 

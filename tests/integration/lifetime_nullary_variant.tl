@@ -8,7 +8,7 @@
   (Missing)
   (Found (& bag i64)))
 
-(define (missing [bag : (& bag Bag)]) : (Lookup bag)
+(define (missing [_bag : (& bag Bag)]) : (Lookup bag)
   Missing)
 
 (define (main) : i64

@@ -4448,7 +4448,7 @@
   [dst1 : String]
   [sse0? : bool]
   [sse1? : bool]
-  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  [_instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (match (compiler-backend-emit-pack-words-direct-registers
     assignments
     w0
@@ -6042,7 +6042,7 @@
   (let
     [lhs : String (compiler-backend-sized-reg "%rax" ty)]
     [rhs : String (compiler-backend-sized-reg "%r8" ty)]
-    [suffix : String (compiler-backend-int-instruction-suffix ty)]
+    [_suffix : String (compiler-backend-int-instruction-suffix ty)]
     (match op
       [(IrBinAdd) (compiler-backend-binop-reg-asm "add" ty rhs lhs)]
       [(IrBinSub) (compiler-backend-binop-reg-asm "sub" ty rhs lhs)]
@@ -7653,8 +7653,8 @@
   [length : CompilerIrValue]
   [ok-label : String]
   [plan : CompilerBackendRuntimePlan]
-  [functions : CompilerIrFunctionList]
-  [externs : CompilerIrExternList]
+  [_functions : CompilerIrFunctionList]
+  [_externs : CompilerIrExternList]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (let
     [call-space : i64
@@ -8810,8 +8810,8 @@
     [_ "    movq %rax, %xmm0\n"]))
 
 (define (compiler-backend-bitcast-compatible?
-  [from-ty : AstType]
-  [to-ty : AstType]
+  [_from-ty : AstType]
+  [_to-ty : AstType]
   [from-width : i64]
   [to-width : i64]
   [from-float : bool]
@@ -12630,7 +12630,7 @@
   [global-types : CompilerBackendGlobalTypeList]
   [vars : i64]
   [plan : CompilerBackendRuntimePlan]
-  [functions : CompilerIrFunctionList]
+  [_functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
   [program-index : CompilerBackendProgramIndex]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
@@ -14947,7 +14947,7 @@
   [load-dst : i64]
   [ptr : CompilerIrValue]
   [load-ty : AstType]
-  [cmp-dst : i64]
+  [_cmp-dst : i64]
   [op : CompilerIrBinOp]
   [rhs : CompilerIrValue]
   [cmp-ty : AstType]
@@ -15025,9 +15025,9 @@
   [base : CompilerIrValue]
   [offset : CompilerIrValue]
   [elem-ty : AstType]
-  [load-dst : i64]
-  [load-ty : AstType]
-  [cmp-dst : i64]
+  [_load-dst : i64]
+  [_load-ty : AstType]
+  [_cmp-dst : i64]
   [op : CompilerIrBinOp]
   [rhs : CompilerIrValue]
   [cmp-ty : AstType]
@@ -15103,7 +15103,7 @@
   [blocks : CompilerIrBlockList]
   [current-label : String]
   [fallthrough : CompilerBackendMaybeLabel]
-  [gep-dst : i64]
+  [_gep-dst : i64]
   [base : CompilerIrValue]
   [offset : CompilerIrValue]
   [elem-ty : AstType]
@@ -15623,7 +15623,7 @@
   [global-types : CompilerBackendGlobalTypeList]
   [vars : i64]
   [plan : CompilerBackendRuntimePlan]
-  [functions : CompilerIrFunctionList]
+  [_functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
   [program-index : CompilerBackendProgramIndex]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
@@ -15689,8 +15689,8 @@
 (define (compiler-backend-indirect-call-param-types
   [types : CompilerRegVarTypeList]
   [func : CompilerIrValue]
-  [functions : CompilerIrFunctionList]
-  [externs : CompilerIrExternList]
+  [_functions : CompilerIrFunctionList]
+  [_externs : CompilerIrExternList]
   [program-index : CompilerBackendProgramIndex]) : AstTypeList
   (match func
     [(IrValueFunction name)
@@ -19278,8 +19278,8 @@
 
 (define (compiler-backend-emit-closure-descriptor-entry-into
   [name : String]
-  [functions : CompilerIrFunctionList]
-  [externs : CompilerIrExternList]
+  [_functions : CompilerIrFunctionList]
+  [_externs : CompilerIrExternList]
   [program-index : CompilerBackendProgramIndex]
   [buf : TextBuf]) : TextBuf
   (match (compiler-backend-index-signature program-index name)
@@ -19357,9 +19357,9 @@
   [target : CompilerBackendTarget]
   [name : String]
   [param-types : AstTypeList]
-  [ret-ty : AstType]
+  [_ret-ty : AstType]
   [plan : CompilerBackendRuntimePlan]
-  [functions : CompilerIrFunctionList]
+  [_functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (let
@@ -20581,10 +20581,10 @@
       (>= name-id 0)
       (compiler-backend-runtime-helper-compatibility-alias-id? name-id))))
 
-(define (compiler-backend-runtime-helper-deprecated-id? [name-id : i64]) : bool
+(define (compiler-backend-runtime-helper-deprecated-id? [_name-id : i64]) : bool
   false)
 
-(define (compiler-backend-runtime-helper-deprecated? [name : String]) : bool
+(define (compiler-backend-runtime-helper-deprecated? [_name : String]) : bool
   false)
 
 (define (compiler-backend-runtime-helper-owner-id [name-id : i64]) : CompilerBackendRuntimeHelperOwner
@@ -20846,23 +20846,23 @@
       (compiler-backend-runtime-index-defines? index "tl_str_view")]
     [defines-concat : bool
       (compiler-backend-runtime-index-defines-concat? index)]
-    [defines-string-eq : bool
+    [_defines-string-eq : bool
       (compiler-backend-runtime-index-defines? index "tl_string_eq")]
-    [defines-string-to-int : bool
+    [_defines-string-to-int : bool
       (compiler-backend-runtime-index-defines? index "tl_string_to_int")]
-    [defines-hash-string : bool
+    [_defines-hash-string : bool
       (compiler-backend-runtime-index-defines? index "tl_hash_string")]
     [defines-int-to-string : bool
       (compiler-backend-runtime-index-defines? index "tl_int_to_string")]
-    [defines-print-err : bool
+    [_defines-print-err : bool
       (compiler-backend-runtime-index-defines? index "tl_print_err")]
-    [defines-print-str : bool
+    [_defines-print-str : bool
       (compiler-backend-runtime-index-defines? index "tl_print_str")]
-    [defines-print-string : bool
+    [_defines-print-string : bool
       (compiler-backend-runtime-index-defines? index "tl_print_string")]
-    [defines-print-char : bool
+    [_defines-print-char : bool
       (compiler-backend-runtime-index-defines? index "tl_print_char")]
-    [defines-print-f64 : bool
+    [_defines-print-f64 : bool
       (compiler-backend-runtime-index-defines? index "tl_print_f64")]
     [defines-region-mark : bool
       (compiler-backend-runtime-index-defines? index "tl_region_mark")]
@@ -20897,11 +20897,11 @@
     [extern-str-view : bool
       (compiler-backend-runtime-index-extern? index "tl_str_view")]
     [extern-concat : bool (compiler-backend-runtime-index-extern-concat? index)]
-    [extern-string-eq : bool
+    [_extern-string-eq : bool
       (compiler-backend-runtime-index-extern? index "tl_string_eq")]
-    [extern-string-to-int : bool
+    [_extern-string-to-int : bool
       (compiler-backend-runtime-index-extern? index "tl_string_to_int")]
-    [extern-hash-string : bool
+    [_extern-hash-string : bool
       (compiler-backend-runtime-index-extern? index "tl_hash_string")]
     [extern-int-to-string : bool
       (compiler-backend-runtime-index-extern? index "tl_int_to_string")]
@@ -20910,80 +20910,80 @@
         index
         ".L_tl_abort"
         "tl_abort_string")]
-    [extern-print-err : bool
+    [_extern-print-err : bool
       (compiler-backend-runtime-index-extern-alias?
         index
         "tl_print_err"
         "tl_print_error")]
-    [extern-print-str : bool
+    [_extern-print-str : bool
       (compiler-backend-runtime-index-extern-alias?
         index
         "tl_print_str"
         "tl_print_string")]
-    [extern-print-char : bool
+    [_extern-print-char : bool
       (compiler-backend-runtime-index-extern? index "tl_print_char")]
-    [extern-print-f64 : bool
+    [_extern-print-f64 : bool
       (compiler-backend-runtime-index-extern? index "tl_print_f64")]
-    [extern-arg-count : bool
+    [_extern-arg-count : bool
       (compiler-backend-runtime-index-extern-alias?
         index
         ".L_tl_arg_count"
         "tl_arg_count")]
-    [extern-arg : bool
+    [_extern-arg : bool
       (compiler-backend-runtime-index-extern-alias? index ".L_tl_arg" "tl_arg")]
-    [extern-read-file : bool
+    [_extern-read-file : bool
       (compiler-backend-runtime-index-extern? index ".L_tl_read_file")]
-    [extern-write-file : bool
+    [_extern-write-file : bool
       (compiler-backend-runtime-index-extern? index ".L_tl_write_file")]
-    [extern-file-exists : bool
+    [_extern-file-exists : bool
       (compiler-backend-runtime-index-extern? index ".L_tl_file_exists")]
-    [extern-read-file-status : bool
+    [_extern-read-file-status : bool
       (compiler-backend-runtime-index-extern? index ".L_tl_read_file_status")]
-    [extern-write-file-status : bool
+    [_extern-write-file-status : bool
       (compiler-backend-runtime-index-extern? index ".L_tl_write_file_status")]
-    [extern-append-file-status : bool
+    [_extern-append-file-status : bool
       (compiler-backend-runtime-index-extern? index ".L_tl_append_file_status")]
-    [extern-file-exists-status : bool
+    [_extern-file-exists-status : bool
       (compiler-backend-runtime-index-extern? index ".L_tl_file_exists_status")]
-    [extern-file-open-status : bool
+    [_extern-file-open-status : bool
       (compiler-backend-runtime-index-extern? index ".L_tl_file_open_status")]
-    [extern-file-close-status : bool
+    [_extern-file-close-status : bool
       (compiler-backend-runtime-index-extern? index ".L_tl_file_close_status")]
-    [extern-file-read-chunk-status : bool
+    [_extern-file-read-chunk-status : bool
       (compiler-backend-runtime-index-extern?
         index
         ".L_tl_file_read_chunk_status")]
-    [extern-file-write-status : bool
+    [_extern-file-write-status : bool
       (compiler-backend-runtime-index-extern? index ".L_tl_file_write_status")]
-    [extern-file-flush-status : bool
+    [_extern-file-flush-status : bool
       (compiler-backend-runtime-index-extern? index ".L_tl_file_flush_status")]
-    [extern-file-read-chunk-bytes : bool
+    [_extern-file-read-chunk-bytes : bool
       (compiler-backend-runtime-index-extern?
         index
         ".L_tl_file_read_chunk_bytes")]
-    [extern-file-read-chunk-eof : bool
+    [_extern-file-read-chunk-eof : bool
       (compiler-backend-runtime-index-extern? index ".L_tl_file_read_chunk_eof")]
-    [extern-fs-mkdir-status : bool
+    [_extern-fs-mkdir-status : bool
       (compiler-backend-runtime-index-extern? index ".L_tl_fs_mkdir_status")]
-    [extern-fs-remove-file-status : bool
+    [_extern-fs-remove-file-status : bool
       (compiler-backend-runtime-index-extern?
         index
         ".L_tl_fs_remove_file_status")]
-    [extern-fs-remove-dir-status : bool
+    [_extern-fs-remove-dir-status : bool
       (compiler-backend-runtime-index-extern?
         index
         ".L_tl_fs_remove_dir_status")]
-    [extern-fs-rename-status : bool
+    [_extern-fs-rename-status : bool
       (compiler-backend-runtime-index-extern? index ".L_tl_fs_rename_status")]
-    [extern-fs-process-id : bool
+    [_extern-fs-process-id : bool
       (compiler-backend-runtime-index-extern? index ".L_tl_fs_process_id")]
-    [extern-read-line : bool
+    [_extern-read-line : bool
       (compiler-backend-runtime-index-extern? index ".L_tl_read_stdin_line")]
-    [extern-read-bytes : bool
+    [_extern-read-bytes : bool
       (compiler-backend-runtime-index-extern? index ".L_tl_read_stdin_bytes")]
-    [extern-stdin-eof : bool
+    [_extern-stdin-eof : bool
       (compiler-backend-runtime-index-extern? index ".L_tl_stdin_eof")]
-    [extern-flush-stdout : bool
+    [_extern-flush-stdout : bool
       (compiler-backend-runtime-index-extern? index ".L_tl_flush_stdout")]
     [extern-region-mark : bool
       (compiler-backend-runtime-index-extern? index "tl_region_mark")]
@@ -21018,80 +21018,81 @@
     [calls-str-view : bool
       (compiler-backend-runtime-index-calls? index "tl_str_view")]
     [calls-concat : bool (compiler-backend-runtime-index-calls-concat? index)]
-    [calls-string-eq : bool
+    [_calls-string-eq : bool
       (compiler-backend-runtime-index-calls? index "tl_string_eq")]
-    [calls-string-to-int : bool
+    [_calls-string-to-int : bool
       (compiler-backend-runtime-index-calls? index "tl_string_to_int")]
-    [calls-hash-string : bool
+    [_calls-hash-string : bool
       (compiler-backend-runtime-index-calls? index "tl_hash_string")]
     [calls-int-to-string : bool
       (compiler-backend-runtime-index-calls? index "tl_int_to_string")]
     [calls-abort : bool
       (compiler-backend-runtime-index-calls? index ".L_tl_abort")]
-    [calls-print-err : bool
+    [_calls-print-err : bool
       (compiler-backend-runtime-index-calls? index "tl_print_err")]
-    [calls-print-str : bool
+    [_calls-print-str : bool
       (compiler-backend-runtime-index-calls? index "tl_print_str")]
-    [calls-print-string : bool
+    [_calls-print-string : bool
       (compiler-backend-runtime-index-calls? index "tl_print_string")]
-    [calls-print-char : bool
+    [_calls-print-char : bool
       (compiler-backend-runtime-index-calls? index "tl_print_char")]
-    [calls-print-f64 : bool
+    [_calls-print-f64 : bool
       (compiler-backend-runtime-index-calls? index "tl_print_f64")]
-    [calls-arg-count : bool
+    [_calls-arg-count : bool
       (compiler-backend-runtime-index-calls? index ".L_tl_arg_count")]
-    [calls-arg : bool (compiler-backend-runtime-index-calls? index ".L_tl_arg")]
-    [calls-read-file : bool
+    [_calls-arg : bool
+      (compiler-backend-runtime-index-calls? index ".L_tl_arg")]
+    [_calls-read-file : bool
       (compiler-backend-runtime-index-calls? index ".L_tl_read_file")]
-    [calls-write-file : bool
+    [_calls-write-file : bool
       (compiler-backend-runtime-index-calls? index ".L_tl_write_file")]
-    [calls-file-exists : bool
+    [_calls-file-exists : bool
       (compiler-backend-runtime-index-calls? index ".L_tl_file_exists")]
-    [calls-read-file-status : bool
+    [_calls-read-file-status : bool
       (compiler-backend-runtime-index-calls? index ".L_tl_read_file_status")]
-    [calls-write-file-status : bool
+    [_calls-write-file-status : bool
       (compiler-backend-runtime-index-calls? index ".L_tl_write_file_status")]
-    [calls-append-file-status : bool
+    [_calls-append-file-status : bool
       (compiler-backend-runtime-index-calls? index ".L_tl_append_file_status")]
-    [calls-file-exists-status : bool
+    [_calls-file-exists-status : bool
       (compiler-backend-runtime-index-calls? index ".L_tl_file_exists_status")]
-    [calls-file-open-status : bool
+    [_calls-file-open-status : bool
       (compiler-backend-runtime-index-calls? index ".L_tl_file_open_status")]
-    [calls-file-close-status : bool
+    [_calls-file-close-status : bool
       (compiler-backend-runtime-index-calls? index ".L_tl_file_close_status")]
-    [calls-file-read-chunk-status : bool
+    [_calls-file-read-chunk-status : bool
       (compiler-backend-runtime-index-calls?
         index
         ".L_tl_file_read_chunk_status")]
-    [calls-file-write-status : bool
+    [_calls-file-write-status : bool
       (compiler-backend-runtime-index-calls? index ".L_tl_file_write_status")]
-    [calls-file-flush-status : bool
+    [_calls-file-flush-status : bool
       (compiler-backend-runtime-index-calls? index ".L_tl_file_flush_status")]
-    [calls-file-read-chunk-bytes : bool
+    [_calls-file-read-chunk-bytes : bool
       (compiler-backend-runtime-index-calls?
         index
         ".L_tl_file_read_chunk_bytes")]
-    [calls-file-read-chunk-eof : bool
+    [_calls-file-read-chunk-eof : bool
       (compiler-backend-runtime-index-calls? index ".L_tl_file_read_chunk_eof")]
-    [calls-fs-mkdir-status : bool
+    [_calls-fs-mkdir-status : bool
       (compiler-backend-runtime-index-calls? index ".L_tl_fs_mkdir_status")]
-    [calls-fs-remove-file-status : bool
+    [_calls-fs-remove-file-status : bool
       (compiler-backend-runtime-index-calls?
         index
         ".L_tl_fs_remove_file_status")]
-    [calls-fs-remove-dir-status : bool
+    [_calls-fs-remove-dir-status : bool
       (compiler-backend-runtime-index-calls? index ".L_tl_fs_remove_dir_status")]
-    [calls-fs-rename-status : bool
+    [_calls-fs-rename-status : bool
       (compiler-backend-runtime-index-calls? index ".L_tl_fs_rename_status")]
-    [calls-fs-process-id : bool
+    [_calls-fs-process-id : bool
       (compiler-backend-runtime-index-calls? index ".L_tl_fs_process_id")]
-    [calls-read-line : bool
+    [_calls-read-line : bool
       (compiler-backend-runtime-index-calls? index ".L_tl_read_stdin_line")]
-    [calls-read-bytes : bool
+    [_calls-read-bytes : bool
       (compiler-backend-runtime-index-calls? index ".L_tl_read_stdin_bytes")]
-    [calls-stdin-eof : bool
+    [_calls-stdin-eof : bool
       (compiler-backend-runtime-index-calls? index ".L_tl_stdin_eof")]
-    [calls-flush-stdout : bool
+    [_calls-flush-stdout : bool
       (compiler-backend-runtime-index-calls? index ".L_tl_flush_stdout")]
     [calls-region-mark : bool
       (compiler-backend-runtime-index-calls? index "tl_region_mark")]
@@ -21130,14 +21131,14 @@
       (and (not defines-str-view) (or extern-str-view calls-str-view))]
     [needs-concat : bool
       (and (not defines-concat) (or extern-concat calls-concat))]
-    [needs-string-eq : bool false]
-    [needs-string-to-int : bool false]
-    [needs-hash-string : bool false]
+    [_needs-string-eq : bool false]
+    [_needs-string-to-int : bool false]
+    [_needs-hash-string : bool false]
     [needs-int-to-string : bool
       (and
         (not defines-int-to-string)
         (or extern-int-to-string calls-int-to-string))]
-    [direct-abort : bool false]
+    [_direct-abort : bool false]
     [needs-print-err : bool false]
     [needs-print-str : bool false]
     [needs-print-char : bool false]
@@ -21300,7 +21301,7 @@
 ;; abort paths now `jmp tl_oom_abort` instead of writing backend rodata, so the
 ;; allocator contributes no runtime data.
 (define (compiler-backend-runtime-alloc-data-for-target
-  [target : CompilerBackendTarget]) : String
+  [_target : CompilerBackendTarget]) : String
   "")
 
 ;; `tl_current_arena` is the live bump-arena pointer shared by tl_alloc, the
@@ -26795,7 +26796,7 @@ tl_atomic_i32_fetch_add_ptr:
   [program : CompilerIrProgram]
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]
-  [spans : CompilerSourceSpans]
+  [_spans : CompilerSourceSpans]
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerBackendObject
   (begin
@@ -27473,7 +27474,7 @@ tl_atomic_i32_fetch_add_ptr:
 (define (compiler-backend-pic-quad-pattern [target : String]) : String
   (str-cat "    .quad " target "\n"))
 
-(define (compiler-backend-pic-quad-replacement [target : String]) : String
+(define (compiler-backend-pic-quad-replacement [_target : String]) : String
   "    .quad 0\n")
 
 (define (compiler-backend-pic-rewrite-target [asm : String] [target : String]) : String

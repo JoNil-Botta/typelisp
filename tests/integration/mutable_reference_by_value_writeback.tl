@@ -8,7 +8,7 @@
 (define (set-pair-x! [p : (&mut p Pair)] [value : i64]) : unit
   (set! (struct-get p x) value))
 
-(define (touch-scalar! [n : (&mut n i64)]) : unit
+(define (touch-scalar! [_n : (&mut n i64)]) : unit
   unit)
 
 (define (main) : i64

@@ -135,6 +135,15 @@
 (define (lint-rule-unused-assignment-suggestion) : String
   "remove the assignment or read the value before overwriting it")
 
+(define (lint-rule-unused-variable-id) : String
+  "unused-variable")
+
+(define (lint-rule-unused-variable-message) : String
+  "unused variable: parameter or local binding is never used")
+
+(define (lint-rule-unused-variable-suggestion) : String
+  "remove the binding or prefix an intentionally unused name with _")
+
 ;: Metadata for one lint rule. Rule id is stable public API for suppressions;
 ;: message is the rendered finding text; suggestion is structured helper text
 ;: that drivers or tooling can render separately from the message.
@@ -224,6 +233,12 @@
     (lint-rule-unused-assignment-message)
     (lint-rule-unused-assignment-suggestion)))
 
+(define (lint-rule-unused-variable) : LintRule
+  (LintRule
+    (lint-rule-unused-variable-id)
+    (lint-rule-unused-variable-message)
+    (lint-rule-unused-variable-suggestion)))
+
 (define (lint-rule-cons [rule : LintRule] [rest : LintRuleList]) : LintRuleList
   (LintRuleCons rule (box rest)))
 
@@ -254,7 +269,9 @@
                         (lint-rule-dead-code)
                         (lint-rule-cons
                           (lint-rule-unused-assignment)
-                          LintRuleNil)))))))))))))
+                          (lint-rule-cons
+                            (lint-rule-unused-variable)
+                            LintRuleNil))))))))))))))
 
 (define (lint-rule-find-in [rules : LintRuleList] [rule-id : String]) : LintMaybeRule
   (match rules
@@ -541,6 +558,13 @@
       "unused assignment: value assigned to "
       (string-append name " is overwritten before it is read"))
     (lint-rule-unused-assignment-id)
+    0
+    span))
+
+(define (lint-unused-variable-finding [name : String] [span : AstSourceSpan]) : LintFinding
+  (LintFinding
+    (string-append "unused variable: " (string-append name " is never used"))
+    (lint-rule-unused-variable-id)
     0
     span))
 
@@ -2343,6 +2367,1342 @@
         (box-get rest)
         (lint-unused-assignments-in-decl decl acc))]))
 
+(defstruct LintSourceNameSpan
+  (span AstSourceSpan)
+  (next-index i64))
+
+(defstruct LintUnusedVariableBinding
+  (name String)
+  (span AstSourceSpan)
+  (used bool)
+  (reportable bool))
+
+(defenum LintUnusedVariableBindingList
+  (LintUnusedVariableBindingNil)
+  (LintUnusedVariableBindingCons
+    LintUnusedVariableBinding
+    (Box LintUnusedVariableBindingList)))
+
+(defenum LintUnusedVariableFrameList
+  (LintUnusedVariableFrameNil)
+  (LintUnusedVariableFrameCons
+    LintUnusedVariableBindingList
+    (Box LintUnusedVariableFrameList)))
+
+(defstruct LintUnusedVariableMarkBindingsResult
+  (bindings LintUnusedVariableBindingList)
+  (found bool))
+
+(defstruct LintUnusedVariableMarkFramesResult
+  (frames LintUnusedVariableFrameList)
+  (found bool))
+
+(defstruct LintUnusedVariableBindingBuild
+  (bindings LintUnusedVariableBindingList)
+  (next-index i64))
+
+(defstruct LintUnusedVariableState
+  (source String)
+  (frames LintUnusedVariableFrameList)
+  (findings LintFindings))
+
+(define (lint-source-prefix-at?
+  [source : String]
+  [start : i64]
+  [needle : String]) : bool
+  (let
+    [source-len : i64 (string-length source)]
+    [needle-len : i64 (string-length needle)]
+    (if (< start 0)
+      false
+      (if (> (+ start needle-len) source-len)
+        false
+        (let
+          [ok : bool true]
+          [idx : i64 0]
+          (begin
+            (while (and ok (< idx needle-len))
+              (if (= (string-ref source (+ start idx)) (string-ref needle idx))
+                (set! idx (+ idx 1))
+                (set! ok false)))
+            ok))))))
+
+(define (lint-source-find-prefix-from
+  [source : String]
+  [needle : String]
+  [idx : i64]) : i64
+  (let
+    [source-len : i64 (string-length source)]
+    [found : i64 (- 0 1)]
+    [i : i64 idx]
+    (begin
+      (while (and (< found 0) (< i source-len))
+        (if (lint-source-prefix-at? source i needle)
+          (set! found i)
+          (set! i (+ i 1))))
+      found)))
+
+(define (lint-source-symbol-boundary? [source : String] [idx : i64]) : bool
+  (let
+    [source-len : i64 (string-length source)]
+    (if (< idx 0)
+      true
+      (if (>= idx source-len)
+        true
+        (not (is-symbol-char (string-ref source idx)))))))
+
+(define (lint-source-name-at? [source : String] [idx : i64] [name : String]) : bool
+  (let
+    [end : i64 (+ idx (string-length name))]
+    (and
+      (lint-source-prefix-at? source idx name)
+      (lint-source-symbol-boundary? source (- idx 1))
+      (lint-source-symbol-boundary? source end))))
+
+(define (lint-source-find-name-from
+  [source : String]
+  [name : String]
+  [idx : i64]) : i64
+  (let
+    [source-len : i64 (string-length source)]
+    [found : i64 (- 0 1)]
+    [i : i64 idx]
+    (begin
+      (while (and (< found 0) (< i source-len))
+        (if (lint-source-name-at? source i name)
+          (set! found i)
+          (set! i (+ i 1))))
+      found)))
+
+(define (lint-source-index-line [source : String] [target : i64]) : i64
+  (let
+    [i : i64 0]
+    [line : i64 1]
+    (begin
+      (while (< i target)
+        (begin
+          (if (= (string-ref source i) #\newline')
+            (set! line (+ line 1))
+            unit)
+          (set! i (+ i 1))))
+      line)))
+
+(define (lint-source-index-col [source : String] [target : i64]) : i64
+  (let
+    [i : i64 0]
+    [col : i64 1]
+    (begin
+      (while (< i target)
+        (begin
+          (if (= (string-ref source i) #\newline')
+            (set! col 1)
+            (set! col (+ col 1)))
+          (set! i (+ i 1))))
+      col)))
+
+(define (lint-source-index-span
+  [source : String]
+  [idx : i64]
+  [width : i64]
+  [fallback : AstSourceSpan]) : AstSourceSpan
+  (if (< idx 0)
+    fallback
+    (let
+      [line : i64 (lint-source-index-line source idx)]
+      [col : i64 (lint-source-index-col source idx)]
+      (AstSourceSpan line col line (+ col width)))))
+
+(define (lint-source-span-start-index [source : String] [span : AstSourceSpan]) : i64
+  (let
+    [target-line : i64 (struct-get span start-line)]
+    [target-col : i64 (struct-get span start-col)]
+    [source-len : i64 (string-length source)]
+    [idx : i64 0]
+    [line : i64 1]
+    [col : i64 1]
+    [found : i64 (- 0 1)]
+    (begin
+      (if (or (<= target-line 0) (<= target-col 0))
+        (set! found (- 0 1))
+        (while (and (< found 0) (< idx source-len))
+          (if (and (= line target-line) (= col target-col))
+            (set! found idx)
+            (begin
+              (if (= (string-ref source idx) #\newline')
+                (begin
+                  (set! line (+ line 1))
+                  (set! col 1))
+                (set! col (+ col 1)))
+              (set! idx (+ idx 1))))))
+      found)))
+
+(define (lint-source-name-span-from
+  [source : String]
+  [name : String]
+  [cursor : i64]
+  [fallback : AstSourceSpan]) : LintSourceNameSpan
+  (let
+    [found : i64 (lint-source-find-name-from source name cursor)]
+    [width : i64 (string-length name)]
+    (if (< found 0)
+      (LintSourceNameSpan fallback cursor)
+      (LintSourceNameSpan
+        (lint-source-index-span source found width fallback)
+        (+ found width)))))
+
+(define (lint-unused-variable-binding
+  [name : String]
+  [span : AstSourceSpan]
+  [reportable : bool]) : LintUnusedVariableBinding
+  (LintUnusedVariableBinding name span false reportable))
+
+(define (lint-unused-variable-binding-cons
+  [head : LintUnusedVariableBinding]
+  [rest : LintUnusedVariableBindingList]) : LintUnusedVariableBindingList
+  (LintUnusedVariableBindingCons head (box rest)))
+
+(define (lint-unused-variable-state-with
+  [state : LintUnusedVariableState]
+  [frames : LintUnusedVariableFrameList]
+  [findings : LintFindings]) : LintUnusedVariableState
+  (LintUnusedVariableState (struct-get state source) frames findings))
+
+(define (lint-unused-variable-binding-mark-used
+  [binding : LintUnusedVariableBinding]) : LintUnusedVariableBinding
+  (LintUnusedVariableBinding
+    (struct-get binding name)
+    (struct-get binding span)
+    true
+    (struct-get binding reportable)))
+
+(define (lint-unused-variable-mark-bindings
+  [bindings : LintUnusedVariableBindingList]
+  [name : String]) : LintUnusedVariableMarkBindingsResult
+  (match bindings
+    [(LintUnusedVariableBindingNil)
+      (LintUnusedVariableMarkBindingsResult LintUnusedVariableBindingNil false)]
+    [(LintUnusedVariableBindingCons binding rest)
+      (if (string-eq (struct-get binding name) name)
+        (LintUnusedVariableMarkBindingsResult
+          (lint-unused-variable-binding-cons
+            (lint-unused-variable-binding-mark-used binding)
+            (box-get rest))
+          true)
+        (let
+          [marked : LintUnusedVariableMarkBindingsResult
+            (lint-unused-variable-mark-bindings (box-get rest) name)]
+          (LintUnusedVariableMarkBindingsResult
+            (lint-unused-variable-binding-cons
+              binding
+              (struct-get marked bindings))
+            (struct-get marked found))))]))
+
+(define (lint-unused-variable-mark-frames
+  [frames : LintUnusedVariableFrameList]
+  [name : String]) : LintUnusedVariableMarkFramesResult
+  (match frames
+    [(LintUnusedVariableFrameNil)
+      (LintUnusedVariableMarkFramesResult LintUnusedVariableFrameNil false)]
+    [(LintUnusedVariableFrameCons bindings rest)
+      (let
+        [marked-bindings : LintUnusedVariableMarkBindingsResult
+          (lint-unused-variable-mark-bindings bindings name)]
+        (if (struct-get marked-bindings found)
+          (LintUnusedVariableMarkFramesResult
+            (LintUnusedVariableFrameCons
+              (struct-get marked-bindings bindings)
+              rest)
+            true)
+          (let
+            [marked-rest : LintUnusedVariableMarkFramesResult
+              (lint-unused-variable-mark-frames (box-get rest) name)]
+            (LintUnusedVariableMarkFramesResult
+              (LintUnusedVariableFrameCons
+                bindings
+                (box (struct-get marked-rest frames)))
+              (struct-get marked-rest found)))))]))
+
+(define (lint-unused-variable-read-name
+  [state : LintUnusedVariableState]
+  [name : String]) : LintUnusedVariableState
+  (let
+    [marked : LintUnusedVariableMarkFramesResult
+      (lint-unused-variable-mark-frames (struct-get state frames) name)]
+    (if (struct-get marked found)
+      (lint-unused-variable-state-with
+        state
+        (struct-get marked frames)
+        (struct-get state findings))
+      state)))
+
+(define (lint-unused-variable-read-id
+  [state : LintUnusedVariableState]
+  [name : i64]) : LintUnusedVariableState
+  (lint-unused-variable-read-name state (intern-str name)))
+
+(define (lint-unused-variable-first-dot-index [text : String]) : i64
+  (let
+    [n : i64 (string-length text)]
+    [idx : i64 0]
+    [found : i64 (- 0 1)]
+    (begin
+      (while (and (< found 0) (< idx n))
+        (if (= (string-ref text idx) #.')
+          (set! found idx)
+          (set! idx (+ idx 1))))
+      found)))
+
+(define (lint-unused-variable-read-var-name
+  [state : LintUnusedVariableState]
+  [name : String]) : LintUnusedVariableState
+  (let
+    [with-full : LintUnusedVariableState
+      (lint-unused-variable-read-name state name)]
+    [dot : i64 (lint-unused-variable-first-dot-index name)]
+    (if (> dot 0)
+      (lint-unused-variable-read-name with-full (substring name 0 dot))
+      with-full)))
+
+(define (lint-unused-variable-read-var-id
+  [state : LintUnusedVariableState]
+  [name : i64]) : LintUnusedVariableState
+  (lint-unused-variable-read-var-name state (intern-str name)))
+
+(define (lint-unused-variable-add-to-current-frame
+  [state : LintUnusedVariableState]
+  [binding : LintUnusedVariableBinding]) : LintUnusedVariableState
+  (match (struct-get state frames)
+    [(LintUnusedVariableFrameNil)
+      (lint-unused-variable-state-with
+        state
+        (LintUnusedVariableFrameCons
+          (lint-unused-variable-binding-cons
+            binding
+            LintUnusedVariableBindingNil)
+          (box LintUnusedVariableFrameNil))
+        (struct-get state findings))]
+    [(LintUnusedVariableFrameCons bindings rest)
+      (lint-unused-variable-state-with
+        state
+        (LintUnusedVariableFrameCons
+          (lint-unused-variable-binding-cons binding bindings)
+          rest)
+        (struct-get state findings))]))
+
+(define (lint-unused-variable-push-frame
+  [state : LintUnusedVariableState]
+  [bindings : LintUnusedVariableBindingList]) : LintUnusedVariableState
+  (lint-unused-variable-state-with
+    state
+    (LintUnusedVariableFrameCons bindings (box (struct-get state frames)))
+    (struct-get state findings)))
+
+(define (lint-unused-variable-report-bindings
+  [bindings : LintUnusedVariableBindingList]
+  [findings : LintFindings]) : LintFindings
+  (match bindings
+    [(LintUnusedVariableBindingNil) findings]
+    [(LintUnusedVariableBindingCons binding rest)
+      (let
+        [next : LintFindings
+          (if (and
+            (struct-get binding reportable)
+            (not (struct-get binding used))
+            (not (lint-underscore-prefixed? (struct-get binding name))))
+            (lint-findings-add
+              (lint-unused-variable-finding
+                (struct-get binding name)
+                (struct-get binding span))
+              findings)
+            findings)]
+        (lint-unused-variable-report-bindings (box-get rest) next))]))
+
+(define (lint-unused-variable-pop-frame [state : LintUnusedVariableState]) : LintUnusedVariableState
+  (match (struct-get state frames)
+    [(LintUnusedVariableFrameNil) state]
+    [(LintUnusedVariableFrameCons bindings rest)
+      (lint-unused-variable-state-with
+        state
+        (box-get rest)
+        (lint-unused-variable-report-bindings
+          bindings
+          (struct-get state findings)))]))
+
+(define (lint-unused-variable-param-bindings
+  [params : AstParamList]
+  [source : String]
+  [cursor : i64]
+  [fallback : AstSourceSpan]
+  [reportable : bool]) : LintUnusedVariableBindingBuild
+  (match params
+    [(AstParamNil)
+      (LintUnusedVariableBindingBuild LintUnusedVariableBindingNil cursor)]
+    [(AstParamCons param rest)
+      (match param
+        [(AstParam name _ _)
+          (let
+            [text : String (intern-str name)]
+            [found : LintSourceNameSpan
+              (lint-source-name-span-from source text cursor fallback)]
+            [tail : LintUnusedVariableBindingBuild
+              (lint-unused-variable-param-bindings
+                (box-get rest)
+                source
+                (struct-get found next-index)
+                fallback
+                reportable)]
+            (LintUnusedVariableBindingBuild
+              (lint-unused-variable-binding-cons
+                (lint-unused-variable-binding
+                  text
+                  (struct-get found span)
+                  reportable)
+                (struct-get tail bindings))
+              (struct-get tail next-index)))])]))
+
+(define (lint-unused-variable-macro-param-bindings
+  [params : AstMacroParamList]
+  [source : String]
+  [cursor : i64]
+  [fallback : AstSourceSpan]
+  [reportable : bool]) : LintUnusedVariableBindingBuild
+  (match params
+    [(AstMacroParamNil)
+      (LintUnusedVariableBindingBuild LintUnusedVariableBindingNil cursor)]
+    [(AstMacroParamCons param rest)
+      (match param
+        [(AstMacroParam name _ _)
+          (let
+            [text : String (intern-str name)]
+            [found : LintSourceNameSpan
+              (lint-source-name-span-from source text cursor fallback)]
+            [tail : LintUnusedVariableBindingBuild
+              (lint-unused-variable-macro-param-bindings
+                (box-get rest)
+                source
+                (struct-get found next-index)
+                fallback
+                reportable)]
+            (LintUnusedVariableBindingBuild
+              (lint-unused-variable-binding-cons
+                (lint-unused-variable-binding
+                  text
+                  (struct-get found span)
+                  reportable)
+                (struct-get tail bindings))
+              (struct-get tail next-index)))])]))
+
+(define (lint-unused-variable-pattern-list-bindings
+  [patterns : AstPatternList]
+  [state : LintUnusedVariableState]) : LintUnusedVariableState
+  (match patterns
+    [(AstPatternNil) state]
+    [(AstPatternCons head rest)
+      (lint-unused-variable-pattern-list-bindings
+        (box-get rest)
+        (lint-unused-variable-pattern-bindings (box-get head) state))]))
+
+(define (lint-unused-variable-type-list
+  [items : AstTypeList]
+  [state : LintUnusedVariableState]) : LintUnusedVariableState
+  (match items
+    [(AstTypeNil) state]
+    [(AstTypeCons id rest)
+      (lint-unused-variable-type-list
+        (box-get rest)
+        (lint-unused-variable-type (ty-node-get id) state))]))
+
+(define (lint-unused-variable-lifetime-list
+  [items : AstLifetimeList]
+  [state : LintUnusedVariableState]) : LintUnusedVariableState
+  (match items
+    [(AstLifetimeNil) state]
+    [(AstLifetimeCons name rest)
+      (lint-unused-variable-lifetime-list
+        (box-get rest)
+        (lint-unused-variable-read-name state name))]))
+
+(define (lint-unused-variable-type-lifetime
+  [name : String]
+  [inner : i64]
+  [state : LintUnusedVariableState]) : LintUnusedVariableState
+  (lint-unused-variable-type
+    (ty-node-get inner)
+    (lint-unused-variable-read-name state name)))
+
+(define (lint-unused-variable-type
+  [ty : AstType]
+  [state : LintUnusedVariableState]) : LintUnusedVariableState
+  (match ty
+    [(AstTyFunc args ret)
+      (lint-unused-variable-type
+        (ty-node-get ret)
+        (lint-unused-variable-type-list args state))]
+    [(AstTyTuple items) (lint-unused-variable-type-list items state)]
+    [(AstTyArray elem _) (lint-unused-variable-type (ty-node-get elem) state)]
+    [(AstTyDynArray elem) (lint-unused-variable-type (ty-node-get elem) state)]
+    [(AstTyBox elem) (lint-unused-variable-type (ty-node-get elem) state)]
+    [(AstTyRegion name inner)
+      (lint-unused-variable-type-lifetime name inner state)]
+    [(AstTyRef name inner)
+      (lint-unused-variable-type-lifetime name inner state)]
+    [(AstTyMutRef name inner)
+      (lint-unused-variable-type-lifetime name inner state)]
+    [(AstTyEnumArgs _ lifetimes)
+      (lint-unused-variable-lifetime-list lifetimes state)]
+    [(AstTyStructArgs _ lifetimes)
+      (lint-unused-variable-lifetime-list lifetimes state)]
+    [(AstTyVar name) (lint-unused-variable-read-id state name)]
+    [(AstTyVarArgs name lifetimes)
+      (lint-unused-variable-lifetime-list
+        lifetimes
+        (lint-unused-variable-read-id state name))]
+    [(AstTyPtr elem) (lint-unused-variable-type (ty-node-get elem) state)]
+    [(AstTyMutPtr elem) (lint-unused-variable-type (ty-node-get elem) state)]
+    [_ state]))
+
+(define (lint-unused-variable-maybe-type
+  [maybe-ty : AstMaybeType]
+  [state : LintUnusedVariableState]) : LintUnusedVariableState
+  (match maybe-ty
+    [(AstNoType) state]
+    [(AstSomeType ty) (lint-unused-variable-type ty state)]))
+
+(define (lint-unused-variable-param-types
+  [params : AstParamList]
+  [state : LintUnusedVariableState]) : LintUnusedVariableState
+  (match params
+    [(AstParamNil) state]
+    [(AstParamCons param rest)
+      (match param
+        [(AstParam _ ty _)
+          (lint-unused-variable-param-types
+            (box-get rest)
+            (lint-unused-variable-type ty state))])]))
+
+(define (lint-unused-variable-macro-param-types
+  [params : AstMacroParamList]
+  [state : LintUnusedVariableState]) : LintUnusedVariableState
+  (match params
+    [(AstMacroParamNil) state]
+    [(AstMacroParamCons param rest)
+      (match param
+        [(AstMacroParam _ ty _)
+          (lint-unused-variable-macro-param-types
+            (box-get rest)
+            (lint-unused-variable-type ty state))])]))
+
+(define (lint-unused-variable-borrow-lifetime
+  [lifetime : AstBorrowLifetime]
+  [state : LintUnusedVariableState]) : LintUnusedVariableState
+  (match lifetime
+    [(AstBorrowLifetimeInferred) state]
+    [(AstBorrowLifetimeNamed name) (lint-unused-variable-read-name state name)]))
+
+(define (lint-unused-variable-pattern-bindings
+  [pattern : AstPattern]
+  [state : LintUnusedVariableState]) : LintUnusedVariableState
+  (match pattern
+    [(AstPatVar name maybe-ty)
+      (lint-unused-variable-add-to-current-frame
+        (lint-unused-variable-maybe-type maybe-ty state)
+        (lint-unused-variable-binding (intern-str name) (lint-no-span) false))]
+    [(AstPatTuple items)
+      (lint-unused-variable-pattern-list-bindings (box-get items) state)]
+    [(AstPatWildcard) state]
+    [(AstPatBinding name)
+      (lint-unused-variable-add-to-current-frame
+        state
+        (lint-unused-variable-binding (intern-str name) (lint-no-span) false))]
+    [(AstPatVariant _ items)
+      (lint-unused-variable-pattern-list-bindings (box-get items) state)]
+    [(AstPatLiteral _) state]))
+
+(define (lint-unused-variable-expr-list
+  [exprs : AstExprList]
+  [state : LintUnusedVariableState]) : LintUnusedVariableState
+  (match exprs
+    [(AstExprNil) state]
+    [(AstExprCons head rest)
+      (lint-unused-variable-expr-list
+        (box-get rest)
+        (lint-unused-variable-expr (ast-node-get head) state (lint-no-span)))]))
+
+(define (lint-unused-variable-quasiquote-expr-list
+  [exprs : AstExprList]
+  [state : LintUnusedVariableState]) : LintUnusedVariableState
+  (match exprs
+    [(AstExprNil) state]
+    [(AstExprCons head rest)
+      (lint-unused-variable-quasiquote-expr-list
+        (box-get rest)
+        (lint-unused-variable-quasiquote-expr (ast-node-get head) state))]))
+
+(define (lint-unused-variable-quasiquote-let-bindings
+  [bindings : AstLetBindingList]
+  [state : LintUnusedVariableState]) : LintUnusedVariableState
+  (match bindings
+    [(AstLetBindingNil) state]
+    [(AstLetBindingCons binding rest)
+      (match binding
+        [(AstLetBinding _ _ init)
+          (lint-unused-variable-quasiquote-let-bindings
+            (box-get rest)
+            (lint-unused-variable-quasiquote-expr (ast-node-get init) state))])]))
+
+(define (lint-unused-variable-quasiquote-match-arms
+  [arms : AstMatchArmList]
+  [state : LintUnusedVariableState]) : LintUnusedVariableState
+  (match arms
+    [(AstMatchArmNil) state]
+    [(AstMatchArmCons arm rest)
+      (match arm
+        [(AstMatchArm _ body)
+          (lint-unused-variable-quasiquote-match-arms
+            (box-get rest)
+            (lint-unused-variable-quasiquote-expr (ast-node-get body) state))])]))
+
+(define (lint-unused-variable-quasiquote-resource-bindings
+  [bindings : AstResourceBindingList]
+  [state : LintUnusedVariableState]) : LintUnusedVariableState
+  (match bindings
+    [(AstResourceBindingNil) state]
+    [(AstResourceBindingCons binding rest)
+      (match binding
+        [(AstResourceBinding _ init cleanup)
+          (lint-unused-variable-quasiquote-resource-bindings
+            (box-get rest)
+            (lint-unused-variable-quasiquote-expr
+              (ast-node-get cleanup)
+              (lint-unused-variable-quasiquote-expr (ast-node-get init) state)))])]))
+
+(define (lint-unused-variable-quasiquote-expr
+  [expr : AstExpr]
+  [state : LintUnusedVariableState]) : LintUnusedVariableState
+  (match expr
+    [(AstExprSpanned inner-box _)
+      (lint-unused-variable-quasiquote-expr (ast-node-get inner-box) state)]
+    [(AstExprUnquote inner)
+      (lint-unused-variable-expr
+        (ast-node-get inner)
+        state
+        (lint-no-effect-span (ast-node-get inner)))]
+    [(AstExprUnquoteSplicing inner)
+      (lint-unused-variable-expr
+        (ast-node-get inner)
+        state
+        (lint-no-effect-span (ast-node-get inner)))]
+    [(AstExprBinary _ left right)
+      (lint-unused-variable-quasiquote-expr
+        (ast-node-get right)
+        (lint-unused-variable-quasiquote-expr (ast-node-get left) state))]
+    [(AstExprUnary _ inner)
+      (lint-unused-variable-quasiquote-expr (ast-node-get inner) state)]
+    [(AstExprCall func args)
+      (lint-unused-variable-quasiquote-expr-list
+        args
+        (lint-unused-variable-quasiquote-expr (ast-node-get func) state))]
+    [(AstExprIf cond then-branch else-branch)
+      (lint-unused-variable-quasiquote-expr
+        (ast-node-get else-branch)
+        (lint-unused-variable-quasiquote-expr
+          (ast-node-get then-branch)
+          (lint-unused-variable-quasiquote-expr (ast-node-get cond) state)))]
+    [(AstExprLet bindings body)
+      (lint-unused-variable-quasiquote-expr
+        (ast-node-get body)
+        (lint-unused-variable-quasiquote-let-bindings bindings state))]
+    [(AstExprLambda _ _ body)
+      (lint-unused-variable-quasiquote-expr (ast-node-get body) state)]
+    [(AstExprTuple exprs)
+      (lint-unused-variable-quasiquote-expr-list exprs state)]
+    [(AstExprTupleRef tuple _)
+      (lint-unused-variable-quasiquote-expr (ast-node-get tuple) state)]
+    [(AstExprArray exprs)
+      (lint-unused-variable-quasiquote-expr-list exprs state)]
+    [(AstExprMakeArray _ len)
+      (lint-unused-variable-quasiquote-expr (ast-node-get len) state)]
+    [(AstExprArrayRef array index)
+      (lint-unused-variable-quasiquote-expr
+        (ast-node-get index)
+        (lint-unused-variable-quasiquote-expr (ast-node-get array) state))]
+    [(AstExprArraySet array index value)
+      (lint-unused-variable-quasiquote-expr
+        (ast-node-get value)
+        (lint-unused-variable-quasiquote-expr
+          (ast-node-get index)
+          (lint-unused-variable-quasiquote-expr (ast-node-get array) state)))]
+    [(AstExprArrayPush array value)
+      (lint-unused-variable-quasiquote-expr
+        (ast-node-get value)
+        (lint-unused-variable-quasiquote-expr (ast-node-get array) state))]
+    [(AstExprStringRef text index)
+      (lint-unused-variable-quasiquote-expr
+        (ast-node-get index)
+        (lint-unused-variable-quasiquote-expr (ast-node-get text) state))]
+    [(AstExprWhile cond body)
+      (lint-unused-variable-quasiquote-expr
+        (ast-node-get body)
+        (lint-unused-variable-quasiquote-expr (ast-node-get cond) state))]
+    [(AstExprBegin exprs)
+      (lint-unused-variable-quasiquote-expr-list exprs state)]
+    [(AstExprUnsafe exprs)
+      (lint-unused-variable-quasiquote-expr-list exprs state)]
+    [(AstExprSet _ value)
+      (lint-unused-variable-quasiquote-expr (ast-node-get value) state)]
+    [(AstExprAnn inner _)
+      (lint-unused-variable-quasiquote-expr (ast-node-get inner) state)]
+    [(AstExprCast inner _)
+      (lint-unused-variable-quasiquote-expr (ast-node-get inner) state)]
+    [(AstExprBorrow _ _ place)
+      (lint-unused-variable-quasiquote-expr (ast-node-get place) state)]
+    [(AstExprMatch scrutinee arms)
+      (lint-unused-variable-quasiquote-match-arms
+        arms
+        (lint-unused-variable-quasiquote-expr (ast-node-get scrutinee) state))]
+    [(AstExprForeach _ _ start end body)
+      (lint-unused-variable-quasiquote-expr
+        (ast-node-get body)
+        (lint-unused-variable-quasiquote-expr
+          (ast-node-get end)
+          (lint-unused-variable-quasiquote-expr (ast-node-get start) state)))]
+    [(AstExprSpmdReduce _ _ _ start end init value)
+      (lint-unused-variable-quasiquote-expr
+        (ast-node-get value)
+        (lint-unused-variable-quasiquote-expr
+          (ast-node-get init)
+          (lint-unused-variable-quasiquote-expr
+            (ast-node-get end)
+            (lint-unused-variable-quasiquote-expr (ast-node-get start) state))))]
+    [(AstExprSpmdBroadcast value lane)
+      (lint-unused-variable-quasiquote-expr
+        (ast-node-get lane)
+        (lint-unused-variable-quasiquote-expr (ast-node-get value) state))]
+    [(AstExprStructGet receiver _)
+      (lint-unused-variable-quasiquote-expr (ast-node-get receiver) state)]
+    [(AstExprStructSet receiver _ value)
+      (lint-unused-variable-quasiquote-expr
+        (ast-node-get value)
+        (lint-unused-variable-quasiquote-expr (ast-node-get receiver) state))]
+    [(AstExprWithRegion _ body)
+      (lint-unused-variable-quasiquote-expr-list body state)]
+    [(AstExprWithEscape scratch body)
+      (lint-unused-variable-quasiquote-expr-list
+        body
+        (lint-unused-variable-quasiquote-expr (ast-node-get scratch) state))]
+    [(AstExprWithScratch body)
+      (lint-unused-variable-quasiquote-expr-list body state)]
+    [(AstExprInArena arena body)
+      (lint-unused-variable-quasiquote-expr-list
+        body
+        (lint-unused-variable-quasiquote-expr (ast-node-get arena) state))]
+    [(AstExprWithResource bindings body)
+      (lint-unused-variable-quasiquote-expr-list
+        body
+        (lint-unused-variable-quasiquote-resource-bindings bindings state))]
+    [(AstExprBox inner)
+      (lint-unused-variable-quasiquote-expr (ast-node-get inner) state)]
+    [(AstExprBoxGet inner)
+      (lint-unused-variable-quasiquote-expr (ast-node-get inner) state)]
+    [(AstExprBoxTake inner)
+      (lint-unused-variable-quasiquote-expr (ast-node-get inner) state)]
+    [(AstExprBoxSet inner value)
+      (lint-unused-variable-quasiquote-expr
+        (ast-node-get value)
+        (lint-unused-variable-quasiquote-expr (ast-node-get inner) state))]
+    [(AstExprComptime inner)
+      (lint-unused-variable-quasiquote-expr (ast-node-get inner) state)]
+    [(AstExprQuasiquote _) state]
+    [(AstExprBracketClause items)
+      (lint-unused-variable-quasiquote-expr-list items state)]
+    [(AstExprTry inner)
+      (lint-unused-variable-quasiquote-expr (ast-node-get inner) state)]
+    [(AstExprReturn inner)
+      (lint-unused-variable-quasiquote-expr (ast-node-get inner) state)]
+    [(AstExprPtrNullCheck inner)
+      (lint-unused-variable-quasiquote-expr (ast-node-get inner) state)]
+    [(AstExprPtrAddrOf place)
+      (lint-unused-variable-quasiquote-expr (ast-node-get place) state)]
+    [(AstExprPtrRead ptr)
+      (lint-unused-variable-quasiquote-expr (ast-node-get ptr) state)]
+    [(AstExprPtrWrite ptr value)
+      (lint-unused-variable-quasiquote-expr
+        (ast-node-get value)
+        (lint-unused-variable-quasiquote-expr (ast-node-get ptr) state))]
+    [(AstExprPtrOffset ptr offset)
+      (lint-unused-variable-quasiquote-expr
+        (ast-node-get offset)
+        (lint-unused-variable-quasiquote-expr (ast-node-get ptr) state))]
+    [(AstExprPtrCast ptr _)
+      (lint-unused-variable-quasiquote-expr (ast-node-get ptr) state)]
+    [(AstExprPtrToInt ptr)
+      (lint-unused-variable-quasiquote-expr (ast-node-get ptr) state)]
+    [(AstExprIntToPtr value _)
+      (lint-unused-variable-quasiquote-expr (ast-node-get value) state)]
+    [(AstExprStringData inner)
+      (lint-unused-variable-quasiquote-expr (ast-node-get inner) state)]
+    [(AstExprStringFromBytes ptr len)
+      (lint-unused-variable-quasiquote-expr
+        (ast-node-get len)
+        (lint-unused-variable-quasiquote-expr (ast-node-get ptr) state))]
+    [(AstExprArrayData inner)
+      (lint-unused-variable-quasiquote-expr (ast-node-get inner) state)]
+    [(AstExprCpuIdEax leaf subleaf)
+      (lint-unused-variable-quasiquote-expr
+        (ast-node-get subleaf)
+        (lint-unused-variable-quasiquote-expr (ast-node-get leaf) state))]
+    [(AstExprCpuIdEbx leaf subleaf)
+      (lint-unused-variable-quasiquote-expr
+        (ast-node-get subleaf)
+        (lint-unused-variable-quasiquote-expr (ast-node-get leaf) state))]
+    [(AstExprCpuIdEcx leaf subleaf)
+      (lint-unused-variable-quasiquote-expr
+        (ast-node-get subleaf)
+        (lint-unused-variable-quasiquote-expr (ast-node-get leaf) state))]
+    [(AstExprCpuIdEdx leaf subleaf)
+      (lint-unused-variable-quasiquote-expr
+        (ast-node-get subleaf)
+        (lint-unused-variable-quasiquote-expr (ast-node-get leaf) state))]
+    [(AstExprXgetbv index)
+      (lint-unused-variable-quasiquote-expr (ast-node-get index) state)]
+    [(AstExprSyscall args)
+      (lint-unused-variable-quasiquote-expr-list args state)]
+    [_ state]))
+
+(define (lint-unused-variable-let-bindings
+  [bindings : AstLetBindingList]
+  [state : LintUnusedVariableState]
+  [cursor : i64]) : LintUnusedVariableState
+  (match bindings
+    [(AstLetBindingNil) state]
+    [(AstLetBindingCons binding rest)
+      (match binding
+        [(AstLetBinding name maybe-ty init)
+          (let
+            [after-ty : LintUnusedVariableState
+              (lint-unused-variable-maybe-type maybe-ty state)]
+            [after-init : LintUnusedVariableState
+              (lint-unused-variable-expr
+                (ast-node-get init)
+                after-ty
+                (lint-no-effect-span (ast-node-get init)))]
+            [text : String (intern-str name)]
+            [found : LintSourceNameSpan
+              (lint-source-name-span-from
+                (struct-get state source)
+                text
+                cursor
+                (lint-no-effect-span (ast-node-get init)))]
+            [with-binding : LintUnusedVariableState
+              (lint-unused-variable-add-to-current-frame
+                after-init
+                (lint-unused-variable-binding text (struct-get found span) true))]
+            (lint-unused-variable-let-bindings
+              (box-get rest)
+              with-binding
+              (struct-get found next-index)))])]))
+
+(define (lint-unused-variable-let
+  [bindings : AstLetBindingList]
+  [body : AstExpr]
+  [state : LintUnusedVariableState]
+  [span : AstSourceSpan]) : LintUnusedVariableState
+  (let
+    [cursor : i64
+      (let
+        [start : i64
+          (lint-source-span-start-index (struct-get state source) span)]
+        (if (< start 0)
+          0
+          start))]
+    [with-frame : LintUnusedVariableState
+      (lint-unused-variable-push-frame state LintUnusedVariableBindingNil)]
+    [with-bindings : LintUnusedVariableState
+      (lint-unused-variable-let-bindings bindings with-frame cursor)]
+    [with-body : LintUnusedVariableState
+      (lint-unused-variable-expr body with-bindings span)]
+    (lint-unused-variable-pop-frame with-body)))
+
+(define (lint-unused-variable-resource-bindings
+  [bindings : AstResourceBindingList]
+  [state : LintUnusedVariableState]) : LintUnusedVariableState
+  (match bindings
+    [(AstResourceBindingNil) state]
+    [(AstResourceBindingCons binding rest)
+      (match binding
+        [(AstResourceBinding name init cleanup)
+          (lint-unused-variable-resource-bindings
+            (box-get rest)
+            (lint-unused-variable-add-to-current-frame
+              (lint-unused-variable-expr
+                (ast-node-get cleanup)
+                (lint-unused-variable-expr
+                  (ast-node-get init)
+                  state
+                  (lint-no-effect-span (ast-node-get init)))
+                (lint-no-effect-span (ast-node-get cleanup)))
+              (lint-unused-variable-binding
+                (intern-str name)
+                (lint-no-span)
+                false)))])]))
+
+(define (lint-unused-variable-match-arms
+  [arms : AstMatchArmList]
+  [state : LintUnusedVariableState]) : LintUnusedVariableState
+  (match arms
+    [(AstMatchArmNil) state]
+    [(AstMatchArmCons arm rest)
+      (match arm
+        [(AstMatchArm pattern body)
+          (let
+            [with-frame : LintUnusedVariableState
+              (lint-unused-variable-push-frame
+                state
+                LintUnusedVariableBindingNil)]
+            [with-pattern : LintUnusedVariableState
+              (lint-unused-variable-pattern-bindings pattern with-frame)]
+            [with-body : LintUnusedVariableState
+              (lint-unused-variable-expr
+                (ast-node-get body)
+                with-pattern
+                (lint-no-effect-span (ast-node-get body)))]
+            (lint-unused-variable-match-arms
+              (box-get rest)
+              (lint-unused-variable-pop-frame with-body)))])]))
+
+(define (lint-unused-variable-lambda
+  [params : AstParamList]
+  [ret : AstMaybeType]
+  [body : AstExpr]
+  [state : LintUnusedVariableState]
+  [span : AstSourceSpan]) : LintUnusedVariableState
+  (let
+    [start : i64 (lint-source-span-start-index (struct-get state source) span)]
+    [cursor : i64
+      (if (< start 0)
+        0
+        (+ start (string-length "(lambda")))]
+    [built : LintUnusedVariableBindingBuild
+      (lint-unused-variable-param-bindings
+        params
+        (struct-get state source)
+        cursor
+        span
+        true)]
+    [with-frame : LintUnusedVariableState
+      (lint-unused-variable-push-frame state (struct-get built bindings))]
+    [with-param-types : LintUnusedVariableState
+      (lint-unused-variable-maybe-type
+        ret
+        (lint-unused-variable-param-types params with-frame))]
+    [with-body : LintUnusedVariableState
+      (lint-unused-variable-expr body with-param-types span)]
+    (lint-unused-variable-pop-frame with-body)))
+
+(define (lint-unused-variable-index-scope
+  [name : i64]
+  [body : AstExpr]
+  [state : LintUnusedVariableState]
+  [span : AstSourceSpan]) : LintUnusedVariableState
+  (let
+    [with-frame : LintUnusedVariableState
+      (lint-unused-variable-push-frame
+        state
+        (lint-unused-variable-binding-cons
+          (lint-unused-variable-binding (intern-str name) span false)
+          LintUnusedVariableBindingNil))]
+    [with-body : LintUnusedVariableState
+      (lint-unused-variable-expr body with-frame span)]
+    (lint-unused-variable-pop-frame with-body)))
+
+(define (lint-unused-variable-expr
+  [expr : AstExpr]
+  [state : LintUnusedVariableState]
+  [span : AstSourceSpan]) : LintUnusedVariableState
+  (match expr
+    [(AstExprSpanned inner-box inner-span)
+      (lint-unused-variable-expr (ast-node-get inner-box) state inner-span)]
+    [(AstExprLiteral _) state]
+    [(AstExprVar name) (lint-unused-variable-read-var-id state name)]
+    [(AstExprBinary _ left right)
+      (lint-unused-variable-expr
+        (ast-node-get right)
+        (lint-unused-variable-expr (ast-node-get left) state span)
+        span)]
+    [(AstExprUnary _ inner)
+      (lint-unused-variable-expr (ast-node-get inner) state span)]
+    [(AstExprCall func args)
+      (lint-unused-variable-expr-list
+        args
+        (lint-unused-variable-expr (ast-node-get func) state span))]
+    [(AstExprIf cond then-branch else-branch)
+      (lint-unused-variable-expr
+        (ast-node-get else-branch)
+        (lint-unused-variable-expr
+          (ast-node-get then-branch)
+          (lint-unused-variable-expr (ast-node-get cond) state span)
+          span)
+        span)]
+    [(AstExprLet bindings body)
+      (lint-unused-variable-let bindings (ast-node-get body) state span)]
+    [(AstExprLambda params ret body)
+      (lint-unused-variable-lambda params ret (ast-node-get body) state span)]
+    [(AstExprTuple exprs) (lint-unused-variable-expr-list exprs state)]
+    [(AstExprTupleRef tuple _)
+      (lint-unused-variable-expr (ast-node-get tuple) state span)]
+    [(AstExprArray exprs) (lint-unused-variable-expr-list exprs state)]
+    [(AstExprMakeArray ty len)
+      (lint-unused-variable-expr
+        (ast-node-get len)
+        (lint-unused-variable-type ty state)
+        span)]
+    [(AstExprArrayRef array index)
+      (lint-unused-variable-expr
+        (ast-node-get index)
+        (lint-unused-variable-expr (ast-node-get array) state span)
+        span)]
+    [(AstExprArraySet array index value)
+      (lint-unused-variable-expr
+        (ast-node-get value)
+        (lint-unused-variable-expr
+          (ast-node-get index)
+          (lint-unused-variable-expr (ast-node-get array) state span)
+          span)
+        span)]
+    [(AstExprArrayPush array value)
+      (lint-unused-variable-expr
+        (ast-node-get value)
+        (lint-unused-variable-expr (ast-node-get array) state span)
+        span)]
+    [(AstExprStringRef text index)
+      (lint-unused-variable-expr
+        (ast-node-get index)
+        (lint-unused-variable-expr (ast-node-get text) state span)
+        span)]
+    [(AstExprWhile cond body)
+      (lint-unused-variable-expr
+        (ast-node-get body)
+        (lint-unused-variable-expr (ast-node-get cond) state span)
+        span)]
+    [(AstExprBegin exprs) (lint-unused-variable-expr-list exprs state)]
+    [(AstExprUnsafe exprs) (lint-unused-variable-expr-list exprs state)]
+    [(AstExprSet _ value)
+      (lint-unused-variable-expr (ast-node-get value) state span)]
+    [(AstExprAnn inner ty)
+      (lint-unused-variable-type
+        ty
+        (lint-unused-variable-expr (ast-node-get inner) state span))]
+    [(AstExprCast inner ty)
+      (lint-unused-variable-type
+        ty
+        (lint-unused-variable-expr (ast-node-get inner) state span))]
+    [(AstExprBorrow _ lifetime place)
+      (lint-unused-variable-expr
+        (ast-node-get place)
+        (lint-unused-variable-borrow-lifetime lifetime state)
+        span)]
+    [(AstExprMatch scrutinee arms)
+      (lint-unused-variable-match-arms
+        arms
+        (lint-unused-variable-expr (ast-node-get scrutinee) state span))]
+    [(AstExprForeach index index-ty start end body)
+      (lint-unused-variable-index-scope
+        index
+        (ast-node-get body)
+        (lint-unused-variable-type
+          index-ty
+          (lint-unused-variable-expr
+            (ast-node-get end)
+            (lint-unused-variable-expr (ast-node-get start) state span)
+            span))
+        span)]
+    [(AstExprSpmdReduce _ index index-ty start end init value)
+      (lint-unused-variable-index-scope
+        index
+        (ast-node-get value)
+        (lint-unused-variable-type
+          index-ty
+          (lint-unused-variable-expr
+            (ast-node-get init)
+            (lint-unused-variable-expr
+              (ast-node-get end)
+              (lint-unused-variable-expr (ast-node-get start) state span)
+              span)
+            span))
+        span)]
+    [(AstExprSpmdBroadcast value lane)
+      (lint-unused-variable-expr
+        (ast-node-get lane)
+        (lint-unused-variable-expr (ast-node-get value) state span)
+        span)]
+    [(AstExprStructGet receiver _)
+      (lint-unused-variable-expr (ast-node-get receiver) state span)]
+    [(AstExprStructSet receiver _ value)
+      (lint-unused-variable-expr
+        (ast-node-get value)
+        (lint-unused-variable-expr (ast-node-get receiver) state span)
+        span)]
+    [(AstExprWithRegion _ body) (lint-unused-variable-expr-list body state)]
+    [(AstExprWithEscape scratch body)
+      (lint-unused-variable-expr-list
+        body
+        (lint-unused-variable-expr (ast-node-get scratch) state span))]
+    [(AstExprWithScratch body) (lint-unused-variable-expr-list body state)]
+    [(AstExprInArena arena body)
+      (lint-unused-variable-expr-list
+        body
+        (lint-unused-variable-expr (ast-node-get arena) state span))]
+    [(AstExprWithResource bindings body)
+      (let
+        [with-frame : LintUnusedVariableState
+          (lint-unused-variable-push-frame state LintUnusedVariableBindingNil)]
+        [with-bindings : LintUnusedVariableState
+          (lint-unused-variable-resource-bindings bindings with-frame)]
+        [with-body : LintUnusedVariableState
+          (lint-unused-variable-expr-list body with-bindings)]
+        (lint-unused-variable-pop-frame with-body))]
+    [(AstExprBox inner)
+      (lint-unused-variable-expr (ast-node-get inner) state span)]
+    [(AstExprBoxGet inner)
+      (lint-unused-variable-expr (ast-node-get inner) state span)]
+    [(AstExprBoxTake inner)
+      (lint-unused-variable-expr (ast-node-get inner) state span)]
+    [(AstExprBoxSet inner value)
+      (lint-unused-variable-expr
+        (ast-node-get value)
+        (lint-unused-variable-expr (ast-node-get inner) state span)
+        span)]
+    [(AstExprTypeLiteral ty) (lint-unused-variable-type ty state)]
+    [(AstExprInit maybe-ty) (lint-unused-variable-maybe-type maybe-ty state)]
+    [(AstExprComptime inner)
+      (lint-unused-variable-expr (ast-node-get inner) state span)]
+    [(AstExprQuote _) state]
+    [(AstExprQuasiquote inner)
+      (lint-unused-variable-quasiquote-expr (ast-node-get inner) state)]
+    [(AstExprUnquote inner)
+      (lint-unused-variable-expr (ast-node-get inner) state span)]
+    [(AstExprUnquoteSplicing inner)
+      (lint-unused-variable-expr (ast-node-get inner) state span)]
+    [(AstExprBracketClause items) (lint-unused-variable-expr-list items state)]
+    [(AstExprTry inner)
+      (lint-unused-variable-expr (ast-node-get inner) state span)]
+    [(AstExprReturn inner)
+      (lint-unused-variable-expr (ast-node-get inner) state span)]
+    [(AstExprPtrNull ty) (lint-unused-variable-type ty state)]
+    [(AstExprPtrNullCheck inner)
+      (lint-unused-variable-expr (ast-node-get inner) state span)]
+    [(AstExprPtrAddrOf place)
+      (lint-unused-variable-expr (ast-node-get place) state span)]
+    [(AstExprPtrRead ptr)
+      (lint-unused-variable-expr (ast-node-get ptr) state span)]
+    [(AstExprPtrWrite ptr value)
+      (lint-unused-variable-expr
+        (ast-node-get value)
+        (lint-unused-variable-expr (ast-node-get ptr) state span)
+        span)]
+    [(AstExprPtrOffset ptr offset)
+      (lint-unused-variable-expr
+        (ast-node-get offset)
+        (lint-unused-variable-expr (ast-node-get ptr) state span)
+        span)]
+    [(AstExprPtrCast ptr ty)
+      (lint-unused-variable-type
+        ty
+        (lint-unused-variable-expr (ast-node-get ptr) state span))]
+    [(AstExprPtrToInt ptr)
+      (lint-unused-variable-expr (ast-node-get ptr) state span)]
+    [(AstExprIntToPtr value ty)
+      (lint-unused-variable-type
+        ty
+        (lint-unused-variable-expr (ast-node-get value) state span))]
+    [(AstExprStringData inner)
+      (lint-unused-variable-expr (ast-node-get inner) state span)]
+    [(AstExprStringFromBytes ptr len)
+      (lint-unused-variable-expr
+        (ast-node-get len)
+        (lint-unused-variable-expr (ast-node-get ptr) state span)
+        span)]
+    [(AstExprArrayData inner)
+      (lint-unused-variable-expr (ast-node-get inner) state span)]
+    [(AstExprBinaryData _) state]
+    [(AstExprProgramArgc) state]
+    [(AstExprProgramArgv) state]
+    [(AstExprProgramEnvp) state]
+    [(AstExprCpuIdEax leaf subleaf)
+      (lint-unused-variable-expr
+        (ast-node-get subleaf)
+        (lint-unused-variable-expr (ast-node-get leaf) state span)
+        span)]
+    [(AstExprCpuIdEbx leaf subleaf)
+      (lint-unused-variable-expr
+        (ast-node-get subleaf)
+        (lint-unused-variable-expr (ast-node-get leaf) state span)
+        span)]
+    [(AstExprCpuIdEcx leaf subleaf)
+      (lint-unused-variable-expr
+        (ast-node-get subleaf)
+        (lint-unused-variable-expr (ast-node-get leaf) state span)
+        span)]
+    [(AstExprCpuIdEdx leaf subleaf)
+      (lint-unused-variable-expr
+        (ast-node-get subleaf)
+        (lint-unused-variable-expr (ast-node-get leaf) state span)
+        span)]
+    [(AstExprXgetbv index)
+      (lint-unused-variable-expr (ast-node-get index) state span)]
+    [(AstExprSyscall args) (lint-unused-variable-expr-list args state)]))
+
+(define (lint-unused-variable-decl-param-cursor
+  [source : String]
+  [prefix : String]
+  [name : String]
+  [fallback : AstSourceSpan]) : i64
+  (let
+    [needle : String (string-append prefix name)]
+    [source-len : i64 (string-length source)]
+    [found : i64 (- 0 1)]
+    [cursor : i64 0]
+    (begin
+      (while (and (< found 0) (< cursor source-len))
+        (let
+          [candidate : i64 (lint-source-find-prefix-from source needle cursor)]
+          (if (< candidate 0)
+            (set! cursor source-len)
+            (let
+              [end : i64 (+ candidate (string-length needle))]
+              (if (lint-source-symbol-boundary? source end)
+                (set! found candidate)
+                (set! cursor (+ candidate 1)))))))
+      (if (< found 0)
+        (let
+          [fallback-start : i64 (lint-source-span-start-index source fallback)]
+          (if (< fallback-start 0)
+            0
+            fallback-start))
+        (+ found (string-length needle))))))
+
+(define (lint-unused-variable-decl-with-param-frame
+  [source : String]
+  [prefix : String]
+  [name : i64]
+  [params : AstParamList]
+  [ret : AstType]
+  [body : i64]
+  [acc : LintFindings]) : LintFindings
+  (let
+    [body-span : AstSourceSpan (lint-no-effect-span (ast-node-get body))]
+    [cursor : i64
+      (lint-unused-variable-decl-param-cursor
+        source
+        prefix
+        (intern-str name)
+        body-span)]
+    [built : LintUnusedVariableBindingBuild
+      (lint-unused-variable-param-bindings params source cursor body-span true)]
+    [state : LintUnusedVariableState
+      (lint-unused-variable-push-frame
+        (LintUnusedVariableState source LintUnusedVariableFrameNil acc)
+        (struct-get built bindings))]
+    [with-param-types : LintUnusedVariableState
+      (lint-unused-variable-type
+        ret
+        (lint-unused-variable-param-types params state))]
+    [with-body : LintUnusedVariableState
+      (lint-unused-variable-expr (ast-node-get body) with-param-types body-span)]
+    (struct-get (lint-unused-variable-pop-frame with-body) findings)))
+
+(define (lint-unused-variable-decl-with-macro-param-frame
+  [source : String]
+  [prefix : String]
+  [name : i64]
+  [params : AstMacroParamList]
+  [ret : AstType]
+  [body : i64]
+  [acc : LintFindings]) : LintFindings
+  (let
+    [body-span : AstSourceSpan (lint-no-effect-span (ast-node-get body))]
+    [cursor : i64
+      (lint-unused-variable-decl-param-cursor
+        source
+        prefix
+        (intern-str name)
+        body-span)]
+    [built : LintUnusedVariableBindingBuild
+      (lint-unused-variable-macro-param-bindings
+        params
+        source
+        cursor
+        body-span
+        true)]
+    [state : LintUnusedVariableState
+      (lint-unused-variable-push-frame
+        (LintUnusedVariableState source LintUnusedVariableFrameNil acc)
+        (struct-get built bindings))]
+    [with-param-types : LintUnusedVariableState
+      (lint-unused-variable-type
+        ret
+        (lint-unused-variable-macro-param-types params state))]
+    [with-body : LintUnusedVariableState
+      (lint-unused-variable-expr (ast-node-get body) with-param-types body-span)]
+    (struct-get (lint-unused-variable-pop-frame with-body) findings)))
+
+(define (lint-unused-variables-in-decl
+  [source : String]
+  [decl : AstDecl]
+  [acc : LintFindings]) : LintFindings
+  (match decl
+    [(AstDeclDef _ maybe-ty body)
+      (struct-get
+        (lint-unused-variable-expr
+          (ast-node-get body)
+          (lint-unused-variable-maybe-type
+            maybe-ty
+            (LintUnusedVariableState source LintUnusedVariableFrameNil acc))
+          (lint-no-effect-span (ast-node-get body)))
+        findings)]
+    [(AstDeclDefFn name params ret body _)
+      (lint-unused-variable-decl-with-param-frame
+        source
+        "(define ("
+        name
+        params
+        ret
+        body
+        acc)]
+    [(AstDeclDefMacro name params ret body)
+      (lint-unused-variable-decl-with-macro-param-frame
+        source
+        "(defmacro ("
+        name
+        params
+        ret
+        body
+        acc)]
+    [(AstDeclTest _ body _)
+      (struct-get
+        (lint-unused-variable-expr
+          (ast-node-get body)
+          (LintUnusedVariableState source LintUnusedVariableFrameNil acc)
+          (lint-no-effect-span (ast-node-get body)))
+        findings)]
+    [(AstDeclUnsafe inner)
+      (lint-unused-variables-in-decl source (box-get inner) acc)]
+    [(AstDeclComptimeDecl _ inner)
+      (lint-unused-variables-in-decl source (box-get inner) acc)]
+    [_ acc]))
+
+(define (lint-unused-variables-in-decl-list
+  [source : String]
+  [decls : AstDeclList]
+  [acc : LintFindings]) : LintFindings
+  (match decls
+    [(AstDeclNil) acc]
+    [(AstDeclCons decl rest)
+      (lint-unused-variables-in-decl-list
+        source
+        (box-get rest)
+        (lint-unused-variables-in-decl source decl acc))]))
+
 ;: Walk every expression in `exprs`, accumulating findings.
 (define (lint-walk-expr-list
   [exprs : AstExprList]
@@ -3358,18 +4718,27 @@
         [rest : AstDeclList (box-get rest)]
         (lint-walk-decl-list rest threshold (lint-walk-decl decl threshold acc)))]))
 
-;: Run all lint rules over `program`, returning the collected findings.
-(define (lint-program [program : AstProgram] [threshold : i64]) : LintFindings
+(define (lint-program-with-source
+  [source : String]
+  [program : AstProgram]
+  [threshold : i64]) : LintFindings
   (match program
     [(AstProgram decls-box)
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (lint-unused-imports-in-decl-list
+        (lint-unused-variables-in-decl-list
+          source
           decls
-          decls
-          (lint-unused-assignments-in-decl-list
+          (lint-unused-imports-in-decl-list
             decls
-            (lint-walk-decl-list decls threshold (lint-findings-empty)))))]))
+            decls
+            (lint-unused-assignments-in-decl-list
+              decls
+              (lint-walk-decl-list decls threshold (lint-findings-empty))))))]))
+
+;: Run all lint rules over `program`, returning the collected findings.
+(define (lint-program [program : AstProgram] [threshold : i64]) : LintFindings
+  (lint-program-with-source "" program threshold))
 
 (define (lint-program-with-deprecated-string-concat
   [source : String]
@@ -3381,12 +4750,15 @@
         [decls : AstDeclList (box-get decls-box)]
         (lint-deprecated-string-concat-scan
           source
-          (lint-unused-imports-in-decl-list
+          (lint-unused-variables-in-decl-list
+            source
             decls
-            decls
-            (lint-unused-assignments-in-decl-list
+            (lint-unused-imports-in-decl-list
               decls
-              (lint-walk-decl-list decls threshold (lint-findings-empty))))))]))
+              decls
+              (lint-unused-assignments-in-decl-list
+                decls
+                (lint-walk-decl-list decls threshold (lint-findings-empty)))))))]))
 
 ;: Self-test: the nested-`if`-ladder rule and the AST walk.
 ;: Flat-AST test helpers: the self-test builds exprs with i64-returning
@@ -4070,6 +5442,16 @@
         "unused import: imported module alias is never referenced")
         unit
         (panic "lint: unused-import message should be registered"))
+      (if (string-eq
+        (lint-rule-suggestion (lint-rule-unused-variable-id))
+        "remove the binding or prefix an intentionally unused name with _")
+        unit
+        (panic "lint: unused-variable suggestion should be registered"))
+      (if (string-eq
+        (lint-rule-message (lint-rule-unused-variable-id))
+        "unused variable: parameter or local binding is never used")
+        unit
+        (panic "lint: unused-variable message should be registered"))
       (if (string-eq (lint-rule-suggestion "unknown-rule") "")
         unit
         (panic "lint: unknown rule should have no suggestion"))

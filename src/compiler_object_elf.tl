@@ -736,7 +736,7 @@
     (compiler-object-elf-push-shstrtab-name! out ".shstrtab")
     (compiler-object-elf-push-shstrtab-name! out ".note.GNU-stack")))
 
-(define (compiler-object-elf-text-offset [image : CompilerObjectImage]) : i64
+(define (compiler-object-elf-text-offset [_image : CompilerObjectImage]) : i64
   (compiler-object-elf-align-offset compiler-object-elf-header-size 16))
 
 (define (compiler-object-elf-data-offset [image : CompilerObjectImage]) : i64

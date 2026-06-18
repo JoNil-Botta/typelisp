@@ -30,7 +30,7 @@
   (TextBufBorrowed (TextBufBorrowedChunkList text) i64))
 
 ;: Return an empty borrowed buffer tied to `text` without storing `text`.
-(define (text-buf-borrowed-empty-like [text : (& text str)]) : (TextBufBorrowed
+(define (text-buf-borrowed-empty-like [_text : (& text str)]) : (TextBufBorrowed
     text)
   (TextBufBorrowed TextBufBorrowedChunkNil 0))
 

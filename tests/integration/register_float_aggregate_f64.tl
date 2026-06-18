@@ -43,12 +43,12 @@
 ;; also put `p` past Win64's four positional register slots.
 (define (stack-pair
   [a : f64]
-  [b : f64]
-  [c : f64]
-  [d : f64]
-  [e : f64]
-  [f : f64]
-  [g : f64]
+  [_b : f64]
+  [_c : f64]
+  [_d : f64]
+  [_e : f64]
+  [_f : f64]
+  [_g : f64]
   [h : f64]
   [p : PairF64]) : f64
   (+ (+ a h) (pair-sum p)))

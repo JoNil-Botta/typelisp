@@ -3999,7 +3999,7 @@
   [range-ends : (Array i64)]) : unit
   (let
     [i : i64 0]
-    [max-start : i64 9223372036854775807]
+    [_max-start : i64 9223372036854775807]
     (while (< i (array-length roots))
       (let
         [root : i64 (array-ref roots i)]
@@ -4168,7 +4168,7 @@
     [starts : (Array i64) (make-array i64 vars)]
     [ends : (Array i64) (make-array i64 vars)]
     [max-start : i64 9223372036854775807]
-    [cleared : unit
+    [_cleared : unit
       (let
         [i : i64 0]
         (while (< i vars)
@@ -4372,7 +4372,7 @@
           [ineligible : CompilerLiveI64Set (compiler-reg-plan-ineligible plan)]
           [colorable : (Array bool) (make-array bool vars)]
           [remap : (Array i64) (make-array i64 vars)]
-          [cleared : unit
+          [_cleared : unit
             (let
               [i : i64 0]
               (begin
@@ -4386,7 +4386,7 @@
                     (array-set! colorable i false)
                     (array-set! remap i (- 0 1))
                     (set! i (+ i 1))))))]
-          [flagged : unit
+          [_flagged : unit
             (compiler-reg-color-flags (compiler-reg-plan-types plan) colorable)]
           [param-floor : i64
             (compiler-reg-color-param-pins params remap slot-ends 0)]
@@ -4450,7 +4450,7 @@
                               (set! next (+ slot 1))))]))
                     (set! i (+ i 1))))
                 next))]
-          [renumbered
+          [_renumbered
             : unit
             ;; Register-homed and unmentioned variables take the remaining FREE
             ;; ids of [0, vars), in var order (deterministic). Filling gaps

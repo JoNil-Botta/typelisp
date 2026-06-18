@@ -954,7 +954,7 @@
 
 (define (build-package-output-dir-profile
   [manifest-dir : String]
-  [name : String]
+  [_name : String]
   [profile : BuildProfile]) : String
   (compiler-load-join-root-path
     (compiler-load-join-root-path manifest-dir "target")
@@ -2281,7 +2281,7 @@
 
 (define (build-ensure-package-output-dirs
   [manifest-dir : String]
-  [name : String]
+  [_name : String]
   [profile : BuildProfile]) : bool
   (let
     [target-dir : String (compiler-load-join-root-path manifest-dir "target")]
@@ -3289,7 +3289,7 @@
         target)]
     [tlci-path : String
       (build-package-tlci-path-profile manifest-dir name profile)]
-    [reset-file-state : unit (compiler-driver-reset-file-state!)]
+    [_reset-file-state : unit (compiler-driver-reset-file-state!)]
     (if (not (build-ensure-package-output-dirs manifest-dir name profile))
       (begin
         (print-error
@@ -3900,7 +3900,7 @@
   [opt-level : i64]
   [profile : BuildProfile]
   [mode : CompilerBackendMode]
-  [lock-policy : BuildPackageLockPolicy]
+  [_lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : StringVec]) : i64
   (let
     [index : i64 0]
@@ -4073,7 +4073,7 @@
   [manifest-path : String]
   [manifest : CompilerPkgManifest]
   [target-text : String]
-  [has-target : bool]
+  [_has-target : bool]
   [opt-level : i64]
   [profile : BuildProfile]
   [mode : CompilerBackendMode]

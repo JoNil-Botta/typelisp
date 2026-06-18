@@ -543,7 +543,7 @@
 
 (define (compiler-load-session-file-cacheable?
   [path : String]
-  [stdlib-roots : StringVec]) : bool
+  [_stdlib-roots : StringVec]) : bool
   ;; Entry files opt out before this helper. Resolved import files are safe to
   ;; cache by path + cfg, including local and package-owned modules.
   (> (string-length (compiler-load-normalize-path path)) 0))

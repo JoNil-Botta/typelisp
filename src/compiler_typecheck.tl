@@ -3867,6 +3867,44 @@
     "(define (main) : String
   (with-arena phase (int->string 42)))"))
 
+(define (compiler-typecheck-channel-atomic-string-send-source) : String
+  (compiler-typecheck-with-arena-source
+    "(extern (tl_arena_make_atomic) : i64)
+(define (arena-make-atomic) : i64 (tl_arena_make_atomic))
+(defstruct ChannelString (raw i64))
+(defenum ChannelStringSendResult
+  (ChannelStringSendOk)
+  (ChannelStringSendErr String))
+(define (channel-string-send
+  [channel : ChannelString]
+  [message : String]) : ChannelStringSendResult
+  (ChannelStringSendOk))
+(define (main) : i64
+  (let
+    [owner : i64 (arena-make-atomic)]
+    [channel : ChannelString (ChannelString 0)]
+    [message (in-arena owner (string-append \"atom\" \"ic\"))]
+    [sent : ChannelStringSendResult (channel-string-send channel message)]
+    42))"))
+
+(define (compiler-typecheck-channel-ordinary-string-send-source) : String
+  (compiler-typecheck-with-arena-source
+    "(defstruct ChannelString (raw i64))
+(defenum ChannelStringSendResult
+  (ChannelStringSendOk)
+  (ChannelStringSendErr String))
+(define (channel-string-send
+  [channel : ChannelString]
+  [message : String]) : ChannelStringSendResult
+  (ChannelStringSendOk))
+(define (main) : i64
+  (let
+    [owner : i64 (arena-make)]
+    [channel : ChannelString (ChannelString 0)]
+    [message (in-arena owner (string-append \"ordinary\" \"arena\"))]
+    [sent : ChannelStringSendResult (channel-string-send channel message)]
+    42))"))
+
 (define (compiler-typecheck-owner-model-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-owner-stack-local-source))
@@ -3880,6 +3918,11 @@
     (compiler-typecheck-error-ok?
       (compiler-typecheck-owner-scoped-arena-escape-source)
       "typecheck: region-tagged value cannot escape with-arena 'phase'")
+    (compiler-typecheck-ok?
+      (compiler-typecheck-channel-atomic-string-send-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-channel-ordinary-string-send-source)
+      "typecheck: channel-string-send cannot send value of type String; owned heap storage needs a static/program or spanning atomic owner proof")
     (compiler-typecheck-ok? (compiler-typecheck-with-escape-string-source))))
 
 (define (compiler-typecheck-reference-render-ok?) : bool

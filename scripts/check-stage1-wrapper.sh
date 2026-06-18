@@ -21,6 +21,12 @@ if [ -z "$COMPILER" ]; then
     echo "host-action CLI smoke requires TYPELISP_BIN" >&2
     exit 1
 fi
+
+case "$COMPILER" in
+    /* | [A-Za-z]:[/\\]*) ;;
+    *) COMPILER="$ROOT/$COMPILER" ;;
+esac
+
 if [ ! -x "$COMPILER" ]; then
     echo "typelisp compiler is not executable: $COMPILER" >&2
     exit 1
@@ -346,9 +352,15 @@ EOF
 (defstruct Stage1Point
   (x i64)
   (y i64))
+(defenum Stage1Tag
+  (Stage1A)
+  (Stage1B i64))
 (defmacro (add-one-macro [value : i64]) : i64
   `(add-one ,value))
 (export
+  (variant Stage1A)
+  (field Stage1Point x)
+  (constructor Stage1Point)
   (macro add-one-macro)
   (type Stage1Point)
   (value stage1-exported-value))
@@ -380,11 +392,13 @@ EOF
     cat > "$BAD_PKG_SOURCE" <<'EOF'
 (define (package-non-entry) : i64 true)
 EOF
-    run_expect_failure check-package-bad "$COMPILER" check --manifest-path "$PKG/typelisp.pkg"
-    assert_empty "$WORKDIR/check-package-bad.stdout"
-    assert_contains "$WORKDIR/check-package-bad.stderr" "check: package source failed:"
-    assert_contains "$WORKDIR/check-package-bad.stderr" "non_entry_bad.tl"
-    assert_not_contains "$WORKDIR/check-package-bad.stderr" "${BAD_PKG_SOURCE}${BAD_PKG_SOURCE}"
+    run_capture check-package-orphan-bad "$COMPILER" check --manifest-path "$PKG/typelisp.pkg"
+    assert_empty "$WORKDIR/check-package-orphan-bad.stderr"
+    assert_contains "$WORKDIR/check-package-orphan-bad.stdout" "Type checking passed!"
+    run_expect_failure check-file-bad "$COMPILER" check "$BAD_PKG_SOURCE"
+    assert_empty "$WORKDIR/check-file-bad.stdout"
+    assert_contains "$WORKDIR/check-file-bad.stderr" "non_entry_bad.tl"
+    assert_not_contains "$WORKDIR/check-file-bad.stderr" "${BAD_PKG_SOURCE}${BAD_PKG_SOURCE}"
     rm "$BAD_PKG_SOURCE"
     run_expect_failure check-file-manifest "$COMPILER" check "$SRC" --manifest-path "$PKG/typelisp.pkg"
     assert_empty "$WORKDIR/check-file-manifest.stdout"
@@ -438,6 +452,9 @@ EOF
     assert_contains "$WORKDIR/inspect-package-tlci.stdout" "  value stage1.macros/stage1-exported-value signature=i64"
     assert_contains "$WORKDIR/inspect-package-tlci.stdout" "  type stage1.macros/Stage1Point layout=size=16 align=8"
     assert_contains "$WORKDIR/inspect-package-tlci.stdout" "  macro stage1.macros/add-one-macro signature=(macro (i64) -> i64)"
+    assert_not_contains "$WORKDIR/inspect-package-tlci.stdout" "Stage1A"
+    assert_not_contains "$WORKDIR/inspect-package-tlci.stdout" "constructor"
+    assert_not_contains "$WORKDIR/inspect-package-tlci.stdout" "field"
     assert_not_contains "$WORKDIR/inspect-package-tlci.stdout" "  (none)"
     cp "$PKG_TLCI" "$WORKDIR/stage1_pkg.first.tlci"
     run_capture build-package-repeat "$COMPILER" build --manifest-path "$PKG/typelisp.pkg" --opt-level 0

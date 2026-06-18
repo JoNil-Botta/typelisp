@@ -604,12 +604,15 @@
   (match decl
     [(AstDeclDef name _ _) (SpecSomeString (intern-str name))]
     [(AstDeclDefFn name _ _ _ _) (SpecSomeString (intern-str name))]
+    [(AstDeclExtern name _ _ _) (SpecSomeString (intern-str name))]
+    [(AstDeclDefDispatch name _) (SpecSomeString (intern-str name))]
     [(AstDeclDefEnum name _ _) (SpecSomeString (intern-str name))]
     [(AstDeclDefEnumLifetimes name _ _ _) (SpecSomeString (intern-str name))]
     [(AstDeclDefStruct name _ _ _) (SpecSomeString (intern-str name))]
     [(AstDeclDefStructLifetimes name _ _ _ _)
       (SpecSomeString (intern-str name))]
     [(AstDeclDefMacro name _ _ _) (SpecSomeString (intern-str name))]
+    [(AstDeclUnsafe inner-box) (gen-decl-visible-name (box-get inner-box))]
     [(AstDeclComptimeDecl _ inner-box)
       (gen-decl-visible-name (box-get inner-box))]
     [_ (SpecNoString)]))
@@ -838,6 +841,110 @@
         [(AstFnExport b-symbol) (= a-symbol b-symbol)]
         [_ false])]))
 
+(define (gen-export-item-eq? [a : AstExportItem] [b : AstExportItem]) : bool
+  (match a
+    [(AstExportValue a-name)
+      (match b
+        [(AstExportValue b-name) (string-eq a-name b-name)]
+        [_ false])]
+    [(AstExportType a-name)
+      (match b
+        [(AstExportType b-name) (string-eq a-name b-name)]
+        [_ false])]
+    [(AstExportMacro a-name)
+      (match b
+        [(AstExportMacro b-name) (string-eq a-name b-name)]
+        [_ false])]
+    [(AstExportConstructor a-name)
+      (match b
+        [(AstExportConstructor b-name) (string-eq a-name b-name)]
+        [_ false])]
+    [(AstExportField a-type a-field)
+      (match b
+        [(AstExportField b-type b-field)
+          (and (string-eq a-type b-type) (string-eq a-field b-field))]
+        [_ false])]
+    [(AstExportVariant a-name)
+      (match b
+        [(AstExportVariant b-name) (string-eq a-name b-name)]
+        [_ false])]))
+
+(define (gen-export-item-list-eq?
+  [a : AstExportItemList]
+  [b : AstExportItemList]) : bool
+  (match a
+    [(AstExportItemNil)
+      (match b
+        [(AstExportItemNil) true]
+        [_ false])]
+    [(AstExportItemCons a-head a-rest)
+      (let
+        [a-rest : AstExportItemList (box-get a-rest)]
+        (match b
+          [(AstExportItemCons b-head b-rest)
+            (let
+              [b-rest : AstExportItemList (box-get b-rest)]
+              (and
+                (gen-export-item-eq? a-head b-head)
+                (gen-export-item-list-eq? a-rest b-rest)))]
+          [_ false]))]))
+
+(define (gen-import-kind-eq? [a : AstImportKind] [b : AstImportKind]) : bool
+  (match a
+    [(AstImportPath)
+      (match b
+        [(AstImportPath) true]
+        [_ false])]
+    [(AstImportModule)
+      (match b
+        [(AstImportModule) true]
+        [_ false])]
+    [(AstImportMacro _)
+      (match b
+        [(AstImportMacro _) true]
+        [_ false])]
+    [(AstImportMacroDecls _)
+      (match b
+        [(AstImportMacroDecls _) true]
+        [_ false])]))
+
+(define (gen-maybe-module-name-eq?
+  [a : AstMaybeModuleName]
+  [b : AstMaybeModuleName]) : bool
+  (match a
+    [(AstNoModuleName)
+      (match b
+        [(AstNoModuleName) true]
+        [_ false])]
+    [(AstSomeModuleName a-name)
+      (match b
+        [(AstSomeModuleName b-name) (string-eq a-name b-name)]
+        [_ false])]))
+
+(define (gen-maybe-import-alias-eq?
+  [a : AstMaybeImportAlias]
+  [b : AstMaybeImportAlias]) : bool
+  (match a
+    [(AstNoImportAlias)
+      (match b
+        [(AstNoImportAlias) true]
+        [_ false])]
+    [(AstSomeImportAlias a-name)
+      (match b
+        [(AstSomeImportAlias b-name) (string-eq a-name b-name)]
+        [_ false])]))
+
+(define (gen-import-spec-eq? [a : AstImportSpec] [b : AstImportSpec]) : bool
+  (match a
+    [(AstImportSpec a-kind a-path a-module a-alias _)
+      (match b
+        [(AstImportSpec b-kind b-path b-module b-alias _)
+          (and
+            (gen-import-kind-eq? a-kind b-kind)
+            (string-eq a-path b-path)
+            (gen-maybe-module-name-eq? a-module b-module)
+            (gen-maybe-import-alias-eq? a-alias b-alias))])]))
+
 (define (gen-decl-eq? [a : AstDecl] [b : AstDecl]) : bool
   (match a
     [(AstDeclDef a-name a-ty a-value-box)
@@ -920,11 +1027,49 @@
                 (ctfe-type-eq a-ret b-ret)
                 (gen-expr-eq? a-body b-body)))]
           [_ false]))]
+    [(AstDeclImport a-spec)
+      (match b
+        [(AstDeclImport b-spec) (gen-import-spec-eq? a-spec b-spec)]
+        [_ false])]
+    [(AstDeclIncludeStr a-name a-path)
+      (match b
+        [(AstDeclIncludeStr b-name b-path)
+          (and (string-eq a-name b-name) (string-eq a-path b-path))]
+        [_ false])]
+    [(AstDeclIncludeBin a-name a-path)
+      (match b
+        [(AstDeclIncludeBin b-name b-path)
+          (and (string-eq a-name b-name) (string-eq a-path b-path))]
+        [_ false])]
+    [(AstDeclExport a-items)
+      (match b
+        [(AstDeclExport b-items) (gen-export-item-list-eq? a-items b-items)]
+        [_ false])]
+    [(AstDeclTest a-name a-body-box _)
+      (let
+        [a-body : AstExpr (ast-node-get a-body-box)]
+        (match b
+          [(AstDeclTest b-name b-body-box _)
+            (let
+              [b-body : AstExpr (ast-node-get b-body-box)]
+              (and (= a-name b-name) (gen-expr-eq? a-body b-body)))]
+          [_ false]))]
+    [(AstDeclModule a-name)
+      (match b
+        [(AstDeclModule b-name) (= a-name b-name)]
+        [_ false])]
     [(AstDeclComptimeDecl _ a-inner-box)
       (let
         [a-inner : AstDecl (box-get a-inner-box)]
         (match b
           [(AstDeclComptimeDecl _ b-inner-box)
+            (gen-decl-eq? a-inner (box-get b-inner-box))]
+          [_ (gen-decl-eq? a-inner b)]))]
+    [(AstDeclUnsafe a-inner-box)
+      (let
+        [a-inner : AstDecl (box-get a-inner-box)]
+        (match b
+          [(AstDeclUnsafe b-inner-box)
             (gen-decl-eq? a-inner (box-get b-inner-box))]
           [_ (gen-decl-eq? a-inner b)]))]
     [_ false]))

@@ -17,6 +17,7 @@
 (import "package_cache_core.tl")
 (import "package_lock_core.tl")
 (import "compiler_diagnostic.tl")
+(import "compiler_parse_core.tl")
 (import "compiler_driver_core.tl")
 (import "compiler_typecheck.tl")
 (import "tlci_core.tl")
@@ -3142,6 +3143,11 @@
     (tlci-empty-bytes)
     (tlci-empty-bytes)))
 
+(define (build-package-tlci-string-contains?
+  [haystack : String]
+  [needle : String]) : bool
+  (string-contains (& haystack) (& needle)))
+
 (define (build-package-write-tlci
   [path : String]
   [manifest : CompilerPkgManifest]
@@ -3161,6 +3167,115 @@
             path
             (tlci-bytes->string bytes 0 (array-length bytes))
             "build: failed to write package tlci")])]))
+
+(define (build-package-closure-doctest-status
+  [entry-path : String]
+  [target : CompilerBackendTarget]
+  [stdlib-roots : StringVec]
+  [manifest-dir : String]
+  [deps : CompilerPkgDeps]
+  [emit-entry : bool]) : i64
+  (match (compiler-driver-load-package-file-with-runtime
+    entry-path
+    target
+    stdlib-roots
+    manifest-dir
+    deps
+    emit-entry)
+    [(ErrCompilerLoadWithPaths diag)
+      (begin
+        (print-error (compiler-diagnostic-render diag))
+        1)]
+    [(OkCompilerLoadWithPaths _ paths _ _)
+      (build-doctest-typecheck-package-paths
+        paths
+        stdlib-roots
+        manifest-dir
+        deps)]))
+
+(define (build-package-tlci-export-test-source) : String
+  "(module stdlib.core_macros)
+(defmacro (implicit-macro [expr : Expr]) : Expr expr)
+(export (macro implicit-macro))
+(module pkg.meta)
+(define exported-value : i64 42)
+(defstruct ExportedPoint (x i64))
+(defenum ExportedTag
+  (TagA))
+(defmacro (exported-macro [expr : Expr]) : Expr expr)
+(export
+  (macro exported-macro)
+  (variant TagA)
+  (field ExportedPoint x)
+  (constructor ExportedPoint)
+  (type ExportedPoint)
+  (value exported-value))")
+
+(define (build-package-tlci-export-test-paths-repeat
+  [path : String]
+  [n : i64]
+  [rest : AstDeclPathList]) : AstDeclPathList
+  (if (<= n 0)
+    rest
+    (ast-decl-path-cons
+      path
+      (build-package-tlci-export-test-paths-repeat path (- n 1) rest))))
+
+(define (build-package-tlci-export-test-paths) : AstDeclPathList
+  (build-package-tlci-export-test-paths-repeat
+    "stdlib/core_macros.tl"
+    3
+    (build-package-tlci-export-test-paths-repeat
+      "tlci_meta/src/lib.tl"
+      6
+      AstDeclPathNil)))
+
+(define (build-package-tlci-export-metadata-smoke-ok?) : bool
+  (match (parse-ast-source (build-package-tlci-export-test-source))
+    [(ErrAstProgram _) false]
+    [(OkAstProgram program)
+      (match program
+        [(AstProgram decls-box)
+          (let
+            [decls : AstDeclList (box-get decls-box)]
+            (match (build-package-tlci-metadata
+              (build-package-graph-test-manifest "tlci_meta")
+              decls
+              (build-package-tlci-export-test-paths))
+              [(ErrTlciMetadata _) false]
+              [(OkTlciMetadata metadata)
+                (let
+                  [emitted : String (tlci-metadata-emit metadata)]
+                  (and
+                    (build-package-tlci-string-contains?
+                      emitted
+                      "(value (name \"pkg.meta/exported-value\") (signature \"i64\")")
+                    (build-package-tlci-string-contains?
+                      emitted
+                      "(type (name \"pkg.meta/ExportedPoint\") (layout \"size=8 align=8\")")
+                    (build-package-tlci-string-contains?
+                      emitted
+                      "(macro (name \"pkg.meta/exported-macro\") (signature \"(macro (Expr) -> Expr)\")")
+                    (not (build-package-tlci-string-contains? emitted "TagA"))
+                    (not
+                      (build-package-tlci-string-contains?
+                        emitted
+                        "constructor"))
+                    (not (build-package-tlci-string-contains? emitted "field"))
+                    (not
+                      (build-package-tlci-string-contains?
+                        emitted
+                        "implicit-macro"))
+                    (not
+                      (build-package-tlci-string-contains?
+                        emitted
+                        "stdlib.core_macros"))))]))])]))
+
+(test
+  build-package-tlci-export-metadata-smoke
+  (unless
+    (build-package-tlci-export-metadata-smoke-ok?)
+    (panic "build package tlci export metadata smoke failed")))
 
 (define (build-package-emit-one
   [manifest-path : String]
@@ -3210,105 +3325,119 @@
         [dep-link-inputs : SourceToolLinkInputs
           (source-tool-link-inputs-from-archives dep-libs)]
         [emit-entry : bool (build-package-kind-entry? kind)]
-        (match (compiler-driver-load-package-file-with-runtime-owned
-          entry-path
-          target
-          stdlib-roots
-          manifest-dir
-          name
-          (struct-get manifest deps)
-          emit-entry)
-          [(ErrCompilerLoadWithPaths diag)
-            (begin
-              (print-error (compiler-diagnostic-render diag))
-              1)]
-          [(OkCompilerLoadWithPaths decls paths _ _)
-            (let
-              [metadata-link-inputs : SourceToolLinkInputs
-                (source-tool-link-inputs-from-decls
-                  decls
-                  (source-tool-link-inputs-empty))]
-              ;; Merge order: manifest all-target/target inputs, source extern
-              ;; metadata, then dependency archives (kept positional after the
-              ;; requested libraries/args).
-              [effective-link-inputs : SourceToolLinkInputs
-                (source-tool-link-inputs-merge
-                  (source-tool-link-inputs-merge
-                    manifest-link-inputs
-                    metadata-link-inputs)
-                  dep-link-inputs)]
-              [crt-entry : bool
-                (and
-                  emit-entry
-                  (source-tool-linux-crt-entry? target effective-link-inputs))]
-              (match (compiler-driver-emit-package-loaded
-                ""
-                target
-                true
-                opt-level
-                mode
-                emit-entry
-                crt-entry
-                decls
-                paths)
-                [(ErrCompilerDriver diag)
-                  (begin
-                    (print-error (compiler-diagnostic-render diag))
-                    1)]
-                [(OkCompilerDriver asm)
-                  (match (source-tool-write-file
-                    asm-path
-                    (source-tool-augment-assembly-for-target asm target)
-                    "build: failed to write package assembly")
-                    [(SourceToolCommandErr message)
-                      (begin
-                        (print-error message)
-                        1)]
-                    [(SourceToolCommandOk)
-                      (match (build-package-artifact-status
-                        kind
+        [doctest-status : i64
+          (build-package-closure-doctest-status
+            entry-path
+            target
+            stdlib-roots
+            manifest-dir
+            (struct-get manifest deps)
+            emit-entry)]
+        (if (= doctest-status 0)
+          (begin
+            (compiler-driver-reset-file-state!)
+            (match (compiler-driver-load-package-file-with-runtime-owned
+              entry-path
+              target
+              stdlib-roots
+              manifest-dir
+              name
+              (struct-get manifest deps)
+              emit-entry)
+              [(ErrCompilerLoadWithPaths diag)
+                (begin
+                  (print-error (compiler-diagnostic-render diag))
+                  1)]
+              [(OkCompilerLoadWithPaths decls paths _ _)
+                (let
+                  [metadata-link-inputs : SourceToolLinkInputs
+                    (source-tool-link-inputs-from-decls
+                      decls
+                      (source-tool-link-inputs-empty))]
+                  ;; Merge order: manifest all-target/target inputs, source extern
+                  ;; metadata, then dependency archives (kept positional after the
+                  ;; requested libraries/args).
+                  [effective-link-inputs : SourceToolLinkInputs
+                    (source-tool-link-inputs-merge
+                      (source-tool-link-inputs-merge
+                        manifest-link-inputs
+                        metadata-link-inputs)
+                      dep-link-inputs)]
+                  [crt-entry : bool
+                    (and
+                      emit-entry
+                      (source-tool-linux-crt-entry?
                         target
+                        effective-link-inputs))]
+                  (match (compiler-driver-emit-package-loaded
+                    ""
+                    target
+                    true
+                    opt-level
+                    mode
+                    emit-entry
+                    crt-entry
+                    decls
+                    paths)
+                    [(ErrCompilerDriver diag)
+                      (begin
+                        (print-error (compiler-diagnostic-render diag))
+                        1)]
+                    [(OkCompilerDriver asm)
+                      (match (source-tool-write-file
                         asm-path
-                        obj-path
-                        artifact-path
-                        effective-link-inputs
-                        (build-package-try-linux-direct-object
-                          kind
-                          target
-                          opt-level
-                          mode
-                          emit-entry
-                          crt-entry
-                          decls
-                          paths
-                          obj-path
-                          artifact-path
-                          effective-link-inputs))
+                        (source-tool-augment-assembly-for-target asm target)
+                        "build: failed to write package assembly")
                         [(SourceToolCommandErr message)
                           (begin
                             (print-error message)
                             1)]
                         [(SourceToolCommandOk)
-                          (match (build-package-write-tlci
-                            tlci-path
-                            manifest
-                            decls
-                            paths)
+                          (match (build-package-artifact-status
+                            kind
+                            target
+                            asm-path
+                            obj-path
+                            artifact-path
+                            effective-link-inputs
+                            (build-package-try-linux-direct-object
+                              kind
+                              target
+                              opt-level
+                              mode
+                              emit-entry
+                              crt-entry
+                              decls
+                              paths
+                              obj-path
+                              artifact-path
+                              effective-link-inputs))
                             [(SourceToolCommandErr message)
                               (begin
                                 (print-error message)
                                 1)]
                             [(SourceToolCommandOk)
-                              (begin
-                                (print-string
-                                  (string-append
-                                    "Built "
-                                    (string-append artifact-path "\n")))
-                                (print-string
-                                  (string-append
-                                    "Built "
-                                    (string-append tlci-path "\n")))
-                                0)])])])]))])))))
+                              (match (build-package-write-tlci
+                                tlci-path
+                                manifest
+                                decls
+                                paths)
+                                [(SourceToolCommandErr message)
+                                  (begin
+                                    (print-error message)
+                                    1)]
+                                [(SourceToolCommandOk)
+                                  (begin
+                                    (print-string
+                                      (string-append
+                                        "Built "
+                                        (string-append artifact-path "\n")))
+                                    (print-string
+                                      (string-append
+                                        "Built "
+                                        (string-append tlci-path "\n")))
+                                    0)])])])]))]))
+          doctest-status)))))
 
 (define (build-package-worker-unified-cli?) : bool
   (and (> (arg-count) 1) (string-eq (arg 1) "build")))
@@ -3883,70 +4012,17 @@
       (build-doctest-report
         (doc-test-typecheck-source-with-roots source text stdlib-roots))]))
 
-(define (build-doctest-typecheck-package-source
-  [source : String]
+(define (build-doctest-typecheck-package-paths
+  [paths : AstDeclPathList]
   [stdlib-roots : StringVec]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : i64
   (build-doctest-report
-    (doc-test-typecheck-package-file-with-roots
-      source
+    (doc-test-typecheck-package-paths-with-roots
+      paths
       stdlib-roots
       manifest-dir
       deps)))
-
-(define (build-doctest-typecheck-package-sources-from
-  [sources : StringVec]
-  [index : i64]
-  [stdlib-roots : StringVec]
-  [manifest-dir : String]
-  [deps : CompilerPkgDeps]) : i64
-  (if (>= index (string-vec-len sources))
-    0
-    (let
-      [source : String (string-vec-get sources index "")]
-      [status : i64
-        (build-doctest-typecheck-package-source
-          source
-          stdlib-roots
-          manifest-dir
-          deps)]
-      (if (= status 0)
-        (build-doctest-typecheck-package-sources-from
-          sources
-          (+ index 1)
-          stdlib-roots
-          manifest-dir
-          deps)
-        status))))
-
-(define (build-doctest-typecheck-package-sources
-  [sources : StringVec]
-  [stdlib-roots : StringVec]
-  [manifest-dir : String]
-  [deps : CompilerPkgDeps]) : i64
-  (build-doctest-typecheck-package-sources-from
-    sources
-    0
-    stdlib-roots
-    manifest-dir
-    deps))
-
-(define (build-doctest-typecheck-package
-  [manifest-path : String]
-  [manifest : CompilerPkgManifest]
-  [stdlib-roots : StringVec]) : i64
-  (match (package-source-discover-for "build" manifest-path true)
-    [(ErrPackageSourceSet message)
-      (begin
-        (print-error message)
-        1)]
-    [(OkPackageSourceSet source-set)
-      (build-doctest-typecheck-package-sources
-        (struct-get source-set sources)
-        stdlib-roots
-        (struct-get source-set manifest-dir)
-        (struct-get manifest deps))]))
 
 (define (build-doctest-build-source
   [source : String]
@@ -4001,46 +4077,37 @@
               (print-error message)
               1)]
           [(OkBuildManifest resolved-manifest)
-            (let
-              [doctest-status : i64
-                (build-doctest-typecheck-package
-                  normalized-path
-                  resolved-manifest
-                  stdlib-roots)]
-              (if (= doctest-status 0)
-                (match (build-package-dependency-graph
-                  normalized-path
-                  resolved-manifest
-                  lock-policy)
-                  [(ErrBuildPackageGraph message)
-                    (begin
-                      (print-error message)
-                      1)]
-                  [(OkBuildPackageGraph graph)
-                    (let
-                      [nodes : BuildPackageGraphNodeVec
-                        (struct-get graph order)]
-                      [dep-status : i64
-                        (build-package-emit-graph-nodes
-                          nodes
-                          target
-                          opt-level
-                          profile
-                          mode
-                          lock-policy
-                          stdlib-roots)]
-                      (if (= dep-status 0)
-                        (build-package-emit-one
-                          normalized-path
-                          resolved-manifest
-                          target
-                          opt-level
-                          profile
-                          mode
-                          stdlib-roots
-                          (build-package-graph-link-libs nodes profile target))
-                        dep-status))])
-                doctest-status))]))]))
+            (match (build-package-dependency-graph
+              normalized-path
+              resolved-manifest
+              lock-policy)
+              [(ErrBuildPackageGraph message)
+                (begin
+                  (print-error message)
+                  1)]
+              [(OkBuildPackageGraph graph)
+                (let
+                  [nodes : BuildPackageGraphNodeVec (struct-get graph order)]
+                  [dep-status : i64
+                    (build-package-emit-graph-nodes
+                      nodes
+                      target
+                      opt-level
+                      profile
+                      mode
+                      lock-policy
+                      stdlib-roots)]
+                  (if (= dep-status 0)
+                    (build-package-emit-one
+                      normalized-path
+                      resolved-manifest
+                      target
+                      opt-level
+                      profile
+                      mode
+                      stdlib-roots
+                      (build-package-graph-link-libs nodes profile target))
+                    dep-status))])]))]))
 
 (define (build-package-from-path
   [manifest-path : String]

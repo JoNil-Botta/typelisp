@@ -815,6 +815,12 @@
     [(AstImportMacro _) false]
     [(AstImportMacroDecls _) false]))
 
+(define (compiler-load-macro-import-kind? [kind : AstImportKind]) : bool
+  (match kind
+    [(AstImportMacro _) true]
+    [(AstImportMacroDecls _) true]
+    [_ false]))
+
 (define (compiler-load-include-str-def [name : String] [contents : String]) : AstDecl
   (ast-decl-def
     name
@@ -1290,72 +1296,94 @@
         (match decl
           [(AstDeclImport
               (AstImportSpec kind import-path expected-module alias _))
-            (match (compiler-load-resolve-import-spec-with-roots
-              importer-path
-              import-root
-              kind
-              import-path
-              stdlib-roots)
-              [(OkPkgResolve resolved)
-                (match (compiler-load-file-with-paths-and-roots-expect-cfg-root
-                  resolved
-                  seen
-                  stdlib-roots
-                  expected-module
-                  import-root
-                  cfgs)
-                  [(OkCompilerLoadWithPaths
-                      imported-decls
-                      imported-paths
-                      imported-modules
-                      import-seen)
-                    (match (compiler-load-decls-with-module-and-roots-cfg-root
-                      rest
-                      importer-path
-                      importer-module
-                      importer-source-module
-                      import-seen
-                      stdlib-roots
-                      import-root
-                      cfgs)
-                      [(OkCompilerLoadWithPaths
-                          rest-decls
-                          rest-paths
-                          rest-modules
-                          rest-seen)
-                        (OkCompilerLoadWithPaths
-                          (compiler-load-decl-list-append
-                            imported-decls
-                            (compiler-load-decls-after-import
-                              kind
-                              resolved
-                              expected-module
-                              alias
-                              importer-source-module
+            (if (compiler-load-macro-import-kind? kind)
+              (match (compiler-load-decls-with-module-and-roots-cfg-root
+                rest
+                importer-path
+                importer-module
+                importer-source-module
+                seen
+                stdlib-roots
+                import-root
+                cfgs)
+                [(OkCompilerLoadWithPaths
+                    rest-decls
+                    rest-paths
+                    rest-modules
+                    rest-seen)
+                  (OkCompilerLoadWithPaths
+                    (ast-decl-cons decl rest-decls)
+                    (ast-decl-path-cons importer-path rest-paths)
+                    (ast-decl-module-cons importer-module rest-modules)
+                    rest-seen)]
+                [(ErrCompilerLoadWithPaths diag)
+                  (ErrCompilerLoadWithPaths diag)])
+              (match (compiler-load-resolve-import-spec-with-roots
+                importer-path
+                import-root
+                kind
+                import-path
+                stdlib-roots)
+                [(OkPkgResolve resolved)
+                  (match (compiler-load-file-with-paths-and-roots-expect-cfg-root
+                    resolved
+                    seen
+                    stdlib-roots
+                    expected-module
+                    import-root
+                    cfgs)
+                    [(OkCompilerLoadWithPaths
+                        imported-decls
+                        imported-paths
+                        imported-modules
+                        import-seen)
+                      (match (compiler-load-decls-with-module-and-roots-cfg-root
+                        rest
+                        importer-path
+                        importer-module
+                        importer-source-module
+                        import-seen
+                        stdlib-roots
+                        import-root
+                        cfgs)
+                        [(OkCompilerLoadWithPaths
+                            rest-decls
+                            rest-paths
+                            rest-modules
+                            rest-seen)
+                          (OkCompilerLoadWithPaths
+                            (compiler-load-decl-list-append
                               imported-decls
-                              rest-decls))
-                          (compiler-load-decl-path-list-append
-                            imported-paths
-                            (compiler-load-paths-after-import
-                              importer-path
-                              alias
-                              imported-decls
-                              rest-paths))
-                          (compiler-load-decl-module-list-append
-                            imported-modules
-                            (compiler-load-modules-after-import
-                              importer-module
-                              alias
-                              imported-decls
-                              rest-modules))
-                          rest-seen)]
-                      [(ErrCompilerLoadWithPaths diag)
-                        (ErrCompilerLoadWithPaths diag)])]
-                  [(ErrCompilerLoadWithPaths diag)
-                    (ErrCompilerLoadWithPaths diag)])]
-              [(ErrPkgResolve message)
-                (ErrCompilerLoadWithPaths
-                  (compiler-diagnostic-at-start importer-path message))])]
+                              (compiler-load-decls-after-import
+                                kind
+                                resolved
+                                expected-module
+                                alias
+                                importer-source-module
+                                imported-decls
+                                rest-decls))
+                            (compiler-load-decl-path-list-append
+                              imported-paths
+                              (compiler-load-paths-after-import
+                                importer-path
+                                alias
+                                imported-decls
+                                rest-paths))
+                            (compiler-load-decl-module-list-append
+                              imported-modules
+                              (compiler-load-modules-after-import
+                                importer-module
+                                alias
+                                imported-decls
+                                rest-modules))
+                            rest-seen)]
+                        [(ErrCompilerLoadWithPaths diag)
+                          (ErrCompilerLoadWithPaths diag)])]
+                    [(ErrCompilerLoadWithPaths diag)
+                      (ErrCompilerLoadWithPaths diag)])]
+                [(ErrPkgResolve message)
+                  (ErrCompilerLoadWithPaths
+                    (compiler-diagnostic-at-start importer-path message))]))]
           [(AstDeclIncludeStr name include-path)
             (match (compiler-load-expand-include-str
               importer-path
@@ -2645,85 +2673,108 @@
         (match decl
           [(AstDeclImport
               (AstImportSpec kind import-path expected-module alias _))
-            (match (compiler-load-resolve-package-import-spec
-              importer-path
-              kind
-              import-path
-              stdlib-roots
-              manifest-dir
-              deps)
-              [(OkPkgResolve resolved)
-                (match (if (compiler-load-package-import-externs?
-                  kind
-                  import-path
-                  deps)
-                  (compiler-load-package-externs-from-import
-                    resolved
-                    seen
-                    stdlib-roots
-                    expected-module
-                    cfgs)
-                  (compiler-load-package-file-with-paths-and-roots-expect
-                    resolved
-                    seen
-                    stdlib-roots
-                    expected-module
-                    manifest-dir
-                    deps
-                    cfgs))
-                  [(OkCompilerLoadWithPaths
-                      imported-decls
-                      imported-paths
-                      imported-modules
-                      import-seen)
-                    (match (compiler-load-package-decls-with-module-and-roots
-                      rest
-                      importer-path
-                      importer-module
-                      importer-source-module
-                      import-seen
+            (if (compiler-load-macro-import-kind? kind)
+              (match (compiler-load-package-decls-with-module-and-roots
+                rest
+                importer-path
+                importer-module
+                importer-source-module
+                seen
+                stdlib-roots
+                manifest-dir
+                deps
+                cfgs)
+                [(OkCompilerLoadWithPaths
+                    rest-decls
+                    rest-paths
+                    rest-modules
+                    rest-seen)
+                  (OkCompilerLoadWithPaths
+                    (ast-decl-cons decl rest-decls)
+                    (ast-decl-path-cons importer-path rest-paths)
+                    (ast-decl-module-cons importer-module rest-modules)
+                    rest-seen)]
+                [(ErrCompilerLoadWithPaths diag)
+                  (ErrCompilerLoadWithPaths diag)])
+              (match (compiler-load-resolve-package-import-spec
+                importer-path
+                kind
+                import-path
+                stdlib-roots
+                manifest-dir
+                deps)
+                [(OkPkgResolve resolved)
+                  (match (if (compiler-load-package-import-externs?
+                    kind
+                    import-path
+                    deps)
+                    (compiler-load-package-externs-from-import
+                      resolved
+                      seen
                       stdlib-roots
+                      expected-module
+                      cfgs)
+                    (compiler-load-package-file-with-paths-and-roots-expect
+                      resolved
+                      seen
+                      stdlib-roots
+                      expected-module
                       manifest-dir
                       deps
-                      cfgs)
-                      [(OkCompilerLoadWithPaths
-                          rest-decls
-                          rest-paths
-                          rest-modules
-                          rest-seen)
-                        (OkCompilerLoadWithPaths
-                          (compiler-load-decl-list-append
-                            imported-decls
-                            (compiler-load-decls-after-import
-                              kind
-                              resolved
-                              expected-module
-                              alias
-                              importer-source-module
+                      cfgs))
+                    [(OkCompilerLoadWithPaths
+                        imported-decls
+                        imported-paths
+                        imported-modules
+                        import-seen)
+                      (match (compiler-load-package-decls-with-module-and-roots
+                        rest
+                        importer-path
+                        importer-module
+                        importer-source-module
+                        import-seen
+                        stdlib-roots
+                        manifest-dir
+                        deps
+                        cfgs)
+                        [(OkCompilerLoadWithPaths
+                            rest-decls
+                            rest-paths
+                            rest-modules
+                            rest-seen)
+                          (OkCompilerLoadWithPaths
+                            (compiler-load-decl-list-append
                               imported-decls
-                              rest-decls))
-                          (compiler-load-decl-path-list-append
-                            imported-paths
-                            (compiler-load-paths-after-import
-                              importer-path
-                              alias
-                              imported-decls
-                              rest-paths))
-                          (compiler-load-decl-module-list-append
-                            imported-modules
-                            (compiler-load-modules-after-import
-                              importer-module
-                              alias
-                              imported-decls
-                              rest-modules))
-                          rest-seen)]
-                      [(ErrCompilerLoadWithPaths diag)
-                        (ErrCompilerLoadWithPaths diag)])]
-                  [(ErrCompilerLoadWithPaths diag)
-                    (ErrCompilerLoadWithPaths diag)])]
-              [(ErrPkgResolve message)
-                (ErrCompilerLoadWithPaths
-                  (compiler-diagnostic-at-start importer-path message))])]
+                              (compiler-load-decls-after-import
+                                kind
+                                resolved
+                                expected-module
+                                alias
+                                importer-source-module
+                                imported-decls
+                                rest-decls))
+                            (compiler-load-decl-path-list-append
+                              imported-paths
+                              (compiler-load-paths-after-import
+                                importer-path
+                                alias
+                                imported-decls
+                                rest-paths))
+                            (compiler-load-decl-module-list-append
+                              imported-modules
+                              (compiler-load-modules-after-import
+                                importer-module
+                                alias
+                                imported-decls
+                                rest-modules))
+                            rest-seen)]
+                        [(ErrCompilerLoadWithPaths diag)
+                          (ErrCompilerLoadWithPaths diag)])]
+                    [(ErrCompilerLoadWithPaths diag)
+                      (ErrCompilerLoadWithPaths diag)])]
+                [(ErrPkgResolve message)
+                  (ErrCompilerLoadWithPaths
+                    (compiler-diagnostic-at-start importer-path message))]))]
           [(AstDeclIncludeStr name include-path)
             (match (compiler-load-package-expand-include-str
               importer-path
@@ -5343,9 +5394,9 @@
     (compiler-load-manifest-diagnostic-rejects?
       "pkg/typelisp.pkg"
       "("
-      "manifest: reader: unterminated list (missing ')')"
+      "manifest: reader: unterminated list: reached end of input before ')'"
       1
-      2)
+      1)
     (compiler-load-manifest-diagnostic-rejects?
       "pkg/typelisp.pkg"
       "(module foo)"

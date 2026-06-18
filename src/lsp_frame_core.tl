@@ -3048,7 +3048,7 @@
   [params : Json]
   [docs : LspDocuments]) : LspHandleResult
   (match (lsp-get-document params docs)
-    [(FoundLspDocument uri path text)
+    [(FoundLspDocument path text _)
       (let
         [decls : LspDeclList (lsp-scan-decls text)]
         [items : JsonList (lsp-decls-to-name-list decls 0)]
@@ -3066,7 +3066,7 @@
   [params : Json]
   [docs : LspDocuments]) : LspHandleResult
   (match (lsp-get-document params docs)
-    [(FoundLspDocument uri path text)
+    [(FoundLspDocument path text _)
       (let
         [decls : LspDeclList (lsp-scan-decls text)]
         [items : JsonList (lsp-decls-to-json-list decls 0)]
@@ -3084,7 +3084,7 @@
   [params : Json]
   [docs : LspDocuments]) : LspHandleResult
   (match (lsp-get-document params docs)
-    [(FoundLspDocument uri path text)
+    [(FoundLspDocument path text _)
       (match (lsp-json-string-field params "name")
         [(OkLspJsonText name)
           (match (lsp-json-string-field params "newText")
@@ -3151,7 +3151,7 @@
   [params : Json]
   [docs : LspDocuments]) : LspHandleResult
   (match (lsp-get-document params docs)
-    [(FoundLspDocument uri path text)
+    [(FoundLspDocument path text _)
       (match (lsp-json-string-field params "after")
         [(OkLspJsonText after-name)
           (match (lsp-json-string-field params "newText")
@@ -3218,7 +3218,7 @@
   [params : Json]
   [docs : LspDocuments]) : LspHandleResult
   (match (lsp-get-document params docs)
-    [(FoundLspDocument uri path text)
+    [(FoundLspDocument path text _)
       (match (lsp-json-string-field params "name")
         [(OkLspJsonText name)
           (let
@@ -3293,7 +3293,7 @@
   [params : Json]
   [docs : LspDocuments]) : LspHandleResult
   (match (lsp-get-document params docs)
-    [(FoundLspDocument uri path text)
+    [(FoundLspDocument path text _)
       (match (lsp-json-string-field params "name")
         [(OkLspJsonText name)
           (match (lsp-json-string-field params "direction")
@@ -3415,7 +3415,7 @@
   [params : Json]
   [docs : LspDocuments]) : LspHandleResult
   (match (lsp-get-document params docs)
-    [(FoundLspDocument uri path text)
+    [(FoundLspDocument path text _)
       (match (lsp-json-string-field params "name")
         [(OkLspJsonText name)
           (let
@@ -3473,7 +3473,7 @@
   [params : Json]
   [docs : LspDocuments]) : LspHandleResult
   (match (lsp-get-document params docs)
-    [(FoundLspDocument uri path text)
+    [(FoundLspDocument path text _)
       (let
         [result : LspEditResult (ErrLspEdit "Not yet implemented")]
         (match result
@@ -3502,7 +3502,7 @@
   [params : Json]
   [docs : LspDocuments]) : LspHandleResult
   (match (lsp-get-document params docs)
-    [(FoundLspDocument uri path text)
+    [(FoundLspDocument path text _)
       (let
         [result : LspEditResult (ErrLspEdit "Not yet implemented")]
         (match result
@@ -3531,7 +3531,7 @@
   [params : Json]
   [docs : LspDocuments]) : LspHandleResult
   (match (lsp-get-document params docs)
-    [(FoundLspDocument uri path text)
+    [(FoundLspDocument path text _)
       (let
         [result : LspEditResult (ErrLspEdit "Not yet implemented")]
         (match result
@@ -3560,7 +3560,7 @@
   [params : Json]
   [docs : LspDocuments]) : LspHandleResult
   (match (lsp-get-document params docs)
-    [(FoundLspDocument uri path text)
+    [(FoundLspDocument path text _)
       (let
         [result : LspEditResult (ErrLspEdit "Not yet implemented")]
         (match result

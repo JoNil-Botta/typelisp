@@ -6364,6 +6364,48 @@
                 [(ErrSpannedSexpr _) false])))]
         [(ErrSpannedTokens _) false]))))
 
+(define (compiler-parse-reader-diagnostic-ok?
+  [path : String]
+  [src : String]
+  [want : String]
+  [line : i64]
+  [col : i64]) : bool
+  (match (parse-ast-source-diagnostic path src)
+    [(ErrAstProgramDiagnostic diag)
+      (and
+        (string-eq (compiler-diagnostic-path diag) path)
+        (= (compiler-diagnostic-line diag) line)
+        (= (compiler-diagnostic-col diag) col)
+        (string-eq (compiler-diagnostic-message diag) want))]
+    [(OkAstProgramDiagnostic _) false]))
+
+(define (compiler-parse-reader-delimiter-diagnostics-ok?) : bool
+  (and
+    (compiler-parse-reader-diagnostic-ok?
+      "missing-paren.tl"
+      "(define (main) : i64 0"
+      "reader: unterminated list: reached end of input before ')'"
+      1
+      1)
+    (compiler-parse-reader-diagnostic-ok?
+      "missing-bracket.tl"
+      "["
+      "reader: unterminated list: reached end of input before ']'"
+      1
+      1)
+    (compiler-parse-reader-diagnostic-ok?
+      "wrong-close-list.tl"
+      "(define]"
+      "reader: mismatched delimiter: expected ')' but found ']' at 1:8"
+      1
+      1)
+    (compiler-parse-reader-diagnostic-ok?
+      "wrong-close-bracket.tl"
+      "[define)"
+      "reader: mismatched delimiter: expected ']' but found ')' at 1:8"
+      1
+      1)))
+
 (define (compiler-parse-float-literal-ok?) : bool
   (match (parse-ast-source "(define (main) : f64 1.5)")
     [(OkAstProgram (AstProgram decls-box))
@@ -9061,6 +9103,7 @@
         (= (compiler-parse-smoke-score program) 36)
         (compiler-parse-nested-expr-span-ok?)
         (compiler-parse-error-span-ok?)
+        (compiler-parse-reader-delimiter-diagnostics-ok?)
         (compiler-parse-float-literal-ok?)
         (compiler-parse-region-ok?)
         (compiler-parse-arena-ok?)

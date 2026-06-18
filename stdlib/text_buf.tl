@@ -538,7 +538,7 @@
           (text-buf-append! buf "A")
           (text-buf-append-char! buf #\newline')
           (text-buf-append-char! buf #\tab')
-          (text-buf-append-int! buf -12)
+          (text-buf-append-int! buf (cast -12 : i64))
           (text-buf-test-assert-text-buf
             buf
             "A\n\t-12"

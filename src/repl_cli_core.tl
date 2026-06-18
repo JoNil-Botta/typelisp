@@ -368,6 +368,11 @@
     [(AstTyI64)
       (OkReplString
         (string-append "(print\n" (string-append expr-source "\n)")))]
+    [(AstTyI32)
+      (OkReplString
+        (string-append
+          "(print\n(cast\n"
+          (string-append expr-source "\n: i64)\n)")))]
     [(AstTyBool)
       (OkReplString
         (string-append "(print-bool\n" (string-append expr-source "\n)")))]

@@ -92,12 +92,10 @@
 
 (define (json-test-nonfinite-render) : bool
   (and
-    (match (json-f64->number-text
-      (json-test-f64-from-bits (cast 0x7ff0000000000000 : u64)))
+    (match (json-f64->number-text (json-test-f64-from-bits 0x7ff0000000000000))
       [(ErrJsonNumberText _) true]
       [(OkJsonNumberText _) false])
-    (match (json-f32->number-text
-      (json-test-f32-from-bits (cast 0x7f800000 : u32)))
+    (match (json-f32->number-text (json-test-f32-from-bits 0x7f800000))
       [(ErrJsonNumberText _) true]
       [(OkJsonNumberText _) false])))
 

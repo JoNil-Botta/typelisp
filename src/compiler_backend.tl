@@ -13270,10 +13270,10 @@
     [(= pos 6) "%r9"]
     [else "%rax"]))
 
-;; Load each operand into %rax and push it, so the operand registers are filled
-;; only in the pop phase below â€” this avoids any hazard where loading one operand
-;; clobbers a register still holding an unloaded operand.
-(define (compiler-backend-emit-syscall-pushes
+;; SysV register allocation keeps TypeLisp values in callee-saved homes
+;; (%rbx/%r12-%r15) or stack slots, which do not overlap the Linux syscall
+;; operand registers. Load operands directly into the kernel ABI registers.
+(define (compiler-backend-emit-syscall-loads
   [assignments : CompilerRegAssignmentList]
   [args : CompilerIrCallArgs]
   [index : i64]
@@ -13283,31 +13283,17 @@
     (match (compiler-backend-emit-load-value-with-plan
       assignments
       (compiler-backend-call-arg-at args index)
-      "%rax")
+      (compiler-backend-syscall-reg index))
       [(OkCompilerBackend load-asm)
-        (match (compiler-backend-emit-syscall-pushes
+        (match (compiler-backend-emit-syscall-loads
           assignments
           args
           (+ index 1)
           count)
           [(OkCompilerBackend rest-asm)
-            (OkCompilerBackend
-              (string-append
-                load-asm
-                (string-append "    pushq %rax\n" rest-asm)))]
+            (OkCompilerBackend (string-append load-asm rest-asm))]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
       [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
-
-;; Pop operands off the stack (top is the last-pushed, highest index) into their
-;; syscall registers, highest position first down to %rax (the syscall number).
-(define (compiler-backend-emit-syscall-pops [index : i64]) : String
-  (if (< index 0)
-    ""
-    (string-append
-      (string-append
-        "    popq "
-        (string-append (compiler-backend-syscall-reg index) "\n"))
-      (compiler-backend-emit-syscall-pops (- index 1)))))
 
 ;; `syscall` clobbers %rcx and %r11, but the register allocator only homes values
 ;; in callee-saved registers (%rbx, %r12-%r15) or rbp-relative stack slots, so no
@@ -13326,20 +13312,18 @@
         "backend: syscall is only supported on the linux-x86_64 target"))
     (let
       [count : i64 (compiler-backend-call-args-count args)]
-      (match (compiler-backend-emit-syscall-pushes assignments args 0 count)
-        [(OkCompilerBackend push-asm)
+      (match (compiler-backend-emit-syscall-loads assignments args 0 count)
+        [(OkCompilerBackend load-asm)
           (OkCompilerBackend
             (string-append
-              push-asm
+              load-asm
               (string-append
-                (compiler-backend-emit-syscall-pops (- count 1))
-                (string-append
-                  "    syscall\n"
-                  (compiler-backend-emit-store-typed-var-with-plan
-                    assignments
-                    dst
-                    "%rax"
-                    (AstTyI64))))))]
+                "    syscall\n"
+                (compiler-backend-emit-store-typed-var-with-plan
+                  assignments
+                  dst
+                  "%rax"
+                  (AstTyI64)))))]
         [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))
 
 (define (compiler-backend-emit-instr

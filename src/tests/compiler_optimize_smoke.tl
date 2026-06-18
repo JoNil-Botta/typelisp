@@ -337,6 +337,7 @@
     (unless (= (compiler-optimize-fixed-point-self-test) 42) (return 1))
     (unless (= (compiler-optimize-tailrec-self-test) 42) (return 1))
     (unless (= (compiler-optimize-global-dce-self-test) 42) (return 1))
+    (unless (= (compiler-optimize-aggregate-candidate-self-test) 42) (return 1))
     (unless (= (compiler-optimize-aggregate-promote-self-test) 42) (return 1))
     (unless (= (compiler-optimize-aggregate-sroa-self-test) 42) (return 1))
     (unless (= (compiler-optimize-spans-self-test) 42) (return 1))

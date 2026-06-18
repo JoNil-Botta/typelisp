@@ -86,6 +86,7 @@ narrow_div_mod|tests/integration/narrow_div_mod.tl|30|-|-|-
 nested_eval|tests/integration/nested_eval.tl|7|-|-|-
 nullary_variant_call|tests/integration/nullary_variant_call.tl|42|-|-|-
 overflow_casts|tests/integration/overflow_casts.tl|0|-|-|-
+integer_literal_default_i32|tests/integration/integer_literal_default_i32.tl|42|-|-|-|requires-stage0-diagnostic:typecheck: return type mismatch
 parser|tests/integration/parser.tl|14|-|-|-
 process_runtime|tests/integration/process_runtime.tl|42|-|-|stdlib/process_borrowed.tl stdlib/process.tl stdlib/process_runtime.tl stdlib/test.tl stdlib/io.tl stdlib/env.tl stdlib/vector.tl stdlib/string.tl
 read_file_missing_trap|tests/integration/read_file_missing_trap.tl|134|-|-|-|expected-stderr:tl: read-file failed\n
@@ -109,6 +110,7 @@ short_circuit|tests/integration/short_circuit.tl|42|-|-|-
 shl_count_width_trap|tests/integration/shl_count_width_trap.tl|129|-|-|-|expected-stderr:tl: shift count out of range\n
 shl_neg_count_trap|tests/integration/shl_neg_count_trap.tl|129|-|-|-|expected-stderr:tl: shift count out of range\n
 spmd_foreach|tests/integration/spmd_foreach.tl|42|-|-|-
+spmd_gather_read|tests/integration/spmd_gather_read.tl|42|-|-|-
 spmd_atomic_scatter|tests/integration/spmd_atomic_scatter.tl|42|-|-|stdlib/atomic.tl
 spmd_reduce_scalar|tests/integration/spmd_reduce_scalar.tl|42|-|-|-
 stdlib_io|tests/integration/stdlib_io.tl|42|-|-|stdlib/io.tl stdlib/string.tl

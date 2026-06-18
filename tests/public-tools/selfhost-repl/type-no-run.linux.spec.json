@@ -1,6 +1,6 @@
 {
   "exit": 0,
-  "stdout_contains": ["i64"],
+  "stdout_contains": ["i32"],
   "stderr_exact": "",
   "stdout_not_contains": ["ran"]
 }

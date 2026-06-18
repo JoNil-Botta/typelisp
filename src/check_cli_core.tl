@@ -114,14 +114,14 @@
   (selfhost-check-doctest-report
     (doc-test-typecheck-file-with-roots input-path stdlib-roots)))
 
-(define (selfhost-check-package-source-doctests
-  [input-path : String]
+(define (selfhost-check-package-doctests
+  [paths : AstDeclPathList]
   [stdlib-roots : StringVec]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : i64
   (selfhost-check-doctest-report
-    (doc-test-typecheck-package-file-with-roots
-      input-path
+    (doc-test-typecheck-package-paths-with-roots
+      paths
       stdlib-roots
       manifest-dir
       deps)))
@@ -142,65 +142,22 @@
         (print-error (compiler-diagnostic-render diag))
         1)]))
 
-(define (selfhost-check-package-source
-  [input-path : String]
-  [stdlib-roots : StringVec]
-  [manifest-dir : String]
-  [deps : CompilerPkgDeps]) : i64
-  (match (compiler-check-package-file-with-roots
-    input-path
-    stdlib-roots
-    manifest-dir
-    deps)
-    [(OkCompilerCheck _) 0]
-    [(ErrCompilerCheck diag)
-      (begin
-        (print-error "check: package source failed:\n")
-        (print-error (compiler-diagnostic-render diag))
-        1)]))
+(define (selfhost-check-package-kind-entry? [kind : CompilerPkgKind]) : bool
+  (match kind
+    [(CompilerPkgKindBin) true]
+    [(CompilerPkgKindLib) false]))
 
-(define (selfhost-check-package-sources-from
-  [sources : StringVec]
-  [index : i64]
-  [stdlib-roots : StringVec]
+(define (selfhost-check-package-entry-path
   [manifest-dir : String]
-  [deps : CompilerPkgDeps]) : i64
-  (if (>= index (string-vec-len sources))
-    0
-    (let
-      [source : String (string-vec-get sources index "")]
-      [status : i64
-        (selfhost-check-package-source source stdlib-roots manifest-dir deps)]
-      (if (= status 0)
-        (let
-          [doctest-status : i64
-            (selfhost-check-package-source-doctests
-              source
-              stdlib-roots
-              manifest-dir
-              deps)]
-          (if (= doctest-status 0)
-            (selfhost-check-package-sources-from
-              sources
-              (+ index 1)
-              stdlib-roots
-              manifest-dir
-              deps)
-            doctest-status))
-        status))))
-
-(define (selfhost-check-package-sources
-  [sources : StringVec]
-  [stdlib-roots : StringVec]
-  [manifest-dir : String]
-  [deps : CompilerPkgDeps]) : i64
-  (selfhost-check-package-sources-from sources 0 stdlib-roots manifest-dir deps))
+  [manifest : CompilerPkgManifest]) : String
+  (compiler-load-normalize-path
+    (compiler-load-join-root-path manifest-dir (struct-get manifest entry))))
 
 (define (selfhost-check-package
   [manifest-path : String]
   [has-manifest : bool]
   [stdlib-roots : StringVec]) : i64
-  (match (package-source-discover manifest-path has-manifest)
+  (match (package-source-resolve-manifest "check" manifest-path has-manifest)
     [(ErrPackageSourceSet message)
       (begin
         (print-error message)
@@ -208,17 +165,32 @@
     [(OkPackageSourceSet source-set)
       (let
         [manifest : CompilerPkgManifest (struct-get source-set manifest)]
-        [status : i64
-          (selfhost-check-package-sources
-            (struct-get source-set sources)
-            stdlib-roots
-            (struct-get source-set manifest-dir)
-            (struct-get manifest deps))]
-        (if (= status 0)
-          (begin
-            (print-string "Type checking passed!\n")
-            0)
-          status))]))
+        [manifest-dir : String (struct-get source-set manifest-dir)]
+        [entry-path : String
+          (selfhost-check-package-entry-path manifest-dir manifest)]
+        (match (compiler-check-package-entry-file-with-roots
+          entry-path
+          stdlib-roots
+          manifest-dir
+          (struct-get manifest deps)
+          (selfhost-check-package-kind-entry? (struct-get manifest kind)))
+          [(OkCompilerCheckWithPaths _ paths)
+            (let
+              [doctest-status : i64
+                (selfhost-check-package-doctests
+                  paths
+                  stdlib-roots
+                  manifest-dir
+                  (struct-get manifest deps))]
+              (if (= doctest-status 0)
+                (begin
+                  (print-string "Type checking passed!\n")
+                  0)
+                doctest-status))]
+          [(ErrCompilerCheckWithPaths diag)
+            (begin
+              (print-error (compiler-diagnostic-render diag))
+              1)]))]))
 
 ;; Run the `check` command over arguments starting at `start`.
 (define (selfhost-check-run-from [start : i64] [count : i64]) : i64

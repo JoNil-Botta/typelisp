@@ -13,6 +13,7 @@
 ;; source path, the fence's source line, the example index, and the rendered
 ;; diagnostic when one is available.
 (import "../stdlib/io.tl")
+(import "../stdlib/vector.tl")
 (import "compiler_check_core.tl")
 (import "compiler_load.tl")
 (import "build_run_core.tl")
@@ -1065,6 +1066,33 @@
       (array-push! slots failure)
       (DocTestRunFailureList slots (+ n 1)))))
 
+(define (doc-test-run-failure-list-append-all-from
+  [failures : DocTestRunFailureList]
+  [more : DocTestRunFailureList]
+  [index : i64]) : DocTestRunFailureList
+  (if (>= index (doc-test-run-failure-list-count more))
+    failures
+    (doc-test-run-failure-list-append-all-from
+      (doc-test-run-failure-list-append
+        failures
+        (doc-test-run-failure-list-ref more index))
+      more
+      (+ index 1))))
+
+(define (doc-test-run-failure-list-append-all
+  [failures : DocTestRunFailureList]
+  [more : DocTestRunFailureList]) : DocTestRunFailureList
+  (doc-test-run-failure-list-append-all-from failures more 0))
+
+(define (doc-test-run-report-merge
+  [left : DocTestRunReport]
+  [right : DocTestRunReport]) : DocTestRunReport
+  (DocTestRunReport
+    (+ (doc-test-run-report-count left) (doc-test-run-report-count right))
+    (doc-test-run-failure-list-append-all
+      (doc-test-run-report-failures left)
+      (doc-test-run-report-failures right))))
+
 ;; Render a failure as `path:line: message`. Fence-level extraction
 ;; errors use index `-1`; example failures include the example number in their
 ;; message so the public CLI text matches the stage0 Rust runner.
@@ -1895,6 +1923,94 @@
   (doc-test-typecheck-package-source-with-roots
     path
     (read-file path)
+    stdlib-roots
+    manifest-dir
+    deps))
+
+(define (doc-test-string-vec-contains-from
+  [items : StringVec]
+  [value : String]
+  [index : i64]) : bool
+  (if (>= index (string-vec-len items))
+    false
+    (if (string-eq (string-vec-get items index "") value)
+      true
+      (doc-test-string-vec-contains-from items value (+ index 1)))))
+
+(define (doc-test-string-vec-contains? [items : StringVec] [value : String]) : bool
+  (doc-test-string-vec-contains-from items value 0))
+
+(define (doc-test-path-list-append-unique [items : StringVec] [path : String]) : StringVec
+  (if (or (= (string-length path) 0) (doc-test-string-vec-contains? items path))
+    items
+    (string-vec-push items path)))
+
+(define (doc-test-path-list-files-from
+  [paths : AstDeclPathList]
+  [items : StringVec]) : StringVec
+  (match paths
+    [(AstDeclPathNil) items]
+    [(AstDeclPathCons path rest)
+      (let
+        [rest : AstDeclPathList (box-get rest)]
+        (doc-test-path-list-files-from
+          rest
+          (doc-test-path-list-append-unique items path)))]))
+
+(define (doc-test-path-list-files [paths : AstDeclPathList]) : StringVec
+  (doc-test-path-list-files-from paths (string-vec-new)))
+
+(define (doc-test-typecheck-package-file-text-with-roots
+  [path : String]
+  [stdlib-roots : StringVec]
+  [manifest-dir : String]
+  [deps : CompilerPkgDeps]) : DocTestRunReport
+  (match (try-read-file (& path))
+    [(ErrIoString _) (DocTestRunReport 0 (doc-test-run-failure-list-empty))]
+    [(OkIoString text)
+      (doc-test-typecheck-package-source-with-roots
+        path
+        text
+        stdlib-roots
+        manifest-dir
+        deps)]))
+
+(define (doc-test-typecheck-package-file-vec-with-roots-from
+  [paths : StringVec]
+  [index : i64]
+  [report : DocTestRunReport]
+  [stdlib-roots : StringVec]
+  [manifest-dir : String]
+  [deps : CompilerPkgDeps]) : DocTestRunReport
+  (if (>= index (string-vec-len paths))
+    report
+    (let
+      [path : String (string-vec-get paths index "")]
+      [next-report : DocTestRunReport
+        (doc-test-run-report-merge
+          report
+          (doc-test-typecheck-package-file-text-with-roots
+            path
+            stdlib-roots
+            manifest-dir
+            deps))]
+      (doc-test-typecheck-package-file-vec-with-roots-from
+        paths
+        (+ index 1)
+        next-report
+        stdlib-roots
+        manifest-dir
+        deps))))
+
+(define (doc-test-typecheck-package-paths-with-roots
+  [paths : AstDeclPathList]
+  [stdlib-roots : StringVec]
+  [manifest-dir : String]
+  [deps : CompilerPkgDeps]) : DocTestRunReport
+  (doc-test-typecheck-package-file-vec-with-roots-from
+    (doc-test-path-list-files paths)
+    0
+    (DocTestRunReport 0 (doc-test-run-failure-list-empty))
     stdlib-roots
     manifest-dir
     deps))

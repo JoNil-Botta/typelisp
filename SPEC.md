@@ -2625,6 +2625,12 @@ Example:
   through the same module loader and compiler pipeline as `compile`.
 - `typelisp build` without `--manifest-path` searches for `typelisp.pkg` from
   the current directory upward.
+- Package `typelisp check` typechecks the manifest entry's transitive import
+  closure once, matching the program closure that package `build` validates.
+  Package `check` and package `build` typecheck doc-comment examples only in
+  that reachable closure. Source files outside the closure are intentionally not
+  package-check/build inputs; validate them through explicit file checks,
+  `typelisp doc --test <file>`, or package test coverage.
 - Package builds accept `--profile dev|release` and `--release`. The default
   profile is `release`; `--release` is an alias for `--profile release`.
   `--opt-level 0|1|2` overrides the profile's optimizer level. Without an

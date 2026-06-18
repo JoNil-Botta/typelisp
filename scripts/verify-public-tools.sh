@@ -561,31 +561,59 @@ assert_success
 assert_stderr_empty
 assert_contains "$DOCTEST_RUN_ONLY_ASM" "main:"
 
-DOCTEST_PKG="$DOCTEST_NORMAL/pkg"
-mkdir -p "$DOCTEST_PKG/src"
-cat > "$DOCTEST_PKG/typelisp.pkg" <<'EOF'
+DOCTEST_PKG_ORPHAN="$DOCTEST_NORMAL/pkg-orphan"
+mkdir -p "$DOCTEST_PKG_ORPHAN/src"
+cat > "$DOCTEST_PKG_ORPHAN/typelisp.pkg" <<'EOF'
 (package
-  (name "doctest_normal_pkg")
+  (name "doctest_orphan_pkg")
   (version "0.1.0")
   (kind "bin")
   (entry "src/main.tl"))
 EOF
-maybe_strip_manifest_kind "$DOCTEST_PKG/typelisp.pkg"
-cat > "$DOCTEST_PKG/src/main.tl" <<'EOF'
+maybe_strip_manifest_kind "$DOCTEST_PKG_ORPHAN/typelisp.pkg"
+cat > "$DOCTEST_PKG_ORPHAN/src/main.tl" <<'EOF'
 (define (main) : i64 0)
 EOF
-cat > "$DOCTEST_PKG/src/lib.tl" <<'EOF'
+cat > "$DOCTEST_PKG_ORPHAN/src/lib.tl" <<'EOF'
 ;# ```typelisp
 ;# (define (bad) : i64 true)
 ;# ```
 (define (helper) : i64 1)
 EOF
-DOCTEST_PKG_LIB_DIAG=$(native_arg_path "$DOCTEST_PKG/src/lib.tl")
-run_cmd normal-doctest-package-check "$COMPILER" check --manifest-path "$DOCTEST_PKG/typelisp.pkg"
+run_cmd normal-doctest-package-orphan-check "$COMPILER" check --manifest-path "$DOCTEST_PKG_ORPHAN/typelisp.pkg"
+assert_success
+assert_stderr_empty
+assert_contains "$out" "Type checking passed!"
+run_cmd normal-doctest-package-orphan-build "$COMPILER" build --manifest-path "$DOCTEST_PKG_ORPHAN/typelisp.pkg" --target "$HOST_TARGET"
+assert_success
+assert_stderr_empty
+
+DOCTEST_PKG_REACH="$DOCTEST_NORMAL/pkg-reachable"
+mkdir -p "$DOCTEST_PKG_REACH/src"
+cat > "$DOCTEST_PKG_REACH/typelisp.pkg" <<'EOF'
+(package
+  (name "doctest_reachable_pkg")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "src/main.tl"))
+EOF
+maybe_strip_manifest_kind "$DOCTEST_PKG_REACH/typelisp.pkg"
+cat > "$DOCTEST_PKG_REACH/src/main.tl" <<'EOF'
+(import "lib.tl")
+(define (main) : i64 (helper))
+EOF
+cat > "$DOCTEST_PKG_REACH/src/lib.tl" <<'EOF'
+;# ```typelisp
+;# (define (bad) : i64 true)
+;# ```
+(define (helper) : i64 1)
+EOF
+DOCTEST_PKG_LIB_DIAG=$(native_arg_path "$DOCTEST_PKG_REACH/src/lib.tl")
+run_cmd normal-doctest-package-check "$COMPILER" check --manifest-path "$DOCTEST_PKG_REACH/typelisp.pkg"
 assert_failure
 assert_stdout_empty
 assert_contains "$err" "$DOCTEST_PKG_LIB_DIAG:1:"
-run_cmd normal-doctest-package-build "$COMPILER" build --manifest-path "$DOCTEST_PKG/typelisp.pkg" --target "$HOST_TARGET"
+run_cmd normal-doctest-package-build "$COMPILER" build --manifest-path "$DOCTEST_PKG_REACH/typelisp.pkg" --target "$HOST_TARGET"
 assert_failure
 assert_stdout_empty
 assert_contains "$err" "$DOCTEST_PKG_LIB_DIAG:1:"

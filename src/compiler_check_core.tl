@@ -9,6 +9,10 @@
   (OkCompilerCheck CompilerTypecheckSummary)
   (ErrCompilerCheck CompilerDiagnostic))
 
+(defenum ResultCompilerCheckWithPaths
+  (OkCompilerCheckWithPaths CompilerTypecheckSummary AstDeclPathList)
+  (ErrCompilerCheckWithPaths CompilerDiagnostic))
+
 (cfg
   compile-profile
   (define compiler-check-profile-start-ms : i64
@@ -106,6 +110,28 @@
       (begin
         (cfg compile-profile (compiler-check-profile-finish "load"))
         (ErrCompilerCheck diag))]))
+
+(define (compiler-check-loaded-cache-with-paths
+  [path : String]
+  [loaded : ResultCompilerLoadWithPaths]
+  [stdlib-roots : StringVec]
+  [cache-scope : String]) : ResultCompilerCheckWithPaths
+  (match loaded
+    [(OkCompilerLoadWithPaths decls paths _ _)
+      (begin
+        (cfg compile-profile (compiler-check-profile-finish "load"))
+        (match (compiler-check-program-with-paths-cache
+          path
+          decls
+          paths
+          stdlib-roots
+          cache-scope)
+          [(OkCompilerCheck summary) (OkCompilerCheckWithPaths summary paths)]
+          [(ErrCompilerCheck diag) (ErrCompilerCheckWithPaths diag)]))]
+    [(ErrCompilerLoadWithPaths diag)
+      (begin
+        (cfg compile-profile (compiler-check-profile-finish "load"))
+        (ErrCompilerCheckWithPaths diag))]))
 
 (define (compiler-check-loaded-with-prelude
   [path : String]
@@ -254,6 +280,120 @@
         (begin
           (cfg compile-profile (compiler-check-profile-finish "load"))
           (ErrCompilerCheck diag))])))
+
+(define (compiler-check-load-package-file-with-runtime-cfg
+  [input-path : String]
+  [stdlib-roots : StringVec]
+  [manifest-dir : String]
+  [deps : CompilerPkgDeps]
+  [emit-entry : bool]
+  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  (if emit-entry
+    (match (compiler-load-package-file-with-paths-and-roots-cfg
+      "stdlib/runtime.tl"
+      (sym-i64-empty)
+      stdlib-roots
+      manifest-dir
+      deps
+      cfgs)
+      [(OkCompilerLoadWithPaths
+          runtime-decls
+          runtime-paths
+          runtime-modules
+          runtime-seen)
+        (match (compiler-load-package-core-macro-prelude-with-roots-cfg
+          runtime-seen
+          stdlib-roots
+          manifest-dir
+          deps
+          cfgs)
+          [(OkCompilerLoadWithPaths
+              macro-decls
+              macro-paths
+              macro-modules
+              prelude-seen)
+            (match (compiler-load-package-entry-file-with-paths-and-roots-cfg
+              input-path
+              prelude-seen
+              stdlib-roots
+              manifest-dir
+              deps
+              cfgs)
+              [(OkCompilerLoadWithPaths
+                  entry-decls
+                  entry-paths
+                  entry-modules
+                  seen)
+                (OkCompilerLoadWithPaths
+                  (compiler-load-decl-list-append
+                    (compiler-load-decl-list-append runtime-decls macro-decls)
+                    entry-decls)
+                  (compiler-load-decl-path-list-append
+                    (compiler-load-decl-path-list-append
+                      runtime-paths
+                      macro-paths)
+                    entry-paths)
+                  (compiler-load-decl-module-list-append
+                    (compiler-load-decl-module-list-append
+                      runtime-modules
+                      macro-modules)
+                    entry-modules)
+                  seen)]
+              [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])]
+          [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])]
+      [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])
+    (match (compiler-load-package-core-macro-prelude-with-roots-cfg
+      (sym-i64-empty)
+      stdlib-roots
+      manifest-dir
+      deps
+      cfgs)
+      [(OkCompilerLoadWithPaths
+          prelude-decls
+          prelude-paths
+          prelude-modules
+          prelude-seen)
+        (match (compiler-load-package-entry-file-with-paths-and-roots-cfg
+          input-path
+          prelude-seen
+          stdlib-roots
+          manifest-dir
+          deps
+          cfgs)
+          [(OkCompilerLoadWithPaths entry-decls entry-paths entry-modules seen)
+            (OkCompilerLoadWithPaths
+              (compiler-load-decl-list-append prelude-decls entry-decls)
+              (compiler-load-decl-path-list-append prelude-paths entry-paths)
+              (compiler-load-decl-module-list-append
+                prelude-modules
+                entry-modules)
+              seen)]
+          [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])]
+      [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])))
+
+(define (compiler-check-package-entry-file-with-roots
+  [path : String]
+  [stdlib-roots : StringVec]
+  [manifest-dir : String]
+  [deps : CompilerPkgDeps]
+  [emit-entry : bool]) : ResultCompilerCheckWithPaths
+  (begin
+    (compiler-check-reset-pools!)
+    (cfg compile-profile (compiler-check-profile-start))
+    (compiler-check-loaded-cache-with-paths
+      path
+      (compiler-check-load-package-file-with-runtime-cfg
+        path
+        stdlib-roots
+        manifest-dir
+        deps
+        emit-entry
+        (compiler-check-language-cfgs))
+      stdlib-roots
+      (compiler-typecheck-prefix-cache-scope
+        "typecheck-prefix-check"
+        stdlib-roots
+        (compiler-check-language-cfgs)))))
 
 (define (compiler-check-source [path : String] [source : String]) : ResultCompilerCheck
   (begin

@@ -2,10 +2,11 @@
 ;#
 ;# Provides first concrete synchronization surfaces for native threads:
 ;# `ChannelI64` for copyable scalar ownership transfer, `ChannelI64PairChannel`
-;# for a move-based two-field aggregate channel, and `MutexI64` for shared scalar
-;# mutation through a lexical cleanup guard. Handles are small copyable values;
-;# shared state lives in runtime-owned OS memory and is serialized with
-;# semaphore-backed synchronization.
+;# for a move-based two-field aggregate channel, `ChannelString` for atomic
+;# arena-owned text messages, and `MutexI64` for shared scalar mutation through a
+;# lexical cleanup guard. Handles are small copyable values; shared state lives
+;# in runtime-owned OS memory and is serialized with semaphore-backed
+;# synchronization.
 ;#
 ;# Usage: `(import "stdlib/sync.tl")`
 ;#
@@ -32,6 +33,10 @@
 
 ;: Number of raw `i64` fields needed to serialize a `ChannelI64PairChannel`.
 (define channel-i64-pair-raw-field-count : i64
+  7)
+
+;: Number of raw `i64` fields needed to serialize a `ChannelString`.
+(define channel-string-raw-field-count : i64
   7)
 
 ;: Number of raw `i64` fields needed to serialize a `MutexI64` handle.
@@ -89,6 +94,16 @@
   (items-handle i64)
   (spaces-handle i64))
 
+;: Runtime-owned bounded channel handle for `String` messages.
+(defstruct ChannelString
+  (slots-addr i64)
+  (state-addr i64)
+  (capacity i64)
+  (slots-bytes i64)
+  (mutex-handle i64)
+  (items-handle i64)
+  (spaces-handle i64))
+
 ;: Result returned by `channel-i64-create`.
 (defenum ChannelI64CreateResult
   (ChannelI64CreateOk ChannelI64)
@@ -98,6 +113,11 @@
 (defenum ChannelI64PairCreateResult
   (ChannelI64PairCreateOk ChannelI64PairChannel)
   (ChannelI64PairCreateErr String))
+
+;: Result returned by `channel-string-create`.
+(defenum ChannelStringCreateResult
+  (ChannelStringCreateOk ChannelString)
+  (ChannelStringCreateErr String))
 
 ;: Result returned by `mutex-i64-create`.
 (defenum MutexI64CreateResult
@@ -114,6 +134,11 @@
   (ChannelI64PairSendOk)
   (ChannelI64PairSendErr String))
 
+;: Result returned by `channel-string-send`.
+(defenum ChannelStringSendResult
+  (ChannelStringSendOk)
+  (ChannelStringSendErr String))
+
 ;: Result returned by `channel-i64-recv`.
 (defenum ChannelI64RecvResult
   (ChannelI64RecvOk i64)
@@ -123,6 +148,11 @@
 (defenum ChannelI64PairRecvResult
   (ChannelI64PairRecvOk ChannelI64Pair)
   (ChannelI64PairRecvErr String))
+
+;: Result returned by `channel-string-recv`.
+(defenum ChannelStringRecvResult
+  (ChannelStringRecvOk String)
+  (ChannelStringRecvErr String))
 
 ;: Windows kernel32 `VirtualAlloc` for runtime-owned channel storage.
 (cfg
@@ -189,6 +219,11 @@
   (unsafe
     (int->ptr (cast addr : u64) : (MutPtr i64))))
 
+;: Convert an integer address into a mutable `String` pointer.
+(define (sync-addr->mut-string [addr : i64]) : (MutPtr String)
+  (unsafe
+    (int->ptr (cast addr : u64) : (MutPtr String))))
+
 ;: Sequentially consistent atomic load of one raw `i64` pointer.
 (extern (sync-atomic-i64-load-ptr [ptr : (Ptr i64)]) : i64 (:symbol "tl_atomic_i64_load_ptr"))
 
@@ -230,6 +265,17 @@
 (define (sync-write-i64! [addr : i64] [slot : i64] [value : i64]) : unit
   (unsafe
     (ptr-write! (ptr-offset (sync-addr->mut-i64 addr) slot) value)))
+
+;: Read one `String` slot from runtime-owned storage.
+(define (sync-read-string [addr : i64] [slot : i64]) : String
+  (unsafe
+    (ptr-read
+      (ptr-cast (ptr-offset (sync-addr->mut-string addr) slot) : (Ptr String)))))
+
+;: Write one `String` slot into runtime-owned storage.
+(define (sync-write-string! [addr : i64] [slot : i64] [value : String]) : unit
+  (unsafe
+    (ptr-write! (ptr-offset (sync-addr->mut-string addr) slot) value)))
 
 ;: Wrap a raw semaphore handle for calls into `thread.tl`.
 (define (sync-semaphore [handle : i64]) : ThreadSemaphore
@@ -750,6 +796,180 @@
 ;: Rebuild a pair channel handle from a raw `i64` array at `offset`.
 (define (channel-i64-pair-load-raw [src : (Array i64)] [offset : i64]) : ChannelI64PairChannel
   (ChannelI64PairChannel
+    (array-ref src offset)
+    (array-ref src (+ offset 1))
+    (array-ref src (+ offset 2))
+    (array-ref src (+ offset 3))
+    (array-ref src (+ offset 4))
+    (array-ref src (+ offset 5))
+    (array-ref src (+ offset 6))))
+
+;: Return the next ring index for `channel`.
+(define (channel-string-next-index [channel : ChannelString] [index : i64]) : i64
+  (let
+    [next : i64 (+ index 1)]
+    (if (>= next (struct-get channel capacity))
+      0
+      next)))
+
+;: Build a string channel handle from allocated storage and semaphore handles.
+(define (channel-string-handle
+  [slots-addr : i64]
+  [state-addr : i64]
+  [capacity : i64]
+  [slots-bytes : i64]
+  [mutex : ThreadSemaphore]
+  [items : ThreadSemaphore]
+  [spaces : ThreadSemaphore]) : ChannelString
+  (ChannelString
+    slots-addr
+    state-addr
+    capacity
+    slots-bytes
+    (struct-get mutex handle)
+    (struct-get items handle)
+    (struct-get spaces handle)))
+
+;: Finish string channel creation after storage allocation.
+(define (channel-string-create-semaphores
+  [slots-addr : i64]
+  [state-addr : i64]
+  [capacity : i64]
+  [slots-bytes : i64]) : ChannelStringCreateResult
+  (match (thread-semaphore-create 1)
+    [(ThreadSemaphoreErr message)
+      (begin
+        (sync-runtime-free slots-addr slots-bytes)
+        (sync-runtime-free state-addr 16)
+        (ChannelStringCreateErr message))]
+    [(ThreadSemaphoreOk mutex)
+      (match (thread-semaphore-create 0)
+        [(ThreadSemaphoreErr message)
+          (begin
+            (sync-semaphore-close (struct-get mutex handle))
+            (sync-runtime-free slots-addr slots-bytes)
+            (sync-runtime-free state-addr 16)
+            (ChannelStringCreateErr message))]
+        [(ThreadSemaphoreOk items)
+          (match (thread-semaphore-create capacity)
+            [(ThreadSemaphoreErr message)
+              (begin
+                (sync-semaphore-close (struct-get mutex handle))
+                (sync-semaphore-close (struct-get items handle))
+                (sync-runtime-free slots-addr slots-bytes)
+                (sync-runtime-free state-addr 16)
+                (ChannelStringCreateErr message))]
+            [(ThreadSemaphoreOk spaces)
+              (begin
+                (sync-write-i64! state-addr 0 0)
+                (sync-write-i64! state-addr 1 0)
+                (ChannelStringCreateOk
+                  (channel-string-handle
+                    slots-addr
+                    state-addr
+                    capacity
+                    slots-bytes
+                    mutex
+                    items
+                    spaces)))])])]))
+
+;: Create a bounded `String` channel with `capacity` queued messages.
+(define (channel-string-create [capacity : i64]) : ChannelStringCreateResult
+  (if (<= capacity 0)
+    (ChannelStringCreateErr "sync: channel capacity must be positive")
+    (if (> capacity channel-i64-max-capacity)
+      (ChannelStringCreateErr "sync: channel capacity exceeds maximum")
+      (let
+        [slots-bytes : i64 (* capacity 8)]
+        [slots-addr : i64 (sync-runtime-alloc slots-bytes)]
+        (if (= slots-addr 0)
+          (ChannelStringCreateErr "sync: channel allocation failed")
+          (let
+            [state-addr : i64 (sync-runtime-alloc 16)]
+            (if (= state-addr 0)
+              (begin
+                (sync-runtime-free slots-addr slots-bytes)
+                (ChannelStringCreateErr "sync: channel allocation failed"))
+              (channel-string-create-semaphores
+                slots-addr
+                state-addr
+                capacity
+                slots-bytes))))))))
+
+;: Send `value`, blocking until one string slot is available.
+(define (channel-string-send [channel : ChannelString] [value : String]) : ChannelStringSendResult
+  (if (not (sync-semaphore-wait (struct-get channel spaces-handle)))
+    (ChannelStringSendErr "sync: channel send wait failed")
+    (if (not (sync-semaphore-wait (struct-get channel mutex-handle)))
+      (begin
+        (sync-semaphore-post (struct-get channel spaces-handle))
+        (ChannelStringSendErr "sync: channel lock failed"))
+      (let
+        [tail : i64 (sync-read-i64 (struct-get channel state-addr) 1)]
+        (begin
+          (sync-write-string! (struct-get channel slots-addr) tail value)
+          (sync-write-i64!
+            (struct-get channel state-addr)
+            1
+            (channel-string-next-index channel tail))
+          (if (not (sync-semaphore-post (struct-get channel mutex-handle)))
+            (ChannelStringSendErr "sync: channel unlock failed")
+            (if (sync-semaphore-post (struct-get channel items-handle))
+              (ChannelStringSendOk)
+              (ChannelStringSendErr "sync: channel send signal failed"))))))))
+
+;: Receive one string value, blocking until one queued message is available.
+(define (channel-string-recv [channel : ChannelString]) : ChannelStringRecvResult
+  (if (not (sync-semaphore-wait (struct-get channel items-handle)))
+    (ChannelStringRecvErr "sync: channel recv wait failed")
+    (if (not (sync-semaphore-wait (struct-get channel mutex-handle)))
+      (begin
+        (sync-semaphore-post (struct-get channel items-handle))
+        (ChannelStringRecvErr "sync: channel lock failed"))
+      (let
+        [head : i64 (sync-read-i64 (struct-get channel state-addr) 0)]
+        [value : String (sync-read-string (struct-get channel slots-addr) head)]
+        (begin
+          (sync-write-i64!
+            (struct-get channel state-addr)
+            0
+            (channel-string-next-index channel head))
+          (if (not (sync-semaphore-post (struct-get channel mutex-handle)))
+            (ChannelStringRecvErr "sync: channel unlock failed")
+            (if (sync-semaphore-post (struct-get channel spaces-handle))
+              (ChannelStringRecvOk value)
+              (ChannelStringRecvErr "sync: channel recv signal failed"))))))))
+
+;: Close string channel resources after all senders/receivers are done.
+(define (channel-string-close [channel : ChannelString]) : bool
+  (let
+    [mutex-ok : bool (sync-semaphore-close (struct-get channel mutex-handle))]
+    [items-ok : bool (sync-semaphore-close (struct-get channel items-handle))]
+    [spaces-ok : bool (sync-semaphore-close (struct-get channel spaces-handle))]
+    [slots-ok : bool
+      (sync-runtime-free
+        (struct-get channel slots-addr)
+        (struct-get channel slots-bytes))]
+    [state-ok : bool (sync-runtime-free (struct-get channel state-addr) 16)]
+    (and mutex-ok items-ok spaces-ok slots-ok state-ok)))
+
+;: Store a string channel handle into a raw `i64` array at `offset`.
+(define (channel-string-store-raw!
+  [channel : ChannelString]
+  [dst : (Array i64)]
+  [offset : i64]) : unit
+  (begin
+    (array-set! dst offset (struct-get channel slots-addr))
+    (array-set! dst (+ offset 1) (struct-get channel state-addr))
+    (array-set! dst (+ offset 2) (struct-get channel capacity))
+    (array-set! dst (+ offset 3) (struct-get channel slots-bytes))
+    (array-set! dst (+ offset 4) (struct-get channel mutex-handle))
+    (array-set! dst (+ offset 5) (struct-get channel items-handle))
+    (array-set! dst (+ offset 6) (struct-get channel spaces-handle))))
+
+;: Rebuild a string channel handle from a raw `i64` array at `offset`.
+(define (channel-string-load-raw [src : (Array i64)] [offset : i64]) : ChannelString
+  (ChannelString
     (array-ref src offset)
     (array-ref src (+ offset 1))
     (array-ref src (+ offset 2))

@@ -29088,6 +29088,271 @@
       (OkMacroSexpr (spanned-sexpr-cons (SpSSym name span) tail span))]
     [(ErrMacroSexpr diag) (ErrMacroSexpr diag)]))
 
+;; Serialize a child expression node (referenced by node-pool id) back to a
+;; spanned sexpr. Used by the declaration-emitting macro output serializer to
+;; rebuild non-trivial function bodies (arithmetic, struct/array access, let,
+;; while, set!, ...) that the quasiquote evaluator stores as typed AST nodes.
+(define (macro-child-to-spanned-sexpr
+  [id : i64]
+  [span : SourceSpan]
+  [origin : AstExpr]) : ResultMacroSexpr
+  (macro-expr-to-spanned-sexpr-with-span (ast-node-get id) span origin))
+
+(define (macro-form1 [name : String] [a : SpannedSexpr] [span : SourceSpan]) : SpannedSexpr
+  (spanned-sexpr-cons
+    (SpSSym name span)
+    (spanned-sexpr-cons a (SpSNil span) span)
+    span))
+
+(define (macro-form2
+  [name : String]
+  [a : SpannedSexpr]
+  [b : SpannedSexpr]
+  [span : SourceSpan]) : SpannedSexpr
+  (spanned-sexpr-cons
+    (SpSSym name span)
+    (spanned-sexpr-cons a (spanned-sexpr-cons b (SpSNil span) span) span)
+    span))
+
+(define (macro-form3
+  [name : String]
+  [a : SpannedSexpr]
+  [b : SpannedSexpr]
+  [c : SpannedSexpr]
+  [span : SourceSpan]) : SpannedSexpr
+  (spanned-sexpr-cons
+    (SpSSym name span)
+    (spanned-sexpr-cons
+      a
+      (spanned-sexpr-cons b (spanned-sexpr-cons c (SpSNil span) span) span)
+      span)
+    span))
+
+(define (macro-binop-symbol [op : AstBinOp]) : String
+  (match op
+    [(AstBinAdd) "+"]
+    [(AstBinSub) "-"]
+    [(AstBinMul) "*"]
+    [(AstBinDiv) "/"]
+    [(AstBinMod) "%"]
+    [(AstBinEq) "="]
+    [(AstBinNe) "!="]
+    [(AstBinLt) "<"]
+    [(AstBinLe) "<="]
+    [(AstBinGt) ">"]
+    [(AstBinGe) ">="]
+    [(AstBinAnd) "and"]
+    [(AstBinOr) "or"]
+    [(AstBinBitAnd) "bit-and"]
+    [(AstBinBitOr) "bit-or"]
+    [(AstBinBitXor) "bit-xor"]
+    [(AstBinShl) "shl"]
+    [(AstBinShr) "shr"]))
+
+(define (macro-unop-symbol [op : AstUnOp]) : String
+  (match op
+    [(AstUnNeg) "-"]
+    [(AstUnNot) "not"]
+    [(AstUnBitNot) "bit-not"]))
+
+(define (macro-lifetime-list-to-spanned-sexpr
+  [items : AstLifetimeList]
+  [span : SourceSpan]) : SpannedSexpr
+  (match items
+    [(AstLifetimeNil) (SpSNil span)]
+    [(AstLifetimeCons name rest)
+      (spanned-sexpr-cons
+        (SpSSym name span)
+        (macro-lifetime-list-to-spanned-sexpr (box-get rest) span)
+        span)]))
+
+(define (macro-type-list-to-spanned-sexpr
+  [items : AstTypeList]
+  [span : SourceSpan]
+  [origin : AstExpr]) : ResultMacroSexpr
+  (match items
+    [(AstTypeNil) (OkMacroSexpr (SpSNil span))]
+    [(AstTypeCons head-id rest)
+      (match (macro-type-to-spanned-sexpr (ty-node-get head-id) span origin)
+        [(OkMacroSexpr shead)
+          (match (macro-type-list-to-spanned-sexpr (box-get rest) span origin)
+            [(OkMacroSexpr stail)
+              (OkMacroSexpr (spanned-sexpr-cons shead stail span))]
+            [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]))
+
+(define (macro-type-unary-sexpr
+  [name : String]
+  [inner-id : i64]
+  [span : SourceSpan]
+  [origin : AstExpr]) : ResultMacroSexpr
+  (match (macro-type-to-spanned-sexpr (ty-node-get inner-id) span origin)
+    [(OkMacroSexpr sinner) (OkMacroSexpr (macro-form1 name sinner span))]
+    [(ErrMacroSexpr diag) (ErrMacroSexpr diag)]))
+
+(define (macro-type-named-args-sexpr
+  [name : String]
+  [lifetimes : AstLifetimeList]
+  [span : SourceSpan]) : ResultMacroSexpr
+  (OkMacroSexpr
+    (spanned-sexpr-cons
+      (SpSSym name span)
+      (macro-lifetime-list-to-spanned-sexpr lifetimes span)
+      span)))
+
+;; Serialize an AstType back to a spanned sexpr so type positions embedded in
+;; expression nodes (make-array, cast, ann, typed let bindings) round-trip.
+(define (macro-type-to-spanned-sexpr
+  [ty : AstType]
+  [span : SourceSpan]
+  [origin : AstExpr]) : ResultMacroSexpr
+  (match ty
+    [(AstTyI64) (OkMacroSexpr (SpSSym "i64" span))]
+    [(AstTyI32) (OkMacroSexpr (SpSSym "i32" span))]
+    [(AstTyI16) (OkMacroSexpr (SpSSym "i16" span))]
+    [(AstTyI8) (OkMacroSexpr (SpSSym "i8" span))]
+    [(AstTyU64) (OkMacroSexpr (SpSSym "u64" span))]
+    [(AstTyU32) (OkMacroSexpr (SpSSym "u32" span))]
+    [(AstTyU16) (OkMacroSexpr (SpSSym "u16" span))]
+    [(AstTyU8) (OkMacroSexpr (SpSSym "u8" span))]
+    [(AstTyF64) (OkMacroSexpr (SpSSym "f64" span))]
+    [(AstTyF32) (OkMacroSexpr (SpSSym "f32" span))]
+    [(AstTyBool) (OkMacroSexpr (SpSSym "bool" span))]
+    [(AstTyChar) (OkMacroSexpr (SpSSym "char" span))]
+    [(AstTyString) (OkMacroSexpr (SpSSym "String" span))]
+    [(AstTyStr) (OkMacroSexpr (SpSSym "str" span))]
+    [(AstTyBytes) (OkMacroSexpr (SpSSym "bytes" span))]
+    [(AstTyUnit) (OkMacroSexpr (SpSSym "unit" span))]
+    [(AstTyNever) (OkMacroSexpr (SpSSym "never" span))]
+    [(AstTyExpr) (OkMacroSexpr (SpSSym "Expr" span))]
+    [(AstTyExprList) (OkMacroSexpr (SpSSym "ExprList" span))]
+    [(AstTyDynArray elem) (macro-type-unary-sexpr "Array" elem span origin)]
+    [(AstTyArray elem count)
+      (match (macro-type-to-spanned-sexpr (ty-node-get elem) span origin)
+        [(OkMacroSexpr selem)
+          (OkMacroSexpr (macro-form2 "Array" selem (SpSInt count span) span))]
+        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+    [(AstTyBox inner) (macro-type-unary-sexpr "Box" inner span origin)]
+    [(AstTyPtr inner) (macro-type-unary-sexpr "Ptr" inner span origin)]
+    [(AstTyMutPtr inner) (macro-type-unary-sexpr "MutPtr" inner span origin)]
+    [(AstTyTuple items)
+      (match (macro-type-list-to-spanned-sexpr items span origin)
+        [(OkMacroSexpr stail)
+          (OkMacroSexpr (spanned-sexpr-cons (SpSSym "Tuple" span) stail span))]
+        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+    [(AstTyFunc args ret)
+      (match (macro-type-list-to-spanned-sexpr args span origin)
+        [(OkMacroSexpr sargs)
+          (match (macro-type-to-spanned-sexpr (ty-node-get ret) span origin)
+            [(OkMacroSexpr sret)
+              (OkMacroSexpr
+                (spanned-sexpr-cons
+                  (SpSSym "->" span)
+                  (macro-spanned-sexpr-append
+                    sargs
+                    (spanned-sexpr-cons sret (SpSNil span) span)
+                    span)
+                  span))]
+            [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+    [(AstTyStruct name) (OkMacroSexpr (SpSSym (intern-str name) span))]
+    [(AstTyEnum name) (OkMacroSexpr (SpSSym (intern-str name) span))]
+    [(AstTyVar name) (OkMacroSexpr (SpSSym (intern-str name) span))]
+    [(AstTyStructArgs name lifetimes)
+      (macro-type-named-args-sexpr (intern-str name) lifetimes span)]
+    [(AstTyEnumArgs name lifetimes)
+      (macro-type-named-args-sexpr (intern-str name) lifetimes span)]
+    [(AstTyVarArgs name lifetimes)
+      (macro-type-named-args-sexpr (intern-str name) lifetimes span)]
+    [(AstTyRef region inner)
+      (match (macro-type-to-spanned-sexpr (ty-node-get inner) span origin)
+        [(OkMacroSexpr sinner)
+          (OkMacroSexpr
+            (if (= (string-length region) 0)
+              (macro-form1 "&" sinner span)
+              (macro-form2 "&" (SpSSym region span) sinner span)))]
+        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+    [(AstTyMutRef region inner)
+      (match (macro-type-to-spanned-sexpr (ty-node-get inner) span origin)
+        [(OkMacroSexpr sinner)
+          (OkMacroSexpr
+            (if (= (string-length region) 0)
+              (macro-form1 "&mut" sinner span)
+              (macro-form2 "&mut" (SpSSym region span) sinner span)))]
+        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+    [(AstTyRegion region inner)
+      (match (macro-type-to-spanned-sexpr (ty-node-get inner) span origin)
+        [(OkMacroSexpr sinner)
+          (OkMacroSexpr (macro-form2 "in" (SpSSym region span) sinner span))]
+        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]))
+
+(define (macro-spanned-sexpr-append
+  [left : SpannedSexpr]
+  [right : SpannedSexpr]
+  [span : SourceSpan]) : SpannedSexpr
+  (match left
+    [(SpSCons head tail _)
+      (spanned-sexpr-cons
+        (sp-node-get head)
+        (macro-spanned-sexpr-append (sp-node-get tail) right span)
+        span)]
+    [_ right]))
+
+(define (macro-let-binding-bracket
+  [binding : AstLetBinding]
+  [span : SourceSpan]
+  [origin : AstExpr]) : ResultMacroSexpr
+  (match binding
+    [(AstLetBinding name maybe-ty value-id)
+      (match (macro-child-to-spanned-sexpr value-id span origin)
+        [(OkMacroSexpr svalue)
+          (match maybe-ty
+            [(AstNoType)
+              (OkMacroSexpr
+                (spanned-sexpr-bracket-list
+                  (spanned-sexpr-cons
+                    (SpSSym (macro-output-syntax-name (intern-str name)) span)
+                    (spanned-sexpr-cons svalue (SpSNil span) span)
+                    span)
+                  span))]
+            [(AstSomeType ty)
+              (match (macro-type-to-spanned-sexpr ty span origin)
+                [(OkMacroSexpr sty)
+                  (OkMacroSexpr
+                    (spanned-sexpr-bracket-list
+                      (spanned-sexpr-cons
+                        (SpSSym
+                          (macro-output-syntax-name (intern-str name))
+                          span)
+                        (spanned-sexpr-cons
+                          (SpSSym ":" span)
+                          (spanned-sexpr-cons
+                            sty
+                            (spanned-sexpr-cons svalue (SpSNil span) span)
+                            span)
+                          span)
+                        span)
+                      span))]
+                [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])])]
+        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]))
+
+(define (macro-let-tail
+  [bindings : AstLetBindingList]
+  [body : SpannedSexpr]
+  [span : SourceSpan]
+  [origin : AstExpr]) : ResultMacroSexpr
+  (match bindings
+    [(AstLetBindingNil)
+      (OkMacroSexpr (spanned-sexpr-cons body (SpSNil span) span))]
+    [(AstLetBindingCons head rest)
+      (match (macro-let-binding-bracket head span origin)
+        [(OkMacroSexpr sbracket)
+          (match (macro-let-tail (box-get rest) body span origin)
+            [(OkMacroSexpr stail)
+              (OkMacroSexpr (spanned-sexpr-cons sbracket stail span))]
+            [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]))
+
 (define (macro-expr-list-to-spanned-sexpr
   [exprs : AstExprList]
   [span : SourceSpan]
@@ -29187,6 +29452,191 @@
         (ast-expr-cons inner-box AstExprNil)
         span
         origin)]
+    [(AstExprBinary op left-id right-id)
+      (match (macro-child-to-spanned-sexpr left-id span origin)
+        [(OkMacroSexpr sleft)
+          (match (macro-child-to-spanned-sexpr right-id span origin)
+            [(OkMacroSexpr sright)
+              (OkMacroSexpr
+                (macro-form2 (macro-binop-symbol op) sleft sright span))]
+            [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+    [(AstExprUnary op inner-id)
+      (match (macro-child-to-spanned-sexpr inner-id span origin)
+        [(OkMacroSexpr sinner)
+          (OkMacroSexpr (macro-form1 (macro-unop-symbol op) sinner span))]
+        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+    [(AstExprLet bindings body-id)
+      (match (macro-child-to-spanned-sexpr body-id span origin)
+        [(OkMacroSexpr sbody)
+          (match (macro-let-tail bindings sbody span origin)
+            [(OkMacroSexpr stail)
+              (OkMacroSexpr (spanned-sexpr-cons (SpSSym "let" span) stail span))]
+            [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+    [(AstExprWhile cond-id body-id)
+      (match (macro-child-to-spanned-sexpr cond-id span origin)
+        [(OkMacroSexpr scond)
+          (match (macro-child-to-spanned-sexpr body-id span origin)
+            [(OkMacroSexpr sbody)
+              (OkMacroSexpr (macro-form2 "while" scond sbody span))]
+            [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+    [(AstExprSet name value-id)
+      (match (macro-child-to-spanned-sexpr value-id span origin)
+        [(OkMacroSexpr svalue)
+          (OkMacroSexpr
+            (macro-form2
+              "set!"
+              (SpSSym (macro-output-syntax-name (intern-str name)) span)
+              svalue
+              span))]
+        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+    [(AstExprMakeArray ty len-id)
+      (match (macro-type-to-spanned-sexpr ty span origin)
+        [(OkMacroSexpr sty)
+          (match (macro-child-to-spanned-sexpr len-id span origin)
+            [(OkMacroSexpr slen)
+              (OkMacroSexpr (macro-form2 "make-array" sty slen span))]
+            [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+    [(AstExprArrayRef array-id index-id)
+      (match (macro-child-to-spanned-sexpr array-id span origin)
+        [(OkMacroSexpr sarray)
+          (match (macro-child-to-spanned-sexpr index-id span origin)
+            [(OkMacroSexpr sindex)
+              (OkMacroSexpr (macro-form2 "array-ref" sarray sindex span))]
+            [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+    [(AstExprArraySet array-id index-id value-id)
+      (match (macro-child-to-spanned-sexpr array-id span origin)
+        [(OkMacroSexpr sarray)
+          (match (macro-child-to-spanned-sexpr index-id span origin)
+            [(OkMacroSexpr sindex)
+              (match (macro-child-to-spanned-sexpr value-id span origin)
+                [(OkMacroSexpr svalue)
+                  (OkMacroSexpr
+                    (macro-form3 "array-set!" sarray sindex svalue span))]
+                [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+            [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+    [(AstExprArrayPush array-id value-id)
+      (match (macro-child-to-spanned-sexpr array-id span origin)
+        [(OkMacroSexpr sarray)
+          (match (macro-child-to-spanned-sexpr value-id span origin)
+            [(OkMacroSexpr svalue)
+              (OkMacroSexpr (macro-form2 "array-push!" sarray svalue span))]
+            [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+    [(AstExprStringRef string-id index-id)
+      (match (macro-child-to-spanned-sexpr string-id span origin)
+        [(OkMacroSexpr sstring)
+          (match (macro-child-to-spanned-sexpr index-id span origin)
+            [(OkMacroSexpr sindex)
+              (OkMacroSexpr (macro-form2 "string-ref" sstring sindex span))]
+            [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+    [(AstExprStructGet receiver-id field)
+      (match (macro-child-to-spanned-sexpr receiver-id span origin)
+        [(OkMacroSexpr sreceiver)
+          (OkMacroSexpr
+            (macro-form2
+              "struct-get"
+              sreceiver
+              (SpSSym (intern-str field) span)
+              span))]
+        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+    [(AstExprStructSet receiver-id field value-id)
+      (match (macro-child-to-spanned-sexpr receiver-id span origin)
+        [(OkMacroSexpr sreceiver)
+          (match (macro-child-to-spanned-sexpr value-id span origin)
+            [(OkMacroSexpr svalue)
+              (OkMacroSexpr
+                (macro-form2
+                  "set!"
+                  (macro-form2
+                    "struct-get"
+                    sreceiver
+                    (SpSSym (intern-str field) span)
+                    span)
+                  svalue
+                  span))]
+            [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+    [(AstExprCast inner-id ty)
+      (match (macro-child-to-spanned-sexpr inner-id span origin)
+        [(OkMacroSexpr sinner)
+          (match (macro-type-to-spanned-sexpr ty span origin)
+            [(OkMacroSexpr sty)
+              (OkMacroSexpr
+                (macro-form3 "cast" sinner (SpSSym ":" span) sty span))]
+            [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+    [(AstExprAnn inner-id ty)
+      (match (macro-child-to-spanned-sexpr inner-id span origin)
+        [(OkMacroSexpr sinner)
+          (match (macro-type-to-spanned-sexpr ty span origin)
+            [(OkMacroSexpr sty)
+              (OkMacroSexpr
+                (macro-form3 "ann" sinner (SpSSym ":" span) sty span))]
+            [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+    [(AstExprReturn inner-id)
+      (match (macro-child-to-spanned-sexpr inner-id span origin)
+        [(OkMacroSexpr sinner)
+          (OkMacroSexpr (macro-form1 "return" sinner span))]
+        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+    [(AstExprTry inner-id)
+      (match (macro-child-to-spanned-sexpr inner-id span origin)
+        [(OkMacroSexpr sinner) (OkMacroSexpr (macro-form1 "try" sinner span))]
+        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+    [(AstExprBox inner-id)
+      (match (macro-child-to-spanned-sexpr inner-id span origin)
+        [(OkMacroSexpr sinner) (OkMacroSexpr (macro-form1 "box" sinner span))]
+        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+    [(AstExprBoxGet inner-id)
+      (match (macro-child-to-spanned-sexpr inner-id span origin)
+        [(OkMacroSexpr sinner)
+          (OkMacroSexpr (macro-form1 "box-get" sinner span))]
+        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+    [(AstExprBoxTake inner-id)
+      (match (macro-child-to-spanned-sexpr inner-id span origin)
+        [(OkMacroSexpr sinner)
+          (OkMacroSexpr (macro-form1 "box-take" sinner span))]
+        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+    [(AstExprBoxSet receiver-id value-id)
+      (match (macro-child-to-spanned-sexpr receiver-id span origin)
+        [(OkMacroSexpr sreceiver)
+          (match (macro-child-to-spanned-sexpr value-id span origin)
+            [(OkMacroSexpr svalue)
+              (OkMacroSexpr
+                (macro-form2
+                  "set!"
+                  (macro-form1 "box-get" sreceiver span)
+                  svalue
+                  span))]
+            [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+    [(AstExprTupleRef tuple-id index)
+      (match (macro-child-to-spanned-sexpr tuple-id span origin)
+        [(OkMacroSexpr stuple)
+          (OkMacroSexpr
+            (macro-form2 "tuple-ref" stuple (SpSInt index span) span))]
+        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+    [(AstExprInit maybe-ty)
+      (match maybe-ty
+        [(AstNoType)
+          (OkMacroSexpr
+            (spanned-sexpr-cons (SpSSym "init" span) (SpSNil span) span))]
+        [(AstSomeType ty)
+          (match (macro-type-to-spanned-sexpr ty span origin)
+            [(OkMacroSexpr sty)
+              (OkMacroSexpr (macro-form2 "init" (SpSSym ":" span) sty span))]
+            [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])])]
+    [(AstExprTypeLiteral ty)
+      (match (macro-type-to-spanned-sexpr ty span origin)
+        [(OkMacroSexpr sty) (OkMacroSexpr (macro-form1 "type" sty span))]
+        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
     [_
       (ErrMacroSexpr
         (macro-output-syntax-diag

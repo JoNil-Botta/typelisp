@@ -1,4 +1,6 @@
+(import "stdlib/arena.tl")
 (import "stdlib/sync.tl")
+(import "stdlib/string.tl")
 
 (define (sync-api-create-rejects-invalid?) : bool
   (and
@@ -13,6 +15,18 @@
       [(ChannelI64CreateOk ch)
         (begin
           (channel-i64-close ch)
+          false)])
+    (match (channel-string-create 0)
+      [(ChannelStringCreateErr _) true]
+      [(ChannelStringCreateOk ch)
+        (begin
+          (channel-string-close ch)
+          false)])
+    (match (channel-string-create (+ channel-i64-max-capacity 1))
+      [(ChannelStringCreateErr _) true]
+      [(ChannelStringCreateOk ch)
+        (begin
+          (channel-string-close ch)
           false)])))
 
 (define (sync-api-send-ok? [result : ChannelI64SendResult]) : bool
@@ -38,6 +52,18 @@
   (match result
     [(ChannelI64PairRecvOk value) value]
     [(ChannelI64PairRecvErr _) fallback]))
+
+(define (sync-api-string-send-ok? [result : ChannelStringSendResult]) : bool
+  (match result
+    [(ChannelStringSendOk) true]
+    [(ChannelStringSendErr _) false]))
+
+(define (sync-api-string-recv-value-or
+  [result : ChannelStringRecvResult]
+  [fallback : String]) : String
+  (match result
+    [(ChannelStringRecvOk value) value]
+    [(ChannelStringRecvErr _) fallback]))
 
 (define (sync-api-run-channel [channel : ChannelI64]) : i64
   (let
@@ -107,6 +133,47 @@
           42
           8)))))
 
+(define (sync-api-run-string-channel [channel : ChannelString]) : i64
+  (let
+    [owner : i64 (arena-make-atomic)]
+    [packed : (Array i64) (make-array i64 channel-string-raw-field-count)]
+    (begin
+      (channel-string-store-raw! channel packed 0)
+      (let
+        [loaded : ChannelString (channel-string-load-raw packed 0)]
+        [send-a : bool
+          (sync-api-string-send-ok?
+            (channel-string-send
+              loaded
+              (in-arena owner (string-append "alpha" ":one"))))]
+        [send-b : bool
+          (sync-api-string-send-ok?
+            (channel-string-send
+              loaded
+              (in-arena owner (string-append "beta" ":two"))))]
+        [first : String
+          (sync-api-string-recv-value-or (channel-string-recv loaded) "missing")]
+        [send-c : bool
+          (sync-api-string-send-ok?
+            (channel-string-send
+              loaded
+              (in-arena owner (string-append "gamma" ":three"))))]
+        [second : String
+          (sync-api-string-recv-value-or (channel-string-recv loaded) "missing")]
+        [third : String
+          (sync-api-string-recv-value-or (channel-string-recv loaded) "missing")]
+        [closed : bool (channel-string-close loaded)]
+        (if (and
+          send-a
+          send-b
+          send-c
+          closed
+          (string-eq first "alpha:one")
+          (string-eq second "beta:two")
+          (string-eq third "gamma:three"))
+          42
+          9)))))
+
 (define (sync-api-run-mutex [mutex : MutexI64]) : i64
   (let
     [packed : (Array i64) (make-array i64 mutex-i64-raw-field-count)]
@@ -173,6 +240,16 @@
         [pair-code : i64 (sync-api-run-pair-channel pair-channel)]
         (if (not (= pair-code 42))
           pair-code
+          (sync-api-run-string-create)))]))
+
+(define (sync-api-run-string-create) : i64
+  (match (channel-string-create 2)
+    [(ChannelStringCreateErr _) 9]
+    [(ChannelStringCreateOk string-channel)
+      (let
+        [string-code : i64 (sync-api-run-string-channel string-channel)]
+        (if (not (= string-code 42))
+          string-code
           (sync-api-run-mutex-create)))]))
 
 (define (sync-api-run-channel-create) : i64

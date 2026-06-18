@@ -29,11 +29,11 @@
       (match (gen-normalize-program-with-paths program paths "")
         [(OkGenProgramWithPaths generated generated-paths)
           (match (macro-expand-program-with-paths generated generated-paths)
-            [(OkMacroExpand expanded)
+            [(OkMacroExpand expanded expanded-paths)
               (if (compiler-specialize-needed? expanded)
                 (match (build-compiler-symbols-with-paths
                   expanded
-                  generated-paths)
+                  expanded-paths)
                   [(OkCompilerSymbols _)
                     (match (compiler-specialize-program expanded)
                       [(OkSpecProgram specialized)
@@ -47,7 +47,7 @@
                     (ErrCompilerTypecheck (tc-diag-at-start message))])
                 (typecheck-compiler-specialized-program-with-paths-cache
                   expanded
-                  generated-paths
+                  expanded-paths
                   stdlib-roots
                   cache-scope))]
             [(ErrMacroExpand diag) (ErrCompilerTypecheck diag)])]
@@ -72,11 +72,9 @@
     (match (gen-normalize-program-with-paths program paths "")
       [(OkGenProgramWithPaths generated generated-paths)
         (match (macro-expand-program-with-paths generated generated-paths)
-          [(OkMacroExpand expanded)
+          [(OkMacroExpand expanded expanded-paths)
             (if (compiler-specialize-needed? expanded)
-              (match (build-compiler-symbols-with-paths
-                expanded
-                generated-paths)
+              (match (build-compiler-symbols-with-paths expanded expanded-paths)
                 [(OkCompilerSymbols _)
                   (match (compiler-specialize-program expanded)
                     [(OkSpecProgram specialized)
@@ -90,7 +88,7 @@
                   (ErrCompilerTypecheckChecked (tc-diag-at-start message))])
               (typecheck-compiler-specialized-program-with-paths-checked-cache
                 expanded
-                generated-paths
+                expanded-paths
                 stdlib-roots
                 cache-scope))]
           [(ErrMacroExpand diag) (ErrCompilerTypecheckChecked diag)])]
@@ -6638,8 +6636,52 @@
 (defmacro (macro-a) : Expr `(macro-b))
 (defmacro (macro-b) : Expr `(macro-a))")
 
-(define (compiler-typecheck-module-macro-import-unsupported-source) : String
-  "(defmacro (gen) : Module (expr-var \"unused\"))
+(define (compiler-typecheck-module-macro-import-source) : String
+  "(defmacro (gen) : Module
+  `(begin
+    (module generated.module)
+    (define (answer) : i64 42)
+    (export (value answer))))
+(import (gen))
+(define (main) : i64 (answer))")
+
+(define (compiler-typecheck-module-macro-import-alias-source) : String
+  "(defmacro (gen) : Module
+  `(begin
+    (module generated.module)
+    (define (answer) : i64 42)
+    (export (value answer))))
+(import (gen) as generated)
+(define (main) : i64 (generated.answer))")
+
+(define (compiler-typecheck-module-macro-import-duplicate-source) : String
+  "(defmacro (gen) : Module
+  `(begin
+    (module generated.module)
+    (define (answer) : i64 42)
+    (export (value answer))))
+(import (gen))
+(import (gen))
+(define (main) : i64 (answer))")
+
+(define (compiler-typecheck-module-macro-import-target-collision-source) : String
+  "(defmacro (gen-a) : Module
+  `(begin
+    (module generated.module)
+    (define (answer) : i64 42)
+    (export (value answer))))
+(defmacro (gen-b) : Module
+  `(begin
+    (module generated.module)
+    (define (answer) : i64 99)
+    (export (value answer))))
+(import (gen-a))
+(import (gen-b))
+(define (main) : i64 (answer))")
+
+(define (compiler-typecheck-module-macro-import-missing-module-source) : String
+  "(defmacro (gen) : Module
+  `(define (answer) : i64 42))
 (import (gen))
 (define (main) : i64 0)")
 
@@ -6921,9 +6963,17 @@
     (compiler-typecheck-error-ok?
       (compiler-typecheck-macro-mutual-depth-source)
       "macro expansion exceeded depth limit")
+    (compiler-typecheck-ok? (compiler-typecheck-module-macro-import-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-module-macro-import-alias-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-module-macro-import-duplicate-source))
     (compiler-typecheck-error-ok?
-      (compiler-typecheck-module-macro-import-unsupported-source)
-      "typecheck: Module macro expansion is not implemented yet (#3153)")
+      (compiler-typecheck-module-macro-import-target-collision-source)
+      "typecheck: Module macro output collides with existing module generated.module for generated identity :gen-b()")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-module-macro-import-missing-module-source)
+      "typecheck: Module macro output must include a module declaration")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-module-macro-expression-source)
       "typecheck: Module macro can only be used in import position")

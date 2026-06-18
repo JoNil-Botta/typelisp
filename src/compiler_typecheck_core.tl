@@ -7,6 +7,8 @@
 (import "compiler_diagnostic.tl")
 (import "compiler_ctfe.tl")
 (import "compiler_clone.tl")
+(import "compiler_parse_core.tl")
+(import "read.tl")
 (import "../stdlib/string.tl")
 (import "../stdlib/str_cat.tl")
 
@@ -22106,20 +22108,24 @@
   [ctx : TcContext]
   [ret : AstType]
   [value : CompilerCtfeValue]) : ResultTcUnit
-  (if (tc-macro-result-decl-emitting? ret)
-    (ErrTcUnit
-      "typecheck: declaration-emitting macro expansion is not implemented yet (#3153)")
+  (if (tc-macro-result-module? ret)
     (match value
-      [(CtfeExpr _ produced)
-        (if (or
-          (tc-type-eq produced (AstTyExpr))
-          (tc-type-compatible?
-            (tc-resolve-type ctx (tc-macro-signature-type ret))
-            (tc-resolve-type ctx produced)))
-          OkTcUnit
-          (ErrTcUnit
-            "typecheck: macro body produced type does not match declaration"))]
-      [_ (ErrTcUnit "typecheck: macro body must return Expr")])))
+      [(CtfeExpr _ _) OkTcUnit]
+      [_ (ErrTcUnit "typecheck: Module macro body must return Expr")])
+    (if (tc-macro-result-decls? ret)
+      (ErrTcUnit
+        "typecheck: declaration-emitting macro expansion is not implemented yet (#3153)")
+      (match value
+        [(CtfeExpr _ produced)
+          (if (or
+            (tc-type-eq produced (AstTyExpr))
+            (tc-type-compatible?
+              (tc-resolve-type ctx (tc-macro-signature-type ret))
+              (tc-resolve-type ctx produced)))
+            OkTcUnit
+            (ErrTcUnit
+              "typecheck: macro body produced type does not match declaration"))]
+        [_ (ErrTcUnit "typecheck: macro body must return Expr")]))))
 
 (define (tc-comptime-purity-chain-push [chain : TcStringList] [name : String]) : TcStringList
   (TcStringCons name (box chain)))
@@ -26942,9 +26948,41 @@
   (OkMacroDecls AstDeclList)
   (ErrMacroDecls CompilerDiagnostic))
 
+(defenum ResultMacroDeclExpansion
+  (OkMacroDeclExpansion AstDeclList AstDeclPathList)
+  (ErrMacroDeclExpansion CompilerDiagnostic))
+
+(defenum ResultMacroDeclsWithPaths
+  (OkMacroDeclsWithPaths AstDeclList AstDeclPathList)
+  (ErrMacroDeclsWithPaths CompilerDiagnostic))
+
 (defenum ResultMacroExpand
-  (OkMacroExpand AstProgram)
+  (OkMacroExpand AstProgram AstDeclPathList)
   (ErrMacroExpand CompilerDiagnostic))
+
+(defenum ResultMacroValue
+  (OkMacroValue CompilerCtfeValue)
+  (ErrMacroValue CompilerDiagnostic))
+
+(defenum ResultMacroSexpr
+  (OkMacroSexpr SpannedSexpr)
+  (ErrMacroSexpr CompilerDiagnostic))
+
+(defenum ResultMacroParsedDecls
+  (OkMacroParsedDecls AstDeclList)
+  (ErrMacroParsedDecls CompilerDiagnostic))
+
+(defenum MacroMaybeModuleName
+  (MacroNoModuleName)
+  (MacroSomeModuleName String))
+
+(defenum MacroMaybeDeclName
+  (MacroNoDeclName)
+  (MacroSomeDeclName String))
+
+(defenum MacroMaybeDeclList
+  (MacroNoDeclList)
+  (MacroSomeDeclList AstDeclList))
 
 (defenum MacroHygieneEnv
   (MacroHygieneNil)
@@ -27006,6 +27044,905 @@
 ;; the whole-program metadata build. Defaults true (build) for safety.
 (define ctfe-needs-metadata : bool
   true)
+
+(define (macro-zero-source-span) : SourceSpan
+  (SourceSpan 1 1 1 1))
+
+(define (macro-source-span-from-ast [span : AstSourceSpan]) : SourceSpan
+  (SourceSpan
+    (struct-get span start-line)
+    (struct-get span start-col)
+    (struct-get span end-line)
+    (struct-get span end-col)))
+
+(define (macro-output-syntax-diag [origin : AstExpr] [message : String]) : CompilerDiagnostic
+  (ctfe-diagnostic-at-expr origin message))
+
+(define (macro-output-syntax-name [name : String]) : String
+  (if (tc-hygiene-template-name? name)
+    (tc-hygiene-template-base name)
+    name))
+
+(define (macro-decl-list-append [left : AstDeclList] [right : AstDeclList]) : AstDeclList
+  (match left
+    [(AstDeclNil) right]
+    [(AstDeclCons head rest)
+      (ast-decl-cons head (macro-decl-list-append (box-get rest) right))]))
+
+(define (macro-decl-path-list-append
+  [left : AstDeclPathList]
+  [right : AstDeclPathList]) : AstDeclPathList
+  (match left
+    [(AstDeclPathNil) right]
+    [(AstDeclPathCons head rest)
+      (ast-decl-path-cons
+        head
+        (macro-decl-path-list-append (box-get rest) right))]))
+
+(define (macro-paths-for-decls [decls : AstDeclList] [path : String]) : AstDeclPathList
+  (match decls
+    [(AstDeclNil) AstDeclPathNil]
+    [(AstDeclCons _ rest)
+      (ast-decl-path-cons path (macro-paths-for-decls (box-get rest) path))]))
+
+(define (macro-decls-final-module [decls : AstDeclList] [module : String]) : String
+  (match decls
+    [(AstDeclNil) module]
+    [(AstDeclCons decl rest)
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (match decl
+          [(AstDeclModule next-module)
+            (macro-decls-final-module rest (intern-str next-module))]
+          [_ (macro-decls-final-module rest module)]))]))
+
+(define (macro-decls-first-module [decls : AstDeclList]) : MacroMaybeModuleName
+  (match decls
+    [(AstDeclNil) (MacroNoModuleName)]
+    [(AstDeclCons decl rest)
+      (match decl
+        [(AstDeclModule name) (MacroSomeModuleName (intern-str name))]
+        [_ (macro-decls-first-module (box-get rest))])]))
+
+(define (macro-decls-contain-module? [decls : AstDeclList] [module : String]) : bool
+  (match decls
+    [(AstDeclNil) false]
+    [(AstDeclCons decl rest)
+      (match decl
+        [(AstDeclModule name)
+          (if (string-eq (intern-str name) module)
+            true
+            (macro-decls-contain-module? (box-get rest) module))]
+        [_ (macro-decls-contain-module? (box-get rest) module)])]))
+
+(define (macro-decls-module-count [decls : AstDeclList]) : i64
+  (match decls
+    [(AstDeclNil) 0]
+    [(AstDeclCons decl rest)
+      (let
+        [rest-count : i64 (macro-decls-module-count (box-get rest))]
+        (match decl
+          [(AstDeclModule _) (+ rest-count 1)]
+          [_ rest-count]))]))
+
+(define (macro-literal-key [lit : AstLiteral]) : String
+  (match lit
+    [(AstLitInt n) (str-cat "int:" (int->string n))]
+    [(AstLitFloat text) (str-cat "float:" text)]
+    [(AstLitBool value)
+      (if value
+        "bool:true"
+        "bool:false")]
+    [(AstLitChar c) (str-cat "char:" (int->string (ctfe-char-code c)))]
+    [(AstLitString text) (str-cat "string:" text)]
+    [(AstLitUnit) "unit"]))
+
+(define (macro-expr-list-key [exprs : AstExprList]) : String
+  (match exprs
+    [(AstExprNil) ""]
+    [(AstExprCons head rest)
+      (str-cat
+        (macro-expr-key (ast-node-get head))
+        ";"
+        (macro-expr-list-key (box-get rest)))]))
+
+(define (macro-expr-id-key [id : i64]) : String
+  (macro-expr-key (ast-node-get id)))
+
+(define (macro-expr-key [expr : AstExpr]) : String
+  (match expr
+    [(AstExprSpanned inner _) (macro-expr-key (ast-node-get inner))]
+    [(AstExprLiteral lit) (macro-literal-key lit)]
+    [(AstExprVar name)
+      (str-cat "var:" (macro-output-syntax-name (intern-str name)))]
+    [(AstExprCall func args)
+      (str-cat
+        "call:"
+        (macro-expr-id-key func)
+        "("
+        (macro-expr-list-key args)
+        ")")]
+    [(AstExprBegin exprs) (str-cat "begin:" (macro-expr-list-key exprs))]
+    [(AstExprUnsafe exprs) (str-cat "unsafe:" (macro-expr-list-key exprs))]
+    [(AstExprTuple exprs) (str-cat "tuple:" (macro-expr-list-key exprs))]
+    [(AstExprArray exprs) (str-cat "array:" (macro-expr-list-key exprs))]
+    [(AstExprBracketClause exprs)
+      (str-cat "clause:" (macro-expr-list-key exprs))]
+    [(AstExprTypeLiteral ty) (str-cat "type:" (ctfe-type-key ty))]
+    [(AstExprAnn inner ty)
+      (str-cat "ann:" (macro-expr-id-key inner) ":" (ctfe-type-key ty))]
+    [(AstExprCast inner ty)
+      (str-cat "cast:" (macro-expr-id-key inner) ":" (ctfe-type-key ty))]
+    [(AstExprQuote inner) (str-cat "quote:" (macro-expr-id-key inner))]
+    [(AstExprQuasiquote inner)
+      (str-cat "quasiquote:" (macro-expr-id-key inner))]
+    [(AstExprUnquote inner) (str-cat "unquote:" (macro-expr-id-key inner))]
+    [(AstExprUnquoteSplicing inner)
+      (str-cat "unquote-splicing:" (macro-expr-id-key inner))]
+    [_ "expr:<opaque>"]))
+
+(define (macro-module-identity
+  [macro-name : String]
+  [definition-module : String]
+  [args : AstExprList]) : String
+  (str-cat definition-module ":" macro-name "(" (macro-expr-list-key args) ")"))
+
+(define (macro-decl-visible-name [decl : AstDecl]) : MacroMaybeDeclName
+  (match decl
+    [(AstDeclDef name _ _) (MacroSomeDeclName (intern-str name))]
+    [(AstDeclDefFn name _ _ _ _) (MacroSomeDeclName (intern-str name))]
+    [(AstDeclDefMacro name _ _ _) (MacroSomeDeclName (intern-str name))]
+    [(AstDeclExtern name _ _ _) (MacroSomeDeclName (intern-str name))]
+    [(AstDeclDefDispatch name _) (MacroSomeDeclName (intern-str name))]
+    [(AstDeclDefEnum name _ _) (MacroSomeDeclName (intern-str name))]
+    [(AstDeclDefEnumLifetimes name _ _ _) (MacroSomeDeclName (intern-str name))]
+    [(AstDeclDefStruct name _ _ _) (MacroSomeDeclName (intern-str name))]
+    [(AstDeclDefStructLifetimes name _ _ _ _)
+      (MacroSomeDeclName (intern-str name))]
+    [(AstDeclUnsafe inner-box) (macro-decl-visible-name (box-get inner-box))]
+    [(AstDeclComptimeDecl _ template-box)
+      (macro-decl-visible-name (box-get template-box))]
+    [_ (MacroNoDeclName)]))
+
+(define (macro-generated-meta
+  [generator : String]
+  [item : String]
+  [key : String]) : AstGeneratedDeclMeta
+  (AstSomeGeneratedDeclMeta generator item AstExprNil key))
+
+(define (macro-wrap-generated-decl
+  [decl : AstDecl]
+  [generator : String]
+  [key : String]) : AstDecl
+  (match decl
+    [(AstDeclModule _) decl]
+    [(AstDeclImport _) decl]
+    [(AstDeclExport _) decl]
+    [_
+      (match (macro-decl-visible-name decl)
+        [(MacroSomeDeclName item)
+          (ast-decl-comptime-decl-with-meta
+            (macro-generated-meta generator item key)
+            decl)]
+        [(MacroNoDeclName) decl])]))
+
+(define (macro-wrap-generated-decls
+  [decls : AstDeclList]
+  [generator : String]
+  [key : String]) : AstDeclList
+  (match decls
+    [(AstDeclNil) AstDeclNil]
+    [(AstDeclCons decl rest)
+      (ast-decl-cons
+        (macro-wrap-generated-decl decl generator key)
+        (macro-wrap-generated-decls (box-get rest) generator key))]))
+
+(define (macro-decl-generated-key? [decl : AstDecl] [key : String]) : bool
+  (match decl
+    [(AstDeclComptimeDecl meta template-box)
+      (match meta
+        [(AstSomeGeneratedDeclMeta _ _ _ meta-key)
+          (if (string-eq meta-key key)
+            true
+            (macro-decl-generated-key? (box-get template-box) key))]
+        [(AstNoGeneratedDeclMeta)
+          (macro-decl-generated-key? (box-get template-box) key)])]
+    [(AstDeclUnsafe inner-box)
+      (macro-decl-generated-key? (box-get inner-box) key)]
+    [_ false]))
+
+(define (macro-decls-contain-generated-key?
+  [decls : AstDeclList]
+  [key : String]) : bool
+  (match decls
+    [(AstDeclNil) false]
+    [(AstDeclCons decl rest)
+      (or
+        (macro-decl-generated-key? decl key)
+        (macro-decls-contain-generated-key? (box-get rest) key))]))
+
+(define (macro-take-module-body-decls [decls : AstDeclList]) : AstDeclList
+  (match decls
+    [(AstDeclNil) AstDeclNil]
+    [(AstDeclCons decl rest)
+      (match decl
+        [(AstDeclModule _) AstDeclNil]
+        [_ (ast-decl-cons decl (macro-take-module-body-decls (box-get rest)))])]))
+
+(define (macro-find-module-body-decls
+  [decls : AstDeclList]
+  [target-module : String]) : MacroMaybeDeclList
+  (match decls
+    [(AstDeclNil) (MacroNoDeclList)]
+    [(AstDeclCons decl rest)
+      (match decl
+        [(AstDeclModule module-name)
+          (if (string-eq (intern-str module-name) target-module)
+            (MacroSomeDeclList (macro-take-module-body-decls (box-get rest)))
+            (macro-find-module-body-decls (box-get rest) target-module))]
+        [_ (macro-find-module-body-decls (box-get rest) target-module)])]))
+
+(define (macro-field-cleanup-eq? [a : AstFieldCleanup] [b : AstFieldCleanup]) : bool
+  (match a
+    [(AstFieldNoCleanup)
+      (match b
+        [(AstFieldNoCleanup) true]
+        [_ false])]
+    [(AstFieldCleanupFn a-name)
+      (match b
+        [(AstFieldCleanupFn b-name) (= a-name b-name)]
+        [_ false])]
+    [(AstFieldOwnedCleanup)
+      (match b
+        [(AstFieldOwnedCleanup) true]
+        [_ false])]))
+
+(define (macro-field-def-eq? [a : AstFieldDef] [b : AstFieldDef]) : bool
+  (match a
+    [(AstFieldDef a-name a-ty a-cleanup)
+      (match b
+        [(AstFieldDef b-name b-ty b-cleanup)
+          (and
+            (= a-name b-name)
+            (ast-type-eq? a-ty b-ty)
+            (macro-field-cleanup-eq? a-cleanup b-cleanup))])]))
+
+(define (macro-field-def-list-eq? [a : AstFieldDefList] [b : AstFieldDefList]) : bool
+  (match a
+    [(AstFieldDefNil)
+      (match b
+        [(AstFieldDefNil) true]
+        [_ false])]
+    [(AstFieldDefCons a-head a-rest)
+      (match b
+        [(AstFieldDefCons b-head b-rest)
+          (and
+            (macro-field-def-eq? a-head b-head)
+            (macro-field-def-list-eq? (box-get a-rest) (box-get b-rest)))]
+        [_ false])]))
+
+(define (macro-struct-repr-eq? [a : AstStructRepr] [b : AstStructRepr]) : bool
+  (match a
+    [(AstStructReprDefault)
+      (match b
+        [(AstStructReprDefault) true]
+        [_ false])]
+    [(AstStructReprC)
+      (match b
+        [(AstStructReprC) true]
+        [_ false])]))
+
+(define (macro-struct-cleanup-eq? [a : AstStructCleanup] [b : AstStructCleanup]) : bool
+  (match a
+    [(AstStructNoCleanup)
+      (match b
+        [(AstStructNoCleanup) true]
+        [_ false])]
+    [(AstStructCleanupFn a-name)
+      (match b
+        [(AstStructCleanupFn b-name) (= a-name b-name)]
+        [_ false])]))
+
+(define (macro-enum-cleanup-eq? [a : AstEnumCleanup] [b : AstEnumCleanup]) : bool
+  (match a
+    [(AstEnumNoCleanup)
+      (match b
+        [(AstEnumNoCleanup) true]
+        [_ false])]
+    [(AstEnumCleanupFn a-name)
+      (match b
+        [(AstEnumCleanupFn b-name) (= a-name b-name)]
+        [_ false])]))
+
+(define (macro-variant-payload-cleanup-eq?
+  [a : AstVariantPayloadCleanup]
+  [b : AstVariantPayloadCleanup]) : bool
+  (match a
+    [(AstVariantPayloadNoCleanup)
+      (match b
+        [(AstVariantPayloadNoCleanup) true]
+        [_ false])]
+    [(AstVariantPayloadCleanupFn a-name)
+      (match b
+        [(AstVariantPayloadCleanupFn b-name) (= a-name b-name)]
+        [_ false])]
+    [(AstVariantPayloadOwnedCleanup)
+      (match b
+        [(AstVariantPayloadOwnedCleanup) true]
+        [_ false])]))
+
+(define (macro-variant-payload-cleanup-list-eq?
+  [a : AstVariantPayloadCleanupList]
+  [b : AstVariantPayloadCleanupList]) : bool
+  (match a
+    [(AstVariantPayloadCleanupNil)
+      (match b
+        [(AstVariantPayloadCleanupNil) true]
+        [_ false])]
+    [(AstVariantPayloadCleanupCons a-head a-rest)
+      (match b
+        [(AstVariantPayloadCleanupCons b-head b-rest)
+          (and
+            (macro-variant-payload-cleanup-eq? a-head b-head)
+            (macro-variant-payload-cleanup-list-eq?
+              (box-get a-rest)
+              (box-get b-rest)))]
+        [_ false])]))
+
+(define (macro-variant-def-eq? [a : AstVariantDef] [b : AstVariantDef]) : bool
+  (match a
+    [(AstVariantDef a-name a-fields a-cleanups)
+      (match b
+        [(AstVariantDef b-name b-fields b-cleanups)
+          (and
+            (= a-name b-name)
+            (ast-type-list-eq? a-fields b-fields)
+            (macro-variant-payload-cleanup-list-eq? a-cleanups b-cleanups))])]))
+
+(define (macro-variant-def-list-eq?
+  [a : AstVariantDefList]
+  [b : AstVariantDefList]) : bool
+  (match a
+    [(AstVariantDefNil)
+      (match b
+        [(AstVariantDefNil) true]
+        [_ false])]
+    [(AstVariantDefCons a-head a-rest)
+      (match b
+        [(AstVariantDefCons b-head b-rest)
+          (and
+            (macro-variant-def-eq? a-head b-head)
+            (macro-variant-def-list-eq? (box-get a-rest) (box-get b-rest)))]
+        [_ false])]))
+
+(define (macro-param-eq? [a : AstParam] [b : AstParam]) : bool
+  (match a
+    [(AstParam a-name a-ty a-comptime)
+      (match b
+        [(AstParam b-name b-ty b-comptime)
+          (and
+            (= a-name b-name)
+            (ast-type-eq? a-ty b-ty)
+            (= a-comptime b-comptime))])]))
+
+(define (macro-param-list-eq? [a : AstParamList] [b : AstParamList]) : bool
+  (match a
+    [(AstParamNil)
+      (match b
+        [(AstParamNil) true]
+        [_ false])]
+    [(AstParamCons a-head a-rest)
+      (match b
+        [(AstParamCons b-head b-rest)
+          (and
+            (macro-param-eq? a-head b-head)
+            (macro-param-list-eq? (box-get a-rest) (box-get b-rest)))]
+        [_ false])]))
+
+(define (macro-macro-param-eq? [a : AstMacroParam] [b : AstMacroParam]) : bool
+  (match a
+    [(AstMacroParam a-name a-ty a-variadic)
+      (match b
+        [(AstMacroParam b-name b-ty b-variadic)
+          (and
+            (= a-name b-name)
+            (ast-type-eq? a-ty b-ty)
+            (= a-variadic b-variadic))])]))
+
+(define (macro-macro-param-list-eq?
+  [a : AstMacroParamList]
+  [b : AstMacroParamList]) : bool
+  (match a
+    [(AstMacroParamNil)
+      (match b
+        [(AstMacroParamNil) true]
+        [_ false])]
+    [(AstMacroParamCons a-head a-rest)
+      (match b
+        [(AstMacroParamCons b-head b-rest)
+          (and
+            (macro-macro-param-eq? a-head b-head)
+            (macro-macro-param-list-eq? (box-get a-rest) (box-get b-rest)))]
+        [_ false])]))
+
+(define (macro-fn-export-eq? [a : AstFnExport] [b : AstFnExport]) : bool
+  (match a
+    [(AstFnNoExport)
+      (match b
+        [(AstFnNoExport) true]
+        [_ false])]
+    [(AstFnExport a-name)
+      (match b
+        [(AstFnExport b-name) (= a-name b-name)]
+        [_ false])]))
+
+(define (macro-extern-kind-eq? [a : AstExternKind] [b : AstExternKind]) : bool
+  (match a
+    [(AstExternValue)
+      (match b
+        [(AstExternValue) true]
+        [_ false])]
+    [(AstExternFunction)
+      (match b
+        [(AstExternFunction) true]
+        [_ false])]))
+
+(define (macro-extern-metadata-eq?
+  [a : AstExternMetadata]
+  [b : AstExternMetadata]) : bool
+  (match a
+    [(AstExternMetadata a-abi a-symbol a-links a-explicit)
+      (match b
+        [(AstExternMetadata b-abi b-symbol b-links b-explicit)
+          (and
+            (ast-extern-abi-eq? a-abi b-abi)
+            (string-eq a-symbol b-symbol)
+            (ast-extern-link-input-list-eq? a-links b-links)
+            (= a-explicit b-explicit))])]))
+
+(define (macro-maybe-type-eq? [a : AstMaybeType] [b : AstMaybeType]) : bool
+  (match a
+    [(AstNoType)
+      (match b
+        [(AstNoType) true]
+        [_ false])]
+    [(AstSomeType a-ty)
+      (match b
+        [(AstSomeType b-ty) (ast-type-eq? a-ty b-ty)]
+        [_ false])]))
+
+(define (macro-maybe-module-name-eq?
+  [a : AstMaybeModuleName]
+  [b : AstMaybeModuleName]) : bool
+  (match a
+    [(AstNoModuleName)
+      (match b
+        [(AstNoModuleName) true]
+        [_ false])]
+    [(AstSomeModuleName a-name)
+      (match b
+        [(AstSomeModuleName b-name) (string-eq a-name b-name)]
+        [_ false])]))
+
+(define (macro-maybe-import-alias-eq?
+  [a : AstMaybeImportAlias]
+  [b : AstMaybeImportAlias]) : bool
+  (match a
+    [(AstNoImportAlias)
+      (match b
+        [(AstNoImportAlias) true]
+        [_ false])]
+    [(AstSomeImportAlias a-name)
+      (match b
+        [(AstSomeImportAlias b-name) (string-eq a-name b-name)]
+        [_ false])]))
+
+(define (macro-import-kind-eq? [a : AstImportKind] [b : AstImportKind]) : bool
+  (match a
+    [(AstImportPath)
+      (match b
+        [(AstImportPath) true]
+        [_ false])]
+    [(AstImportModule)
+      (match b
+        [(AstImportModule) true]
+        [_ false])]
+    [(AstImportMacro a-call)
+      (match b
+        [(AstImportMacro b-call)
+          (ctfe-expr-eq (ast-node-get a-call) (ast-node-get b-call))]
+        [_ false])]
+    [(AstImportMacroDecls a-call)
+      (match b
+        [(AstImportMacroDecls b-call)
+          (ctfe-expr-eq (ast-node-get a-call) (ast-node-get b-call))]
+        [_ false])]))
+
+(define (macro-import-spec-eq? [a : AstImportSpec] [b : AstImportSpec]) : bool
+  (match a
+    [(AstImportSpec a-kind a-path a-module a-alias _)
+      (match b
+        [(AstImportSpec b-kind b-path b-module b-alias _)
+          (and
+            (macro-import-kind-eq? a-kind b-kind)
+            (string-eq a-path b-path)
+            (macro-maybe-module-name-eq? a-module b-module)
+            (macro-maybe-import-alias-eq? a-alias b-alias))])]))
+
+(define (macro-export-item-eq? [a : AstExportItem] [b : AstExportItem]) : bool
+  (match a
+    [(AstExportValue a-name)
+      (match b
+        [(AstExportValue b-name) (string-eq a-name b-name)]
+        [_ false])]
+    [(AstExportType a-name)
+      (match b
+        [(AstExportType b-name) (string-eq a-name b-name)]
+        [_ false])]
+    [(AstExportMacro a-name)
+      (match b
+        [(AstExportMacro b-name) (string-eq a-name b-name)]
+        [_ false])]
+    [(AstExportConstructor a-name)
+      (match b
+        [(AstExportConstructor b-name) (string-eq a-name b-name)]
+        [_ false])]
+    [(AstExportField a-owner a-name)
+      (match b
+        [(AstExportField b-owner b-name)
+          (and (string-eq a-owner b-owner) (string-eq a-name b-name))]
+        [_ false])]
+    [(AstExportVariant a-name)
+      (match b
+        [(AstExportVariant b-name) (string-eq a-name b-name)]
+        [_ false])]))
+
+(define (macro-export-item-list-eq?
+  [a : AstExportItemList]
+  [b : AstExportItemList]) : bool
+  (match a
+    [(AstExportItemNil)
+      (match b
+        [(AstExportItemNil) true]
+        [_ false])]
+    [(AstExportItemCons a-head a-rest)
+      (match b
+        [(AstExportItemCons b-head b-rest)
+          (and
+            (macro-export-item-eq? a-head b-head)
+            (macro-export-item-list-eq? (box-get a-rest) (box-get b-rest)))]
+        [_ false])]))
+
+(define (macro-decl-strip-generated [decl : AstDecl]) : AstDecl
+  (match decl
+    [(AstDeclComptimeDecl _ template-box)
+      (macro-decl-strip-generated (box-get template-box))]
+    [_ decl]))
+
+(define (macro-decl-eq-inner? [a : AstDecl] [b : AstDecl]) : bool
+  (match a
+    [(AstDeclModule a-name)
+      (match b
+        [(AstDeclModule b-name) (= a-name b-name)]
+        [_ false])]
+    [(AstDeclDef a-name a-ty a-value)
+      (match b
+        [(AstDeclDef b-name b-ty b-value)
+          (and
+            (= a-name b-name)
+            (macro-maybe-type-eq? a-ty b-ty)
+            (ctfe-expr-eq (ast-node-get a-value) (ast-node-get b-value)))]
+        [_ false])]
+    [(AstDeclDefFn a-name a-params a-ret a-body a-export)
+      (match b
+        [(AstDeclDefFn b-name b-params b-ret b-body b-export)
+          (and
+            (= a-name b-name)
+            (macro-param-list-eq? a-params b-params)
+            (ast-type-eq? a-ret b-ret)
+            (ctfe-expr-eq (ast-node-get a-body) (ast-node-get b-body))
+            (macro-fn-export-eq? a-export b-export))]
+        [_ false])]
+    [(AstDeclDefMacro a-name a-params a-ret a-body)
+      (match b
+        [(AstDeclDefMacro b-name b-params b-ret b-body)
+          (and
+            (= a-name b-name)
+            (macro-macro-param-list-eq? a-params b-params)
+            (ast-type-eq? a-ret b-ret)
+            (ctfe-expr-eq (ast-node-get a-body) (ast-node-get b-body)))]
+        [_ false])]
+    [(AstDeclExtern a-name a-kind a-meta a-ty)
+      (match b
+        [(AstDeclExtern b-name b-kind b-meta b-ty)
+          (and
+            (= a-name b-name)
+            (macro-extern-kind-eq? a-kind b-kind)
+            (macro-extern-metadata-eq? a-meta b-meta)
+            (ast-type-eq? a-ty b-ty))]
+        [_ false])]
+    [(AstDeclDefEnum a-name a-cleanup a-variants)
+      (match b
+        [(AstDeclDefEnum b-name b-cleanup b-variants)
+          (and
+            (= a-name b-name)
+            (macro-enum-cleanup-eq? a-cleanup b-cleanup)
+            (macro-variant-def-list-eq? a-variants b-variants))]
+        [_ false])]
+    [(AstDeclDefEnumLifetimes a-name a-lifetimes a-cleanup a-variants)
+      (match b
+        [(AstDeclDefEnumLifetimes b-name b-lifetimes b-cleanup b-variants)
+          (and
+            (= a-name b-name)
+            (ast-lifetime-list-eq? a-lifetimes b-lifetimes)
+            (macro-enum-cleanup-eq? a-cleanup b-cleanup)
+            (macro-variant-def-list-eq? a-variants b-variants))]
+        [_ false])]
+    [(AstDeclDefStruct a-name a-repr a-cleanup a-fields)
+      (match b
+        [(AstDeclDefStruct b-name b-repr b-cleanup b-fields)
+          (and
+            (= a-name b-name)
+            (macro-struct-repr-eq? a-repr b-repr)
+            (macro-struct-cleanup-eq? a-cleanup b-cleanup)
+            (macro-field-def-list-eq? a-fields b-fields))]
+        [_ false])]
+    [(AstDeclDefStructLifetimes a-name a-lifetimes a-repr a-cleanup a-fields)
+      (match b
+        [(AstDeclDefStructLifetimes
+            b-name
+            b-lifetimes
+            b-repr
+            b-cleanup
+            b-fields)
+          (and
+            (= a-name b-name)
+            (ast-lifetime-list-eq? a-lifetimes b-lifetimes)
+            (macro-struct-repr-eq? a-repr b-repr)
+            (macro-struct-cleanup-eq? a-cleanup b-cleanup)
+            (macro-field-def-list-eq? a-fields b-fields))]
+        [_ false])]
+    [(AstDeclImport a-spec)
+      (match b
+        [(AstDeclImport b-spec) (macro-import-spec-eq? a-spec b-spec)]
+        [_ false])]
+    [(AstDeclIncludeStr a-name a-path)
+      (match b
+        [(AstDeclIncludeStr b-name b-path)
+          (and (string-eq a-name b-name) (string-eq a-path b-path))]
+        [_ false])]
+    [(AstDeclIncludeBin a-name a-path)
+      (match b
+        [(AstDeclIncludeBin b-name b-path)
+          (and (string-eq a-name b-name) (string-eq a-path b-path))]
+        [_ false])]
+    [(AstDeclExport a-items)
+      (match b
+        [(AstDeclExport b-items) (macro-export-item-list-eq? a-items b-items)]
+        [_ false])]
+    [(AstDeclDefDispatch a-name a-variants)
+      (match b
+        [(AstDeclDefDispatch b-name b-variants)
+          (and (= a-name b-name) (= a-variants b-variants))]
+        [_ false])]
+    [(AstDeclTest a-name a-body _)
+      (match b
+        [(AstDeclTest b-name b-body _)
+          (and
+            (= a-name b-name)
+            (ctfe-expr-eq (ast-node-get a-body) (ast-node-get b-body)))]
+        [_ false])]
+    [(AstDeclUnsafe a-inner)
+      (match b
+        [(AstDeclUnsafe b-inner)
+          (macro-decl-eq? (box-get a-inner) (box-get b-inner))]
+        [_ false])]
+    [(AstDeclComptimeDecl _ _) (macro-decl-eq? a b)]))
+
+(define (macro-decl-eq? [a : AstDecl] [b : AstDecl]) : bool
+  (macro-decl-eq-inner?
+    (macro-decl-strip-generated a)
+    (macro-decl-strip-generated b)))
+
+(define (macro-decl-list-eq? [a : AstDeclList] [b : AstDeclList]) : bool
+  (match a
+    [(AstDeclNil)
+      (match b
+        [(AstDeclNil) true]
+        [_ false])]
+    [(AstDeclCons a-head a-rest)
+      (match b
+        [(AstDeclCons b-head b-rest)
+          (and
+            (macro-decl-eq? a-head b-head)
+            (macro-decl-list-eq? (box-get a-rest) (box-get b-rest)))]
+        [_ false])]))
+
+(define (macro-expr-list-with-head-symbol
+  [name : String]
+  [exprs : AstExprList]
+  [span : SourceSpan]
+  [origin : AstExpr]) : ResultMacroSexpr
+  (match (macro-expr-list-to-spanned-sexpr exprs span origin)
+    [(OkMacroSexpr tail)
+      (OkMacroSexpr (spanned-sexpr-cons (SpSSym name span) tail span))]
+    [(ErrMacroSexpr diag) (ErrMacroSexpr diag)]))
+
+(define (macro-expr-list-to-spanned-sexpr
+  [exprs : AstExprList]
+  [span : SourceSpan]
+  [origin : AstExpr]) : ResultMacroSexpr
+  (match exprs
+    [(AstExprNil) (OkMacroSexpr (SpSNil span))]
+    [(AstExprCons head rest)
+      (let
+        [head-expr : AstExpr (ast-node-get head)]
+        [rest : AstExprList (box-get rest)]
+        (match (macro-expr-to-spanned-sexpr-with-span head-expr span origin)
+          [(OkMacroSexpr shead)
+            (match (macro-expr-list-to-spanned-sexpr rest span origin)
+              [(OkMacroSexpr stail)
+                (OkMacroSexpr (spanned-sexpr-cons shead stail span))]
+              [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+          [(ErrMacroSexpr diag) (ErrMacroSexpr diag)]))]))
+
+(define (macro-expr-to-spanned-sexpr-with-span
+  [expr : AstExpr]
+  [span : SourceSpan]
+  [origin : AstExpr]) : ResultMacroSexpr
+  (match expr
+    [(AstExprSpanned inner-box ast-span)
+      (macro-expr-to-spanned-sexpr-with-span
+        (ast-node-get inner-box)
+        (macro-source-span-from-ast ast-span)
+        origin)]
+    [(AstExprLiteral lit)
+      (match lit
+        [(AstLitInt n) (OkMacroSexpr (SpSInt n span))]
+        [(AstLitFloat text) (OkMacroSexpr (SpSFloat text span))]
+        [(AstLitBool value)
+          (OkMacroSexpr
+            (SpSSym
+              (if value
+                "true"
+                "false")
+              span))]
+        [(AstLitChar c) (OkMacroSexpr (SpSChar c span))]
+        [(AstLitString text) (OkMacroSexpr (SpSStr text span))]
+        [(AstLitUnit) (OkMacroSexpr (SpSSym "unit" span))])]
+    [(AstExprVar name)
+      (OkMacroSexpr (SpSSym (macro-output-syntax-name (intern-str name)) span))]
+    [(AstExprCall func-box args)
+      (let
+        [func : AstExpr (ast-node-get func-box)]
+        (match (macro-expr-to-spanned-sexpr-with-span func span origin)
+          [(OkMacroSexpr head)
+            (match (macro-expr-list-to-spanned-sexpr args span origin)
+              [(OkMacroSexpr tail)
+                (OkMacroSexpr (spanned-sexpr-cons head tail span))]
+              [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+          [(ErrMacroSexpr diag) (ErrMacroSexpr diag)]))]
+    [(AstExprBracketClause items)
+      (match (macro-expr-list-to-spanned-sexpr items span origin)
+        [(OkMacroSexpr list)
+          (OkMacroSexpr (spanned-sexpr-bracket-list list span))]
+        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+    [(AstExprIf cond-box then-box else-box)
+      (macro-expr-list-with-head-symbol
+        "if"
+        (ast-expr-cons
+          cond-box
+          (ast-expr-cons then-box (ast-expr-cons else-box AstExprNil)))
+        span
+        origin)]
+    [(AstExprBegin exprs)
+      (macro-expr-list-with-head-symbol "begin" exprs span origin)]
+    [(AstExprUnsafe exprs)
+      (macro-expr-list-with-head-symbol "unsafe" exprs span origin)]
+    [(AstExprTuple exprs)
+      (macro-expr-list-with-head-symbol "tuple" exprs span origin)]
+    [(AstExprArray exprs)
+      (macro-expr-list-with-head-symbol "array" exprs span origin)]
+    [(AstExprQuote inner-box)
+      (macro-expr-list-with-head-symbol
+        "quote"
+        (ast-expr-cons inner-box AstExprNil)
+        span
+        origin)]
+    [(AstExprQuasiquote inner-box)
+      (macro-expr-list-with-head-symbol
+        "quasiquote"
+        (ast-expr-cons inner-box AstExprNil)
+        span
+        origin)]
+    [(AstExprUnquote inner-box)
+      (macro-expr-list-with-head-symbol
+        "unquote"
+        (ast-expr-cons inner-box AstExprNil)
+        span
+        origin)]
+    [(AstExprUnquoteSplicing inner-box)
+      (macro-expr-list-with-head-symbol
+        "unquote-splicing"
+        (ast-expr-cons inner-box AstExprNil)
+        span
+        origin)]
+    [_
+      (ErrMacroSexpr
+        (macro-output-syntax-diag
+          origin
+          "typecheck: module macro output contains syntax that cannot be parsed as a declaration"))]))
+
+(define (macro-expr-to-spanned-sexpr [expr : AstExpr] [origin : AstExpr]) : ResultMacroSexpr
+  (macro-expr-to-spanned-sexpr-with-span expr (macro-zero-source-span) origin))
+
+(define (macro-parse-decl-sexpr [form : SpannedSexpr] [origin : AstExpr]) : ResultMacroParsedDecls
+  (match (parse-ast-decl-maybe (compiler-parse-dispatch-env) form)
+    [(OkAstSomeDecl decl) (OkMacroParsedDecls (ast-decl-cons decl AstDeclNil))]
+    [(OkAstDecls decls) (OkMacroParsedDecls decls)]
+    [(OkAstNoDecl) (OkMacroParsedDecls AstDeclNil)]
+    [(ErrAstMaybeDecl message)
+      (ErrMacroParsedDecls (macro-output-syntax-diag origin message))]))
+
+(define (macro-parse-decls-from-one-expr [expr : AstExpr] [origin : AstExpr]) : ResultMacroParsedDecls
+  (let
+    [mark : i64 (sp-node-pool-len)]
+    (match (macro-expr-to-spanned-sexpr expr origin)
+      [(OkMacroSexpr form)
+        (match (macro-parse-decl-sexpr form origin)
+          [(OkMacroParsedDecls decls)
+            (begin
+              (sp-node-pool-truncate! mark)
+              (OkMacroParsedDecls decls))]
+          [(ErrMacroParsedDecls diag)
+            (begin
+              (sp-node-pool-truncate! mark)
+              (ErrMacroParsedDecls diag))])]
+      [(ErrMacroSexpr diag)
+        (begin
+          (sp-node-pool-truncate! mark)
+          (ErrMacroParsedDecls diag))])))
+
+(define (macro-parse-decls-from-exprs [exprs : AstExprList] [origin : AstExpr]) : ResultMacroParsedDecls
+  (match exprs
+    [(AstExprNil) (OkMacroParsedDecls AstDeclNil)]
+    [(AstExprCons head rest)
+      (let
+        [head-expr : AstExpr (ast-node-get head)]
+        [rest : AstExprList (box-get rest)]
+        (match (macro-parse-decls-from-expr head-expr origin)
+          [(OkMacroParsedDecls head-decls)
+            (match (macro-parse-decls-from-exprs rest origin)
+              [(OkMacroParsedDecls rest-decls)
+                (OkMacroParsedDecls
+                  (macro-decl-list-append head-decls rest-decls))]
+              [(ErrMacroParsedDecls diag) (ErrMacroParsedDecls diag)])]
+          [(ErrMacroParsedDecls diag) (ErrMacroParsedDecls diag)]))]))
+
+(define (macro-parse-decls-from-expr [expr : AstExpr] [origin : AstExpr]) : ResultMacroParsedDecls
+  (match (ast-expr-unspan expr)
+    [(AstExprBegin exprs) (macro-parse-decls-from-exprs exprs origin)]
+    [(AstExprCall func-box args)
+      (let
+        [func : AstExpr (ast-node-get func-box)]
+        (match (ast-expr-unspan func)
+          [(AstExprVar name)
+            (if (string-eq (macro-output-syntax-name (intern-str name)) "begin")
+              (macro-parse-decls-from-exprs args origin)
+              (macro-parse-decls-from-one-expr expr origin))]
+          [_ (macro-parse-decls-from-one-expr expr origin)]))]
+    [_ (macro-parse-decls-from-one-expr expr origin)]))
+
+(define (macro-module-decls-from-ctfe-value
+  [value : CompilerCtfeValue]
+  [origin : AstExpr]) : ResultMacroParsedDecls
+  (match value
+    [(CtfeExpr node _) (macro-parse-decls-from-expr (ast-node-get node) origin)]
+    [_
+      (ErrMacroParsedDecls
+        (macro-output-syntax-diag
+          origin
+          "typecheck: Module macro transformer did not produce Expr"))]))
 
 (define (macro-collect-decl-name [decl : AstDecl] [acc : TcStringList]) : TcStringList
   (match decl
@@ -28386,7 +29323,55 @@
                           call-expr)]
                       [(ErrMacroEnv diag) (ErrMacroEnv diag)]))]))]))]))
 
-;; Run a macro transformer via CTFE and re-expand its produced form to a fixpoint.
+;; Run a macro transformer via CTFE. Callers decide how to interpret the
+;; returned syntax value for expression, module, or declaration positions.
+(define (macro-eval-transformer
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [decls : AstDeclList]
+  [macro-name : String]
+  [params : AstMacroParamList]
+  [body : AstExpr]
+  [args : AstExprList]
+  [depth : i64]
+  [call-expr : AstExpr]) : ResultMacroValue
+  ;; Expand the operands first so a macro call passed as an argument (e.g. a
+  ;; nested `str-cat`) is reduced to a plain expression before it is typechecked
+  ;; and bound; otherwise the operand typecheck sees the inner macro name as an
+  ;; unbound value.
+  (match (macro-expand-exprs ctx type-env decls depth args)
+    [(OkMacroExprList expanded-args)
+      (match (macro-bind-params
+        ctx
+        type-env
+        params
+        expanded-args
+        (tc-ctfe-env ctx)
+        call-expr)
+        [(OkMacroEnv env)
+          (begin
+            (cfg compile-profile (compiler-tc-macro-profile-start))
+            (match (ctfe-eval-node
+              body
+              (ctfe-env-extend env (ctfe-hygiene-enabled-name) (CtfeBool true))
+              (ctfe-fuel-limit))
+              [(OkCtfe value _)
+                (begin
+                  (cfg
+                    compile-profile
+                    (compiler-tc-macro-profile-finish macro-name expanded-args))
+                  (OkMacroValue value))]
+              [(ErrCtfe diag)
+                (begin
+                  (cfg
+                    compile-profile
+                    (compiler-tc-macro-profile-finish macro-name expanded-args))
+                  (ErrMacroValue diag))]))]
+        [(ErrMacroEnv diag) (ErrMacroValue diag)])]
+    [(ErrMacroExprList diag) (ErrMacroValue diag)]))
+
+;; Run an expression-position macro transformer via CTFE and re-expand its
+;; produced form to a fixpoint.
 (define (macro-expand-call
   [ctx : TcContext]
   [type-env : TcTypeEnv]
@@ -28399,10 +29384,6 @@
   [args : AstExprList]
   [depth : i64]
   [call-expr : AstExpr]) : ResultMacroExpr
-  ;; Expand the operands first so a macro call passed as an argument (e.g. a
-  ;; nested `str-cat`) is reduced to a plain expression before it is typechecked
-  ;; and bound; otherwise the operand typecheck sees the inner macro name as an
-  ;; unbound value.
   (if (tc-macro-result-module? ret)
     (ErrMacroExpr
       (ctfe-diagnostic-at-expr
@@ -28413,73 +29394,47 @@
         (ctfe-diagnostic-at-expr
           call-expr
           "typecheck: Decls macro can only be used at module scope"))
-      (match (macro-expand-exprs ctx type-env decls depth args)
-        [(OkMacroExprList expanded-args)
-          (match (macro-bind-params
-            ctx
-            type-env
-            params
-            expanded-args
-            (tc-ctfe-env ctx)
-            call-expr)
-            [(OkMacroEnv env)
-              (begin
-                (cfg compile-profile (compiler-tc-macro-profile-start))
-                (match (ctfe-eval-node
-                  body
-                  (ctfe-env-extend
-                    env
-                    (ctfe-hygiene-enabled-name)
-                    (CtfeBool true))
-                  (ctfe-fuel-limit))
-                  [(OkCtfe value _)
-                    (begin
-                      (cfg
-                        compile-profile
-                        (compiler-tc-macro-profile-finish
-                          macro-name
-                          expanded-args))
-                      (match value
-                        [(CtfeExpr expanded produced)
-                          (if (or
-                            (tc-type-eq produced (AstTyExpr))
-                            (tc-type-compatible?
-                              (tc-resolve-type
-                                ctx
-                                (tc-macro-signature-type ret))
-                              (tc-resolve-type ctx produced)))
-                            (macro-expand-expr
-                              ctx
-                              type-env
-                              decls
-                              (+ depth 1)
-                              (ast-node-get
-                                (macro-hygiene-expr
-                                  (ast-node-get expanded)
-                                  MacroHygieneNil
-                                  (macro-hygiene-context-macro-name
-                                    macro-name
-                                    definition-module)
-                                  (+ depth 1))))
-                            (ErrMacroExpr
-                              (ctfe-diagnostic-at-expr
-                                call-expr
-                                "typecheck: macro expansion produced type does not match declaration")))]
-                        [_
-                          (ErrMacroExpr
-                            (ctfe-diagnostic-at-expr
-                              call-expr
-                              "macro transformer did not produce an Expr"))]))]
-                  [(ErrCtfe diag)
-                    (begin
-                      (cfg
-                        compile-profile
-                        (compiler-tc-macro-profile-finish
-                          macro-name
-                          expanded-args))
-                      (ErrMacroExpr diag))]))]
-            [(ErrMacroEnv diag) (ErrMacroExpr diag)])]
-        [(ErrMacroExprList diag) (ErrMacroExpr diag)]))))
+      (match (macro-eval-transformer
+        ctx
+        type-env
+        decls
+        macro-name
+        params
+        body
+        args
+        depth
+        call-expr)
+        [(OkMacroValue value)
+          (match value
+            [(CtfeExpr expanded produced)
+              (if (or
+                (tc-type-eq produced (AstTyExpr))
+                (tc-type-compatible?
+                  (tc-resolve-type ctx (tc-macro-signature-type ret))
+                  (tc-resolve-type ctx produced)))
+                (macro-expand-expr
+                  ctx
+                  type-env
+                  decls
+                  (+ depth 1)
+                  (ast-node-get
+                    (macro-hygiene-expr
+                      (ast-node-get expanded)
+                      MacroHygieneNil
+                      (macro-hygiene-context-macro-name
+                        macro-name
+                        definition-module)
+                      (+ depth 1))))
+                (ErrMacroExpr
+                  (ctfe-diagnostic-at-expr
+                    call-expr
+                    "typecheck: macro expansion produced type does not match declaration")))]
+            [_
+              (ErrMacroExpr
+                (ctfe-diagnostic-at-expr
+                  call-expr
+                  "macro transformer did not produce an Expr"))])]
+        [(ErrMacroValue diag) (ErrMacroExpr diag)]))))
 
 (define (macro-expand-exprs
   [ctx : TcContext]
@@ -29208,6 +30163,267 @@
             [(ErrMacroDecl diag) (ErrMacroDecl diag)]))]
       [_ (OkMacroDecl decl)])))
 
+(define (macro-single-decl-expansion [decl : AstDecl] [path : String]) : ResultMacroDeclExpansion
+  (OkMacroDeclExpansion
+    (ast-decl-cons decl AstDeclNil)
+    (ast-decl-path-cons path AstDeclPathNil)))
+
+(define (macro-module-import-marker-decls
+  [target-module : String]
+  [alias : AstMaybeImportAlias]
+  [span : AstSourceSpan]) : AstDeclList
+  (let
+    [binding-alias : AstMaybeImportAlias
+      (match alias
+        [(AstNoImportAlias) (AstSomeImportAlias "")]
+        [_ alias])]
+    (ast-decl-cons
+      (AstDeclImport
+        (AstImportSpec
+          (AstImportModule)
+          target-module
+          (AstSomeModuleName target-module)
+          binding-alias
+          span))
+      AstDeclNil)))
+
+(define (macro-call-not-macro-diag [call-expr : AstExpr]) : CompilerDiagnostic
+  (ctfe-diagnostic-at-expr
+    call-expr
+    "typecheck: module-scope macro call does not name a macro"))
+
+(define (macro-module-incompatible-diag
+  [call-expr : AstExpr]
+  [identity : String]) : CompilerDiagnostic
+  (ctfe-diagnostic-at-expr
+    call-expr
+    (str-cat
+      "typecheck: Module macro duplicate generated identity produced incompatible output: "
+      identity)))
+
+(define (macro-module-existing-collision-diag
+  [call-expr : AstExpr]
+  [target-module : String]
+  [identity : String]) : CompilerDiagnostic
+  (ctfe-diagnostic-at-expr
+    call-expr
+    (str-cat
+      "typecheck: Module macro output collides with existing module "
+      (str-cat target-module (str-cat " for generated identity " identity)))))
+
+(define (macro-expand-module-materialized
+  [orig-decls : AstDeclList]
+  [module : String]
+  [target-module : String]
+  [alias : AstMaybeImportAlias]
+  [span : AstSourceSpan]
+  [decl-path : String]
+  [macro-name : String]
+  [identity : String]
+  [body-rest : AstDeclList]
+  [call-expr : AstExpr]) : ResultMacroDeclExpansion
+  (let
+    [generated-body : AstDeclList
+      (macro-wrap-generated-decls body-rest macro-name identity)]
+    [materialized : AstDeclList
+      (ast-decl-cons (ast-decl-module target-module) generated-body)]
+    (match (macro-find-module-body-decls orig-decls target-module)
+      [(MacroSomeDeclList existing-body)
+        (if (macro-decls-contain-generated-key? existing-body identity)
+          (if (macro-decl-list-eq? generated-body existing-body)
+            (let
+              [expanded : AstDeclList
+                (macro-module-import-marker-decls target-module alias span)]
+              (OkMacroDeclExpansion
+                expanded
+                (macro-paths-for-decls expanded decl-path)))
+            (ErrMacroDeclExpansion
+              (macro-module-incompatible-diag call-expr identity)))
+          (ErrMacroDeclExpansion
+            (macro-module-existing-collision-diag
+              call-expr
+              target-module
+              identity)))]
+      [(MacroNoDeclList)
+        (let
+          [expanded : AstDeclList
+            (macro-decl-list-append
+              materialized
+              (ast-decl-cons
+                (ast-decl-module module)
+                (macro-module-import-marker-decls target-module alias span)))]
+          (OkMacroDeclExpansion
+            expanded
+            (macro-paths-for-decls expanded decl-path)))])))
+
+(define (macro-expand-module-generated-decls
+  [orig-decls : AstDeclList]
+  [module : String]
+  [alias : AstMaybeImportAlias]
+  [span : AstSourceSpan]
+  [decl-path : String]
+  [macro-name : String]
+  [identity : String]
+  [generated : AstDeclList]
+  [call-expr : AstExpr]) : ResultMacroDeclExpansion
+  (let
+    [module-count : i64 (macro-decls-module-count generated)]
+    (if (= module-count 0)
+      (ErrMacroDeclExpansion
+        (ctfe-diagnostic-at-expr
+          call-expr
+          "typecheck: Module macro output must include a module declaration"))
+      (if (> module-count 1)
+        (ErrMacroDeclExpansion
+          (ctfe-diagnostic-at-expr
+            call-expr
+            "typecheck: Module macro output must include exactly one module declaration"))
+        (match generated
+          [(AstDeclCons first body-rest-box)
+            (match first
+              [(AstDeclModule target-module-id)
+                (macro-expand-module-materialized
+                  orig-decls
+                  module
+                  (intern-str target-module-id)
+                  alias
+                  span
+                  decl-path
+                  macro-name
+                  identity
+                  (box-get body-rest-box)
+                  call-expr)]
+              [_
+                (ErrMacroDeclExpansion
+                  (ctfe-diagnostic-at-expr
+                    call-expr
+                    "typecheck: Module macro output must start with a module declaration"))])]
+          [(AstDeclNil)
+            (ErrMacroDeclExpansion
+              (ctfe-diagnostic-at-expr
+                call-expr
+                "typecheck: Module macro output must include a module declaration"))])))))
+
+(define (macro-expand-module-import
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [orig-decls : AstDeclList]
+  [module : String]
+  [call-id : i64]
+  [alias : AstMaybeImportAlias]
+  [span : AstSourceSpan]
+  [decl-path : String]) : ResultMacroDeclExpansion
+  (let
+    [call-expr : AstExpr (ast-node-get call-id)]
+    (match (ast-expr-unspan call-expr)
+      [(AstExprCall func-box args)
+        (let
+          [decl-ctx : TcContext (tc-context-with-module ctx module)]
+          [func : AstExpr (ast-node-get func-box)]
+          [global-env : TcTypeEnv (tc-hygiene-global-env top-env)]
+          (match (macro-call-decl decl-ctx func orig-decls call-expr)
+            [(OkMacroCallDecl maybe-decl)
+              (match maybe-decl
+                [(MacroSomeDecl macro-name definition-module params ret body)
+                  (if (tc-macro-result-module? ret)
+                    (match (macro-expand-exprs
+                      decl-ctx
+                      global-env
+                      orig-decls
+                      0
+                      args)
+                      [(OkMacroExprList expanded-args)
+                        (let
+                          [identity : String
+                            (macro-module-identity
+                              macro-name
+                              definition-module
+                              expanded-args)]
+                          (match (macro-eval-transformer
+                            decl-ctx
+                            global-env
+                            orig-decls
+                            macro-name
+                            params
+                            body
+                            args
+                            0
+                            call-expr)
+                            [(OkMacroValue value)
+                              (match (macro-module-decls-from-ctfe-value
+                                value
+                                call-expr)
+                                [(OkMacroParsedDecls generated)
+                                  (macro-expand-module-generated-decls
+                                    orig-decls
+                                    module
+                                    alias
+                                    span
+                                    decl-path
+                                    macro-name
+                                    identity
+                                    generated
+                                    call-expr)]
+                                [(ErrMacroParsedDecls diag)
+                                  (ErrMacroDeclExpansion diag)])]
+                            [(ErrMacroValue diag) (ErrMacroDeclExpansion diag)]))]
+                      [(ErrMacroExprList diag) (ErrMacroDeclExpansion diag)])
+                    (if (tc-macro-result-decls? ret)
+                      (ErrMacroDeclExpansion
+                        (ctfe-diagnostic-at-expr
+                          call-expr
+                          "typecheck: Decls macro cannot be used in import position"))
+                      (ErrMacroDeclExpansion
+                        (ctfe-diagnostic-at-expr
+                          call-expr
+                          "typecheck: expression macro cannot be used as module import"))))]
+                [(MacroNoDecl)
+                  (ErrMacroDeclExpansion (macro-call-not-macro-diag call-expr))])]
+            [(ErrMacroCallDecl diag) (ErrMacroDeclExpansion diag)]))]
+      [_
+        (ErrMacroDeclExpansion
+          (ctfe-diagnostic-at-expr
+            call-expr
+            "typecheck: import macro placeholder must contain a call"))])))
+
+(define (macro-expand-decl-with-path
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [orig-decls : AstDeclList]
+  [module : String]
+  [decl : AstDecl]
+  [decl-path : String]) : ResultMacroDeclExpansion
+  (match decl
+    [(AstDeclImport (AstImportSpec kind _ _ alias span))
+      (match kind
+        [(AstImportMacro call-id)
+          (macro-expand-module-import
+            ctx
+            top-env
+            orig-decls
+            module
+            call-id
+            alias
+            span
+            decl-path)]
+        [(AstImportMacroDecls _)
+          (let
+            [decl-ctx : TcContext (tc-context-with-module ctx module)]
+            (match (macro-expand-decl decl-ctx top-env orig-decls decl)
+              [(OkMacroDecl expanded)
+                (macro-single-decl-expansion expanded decl-path)]
+              [(ErrMacroDecl diag) (ErrMacroDeclExpansion diag)]))]
+        [_ (macro-single-decl-expansion decl decl-path)])]
+    [_
+      (let
+        [decl-ctx : TcContext (tc-context-with-module ctx module)]
+        (if (not (macro-decl-uses-macro? decl-ctx orig-decls decl))
+          (macro-single-decl-expansion decl decl-path)
+          (match (macro-expand-decl decl-ctx top-env orig-decls decl)
+            [(OkMacroDecl expanded)
+              (macro-single-decl-expansion expanded decl-path)]
+            [(ErrMacroDecl diag) (ErrMacroDeclExpansion diag)])))]))
+
 ;; Macro-expansion skip analysis (#2350-regression fix). Once any module defines
 ;; a macro, `has-defmacro` forces the full macro-expand walk over EVERY decl in
 ;; the program (all imported modules), which redundantly re-typechecks match
@@ -29641,50 +30857,119 @@
   [top-env : TcTypeEnv]
   [orig-decls : AstDeclList]
   [decls : AstDeclList]
-  [compat-only : bool]) : ResultMacroDecls
+  [paths : AstDeclPathList]
+  [module : String]
+  [compat-only : bool]) : ResultMacroDeclsWithPaths
   (match decls
-    [(AstDeclNil) (OkMacroDecls (AstDeclNil))]
+    [(AstDeclNil) (OkMacroDeclsWithPaths AstDeclNil AstDeclPathNil)]
     [(AstDeclCons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
+        [decl-path : String
+          (match paths
+            [(AstDeclPathCons path _) path]
+            [(AstDeclPathNil) ""])]
+        [rest-paths : AstDeclPathList
+          (match paths
+            [(AstDeclPathCons _ path-rest)
+              (let
+                [path-rest : AstDeclPathList (box-get path-rest)]
+                path-rest)]
+            [(AstDeclPathNil) AstDeclPathNil])]
         (match decl
           [(AstDeclModule next-module)
-            (begin
-              (set! macro-expand-active-module (intern-str next-module))
-              (match (macro-expand-decls
-                ctx
-                top-env
-                orig-decls
-                rest
-                compat-only)
-                [(OkMacroDecls nrest) (OkMacroDecls (ast-decl-cons decl nrest))]
-                [(ErrMacroDecls diag) (ErrMacroDecls diag)]))]
+            (match (macro-expand-decls
+              ctx
+              top-env
+              orig-decls
+              rest
+              rest-paths
+              (intern-str next-module)
+              compat-only)
+              [(OkMacroDeclsWithPaths nrest nrest-paths)
+                (OkMacroDeclsWithPaths
+                  (ast-decl-cons decl nrest)
+                  (ast-decl-path-cons decl-path nrest-paths))]
+              [(ErrMacroDeclsWithPaths diag) (ErrMacroDeclsWithPaths diag)])]
           [_
-            (let
-              [decl-ctx : TcContext
-                (tc-context-with-module ctx macro-expand-active-module)]
-              (if (not (macro-decl-uses-macro? decl-ctx orig-decls decl))
-                (match (macro-expand-decls
-                  ctx
-                  top-env
-                  orig-decls
-                  rest
-                  compat-only)
-                  [(OkMacroDecls nrest)
-                    (OkMacroDecls (ast-decl-cons decl nrest))]
-                  [(ErrMacroDecls diag) (ErrMacroDecls diag)])
-                (match (macro-expand-decl decl-ctx top-env orig-decls decl)
-                  [(OkMacroDecl ndecl)
-                    (match (macro-expand-decls
+            (match decl
+              [(AstDeclImport (AstImportSpec kind _ _ _ _))
+                (match kind
+                  [(AstImportMacro _)
+                    (match (macro-expand-decl-with-path
                       ctx
                       top-env
                       orig-decls
-                      rest
-                      compat-only)
-                      [(OkMacroDecls nrest)
-                        (OkMacroDecls (ast-decl-cons ndecl nrest))]
-                      [(ErrMacroDecls diag) (ErrMacroDecls diag)])]
-                  [(ErrMacroDecl diag) (ErrMacroDecls diag)])))]))]))
+                      module
+                      decl
+                      decl-path)
+                      [(OkMacroDeclExpansion expanded expanded-paths)
+                        (OkMacroDeclsWithPaths
+                          (macro-decl-list-append expanded rest)
+                          (macro-decl-path-list-append
+                            expanded-paths
+                            rest-paths))]
+                      [(ErrMacroDeclExpansion diag)
+                        (ErrMacroDeclsWithPaths diag)])]
+                  [_
+                    (match (macro-expand-decl-with-path
+                      ctx
+                      top-env
+                      orig-decls
+                      module
+                      decl
+                      decl-path)
+                      [(OkMacroDeclExpansion expanded expanded-paths)
+                        (let
+                          [next-module : String
+                            (macro-decls-final-module expanded module)]
+                          (match (macro-expand-decls
+                            ctx
+                            top-env
+                            orig-decls
+                            rest
+                            rest-paths
+                            next-module
+                            compat-only)
+                            [(OkMacroDeclsWithPaths nrest nrest-paths)
+                              (OkMacroDeclsWithPaths
+                                (macro-decl-list-append expanded nrest)
+                                (macro-decl-path-list-append
+                                  expanded-paths
+                                  nrest-paths))]
+                            [(ErrMacroDeclsWithPaths diag)
+                              (ErrMacroDeclsWithPaths diag)]))]
+                      [(ErrMacroDeclExpansion diag)
+                        (ErrMacroDeclsWithPaths diag)])])]
+              [_
+                (match (macro-expand-decl-with-path
+                  ctx
+                  top-env
+                  orig-decls
+                  module
+                  decl
+                  decl-path)
+                  [(OkMacroDeclExpansion expanded expanded-paths)
+                    (let
+                      [next-module : String
+                        (macro-decls-final-module expanded module)]
+                      (match (macro-expand-decls
+                        ctx
+                        top-env
+                        orig-decls
+                        rest
+                        rest-paths
+                        next-module
+                        compat-only)
+                        [(OkMacroDeclsWithPaths nrest nrest-paths)
+                          (OkMacroDeclsWithPaths
+                            (macro-decl-list-append expanded nrest)
+                            (macro-decl-path-list-append
+                              expanded-paths
+                              nrest-paths))]
+                        [(ErrMacroDeclsWithPaths diag)
+                          (ErrMacroDeclsWithPaths diag)]))]
+                  [(ErrMacroDeclExpansion diag) (ErrMacroDeclsWithPaths diag)])])]))]))
 
 (define (macro-expr-needs-compat-expansion? [expr : AstExpr]) : bool
   (or
@@ -29753,11 +31038,32 @@
         [rest : AstDeclList (box-get rest)]
         (or (macro-decl-has-defmacro? decl) (macro-program-has-defmacro? rest)))]))
 
+(define (macro-decl-has-module-placeholder? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDeclImport (AstImportSpec kind _ _ _ _))
+      (match kind
+        [(AstImportMacro _) true]
+        [(AstImportMacroDecls _) true]
+        [_ false])]
+    [(AstDeclUnsafe inner-box)
+      (macro-decl-has-module-placeholder? (box-get inner-box))]
+    [(AstDeclComptimeDecl _ template-box)
+      (macro-decl-has-module-placeholder? (box-get template-box))]
+    [_ false]))
+
+(define (macro-program-has-module-placeholder? [decls : AstDeclList]) : bool
+  (match decls
+    [(AstDeclNil) false]
+    [(AstDeclCons decl rest)
+      (or
+        (macro-decl-has-module-placeholder? decl)
+        (macro-program-has-module-placeholder? (box-get rest)))]))
+
 ;; Expand all macro calls in a parsed program before typechecking. Programs that
 ;; need no macro or guard-compatibility expansion are returned unchanged without
 ;; rebuilding the AST, so the expansion phase adds no allocation for the common
 ;; case.
-(define (macro-expand-program-with-paths
+(define (macro-expand-program-pass-with-paths
   [program : AstProgram]
   [paths : AstDeclPathList]) : ResultMacroExpand
   (match program
@@ -29832,8 +31138,10 @@
                                           top-env
                                           decls
                                           decls
+                                          paths
+                                          ""
                                           (not has-defmacro))
-                                          [(OkMacroDecls ndecls)
+                                          [(OkMacroDeclsWithPaths ndecls npaths)
                                             (begin
                                               (cfg
                                                 compile-profile
@@ -29843,8 +31151,9 @@
                                                 compile-profile
                                                 (compiler-tc-macro-profile-emit))
                                               (OkMacroExpand
-                                                (ast-program ndecls)))]
-                                          [(ErrMacroDecls diag)
+                                                (ast-program ndecls)
+                                                npaths))]
+                                          [(ErrMacroDeclsWithPaths diag)
                                             (begin
                                               (cfg
                                                 compile-profile
@@ -29865,7 +31174,47 @@
                       (ErrMacroExpand (tc-diag-at-start message))])]
                 [(ErrCompilerSymbols message)
                   (ErrMacroExpand (tc-diag-at-start message))]))
-            (OkMacroExpand program))))]))
+            (OkMacroExpand program paths))))]))
+
+(define (macro-expand-fixed-point-limit) : i64
+  8)
+
+(define (macro-expand-program-with-paths-loop
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [fuel : i64]) : ResultMacroExpand
+  (if (< fuel 0)
+    (ErrMacroExpand
+      (tc-diag-at-start
+        "typecheck: module macro expansion exceeded fixed-point limit"))
+    (let
+      [had-placeholders : bool
+        (match program
+          [(AstProgram input-decls-box)
+            (macro-program-has-module-placeholder? (box-get input-decls-box))])]
+      (match (macro-expand-program-pass-with-paths program paths)
+        [(OkMacroExpand expanded expanded-paths)
+          (match expanded
+            [(AstProgram decls-box)
+              (let
+                [decls : AstDeclList (box-get decls-box)]
+                (if (or
+                  had-placeholders
+                  (macro-program-has-module-placeholder? decls))
+                  (macro-expand-program-with-paths-loop
+                    expanded
+                    expanded-paths
+                    (- fuel 1))
+                  (OkMacroExpand expanded expanded-paths)))])]
+        [(ErrMacroExpand diag) (ErrMacroExpand diag)]))))
+
+(define (macro-expand-program-with-paths
+  [program : AstProgram]
+  [paths : AstDeclPathList]) : ResultMacroExpand
+  (macro-expand-program-with-paths-loop
+    program
+    paths
+    (macro-expand-fixed-point-limit)))
 
 (define (macro-expand-program [program : AstProgram]) : ResultMacroExpand
   (macro-expand-program-with-paths program AstDeclPathNil))

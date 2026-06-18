@@ -2320,9 +2320,15 @@ cat > "$PKG/src/math.tl" <<'EOF'
 (defstruct PublicToolPoint
   (x i64)
   (y i64))
+(defenum PublicToolTag
+  (PublicToolA)
+  (PublicToolB i64))
 (defmacro (public-tool-macro [expr : Expr]) : Expr expr)
 (define (inc [x : i64]) : i64 (+ x 1))
 (export
+  (variant PublicToolA)
+  (field PublicToolPoint x)
+  (constructor PublicToolPoint)
   (value public-tool-value)
   (type PublicToolPoint)
   (macro public-tool-macro))
@@ -2360,6 +2366,9 @@ if [ "$HAS_INSPECT_COMMAND" -eq 1 ]; then
     assert_contains "$out" "  value public-tool-value signature=i64"
     assert_contains "$out" "  type PublicToolPoint layout=size=16 align=8"
     assert_contains "$out" "  macro public-tool-macro signature=(macro (Expr) -> Expr)"
+    assert_not_contains "$out" "PublicToolA"
+    assert_not_contains "$out" "constructor"
+    assert_not_contains "$out" "field"
     assert_not_contains "$out" "  (none)"
     BAD_TLCI="$WORKDIR/bad.tlci"
     printf 'bad' > "$BAD_TLCI"

@@ -147,6 +147,12 @@
   "(define (main) : i64
   (unsafe (+ 1 2)))")
 
+(define (lint-driver-smoke-unused-unsafe-call-source) : String
+  "(define (safe-helper) : i64
+  7)
+(define (main) : i64
+  (unsafe (cast (safe-helper) : i64)))")
+
 (define (lint-driver-smoke-required-unsafe-source) : String
   "(define (main [p : (Ptr i64)]) : i64
   (unsafe (ptr-read p)))")
@@ -420,6 +426,12 @@
         (lint-driver-smoke-required-unsafe-source)
         (string-vec-new)
         false)]
+    [safe-call : LintFindings
+      (selfhost-lint-source-with-roots-and-options
+        "lint_driver_unused_unsafe_call.tl"
+        (lint-driver-smoke-unused-unsafe-call-source)
+        (string-vec-new)
+        false)]
     [nested : LintFindings
       (selfhost-lint-source-with-roots-and-options
         "lint_driver_nested_unsafe.tl"
@@ -442,15 +454,23 @@
             2))
         61]
       [(not (= (lint-findings-count required) 0)) 62]
-      [(not (= (lint-findings-count nested) 1)) 63]
+      [(not (= (lint-findings-count safe-call) 1)) 63]
+      [(not
+          (lint-driver-smoke-finding-rule-line-ok?
+            safe-call
+            0
+            (lint-rule-unused-unsafe-id)
+            4))
+        64]
+      [(not (= (lint-findings-count nested) 1)) 65]
       [(not
           (lint-driver-smoke-finding-rule-line-ok?
             nested
             0
             (lint-rule-unused-unsafe-id)
             2))
-        64]
-      [(not (= (lint-findings-count suppressed) 0)) 65]
+        66]
+      [(not (= (lint-findings-count suppressed) 0)) 67]
       [else 42])))
 
 (define (main) : i64

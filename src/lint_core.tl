@@ -1330,11 +1330,9 @@
     [(AstExprUnary _ inner)
       (lint-expr-uses-import? (ast-node-get inner) alias module-name)]
     [(AstExprCall func args)
-      (if (lint-requires-enclosing-unsafe-sentinel? alias module-name)
+      (if (lint-expr-uses-import? (ast-node-get func) alias module-name)
         true
-        (if (lint-expr-uses-import? (ast-node-get func) alias module-name)
-          true
-          (lint-expr-list-uses-import? args alias module-name)))]
+        (lint-expr-list-uses-import? args alias module-name))]
     [(AstExprIf cond then-branch else-branch)
       (if (lint-expr-uses-import? (ast-node-get cond) alias module-name)
         true
@@ -1402,11 +1400,9 @@
         true
         (lint-type-uses-import? ty alias module-name))]
     [(AstExprCast inner ty)
-      (if (lint-requires-enclosing-unsafe-sentinel? alias module-name)
+      (if (lint-expr-uses-import? (ast-node-get inner) alias module-name)
         true
-        (if (lint-expr-uses-import? (ast-node-get inner) alias module-name)
-          true
-          (lint-type-uses-import? ty alias module-name)))]
+        (lint-type-uses-import? ty alias module-name))]
     [(AstExprBorrow _ _ place)
       (lint-expr-uses-import? (ast-node-get place) alias module-name)]
     [(AstExprMatch scrutinee arms)

@@ -380,11 +380,13 @@ EOF
     cat > "$BAD_PKG_SOURCE" <<'EOF'
 (define (package-non-entry) : i64 true)
 EOF
-    run_expect_failure check-package-bad "$COMPILER" check --manifest-path "$PKG/typelisp.pkg"
-    assert_empty "$WORKDIR/check-package-bad.stdout"
-    assert_contains "$WORKDIR/check-package-bad.stderr" "check: package source failed:"
-    assert_contains "$WORKDIR/check-package-bad.stderr" "non_entry_bad.tl"
-    assert_not_contains "$WORKDIR/check-package-bad.stderr" "${BAD_PKG_SOURCE}${BAD_PKG_SOURCE}"
+    run_capture check-package-orphan-bad "$COMPILER" check --manifest-path "$PKG/typelisp.pkg"
+    assert_empty "$WORKDIR/check-package-orphan-bad.stderr"
+    assert_contains "$WORKDIR/check-package-orphan-bad.stdout" "Type checking passed!"
+    run_expect_failure check-file-bad "$COMPILER" check "$BAD_PKG_SOURCE"
+    assert_empty "$WORKDIR/check-file-bad.stdout"
+    assert_contains "$WORKDIR/check-file-bad.stderr" "non_entry_bad.tl"
+    assert_not_contains "$WORKDIR/check-file-bad.stderr" "${BAD_PKG_SOURCE}${BAD_PKG_SOURCE}"
     rm "$BAD_PKG_SOURCE"
     run_expect_failure check-file-manifest "$COMPILER" check "$SRC" --manifest-path "$PKG/typelisp.pkg"
     assert_empty "$WORKDIR/check-file-manifest.stdout"

@@ -58,6 +58,12 @@
   (raw Thread)
   (result-addr i64))
 
+;: Typed handle returned by `thread-spawn-box-i64`.
+(defstruct ThreadBoxI64
+  (raw Thread)
+  (result-addr i64)
+  (owner i64))
+
 ;: Result returned by `thread-spawn-i64`.
 (defenum ThreadI64SpawnResult
   (ThreadI64SpawnOk ThreadI64)
@@ -83,6 +89,11 @@
   (ThreadArrayI64SpawnOk ThreadArrayI64)
   (ThreadArrayI64SpawnErr String))
 
+;: Result returned by `thread-spawn-box-i64`.
+(defenum ThreadBoxI64SpawnResult
+  (ThreadBoxI64SpawnOk ThreadBoxI64)
+  (ThreadBoxI64SpawnErr String))
+
 ;: Result returned by `thread-join-i64`.
 (defenum ThreadI64JoinResult
   (ThreadI64JoinOk i64)
@@ -107,6 +118,11 @@
 (defenum ThreadArrayI64JoinResult
   (ThreadArrayI64JoinOk (Array i64))
   (ThreadArrayI64JoinErr String))
+
+;: Result returned by `thread-join-box-i64`.
+(defenum ThreadBoxI64JoinResult
+  (ThreadBoxI64JoinOk (Box i64))
+  (ThreadBoxI64JoinErr String))
 
 ;: Opaque counting semaphore handle.
 (defstruct ThreadSemaphore
@@ -487,6 +503,28 @@
         (ThreadArrayI64SpawnOk (ThreadArrayI64 raw result-addr))]
       [(ThreadSpawnErr message) (ThreadArrayI64SpawnErr message)])))
 
+;: Spawn a compiler-checked direct nullary closure returning `(Box i64)`.
+;:
+;: The task runs with a fresh atomic arena as the active allocation target, then
+;: copies the boxed scalar payload to an atomic result cell. Join reconstructs a
+;: fresh box in that same spanning owner. The handle must be joined exactly once.
+(define (thread-spawn-box-i64 [task : (-> (Box i64))]) : ThreadBoxI64SpawnResult
+  (let
+    [owner : i64 (arena-make-atomic)]
+    [result : (Array i64) (in-arena owner (make-array i64 1))]
+    [result-addr : i64 (thread-array-i64-addr result)]
+    (match (thread-spawn
+      (lambda ([_ignored : i64]) : i64
+        (let
+          [value : (Box i64) (in-arena owner (task))]
+          (begin
+            (thread-write-i64! result-addr (box-get value))
+            0)))
+      0)
+      [(ThreadSpawnOk raw)
+        (ThreadBoxI64SpawnOk (ThreadBoxI64 raw result-addr owner))]
+      [(ThreadSpawnErr message) (ThreadBoxI64SpawnErr message)])))
+
 ;: Wait for a Linux raw-clone thread to clear its join cell.
 (define (thread-linux-join [thread : Thread]) : ThreadJoinResult
   (let
@@ -547,6 +585,16 @@
       (ThreadArrayI64JoinOk
         (thread-read-array-i64 (struct-get thread result-addr)))]
     [(ThreadJoinErr message) (ThreadArrayI64JoinErr message)]))
+
+;: Join a typed `(Box i64)` thread and return its closure result.
+(define (thread-join-box-i64 [thread : ThreadBoxI64]) : ThreadBoxI64JoinResult
+  (match (thread-join (struct-get thread raw))
+    [(ThreadJoinOk _)
+      (ThreadBoxI64JoinOk
+        (in-arena
+          (struct-get thread owner)
+          (box (thread-read-i64 (struct-get thread result-addr)))))]
+    [(ThreadJoinErr message) (ThreadBoxI64JoinErr message)]))
 
 ;: Count set bits in a positive byte value.
 (define (thread-count-byte-bits [byte : i64]) : i64

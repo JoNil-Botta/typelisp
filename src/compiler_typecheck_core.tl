@@ -5815,6 +5815,25 @@
               [(OkTcUnit) (tc-source-macro-param-list-policy-ok ctx rest)]
               [(ErrTcUnit message) (ErrTcUnit message)])]))]))
 
+(define (tc-macro-result-name? [ty : AstType] [upper : String] [lower : String]) : bool
+  (match ty
+    [(AstTyVar name) (or (= name (intern upper)) (= name (intern lower)))]
+    [_ false]))
+
+(define (tc-macro-result-module? [ty : AstType]) : bool
+  (tc-macro-result-name? ty "Module" "module"))
+
+(define (tc-macro-result-decls? [ty : AstType]) : bool
+  (tc-macro-result-name? ty "Decls" "decls"))
+
+(define (tc-macro-result-decl-emitting? [ty : AstType]) : bool
+  (or (tc-macro-result-module? ty) (tc-macro-result-decls? ty)))
+
+(define (tc-source-macro-result-policy-ok [ctx : TcContext] [ty : AstType]) : ResultTcUnit
+  (if (tc-macro-result-decl-emitting? ty)
+    OkTcUnit
+    (tc-source-type-policy-ok ctx ty)))
+
 (define (tc-source-field-list-policy-ok
   [ctx : TcContext]
   [fields : AstFieldDefList]) : ResultTcUnit
@@ -6760,7 +6779,7 @@
         [body : AstExpr (ast-node-get body-box)]
         (match (tc-source-macro-param-list-policy-ok ctx params)
           [(OkTcUnit)
-            (match (tc-source-type-policy-ok ctx ret)
+            (match (tc-source-macro-result-policy-ok ctx ret)
               [(OkTcUnit)
                 (match (tc-source-expr-policy-ok ctx body)
                   [(OkTcUnit)
@@ -22098,17 +22117,20 @@
   [ctx : TcContext]
   [ret : AstType]
   [value : CompilerCtfeValue]) : ResultTcUnit
-  (match value
-    [(CtfeExpr _ produced)
-      (if (or
-        (tc-type-eq produced (AstTyExpr))
-        (tc-type-compatible?
-          (tc-resolve-type ctx (tc-macro-signature-type ret))
-          (tc-resolve-type ctx produced)))
-        OkTcUnit
-        (ErrTcUnit
-          "typecheck: macro body produced type does not match declaration"))]
-    [_ (ErrTcUnit "typecheck: macro body must return Expr")]))
+  (if (tc-macro-result-decl-emitting? ret)
+    (ErrTcUnit
+      "typecheck: declaration-emitting macro expansion is not implemented yet (#3153)")
+    (match value
+      [(CtfeExpr _ produced)
+        (if (or
+          (tc-type-eq produced (AstTyExpr))
+          (tc-type-compatible?
+            (tc-resolve-type ctx (tc-macro-signature-type ret))
+            (tc-resolve-type ctx produced)))
+          OkTcUnit
+          (ErrTcUnit
+            "typecheck: macro body produced type does not match declaration"))]
+      [_ (ErrTcUnit "typecheck: macro body must return Expr")])))
 
 (define (tc-comptime-purity-chain-push [chain : TcStringList] [name : String]) : TcStringList
   (TcStringCons name (box chain)))
@@ -28432,64 +28454,83 @@
   ;; nested `str-cat`) is reduced to a plain expression before it is typechecked
   ;; and bound; otherwise the operand typecheck sees the inner macro name as an
   ;; unbound value.
-  (match (macro-expand-exprs ctx type-env decls depth args)
-    [(OkMacroExprList expanded-args)
-      (match (macro-bind-params
-        ctx
-        type-env
-        params
-        expanded-args
-        (tc-ctfe-env ctx)
-        call-expr)
-        [(OkMacroEnv env)
-          (begin
-            (cfg compile-profile (compiler-tc-macro-profile-start))
-            (match (ctfe-eval-node
-              body
-              (ctfe-env-extend env (ctfe-hygiene-enabled-name) (CtfeBool true))
-              (ctfe-fuel-limit))
-              [(OkCtfe value _)
-                (begin
-                  (cfg
-                    compile-profile
-                    (compiler-tc-macro-profile-finish macro-name expanded-args))
-                  (match value
-                    [(CtfeExpr expanded produced)
-                      (if (or
-                        (tc-type-eq produced (AstTyExpr))
-                        (tc-type-compatible?
-                          (tc-resolve-type ctx (tc-macro-signature-type ret))
-                          (tc-resolve-type ctx produced)))
-                        (macro-expand-expr
-                          ctx
-                          type-env
-                          decls
-                          (+ depth 1)
-                          (ast-node-get
-                            (macro-hygiene-expr
-                              (ast-node-get expanded)
-                              MacroHygieneNil
-                              (macro-hygiene-context-macro-name
-                                macro-name
-                                definition-module)
-                              (+ depth 1))))
-                        (ErrMacroExpr
-                          (ctfe-diagnostic-at-expr
-                            call-expr
-                            "typecheck: macro expansion produced type does not match declaration")))]
-                    [_
-                      (ErrMacroExpr
-                        (ctfe-diagnostic-at-expr
-                          call-expr
-                          "macro transformer did not produce an Expr"))]))]
-              [(ErrCtfe diag)
-                (begin
-                  (cfg
-                    compile-profile
-                    (compiler-tc-macro-profile-finish macro-name expanded-args))
-                  (ErrMacroExpr diag))]))]
-        [(ErrMacroEnv diag) (ErrMacroExpr diag)])]
-    [(ErrMacroExprList diag) (ErrMacroExpr diag)]))
+  (if (tc-macro-result-module? ret)
+    (ErrMacroExpr
+      (ctfe-diagnostic-at-expr
+        call-expr
+        "typecheck: Module macro can only be used in import position"))
+    (if (tc-macro-result-decls? ret)
+      (ErrMacroExpr
+        (ctfe-diagnostic-at-expr
+          call-expr
+          "typecheck: Decls macro can only be used at module scope"))
+      (match (macro-expand-exprs ctx type-env decls depth args)
+        [(OkMacroExprList expanded-args)
+          (match (macro-bind-params
+            ctx
+            type-env
+            params
+            expanded-args
+            (tc-ctfe-env ctx)
+            call-expr)
+            [(OkMacroEnv env)
+              (begin
+                (cfg compile-profile (compiler-tc-macro-profile-start))
+                (match (ctfe-eval-node
+                  body
+                  (ctfe-env-extend
+                    env
+                    (ctfe-hygiene-enabled-name)
+                    (CtfeBool true))
+                  (ctfe-fuel-limit))
+                  [(OkCtfe value _)
+                    (begin
+                      (cfg
+                        compile-profile
+                        (compiler-tc-macro-profile-finish
+                          macro-name
+                          expanded-args))
+                      (match value
+                        [(CtfeExpr expanded produced)
+                          (if (or
+                            (tc-type-eq produced (AstTyExpr))
+                            (tc-type-compatible?
+                              (tc-resolve-type
+                                ctx
+                                (tc-macro-signature-type ret))
+                              (tc-resolve-type ctx produced)))
+                            (macro-expand-expr
+                              ctx
+                              type-env
+                              decls
+                              (+ depth 1)
+                              (ast-node-get
+                                (macro-hygiene-expr
+                                  (ast-node-get expanded)
+                                  MacroHygieneNil
+                                  (macro-hygiene-context-macro-name
+                                    macro-name
+                                    definition-module)
+                                  (+ depth 1))))
+                            (ErrMacroExpr
+                              (ctfe-diagnostic-at-expr
+                                call-expr
+                                "typecheck: macro expansion produced type does not match declaration")))]
+                        [_
+                          (ErrMacroExpr
+                            (ctfe-diagnostic-at-expr
+                              call-expr
+                              "macro transformer did not produce an Expr"))]))]
+                  [(ErrCtfe diag)
+                    (begin
+                      (cfg
+                        compile-profile
+                        (compiler-tc-macro-profile-finish
+                          macro-name
+                          expanded-args))
+                      (ErrMacroExpr diag))]))]
+            [(ErrMacroEnv diag) (ErrMacroExpr diag)])]
+        [(ErrMacroExprList diag) (ErrMacroExpr diag)]))))
 
 (define (macro-expand-exprs
   [ctx : TcContext]
@@ -29108,6 +29149,62 @@
           [(ErrMacroExprList diag) (ErrMacroExpr diag)])]
       [_ (OkMacroExpr (ast-node-push expr))])))
 
+(define (macro-expand-module-call-position
+  [ctx : TcContext]
+  [decls : AstDeclList]
+  [call-id : i64]
+  [import-position : bool]) : ResultMacroDecl
+  (let
+    [call-expr : AstExpr (ast-node-get call-id)]
+    (match (ast-expr-unspan call-expr)
+      [(AstExprCall func-box _)
+        (let
+          [func : AstExpr (ast-node-get func-box)]
+          (match (macro-call-decl ctx func decls call-expr)
+            [(OkMacroCallDecl maybe-decl)
+              (match maybe-decl
+                [(MacroSomeDecl _ _ _ ret _)
+                  (if import-position
+                    (if (tc-macro-result-module? ret)
+                      (ErrMacroDecl
+                        (ctfe-diagnostic-at-expr
+                          call-expr
+                          "typecheck: Module macro expansion is not implemented yet (#3153)"))
+                      (if (tc-macro-result-decls? ret)
+                        (ErrMacroDecl
+                          (ctfe-diagnostic-at-expr
+                            call-expr
+                            "typecheck: Decls macro cannot be used in import position"))
+                        (ErrMacroDecl
+                          (ctfe-diagnostic-at-expr
+                            call-expr
+                            "typecheck: expression macro cannot be used as module import"))))
+                    (if (tc-macro-result-decls? ret)
+                      (ErrMacroDecl
+                        (ctfe-diagnostic-at-expr
+                          call-expr
+                          "typecheck: Decls macro expansion is not implemented yet (#3153)"))
+                      (if (tc-macro-result-module? ret)
+                        (ErrMacroDecl
+                          (ctfe-diagnostic-at-expr
+                            call-expr
+                            "typecheck: Module macro can only be used in import position"))
+                        (ErrMacroDecl
+                          (ctfe-diagnostic-at-expr
+                            call-expr
+                            "typecheck: expression macro cannot be used at module scope")))))]
+                [(MacroNoDecl)
+                  (ErrMacroDecl
+                    (ctfe-diagnostic-at-expr
+                      call-expr
+                      "typecheck: module-scope macro call must resolve to defmacro"))])]
+            [(ErrMacroCallDecl diag) (ErrMacroDecl diag)]))]
+      [_
+        (ErrMacroDecl
+          (ctfe-diagnostic-at-expr
+            call-expr
+            "typecheck: module-scope macro placeholder must be a call"))])))
+
 (define (macro-expand-decl
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -29145,6 +29242,13 @@
             [(OkMacroExpr nexpr)
               (OkMacroDecl (ast-decl-test-id name nexpr span))]
             [(ErrMacroExpr diag) (ErrMacroDecl diag)]))]
+      [(AstDeclImport (AstImportSpec kind _ _ _ _))
+        (match kind
+          [(AstImportMacro call-id)
+            (macro-expand-module-call-position ctx decls call-id true)]
+          [(AstImportMacroDecls call-id)
+            (macro-expand-module-call-position ctx decls call-id false)]
+          [_ (OkMacroDecl decl)])]
       [(AstDeclUnsafe inner-box)
         (let
           [inner : AstDecl (box-get inner-box)]
@@ -29404,6 +29508,11 @@
     [(AstDeclDefFn _ _ _ body-box _)
       (macro-node-uses-macro? ctx decls body-box)]
     [(AstDeclTest _ expr-box _) (macro-node-uses-macro? ctx decls expr-box)]
+    [(AstDeclImport (AstImportSpec kind _ _ _ _))
+      (match kind
+        [(AstImportMacro _) true]
+        [(AstImportMacroDecls _) true]
+        [_ false])]
     [(AstDeclUnsafe inner-box)
       (macro-decl-uses-macro? ctx decls (box-get inner-box))]
     [_ false]))
@@ -29646,6 +29755,11 @@
       (let
         [body : AstExpr (ast-node-get body-box)]
         (macro-expr-needs-compat-expansion? body))]
+    [(AstDeclImport (AstImportSpec kind _ _ _ _))
+      (match kind
+        [(AstImportMacro _) true]
+        [(AstImportMacroDecls _) true]
+        [_ false])]
     [(AstDeclUnsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]

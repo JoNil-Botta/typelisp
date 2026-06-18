@@ -6638,6 +6638,29 @@
 (defmacro (macro-a) : Expr `(macro-b))
 (defmacro (macro-b) : Expr `(macro-a))")
 
+(define (compiler-typecheck-module-macro-import-unsupported-source) : String
+  "(defmacro (gen) : Module (expr-var \"unused\"))
+(import (gen))
+(define (main) : i64 0)")
+
+(define (compiler-typecheck-module-macro-expression-source) : String
+  "(defmacro (gen) : Module (expr-var \"unused\"))
+(define (main) : i64 (gen))")
+
+(define (compiler-typecheck-decls-macro-import-source) : String
+  "(defmacro (gen) : Decls (expr-var \"unused\"))
+(import (gen))
+(define (main) : i64 0)")
+
+(define (compiler-typecheck-decls-macro-expression-source) : String
+  "(defmacro (gen) : Decls (expr-var \"unused\"))
+(define (main) : i64 (gen))")
+
+(define (compiler-typecheck-expression-macro-module-scope-source) : String
+  "(defmacro (gen) : Expr (expr-var \"unused\"))
+(gen)
+(define (main) : i64 0)")
+
 (define (compiler-typecheck-macro-runtime-import-order-source) : String
   "(define (runtime-touch [text : String]) : unit
   (if true
@@ -6898,6 +6921,21 @@
     (compiler-typecheck-error-ok?
       (compiler-typecheck-macro-mutual-depth-source)
       "macro expansion exceeded depth limit")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-module-macro-import-unsupported-source)
+      "typecheck: Module macro expansion is not implemented yet (#3153)")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-module-macro-expression-source)
+      "typecheck: Module macro can only be used in import position")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-decls-macro-import-source)
+      "typecheck: Decls macro cannot be used in import position")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-decls-macro-expression-source)
+      "typecheck: Decls macro can only be used at module scope")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-expression-macro-module-scope-source)
+      "typecheck: expression macro cannot be used at module scope")
     (compiler-typecheck-ok?
       (compiler-typecheck-macro-runtime-import-order-source))))
 

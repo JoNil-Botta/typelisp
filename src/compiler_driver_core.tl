@@ -32,13 +32,34 @@
 (defstruct CompilerDriverState
   (expr-pool AstExprNodePoolState)
   (type-pool AstTypeNodePoolState)
-  (session-cache-enabled bool))
+  (session-cache-enabled bool)
+  (session-program-cache-enabled bool)
+  (session-ast-floor (Array i64))
+  (session-ty-floor (Array i64))
+  (session-intern-floor (Array i64)))
+
+(define (compiler-driver-state-i64-cell [value : i64]) : (Array i64)
+  (let
+    [cell : (Array i64) (make-array i64 1)]
+    (begin
+      (array-set! cell 0 value)
+      cell)))
+
+(define (compiler-driver-state-cell-get [cell : (Array i64)]) : i64
+  (array-ref cell 0))
+
+(define (compiler-driver-state-cell-set! [cell : (Array i64)] [value : i64]) : unit
+  (array-set! cell 0 value))
 
 (define (compiler-driver-state-new) : CompilerDriverState
   (CompilerDriverState
     (ast-expr-node-pool-state-create 1)
     (ast-type-node-pool-state-create 1)
-    false))
+    false
+    true
+    (compiler-driver-state-i64-cell 0)
+    (compiler-driver-state-i64-cell 0)
+    (compiler-driver-state-i64-cell 0)))
 
 (define (compiler-driver-state-session-cache-enabled?
   [state : CompilerDriverState]) : bool
@@ -53,7 +74,59 @@
     (CompilerDriverState
       (struct-get state expr-pool)
       (struct-get state type-pool)
-      true)))
+      true
+      (struct-get state session-program-cache-enabled)
+      (struct-get state session-ast-floor)
+      (struct-get state session-ty-floor)
+      (struct-get state session-intern-floor))))
+
+(define (compiler-driver-state-session-program-cache-enabled?
+  [state : CompilerDriverState]) : bool
+  (struct-get state session-program-cache-enabled))
+
+(define (compiler-driver-state-session-program-cache-disable
+  [state : CompilerDriverState]) : CompilerDriverState
+  (CompilerDriverState
+    (struct-get state expr-pool)
+    (struct-get state type-pool)
+    (struct-get state session-cache-enabled)
+    false
+    (struct-get state session-ast-floor)
+    (struct-get state session-ty-floor)
+    (struct-get state session-intern-floor)))
+
+(define (compiler-driver-state-apply-session-floors!
+  [state : CompilerDriverState]) : unit
+  (if (compiler-driver-state-session-cache-enabled? state)
+    (compiler-load-session-floors-set!
+      (compiler-driver-state-cell-get (struct-get state session-ast-floor))
+      (compiler-driver-state-cell-get (struct-get state session-ty-floor))
+      (compiler-driver-state-cell-get (struct-get state session-intern-floor)))
+    (compiler-load-session-floors-set! 0 0 0)))
+
+(define (compiler-driver-state-apply-session-flags!
+  [state : CompilerDriverState]) : unit
+  (begin
+    (compiler-driver-state-apply-session-floors! state)
+    (compiler-load-session-cache-set-enabled!
+      (compiler-driver-state-session-cache-enabled? state))
+    (compiler-load-session-program-cache-set-enabled!
+      (compiler-driver-state-session-program-cache-enabled? state))))
+
+(define (compiler-driver-state-capture-session-floors!
+  [state : CompilerDriverState]) : unit
+  (if (compiler-driver-state-session-cache-enabled? state)
+    (begin
+      (compiler-driver-state-cell-set!
+        (struct-get state session-ast-floor)
+        (compiler-load-session-ast-floor-value))
+      (compiler-driver-state-cell-set!
+        (struct-get state session-ty-floor)
+        (compiler-load-session-ty-floor-value))
+      (compiler-driver-state-cell-set!
+        (struct-get state session-intern-floor)
+        (compiler-load-session-intern-floor-value)))
+    unit))
 
 (define compiler-driver-runtime-prelude-cache-capacity : i64
   16)
@@ -161,9 +234,7 @@
     ;; #2919 state boundary: compile jobs now carry an explicit driver state.
     ;; Parser/typechecker/lowerer hot paths still use compatibility globals
     ;; until the remaining node-pool and loader migrations are complete.
-    (if (compiler-driver-state-session-cache-enabled? state)
-      (compiler-load-session-cache-enable!)
-      unit)
+    (compiler-driver-state-apply-session-flags! state)
     (compiler-driver-reset-file-state!)))
 
 (cfg

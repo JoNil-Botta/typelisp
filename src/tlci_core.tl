@@ -155,39 +155,41 @@
     (int->string actual)))
 
 (define (tlci-validate-host-callback-table [table : TlciHostCallbackTable]) : ResultTlciHostAbi
-  (if (not (= (struct-get table magic) tlci-host-callback-table-magic))
-    (ErrTlciHostAbi "tlci host ABI: bad host callback table magic")
-    (if (not (= (struct-get table abi-version) tlci-host-abi-version))
+  (cond
+    [(not (= (struct-get table magic) tlci-host-callback-table-magic))
+      (ErrTlciHostAbi "tlci host ABI: bad host callback table magic")]
+    [(not (= (struct-get table abi-version) tlci-host-abi-version))
       (ErrTlciHostAbi
-        (tlci-host-abi-version-error (struct-get table abi-version)))
-      (if (< (struct-get table byte-size) tlci-host-callback-table-size)
-        (ErrTlciHostAbi
-          "tlci host ABI: host callback table byte-size is smaller than v1")
-        (if (not (= (struct-get table reserved0) 0))
-          (ErrTlciHostAbi
-            "tlci host ABI: host callback table reserved0 must be zero")
-          (if (not (= (struct-get table reserved1) 0))
-            (ErrTlciHostAbi
-              "tlci host ABI: host callback table reserved1 must be zero")
-            (OkTlciHostAbi)))))))
+        (tlci-host-abi-version-error (struct-get table abi-version)))]
+    [(< (struct-get table byte-size) tlci-host-callback-table-size)
+      (ErrTlciHostAbi
+        "tlci host ABI: host callback table byte-size is smaller than v1")]
+    [(not (= (struct-get table reserved0) 0))
+      (ErrTlciHostAbi
+        "tlci host ABI: host callback table reserved0 must be zero")]
+    [(not (= (struct-get table reserved1) 0))
+      (ErrTlciHostAbi
+        "tlci host ABI: host callback table reserved1 must be zero")]
+    [else (OkTlciHostAbi)]))
 
 (define (tlci-validate-image-registration
   [registration : TlciImageRegistration]) : ResultTlciHostAbi
-  (if (not (= (struct-get registration magic) tlci-image-registration-magic))
-    (ErrTlciHostAbi "tlci host ABI: bad image registration magic")
-    (if (not (= (struct-get registration abi-version) tlci-host-abi-version))
+  (cond
+    [(not (= (struct-get registration magic) tlci-image-registration-magic))
+      (ErrTlciHostAbi "tlci host ABI: bad image registration magic")]
+    [(not (= (struct-get registration abi-version) tlci-host-abi-version))
       (ErrTlciHostAbi
-        (tlci-host-abi-version-error (struct-get registration abi-version)))
-      (if (< (struct-get registration byte-size) tlci-image-registration-size)
-        (ErrTlciHostAbi
-          "tlci host ABI: image registration byte-size is smaller than v1")
-        (if (not (= (struct-get registration reserved0) 0))
-          (ErrTlciHostAbi
-            "tlci host ABI: image registration reserved0 must be zero")
-          (if (not (= (struct-get registration reserved1) 0))
-            (ErrTlciHostAbi
-              "tlci host ABI: image registration reserved1 must be zero")
-            (OkTlciHostAbi)))))))
+        (tlci-host-abi-version-error (struct-get registration abi-version)))]
+    [(< (struct-get registration byte-size) tlci-image-registration-size)
+      (ErrTlciHostAbi
+        "tlci host ABI: image registration byte-size is smaller than v1")]
+    [(not (= (struct-get registration reserved0) 0))
+      (ErrTlciHostAbi
+        "tlci host ABI: image registration reserved0 must be zero")]
+    [(not (= (struct-get registration reserved1) 0))
+      (ErrTlciHostAbi
+        "tlci host ABI: image registration reserved1 must be zero")]
+    [else (OkTlciHostAbi)]))
 
 (define (tlci-empty-bytes) : (Array u8)
   (make-array u8 0))

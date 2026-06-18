@@ -1814,6 +1814,57 @@
     (tltest-run-executable-error-message-self-test?)
     (panic "test CLI spawn error diagnostic did not preserve artifacts")))
 
+(define (tltest-stdlib-env-fixture-source? [source : String]) : bool
+  (string-eq (compiler-load-normalize-path source) "stdlib/env.tl"))
+
+(define (tltest-stdlib-env-fixture-path [target : CompilerBackendTarget]) : String
+  (if (compiler-backend-target-windows? target)
+    "one;two;three"
+    "one:two:three"))
+
+(define (tltest-stdlib-env-fixture-env [target : CompilerBackendTarget]) : ProcessEnvList
+  (process-env-cons
+    "TYPELISP_STDLIB_TEST_EMPTY"
+    ""
+    (process-env-cons
+      "TYPELISP_STDLIB_TEST_VALUE"
+      "env-value-854"
+      (process-env-cons
+        "TYPELISP_STDLIB_TEST_PATH"
+        (tltest-stdlib-env-fixture-path target)
+        (ProcessEnvNil)))))
+
+(define (tltest-run-harness-output
+  [source : String]
+  [bin-path : String]
+  [target : CompilerBackendTarget]) : ResultProcessOutput
+  (if (tltest-stdlib-env-fixture-source? source)
+    (process-output
+      (source-tool-command-for-target
+        target
+        (process-command-with-env-list
+          (process-command bin-path (process-args-empty))
+          (tltest-stdlib-env-fixture-env target))))
+    (source-tool-run-executable bin-path target (process-args-empty))))
+
+(define (tltest-stdlib-env-fixture-self-test?) : bool
+  (and
+    (tltest-stdlib-env-fixture-source? "stdlib/env.tl")
+    (tltest-stdlib-env-fixture-source? "stdlib\\env.tl")
+    (not (tltest-stdlib-env-fixture-source? "stdlib/process.tl"))
+    (string-eq
+      (tltest-stdlib-env-fixture-path (BackendTargetWindows))
+      "one;two;three")
+    (string-eq
+      (tltest-stdlib-env-fixture-path (BackendTargetLinux))
+      "one:two:three")))
+
+(test
+  test-cli-stdlib-env-fixture-is-target-aware
+  (unless
+    (tltest-stdlib-env-fixture-self-test?)
+    (panic "test CLI stdlib/env fixture routing mismatch")))
+
 (define (tltest-run-harness-in-temp
   [source : String]
   [entry-path : String]
@@ -1859,10 +1910,7 @@
                     true)
                   1)]
               [(SourceToolCommandOk)
-                (match (source-tool-run-executable
-                  bin-path
-                  target
-                  (process-args-empty))
+                (match (tltest-run-harness-output source bin-path target)
                   [(OkProcessOutput output)
                     (let
                       [status : i64 (process-output-status output)]

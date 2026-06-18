@@ -101,6 +101,8 @@
 (defenum OptAggregatePromoteBuild
   (OptAggregatePromoteBuild OptAggregatePromoteSlotList i64))
 
+(define opt-aggregate-list-initial-capacity : i64
+  4)
 (define compiler-optimize-level-default : i64
   1)
 (cfg
@@ -1776,18 +1778,59 @@
 (define (opt-aggregate-pointer-list-with-capacity [capacity : i64]) : OptAggregatePointerList
   (OptAggregatePointerList (make-array OptAggregatePointer capacity) 0))
 
+(define (opt-aggregate-list-next-capacity [capacity : i64]) : i64
+  (if (< capacity opt-aggregate-list-initial-capacity)
+    opt-aggregate-list-initial-capacity
+    (* capacity 2)))
+
+(define (opt-aggregate-pointer-list-grow [ptrs : OptAggregatePointerList]) : OptAggregatePointerList
+  (let
+    [old-slots : (Array OptAggregatePointer) (struct-get ptrs slots)]
+    [len : i64 (struct-get ptrs len)]
+    [new-slots : (Array OptAggregatePointer)
+      (make-array
+        OptAggregatePointer
+        (opt-aggregate-list-next-capacity (array-length old-slots)))]
+    [i : i64 0]
+    (begin
+      (while (< i len)
+        (begin
+          (array-set! new-slots i (array-ref old-slots i))
+          (set! i (+ i 1))))
+      (OptAggregatePointerList new-slots len))))
+
 (define (opt-aggregate-pointer-list-push
   [ptrs : OptAggregatePointerList]
   [ptr : OptAggregatePointer]) : OptAggregatePointerList
   (let
     [slots : (Array OptAggregatePointer) (struct-get ptrs slots)]
     [len : i64 (struct-get ptrs len)]
-    (begin
-      (array-set! slots len ptr)
-      (OptAggregatePointerList slots (+ len 1)))))
+    (if (>= len (array-length slots))
+      (opt-aggregate-pointer-list-push
+        (opt-aggregate-pointer-list-grow ptrs)
+        ptr)
+      (begin
+        (array-set! slots len ptr)
+        (OptAggregatePointerList slots (+ len 1))))))
 
 (define (opt-aggregate-access-list-with-capacity [capacity : i64]) : OptAggregateAccessList
   (OptAggregateAccessList (make-array OptAggregateAccess capacity) 0))
+
+(define (opt-aggregate-access-list-grow [accesses : OptAggregateAccessList]) : OptAggregateAccessList
+  (let
+    [old-slots : (Array OptAggregateAccess) (struct-get accesses slots)]
+    [len : i64 (struct-get accesses len)]
+    [new-slots : (Array OptAggregateAccess)
+      (make-array
+        OptAggregateAccess
+        (opt-aggregate-list-next-capacity (array-length old-slots)))]
+    [i : i64 0]
+    (begin
+      (while (< i len)
+        (begin
+          (array-set! new-slots i (array-ref old-slots i))
+          (set! i (+ i 1))))
+      (OptAggregateAccessList new-slots len))))
 
 (define (opt-aggregate-access-list-push
   [accesses : OptAggregateAccessList]
@@ -1795,14 +1838,36 @@
   (let
     [slots : (Array OptAggregateAccess) (struct-get accesses slots)]
     [len : i64 (struct-get accesses len)]
-    (begin
-      (array-set! slots len access)
-      (OptAggregateAccessList slots (+ len 1)))))
+    (if (>= len (array-length slots))
+      (opt-aggregate-access-list-push
+        (opt-aggregate-access-list-grow accesses)
+        access)
+      (begin
+        (array-set! slots len access)
+        (OptAggregateAccessList slots (+ len 1))))))
 
 (define (opt-aggregate-candidate-list-with-capacity [capacity : i64]) : OptAggregateAllocCandidateList
   (OptAggregateAllocCandidateList
     (make-array OptAggregateAllocCandidate capacity)
     0))
+
+(define (opt-aggregate-candidate-list-grow
+  [candidates : OptAggregateAllocCandidateList]) : OptAggregateAllocCandidateList
+  (let
+    [old-slots : (Array OptAggregateAllocCandidate)
+      (struct-get candidates slots)]
+    [len : i64 (struct-get candidates len)]
+    [new-slots : (Array OptAggregateAllocCandidate)
+      (make-array
+        OptAggregateAllocCandidate
+        (opt-aggregate-list-next-capacity (array-length old-slots)))]
+    [i : i64 0]
+    (begin
+      (while (< i len)
+        (begin
+          (array-set! new-slots i (array-ref old-slots i))
+          (set! i (+ i 1))))
+      (OptAggregateAllocCandidateList new-slots len))))
 
 (define (opt-aggregate-candidate-list-push
   [candidates : OptAggregateAllocCandidateList]
@@ -1810,12 +1875,33 @@
   (let
     [slots : (Array OptAggregateAllocCandidate) (struct-get candidates slots)]
     [len : i64 (struct-get candidates len)]
-    (begin
-      (array-set! slots len candidate)
-      (OptAggregateAllocCandidateList slots (+ len 1)))))
+    (if (>= len (array-length slots))
+      (opt-aggregate-candidate-list-push
+        (opt-aggregate-candidate-list-grow candidates)
+        candidate)
+      (begin
+        (array-set! slots len candidate)
+        (OptAggregateAllocCandidateList slots (+ len 1))))))
 
 (define (opt-aggregate-promote-slot-list-with-capacity [capacity : i64]) : OptAggregatePromoteSlotList
   (OptAggregatePromoteSlotList (make-array OptAggregatePromoteSlot capacity) 0))
+
+(define (opt-aggregate-promote-slot-list-grow
+  [slots-list : OptAggregatePromoteSlotList]) : OptAggregatePromoteSlotList
+  (let
+    [old-slots : (Array OptAggregatePromoteSlot) (struct-get slots-list slots)]
+    [len : i64 (struct-get slots-list len)]
+    [new-slots : (Array OptAggregatePromoteSlot)
+      (make-array
+        OptAggregatePromoteSlot
+        (opt-aggregate-list-next-capacity (array-length old-slots)))]
+    [i : i64 0]
+    (begin
+      (while (< i len)
+        (begin
+          (array-set! new-slots i (array-ref old-slots i))
+          (set! i (+ i 1))))
+      (OptAggregatePromoteSlotList new-slots len))))
 
 (define (opt-aggregate-promote-slot-list-push
   [slots-list : OptAggregatePromoteSlotList]
@@ -1823,9 +1909,13 @@
   (let
     [slots : (Array OptAggregatePromoteSlot) (struct-get slots-list slots)]
     [len : i64 (struct-get slots-list len)]
-    (begin
-      (array-set! slots len slot)
-      (OptAggregatePromoteSlotList slots (+ len 1)))))
+    (if (>= len (array-length slots))
+      (opt-aggregate-promote-slot-list-push
+        (opt-aggregate-promote-slot-list-grow slots-list)
+        slot)
+      (begin
+        (array-set! slots len slot)
+        (OptAggregatePromoteSlotList slots (+ len 1))))))
 
 (define (opt-aggregate-pointer-list-lookup-from
   [ptrs : OptAggregatePointerList]
@@ -2235,44 +2325,37 @@
   [base : i64]
   [ty : AstType]
   [size : i64]
-  [instrs : CompilerIrInstrList]
-  [capacity : i64]) : OptAggregateScanResult
+  [instrs : CompilerIrInstrList]) : OptAggregateScanResult
   (opt-aggregate-scan-instrs
     base
     ty
     size
     instrs
-    (opt-aggregate-pointer-list-with-capacity capacity)
-    (opt-aggregate-access-list-with-capacity capacity)
+    (opt-aggregate-pointer-list-with-capacity
+      opt-aggregate-list-initial-capacity)
+    (opt-aggregate-access-list-with-capacity
+      opt-aggregate-list-initial-capacity)
     false))
 
 (define (opt-aggregate-candidates-from-instrs
   [scan : CompilerIrInstrList]
-  [capacity : i64]
   [candidates : OptAggregateAllocCandidateList]) : OptAggregateAllocCandidateList
   (match scan
     [(IrInstrNil) candidates]
     [(IrInstrCons instr rest)
       (match (opt-aggregate-direct-alloc instr)
         [(OptSomeAggregateAlloc base ty size)
-          (match (opt-aggregate-classify-one base ty size scan capacity)
+          (match (opt-aggregate-classify-one base ty size scan)
             [(OptAggregateScanOk ptrs accesses)
               (opt-aggregate-candidates-from-instrs
                 (box-get rest)
-                capacity
                 (opt-aggregate-candidate-list-push
                   candidates
                   (OptAggregateAllocCandidate base ty size ptrs accesses)))]
             [(OptAggregateScanReject)
-              (opt-aggregate-candidates-from-instrs
-                (box-get rest)
-                capacity
-                candidates)])]
+              (opt-aggregate-candidates-from-instrs (box-get rest) candidates)])]
         [(OptNoAggregateAlloc)
-          (opt-aggregate-candidates-from-instrs
-            (box-get rest)
-            capacity
-            candidates)])]))
+          (opt-aggregate-candidates-from-instrs (box-get rest) candidates)])]))
 
 (define (opt-aggregate-instr-list-append
   [left : CompilerIrInstrList]
@@ -2313,11 +2396,10 @@
     [(IrFunction _ _ _ _ blocks)
       (let
         [instrs : CompilerIrInstrList (opt-aggregate-flatten-blocks blocks)]
-        [count : i64 (compiler-ir-instr-list-count instrs)]
         (opt-aggregate-candidates-from-instrs
           instrs
-          count
-          (opt-aggregate-candidate-list-with-capacity count)))]))
+          (opt-aggregate-candidate-list-with-capacity
+            opt-aggregate-list-initial-capacity)))]))
 
 (define (opt-aggregate-candidate-list-append
   [left : OptAggregateAllocCandidateList]
@@ -2432,7 +2514,8 @@
       (struct-get candidates slots)]
     [candidate-count : i64 (struct-get candidates len)]
     [promote-slots : OptAggregatePromoteSlotList
-      (opt-aggregate-promote-slot-list-with-capacity candidate-count)]
+      (opt-aggregate-promote-slot-list-with-capacity
+        opt-aggregate-list-initial-capacity)]
     [frame : i64 next-frame]
     [index : i64 0]
     (begin
@@ -22879,9 +22962,10 @@
 
 (define (opt-aggregate-positive-classified?) : bool
   (let
+    [instrs : CompilerIrInstrList (opt-aggregate-positive-instrs)]
+    [instr-count : i64 (compiler-ir-instr-list-count instrs)]
     [candidates : OptAggregateAllocCandidateList
-      (opt-aggregate-allocation-candidates
-        (opt-spans-program (opt-aggregate-positive-instrs)))]
+      (opt-aggregate-allocation-candidates (opt-spans-program instrs))]
     (if (= (opt-aggregate-candidate-list-count candidates) 1)
       (match (array-ref (struct-get candidates slots) 0)
         [(OptAggregateAllocCandidate base ty size ptrs accesses)
@@ -22892,7 +22976,9 @@
             (= (opt-aggregate-pointer-list-count ptrs) 3)
             (= (opt-aggregate-access-list-count accesses) 3)
             (= (opt-aggregate-access-list-store-count accesses) 2)
-            (= (opt-aggregate-access-list-load-count accesses) 1))])
+            (= (opt-aggregate-access-list-load-count accesses) 1)
+            (< (array-length (struct-get ptrs slots)) instr-count)
+            (< (array-length (struct-get accesses slots)) instr-count))])
       false)))
 
 (define (compiler-optimize-aggregate-candidate-self-test) : i64

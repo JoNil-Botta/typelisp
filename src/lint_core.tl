@@ -144,6 +144,15 @@
 (define (lint-rule-unused-variable-suggestion) : String
   "remove the binding or prefix an intentionally unused name with _")
 
+(define (lint-rule-unused-unsafe-id) : String
+  "unused-unsafe")
+
+(define (lint-rule-unused-unsafe-message) : String
+  "unused unsafe block: body does not require unsafe context")
+
+(define (lint-rule-unused-unsafe-suggestion) : String
+  "remove the unsafe wrapper")
+
 ;: Metadata for one lint rule. Rule id is stable public API for suppressions;
 ;: message is the rendered finding text; suggestion is structured helper text
 ;: that drivers or tooling can render separately from the message.
@@ -239,6 +248,12 @@
     (lint-rule-unused-variable-message)
     (lint-rule-unused-variable-suggestion)))
 
+(define (lint-rule-unused-unsafe) : LintRule
+  (LintRule
+    (lint-rule-unused-unsafe-id)
+    (lint-rule-unused-unsafe-message)
+    (lint-rule-unused-unsafe-suggestion)))
+
 (define (lint-rule-cons [rule : LintRule] [rest : LintRuleList]) : LintRuleList
   (LintRuleCons rule (box rest)))
 
@@ -271,7 +286,9 @@
                           (lint-rule-unused-assignment)
                           (lint-rule-cons
                             (lint-rule-unused-variable)
-                            LintRuleNil))))))))))))))
+                            (lint-rule-cons
+                              (lint-rule-unused-unsafe)
+                              LintRuleNil)))))))))))))))
 
 (define (lint-rule-find-in [rules : LintRuleList] [rule-id : String]) : LintMaybeRule
   (match rules
@@ -565,6 +582,13 @@
   (LintFinding
     (string-append "unused variable: " (string-append name " is never used"))
     (lint-rule-unused-variable-id)
+    0
+    span))
+
+(define (lint-unused-unsafe-finding [span : AstSourceSpan]) : LintFinding
+  (LintFinding
+    (lint-rule-message (lint-rule-unused-unsafe-id))
+    (lint-rule-unused-unsafe-id)
     0
     span))
 
@@ -1205,6 +1229,23 @@
         (lint-pattern-list-uses-import? (box-get items) alias module-name))]
     [(AstPatLiteral _) false]))
 
+(define (lint-unused-unsafe-candidate-sentinel?
+  [alias : String]
+  [module-name : String]) : bool
+  (and
+    (string-eq alias "__tl_lint_unused_unsafe_candidate")
+    (string-eq module-name "")))
+
+(define (lint-requires-enclosing-unsafe-sentinel?
+  [alias : String]
+  [module-name : String]) : bool
+  (and
+    (string-eq alias "__tl_lint_requires_enclosing_unsafe")
+    (string-eq module-name "")))
+
+(define (lint-expr-list-requires-enclosing-unsafe? [exprs : AstExprList]) : bool
+  (lint-expr-list-uses-import? exprs "__tl_lint_requires_enclosing_unsafe" ""))
+
 (define (lint-expr-list-uses-import?
   [exprs : AstExprList]
   [alias : String]
@@ -1343,7 +1384,13 @@
         (lint-expr-uses-import? (ast-node-get body) alias module-name))]
     [(AstExprBegin exprs) (lint-expr-list-uses-import? exprs alias module-name)]
     [(AstExprUnsafe exprs)
-      (lint-expr-list-uses-import? exprs alias module-name)]
+      (cond
+        [(lint-requires-enclosing-unsafe-sentinel? alias module-name) false]
+        [(lint-unused-unsafe-candidate-sentinel? alias module-name)
+          (if (lint-expr-list-requires-enclosing-unsafe? exprs)
+            (lint-expr-list-uses-import? exprs alias module-name)
+            true)]
+        [else (lint-expr-list-uses-import? exprs alias module-name)])]
     [(AstExprSet target value)
       (if (lint-name-id-uses-import? target alias module-name)
         true
@@ -1434,35 +1481,55 @@
     [(AstExprPtrNullCheck inner)
       (lint-expr-uses-import? (ast-node-get inner) alias module-name)]
     [(AstExprPtrAddrOf place)
-      (lint-expr-uses-import? (ast-node-get place) alias module-name)]
+      (if (lint-requires-enclosing-unsafe-sentinel? alias module-name)
+        true
+        (lint-expr-uses-import? (ast-node-get place) alias module-name))]
     [(AstExprPtrRead ptr)
-      (lint-expr-uses-import? (ast-node-get ptr) alias module-name)]
+      (if (lint-requires-enclosing-unsafe-sentinel? alias module-name)
+        true
+        (lint-expr-uses-import? (ast-node-get ptr) alias module-name))]
     [(AstExprPtrWrite ptr value)
-      (if (lint-expr-uses-import? (ast-node-get ptr) alias module-name)
+      (if (lint-requires-enclosing-unsafe-sentinel? alias module-name)
         true
-        (lint-expr-uses-import? (ast-node-get value) alias module-name))]
+        (if (lint-expr-uses-import? (ast-node-get ptr) alias module-name)
+          true
+          (lint-expr-uses-import? (ast-node-get value) alias module-name)))]
     [(AstExprPtrOffset ptr offset)
-      (if (lint-expr-uses-import? (ast-node-get ptr) alias module-name)
+      (if (lint-requires-enclosing-unsafe-sentinel? alias module-name)
         true
-        (lint-expr-uses-import? (ast-node-get offset) alias module-name))]
+        (if (lint-expr-uses-import? (ast-node-get ptr) alias module-name)
+          true
+          (lint-expr-uses-import? (ast-node-get offset) alias module-name)))]
     [(AstExprPtrCast ptr ty)
-      (if (lint-expr-uses-import? (ast-node-get ptr) alias module-name)
+      (if (lint-requires-enclosing-unsafe-sentinel? alias module-name)
         true
-        (lint-type-uses-import? ty alias module-name))]
+        (if (lint-expr-uses-import? (ast-node-get ptr) alias module-name)
+          true
+          (lint-type-uses-import? ty alias module-name)))]
     [(AstExprPtrToInt ptr)
-      (lint-expr-uses-import? (ast-node-get ptr) alias module-name)]
+      (if (lint-requires-enclosing-unsafe-sentinel? alias module-name)
+        true
+        (lint-expr-uses-import? (ast-node-get ptr) alias module-name))]
     [(AstExprIntToPtr value ty)
-      (if (lint-expr-uses-import? (ast-node-get value) alias module-name)
+      (if (lint-requires-enclosing-unsafe-sentinel? alias module-name)
         true
-        (lint-type-uses-import? ty alias module-name))]
+        (if (lint-expr-uses-import? (ast-node-get value) alias module-name)
+          true
+          (lint-type-uses-import? ty alias module-name)))]
     [(AstExprStringData inner)
-      (lint-expr-uses-import? (ast-node-get inner) alias module-name)]
-    [(AstExprStringFromBytes ptr len)
-      (if (lint-expr-uses-import? (ast-node-get ptr) alias module-name)
+      (if (lint-requires-enclosing-unsafe-sentinel? alias module-name)
         true
-        (lint-expr-uses-import? (ast-node-get len) alias module-name))]
+        (lint-expr-uses-import? (ast-node-get inner) alias module-name))]
+    [(AstExprStringFromBytes ptr len)
+      (if (lint-requires-enclosing-unsafe-sentinel? alias module-name)
+        true
+        (if (lint-expr-uses-import? (ast-node-get ptr) alias module-name)
+          true
+          (lint-expr-uses-import? (ast-node-get len) alias module-name)))]
     [(AstExprArrayData inner)
-      (lint-expr-uses-import? (ast-node-get inner) alias module-name)]
+      (if (lint-requires-enclosing-unsafe-sentinel? alias module-name)
+        true
+        (lint-expr-uses-import? (ast-node-get inner) alias module-name))]
     [(AstExprBinaryData _) false]
     [(AstExprProgramArgc) false]
     [(AstExprProgramArgv) false]
@@ -1485,7 +1552,10 @@
         (lint-expr-uses-import? (ast-node-get subleaf) alias module-name))]
     [(AstExprXgetbv index)
       (lint-expr-uses-import? (ast-node-get index) alias module-name)]
-    [(AstExprSyscall args) (lint-expr-list-uses-import? args alias module-name)]))
+    [(AstExprSyscall args)
+      (if (lint-requires-enclosing-unsafe-sentinel? alias module-name)
+        true
+        (lint-expr-list-uses-import? args alias module-name))]))
 
 (define (lint-extern-abi-uses-import?
   [abi : AstExternAbi]
@@ -1725,6 +1795,14 @@
         (if (lint-decl-uses-import? decl alias module-name)
           true
           (lint-decl-list-uses-import? rest alias module-name)))]))
+
+(define (lint-program-has-unused-unsafe-candidate? [program : AstProgram]) : bool
+  (match program
+    [(AstProgram decls-box)
+      (lint-decl-list-uses-import?
+        (box-get decls-box)
+        "__tl_lint_unused_unsafe_candidate"
+        "")]))
 
 (define (lint-underscore-prefixed? [name : String]) : bool
   (let
@@ -5452,6 +5530,16 @@
         "unused variable: parameter or local binding is never used")
         unit
         (panic "lint: unused-variable message should be registered"))
+      (if (string-eq
+        (lint-rule-suggestion (lint-rule-unused-unsafe-id))
+        "remove the unsafe wrapper")
+        unit
+        (panic "lint: unused-unsafe suggestion should be registered"))
+      (if (string-eq
+        (lint-rule-message (lint-rule-unused-unsafe-id))
+        "unused unsafe block: body does not require unsafe context")
+        unit
+        (panic "lint: unused-unsafe message should be registered"))
       (if (string-eq (lint-rule-suggestion "unknown-rule") "")
         unit
         (panic "lint: unknown rule should have no suggestion"))

@@ -143,6 +143,36 @@
 (define (prefix [buf : i64]) : i64
   0)")
 
+(define (lint-driver-smoke-unused-unsafe-source) : String
+  "(define (main) : i64
+  (unsafe (+ 1 2)))")
+
+(define (lint-driver-smoke-unused-unsafe-call-source) : String
+  "(define (safe-helper) : i64
+  7)
+(define (main) : i64
+  (unsafe (cast (safe-helper) : i64)))")
+
+(define (lint-driver-smoke-required-unsafe-source) : String
+  "(define (main [p : (Ptr i64)]) : i64
+  (unsafe (ptr-read p)))")
+
+(define (lint-driver-smoke-required-unsafe-call-source) : String
+  "(unsafe (define (danger [value : i64]) : i64
+  value))
+(define (main) : i64
+  (unsafe (danger 9)))")
+
+(define (lint-driver-smoke-nested-unsafe-source) : String
+  "(define (main [p : (Ptr i64)]) : i64
+  (unsafe
+    (unsafe (ptr-read p))))")
+
+(define (lint-driver-smoke-suppressed-unused-unsafe-source) : String
+  "(define (main) : i64
+  ;; lint-allow: unused-unsafe
+  (unsafe (+ 1 2)))")
+
 (define (lint-driver-smoke-source-finding-count-with-deprecated-string-concat
   [source : String]) : i64
   (lint-findings-count
@@ -388,6 +418,74 @@
         unit)
       status)))
 
+(define (lint-driver-smoke-unused-unsafe-self-test) : i64
+  (let
+    [reported : LintFindings
+      (selfhost-lint-source-with-roots-and-options
+        "lint_driver_unused_unsafe.tl"
+        (lint-driver-smoke-unused-unsafe-source)
+        (string-vec-new)
+        false)]
+    [required : LintFindings
+      (selfhost-lint-source-with-roots-and-options
+        "lint_driver_required_unsafe.tl"
+        (lint-driver-smoke-required-unsafe-source)
+        (string-vec-new)
+        false)]
+    [safe-call : LintFindings
+      (selfhost-lint-source-with-roots-and-options
+        "lint_driver_unused_unsafe_call.tl"
+        (lint-driver-smoke-unused-unsafe-call-source)
+        (string-vec-new)
+        false)]
+    [required-call : LintFindings
+      (selfhost-lint-source-with-roots-and-options
+        "lint_driver_required_unsafe_call.tl"
+        (lint-driver-smoke-required-unsafe-call-source)
+        (string-vec-new)
+        false)]
+    [nested : LintFindings
+      (selfhost-lint-source-with-roots-and-options
+        "lint_driver_nested_unsafe.tl"
+        (lint-driver-smoke-nested-unsafe-source)
+        (string-vec-new)
+        false)]
+    [suppressed : LintFindings
+      (selfhost-lint-source-with-roots-and-options
+        "lint_driver_suppressed_unused_unsafe.tl"
+        (lint-driver-smoke-suppressed-unused-unsafe-source)
+        (string-vec-new)
+        false)]
+    (cond
+      [(not (= (lint-findings-count reported) 1)) 60]
+      [(not
+          (lint-driver-smoke-finding-rule-line-ok?
+            reported
+            0
+            (lint-rule-unused-unsafe-id)
+            2))
+        61]
+      [(not (= (lint-findings-count required) 0)) 62]
+      [(not (= (lint-findings-count safe-call) 1)) 63]
+      [(not
+          (lint-driver-smoke-finding-rule-line-ok?
+            safe-call
+            0
+            (lint-rule-unused-unsafe-id)
+            4))
+        64]
+      [(not (= (lint-findings-count required-call) 0)) 65]
+      [(not (= (lint-findings-count nested) 1)) 66]
+      [(not
+          (lint-driver-smoke-finding-rule-line-ok?
+            nested
+            0
+            (lint-rule-unused-unsafe-id)
+            2))
+        67]
+      [(not (= (lint-findings-count suppressed) 0)) 68]
+      [else 42])))
+
 (define (main) : i64
   (begin
     ;; The imported driver core defines printing helpers; keep the print-string
@@ -419,7 +517,12 @@
                               [unreachable-result : i64
                                 (lint-driver-smoke-unreachable-self-test)]
                               (if (= unreachable-result 42)
-                                (lint-driver-smoke-unused-variable-self-test)
+                                (let
+                                  [unused-variable-result : i64
+                                    (lint-driver-smoke-unused-variable-self-test)]
+                                  (if (= unused-variable-result 42)
+                                    (lint-driver-smoke-unused-unsafe-self-test)
+                                    unused-variable-result))
                                 unreachable-result))
                             no-effect-result))
                         concat-result))

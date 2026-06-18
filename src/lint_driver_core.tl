@@ -7,6 +7,7 @@
 ;; is opt-in until the remaining in-tree str-cat migrations land.
 (import "../stdlib/io.tl")
 (import "../stdlib/list.tl")
+(import "compiler_check_core.tl")
 (import "compiler_load.tl")
 (import "lint_core.tl")
 (import "package_source_core.tl")
@@ -351,16 +352,91 @@
   [program : AstProgram]) : LintFindings
   (selfhost-lint-program-findings-with-options source program false))
 
+(define (selfhost-lint-findings-append-from
+  [src : LintFindings]
+  [index : i64]
+  [out : LintFindings]) : LintFindings
+  (if (>= index (lint-findings-count src))
+    out
+    (selfhost-lint-findings-append-from
+      src
+      (+ index 1)
+      (lint-findings-add (lint-findings-ref src index) out))))
+
+(define (selfhost-lint-findings-append
+  [left : LintFindings]
+  [right : LintFindings]) : LintFindings
+  (selfhost-lint-findings-append-from right 0 left))
+
+(define (selfhost-lint-unused-unsafe-findings-from
+  [path : String]
+  [index : i64]
+  [out : LintFindings]) : LintFindings
+  (if (>= index (tc-unused-unsafe-block-count))
+    out
+    (let
+      [next : LintFindings
+        (if (and
+          (not (tc-unused-unsafe-block-used? index))
+          (string-eq (tc-unused-unsafe-block-path index) path))
+          (lint-findings-add
+            (lint-unused-unsafe-finding (tc-unused-unsafe-block-span index))
+            out)
+          out)]
+      (selfhost-lint-unused-unsafe-findings-from path (+ index 1) next))))
+
+(define (selfhost-lint-unused-unsafe-findings
+  [path : String]
+  [source : String]
+  [program : AstProgram]
+  [stdlib-roots : StringVec]) : LintFindings
+  (if (lint-program-has-unused-unsafe-candidate? program)
+    (begin
+      (tc-unused-unsafe-tracking-reset! path)
+      (match (compiler-check-source-with-roots path source stdlib-roots)
+        [(OkCompilerCheck _)
+          (let
+            [findings : LintFindings
+              (selfhost-lint-filter-derived-origins
+                source
+                (selfhost-lint-unused-unsafe-findings-from
+                  path
+                  0
+                  (lint-findings-empty)))]
+            (begin
+              (tc-unused-unsafe-tracking-disable!)
+              findings))]
+        [(ErrCompilerCheck _)
+          (begin
+            (tc-unused-unsafe-tracking-disable!)
+            (lint-findings-empty))]))
+    (lint-findings-empty)))
+
+(define (selfhost-lint-program-and-typed-findings
+  [path : String]
+  [source : String]
+  [program : AstProgram]
+  [stdlib-roots : StringVec]
+  [deprecated-string-concat : bool]) : LintFindings
+  (selfhost-lint-findings-append
+    (selfhost-lint-program-findings-with-options
+      source
+      program
+      deprecated-string-concat)
+    (selfhost-lint-unused-unsafe-findings path source program stdlib-roots)))
+
 (define (selfhost-lint-source-with-roots-and-options
   [path : String]
   [source : String]
-  [_stdlib-roots : StringVec]
+  [stdlib-roots : StringVec]
   [deprecated-string-concat : bool]) : LintFindings
   (match (parse-ast-source-diagnostic path source)
     [(OkAstProgramDiagnostic program)
-      (selfhost-lint-program-findings-with-options
+      (selfhost-lint-program-and-typed-findings
+        path
         source
         program
+        stdlib-roots
         deprecated-string-concat)]
     [(ErrAstProgramDiagnostic _) (lint-findings-empty)]))
 
@@ -1473,7 +1549,7 @@
 
 (define (selfhost-lint-file
   [input-path : String]
-  [_stdlib-roots : StringVec]
+  [stdlib-roots : StringVec]
   [enforcing : bool]
   [deprecated-string-concat : bool]) : i64
   (let
@@ -1482,9 +1558,11 @@
       [(OkAstProgramDiagnostic program)
         (let
           [findings : LintFindings
-            (selfhost-lint-program-findings-with-options
+            (selfhost-lint-program-and-typed-findings
+              input-path
               source
               program
+              stdlib-roots
               deprecated-string-concat)]
           (begin
             (selfhost-lint-print-findings input-path findings)
@@ -1504,7 +1582,7 @@
 
 (define (selfhost-lint-file-with-package-dead
   [input-path : String]
-  [_stdlib-roots : StringVec]
+  [stdlib-roots : StringVec]
   [enforcing : bool]
   [deprecated-string-concat : bool]
   [dead-decls : SelfhostLintDeadDecls]) : i64
@@ -1514,9 +1592,11 @@
       [(OkAstProgramDiagnostic program)
         (let
           [findings : LintFindings
-            (selfhost-lint-program-findings-with-options
+            (selfhost-lint-program-and-typed-findings
+              input-path
               source
               program
+              stdlib-roots
               deprecated-string-concat)]
           [ordinary-count : i64
             (selfhost-lint-print-findings input-path findings)]

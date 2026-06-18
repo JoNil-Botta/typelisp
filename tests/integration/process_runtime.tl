@@ -2,6 +2,7 @@
 (import "stdlib/env.tl")
 (import "stdlib/process_borrowed.tl")
 (import "stdlib/test.tl")
+(import "stdlib/vector.tl")
 
 (define (assert-owned-string-eq
   [actual : String]
@@ -123,6 +124,13 @@
       "TYPELISP_PROCESS_RUNTIME_ENV_VEC"
       "process-env-vec-value")))
 
+(define (windows-argv-vec-command) : ProcessCommand
+  (process-command-from-argv-vec
+    "C:\\Windows\\System32\\cmd.exe"
+    (string-vec-push
+      (string-vec-push (string-vec-with-capacity 2) "/C")
+      "echo argv-vec=ok")))
+
 (define (windows-missing-command) : ProcessCommand
   (process-command
     "C:\\Windows\\System32\\definitely-missing-typelisp.exe"
@@ -148,6 +156,15 @@
       (process-env-vec-new)
       "TYPELISP_PROCESS_RUNTIME_ENV_VEC"
       "process-env-vec-value")))
+
+(define (linux-argv-vec-command) : ProcessCommand
+  (process-command-from-argv-vec
+    "/usr/bin/printf"
+    (string-vec-push
+      (string-vec-push
+        (string-vec-push (string-vec-with-capacity 3) "%s:%s")
+        "argv")
+      "vec")))
 
 (define (linux-async-process-command [text : String]) : ProcessCommand
   (process-command "/usr/bin/printf" (process-args-single text)))
@@ -181,6 +198,11 @@
         0
         "process-env-vec-value\r\n"
         "")
+      (assert-process-output-result
+        (process-output (windows-argv-vec-command))
+        0
+        "argv-vec=ok\r\n"
+        "")
       (assert-process-spawn-failed (process-output (windows-missing-command)))
       (assert-process-child-unsupported
         (process-start (windows-process-command)))
@@ -201,6 +223,11 @@
         (process-output (linux-env-vec-command))
         0
         "process-env-vec-value\n"
+        "")
+      (assert-process-output-result
+        (process-output (linux-argv-vec-command))
+        0
+        "argv:vec"
         "")
       (assert-process-output-result
         (linux-borrowed-process-output "/usr/bin/printf" "borrowed-stdout=ok")

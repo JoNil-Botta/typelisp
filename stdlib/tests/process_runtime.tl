@@ -1,6 +1,7 @@
 (import "stdlib/env.tl")
 (import "stdlib/process_borrowed.tl")
 (import "stdlib/test.tl")
+(import "stdlib/vector.tl")
 
 (define (assert-owned-string-eq
   [actual : String]
@@ -166,6 +167,15 @@
       "TYPELISP_PROCESS_RUNTIME_ENV_VEC"
       "process-env-vec-value")))
 
+(define (process-runtime-argv-vec-command) : ProcessCommand
+  (process-command-from-argv-vec
+    "/usr/bin/printf"
+    (string-vec-push
+      (string-vec-push
+        (string-vec-push (string-vec-with-capacity 3) "%s:%s")
+        "argv")
+      "vec")))
+
 (define (process-runtime-stdin-command) : ProcessCommand
   (process-command-with-stdin
     (process-command "/usr/bin/cat" (process-args-empty))
@@ -222,6 +232,13 @@
       "TYPELISP_PROCESS_RUNTIME_ENV_VEC"
       "process-env-vec-value")))
 
+(define (process-runtime-windows-argv-vec-command) : ProcessCommand
+  (process-command-from-argv-vec
+    "C:\\Windows\\System32\\cmd.exe"
+    (string-vec-push
+      (string-vec-push (string-vec-with-capacity 2) "/C")
+      "echo argv-vec=ok")))
+
 (define (process-runtime-windows-missing-command) : ProcessCommand
   (process-command
     "C:\\Windows\\System32\\definitely-missing-typelisp.exe"
@@ -248,6 +265,12 @@
         "process-env-vec-value\r\n"
         ""
         "windows process env vec override")
+      (assert-process-ok
+        (process-output (process-runtime-windows-argv-vec-command))
+        0
+        "argv-vec=ok\r\n"
+        ""
+        "windows process argv vec")
       (assert-process-spawn-failed
         (process-output (process-runtime-windows-missing-command))
         "windows process missing executable")
@@ -289,6 +312,12 @@
         "process-env-vec-value\n"
         ""
         "process env vec override")
+      (assert-process-ok
+        (process-output (process-runtime-argv-vec-command))
+        0
+        "argv:vec"
+        ""
+        "process argv vec")
       (assert-process-ok
         (process-output (process-runtime-stdin-command))
         0

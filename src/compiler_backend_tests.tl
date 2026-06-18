@@ -3954,13 +3954,15 @@
       (and
         (backend-and8
           (compiler-backend-string-contains? asm "    syscall\n")
-          (compiler-backend-string-contains? asm "    popq %rax\n")
-          (compiler-backend-string-contains? asm "    popq %rdi\n")
-          (compiler-backend-string-contains? asm "    popq %rsi\n")
-          (compiler-backend-string-contains? asm "    popq %rdx\n")
+          (compiler-backend-string-contains? asm ", %rax\n")
+          (compiler-backend-string-contains? asm ", %rdi\n")
+          (compiler-backend-string-contains? asm ", %rsi\n")
+          (compiler-backend-string-contains? asm ", %rdx\n")
           (compiler-backend-string-contains? asm "    movq $231,")
           (compiler-backend-string-contains? asm "    movq $42,")
           true)
+        (not (compiler-backend-string-contains? asm "    pushq %rax\n"))
+        (not (compiler-backend-string-contains? asm "    popq "))
         (not (compiler-backend-string-contains? asm ".extern syscall\n")))]
     [(ErrCompilerBackend _) false]))
 
@@ -5904,15 +5906,18 @@
 (define (compiler-backend-full-syscall-registers-ok?) : bool
   (let
     [instr : CompilerIrInstr (compiler-backend-full-syscall-instr)]
-    (backend-and8
-      (compiler-backend-instr-contains? instr "    popq %rax\n")
-      (compiler-backend-instr-contains? instr "    popq %rdi\n")
-      (compiler-backend-instr-contains? instr "    popq %rsi\n")
-      (compiler-backend-instr-contains? instr "    popq %rdx\n")
-      (compiler-backend-instr-contains? instr "    popq %r10\n")
-      (compiler-backend-instr-contains? instr "    popq %r8\n")
-      (compiler-backend-instr-contains? instr "    popq %r9\n")
-      (compiler-backend-instr-contains? instr "    syscall\n"))))
+    (and
+      (backend-and8
+        (compiler-backend-instr-contains? instr "    movl $231, %eax\n")
+        (compiler-backend-instr-contains? instr "    movl $1, %edi\n")
+        (compiler-backend-instr-contains? instr "    movl $2, %esi\n")
+        (compiler-backend-instr-contains? instr "    movl $3, %edx\n")
+        (compiler-backend-instr-contains? instr "    movl $4, %r10d\n")
+        (compiler-backend-instr-contains? instr "    movl $5, %r8d\n")
+        (compiler-backend-instr-contains? instr "    movl $6, %r9d\n")
+        (compiler-backend-instr-contains? instr "    syscall\n"))
+      (not (compiler-backend-instr-contains? instr "    pushq %rax\n"))
+      (not (compiler-backend-instr-contains? instr "    popq ")))))
 
 (define (compiler-backend-low-level-instr-ok?) : bool
   (and
@@ -5942,21 +5947,29 @@
       ;; A one-operand syscall loads the number into %rax and issues `syscall`.
       (compiler-backend-instr-contains?
         (IrInstrSyscall 0 (IrCallArgsOne (IrValueI64 231)))
-        "    syscall\n")
+        "    movl $231, %eax\n")
       (compiler-backend-instr-contains?
         (IrInstrSyscall 0 (IrCallArgsOne (IrValueI64 231)))
-        "    popq %rax\n")
+        "    syscall\n")
+      (not
+        (compiler-backend-instr-contains?
+          (IrInstrSyscall 0 (IrCallArgsOne (IrValueI64 231)))
+          "    pushq %rax\n"))
+      (not
+        (compiler-backend-instr-contains?
+          (IrInstrSyscall 0 (IrCallArgsOne (IrValueI64 231)))
+          "    popq "))
       ;; A two-operand syscall additionally loads argument 0 into %rdi.
       (compiler-backend-instr-contains?
         (IrInstrSyscall 0 (IrCallArgsTwo (IrValueI64 231) (IrValueI64 42)))
-        "    popq %rdi\n")
+        "    movl $42, %edi\n")
       (compiler-backend-instr-contains?
         (IrInstrSyscall 0 (IrCallArgsTwo (IrValueI64 231) (IrValueI64 42)))
-        "    popq %rax\n")
-      (compiler-backend-full-syscall-registers-ok?)
-      true
-      true
-      true)))
+        "    movl $231, %eax\n")
+      (compiler-backend-instr-contains?
+        (IrInstrSyscall 0 (IrCallArgsTwo (IrValueI64 231) (IrValueI64 0)))
+        "    xorl %edi, %edi\n")
+      (compiler-backend-full-syscall-registers-ok?))))
 
 (define (compiler-backend-numeric-cast-shape-ok?) : bool
   (backend-and8

@@ -1899,6 +1899,131 @@
     manifest-dir
     deps))
 
+(define (doc-test-path-under-root? [path : String] [root : String]) : bool
+  (let
+    [normalized-path : String (compiler-load-normalize-path path)]
+    [normalized-root : String (compiler-load-normalize-path root)]
+    (and
+      (> (string-length normalized-root) 0)
+      (if (string-eq normalized-root ".")
+        (not (compiler-load-path-escapes? normalized-path))
+        (compiler-load-path-under-root? normalized-path normalized-root)))))
+
+(define (doc-test-dep-list-path?
+  [path : String]
+  [manifest-dir : String]
+  [deps : CompilerPkgDepList]) : bool
+  (match deps
+    [(CompilerPkgDepNil) false]
+    [(CompilerPkgDepCons dep rest)
+      (let
+        [rest : CompilerPkgDepList (box-get rest)]
+        [dep-path : String (struct-get dep path)]
+        [dep-root : String
+          (compiler-load-normalize-path
+            (if (compiler-load-absolute-path? dep-path)
+              dep-path
+              (compiler-load-join-root-path manifest-dir dep-path)))]
+        (if (and
+          (not (compiler-load-github-dependency-path? dep-path))
+          (doc-test-path-under-root? path dep-root))
+          true
+          (doc-test-dep-list-path? path manifest-dir rest)))]))
+
+(define (doc-test-typecheck-package-path-list-with-roots-from
+  [paths : AstDeclPathList]
+  [stdlib-roots : StringVec]
+  [manifest-dir : String]
+  [deps : CompilerPkgDeps]
+  [last-path : String]) : DocTestRunReport
+  (match paths
+    [(AstDeclPathNil) (DocTestRunReport 0 (doc-test-run-failure-list-empty))]
+    [(AstDeclPathCons path rest)
+      (let
+        [rest : AstDeclPathList (box-get rest)]
+        [normalized : String (compiler-load-normalize-path path)]
+        [rooted : String
+          (if (or
+            (compiler-load-absolute-path? path)
+            (doc-test-path-under-root? normalized manifest-dir))
+            normalized
+            (compiler-load-normalize-path
+              (compiler-load-join-root-path manifest-dir normalized)))]
+        [stdlib-path : String
+          (if (compiler-load-stdlib-import? normalized)
+            normalized
+            (compiler-load-stdlib-owned-path-from-roots rooted stdlib-roots))]
+        [manifest-stdlib-root : String
+          (compiler-load-normalize-path
+            (compiler-load-join-root-path manifest-dir "stdlib"))]
+        [manifest-root : String (compiler-load-normalize-path manifest-dir)]
+        [manifest-local : bool
+          (if (string-eq manifest-root ".")
+            (and
+              (not (compiler-load-absolute-path? rooted))
+              (doc-test-path-under-root? rooted manifest-dir))
+            (doc-test-path-under-root? rooted manifest-dir))]
+        [package-local : bool
+          (and
+            (> (string-length path) 0)
+            (not (compiler-load-stdlib-import? stdlib-path))
+            (not (doc-test-path-under-root? rooted manifest-stdlib-root))
+            (not
+              (doc-test-dep-list-path?
+                rooted
+                manifest-dir
+                (compiler-pkg-deps-list deps)))
+            manifest-local)]
+        (if (and package-local (not (string-eq rooted last-path)))
+          (let
+            [report : DocTestRunReport
+              (doc-test-typecheck-package-file-text-with-roots
+                rooted
+                stdlib-roots
+                manifest-dir
+                deps)]
+            (if (doc-test-run-report-ok? report)
+              (doc-test-typecheck-package-path-list-with-roots-from
+                rest
+                stdlib-roots
+                manifest-dir
+                deps
+                rooted)
+              report))
+          (doc-test-typecheck-package-path-list-with-roots-from
+            rest
+            stdlib-roots
+            manifest-dir
+            deps
+            last-path)))]))
+
+(define (doc-test-typecheck-package-file-text-with-roots
+  [path : String]
+  [stdlib-roots : StringVec]
+  [manifest-dir : String]
+  [deps : CompilerPkgDeps]) : DocTestRunReport
+  (match (try-read-file (& path))
+    [(ErrIoString _) (DocTestRunReport 0 (doc-test-run-failure-list-empty))]
+    [(OkIoString text)
+      (doc-test-typecheck-package-source-with-roots
+        path
+        text
+        stdlib-roots
+        manifest-dir
+        deps)]))
+
+(define (doc-test-typecheck-package-paths-with-roots
+  [paths : AstDeclPathList]
+  [stdlib-roots : StringVec]
+  [manifest-dir : String]
+  [deps : CompilerPkgDeps]) : DocTestRunReport
+  (doc-test-typecheck-package-path-list-with-roots-from
+    paths
+    stdlib-roots
+    manifest-dir
+    deps
+    ""))
+
 ;; Exit status for a report: 0 when every example passed (or there were none),
 ;; 1 otherwise. Callers turn this directly into a process exit code.
 (define (doc-test-run-report-status [report : DocTestRunReport]) : i64

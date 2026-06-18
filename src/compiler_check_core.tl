@@ -9,6 +9,10 @@
   (OkCompilerCheck CompilerTypecheckSummary)
   (ErrCompilerCheck CompilerDiagnostic))
 
+(defenum ResultCompilerCheckWithPaths
+  (OkCompilerCheckWithPaths CompilerTypecheckSummary AstDeclPathList)
+  (ErrCompilerCheckWithPaths CompilerDiagnostic))
+
 (cfg
   compile-profile
   (define compiler-check-profile-start-ms : i64
@@ -106,6 +110,28 @@
       (begin
         (cfg compile-profile (compiler-check-profile-finish "load"))
         (ErrCompilerCheck diag))]))
+
+(define (compiler-check-loaded-cache-with-paths
+  [path : String]
+  [loaded : ResultCompilerLoadWithPaths]
+  [stdlib-roots : StringVec]
+  [cache-scope : String]) : ResultCompilerCheckWithPaths
+  (match loaded
+    [(OkCompilerLoadWithPaths decls paths _ _)
+      (begin
+        (cfg compile-profile (compiler-check-profile-finish "load"))
+        (match (compiler-check-program-with-paths-cache
+          path
+          decls
+          paths
+          stdlib-roots
+          cache-scope)
+          [(OkCompilerCheck summary) (OkCompilerCheckWithPaths summary paths)]
+          [(ErrCompilerCheck diag) (ErrCompilerCheckWithPaths diag)]))]
+    [(ErrCompilerLoadWithPaths diag)
+      (begin
+        (cfg compile-profile (compiler-check-profile-finish "load"))
+        (ErrCompilerCheckWithPaths diag))]))
 
 (define (compiler-check-loaded-with-prelude
   [path : String]
@@ -254,6 +280,30 @@
         (begin
           (cfg compile-profile (compiler-check-profile-finish "load"))
           (ErrCompilerCheck diag))])))
+
+(define (compiler-check-package-entry-file-with-roots
+  [path : String]
+  [stdlib-roots : StringVec]
+  [manifest-dir : String]
+  [deps : CompilerPkgDeps]
+  [emit-entry : bool]) : ResultCompilerCheckWithPaths
+  (begin
+    (compiler-check-reset-pools!)
+    (cfg compile-profile (compiler-check-profile-start))
+    (compiler-check-loaded-cache-with-paths
+      path
+      (compiler-load-package-file-with-runtime-cfg
+        path
+        stdlib-roots
+        manifest-dir
+        deps
+        emit-entry
+        (compiler-check-language-cfgs))
+      stdlib-roots
+      (compiler-typecheck-prefix-cache-scope
+        "typecheck-prefix-check"
+        stdlib-roots
+        (compiler-check-language-cfgs)))))
 
 (define (compiler-check-source [path : String] [source : String]) : ResultCompilerCheck
   (begin

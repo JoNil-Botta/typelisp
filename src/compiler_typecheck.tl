@@ -3867,6 +3867,44 @@
     "(define (main) : String
   (with-arena phase (int->string 42)))"))
 
+(define (compiler-typecheck-channel-atomic-string-send-source) : String
+  (compiler-typecheck-with-arena-source
+    "(extern (tl_arena_make_atomic) : i64)
+(define (arena-make-atomic) : i64 (tl_arena_make_atomic))
+(defstruct ChannelString (raw i64))
+(defenum ChannelStringSendResult
+  (ChannelStringSendOk)
+  (ChannelStringSendErr String))
+(define (channel-string-send
+  [channel : ChannelString]
+  [message : String]) : ChannelStringSendResult
+  (ChannelStringSendOk))
+(define (main) : i64
+  (let
+    [owner : i64 (arena-make-atomic)]
+    [channel : ChannelString (ChannelString 0)]
+    [message (in-arena owner (string-append \"atom\" \"ic\"))]
+    [sent : ChannelStringSendResult (channel-string-send channel message)]
+    42))"))
+
+(define (compiler-typecheck-channel-ordinary-string-send-source) : String
+  (compiler-typecheck-with-arena-source
+    "(defstruct ChannelString (raw i64))
+(defenum ChannelStringSendResult
+  (ChannelStringSendOk)
+  (ChannelStringSendErr String))
+(define (channel-string-send
+  [channel : ChannelString]
+  [message : String]) : ChannelStringSendResult
+  (ChannelStringSendOk))
+(define (main) : i64
+  (let
+    [owner : i64 (arena-make)]
+    [channel : ChannelString (ChannelString 0)]
+    [message (in-arena owner (string-append \"ordinary\" \"arena\"))]
+    [sent : ChannelStringSendResult (channel-string-send channel message)]
+    42))"))
+
 (define (compiler-typecheck-owner-model-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-owner-stack-local-source))
@@ -3880,6 +3918,11 @@
     (compiler-typecheck-error-ok?
       (compiler-typecheck-owner-scoped-arena-escape-source)
       "typecheck: region-tagged value cannot escape with-arena 'phase'")
+    (compiler-typecheck-ok?
+      (compiler-typecheck-channel-atomic-string-send-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-channel-ordinary-string-send-source)
+      "typecheck: channel-string-send cannot send value of type String; owned heap storage needs a static/program or spanning atomic owner proof")
     (compiler-typecheck-ok? (compiler-typecheck-with-escape-string-source))))
 
 (define (compiler-typecheck-reference-render-ok?) : bool
@@ -8201,16 +8244,54 @@
 
 (define (compiler-typecheck-moved-set-metrics-ok?) : bool
   (let
+    [origin-a : AstExpr (AstExprVar (intern "origin-a"))]
+    [origin-b : AstExpr (AstExprVar (intern "origin-b"))]
     [empty : TcMovedSet (tc-moved-empty)]
     [one : TcMovedSet (tc-moved-add empty "alpha")]
     [dupe : TcMovedSet (tc-moved-add (tc-moved-clone one) "alpha")]
     [two : TcMovedSet (tc-moved-add (tc-moved-clone dupe) "beta")]
     [removed : TcMovedSet (tc-moved-remove (tc-moved-clone two) "alpha")]
+    [origin-whole : TcMovedSet
+      (tc-moved-add-origin (tc-moved-empty) "origin-root" origin-a)]
+    [origin-whole-id : i64
+      (match (tc-moved-conflict origin-whole "origin-root")
+        [(TcSomeMoveConflict key origin-id)
+          (if (string-eq key "origin-root")
+            origin-id
+            (tc-moved-no-origin-id))]
+        [TcNoMoveConflict (tc-moved-no-origin-id)])]
+    [origin-whole-ok : bool (not (= origin-whole-id (tc-moved-no-origin-id)))]
+    [origin-clone-ok : bool
+      (match (tc-moved-conflict (tc-moved-clone origin-whole) "origin-root")
+        [(TcSomeMoveConflict _ origin-id) (= origin-id origin-whole-id)]
+        [TcNoMoveConflict false])]
     [partial : TcMovedSet
       (tc-moved-add-projection-path
-        (tc-moved-add-projection-path (tc-moved-empty) "items" "items.#array.0")
+        (tc-moved-add-projection-path
+          (tc-moved-empty)
+          "items"
+          "items.#array.0"
+          origin-a)
         "items"
-        "items.#array.1")]
+        "items.#array.1"
+        origin-b)]
+    [partial-exact-conflict : bool
+      (match (tc-moved-path-conflict partial "items.#array.0")
+        [(TcSomeMoveConflict key origin-id)
+          (and
+            (string-eq key (tc-moved-path-key "items.#array.0"))
+            (not (= origin-id (tc-moved-no-origin-id))))]
+        [TcNoMoveConflict false])]
+    [partial-parent-conflict : bool
+      (match (tc-moved-path-conflict partial "items")
+        [(TcSomeMoveConflict _ origin-id)
+          (not (= origin-id (tc-moved-no-origin-id)))]
+        [TcNoMoveConflict false])]
+    [partial-root-conflict : bool
+      (match (tc-moved-root-conflict partial "items")
+        [(TcSomeMoveConflict _ origin-id)
+          (not (= origin-id (tc-moved-no-origin-id)))]
+        [TcNoMoveConflict false])]
     [partial-one : TcMovedSet
       (tc-moved-remove-exact-path
         (tc-moved-clone partial)
@@ -8235,17 +8316,32 @@
       (tc-moved-remove-root-state root-path "shadowed")]
     [root-path-clears : bool
       (not (tc-moved-contains? root-path-clear (tc-moved-path-key "shadowed")))]
+    [union-left : TcMovedSet (tc-moved-add-value (tc-moved-empty) "shared" 101)]
+    [union-right : TcMovedSet
+      (tc-moved-add-value (tc-moved-empty) "shared" 202)]
+    [union-origin-left : bool
+      (match (tc-moved-conflict
+        (tc-moved-union union-left union-right)
+        "shared")
+        [(TcSomeMoveConflict _ origin-id) (= origin-id 101)]
+        [TcNoMoveConflict false])]
     (and
       (= (tc-moved-len (tc-moved-empty)) 0)
       (= (tc-moved-len dupe) 1)
       (= (tc-moved-len two) 2)
       (>= (tc-moved-capacity two) 8)
       (not (tc-moved-contains? removed "alpha"))
+      origin-whole-ok
+      origin-clone-ok
+      partial-exact-conflict
+      partial-parent-conflict
+      partial-root-conflict
       partial-keeps-sibling
       partial-keeps-marker
       partial-clears-sibling
       partial-clears-marker
-      root-path-clears)))
+      root-path-clears
+      union-origin-left)))
 
 ;; Returns true when use-after-move is rejected (straight-line and after a
 ;; branch that moves on every arm), while a single move, copyable reuse, ordinary

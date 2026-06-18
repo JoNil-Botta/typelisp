@@ -189,5 +189,6 @@ register_float_aggregate_f32|tests/integration/register_float_aggregate_f32.tl|4
 in_arena|tests/integration/in_arena.tl|42|-|-|-
 resource_with_order|tests/integration/resource_with_order.tl|42|-|-|-
 sync_channel_thread_runtime|tests/integration/sync_channel_thread_runtime.tl|42|-|-|stdlib/sync.tl stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
+sync_channel_pair_thread_runtime|tests/integration/sync_channel_pair_thread_runtime.tl|42|-|-|stdlib/sync.tl stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
 sync_mutex_thread_runtime|tests/integration/sync_mutex_thread_runtime.tl|42|-|-|stdlib/sync.tl stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
 box_take_set|tests/integration/box_take_set.tl|42|-|-|-|requires-stage0-diagnostic:parse: set! target must be a name or struct field place

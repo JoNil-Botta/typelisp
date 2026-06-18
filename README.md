@@ -454,6 +454,13 @@ nested package roots that have their own `typelisp.pkg`, and directories named
 `tests`. Test directories are reserved for `typelisp test` integration
 discovery and repository fixture corpora such as `src/tests/`.
 
+Package `check` and package `build` validate the manifest entry's reachable
+import closure, not every source file discovered under the package root. That
+same closure also scopes package doc-comment example typechecking for these
+commands. Orphan modules, alternate entries, and other out-of-closure files are
+checked by explicit `typelisp check <file>`, `typelisp doc --test <file>`, or
+package `typelisp test` coverage when they are intended to stand alone.
+
 Package builds load local dependency manifests into a normalized DAG keyed by
 manifest path before code generation. Transitive dependencies are built once per
 package build invocation, diamond graphs share the common archive build,

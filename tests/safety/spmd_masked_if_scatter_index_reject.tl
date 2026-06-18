@@ -1,4 +1,4 @@
-;: SPEC SPMD contract: masked-if writes reject gather/scatter-like indexes.
+;: SPEC SPMD contract: masked-if writes reject scatter-like indexes.
 (define (main
   [xs : (Array i64)]
   [ix : (Array i64)]

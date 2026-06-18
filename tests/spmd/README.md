@@ -58,6 +58,10 @@ falling back to scalar code.
 - `../integration/spmd_foreach.tl` - `foreach` add/mul maps over i64, u64,
   i32, u32, i16, u16, i8, u8, f64, and f32 arrays, self-checked against
   scalar loops across empty, sub-lane, exact-lane, and tail lengths. Exit 42.
+- `../integration/spmd_gather_read.tl` - scalar `foreach` gather-read fixture
+  that reads `xs[ix[i]]` into contiguous `out[i]` across empty, sub-lane, tail,
+  and repeated-index lengths. Scalar exits 42; explicit SIMD modes report the
+  staged non-contiguous-map diagnostic.
 - `bool_lanes.tl` - AVX-512-only bool dynamic-array lane fixture covering
   bool array copies and i64 comparison results stored to bool arrays across
   empty, sub-lane, exact-lane, and tail lengths. Scalar exits 42; AVX2 reports
@@ -86,6 +90,9 @@ Coverage map:
   `../integration/spmd_foreach.tl`, the two tail fixtures, and
   `uniform_zip_i64.tl`. The intentionally unsupported byte multiply policy is
   covered by `i8_mul_reject.tl`.
+- Scalar gather-read coverage for dynamic arrays lives in
+  `../integration/spmd_gather_read.tl`; explicit SIMD modes keep a staged
+  diagnostic until vector gather lowering is implemented.
 - AVX-512 bool dynamic-array lane coverage lives in `bool_lanes.tl`; AVX2 keeps
   an explicit staged diagnostic for the same source shape.
 - AVX-512 masked varying `if` direct-index, shifted-contiguous-index, and

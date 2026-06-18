@@ -29,10 +29,11 @@ Language direction:
   same machinery.
 - Treat ISPC-style SPMD as the data-parallel model. The current source surface
   is in [SPEC.md section 5.15](SPEC.md); masked varying `if` is in flight
-  (#2131, #2205, #2207), while the post-masked-if queue is split across lane
-  identity (#2761), gather/scatter (#2762), wider lane types (#2763), public
-  vector/mask values (#2764), cross-lane ops (#2765), atomics/overlapping
-  writes (#2766), deferred control flow (#2767), and varying-call ABI (#2768).
+  (#2131, #2205, #2207), scalar gather-only reads from dynamic arrays are
+  implemented (#2762), and the remaining SPMD queue covers lane identity
+  (#2761), wider lane types (#2763), public vector/mask values (#2764),
+  cross-lane ops (#2765), atomics/overlapping writes (#2766), deferred control
+  flow (#2767), and varying-call ABI (#2768).
 - Use Zig-style comptime as the abstraction mechanism. TypeLisp should not grow
   source-level generics, traits, interfaces, or `impl` syntax; comptime code
   generates concrete types, functions, and implementation bundles instead.

@@ -588,6 +588,25 @@ run_cmd normal-doctest-package-orphan-build "$COMPILER" build --manifest-path "$
 assert_success
 assert_stderr_empty
 
+DOCTEST_BAD_STDLIB="$DOCTEST_NORMAL/bad-stdlib-docs"
+mkdir -p "$DOCTEST_BAD_STDLIB"
+{
+    cat <<'EOF'
+;# ```typelisp
+;# (define (bad) : i64 true)
+;# ```
+EOF
+    cat "$ROOT/stdlib/core_macros.tl"
+} > "$DOCTEST_BAD_STDLIB/core_macros.tl"
+cp "$ROOT/stdlib/runtime.tl" "$DOCTEST_BAD_STDLIB/runtime.tl"
+run_cmd normal-doctest-package-stdlib-doc-check "$COMPILER" check --manifest-path "$DOCTEST_PKG_ORPHAN/typelisp.pkg" --stdlib-root "$DOCTEST_BAD_STDLIB"
+assert_success
+assert_stderr_empty
+assert_contains "$out" "Type checking passed!"
+run_cmd normal-doctest-package-stdlib-doc-build "$COMPILER" build --manifest-path "$DOCTEST_PKG_ORPHAN/typelisp.pkg" --target "$HOST_TARGET" --stdlib-root "$DOCTEST_BAD_STDLIB"
+assert_success
+assert_stderr_empty
+
 DOCTEST_PKG_REACH="$DOCTEST_NORMAL/pkg-reachable"
 mkdir -p "$DOCTEST_PKG_REACH/src"
 cat > "$DOCTEST_PKG_REACH/typelisp.pkg" <<'EOF'

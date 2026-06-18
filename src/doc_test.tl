@@ -1962,10 +1962,6 @@
         (not (compiler-load-path-escapes? normalized-path))
         (compiler-load-path-under-root? normalized-path normalized-root)))))
 
-(define (doc-test-stdlib-path? [path : String] [stdlib-roots : StringVec]) : bool
-  (compiler-load-stdlib-import?
-    (compiler-load-stdlib-owned-path-from-roots path stdlib-roots)))
-
 (define (doc-test-dep-list-path?
   [path : String]
   [manifest-dir : String]
@@ -1983,26 +1979,6 @@
           true
           (doc-test-dep-list-path? path manifest-dir rest)))]))
 
-(define (doc-test-dep-path?
-  [path : String]
-  [manifest-dir : String]
-  [deps : CompilerPkgDeps]) : bool
-  (doc-test-dep-list-path? path manifest-dir (compiler-pkg-deps-list deps)))
-
-(define (doc-test-package-local-path?
-  [path : String]
-  [stdlib-roots : StringVec]
-  [manifest-dir : String]
-  [deps : CompilerPkgDeps]) : bool
-  (and
-    (> (string-length path) 0)
-    (let
-      [rooted : String (doc-test-rooted-path manifest-dir path)]
-      (and
-        (not (doc-test-stdlib-path? rooted stdlib-roots))
-        (not (doc-test-dep-path? rooted manifest-dir deps))
-        (doc-test-path-under-root? rooted manifest-dir)))))
-
 (define (doc-test-path-list-files-from
   [paths : AstDeclPathList]
   [items : StringVec]
@@ -2015,9 +1991,21 @@
       (let
         [rest : AstDeclPathList (box-get rest)]
         [rooted : String (doc-test-rooted-path manifest-dir path)]
+        [stdlib-path : String
+          (compiler-load-stdlib-owned-path-from-roots rooted stdlib-roots)]
+        [package-local : bool
+          (and
+            (> (string-length path) 0)
+            (not (compiler-load-stdlib-import? stdlib-path))
+            (not
+              (doc-test-dep-list-path?
+                rooted
+                manifest-dir
+                (compiler-pkg-deps-list deps)))
+            (doc-test-path-under-root? rooted manifest-dir))]
         (doc-test-path-list-files-from
           rest
-          (if (doc-test-package-local-path? path stdlib-roots manifest-dir deps)
+          (if package-local
             (doc-test-path-list-append-unique items rooted)
             items)
           stdlib-roots
@@ -2035,34 +2023,6 @@
     stdlib-roots
     manifest-dir
     deps))
-
-(define (doc-test-package-path-filter-smoke-ok?) : bool
-  (let
-    [manifest-dir : String "target/doc_filter"]
-    [stdlib-roots : StringVec
-      (string-vec-push (string-vec-new) "target/doc_filter/stdlib")]
-    [deps : CompilerPkgDeps
-      (compiler-pkg-deps-from-list
-        (CompilerPkgDepCons
-          (CompilerPkgDep "dep" "vendor/dep")
-          (box CompilerPkgDepNil)))]
-    [paths : AstDeclPathList
-      (ast-decl-path-cons
-        "target/doc_filter/src/main.tl"
-        (ast-decl-path-cons
-          "stdlib/core_macros.tl"
-          (ast-decl-path-cons
-            "target/doc_filter/stdlib/string.tl"
-            (ast-decl-path-cons
-              "target/doc_filter/vendor/dep/src/lib.tl"
-              (ast-decl-path-cons
-                "target/doc_filter/src/main.tl"
-                (ast-decl-path-cons "../other/src/lib.tl" AstDeclPathNil))))))]
-    [files : StringVec
-      (doc-test-path-list-files paths stdlib-roots manifest-dir deps)]
-    (and
-      (= (string-vec-len files) 1)
-      (string-eq (string-vec-get files 0 "") "target/doc_filter/src/main.tl"))))
 
 (define (doc-test-typecheck-package-file-text-with-roots
   [path : String]
@@ -2956,13 +2916,6 @@ typecheck: return type mismatch"))]
       (return
         (begin
           (panic "doc-test-run: session cache smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
-    (unless
-      (doc-test-package-path-filter-smoke-ok?)
-      (return
-        (begin
-          (panic "doc-test-run: package path filter smoke mismatch")
           ;; lint-allow: unreachable-code
           0)))
     42))

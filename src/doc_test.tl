@@ -2786,4 +2786,12 @@ typecheck: return type mismatch"))]
           (panic "source-tool: windows direct object fallback smoke regressed")
           ;; lint-allow: unreachable-code
           0)))
+    (unless
+      (source-tool-windows-direct-object-relocation-gate-smoke-ok?)
+      (return
+        (begin
+          (panic
+            "source-tool: windows direct object relocation gate smoke regressed")
+          ;; lint-allow: unreachable-code
+          0)))
     (doc-test-run-smoke)))

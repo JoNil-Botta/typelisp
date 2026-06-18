@@ -232,6 +232,60 @@ fi
 assert_empty "$WORKDIR/run.stdout"
 assert_empty "$WORKDIR/run.stderr"
 
+NOASM_BIN="$WORKDIR/tiny-direct-object.exe"
+NOASM_BIN_DISPLAY=$NOASM_BIN
+if command -v cygpath >/dev/null 2>&1; then
+    NOASM_BIN_DISPLAY=$(cygpath -m "$NOASM_BIN")
+fi
+
+echo "[windows-native-link] build --direct direct-object without assembler"
+set +e
+TYPELISP_WINDOWS_DIRECT_OBJECT=1 \
+    TYPELISP_WINDOWS_CLANG=__typelisp_unexpected_assembler_fallback__.exe \
+    "$COMPILER" build \
+    --direct "$SRC" --target windows-x86_64 -o "$NOASM_BIN" \
+    --stdlib-root "$ROOT/stdlib" \
+    > "$WORKDIR/build-direct-object.stdout" 2> "$WORKDIR/build-direct-object.stderr"
+noasm_build_status=$?
+set -e
+if [ "$noasm_build_status" -ne 0 ]; then
+    sed 's/^/  /' "$WORKDIR/build-direct-object.stdout" >&2 || true
+    sed 's/^/  /' "$WORKDIR/build-direct-object.stderr" >&2 || true
+    fail "selfhost build --direct direct-object without assembler failed"
+fi
+assert_contains "$WORKDIR/build-direct-object.stdout" "Built $NOASM_BIN_DISPLAY"
+assert_empty "$WORKDIR/build-direct-object.stderr"
+[ -x "$NOASM_BIN" ] || fail "direct-object build did not write executable $NOASM_BIN"
+
+set +e
+"$NOASM_BIN" > "$WORKDIR/built-direct-object.stdout" 2> "$WORKDIR/built-direct-object.stderr"
+noasm_built_status=$?
+set -e
+if [ "$noasm_built_status" -ne 42 ]; then
+    sed 's/^/  /' "$WORKDIR/built-direct-object.stdout" >&2 || true
+    sed 's/^/  /' "$WORKDIR/built-direct-object.stderr" >&2 || true
+    fail "direct-object executable expected exit 42, got $noasm_built_status"
+fi
+assert_empty "$WORKDIR/built-direct-object.stdout"
+assert_empty "$WORKDIR/built-direct-object.stderr"
+
+echo "[windows-native-link] run --direct direct-object without assembler"
+set +e
+TYPELISP_WINDOWS_DIRECT_OBJECT=1 \
+    TYPELISP_WINDOWS_CLANG=__typelisp_unexpected_assembler_fallback__.exe \
+    "$COMPILER" run \
+    --direct "$SRC" --target windows-x86_64 --stdlib-root "$ROOT/stdlib" \
+    > "$WORKDIR/run-direct-object.stdout" 2> "$WORKDIR/run-direct-object.stderr"
+noasm_run_status=$?
+set -e
+if [ "$noasm_run_status" -ne 42 ]; then
+    sed 's/^/  /' "$WORKDIR/run-direct-object.stdout" >&2 || true
+    sed 's/^/  /' "$WORKDIR/run-direct-object.stderr" >&2 || true
+    fail "selfhost run --direct direct-object without assembler expected exit 42, got $noasm_run_status"
+fi
+assert_empty "$WORKDIR/run-direct-object.stdout"
+assert_empty "$WORKDIR/run-direct-object.stderr"
+
 LINK_LIB_DIR="$WORKDIR/native-lib"
 mkdir -p "$LINK_LIB_DIR"
 cat > "$LINK_LIB_DIR/ffi_add7.s" <<'EOF'

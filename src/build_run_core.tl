@@ -740,34 +740,65 @@
   [kind : CompilerObjectSymbolKind]) : bool
   (and
     (compiler-object-symbol-kind-eq? kind (ObjectSymbolFunction))
-    (or (string-eq name "ExitProcess") (string-eq name "GetCommandLineA"))))
+    (or
+      (string-eq name "ExitProcess")
+      (string-eq name "GetCommandLineA")
+      (string-eq name "GetStdHandle")
+      (string-eq name "WriteFile")
+      (string-eq name "VirtualAlloc")
+      (string-eq name "VirtualFree"))))
 
-(define (source-tool-windows-direct-object-symbols-linkable?
-  [symbols : CompilerObjectSymbolList]) : bool
+(define (source-tool-windows-direct-object-relocation-target-linkable?
+  [symbols : CompilerObjectSymbolList]
+  [target : String]) : bool
   (let
     [count : i64 (compiler-object-symbol-list-count symbols)]
     [index : i64 0]
     [ok : bool true]
+    [done : bool false]
     (begin
-      (while (and ok (< index count))
+      (while (and (not done) (< index count))
         (match (compiler-object-symbol-list-ref symbols index)
           [(ObjectSymbol name binding kind _)
-            (match binding
-              [(ObjectSymbolExtern)
-                (if (source-tool-windows-direct-object-extern-linkable?
-                  name
-                  kind)
-                  (set! index (+ index 1))
-                  (set! ok false))]
-              [_ (set! index (+ index 1))])]))
+            (if (string-eq name target)
+              (begin
+                (match binding
+                  [(ObjectSymbolExtern)
+                    (set!
+                      ok
+                      (source-tool-windows-direct-object-extern-linkable?
+                        name
+                        kind))]
+                  [_ (set! ok true)])
+                (set! done true))
+              (set! index (+ index 1)))]))
+      ok)))
+
+(define (source-tool-windows-direct-object-relocations-linkable?
+  [symbols : CompilerObjectSymbolList]
+  [relocs : CompilerObjectRelocationList]) : bool
+  (let
+    [count : i64 (compiler-object-relocation-list-count relocs)]
+    [index : i64 0]
+    [ok : bool true]
+    (begin
+      (while (and ok (< index count))
+        (match (compiler-object-relocation-list-ref relocs index)
+          [(ObjectRelocation _ _ _ target)
+            (if (source-tool-windows-direct-object-relocation-target-linkable?
+              symbols
+              target)
+              (set! index (+ index 1))
+              (set! ok false))]))
       ok)))
 
 (define (source-tool-windows-direct-object-linkable?
   [image : CompilerObjectImage]) : bool
   (and
     (compiler-object-coff-image-supported? image)
-    (source-tool-windows-direct-object-symbols-linkable?
-      (struct-get image symbols))
+    (source-tool-windows-direct-object-relocations-linkable?
+      (struct-get image symbols)
+      (struct-get image relocations))
     (compiler-object-symbol-list-contains?
       (struct-get image symbols)
       "_tl_start"
@@ -1167,6 +1198,50 @@
     [(OkCompilerBackendObject image)
       (not (source-tool-windows-direct-object-linkable? image))]
     [(ErrCompilerBackendObject _) false]))
+
+(define (source-tool-windows-direct-object-relocation-gate-smoke-ok?) : bool
+  (let
+    [symbols : CompilerObjectSymbolList
+      (compiler-object-symbol-cons
+        (ObjectSymbol
+          "GetStdHandle"
+          (ObjectSymbolExtern)
+          (ObjectSymbolFunction)
+          ObjectNoSection)
+        (compiler-object-symbol-cons
+          (ObjectSymbol
+            "GetCurrentProcessId"
+            (ObjectSymbolExtern)
+            (ObjectSymbolFunction)
+            ObjectNoSection)
+          ObjectSymbolNil))]
+    [allowed-relocs : CompilerObjectRelocationList
+      (compiler-object-relocation-cons
+        (ObjectRelocation
+          (ObjectSectionText)
+          "main"
+          (ObjectRelocCall)
+          "GetStdHandle")
+        ObjectRelocationNil)]
+    [blocked-relocs : CompilerObjectRelocationList
+      (compiler-object-relocation-cons
+        (ObjectRelocation
+          (ObjectSectionText)
+          "main"
+          (ObjectRelocCall)
+          "GetCurrentProcessId")
+        ObjectRelocationNil)]
+    (and
+      (source-tool-windows-direct-object-relocations-linkable?
+        symbols
+        ObjectRelocationNil)
+      (source-tool-windows-direct-object-relocations-linkable?
+        symbols
+        allowed-relocs)
+      (not
+        (source-tool-windows-direct-object-relocations-linkable?
+          symbols
+          blocked-relocs)))))
 
 (define (source-tool-windows-linker-fallback-command
   [obj-path : String]

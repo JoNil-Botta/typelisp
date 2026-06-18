@@ -887,6 +887,7 @@
   (let
     [state : CompilerDriverState
       (compiler-driver-state-session-cache-enable (compiler-driver-state-new))]
+    [_ : unit (compiler-load-session-program-cache-disable!)]
     (match config
       [(CompileCliBatchConfig
           batch-path

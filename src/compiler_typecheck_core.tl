@@ -2685,6 +2685,8 @@
   -1)
 (define tc-unused-unsafe-current-path : String
   "")
+(define tc-unused-unsafe-target-path : String
+  "")
 (define tc-unused-unsafe-block-spans : (Array AstSourceSpan)
   (make-array AstSourceSpan 128))
 (define tc-unused-unsafe-block-paths : (Array String)
@@ -2697,10 +2699,11 @@
 (define (tc-unused-unsafe-no-span) : AstSourceSpan
   (AstSourceSpan 0 0 0 0))
 
-(define (tc-unused-unsafe-tracking-reset!) : unit
+(define (tc-unused-unsafe-tracking-reset! [path : String]) : unit
   (begin
     (set! tc-unused-unsafe-current-block -1)
     (set! tc-unused-unsafe-current-path "")
+    (set! tc-unused-unsafe-target-path path)
     (set! tc-unused-unsafe-block-len 0)
     (set! tc-unused-unsafe-tracking-enabled true)))
 
@@ -2708,7 +2711,8 @@
   (begin
     (set! tc-unused-unsafe-tracking-enabled false)
     (set! tc-unused-unsafe-current-block -1)
-    (set! tc-unused-unsafe-current-path "")))
+    (set! tc-unused-unsafe-current-path "")
+    (set! tc-unused-unsafe-target-path "")))
 
 (define (tc-unused-unsafe-block-count) : i64
   tc-unused-unsafe-block-len)
@@ -2821,12 +2825,16 @@
     [prev : i64 tc-unused-unsafe-current-block]
     (begin
       (if tc-unused-unsafe-tracking-enabled
-        (match span
-          [(TcSomeAstSourceSpan real-span)
-            (set!
-              tc-unused-unsafe-current-block
-              (tc-unused-unsafe-push real-span))]
-          [(TcNoAstSourceSpan) unit])
+        (if (string-eq
+          tc-unused-unsafe-current-path
+          tc-unused-unsafe-target-path)
+          (match span
+            [(TcSomeAstSourceSpan real-span)
+              (set!
+                tc-unused-unsafe-current-block
+                (tc-unused-unsafe-push real-span))]
+            [(TcNoAstSourceSpan) unit])
+          unit)
         unit)
       prev)))
 

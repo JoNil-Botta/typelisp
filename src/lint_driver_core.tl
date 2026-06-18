@@ -392,7 +392,7 @@
   [stdlib-roots : StringVec]) : LintFindings
   (if (lint-program-has-unused-unsafe-candidate? program)
     (begin
-      (tc-unused-unsafe-tracking-reset!)
+      (tc-unused-unsafe-tracking-reset! path)
       (match (compiler-check-source-with-roots path source stdlib-roots)
         [(OkCompilerCheck _)
           (let

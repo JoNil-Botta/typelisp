@@ -416,7 +416,7 @@
     unit))
 
 ;: Inline test assertion for boolean predicates.
-(define (env-test-assert-true [condition : bool] [message : String]) : unit
+(define (env-test-assert-true [condition : bool] [_message : String]) : unit
   (if condition
     unit
     (env-test-fail)))
@@ -436,7 +436,7 @@
   (env-test-assert-true (string-eq actual expected) message))
 
 ;: Assert that an environment lookup is missing.
-(define (env-test-assert-none [value : EnvMaybeString] [message : String]) : unit
+(define (env-test-assert-none [value : EnvMaybeString] [_message : String]) : unit
   (match value
     [(EnvNoString) unit]
     [(EnvSomeString _) (env-test-fail)]))
@@ -454,7 +454,7 @@
 ;: Assert that an environment path-list lookup is missing.
 (define (env-test-assert-path-none
   [value : EnvMaybeStringList]
-  [message : String]) : unit
+  [_message : String]) : unit
   (match value
     [(EnvNoStringList) unit]
     [(EnvSomeStringList _) (env-test-fail)]))
@@ -462,7 +462,7 @@
 ;: Assert that an environment path-vector lookup is missing.
 (define (env-test-assert-path-vec-none
   [value : EnvMaybeStringVec]
-  [message : String]) : unit
+  [_message : String]) : unit
   (match value
     [(EnvNoStringVec) unit]
     [(EnvSomeStringVec _) (env-test-fail)]))
@@ -470,7 +470,7 @@
 ;: Assert that an environment path-list lookup returns an empty list.
 (define (env-test-assert-path-empty
   [value : EnvMaybeStringList]
-  [message : String]) : unit
+  [_message : String]) : unit
   (match value
     [(EnvSomeStringList items)
       (match items

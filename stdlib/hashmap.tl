@@ -390,7 +390,7 @@
       (StringI64Map slots 0 0))))
 
 ;: Construct a missing borrowed-value lookup result tied to `map`.
-(define (string-i64-map-borrowed-value-missing [map : (& map StringI64Map)]) : (StringI64MapBorrowedValueLookup
+(define (string-i64-map-borrowed-value-missing [_map : (& map StringI64Map)]) : (StringI64MapBorrowedValueLookup
     map)
   (StringI64MapBorrowedValueMissing))
 

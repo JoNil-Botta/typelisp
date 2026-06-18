@@ -2065,7 +2065,7 @@
   [all-paths : AstDeclPathList]
   [module : String]
   [name : String]
-  [index : i64]
+  [_index : i64]
   [decl-path : String]) : CompilerMaybeString
   (match (compiler-symbols-lookup-value-in-module symbols module name)
     [(SomeI64 existing)

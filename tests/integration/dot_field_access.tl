@@ -29,7 +29,7 @@
       (set! o.p.y 12)
       (+ o.p.x (+ o.p.y o.z)))))
 
-(define (take-field [r : (& n i64)]) : i64
+(define (take-field [_r : (& n i64)]) : i64
   5)
 
 (define (dot-borrow) : i64

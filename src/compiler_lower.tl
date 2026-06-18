@@ -1875,7 +1875,7 @@
 
 (define (lower-spmd-inline-helper-name
   [ctx : TcContext]
-  [env : SymI64Env]
+  [_env : SymI64Env]
   [type-env : TcTypeEnv]
   [shadowed : LowerStringSet]
   [func : AstExpr]) : ResultTcString
@@ -3454,7 +3454,7 @@
 
 (define (lower-reachable-clone-roots
   [program : AstProgram]
-  [paths : AstDeclPathList]
+  [_paths : AstDeclPathList]
   [names : LowerNameEnv]) : ResultLowerCloneRoots
   (match (build-compiler-symbols program)
     [(OkCompilerSymbols symbols)
@@ -5071,7 +5071,7 @@
 (define (lower-state-emit-at-expr
   [state : LowerState]
   [instr : CompilerIrInstr]
-  [expr : AstExpr]) : LowerState
+  [_expr : AstExpr]) : LowerState
   ;; Per-instruction spans are allocated inside per-function scratch arenas and
   ;; are not escaped by `lower-function-escaping`; function-level spans are
   ;; recorded separately after escape.
@@ -7281,7 +7281,7 @@
   [base : CompilerIrValue]
   [struct-name : String]
   [field : String]
-  [origin : AstExpr]
+  [_origin : AstExpr]
   [result-ty : AstType]) : ResultLowerExpr
   (match (lower-struct-field-info ctx struct-name field)
     [(OkLowerFieldInfo info)
@@ -8978,7 +8978,7 @@
 ;; miscompile an indirect call through it).
 (define (lower-symbol-function-value?
   [ctx : TcContext]
-  [state : LowerState]
+  [_state : LowerState]
   [name : String]) : bool
   (let
     [symbols : CompilerSymbols (tc-context-symbols ctx)]
@@ -17528,7 +17528,7 @@
 
 (define (lower-inline-string-eq-finish
   [state : LowerState]
-  [true-label : String]
+  [_true-label : String]
   [false-label : String]
   [done-label : String]
   [result-var : i64]
@@ -18373,7 +18373,7 @@
   [name : String]
   [args : AstExprList]
   [result-ty : AstType]
-  [origin : AstExpr]) : LowerMaybeDirectStore
+  [_origin : AstExpr]) : LowerMaybeDirectStore
   (match (sym-i64-lookup env name)
     [(SomeI64 _) (LowerNoDirectStore)]
     [(NoneI64)
@@ -22879,7 +22879,7 @@
   [state : LowerState]
   [env : SymI64Env]
   [type-env : TcTypeEnv]
-  [result-ty : AstType]
+  [_result-ty : AstType]
   [index : String]
   [index-ty : AstType]
   [start : AstExpr]
@@ -25993,7 +25993,7 @@
     (lower-emit-mask-not state active-mask lanes)))
 
 (define (lower-avx512-masked-var
-  [ctx : TcContext]
+  [_ctx : TcContext]
   [state : LowerState]
   [env : SymI64Env]
   [type-env : TcTypeEnv]
@@ -26038,7 +26038,7 @@
             "unbound values inside masked vector expressions")]))))
 
 (define (lower-avx512-masked-array-ref
-  [ctx : TcContext]
+  [_ctx : TcContext]
   [state : LowerState]
   [env : SymI64Env]
   [type-env : TcTypeEnv]
@@ -26675,7 +26675,7 @@
   [index-var : i64]
   [active-mask : CompilerIrValue]
   [lanes : i64]
-  [expr : AstExpr]
+  [_expr : AstExpr]
   [op : CompilerIrBinOp]
   [left : AstExpr]
   [right : AstExpr]) : ResultLowerExpr
@@ -31083,7 +31083,7 @@
 
 (define (lower-dispatch-entry-block
   [cache-name : String]
-  [fn-ty : AstType]
+  [_fn-ty : AstType]
   [cached-var : i64]
   [resolve-label : String]) : CompilerIrBlock
   (compiler-ir-block
@@ -31523,7 +31523,7 @@
 
 (define (lower-dispatch-decl
   [ctx : TcContext]
-  [top-env : TcTypeEnv]
+  [_top-env : TcTypeEnv]
   [local-top-env : TcTypeEnv]
   [type-cache : LowerTypeCache]
   [name : String]

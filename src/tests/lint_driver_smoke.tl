@@ -57,7 +57,7 @@
     42))")
 
 (define (lint-driver-smoke-unreachable-source) : String
-  "(define (cleanup [x : i64]) : unit unit)
+  "(define (cleanup [_x : i64]) : unit unit)
 (define (main [arena : i64]) : i64
   (begin
     (begin
@@ -89,6 +89,59 @@
     (return 1)
     ;; lint-allow: unreachable-code
     2))")
+
+(define (lint-driver-smoke-unused-variable-source) : String
+  "(defmacro (emit [quoted-only : Expr] [used-macro : Expr]) : Expr
+  `(quoted-only ,used-macro))
+(define (lambda-case) : i64
+  (let
+    [f (lambda ([x : i64] [unused-lambda : i64]) : i64 x)]
+    (f 1 2)))
+(define (main [unused-param : i64] [used-param : i64]) : i64
+  (let
+    [used-local : i64 used-param]
+    [unused-local : i64 9]
+    used-local))")
+
+(define (lint-driver-smoke-clean-unused-variable-source) : String
+  "(defstruct Pair
+  (x i64)
+  (y i64))
+(defstruct TaggedPair
+  (:lifetimes owner)
+  (x i64))
+(define (id [comptime T : type] [value : T]) : T
+  value)
+(define (dot-clean) : i64
+  (let
+    [p : Pair (Pair 1 2)]
+    p.x))
+(define (tagged [owner : i64]) : (TaggedPair owner)
+  (TaggedPair 1))
+(define (main [_unused-param : i64] [used-param : i64]) : i64
+  (let
+    [_unused-local : i64 0]
+    [used-local : i64 used-param]
+    used-local))")
+
+(define (lint-driver-smoke-shadow-unused-variable-source) : String
+  "(define (main [x : i64]) : i64
+  (let
+    [x : i64 2]
+    x))")
+
+(define (lint-driver-smoke-suppressed-unused-variable-source) : String
+  "(define (main
+  ;; lint-allow: unused-variable
+  [x : i64]
+  [y : i64]) : i64
+  y)")
+
+(define (lint-driver-smoke-prefix-unused-variable-source) : String
+  "(define (prefix-long [buf : i64]) : i64
+  buf)
+(define (prefix [buf : i64]) : i64
+  0)")
 
 (define (lint-driver-smoke-source-finding-count-with-deprecated-string-concat
   [source : String]) : i64
@@ -125,6 +178,20 @@
         [fspan : AstSourceSpan (struct-get finding span)]
         (and
           (> (struct-get fspan start-line) 0)
+          (string-eq (struct-get finding rule-id) rule-id)))]
+    [(LintNoFinding) false]))
+
+(define (lint-driver-smoke-finding-rule-line-ok?
+  [findings : LintFindings]
+  [index : i64]
+  [rule-id : String]
+  [line : i64]) : bool
+  (match (lint-findings-get findings index)
+    [(LintSomeFinding finding)
+      (let
+        [fspan : AstSourceSpan (struct-get finding span)]
+        (and
+          (= (struct-get fspan start-line) line)
           (string-eq (struct-get finding rule-id) rule-id)))]
     [(LintNoFinding) false]))
 
@@ -242,6 +309,85 @@
       [(not (= (lint-findings-count suppressed) 0)) 45]
       [else 42])))
 
+(define (lint-driver-smoke-unused-variable-self-test) : i64
+  (let
+    [reported : LintFindings
+      (selfhost-lint-source-with-roots-and-options
+        "lint_driver_unused_variable.tl"
+        (lint-driver-smoke-unused-variable-source)
+        (string-vec-new)
+        false)]
+    [clean : LintFindings
+      (selfhost-lint-source-with-roots-and-options
+        "lint_driver_unused_variable_clean.tl"
+        (lint-driver-smoke-clean-unused-variable-source)
+        (string-vec-new)
+        false)]
+    [shadow : LintFindings
+      (selfhost-lint-source-with-roots-and-options
+        "lint_driver_unused_variable_shadow.tl"
+        (lint-driver-smoke-shadow-unused-variable-source)
+        (string-vec-new)
+        false)]
+    [suppressed : LintFindings
+      (selfhost-lint-source-with-roots-and-options
+        "lint_driver_unused_variable_suppressed.tl"
+        (lint-driver-smoke-suppressed-unused-variable-source)
+        (string-vec-new)
+        false)]
+    [prefix : LintFindings
+      (selfhost-lint-source-with-roots-and-options
+        "lint_driver_unused_variable_prefix.tl"
+        (lint-driver-smoke-prefix-unused-variable-source)
+        (string-vec-new)
+        false)]
+    [status : i64 42]
+    (begin
+      (if (not (= (lint-findings-count reported) 4))
+        (set! status 50)
+        unit)
+      (if (and
+        (= status 42)
+        (not
+          (lint-driver-smoke-finding-rule-ok?
+            reported
+            0
+            (lint-rule-unused-variable-id))))
+        (set! status 51)
+        unit)
+      (if (and (= status 42) (not (= (lint-findings-count clean) 0)))
+        (set! status 52)
+        unit)
+      (if (and (= status 42) (not (= (lint-findings-count shadow) 1)))
+        (set! status 53)
+        unit)
+      (if (and
+        (= status 42)
+        (not
+          (lint-driver-smoke-finding-rule-ok?
+            shadow
+            0
+            (lint-rule-unused-variable-id))))
+        (set! status 54)
+        unit)
+      (if (and (= status 42) (not (= (lint-findings-count suppressed) 0)))
+        (set! status 55)
+        unit)
+      (if (and (= status 42) (not (= (lint-findings-count prefix) 1)))
+        (set! status 56)
+        unit)
+      (if (and
+        (= status 42)
+        (not
+          (lint-driver-smoke-finding-rule-line-ok?
+            prefix
+            0
+            (lint-rule-unused-variable-id)
+            3)))
+        (set! status 57)
+        unit)
+      status)))
+
 (define (main) : i64
   (begin
     ;; The imported driver core defines printing helpers; keep the print-string
@@ -269,7 +415,12 @@
                           [no-effect-result : i64
                             (lint-driver-smoke-no-effect-self-test)]
                           (if (= no-effect-result 42)
-                            (lint-driver-smoke-unreachable-self-test)
+                            (let
+                              [unreachable-result : i64
+                                (lint-driver-smoke-unreachable-self-test)]
+                              (if (= unreachable-result 42)
+                                (lint-driver-smoke-unused-variable-self-test)
+                                unreachable-result))
                             no-effect-result))
                         concat-result))
                     unused-assignment-result))

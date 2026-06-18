@@ -396,7 +396,7 @@
     (let
       [table-arena : i64 (io-arena-make)]
       [prev-arena : i64 (io-arena-current)]
-      [switched : unit
+      [_switched : unit
         (unsafe
           (io-arena-set table-arena))]
       [fds : (MutPtr i64)
@@ -417,7 +417,7 @@
       [last-bytes : (MutPtr String)
         (unsafe
           (ptr-cast (io-runtime-alloc 16384) : (MutPtr String)))]
-      [restored : unit
+      [_restored : unit
         (unsafe
           (io-arena-set prev-arena))]
       [i : i64 0]

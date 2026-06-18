@@ -919,7 +919,7 @@
               (string-append ": " (process-error-message error)))))])))
 
 (define (source-tool-command-for-target
-  [target : CompilerBackendTarget]
+  [_target : CompilerBackendTarget]
   [command : ProcessCommand]) : ProcessCommand
   command)
 

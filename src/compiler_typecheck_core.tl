@@ -3592,7 +3592,7 @@
       ;; survives the scratch arenas active during per-decl typechecking.
       (let
         [prev-arena : i64 (arena-current)]
-        [switched : unit
+        [_switched : unit
           (unsafe
             (arena-set! (tc-hygiene-module-env-cache-arena-handle)))]
         (match (tc-module-local-env-cached
@@ -10343,7 +10343,7 @@
 (define (tc-call-lifetime-constructor-type
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [func : AstExpr]
+  [_func : AstExpr]
   [args : AstExprList]
   [params : AstTypeList]
   [ret : AstType]
@@ -23204,10 +23204,10 @@
 (define (tc-comptime-purity-handle-decl
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [bound : TcStringList]
+  [_bound : TcStringList]
   [chain : TcStringList]
   [seen : TcStringList]
-  [expr : AstExpr]
+  [_expr : AstExpr]
   [name : String]
   [handle : i64]) : ResultTcUnit
   (if (tc-string-list-contains seen name)
@@ -27922,7 +27922,7 @@
 (define (macro-qualified-call-decl-with-exports
   [ctx : TcContext]
   [exports : CompilerExports]
-  [decls : AstDeclList]
+  [_decls : AstDeclList]
   [target-module : String]
   [base : String]
   [name : String]

@@ -394,7 +394,7 @@
   `(text-buf-clear-ref! (&mut ,buf)))
 
 ;: Return an empty buffer, leaving the old immutable `buf` value unchanged.
-(define (text-buf-clear [buf : TextBuf]) : TextBuf
+(define (text-buf-clear [_buf : TextBuf]) : TextBuf
   (text-buf-empty))
 
 ;: Mutably reset `buf`, leaving it ready for reuse.

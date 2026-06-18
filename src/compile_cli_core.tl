@@ -674,6 +674,7 @@
   [output-path : String]
   [emit-ir : bool]
   [pic : bool]
+  ;; lint-allow: unused-variable
   [has-target : bool]
   [target : CompilerBackendTarget]
   [stdlib-roots : StringVec]

@@ -1965,7 +1965,7 @@
 (define (tltest-no-tests-run
   [source : String]
   [target : String]
-  [mode : String]
+  [_mode : String]
   [opt-level : i64]) : i64
   ;; With no inline tests there is no source harness to validate here. `test
   ;; --check` owns source typechecking; run mode only needs the zero-test runner.

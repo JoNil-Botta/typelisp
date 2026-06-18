@@ -6770,7 +6770,7 @@
     [cond1 : i64 (ctfe-expr-var "a")]
     [cond2 : i64 (ctfe-expr-var "b")]
     [else-expr : i64 (ctfe-expr-bool false)]
-    [conds : AstExprList
+    [_conds : AstExprList
       (ctfe-expr-list-cons cond1 (ctfe-expr-list-singleton cond2))]
     ;; fold helper: single cond -> (if cond true else)
     [folded1 : i64 (ctfe-expr-if cond2 (ctfe-expr-bool true) else-expr)]

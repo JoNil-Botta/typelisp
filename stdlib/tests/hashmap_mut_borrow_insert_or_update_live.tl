@@ -1,6 +1,6 @@
 (import "stdlib/hashmap.tl")
 
-(define (use-map-borrow [borrowed : (&mut map StringI64Map)]) : unit
+(define (use-map-borrow [_borrowed : (&mut map StringI64Map)]) : unit
   unit)
 
 ; Must fail: insert-or-update may overwrite, insert, resize, or move buckets

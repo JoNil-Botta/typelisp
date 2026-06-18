@@ -327,7 +327,7 @@
             mutex-i64-users-closing-delta)]
         (if (= previous-users 0)
           (let
-            [closed-marked : unit
+            [_closed-marked : unit
               (sync-atomic-i64-store!
                 control-addr
                 mutex-i64-control-closed-slot

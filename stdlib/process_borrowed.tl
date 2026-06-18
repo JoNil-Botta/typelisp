@@ -47,7 +47,7 @@
   (stdin (ProcessBorrowedMaybeString stdin)))
 
 ;: Return an empty borrowed argument list tied to `text` without storing it.
-(define (process-borrowed-args-empty-like [text : (& text str)]) : (ProcessBorrowedStringList
+(define (process-borrowed-args-empty-like [_text : (& text str)]) : (ProcessBorrowedStringList
     text)
   (ProcessBorrowedStringNil))
 
@@ -83,7 +83,7 @@
         (box (process-borrowed-args-owned (box-get rest))))]))
 
 ;: Return an empty borrowed environment override list tied to `text`.
-(define (process-borrowed-env-empty-like [text : (& text str)]) : (ProcessBorrowedEnvList
+(define (process-borrowed-env-empty-like [_text : (& text str)]) : (ProcessBorrowedEnvList
     text)
   (ProcessBorrowedEnvNil))
 
@@ -113,7 +113,7 @@
 
 ;: Return a borrowed stdin/cwd value that stores no string but keeps the target
 ;: type lifetime anchored to `text`.
-(define (process-borrowed-no-string-like [text : (& text str)]) : (ProcessBorrowedMaybeString
+(define (process-borrowed-no-string-like [_text : (& text str)]) : (ProcessBorrowedMaybeString
     text)
   (ProcessBorrowedNoString))
 

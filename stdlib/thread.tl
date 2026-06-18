@@ -324,7 +324,7 @@
 ;: are not structurally transferable and rejects calls from scoped arenas.
 (define (thread-spawn-i64 [task : (-> i64)]) : ThreadI64SpawnResult
   (match (thread-spawn
-    (lambda ([ignored : i64]) : i64
+    (lambda ([_ignored : i64]) : i64
       (task))
     0)
     [(ThreadSpawnOk raw) (ThreadI64SpawnOk (ThreadI64 raw))]
@@ -336,7 +336,7 @@
 ;: `thread-join-bool`.
 (define (thread-spawn-bool [task : (-> bool)]) : ThreadBoolSpawnResult
   (match (thread-spawn
-    (lambda ([ignored : i64]) : i64
+    (lambda ([_ignored : i64]) : i64
       (if (task)
         1
         0))
@@ -347,7 +347,7 @@
 ;: Spawn a compiler-checked direct nullary closure returning `unit`.
 (define (thread-spawn-unit [task : (-> unit)]) : ThreadUnitSpawnResult
   (match (thread-spawn
-    (lambda ([ignored : i64]) : i64
+    (lambda ([_ignored : i64]) : i64
       (begin
         (task)
         0))

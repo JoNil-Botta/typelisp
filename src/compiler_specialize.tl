@@ -4787,7 +4787,7 @@
 (define (gen-hashmap-source-for-info
   [map-name : String]
   [key-type-key : String]
-  [value-type-key : String]
+  [_value-type-key : String]
   [descriptor : String]
   [key-info : GenHashmapTypeInfo]
   [value-info : GenHashmapTypeInfo]
@@ -6850,7 +6850,7 @@
   [values : SpecValueList]
   [templates : SpecTemplateEnv]
   [state : SpecState]
-  [origin : AstExpr]) : ResultSpecEnsure
+  [_origin : AstExpr]) : ResultSpecEnsure
   (match template
     [(SpecTemplate name params ret body)
       (match state

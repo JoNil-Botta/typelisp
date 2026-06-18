@@ -538,6 +538,55 @@
     (compiler-typecheck-ok?
       (compiler-typecheck-mut-borrow-read-through-ref-source))))
 
+(define (compiler-typecheck-labeled-move-error-ok?
+  [src : String]
+  [want-message : String]
+  [want-label-fragment : String]) : bool
+  (match (typecheck-compiler-source src)
+    [(ErrCompilerTypecheck diag)
+      (and
+        (string-eq (compiler-diagnostic-message diag) want-message)
+        (compiler-typecheck-help-contains? diag "clone the owner")
+        (=
+          (compiler-typecheck-secondary-count
+            (compiler-diagnostic-secondary-spans diag))
+          1)
+        (compiler-typecheck-secondary-label-contains?
+          (compiler-diagnostic-secondary-spans diag)
+          want-label-fragment))]
+    [(OkCompilerTypecheck _) false]))
+
+(define (compiler-typecheck-move-diagnostic-tests-ok?) : bool
+  (and
+    (compiler-typecheck-labeled-move-error-ok?
+      (compiler-typecheck-move-use-after-move-source)
+      "typecheck: use of moved value `s`"
+      "move of `s` happened here")
+    (compiler-typecheck-labeled-move-error-ok?
+      (compiler-typecheck-move-owner-projection-nested-repeat-source)
+      "typecheck: use of moved value `p.inner.handle`"
+      "move of `p.inner.handle` happened here")
+    (compiler-typecheck-labeled-move-error-ok?
+      (compiler-typecheck-move-owner-projection-nested-parent-after-child-source)
+      "typecheck: use of moved value `p.inner`"
+      "move of `p.inner.handle` happened here")
+    (compiler-typecheck-labeled-move-error-ok?
+      (compiler-typecheck-move-owner-projection-nested-child-after-parent-source)
+      "typecheck: use of moved value `p.inner`"
+      "move of `p.inner` happened here")
+    (compiler-typecheck-labeled-move-error-ok?
+      (compiler-typecheck-move-while-loop-carried-param-source)
+      "typecheck: cannot move loop-carried owner value `s`"
+      "loop-carried")
+    (compiler-typecheck-labeled-move-error-ok?
+      (compiler-typecheck-move-with-cleanup-owner-whole-source)
+      "typecheck: cleanup owner `h` moved before with scope exit"
+      "move of `h` happened here")
+    (compiler-typecheck-labeled-move-error-ok?
+      (compiler-typecheck-move-with-cleanup-owner-field-source)
+      "typecheck: cleanup owner `h` moved before with scope exit"
+      "move of `h.handle` happened here")))
+
 (define (compiler-typecheck-reference-return-container-tests-ok?) : bool
   (and
     (compiler-typecheck-ok?
@@ -984,6 +1033,9 @@
     (unless
       (compiler-typecheck-borrow-diagnostic-tests-ok?)
       (panic "typecheck: borrow diagnostic tests failed"))
+    (unless
+      (compiler-typecheck-move-diagnostic-tests-ok?)
+      (panic "typecheck: move diagnostic tests failed"))
     (unless
       (compiler-typecheck-macro-alias-cache-collision-ok?)
       (panic "typecheck: macro alias cache collision test failed"))

@@ -133,6 +133,18 @@
 (define (expr-var [name : String]) : Expr
   (expr-var name))
 
+;: Concatenate two strings during macro CTFE.
+(define (string-concat [left : String] [_right : String]) : String
+  left)
+
+;: Alias for `string-concat` during macro CTFE.
+(define (string-append [left : String] [_right : String]) : String
+  left)
+
+;: Render an integer as a string during macro CTFE.
+(define (int->string [_value : i64]) : String
+  "")
+
 ;: Mark an expression for unquote-splicing during macro CTFE.
 (define (expr-splice [value : Expr]) : Expr
   (expr-splice value))
@@ -289,6 +301,9 @@
   (value expr-bool)
   (value expr-int)
   (value expr-var)
+  (value string-concat)
+  (value string-append)
+  (value int->string)
   (value expr-splice)
   (value expr-if)
   (value expr-bool?)

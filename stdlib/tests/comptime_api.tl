@@ -20,6 +20,15 @@
   (comptime.expr-int
     (comptime.expr-list-length (comptime.expr-clause-list->expr-list arms))))
 
+(defmacro (stdlib-comptime-derived-name [prefix : comptime.Expr]) : i64
+  (match prefix
+    [(ExprVar base)
+      (comptime.expr-var
+        (comptime.string-concat
+          (comptime.string-append base (comptime.int->string 0))
+          "-value"))]
+    [_ (comptime.expr-int 0)]))
+
 (define (stdlib-comptime-qualified-import-shape) : i64
   (+
     (stdlib-comptime-id 14)
@@ -32,6 +41,13 @@
     (stdlib-comptime-arg-count 1 2 3)
     (+ (stdlib-comptime-clause-count [false 0] [true 0] [false 0]) 36)))
 
+(define (stdlib-comptime-qualified-string-helper-shape) : i64
+  (let
+    [stdlib-comptime-derived0-value : i64 42]
+    (+
+      stdlib-comptime-derived0-value
+      (stdlib-comptime-derived-name stdlib-comptime-derived))))
+
 (test
   comptime-qualified-import-shape
   (if (= (stdlib-comptime-qualified-import-shape) 42)
@@ -43,6 +59,14 @@
 (test
   comptime-qualified-helper-shape
   (if (= (stdlib-comptime-qualified-helper-shape) 42)
+    unit
+    (begin
+      (/ 1 0)
+      unit)))
+
+(test
+  comptime-qualified-string-helper-shape
+  (if (= (stdlib-comptime-qualified-string-helper-shape) 84)
     unit
     (begin
       (/ 1 0)

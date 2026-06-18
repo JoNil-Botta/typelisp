@@ -62,7 +62,27 @@
     (define (int-vec-never-probe [value : i64]) : i64
       (ann (return value) : never))))
 
+(defmacro (derived-name-family [prefix : Expr]) : Decls
+  (match prefix
+    [(ExprVar base)
+      (let
+        [seed-name : Expr
+          (expr-var
+            (string-concat base (string-append "-seed" (int->string 0))))]
+        [new-name : Expr (expr-var (string-concat base "-new"))]
+        [push-name : Expr (expr-var (string-append base "-push"))]
+        `(begin
+          (define ,seed-name : i64
+            40)
+          (define (,new-name) : i64
+            ,seed-name)
+          (define (,push-name [value : i64]) : i64
+            (+ value 2))))]
+    [_ `(begin)]))
+
 (int-vector-family)
+
+(derived-name-family lsp-decl-list)
 
 (define (int-vec-fill [n : i64]) : IntVec
   (let
@@ -114,3 +134,10 @@
     (int-vec-fixed-array-probe)
     6
     "generated typed fixed array binding round-trips"))
+
+(test
+  generated-vector-derived-prefix-names
+  (assert-i64-eq
+    (lsp-decl-list-push (lsp-decl-list-new))
+    42
+    "declaration macro derives identifiers from prefix strings"))

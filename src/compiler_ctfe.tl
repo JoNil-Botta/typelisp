@@ -2755,6 +2755,9 @@
 
 (define (ctfe-comptime-helper-call-name [name : String]) : String
   (cond
+    [(ctfe-stdlib-comptime-helper-name? name "string-append") "string-append"]
+    [(ctfe-stdlib-comptime-helper-name? name "string-concat") "string-concat"]
+    [(ctfe-stdlib-comptime-helper-name? name "int->string") "int->string"]
     [(ctfe-stdlib-comptime-helper-name? name "expr-bool") "expr-bool"]
     [(ctfe-stdlib-comptime-helper-name? name "expr-int") "expr-int"]
     [(ctfe-stdlib-comptime-helper-name? name "expr-var") "expr-var"]
@@ -3421,14 +3424,14 @@
           [(or (string-eq raw-name "string-eq") (string-eq raw-name "string=?"))
             (ctfe-eval-string-eq-call raw-name args expr env fuel)]
           [(or
-              (string-eq raw-name "string-append")
-              (string-eq raw-name "string-concat"))
-            (ctfe-eval-string-append-call raw-name args expr env fuel)]
+              (string-eq call-name "string-append")
+              (string-eq call-name "string-concat"))
+            (ctfe-eval-string-append-call call-name args expr env fuel)]
           [(or
               (string-eq raw-name "string-length")
               (string-eq raw-name "length"))
             (ctfe-eval-string-length-call raw-name args expr env fuel)]
-          [(string-eq raw-name "int->string")
+          [(string-eq call-name "int->string")
             (ctfe-eval-int-to-string-call args expr env fuel)]
           [(string-eq call-name "expr-bool")
             (ctfe-eval-expr-bool-call args expr env fuel)]

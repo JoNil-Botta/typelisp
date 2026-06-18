@@ -11086,30 +11086,39 @@
   (tc-name-base-eq? name base))
 
 (define (tc-thread-spawn-i64-name? [name : String]) : bool
-  (tc-thread-name-base-eq? name "thread-spawn-i64"))
+  (string-eq (tc-thread-name-base name) "thread-spawn-i64"))
 
 (define (tc-thread-spawn-bool-name? [name : String]) : bool
-  (tc-thread-name-base-eq? name "thread-spawn-bool"))
+  (string-eq (tc-thread-name-base name) "thread-spawn-bool"))
 
 (define (tc-thread-spawn-unit-name? [name : String]) : bool
-  (tc-thread-name-base-eq? name "thread-spawn-unit"))
+  (string-eq (tc-thread-name-base name) "thread-spawn-unit"))
 
 (define (tc-thread-spawn-string-name? [name : String]) : bool
-  (tc-thread-name-base-eq? name "thread-spawn-string"))
+  (string-eq (tc-thread-name-base name) "thread-spawn-string"))
+
+(define (tc-thread-spawn-array-i64-name? [name : String]) : bool
+  (string-eq (tc-thread-name-base name) "thread-spawn-array-i64"))
 
 (define (tc-thread-safe-spawn-name? [name : String]) : bool
-  (or
-    (tc-thread-spawn-i64-name? name)
-    (tc-thread-spawn-bool-name? name)
-    (tc-thread-spawn-unit-name? name)
-    (tc-thread-spawn-string-name? name)))
+  (let
+    [base : String (tc-thread-name-base name)]
+    (or
+      (string-eq base "thread-spawn-i64")
+      (string-eq base "thread-spawn-bool")
+      (string-eq base "thread-spawn-unit")
+      (string-eq base "thread-spawn-string")
+      (string-eq base "thread-spawn-array-i64"))))
 
 (define (tc-thread-safe-handle-type-name? [name : String]) : bool
-  (or
-    (tc-thread-name-base-eq? name "ThreadI64")
-    (tc-thread-name-base-eq? name "ThreadBool")
-    (tc-thread-name-base-eq? name "ThreadUnit")
-    (tc-thread-name-base-eq? name "ThreadString")))
+  (let
+    [base : String (tc-thread-name-base name)]
+    (or
+      (string-eq base "ThreadI64")
+      (string-eq base "ThreadBool")
+      (string-eq base "ThreadUnit")
+      (string-eq base "ThreadString")
+      (string-eq base "ThreadArrayI64"))))
 
 (define (tc-thread-safe-spawn-call-name [func : AstExpr]) : TcMaybeString
   (match (tc-expr-var-name func)
@@ -11194,6 +11203,8 @@
       (tc-thread-name-base-eq? result-name "ThreadUnitSpawnResult")]
     [(tc-thread-spawn-string-name? spawn-name)
       (tc-thread-name-base-eq? result-name "ThreadStringSpawnResult")]
+    [(tc-thread-spawn-array-i64-name? spawn-name)
+      (tc-thread-name-base-eq? result-name "ThreadArrayI64SpawnResult")]
     [else false]))
 
 (define (tc-thread-safe-spawn-result-type?
@@ -11229,6 +11240,14 @@
       [(tc-thread-spawn-string-name? spawn-name)
         (match resolved
           [(AstTyString) true]
+          [_ false])]
+      [(tc-thread-spawn-array-i64-name? spawn-name)
+        (match resolved
+          [(AstTyDynArray elem)
+            (match (tc-type-strip-region
+              (tc-resolve-type ctx (ty-node-get elem)))
+              [(AstTyI64) true]
+              [_ false])]
           [_ false])]
       [else false])))
 

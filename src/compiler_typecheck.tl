@@ -6698,6 +6698,37 @@
   "(defmacro (gen) : Decls (expr-var \"unused\"))
 (define (main) : i64 (gen))")
 
+(define (compiler-typecheck-decls-macro-single-source) : String
+  "(defmacro (gen) : Decls
+  `(define (answer) : i64 42))
+(gen)
+(define (main) : i64 (answer))")
+
+(define (compiler-typecheck-decls-macro-multiple-source) : String
+  "(defmacro (gen) : Decls
+  `(begin
+    (define (left) : i64 20)
+    (define (right) : i64 22)))
+(gen)
+(define (main) : i64 (+ (left) (right)))")
+
+(define (compiler-typecheck-decls-macro-import-followup-source) : String
+  "(module generated)
+(define (answer) : i64 42)
+(export (value answer))
+(module main)
+(defmacro (gen) : Decls
+  `(import generated))
+(gen)
+(define (main) : i64 (generated.answer))")
+
+(define (compiler-typecheck-decls-macro-duplicate-source) : String
+  "(defmacro (gen) : Decls
+  `(define (answer) : i64 42))
+(define (answer) : i64 1)
+(gen)
+(define (main) : i64 (answer))")
+
 (define (compiler-typecheck-expression-macro-module-scope-source) : String
   "(defmacro (gen) : Expr (expr-var \"unused\"))
 (gen)
@@ -6983,6 +7014,13 @@
     (compiler-typecheck-error-ok?
       (compiler-typecheck-decls-macro-expression-source)
       "typecheck: Decls macro can only be used at module scope")
+    (compiler-typecheck-ok? (compiler-typecheck-decls-macro-single-source))
+    (compiler-typecheck-ok? (compiler-typecheck-decls-macro-multiple-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-decls-macro-import-followup-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-decls-macro-duplicate-source)
+      "symbols: duplicate value declaration answer")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-expression-macro-module-scope-source)
       "typecheck: expression macro cannot be used at module scope")

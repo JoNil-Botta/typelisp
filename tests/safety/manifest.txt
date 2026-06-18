@@ -100,6 +100,9 @@ sync_mutex_guard_capture_reject|check-fail|tests/safety/sync_mutex_guard_capture
 sync_mutex_guard_store_reject|check-fail|tests/safety/sync_mutex_guard_store_reject.tl|-|struct Bad field guard stores cleanup-owning type MutexI64Guard without :owned
 sync_channel_i64_pair_use_after_send_reject|check-fail|tests/safety/sync_channel_i64_pair_use_after_send_reject.tl|-|use of moved value `msg`
 sync_channel_send_raw_pointer_reject|check-fail|tests/safety/sync_channel_send_raw_pointer_reject.tl|-|raw pointers cannot cross thread boundaries in safe code
+sync_channel_string_atomic_send_ok|check-ok|tests/safety/sync_channel_string_atomic_send_ok.tl|-|-
+sync_channel_string_default_arena_reject|check-fail|tests/safety/sync_channel_string_default_arena_reject.tl|-|owned heap storage needs a static/program or spanning atomic owner proof
+sync_channel_string_use_after_send_reject|check-fail|tests/safety/sync_channel_string_use_after_send_reject.tl|-|use of moved value `message`
 thread_spawn_i64_aggregate_capture_ok|check-ok|tests/safety/thread_spawn_i64_aggregate_capture_ok.tl|-|-
 thread_spawn_i64_atomic_string_capture_ok|check-ok|tests/safety/thread_spawn_i64_atomic_string_capture_ok.tl|-|-
 thread_spawn_i64_string_capture_reject|check-fail|tests/safety/thread_spawn_i64_string_capture_reject.tl|-|thread-spawn-i64 cannot capture `text` of type String

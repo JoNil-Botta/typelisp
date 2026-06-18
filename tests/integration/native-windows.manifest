@@ -116,7 +116,7 @@ spmd_scan_scalar|tests/integration/spmd_scan_scalar.tl|42|-|-|-|requires-stage0-
 stdlib_io|tests/integration/stdlib_io.tl|42|-|-|stdlib/io.tl stdlib/string.tl
 stdlib_json|tests/integration/stdlib_json.tl|42|-|-|stdlib/json.tl stdlib/str_cat.tl stdlib/string.tl stdlib/text_buf.tl stdlib/io.tl
 stdlib_json_derive|tests/integration/stdlib_json_derive.tl|42|-|-|stdlib/json.tl stdlib/str_cat.tl stdlib/string.tl stdlib/text_buf.tl stdlib/io.tl
-stdlib_text_buf|tests/integration/stdlib_text_buf.tl|42|-|-|stdlib/text_buf.tl stdlib/io.tl stdlib/string.tl
+stdlib_text_buf|tests/integration/stdlib_text_buf.tl|42|-|-|stdlib/text_buf.tl stdlib/text_buf_borrowed.tl stdlib/io.tl stdlib/string.tl
 stdlib_string|tests/integration/stdlib_string.tl|42|hello\174\nhello\174\nhello\174\nfound\n\174empty-left\n\174empty-right\n\174all-space\ncontains\nmissing\nhippo\nabx\n0\n123456789\n-42\n9223372036854775807\n-9223372036854775808\n|-|stdlib/io.tl stdlib/string.tl
 stdlib_substring_negative_len_trap|tests/integration/stdlib_substring_negative_len_trap.tl|134|-|-|stdlib/string.tl|expected-stderr:tl: array index out of bounds\n
 stdlib_substring_negative_start_trap|tests/integration/stdlib_substring_negative_start_trap.tl|134|-|-|stdlib/string.tl|expected-stderr:tl: array index out of bounds\n
@@ -137,6 +137,7 @@ thread_safe_bool_unit|tests/integration/thread_safe_bool_unit.tl|42|-|-|stdlib/a
 thread_safe_aggregate_capture|tests/integration/thread_safe_aggregate_capture.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
 thread_safe_string|tests/integration/thread_safe_string.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
 thread_safe_array_i64|tests/integration/thread_safe_array_i64.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
+thread_safe_box_i64|tests/integration/thread_safe_box_i64.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
 tl_alloc|tests/integration/tl_alloc.tl|0|-|-|-
 tree|tests/integration/tree.tl|3|-|-|-
 tuple_values|tests/integration/tuple_values.tl|42|-|-|-

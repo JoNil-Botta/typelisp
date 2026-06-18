@@ -66,14 +66,15 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
   toolset and SDK trees, including newest-usable candidate selection through
   the vector-backed scanners.
 - `process_api.tl` covers command construction, argv append helpers,
-  cwd/stdin/env accessors, vector-backed env override construction,
-  validation, duplicate-name order, list conversion, invalid-command
-  diagnostics, result/error predicates, and async start/wait API validation.
+  vector-backed argv conversion/builders, cwd/stdin/env accessors,
+  vector-backed env override construction, validation, duplicate-name order,
+  list conversion, invalid-command diagnostics, result/error predicates, and
+  async start/wait API validation.
 - The process borrowed escape fixture verifies the checker rejects returning a
   borrowed command whose text owner is shorter-lived than the declared command
   lifetime.
 - `process_runtime.tl` covers backend process execution for stdout, stderr,
-  env override propagation through list-backed and vector-backed command
+  argv and env propagation through list-backed and vector-backed command
   builders, nonzero status, failed spawn, and async start/wait on Linux, plus
   the structured unsupported async result on Windows.
 - `thread_api.tl` covers worker count fallback shape, invalid semaphore
@@ -184,8 +185,8 @@ Inline stdlib coverage:
 - `io_caller_result.tl` owns inline tests for `read-file-or-result`
   fallback-borrow and owned-result paths.
 - `text_buf_borrowed.tl` owns inline tests for borrowed chunks, owned chunk
-  boundaries, copied unrelated borrowed chunks, render, length, and empty
-  predicates.
+  boundaries, copied unrelated borrowed chunks, shared render materialization,
+  length, and empty predicates.
 - `process_borrowed.tl` owns inline tests for borrowed executable, argv, cwd,
   env, and stdin fields, validation diagnostics, and explicit conversion to
   owned `ProcessCommand` before the runtime boundary.

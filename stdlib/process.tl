@@ -113,6 +113,27 @@
     [(ProcessStringCons value rest)
       (ProcessStringCons value (box (process-args-append (box-get rest) right)))]))
 
+;: Convert a `StringVec` argv buffer to the list representation consumed by
+;: `ProcessCommand`, preserving vector order.
+(define (process-args-from-string-vec-from
+  [args : StringVec]
+  [index : i64]
+  [out : ProcessStringList]) : ProcessStringList
+  (if (< index 0)
+    out
+    (process-args-from-string-vec-from
+      args
+      (- index 1)
+      (process-args-cons (string-vec-get args index "") out))))
+
+;: Convert a `StringVec` argv buffer to the list representation consumed by
+;: `ProcessCommand`, preserving vector order.
+(define (process-args-from-string-vec [args : StringVec]) : ProcessStringList
+  (process-args-from-string-vec-from
+    args
+    (- (string-vec-len args) 1)
+    (ProcessStringNil)))
+
 ;: Return an empty environment override list.
 (define (process-env-empty) : ProcessEnvList
   (ProcessEnvNil))
@@ -268,6 +289,11 @@
     (ProcessEnvNil)
     (ProcessNoString)))
 
+;: Construct a process command from an executable and a vector-backed argv
+;: buffer. The command keeps the existing list-backed ABI after one conversion.
+(define (process-command-from-argv-vec [executable : String] [argv : StringVec]) : ProcessCommand
+  (process-command executable (process-args-from-string-vec argv)))
+
 ;: Return a copy of `command` with `arg` appended after existing argv entries.
 (define (process-command-with-arg [command : ProcessCommand] [arg : String]) : ProcessCommand
   (ProcessCommand
@@ -289,6 +315,25 @@
     (process-command-cwd command)
     (process-command-env command)
     (process-command-stdin command)))
+
+;: Return a copy of `command` with the full argv list replaced by a
+;: vector-backed argv buffer converted once at the compatibility boundary.
+(define (process-command-with-argv-vec
+  [command : ProcessCommand]
+  [argv : StringVec]) : ProcessCommand
+  (ProcessCommand
+    (process-command-executable command)
+    (process-args-from-string-vec argv)
+    (process-command-cwd command)
+    (process-command-env command)
+    (process-command-stdin command)))
+
+;: Return a copy of `command` with vector-backed args appended after existing
+;: argv entries through one list conversion and one list append.
+(define (process-command-with-args-vec
+  [command : ProcessCommand]
+  [args : StringVec]) : ProcessCommand
+  (process-command-with-args command (process-args-from-string-vec args)))
 
 ;: Construct a process command with every owned-storage field supplied
 ;: explicitly.

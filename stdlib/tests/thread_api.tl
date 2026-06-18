@@ -59,6 +59,11 @@
     [(ThreadArrayI64JoinOk items) (thread-api-array-i64-ok? items)]
     [(ThreadArrayI64JoinErr _) false]))
 
+(define (thread-api-join-box-i64-ok? [result : ThreadBoxI64JoinResult]) : bool
+  (match result
+    [(ThreadBoxI64JoinOk cell) (= (box-get cell) 42)]
+    [(ThreadBoxI64JoinErr _) false]))
+
 (define (thread-api-safe-i64-expect
   [spawn : ThreadI64SpawnResult]
   [expected : i64]
@@ -129,6 +134,16 @@
       (if (thread-api-join-array-i64-ok? (thread-join-array-i64 worker))
         42
         20)]))
+
+(define (thread-api-safe-box-i64-run) : i64
+  (match (thread-spawn-box-i64
+    (lambda () : (Box i64)
+      (box 42)))
+    [(ThreadBoxI64SpawnErr _) 21]
+    [(ThreadBoxI64SpawnOk worker)
+      (if (thread-api-join-box-i64-ok? (thread-join-box-i64 worker))
+        42
+        22)]))
 
 (define (thread-api-safe-i64-run) : i64
   (let
@@ -226,11 +241,13 @@
     [safe-code : i64 (thread-api-safe-i64-run)]
     [safe-string-code : i64 (thread-api-safe-string-run)]
     [safe-array-code : i64 (thread-api-safe-array-i64-run)]
+    [safe-box-code : i64 (thread-api-safe-box-i64-run)]
     (cond
       [(< (thread-default-worker-count) 1) 1]
       [(not (= safe-code 42)) safe-code]
       [(not (= safe-string-code 42)) safe-string-code]
       [(not (= safe-array-code 42)) safe-array-code]
+      [(not (= safe-box-code 42)) safe-box-code]
       [(not (thread-api-negative-semaphore-rejected?)) 11]
       [(not (thread-api-large-semaphore-rejected?)) 12]
       [else

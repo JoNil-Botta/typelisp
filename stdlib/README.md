@@ -157,11 +157,13 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   `(import "stdlib/math.tl")`.
 - `process.tl`: process command/output/error data model and the public
   `process-output`/`process-start`/`process-wait` wrappers for selfhost tools.
-  Env overrides keep the existing `ProcessEnvList` runtime boundary and also
-  expose `ProcessEnvVec`, a parallel-`StringVec` builder surface. Inherited
-  environment entries whose names match an override are removed, vector override
-  entries are emitted in vector order after inherited entries, and duplicate
-  override names are preserved in that order. Import it with
+  `ProcessCommand` keeps the existing list-backed argv/env runtime boundary and
+  also exposes `StringVec` argv conversion helpers plus `ProcessEnvVec`, a
+  parallel-`StringVec` env builder surface. Vector argv helpers convert once
+  while preserving order. Inherited environment entries whose names match an
+  override are removed, vector override entries are emitted in vector order after
+  inherited entries, and duplicate override names are preserved in that order.
+  Import it with
   `(import "stdlib/process.tl")`.
 - `process_runtime.tl`: TypeLisp implementation of the process-execution runtime
   (`tl_process_output`/`tl_process_start`/`tl_process_wait`) that `process.tl`
@@ -208,7 +210,8 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   `thread-spawn-bool`/`thread-join-bool`, and
   `thread-spawn-unit`/`thread-join-unit` for checked nullary closures.
   `thread-spawn-string`/`thread-join-string` and
-  `thread-spawn-array-i64`/`thread-join-array-i64` run the task in a fresh atomic
+  `thread-spawn-array-i64`/`thread-join-array-i64` and
+  `thread-spawn-box-i64`/`thread-join-box-i64` run the task in a fresh atomic
   arena before returning the joined aggregate. Linux uses raw clone/futex/eventfd
   syscalls; Windows uses kernel32 threads and semaphores. Import it with
   `(import "stdlib/thread.tl")`.
@@ -218,12 +221,14 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   `ResultTimeMs`. Calendar conversion, formatting, time zones, locale,
   sleeping, and timers are deferred. Import it with `(import "stdlib/time.tl")`.
 - `text_buf.tl`: arena-aware text buffer helpers for incremental String
-  construction with owned `TextBuf` chunks. Import it with
+  construction with owned `TextBuf` chunks and the shared ordered-chunk render
+  helper used by the borrowed companion. Import it with
   `(import "stdlib/text_buf.tl")`.
 - `text_buf_borrowed.tl`: lifetime-parameterized `TextBufBorrowed`
   borrowed-chunk companion surface. Import it with
   `(import "stdlib/text_buf_borrowed.tl")`; it remains separate from
-  `text_buf.tl` while the compatibility surface keeps owned chunk storage.
+  `text_buf.tl` while the compatibility surface keeps owned chunk storage, but
+  adapts to the owned render helper at explicit materialization boundaries.
 - `vector.tl`: generated concrete vector family (collections v1, #835/#1989)
   over `(Array T)`, with `I64Vec` preserved as the compatibility template and
   `StringVec` added as the first non-i64 stdlib instantiation. Both provide
@@ -381,11 +386,11 @@ owned stdlib imports keep the compatibility wrappers.
 | `json-*` helpers | Parser, lookup, escaping, and JSON number parsing helpers borrow source text or keys. Object lookup compares borrowed keys without allocating. Parsed JSON aggregates, decoded strings, escaped strings, stringified output, float number text, validation copies, vector-builder backing arrays, and final list/member spines allocate owned results in the active arena. Array/object parsing accumulates elements in JSON-local vector builders and converts once to the public list model, preserving source order and first-match duplicate-key lookup. Float conversion is deterministic, finite-only, host-locale independent, and currently accepts up to 300 non-zero significant decimal digits; longer non-zero number text is rejected rather than rounded through an unbounded scratch representation. |
 | `string-eq`, `string=?`, `string-eq-borrowed`, `string->int`, `string->int-borrowed` | Equality and integer parsing helpers inspect string bytes without allocating. The owned wrappers borrow their inputs internally; the borrowed variants are available to stdlib code that already has `(& r str)` values. `string->int` keeps the legacy runtime parser rules, including `""`/`"-"` as zero and byte-minus-`'0'` arithmetic for non-digits. |
 | `string-list-*` helpers | Construct immutable `StringList` cons nodes and `StringListBuilder` values in the active arena. `string-list-reverse`, `-reverse-onto`, `-append`, `-from-array`, `-from-vec`, and builder build helpers allocate fresh list spines; `string-list-to-array` and `string-list-to-vec` allocate fresh active-arena storage and copy the string handles into it. |
-| `process-*` helpers in `process.tl` / `process_borrowed.tl` | Owned `process.tl` helpers construct process command/output/error aggregates in the active arena. Command builders keep owned `String` parameters because `ProcessCommand`, argv, env, cwd, and stdin fields store owned strings; validators use borrowed text inspection where they do not store inputs. Ordered argv append helpers allocate list nodes. `ProcessEnvVec` stores env overrides in parallel `StringVec` buffers with an equal-length invariant; append/growth allocate through the underlying vectors, validation checks invalid names and shape, and conversion to `ProcessEnvList` allocates list nodes while preserving vector order and duplicate names. `process_borrowed.tl` exposes lifetime-parameterized `ProcessBorrowedCommand` storage for borrowed executable, argv, cwd, env, and stdin text. Borrowed `process-borrowed-output`, `process-borrowed-run`, and `process-borrowed-start` validate borrowed storage and copy once to owned `ProcessCommand` before the runtime boundary. Borrowed argv and env lists are lifetime-homogeneous; use the owned conversion boundary to join independently scoped text. On Linux and Windows, owned and borrowed process-output/run/start paths execute through `process_runtime.tl`, preserving inherited environment entries, replacing entries named by env overrides, honoring cwd, and feeding string stdin where supported. Unsupported targets return structured errors. |
-| `thread-*` helpers in `thread.tl` | Thread spawning allocates a small active-arena context, join/result cells, and on Linux a raw worker stack before the OS thread starts. Each worker initializes a fresh per-thread default arena before calling user code. `thread-spawn-string` and `thread-spawn-array-i64` also allocate a fresh atomic arena and one result cell so the joined aggregate storage can safely outlive the worker. Semaphore handles are OS resources and do not allocate TypeLisp heap storage beyond result aggregates. The raw `i64` context/result surface still does not transfer ownership; callers that pass addresses through it remain responsible for synchronization in unsafe code. |
+| `process-*` helpers in `process.tl` / `process_borrowed.tl` | Owned `process.tl` helpers construct process command/output/error aggregates in the active arena. Command builders keep owned `String` parameters because `ProcessCommand`, argv, env, cwd, and stdin fields store owned strings; validators use borrowed text inspection where they do not store inputs. Ordered argv append helpers allocate list nodes. `StringVec` argv helpers accumulate through vector backing storage and convert once to `ProcessStringList`, allocating list nodes while preserving vector order. `ProcessEnvVec` stores env overrides in parallel `StringVec` buffers with an equal-length invariant; append/growth allocate through the underlying vectors, validation checks invalid names and shape, and conversion to `ProcessEnvList` allocates list nodes while preserving vector order and duplicate names. `process_borrowed.tl` exposes lifetime-parameterized `ProcessBorrowedCommand` storage for borrowed executable, argv, cwd, env, and stdin text. Borrowed `process-borrowed-output`, `process-borrowed-run`, and `process-borrowed-start` validate borrowed storage and copy once to owned `ProcessCommand` before the runtime boundary. Borrowed argv and env lists are lifetime-homogeneous; use the owned conversion boundary to join independently scoped text. On Linux and Windows, owned and borrowed process-output/run/start paths execute through `process_runtime.tl`, preserving inherited environment entries, replacing entries named by env overrides, honoring cwd, and feeding string stdin where supported. Unsupported targets return structured errors. |
+| `thread-*` helpers in `thread.tl` | Thread spawning allocates a small active-arena context, join/result cells, and on Linux a raw worker stack before the OS thread starts. Each worker initializes a fresh per-thread default arena before calling user code. `thread-spawn-string`, `thread-spawn-array-i64`, and `thread-spawn-box-i64` also allocate a fresh atomic arena and one result cell so the joined aggregate storage can safely outlive the worker. Semaphore handles are OS resources and do not allocate TypeLisp heap storage beyond result aggregates. The raw `i64` context/result surface still does not transfer ownership; callers that pass addresses through it remain responsible for synchronization in unsafe code. |
 | `random-*` helpers | Construct deterministic RNG state, draw/result aggregates, and compatibility weight-list cons nodes in the active arena. Array and `I64Vec` weighted-index helpers scan existing storage without cons nodes; the legacy list helper copies weights into an active-arena array wrapper before selection. Draws are deterministic from caller-provided seeds and do not read host entropy. `random-system-seed` reads a platform seed through FFI, normalizes it, and returns a `ResultSystemSeed` aggregate in the active arena; `random-from-system` constructs and returns a new `RandomState` aggregate in the active arena. |
 | `assert-*` helpers in `test.tl` | Non-allocating checks on success; `assert-string-eq` borrows compared text inputs while assertion messages remain owned `String` values for the current `panic` API. |
-| `text-buf-*` helpers in `text_buf.tl` / `text_buf_borrowed.tl` | Owned `TextBuf` chunks and rendered strings allocate in the active arena. Append helpers avoid concatenating the accumulated prefix until `text-buf-render`; `text-buf-clear`/`text-buf-reset` return a fresh empty immutable buffer value. `TextBufBorrowed` carries one source lifetime, stores `(& text str)` chunks without copying at append time, and also accepts owned chunks through `text-buf-borrowed-append-owned`. `text-buf-borrowed-append-copy` copies unrelated borrowed chunks into owned active-arena storage before appending, while `text-buf-borrowed-render` materializes the final owned `String`. |
+| `text-buf-*` helpers in `text_buf.tl` / `text_buf_borrowed.tl` | Owned `TextBuf` chunks and rendered strings allocate in the active arena. Append helpers avoid concatenating the accumulated prefix until `text-buf-render`; `text-buf-clear`/`text-buf-reset` return a fresh empty immutable buffer value. `TextBufBorrowed` carries one source lifetime, stores `(& text str)` chunks without copying at append time, and also accepts owned chunks through `text-buf-borrowed-append-owned`. `text-buf-borrowed-append-copy` copies unrelated borrowed chunks into owned active-arena storage before appending, while `text-buf-borrowed-render` adapts borrowed chunks to owned chunk nodes at the materialization boundary and reuses the shared ordered-chunk render path. |
 | `msvc-*` helpers | Non-owning target/tool/version/path inputs are borrowed `str` values. Discovery results store owned executable, PATH, LIB, and INCLUDE strings. PATH, Visual Studio toolset, and Windows SDK candidate scans use `StringVec` storage internally. Some internal path probes copy borrowed paths until the lower-level `io/fs` APIs are fully borrowed. |
 
 The recoverable I/O API maps the runtime's integer status codes into the public

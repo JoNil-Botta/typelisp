@@ -125,4 +125,6 @@ thread_spawn_string_capture_reject|check-fail|tests/safety/thread_spawn_string_c
 thread_join_string_double_reject|check-fail|tests/safety/thread_join_string_double_reject.tl|-|use of moved value `worker`
 thread_spawn_array_i64_capture_reject|check-fail|tests/safety/thread_spawn_array_i64_capture_reject.tl|-|thread-spawn-array-i64 cannot capture `items` of type (Array i64)
 thread_join_array_i64_double_reject|check-fail|tests/safety/thread_join_array_i64_double_reject.tl|-|use of moved value `worker`
+thread_spawn_box_i64_capture_reject|check-fail|tests/safety/thread_spawn_box_i64_capture_reject.tl|-|thread-spawn-box-i64 cannot capture `cell` of type (Box i64)
+thread_join_box_i64_double_reject|check-fail|tests/safety/thread_join_box_i64_double_reject.tl|-|use of moved value `worker`
 thread_spawn_i64_shadow_local_ok|check-ok|tests/safety/thread_spawn_i64_shadow_local_ok.tl|-|-

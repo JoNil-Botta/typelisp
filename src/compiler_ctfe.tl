@@ -2749,11 +2749,9 @@
 (define (ctfe-stdlib-comptime-helper-name? [name : String] [base : String]) : bool
   (or
     (string-eq name base)
-    (or
-      (string-eq name (string-append "comptime." base))
-      (or
-        (string-eq name (string-append "stdlib.comptime." base))
-        (string-eq name (string-append "stdlib.comptime/" base))))))
+    (string-eq name (string-append "comptime." base))
+    (string-eq name (string-append "stdlib.comptime." base))
+    (string-eq name (string-append "stdlib.comptime/" base))))
 
 (define (ctfe-comptime-helper-call-name [name : String]) : String
   (cond

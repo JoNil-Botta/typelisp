@@ -532,7 +532,7 @@
           (compile-cli-default-output input-path)
           false
           false
-          (source-tool-default-target)
+          (BackendTargetLinux)
           (string-vec-new)
           (string-vec-new)
           false
@@ -556,7 +556,7 @@
           count
           batch-path
           false
-          (source-tool-default-target)
+          (BackendTargetLinux)
           (string-vec-new)
           (string-vec-new)
           false

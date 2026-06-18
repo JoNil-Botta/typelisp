@@ -2421,6 +2421,46 @@
         (set! tc-cleanup-owner-marker-id-cache-generation (intern-generation))
         id))))
 
+(define (tc-ordinary-arena-owner-marker-name) : String
+  " __tl_ordinary_arena_owner")
+
+(define tc-ordinary-arena-owner-marker-id-cache : i64
+  -1)
+(define tc-ordinary-arena-owner-marker-id-cache-generation : i64
+  -1)
+
+(define (tc-ordinary-arena-owner-marker-id) : i64
+  (if (= tc-ordinary-arena-owner-marker-id-cache-generation (intern-generation))
+    tc-ordinary-arena-owner-marker-id-cache
+    (let
+      [id : i64 (tc-name-id (tc-ordinary-arena-owner-marker-name))]
+      (begin
+        (set! tc-ordinary-arena-owner-marker-id-cache id)
+        (set!
+          tc-ordinary-arena-owner-marker-id-cache-generation
+          (intern-generation))
+        id))))
+
+(define (tc-atomic-arena-owner-marker-name) : String
+  " __tl_atomic_arena_owner")
+
+(define tc-atomic-arena-owner-marker-id-cache : i64
+  -1)
+(define tc-atomic-arena-owner-marker-id-cache-generation : i64
+  -1)
+
+(define (tc-atomic-arena-owner-marker-id) : i64
+  (if (= tc-atomic-arena-owner-marker-id-cache-generation (intern-generation))
+    tc-atomic-arena-owner-marker-id-cache
+    (let
+      [id : i64 (tc-name-id (tc-atomic-arena-owner-marker-name))]
+      (begin
+        (set! tc-atomic-arena-owner-marker-id-cache id)
+        (set!
+          tc-atomic-arena-owner-marker-id-cache-generation
+          (intern-generation))
+        id))))
+
 (define (tc-return-type-name) : String
   "__tl_return_type")
 
@@ -3697,11 +3737,28 @@
 (define (tc-bind-cleanup-owner [env : TcTypeEnv] [name : String]) : TcTypeEnv
   (tc-bind env (tc-cleanup-owner-marker-name) (AstTyVar (intern name))))
 
+(define (tc-bind-ordinary-arena-owner [env : TcTypeEnv] [name : String]) : TcTypeEnv
+  (tc-bind env (tc-ordinary-arena-owner-marker-name) (AstTyVar (intern name))))
+
+(define (tc-bind-atomic-arena-owner [env : TcTypeEnv] [name : String]) : TcTypeEnv
+  (tc-bind env (tc-atomic-arena-owner-marker-name) (AstTyVar (intern name))))
+
 (define (tc-cleanup-owner-marker-for?
   [key : i64]
   [ty : AstType]
   [name : String]) : bool
   (if (= key (tc-cleanup-owner-marker-id))
+    (match ty
+      [(AstTyVar owner) (string-eq (intern-str owner) name)]
+      [_ false])
+    false))
+
+(define (tc-arena-owner-marker-for?
+  [marker-id : i64]
+  [key : i64]
+  [ty : AstType]
+  [name : String]) : bool
+  (if (= key marker-id)
     (match ty
       [(AstTyVar owner) (string-eq (intern-str owner) name)]
       [_ false])
@@ -3713,6 +3770,31 @@
       [(AstTyVar _) true]
       [_ false])
     false))
+
+(define (tc-arena-owner-marker-entry?
+  [marker-id : i64]
+  [key : i64]
+  [ty : AstType]) : bool
+  (if (= key marker-id)
+    (match ty
+      [(AstTyVar _) true]
+      [_ false])
+    false))
+
+(define (tc-ordinary-arena-owner-marker-entry? [key : i64] [ty : AstType]) : bool
+  (tc-arena-owner-marker-entry? (tc-ordinary-arena-owner-marker-id) key ty))
+
+(define (tc-atomic-arena-owner-marker-entry? [key : i64] [ty : AstType]) : bool
+  (tc-arena-owner-marker-entry? (tc-atomic-arena-owner-marker-id) key ty))
+
+(define (tc-arena-owner-marker-head?
+  [env : TcTypeEnv]
+  [name : String]
+  [marker-id : i64]) : bool
+  (match env
+    [(TcTypeNil) false]
+    [(TcTypeCache _ _ _ _ _ _ _ _ _) false]
+    [(TcTypeBind key ty _) (tc-arena-owner-marker-for? marker-id key ty name)]))
 
 (define (tc-cleanup-owner-marker-head? [env : TcTypeEnv] [name : String]) : bool
   (match env
@@ -3737,6 +3819,36 @@
     [(TcTypeCache _ _ _ _ _ _ _ rest _)
       (tc-cleanup-owner-active-scan? (box-get rest) name)]
     [_ (tc-cleanup-owner-active-scan? env name)]))
+
+(define (tc-arena-owner-active-scan?
+  [env : TcTypeEnv]
+  [name : String]
+  [marker-id : i64]) : bool
+  (match env
+    [(TcTypeNil) false]
+    [(TcTypeCache _ _ _ _ _ scan-through _ rest _)
+      (if scan-through
+        (tc-arena-owner-active-scan? (box-get rest) name marker-id)
+        false)]
+    [(TcTypeBind key _ rest)
+      (if (= key (tc-name-id name))
+        (tc-arena-owner-marker-head? (box-get rest) name marker-id)
+        (tc-arena-owner-active-scan? (box-get rest) name marker-id))]))
+
+(define (tc-arena-owner-active?
+  [env : TcTypeEnv]
+  [name : String]
+  [marker-id : i64]) : bool
+  (match env
+    [(TcTypeCache _ _ _ _ _ _ _ rest _)
+      (tc-arena-owner-active-scan? (box-get rest) name marker-id)]
+    [_ (tc-arena-owner-active-scan? env name marker-id)]))
+
+(define (tc-ordinary-arena-owner-active? [env : TcTypeEnv] [name : String]) : bool
+  (tc-arena-owner-active? env name (tc-ordinary-arena-owner-marker-id)))
+
+(define (tc-atomic-arena-owner-active? [env : TcTypeEnv] [name : String]) : bool
+  (tc-arena-owner-active? env name (tc-atomic-arena-owner-marker-id)))
 
 (define (tc-active-cleanup-owners-scan [root : TcTypeEnv] [env : TcTypeEnv]) : TcStringList
   (match env
@@ -4463,6 +4575,21 @@
 
 (define (tc-type-collect-regions [ty : AstType]) : TcStringList
   (tc-type-collect-regions-into ty TcStringNil))
+
+(define (tc-region-list-all-atomic-arena-owners?
+  [env : TcTypeEnv]
+  [regions : TcStringList]) : bool
+  (match regions
+    [(TcStringNil) true]
+    [(TcStringCons region rest)
+      (and
+        (tc-atomic-arena-owner-active? env region)
+        (tc-region-list-all-atomic-arena-owners? env (box-get rest)))]))
+
+(define (tc-type-regions-all-atomic-arena-owners?
+  [env : TcTypeEnv]
+  [ty : AstType]) : bool
+  (tc-region-list-all-atomic-arena-owners? env (tc-type-collect-regions ty)))
 
 (define (tc-type-outer-region [ty : AstType]) : TcMaybeString
   (match ty
@@ -9712,6 +9839,23 @@
 (define (tc-default-builtin-unshadowed-scan? [env : TcTypeEnv] [name : String]) : bool
   (tc-default-builtin-unshadowed-scan-id? env (tc-name-id name)))
 
+(define (tc-name-local-bound-before-module-scan-id?
+  [env : TcTypeEnv]
+  [name-id : i64]) : bool
+  (match env
+    [(TcTypeNil) false]
+    [(TcTypeCache _ _ _ _ _ scan-through _ rest _)
+      (if scan-through
+        (tc-name-local-bound-before-module-scan-id? (box-get rest) name-id)
+        false)]
+    [(TcTypeBind key _ rest)
+      (if (= key name-id)
+        true
+        (tc-name-local-bound-before-module-scan-id? (box-get rest) name-id))]))
+
+(define (tc-name-local-bound-before-module? [env : TcTypeEnv] [name : String]) : bool
+  (tc-name-local-bound-before-module-scan-id? env (tc-name-id name)))
+
 (define (tc-default-builtin-unshadowed? [env : TcTypeEnv] [name : String]) : bool
   (if (tc-region-arg-builtin-name? name)
     (tc-default-builtin-unshadowed-scan? env name)
@@ -10531,15 +10675,73 @@
           (tc-expr-c-abi-fnptr? ctx env else-branch)))]
     [_ false]))
 
+(define (tc-name-base-eq? [name : String] [base : String]) : bool
+  (if (string-eq name base)
+    true
+    (if (tc-name-qualified? name)
+      (string-eq (tc-qualified-name-base name) base)
+      false)))
+
+(define (tc-arena-owner-kind-none) : i64
+  0)
+
+(define (tc-arena-owner-kind-ordinary) : i64
+  1)
+
+(define (tc-arena-owner-kind-atomic) : i64
+  2)
+
+(define (tc-arena-owner-call-kind [env : TcTypeEnv] [expr : AstExpr]) : i64
+  (match (ast-expr-unspan expr)
+    [(AstExprCall func-box args)
+      (match args
+        [(AstExprNil)
+          (match (tc-expr-var-name (ast-node-get func-box))
+            [(TcSomeString name)
+              (cond
+                [(and
+                    (string-eq name "arena-make-atomic")
+                    (not
+                      (tc-name-local-bound-before-module?
+                        env
+                        "arena-make-atomic")))
+                  (tc-arena-owner-kind-atomic)]
+                [(and
+                    (string-eq name "arena-make")
+                    (not (tc-name-local-bound-before-module? env "arena-make")))
+                  (tc-arena-owner-kind-ordinary)]
+                [else (tc-arena-owner-kind-none)])]
+            [(TcNoString) (tc-arena-owner-kind-none)])]
+        [_ (tc-arena-owner-kind-none)])]
+    [_ (tc-arena-owner-kind-none)]))
+
+(define (tc-bind-arena-owner-if-needed-id
+  [env : TcTypeEnv]
+  [name : i64]
+  [init : AstExpr]) : TcTypeEnv
+  (let
+    [kind : i64 (tc-arena-owner-call-kind env init)]
+    (cond
+      [(= kind (tc-arena-owner-kind-atomic))
+        (tc-bind-atomic-arena-owner env (intern-str name))]
+      [(= kind (tc-arena-owner-kind-ordinary))
+        (tc-bind-ordinary-arena-owner env (intern-str name))]
+      [else env])))
+
 (define (tc-bind-c-abi-fnptr-if-needed-id
   [ctx : TcContext]
   [env : TcTypeEnv]
   [name : i64]
   [ty : AstType]
   [init : AstExpr]) : TcTypeEnv
-  (if (and (tc-c-abi-fnptr-type? ty) (tc-expr-c-abi-fnptr? ctx env init))
-    (tc-bind-c-abi-fnptr-id env name ty)
-    (tc-bind-id env name ty)))
+  (let
+    [owner-env : TcTypeEnv
+      (if (tc-type-eq (tc-type-strip-region ty) (AstTyI64))
+        (tc-bind-arena-owner-if-needed-id env name init)
+        env)]
+    (if (and (tc-c-abi-fnptr-type? ty) (tc-expr-c-abi-fnptr? ctx env init))
+      (tc-bind-c-abi-fnptr-id owner-env name ty)
+      (tc-bind-id owner-env name ty))))
 
 (define (tc-raw-c-fnptr-flow-ok
   [ctx : TcContext]
@@ -10659,11 +10861,7 @@
         (tc-expr-c-abi-fnptr? ctx env func))]))
 
 (define (tc-thread-name-base-eq? [name : String] [base : String]) : bool
-  (if (string-eq name base)
-    true
-    (if (tc-name-qualified? name)
-      (string-eq (tc-qualified-name-base name) base)
-      false)))
+  (tc-name-base-eq? name base))
 
 (define (tc-thread-spawn-i64-name? [name : String]) : bool
   (tc-thread-name-base-eq? name "thread-spawn-i64"))
@@ -10831,8 +11029,10 @@
 
 (define (tc-thread-transfer-type-list-class
   [ctx : TcContext]
+  [env : TcTypeEnv]
   [types : AstTypeList]
-  [stack : TcStringList]) : TcThreadTransferClass
+  [stack : TcStringList]
+  [owner-proof : bool]) : TcThreadTransferClass
   (match types
     [(AstTypeNil) (TcThreadShareable)]
     [(AstTypeCons head rest)
@@ -10840,13 +11040,15 @@
         [head : AstType (ty-node-get head)]
         [rest : AstTypeList (box-get rest)]
         (tc-thread-transfer-class-merge
-          (tc-thread-transfer-type-class ctx head stack)
-          (tc-thread-transfer-type-list-class ctx rest stack)))]))
+          (tc-thread-transfer-type-class ctx env head stack owner-proof)
+          (tc-thread-transfer-type-list-class ctx env rest stack owner-proof)))]))
 
 (define (tc-thread-transfer-field-list-class
   [ctx : TcContext]
+  [env : TcTypeEnv]
   [fields : AstFieldDefList]
-  [stack : TcStringList]) : TcThreadTransferClass
+  [stack : TcStringList]
+  [owner-proof : bool]) : TcThreadTransferClass
   (match fields
     [(AstFieldDefNil) (TcThreadShareable)]
     [(AstFieldDefCons field rest)
@@ -10855,13 +11057,20 @@
         (match field
           [(AstFieldDef _ ty _)
             (tc-thread-transfer-class-merge
-              (tc-thread-transfer-type-class ctx ty stack)
-              (tc-thread-transfer-field-list-class ctx rest stack))]))]))
+              (tc-thread-transfer-type-class ctx env ty stack owner-proof)
+              (tc-thread-transfer-field-list-class
+                ctx
+                env
+                rest
+                stack
+                owner-proof))]))]))
 
 (define (tc-thread-transfer-variant-list-class
   [ctx : TcContext]
+  [env : TcTypeEnv]
   [variants : AstVariantDefList]
-  [stack : TcStringList]) : TcThreadTransferClass
+  [stack : TcStringList]
+  [owner-proof : bool]) : TcThreadTransferClass
   (match variants
     [(AstVariantDefNil) (TcThreadShareable)]
     [(AstVariantDefCons variant rest)
@@ -10870,13 +11079,25 @@
         (match variant
           [(AstVariantDef _ payloads _)
             (tc-thread-transfer-class-merge
-              (tc-thread-transfer-type-list-class ctx payloads stack)
-              (tc-thread-transfer-variant-list-class ctx rest stack))]))]))
+              (tc-thread-transfer-type-list-class
+                ctx
+                env
+                payloads
+                stack
+                owner-proof)
+              (tc-thread-transfer-variant-list-class
+                ctx
+                env
+                rest
+                stack
+                owner-proof))]))]))
 
 (define (tc-thread-transfer-struct-class
   [ctx : TcContext]
+  [env : TcTypeEnv]
   [struct-name : String]
-  [stack : TcStringList]) : TcThreadTransferClass
+  [stack : TcStringList]
+  [owner-proof : bool]) : TcThreadTransferClass
   (if (tc-string-list-contains stack struct-name)
     (tc-thread-transfer-reject
       (str-cat
@@ -10892,14 +11113,18 @@
               (tc-thread-transfer-aggregate-class
                 (tc-thread-transfer-field-list-class
                   ctx
+                  env
                   fields
-                  (tc-string-list-add stack struct-name))))])]
+                  (tc-string-list-add stack struct-name)
+                  owner-proof)))])]
       [(ErrTcStructDecl message) (tc-thread-transfer-reject message)])))
 
 (define (tc-thread-transfer-enum-class
   [ctx : TcContext]
+  [env : TcTypeEnv]
   [enum-name : String]
-  [stack : TcStringList]) : TcThreadTransferClass
+  [stack : TcStringList]
+  [owner-proof : bool]) : TcThreadTransferClass
   (if (tc-string-list-contains stack enum-name)
     (tc-thread-transfer-reject
       (str-cat
@@ -10915,45 +11140,98 @@
               (tc-thread-transfer-aggregate-class
                 (tc-thread-transfer-variant-list-class
                   ctx
+                  env
                   variants
-                  (tc-string-list-add stack enum-name))))])]
+                  (tc-string-list-add stack enum-name)
+                  owner-proof)))])]
       [(ErrTcEnumDecl message) (tc-thread-transfer-reject message)])))
 
 (define (tc-thread-transfer-type-class-with-stack
   [ctx : TcContext]
+  [env : TcTypeEnv]
   [ty : AstType]
-  [stack : TcStringList]) : TcThreadTransferClass
+  [stack : TcStringList]
+  [owner-proof : bool]) : TcThreadTransferClass
   (let
     [resolved : AstType (tc-resolve-type ctx ty)]
     (match resolved
-      [(AstTyRegion _ _) (tc-thread-transfer-region-reject)]
+      [(AstTyRegion region inner)
+        (if (tc-atomic-arena-owner-active? env region)
+          (tc-thread-transfer-type-class ctx env (ty-node-get inner) stack true)
+          (tc-thread-transfer-region-reject))]
       [(AstTyRef _ _) (tc-thread-transfer-reference-reject)]
       [(AstTyMutRef _ _) (tc-thread-transfer-mut-reference-reject)]
       [(AstTyPtr _) (tc-thread-transfer-raw-pointer-reject)]
       [(AstTyMutPtr _) (tc-thread-transfer-raw-pointer-reject)]
-      [(AstTyString) (tc-thread-transfer-owned-heap-reject)]
+      [(AstTyString)
+        (if owner-proof
+          (TcThreadShareable)
+          (tc-thread-transfer-owned-heap-reject))]
       [(AstTyStr) (tc-thread-transfer-reference-reject)]
       [(AstTyBytes) (tc-thread-transfer-reference-reject)]
-      [(AstTyDynArray _) (tc-thread-transfer-owned-heap-reject)]
-      [(AstTyBox _) (tc-thread-transfer-owned-heap-reject)]
+      [(AstTyDynArray elem)
+        (if owner-proof
+          (tc-thread-transfer-aggregate-class
+            (tc-thread-transfer-type-class
+              ctx
+              env
+              (ty-node-get elem)
+              stack
+              owner-proof))
+          (tc-thread-transfer-owned-heap-reject))]
+      [(AstTyBox elem)
+        (if owner-proof
+          (tc-thread-transfer-aggregate-class
+            (tc-thread-transfer-type-class
+              ctx
+              env
+              (ty-node-get elem)
+              stack
+              owner-proof))
+          (tc-thread-transfer-owned-heap-reject))]
       [(AstTyTuple elems)
         (tc-thread-transfer-aggregate-class
-          (tc-thread-transfer-type-list-class ctx elems stack))]
+          (tc-thread-transfer-type-list-class ctx env elems stack owner-proof))]
       [(AstTyArray elem _)
         (tc-thread-transfer-aggregate-class
-          (tc-thread-transfer-type-class ctx (ty-node-get elem) stack))]
+          (tc-thread-transfer-type-class
+            ctx
+            env
+            (ty-node-get elem)
+            stack
+            owner-proof))]
       [(AstTyStruct name)
-        (tc-thread-transfer-struct-class ctx (intern-str name) stack)]
+        (tc-thread-transfer-struct-class
+          ctx
+          env
+          (intern-str name)
+          stack
+          owner-proof)]
       [(AstTyStructArgs name lifetimes)
         (if (> (tc-lifetime-list-count lifetimes) 0)
           (tc-thread-transfer-region-reject)
-          (tc-thread-transfer-struct-class ctx (intern-str name) stack))]
+          (tc-thread-transfer-struct-class
+            ctx
+            env
+            (intern-str name)
+            stack
+            owner-proof))]
       [(AstTyEnum name)
-        (tc-thread-transfer-enum-class ctx (intern-str name) stack)]
+        (tc-thread-transfer-enum-class
+          ctx
+          env
+          (intern-str name)
+          stack
+          owner-proof)]
       [(AstTyEnumArgs name lifetimes)
         (if (> (tc-lifetime-list-count lifetimes) 0)
           (tc-thread-transfer-region-reject)
-          (tc-thread-transfer-enum-class ctx (intern-str name) stack))]
+          (tc-thread-transfer-enum-class
+            ctx
+            env
+            (intern-str name)
+            stack
+            owner-proof))]
       [(AstTyFunc _ _)
         (tc-thread-transfer-reject
           "function value transfer requires a direct no-capture function symbol")]
@@ -10973,12 +11251,20 @@
 
 (define (tc-thread-transfer-type-class
   [ctx : TcContext]
+  [env : TcTypeEnv]
   [ty : AstType]
-  [stack : TcStringList]) : TcThreadTransferClass
-  (tc-thread-transfer-type-class-with-stack ctx ty stack))
+  [stack : TcStringList]
+  [owner-proof : bool]) : TcThreadTransferClass
+  (tc-thread-transfer-type-class-with-stack ctx env ty stack owner-proof))
 
 (define (tc-thread-transfer-classify-type [ctx : TcContext] [ty : AstType]) : TcThreadTransferClass
-  (tc-thread-transfer-type-class ctx ty TcStringNil))
+  (tc-thread-transfer-type-class ctx (tc-empty-env) ty TcStringNil false))
+
+(define (tc-thread-transfer-classify-type-in-env
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [ty : AstType]) : TcThreadTransferClass
+  (tc-thread-transfer-type-class ctx env ty TcStringNil false))
 
 (define (tc-thread-safe-spawn-capture-message
   [spawn-name : String]
@@ -11022,7 +11308,9 @@
           [(or
               (= key (tc-region-marker-id))
               (= key (tc-default-boundary-id))
-              (tc-cleanup-owner-marker-entry? key ty))
+              (tc-cleanup-owner-marker-entry? key ty)
+              (tc-ordinary-arena-owner-marker-entry? key ty)
+              (tc-atomic-arena-owner-marker-entry? key ty))
             (tc-check-thread-safe-spawn-captures-scan-root
               spawn-name
               ctx
@@ -11044,6 +11332,14 @@
                 "typecheck: "
                 spawn-name
                 " lambda cannot assign captured binding"))]
+          [(tc-ordinary-arena-owner-active? root name)
+            (ErrTcUnit
+              (str-cat
+                "typecheck: "
+                spawn-name
+                " cannot capture ordinary arena handle `"
+                name
+                "`; use arena-make-atomic for a spanning owner"))]
           [(tc-cleanup-owner-active? root name)
             (ErrTcUnit
               (str-cat
@@ -11051,7 +11347,7 @@
                 spawn-name
                 " cannot capture cleanup-required resource"))]
           [else
-            (match (tc-thread-transfer-classify-type ctx ty)
+            (match (tc-thread-transfer-classify-type-in-env ctx root ty)
               [(TcThreadTransferRejected reason)
                 (ErrTcUnit
                   (tc-thread-safe-spawn-capture-message
@@ -11093,41 +11389,50 @@
         (tc-param-bound-names params)
         body)]))
 
+(define (tc-check-thread-safe-spawn-direct-lambda-arg
+  [spawn-name : String]
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [arg : AstExpr]) : ResultTcUnit
+  (match (ast-expr-unspan arg)
+    [(AstExprLambda params _ body-box)
+      (match params
+        [(AstParamNil)
+          (tc-check-thread-safe-spawn-captures
+            spawn-name
+            ctx
+            env
+            params
+            (ast-node-get body-box))]
+        [_
+          (ErrTcUnit
+            (str-cat
+              "typecheck: "
+              spawn-name
+              " requires a direct nullary lambda argument so captures can be checked"))])]
+    [_
+      (ErrTcUnit
+        (str-cat
+          "typecheck: "
+          spawn-name
+          " requires a direct nullary lambda argument so captures can be checked"))]))
+
 (define (tc-check-thread-safe-spawn-direct-lambda
   [spawn-name : String]
   [ctx : TcContext]
   [env : TcTypeEnv]
   [arg : AstExpr]) : ResultTcUnit
   (match (tc-active-region env)
-    [(TcSomeString _)
-      (ErrTcUnit
-        (str-cat
-          "typecheck: "
-          spawn-name
-          " cannot spawn from scoped arena; closure storage would not outlive the worker"))]
+    [(TcSomeString region)
+      (if (tc-atomic-arena-owner-active? env region)
+        (tc-check-thread-safe-spawn-direct-lambda-arg spawn-name ctx env arg)
+        (ErrTcUnit
+          (str-cat
+            "typecheck: "
+            spawn-name
+            " cannot spawn from scoped arena; closure storage would not outlive the worker")))]
     [(TcNoString)
-      (match (ast-expr-unspan arg)
-        [(AstExprLambda params _ body-box)
-          (match params
-            [(AstParamNil)
-              (tc-check-thread-safe-spawn-captures
-                spawn-name
-                ctx
-                env
-                params
-                (ast-node-get body-box))]
-            [_
-              (ErrTcUnit
-                (str-cat
-                  "typecheck: "
-                  spawn-name
-                  " requires a direct nullary lambda argument so captures can be checked"))])]
-        [_
-          (ErrTcUnit
-            (str-cat
-              "typecheck: "
-              spawn-name
-              " requires a direct nullary lambda argument so captures can be checked"))])]))
+      (tc-check-thread-safe-spawn-direct-lambda-arg spawn-name ctx env arg)]))
 
 (define (tc-check-thread-spawn-i64-call
   [ctx : TcContext]
@@ -11290,6 +11595,10 @@
                                 (if (and
                                   (tc-type-contains-any-region got)
                                   (not allow-region-args)
+                                  (not
+                                    (tc-type-regions-all-atomic-arena-owners?
+                                      env
+                                      got))
                                   (not (tc-type-contains-reference? got)))
                                   (ErrTcUnit
                                     "typecheck: cannot pass region-tagged value to function parameter; region value would escape")
@@ -16263,7 +16572,9 @@
           [(or
               (= key (tc-region-marker-id))
               (= key (tc-default-boundary-id))
-              (tc-cleanup-owner-marker-entry? key ty))
+              (tc-cleanup-owner-marker-entry? key ty)
+              (tc-ordinary-arena-owner-marker-entry? key ty)
+              (tc-atomic-arena-owner-marker-entry? key ty))
             (tc-check-lambda-region-captures-scan-root
               root
               (box-get rest)
@@ -16296,8 +16607,15 @@
               (ErrTcUnit
                 "typecheck: lambda cannot capture immutable reference; reference value would escape lexical scope"))]
           [(tc-type-contains-any-region ty)
-            (ErrTcUnit
-              "typecheck: lambda cannot capture region-tagged value; region value would escape")]
+            (if (tc-type-regions-all-atomic-arena-owners? root ty)
+              (tc-check-lambda-region-captures-scan-root
+                root
+                (box-get rest)
+                bound
+                body
+                allow-immutable-reference-captures)
+              (ErrTcUnit
+                "typecheck: lambda cannot capture region-tagged value; region value would escape"))]
           [else
             (tc-check-lambda-region-captures-scan-root
               root
@@ -21024,6 +21342,19 @@
         (ErrTcType (tc-with-scratch-unsupported-message ctx body-ty)))]
     [(ErrTcType message) (ErrTcType message)]))
 
+(define (tc-in-arena-atomic-owner [env : TcTypeEnv] [arena : AstExpr]) : TcMaybeString
+  (match (tc-expr-var-name arena)
+    [(TcSomeString name)
+      (if (tc-atomic-arena-owner-active? env name)
+        (TcSomeString name)
+        (TcNoString))]
+    [(TcNoString) (TcNoString)]))
+
+(define (tc-in-arena-body-env [env : TcTypeEnv] [arena : AstExpr]) : TcTypeEnv
+  (match (tc-in-arena-atomic-owner env arena)
+    [(TcSomeString owner) (tc-push-region env owner)]
+    [(TcNoString) env]))
+
 (define (tc-in-arena-expr
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -21032,7 +21363,7 @@
   (match (tc-expr-with-expected-or-actual ctx env arena (AstTyI64))
     [(OkTcType arena-ty)
       (if (tc-type-eq arena-ty (AstTyI64))
-        (tc-begin-list ctx env body)
+        (tc-begin-list ctx (tc-in-arena-body-env env arena) body)
         (ErrTcType "typecheck: in-arena arena must be i64"))]
     [(ErrTcType message) (ErrTcType message)]))
 
@@ -21045,7 +21376,11 @@
   (match (tc-expr-with-expected-or-actual ctx env arena (AstTyI64))
     [(OkTcType arena-ty)
       (if (tc-type-eq arena-ty (AstTyI64))
-        (tc-begin-list-with-expected ctx env body expected)
+        (tc-begin-list-with-expected
+          ctx
+          (tc-in-arena-body-env env arena)
+          body
+          expected)
         (ErrTcType "typecheck: in-arena arena must be i64"))]
     [(ErrTcType message) (ErrTcType message)]))
 
@@ -21117,7 +21452,10 @@
               (tc-resolve-type ctx ret))]
           [(AstNoType) (tc-expr ctx lambda-env body)])
           [(OkTcType body-ty)
-            (if (tc-type-contains-any-region body-ty)
+            (if (and
+              (tc-type-contains-any-region body-ty)
+              (not
+                (tc-type-regions-all-atomic-arena-owners? lambda-env body-ty)))
               (ErrTcType
                 "typecheck: lambda return value has region-tagged type; region value would escape")
               (match maybe-ret

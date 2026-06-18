@@ -4324,6 +4324,56 @@ The v1 helper module treats table bytes as opaque after count/size validation;
 the loader slice that consumes entries will validate referenced name ranges and
 code offsets.
 
+##### 5.17.1.1 Host ABI handshake
+
+The tlci header field at byte offset 24 is the host callback ABI version. In v1
+it is exactly the host ABI version used by the dormant native image handshake
+below; both values are `1`. A loader must reject a code-bearing image whose tlci
+header callback ABI version does not match the host callback table version it
+will pass to the image.
+
+A code-bearing image exports one native entry point named `tlci_image_entry`.
+The host calls it with the target platform's ordinary integer calling
+convention:
+
+| Position | Type | Meaning |
+| ---: | --- | --- |
+| 0 | pointer-sized integer | Address of the read-only host callback table |
+| 1 | pointer-sized integer | Address of a writable image registration record |
+| return | `i64` status | `0` on successful registration; nonzero values are reserved diagnostics |
+
+No callback slots are assigned in v1. The callback table begins with a fixed
+48-byte header, and any bytes after `byte-size` are outside the record:
+
+| Offset | Size | Field |
+| ---: | ---: | --- |
+| 0 | 8 | Magic little-endian u64 for ASCII `TLCIHOST` |
+| 8 | 8 | Host callback ABI version, currently `1` |
+| 16 | 8 | Callback table byte size; must be at least `48` |
+| 24 | 8 | Opaque host context pointer, or `0` |
+| 32 | 8 | Reserved, must be `0` in v1 |
+| 40 | 8 | Reserved, must be `0` in v1 |
+
+The image fills the writable registration record before returning success. The
+v1 registration record is also 48 bytes:
+
+| Offset | Size | Field |
+| ---: | ---: | --- |
+| 0 | 8 | Magic little-endian u64 for ASCII `TLCIIMAG` |
+| 8 | 8 | Host callback ABI version used by the image, currently `1` |
+| 16 | 8 | Registration record byte size; must be at least `48` |
+| 24 | 8 | Opaque image context pointer for later dispatch, or `0` |
+| 32 | 8 | Reserved, must be `0` in v1 |
+| 40 | 8 | Reserved, must be `0` in v1 |
+
+Compatibility is append-only. Future ABI versions may require larger byte-size
+values and assign callback or registration fields after the v1 header, but they
+must not reinterpret the v1 offsets above. A v1 loader accepts larger records
+when the magic, ABI version, minimum byte size, and reserved-zero fields are
+valid, and ignores the tail. The v1 skeleton does not execute callbacks, load
+dependent images, enforce macro fuel, or dispatch compiled macros; those are
+later loader and stdlib macro-surface slices.
+
 The metadata section is UTF-8/ASCII S-expression text with stable field order:
 
 ```lisp test=ignore name=tlci-metadata-schema reason="tlci metadata S-expression, not TypeLisp source"

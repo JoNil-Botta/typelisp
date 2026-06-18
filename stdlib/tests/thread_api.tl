@@ -46,6 +46,19 @@
         (string-eq text expected))]
     [(ThreadStringJoinErr _) false]))
 
+(define (thread-api-array-i64-ok? [items : (Array i64)]) : bool
+  (and
+    (= (array-length items) 4)
+    (= (array-ref items 0) 10)
+    (= (array-ref items 1) 20)
+    (= (array-ref items 2) 30)
+    (= (array-ref items 3) 40)))
+
+(define (thread-api-join-array-i64-ok? [result : ThreadArrayI64JoinResult]) : bool
+  (match result
+    [(ThreadArrayI64JoinOk items) (thread-api-array-i64-ok? items)]
+    [(ThreadArrayI64JoinErr _) false]))
+
 (define (thread-api-safe-i64-expect
   [spawn : ThreadI64SpawnResult]
   [expected : i64]
@@ -96,6 +109,26 @@
         (if (thread-api-join-string-ok? (thread-join-string worker))
           42
           18)])))
+
+(define (thread-api-array-i64-build [base : i64]) : (Array i64)
+  (let
+    [items : (Array i64) (make-array i64 4)]
+    (begin
+      (array-set! items 0 base)
+      (array-set! items 1 (+ base 10))
+      (array-set! items 2 (+ base 20))
+      (array-set! items 3 (+ base 30))
+      items)))
+
+(define (thread-api-safe-array-i64-run) : i64
+  (match (thread-spawn-array-i64
+    (lambda () : (Array i64)
+      (thread-api-array-i64-build 10)))
+    [(ThreadArrayI64SpawnErr _) 19]
+    [(ThreadArrayI64SpawnOk worker)
+      (if (thread-api-join-array-i64-ok? (thread-join-array-i64 worker))
+        42
+        20)]))
 
 (define (thread-api-safe-i64-run) : i64
   (let
@@ -192,10 +225,12 @@
   (let
     [safe-code : i64 (thread-api-safe-i64-run)]
     [safe-string-code : i64 (thread-api-safe-string-run)]
+    [safe-array-code : i64 (thread-api-safe-array-i64-run)]
     (cond
       [(< (thread-default-worker-count) 1) 1]
       [(not (= safe-code 42)) safe-code]
       [(not (= safe-string-code 42)) safe-string-code]
+      [(not (= safe-array-code 42)) safe-array-code]
       [(not (thread-api-negative-semaphore-rejected?)) 11]
       [(not (thread-api-large-semaphore-rejected?)) 12]
       [else

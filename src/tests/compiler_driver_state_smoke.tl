@@ -93,6 +93,57 @@
       (compiler-load-session-cache-disable-for-test!)
       ok)))
 
+(define (compiler-driver-state-smoke-load-session-storage-isolated?) : bool
+  (let
+    [state-a : CompilerDriverState
+      (compiler-driver-state-session-cache-enable (compiler-driver-state-new))]
+    [state-b : CompilerDriverState (compiler-driver-state-new)]
+    [program : AstProgram (ast-program AstDeclNil)]
+    [ok : bool true]
+    (begin
+      (compiler-driver-state-apply-session-flags! state-a)
+      (compiler-load-program-cache-clear!)
+      (unless
+        (compiler-load-program-cache-store "state-key" program)
+        (set! ok false))
+      (compiler-load-runtime-prelude-cache-store
+        "prelude-key"
+        AstDeclNil
+        AstDeclPathNil
+        AstDeclModuleNil
+        (sym-i64-empty))
+      (compiler-load-session-floors-set! 2 3 4)
+      (compiler-driver-state-apply-session-flags! state-b)
+      (unless (not (compiler-load-session-cache-enabled?)) (set! ok false))
+      (unless (= (compiler-load-session-ast-floor-value) 0) (set! ok false))
+      (unless (= (compiler-load-session-ty-floor-value) 0) (set! ok false))
+      (unless (= (compiler-load-session-intern-floor-value) 0) (set! ok false))
+      (unless
+        (= (compiler-load-program-cache-store-count-value) 0)
+        (set! ok false))
+      (match (compiler-load-program-cache-lookup "state-key")
+        [(CompilerLoadProgramCacheMiss) unit]
+        [(CompilerLoadProgramCacheHit _) (set! ok false)])
+      (match (compiler-load-runtime-prelude-cache-lookup "prelude-key")
+        [(CompilerLoadPreludeCacheMiss) unit]
+        [(CompilerLoadPreludeCacheHit _ _ _ _) (set! ok false)])
+      (compiler-driver-state-apply-session-flags! state-a)
+      (unless (compiler-load-session-cache-enabled?) (set! ok false))
+      (unless (= (compiler-load-session-ast-floor-value) 2) (set! ok false))
+      (unless (= (compiler-load-session-ty-floor-value) 3) (set! ok false))
+      (unless (= (compiler-load-session-intern-floor-value) 4) (set! ok false))
+      (unless
+        (= (compiler-load-program-cache-store-count-value) 1)
+        (set! ok false))
+      (match (compiler-load-program-cache-lookup "state-key")
+        [(CompilerLoadProgramCacheHit _) unit]
+        [(CompilerLoadProgramCacheMiss) (set! ok false)])
+      (match (compiler-load-runtime-prelude-cache-lookup "prelude-key")
+        [(CompilerLoadPreludeCacheHit _ _ _ _) unit]
+        [(CompilerLoadPreludeCacheMiss) (set! ok false)])
+      (compiler-load-session-cache-disable-for-test!)
+      ok)))
+
 (define (compiler-driver-state-smoke-pools-isolated?) : bool
   (let
     [state-a : CompilerDriverState (compiler-driver-state-new)]
@@ -174,6 +225,9 @@
   (begin
     (unless (compiler-driver-state-smoke-cache-isolated?) (return 2))
     (unless (compiler-driver-state-smoke-reset-flags-isolated?) (return 3))
+    (unless
+      (compiler-driver-state-smoke-load-session-storage-isolated?)
+      (return 6))
     (unless (compiler-driver-state-smoke-pools-isolated?) (return 4))
     (unless (compiler-driver-state-smoke-type-dedup-isolated?) (return 5))
     42))

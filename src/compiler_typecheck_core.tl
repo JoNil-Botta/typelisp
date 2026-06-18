@@ -6,6 +6,7 @@
 (import "compiler_builtin_ids.tl")
 (import "compiler_diagnostic.tl")
 (import "compiler_ctfe.tl")
+(import "compiler_specialize.tl")
 (import "compiler_clone.tl")
 (import "compiler_parse_core.tl")
 (import "read.tl")
@@ -23961,20 +23962,23 @@
 (define (tc-moved-partial? [set : TcMovedSet] [name : String]) : bool
   (tc-moved-contains? set (tc-moved-partial-key name)))
 
+(define (tc-move-string-prefix? [text : String] [prefix : String]) : bool
+  (is-string-prefix-at (& text) (& prefix) 0))
+
 (define (tc-moved-path-key? [key : String]) : bool
-  (tc-move-string-prefix-at? key (tc-moved-path-key "") 0))
+  (tc-move-string-prefix? key (tc-moved-path-key "")))
 
 (define (tc-moved-conflict-display-path [key : String]) : String
   (let
     [path-prefix : String (tc-moved-path-key "")]
     [partial-prefix : String (tc-moved-partial-key "")]
     [key-len : i64 (string-length key)]
-    (if (tc-move-string-prefix-at? key path-prefix 0)
+    (if (tc-move-string-prefix? key path-prefix)
       (substring
         key
         (string-length path-prefix)
         (- key-len (string-length path-prefix)))
-      (if (tc-move-string-prefix-at? key partial-prefix 0)
+      (if (tc-move-string-prefix? key partial-prefix)
         (substring
           key
           (string-length partial-prefix)
@@ -24051,6 +24055,28 @@
     (tc-moved-no-origin-id)
     (tc-move-loop-carried-origin-label name)))
 
+(define (tc-move-rich-conflict-result
+  [conflict : TcMoveConflict]
+  [fallback-key : String]
+  [primary : AstExpr]
+  [message : String]) : TcMoveResult
+  (ErrTcMove
+    (tc-move-rich-conflict-message conflict fallback-key primary message)))
+
+(define (tc-move-rich-use-conflict-result
+  [conflict : TcMoveConflict]
+  [fallback-key : String]
+  [primary : AstExpr]
+  [name : String]) : TcMoveResult
+  (tc-move-rich-conflict-result
+    conflict
+    fallback-key
+    primary
+    (tc-move-use-message name)))
+
+(define (tc-move-rich-loop-carried-result [name : String] [primary : AstExpr]) : TcMoveResult
+  (ErrTcMove (tc-move-rich-loop-carried-message name primary)))
+
 (define (tc-moved-path-key-conflicts? [key : String] [path : String]) : bool
   (let
     [new-key : String (tc-moved-path-key path)]
@@ -24059,8 +24085,8 @@
     (if (tc-moved-path-key? key)
       (or
         (string-eq key new-key)
-        (tc-move-string-prefix-at? key descendant-prefix 0)
-        (tc-move-string-prefix-at? new-key ancestor-prefix 0))
+        (tc-move-string-prefix? key descendant-prefix)
+        (tc-move-string-prefix? new-key ancestor-prefix))
       false)))
 
 (define (tc-moved-path-conflict-loop
@@ -24094,29 +24120,6 @@
     [(TcSomeMoveConflict _ _) true]
     [TcNoMoveConflict false]))
 
-(define (tc-move-string-prefix-at-loop
-  [text : String]
-  [prefix : String]
-  [start : i64]
-  [index : i64]
-  [prefix-len : i64]) : bool
-  (if (>= index prefix-len)
-    true
-    (if (= (string-ref text (+ start index)) (string-ref prefix index))
-      (tc-move-string-prefix-at-loop text prefix start (+ index 1) prefix-len)
-      false)))
-
-(define (tc-move-string-prefix-at?
-  [text : String]
-  [prefix : String]
-  [start : i64]) : bool
-  (let
-    [text-len : i64 (string-length text)]
-    [prefix-len : i64 (string-length prefix)]
-    (if (or (< start 0) (> (+ start prefix-len) text-len))
-      false
-      (tc-move-string-prefix-at-loop text prefix start 0 prefix-len))))
-
 (define (tc-moved-remove-prefix-loop
   [map : StringI64Map]
   [prefix : String]
@@ -24129,7 +24132,7 @@
         (let
           [next : i64 (string-i64-map-next-occupied map (+ index 1))]
           [out2 : TcMovedSet
-            (if (tc-move-string-prefix-at? key prefix 0)
+            (if (tc-move-string-prefix? key prefix)
               (tc-moved-remove out key)
               out)]
           (tc-moved-remove-prefix-loop map prefix next out2))]
@@ -24162,9 +24165,7 @@
     false
     (match (string-i64-map-entry-at map index)
       [(StringI64MapEntrySome key _)
-        (if (and
-          (tc-moved-path-key? key)
-          (tc-move-string-prefix-at? key prefix 0))
+        (if (and (tc-moved-path-key? key) (tc-move-string-prefix? key prefix))
           true
           (tc-moved-any-path-with-prefix-loop?
             map
@@ -24190,9 +24191,7 @@
     TcNoMoveConflict
     (match (string-i64-map-entry-at map index)
       [(StringI64MapEntrySome key value)
-        (if (and
-          (tc-moved-path-key? key)
-          (tc-move-string-prefix-at? key prefix 0))
+        (if (and (tc-moved-path-key? key) (tc-move-string-prefix? key prefix))
           (TcSomeMoveConflict key value)
           (tc-moved-root-path-conflict-loop
             map
@@ -24655,6 +24654,52 @@
           [(AstParam name _ _)
             (tc-move-params-locals rest (tc-moved-add acc (intern-str name)))]))]))
 
+(define (tc-move-after-consuming-projection
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [loop-carried : TcMovedSet]
+  [moved : TcMovedSet]
+  [expr : AstExpr]) : TcMoveResult
+  (if (tc-move-dynamic-array-element-projection? ctx env expr)
+    (ErrTcMove (tc-move-dynamic-array-element-message))
+    (if (tc-move-box-projection? expr)
+      (ErrTcMove (tc-move-box-projection-message))
+      (match (tc-move-projection-path expr)
+        [(TcSomeString path)
+          (match (tc-move-root-projection-var expr)
+            [(TcSomeString root)
+              (if (tc-moved-contains? locals root)
+                (match (tc-moved-path-conflict moved path)
+                  [(TcSomeMoveConflict key origin-id)
+                    (tc-move-rich-use-conflict-result
+                      (TcSomeMoveConflict key origin-id)
+                      (tc-moved-path-key path)
+                      expr
+                      path)]
+                  [TcNoMoveConflict
+                    (OkTcMove
+                      (tc-moved-add-projection-path moved root path expr))])
+                (OkTcMove moved))]
+            [(TcNoString) (OkTcMove moved)])]
+        [(TcNoString)
+          (if (tc-move-aggregate-path-projection? expr)
+            (ErrTcMove (tc-move-aggregate-path-message))
+            (match (tc-move-root-projection-var expr)
+              [(TcSomeString root)
+                (if (tc-moved-contains? locals root)
+                  (if (tc-moved-partial? moved root)
+                    (tc-move-rich-use-conflict-result
+                      (tc-moved-root-conflict moved root)
+                      root
+                      expr
+                      root)
+                    (if (tc-moved-contains? loop-carried root)
+                      (tc-move-rich-loop-carried-result root expr)
+                      (OkTcMove (tc-moved-add-origin moved root expr))))
+                  (OkTcMove moved))]
+              [(TcNoString) (OkTcMove moved)]))]))))
+
 ;; Mark the source variable moved when an init/rhs is a bare move-only variable
 ;; that names a tracked local/parameter (not an enum constructor or global).
 (define (tc-move-after-bind
@@ -24668,65 +24713,26 @@
     [(TcSomeString v)
       (if (and (tc-moved-contains? locals v) (tc-move-var-move-only? env v))
         (if (tc-moved-partial? moved v)
-          (ErrTcMove
-            (tc-move-rich-conflict-message
-              (tc-moved-root-conflict moved v)
-              v
-              init
-              (tc-move-use-message v)))
+          (tc-move-rich-use-conflict-result
+            (tc-moved-root-conflict moved v)
+            v
+            init
+            v)
           (if (tc-moved-contains? loop-carried v)
-            (ErrTcMove (tc-move-rich-loop-carried-message v init))
+            (tc-move-rich-loop-carried-result v init)
             (OkTcMove (tc-moved-add-origin moved v init))))
         (OkTcMove moved))]
     [(TcNoString)
       (match (tc-expr ctx env init)
         [(OkTcType init-ty)
           (if (tc-type-consuming-by-value-now? ctx init-ty)
-            (if (tc-move-dynamic-array-element-projection? ctx env init)
-              (ErrTcMove (tc-move-dynamic-array-element-message))
-              (if (tc-move-box-projection? init)
-                (ErrTcMove (tc-move-box-projection-message))
-                (match (tc-move-projection-path init)
-                  [(TcSomeString path)
-                    (match (tc-move-root-projection-var init)
-                      [(TcSomeString root)
-                        (if (tc-moved-contains? locals root)
-                          (match (tc-moved-path-conflict moved path)
-                            [(TcSomeMoveConflict key origin-id)
-                              (ErrTcMove
-                                (tc-move-rich-conflict-message
-                                  (TcSomeMoveConflict key origin-id)
-                                  (tc-moved-path-key path)
-                                  init
-                                  (tc-move-use-message path)))]
-                            [TcNoMoveConflict
-                              (OkTcMove
-                                (tc-moved-add-projection-path
-                                  moved
-                                  root
-                                  path
-                                  init))])
-                          (OkTcMove moved))]
-                      [(TcNoString) (OkTcMove moved)])]
-                  [(TcNoString)
-                    (if (tc-move-aggregate-path-projection? init)
-                      (ErrTcMove (tc-move-aggregate-path-message))
-                      (match (tc-move-root-projection-var init)
-                        [(TcSomeString root)
-                          (if (tc-moved-contains? locals root)
-                            (if (tc-moved-partial? moved root)
-                              (ErrTcMove
-                                (tc-move-rich-conflict-message
-                                  (tc-moved-root-conflict moved root)
-                                  root
-                                  init
-                                  (tc-move-use-message root)))
-                              (if (tc-moved-contains? loop-carried root)
-                                (ErrTcMove
-                                  (tc-move-rich-loop-carried-message root init))
-                                (OkTcMove (tc-moved-add-origin moved root init))))
-                            (OkTcMove moved))]
-                        [(TcNoString) (OkTcMove moved)]))])))
+            (tc-move-after-consuming-projection
+              ctx
+              env
+              locals
+              loop-carried
+              moved
+              init)
             (OkTcMove moved))]
         [(ErrTcType _) (OkTcMove moved)])]))
 
@@ -24739,47 +24745,7 @@
   [expr : AstExpr]
   [move? : bool]) : TcMoveResult
   (if move?
-    (if (tc-move-dynamic-array-element-projection? ctx env expr)
-      (ErrTcMove (tc-move-dynamic-array-element-message))
-      (if (tc-move-box-projection? expr)
-        (ErrTcMove (tc-move-box-projection-message))
-        (match (tc-move-projection-path expr)
-          [(TcSomeString path)
-            (match (tc-move-root-projection-var expr)
-              [(TcSomeString root)
-                (if (tc-moved-contains? locals root)
-                  (match (tc-moved-path-conflict moved path)
-                    [(TcSomeMoveConflict key origin-id)
-                      (ErrTcMove
-                        (tc-move-rich-conflict-message
-                          (TcSomeMoveConflict key origin-id)
-                          (tc-moved-path-key path)
-                          expr
-                          (tc-move-use-message path)))]
-                    [TcNoMoveConflict
-                      (OkTcMove
-                        (tc-moved-add-projection-path moved root path expr))])
-                  (OkTcMove moved))]
-              [(TcNoString) (OkTcMove moved)])]
-          [(TcNoString)
-            (if (tc-move-aggregate-path-projection? expr)
-              (ErrTcMove (tc-move-aggregate-path-message))
-              (match (tc-move-root-projection-var expr)
-                [(TcSomeString root)
-                  (if (tc-moved-contains? locals root)
-                    (if (tc-moved-partial? moved root)
-                      (ErrTcMove
-                        (tc-move-rich-conflict-message
-                          (tc-moved-root-conflict moved root)
-                          root
-                          expr
-                          (tc-move-use-message root)))
-                      (if (tc-moved-contains? loop-carried root)
-                        (ErrTcMove
-                          (tc-move-rich-loop-carried-message root expr))
-                        (OkTcMove (tc-moved-add-origin moved root expr))))
-                    (OkTcMove moved))]
-                [(TcNoString) (OkTcMove moved)]))])))
+    (tc-move-after-consuming-projection ctx env locals loop-carried moved expr)
     (OkTcMove moved)))
 
 (define (tc-move-after-consuming-value
@@ -24913,14 +24879,13 @@
                   (if (or
                     (tc-moved-contains? moved name)
                     (tc-moved-partial? moved name))
-                    (ErrTcMove
-                      (tc-move-rich-conflict-message
-                        (tc-moved-root-conflict moved name)
-                        name
-                        body
-                        (tc-move-use-message name)))
+                    (tc-move-rich-use-conflict-result
+                      (tc-moved-root-conflict moved name)
+                      name
+                      body
+                      name)
                     (if (tc-moved-contains? loop-carried name)
-                      (ErrTcMove (tc-move-rich-loop-carried-message name body))
+                      (tc-move-rich-loop-carried-result name body)
                       (tc-move-check-lambda-owner-captures-scan
                         ctx
                         root
@@ -25303,12 +25268,11 @@
     [(TcStringNil) (OkTcMove moved)]
     [(TcStringCons name rest)
       (if (or (tc-moved-contains? moved name) (tc-moved-partial? moved name))
-        (ErrTcMove
-          (tc-move-rich-conflict-message
-            (tc-moved-root-conflict moved name)
-            name
-            scope
-            (tc-move-cleanup-owner-exit-message name)))
+        (tc-move-rich-conflict-result
+          (tc-moved-root-conflict moved name)
+          name
+          scope
+          (tc-move-cleanup-owner-exit-message name))
         (tc-move-check-cleanup-owner-exit moved (box-get rest) scope))]))
 
 (define (tc-move-add-bound-names [locals : TcMovedSet] [names : TcStringList]) : TcMovedSet
@@ -25432,12 +25396,11 @@
                 (ast-node-get virtual-id))]
             [(ErrTcExprId message) (ErrTcMove message)])
           (if (tc-moved-contains? moved name-text)
-            (ErrTcMove
-              (tc-move-rich-conflict-message
-                (tc-moved-conflict moved name-text)
-                name-text
-                expr
-                (tc-move-use-message name-text)))
+            (tc-move-rich-use-conflict-result
+              (tc-moved-conflict moved name-text)
+              name-text
+              expr
+              name-text)
             (OkTcMove moved))))]
     [(AstExprBinary _ left-box right-box)
       (let
@@ -25585,12 +25548,11 @@
             (match (tc-move-tuple-element-path expr)
               [(TcSomeString path)
                 (if (tc-moved-contains? moved1 (tc-moved-path-key path))
-                  (ErrTcMove
-                    (tc-move-rich-conflict-message
-                      (tc-moved-conflict moved1 (tc-moved-path-key path))
-                      (tc-moved-path-key path)
-                      expr
-                      (tc-move-use-message path)))
+                  (tc-move-rich-use-conflict-result
+                    (tc-moved-conflict moved1 (tc-moved-path-key path))
+                    (tc-moved-path-key path)
+                    expr
+                    path)
                   (OkTcMove moved1))]
               [(TcNoString) (OkTcMove moved1)])]
           [(ErrTcMove message) (ErrTcMove message)]))]
@@ -25622,12 +25584,11 @@
                 (match (tc-move-array-element-path expr)
                   [(TcSomeString path)
                     (if (tc-moved-contains? moved2 (tc-moved-path-key path))
-                      (ErrTcMove
-                        (tc-move-rich-conflict-message
-                          (tc-moved-conflict moved2 (tc-moved-path-key path))
-                          (tc-moved-path-key path)
-                          expr
-                          (tc-move-use-message path)))
+                      (tc-move-rich-use-conflict-result
+                        (tc-moved-conflict moved2 (tc-moved-path-key path))
+                        (tc-moved-path-key path)
+                        expr
+                        path)
                       (OkTcMove moved2))]
                   [(TcNoString) (OkTcMove moved2)])]
               [(ErrTcMove message) (ErrTcMove message)])]
@@ -25834,12 +25795,11 @@
             (match (tc-move-struct-field-path expr)
               [(TcSomeString path)
                 (if (tc-moved-contains? moved1 (tc-moved-path-key path))
-                  (ErrTcMove
-                    (tc-move-rich-conflict-message
-                      (tc-moved-conflict moved1 (tc-moved-path-key path))
-                      (tc-moved-path-key path)
-                      expr
-                      (tc-move-use-message path)))
+                  (tc-move-rich-use-conflict-result
+                    (tc-moved-conflict moved1 (tc-moved-path-key path))
+                    (tc-moved-path-key path)
+                    expr
+                    path)
                   (OkTcMove moved1))]
               [(TcNoString) (OkTcMove moved1)])]
           [(ErrTcMove message) (ErrTcMove message)]))]
@@ -25963,12 +25923,11 @@
         (tc-move-check-expr ctx env locals loop-carried moved inner))]
     [(AstExprPtrAddrOf name)
       (if (tc-moved-contains? moved (intern-str name))
-        (ErrTcMove
-          (tc-move-rich-conflict-message
-            (tc-moved-conflict moved (intern-str name))
-            (intern-str name)
-            expr
-            (tc-move-use-message (intern-str name))))
+        (tc-move-rich-use-conflict-result
+          (tc-moved-conflict moved (intern-str name))
+          (intern-str name)
+          expr
+          (intern-str name))
         (OkTcMove moved))]
     [(AstExprPtrRead inner-box)
       (let
@@ -27857,14 +27816,6 @@
   (OkMacroValue CompilerCtfeValue)
   (ErrMacroValue CompilerDiagnostic))
 
-(defenum ResultMacroIdentityKey
-  (OkMacroIdentityKey String i64)
-  (ErrMacroIdentityKey CompilerDiagnostic))
-
-(defenum ResultMacroIdentity
-  (OkMacroIdentity String)
-  (ErrMacroIdentity CompilerDiagnostic))
-
 (defenum ResultMacroSexpr
   (OkMacroSexpr SpannedSexpr)
   (ErrMacroSexpr CompilerDiagnostic))
@@ -27877,17 +27828,9 @@
   (MacroNoModuleName)
   (MacroSomeModuleName String))
 
-(defenum MacroMaybeDeclName
-  (MacroNoDeclName)
-  (MacroSomeDeclName String))
-
 (defenum MacroMaybeDeclList
   (MacroNoDeclList)
   (MacroSomeDeclList AstDeclList))
-
-(defenum MacroMaybeGeneratedIdentity
-  (MacroNoGeneratedIdentity)
-  (MacroSomeGeneratedIdentity String))
 
 (defenum MacroHygieneEnv
   (MacroHygieneNil)
@@ -28011,25 +27954,12 @@
           [(AstDeclModule _) (+ rest-count 1)]
           [_ rest-count]))]))
 
-(define (macro-string-key-from [text : String] [idx : i64] [n : i64]) : String
-  (if (>= idx n)
-    ""
-    (str-cat
-      "_"
-      (int->string (cast (string-ref text idx) : i64))
-      (macro-string-key-from text (+ idx 1) n))))
-
-(define (macro-string-key [text : String]) : String
-  (let
-    [n : i64 (string-length text)]
-    (str-cat "string_" (int->string n) (macro-string-key-from text 0 n))))
-
 (define (macro-identity-key-exprs
   [exprs : AstExprList]
   [env : CtfeEnv]
-  [fuel : i64]) : ResultMacroIdentityKey
+  [fuel : i64]) : ResultGenKey
   (match exprs
-    [(AstExprNil) (OkMacroIdentityKey "" fuel)]
+    [(AstExprNil) (OkGenKey "" fuel)]
     [(AstExprCons head rest)
       (let
         [head-expr : AstExpr (ast-node-get head)]
@@ -28038,49 +27968,31 @@
             (match value
               [(CtfeString text)
                 (match (macro-identity-key-exprs (box-get rest) env head-fuel)
-                  [(OkMacroIdentityKey tail tail-fuel)
+                  [(OkGenKey tail tail-fuel)
                     (let
-                      [head-key : String (macro-string-key text)]
-                      (OkMacroIdentityKey
+                      [head-key : String (spec-string-key text)]
+                      (OkGenKey
                         (if (> (string-length tail) 0)
                           (str-cat head-key ";" tail)
                           head-key)
                         tail-fuel))]
-                  [(ErrMacroIdentityKey diag) (ErrMacroIdentityKey diag)])]
+                  [(ErrGenKey diag) (ErrGenKey diag)])]
               [_
-                (ErrMacroIdentityKey
+                (ErrGenKey
                   (ctfe-diagnostic-at-expr
                     head-expr
                     "typecheck: Module macro identity key expression must evaluate to String"))])]
-          [(ErrCtfe diag) (ErrMacroIdentityKey diag)]))]))
+          [(ErrCtfe diag) (ErrGenKey diag)]))]))
 
 (define (macro-module-identity
   [macro-name : String]
   [definition-module : String]
   [args : AstExprList]
-  [env : CtfeEnv]) : ResultMacroIdentity
+  [env : CtfeEnv]) : ResultGenKey
   (match (macro-identity-key-exprs args env (ctfe-fuel-limit))
-    [(OkMacroIdentityKey arg-key _)
-      (OkMacroIdentity
-        (str-cat definition-module ":" macro-name "(" arg-key ")"))]
-    [(ErrMacroIdentityKey diag) (ErrMacroIdentity diag)]))
-
-(define (macro-decl-visible-name [decl : AstDecl]) : MacroMaybeDeclName
-  (match decl
-    [(AstDeclDef name _ _) (MacroSomeDeclName (intern-str name))]
-    [(AstDeclDefFn name _ _ _ _) (MacroSomeDeclName (intern-str name))]
-    [(AstDeclDefMacro name _ _ _) (MacroSomeDeclName (intern-str name))]
-    [(AstDeclExtern name _ _ _) (MacroSomeDeclName (intern-str name))]
-    [(AstDeclDefDispatch name _) (MacroSomeDeclName (intern-str name))]
-    [(AstDeclDefEnum name _ _) (MacroSomeDeclName (intern-str name))]
-    [(AstDeclDefEnumLifetimes name _ _ _) (MacroSomeDeclName (intern-str name))]
-    [(AstDeclDefStruct name _ _ _) (MacroSomeDeclName (intern-str name))]
-    [(AstDeclDefStructLifetimes name _ _ _ _)
-      (MacroSomeDeclName (intern-str name))]
-    [(AstDeclUnsafe inner-box) (macro-decl-visible-name (box-get inner-box))]
-    [(AstDeclComptimeDecl _ template-box)
-      (macro-decl-visible-name (box-get template-box))]
-    [_ (MacroNoDeclName)]))
+    [(OkGenKey arg-key fuel)
+      (OkGenKey (str-cat definition-module ":" macro-name "(" arg-key ")") fuel)]
+    [(ErrGenKey diag) (ErrGenKey diag)]))
 
 (define (macro-generated-meta
   [generator : String]
@@ -28097,12 +28009,12 @@
     [(AstDeclImport _) decl]
     [(AstDeclExport _) decl]
     [_
-      (match (macro-decl-visible-name decl)
-        [(MacroSomeDeclName item)
+      (match (gen-decl-visible-name decl)
+        [(SpecSomeString item)
           (ast-decl-comptime-decl-with-meta
             (macro-generated-meta generator item key)
             decl)]
-        [(MacroNoDeclName) decl])]))
+        [(SpecNoString) decl])]))
 
 (define (macro-wrap-generated-decls
   [decls : AstDeclList]
@@ -28139,254 +28051,6 @@
         (macro-decl-generated-key? decl key)
         (macro-decls-contain-generated-key? (box-get rest) key))]))
 
-(define (macro-generated-meta-eq?
-  [a : AstGeneratedDeclMeta]
-  [b : AstGeneratedDeclMeta]) : bool
-  (match a
-    [(AstNoGeneratedDeclMeta)
-      (match b
-        [(AstNoGeneratedDeclMeta) true]
-        [_ false])]
-    [(AstSomeGeneratedDeclMeta a-generator a-item _ a-key)
-      (match b
-        [(AstSomeGeneratedDeclMeta b-generator b-item _ b-key)
-          (and
-            (string-eq a-generator b-generator)
-            (string-eq a-item b-item)
-            (string-eq a-key b-key))]
-        [_ false])]))
-
-(define (macro-maybe-type-eq? [a : AstMaybeType] [b : AstMaybeType]) : bool
-  (match a
-    [(AstNoType)
-      (match b
-        [(AstNoType) true]
-        [_ false])]
-    [(AstSomeType a-ty)
-      (match b
-        [(AstSomeType b-ty) (tc-type-eq a-ty b-ty)]
-        [_ false])]))
-
-(define (macro-param-eq? [a : AstParam] [b : AstParam]) : bool
-  (match a
-    [(AstParam a-name a-ty a-comptime?)
-      (match b
-        [(AstParam b-name b-ty b-comptime?)
-          (and
-            (= a-name b-name)
-            (tc-type-eq a-ty b-ty)
-            (= a-comptime? b-comptime?))])]))
-
-(define (macro-param-list-eq? [a : AstParamList] [b : AstParamList]) : bool
-  (match a
-    [(AstParamNil)
-      (match b
-        [(AstParamNil) true]
-        [_ false])]
-    [(AstParamCons a-head a-rest)
-      (let
-        [a-rest : AstParamList (box-get a-rest)]
-        (match b
-          [(AstParamCons b-head b-rest)
-            (let
-              [b-rest : AstParamList (box-get b-rest)]
-              (and
-                (macro-param-eq? a-head b-head)
-                (macro-param-list-eq? a-rest b-rest)))]
-          [_ false]))]))
-
-(define (macro-fn-export-eq? [a : AstFnExport] [b : AstFnExport]) : bool
-  (match a
-    [(AstFnNoExport)
-      (match b
-        [(AstFnNoExport) true]
-        [_ false])]
-    [(AstFnExport a-symbol)
-      (match b
-        [(AstFnExport b-symbol) (= a-symbol b-symbol)]
-        [_ false])]))
-
-(define (macro-export-item-eq? [a : AstExportItem] [b : AstExportItem]) : bool
-  (match a
-    [(AstExportValue a-name)
-      (match b
-        [(AstExportValue b-name) (string-eq a-name b-name)]
-        [_ false])]
-    [(AstExportType a-name)
-      (match b
-        [(AstExportType b-name) (string-eq a-name b-name)]
-        [_ false])]
-    [(AstExportMacro a-name)
-      (match b
-        [(AstExportMacro b-name) (string-eq a-name b-name)]
-        [_ false])]
-    [(AstExportConstructor a-name)
-      (match b
-        [(AstExportConstructor b-name) (string-eq a-name b-name)]
-        [_ false])]
-    [(AstExportField a-type a-field)
-      (match b
-        [(AstExportField b-type b-field)
-          (and (string-eq a-type b-type) (string-eq a-field b-field))]
-        [_ false])]
-    [(AstExportVariant a-name)
-      (match b
-        [(AstExportVariant b-name) (string-eq a-name b-name)]
-        [_ false])]))
-
-(define (macro-export-item-list-eq?
-  [a : AstExportItemList]
-  [b : AstExportItemList]) : bool
-  (match a
-    [(AstExportItemNil)
-      (match b
-        [(AstExportItemNil) true]
-        [_ false])]
-    [(AstExportItemCons a-head a-rest)
-      (let
-        [a-rest : AstExportItemList (box-get a-rest)]
-        (match b
-          [(AstExportItemCons b-head b-rest)
-            (let
-              [b-rest : AstExportItemList (box-get b-rest)]
-              (and
-                (macro-export-item-eq? a-head b-head)
-                (macro-export-item-list-eq? a-rest b-rest)))]
-          [_ false]))]))
-
-(define (macro-import-kind-eq? [a : AstImportKind] [b : AstImportKind]) : bool
-  (match a
-    [(AstImportPath)
-      (match b
-        [(AstImportPath) true]
-        [_ false])]
-    [(AstImportModule)
-      (match b
-        [(AstImportModule) true]
-        [_ false])]
-    [(AstImportMacro _)
-      (match b
-        [(AstImportMacro _) true]
-        [_ false])]
-    [(AstImportMacroDecls _)
-      (match b
-        [(AstImportMacroDecls _) true]
-        [_ false])]))
-
-(define (macro-maybe-module-name-eq?
-  [a : AstMaybeModuleName]
-  [b : AstMaybeModuleName]) : bool
-  (match a
-    [(AstNoModuleName)
-      (match b
-        [(AstNoModuleName) true]
-        [_ false])]
-    [(AstSomeModuleName a-name)
-      (match b
-        [(AstSomeModuleName b-name) (string-eq a-name b-name)]
-        [_ false])]))
-
-(define (macro-maybe-import-alias-eq?
-  [a : AstMaybeImportAlias]
-  [b : AstMaybeImportAlias]) : bool
-  (match a
-    [(AstNoImportAlias)
-      (match b
-        [(AstNoImportAlias) true]
-        [_ false])]
-    [(AstSomeImportAlias a-name)
-      (match b
-        [(AstSomeImportAlias b-name) (string-eq a-name b-name)]
-        [_ false])]))
-
-(define (macro-import-spec-eq? [a : AstImportSpec] [b : AstImportSpec]) : bool
-  (match a
-    [(AstImportSpec a-kind a-path a-module a-alias _)
-      (match b
-        [(AstImportSpec b-kind b-path b-module b-alias _)
-          (and
-            (macro-import-kind-eq? a-kind b-kind)
-            (string-eq a-path b-path)
-            (macro-maybe-module-name-eq? a-module b-module)
-            (macro-maybe-import-alias-eq? a-alias b-alias))])]))
-
-(define (macro-decl-structural-eq? [a : AstDecl] [b : AstDecl]) : bool
-  (match a
-    [(AstDeclDef a-name a-ty a-value-box)
-      (let
-        [a-value : AstExpr (ast-node-get a-value-box)]
-        (match b
-          [(AstDeclDef b-name b-ty b-value-box)
-            (let
-              [b-value : AstExpr (ast-node-get b-value-box)]
-              (and
-                (= a-name b-name)
-                (macro-maybe-type-eq? a-ty b-ty)
-                (ctfe-expr-eq a-value b-value)))]
-          [_ false]))]
-    [(AstDeclDefFn a-name a-params a-ret a-body-box a-export)
-      (let
-        [a-body : AstExpr (ast-node-get a-body-box)]
-        (match b
-          [(AstDeclDefFn b-name b-params b-ret b-body-box b-export)
-            (let
-              [b-body : AstExpr (ast-node-get b-body-box)]
-              (and
-                (= a-name b-name)
-                (macro-param-list-eq? a-params b-params)
-                (tc-type-eq a-ret b-ret)
-                (ctfe-expr-eq a-body b-body)
-                (macro-fn-export-eq? a-export b-export)))]
-          [_ false]))]
-    [(AstDeclImport a-spec)
-      (match b
-        [(AstDeclImport b-spec) (macro-import-spec-eq? a-spec b-spec)]
-        [_ false])]
-    [(AstDeclIncludeStr a-name a-path)
-      (match b
-        [(AstDeclIncludeStr b-name b-path)
-          (and (string-eq a-name b-name) (string-eq a-path b-path))]
-        [_ false])]
-    [(AstDeclIncludeBin a-name a-path)
-      (match b
-        [(AstDeclIncludeBin b-name b-path)
-          (and (string-eq a-name b-name) (string-eq a-path b-path))]
-        [_ false])]
-    [(AstDeclExport a-items)
-      (match b
-        [(AstDeclExport b-items) (macro-export-item-list-eq? a-items b-items)]
-        [_ false])]
-    [(AstDeclTest a-name a-body-box _)
-      (let
-        [a-body : AstExpr (ast-node-get a-body-box)]
-        (match b
-          [(AstDeclTest b-name b-body-box _)
-            (let
-              [b-body : AstExpr (ast-node-get b-body-box)]
-              (and (= a-name b-name) (ctfe-expr-eq a-body b-body)))]
-          [_ false]))]
-    [(AstDeclModule a-name)
-      (match b
-        [(AstDeclModule b-name) (= a-name b-name)]
-        [_ false])]
-    [(AstDeclComptimeDecl a-meta a-template-box)
-      (match b
-        [(AstDeclComptimeDecl b-meta b-template-box)
-          (and
-            (macro-generated-meta-eq? a-meta b-meta)
-            (macro-decl-structural-eq?
-              (box-get a-template-box)
-              (box-get b-template-box)))]
-        [_ false])]
-    [(AstDeclUnsafe a-inner-box)
-      (let
-        [a-inner : AstDecl (box-get a-inner-box)]
-        (match b
-          [(AstDeclUnsafe b-inner-box)
-            (macro-decl-structural-eq? a-inner (box-get b-inner-box))]
-          [_ (macro-decl-structural-eq? a-inner b)]))]
-    [_ false]))
-
 (define (macro-decl-list-structural-eq? [a : AstDeclList] [b : AstDeclList]) : bool
   (match a
     [(AstDeclNil)
@@ -28401,7 +28065,7 @@
             (let
               [b-rest : AstDeclList (box-get b-rest)]
               (and
-                (macro-decl-structural-eq? a-head b-head)
+                (gen-decl-eq? a-head b-head)
                 (macro-decl-list-structural-eq? a-rest b-rest)))]
           [_ false]))]))
 
@@ -30918,16 +30582,17 @@
               generated-body
               module
               alias
-              span
               identity)
-              [(OkMacroImportCollision)
+              [CompilerNoString
                 (let
                   [expanded : AstDeclList
                     (macro-module-import-marker-decls target-module alias span)]
                   (OkMacroDeclExpansion
                     expanded
                     (macro-paths-for-decls expanded decl-path)))]
-              [(ErrMacroImportCollision diag) (ErrMacroDeclExpansion diag)])
+              [(CompilerSomeString message)
+                (ErrMacroDeclExpansion
+                  (macro-generated-import-diag span message))])
             (ErrMacroDeclExpansion
               (macro-module-incompatible-output-diag call-expr identity)))
           (ErrMacroDeclExpansion
@@ -30941,9 +30606,8 @@
           generated-body
           module
           alias
-          span
           identity)
-          [(OkMacroImportCollision)
+          [CompilerNoString
             (let
               [expanded : AstDeclList
                 (macro-decl-list-append
@@ -30954,7 +30618,8 @@
               (OkMacroDeclExpansion
                 expanded
                 (macro-paths-for-decls expanded decl-path)))]
-          [(ErrMacroImportCollision diag) (ErrMacroDeclExpansion diag)])])))
+          [(CompilerSomeString message)
+            (ErrMacroDeclExpansion (macro-generated-import-diag span message))])])))
 
 (define (macro-expand-module-generated-decls
   [orig-decls : AstDeclList]
@@ -31095,7 +30760,7 @@
                           definition-module
                           expanded-args
                           (tc-ctfe-env decl-ctx))
-                          [(OkMacroIdentity identity)
+                          [(OkGenKey identity _)
                             (match (macro-eval-transformer
                               decl-ctx
                               global-env
@@ -31125,7 +30790,7 @@
                                     (ErrMacroDeclExpansion diag)])]
                               [(ErrMacroValue diag)
                                 (ErrMacroDeclExpansion diag)])]
-                          [(ErrMacroIdentity diag) (ErrMacroDeclExpansion diag)])]
+                          [(ErrGenKey diag) (ErrMacroDeclExpansion diag)])]
                       [(ErrMacroExprList diag) (ErrMacroDeclExpansion diag)])
                     (if (tc-macro-result-decls? ret)
                       (ErrMacroDeclExpansion
@@ -31185,37 +30850,28 @@
             [(ErrMacroDecl diag) (ErrMacroDeclExpansion diag)])))]))
 
 (define (macro-module-generated-key? [key : String]) : bool
-  (let
-    [prefix : String "generated:"]
-    [prefix-len : i64 (string-length prefix)]
-    [key-len : i64 (string-length key)]
-    (and
-      (> key-len 0)
-      (not
-        (and
-          (>= key-len prefix-len)
-          (string-eq (substring key 0 prefix-len) prefix))))))
+  (and (> (string-length key) 0) (not (tc-string-prefix? key "generated:"))))
 
-(define (macro-decl-generated-identity [decl : AstDecl]) : MacroMaybeGeneratedIdentity
+(define (macro-decl-generated-identity [decl : AstDecl]) : CompilerMaybeString
   (match decl
     [(AstDeclComptimeDecl meta template-box)
       (match meta
         [(AstSomeGeneratedDeclMeta _ _ _ key)
           (if (macro-module-generated-key? key)
-            (MacroSomeGeneratedIdentity key)
+            (CompilerSomeString key)
             (macro-decl-generated-identity (box-get template-box)))]
         [(AstNoGeneratedDeclMeta)
           (macro-decl-generated-identity (box-get template-box))])]
     [(AstDeclUnsafe inner-box)
       (macro-decl-generated-identity (box-get inner-box))]
-    [_ (MacroNoGeneratedIdentity)]))
+    [_ CompilerNoString]))
 
 (define (macro-module-generated-identity-in
   [decls : AstDeclList]
   [target-module : String]
-  [module : String]) : MacroMaybeGeneratedIdentity
+  [module : String]) : CompilerMaybeString
   (match decls
-    [(AstDeclNil) (MacroNoGeneratedIdentity)]
+    [(AstDeclNil) CompilerNoString]
     [(AstDeclCons decl rest-box)
       (match decl
         [(AstDeclModule next-module)
@@ -31226,9 +30882,8 @@
         [_
           (if (string-eq module target-module)
             (match (macro-decl-generated-identity decl)
-              [(MacroSomeGeneratedIdentity identity)
-                (MacroSomeGeneratedIdentity identity)]
-              [(MacroNoGeneratedIdentity)
+              [(CompilerSomeString identity) (CompilerSomeString identity)]
+              [CompilerNoString
                 (macro-module-generated-identity-in
                   (box-get rest-box)
                   target-module
@@ -31240,7 +30895,7 @@
 
 (define (macro-module-generated-identity
   [decls : AstDeclList]
-  [target-module : String]) : MacroMaybeGeneratedIdentity
+  [target-module : String]) : CompilerMaybeString
   (macro-module-generated-identity-in decls target-module ""))
 
 (define (macro-import-unqualified? [alias : AstMaybeImportAlias]) : bool
@@ -31253,10 +30908,6 @@
     [(AstSomeImportAlias alias-name) (string-eq alias-name "")]
     [(AstNoImportAlias) true]))
 
-(defenum ResultMacroImportCollision
-  (OkMacroImportCollision)
-  (ErrMacroImportCollision CompilerDiagnostic))
-
 (define (macro-export-value-name [item : AstExportItem]) : TcMaybeString
   (match item
     [(AstExportValue name) (TcSomeString name)]
@@ -31264,57 +30915,28 @@
     [(AstExportVariant name) (TcSomeString name)]
     [_ (TcNoString)]))
 
-(define (macro-export-items-contain-value?
-  [items : AstExportItemList]
-  [name : String]) : bool
-  (match items
-    [(AstExportItemNil) false]
-    [(AstExportItemCons item rest-box)
-      (match (macro-export-value-name item)
-        [(TcSomeString item-name)
-          (or
-            (string-eq item-name name)
-            (macro-export-items-contain-value? (box-get rest-box) name))]
-        [(TcNoString)
-          (macro-export-items-contain-value? (box-get rest-box) name)])]))
-
-(define (macro-module-exports-value-in?
-  [decls : AstDeclList]
-  [target-module : String]
-  [module : String]
-  [name : String]) : bool
-  (match decls
-    [(AstDeclNil) false]
-    [(AstDeclCons decl rest-box)
-      (match decl
-        [(AstDeclModule next-module)
-          (macro-module-exports-value-in?
-            (box-get rest-box)
-            target-module
-            (intern-str next-module)
-            name)]
-        [(AstDeclExport items)
-          (or
-            (and
-              (string-eq module target-module)
-              (macro-export-items-contain-value? items name))
-            (macro-module-exports-value-in?
-              (box-get rest-box)
-              target-module
-              module
-              name))]
-        [_
-          (macro-module-exports-value-in?
-            (box-get rest-box)
-            target-module
-            module
-            name)])]))
-
-(define (macro-module-exports-value?
-  [decls : AstDeclList]
+(define (macro-export-table-has?
+  [kind : String]
   [target-module : String]
   [name : String]) : bool
-  (macro-module-exports-value-in? decls target-module "" name))
+  (match (compiler-exports-lookup
+    macro-expand-exports-value
+    kind
+    target-module
+    name)
+    [(SomeI64 _) true]
+    [(NoneI64) false]))
+
+(define (macro-generated-module-exports-value?
+  [target-module : String]
+  [name : String]) : bool
+  (or
+    (macro-export-table-has? (compiler-export-kind-value) target-module name)
+    (macro-export-table-has?
+      (compiler-export-kind-constructor)
+      target-module
+      name)
+    (macro-export-table-has? (compiler-export-kind-variant) target-module name)))
 
 (define (macro-variant-list-contains-value?
   [variants : AstVariantDefList]
@@ -31352,34 +30974,28 @@
 (define (macro-generated-import-diag [span : AstSourceSpan] [message : String]) : CompilerDiagnostic
   (tc-canonical-diagnostic (compiler-diagnostic-from-ast-span "" span message)))
 
-(define (macro-generated-generated-collision-diag
-  [span : AstSourceSpan]
+(define (macro-generated-generated-collision-message
   [name : String]
   [existing-identity : String]
-  [current-identity : String]) : CompilerDiagnostic
-  (macro-generated-import-diag
-    span
-    (str-cat
-      "typecheck: generated import collision for value "
-      name
-      " between generated identities "
-      existing-identity
-      " and "
-      current-identity
-      "; use an explicit alias or full generated-module access")))
+  [current-identity : String]) : String
+  (str-cat
+    "typecheck: generated import collision for value "
+    name
+    " between generated identities "
+    existing-identity
+    " and "
+    current-identity
+    "; use an explicit alias or full generated-module access"))
 
-(define (macro-generated-local-collision-diag
-  [span : AstSourceSpan]
+(define (macro-generated-local-collision-message
   [name : String]
-  [identity : String]) : CompilerDiagnostic
-  (macro-generated-import-diag
-    span
-    (str-cat
-      "typecheck: generated import collision for value "
-      name
-      " from generated identity "
-      identity
-      " with ordinary binding local declaration; use an explicit alias or full generated-module access")))
+  [identity : String]) : String
+  (str-cat
+    "typecheck: generated import collision for value "
+    name
+    " from generated identity "
+    identity
+    " with ordinary binding local declaration; use an explicit alias or full generated-module access"))
 
 (define (macro-check-generated-import-value-collision-in
   [all-decls : AstDeclList]
@@ -31387,10 +31003,9 @@
   [module : String]
   [import-module : String]
   [identity : String]
-  [span : AstSourceSpan]
-  [name : String]) : ResultMacroImportCollision
+  [name : String]) : CompilerMaybeString
   (match decls
-    [(AstDeclNil) (OkMacroImportCollision)]
+    [(AstDeclNil) CompilerNoString]
     [(AstDeclCons decl rest-box)
       (match decl
         [(AstDeclModule next-module)
@@ -31400,25 +31015,18 @@
             (intern-str next-module)
             import-module
             identity
-            span
             name)]
         [(AstDeclImport
-            (AstImportSpec
-              _
-              _
-              (AstSomeModuleName target-module)
-              alias
-              import-span))
+            (AstImportSpec _ _ (AstSomeModuleName target-module) alias _))
           (if (string-eq module import-module)
             (if (macro-import-unqualified? alias)
               (match (macro-module-generated-identity all-decls target-module)
-                [(MacroSomeGeneratedIdentity existing-identity)
+                [(CompilerSomeString existing-identity)
                   (if (and
                     (not (string-eq existing-identity identity))
-                    (macro-module-exports-value? all-decls target-module name))
-                    (ErrMacroImportCollision
-                      (macro-generated-generated-collision-diag
-                        import-span
+                    (macro-generated-module-exports-value? target-module name))
+                    (CompilerSomeString
+                      (macro-generated-generated-collision-message
                         name
                         existing-identity
                         identity))
@@ -31428,24 +31036,24 @@
                       module
                       import-module
                       identity
-                      span
                       name))]
-                [(MacroNoGeneratedIdentity)
-                  (macro-check-generated-import-value-collision-in
-                    all-decls
-                    (box-get rest-box)
-                    module
-                    import-module
-                    identity
-                    span
-                    name)])
+                [CompilerNoString
+                  (if (macro-generated-module-exports-value? target-module name)
+                    (CompilerSomeString
+                      (macro-generated-local-collision-message name identity))
+                    (macro-check-generated-import-value-collision-in
+                      all-decls
+                      (box-get rest-box)
+                      module
+                      import-module
+                      identity
+                      name))])
               (macro-check-generated-import-value-collision-in
                 all-decls
                 (box-get rest-box)
                 module
                 import-module
                 identity
-                span
                 name))
             (macro-check-generated-import-value-collision-in
               all-decls
@@ -31453,31 +31061,28 @@
               module
               import-module
               identity
-              span
               name))]
         [_
           (if (and
             (string-eq module import-module)
             (macro-local-decl-has-value? decl name))
-            (ErrMacroImportCollision
-              (macro-generated-local-collision-diag span name identity))
+            (CompilerSomeString
+              (macro-generated-local-collision-message name identity))
             (macro-check-generated-import-value-collision-in
               all-decls
               (box-get rest-box)
               module
               import-module
               identity
-              span
               name))])]))
 
 (define (macro-check-generated-export-item-collisions
   [all-decls : AstDeclList]
   [items : AstExportItemList]
   [import-module : String]
-  [identity : String]
-  [span : AstSourceSpan]) : ResultMacroImportCollision
+  [identity : String]) : CompilerMaybeString
   (match items
-    [(AstExportItemNil) (OkMacroImportCollision)]
+    [(AstExportItemNil) CompilerNoString]
     [(AstExportItemCons item rest-box)
       (match (macro-export-value-name item)
         [(TcSomeString name)
@@ -31487,32 +31092,28 @@
             ""
             import-module
             identity
-            span
             name)
-            [(OkMacroImportCollision)
+            [CompilerNoString
               (macro-check-generated-export-item-collisions
                 all-decls
                 (box-get rest-box)
                 import-module
-                identity
-                span)]
-            [(ErrMacroImportCollision diag) (ErrMacroImportCollision diag)])]
+                identity)]
+            [(CompilerSomeString message) (CompilerSomeString message)])]
         [(TcNoString)
           (macro-check-generated-export-item-collisions
             all-decls
             (box-get rest-box)
             import-module
-            identity
-            span)])]))
+            identity)])]))
 
 (define (macro-check-generated-import-collisions-in
   [all-decls : AstDeclList]
   [generated-body : AstDeclList]
   [import-module : String]
-  [identity : String]
-  [span : AstSourceSpan]) : ResultMacroImportCollision
+  [identity : String]) : CompilerMaybeString
   (match generated-body
-    [(AstDeclNil) (OkMacroImportCollision)]
+    [(AstDeclNil) CompilerNoString]
     [(AstDeclCons decl rest-box)
       (match decl
         [(AstDeclExport items)
@@ -31520,39 +31121,34 @@
             all-decls
             items
             import-module
-            identity
-            span)
-            [(OkMacroImportCollision)
+            identity)
+            [CompilerNoString
               (macro-check-generated-import-collisions-in
                 all-decls
                 (box-get rest-box)
                 import-module
-                identity
-                span)]
-            [(ErrMacroImportCollision diag) (ErrMacroImportCollision diag)])]
+                identity)]
+            [(CompilerSomeString message) (CompilerSomeString message)])]
         [_
           (macro-check-generated-import-collisions-in
             all-decls
             (box-get rest-box)
             import-module
-            identity
-            span)])]))
+            identity)])]))
 
 (define (macro-check-generated-import-collisions
   [all-decls : AstDeclList]
   [generated-body : AstDeclList]
   [import-module : String]
   [alias : AstMaybeImportAlias]
-  [span : AstSourceSpan]
-  [identity : String]) : ResultMacroImportCollision
+  [identity : String]) : CompilerMaybeString
   (if (macro-module-import-request-unqualified? alias)
     (macro-check-generated-import-collisions-in
       all-decls
       generated-body
       import-module
-      identity
-      span)
-    (OkMacroImportCollision)))
+      identity)
+    CompilerNoString))
 
 ;; Macro-expansion skip analysis (#2350-regression fix). Once any module defines
 ;; a macro, `has-defmacro` forces the full macro-expand walk over EVERY decl in

@@ -1750,6 +1750,255 @@
           true
           (lint-decl-list-uses-import? rest alias module-name)))]))
 
+(define (lint-expr-list-has-unsafe? [exprs : AstExprList]) : bool
+  (match exprs
+    [(AstExprNil) false]
+    [(AstExprCons head rest)
+      (let
+        [head : AstExpr (ast-node-get head)]
+        [rest : AstExprList (box-get rest)]
+        (if (lint-expr-has-unsafe? head)
+          true
+          (lint-expr-list-has-unsafe? rest)))]))
+
+(define (lint-let-bindings-have-unsafe? [bindings : AstLetBindingList]) : bool
+  (match bindings
+    [(AstLetBindingNil) false]
+    [(AstLetBindingCons binding rest)
+      (match binding
+        [(AstLetBinding _ _ init)
+          (if (lint-expr-has-unsafe? (ast-node-get init))
+            true
+            (lint-let-bindings-have-unsafe? (box-get rest)))])]))
+
+(define (lint-match-arms-have-unsafe? [arms : AstMatchArmList]) : bool
+  (match arms
+    [(AstMatchArmNil) false]
+    [(AstMatchArmCons arm rest)
+      (match arm
+        [(AstMatchArm _ body)
+          (if (lint-expr-has-unsafe? (ast-node-get body))
+            true
+            (lint-match-arms-have-unsafe? (box-get rest)))])]))
+
+(define (lint-resource-bindings-have-unsafe?
+  [bindings : AstResourceBindingList]) : bool
+  (match bindings
+    [(AstResourceBindingNil) false]
+    [(AstResourceBindingCons binding rest)
+      (match binding
+        [(AstResourceBinding _ init cleanup)
+          (if (lint-expr-has-unsafe? (ast-node-get init))
+            true
+            (if (lint-expr-has-unsafe? (ast-node-get cleanup))
+              true
+              (lint-resource-bindings-have-unsafe? (box-get rest))))])]))
+
+(define (lint-expr-has-unsafe? [expr : AstExpr]) : bool
+  (match expr
+    [(AstExprSpanned inner-box _)
+      (lint-expr-has-unsafe? (ast-node-get inner-box))]
+    [(AstExprLiteral _) false]
+    [(AstExprVar _) false]
+    [(AstExprBinary _ left right)
+      (if (lint-expr-has-unsafe? (ast-node-get left))
+        true
+        (lint-expr-has-unsafe? (ast-node-get right)))]
+    [(AstExprUnary _ inner) (lint-expr-has-unsafe? (ast-node-get inner))]
+    [(AstExprCall func args)
+      (if (lint-expr-has-unsafe? (ast-node-get func))
+        true
+        (lint-expr-list-has-unsafe? args))]
+    [(AstExprIf cond then-branch else-branch)
+      (if (lint-expr-has-unsafe? (ast-node-get cond))
+        true
+        (if (lint-expr-has-unsafe? (ast-node-get then-branch))
+          true
+          (lint-expr-has-unsafe? (ast-node-get else-branch))))]
+    [(AstExprLet bindings body)
+      (if (lint-let-bindings-have-unsafe? bindings)
+        true
+        (lint-expr-has-unsafe? (ast-node-get body)))]
+    [(AstExprLambda _ _ body) (lint-expr-has-unsafe? (ast-node-get body))]
+    [(AstExprTuple exprs) (lint-expr-list-has-unsafe? exprs)]
+    [(AstExprTupleRef tuple _) (lint-expr-has-unsafe? (ast-node-get tuple))]
+    [(AstExprArray exprs) (lint-expr-list-has-unsafe? exprs)]
+    [(AstExprMakeArray _ len) (lint-expr-has-unsafe? (ast-node-get len))]
+    [(AstExprArrayRef array index)
+      (if (lint-expr-has-unsafe? (ast-node-get array))
+        true
+        (lint-expr-has-unsafe? (ast-node-get index)))]
+    [(AstExprArraySet array index value)
+      (if (lint-expr-has-unsafe? (ast-node-get array))
+        true
+        (if (lint-expr-has-unsafe? (ast-node-get index))
+          true
+          (lint-expr-has-unsafe? (ast-node-get value))))]
+    [(AstExprArrayPush array value)
+      (if (lint-expr-has-unsafe? (ast-node-get array))
+        true
+        (lint-expr-has-unsafe? (ast-node-get value)))]
+    [(AstExprStringRef text index)
+      (if (lint-expr-has-unsafe? (ast-node-get text))
+        true
+        (lint-expr-has-unsafe? (ast-node-get index)))]
+    [(AstExprWhile cond body)
+      (if (lint-expr-has-unsafe? (ast-node-get cond))
+        true
+        (lint-expr-has-unsafe? (ast-node-get body)))]
+    [(AstExprBegin exprs) (lint-expr-list-has-unsafe? exprs)]
+    [(AstExprUnsafe _) true]
+    [(AstExprSet _ value) (lint-expr-has-unsafe? (ast-node-get value))]
+    [(AstExprAnn inner _) (lint-expr-has-unsafe? (ast-node-get inner))]
+    [(AstExprCast inner _) (lint-expr-has-unsafe? (ast-node-get inner))]
+    [(AstExprBorrow _ _ place) (lint-expr-has-unsafe? (ast-node-get place))]
+    [(AstExprMatch scrutinee arms)
+      (if (lint-expr-has-unsafe? (ast-node-get scrutinee))
+        true
+        (lint-match-arms-have-unsafe? arms))]
+    [(AstExprForeach _ _ start end body)
+      (cond
+        [(lint-expr-has-unsafe? (ast-node-get start)) true]
+        [(lint-expr-has-unsafe? (ast-node-get end)) true]
+        [else (lint-expr-has-unsafe? (ast-node-get body))])]
+    [(AstExprSpmdReduce _ _ _ start end init value)
+      (cond
+        [(lint-expr-has-unsafe? (ast-node-get start)) true]
+        [(lint-expr-has-unsafe? (ast-node-get end)) true]
+        [(lint-expr-has-unsafe? (ast-node-get init)) true]
+        [else (lint-expr-has-unsafe? (ast-node-get value))])]
+    [(AstExprSpmdBroadcast value lane)
+      (if (lint-expr-has-unsafe? (ast-node-get value))
+        true
+        (lint-expr-has-unsafe? (ast-node-get lane)))]
+    [(AstExprStructGet receiver _)
+      (lint-expr-has-unsafe? (ast-node-get receiver))]
+    [(AstExprStructSet receiver _ value)
+      (if (lint-expr-has-unsafe? (ast-node-get receiver))
+        true
+        (lint-expr-has-unsafe? (ast-node-get value)))]
+    [(AstExprWithRegion _ body) (lint-expr-list-has-unsafe? body)]
+    [(AstExprWithEscape scratch body)
+      (if (lint-expr-has-unsafe? (ast-node-get scratch))
+        true
+        (lint-expr-list-has-unsafe? body))]
+    [(AstExprWithScratch body) (lint-expr-list-has-unsafe? body)]
+    [(AstExprInArena arena body)
+      (if (lint-expr-has-unsafe? (ast-node-get arena))
+        true
+        (lint-expr-list-has-unsafe? body))]
+    [(AstExprWithResource bindings body)
+      (if (lint-resource-bindings-have-unsafe? bindings)
+        true
+        (lint-expr-list-has-unsafe? body))]
+    [(AstExprBox inner) (lint-expr-has-unsafe? (ast-node-get inner))]
+    [(AstExprBoxGet inner) (lint-expr-has-unsafe? (ast-node-get inner))]
+    [(AstExprBoxTake inner) (lint-expr-has-unsafe? (ast-node-get inner))]
+    [(AstExprBoxSet inner value)
+      (if (lint-expr-has-unsafe? (ast-node-get inner))
+        true
+        (lint-expr-has-unsafe? (ast-node-get value)))]
+    [(AstExprTypeLiteral _) false]
+    [(AstExprInit _) false]
+    [(AstExprComptime inner) (lint-expr-has-unsafe? (ast-node-get inner))]
+    [(AstExprQuote inner) (lint-expr-has-unsafe? (ast-node-get inner))]
+    [(AstExprQuasiquote inner) (lint-expr-has-unsafe? (ast-node-get inner))]
+    [(AstExprUnquote inner) (lint-expr-has-unsafe? (ast-node-get inner))]
+    [(AstExprUnquoteSplicing inner)
+      (lint-expr-has-unsafe? (ast-node-get inner))]
+    [(AstExprBracketClause items) (lint-expr-list-has-unsafe? items)]
+    [(AstExprTry inner) (lint-expr-has-unsafe? (ast-node-get inner))]
+    [(AstExprReturn inner) (lint-expr-has-unsafe? (ast-node-get inner))]
+    [(AstExprPtrNull _) false]
+    [(AstExprPtrNullCheck inner) (lint-expr-has-unsafe? (ast-node-get inner))]
+    [(AstExprPtrAddrOf place) (lint-expr-has-unsafe? (ast-node-get place))]
+    [(AstExprPtrRead ptr) (lint-expr-has-unsafe? (ast-node-get ptr))]
+    [(AstExprPtrWrite ptr value)
+      (if (lint-expr-has-unsafe? (ast-node-get ptr))
+        true
+        (lint-expr-has-unsafe? (ast-node-get value)))]
+    [(AstExprPtrOffset ptr offset)
+      (if (lint-expr-has-unsafe? (ast-node-get ptr))
+        true
+        (lint-expr-has-unsafe? (ast-node-get offset)))]
+    [(AstExprPtrCast ptr _) (lint-expr-has-unsafe? (ast-node-get ptr))]
+    [(AstExprPtrToInt ptr) (lint-expr-has-unsafe? (ast-node-get ptr))]
+    [(AstExprIntToPtr value _) (lint-expr-has-unsafe? (ast-node-get value))]
+    [(AstExprStringData inner) (lint-expr-has-unsafe? (ast-node-get inner))]
+    [(AstExprStringFromBytes ptr len)
+      (if (lint-expr-has-unsafe? (ast-node-get ptr))
+        true
+        (lint-expr-has-unsafe? (ast-node-get len)))]
+    [(AstExprArrayData inner) (lint-expr-has-unsafe? (ast-node-get inner))]
+    [(AstExprBinaryData _) false]
+    [(AstExprProgramArgc) false]
+    [(AstExprProgramArgv) false]
+    [(AstExprProgramEnvp) false]
+    [(AstExprCpuIdEax leaf subleaf)
+      (if (lint-expr-has-unsafe? (ast-node-get leaf))
+        true
+        (lint-expr-has-unsafe? (ast-node-get subleaf)))]
+    [(AstExprCpuIdEbx leaf subleaf)
+      (if (lint-expr-has-unsafe? (ast-node-get leaf))
+        true
+        (lint-expr-has-unsafe? (ast-node-get subleaf)))]
+    [(AstExprCpuIdEcx leaf subleaf)
+      (if (lint-expr-has-unsafe? (ast-node-get leaf))
+        true
+        (lint-expr-has-unsafe? (ast-node-get subleaf)))]
+    [(AstExprCpuIdEdx leaf subleaf)
+      (if (lint-expr-has-unsafe? (ast-node-get leaf))
+        true
+        (lint-expr-has-unsafe? (ast-node-get subleaf)))]
+    [(AstExprXgetbv index) (lint-expr-has-unsafe? (ast-node-get index))]
+    [(AstExprSyscall args) (lint-expr-list-has-unsafe? args)]))
+
+(define (lint-generated-decl-meta-has-unsafe? [meta : AstGeneratedDeclMeta]) : bool
+  (match meta
+    [(AstNoGeneratedDeclMeta) false]
+    [(AstSomeGeneratedDeclMeta _ _ args _) (lint-expr-list-has-unsafe? args)]))
+
+(define (lint-decl-has-unsafe? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDeclModule _) false]
+    [(AstDeclDef _ _ body) (lint-expr-has-unsafe? (ast-node-get body))]
+    [(AstDeclDefFn _ _ _ body _) (lint-expr-has-unsafe? (ast-node-get body))]
+    [(AstDeclDefMacro _ _ _ body) (lint-expr-has-unsafe? (ast-node-get body))]
+    [(AstDeclExtern _ _ _ _) false]
+    [(AstDeclDefEnum _ _ _) false]
+    [(AstDeclDefEnumLifetimes _ _ _ _) false]
+    [(AstDeclDefStruct _ _ _ _) false]
+    [(AstDeclDefStructLifetimes _ _ _ _ _) false]
+    [(AstDeclImport (AstImportSpec (AstImportMacro call-expr) _ _ _ _))
+      (lint-expr-has-unsafe? (ast-node-get call-expr))]
+    [(AstDeclImport (AstImportSpec (AstImportMacroDecls call-expr) _ _ _ _))
+      (lint-expr-has-unsafe? (ast-node-get call-expr))]
+    [(AstDeclImport _) false]
+    [(AstDeclIncludeStr _ _) false]
+    [(AstDeclIncludeBin _ _) false]
+    [(AstDeclExport _) false]
+    [(AstDeclDefDispatch _ _) false]
+    [(AstDeclTest _ body _) (lint-expr-has-unsafe? (ast-node-get body))]
+    [(AstDeclUnsafe inner) (lint-decl-has-unsafe? (box-get inner))]
+    [(AstDeclComptimeDecl meta inner)
+      (if (lint-generated-decl-meta-has-unsafe? meta)
+        true
+        (lint-decl-has-unsafe? (box-get inner)))]))
+
+(define (lint-decl-list-has-unsafe? [decls : AstDeclList]) : bool
+  (match decls
+    [(AstDeclNil) false]
+    [(AstDeclCons decl rest)
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (if (lint-decl-has-unsafe? decl)
+          true
+          (lint-decl-list-has-unsafe? rest)))]))
+
+(define (lint-program-has-unsafe? [program : AstProgram]) : bool
+  (match program
+    [(AstProgram decls-box) (lint-decl-list-has-unsafe? (box-get decls-box))]))
+
 (define (lint-underscore-prefixed? [name : String]) : bool
   (let
     [n : i64 (string-length name)]

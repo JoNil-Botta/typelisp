@@ -368,11 +368,6 @@
   [right : LintFindings]) : LintFindings
   (selfhost-lint-findings-append-from right 0 left))
 
-(define (selfhost-lint-source-has-unsafe? [source : String]) : bool
-  (let
-    [needle : String "unsafe"]
-    (string-contains (& source) (& needle))))
-
 (define (selfhost-lint-unused-unsafe-findings-from
   [path : String]
   [index : i64]
@@ -393,8 +388,9 @@
 (define (selfhost-lint-unused-unsafe-findings
   [path : String]
   [source : String]
+  [program : AstProgram]
   [stdlib-roots : StringVec]) : LintFindings
-  (if (selfhost-lint-source-has-unsafe? source)
+  (if (lint-program-has-unsafe? program)
     (begin
       (tc-unused-unsafe-tracking-reset!)
       (match (compiler-check-source-with-roots path source stdlib-roots)
@@ -427,7 +423,7 @@
       source
       program
       deprecated-string-concat)
-    (selfhost-lint-unused-unsafe-findings path source stdlib-roots)))
+    (selfhost-lint-unused-unsafe-findings path source program stdlib-roots)))
 
 (define (selfhost-lint-source-with-roots-and-options
   [path : String]

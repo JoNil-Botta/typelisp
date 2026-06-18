@@ -2320,15 +2320,27 @@ cat > "$PKG/src/math.tl" <<'EOF'
 (defstruct PublicToolPoint
   (x i64)
   (y i64))
+(defenum PublicToolTag
+  (PublicToolTagA)
+  (PublicToolTagB i64))
 (defmacro (public-tool-macro [expr : Expr]) : Expr expr)
 (define (inc [x : i64]) : i64 (+ x 1))
 (export
+  (variant PublicToolTagA)
+  (field PublicToolPoint x)
+  (constructor PublicToolPoint)
+  (value public-tool-value)
+  (type PublicToolPoint)
+  (macro public-tool-macro)
   (value public-tool-value)
   (type PublicToolPoint)
   (macro public-tool-macro))
 EOF
 cat > "$PKG/vendor/math/src/lib.tl" <<'EOF'
+(define dependency-exported-value : i64 5)
 (define (add-one [x : i64]) : i64 (+ x 1))
+(export
+  (value dependency-exported-value))
 EOF
 cat > "$PKG/vendor/math/typelisp.pkg" <<'EOF'
 (package
@@ -2361,6 +2373,16 @@ if [ "$HAS_INSPECT_COMMAND" -eq 1 ]; then
     assert_contains "$out" "  type PublicToolPoint layout=size=16 align=8"
     assert_contains "$out" "  macro public-tool-macro signature=(macro (Expr) -> Expr)"
     assert_not_contains "$out" "  (none)"
+    assert_not_contains "$out" "PublicToolTagA"
+    assert_not_contains "$out" "constructor"
+    assert_not_contains "$out" "field"
+    assert_not_contains "$out" "dependency-exported-value"
+    run_cmd package-inspect-dependency-tlci "$COMPILER" inspect "$MATH_TLCI"
+    assert_success
+    assert_stderr_empty
+    assert_contains "$out" "tlci image"
+    assert_contains "$out" "package-name: math"
+    assert_contains "$out" "  value dependency-exported-value signature=i64"
     BAD_TLCI="$WORKDIR/bad.tlci"
     printf 'bad' > "$BAD_TLCI"
     run_cmd package-inspect-bad-tlci "$COMPILER" inspect "$BAD_TLCI"

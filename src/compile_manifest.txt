@@ -148,9 +148,9 @@ contains|_tl_build_package:
 contains|_tl_build_package_emit:
 contains|_tl_build_package_write_tlci:
 contains|_tl_build_doctest_build_source:
-contains|_tl_build_doctest_typecheck_package:
+contains|_tl_build_cli_core_build_doctest_typecheck_package_paths:
 contains|_tl_doc_test_typecheck_source_with_roots:
-contains|_tl_doc_test_typecheck_package_file_with_roots:
+contains|_tl_doc_test_doc_test_typecheck_package_paths_with_roots:
 contains|_tl_host_plan_netline:
 contains|could not find typelisp.pkg
 contains|Built
@@ -164,7 +164,7 @@ contains|_tl_selfhost_check_config_from:
 contains|_tl_selfhost_check_file:
 contains|selfhost_check_package:
 contains|_tl_compiler_check_file_with_roots:
-contains|compiler_check_package_file_with_roots
+contains|_tl_compiler_check_core_compiler_check_package_entry_file_with_roots:
 contains|_tl_doc_test_typecheck_file_with_roots:
 contains|package_source_discover
 contains|selfhost-check: cannot combine input path with --manifest-path

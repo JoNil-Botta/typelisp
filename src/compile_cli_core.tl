@@ -689,34 +689,38 @@
         (compiler-driver-state-reset-file-state! state)
         (let
           [cfgs : SymI64Env (compile-cli-cfg-names-to-env cfg-names)]
-          (if emit-ir
-            (compiler-driver-write-result
-              (compiler-driver-emit-ir-summary-file-with-target-roots-level-mode-and-cfg
-                input-path
-                target
-                stdlib-roots
-                opt-level
-                backend-mode
-                cfgs)
-              output-path)
-            (if pic
-              (compiler-driver-compile-file-pic-with-target-roots-level-mode-cfg
-                input-path
-                output-path
-                target
-                true
-                stdlib-roots
-                opt-level
-                backend-mode
-                cfgs)
-              (compiler-driver-compile-file-for-target-with-roots-level-mode-and-cfg
-                input-path
-                output-path
-                target
-                stdlib-roots
-                opt-level
-                backend-mode
-                cfgs)))))
+          [status : i64
+            (if emit-ir
+              (compiler-driver-write-result
+                (compiler-driver-emit-ir-summary-file-with-target-roots-level-mode-and-cfg
+                  input-path
+                  target
+                  stdlib-roots
+                  opt-level
+                  backend-mode
+                  cfgs)
+                output-path)
+              (if pic
+                (compiler-driver-compile-file-pic-with-target-roots-level-mode-cfg
+                  input-path
+                  output-path
+                  target
+                  true
+                  stdlib-roots
+                  opt-level
+                  backend-mode
+                  cfgs)
+                (compiler-driver-compile-file-for-target-with-roots-level-mode-and-cfg
+                  input-path
+                  output-path
+                  target
+                  stdlib-roots
+                  opt-level
+                  backend-mode
+                  cfgs)))]
+          (begin
+            (compiler-driver-state-capture-session-floors! state)
+            status)))
       doctest-status)))
 
 (define (compile-cli-batch-line-end [text : String] [start : i64] [n : i64]) : i64
@@ -887,8 +891,8 @@
 (define (compile-cli-run-batch [config : CompileCliBatchConfig]) : i64
   (let
     [state : CompilerDriverState
-      (compiler-driver-state-session-cache-enable (compiler-driver-state-new))]
-    [_ : unit (compiler-load-session-program-cache-disable!)]
+      (compiler-driver-state-session-program-cache-disable
+        (compiler-driver-state-session-cache-enable (compiler-driver-state-new)))]
     (match config
       [(CompileCliBatchConfig
           batch-path

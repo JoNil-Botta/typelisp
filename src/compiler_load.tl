@@ -320,10 +320,35 @@
       (set! compiler-load-session-intern-floor (intern-pool-len))
       unit)))
 
+(define (compiler-load-session-ast-floor-value) : i64
+  compiler-load-session-ast-floor)
+
+(define (compiler-load-session-ty-floor-value) : i64
+  compiler-load-session-ty-floor)
+
+(define (compiler-load-session-intern-floor-value) : i64
+  compiler-load-session-intern-floor)
+
+(define (compiler-load-session-floors-set!
+  [ast-floor : i64]
+  [ty-floor : i64]
+  [intern-floor : i64]) : unit
+  (begin
+    (set! compiler-load-session-ast-floor ast-floor)
+    (set! compiler-load-session-ty-floor ty-floor)
+    (set! compiler-load-session-intern-floor intern-floor)))
+
 (define (compiler-load-session-cache-enable!) : unit
   (begin
     (set! compiler-load-session-cache-enabled true)
     (intern-persistent-storage-enable!)))
+
+(define (compiler-load-session-cache-set-enabled! [enabled : bool]) : unit
+  (if enabled
+    (compiler-load-session-cache-enable!)
+    (begin
+      (set! compiler-load-session-cache-enabled false)
+      (intern-persistent-storage-disable!))))
 
 (define (compiler-load-session-program-cache-enable!) : unit
   (set! compiler-load-session-program-cache-enabled true))
@@ -332,6 +357,11 @@
   (begin
     (set! compiler-load-session-program-cache-enabled false)
     (compiler-load-program-cache-clear!)))
+
+(define (compiler-load-session-program-cache-set-enabled! [enabled : bool]) : unit
+  (if enabled
+    (compiler-load-session-program-cache-enable!)
+    (compiler-load-session-program-cache-disable!)))
 
 (define (compiler-load-session-program-cache-enabled?) : bool
   compiler-load-session-program-cache-enabled)

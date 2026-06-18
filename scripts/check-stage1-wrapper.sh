@@ -21,6 +21,12 @@ if [ -z "$COMPILER" ]; then
     echo "host-action CLI smoke requires TYPELISP_BIN" >&2
     exit 1
 fi
+
+case "$COMPILER" in
+    /* | [A-Za-z]:[/\\]*) ;;
+    *) COMPILER="$ROOT/$COMPILER" ;;
+esac
+
 if [ ! -x "$COMPILER" ]; then
     echo "typelisp compiler is not executable: $COMPILER" >&2
     exit 1

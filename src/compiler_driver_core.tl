@@ -1342,88 +1342,13 @@
   [deps : CompilerPkgDeps]
   [emit-entry : bool]
   [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
-  (if emit-entry
-    (match (compiler-load-package-file-with-paths-and-roots-cfg
-      "stdlib/runtime.tl"
-      (sym-i64-empty)
-      stdlib-roots
-      manifest-dir
-      deps
-      cfgs)
-      [(OkCompilerLoadWithPaths
-          runtime-decls
-          runtime-paths
-          runtime-modules
-          runtime-seen)
-        (match (compiler-load-package-core-macro-prelude-with-roots-cfg
-          runtime-seen
-          stdlib-roots
-          manifest-dir
-          deps
-          cfgs)
-          [(OkCompilerLoadWithPaths
-              macro-decls
-              macro-paths
-              macro-modules
-              prelude-seen)
-            (match (compiler-load-package-entry-file-with-paths-and-roots-cfg
-              input-path
-              prelude-seen
-              stdlib-roots
-              manifest-dir
-              deps
-              cfgs)
-              [(OkCompilerLoadWithPaths
-                  entry-decls
-                  entry-paths
-                  entry-modules
-                  seen)
-                (OkCompilerLoadWithPaths
-                  (compiler-load-decl-list-append
-                    (compiler-load-decl-list-append runtime-decls macro-decls)
-                    entry-decls)
-                  (compiler-load-decl-path-list-append
-                    (compiler-load-decl-path-list-append
-                      runtime-paths
-                      macro-paths)
-                    entry-paths)
-                  (compiler-load-decl-module-list-append
-                    (compiler-load-decl-module-list-append
-                      runtime-modules
-                      macro-modules)
-                    entry-modules)
-                  seen)]
-              [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])]
-          [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])]
-      [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])
-    (match (compiler-load-package-core-macro-prelude-with-roots-cfg
-      (sym-i64-empty)
-      stdlib-roots
-      manifest-dir
-      deps
-      cfgs)
-      [(OkCompilerLoadWithPaths
-          prelude-decls
-          prelude-paths
-          prelude-modules
-          prelude-seen)
-        (match (compiler-load-package-entry-file-with-paths-and-roots-cfg
-          input-path
-          prelude-seen
-          stdlib-roots
-          manifest-dir
-          deps
-          cfgs)
-          [(OkCompilerLoadWithPaths entry-decls entry-paths entry-modules seen)
-            (OkCompilerLoadWithPaths
-              (compiler-load-decl-list-append prelude-decls entry-decls)
-              (compiler-load-decl-path-list-append prelude-paths entry-paths)
-              (compiler-load-decl-module-list-append
-                prelude-modules
-                entry-modules)
-              seen)]
-          [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])]
-      [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])))
+  (compiler-load-package-file-with-runtime-cfg
+    input-path
+    stdlib-roots
+    manifest-dir
+    deps
+    emit-entry
+    cfgs))
 
 (define (compiler-driver-load-package-file-with-runtime
   [input-path : String]

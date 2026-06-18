@@ -2470,6 +2470,15 @@
       (CompilerRegAssignment 1 (CompilerRegRegister "%r13"))
       CompilerRegAssignmentNil)))
 
+(define (compiler-backend-callee-save-assignments3) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment 0 (CompilerRegRegister "%r12"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment 1 (CompilerRegRegister "%r13"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 2 (CompilerRegRegister "%r14"))
+        CompilerRegAssignmentNil))))
+
 (define (compiler-backend-callee-save-assignments4) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
     (CompilerRegAssignment 0 (CompilerRegRegister "%r12"))
@@ -2511,6 +2520,8 @@
       (compiler-backend-callee-save-assignments1)]
     [two : CompilerRegAssignmentList
       (compiler-backend-callee-save-assignments2)]
+    [three : CompilerRegAssignmentList
+      (compiler-backend-callee-save-assignments3)]
     [four : CompilerRegAssignmentList
       (compiler-backend-callee-save-assignments4)]
     [five : CompilerRegAssignmentList
@@ -2530,6 +2541,9 @@
           (compiler-backend-emit-restore-callee-regs two 3)
           "    leaq -40(%rbp), %rsp\n    popq %r13\n    popq %r12\n")
         (string-eq
+          (compiler-backend-emit-restore-callee-regs three 2)
+          "    leaq -40(%rbp), %rsp\n    popq %r14\n    popq %r13\n    popq %r12\n")
+        (string-eq
           (compiler-backend-emit-restore-callee-regs four 2)
           "    leaq -48(%rbp), %rsp\n    popq %r15\n    popq %r14\n    popq %r13\n    popq %r12\n")
         (string-eq
@@ -2541,8 +2555,8 @@
         (string-eq
           (compiler-backend-tail-jump-tail four 2 "_tl_next")
           "    leaq -48(%rbp), %rsp\n    popq %r15\n    popq %r14\n    popq %r13\n    popq %r12\n    leave\n    jmp _tl_next\n")
-        (compiler-backend-string-contains? shared "    popq %rbx\n")
-        (compiler-backend-string-contains? shared "    leave\n    ret\n"))
+        (compiler-backend-string-contains? shared "    popq %rbx\n"))
+      (compiler-backend-string-contains? shared "    leave\n    ret\n")
       (not (string-eq shared "")))))
 
 (define (compiler-backend-peephole-register-moves-ok?) : bool

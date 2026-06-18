@@ -130,10 +130,11 @@ struct_field_set|tests/integration/struct_field_set.tl|42|-|-|-
 substring|tests/integration/substring.tl|55|-|-|stdlib/string.tl
 sym_i64_env|tests/integration/sym_i64_env.tl|0|PASS: empty-miss\nPASS: single-hit-contains\nPASS: single-hit-value\nPASS: single-miss\nPASS: shadow-newest\nPASS: outer-preserved-a\nPASS: outer-no-b\nPASS: inner-sees-a\nPASS: inner-sees-b\nPASS: substring-key-hit\nPASS: append-key-hit\nPASS: chain-x\nPASS: chain-y\nPASS: chain-z\nPASS: id-key-contains\nPASS: id-key-string-contains\nPASS: id-key-value\nAll sym-i64-env tests passed.\n|-|sym_i64_env_core.tl compiler_intern.tl stdlib/io.tl stdlib/string.tl
 tail_self_loop|tests/integration/tail_self_loop.tl|42|-|-|-
-thread_runtime|tests/integration/thread_runtime.tl|42|-|-|stdlib/thread.tl
-thread_safe_i64|tests/integration/thread_safe_i64.tl|42|-|-|stdlib/thread.tl
-thread_safe_bool_unit|tests/integration/thread_safe_bool_unit.tl|42|-|-|stdlib/thread.tl
-thread_safe_aggregate_capture|tests/integration/thread_safe_aggregate_capture.tl|42|-|-|stdlib/thread.tl
+thread_runtime|tests/integration/thread_runtime.tl|42|-|-|stdlib/thread.tl stdlib/string.tl
+thread_safe_i64|tests/integration/thread_safe_i64.tl|42|-|-|stdlib/thread.tl stdlib/string.tl
+thread_safe_bool_unit|tests/integration/thread_safe_bool_unit.tl|42|-|-|stdlib/thread.tl stdlib/string.tl
+thread_safe_aggregate_capture|tests/integration/thread_safe_aggregate_capture.tl|42|-|-|stdlib/thread.tl stdlib/string.tl
+thread_safe_string|tests/integration/thread_safe_string.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
 tl_alloc|tests/integration/tl_alloc.tl|0|-|-|-
 tree|tests/integration/tree.tl|3|-|-|-
 tuple_values|tests/integration/tuple_values.tl|42|-|-|-
@@ -187,6 +188,6 @@ register_float_aggregate_f64|tests/integration/register_float_aggregate_f64.tl|4
 register_float_aggregate_f32|tests/integration/register_float_aggregate_f32.tl|42|-|-|-
 in_arena|tests/integration/in_arena.tl|42|-|-|-
 resource_with_order|tests/integration/resource_with_order.tl|42|-|-|-
-sync_channel_thread_runtime|tests/integration/sync_channel_thread_runtime.tl|42|-|-|stdlib/sync.tl stdlib/thread.tl
-sync_mutex_thread_runtime|tests/integration/sync_mutex_thread_runtime.tl|42|-|-|stdlib/sync.tl stdlib/thread.tl
+sync_channel_thread_runtime|tests/integration/sync_channel_thread_runtime.tl|42|-|-|stdlib/sync.tl stdlib/thread.tl stdlib/string.tl
+sync_mutex_thread_runtime|tests/integration/sync_mutex_thread_runtime.tl|42|-|-|stdlib/sync.tl stdlib/thread.tl stdlib/string.tl
 box_take_set|tests/integration/box_take_set.tl|42|-|-|-|requires-stage0-diagnostic:parse: set! target must be a name or struct field place

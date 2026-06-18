@@ -78,7 +78,7 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
   the structured unsupported async result on Windows.
 - `thread_api.tl` covers worker count fallback shape, invalid semaphore
   creation, two native worker threads, semaphore signaling, and join return
-  values.
+  values, including the checked `String` join wrapper.
 - `time_api.tl` covers `time-unix-ms` positive wall-clock range checks,
   `time-monotonic-ms` non-negative and non-decreasing checks, and structured
   `ResultTimeMs` error/fallback helpers without depending on exact timestamps.

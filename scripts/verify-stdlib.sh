@@ -236,7 +236,7 @@ stdlib/tests/process_api.tl|42|-|-|-|requires-stage0-symbol:tl_process_start,tl_
 stdlib/tests/process_runtime.tl|42|-|-
 stdlib/tests/profile_api.tl|42|-|-
 stdlib/tests/sync_api.tl|42|-|-
-stdlib/tests/thread_api.tl|42|-|-
+stdlib/tests/thread_api.tl|42|-|-|-|requires-stage0-symbol:tl_arena_make_atomic
 stdlib/tests/time_api.tl|42|-|-
 stdlib/tests/test_assert_failure.tl|134|-|literal:stdlib test failure message
 EOF

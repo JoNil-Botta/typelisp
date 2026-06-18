@@ -57,11 +57,12 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
   families, descriptor identities, borrowed string-key contains/remove wrappers,
   duplicate insert, collision chains, tombstone reuse, growth/rehash, missing
   remove, and deterministic bucket-order iteration.
-- `sync_api.tl` covers `stdlib/sync.tl` bounded `ChannelI64` and
-  `ChannelI64PairChannel` creation failures, blocking send/recv success paths
-  in a single thread, FIFO wraparound, raw handle packing, and resource close.
-  It also covers `MutexI64` guard locking, guarded get/set/add, raw handle
-  packing, close rejection while a guard is live, and fail-closed double close.
+- `sync_api.tl` covers `stdlib/sync.tl` bounded `ChannelI64`,
+  `ChannelI64PairChannel`, and `ChannelString` creation failures, blocking
+  send/recv success paths in a single thread, FIFO wraparound, raw handle
+  packing, atomic-arena string transfer, and resource close. It also covers
+  `MutexI64` guard locking, guarded get/set/add, raw handle packing, close
+  rejection while a guard is live, and fail-closed double close.
 - `msvc_api.tl` covers pure MSVC discovery helpers with fake temp-directory
   toolset and SDK trees, including newest-usable candidate selection through
   the vector-backed scanners.

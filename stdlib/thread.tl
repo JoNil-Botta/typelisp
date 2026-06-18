@@ -17,6 +17,9 @@
 ;# (define (main) : i64
 ;#   (if (>= (thread-default-worker-count) 1) 42 1))
 ;# ```
+(import "arena.tl")
+(import "string.tl")
+
 ;: Opaque native thread handle plus runtime-owned join state.
 (defstruct Thread
   (handle i64)
@@ -45,6 +48,11 @@
 (defstruct ThreadUnit
   (raw Thread))
 
+;: Typed handle returned by `thread-spawn-string`.
+(defstruct ThreadString
+  (raw Thread)
+  (result-addr i64))
+
 ;: Result returned by `thread-spawn-i64`.
 (defenum ThreadI64SpawnResult
   (ThreadI64SpawnOk ThreadI64)
@@ -60,6 +68,11 @@
   (ThreadUnitSpawnOk ThreadUnit)
   (ThreadUnitSpawnErr String))
 
+;: Result returned by `thread-spawn-string`.
+(defenum ThreadStringSpawnResult
+  (ThreadStringSpawnOk ThreadString)
+  (ThreadStringSpawnErr String))
+
 ;: Result returned by `thread-join-i64`.
 (defenum ThreadI64JoinResult
   (ThreadI64JoinOk i64)
@@ -74,6 +87,11 @@
 (defenum ThreadUnitJoinResult
   (ThreadUnitJoinOk)
   (ThreadUnitJoinErr String))
+
+;: Result returned by `thread-join-string`.
+(defenum ThreadStringJoinResult
+  (ThreadStringJoinOk String)
+  (ThreadStringJoinErr String))
 
 ;: Opaque counting semaphore handle.
 (defstruct ThreadSemaphore
@@ -170,6 +188,11 @@
   (unsafe
     (cast (ptr->int (ptr-cast (array-data buf) : (Ptr u8))) : i64)))
 
+;: Return the integer address of an `Array String` backing buffer.
+(define (thread-array-string-addr [buf : (Array String)]) : i64
+  (unsafe
+    (cast (ptr->int (ptr-cast (array-data buf) : (Ptr u8))) : i64)))
+
 ;: Convert an integer address into a mutable i32 pointer.
 (define (thread-addr->mut-i32 [addr : i64]) : (MutPtr i32)
   (unsafe
@@ -179,6 +202,11 @@
 (define (thread-addr->mut-i64 [addr : i64]) : (MutPtr i64)
   (unsafe
     (int->ptr (cast addr : u64) : (MutPtr i64))))
+
+;: Convert an integer address into a mutable `String` pointer.
+(define (thread-addr->mut-string [addr : i64]) : (MutPtr String)
+  (unsafe
+    (int->ptr (cast addr : u64) : (MutPtr String))))
 
 ;: Read an i32 from `addr`.
 (define (thread-read-i32 [addr : i64]) : i32
@@ -199,6 +227,16 @@
 (define (thread-write-i64! [addr : i64] [value : i64]) : unit
   (unsafe
     (ptr-write! (thread-addr->mut-i64 addr) value)))
+
+;: Read a `String` from `addr`.
+(define (thread-read-string [addr : i64]) : String
+  (unsafe
+    (ptr-read (ptr-cast (thread-addr->mut-string addr) : (Ptr String)))))
+
+;: Write a `String` to `addr`.
+(define (thread-write-string! [addr : i64] [value : String]) : unit
+  (unsafe
+    (ptr-write! (thread-addr->mut-string addr) value)))
 
 ;: Linux raw clone flags for same-process worker threads.
 (define (thread-linux-clone-flags) : i64
@@ -355,6 +393,29 @@
     [(ThreadSpawnOk raw) (ThreadUnitSpawnOk (ThreadUnit raw))]
     [(ThreadSpawnErr message) (ThreadUnitSpawnErr message)]))
 
+;: Spawn a compiler-checked direct nullary closure returning `String`.
+;:
+;: The task runs with a fresh atomic arena as the active allocation target, then
+;: copies its result into that arena before publishing it to the joiner. The
+;: joined `String` therefore owns storage in an arena that can outlive both the
+;: worker and the joining thread. The handle must be joined exactly once.
+(define (thread-spawn-string [task : (-> String)]) : ThreadStringSpawnResult
+  (let
+    [owner : i64 (arena-make-atomic)]
+    [result : (Array String) (in-arena owner (make-array String 1))]
+    [result-addr : i64 (thread-array-string-addr result)]
+    (match (thread-spawn
+      (lambda ([_ignored : i64]) : i64
+        (let
+          [value : String (in-arena owner (task))]
+          [copied : String (in-arena owner (string-copy-borrowed (& value)))]
+          (begin
+            (thread-write-string! result-addr copied)
+            0)))
+      0)
+      [(ThreadSpawnOk raw) (ThreadStringSpawnOk (ThreadString raw result-addr))]
+      [(ThreadSpawnErr message) (ThreadStringSpawnErr message)])))
+
 ;: Wait for a Linux raw-clone thread to clear its join cell.
 (define (thread-linux-join [thread : Thread]) : ThreadJoinResult
   (let
@@ -400,6 +461,13 @@
   (match (thread-join (struct-get thread raw))
     [(ThreadJoinOk _) (ThreadUnitJoinOk)]
     [(ThreadJoinErr message) (ThreadUnitJoinErr message)]))
+
+;: Join a typed `String` thread and return its closure result.
+(define (thread-join-string [thread : ThreadString]) : ThreadStringJoinResult
+  (match (thread-join (struct-get thread raw))
+    [(ThreadJoinOk _)
+      (ThreadStringJoinOk (thread-read-string (struct-get thread result-addr)))]
+    [(ThreadJoinErr message) (ThreadStringJoinErr message)]))
 
 ;: Count set bits in a positive byte value.
 (define (thread-count-byte-bits [byte : i64]) : i64

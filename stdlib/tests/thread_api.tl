@@ -1,4 +1,5 @@
 (import "stdlib/thread.tl")
+(import "stdlib/string.tl")
 
 (define (test-array-i64-addr [items : (Array i64)]) : i64
   (unsafe
@@ -36,6 +37,14 @@
   (match result
     [(ThreadI64JoinOk code) code]
     [(ThreadI64JoinErr _) -1]))
+
+(define (thread-api-join-string-ok? [result : ThreadStringJoinResult]) : bool
+  (match result
+    [(ThreadStringJoinOk text)
+      (let
+        [expected : String "thread:42"]
+        (string-eq text expected))]
+    [(ThreadStringJoinErr _) false]))
 
 (define (thread-api-safe-i64-expect
   [spawn : ThreadI64SpawnResult]
@@ -75,6 +84,18 @@
       (if (and ok (= sum 92))
         42
         16))))
+
+(define (thread-api-safe-string-run) : i64
+  (let
+    [base : i64 40]
+    (match (thread-spawn-string
+      (lambda () : String
+        (string-append "thread:" (int->string (+ base 2)))))
+      [(ThreadStringSpawnErr _) 17]
+      [(ThreadStringSpawnOk worker)
+        (if (thread-api-join-string-ok? (thread-join-string worker))
+          42
+          18)])))
 
 (define (thread-api-safe-i64-run) : i64
   (let
@@ -170,9 +191,11 @@
 (define (main) : i64
   (let
     [safe-code : i64 (thread-api-safe-i64-run)]
+    [safe-string-code : i64 (thread-api-safe-string-run)]
     (cond
       [(< (thread-default-worker-count) 1) 1]
       [(not (= safe-code 42)) safe-code]
+      [(not (= safe-string-code 42)) safe-string-code]
       [(not (thread-api-negative-semaphore-rejected?)) 11]
       [(not (thread-api-large-semaphore-rejected?)) 12]
       [else

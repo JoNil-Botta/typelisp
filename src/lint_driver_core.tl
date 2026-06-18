@@ -832,6 +832,20 @@
             (selfhost-lint-dead-expr-refs
               (ast-node-get start)
               (selfhost-lint-dead-type-refs index-ty refs)))))]
+    [(AstExprSpmdScan _ _ index-ty start end _ prefix-ty init value body)
+      (selfhost-lint-dead-expr-refs
+        (ast-node-get body)
+        (selfhost-lint-dead-expr-refs
+          (ast-node-get value)
+          (selfhost-lint-dead-expr-refs
+            (ast-node-get init)
+            (selfhost-lint-dead-expr-refs
+              (ast-node-get end)
+              (selfhost-lint-dead-expr-refs
+                (ast-node-get start)
+                (selfhost-lint-dead-type-refs
+                  prefix-ty
+                  (selfhost-lint-dead-type-refs index-ty refs)))))))]
     [(AstExprSpmdBroadcast value lane)
       (selfhost-lint-dead-expr-refs
         (ast-node-get lane)

@@ -7365,6 +7365,58 @@
                   [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
               [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
           [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+    [(AstExprSpmdScan
+        op
+        index
+        index-ty
+        start-box
+        end-box
+        prefix
+        prefix-ty
+        init-box
+        value-box
+        body-box)
+      (let
+        [start : AstExpr (ast-node-get start-box)]
+        [end : AstExpr (ast-node-get end-box)]
+        [init : AstExpr (ast-node-get init-box)]
+        [value : AstExpr (ast-node-get value-box)]
+        [body : AstExpr (ast-node-get body-box)]
+        [value-templates : SpecTemplateEnv
+          (spec-template-env-shadow-name templates (intern-str index))]
+        [body-templates : SpecTemplateEnv
+          (spec-template-env-shadow-name value-templates (intern-str prefix))]
+        (match (spec-rewrite-expr start templates state)
+          [(OkSpecExpr rewritten-start start-state)
+            (match (spec-rewrite-expr end templates start-state)
+              [(OkSpecExpr rewritten-end end-state)
+                (match (spec-rewrite-expr init templates end-state)
+                  [(OkSpecExpr rewritten-init init-state)
+                    (match (spec-rewrite-expr value value-templates init-state)
+                      [(OkSpecExpr rewritten-value value-state)
+                        (match (spec-rewrite-expr
+                          body
+                          body-templates
+                          value-state)
+                          [(OkSpecExpr rewritten-body body-state)
+                            (OkSpecExpr
+                              (ast-expr-spmd-scan-id
+                                op
+                                index
+                                index-ty
+                                rewritten-start
+                                rewritten-end
+                                prefix
+                                prefix-ty
+                                rewritten-init
+                                rewritten-value
+                                rewritten-body)
+                              body-state)]
+                          [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+                      [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+                  [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+              [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
     [(AstExprSpmdBroadcast value-box lane-box)
       (let
         [value : AstExpr (ast-node-get value-box)]
@@ -7971,6 +8023,54 @@
                   [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
               [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
           [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprSpmdScan
+        op
+        index
+        index-ty
+        start-box
+        end-box
+        prefix
+        prefix-ty
+        init-box
+        value-box
+        body-box)
+      (let
+        [start : AstExpr (ast-node-get start-box)]
+        [end : AstExpr (ast-node-get end-box)]
+        [init : AstExpr (ast-node-get init-box)]
+        [value : AstExpr (ast-node-get value-box)]
+        [body : AstExpr (ast-node-get body-box)]
+        [value-subs : SpecValueSubst
+          (spec-value-subst-remove-name subs (intern-str index))]
+        [body-subs : SpecValueSubst
+          (spec-value-subst-remove-name value-subs (intern-str prefix))]
+        (match (spec-substitute-values-expr start subs)
+          [(OkSpecSubExpr rewritten-start)
+            (match (spec-substitute-values-expr end subs)
+              [(OkSpecSubExpr rewritten-end)
+                (match (spec-substitute-values-expr init subs)
+                  [(OkSpecSubExpr rewritten-init)
+                    (match (spec-substitute-values-expr value value-subs)
+                      [(OkSpecSubExpr rewritten-value)
+                        (match (spec-substitute-values-expr body body-subs)
+                          [(OkSpecSubExpr rewritten-body)
+                            (OkSpecSubExpr
+                              (ast-expr-spmd-scan-id
+                                op
+                                index
+                                index-ty
+                                rewritten-start
+                                rewritten-end
+                                prefix
+                                prefix-ty
+                                rewritten-init
+                                rewritten-value
+                                rewritten-body))]
+                          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+                      [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+                  [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
     [(AstExprSpmdBroadcast value-box lane-box)
       (let
         [value : AstExpr (ast-node-get value-box)]
@@ -8471,6 +8571,54 @@
                             rewritten-end
                             rewritten-init
                             rewritten-value))]
+                      [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+                  [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprSpmdScan
+        op
+        index
+        index-ty
+        start-box
+        end-box
+        prefix
+        prefix-ty
+        init-box
+        value-box
+        body-box)
+      (let
+        [start : AstExpr (ast-node-get start-box)]
+        [end : AstExpr (ast-node-get end-box)]
+        [init : AstExpr (ast-node-get init-box)]
+        [value : AstExpr (ast-node-get value-box)]
+        [body : AstExpr (ast-node-get body-box)]
+        [value-subs : SpecTypeSubst
+          (spec-type-subst-remove-name subs (intern-str index))]
+        [body-subs : SpecTypeSubst
+          (spec-type-subst-remove-name value-subs (intern-str prefix))]
+        (match (spec-substitute-types-expr start subs)
+          [(OkSpecSubExpr rewritten-start)
+            (match (spec-substitute-types-expr end subs)
+              [(OkSpecSubExpr rewritten-end)
+                (match (spec-substitute-types-expr init subs)
+                  [(OkSpecSubExpr rewritten-init)
+                    (match (spec-substitute-types-expr value value-subs)
+                      [(OkSpecSubExpr rewritten-value)
+                        (match (spec-substitute-types-expr body body-subs)
+                          [(OkSpecSubExpr rewritten-body)
+                            (OkSpecSubExpr
+                              (ast-expr-spmd-scan-id
+                                op
+                                index
+                                (spec-substitute-type index-ty subs)
+                                rewritten-start
+                                rewritten-end
+                                prefix
+                                (spec-substitute-type prefix-ty subs)
+                                rewritten-init
+                                rewritten-value
+                                rewritten-body))]
+                          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
                       [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
                   [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
               [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]

@@ -3493,11 +3493,12 @@ This section defines the SPMD source surface. The current compiler parses and
 type-checks `foreach`, lowers it to scalar reference loops, and has AVX2 and
 AVX-512 backend paths for a first contiguous map/zip subset. `spmd-reduce` is
 also implemented: scalar lowering covers the supported operator/type surface
-below, and SIMD backend modes vectorize eligible contiguous array folds. The v2
-masked varying `if` contract and public lane identity forms are specified here
-before compiler implementation; until those implementations land, the current
-checker still rejects varying control-flow conditions inside `foreach` and
-rejects `(program-index)`/`(program-count)`.
+below, and SIMD backend modes vectorize eligible contiguous array folds.
+`spmd-scan` is implemented as scalar reference lowering for range-wide
+inclusive scans. The v2 masked varying `if` contract and public lane identity
+forms are specified here before compiler implementation; until those
+implementations land, the current checker still rejects varying control-flow
+conditions inside `foreach` and rejects `(program-index)`/`(program-count)`.
 
 SPMD is data parallelism inside one task. It does not create independently
 scheduled OS threads, does not transfer ownership between thread-local arenas,
@@ -3764,7 +3765,7 @@ Explicit SPMD atomic scatter:
               (array-set! out i 1))))))
 ```
 
-SPMD reductions:
+SPMD reductions and scans:
 
 The first reduction surface is an explicit expression form:
 
@@ -3783,10 +3784,22 @@ The first reduction surface is an explicit expression form:
   (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))
 ```
 
+```lisp test=check name=spmd-scan-sum-i64
+(define (scan-prefix-sum [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+  (spmd-scan
+    sum
+    ([i : i64 0 n] [prefix : i64 0])
+    (array-ref xs i)
+    (array-set! out i prefix)))
+```
+
 Syntax:
 
 - `(spmd-reduce op ([i : i64 start end]) init value)` evaluates to one scalar
   result.
+- `(spmd-scan op ([i : i64 start end] [prefix : T init]) value body)` evaluates
+  a range-wide inclusive scan and has type `unit`. `prefix` is visible only in
+  `body`.
 - `(spmd-broadcast value lane)` evaluates `value` for the selected source lane
   in the current SPMD gang and makes that scalar value available to every
   active lane in the gang.
@@ -3800,12 +3813,16 @@ Evaluation and empty ranges:
   logical iteration. `init` is the accumulator seed and the empty-range result.
 - `value` is evaluated once for each logical `i` in increasing index order in
   the scalar semantics. If `end <= start`, `value` is not evaluated.
-- The semantic result is the same as a scalar left fold:
+- For `spmd-reduce`, the semantic result is the same as a scalar left fold:
   - `sum`: `acc = (+ acc value)`.
   - `min`: `acc = (if (< value acc) value acc)`.
   - `max`: `acc = (if (> value acc) value acc)`.
   - `all`: `acc = (and acc value)`.
   - `any`: `acc = (or acc value)`.
+- For `spmd-scan`, the same accumulator update happens before `body` on each
+  iteration. The `prefix` binding visible in `body` is the inclusive value
+  after combining the current iteration's `value`; `value` and `body` are
+  skipped for empty ranges.
 - Integer `sum` uses the existing modulo-wrapping integer `+` semantics.
 - `f64 sum` uses the same ordered scalar `+` semantics as an explicit loop in
   scalar backend modes. SIMD backend modes may use deterministic horizontal
@@ -3818,7 +3835,11 @@ Type rules for the first slice:
 - `min` and `max` support `i32` and `i64`.
 - `all` and `any` support `bool`.
 - `init` and `value` must have the same supported type for the chosen `op`, and
-  the result type is that same type.
+  the `spmd-reduce` result type is that same type.
+- `spmd-scan` uses the same operators, but the first scan slice supports only
+  `i32`/`i64` for `sum`/`min`/`max` and `bool` for `all`/`any`. `f32`/`f64`
+  scans are rejected with a diagnostic that notes floating-point scan ordering
+  is deferred. The `prefix` binding has the same type as `init` and `value`.
 - `f32`, narrow integer widths, unsigned integer widths, `char`, `String`,
   structs, enums, tuples, arrays, function values, public vector types, and
   public mask types are rejected in the first reduction slice.
@@ -3826,7 +3847,8 @@ Type rules for the first slice:
 Backend coverage for reductions:
 
 - Scalar backend modes lower every supported operator/type combination listed
-  above.
+  above. `spmd-scan` currently uses scalar reference lowering in every backend
+  mode.
 - SIMD backend modes vectorize eligible contiguous array folds. AVX2 supports
   `sum` over `i32`, `i64`, and `f64`, plus `min`/`max` over `i32`; AVX-512
   supports those shapes and also `min`/`max` over `i64`.
@@ -3841,19 +3863,23 @@ Purity and varying rules for the first slice:
   whose values satisfy the same rules.
 - `value` must not perform writes or other side effects. In particular, `set!`,
   `array-set!`, `print*`, file I/O, `panic`/`error`, nested `foreach`, nested
-  `spmd-reduce`, and user-defined calls with varying arguments are rejected in
-  the first slice.
+  `spmd-reduce`, nested `spmd-scan`, and user-defined calls with varying
+  arguments are rejected in the first slice.
+- `spmd-scan` applies the same purity and index restrictions to `value`.
+  `body` must have type `unit` and uses the same first-slice side-effect rules
+  as `foreach`; nested public SPMD constructs are rejected.
 - Reductions by mutating an outer variable inside `foreach` remain rejected.
   Use `spmd-reduce` so scalar fallback and SIMD lowering have one explicit
   accumulator contract.
 
 Cross-lane operations:
 
-- `spmd-reduce` and `spmd-broadcast` are the public cross-lane source
+- `spmd-reduce`, `spmd-scan`, and `spmd-broadcast` are the public cross-lane source
   operations in this slice.
 - `spmd-broadcast` is valid only inside a `foreach` body or inside the `value`
-  expression of `spmd-reduce`. It is invalid in ordinary expressions, type
-  positions, `foreach` bounds, and `spmd-reduce` start/end/init expressions.
+  expression of `spmd-reduce`, or inside a `spmd-scan` body. It is invalid in
+  ordinary expressions, type positions, `foreach` bounds, `spmd-reduce`
+  start/end/init expressions, and `spmd-scan` start/end/init/value expressions.
 - The first broadcast slice supports `i32`, `u32`, `i64`, `u64`, `f32`, and
   `f64` values. `lane` must be a uniform `i64` source-lane slot. The result
   type is the value type. If `value` is varying, the result is varying; if
@@ -3873,9 +3899,9 @@ Cross-lane operations:
   explicit SIMD backend modes until a vector pattern accepts them. Bool
   `spmd-broadcast` remains deferred even though bool dynamic-array lanes are
   supported in the AVX-512 `foreach` subset.
-- Scans/prefix reductions, general shuffles, lane extraction/insertion,
-  gathers/scatters, atomics, task parallelism, and public vector/mask values
-  remain deferred.
+- General shuffles, lane extraction/insertion, gathers/scatters, atomics, task
+  parallelism, vectorized scans, floating-point scans, and public vector/mask
+  values remain deferred.
 - IR and backend work may add private horizontal-reduction primitives as needed
   to implement `spmd-reduce`; those primitives are not user-denotable source
   operations.
@@ -5662,8 +5688,8 @@ not the future safe reference/borrow model (#182), not a replacement for
 | `(with ...)` scoped non-memory resource cleanup | Implemented (#907): parser/typechecker/lowering with LIFO cleanup order |
 | `(in-arena ...)` first-class arena target | Implemented (#2625): safe dynamic active-arena switch with restoration on normal and early exits, no mark/rewind/destroy/clone |
 | Cleanup-owning aggregate declarations | Implemented for structs (#907); cleanup-owning enums remain reserved |
-| SPMD / SIMD `foreach` and `spmd-reduce` | Scalar reference lowering implemented; AVX2/AVX-512 support a first contiguous `foreach` map/zip subset over `i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `i64`, `u64`, `f32`, and `f64`; AVX-512 also supports bool dynamic-array copies and bool-valued map results through private mask conversion; scalar gather-only dynamic-array reads are implemented with ordinary bounds checks while explicit SIMD modes reject non-contiguous gather shapes; eligible `spmd-reduce` folds and direct array-value `spmd-broadcast` maps are implemented; explicit `stdlib/atomic.tl` i32/i64 element helpers provide the first overlap-tolerant SPMD scatter write surface; masked varying `if` remains in flight (#2131/#2207) |
-| Public cross-lane/source SPMD gaps beyond implemented `spmd-reduce`/`spmd-broadcast` and explicit atomic helpers | Public lane identities, scans/prefix reductions, general shuffles, remaining masked/control-flow forms, and out-of-line varying calls remain deferred; public vector/mask/varying source type deferral is pinned (#2903), with live work split across #2761, #2207/#2767, #2852, #2884, and #2905 |
+| SPMD / SIMD `foreach`, `spmd-reduce`, and `spmd-scan` | Scalar reference lowering implemented; AVX2/AVX-512 support a first contiguous `foreach` map/zip subset over `i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `i64`, `u64`, `f32`, and `f64`; AVX-512 also supports bool dynamic-array copies and bool-valued map results through private mask conversion; scalar gather-only dynamic-array reads are implemented with ordinary bounds checks while explicit SIMD modes reject non-contiguous gather shapes; eligible `spmd-reduce` folds, scalar inclusive `spmd-scan`, and direct array-value `spmd-broadcast` maps are implemented; explicit `stdlib/atomic.tl` i32/i64 element helpers provide the first overlap-tolerant SPMD scatter write surface; masked varying `if` remains in flight (#2131/#2207) |
+| Public cross-lane/source SPMD gaps beyond implemented `spmd-reduce`/`spmd-scan`/`spmd-broadcast` and explicit atomic helpers | Public lane identities, vectorized/floating-point scans, general shuffles, remaining masked/control-flow forms, and out-of-line varying calls remain deferred; public vector/mask/varying source type deferral is pinned (#2903), with live work split across #2761, #2207/#2767, #2852, and #2884 |
 | Runtime SIMD dispatch (`defdispatch`) | Implemented for scalar/AVX2/AVX-512 variants with cached runtime selection and end-to-end selection verification |
 | Windows region helpers | Implemented for `tl_region_mark`/`tl_region_reset` and `with-arena` scoped reclamation |
 | Complete source locations for all semantic errors | Partial |
@@ -6253,6 +6279,7 @@ expr          ::= literal
                 | "(" "foreach" foreach-clause expr ")"
                 | "(" "cfg" cfg-predicate expr [expr] ")"
                 | "(" "spmd-reduce" reduce-op foreach-clause expr expr ")"
+                | "(" "spmd-scan" reduce-op scan-clause expr expr ")"
                 | "(" "spmd-broadcast" expr expr ")"
                 | "(" spmd-lane-form ")"
                 | "(" "lambda" "(" param* ")" [":" type] expr ")"
@@ -6302,6 +6329,8 @@ borrow-place  ::= ident
 binding       ::= "[" ident [":" type] expr "]"
 resource-binding ::= "[" ident expr expr "]"  ; name init cleanup-fn
 foreach-clause ::= "(" "[" ident ":" type expr expr "]" ")"
+scan-clause   ::= "(" "[" ident ":" type expr expr "]"
+                      "[" ident ":" type expr "]" ")"
 reduce-op     ::= "sum" | "min" | "max" | "all" | "any"
 spmd-lane-form ::= "program-index" | "program-count"
 match-arm     ::= "[" pattern expr "]"

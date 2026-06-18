@@ -267,6 +267,7 @@
   (AstExprMatch i64 AstMatchArmList)
   (AstExprForeach i64 AstType i64 i64 i64)
   (AstExprSpmdReduce AstReduceOp i64 AstType i64 i64 i64 i64)
+  (AstExprSpmdScan AstReduceOp i64 AstType i64 i64 i64 AstType i64 i64 i64)
   (AstExprSpmdBroadcast i64 i64)
   (AstExprStructGet i64 i64)
   (AstExprStructSet i64 i64 i64)
@@ -1685,6 +1686,54 @@
   [value : i64]) : i64
   (ast-node-push (AstExprSpmdReduce op name index-ty start end init value)))
 
+(define (ast-expr-spmd-scan
+  [op : AstReduceOp]
+  [index : String]
+  [index-ty : AstType]
+  [start : i64]
+  [end : i64]
+  [prefix : String]
+  [prefix-ty : AstType]
+  [init : i64]
+  [value : i64]
+  [body : i64]) : i64
+  (ast-node-push
+    (AstExprSpmdScan
+      op
+      (intern index)
+      index-ty
+      start
+      end
+      (intern prefix)
+      prefix-ty
+      init
+      value
+      body)))
+
+(define (ast-expr-spmd-scan-id
+  [op : AstReduceOp]
+  [index : i64]
+  [index-ty : AstType]
+  [start : i64]
+  [end : i64]
+  [prefix : i64]
+  [prefix-ty : AstType]
+  [init : i64]
+  [value : i64]
+  [body : i64]) : i64
+  (ast-node-push
+    (AstExprSpmdScan
+      op
+      index
+      index-ty
+      start
+      end
+      prefix
+      prefix-ty
+      init
+      value
+      body)))
+
 (define (ast-expr-spmd-broadcast [value : i64] [lane : i64]) : i64
   (ast-node-push (AstExprSpmdBroadcast value lane)))
 
@@ -2054,6 +2103,7 @@
     [(AstExprInit _) 61]
     [(AstExprComptime _) 27]
     [(AstExprSpmdReduce _ _ _ _ _ _ _) 28]
+    [(AstExprSpmdScan _ _ _ _ _ _ _ _ _ _) 68]
     [(AstExprSpmdBroadcast _ _) 64]
     [(AstExprTry _) 29]
     [(AstExprReturn _) 48]

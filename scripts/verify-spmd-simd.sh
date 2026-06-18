@@ -99,6 +99,7 @@ tests/spmd/bool_lanes.tl
 tests/integration/spmd_foreach.tl
 tests/integration/spmd_gather_read.tl
 tests/integration/spmd_reduce_scalar.tl
+tests/integration/spmd_scan_scalar.tl
 EOF
 }
 

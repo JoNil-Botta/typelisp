@@ -61,6 +61,9 @@ integer_literal_unsigned_negative_reject|check-fail|tests/safety/integer_literal
 in_arena_inner_region_escape|check-fail|tests/safety/in_arena_inner_region_escape.tl|-|cannot escape with-arena
 spmd_outer_mutation_reject|check-fail|tests/safety/spmd_outer_mutation_reject.tl|-|foreach cannot set binding declared outside foreach
 spmd_reduce_f64_min_reject|check-fail|tests/safety/spmd_reduce_f64_min_reject.tl|-|spmd-reduce min requires an i32 or i64 type
+spmd_scan_f64_sum_reject|check-fail|tests/safety/spmd_scan_f64_sum_reject.tl|-|spmd-scan sum requires an i32 or i64 type; floating-point scan ordering is deferred
+spmd_scan_nested_foreach_reject|check-fail|tests/safety/spmd_scan_nested_foreach_reject.tl|-|nested foreach inside spmd-scan is not supported
+spmd_scan_outer_mutation_reject|check-fail|tests/safety/spmd_scan_outer_mutation_reject.tl|-|foreach cannot set binding declared outside foreach
 spmd_broadcast_outside_reject|check-fail|tests/safety/spmd_broadcast_outside_reject.tl|-|spmd-broadcast is only valid inside a foreach body or spmd-reduce value expression
 spmd_broadcast_varying_lane_reject|check-fail|tests/safety/spmd_broadcast_varying_lane_reject.tl|-|spmd-broadcast lane must be uniform
 spmd_broadcast_bool_reject|check-fail|tests/safety/spmd_broadcast_bool_reject.tl|-|spmd-broadcast value must have type i32, u32, i64, u64, f32, or f64; bool broadcast remains deferred

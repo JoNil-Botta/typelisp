@@ -568,7 +568,7 @@ same local value or type name without colliding.
 
 `if`, `when`, `unless`, `let`, `while`, `begin`, `set!`, `match` (incl.
 nested/recursive enum patterns and `_`), `ann`, `cast`, `foreach`,
-`spmd-reduce`, plus
+`spmd-reduce`, `spmd-scan`, plus
 arithmetic (`+ - * / %`),
 comparison (`= != < <= > >=`), boolean (`and` `or`), and bitwise/shift
 (`bit-and` `bit-or` `bit-xor` `shl` `shr`) operators. `struct-get` reads a
@@ -597,9 +597,11 @@ using the same CPUID/XGETBV capability checks exposed by `stdlib/cpu.tl`;
 AVX-512 dispatch currently requires AVX-512BW because byte-lane lowering uses
 BW instructions.
 `spmd-reduce` scalar lowering supports `sum` over `i32`, `i64`, and `f64`,
-`min`/`max` over `i32` and `i64`, and `all`/`any` over `bool`. SIMD backend
-modes vectorize eligible contiguous array reductions: `sum` over `i32`, `i64`,
-and `f64`; `min`/`max` over `i32`; and AVX-512 `min`/`max` over `i64`. The
+`min`/`max` over `i32` and `i64`, and `all`/`any` over `bool`; `spmd-scan`
+scalar lowering supports inclusive `sum`/`min`/`max` scans over `i32`/`i64` and
+`all`/`any` scans over `bool`. SIMD backend modes vectorize eligible contiguous
+array reductions: `sum` over `i32`, `i64`, and `f64`; `min`/`max` over `i32`;
+and AVX-512 `min`/`max` over `i64`. The
 SPEC also defines the next masked varying `if` slice; the current compiler
 still rejects varying `if` until that implementation lands. `SPEC.md` also
 defines the future `(program-index)` and `(program-count)` SPMD lane identity
@@ -889,8 +891,8 @@ through the TypeLisp-owned build/run path.
 `u64`, `f32`, and `f64` lanes, with AVX-512 additionally supporting bool
 dynamic-array copies and bool-valued map results through private mask
 conversion. SIMD backend modes also support eligible `spmd-reduce` array folds.
-Scalar `spmd-reduce` lowering supports `sum`, `min`, `max`, `all`, and `any`
-over the SPEC.md supported types.
+Scalar `spmd-reduce` and `spmd-scan` lowering supports `sum`, `min`, `max`,
+`all`, and `any` over the SPEC.md supported types.
 For `i8`/`u8` lanes, `+` is vectorized and `*` is rejected in explicit SIMD
 backend modes until widening/narrowing byte multiply lowering is designed.
 AVX-512 uses ZMM vectors and opmask predicated tails, requires AVX-512BW for

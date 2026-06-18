@@ -1422,6 +1422,15 @@
         [(lint-expr-uses-import? (ast-node-get end) alias module-name) true]
         [(lint-expr-uses-import? (ast-node-get init) alias module-name) true]
         [else (lint-expr-uses-import? (ast-node-get value) alias module-name)])]
+    [(AstExprSpmdScan _ _ index-ty start end _ prefix-ty init value body)
+      (cond
+        [(lint-type-uses-import? index-ty alias module-name) true]
+        [(lint-type-uses-import? prefix-ty alias module-name) true]
+        [(lint-expr-uses-import? (ast-node-get start) alias module-name) true]
+        [(lint-expr-uses-import? (ast-node-get end) alias module-name) true]
+        [(lint-expr-uses-import? (ast-node-get init) alias module-name) true]
+        [(lint-expr-uses-import? (ast-node-get value) alias module-name) true]
+        [else (lint-expr-uses-import? (ast-node-get body) alias module-name)])]
     [(AstExprSpmdBroadcast value lane)
       (if (lint-expr-uses-import? (ast-node-get value) alias module-name)
         true
@@ -2178,6 +2187,17 @@
             (lint-unused-assignment-note-reads
               (ast-node-get end)
               (lint-unused-assignment-note-reads (ast-node-get start) state)))))]
+    [(AstExprSpmdScan _ _ _ start end _ _ init value body)
+      (lint-unused-assignment-clear-pending
+        (lint-unused-assignment-note-reads
+          (ast-node-get body)
+          (lint-unused-assignment-note-reads
+            (ast-node-get value)
+            (lint-unused-assignment-note-reads
+              (ast-node-get init)
+              (lint-unused-assignment-note-reads
+                (ast-node-get end)
+                (lint-unused-assignment-note-reads (ast-node-get start) state))))))]
     [(AstExprSpmdBroadcast value lane)
       (lint-unused-assignment-note-reads
         (ast-node-get lane)
@@ -3152,6 +3172,16 @@
           (lint-unused-variable-quasiquote-expr
             (ast-node-get end)
             (lint-unused-variable-quasiquote-expr (ast-node-get start) state))))]
+    [(AstExprSpmdScan _ _ _ start end _ _ init value body)
+      (lint-unused-variable-quasiquote-expr
+        (ast-node-get body)
+        (lint-unused-variable-quasiquote-expr
+          (ast-node-get value)
+          (lint-unused-variable-quasiquote-expr
+            (ast-node-get init)
+            (lint-unused-variable-quasiquote-expr
+              (ast-node-get end)
+              (lint-unused-variable-quasiquote-expr (ast-node-get start) state)))))]
     [(AstExprSpmdBroadcast value lane)
       (lint-unused-variable-quasiquote-expr
         (ast-node-get lane)
@@ -3393,6 +3423,25 @@
       (lint-unused-variable-expr body with-frame span)]
     (lint-unused-variable-pop-frame with-body)))
 
+(define (lint-unused-variable-scan-body-scope
+  [index : i64]
+  [prefix : i64]
+  [body : AstExpr]
+  [state : LintUnusedVariableState]
+  [span : AstSourceSpan]) : LintUnusedVariableState
+  (let
+    [with-frame : LintUnusedVariableState
+      (lint-unused-variable-push-frame
+        state
+        (lint-unused-variable-binding-cons
+          (lint-unused-variable-binding (intern-str index) span false)
+          (lint-unused-variable-binding-cons
+            (lint-unused-variable-binding (intern-str prefix) span false)
+            LintUnusedVariableBindingNil)))]
+    [with-body : LintUnusedVariableState
+      (lint-unused-variable-expr body with-frame span)]
+    (lint-unused-variable-pop-frame with-body)))
+
 (define (lint-unused-variable-expr
   [expr : AstExpr]
   [state : LintUnusedVariableState]
@@ -3508,6 +3557,42 @@
               span)
             span))
         span)]
+    [(AstExprSpmdScan
+        _
+        index
+        index-ty
+        start
+        end
+        prefix
+        prefix-ty
+        init
+        value
+        body)
+      (let
+        [base-state : LintUnusedVariableState
+          (lint-unused-variable-type
+            prefix-ty
+            (lint-unused-variable-type
+              index-ty
+              (lint-unused-variable-expr
+                (ast-node-get init)
+                (lint-unused-variable-expr
+                  (ast-node-get end)
+                  (lint-unused-variable-expr (ast-node-get start) state span)
+                  span)
+                span)))]
+        [value-state : LintUnusedVariableState
+          (lint-unused-variable-index-scope
+            index
+            (ast-node-get value)
+            base-state
+            span)]
+        (lint-unused-variable-scan-body-scope
+          index
+          prefix
+          (ast-node-get body)
+          value-state
+          span))]
     [(AstExprSpmdBroadcast value lane)
       (lint-unused-variable-expr
         (ast-node-get lane)
@@ -4593,6 +4678,26 @@
             init
             threshold
             (lint-walk-expr end threshold (lint-walk-expr start threshold acc)))))]
+    [(AstExprSpmdScan _ _ _ start-box end-box _ _ init-box value-box body-box)
+      (let
+        [start : AstExpr (ast-node-get start-box)]
+        [end : AstExpr (ast-node-get end-box)]
+        [init : AstExpr (ast-node-get init-box)]
+        [value : AstExpr (ast-node-get value-box)]
+        [body : AstExpr (ast-node-get body-box)]
+        (lint-walk-expr
+          body
+          threshold
+          (lint-walk-expr
+            value
+            threshold
+            (lint-walk-expr
+              init
+              threshold
+              (lint-walk-expr
+                end
+                threshold
+                (lint-walk-expr start threshold acc))))))]
     [(AstExprSpmdBroadcast value-box lane-box)
       (let
         [value : AstExpr (ast-node-get value-box)]

@@ -677,20 +677,36 @@
     [_ node]))
 
 ;; State-owned type node pools mirror the global type-node backing store while
-;; keeping each worker's ids and reset marks independent. Hash-consing remains
-;; only on the process-global hot path until the full compiler state migration.
+;; keeping each worker's ids, reset marks, and hash-consing table independent.
+;; The compiler hot path still uses the process-global compatibility wrappers
+;; until parser/typechecker/driver state is threaded through every call.
 (defstruct AstTypeNodePoolState
   (slots (Array AstType))
   (count i64)
   (base-arena i64)
-  (exhausted bool))
+  (exhausted bool)
+  (dedup-slots (Array i64))
+  (dedup-count i64))
 
 (defenum AstTypeNodePoolPushResult
   (AstTypeNodePoolPushOk AstTypeNodePoolState i64))
 
+(define (ast-type-node-pool-state-dedup-capacity [capacity : i64]) : i64
+  (let
+    [want : i64
+      (if (< capacity 16)
+        16
+        capacity)]
+    [cap : i64 1]
+    (begin
+      (while (< cap want)
+        (set! cap (* cap 2)))
+      cap)))
+
 (define (ast-type-node-pool-state-init [capacity : i64] [base-arena : i64]) : AstTypeNodePoolState
   (let
     [cap : i64 (node-pool-state-normalize-capacity capacity)]
+    [dedup-cap : i64 (ast-type-node-pool-state-dedup-capacity cap)]
     [prev-arena : i64 (arena-current)]
     [slots : (Array AstType)
       (begin
@@ -702,7 +718,17 @@
             (unsafe
               (arena-set! prev-arena))
             arr)))]
-    (AstTypeNodePoolState slots 0 base-arena false)))
+    [dedup-slots : (Array i64)
+      (begin
+        (unsafe
+          (arena-set! base-arena))
+        (let
+          [arr : (Array i64) (make-array i64 dedup-cap)]
+          (begin
+            (unsafe
+              (arena-set! prev-arena))
+            arr)))]
+    (AstTypeNodePoolState slots 0 base-arena false dedup-slots 0)))
 
 (define (ast-type-node-pool-state-create [capacity : i64]) : AstTypeNodePoolState
   (ast-type-node-pool-state-init capacity (arena-current)))
@@ -719,14 +745,37 @@
 (define (ast-type-node-pool-state-mark [pool : AstTypeNodePoolState]) : i64
   (ast-type-node-pool-state-len pool))
 
+(define (ast-type-node-pool-state-dedup-clear [pool : AstTypeNodePoolState]) : AstTypeNodePoolState
+  (let
+    [slots : (Array i64) (struct-get pool dedup-slots)]
+    [cap : i64 (array-length slots)]
+    [i : i64 0]
+    (begin
+      (while (< i cap)
+        (begin
+          (array-set! slots i 0)
+          (set! i (+ i 1))))
+      (AstTypeNodePoolState
+        (struct-get pool slots)
+        (struct-get pool count)
+        (struct-get pool base-arena)
+        (struct-get pool exhausted)
+        slots
+        0))))
+
 (define (ast-type-node-pool-state-reset-to
   [pool : AstTypeNodePoolState]
   [mark : i64]) : AstTypeNodePoolState
-  (AstTypeNodePoolState
-    (struct-get pool slots)
-    mark
-    (struct-get pool base-arena)
-    false))
+  ;; Reset truncates the node prefix. Clear, rather than rebuild, the dedup
+  ;; table so no entry can point at an id >= mark; later pushes repopulate it.
+  (ast-type-node-pool-state-dedup-clear
+    (AstTypeNodePoolState
+      (struct-get pool slots)
+      mark
+      (struct-get pool base-arena)
+      false
+      (struct-get pool dedup-slots)
+      (struct-get pool dedup-count))))
 
 (define (ast-type-node-pool-state-reset-to-mark
   [pool : AstTypeNodePoolState]
@@ -767,9 +816,11 @@
         new-slots
         len
         base-arena
-        (struct-get pool exhausted)))))
+        (struct-get pool exhausted)
+        (struct-get pool dedup-slots)
+        (struct-get pool dedup-count)))))
 
-(define (ast-type-node-pool-state-push
+(define (ast-type-node-pool-state-push-raw
   [pool : AstTypeNodePoolState]
   [node : AstType]) : AstTypeNodePoolPushResult
   (let
@@ -800,8 +851,65 @@
           slots
           (+ id 1)
           base-arena
-          (struct-get ready exhausted))
+          (struct-get ready exhausted)
+          (struct-get ready dedup-slots)
+          (struct-get ready dedup-count))
         id))))
+
+(define (ast-type-node-pool-state-push-dedup
+  [pool : AstTypeNodePoolState]
+  [node : AstType]
+  [dedup-slots : (Array i64)]
+  [dedup-count : i64]
+  [idx : i64]
+  [mask : i64]) : AstTypeNodePoolPushResult
+  (let
+    [slot : i64 (array-ref dedup-slots idx)]
+    (if (= slot 0)
+      (match (ast-type-node-pool-state-push-raw pool node)
+        [(AstTypeNodePoolPushOk next id)
+          (begin
+            (array-set! dedup-slots idx (+ id 1))
+            (AstTypeNodePoolPushOk
+              (AstTypeNodePoolState
+                (struct-get next slots)
+                (struct-get next count)
+                (struct-get next base-arena)
+                (struct-get next exhausted)
+                dedup-slots
+                (+ dedup-count 1))
+              id))])
+      (if (ty-node-shallow-value-eq?
+        (array-ref (struct-get pool slots) (- slot 1))
+        node)
+        (AstTypeNodePoolPushOk pool (- slot 1))
+        (ast-type-node-pool-state-push-dedup
+          pool
+          node
+          dedup-slots
+          dedup-count
+          (bit-and (+ idx 1) mask)
+          mask)))))
+
+(define (ast-type-node-pool-state-push
+  [pool : AstTypeNodePoolState]
+  [node : AstType]) : AstTypeNodePoolPushResult
+  (let
+    [dedup-slots : (Array i64) (struct-get pool dedup-slots)]
+    [dedup-cap : i64 (array-length dedup-slots)]
+    [dedup-count : i64 (struct-get pool dedup-count)]
+    (if (>= (* dedup-count 2) dedup-cap)
+      (ast-type-node-pool-state-push-raw pool node)
+      (let
+        [mask : i64 (- dedup-cap 1)]
+        [idx : i64 (bit-and (ty-node-hash-value node) mask)]
+        (ast-type-node-pool-state-push-dedup
+          pool
+          node
+          dedup-slots
+          dedup-count
+          idx
+          mask)))))
 
 (define (ast-type-node-pool-state-get [pool : AstTypeNodePoolState] [id : i64]) : AstType
   (array-ref (struct-get pool slots) id))
@@ -825,7 +933,9 @@
             out)))]
     (begin
       (array-set! (struct-get pool slots) id persistent)
-      pool)))
+      ;; Overwriting an existing id can make hash entries stale. Clear the
+      ;; private table and let future pushes repopulate it from new candidates.
+      (ast-type-node-pool-state-dedup-clear pool))))
 
 ;: Append `node` to the pool unconditionally and return its ty id.
 (define (ty-node-push-raw [node : AstType]) : i64
@@ -970,10 +1080,10 @@
             (ty-type-list-eq? (box-get a-rest) (box-get b-rest)))]
         [_ false])]))
 
-;; Shallow structural equality between a pool node and a candidate node. Child
+;; Shallow structural equality between a stored node and a candidate node. Child
 ;; ids compare as plain integers because children are themselves deduplicated.
-(define (ty-node-shallow-eq? [a-id : i64] [b : AstType]) : bool
-  (match (ty-node-get a-id)
+(define (ty-node-shallow-value-eq? [a : AstType] [b : AstType]) : bool
+  (match a
     [(AstTyI64)
       (match b
         [(AstTyI64) true]
@@ -1122,6 +1232,15 @@
       (match b
         [(AstTyMutPtr b-inner) (= a-inner b-inner)]
         [_ false])]))
+
+(define (ty-node-shallow-eq? [a-id : i64] [b : AstType]) : bool
+  (ty-node-shallow-value-eq? (ty-node-get a-id) b))
+
+(define (ast-type-node-pool-state-shallow-eq?
+  [pool : AstTypeNodePoolState]
+  [a-id : i64]
+  [b : AstType]) : bool
+  (ty-node-shallow-value-eq? (ast-type-node-pool-state-get pool a-id) b))
 
 ;: Append `node` to the pool, returning an existing id when an identical node
 ;: was already pushed. The table is probed before appending so the common

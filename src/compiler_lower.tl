@@ -327,15 +327,13 @@
   (OkLowerStringValues LowerState CompilerIrValueList i64)
   (ErrLowerStringValues CompilerDiagnostic))
 
-(defenum LowerCleanup
-  (LowerCleanup String String))
-
-(defenum LowerCleanupList
-  (LowerCleanupNil)
-  (LowerCleanupCons LowerCleanup (Box LowerCleanupList)))
+(defstruct LowerCleanupStack
+  (hidden-names (Array String))
+  (cleanup-names (Array String))
+  (count i64))
 
 (defenum LowerResourceBindings
-  (LowerResourceBindings LowerState SymI64Env TcTypeEnv LowerCleanupList))
+  (LowerResourceBindings LowerState SymI64Env TcTypeEnv LowerCleanupStack))
 
 (defenum ResultLowerResourceBindings
   (OkLowerResourceBindings LowerResourceBindings)
@@ -10296,24 +10294,72 @@
     [(NoneI64)
       (ErrLowerState (lower-diagnostic "lower: missing arena restore binding"))]))
 
-(define (lower-emit-cleanup-list
+(define (lower-cleanup-stack-empty) : LowerCleanupStack
+  (LowerCleanupStack (make-array String 0) (make-array String 0) 0))
+
+(define (lower-cleanup-stack-push
+  [cleanups : LowerCleanupStack]
+  [hidden-name : String]
+  [cleanup-name : String]) : LowerCleanupStack
+  (let
+    [hidden-names : (Array String) (struct-get cleanups hidden-names)]
+    [cleanup-names : (Array String) (struct-get cleanups cleanup-names)]
+    [count : i64 (struct-get cleanups count)]
+    (begin
+      (array-push! hidden-names hidden-name)
+      (array-push! cleanup-names cleanup-name)
+      (LowerCleanupStack hidden-names cleanup-names (+ count 1)))))
+
+(define (lower-cleanup-stack-count [cleanups : LowerCleanupStack]) : i64
+  (struct-get cleanups count))
+
+(define (lower-cleanup-stack-entry?
+  [cleanups : LowerCleanupStack]
+  [index : i64]
+  [hidden-name : String]
+  [cleanup-name : String]) : bool
+  (if (or (< index 0) (>= index (struct-get cleanups count)))
+    false
+    (and
+      (string-eq
+        (array-ref (struct-get cleanups hidden-names) index)
+        hidden-name)
+      (string-eq
+        (array-ref (struct-get cleanups cleanup-names) index)
+        cleanup-name))))
+
+(define (lower-emit-cleanup-stack-at
   [state : LowerState]
   [env : SymI64Env]
-  [cleanups : LowerCleanupList]) : ResultLowerState
-  (match cleanups
-    [(LowerCleanupNil) (OkLowerState state)]
-    [(LowerCleanupCons cleanup rest)
-      (match cleanup
-        [(LowerCleanup hidden-name cleanup-name)
-          (match (lower-emit-cleanup-call state env hidden-name cleanup-name)
-            [(OkLowerState next-state)
-              (lower-emit-cleanup-list next-state env (box-get rest))]
-            [(ErrLowerState message) (ErrLowerState message)])])]))
+  [hidden-names : (Array String)]
+  [cleanup-names : (Array String)]
+  [index : i64]) : ResultLowerState
+  (if (< index 0)
+    (OkLowerState state)
+    (match (lower-emit-cleanup-call
+      state
+      env
+      (array-ref hidden-names index)
+      (array-ref cleanup-names index))
+      [(OkLowerState next-state)
+        (lower-emit-cleanup-stack-at
+          next-state
+          env
+          hidden-names
+          cleanup-names
+          (- index 1))]
+      [(ErrLowerState message) (ErrLowerState message)])))
 
-(define (lower-cleanup-list-count [cleanups : LowerCleanupList]) : i64
-  (match cleanups
-    [(LowerCleanupNil) 0]
-    [(LowerCleanupCons _ rest) (+ 1 (lower-cleanup-list-count (box-get rest)))]))
+(define (lower-emit-cleanup-stack
+  [state : LowerState]
+  [env : SymI64Env]
+  [cleanups : LowerCleanupStack]) : ResultLowerState
+  (lower-emit-cleanup-stack-at
+    state
+    env
+    (struct-get cleanups hidden-names)
+    (struct-get cleanups cleanup-names)
+    (- (struct-get cleanups count) 1)))
 
 ;; #2598: emit the cleanup/region-reset calls a binding env keeps active. This
 ;; walks the whole TcTypeEnv chain once per scope exit; it used to be a
@@ -22113,7 +22159,7 @@
   [env : SymI64Env]
   [type-env : TcTypeEnv]
   [bindings : AstResourceBindingList]
-  [cleanups : LowerCleanupList]) : ResultLowerResourceBindings
+  [cleanups : LowerCleanupStack]) : ResultLowerResourceBindings
   (match bindings
     [(AstResourceBindingNil)
       (OkLowerResourceBindings
@@ -22176,11 +22222,10 @@
                                         bound-env
                                         bound-type-env
                                         rest
-                                        (LowerCleanupCons
-                                          (LowerCleanup
-                                            hidden-name
-                                            cleanup-name)
-                                          (box cleanups))))]))]
+                                        (lower-cleanup-stack-push
+                                          cleanups
+                                          hidden-name
+                                          cleanup-name)))]))]
                             [(ErrTcString message)
                               (ErrLowerResourceBindings
                                 (lower-diagnostic-at-expr cleanup message))])])]
@@ -22202,7 +22247,7 @@
     env
     type-env
     bindings
-    LowerCleanupNil)
+    (lower-cleanup-stack-empty))
     [(OkLowerResourceBindings lowered-bindings)
       (match lowered-bindings
         [(LowerResourceBindings binding-state body-env body-type-env cleanups)
@@ -22212,7 +22257,7 @@
                 [(LowerExpr body-state value body-ty)
                   (if (tc-never-type? body-ty)
                     (OkLowerExpr (LowerExpr body-state value body-ty))
-                    (match (lower-emit-cleanup-list
+                    (match (lower-emit-cleanup-stack
                       body-state
                       body-env
                       cleanups)
@@ -41731,13 +41776,14 @@
           (LowerCaptureCons
             (LowerCapture "cap-b" 2 (AstTyBool) 8)
             (box LowerCaptureNil))))]
-    [cleanups : LowerCleanupList
-      (LowerCleanupCons
-        (LowerCleanup "hidden-a" "cleanup-a")
-        (box
-          (LowerCleanupCons
-            (LowerCleanup "hidden-b" "cleanup-b")
-            (box LowerCleanupNil))))]
+    [cleanups : LowerCleanupStack
+      (lower-cleanup-stack-push
+        (lower-cleanup-stack-push
+          (lower-cleanup-stack-empty)
+          "hidden-a"
+          "cleanup-a")
+        "hidden-b"
+        "cleanup-b")]
     (and
       (= (lower-name-env-count names) 2)
       (string-eq (lower-name-env-resolve names "source-b") "logical-b")
@@ -41745,7 +41791,9 @@
       (lower-string-set-contains? strings "helper-b")
       (= (lower-capture-list-count captures) 2)
       (lower-capture-list-contains-name? captures "cap-b")
-      (= (lower-cleanup-list-count cleanups) 2))))
+      (= (lower-cleanup-stack-count cleanups) 2)
+      (lower-cleanup-stack-entry? cleanups 0 "hidden-a" "cleanup-a")
+      (lower-cleanup-stack-entry? cleanups 1 "hidden-b" "cleanup-b"))))
 
 (define (compiler-lower-back-half-tests-ok?) : bool
   (let

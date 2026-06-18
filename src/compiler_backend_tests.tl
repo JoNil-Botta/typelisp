@@ -3640,6 +3640,190 @@
         [(ErrCompilerBackend _) false])]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-phi-return-entry-asm
+  [blocks : CompilerIrBlockList]
+  [entry-instrs : CompilerIrInstrList]
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]) : ResultCompilerBackend
+  (let
+    [use-counts : (Array i64)
+      (compiler-backend-function-use-counts vars blocks)]
+    (compiler-backend-emit-instrs
+      (BackendTargetLinux)
+      "_tl_test"
+      "test"
+      blocks
+      "entry"
+      (CompilerBackendNoLabel)
+      entry-instrs
+      assignments
+      vars
+      CompilerRegVarTypeNil
+      (CompilerBackendGlobalTypeNil)
+      (AstTyI64)
+      (compiler-backend-runtime-helper-full-plan)
+      IrFunctionNil
+      IrExternNil
+      (compiler-backend-program-index-build IrFunctionNil IrExternNil)
+      (compiler-source-spans-empty)
+      (compiler-diagnostic-at-start "" "")
+      use-counts
+      (text-buf-empty))))
+
+(define (compiler-backend-single-phi-return-entry-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (IrInstrMov 1 (IrValueI64 7) (AstTyI64))
+    (compiler-ir-instr-cons (IrInstrJump "join") IrInstrNil)))
+
+(define (compiler-backend-single-phi-return-join-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (IrInstrPhi
+      0
+      (compiler-ir-phi-input-cons (IrValueVar 1) "entry" IrPhiInputNil)
+      (AstTyI64))
+    (compiler-ir-instr-cons
+      (IrInstrReturn (IrSomeValue (IrValueVar 0)))
+      IrInstrNil)))
+
+(define (compiler-backend-single-phi-return-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-backend-single-phi-return-entry-instrs))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "join"
+        (compiler-backend-single-phi-return-join-instrs))
+      IrBlockNil)))
+
+(define (compiler-backend-single-phi-return-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment 0 (CompilerRegRegister "%r12"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment 1 (CompilerRegRegister "%r14"))
+      CompilerRegAssignmentNil)))
+
+(define (compiler-backend-single-phi-return-shortcut-ok?) : bool
+  (match (compiler-backend-phi-return-entry-asm
+    (compiler-backend-single-phi-return-blocks)
+    (compiler-backend-single-phi-return-entry-instrs)
+    (compiler-backend-single-phi-return-assignments)
+    2)
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "    movl $7, %eax\n")
+        (not (compiler-backend-string-contains? asm "    movl $7, %r14d\n"))
+        (not (compiler-backend-string-contains? asm "    movq %r14, %r12\n"))
+        (not
+          (compiler-backend-string-contains? asm "    jmp .L_tl_test_join\n")))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-multi-phi-return-entry-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (IrInstrMov 2 (IrValueI64 7) (AstTyI64))
+    (compiler-ir-instr-cons
+      (IrInstrMov 3 (IrValueI64 11) (AstTyI64))
+      (compiler-ir-instr-cons (IrInstrJump "join") IrInstrNil))))
+
+(define (compiler-backend-multi-phi-return-join-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (IrInstrPhi
+      0
+      (compiler-ir-phi-input-cons (IrValueVar 3) "entry" IrPhiInputNil)
+      (AstTyI64))
+    (compiler-ir-instr-cons
+      (IrInstrPhi
+        1
+        (compiler-ir-phi-input-cons (IrValueVar 2) "entry" IrPhiInputNil)
+        (AstTyI64))
+      (compiler-ir-instr-cons
+        (IrInstrPhi
+          4
+          (compiler-ir-phi-input-cons (IrValueI64 99) "entry" IrPhiInputNil)
+          (AstTyI64))
+        (compiler-ir-instr-cons
+          (IrInstrReturn (IrSomeValue (IrValueVar 1)))
+          IrInstrNil)))))
+
+(define (compiler-backend-multi-phi-return-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block "entry" (compiler-backend-multi-phi-return-entry-instrs))
+    (compiler-ir-block-cons
+      (compiler-ir-block "join" (compiler-backend-multi-phi-return-join-instrs))
+      IrBlockNil)))
+
+(define (compiler-backend-multi-phi-return-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment 0 (CompilerRegRegister "%r12"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment 1 (CompilerRegRegister "%r13"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 2 (CompilerRegRegister "%r14"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment 3 (CompilerRegRegister "%r15"))
+          (compiler-reg-assignment-cons
+            (CompilerRegAssignment 4 (CompilerRegRegister "%rbx"))
+            CompilerRegAssignmentNil))))))
+
+(define (compiler-backend-multi-phi-return-shortcut-ok?) : bool
+  (match (compiler-backend-phi-return-entry-asm
+    (compiler-backend-multi-phi-return-blocks)
+    (compiler-backend-multi-phi-return-entry-instrs)
+    (compiler-backend-multi-phi-return-assignments)
+    5)
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "    movl $7, %r14d\n")
+        (compiler-backend-string-contains? asm "    movq %r14, %rax\n")
+        (not (compiler-backend-string-contains? asm "    movq %r14, %r13\n"))
+        (not (compiler-backend-string-contains? asm "    movl $99, %ebx\n"))
+        (not
+          (compiler-backend-string-contains? asm "    jmp .L_tl_test_join\n")))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-phi-return-work-join-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (IrInstrPhi
+      0
+      (compiler-ir-phi-input-cons (IrValueVar 1) "entry" IrPhiInputNil)
+      (AstTyI64))
+    (compiler-ir-instr-cons
+      (IrInstrMov 2 (IrValueI64 99) (AstTyI64))
+      (compiler-ir-instr-cons
+        (IrInstrReturn (IrSomeValue (IrValueVar 0)))
+        IrInstrNil))))
+
+(define (compiler-backend-phi-return-work-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-backend-single-phi-return-entry-instrs))
+    (compiler-ir-block-cons
+      (compiler-ir-block "join" (compiler-backend-phi-return-work-join-instrs))
+      IrBlockNil)))
+
+(define (compiler-backend-phi-return-work-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment 0 (CompilerRegRegister "%r12"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment 1 (CompilerRegRegister "%r14"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 2 (CompilerRegRegister "%r15"))
+        CompilerRegAssignmentNil))))
+
+(define (compiler-backend-phi-return-rejects-work-ok?) : bool
+  (match (compiler-backend-phi-return-entry-asm
+    (compiler-backend-phi-return-work-blocks)
+    (compiler-backend-single-phi-return-entry-instrs)
+    (compiler-backend-phi-return-work-assignments)
+    3)
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "    movl $7, %r12d\n")
+        (compiler-backend-string-contains? asm "    jmp .L_tl_test_join\n")
+        (not (compiler-backend-string-contains? asm "    movq %r14, %rax\n")))]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-mov-phi-copy-entry-instrs) : CompilerIrInstrList
   (compiler-ir-instr-cons
     (IrInstrMov 2 (IrValueI64 7) (AstTyI64))
@@ -6025,15 +6209,44 @@
       (not (compiler-backend-instr-contains? instr "    pushq %rax\n"))
       (not (compiler-backend-instr-contains? instr "    popq ")))))
 
+(define (compiler-backend-cpuid-eax-direct-ok?) : bool
+  (let
+    [instr : CompilerIrInstr (IrInstrCpuId 0 (IrValueI64 7) (IrValueI64 0) 0)]
+    (backend-and8
+      (compiler-backend-instr-contains? instr "    xorl %ecx, %ecx\n")
+      (compiler-backend-instr-contains? instr "    movl $7, %eax\n")
+      (compiler-backend-instr-contains? instr "    pushq %rbx\n")
+      (compiler-backend-instr-contains? instr "    cpuid\n")
+      (compiler-backend-instr-contains? instr "    popq %rbx\n")
+      (not (compiler-backend-instr-contains? instr "    movl %eax, %eax\n"))
+      (not (compiler-backend-instr-contains? instr "    movl %r11d, %ecx\n"))
+      (not (compiler-backend-instr-contains? instr "%r11")))))
+
+(define (compiler-backend-cpuid-direct-subleaf-ok?) : bool
+  (let
+    [instr : CompilerIrInstr (IrInstrCpuId 0 (IrValueI64 7) (IrValueI64 3) 0)]
+    (backend-and4
+      (compiler-backend-instr-contains? instr "    movl $3, %ecx\n")
+      (compiler-backend-instr-contains? instr "    movl $7, %eax\n")
+      (not (compiler-backend-instr-contains? instr "    movl %r11d, %ecx\n"))
+      (not (compiler-backend-instr-contains? instr "%r11")))))
+
+(define (compiler-backend-xgetbv-zero-index-ok?) : bool
+  (let
+    [instr : CompilerIrInstr (IrInstrXgetbv 0 (IrValueI64 0))]
+    (backend-and4
+      (compiler-backend-instr-contains? instr "    xorl %ecx, %ecx\n")
+      (compiler-backend-instr-contains? instr "    xgetbv\n")
+      (compiler-backend-instr-contains? instr "    orq %rdx, %rax\n")
+      true)))
+
 (define (compiler-backend-low-level-instr-ok?) : bool
   (and
     (backend-and8
       (compiler-backend-instr-contains? (IrInstrEntryArgc 0) ".L_tl_argc(%rip)")
       (compiler-backend-instr-contains? (IrInstrEntryArgv 0) ".L_tl_argv(%rip)")
       (compiler-backend-instr-contains? (IrInstrEntryEnvp 0) ".L_tl_envp(%rip)")
-      (compiler-backend-instr-contains?
-        (IrInstrCpuId 0 (IrValueI64 7) (IrValueI64 0) 0)
-        "    cpuid\n")
+      (compiler-backend-cpuid-eax-direct-ok?)
       (compiler-backend-instr-contains?
         (IrInstrCpuId 0 (IrValueI64 7) (IrValueI64 0) 1)
         "    movl %ebx, %eax\n")
@@ -6043,12 +6256,8 @@
       (compiler-backend-instr-contains?
         (IrInstrCpuId 0 (IrValueI64 7) (IrValueI64 0) 3)
         "    movl %edx, %eax\n")
-      (compiler-backend-instr-contains?
-        (IrInstrXgetbv 0 (IrValueI64 0))
-        "    xgetbv\n"))
-    (compiler-backend-instr-contains?
-      (IrInstrXgetbv 0 (IrValueI64 0))
-      "    orq %rdx, %rax\n")
+      (compiler-backend-xgetbv-zero-index-ok?))
+    (compiler-backend-cpuid-direct-subleaf-ok?)
     (backend-and8
       ;; A one-operand syscall loads the number into %rax and issues `syscall`.
       (compiler-backend-instr-contains?
@@ -8691,6 +8900,9 @@
         (compiler-backend-branch-phi-edge-copy-ok?)
         (compiler-backend-phi-immediate-stack-copy-ok?)
         (compiler-backend-phi-direct-scalar-copy-ok?)
+        (compiler-backend-single-phi-return-shortcut-ok?)
+        (compiler-backend-multi-phi-return-shortcut-ok?)
+        (compiler-backend-phi-return-rejects-work-ok?)
         (compiler-backend-mov-phi-copy-fusion-ok?))
       (and
         (compiler-backend-f64-ok?)

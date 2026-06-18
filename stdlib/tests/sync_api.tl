@@ -27,6 +27,18 @@
     [(ChannelI64RecvOk value) value]
     [(ChannelI64RecvErr _) fallback]))
 
+(define (sync-api-pair-send-ok? [result : ChannelI64PairSendResult]) : bool
+  (match result
+    [(ChannelI64PairSendOk) true]
+    [(ChannelI64PairSendErr _) false]))
+
+(define (sync-api-pair-recv-value-or
+  [result : ChannelI64PairRecvResult]
+  [fallback : ChannelI64Pair]) : ChannelI64Pair
+  (match result
+    [(ChannelI64PairRecvOk value) value]
+    [(ChannelI64PairRecvErr _) fallback]))
+
 (define (sync-api-run-channel [channel : ChannelI64]) : i64
   (let
     [packed : (Array i64) (make-array i64 channel-i64-raw-field-count)]
@@ -51,6 +63,49 @@
           (= third 43))
           42
           2)))))
+
+(define (sync-api-pair-sum [value : ChannelI64Pair]) : i64
+  (+ (struct-get value left) (struct-get value right)))
+
+(define (sync-api-run-pair-channel [channel : ChannelI64PairChannel]) : i64
+  (let
+    [packed : (Array i64) (make-array i64 channel-i64-pair-raw-field-count)]
+    (begin
+      (channel-i64-pair-store-raw! channel packed 0)
+      (let
+        [loaded : ChannelI64PairChannel (channel-i64-pair-load-raw packed 0)]
+        [first-msg : ChannelI64Pair (ChannelI64Pair 5 7)]
+        [second-msg : ChannelI64Pair (ChannelI64Pair 11 13)]
+        [third-msg : ChannelI64Pair (ChannelI64Pair 17 19)]
+        [send-a : bool
+          (sync-api-pair-send-ok? (channel-i64-pair-send loaded first-msg))]
+        [send-b : bool
+          (sync-api-pair-send-ok? (channel-i64-pair-send loaded second-msg))]
+        [first : ChannelI64Pair
+          (sync-api-pair-recv-value-or
+            (channel-i64-pair-recv loaded)
+            (ChannelI64Pair -1 -1))]
+        [send-c : bool
+          (sync-api-pair-send-ok? (channel-i64-pair-send loaded third-msg))]
+        [second : ChannelI64Pair
+          (sync-api-pair-recv-value-or
+            (channel-i64-pair-recv loaded)
+            (ChannelI64Pair -1 -1))]
+        [third : ChannelI64Pair
+          (sync-api-pair-recv-value-or
+            (channel-i64-pair-recv loaded)
+            (ChannelI64Pair -1 -1))]
+        [closed : bool (channel-i64-pair-close loaded)]
+        (if (and
+          send-a
+          send-b
+          send-c
+          closed
+          (= (sync-api-pair-sum first) 12)
+          (= (sync-api-pair-sum second) 24)
+          (= (sync-api-pair-sum third) 36))
+          42
+          8)))))
 
 (define (sync-api-run-mutex [mutex : MutexI64]) : i64
   (let
@@ -105,18 +160,33 @@
         [closed-again : bool (mutex-i64-close mutex)]
         (and closed (not closed-again)))]))
 
+(define (sync-api-run-mutex-create) : i64
+  (match (mutex-i64-create 5)
+    [(MutexI64CreateErr _) 5]
+    [(MutexI64CreateOk mutex) (sync-api-run-mutex mutex)]))
+
+(define (sync-api-run-pair-create) : i64
+  (match (channel-i64-pair-create 2)
+    [(ChannelI64PairCreateErr _) 8]
+    [(ChannelI64PairCreateOk pair-channel)
+      (let
+        [pair-code : i64 (sync-api-run-pair-channel pair-channel)]
+        (if (not (= pair-code 42))
+          pair-code
+          (sync-api-run-mutex-create)))]))
+
+(define (sync-api-run-channel-create) : i64
+  (match (channel-i64-create 2)
+    [(ChannelI64CreateErr _) 3]
+    [(ChannelI64CreateOk channel)
+      (let
+        [channel-code : i64 (sync-api-run-channel channel)]
+        (if (not (= channel-code 42))
+          channel-code
+          (sync-api-run-pair-create)))]))
+
 (define (main) : i64
   (cond
     [(not (sync-api-create-rejects-invalid?)) 1]
     [(not (sync-api-close-fresh-mutex?)) 7]
-    [else
-      (match (channel-i64-create 2)
-        [(ChannelI64CreateErr _) 3]
-        [(ChannelI64CreateOk channel)
-          (let
-            [channel-code : i64 (sync-api-run-channel channel)]
-            (if (not (= channel-code 42))
-              channel-code
-              (match (mutex-i64-create 5)
-                [(MutexI64CreateErr _) 5]
-                [(MutexI64CreateOk mutex) (sync-api-run-mutex mutex)])))])]))
+    [else (sync-api-run-channel-create)]))

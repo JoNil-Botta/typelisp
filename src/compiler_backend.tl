@@ -136,6 +136,14 @@
   (OkBackendPhiCopies CompilerBackendPhiCopyList)
   (ErrBackendPhiCopies String))
 
+(defenum CompilerBackendPhiReturnMatch
+  (BackendNoPhiReturnMatch)
+  (BackendSomePhiReturnMatch CompilerIrValue))
+
+(defenum ResultBackendPhiReturnMatch
+  (OkBackendPhiReturnMatch CompilerBackendPhiReturnMatch)
+  (ErrBackendPhiReturnMatch String))
+
 (defenum CompilerBackendMaybeImmediate
   (CompilerBackendNoImmediate)
   (CompilerBackendSomeImmediate String))
@@ -12741,6 +12749,31 @@
                     "")))))]
         [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))
 
+(define (compiler-backend-trivial-phi-return-find
+  [instrs : CompilerIrInstrSeq]
+  [from-label : String]
+  [returned-dst : i64]
+  [index : i64]
+  [last-index : i64]
+  [found : CompilerBackendPhiReturnMatch]) : ResultBackendPhiReturnMatch
+  (if (>= index last-index)
+    (OkBackendPhiReturnMatch found)
+    (match (compiler-ir-instr-seq-ref instrs index)
+      [(IrInstrPhi dst inputs _)
+        (match (compiler-backend-phi-input-value inputs from-label)
+          [(OkBackendValue incoming)
+            (compiler-backend-trivial-phi-return-find
+              instrs
+              from-label
+              returned-dst
+              (+ index 1)
+              last-index
+              (if (= dst returned-dst)
+                (BackendSomePhiReturnMatch incoming)
+                found))]
+          [(ErrBackendValue message) (ErrBackendPhiReturnMatch message)])]
+      [_ (OkBackendPhiReturnMatch (BackendNoPhiReturnMatch))])))
+
 (define (compiler-backend-emit-trivial-phi-return-edge-instrs
   [source-function : String]
   [blocks : CompilerIrBlockList]
@@ -12750,39 +12783,46 @@
   [vars : i64]
   [ret-ty : AstType]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
-  (if (= (compiler-ir-instr-seq-count instrs) 2)
+  (if (< (compiler-ir-instr-seq-count instrs) 2)
+    (OkCompilerBackend "")
     (let
-      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs 0)]
-      [next : CompilerIrInstr (compiler-ir-instr-seq-ref instrs 1)]
-      (match instr
-        [(IrInstrPhi dst inputs _)
-          (match next
-            [(IrInstrReturn maybe)
-              (match maybe
-                [(IrSomeValue value)
-                  (if (compiler-backend-branch-uses-var? value dst)
-                    (match (compiler-backend-phi-input-value inputs from-label)
-                      [(OkBackendValue incoming)
-                        ;; The real program-index must reach emit-return here:
-                        ;; an empty index makes the register-group return check
-                        ;; always false, so a 16-byte group return would load
-                        ;; only word0 (#2386 word1-drop miscompile).
-                        (compiler-backend-emit-return
-                          source-function
-                          blocks
-                          (IrSomeValue incoming)
-                          assignments
-                          vars
-                          ret-ty
-                          program-index)]
-                      [(ErrBackendValue message)
-                        (ErrCompilerBackend
-                          (compiler-diagnostic-at-start "" message))])
-                    (OkCompilerBackend ""))]
-                [(IrNoValue) (OkCompilerBackend "")])]
-            [_ (OkCompilerBackend "")])]
-        [_ (OkCompilerBackend "")]))
-    (OkCompilerBackend "")))
+      [last-index : i64 (- (compiler-ir-instr-seq-count instrs) 1)]
+      [last : CompilerIrInstr (compiler-ir-instr-seq-ref instrs last-index)]
+      (match last
+        [(IrInstrReturn maybe)
+          (match maybe
+            [(IrSomeValue value)
+              (match value
+                [(IrValueVar returned-dst)
+                  (match (compiler-backend-trivial-phi-return-find
+                    instrs
+                    from-label
+                    returned-dst
+                    0
+                    last-index
+                    (BackendNoPhiReturnMatch))
+                    [(OkBackendPhiReturnMatch found)
+                      (match found
+                        [(BackendSomePhiReturnMatch incoming)
+                          ;; The real program-index must reach emit-return here:
+                          ;; an empty index makes the register-group return check
+                          ;; always false, so a 16-byte group return would load
+                          ;; only word0 (#2386 word1-drop miscompile).
+                          (compiler-backend-emit-return
+                            source-function
+                            blocks
+                            (IrSomeValue incoming)
+                            assignments
+                            vars
+                            ret-ty
+                            program-index)]
+                        [(BackendNoPhiReturnMatch) (OkCompilerBackend "")])]
+                    [(ErrBackendPhiReturnMatch message)
+                      (ErrCompilerBackend
+                        (compiler-diagnostic-at-start "" message))])]
+                [_ (OkCompilerBackend "")])]
+            [(IrNoValue) (OkCompilerBackend "")])]
+        [_ (OkCompilerBackend "")]))))
 
 (define (compiler-backend-emit-trivial-phi-return-edge
   [source-function : String]
@@ -12839,42 +12879,49 @@
   [moved-dst : i64]
   [moved-src : CompilerIrValue]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
-  (if (= (compiler-ir-instr-seq-count instrs) 2)
+  (if (< (compiler-ir-instr-seq-count instrs) 2)
+    (OkCompilerBackend "")
     (let
-      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs 0)]
-      [next : CompilerIrInstr (compiler-ir-instr-seq-ref instrs 1)]
-      (match instr
-        [(IrInstrPhi dst inputs _)
-          (match next
-            [(IrInstrReturn maybe)
-              (match maybe
-                [(IrSomeValue value)
-                  (if (compiler-backend-branch-uses-var? value dst)
-                    (match (compiler-backend-phi-input-value inputs from-label)
-                      [(OkBackendValue incoming)
-                        (if (compiler-backend-branch-uses-var?
-                          incoming
-                          moved-dst)
-                          ;; Same #2386 word1-drop hazard as the plain trivial
-                          ;; phi return edge: emit-return needs the real
-                          ;; program-index to spot register-group returns.
-                          (compiler-backend-emit-return
-                            source-function
-                            blocks
-                            (IrSomeValue moved-src)
-                            assignments
-                            vars
-                            ret-ty
-                            program-index)
-                          (OkCompilerBackend ""))]
-                      [(ErrBackendValue message)
-                        (ErrCompilerBackend
-                          (compiler-diagnostic-at-start "" message))])
-                    (OkCompilerBackend ""))]
-                [(IrNoValue) (OkCompilerBackend "")])]
-            [_ (OkCompilerBackend "")])]
-        [_ (OkCompilerBackend "")]))
-    (OkCompilerBackend "")))
+      [last-index : i64 (- (compiler-ir-instr-seq-count instrs) 1)]
+      [last : CompilerIrInstr (compiler-ir-instr-seq-ref instrs last-index)]
+      (match last
+        [(IrInstrReturn maybe)
+          (match maybe
+            [(IrSomeValue value)
+              (match value
+                [(IrValueVar returned-dst)
+                  (match (compiler-backend-trivial-phi-return-find
+                    instrs
+                    from-label
+                    returned-dst
+                    0
+                    last-index
+                    (BackendNoPhiReturnMatch))
+                    [(OkBackendPhiReturnMatch found)
+                      (match found
+                        [(BackendSomePhiReturnMatch incoming)
+                          (if (compiler-backend-branch-uses-var?
+                            incoming
+                            moved-dst)
+                            ;; Same #2386 word1-drop hazard as the plain trivial
+                            ;; phi return edge: emit-return needs the real
+                            ;; program-index to spot register-group returns.
+                            (compiler-backend-emit-return
+                              source-function
+                              blocks
+                              (IrSomeValue moved-src)
+                              assignments
+                              vars
+                              ret-ty
+                              program-index)
+                            (OkCompilerBackend ""))]
+                        [(BackendNoPhiReturnMatch) (OkCompilerBackend "")])]
+                    [(ErrBackendPhiReturnMatch message)
+                      (ErrCompilerBackend
+                        (compiler-diagnostic-at-start "" message))])]
+                [_ (OkCompilerBackend "")])]
+            [(IrNoValue) (OkCompilerBackend "")])]
+        [_ (OkCompilerBackend "")]))))
 
 (define (compiler-backend-emit-mov-trivial-phi-return-edge
   [source-function : String]
@@ -13202,7 +13249,7 @@
 
 (define (compiler-backend-cpuid-result-move [reg-index : i64]) : String
   (cond
-    [(= reg-index 0) "    movl %eax, %eax\n"]
+    [(= reg-index 0) ""]
     [(= reg-index 1) "    movl %ebx, %eax\n"]
     [(= reg-index 2) "    movl %ecx, %eax\n"]
     [(= reg-index 3) "    movl %edx, %eax\n"]
@@ -13214,7 +13261,7 @@
   [leaf : CompilerIrValue]
   [subleaf : CompilerIrValue]
   [reg-index : i64]) : ResultCompilerBackend
-  (match (compiler-backend-emit-load-value-with-plan assignments subleaf "%r11")
+  (match (compiler-backend-emit-load-value-with-plan assignments subleaf "%rcx")
     [(OkCompilerBackend subleaf-asm)
       (match (compiler-backend-emit-load-value-with-plan
         assignments
@@ -13227,7 +13274,7 @@
               (string-append
                 leaf-asm
                 (string-append
-                  "    movl %r11d, %ecx\n    pushq %rbx\n    cpuid\n"
+                  "    pushq %rbx\n    cpuid\n"
                   (string-append
                     (compiler-backend-cpuid-result-move reg-index)
                     (string-append
@@ -15519,35 +15566,59 @@
                   func-diag
                   use-counts
                   buf)
-                (compiler-backend-emit-instrs
-                  target
-                  function
+                (match (compiler-backend-emit-trivial-phi-return-edge
                   source-function
                   blocks
+                  target-label
                   current-label
-                  fallthrough
-                  after-jump
                   assignments
                   vars
-                  types
-                  global-types
                   ret-ty
-                  plan
-                  functions
-                  externs
-                  program-index
-                  spans
-                  func-diag
-                  use-counts
-                  (text-buf-append
-                    buf
-                    (string-append
-                      fused-copies
-                      (if (compiler-backend-jump-target-is-fallthrough?
-                        target-label
-                        fallthrough)
-                        ""
-                        (compiler-backend-jump-label function target-label))))))]
+                  program-index)
+                  [(OkCompilerBackend plain-direct-return)
+                    (compiler-backend-emit-instrs
+                      target
+                      function
+                      source-function
+                      blocks
+                      current-label
+                      fallthrough
+                      after-jump
+                      assignments
+                      vars
+                      types
+                      global-types
+                      ret-ty
+                      plan
+                      functions
+                      externs
+                      program-index
+                      spans
+                      func-diag
+                      use-counts
+                      (text-buf-append
+                        buf
+                        (if (string-eq plain-direct-return "")
+                          (string-append
+                            fused-copies
+                            (if (compiler-backend-jump-target-is-fallthrough?
+                              target-label
+                              fallthrough)
+                              ""
+                              (compiler-backend-jump-label
+                                function
+                                target-label)))
+                          plain-direct-return)))]
+                  [(ErrCompilerBackend message)
+                    (ErrCompilerBackend
+                      (compiler-backend-apply-instr-diagnostic
+                        message
+                        (compiler-backend-instr-diagnostic
+                          spans
+                          source-function
+                          (IrInstrMov dst src ty)
+                          func-diag
+                          "")))]))]
             [(ErrCompilerBackend message)
               (ErrCompilerBackend
                 (compiler-backend-apply-instr-diagnostic

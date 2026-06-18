@@ -1945,78 +1945,35 @@
     items
     (string-vec-push items path)))
 
-(define (doc-test-path-under-root? [path : String] [root : String]) : bool
-  (let
-    [normalized-path : String (compiler-load-normalize-path path)]
-    [normalized-root : String (compiler-load-normalize-path root)]
-    (and
-      (> (string-length normalized-root) 0)
-      (if (string-eq normalized-root ".")
-        (not (compiler-load-path-escapes? normalized-path))
-        (compiler-load-path-under-root? normalized-path normalized-root)))))
-
-(define (doc-test-dep-list-path?
-  [path : String]
-  [manifest-dir : String]
-  [deps : CompilerPkgDepList]) : bool
-  (match deps
-    [(CompilerPkgDepNil) false]
-    [(CompilerPkgDepCons dep rest)
-      (let
-        [rest : CompilerPkgDepList (box-get rest)]
-        [dep-path : String (struct-get dep path)]
-        [dep-root : String
-          (compiler-load-normalize-path
-            (if (compiler-load-absolute-path? dep-path)
-              dep-path
-              (compiler-load-join-root-path manifest-dir dep-path)))]
-        (if (and
-          (not (compiler-load-github-dependency-path? dep-path))
-          (doc-test-path-under-root? path dep-root))
-          true
-          (doc-test-dep-list-path? path manifest-dir rest)))]))
-
 (define (doc-test-path-list-files-from
   [paths : AstDeclPathList]
   [items : StringVec]
   [stdlib-roots : StringVec]
-  [manifest-dir : String]
-  [deps : CompilerPkgDeps]) : StringVec
+  [manifest-dir : String]) : StringVec
   (match paths
     [(AstDeclPathNil) items]
     [(AstDeclPathCons path rest)
       (let
         [rest : AstDeclPathList (box-get rest)]
-        [normalized : String (compiler-load-normalize-path path)]
-        [rooted : String
-          (if (or
-            (compiler-load-absolute-path? path)
-            (doc-test-path-under-root? normalized manifest-dir))
-            normalized
-            (compiler-load-normalize-path
-              (compiler-load-join-root-path manifest-dir normalized)))]
+        [manifest-root : String (compiler-load-normalize-path manifest-dir)]
         [stdlib-path : String
-          (if (compiler-load-stdlib-import? normalized)
-            normalized
-            (compiler-load-stdlib-owned-path-from-roots rooted stdlib-roots))]
+          (if (compiler-load-stdlib-import? path)
+            path
+            (compiler-load-stdlib-owned-path-from-roots path stdlib-roots))]
         [package-local : bool
           (and
             (> (string-length path) 0)
             (not (compiler-load-stdlib-import? stdlib-path))
-            (not
-              (doc-test-dep-list-path?
-                rooted
-                manifest-dir
-                (compiler-pkg-deps-list deps)))
-            (doc-test-path-under-root? rooted manifest-dir))]
+            (if (string-eq manifest-root ".")
+              (not (compiler-load-path-escapes? path))
+              (compiler-load-path-under-root? path manifest-root)))]
         (doc-test-path-list-files-from
           rest
           (if package-local
-            (doc-test-path-list-append-unique items rooted)
+            (doc-test-path-list-append-unique items path)
             items)
           stdlib-roots
-          manifest-dir
-          deps))]))
+          manifest-dir))]))
 
 (define (doc-test-typecheck-package-file-text-with-roots
   [path : String]
@@ -2070,8 +2027,7 @@
       paths
       (string-vec-new)
       stdlib-roots
-      manifest-dir
-      deps)
+      manifest-dir)
     0
     (DocTestRunReport 0 (doc-test-run-failure-list-empty))
     stdlib-roots

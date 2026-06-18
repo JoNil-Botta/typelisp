@@ -10860,6 +10860,11 @@
         ret
         (tc-expr-c-abi-fnptr? ctx env func))]))
 
+(define (tc-thread-name-base [name : String]) : String
+  (if (tc-name-qualified? name)
+    (tc-qualified-name-base name)
+    name))
+
 (define (tc-thread-name-base-eq? [name : String] [base : String]) : bool
   (tc-name-base-eq? name base))
 
@@ -10896,6 +10901,69 @@
         (TcSomeString name)
         (TcNoString))]
     [(TcNoString) (TcNoString)]))
+
+(define (tc-thread-channel-send-name? [name : String]) : bool
+  (let
+    [base : String (tc-thread-name-base name)]
+    (and
+      (tc-string-prefix? base "channel-")
+      (tc-string-has-suffix? base "-send"))))
+
+(define (tc-thread-channel-send-call-name [func : AstExpr]) : TcMaybeString
+  (match (tc-expr-var-name func)
+    [(TcSomeString name)
+      (if (tc-thread-channel-send-name? name)
+        (TcSomeString name)
+        (TcNoString))]
+    [(TcNoString) (TcNoString)]))
+
+(define (tc-thread-channel-send-result-name? [name : String]) : bool
+  (tc-string-has-suffix? (tc-thread-name-base name) "SendResult"))
+
+(define (tc-thread-channel-send-result-type? [ctx : TcContext] [ty : AstType]) : bool
+  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(AstTyEnum name) (tc-thread-channel-send-result-name? (intern-str name))]
+    [(AstTyEnumArgs name _)
+      (tc-thread-channel-send-result-name? (intern-str name))]
+    [_ false]))
+
+(define (tc-thread-channel-send-message-param [params : AstTypeList]) : ResultTcType
+  (match params
+    [(AstTypeCons _ rest-box)
+      (let
+        [rest : AstTypeList (box-get rest-box)]
+        (match rest
+          [(AstTypeCons message-box tail-box)
+            (match (box-get tail-box)
+              [(AstTypeNil) (OkTcType (ty-node-get message-box))]
+              [_
+                (ErrTcType
+                  "typecheck: channel send expects channel and message parameters")])]
+          [(AstTypeNil)
+            (ErrTcType
+              "typecheck: channel send expects channel and message parameters")]))]
+    [(AstTypeNil)
+      (ErrTcType
+        "typecheck: channel send expects channel and message parameters")]))
+
+(define (tc-thread-channel-send-message-arg [args : AstExprList]) : ResultTcExpr
+  (match args
+    [(AstExprCons _ rest-box)
+      (let
+        [rest : AstExprList (box-get rest-box)]
+        (match rest
+          [(AstExprCons message-box tail-box)
+            (match (box-get tail-box)
+              [(AstExprNil) (OkTcExpr (ast-node-get message-box))]
+              [_
+                (ErrTcExpr
+                  "typecheck: channel send expects channel and message arguments")])]
+          [(AstExprNil)
+            (ErrTcExpr
+              "typecheck: channel send expects channel and message arguments")]))]
+    [(AstExprNil)
+      (ErrTcExpr
+        "typecheck: channel send expects channel and message arguments")]))
 
 (define (tc-thread-safe-spawn-result-type-name?
   [spawn-name : String]
@@ -11462,6 +11530,71 @@
         OkTcUnit)]
     [(TcNoString) OkTcUnit]))
 
+(define (tc-thread-channel-send-message
+  [send-name : String]
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [message-ty : AstType]) : ResultTcUnit
+  (match (tc-thread-transfer-classify-type-in-env ctx env message-ty)
+    [(TcThreadTransferRejected reason)
+      (ErrTcUnit
+        (str-cat
+          "typecheck: "
+          send-name
+          " cannot send value of type "
+          (tc-type-render
+            (tc-type-without-regions (tc-resolve-type ctx message-ty)))
+          "; "
+          reason))]
+    [_ OkTcUnit]))
+
+(define (tc-check-thread-channel-send-call
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func : AstExpr]
+  [args : AstExprList]
+  [params : AstTypeList]
+  [ret : AstType]) : ResultTcUnit
+  (match (tc-thread-channel-send-call-name func)
+    [(TcSomeString send-name)
+      (if (tc-thread-channel-send-result-type? ctx ret)
+        (match (tc-thread-channel-send-message-param params)
+          [(OkTcType _)
+            (match (tc-thread-channel-send-message-arg args)
+              [(OkTcExpr message-expr)
+                (match (tc-expr ctx env message-expr)
+                  [(OkTcType message-ty)
+                    (tc-thread-channel-send-message
+                      send-name
+                      ctx
+                      env
+                      message-ty)]
+                  [(ErrTcType message) (ErrTcUnit message)])]
+              [(ErrTcExpr message) (ErrTcUnit message)])]
+          [(ErrTcType message) (ErrTcUnit message)])
+        OkTcUnit)]
+    [(TcNoString) OkTcUnit]))
+
+(define (tc-thread-channel-send-function-result?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func : AstExpr]) : bool
+  (match (tc-expr ctx env func)
+    [(OkTcType fn-ty)
+      (match (tc-type-strip-region fn-ty)
+        [(AstTyFunc _ ret-box)
+          (tc-thread-channel-send-result-type? ctx (ty-node-get ret-box))]
+        [_ false])]
+    [(ErrTcType _) false]))
+
+(define (tc-thread-channel-send-call?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func : AstExpr]) : bool
+  (match (tc-thread-channel-send-call-name func)
+    [(TcSomeString _) (tc-thread-channel-send-function-result? ctx env func)]
+    [(TcNoString) false]))
+
 (define (tc-call-function-type-normal
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -11523,7 +11656,17 @@
                         args
                         params
                         ret)
-                        [(OkTcUnit) (OkTcType (tc-tag-active-region env ret))]
+                        [(OkTcUnit)
+                          (match (tc-check-thread-channel-send-call
+                            ctx
+                            env
+                            func
+                            args
+                            params
+                            ret)
+                            [(OkTcUnit)
+                              (OkTcType (tc-tag-active-region env ret))]
+                            [(ErrTcUnit message) (ErrTcType message)])]
                         [(ErrTcUnit message) (ErrTcType message)])]
                     [(ErrTcUnit message) (ErrTcType message)])]
                 [_
@@ -24409,15 +24552,15 @@
             (OkTcMove moved))]
         [(ErrTcType _) (OkTcMove moved)])]))
 
-(define (tc-move-after-consuming-value
+(define (tc-move-after-moving-value
   [ctx : TcContext]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [loop-carried : TcMovedSet]
   [moved : TcMovedSet]
   [expr : AstExpr]
-  [target-ty : AstType]) : TcMoveResult
-  (if (tc-type-consuming-by-value-now? ctx target-ty)
+  [move? : bool]) : TcMoveResult
+  (if move?
     (if (tc-move-dynamic-array-element-projection? ctx env expr)
       (ErrTcMove (tc-move-dynamic-array-element-message))
       (if (tc-move-box-projection? expr)
@@ -24446,6 +24589,40 @@
                     (OkTcMove moved))]
                 [(TcNoString) (OkTcMove moved)]))])))
     (OkTcMove moved)))
+
+(define (tc-move-after-consuming-value
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [loop-carried : TcMovedSet]
+  [moved : TcMovedSet]
+  [expr : AstExpr]
+  [target-ty : AstType]) : TcMoveResult
+  (tc-move-after-moving-value
+    ctx
+    env
+    locals
+    loop-carried
+    moved
+    expr
+    (tc-type-consuming-by-value-now? ctx target-ty)))
+
+(define (tc-move-after-move-only-value
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [loop-carried : TcMovedSet]
+  [moved : TcMovedSet]
+  [expr : AstExpr]
+  [target-ty : AstType]) : TcMoveResult
+  (tc-move-after-moving-value
+    ctx
+    env
+    locals
+    loop-carried
+    moved
+    expr
+    (tc-type-move-only? (tc-resolve-type ctx target-ty))))
 
 (define (tc-move-after-match-scrutinee
   [ctx : TcContext]
@@ -24728,6 +24905,64 @@
       moved
       exprs
       types)))
+
+(define (tc-move-check-thread-channel-send-message
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [loop-carried : TcMovedSet]
+  [moved : TcMovedSet]
+  [func : AstExpr]
+  [args : AstExprList]
+  [params : AstTypeList]) : TcMoveResult
+  (if (tc-thread-channel-send-call? ctx env func)
+    (match (tc-thread-channel-send-call-name func)
+      [(TcSomeString _)
+        (match (tc-thread-channel-send-message-param params)
+          [(OkTcType message-ty)
+            (match (tc-thread-channel-send-message-arg args)
+              [(OkTcExpr message-expr)
+                (tc-move-after-move-only-value
+                  ctx
+                  env
+                  locals
+                  loop-carried
+                  moved
+                  message-expr
+                  message-ty)]
+              [(ErrTcExpr message) (ErrTcMove message)])]
+          [(ErrTcType message) (ErrTcMove message)])]
+      [(TcNoString) (OkTcMove moved)])
+    (OkTcMove moved)))
+
+(define (tc-move-check-call-args-with-types
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [loop-carried : TcMovedSet]
+  [moved : TcMovedSet]
+  [func : AstExpr]
+  [args : AstExprList]
+  [params : AstTypeList]) : TcMoveResult
+  (match (tc-move-check-exprs-with-types
+    ctx
+    env
+    locals
+    loop-carried
+    moved
+    args
+    params)
+    [(OkTcMove moved-args)
+      (tc-move-check-thread-channel-send-message
+        ctx
+        env
+        locals
+        loop-carried
+        moved-args
+        func
+        args
+        params)]
+    [(ErrTcMove message) (ErrTcMove message)]))
 
 (define (tc-move-call-param-types
   [ctx : TcContext]
@@ -25025,30 +25260,33 @@
                         params
                         abi)
                         [(OkTcTypeList expanded-params)
-                          (tc-move-check-exprs-with-types
+                          (tc-move-check-call-args-with-types
                             ctx
                             env
                             locals
                             loop-carried
                             moved1
+                            func
                             args
                             expanded-params)]
                         [(ErrTcTypeList message) (ErrTcMove message)])
-                      (tc-move-check-exprs-with-types
+                      (tc-move-check-call-args-with-types
                         ctx
                         env
                         locals
                         loop-carried
                         moved1
+                        func
                         args
                         params))]
                   [(TcNoExternAbi)
-                    (tc-move-check-exprs-with-types
+                    (tc-move-check-call-args-with-types
                       ctx
                       env
                       locals
                       loop-carried
                       moved1
+                      func
                       args
                       params)])]
               [(ErrTcTypeList _)
@@ -25908,6 +26146,16 @@
     (tc-borrow-check-after-consuming-place locals borrowed expr)
     (OkTcBorrowCheck borrowed)))
 
+(define (tc-borrow-check-after-move-only-value
+  [ctx : TcContext]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [expr : AstExpr]
+  [target-ty : AstType]) : TcBorrowCheckResult
+  (if (tc-type-move-only? (tc-resolve-type ctx target-ty))
+    (tc-borrow-check-after-consuming-place locals borrowed expr)
+    (OkTcBorrowCheck borrowed)))
+
 (define (tc-borrow-check-after-reading-value
   [ctx : TcContext]
   [locals : TcMovedSet]
@@ -26260,6 +26508,32 @@
                 [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
           [(AstTypeNil) (ErrTcBorrowCheck "typecheck: arity mismatch")]))]))
 
+(define (tc-borrow-check-thread-channel-send-message
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [func : AstExpr]
+  [args : AstExprList]
+  [params : AstTypeList]) : TcBorrowCheckResult
+  (if (tc-thread-channel-send-call? ctx env func)
+    (match (tc-thread-channel-send-call-name func)
+      [(TcSomeString _)
+        (match (tc-thread-channel-send-message-param params)
+          [(OkTcType message-ty)
+            (match (tc-thread-channel-send-message-arg args)
+              [(OkTcExpr message-expr)
+                (tc-borrow-check-after-move-only-value
+                  ctx
+                  locals
+                  borrowed
+                  message-expr
+                  message-ty)]
+              [(ErrTcExpr message) (ErrTcBorrowCheck message)])]
+          [(ErrTcType message) (ErrTcBorrowCheck message)])]
+      [(TcNoString) (OkTcBorrowCheck borrowed)])
+    (OkTcBorrowCheck borrowed)))
+
 (define (tc-borrow-check-call-args-with-types
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -26286,6 +26560,34 @@
           args
           types)
           [(OkTcBorrowCheck borrowed2)
+            (match (tc-borrow-check-thread-channel-send-message
+              ctx
+              env
+              locals
+              borrowed2
+              func
+              args
+              types)
+              [(OkTcBorrowCheck borrowed3)
+                (tc-borrow-check-after-call-effects
+                  ctx
+                  env
+                  locals
+                  borrowed3
+                  call-expr
+                  func
+                  args)]
+              [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
+          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])
+        (match (tc-borrow-check-thread-channel-send-message
+          ctx
+          env
+          locals
+          borrowed
+          func
+          args
+          types)
+          [(OkTcBorrowCheck borrowed2)
             (tc-borrow-check-after-call-effects
               ctx
               env
@@ -26294,15 +26596,7 @@
               call-expr
               func
               args)]
-          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])
-        (tc-borrow-check-after-call-effects
-          ctx
-          env
-          locals
-          borrowed
-          call-expr
-          func
-          args))]
+          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
     [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))
 
 (define (tc-borrow-check-exprs

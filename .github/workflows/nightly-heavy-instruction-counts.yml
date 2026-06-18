@@ -30,9 +30,13 @@ jobs:
       - name: Install Linux instruction-count tools
         shell: bash
         run: |
-          sudo apt-get update
-          if ! sudo apt-get install -y valgrind; then
-            echo "[heavy-ir] valgrind install failed; continuing so the checker can report a skip if unavailable"
+          # cachegrind only needs valgrind itself; skip Recommends to cut install
+          # time. Use the runner's preinstalled apt index and only refresh it if
+          # the first install fails on a stale package.
+          if ! sudo apt-get install -y --no-install-recommends valgrind; then
+            sudo apt-get update || true
+            sudo apt-get install -y --no-install-recommends valgrind \
+              || echo "[heavy-ir] valgrind install failed; continuing so the checker can report a skip if unavailable"
           fi
           command -v valgrind || true
 

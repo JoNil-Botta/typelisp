@@ -108,9 +108,33 @@
       (compiler-driver-state-smoke-type-i64? type-a2 type-a-id0)
       (compiler-driver-state-smoke-type-char? type-b2 type-b-id))))
 
+(define (compiler-driver-state-smoke-type-dedup-isolated?) : bool
+  (let
+    [state-a : CompilerDriverState (compiler-driver-state-new)]
+    [state-b : CompilerDriverState (compiler-driver-state-new)]
+    [type-a0 : AstTypeNodePoolState (struct-get state-a type-pool)]
+    [type-b0 : AstTypeNodePoolState (struct-get state-b type-pool)]
+    (match (ast-type-node-pool-state-push type-a0 (AstTyI64))
+      [(AstTypeNodePoolPushOk type-a1 a-id)
+        (match (ast-type-node-pool-state-push type-b0 (AstTyI64))
+          [(AstTypeNodePoolPushOk type-b1 b-id)
+            (match (ast-type-node-pool-state-push type-a1 (AstTyI64))
+              [(AstTypeNodePoolPushOk type-a2 a-dupe-id)
+                (match (ast-type-node-pool-state-push type-b1 (AstTyI64))
+                  [(AstTypeNodePoolPushOk type-b2 b-dupe-id)
+                    (and
+                      (= a-id 0)
+                      (= b-id 0)
+                      (= a-dupe-id a-id)
+                      (= b-dupe-id b-id)
+                      (= (ast-type-node-pool-state-len type-a2) 1)
+                      (= (ast-type-node-pool-state-len type-b2) 1)
+                      (compiler-driver-state-smoke-type-i64? type-a2 a-id)
+                      (compiler-driver-state-smoke-type-i64? type-b2 b-id))])])])])))
+
 (define (main) : i64
-  (if (compiler-driver-state-smoke-cache-isolated?)
-    (if (compiler-driver-state-smoke-pools-isolated?)
-      42
-      3)
-    2))
+  (begin
+    (unless (compiler-driver-state-smoke-cache-isolated?) (return 2))
+    (unless (compiler-driver-state-smoke-pools-isolated?) (return 3))
+    (unless (compiler-driver-state-smoke-type-dedup-isolated?) (return 4))
+    42))

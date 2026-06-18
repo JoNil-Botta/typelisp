@@ -106,10 +106,69 @@
       (compiler-ast-state-type-string? a2 aid1)
       (compiler-ast-state-type-char? b3 bid1))))
 
+(define (compiler-ast-state-owned-type-dedup-reuse-smoke?) : bool
+  (match (ast-type-node-pool-state-push
+    (ast-type-node-pool-state-create 1)
+    (AstTyI64))
+    [(AstTypeNodePoolPushOk p1 first-id)
+      (match (ast-type-node-pool-state-push p1 (AstTyI64))
+        [(AstTypeNodePoolPushOk p2 second-id)
+          (and
+            (= first-id 0)
+            (= second-id first-id)
+            (= (ast-type-node-pool-state-len p2) 1)
+            (compiler-ast-state-type-i64? p2 first-id))])]))
+
+(define (compiler-ast-state-owned-type-dedup-isolated-smoke?) : bool
+  (match (ast-type-node-pool-state-push
+    (ast-type-node-pool-state-create 1)
+    (AstTyI64))
+    [(AstTypeNodePoolPushOk a1 a-id)
+      (match (ast-type-node-pool-state-push
+        (ast-type-node-pool-state-create 1)
+        (AstTyI64))
+        [(AstTypeNodePoolPushOk b1 b-id)
+          (match (ast-type-node-pool-state-push a1 (AstTyI64))
+            [(AstTypeNodePoolPushOk a2 a-dupe-id)
+              (match (ast-type-node-pool-state-push b1 (AstTyI64))
+                [(AstTypeNodePoolPushOk b2 b-dupe-id)
+                  (and
+                    (= a-id 0)
+                    (= b-id 0)
+                    (= a-dupe-id a-id)
+                    (= b-dupe-id b-id)
+                    (= (ast-type-node-pool-state-len a2) 1)
+                    (= (ast-type-node-pool-state-len b2) 1)
+                    (compiler-ast-state-type-i64? a2 a-id)
+                    (compiler-ast-state-type-i64? b2 b-id))])])])]))
+
+(define (compiler-ast-state-owned-type-dedup-reset-smoke?) : bool
+  (match (ast-type-node-pool-state-push
+    (ast-type-node-pool-state-create 1)
+    (AstTyI64))
+    [(AstTypeNodePoolPushOk p1 i64-id)
+      (match (ast-type-node-pool-state-push p1 (AstTyString))
+        [(AstTypeNodePoolPushOk p2 string-id)
+          (let
+            [reset : AstTypeNodePoolState
+              (ast-type-node-pool-state-reset-to-mark p2 1)]
+            (match (ast-type-node-pool-state-push reset (AstTyString))
+              [(AstTypeNodePoolPushOk p3 string-id2)
+                (and
+                  (= i64-id 0)
+                  (= string-id 1)
+                  (= string-id2 1)
+                  (= (ast-type-node-pool-state-len p3) 2)
+                  (compiler-ast-state-type-i64? p3 i64-id)
+                  (compiler-ast-state-type-string? p3 string-id2))]))])]))
+
 (define (compiler-ast-state-owned-node-pools-smoke?) : bool
   (and
     (compiler-ast-state-owned-expr-pool-smoke?)
-    (compiler-ast-state-owned-type-pool-smoke?)))
+    (compiler-ast-state-owned-type-pool-smoke?)
+    (compiler-ast-state-owned-type-dedup-reuse-smoke?)
+    (compiler-ast-state-owned-type-dedup-isolated-smoke?)
+    (compiler-ast-state-owned-type-dedup-reset-smoke?)))
 
 (define (main) : i64
   (if (and

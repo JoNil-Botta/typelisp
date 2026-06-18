@@ -802,25 +802,22 @@
   [needle : String]
   [start : i64]
   [index : i64]) : bool
-  (if (>= index (string-length needle))
-    true
-    (if (>= (+ start index) (string-length haystack))
-      false
-      (if (= (string-ref haystack (+ start index)) (string-ref needle index))
-        (compiler-object-string-prefix-at? haystack needle start (+ index 1))
-        false))))
+  (cond
+    [(>= index (string-length needle)) true]
+    [(>= (+ start index) (string-length haystack)) false]
+    [(= (string-ref haystack (+ start index)) (string-ref needle index))
+      (compiler-object-string-prefix-at? haystack needle start (+ index 1))]
+    [else false]))
 
 (define (compiler-object-string-contains?
   [haystack : String]
   [needle : String]
   [start : i64]) : bool
-  (if (= (string-length needle) 0)
-    true
-    (if (> (+ start (string-length needle)) (string-length haystack))
-      false
-      (if (compiler-object-string-prefix-at? haystack needle start 0)
-        true
-        (compiler-object-string-contains? haystack needle (+ start 1))))))
+  (cond
+    [(= (string-length needle) 0) true]
+    [(> (+ start (string-length needle)) (string-length haystack)) false]
+    [(compiler-object-string-prefix-at? haystack needle start 0) true]
+    [else (compiler-object-string-contains? haystack needle (+ start 1))]))
 
 (define (compiler-object-instr-list-contains-bytes?
   [instrs : CompilerObjectX64InstrList]

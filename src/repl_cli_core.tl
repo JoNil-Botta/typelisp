@@ -582,34 +582,10 @@
     (and (not in-string) (= parens 0) (= brackets 0))
     (let
       [c : char (string-ref text idx)]
-      (if in-string
-        (if escaped
-          (repl-input-complete-loop
-            text
-            (+ idx 1)
-            len
-            parens
-            brackets
-            true
-            false)
-          (if (= c #\\')
-            (repl-input-complete-loop
-              text
-              (+ idx 1)
-              len
-              parens
-              brackets
-              true
-              true)
-            (if (= c #"')
-              (repl-input-complete-loop
-                text
-                (+ idx 1)
-                len
-                parens
-                brackets
-                false
-                false)
+      (cond
+        [in-string
+          (cond
+            [escaped
               (repl-input-complete-loop
                 text
                 (+ idx 1)
@@ -617,8 +593,35 @@
                 parens
                 brackets
                 true
-                false))))
-        (if (= c #;')
+                false)]
+            [(= c #\\')
+              (repl-input-complete-loop
+                text
+                (+ idx 1)
+                len
+                parens
+                brackets
+                true
+                true)]
+            [(= c #"')
+              (repl-input-complete-loop
+                text
+                (+ idx 1)
+                len
+                parens
+                brackets
+                false
+                false)]
+            [else
+              (repl-input-complete-loop
+                text
+                (+ idx 1)
+                len
+                parens
+                brackets
+                true
+                false)])]
+        [(= c #;')
           (repl-input-complete-loop
             text
             (repl-skip-comment text (+ idx 1) len)
@@ -626,73 +629,74 @@
             parens
             brackets
             false
-            false)
-          (if (= c #"')
+            false)]
+        [(= c #"')
+          (repl-input-complete-loop
+            text
+            (+ idx 1)
+            len
+            parens
+            brackets
+            true
+            false)]
+        [(= c ##')
+          (repl-input-complete-loop
+            text
+            (repl-skip-char-literal text (+ idx 1) len)
+            len
+            parens
+            brackets
+            false
+            false)]
+        [(= c #(')
+          (repl-input-complete-loop
+            text
+            (+ idx 1)
+            len
+            (+ parens 1)
+            brackets
+            false
+            false)]
+        [(= c #[')
+          (repl-input-complete-loop
+            text
+            (+ idx 1)
+            len
+            parens
+            (+ brackets 1)
+            false
+            false)]
+        [(= c #)')
+          (if (= parens 0)
+            true
+            (repl-input-complete-loop
+              text
+              (+ idx 1)
+              len
+              (- parens 1)
+              brackets
+              false
+              false))]
+        [(= c #]')
+          (if (= brackets 0)
+            true
             (repl-input-complete-loop
               text
               (+ idx 1)
               len
               parens
-              brackets
-              true
-              false)
-            (if (= c ##')
-              (repl-input-complete-loop
-                text
-                (repl-skip-char-literal text (+ idx 1) len)
-                len
-                parens
-                brackets
-                false
-                false)
-              (if (= c #(')
-                (repl-input-complete-loop
-                  text
-                  (+ idx 1)
-                  len
-                  (+ parens 1)
-                  brackets
-                  false
-                  false)
-                (if (= c #[')
-                  (repl-input-complete-loop
-                    text
-                    (+ idx 1)
-                    len
-                    parens
-                    (+ brackets 1)
-                    false
-                    false)
-                  (if (= c #)')
-                    (if (= parens 0)
-                      true
-                      (repl-input-complete-loop
-                        text
-                        (+ idx 1)
-                        len
-                        (- parens 1)
-                        brackets
-                        false
-                        false))
-                    (if (= c #]')
-                      (if (= brackets 0)
-                        true
-                        (repl-input-complete-loop
-                          text
-                          (+ idx 1)
-                          len
-                          parens
-                          (- brackets 1)
-                          false
-                          false))
-                      (repl-input-complete-loop
-                        text
-                        (+ idx 1)
-                        len
-                        parens
-                        brackets
-                        false
-                        false))))))))))))
+              (- brackets 1)
+              false
+              false))]
+        [else
+          (repl-input-complete-loop
+            text
+            (+ idx 1)
+            len
+            parens
+            brackets
+            false
+            false)]))))
 
 (define (repl-input-complete? [input : String]) : bool
   (repl-input-complete-loop input 0 (string-length input) 0 0 false false))

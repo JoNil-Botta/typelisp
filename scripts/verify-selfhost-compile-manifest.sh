@@ -476,7 +476,7 @@ run_compile_batch() {
             "$batch_label" \
             "$batch_out" \
             "$batch_err" \
-            "$COMPILER" compile --batch "$batch_chunk" --stdlib-root "$ROOT/stdlib"
+            "$COMPILER" compile --batch "$batch_chunk" --target linux-x86_64 --stdlib-root "$ROOT/stdlib"
         code=$?
         set -e
         if [ "$code" -ne 0 ]; then

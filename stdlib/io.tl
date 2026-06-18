@@ -1013,96 +1013,95 @@
               (set! significand (io-float-bn-append-digit significand digit))
               (set! int-digits (+ int-digits 1))
               (set! index (+ index 1)))))
-        (if (= (+ int-digits frac-digits) 0)
-          (IoFloatNoDecimal)
-          (if (= index n)
-            (IoFloatSomeDecimal negative significand 0)
-            (if (= (string-ref text index) #.')
-              (begin
-                (set! index (+ index 1))
-                (while (and
-                  (< index n)
-                  (io-float-decimal-digit? (string-ref text index)))
-                  (let
-                    [digit : i64
-                      (io-float-decimal-digit-value (string-ref text index))]
-                    (begin
-                      (set!
-                        significand
-                        (io-float-bn-append-digit significand digit))
-                      (set! frac-digits (+ frac-digits 1))
-                      (set! index (+ index 1)))))
-                (if (= frac-digits 0)
-                  (IoFloatNoDecimal)
+        (cond
+          [(= (+ int-digits frac-digits) 0) (IoFloatNoDecimal)]
+          [(= index n) (IoFloatSomeDecimal negative significand 0)]
+          [(= (string-ref text index) #.')
+            (begin
+              (set! index (+ index 1))
+              (while (and
+                (< index n)
+                (io-float-decimal-digit? (string-ref text index)))
+                (let
+                  [digit : i64
+                    (io-float-decimal-digit-value (string-ref text index))]
                   (begin
-                    (if (and
-                      (< index n)
-                      (io-float-exponent-char? (string-ref text index)))
-                      (begin
-                        (set! index (+ index 1))
-                        (if (and (< index n) (= (string-ref text index) #-'))
-                          (begin
-                            (set! exp-negative true)
-                            (set! index (+ index 1)))
-                          (if (and (< index n) (= (string-ref text index) #+'))
-                            (set! index (+ index 1))
-                            unit))
-                        (while (and
-                          (< index n)
-                          (io-float-decimal-digit? (string-ref text index)))
-                          (let
-                            [digit : i64
-                              (io-float-decimal-digit-value
-                                (string-ref text index))]
-                            (begin
-                              (when
-                                (< exp-value 4000)
-                                (set! exp-value (+ (* exp-value 10) digit)))
-                              (set! exp-digits (+ exp-digits 1))
-                              (set! index (+ index 1)))))
-                        (when (= exp-digits 0) (set! index (+ n 1))))
-                      unit)
-                    (if (!= index n)
-                      (IoFloatNoDecimal)
-                      (IoFloatSomeDecimal
-                        negative
-                        significand
-                        (-
-                          (if exp-negative
-                            (- 0 exp-value)
-                            exp-value)
-                          frac-digits))))))
-              (if (io-float-exponent-char? (string-ref text index))
+                    (set!
+                      significand
+                      (io-float-bn-append-digit significand digit))
+                    (set! frac-digits (+ frac-digits 1))
+                    (set! index (+ index 1)))))
+              (if (= frac-digits 0)
+                (IoFloatNoDecimal)
                 (begin
-                  (set! index (+ index 1))
-                  (if (and (< index n) (= (string-ref text index) #-'))
-                    (begin
-                      (set! exp-negative true)
-                      (set! index (+ index 1)))
-                    (if (and (< index n) (= (string-ref text index) #+'))
-                      (set! index (+ index 1))
-                      unit))
-                  (while (and
+                  (if (and
                     (< index n)
-                    (io-float-decimal-digit? (string-ref text index)))
-                    (let
-                      [digit : i64
-                        (io-float-decimal-digit-value (string-ref text index))]
-                      (begin
-                        (when
-                          (< exp-value 4000)
-                          (set! exp-value (+ (* exp-value 10) digit)))
-                        (set! exp-digits (+ exp-digits 1))
-                        (set! index (+ index 1)))))
-                  (if (or (= exp-digits 0) (!= index n))
+                    (io-float-exponent-char? (string-ref text index)))
+                    (begin
+                      (set! index (+ index 1))
+                      (if (and (< index n) (= (string-ref text index) #-'))
+                        (begin
+                          (set! exp-negative true)
+                          (set! index (+ index 1)))
+                        (if (and (< index n) (= (string-ref text index) #+'))
+                          (set! index (+ index 1))
+                          unit))
+                      (while (and
+                        (< index n)
+                        (io-float-decimal-digit? (string-ref text index)))
+                        (let
+                          [digit : i64
+                            (io-float-decimal-digit-value
+                              (string-ref text index))]
+                          (begin
+                            (when
+                              (< exp-value 4000)
+                              (set! exp-value (+ (* exp-value 10) digit)))
+                            (set! exp-digits (+ exp-digits 1))
+                            (set! index (+ index 1)))))
+                      (when (= exp-digits 0) (set! index (+ n 1))))
+                    unit)
+                  (if (!= index n)
                     (IoFloatNoDecimal)
                     (IoFloatSomeDecimal
                       negative
                       significand
-                      (if exp-negative
-                        (- 0 exp-value)
-                        exp-value))))
-                (IoFloatNoDecimal)))))))))
+                      (-
+                        (if exp-negative
+                          (- 0 exp-value)
+                          exp-value)
+                        frac-digits))))))]
+          [(io-float-exponent-char? (string-ref text index))
+            (begin
+              (set! index (+ index 1))
+              (if (and (< index n) (= (string-ref text index) #-'))
+                (begin
+                  (set! exp-negative true)
+                  (set! index (+ index 1)))
+                (if (and (< index n) (= (string-ref text index) #+'))
+                  (set! index (+ index 1))
+                  unit))
+              (while (and
+                (< index n)
+                (io-float-decimal-digit? (string-ref text index)))
+                (let
+                  [digit : i64
+                    (io-float-decimal-digit-value (string-ref text index))]
+                  (begin
+                    (when
+                      (< exp-value 4000)
+                      (set! exp-value (+ (* exp-value 10) digit)))
+                    (set! exp-digits (+ exp-digits 1))
+                    (set! index (+ index 1)))))
+              (if (or (= exp-digits 0) (!= index n))
+                (IoFloatNoDecimal)
+                (IoFloatSomeDecimal
+                  negative
+                  significand
+                  (if exp-negative
+                    (- 0 exp-value)
+                    exp-value))))]
+          [else (IoFloatNoDecimal)])))))
 
 ;: floor(a / b) for b > 0 (TL `/` truncates toward zero).
 (define (ftoa-floor-div [a : i64] [b : i64]) : i64
@@ -1327,27 +1326,29 @@
     [body : String ""]
     [ndig : i64 (string-length s)]
     (begin
-      (if (or (< k -4) (>= k 17))
-        (set!
-          body
-          (string-append
-            (substring s 0 1)
-            (string-append
-              (if (> ndig 1)
-                (string-append "." (substring s 1 (- ndig 1)))
-                "")
-              (string-append "e" (ftoa-pad-exp k)))))
-        (if (< k 0)
+      (cond
+        [(or (< k -4) (>= k 17))
           (set!
             body
-            (string-append "0." (string-append (ftoa-zeros (- (- 0 k) 1)) s)))
-          (if (>= (+ k 1) ndig)
-            (set! body (string-append s (ftoa-zeros (- (+ k 1) ndig))))
-            (set!
-              body
+            (string-append
+              (substring s 0 1)
               (string-append
-                (substring s 0 (+ k 1))
-                (string-append "." (substring s (+ k 1) (- ndig (+ k 1)))))))))
+                (if (> ndig 1)
+                  (string-append "." (substring s 1 (- ndig 1)))
+                  "")
+                (string-append "e" (ftoa-pad-exp k)))))]
+        [(< k 0)
+          (set!
+            body
+            (string-append "0." (string-append (ftoa-zeros (- (- 0 k) 1)) s)))]
+        [(>= (+ k 1) ndig)
+          (set! body (string-append s (ftoa-zeros (- (+ k 1) ndig))))]
+        [else
+          (set!
+            body
+            (string-append
+              (substring s 0 (+ k 1))
+              (string-append "." (substring s (+ k 1) (- ndig (+ k 1))))))])
       (if neg
         (string-append "-" body)
         body))))
@@ -1661,34 +1662,33 @@
 
 ;: Return the host status code for reading a chunk into the stdlib handle cache.
 (define (file-read-chunk-status [raw : i64] [count : i64]) : i64
-  (if (not (io-valid-handle? raw))
-    38
-    (if (not (= (io-file-i64-ref (io-file-modes-ptr) raw) 0))
-      38
-      (if (< count 0)
-        22
-        (if (= count 0)
+  (cond
+    [(not (io-valid-handle? raw)) 38]
+    [(not (= (io-file-i64-ref (io-file-modes-ptr) raw) 0)) 38]
+    [(< count 0) 22]
+    [(= count 0)
+      (begin
+        (io-file-string-set! (io-file-last-bytes-ptr) raw "")
+        (io-file-bool-set! (io-file-last-ready-ptr) raw true)
+        0)]
+    [else
+      (let
+        [buf : (Array u8) (make-array u8 count)]
+        [fd : i64 (io-file-i64-ref (io-file-fds-ptr) raw)]
+        [read-count : i64 (io-platform-read fd (io-array-ptr buf) count)]
+        (if (< read-count 0)
+          (io-last-error-code)
           (begin
-            (io-file-string-set! (io-file-last-bytes-ptr) raw "")
+            (if (= read-count 0)
+              (io-file-bool-set! (io-file-eofs-ptr) raw true)
+              (io-file-bool-set! (io-file-eofs-ptr) raw false))
+            (io-file-string-set!
+              (io-file-last-bytes-ptr)
+              raw
+              (unsafe
+                (string-from-bytes (io-array-const-ptr buf) read-count)))
             (io-file-bool-set! (io-file-last-ready-ptr) raw true)
-            0)
-          (let
-            [buf : (Array u8) (make-array u8 count)]
-            [fd : i64 (io-file-i64-ref (io-file-fds-ptr) raw)]
-            [read-count : i64 (io-platform-read fd (io-array-ptr buf) count)]
-            (if (< read-count 0)
-              (io-last-error-code)
-              (begin
-                (if (= read-count 0)
-                  (io-file-bool-set! (io-file-eofs-ptr) raw true)
-                  (io-file-bool-set! (io-file-eofs-ptr) raw false))
-                (io-file-string-set!
-                  (io-file-last-bytes-ptr)
-                  raw
-                  (unsafe
-                    (string-from-bytes (io-array-const-ptr buf) read-count)))
-                (io-file-bool-set! (io-file-last-ready-ptr) raw true)
-                0))))))))
+            0)))]))
 
 ;: Return the host status code for writing `contents` through a stdlib handle.
 (define (file-write-status [raw : i64] [contents : String]) : i64
@@ -1953,43 +1953,29 @@
 (define (io-error-from-status [path : (& path str)] [code : i64]) : IoError
   (let
     [owned-path : String (io-copy-path path)]
-    (if (io-status-expected-absence? code)
-      (IoNotFound owned-path)
-      (if (= code io-status-permission-denied)
-        (IoPermissionDenied owned-path)
-        (if (= code io-status-invalid)
-          (IoInvalidPath owned-path)
-          (if (= code io-status-name-too-long)
-            (IoInvalidPath owned-path)
-            (if (= code io-status-interrupted)
-              (IoInterrupted owned-path)
-              (if (= code io-status-is-directory)
-                (IoUnsupported owned-path)
-                (if (= code io-status-unsupported)
-                  (IoUnsupported owned-path)
-                  (if (= code io-status-ok)
-                    (IoUnknown owned-path)
-                    (IoSystemCode code owned-path)))))))))))
+    (cond
+      [(io-status-expected-absence? code) (IoNotFound owned-path)]
+      [(= code io-status-permission-denied) (IoPermissionDenied owned-path)]
+      [(= code io-status-invalid) (IoInvalidPath owned-path)]
+      [(= code io-status-name-too-long) (IoInvalidPath owned-path)]
+      [(= code io-status-interrupted) (IoInterrupted owned-path)]
+      [(= code io-status-is-directory) (IoUnsupported owned-path)]
+      [(= code io-status-unsupported) (IoUnsupported owned-path)]
+      [(= code io-status-ok) (IoUnknown owned-path)]
+      [else (IoSystemCode code owned-path)])))
 
 ;: Convert a runtime status code for an already-owned path.
 (define (io-error-from-owned-status [path : String] [code : i64]) : IoError
-  (if (io-status-expected-absence? code)
-    (IoNotFound path)
-    (if (= code io-status-permission-denied)
-      (IoPermissionDenied path)
-      (if (= code io-status-invalid)
-        (IoInvalidPath path)
-        (if (= code io-status-name-too-long)
-          (IoInvalidPath path)
-          (if (= code io-status-interrupted)
-            (IoInterrupted path)
-            (if (= code io-status-is-directory)
-              (IoUnsupported path)
-              (if (= code io-status-unsupported)
-                (IoUnsupported path)
-                (if (= code io-status-ok)
-                  (IoUnknown path)
-                  (IoSystemCode code path))))))))))
+  (cond
+    [(io-status-expected-absence? code) (IoNotFound path)]
+    [(= code io-status-permission-denied) (IoPermissionDenied path)]
+    [(= code io-status-invalid) (IoInvalidPath path)]
+    [(= code io-status-name-too-long) (IoInvalidPath path)]
+    [(= code io-status-interrupted) (IoInterrupted path)]
+    [(= code io-status-is-directory) (IoUnsupported path)]
+    [(= code io-status-unsupported) (IoUnsupported path)]
+    [(= code io-status-ok) (IoUnknown path)]
+    [else (IoSystemCode code path)]))
 
 ;: Convert a status code for a fixed diagnostic label.
 (define (io-error-from-label [label : String] [code : i64]) : IoError

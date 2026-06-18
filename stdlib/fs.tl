@@ -1023,19 +1023,17 @@
           rooted))
       (let
         [body : String (fs-path-segment-vec-render segments)]
-        (if (and drive-root (= (string-length body) 0))
-          (string-append (substring-borrowed path 0 2) "/")
-          (if drive-root
+        (cond
+          [(and drive-root (= (string-length body) 0))
+            (string-append (substring-borrowed path 0 2) "/")]
+          [drive-root
             (string-append
               (substring-borrowed path 0 2)
-              (string-append "/" body))
-            (if (and rooted (= (string-length body) 0))
-              "/"
-              (if rooted
-                (string-append "/" body)
-                (if (= (string-length body) 0)
-                  "."
-                  body)))))))))
+              (string-append "/" body))]
+          [(and rooted (= (string-length body) 0)) "/"]
+          [rooted (string-append "/" body)]
+          [(= (string-length body) 0) "."]
+          [else body])))))
 
 ;: Return true when a normalized relative path still escapes via leading `..`.
 (define (fs-path-normalized-escapes? [normalized : (& normalized str)]) : bool
@@ -1069,24 +1067,24 @@
 ;:
 ;: Empty sides are returned without allocating an extra separator.
 (define (fs-path-join [left : (& left str)] [right : (& right str)]) : String
-  (if (= (string-length left) 0)
-    (string-copy-borrowed right)
-    (if (= (string-length right) 0)
-      (string-copy-borrowed left)
-      (if (fs-path-separator? (string-ref left (- (string-length left) 1)))
-        (if (fs-path-separator? (string-ref right 0))
-          (let
-            [trimmed-right : String
-              (substring-borrowed right 1 (- (string-length right) 1))]
-            (string-append-borrowed left (& trimmed-right)))
-          (string-append-borrowed left right))
-        (if (fs-path-separator? (string-ref right 0))
-          (string-append-borrowed left right)
-          (let
-            [separator : String (fs-path-separator)]
-            [left-with-separator : String
-              (string-append-borrowed left (& separator))]
-            (string-append-borrowed (& left-with-separator) right)))))))
+  (cond
+    [(= (string-length left) 0) (string-copy-borrowed right)]
+    [(= (string-length right) 0) (string-copy-borrowed left)]
+    [(fs-path-separator? (string-ref left (- (string-length left) 1)))
+      (if (fs-path-separator? (string-ref right 0))
+        (let
+          [trimmed-right : String
+            (substring-borrowed right 1 (- (string-length right) 1))]
+          (string-append-borrowed left (& trimmed-right)))
+        (string-append-borrowed left right))]
+    [(fs-path-separator? (string-ref right 0))
+      (string-append-borrowed left right)]
+    [else
+      (let
+        [separator : String (fs-path-separator)]
+        [left-with-separator : String
+          (string-append-borrowed left (& separator))]
+        (string-append-borrowed (& left-with-separator) right))]))
 
 ;: Join two owned `String` path segments by delegating to `fs-path-join`.
 ;:
@@ -1185,13 +1183,11 @@
 
 ;: Convert a runtime file-kind status into a structured result.
 (define (fs-file-kind-status-result [path : (& path str)] [status : i64]) : ResultFsFileKind
-  (if (= status fs-file-kind-regular-code)
-    (OkFsFileKind (FsFileRegular))
-    (if (= status fs-file-kind-directory-code)
-      (OkFsFileKind (FsFileDirectory))
-      (if (= status fs-file-kind-other-code)
-        (OkFsFileKind (FsFileOther))
-        (ErrFsFileKind (io-error-from-status path status))))))
+  (cond
+    [(= status fs-file-kind-regular-code) (OkFsFileKind (FsFileRegular))]
+    [(= status fs-file-kind-directory-code) (OkFsFileKind (FsFileDirectory))]
+    [(= status fs-file-kind-other-code) (OkFsFileKind (FsFileOther))]
+    [else (ErrFsFileKind (io-error-from-status path status))]))
 
 ;: Create `path` as a directory, returning a structured status.
 ;:
@@ -1437,25 +1433,24 @@
     (let
       [name : String (fs-temp-name prefix pid attempt)]
       [path : String
-        (if (= (string-length root) 0)
-          name
-          (if (= (string-length name) 0)
-            (string-copy-borrowed root)
-            (if (fs-path-separator?
-              (string-ref root (- (string-length root) 1)))
-              (if (fs-path-separator? (string-ref name 0))
-                (let
-                  [trimmed-name : String
-                    (substring-borrowed (& name) 1 (- (string-length name) 1))]
-                  (string-append-borrowed root (& trimmed-name)))
-                (string-append-borrowed root (& name)))
-              (if (fs-path-separator? (string-ref name 0))
-                (string-append-borrowed root (& name))
-                (let
-                  [separator : String (fs-path-separator)]
-                  [root-with-separator : String
-                    (string-append-borrowed root (& separator))]
-                  (string-append root-with-separator name))))))]
+        (cond
+          [(= (string-length root) 0) name]
+          [(= (string-length name) 0) (string-copy-borrowed root)]
+          [(fs-path-separator? (string-ref root (- (string-length root) 1)))
+            (if (fs-path-separator? (string-ref name 0))
+              (let
+                [trimmed-name : String
+                  (substring-borrowed (& name) 1 (- (string-length name) 1))]
+                (string-append-borrowed root (& trimmed-name)))
+              (string-append-borrowed root (& name)))]
+          [(fs-path-separator? (string-ref name 0))
+            (string-append-borrowed root (& name))]
+          [else
+            (let
+              [separator : String (fs-path-separator)]
+              [root-with-separator : String
+                (string-append-borrowed root (& separator))]
+              (string-append root-with-separator name))])]
       [status : i64 (fs-mkdir-status-owned path)]
       (if (= status io-status-ok)
         (OkIoString path)

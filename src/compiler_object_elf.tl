@@ -840,33 +840,20 @@
     [(ObjectSectionXdata) 0]))
 
 (define (compiler-object-elf-section-name-offset [index : i64]) : i64
-  (if (= index compiler-object-elf-section-text-index)
-    1
-    (if (= index compiler-object-elf-section-data-index)
-      7
-      (if (= index compiler-object-elf-section-rodata-index)
-        13
-        (if (= index compiler-object-elf-section-bss-index)
-          21
-          (if (= index compiler-object-elf-section-rela-text-index)
-            26
-            (if (= index compiler-object-elf-section-rela-data-index)
-              37
-              (if (= index compiler-object-elf-section-rela-rodata-index)
-                48
-                (if (= index compiler-object-elf-section-rela-bss-index)
-                  61
-                  (if (= index compiler-object-elf-section-symtab-index)
-                    71
-                    (if (= index compiler-object-elf-section-strtab-index)
-                      79
-                      (if (= index compiler-object-elf-section-shstrtab-index)
-                        87
-                        (if (=
-                          index
-                          compiler-object-elf-section-note-gnu-stack-index)
-                          97
-                          0)))))))))))))
+  (cond
+    [(= index compiler-object-elf-section-text-index) 1]
+    [(= index compiler-object-elf-section-data-index) 7]
+    [(= index compiler-object-elf-section-rodata-index) 13]
+    [(= index compiler-object-elf-section-bss-index) 21]
+    [(= index compiler-object-elf-section-rela-text-index) 26]
+    [(= index compiler-object-elf-section-rela-data-index) 37]
+    [(= index compiler-object-elf-section-rela-rodata-index) 48]
+    [(= index compiler-object-elf-section-rela-bss-index) 61]
+    [(= index compiler-object-elf-section-symtab-index) 71]
+    [(= index compiler-object-elf-section-strtab-index) 79]
+    [(= index compiler-object-elf-section-shstrtab-index) 87]
+    [(= index compiler-object-elf-section-note-gnu-stack-index) 97]
+    [else 0]))
 
 (define (compiler-object-elf-push-header!
   [out : (Array u8)]

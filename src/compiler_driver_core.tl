@@ -1811,23 +1811,6 @@
     mode
     (compiler-cfg-empty)))
 
-(define (compiler-driver-compile-file-with-roots-level-mode-and-cfg
-  [input-path : String]
-  [output-path : String]
-  [stdlib-roots : StringVec]
-  [opt-level : i64]
-  [mode : CompilerBackendMode]
-  [cfgs : SymI64Env]) : i64
-  (compiler-driver-compile-file-with-target-roots-level-mode-cfg
-    input-path
-    output-path
-    (BackendTargetLinux)
-    false
-    stdlib-roots
-    opt-level
-    mode
-    cfgs))
-
 (define (compiler-driver-compile-file-for-target
   [input-path : String]
   [output-path : String]

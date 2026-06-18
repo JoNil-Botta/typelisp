@@ -69,19 +69,16 @@
       (let
         [head-name : String (format-rules-node-symbol-name head)]
         [rest : FormatCstList (box-get rest-box)]
-        (if (string-eq head-name "import")
-          "import"
-          (if (string-eq head-name "extern")
-            "extern"
-            (if (string-eq head-name "include-str")
-              "include-str"
-              (if (string-eq head-name "define")
-                (if (format-rules-define-value-rest? rest)
-                  "define"
-                  "")
-                (if (string-eq head-name "cfg")
-                  (format-rules-cfg-top-form-family rest)
-                  ""))))))]
+        (cond
+          [(string-eq head-name "import") "import"]
+          [(string-eq head-name "extern") "extern"]
+          [(string-eq head-name "include-str") "include-str"]
+          [(string-eq head-name "define")
+            (if (format-rules-define-value-rest? rest)
+              "define"
+              "")]
+          [(string-eq head-name "cfg") (format-rules-cfg-top-form-family rest)]
+          [else ""]))]
     [_ ""]))
 
 (define (format-rules-top-form-family [node : FormatCst]) : String
@@ -575,38 +572,33 @@
 (define (format-rules-special-list-doc
   [head : FormatCst]
   [rest : FormatCstList]) : Doc
-  (if (format-rules-node-symbol? head "import")
-    (format-rules-inline-form-doc "import" rest)
-    (if (format-rules-node-symbol? head "include-str")
-      (format-rules-inline-form-doc "include-str" rest)
-      (if (format-rules-node-symbol? head "extern")
-        (format-rules-inline-form-doc "extern" rest)
-        (if (format-rules-node-symbol? head "define")
-          (format-rules-define-doc rest)
-          (if (format-rules-node-symbol? head "defmacro")
-            (format-rules-defmacro-doc rest)
-            (if (format-rules-node-symbol? head "defenum")
-              (format-rules-first-or-line-form-doc "defenum" rest)
-              (if (format-rules-node-symbol? head "defstruct")
-                (format-rules-first-or-line-form-doc "defstruct" rest)
-                (if (format-rules-node-symbol? head "lambda")
-                  (format-rules-lambda-doc rest)
-                  (if (format-rules-node-symbol? head "let")
-                    (format-rules-let-doc rest)
-                    (if (format-rules-node-symbol? head "if")
-                      (format-rules-first-or-line-form-doc "if" rest)
-                      (if (format-rules-node-symbol? head "while")
-                        (format-rules-first-or-line-form-doc "while" rest)
-                        (if (format-rules-node-symbol? head "begin")
-                          (format-rules-line-form-doc "begin" rest)
-                          (if (format-rules-node-symbol? head "unsafe")
-                            (format-rules-line-form-doc "unsafe" rest)
-                            (if (format-rules-node-symbol? head "match")
-                              (format-rules-first-or-line-form-doc "match" rest)
-                              (format-rules-delimited-doc
-                                "("
-                                (FmtCstCons head (box rest))
-                                ")"))))))))))))))))
+  (cond
+    [(format-rules-node-symbol? head "import")
+      (format-rules-inline-form-doc "import" rest)]
+    [(format-rules-node-symbol? head "include-str")
+      (format-rules-inline-form-doc "include-str" rest)]
+    [(format-rules-node-symbol? head "extern")
+      (format-rules-inline-form-doc "extern" rest)]
+    [(format-rules-node-symbol? head "define") (format-rules-define-doc rest)]
+    [(format-rules-node-symbol? head "defmacro")
+      (format-rules-defmacro-doc rest)]
+    [(format-rules-node-symbol? head "defenum")
+      (format-rules-first-or-line-form-doc "defenum" rest)]
+    [(format-rules-node-symbol? head "defstruct")
+      (format-rules-first-or-line-form-doc "defstruct" rest)]
+    [(format-rules-node-symbol? head "lambda") (format-rules-lambda-doc rest)]
+    [(format-rules-node-symbol? head "let") (format-rules-let-doc rest)]
+    [(format-rules-node-symbol? head "if")
+      (format-rules-first-or-line-form-doc "if" rest)]
+    [(format-rules-node-symbol? head "while")
+      (format-rules-first-or-line-form-doc "while" rest)]
+    [(format-rules-node-symbol? head "begin")
+      (format-rules-line-form-doc "begin" rest)]
+    [(format-rules-node-symbol? head "unsafe")
+      (format-rules-line-form-doc "unsafe" rest)]
+    [(format-rules-node-symbol? head "match")
+      (format-rules-first-or-line-form-doc "match" rest)]
+    [else (format-rules-delimited-doc "(" (FmtCstCons head (box rest)) ")")]))
 
 (define (format-rules-colon-list-doc [rest : FormatCstList]) : Doc
   (match rest

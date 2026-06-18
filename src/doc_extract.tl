@@ -235,19 +235,20 @@
         (if (< i n)
           (let
             [c : char (string-ref src i)]
-            (if escaped
-              (begin
-                (set! escaped false)
-                (set! i (+ i 1)))
-              (if (= c #\\')
+            (cond
+              [escaped
+                (begin
+                  (set! escaped false)
+                  (set! i (+ i 1)))]
+              [(= c #\\')
                 (begin
                   (set! escaped true)
-                  (set! i (+ i 1)))
-                (if (= c #"')
-                  (begin
-                    (set! i (+ i 1))
-                    (set! keep false))
-                  (set! i (+ i 1))))))
+                  (set! i (+ i 1)))]
+              [(= c #"')
+                (begin
+                  (set! i (+ i 1))
+                  (set! keep false))]
+              [else (set! i (+ i 1))]))
           (set! keep false)))
       i)))
 
@@ -276,24 +277,23 @@
         (if (< i n)
           (let
             [c : char (string-ref src i)]
-            (if (= c #;')
-              (set! i (doc-next-line-start src (doc-line-end src i n) n))
-              (if (= c #"')
-                (set! i (doc-scan-string-end src i n))
-                (if (= c ##')
-                  (set! i (doc-scan-char-literal-end src i n))
-                  (if (or (= c #(') (= c #['))
-                    (begin
-                      (set! depth (+ depth 1))
-                      (set! i (+ i 1)))
-                    (if (or (= c #)') (= c #]'))
-                      (begin
-                        (set! depth (- depth 1))
-                        (set! i (+ i 1))
-                        (if (<= depth 0)
-                          (set! keep false)
-                          (set! keep keep)))
-                      (set! i (+ i 1))))))))
+            (cond
+              [(= c #;')
+                (set! i (doc-next-line-start src (doc-line-end src i n) n))]
+              [(= c #"') (set! i (doc-scan-string-end src i n))]
+              [(= c ##') (set! i (doc-scan-char-literal-end src i n))]
+              [(or (= c #(') (= c #['))
+                (begin
+                  (set! depth (+ depth 1))
+                  (set! i (+ i 1)))]
+              [(or (= c #)') (= c #]'))
+                (begin
+                  (set! depth (- depth 1))
+                  (set! i (+ i 1))
+                  (if (<= depth 0)
+                    (set! keep false)
+                    (set! keep keep)))]
+              [else (set! i (+ i 1))]))
           (set! keep false)))
       i)))
 
@@ -326,17 +326,17 @@
         (let
           [tag : i64 (format-token-tag (format-token-at stream i))]
           (begin
-            (if (or (= tag (fmt-tag-lparen)) (= tag (fmt-tag-lbracket)))
-              (set! depth (+ depth 1))
-              (if (or (= tag (fmt-tag-rparen)) (= tag (fmt-tag-rbracket)))
+            (cond
+              [(or (= tag (fmt-tag-lparen)) (= tag (fmt-tag-lbracket)))
+                (set! depth (+ depth 1))]
+              [(or (= tag (fmt-tag-rparen)) (= tag (fmt-tag-rbracket)))
                 (begin
                   (set! depth (- depth 1))
                   (if (= depth 0)
                     (set! done true)
-                    unit))
-                (if (= tag (fmt-tag-end))
-                  (set! done true)
-                  unit)))
+                    unit))]
+              [(= tag (fmt-tag-end)) (set! done true)]
+              [else unit])
             (set! i (+ i 1)))))
       i)))
 
@@ -394,19 +394,20 @@
         (let
           [head : String (doc-symbol-text stream head-idx)]
           [after-head : i64 (+ head-idx 1)]
-          (if (string-eq head "define")
-            (doc-info-after-define stream after-head)
-            (if (string-eq head "extern")
-              (doc-info-after-extern stream after-head)
-              (if (string-eq head "defenum")
-                (doc-info-after-name (DocKindDefEnum) stream after-head)
-                (if (string-eq head "defstruct")
-                  (doc-info-after-name (DocKindDefStruct) stream after-head)
-                  (if (string-eq head "defmacro")
-                    (doc-info-after-defmacro stream after-head)
-                    (if (string-eq head "comptime-decl")
-                      (doc-info-after-comptime-decl stream after-head)
-                      (DocNoDeclInfo))))))))
+          (cond
+            [(string-eq head "define")
+              (doc-info-after-define stream after-head)]
+            [(string-eq head "extern")
+              (doc-info-after-extern stream after-head)]
+            [(string-eq head "defenum")
+              (doc-info-after-name (DocKindDefEnum) stream after-head)]
+            [(string-eq head "defstruct")
+              (doc-info-after-name (DocKindDefStruct) stream after-head)]
+            [(string-eq head "defmacro")
+              (doc-info-after-defmacro stream after-head)]
+            [(string-eq head "comptime-decl")
+              (doc-info-after-comptime-decl stream after-head)]
+            [else (DocNoDeclInfo)]))
         (DocNoDeclInfo)))
     (DocNoDeclInfo)))
 

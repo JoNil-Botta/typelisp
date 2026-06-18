@@ -107,34 +107,34 @@
   [stop-tag : i64]) : ResultFormatParsedCstList
   (let
     [tag : i64 (format-token-tag (format-token-at stream idx))]
-    (if (= tag (fmt-tag-end))
-      (if (= stop-tag 0)
-        (OkFormatParsedCstList (FmtParsedCstList FmtCstNil idx))
-        (ErrFormatParsedCstList
-          (FormatSourceError
-            "format cst: unclosed delimiter"
-            (format-token-span stream idx))))
-      (if (and (!= stop-tag 0) (= tag stop-tag))
-        (OkFormatParsedCstList (FmtParsedCstList FmtCstNil (+ idx 1)))
-        (if (fmt-unexpected-closing tag)
+    (cond
+      [(= tag (fmt-tag-end))
+        (if (= stop-tag 0)
+          (OkFormatParsedCstList (FmtParsedCstList FmtCstNil idx))
           (ErrFormatParsedCstList
             (FormatSourceError
-              "format cst: unexpected closing delimiter"
-              (format-token-span stream idx)))
-          (match (fmt-parse-one-result stream idx)
-            [(OkFormatParsedCst parsed)
-              (match parsed
-                [(FmtParsedCst node next)
-                  (match (fmt-parse-seq-result stream next stop-tag)
-                    [(OkFormatParsedCstList parsed-rest)
-                      (match parsed-rest
-                        [(FmtParsedCstList rest final)
-                          (OkFormatParsedCstList
-                            (FmtParsedCstList
-                              (FmtCstCons node (box rest))
-                              final))])]
-                    [(ErrFormatParsedCstList err) (ErrFormatParsedCstList err)])])]
-            [(ErrFormatParsedCst err) (ErrFormatParsedCstList err)]))))))
+              "format cst: unclosed delimiter"
+              (format-token-span stream idx))))]
+      [(and (!= stop-tag 0) (= tag stop-tag))
+        (OkFormatParsedCstList (FmtParsedCstList FmtCstNil (+ idx 1)))]
+      [(fmt-unexpected-closing tag)
+        (ErrFormatParsedCstList
+          (FormatSourceError
+            "format cst: unexpected closing delimiter"
+            (format-token-span stream idx)))]
+      [else
+        (match (fmt-parse-one-result stream idx)
+          [(OkFormatParsedCst parsed)
+            (match parsed
+              [(FmtParsedCst node next)
+                (match (fmt-parse-seq-result stream next stop-tag)
+                  [(OkFormatParsedCstList parsed-rest)
+                    (match parsed-rest
+                      [(FmtParsedCstList rest final)
+                        (OkFormatParsedCstList
+                          (FmtParsedCstList (FmtCstCons node (box rest)) final))])]
+                  [(ErrFormatParsedCstList err) (ErrFormatParsedCstList err)])])]
+          [(ErrFormatParsedCst err) (ErrFormatParsedCstList err)])])))
 
 (define (fmt-parse-seq
   [stream : FormatTokenStream]
@@ -152,43 +152,44 @@
   (let
     [tok : FormatToken (format-token-at stream idx)]
     [tag : i64 (format-token-tag (format-token-at stream idx))]
-    (if (= tag (fmt-tag-lparen))
-      (match (fmt-parse-seq-result stream (+ idx 1) (fmt-tag-rparen))
-        [(OkFormatParsedCstList parsed)
-          (match parsed
-            [(FmtParsedCstList items next)
-              (OkFormatParsedCst (FmtParsedCst (FmtCstList (box items)) next))])]
-        [(ErrFormatParsedCstList err) (ErrFormatParsedCst err)])
-      (if (= tag (fmt-tag-lbracket))
+    (cond
+      [(= tag (fmt-tag-lparen))
+        (match (fmt-parse-seq-result stream (+ idx 1) (fmt-tag-rparen))
+          [(OkFormatParsedCstList parsed)
+            (match parsed
+              [(FmtParsedCstList items next)
+                (OkFormatParsedCst (FmtParsedCst (FmtCstList (box items)) next))])]
+          [(ErrFormatParsedCstList err) (ErrFormatParsedCst err)])]
+      [(= tag (fmt-tag-lbracket))
         (match (fmt-parse-seq-result stream (+ idx 1) (fmt-tag-rbracket))
           [(OkFormatParsedCstList parsed)
             (match parsed
               [(FmtParsedCstList items next)
                 (OkFormatParsedCst
                   (FmtParsedCst (FmtCstBracketList (box items)) next))])]
-          [(ErrFormatParsedCstList err) (ErrFormatParsedCst err)])
-        (if (= tag (fmt-tag-comment))
-          (OkFormatParsedCst
-            (FmtParsedCst (FmtCstComment (format-token-text tok)) (+ idx 1)))
-          (if (fmt-prefix-tag? tag)
-            (match (fmt-parse-one-result stream (+ idx 1))
-              [(OkFormatParsedCst parsed)
-                (match parsed
-                  [(FmtParsedCst child next)
-                    (OkFormatParsedCst
-                      (FmtParsedCst (FmtCstPrefix tok (box child)) next))])]
-              [(ErrFormatParsedCst err) (ErrFormatParsedCst err)])
-            (if (fmt-unexpected-closing tag)
-              (ErrFormatParsedCst
-                (FormatSourceError
-                  "format cst: unexpected closing delimiter"
-                  (format-token-span stream idx)))
-              (if (= tag (fmt-tag-end))
-                (ErrFormatParsedCst
-                  (FormatSourceError
-                    "format cst: unexpected end"
-                    (format-token-span stream idx)))
-                (OkFormatParsedCst (FmtParsedCst (FmtCstAtom tok) (+ idx 1)))))))))))
+          [(ErrFormatParsedCstList err) (ErrFormatParsedCst err)])]
+      [(= tag (fmt-tag-comment))
+        (OkFormatParsedCst
+          (FmtParsedCst (FmtCstComment (format-token-text tok)) (+ idx 1)))]
+      [(fmt-prefix-tag? tag)
+        (match (fmt-parse-one-result stream (+ idx 1))
+          [(OkFormatParsedCst parsed)
+            (match parsed
+              [(FmtParsedCst child next)
+                (OkFormatParsedCst
+                  (FmtParsedCst (FmtCstPrefix tok (box child)) next))])]
+          [(ErrFormatParsedCst err) (ErrFormatParsedCst err)])]
+      [(fmt-unexpected-closing tag)
+        (ErrFormatParsedCst
+          (FormatSourceError
+            "format cst: unexpected closing delimiter"
+            (format-token-span stream idx)))]
+      [(= tag (fmt-tag-end))
+        (ErrFormatParsedCst
+          (FormatSourceError
+            "format cst: unexpected end"
+            (format-token-span stream idx)))]
+      [else (OkFormatParsedCst (FmtParsedCst (FmtCstAtom tok) (+ idx 1)))])))
 
 (define (fmt-parse-one [stream : FormatTokenStream] [idx : i64]) : FormatParsedCst
   (match (fmt-parse-one-result stream idx)

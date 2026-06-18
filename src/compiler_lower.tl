@@ -450,6 +450,19 @@
 (define (lower-reference-support-message) : String
   "lower: reference-typed programs require borrow/reference lowering support (#803/#806/#804)")
 
+(define (lower-bytes-view-from-parts-name? [name : String]) : bool
+  (let
+    [base : String
+      (if (tc-name-qualified? name)
+        (tc-qualified-name-base name)
+        name)]
+    (or
+      (string-eq base "tl_bytes_view_from_str_parts")
+      (string-eq base "tl_bytes_view_from_buf_parts")
+      (string-eq base "tl_bytes_mut_view_from_buf_parts")
+      (string-eq base "tl_bytes_view_from_bytes_parts")
+      (string-eq base "tl_bytes_mut_view_from_bytes_parts"))))
+
 (define (lower-supported-reference-extern?
   [ctx : TcContext]
   [name : i64]
@@ -459,7 +472,8 @@
     [_ty : AstType ty]
     (or
       (compiler-builtin-backend-tl-str-view-id? name)
-      (string-eq (intern-str name) "tl_str_view"))))
+      (string-eq (intern-str name) "tl_str_view")
+      (lower-bytes-view-from-parts-name? (intern-str name)))))
 
 (define (lower-instr-list-fill-array-reversed
   [instrs : CompilerIrInstrList]
@@ -6716,10 +6730,28 @@
         [_ false])]
     [_ false]))
 
+(define (lower-bytes-ref-type? [ctx : TcContext] [ty : AstType]) : bool
+  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(AstTyRef _ inner)
+      (match (tc-type-strip-region (tc-resolve-type ctx (ty-node-get inner)))
+        [(AstTyBytes) true]
+        [_ false])]
+    [(AstTyMutRef _ inner)
+      (match (tc-type-strip-region (tc-resolve-type ctx (ty-node-get inner)))
+        [(AstTyBytes) true]
+        [_ false])]
+    [_ false]))
+
 (define (lower-string-handle-type? [ctx : TcContext] [ty : AstType]) : bool
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
     [(AstTyString) true]
     [_ (lower-str-ref-type? ctx ty)]))
+
+(define (lower-bytes-handle-type? [ctx : TcContext] [ty : AstType]) : bool
+  (lower-bytes-ref-type? ctx ty))
+
+(define (lower-length-handle-type? [ctx : TcContext] [ty : AstType]) : bool
+  (or (lower-string-handle-type? ctx ty) (lower-bytes-handle-type? ctx ty)))
 
 (define (lower-string-concat-builtin-name? [name : String]) : bool
   (or (string-eq name "string-append") (string-eq name "string-concat")))
@@ -6871,6 +6903,7 @@
     [(AstTyBool) true]
     [(AstTyChar) true]
     [(AstTyStr) true]
+    [(AstTyBytes) true]
     [(AstTyTuple elems)
       (lower-supported-reference-type-list-with-stack? ctx elems LowerStringNil)]
     [(AstTyArray elem-ty _)
@@ -17039,6 +17072,98 @@
                 result-ty)))])]
     [(ErrLowerArgs message) (ErrLowerExpr message)]))
 
+(define (lower-bytes-view-from-parts-result
+  [ctx : TcContext]
+  [state : LowerState]
+  [ptr-value : CompilerIrValue]
+  [len-value : CompilerIrValue]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match (lower-reserve-inline-storage state 16 (AstTyString))
+    [(LowerExpr base-state base-value _)
+      (let
+        [with-ptr : LowerState
+          (lower-store-at-offset base-state base-value 0 ptr-value (AstTyU64))]
+        [with-len : LowerState
+          (lower-store-at-offset with-ptr base-value 8 len-value (AstTyI64))]
+        (match (lower-state-alloc-var with-len)
+          [(LowerAlloc call-state call-var)
+            (OkLowerExpr
+              (LowerExpr
+                (lower-state-emit-at-expr
+                  call-state
+                  (IrInstrCall
+                    call-var
+                    "tl_str_view"
+                    (compiler-ir-call-args-from-list
+                      (compiler-ir-value-cons
+                        base-value
+                        (compiler-ir-value-cons
+                          (IrValueI64 0)
+                          (compiler-ir-value-cons len-value IrValueNil))))
+                    (lower-one-word-register-storage-type ctx result-ty))
+                  origin)
+                (IrValueVar call-var)
+                result-ty))]))]))
+
+(define (lower-bytes-view-from-parts-values
+  [ctx : TcContext]
+  [args-result : ResultLowerArgs]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match args-result
+    [(OkLowerArgs args-state values)
+      (match values
+        [(IrValueCons data-value rest0)
+          (match (box-get rest0)
+            [(IrValueCons len-value rest1)
+              (match (box-get rest1)
+                [(IrValueCons _ rest2)
+                  (match (box-get rest2)
+                    [(IrValueNil)
+                      (lower-bytes-view-from-parts-result
+                        ctx
+                        args-state
+                        data-value
+                        len-value
+                        result-ty
+                        origin)]
+                    [_
+                      (ErrLowerExpr
+                        (lower-diagnostic-at-expr
+                          origin
+                          "lower: bytes view helper expects data, length, owner"))])]
+                [_
+                  (ErrLowerExpr
+                    (lower-diagnostic-at-expr
+                      origin
+                      "lower: bytes view helper expects data, length, owner"))])]
+            [_
+              (ErrLowerExpr
+                (lower-diagnostic-at-expr
+                  origin
+                  "lower: bytes view helper expects data, length, owner"))])]
+        [_
+          (ErrLowerExpr
+            (lower-diagnostic-at-expr
+              origin
+              "lower: bytes view helper expects data, length, owner"))])]
+    [(ErrLowerArgs message) (ErrLowerExpr message)]))
+
+(define (lower-bytes-view-from-parts-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (lower-bytes-view-from-parts-values
+    ctx
+    (lower-args ctx state env type-env args)
+    result-ty
+    origin))
+
 (define (lower-direct-call-from-args
   [ctx : TcContext]
   [args-result : ResultLowerArgs]
@@ -17101,35 +17226,33 @@
   [args : AstExprList]
   [result-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
-  (match (lower-lookup-type
-    ctx
-    (lower-state-type-cache state)
-    env
-    type-env
-    name)
-    [(OkTcType fn-ty)
-      (match (tc-type-strip-region (tc-resolve-type ctx fn-ty))
-        [(AstTyFunc param-types _)
-          (match (lower-direct-call-param-types
-            ctx
-            type-env
-            name
-            args
-            (tc-resolve-type-list ctx param-types))
-            [(OkTcTypeList call-param-types)
-              (if (lower-c-abi-extern-call? ctx state env name)
-                (lower-direct-c-abi-call
-                  ctx
-                  state
-                  env
-                  type-env
-                  name
-                  args
-                  call-param-types
-                  result-ty
-                  origin)
-                (if (lower-c-abi-extern-value-call? ctx state env name)
-                  (lower-extern-value-c-abi-call
+  (if (lower-bytes-view-from-parts-name? name)
+    (lower-bytes-view-from-parts-call
+      ctx
+      state
+      env
+      type-env
+      args
+      result-ty
+      origin)
+    (match (lower-lookup-type
+      ctx
+      (lower-state-type-cache state)
+      env
+      type-env
+      name)
+      [(OkTcType fn-ty)
+        (match (tc-type-strip-region (tc-resolve-type ctx fn-ty))
+          [(AstTyFunc param-types _)
+            (match (lower-direct-call-param-types
+              ctx
+              type-env
+              name
+              args
+              (tc-resolve-type-list ctx param-types))
+              [(OkTcTypeList call-param-types)
+                (if (lower-c-abi-extern-call? ctx state env name)
+                  (lower-direct-c-abi-call
                     ctx
                     state
                     env
@@ -17137,40 +17260,51 @@
                     name
                     args
                     call-param-types
-                    (tc-type-strip-region (tc-resolve-type ctx fn-ty))
                     result-ty
                     origin)
-                  (lower-direct-call-from-call-args
-                    ctx
-                    (lower-call-args-as-needed
+                  (if (lower-c-abi-extern-value-call? ctx state env name)
+                    (lower-extern-value-c-abi-call
                       ctx
                       state
                       env
                       type-env
+                      name
                       args
-                      call-param-types)
-                    env
-                    name
-                    result-ty
-                    origin)))]
-            [(ErrTcTypeList message)
-              (ErrLowerExpr (lower-diagnostic-at-expr origin message))])]
-        [_
-          (lower-direct-call-from-args
-            ctx
-            (lower-args ctx state env type-env args)
-            env
-            name
-            result-ty
-            origin)])]
-    [(ErrTcType _)
-      (lower-direct-call-from-args
-        ctx
-        (lower-args ctx state env type-env args)
-        env
-        name
-        result-ty
-        origin)]))
+                      call-param-types
+                      (tc-type-strip-region (tc-resolve-type ctx fn-ty))
+                      result-ty
+                      origin)
+                    (lower-direct-call-from-call-args
+                      ctx
+                      (lower-call-args-as-needed
+                        ctx
+                        state
+                        env
+                        type-env
+                        args
+                        call-param-types)
+                      env
+                      name
+                      result-ty
+                      origin)))]
+              [(ErrTcTypeList message)
+                (ErrLowerExpr (lower-diagnostic-at-expr origin message))])]
+          [_
+            (lower-direct-call-from-args
+              ctx
+              (lower-args ctx state env type-env args)
+              env
+              name
+              result-ty
+              origin)])]
+      [(ErrTcType _)
+        (lower-direct-call-from-args
+          ctx
+          (lower-args ctx state env type-env args)
+          env
+          name
+          result-ty
+          origin)])))
 
 (define (lower-indirect-call-values
   [ctx : TcContext]
@@ -18988,7 +19122,7 @@
   (match (tc-array-length-receiver ctx arr-ty)
     [(OkTcArrayReceiver _) (lower-array-length-load ctx state env type-env arr)]
     [(ErrTcArrayReceiver _)
-      (if (lower-string-handle-type? ctx arr-ty)
+      (if (lower-length-handle-type? ctx arr-ty)
         (lower-array-length-load ctx state env type-env arr)
         (lower-direct-call ctx state env type-env name args result-ty origin))]))
 

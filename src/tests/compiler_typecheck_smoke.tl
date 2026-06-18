@@ -776,6 +776,63 @@
       (compiler-typecheck-smoke-module-macro-local-collision-source)
       "typecheck: generated import collision for value answer from generated identity :gen(string_1_120) with ordinary binding local declaration; use an explicit alias or full generated-module access")))
 
+;; Declaration-emitting macros must be able to emit functions with non-trivial
+;; bodies (#3193 / #3074). The macro-output serializer round-trips arithmetic,
+;; struct-get, make-array, array-ref/array-set!, let, while, and set! back to
+;; declarations; before that surface existed these fixtures failed with
+;; "module macro output contains syntax that cannot be parsed as a declaration".
+(define (compiler-typecheck-smoke-decls-macro-body-source) : String
+  "(defmacro (int-stack) : Decls
+  `(begin
+    (defstruct Stack
+      (slots (Array i64))
+      (len i64)
+      (cap i64))
+    (define (stack-new) : Stack
+      (Stack (make-array i64 4) 0 4))
+    (define (stack-grow [s : Stack]) : Stack
+      (let
+        [new-cap : i64 (* (struct-get s cap) 2)]
+        [bigger : (Array i64) (make-array i64 new-cap)]
+        [i : i64 0]
+        (begin
+          (while (< i (struct-get s len))
+            (begin
+              (array-set! bigger i (array-ref (struct-get s slots) i))
+              (set! i (+ i 1))))
+          (Stack bigger (struct-get s len) new-cap))))
+    (define (stack-push [s : Stack] [value : i64]) : Stack
+      (if (< (struct-get s len) (struct-get s cap))
+        (begin
+          (array-set! (struct-get s slots) (struct-get s len) value)
+          (Stack (struct-get s slots) (+ (struct-get s len) 1) (struct-get s cap)))
+        (stack-push (stack-grow s) value)))
+    (define (stack-top [s : Stack]) : i64
+      (array-ref (struct-get s slots) (- (struct-get s len) 1)))))
+(int-stack)
+(define (main) : i64 (stack-top (stack-push (stack-push (stack-new) 7) 42)))")
+
+(define (compiler-typecheck-smoke-module-macro-body-source) : String
+  "(defmacro (int-box) : Module
+  `(begin
+    (module generated.intbox)
+    (defstruct Box1 (value i64))
+    (define (make [value : i64]) : Box1
+      (Box1 value))
+    (define (bumped [b : Box1]) : i64
+      (let [doubled : i64 (* (struct-get b value) 2)] (+ doubled 1)))
+    (export (type Box1))
+    (export (constructor Box1))
+    (export (value make))
+    (export (value bumped))))
+(import (int-box) as ib)
+(define (main) : i64 (ib.bumped (ib.make 20)))")
+
+(define (compiler-typecheck-smoke-decl-macro-body-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok? (compiler-typecheck-smoke-decls-macro-body-source))
+    (compiler-typecheck-ok? (compiler-typecheck-smoke-module-macro-body-source))))
+
 (define (compiler-typecheck-smoke-prefix-cache-cfg-source) : String
   "(cfg feature (define (shared-helper [x : i64]) : i64 (+ x 2)))
 (cfg (not feature) (define (shared-helper [x : i64]) : i64 (+ x 1)))
@@ -1042,6 +1099,9 @@
     (unless
       (compiler-typecheck-smoke-module-macro-identity-tests-ok?)
       (panic "typecheck: module macro identity smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-decl-macro-body-tests-ok?)
+      (panic "typecheck: declaration macro body smoke failed"))
     (unless
       (compiler-typecheck-smoke-prefix-cache-root-isolation-ok?)
       (panic "typecheck: prefix cache root smoke failed"))

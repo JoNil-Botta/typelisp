@@ -630,6 +630,7 @@
 (define (doc-main-test [base : i64]) : i64
   (begin
     (compiler-load-session-cache-enable!)
+    (compiler-load-session-program-cache-disable!)
     (match (doc-test-config-from base (arg-count))
       [(OkDocTestCliConfig config)
         (match config

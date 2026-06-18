@@ -101,6 +101,12 @@
   0)
 (define compiler-load-session-cache-enabled : bool
   false)
+
+;; Parsed-program cache entries live in the node pools and raise the session
+;; floors. Batch CLIs disable this cache so entry-local AST nodes are not kept
+;; alive across the whole batch; prefix/prelude caches stay enabled.
+(define compiler-load-session-program-cache-enabled : bool
+  true)
 (define compiler-load-program-cache-capacity : i64
   256)
 (define compiler-load-local-program-cache-node-limit : i64
@@ -319,9 +325,21 @@
     (set! compiler-load-session-cache-enabled true)
     (intern-persistent-storage-enable!)))
 
+(define (compiler-load-session-program-cache-enable!) : unit
+  (set! compiler-load-session-program-cache-enabled true))
+
+(define (compiler-load-session-program-cache-disable!) : unit
+  (begin
+    (set! compiler-load-session-program-cache-enabled false)
+    (compiler-load-program-cache-clear!)))
+
+(define (compiler-load-session-program-cache-enabled?) : bool
+  compiler-load-session-program-cache-enabled)
+
 (define (compiler-load-session-cache-disable-for-test!) : unit
   (begin
     (set! compiler-load-session-cache-enabled false)
+    (set! compiler-load-session-program-cache-enabled true)
     (set! compiler-load-session-ast-floor 0)
     (set! compiler-load-session-ty-floor 0)
     (set! compiler-load-session-intern-floor 0)
@@ -1780,6 +1798,7 @@
   [cfgs : SymI64Env]) : ResultAstProgramDiagnostic
   (if (and
     (compiler-load-session-cache-enabled?)
+    (compiler-load-session-program-cache-enabled?)
     (compiler-load-session-file-cacheable? path stdlib-roots))
     (let
       [key : String (compiler-load-program-cache-key "file" path cfgs)]
@@ -1832,7 +1851,9 @@
   [path : String]
   [source : String]
   [cfgs : SymI64Env]) : ResultAstProgramDiagnostic
-  (if (compiler-load-session-cache-enabled?)
+  (if (and
+    (compiler-load-session-cache-enabled?)
+    (compiler-load-session-program-cache-enabled?))
     (let
       [key : String (compiler-load-program-cache-key "embedded" path cfgs)]
       (match (compiler-load-program-cache-lookup key)

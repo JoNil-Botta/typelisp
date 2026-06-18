@@ -2762,6 +2762,7 @@
   [roots : StringVec]) : i64
   (begin
     (compiler-load-session-cache-enable!)
+    (compiler-load-session-program-cache-disable!)
     (match (source-tool-target target)
       [(ErrSourceToolTarget _)
         (begin

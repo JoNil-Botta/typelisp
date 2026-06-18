@@ -11479,6 +11479,24 @@
     [(AstTyString) true]
     [_ (tc-str-ref-type? ty)]))
 
+(define (tc-bytes-ref-type? [ty : AstType]) : bool
+  (match (tc-type-strip-region ty)
+    [(AstTyRef _ inner)
+      (match (tc-type-strip-region (ty-node-get inner))
+        [(AstTyBytes) true]
+        [_ false])]
+    [(AstTyMutRef _ inner)
+      (match (tc-type-strip-region (ty-node-get inner))
+        [(AstTyBytes) true]
+        [_ false])]
+    [_ false]))
+
+(define (tc-bytes-handle-type? [ty : AstType]) : bool
+  (tc-bytes-ref-type? ty))
+
+(define (tc-length-handle-type? [ty : AstType]) : bool
+  (or (tc-string-handle-type? ty) (tc-bytes-handle-type? ty)))
+
 (define (tc-check-string-handle-arg
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -11743,7 +11761,7 @@
   [arg-ty : AstType]) : ResultTcType
   (if (and
     (tc-default-builtin-unshadowed? env name)
-    (tc-string-handle-type? arg-ty))
+    (tc-length-handle-type? arg-ty))
     (OkTcType (AstTyI64))
     (if (compiler-builtin-typecheck-string-length-id? (tc-builtin-name-id name))
       (if (tc-default-builtin-unshadowed? env name)
@@ -20313,9 +20331,9 @@
     [(OkTcUnit)
       (match (tc-expr ctx env str)
         [(OkTcType str-ty)
-          (if (tc-string-handle-type? str-ty)
+          (if (tc-length-handle-type? str-ty)
             (OkTcType (ast-ty-ptr (AstTyU8)))
-            (ErrTcType "typecheck: string-data requires String"))]
+            (ErrTcType "typecheck: string-data requires String or bytes"))]
         [(ErrTcType message) (ErrTcType message)])]
     [(ErrTcUnit message) (ErrTcType message)]))
 

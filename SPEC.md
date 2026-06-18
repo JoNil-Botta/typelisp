@@ -334,7 +334,7 @@ expected type is present.
   are rejected; mutable bytes use `ByteBuf` and `bytes`.
 - `str` is not NUL-terminated. Its length is carried with the borrowed view.
 
-**Owned mutable byte buffer:** `ByteBuf` (specified, pending implementation)
+**Owned mutable byte buffer:** `ByteBuf` (specified, implemented for stdlib core)
 - `ByteBuf` is an owned, move-only mutable byte buffer allocated in the active
   arena. It stores a data pointer, live length, and capacity.
 - The live range `[0, len)` is initialized byte storage. The spare capacity
@@ -345,7 +345,7 @@ expected type is present.
   live bytes. The old backing store is not reclaimed until its arena is reset or
   the process exits.
 
-**Borrowed byte-slice referent:** `bytes` (specified, pending implementation)
+**Borrowed byte-slice referent:** `bytes` (specified, implemented for stdlib core)
 - `bytes` is a borrowed byte-slice referent, not a by-value type in v1.
 - `(& lifetime bytes)` is an immutable borrowed byte view.
 - `(&mut lifetime bytes)` is an exclusive mutable byte view over a fixed-length
@@ -1881,7 +1881,7 @@ runtime bounds discipline as arrays and strings: negative or out-of-range
 indices and invalid `[start, start + len)` slices trap through the ordinary
 out-of-bounds path unless an API is explicitly named as checked/try-style.
 
-The first stdlib implementation should use `stdlib/byte_buf.tl`, with
+The stdlib implementation uses `stdlib/byte_buf.tl`, with
 `byte-buf-*` helper names for owned-buffer operations and `bytes-*` helper names
 for borrowed-slice operations. The required semantic operations are:
 
@@ -1908,10 +1908,10 @@ Conversions are explicit:
   owner is rejected. While a mutable view is live, any aliasing read, write,
   move, or growth of the owner is rejected by the borrow checker.
 - `(Array u8)` remains a compatibility storage shape. New public binary APIs
-  should use `ByteBuf`/`bytes` once implemented; array conversion is an explicit
+  should use `ByteBuf`/`bytes`; array conversion is an explicit
   copy or explicit borrowed view over a declared live prefix.
 
-```lisp test=ignore name=bytebuf-borrow-surface reason="ByteBuf and bytes are specified before stdlib implementation"
+```lisp test=ignore name=bytebuf-borrow-surface reason="illustrative surface; import omitted"
 (define (first-byte [view : (& input bytes)]) : u8
   (bytes-ref view 0))
 
@@ -1960,7 +1960,7 @@ inputs while preserving owned `String` results for allocation sites.
 | Active-arena owned string results | `arg`, `read-file`, `file-read-chunk-bytes`, `read-stdin-line`, `read-stdin-bytes`, `int->string`, `str-cat`/low-level concat primitives, `substring`/`string-slice`, stdlib trim/replacement helpers when they build text, env/path split/join helpers | Return owned `String` storage allocated in the active arena. Results created inside a scoped arena cannot escape that arena. |
 | Borrowed string views | `substring-view`/`string-slice-view`, stdlib trim `*-view` helpers | Return `(& r str)` views tied to the input lifetime. Bounds traps match the owned-copy APIs. They do not copy bytes; a runtime helper may allocate fixed metadata for the view record, but it does not take ownership of or extend the backing bytes. |
 | Caller-provided fallback/result values | `stdlib/string.tl` `string-replace` when no match is found, `stdlib/io.tl` `read-file-or` fallback paths; check-only companion modules `stdlib/string_caller_result.tl` and `stdlib/io_caller_result.tl` | Preserve the caller-owned value instead of allocating. The companion modules expose source/typecheck-only lifetime-preserving aggregate shapes: branch-composed `StringReplaceResult` for replacement helpers and `ReadFileOrResult` for fallback reads. Ordinary runnable wrappers remain conservatively owned-compatible until reference-typed aggregate lowering and fuller branch lifetime unification land (#1722/#804). |
-| Mutable or binary byte storage | `ByteBuf`, `(& r bytes)`, `(&mut r bytes)`; dynamic `(Array u8)` compatibility code today | Not modeled as `str`. New binary APIs should use the explicit byte-buffer family once implemented; mutable byte views are exclusive borrowed `bytes`, not mutable strings. |
+| Mutable or binary byte storage | `ByteBuf`, `(& r bytes)`, `(&mut r bytes)`; dynamic `(Array u8)` compatibility code today | Not modeled as `str`. New binary APIs should use the explicit byte-buffer family; mutable byte views are exclusive borrowed `bytes`, not mutable strings. |
 
 #### ABI and lowering representation
 

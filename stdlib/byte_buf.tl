@@ -7,8 +7,9 @@
 ;#
 ;# Byte buffers are binary containers, not text. String conversion helpers are
 ;# explicit copy boundaries and preserve NUL bytes and bytes outside ASCII.
-;# Borrowed `bytes` views are specified separately and will live on this module
-;# when the referent surface is implemented.
+;# Borrowed `bytes` views expose fixed-length live ranges without copying; view
+;# constructors are tied to an owner witness so the borrow checker can keep the
+;# source alive.
 ;#
 ;# Usage: `(import "stdlib/byte_buf.tl")`
 ;#
@@ -28,6 +29,36 @@
 (defstruct ByteBuf
   (slots (Array u8))
   (len i64))
+
+(unsafe
+  (extern (tl_bytes_view_from_str_parts
+    [data : (Ptr u8)]
+    [len : i64]
+    [owner : (& source str)]) : (& source bytes)))
+
+(unsafe
+  (extern (tl_bytes_view_from_buf_parts
+    [data : (Ptr u8)]
+    [len : i64]
+    [owner : (& source ByteBuf)]) : (& source bytes)))
+
+(unsafe
+  (extern (tl_bytes_mut_view_from_buf_parts
+    [data : (MutPtr u8)]
+    [len : i64]
+    [owner : (&mut source ByteBuf)]) : (&mut source bytes)))
+
+(unsafe
+  (extern (tl_bytes_view_from_bytes_parts
+    [data : (Ptr u8)]
+    [len : i64]
+    [owner : (& source bytes)]) : (& source bytes)))
+
+(unsafe
+  (extern (tl_bytes_mut_view_from_bytes_parts
+    [data : (MutPtr u8)]
+    [len : i64]
+    [owner : (&mut source bytes)]) : (&mut source bytes)))
 
 ;: Number of live bytes in `buf`.
 (define (byte-buf-len [buf : ByteBuf]) : i64
@@ -71,6 +102,151 @@
         (if (> count remaining)
           (tl_oob_abort)
           unit))]))
+
+;: Number of bytes in an immutable borrowed byte view.
+(define (bytes-length [view : (& source bytes)]) : i64
+  (string-length view))
+
+;: Number of bytes in a mutable borrowed byte view.
+(define (bytes-mut-length [view : (&mut source bytes)]) : i64
+  (string-length view))
+
+;: Raw immutable data pointer for low-level stdlib internals.
+(define (bytes-data [view : (& source bytes)]) : (Ptr u8)
+  (unsafe
+    (string-data view)))
+
+;: Raw mutable data pointer for low-level stdlib internals.
+(define (bytes-mut-data [view : (&mut source bytes)]) : (MutPtr u8)
+  (unsafe
+    (ptr-cast (string-data view) : (MutPtr u8))))
+
+;: Read byte `index`, returning `fallback` when `index` is outside the view.
+(define (bytes-get [view : (& source bytes)] [index : i64] [fallback : u8]) : u8
+  (if (if (>= index 0)
+    (< index (bytes-length view))
+    false)
+    (unsafe
+      (ptr-read (ptr-offset (bytes-data view) index)))
+    fallback))
+
+;: Read byte `index` from a mutable view, returning `fallback` when out of range.
+(define (bytes-mut-get
+  [view : (&mut source bytes)]
+  [index : i64]
+  [fallback : u8]) : u8
+  (if (if (>= index 0)
+    (< index (bytes-mut-length view))
+    false)
+    (unsafe
+      (ptr-read (ptr-offset (ptr-cast (bytes-mut-data view) : (Ptr u8)) index)))
+    fallback))
+
+;: Read byte `index`, trapping when `index` is outside the view.
+(define (bytes-ref [view : (& source bytes)] [index : i64]) : u8
+  (begin
+    (byte-buf-check-range (bytes-length view) index 1)
+    (unsafe
+      (ptr-read (ptr-offset (bytes-data view) index)))))
+
+;: Read byte `index` from a mutable view, trapping when outside the view.
+(define (bytes-mut-ref [view : (&mut source bytes)] [index : i64]) : u8
+  (begin
+    (byte-buf-check-range (bytes-mut-length view) index 1)
+    (unsafe
+      (ptr-read (ptr-offset (ptr-cast (bytes-mut-data view) : (Ptr u8)) index)))))
+
+;: Overwrite byte `index` inside a mutable fixed-length view.
+(define (bytes-set! [view : (&mut source bytes)] [index : i64] [value : u8]) : unit
+  (begin
+    (byte-buf-check-range (bytes-mut-length view) index 1)
+    (unsafe
+      (ptr-write! (ptr-offset (bytes-mut-data view) index) value))))
+
+;: Convert a borrowed `str` view into an immutable borrowed byte view.
+(define (str-as-bytes [text : (& source str)]) : (& source bytes)
+  (unsafe
+    (tl_bytes_view_from_str_parts (string-data text) (string-length text) text)))
+
+;: Borrow a checked immutable sub-slice without copying.
+(define (bytes-slice-view [view : (& source bytes)] [start : i64] [count : i64]) : (&
+    source
+    bytes)
+  (begin
+    (byte-buf-check-range (bytes-length view) start count)
+    (unsafe
+      (tl_bytes_view_from_bytes_parts
+        (ptr-offset (bytes-data view) start)
+        count
+        view))))
+
+;: Borrow a checked mutable fixed-length sub-slice without copying.
+(define (bytes-mut-slice-view
+  [view : (&mut source bytes)]
+  [start : i64]
+  [count : i64]) : (&mut source bytes)
+  (begin
+    (byte-buf-check-range (bytes-mut-length view) start count)
+    (unsafe
+      (tl_bytes_mut_view_from_bytes_parts
+        (ptr-offset (bytes-mut-data view) start)
+        count
+        view))))
+
+;: Copy a checked borrowed byte range into a fresh `(Array u8)`.
+(define (bytes-copy-range [view : (& source bytes)] [start : i64] [count : i64]) : (Array
+    u8)
+  (begin
+    (byte-buf-check-range (bytes-length view) start count)
+    (let
+      [out : (Array u8) (make-array u8 count)]
+      [dst : (MutPtr u8)
+        (unsafe
+          (array-data out))]
+      (begin
+        (str-copy-bytes-into
+          (unsafe
+            (ptr-offset (bytes-data view) start))
+          dst
+          0
+          count)
+        out))))
+
+;: Copy all bytes in `view` into a fresh `(Array u8)`.
+(define (bytes-to-array [view : (& source bytes)]) : (Array u8)
+  (bytes-copy-range view 0 (bytes-length view)))
+
+;: Copy all bytes in `view` into a fresh `String`.
+(define (bytes-to-string [view : (& source bytes)]) : String
+  (let
+    [n : i64 (bytes-length view)]
+    (if (= n 0)
+      ""
+      (let
+        [out : (Array u8) (bytes-to-array view)]
+        [dst : (MutPtr u8)
+          (unsafe
+            (array-data out))]
+        (unsafe
+          (string-from-bytes (ptr-cast dst : (Ptr u8)) n))))))
+
+;: Borrow the live range of a `ByteBuf` as immutable bytes.
+(define (byte-buf-as-bytes [buf : (& source ByteBuf)]) : (& source bytes)
+  (unsafe
+    (tl_bytes_view_from_buf_parts
+      (ptr-cast (array-data (struct-get buf slots)) : (Ptr u8))
+      (struct-get buf len)
+      buf)))
+
+;: Borrow the live range of a `ByteBuf` as mutable fixed-length bytes.
+(define (byte-buf-as-mut-bytes [buf : (&mut source ByteBuf)]) : (&mut
+    source
+    bytes)
+  (unsafe
+    (tl_bytes_mut_view_from_buf_parts
+      (array-data (struct-get buf slots))
+      (struct-get buf len)
+      buf)))
 
 ;: Read live byte `index`, returning `fallback` when `index` is outside
 ;: `[0, len)`.
@@ -235,6 +411,34 @@
 (define (byte-buf-append-string [buf : ByteBuf] [src : String]) : ByteBuf
   (byte-buf-append-string-range buf src 0 (string-length src)))
 
+;: Append `count` bytes from a borrowed byte view, trapping on invalid ranges.
+(define (byte-buf-append-bytes-range
+  [buf : ByteBuf]
+  [src : (& source bytes)]
+  [start : i64]
+  [count : i64]) : ByteBuf
+  (begin
+    (byte-buf-check-range (bytes-length src) start count)
+    (let
+      [ready : ByteBuf (byte-buf-reserve buf count)]
+      [old-len : i64 (byte-buf-len ready)]
+      [dst : (MutPtr u8)
+        (unsafe
+          (array-data (struct-get ready slots)))]
+      (begin
+        (str-copy-bytes-into
+          (unsafe
+            (ptr-offset (bytes-data src) start))
+          dst
+          old-len
+          count)
+        (set! (struct-get ready len) (+ old-len count))
+        ready))))
+
+;: Append every byte from a borrowed byte view.
+(define (byte-buf-append-bytes [buf : ByteBuf] [src : (& source bytes)]) : ByteBuf
+  (byte-buf-append-bytes-range buf src 0 (bytes-length src)))
+
 ;: Copy `count` bytes from `src` starting at `start` into a new buffer.
 (define (byte-buf-from-array-range
   [src : (Array u8)]
@@ -253,6 +457,17 @@
 ;: Copy every byte from `src` into a new buffer.
 (define (byte-buf-from-string [src : String]) : ByteBuf
   (byte-buf-from-string-range src 0 (string-length src)))
+
+;: Copy `count` borrowed bytes into a new buffer.
+(define (byte-buf-from-bytes-range
+  [src : (& source bytes)]
+  [start : i64]
+  [count : i64]) : ByteBuf
+  (byte-buf-append-bytes-range (byte-buf-with-capacity count) src start count))
+
+;: Copy every borrowed byte into a new buffer.
+(define (byte-buf-from-bytes [src : (& source bytes)]) : ByteBuf
+  (byte-buf-from-bytes-range src 0 (bytes-length src)))
 
 ;: Copy a live byte range into a fresh `(Array u8)` snapshot.
 (define (byte-buf-copy-range [buf : ByteBuf] [start : i64] [count : i64]) : (Array
@@ -424,6 +639,77 @@
             [out : String (byte-buf-to-string buf)]
             [expected : String "hello"]
             (assert-string-eq (& out) (& expected) "to-string text"))))
+      (let
+        [text : String "abcdef"]
+        [view : (& text bytes) (str-as-bytes (& text))]
+        [middle : (& text bytes) (bytes-slice-view view 2 3)]
+        (begin
+          (assert-i64-eq (bytes-length view) 6 "bytes view len")
+          (byte-buf-test-assert-u8-eq (bytes-ref view 1) 98 "bytes ref")
+          (byte-buf-test-assert-u8-eq
+            (bytes-get view 99 (byte-buf-test-u8 77))
+            77
+            "bytes get fallback")
+          (assert-i64-eq (bytes-length middle) 3 "bytes sub-slice len")
+          (byte-buf-test-assert-u8-eq
+            (bytes-ref middle 0)
+            99
+            "bytes sub-slice first")
+          (let
+            [arr : (Array u8) (bytes-to-array middle)]
+            (begin
+              (assert-i64-eq (array-length arr) 3 "bytes to-array len")
+              (byte-buf-test-assert-u8-eq
+                (array-ref arr 2)
+                101
+                "bytes to-array last")))
+          (let
+            [copy : String (bytes-to-string middle)]
+            [expected : String "cde"]
+            (assert-string-eq (& copy) (& expected) "bytes to-string"))
+          (let
+            [buf : ByteBuf (byte-buf-from-bytes middle)]
+            [actual : String (byte-buf-to-string buf)]
+            [expected : String "cde"]
+            (assert-string-eq (& actual) (& expected) "byte-buf from bytes"))
+          (let
+            [buf : ByteBuf
+              (byte-buf-append-bytes (byte-buf-from-string "x") middle)]
+            [actual : String (byte-buf-to-string buf)]
+            [expected : String "xcde"]
+            (assert-string-eq (& actual) (& expected) "byte-buf append bytes"))))
+      (let
+        [buf : ByteBuf (byte-buf-from-string "view")]
+        [view : (& buf bytes) (byte-buf-as-bytes (& buf))]
+        (begin
+          (assert-i64-eq (bytes-length view) 4 "byte-buf view len")
+          (byte-buf-test-assert-u8-eq
+            (bytes-ref view 2)
+            101
+            "byte-buf view reads live data")))
+      (let
+        [buf : ByteBuf (byte-buf-from-string "abc")]
+        (begin
+          (let
+            [view : (&mut buf bytes) (byte-buf-as-mut-bytes (&mut buf))]
+            (begin
+              (assert-i64-eq (bytes-mut-length view) 3 "mutable bytes len")
+              (byte-buf-test-assert-u8-eq
+                (bytes-mut-ref view 0)
+                97
+                "mutable bytes read")
+              (bytes-set! view 1 (byte-buf-test-u8 90))
+              (let
+                [tail : (&mut buf bytes) (bytes-mut-slice-view view 2 1)]
+                (bytes-set! tail 0 (byte-buf-test-u8 81)))))
+          (byte-buf-test-assert-u8-eq
+            (byte-buf-ref buf 1)
+            90
+            "mutable bytes writes through")
+          (byte-buf-test-assert-u8-eq
+            (byte-buf-ref buf 2)
+            81
+            "mutable bytes sub-slice writes through")))
       (let
         [binary : ByteBuf
           (byte-buf-push

@@ -22219,28 +22219,30 @@
     false))
 
 (define (tc-comptime-purity-ctfe-builtin? [name : String]) : bool
-  (cond
-    [(string-eq name "size-of") true]
-    [(string-eq name "align-of") true]
-    [(string-eq name "offset-of") true]
-    [(ctfe-reflection-query-name? name) true]
-    [(string-eq name "string-eq") true]
-    [(string-eq name "string=?") true]
-    [(string-eq name "string-append") true]
-    [(string-eq name "string-concat") true]
-    [(string-eq name "string-length") true]
-    [(string-eq name "length") true]
-    [(string-eq name "int->string") true]
-    [(string-eq name "expr-bool") true]
-    [(string-eq name "expr-int") true]
-    [(string-eq name "expr-var") true]
-    [(string-eq name "expr-splice") true]
-    [(string-eq name "expr-if") true]
-    [(ctfe-expr-inspector-name? name) true]
-    [(ctfe-expr-list-inspector-name? name) true]
-    [(ctfe-expr-clause-inspector-name? name) true]
-    [(ctfe-expr-clause-list-inspector-name? name) true]
-    [else false]))
+  (let
+    [call-name : String (ctfe-comptime-helper-call-name name)]
+    (cond
+      [(string-eq name "size-of") true]
+      [(string-eq name "align-of") true]
+      [(string-eq name "offset-of") true]
+      [(ctfe-reflection-query-name? name) true]
+      [(string-eq name "string-eq") true]
+      [(string-eq name "string=?") true]
+      [(string-eq name "string-append") true]
+      [(string-eq name "string-concat") true]
+      [(string-eq name "string-length") true]
+      [(string-eq name "length") true]
+      [(string-eq name "int->string") true]
+      [(string-eq call-name "expr-bool") true]
+      [(string-eq call-name "expr-int") true]
+      [(string-eq call-name "expr-var") true]
+      [(string-eq call-name "expr-splice") true]
+      [(string-eq call-name "expr-if") true]
+      [(ctfe-expr-inspector-name? call-name) true]
+      [(ctfe-expr-list-inspector-name? call-name) true]
+      [(ctfe-expr-clause-inspector-name? call-name) true]
+      [(ctfe-expr-clause-list-inspector-name? call-name) true]
+      [else false])))
 
 (define (tc-macro-param-list-add-bound-names
   [params : AstMacroParamList]

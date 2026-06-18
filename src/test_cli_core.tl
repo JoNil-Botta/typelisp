@@ -1272,6 +1272,21 @@
   [names : StringI64Map]) : StringI64Map
   (tltest-reach-mark-tests-from tests (- (array-length tests) 1) names))
 
+(define (tltest-reach-mark-export-items
+  [items : AstExportItemList]
+  [names : StringI64Map]) : StringI64Map
+  (match items
+    [(AstExportItemNil) names]
+    [(AstExportItemCons item rest)
+      (let
+        [rest : AstExportItemList (box-get rest)]
+        (match item
+          [(AstExportValue name)
+            (tltest-reach-mark-export-items
+              rest
+              (tltest-reach-mark-name names name))]
+          [_ (tltest-reach-mark-export-items rest names)]))]))
+
 (define (tltest-reach-mark-decl [decl : AstDecl] [names : StringI64Map]) : StringI64Map
   (match decl
     [(AstDeclDef name _ expr-box)
@@ -1300,6 +1315,7 @@
       (let
         [inner : AstDecl (box-get inner-box)]
         (tltest-reach-mark-decl inner names))]
+    [(AstDeclExport items) (tltest-reach-mark-export-items items names)]
     [_ names]))
 
 (define (tltest-reach-mark-decls-from
@@ -1611,6 +1627,59 @@
   (if (tltest-import-alias-preserved-self-test?)
     unit
     (panic "test CLI inline harness dropped import alias")))
+
+(define (tltest-exported-value-preserved-self-test?) : bool
+  (let
+    [helper-name : String "__tl_exported_test_helper"]
+    [helper-decl : AstDecl
+      (ast-decl-def-fn
+        helper-name
+        AstParamNil
+        (AstTyUnit)
+        (ast-node-push (AstExprLiteral (AstLitUnit))))]
+    [export-decl : AstDecl
+      (AstDeclExport
+        (ast-export-item-cons (AstExportValue helper-name) AstExportItemNil))]
+    [span : AstSourceSpan (AstSourceSpan 7 1 7 1)]
+    [decls : AstDeclList
+      (ast-decl-cons
+        helper-decl
+        (ast-decl-cons
+          export-decl
+          (ast-decl-cons
+            (ast-decl-test
+              "exported-helper-not-called"
+              (ast-node-push (AstExprLiteral (AstLitUnit)))
+              span)
+            AstDeclNil)))]
+    [paths : AstDeclPathList
+      (ast-decl-path-cons
+        "exports.tl"
+        (ast-decl-path-cons
+          "exports.tl"
+          (ast-decl-path-cons "exports.tl" AstDeclPathNil)))]
+    (match (tltest-build-harness "exports.tl" decls paths)
+      [(InlineHarness program _ count)
+        (match program
+          [(AstProgram harness-decls-box)
+            (match (box-get harness-decls-box)
+              [(AstDeclCons first rest0)
+                (match (box-get rest0)
+                  [(AstDeclCons second _)
+                    (and
+                      (= count 1)
+                      (string-eq (tltest-decl-name first) helper-name)
+                      (match second
+                        [(AstDeclExport _) true]
+                        [_ false]))]
+                  [_ false])]
+              [_ false])])])))
+
+(test
+  test-cli-inline-harness-preserves-exported-values
+  (if (tltest-exported-value-preserved-self-test?)
+    unit
+    (panic "test CLI inline harness pruned exported value")))
 
 (define (tltest-macro-quasiquote-deps-self-test?) : bool
   (let

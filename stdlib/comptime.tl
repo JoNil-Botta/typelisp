@@ -4,7 +4,9 @@
 ;# types described by SPEC 3.7.2.2. The current compiler still stores macro
 ;# syntax internally as `AstTyExpr` / `CtfeExpr`; it verifies these declarations
 ;# and treats the syntax types as aliases for that internal representation while
-;# the CTFE value migration lands.
+;# the CTFE value migration lands. The helper functions below are stdlib-owned
+;# signatures for the same compile-time-only bridge; macro CTFE intercepts calls
+;# to them before their placeholder bodies are evaluated.
 (module stdlib.comptime)
 
 ;: Syntax value passed to and returned from expression macros.
@@ -119,6 +121,102 @@
     (TypeInfoEnum String TypeVariantList)
     (TypeInfoOpaque String)))
 
+;: Build a bool literal expression during macro CTFE.
+(define (expr-bool [value : bool]) : Expr
+  (expr-bool value))
+
+;: Build an integer literal expression during macro CTFE.
+(define (expr-int [value : i64]) : Expr
+  (expr-int value))
+
+;: Build a variable-reference expression during macro CTFE.
+(define (expr-var [name : String]) : Expr
+  (expr-var name))
+
+;: Mark an expression for unquote-splicing during macro CTFE.
+(define (expr-splice [value : Expr]) : Expr
+  (expr-splice value))
+
+;: Build an if expression during macro CTFE.
+(define (expr-if [cond : Expr] [then-expr : Expr] [else-expr : Expr]) : Expr
+  (expr-if cond then-expr else-expr))
+
+;: Return true when an expression is a bool literal.
+(define (expr-bool? [value : Expr]) : bool
+  (expr-bool? value))
+
+;: Extract the bool literal payload from an expression.
+(define (expr-bool-value [value : Expr]) : bool
+  (expr-bool-value value))
+
+;: Return true when an expression is an if expression.
+(define (expr-if? [value : Expr]) : bool
+  (expr-if? value))
+
+;: Extract an if expression's condition.
+(define (expr-if-cond [value : Expr]) : Expr
+  (expr-if-cond value))
+
+;: Extract an if expression's then branch.
+(define (expr-if-then [value : Expr]) : Expr
+  (expr-if-then value))
+
+;: Extract an if expression's else branch.
+(define (expr-if-else [value : Expr]) : Expr
+  (expr-if-else value))
+
+;: Return true when an expression list has no items.
+(define (expr-list-empty? [items : ExprList]) : bool
+  (expr-list-empty? items))
+
+;: Return the number of items in an expression list.
+(define (expr-list-length [items : ExprList]) : i64
+  (expr-list-length items))
+
+;: Return the first item in a non-empty expression list.
+(define (expr-list-head [items : ExprList]) : Expr
+  (expr-list-head items))
+
+;: Return all but the first item from a non-empty expression list.
+(define (expr-list-tail [items : ExprList]) : ExprList
+  (expr-list-tail items))
+
+;: Return an expression list item by index.
+(define (expr-list-nth [items : ExprList] [index : i64]) : Expr
+  (expr-list-nth items index))
+
+;: Return the first expression from a clause.
+(define (expr-clause-first [clause : ExprClause]) : Expr
+  (expr-clause-first clause))
+
+;: Return the second expression from a clause.
+(define (expr-clause-second [clause : ExprClause]) : Expr
+  (expr-clause-second clause))
+
+;: Return true when a clause list has no items.
+(define (expr-clause-list-empty? [items : ExprClauseList]) : bool
+  (expr-clause-list-empty? items))
+
+;: Return the number of clauses in a clause list.
+(define (expr-clause-list-length [items : ExprClauseList]) : i64
+  (expr-clause-list-length items))
+
+;: Return the first item in a non-empty clause list.
+(define (expr-clause-list-head [items : ExprClauseList]) : ExprClause
+  (expr-clause-list-head items))
+
+;: Return all but the first item from a non-empty clause list.
+(define (expr-clause-list-tail [items : ExprClauseList]) : ExprClauseList
+  (expr-clause-list-tail items))
+
+;: Return a clause list item by index.
+(define (expr-clause-list-nth [items : ExprClauseList] [index : i64]) : ExprClause
+  (expr-clause-list-nth items index))
+
+;: Convert clause first expressions into an expression list.
+(define (expr-clause-list->expr-list [items : ExprClauseList]) : ExprList
+  (expr-clause-list->expr-list items))
+
 (export
   (type Expr)
   (variant ExprBool)
@@ -187,4 +285,28 @@
   (variant TypeInfoTuple)
   (variant TypeInfoStruct)
   (variant TypeInfoEnum)
-  (variant TypeInfoOpaque))
+  (variant TypeInfoOpaque)
+  (value expr-bool)
+  (value expr-int)
+  (value expr-var)
+  (value expr-splice)
+  (value expr-if)
+  (value expr-bool?)
+  (value expr-bool-value)
+  (value expr-if?)
+  (value expr-if-cond)
+  (value expr-if-then)
+  (value expr-if-else)
+  (value expr-list-empty?)
+  (value expr-list-length)
+  (value expr-list-head)
+  (value expr-list-tail)
+  (value expr-list-nth)
+  (value expr-clause-first)
+  (value expr-clause-second)
+  (value expr-clause-list-empty?)
+  (value expr-clause-list-length)
+  (value expr-clause-list-head)
+  (value expr-clause-list-tail)
+  (value expr-clause-list-nth)
+  (value expr-clause-list->expr-list))

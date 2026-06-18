@@ -5663,9 +5663,14 @@
       "(define (main [xs : (Array u32)] [out : (Array u32)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (array-set! out i (spmd-broadcast (array-ref xs i) 0))) 0))")
     (compiler-typecheck-ok?
       "(define (main [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (spmd-broadcast (array-ref xs i) 0)))")
+    (compiler-typecheck-ok?
+      "(define (main [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit (spmd-scan sum ([i : i64 0 n] [prefix : i64 0]) (array-ref xs i) (array-set! out i (spmd-broadcast prefix 0))))")
     (compiler-typecheck-error-ok?
       "(define (main) : i64 (spmd-broadcast 1 0))"
-      "typecheck: spmd-broadcast is only valid inside a foreach body or spmd-reduce value expression")
+      "typecheck: spmd-broadcast is only valid inside a foreach body, spmd-reduce value expression, or spmd-scan body")
+    (compiler-typecheck-error-ok?
+      "(define (main [xs : (Array i64)] [n : i64]) : unit (spmd-scan sum ([i : i64 0 n] [prefix : i64 0]) (spmd-broadcast (array-ref xs i) 0) unit))"
+      "typecheck: spmd-broadcast is only valid inside a foreach body, spmd-reduce value expression, or spmd-scan body")
     (compiler-typecheck-error-ok?
       "(define (main [xs : (Array i64)] [out : (Array i64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (array-set! out i (spmd-broadcast (array-ref xs i) i))) 0))"
       "typecheck: spmd-broadcast lane must be uniform")

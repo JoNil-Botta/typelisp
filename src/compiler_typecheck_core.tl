@@ -6404,7 +6404,7 @@
     [(ErrTcUnit message) (ErrTcUnit message)]))
 
 (define (tc-spmd-broadcast-scope-message) : String
-  "typecheck: spmd-broadcast is only valid inside a foreach body or spmd-reduce value expression")
+  "typecheck: spmd-broadcast is only valid inside a foreach body, spmd-reduce value expression, or spmd-scan body")
 
 (define (tc-source-expr-list-spmd-broadcast-scope-ok
   [exprs : AstExprList]

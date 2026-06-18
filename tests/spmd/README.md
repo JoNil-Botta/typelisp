@@ -70,8 +70,8 @@ falling back to scalar code.
   i64/i32/f64 plus `all`/`any` bool reductions across empty, sub-lane,
   exact-lane, and tail lengths. Exit 42.
 - `../integration/spmd_scan_scalar.tl` - `spmd-scan` inclusive prefixes for
-  i64 sum, i32 max, and bool all/any across empty, sub-lane, exact-lane, and
-  tail lengths. Exit 42.
+  i64 sum/min/max, i32 sum/min/max, and bool all/any across empty, sub-lane,
+  exact-lane, and tail lengths. Exit 42.
 - `runtime_dispatch_select.tl` — one `defdispatch` binary whose variants share
   the same i64 SPMD checksum and encode the selected variant in the exit code.
   Scalar exits 42, AVX2 exits 106, and AVX-512 exits 170.

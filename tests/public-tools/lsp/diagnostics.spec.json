@@ -3,6 +3,7 @@
   "stderr_exact": "",
   "message_checks": [
     {"raw_contains": "textDocument/publishDiagnostics", "raw_contains": "parse_error.tl", "raw_contains": "E0100"},
-    {"raw_contains": "textDocument/publishDiagnostics", "raw_contains": "type_error.tl", "raw_contains": "E0200"}
+    {"raw_contains": "textDocument/publishDiagnostics", "raw_contains": "type_error.tl", "raw_contains": "E0200"},
+    {"raw_contains": "textDocument/publishDiagnostics", "raw_contains": "borrow_error.tl", "raw_contains": "relatedInformation", "raw_contains": "location", "raw_contains": "range", "raw_contains": "\"line\":7", "raw_contains": "\"character\":11", "raw_contains": "\"character\":12", "raw_contains": "remains live"}
   ]
 }

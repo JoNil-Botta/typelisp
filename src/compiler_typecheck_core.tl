@@ -23886,6 +23886,10 @@
   (TcMoveNoIndex)
   (TcMoveSomeIndex i64))
 
+(defenum TcMoveConflict
+  (TcNoMoveConflict)
+  (TcSomeMoveConflict String i64))
+
 (define (tc-moved-empty) : TcMovedSet
   (TcMovedSet (string-i64-map-with-capacity 8)))
 
@@ -23906,16 +23910,31 @@
 (define (tc-moved-contains? [set : TcMovedSet] [name : String]) : bool
   (string-i64-map-contains? (tc-moved-map set) name))
 
+(define (tc-moved-no-origin-id) : i64
+  -1)
+
 (define (tc-moved-add [set : TcMovedSet] [name : String]) : TcMovedSet
-  (TcMovedSet (string-i64-map-put (tc-moved-map set) name 1)))
+  (TcMovedSet
+    (string-i64-map-put (tc-moved-map set) name (tc-moved-no-origin-id))))
 
 (define (tc-moved-add-value [set : TcMovedSet] [name : String] [value : i64]) : TcMovedSet
   (TcMovedSet (string-i64-map-put (tc-moved-map set) name value)))
+
+(define (tc-moved-add-origin
+  [set : TcMovedSet]
+  [name : String]
+  [origin : AstExpr]) : TcMovedSet
+  (tc-moved-add-value set name (ast-node-push origin)))
 
 (define (tc-moved-remove [set : TcMovedSet] [name : String]) : TcMovedSet
   (match (string-i64-map-remove (tc-moved-map set) name)
     [(StringI64MapRemoveOk map) (TcMovedSet map)]
     [(StringI64MapRemoveMissing map) (TcMovedSet map)]))
+
+(define (tc-moved-conflict [set : TcMovedSet] [name : String]) : TcMoveConflict
+  (match (string-i64-map-get (tc-moved-map set) name)
+    [(StringI64MapFound origin-id) (TcSomeMoveConflict name origin-id)]
+    [(StringI64MapMissing) TcNoMoveConflict]))
 
 (define (tc-move-use-message [name : String]) : String
   (string-append (string-append "typecheck: use of moved value `" name) "`"))
@@ -23930,6 +23949,9 @@
     (string-append "typecheck: cleanup owner `" name)
     "` moved before with scope exit"))
 
+(define (tc-move-help) : String
+  "clone the owner before moving it again, reinitialize the moved place before reuse, or keep the owner move inside a narrower scope")
+
 (define (tc-moved-path-key [path : String]) : String
   (string-append "\npath:" path))
 
@@ -23941,6 +23963,93 @@
 
 (define (tc-moved-path-key? [key : String]) : bool
   (tc-move-string-prefix-at? key (tc-moved-path-key "") 0))
+
+(define (tc-moved-conflict-display-path [key : String]) : String
+  (let
+    [path-prefix : String (tc-moved-path-key "")]
+    [partial-prefix : String (tc-moved-partial-key "")]
+    [key-len : i64 (string-length key)]
+    (if (tc-move-string-prefix-at? key path-prefix 0)
+      (substring
+        key
+        (string-length path-prefix)
+        (- key-len (string-length path-prefix)))
+      (if (tc-move-string-prefix-at? key partial-prefix 0)
+        (substring
+          key
+          (string-length partial-prefix)
+          (- key-len (string-length partial-prefix)))
+        key))))
+
+(define (tc-move-origin-label [key : String]) : String
+  (str-cat "move of `" (tc-moved-conflict-display-path key) "` happened here"))
+
+(define (tc-move-loop-carried-origin-label [name : String]) : String
+  (str-cat "owner value `" name "` is loop-carried into a repeated body"))
+
+(define (tc-move-origin-span [origin-id : i64]) : TcMaybeAstSourceSpan
+  (if (= origin-id (tc-moved-no-origin-id))
+    TcNoAstSourceSpan
+    (tc-expr-maybe-span (ast-node-get origin-id))))
+
+(define (tc-move-rich-origin-message
+  [primary : AstExpr]
+  [message : String]
+  [origin-id : i64]
+  [origin-label : String]) : String
+  (match (tc-expr-maybe-span primary)
+    [(TcSomeAstSourceSpan primary-span)
+      (match (tc-move-origin-span origin-id)
+        [(TcSomeAstSourceSpan origin-span)
+          (tc-rich-error-one-secondary
+            primary-span
+            message
+            (tc-move-help)
+            origin-span
+            origin-label)]
+        [(TcNoAstSourceSpan)
+          (tc-rich-error-one-secondary
+            primary-span
+            message
+            (tc-move-help)
+            primary-span
+            origin-label)])]
+    [(TcNoAstSourceSpan)
+      (match (tc-move-origin-span origin-id)
+        [(TcSomeAstSourceSpan origin-span)
+          (tc-rich-error-one-secondary
+            origin-span
+            message
+            (tc-move-help)
+            origin-span
+            origin-label)]
+        [(TcNoAstSourceSpan) message])]))
+
+(define (tc-move-rich-conflict-message
+  [conflict : TcMoveConflict]
+  [fallback-key : String]
+  [primary : AstExpr]
+  [message : String]) : String
+  (match conflict
+    [(TcSomeMoveConflict key origin-id)
+      (tc-move-rich-origin-message
+        primary
+        message
+        origin-id
+        (tc-move-origin-label key))]
+    [TcNoMoveConflict
+      (tc-move-rich-origin-message
+        primary
+        message
+        (tc-moved-no-origin-id)
+        (tc-move-origin-label fallback-key))]))
+
+(define (tc-move-rich-loop-carried-message [name : String] [primary : AstExpr]) : String
+  (tc-move-rich-origin-message
+    primary
+    (tc-move-loop-carried-message name)
+    (tc-moved-no-origin-id)
+    (tc-move-loop-carried-origin-label name)))
 
 (define (tc-moved-path-key-conflicts? [key : String] [path : String]) : bool
   (let
@@ -23957,13 +24066,13 @@
 (define (tc-moved-path-conflict-loop
   [map : StringI64Map]
   [path : String]
-  [index : i64]) : bool
+  [index : i64]) : TcMoveConflict
   (if (>= index (string-i64-map-capacity map))
-    false
+    TcNoMoveConflict
     (match (string-i64-map-entry-at map index)
-      [(StringI64MapEntrySome key _)
+      [(StringI64MapEntrySome key value)
         (if (tc-moved-path-key-conflicts? key path)
-          true
+          (TcSomeMoveConflict key value)
           (tc-moved-path-conflict-loop
             map
             path
@@ -23974,11 +24083,16 @@
           path
           (string-i64-map-next-occupied map (+ index 1)))])))
 
-(define (tc-moved-path-conflict? [set : TcMovedSet] [path : String]) : bool
+(define (tc-moved-path-conflict [set : TcMovedSet] [path : String]) : TcMoveConflict
   (tc-moved-path-conflict-loop
     (tc-moved-map set)
     path
     (string-i64-map-next-occupied (tc-moved-map set) 0)))
+
+(define (tc-moved-path-conflict? [set : TcMovedSet] [path : String]) : bool
+  (match (tc-moved-path-conflict set path)
+    [(TcSomeMoveConflict _ _) true]
+    [TcNoMoveConflict false]))
 
 (define (tc-move-string-prefix-at-loop
   [text : String]
@@ -24068,6 +24182,42 @@
     (tc-moved-path-key (string-append root "."))
     (string-i64-map-next-occupied (tc-moved-map set) 0)))
 
+(define (tc-moved-root-path-conflict-loop
+  [map : StringI64Map]
+  [prefix : String]
+  [index : i64]) : TcMoveConflict
+  (if (>= index (string-i64-map-capacity map))
+    TcNoMoveConflict
+    (match (string-i64-map-entry-at map index)
+      [(StringI64MapEntrySome key value)
+        (if (and
+          (tc-moved-path-key? key)
+          (tc-move-string-prefix-at? key prefix 0))
+          (TcSomeMoveConflict key value)
+          (tc-moved-root-path-conflict-loop
+            map
+            prefix
+            (string-i64-map-next-occupied map (+ index 1))))]
+      [(StringI64MapEntryNone)
+        (tc-moved-root-path-conflict-loop
+          map
+          prefix
+          (string-i64-map-next-occupied map (+ index 1)))])))
+
+(define (tc-moved-root-path-conflict [set : TcMovedSet] [root : String]) : TcMoveConflict
+  (tc-moved-root-path-conflict-loop
+    (tc-moved-map set)
+    (tc-moved-path-key (string-append root "."))
+    (string-i64-map-next-occupied (tc-moved-map set) 0)))
+
+(define (tc-moved-root-conflict [set : TcMovedSet] [root : String]) : TcMoveConflict
+  (match (tc-moved-conflict set root)
+    [(TcSomeMoveConflict key origin-id) (TcSomeMoveConflict key origin-id)]
+    [TcNoMoveConflict
+      (match (tc-moved-root-path-conflict set root)
+        [(TcSomeMoveConflict key origin-id) (TcSomeMoveConflict key origin-id)]
+        [TcNoMoveConflict (tc-moved-conflict set (tc-moved-partial-key root))])]))
+
 (define (tc-moved-remove-exact-path
   [set : TcMovedSet]
   [root : String]
@@ -24085,14 +24235,16 @@
   (if (>= index (string-i64-map-capacity a))
     out
     (match (string-i64-map-entry-at a index)
-      [(StringI64MapEntrySome key _)
+      [(StringI64MapEntrySome key value)
         (tc-moved-union-loop
           a
           (string-i64-map-next-occupied a (+ index 1))
-          (tc-moved-add out key))]
+          (tc-moved-add-value out key value))]
       [(StringI64MapEntryNone)
         (tc-moved-union-loop a (string-i64-map-next-occupied a (+ index 1)) out)])))
 
+;; Union keeps the left input's value for duplicate facts. Branch merging
+;; therefore reports the origin from the first/left arm deterministically.
 (define (tc-moved-union [a : TcMovedSet] [b : TcMovedSet]) : TcMovedSet
   (tc-moved-union-loop
     (tc-moved-map a)
@@ -24399,10 +24551,14 @@
 (define (tc-moved-add-projection-path
   [moved : TcMovedSet]
   [root : String]
-  [path : String]) : TcMovedSet
-  (tc-moved-add
-    (tc-moved-add moved (tc-moved-path-key path))
-    (tc-moved-partial-key root)))
+  [path : String]
+  [origin : AstExpr]) : TcMovedSet
+  (let
+    [origin-id : i64 (ast-node-push origin)]
+    (tc-moved-add-value
+      (tc-moved-add-value moved (tc-moved-path-key path) origin-id)
+      (tc-moved-partial-key root)
+      origin-id)))
 
 (define (tc-move-box-projection? [expr : AstExpr]) : bool
   (match expr
@@ -24512,10 +24668,15 @@
     [(TcSomeString v)
       (if (and (tc-moved-contains? locals v) (tc-move-var-move-only? env v))
         (if (tc-moved-partial? moved v)
-          (ErrTcMove (tc-move-use-message v))
+          (ErrTcMove
+            (tc-move-rich-conflict-message
+              (tc-moved-root-conflict moved v)
+              v
+              init
+              (tc-move-use-message v)))
           (if (tc-moved-contains? loop-carried v)
-            (ErrTcMove (tc-move-loop-carried-message v))
-            (OkTcMove (tc-moved-add moved v))))
+            (ErrTcMove (tc-move-rich-loop-carried-message v init))
+            (OkTcMove (tc-moved-add-origin moved v init))))
         (OkTcMove moved))]
     [(TcNoString)
       (match (tc-expr ctx env init)
@@ -24530,10 +24691,21 @@
                     (match (tc-move-root-projection-var init)
                       [(TcSomeString root)
                         (if (tc-moved-contains? locals root)
-                          (if (tc-moved-path-conflict? moved path)
-                            (ErrTcMove (tc-move-use-message path))
-                            (OkTcMove
-                              (tc-moved-add-projection-path moved root path)))
+                          (match (tc-moved-path-conflict moved path)
+                            [(TcSomeMoveConflict key origin-id)
+                              (ErrTcMove
+                                (tc-move-rich-conflict-message
+                                  (TcSomeMoveConflict key origin-id)
+                                  (tc-moved-path-key path)
+                                  init
+                                  (tc-move-use-message path)))]
+                            [TcNoMoveConflict
+                              (OkTcMove
+                                (tc-moved-add-projection-path
+                                  moved
+                                  root
+                                  path
+                                  init))])
                           (OkTcMove moved))]
                       [(TcNoString) (OkTcMove moved)])]
                   [(TcNoString)
@@ -24543,10 +24715,16 @@
                         [(TcSomeString root)
                           (if (tc-moved-contains? locals root)
                             (if (tc-moved-partial? moved root)
-                              (ErrTcMove (tc-move-use-message root))
+                              (ErrTcMove
+                                (tc-move-rich-conflict-message
+                                  (tc-moved-root-conflict moved root)
+                                  root
+                                  init
+                                  (tc-move-use-message root)))
                               (if (tc-moved-contains? loop-carried root)
-                                (ErrTcMove (tc-move-loop-carried-message root))
-                                (OkTcMove (tc-moved-add moved root))))
+                                (ErrTcMove
+                                  (tc-move-rich-loop-carried-message root init))
+                                (OkTcMove (tc-moved-add-origin moved root init))))
                             (OkTcMove moved))]
                         [(TcNoString) (OkTcMove moved)]))])))
             (OkTcMove moved))]
@@ -24570,9 +24748,17 @@
             (match (tc-move-root-projection-var expr)
               [(TcSomeString root)
                 (if (tc-moved-contains? locals root)
-                  (if (tc-moved-path-conflict? moved path)
-                    (ErrTcMove (tc-move-use-message path))
-                    (OkTcMove (tc-moved-add-projection-path moved root path)))
+                  (match (tc-moved-path-conflict moved path)
+                    [(TcSomeMoveConflict key origin-id)
+                      (ErrTcMove
+                        (tc-move-rich-conflict-message
+                          (TcSomeMoveConflict key origin-id)
+                          (tc-moved-path-key path)
+                          expr
+                          (tc-move-use-message path)))]
+                    [TcNoMoveConflict
+                      (OkTcMove
+                        (tc-moved-add-projection-path moved root path expr))])
                   (OkTcMove moved))]
               [(TcNoString) (OkTcMove moved)])]
           [(TcNoString)
@@ -24582,10 +24768,16 @@
                 [(TcSomeString root)
                   (if (tc-moved-contains? locals root)
                     (if (tc-moved-partial? moved root)
-                      (ErrTcMove (tc-move-use-message root))
+                      (ErrTcMove
+                        (tc-move-rich-conflict-message
+                          (tc-moved-root-conflict moved root)
+                          root
+                          expr
+                          (tc-move-use-message root)))
                       (if (tc-moved-contains? loop-carried root)
-                        (ErrTcMove (tc-move-loop-carried-message root))
-                        (OkTcMove (tc-moved-add moved root))))
+                        (ErrTcMove
+                          (tc-move-rich-loop-carried-message root expr))
+                        (OkTcMove (tc-moved-add-origin moved root expr))))
                     (OkTcMove moved))]
                 [(TcNoString) (OkTcMove moved)]))])))
     (OkTcMove moved)))
@@ -24635,7 +24827,7 @@
       (if (and
         (tc-moved-contains? locals v)
         (tc-type-consuming-match-scrutinee-now? ctx scrut-ty))
-        (tc-moved-add moved v)
+        (tc-moved-add-origin moved v expr)
         moved)]
     [(TcNoString) moved]))
 
@@ -24721,16 +24913,21 @@
                   (if (or
                     (tc-moved-contains? moved name)
                     (tc-moved-partial? moved name))
-                    (ErrTcMove (tc-move-use-message name))
+                    (ErrTcMove
+                      (tc-move-rich-conflict-message
+                        (tc-moved-root-conflict moved name)
+                        name
+                        body
+                        (tc-move-use-message name)))
                     (if (tc-moved-contains? loop-carried name)
-                      (ErrTcMove (tc-move-loop-carried-message name))
+                      (ErrTcMove (tc-move-rich-loop-carried-message name body))
                       (tc-move-check-lambda-owner-captures-scan
                         ctx
                         root
                         rest-env
                         locals
                         loop-carried
-                        (tc-moved-add moved name)
+                        (tc-moved-add-origin moved name body)
                         bound
                         (tc-string-list-add seen name)
                         body)))
@@ -25100,13 +25297,19 @@
 
 (define (tc-move-check-cleanup-owner-exit
   [moved : TcMovedSet]
-  [roots : TcStringList]) : TcMoveResult
+  [roots : TcStringList]
+  [scope : AstExpr]) : TcMoveResult
   (match roots
     [(TcStringNil) (OkTcMove moved)]
     [(TcStringCons name rest)
       (if (or (tc-moved-contains? moved name) (tc-moved-partial? moved name))
-        (ErrTcMove (tc-move-cleanup-owner-exit-message name))
-        (tc-move-check-cleanup-owner-exit moved (box-get rest)))]))
+        (ErrTcMove
+          (tc-move-rich-conflict-message
+            (tc-moved-root-conflict moved name)
+            name
+            scope
+            (tc-move-cleanup-owner-exit-message name)))
+        (tc-move-check-cleanup-owner-exit moved (box-get rest) scope))]))
 
 (define (tc-move-add-bound-names [locals : TcMovedSet] [names : TcStringList]) : TcMovedSet
   (match names
@@ -25229,7 +25432,12 @@
                 (ast-node-get virtual-id))]
             [(ErrTcExprId message) (ErrTcMove message)])
           (if (tc-moved-contains? moved name-text)
-            (ErrTcMove (tc-move-use-message name-text))
+            (ErrTcMove
+              (tc-move-rich-conflict-message
+                (tc-moved-conflict moved name-text)
+                name-text
+                expr
+                (tc-move-use-message name-text)))
             (OkTcMove moved))))]
     [(AstExprBinary _ left-box right-box)
       (let
@@ -25377,7 +25585,12 @@
             (match (tc-move-tuple-element-path expr)
               [(TcSomeString path)
                 (if (tc-moved-contains? moved1 (tc-moved-path-key path))
-                  (ErrTcMove (tc-move-use-message path))
+                  (ErrTcMove
+                    (tc-move-rich-conflict-message
+                      (tc-moved-conflict moved1 (tc-moved-path-key path))
+                      (tc-moved-path-key path)
+                      expr
+                      (tc-move-use-message path)))
                   (OkTcMove moved1))]
               [(TcNoString) (OkTcMove moved1)])]
           [(ErrTcMove message) (ErrTcMove message)]))]
@@ -25409,7 +25622,12 @@
                 (match (tc-move-array-element-path expr)
                   [(TcSomeString path)
                     (if (tc-moved-contains? moved2 (tc-moved-path-key path))
-                      (ErrTcMove (tc-move-use-message path))
+                      (ErrTcMove
+                        (tc-move-rich-conflict-message
+                          (tc-moved-conflict moved2 (tc-moved-path-key path))
+                          (tc-moved-path-key path)
+                          expr
+                          (tc-move-use-message path)))
                       (OkTcMove moved2))]
                   [(TcNoString) (OkTcMove moved2)])]
               [(ErrTcMove message) (ErrTcMove message)])]
@@ -25616,7 +25834,12 @@
             (match (tc-move-struct-field-path expr)
               [(TcSomeString path)
                 (if (tc-moved-contains? moved1 (tc-moved-path-key path))
-                  (ErrTcMove (tc-move-use-message path))
+                  (ErrTcMove
+                    (tc-move-rich-conflict-message
+                      (tc-moved-conflict moved1 (tc-moved-path-key path))
+                      (tc-moved-path-key path)
+                      expr
+                      (tc-move-use-message path)))
                   (OkTcMove moved1))]
               [(TcNoString) (OkTcMove moved1)])]
           [(ErrTcMove message) (ErrTcMove message)]))]
@@ -25654,7 +25877,8 @@
             body-loop
             moved1
             exprs)
-            [(OkTcMove moved2) (tc-move-check-cleanup-owner-exit moved2 roots)]
+            [(OkTcMove moved2)
+              (tc-move-check-cleanup-owner-exit moved2 roots expr)]
             [(ErrTcMove message) (ErrTcMove message)])]
         [(ErrTcMoveResourceBindings message) (ErrTcMove message)])]
     [(AstExprBox inner-box)
@@ -25739,7 +25963,12 @@
         (tc-move-check-expr ctx env locals loop-carried moved inner))]
     [(AstExprPtrAddrOf name)
       (if (tc-moved-contains? moved (intern-str name))
-        (ErrTcMove (tc-move-use-message (intern-str name)))
+        (ErrTcMove
+          (tc-move-rich-conflict-message
+            (tc-moved-conflict moved (intern-str name))
+            (intern-str name)
+            expr
+            (tc-move-use-message (intern-str name))))
         (OkTcMove moved))]
     [(AstExprPtrRead inner-box)
       (let

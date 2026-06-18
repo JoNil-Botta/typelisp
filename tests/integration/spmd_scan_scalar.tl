@@ -84,13 +84,10 @@
       (scan-max-i32 xs out 5)
       (and
         (= (array-ref out 0) (cast (- 0 3) : i32))
-        (and
-          (= (array-ref out 1) (cast 4 : i32))
-          (and
-            (= (array-ref out 2) (cast 4 : i32))
-            (and
-              (= (array-ref out 3) (cast 9 : i32))
-              (= (array-ref out 4) (cast 9 : i32)))))))))
+        (= (array-ref out 1) (cast 4 : i32))
+        (= (array-ref out 2) (cast 4 : i32))
+        (= (array-ref out 3) (cast 9 : i32))
+        (= (array-ref out 4) (cast 9 : i32))))))
 
 (define (case-bool-scans) : bool
   (let
@@ -105,17 +102,13 @@
       (scan-any-bool any-in any-out 4)
       (and
         (array-ref all-out 0)
-        (and
-          (array-ref all-out 1)
-          (and
-            (not (array-ref all-out 2))
-            (and
-              (not (array-ref all-out 3))
-              (and
-                (not (array-ref any-out 0))
-                (and
-                  (not (array-ref any-out 1))
-                  (and (array-ref any-out 2) (array-ref any-out 3)))))))))))
+        (array-ref all-out 1)
+        (not (array-ref all-out 2))
+        (not (array-ref all-out 3))
+        (not (array-ref any-out 0))
+        (not (array-ref any-out 1))
+        (array-ref any-out 2)
+        (array-ref any-out 3)))))
 
 (define (case-empty-range) : bool
   (let
@@ -169,7 +162,8 @@
           (set! prefix 0)))
       (and
         (= (array-ref out 0) 1)
-        (and (= (array-ref out 1) 3) (= (array-ref out 2) 6))))))
+        (= (array-ref out 1) 3)
+        (= (array-ref out 2) 6)))))
 
 (define (main) : i64
   (cond

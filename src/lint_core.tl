@@ -144,6 +144,15 @@
 (define (lint-rule-unused-variable-suggestion) : String
   "remove the binding or prefix an intentionally unused name with _")
 
+(define (lint-rule-unused-unsafe-id) : String
+  "unused-unsafe")
+
+(define (lint-rule-unused-unsafe-message) : String
+  "unused unsafe block: body does not require unsafe context")
+
+(define (lint-rule-unused-unsafe-suggestion) : String
+  "remove the unsafe wrapper")
+
 ;: Metadata for one lint rule. Rule id is stable public API for suppressions;
 ;: message is the rendered finding text; suggestion is structured helper text
 ;: that drivers or tooling can render separately from the message.
@@ -239,6 +248,12 @@
     (lint-rule-unused-variable-message)
     (lint-rule-unused-variable-suggestion)))
 
+(define (lint-rule-unused-unsafe) : LintRule
+  (LintRule
+    (lint-rule-unused-unsafe-id)
+    (lint-rule-unused-unsafe-message)
+    (lint-rule-unused-unsafe-suggestion)))
+
 (define (lint-rule-cons [rule : LintRule] [rest : LintRuleList]) : LintRuleList
   (LintRuleCons rule (box rest)))
 
@@ -271,7 +286,9 @@
                           (lint-rule-unused-assignment)
                           (lint-rule-cons
                             (lint-rule-unused-variable)
-                            LintRuleNil))))))))))))))
+                            (lint-rule-cons
+                              (lint-rule-unused-unsafe)
+                              LintRuleNil)))))))))))))))
 
 (define (lint-rule-find-in [rules : LintRuleList] [rule-id : String]) : LintMaybeRule
   (match rules
@@ -565,6 +582,13 @@
   (LintFinding
     (string-append "unused variable: " (string-append name " is never used"))
     (lint-rule-unused-variable-id)
+    0
+    span))
+
+(define (lint-unused-unsafe-finding [span : AstSourceSpan]) : LintFinding
+  (LintFinding
+    (lint-rule-message (lint-rule-unused-unsafe-id))
+    (lint-rule-unused-unsafe-id)
     0
     span))
 
@@ -5452,6 +5476,16 @@
         "unused variable: parameter or local binding is never used")
         unit
         (panic "lint: unused-variable message should be registered"))
+      (if (string-eq
+        (lint-rule-suggestion (lint-rule-unused-unsafe-id))
+        "remove the unsafe wrapper")
+        unit
+        (panic "lint: unused-unsafe suggestion should be registered"))
+      (if (string-eq
+        (lint-rule-message (lint-rule-unused-unsafe-id))
+        "unused unsafe block: body does not require unsafe context")
+        unit
+        (panic "lint: unused-unsafe message should be registered"))
       (if (string-eq (lint-rule-suggestion "unknown-rule") "")
         unit
         (panic "lint: unknown rule should have no suggestion"))

@@ -2678,6 +2678,196 @@
     [(TcTypeCache _ _ _ _ _ _ _ rest _) (tc-in-unsafe-scan? (box-get rest))]
     [_ (tc-in-unsafe-scan? env)]))
 
+(define tc-unused-unsafe-tracking-enabled : bool
+  false)
+(define tc-unused-unsafe-current-block : i64
+  -1)
+(define tc-unused-unsafe-current-path : String
+  "")
+(define tc-unused-unsafe-block-spans : (Array AstSourceSpan)
+  (make-array AstSourceSpan 128))
+(define tc-unused-unsafe-block-paths : (Array String)
+  (make-array String 128))
+(define tc-unused-unsafe-block-used : (Array bool)
+  (make-array bool 128))
+(define tc-unused-unsafe-block-len : i64
+  0)
+
+(define (tc-unused-unsafe-no-span) : AstSourceSpan
+  (AstSourceSpan 0 0 0 0))
+
+(define (tc-unused-unsafe-tracking-reset!) : unit
+  (begin
+    (set! tc-unused-unsafe-current-block -1)
+    (set! tc-unused-unsafe-current-path "")
+    (set! tc-unused-unsafe-block-len 0)
+    (set! tc-unused-unsafe-tracking-enabled true)))
+
+(define (tc-unused-unsafe-tracking-disable!) : unit
+  (begin
+    (set! tc-unused-unsafe-tracking-enabled false)
+    (set! tc-unused-unsafe-current-block -1)
+    (set! tc-unused-unsafe-current-path "")))
+
+(define (tc-unused-unsafe-block-count) : i64
+  tc-unused-unsafe-block-len)
+
+(define (tc-unused-unsafe-block-path [index : i64]) : String
+  (if (and (>= index 0) (< index tc-unused-unsafe-block-len))
+    (array-ref tc-unused-unsafe-block-paths index)
+    ""))
+
+(define (tc-unused-unsafe-block-span [index : i64]) : AstSourceSpan
+  (if (and (>= index 0) (< index tc-unused-unsafe-block-len))
+    (array-ref tc-unused-unsafe-block-spans index)
+    (tc-unused-unsafe-no-span)))
+
+(define (tc-unused-unsafe-block-used? [index : i64]) : bool
+  (if (and (>= index 0) (< index tc-unused-unsafe-block-len))
+    (array-ref tc-unused-unsafe-block-used index)
+    false))
+
+(define (tc-unused-unsafe-set-current-path! [path : String]) : String
+  (let
+    [prev : String tc-unused-unsafe-current-path]
+    (begin
+      (if tc-unused-unsafe-tracking-enabled
+        (set! tc-unused-unsafe-current-path path)
+        unit)
+      prev)))
+
+(define (tc-unused-unsafe-restore-current-path! [path : String]) : unit
+  (if tc-unused-unsafe-tracking-enabled
+    (set! tc-unused-unsafe-current-path path)
+    unit))
+
+(define (tc-unused-unsafe-span-eq? [a : AstSourceSpan] [b : AstSourceSpan]) : bool
+  (and
+    (= (struct-get a start-line) (struct-get b start-line))
+    (= (struct-get a start-col) (struct-get b start-col))
+    (= (struct-get a end-line) (struct-get b end-line))
+    (= (struct-get a end-col) (struct-get b end-col))))
+
+(define (tc-unused-unsafe-find-existing
+  [path : String]
+  [span : AstSourceSpan]
+  [index : i64]) : i64
+  (if (>= index tc-unused-unsafe-block-len)
+    -1
+    (if (and
+      (string-eq (array-ref tc-unused-unsafe-block-paths index) path)
+      (tc-unused-unsafe-span-eq?
+        (array-ref tc-unused-unsafe-block-spans index)
+        span))
+      index
+      (tc-unused-unsafe-find-existing path span (+ index 1)))))
+
+(define (tc-unused-unsafe-grow-copy
+  [new-spans : (Array AstSourceSpan)]
+  [new-paths : (Array String)]
+  [new-used : (Array bool)]
+  [index : i64]) : unit
+  (if (>= index tc-unused-unsafe-block-len)
+    unit
+    (begin
+      (array-set!
+        new-spans
+        index
+        (array-ref tc-unused-unsafe-block-spans index))
+      (array-set!
+        new-paths
+        index
+        (array-ref tc-unused-unsafe-block-paths index))
+      (array-set! new-used index (array-ref tc-unused-unsafe-block-used index))
+      (tc-unused-unsafe-grow-copy new-spans new-paths new-used (+ index 1)))))
+
+(define (tc-unused-unsafe-grow!) : unit
+  (let
+    [old-cap : i64 (array-length tc-unused-unsafe-block-spans)]
+    [new-cap : i64 (* old-cap 2)]
+    [new-spans : (Array AstSourceSpan) (make-array AstSourceSpan new-cap)]
+    [new-paths : (Array String) (make-array String new-cap)]
+    [new-used : (Array bool) (make-array bool new-cap)]
+    (begin
+      (tc-unused-unsafe-grow-copy new-spans new-paths new-used 0)
+      (set! tc-unused-unsafe-block-spans new-spans)
+      (set! tc-unused-unsafe-block-paths new-paths)
+      (set! tc-unused-unsafe-block-used new-used))))
+
+(define (tc-unused-unsafe-push [span : AstSourceSpan]) : i64
+  (let
+    [existing : i64
+      (tc-unused-unsafe-find-existing tc-unused-unsafe-current-path span 0)]
+    (if (>= existing 0)
+      existing
+      (let
+        [slot : i64 tc-unused-unsafe-block-len]
+        (begin
+          (if (>= slot (array-length tc-unused-unsafe-block-spans))
+            (tc-unused-unsafe-grow!)
+            unit)
+          (array-set! tc-unused-unsafe-block-spans slot span)
+          (array-set!
+            tc-unused-unsafe-block-paths
+            slot
+            tc-unused-unsafe-current-path)
+          (array-set! tc-unused-unsafe-block-used slot false)
+          (set! tc-unused-unsafe-block-len (+ tc-unused-unsafe-block-len 1))
+          slot)))))
+
+(define (tc-unused-unsafe-enter-block [span : TcMaybeAstSourceSpan]) : i64
+  (let
+    [prev : i64 tc-unused-unsafe-current-block]
+    (begin
+      (if tc-unused-unsafe-tracking-enabled
+        (match span
+          [(TcSomeAstSourceSpan real-span)
+            (set!
+              tc-unused-unsafe-current-block
+              (tc-unused-unsafe-push real-span))]
+          [(TcNoAstSourceSpan) unit])
+        unit)
+      prev)))
+
+(define (tc-unused-unsafe-restore-block! [prev : i64]) : unit
+  (if tc-unused-unsafe-tracking-enabled
+    (set! tc-unused-unsafe-current-block prev)
+    unit))
+
+(define (tc-unused-unsafe-mark-current-used!) : unit
+  (if (and
+    tc-unused-unsafe-tracking-enabled
+    (>= tc-unused-unsafe-current-block 0)
+    (< tc-unused-unsafe-current-block tc-unused-unsafe-block-len))
+    (array-set! tc-unused-unsafe-block-used tc-unused-unsafe-current-block true)
+    unit))
+
+(define (tc-unsafe-begin-list-with-expected
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [exprs : AstExprList]
+  [expected : AstType]
+  [span : TcMaybeAstSourceSpan]) : ResultTcType
+  (let
+    [prev : i64 (tc-unused-unsafe-enter-block span)]
+    [result : ResultTcType
+      (tc-begin-list-with-expected ctx (tc-enter-unsafe env) exprs expected)]
+    (begin
+      (tc-unused-unsafe-restore-block! prev)
+      result)))
+
+(define (tc-unsafe-begin-list
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [exprs : AstExprList]
+  [span : TcMaybeAstSourceSpan]) : ResultTcType
+  (let
+    [prev : i64 (tc-unused-unsafe-enter-block span)]
+    [result : ResultTcType (tc-begin-list ctx (tc-enter-unsafe env) exprs)]
+    (begin
+      (tc-unused-unsafe-restore-block! prev)
+      result)))
+
 (define (tc-bind-return-type [env : TcTypeEnv] [ty : AstType]) : TcTypeEnv
   (tc-bind env (tc-return-type-name) ty))
 
@@ -7469,7 +7659,9 @@
 
 (define (tc-require-unsafe [env : TcTypeEnv] [name : String]) : ResultTcUnit
   (if (tc-in-unsafe? env)
-    OkTcUnit
+    (begin
+      (tc-unused-unsafe-mark-current-used!)
+      OkTcUnit)
     (ErrTcUnit
       (string-append
         "typecheck: "
@@ -9572,12 +9764,23 @@
     [(AstExprSpanned inner-box span)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
-        (match (tc-expr-with-expected-or-actual-core
-          ctx
-          env
-          inner
-          expected
-          allow-mut-by-value-borrow)
+        [result : ResultTcType
+          (match inner
+            [(AstExprUnsafe exprs)
+              (tc-unsafe-begin-list-with-expected
+                ctx
+                env
+                exprs
+                expected
+                (TcSomeAstSourceSpan span))]
+            [_
+              (tc-expr-with-expected-or-actual-core
+                ctx
+                env
+                inner
+                expected
+                allow-mut-by-value-borrow)])]
+        (match result
           [(OkTcType ty) (OkTcType ty)]
           [(ErrTcType message) (tc-locate-spanned-error inner span message)]))]
     [(AstExprBinary op left-box right-box)
@@ -9632,7 +9835,12 @@
         [_ (tc-expr ctx env expr)])]
     [(AstExprBegin exprs) (tc-begin-list-with-expected ctx env exprs expected)]
     [(AstExprUnsafe exprs)
-      (tc-begin-list-with-expected ctx (tc-enter-unsafe env) exprs expected)]
+      (tc-unsafe-begin-list-with-expected
+        ctx
+        env
+        exprs
+        expected
+        TcNoAstSourceSpan)]
     [(AstExprLet bindings body-box)
       (let
         [body : AstExpr (ast-node-get body-box)]
@@ -21768,7 +21976,12 @@
     [(AstExprSpanned inner-box span)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
-        (match (tc-expr ctx env inner)
+        [result : ResultTcType
+          (match inner
+            [(AstExprUnsafe exprs)
+              (tc-unsafe-begin-list ctx env exprs (TcSomeAstSourceSpan span))]
+            [_ (tc-expr ctx env inner)])]
+        (match result
           [(OkTcType ty) (OkTcType ty)]
           [(ErrTcType message) (tc-locate-spanned-error inner span message)]))]
     [(AstExprLiteral lit) (OkTcType (tc-literal-type lit))]
@@ -22025,7 +22238,8 @@
     [(AstExprBegin exprs) (tc-begin-list ctx env exprs)]
     ;; `(unsafe ...)` types like `begin` in v1; the unsafe-context flag for
     ;; raw-pointer ops is added with their checks (#955).
-    [(AstExprUnsafe exprs) (tc-begin-list ctx (tc-enter-unsafe env) exprs)]
+    [(AstExprUnsafe exprs)
+      (tc-unsafe-begin-list ctx env exprs TcNoAstSourceSpan)]
     [(AstExprIf cond-box then-branch-box else-branch-box)
       (let
         [cond : AstExpr (ast-node-get cond-box)]
@@ -33509,6 +33723,8 @@
                 global-env)
               (let
                 [decl-ctx : TcContext (tc-context-with-module ctx module)]
+                [prev-path : String
+                  (tc-unused-unsafe-set-current-path! decl-path)]
                 (begin
                   (cfg compile-profile (compiler-tc-decl-profile-start-section))
                   (match (tc-check-decl-with-global-env
@@ -33518,6 +33734,7 @@
                     decl)
                     [(OkTcUnit)
                       (begin
+                        (tc-unused-unsafe-restore-current-path! prev-path)
                         (cfg
                           compile-profile
                           (compiler-tc-decl-profile-record decl))
@@ -33532,8 +33749,10 @@
                           local-env
                           global-env))]
                     [(ErrTcUnit message)
-                      (ErrCompilerTypecheck
-                        (tc-typecheck-diag-with-path decl decl-path message))]))))]))]))
+                      (begin
+                        (tc-unused-unsafe-restore-current-path! prev-path)
+                        (ErrCompilerTypecheck
+                          (tc-typecheck-diag-with-path decl decl-path message)))]))))]))]))
 
 (define (typecheck-compiler-specialized-program-with-paths-checked-inner
   [program : AstProgram]

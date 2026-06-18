@@ -137,6 +137,7 @@ thread_safe_bool_unit|tests/integration/thread_safe_bool_unit.tl|42|-|-|stdlib/a
 thread_safe_aggregate_capture|tests/integration/thread_safe_aggregate_capture.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
 thread_safe_string|tests/integration/thread_safe_string.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
 thread_safe_array_i64|tests/integration/thread_safe_array_i64.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
+thread_safe_box_i64|tests/integration/thread_safe_box_i64.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
 tl_alloc|tests/integration/tl_alloc.tl|0|-|-|-
 tree|tests/integration/tree.tl|3|-|-|-
 tuple_values|tests/integration/tuple_values.tl|42|-|-|-

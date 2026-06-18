@@ -10884,6 +10884,9 @@
 (define (tc-thread-spawn-array-i64-name? [name : String]) : bool
   (string-eq (tc-thread-name-base name) "thread-spawn-array-i64"))
 
+(define (tc-thread-spawn-box-i64-name? [name : String]) : bool
+  (string-eq (tc-thread-name-base name) "thread-spawn-box-i64"))
+
 (define (tc-thread-safe-spawn-name? [name : String]) : bool
   (let
     [base : String (tc-thread-name-base name)]
@@ -10892,7 +10895,8 @@
       (string-eq base "thread-spawn-bool")
       (string-eq base "thread-spawn-unit")
       (string-eq base "thread-spawn-string")
-      (string-eq base "thread-spawn-array-i64"))))
+      (string-eq base "thread-spawn-array-i64")
+      (string-eq base "thread-spawn-box-i64"))))
 
 (define (tc-thread-safe-handle-type-name? [name : String]) : bool
   (let
@@ -10902,7 +10906,8 @@
       (string-eq base "ThreadBool")
       (string-eq base "ThreadUnit")
       (string-eq base "ThreadString")
-      (string-eq base "ThreadArrayI64"))))
+      (string-eq base "ThreadArrayI64")
+      (string-eq base "ThreadBoxI64"))))
 
 (define (tc-thread-safe-spawn-call-name [func : AstExpr]) : TcMaybeString
   (match (tc-expr-var-name func)
@@ -10989,6 +10994,8 @@
       (tc-thread-name-base-eq? result-name "ThreadStringSpawnResult")]
     [(tc-thread-spawn-array-i64-name? spawn-name)
       (tc-thread-name-base-eq? result-name "ThreadArrayI64SpawnResult")]
+    [(tc-thread-spawn-box-i64-name? spawn-name)
+      (tc-thread-name-base-eq? result-name "ThreadBoxI64SpawnResult")]
     [else false]))
 
 (define (tc-thread-safe-spawn-result-type?
@@ -11028,6 +11035,14 @@
       [(tc-thread-spawn-array-i64-name? spawn-name)
         (match resolved
           [(AstTyDynArray elem)
+            (match (tc-type-strip-region
+              (tc-resolve-type ctx (ty-node-get elem)))
+              [(AstTyI64) true]
+              [_ false])]
+          [_ false])]
+      [(tc-thread-spawn-box-i64-name? spawn-name)
+        (match resolved
+          [(AstTyBox elem)
             (match (tc-type-strip-region
               (tc-resolve-type ctx (ty-node-get elem)))
               [(AstTyI64) true]

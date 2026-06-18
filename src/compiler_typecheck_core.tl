@@ -29329,7 +29329,7 @@
   [ctx : TcContext]
   [type-env : TcTypeEnv]
   [decls : AstDeclList]
-  [macro-name : String]
+  [_macro-name : String]
   [params : AstMacroParamList]
   [body : AstExpr]
   [args : AstExprList]
@@ -29359,13 +29359,13 @@
                 (begin
                   (cfg
                     compile-profile
-                    (compiler-tc-macro-profile-finish macro-name expanded-args))
+                    (compiler-tc-macro-profile-finish _macro-name expanded-args))
                   (OkMacroValue value))]
               [(ErrCtfe diag)
                 (begin
                   (cfg
                     compile-profile
-                    (compiler-tc-macro-profile-finish macro-name expanded-args))
+                    (compiler-tc-macro-profile-finish _macro-name expanded-args))
                   (ErrMacroValue diag))]))]
         [(ErrMacroEnv diag) (ErrMacroValue diag)])]
     [(ErrMacroExprList diag) (ErrMacroValue diag)]))
@@ -30209,7 +30209,9 @@
     call-expr
     (str-cat
       "typecheck: Module macro output collides with existing module "
-      (str-cat target-module (str-cat " for generated identity " identity)))))
+      target-module
+      " for generated identity "
+      identity)))
 
 (define (macro-expand-module-materialized
   [orig-decls : AstDeclList]

@@ -2458,6 +2458,93 @@
       (not (compiler-backend-plan-uses-callee-regs? assignments))
       (= (compiler-backend-frame-slots 2 assignments) 2))))
 
+(define (compiler-backend-callee-save-assignments1) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment 0 (CompilerRegRegister "%r12"))
+    CompilerRegAssignmentNil))
+
+(define (compiler-backend-callee-save-assignments2) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment 0 (CompilerRegRegister "%r12"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment 1 (CompilerRegRegister "%r13"))
+      CompilerRegAssignmentNil)))
+
+(define (compiler-backend-callee-save-assignments4) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment 0 (CompilerRegRegister "%r12"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment 1 (CompilerRegRegister "%r13"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 2 (CompilerRegRegister "%r14"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment 3 (CompilerRegRegister "%r15"))
+          CompilerRegAssignmentNil)))))
+
+(define (compiler-backend-callee-save-assignments5) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment 0 (CompilerRegRegister "%r12"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment 1 (CompilerRegRegister "%r13"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 2 (CompilerRegRegister "%r14"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment 3 (CompilerRegRegister "%r15"))
+          (compiler-reg-assignment-cons
+            (CompilerRegAssignment 4 (CompilerRegRegister "%rbx"))
+            CompilerRegAssignmentNil))))))
+
+(define (compiler-backend-callee-save-double-return-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons (IrInstrReturn IrNoValue) IrInstrNil))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "alt"
+        (compiler-ir-instr-cons (IrInstrReturn IrNoValue) IrInstrNil))
+      IrBlockNil)))
+
+(define (compiler-backend-callee-save-pop-epilogue-ok?) : bool
+  (let
+    [one : CompilerRegAssignmentList
+      (compiler-backend-callee-save-assignments1)]
+    [two : CompilerRegAssignmentList
+      (compiler-backend-callee-save-assignments2)]
+    [four : CompilerRegAssignmentList
+      (compiler-backend-callee-save-assignments4)]
+    [five : CompilerRegAssignmentList
+      (compiler-backend-callee-save-assignments5)]
+    [shared : String
+      (compiler-backend-return-epilogue
+        "pop_shared"
+        five
+        1
+        (compiler-backend-callee-save-double-return-blocks))]
+    (and
+      (backend-and8
+        (string-eq
+          (compiler-backend-emit-restore-callee-regs one 3)
+          "    movq -32(%rbp), %r12\n")
+        (string-eq
+          (compiler-backend-emit-restore-callee-regs two 3)
+          "    leaq -40(%rbp), %rsp\n    popq %r13\n    popq %r12\n")
+        (string-eq
+          (compiler-backend-emit-restore-callee-regs four 2)
+          "    leaq -48(%rbp), %rsp\n    popq %r15\n    popq %r14\n    popq %r13\n    popq %r12\n")
+        (string-eq
+          (compiler-backend-emit-restore-callee-regs five 1)
+          "    leaq -48(%rbp), %rsp\n    popq %rbx\n    popq %r15\n    popq %r14\n    popq %r13\n    popq %r12\n")
+        (string-eq
+          (compiler-backend-inline-return-tail two 3)
+          "    leaq -40(%rbp), %rsp\n    popq %r13\n    popq %r12\n    leave\n    ret\n")
+        (string-eq
+          (compiler-backend-tail-jump-tail four 2 "_tl_next")
+          "    leaq -48(%rbp), %rsp\n    popq %r15\n    popq %r14\n    popq %r13\n    popq %r12\n    leave\n    jmp _tl_next\n")
+        (compiler-backend-string-contains? shared "    popq %rbx\n")
+        (compiler-backend-string-contains? shared "    leave\n    ret\n"))
+      (not (string-eq shared "")))))
+
 (define (compiler-backend-peephole-register-moves-ok?) : bool
   (let
     [assignments : CompilerRegAssignmentList
@@ -8892,7 +8979,9 @@
       (and
         (compiler-backend-enum-match-ok?)
         (compiler-backend-never-branch-register-group-ok?))
-      (compiler-backend-regalloc-ok?)
+      (and
+        (compiler-backend-regalloc-ok?)
+        (compiler-backend-callee-save-pop-epilogue-ok?))
       (compiler-backend-peephole-ok?)
       (and
         (compiler-backend-phi-parallel-copy-ok?)

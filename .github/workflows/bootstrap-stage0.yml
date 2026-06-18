@@ -5,6 +5,11 @@ name: Bootstrap Stage0
 # "stage0-latest" release is recreated with the same assets, giving CI a stable
 # download URL while permanent releases remain.
 #
+# The publish job also packages the VS Code extension (tools/vs-code-extension)
+# into typelisp.vsix and attaches it to the same releases under a stable asset
+# name. The editor plugin therefore installs from the same stable stage0-latest
+# URL as the compiler it auto-downloads at runtime.
+#
 # Self-perpetuation: the new
 # stage0 is built by FETCHING THE PREVIOUSLY PUBLISHED stage0 (the last cli.tl
 # binary, via scripts/fetch-stage0.sh) and using THAT compiler to compile
@@ -129,20 +134,36 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: tools/vs-code-extension/package-lock.json
+
       - name: Download stage0 artifacts
         uses: actions/download-artifact@v4
         with:
           path: stage0-artifacts
           merge-multiple: true
 
+      - name: Package VS Code extension
+        working-directory: tools/vs-code-extension
+        run: |
+          npm ci
+          # Emit a stable asset name (typelisp.vsix) so the download URL is fixed
+          # across extension version bumps, like the stage0 binary asset names.
+          # `vsce package` runs the vscode:prepublish (compile) script first.
+          npx --no-install vsce package --out "$GITHUB_WORKSPACE/stage0-artifacts/typelisp.vsix"
+
       - name: Verify staged assets
         run: |
           test -s stage0-artifacts/typelisp-stage0-linux
           test -s stage0-artifacts/typelisp-stage0-windows.exe
+          test -s stage0-artifacts/typelisp.vsix
           chmod +x stage0-artifacts/typelisp-stage0-linux
           (
             cd stage0-artifacts
-            sha256sum typelisp-stage0-linux typelisp-stage0-windows.exe > SHA256SUMS
+            sha256sum typelisp-stage0-linux typelisp-stage0-windows.exe typelisp.vsix > SHA256SUMS
             sha256sum -c SHA256SUMS
           )
           file stage0-artifacts/typelisp-stage0-linux
@@ -159,6 +180,7 @@ jobs:
           Assets:
           - typelisp-stage0-linux
           - typelisp-stage0-windows.exe
+          - typelisp.vsix (VS Code extension)
           - SHA256SUMS
           EOF
           )"
@@ -170,6 +192,7 @@ jobs:
             --target "${{ github.sha }}" \
             stage0-artifacts/typelisp-stage0-linux \
             stage0-artifacts/typelisp-stage0-windows.exe \
+            stage0-artifacts/typelisp.vsix \
             stage0-artifacts/SHA256SUMS
 
           echo "PERMANENT_TAG=$tag" >> "$GITHUB_ENV"
@@ -199,6 +222,7 @@ jobs:
           Stable asset URLs:
           - https://github.com/${{ github.repository }}/releases/download/stage0-latest/typelisp-stage0-linux
           - https://github.com/${{ github.repository }}/releases/download/stage0-latest/typelisp-stage0-windows.exe
+          - https://github.com/${{ github.repository }}/releases/download/stage0-latest/typelisp.vsix
           - https://github.com/${{ github.repository }}/releases/download/stage0-latest/SHA256SUMS
           EOF
           )"
@@ -210,4 +234,5 @@ jobs:
             --target "${{ github.sha }}" \
             stage0-artifacts/typelisp-stage0-linux \
             stage0-artifacts/typelisp-stage0-windows.exe \
+            stage0-artifacts/typelisp.vsix \
             stage0-artifacts/SHA256SUMS

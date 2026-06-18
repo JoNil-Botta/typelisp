@@ -20,7 +20,8 @@
   "activationEvents": [
     "onLanguage:typelisp",
     "workspaceContains:**/*.tl",
-    "onCommand:typelisp.restartLanguageServer"
+    "onCommand:typelisp.restartLanguageServer",
+    "onCommand:typelisp.updateStage0"
   ],
   "scripts": {
     "vscode:prepublish": "npm run compile",
@@ -56,6 +57,10 @@
       {
         "command": "typelisp.restartLanguageServer",
         "title": "TypeLisp: Restart Language Server"
+      },
+      {
+        "command": "typelisp.updateStage0",
+        "title": "TypeLisp: Update Stage0 Compiler"
       }
     ],
     "configuration": {
@@ -64,7 +69,22 @@
         "typelisp.executablePath": {
           "type": "string",
           "default": "typelisp",
-          "description": "Path to the `typelisp` executable used to launch the LSP server (`typelisp lsp`). Defaults to `typelisp` on PATH."
+          "description": "Explicit path to the `typelisp` executable used to launch the LSP server (`typelisp lsp`). When set, it overrides the auto-downloaded stage0 compiler. Leave unset to let the extension manage stage0 automatically (see `typelisp.stage0.autoUpdate`)."
+        },
+        "typelisp.stage0.autoUpdate": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically download and keep the prebuilt `typelisp` stage0 compiler up to date from GitHub releases, storing it in the extension's global storage. Ignored when `typelisp.executablePath` is set. Only Linux and Windows x86_64 builds are published."
+        },
+        "typelisp.stage0.repo": {
+          "type": "string",
+          "default": "JoNil-Botta/typelisp",
+          "description": "GitHub `owner/name` repository to download the stage0 compiler release from."
+        },
+        "typelisp.stage0.releaseTag": {
+          "type": "string",
+          "default": "stage0-latest",
+          "description": "GitHub release tag to track for the stage0 compiler. The default `stage0-latest` is a mutable release republished on every push to `main`."
         },
         "typelisp.stdlibRoots": {
           "type": "array",
@@ -86,6 +106,7 @@
     "vscode-languageclient": "8.1.0"
   },
   "devDependencies": {
+    "@types/node": "20.19.9",
     "@types/vscode": "1.75.1",
     "@vscode/vsce": "2.32.0",
     "typescript": "5.9.3"

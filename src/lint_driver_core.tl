@@ -758,12 +758,14 @@
       (selfhost-lint-dead-expr-refs
         (ast-node-get body)
         (selfhost-lint-dead-let-binding-refs bindings refs))]
-    [(AstExprLambda params ret body)
-      (selfhost-lint-dead-expr-refs
-        (ast-node-get body)
-        (selfhost-lint-dead-maybe-type-refs
-          ret
-          (selfhost-lint-dead-param-list-refs params refs)))]
+    [(AstExprLambda lambda-box)
+      (match (box-get lambda-box)
+        [(AstLambda params ret body)
+          (selfhost-lint-dead-expr-refs
+            (ast-node-get body)
+            (selfhost-lint-dead-maybe-type-refs
+              ret
+              (selfhost-lint-dead-param-list-refs params refs)))])]
     [(AstExprTuple exprs) (selfhost-lint-dead-expr-list-refs exprs refs)]
     [(AstExprTupleRef tuple _)
       (selfhost-lint-dead-expr-refs (ast-node-get tuple) refs)]
@@ -832,20 +834,22 @@
             (selfhost-lint-dead-expr-refs
               (ast-node-get start)
               (selfhost-lint-dead-type-refs index-ty refs)))))]
-    [(AstExprSpmdScan _ _ index-ty start end _ prefix-ty init value body)
-      (selfhost-lint-dead-expr-refs
-        (ast-node-get body)
-        (selfhost-lint-dead-expr-refs
-          (ast-node-get value)
+    [(AstExprSpmdScan scan-box)
+      (match (box-get scan-box)
+        [(AstSpmdScan _ _ index-ty start end _ prefix-ty init value body)
           (selfhost-lint-dead-expr-refs
-            (ast-node-get init)
+            (ast-node-get body)
             (selfhost-lint-dead-expr-refs
-              (ast-node-get end)
+              (ast-node-get value)
               (selfhost-lint-dead-expr-refs
-                (ast-node-get start)
-                (selfhost-lint-dead-type-refs
-                  prefix-ty
-                  (selfhost-lint-dead-type-refs index-ty refs)))))))]
+                (ast-node-get init)
+                (selfhost-lint-dead-expr-refs
+                  (ast-node-get end)
+                  (selfhost-lint-dead-expr-refs
+                    (ast-node-get start)
+                    (selfhost-lint-dead-type-refs
+                      prefix-ty
+                      (selfhost-lint-dead-type-refs index-ty refs)))))))])]
     [(AstExprSpmdBroadcast value lane)
       (selfhost-lint-dead-expr-refs
         (ast-node-get lane)

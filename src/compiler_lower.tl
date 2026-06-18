@@ -2366,68 +2366,84 @@
                       (ast-node-push rewritten-value))))]
               [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)])]
           [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)]))]
-    [(AstExprSpmdScan
-        op
-        index
-        index-ty
-        start-box
-        end-box
-        prefix
-        prefix-ty
-        init-box
-        value-box
-        body-box)
-      (let
-        [start : AstExpr (ast-node-get start-box)]
-        [end : AstExpr (ast-node-get end-box)]
-        [init : AstExpr (ast-node-get init-box)]
-        [value : AstExpr (ast-node-get value-box)]
-        [body : AstExpr (ast-node-get body-box)]
-        (match (lower-spmd-inline-expr ctx env type-env start subst shadowed)
-          [(OkLowerAstExpr rewritten-start)
-            (match (lower-spmd-inline-expr ctx env type-env end subst shadowed)
-              [(OkLowerAstExpr rewritten-end)
+    [(AstExprSpmdScan scan-box)
+      (match (box-get scan-box)
+        [(AstSpmdScan
+            op
+            index
+            index-ty
+            start-box
+            end-box
+            prefix
+            prefix-ty
+            init-box
+            value-box
+            body-box)
+          (let
+            [start : AstExpr (ast-node-get start-box)]
+            [end : AstExpr (ast-node-get end-box)]
+            [init : AstExpr (ast-node-get init-box)]
+            [value : AstExpr (ast-node-get value-box)]
+            [body : AstExpr (ast-node-get body-box)]
+            (match (lower-spmd-inline-expr
+              ctx
+              env
+              type-env
+              start
+              subst
+              shadowed)
+              [(OkLowerAstExpr rewritten-start)
                 (match (lower-spmd-inline-expr
                   ctx
                   env
                   type-env
-                  init
+                  end
                   subst
                   shadowed)
-                  [(OkLowerAstExpr rewritten-init)
+                  [(OkLowerAstExpr rewritten-end)
                     (match (lower-spmd-inline-expr
                       ctx
                       env
                       type-env
-                      value
+                      init
                       subst
                       shadowed)
-                      [(OkLowerAstExpr rewritten-value)
+                      [(OkLowerAstExpr rewritten-init)
                         (match (lower-spmd-inline-expr
                           ctx
                           env
                           type-env
-                          body
+                          value
                           subst
                           shadowed)
-                          [(OkLowerAstExpr rewritten-body)
-                            (OkLowerAstExpr
-                              (AstExprSpmdScan
-                                op
-                                index
-                                index-ty
-                                (ast-node-push rewritten-start)
-                                (ast-node-push rewritten-end)
-                                prefix
-                                prefix-ty
-                                (ast-node-push rewritten-init)
-                                (ast-node-push rewritten-value)
-                                (ast-node-push rewritten-body)))]
+                          [(OkLowerAstExpr rewritten-value)
+                            (match (lower-spmd-inline-expr
+                              ctx
+                              env
+                              type-env
+                              body
+                              subst
+                              shadowed)
+                              [(OkLowerAstExpr rewritten-body)
+                                (OkLowerAstExpr
+                                  (AstExprSpmdScan
+                                    (box
+                                      (AstSpmdScan
+                                        op
+                                        index
+                                        index-ty
+                                        (ast-node-push rewritten-start)
+                                        (ast-node-push rewritten-end)
+                                        prefix
+                                        prefix-ty
+                                        (ast-node-push rewritten-init)
+                                        (ast-node-push rewritten-value)
+                                        (ast-node-push rewritten-body)))))]
+                              [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)])]
                           [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)])]
                       [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)])]
                   [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)])]
-              [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)])]
-          [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)]))]
+              [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)]))])]
     [(AstExprSpmdBroadcast value-box lane-box)
       (let
         [value : AstExpr (ast-node-get value-box)]
@@ -2979,16 +2995,18 @@
           bindings)
           [(LowerCloneRootEnv binding-roots body-env)
             (lower-clone-roots-expr ctx body-env decls able binding-roots body)]))]
-    [(AstExprLambda params _ body-box)
-      (let
-        [body : AstExpr (ast-node-get body-box)]
-        (lower-clone-roots-expr
-          ctx
-          (tc-bind-params ctx env params)
-          decls
-          able
-          roots
-          body))]
+    [(AstExprLambda lambda-box)
+      (match (box-get lambda-box)
+        [(AstLambda params _ body-box)
+          (let
+            [body : AstExpr (ast-node-get body-box)]
+            (lower-clone-roots-expr
+              ctx
+              (tc-bind-params ctx env params)
+              decls
+              able
+              roots
+              body))])]
     [(AstExprTuple values)
       (lower-clone-roots-expr-list ctx env decls able roots values)]
     [(AstExprTupleRef value-box _)
@@ -3157,52 +3175,54 @@
               end)
             init)
           value))]
-    [(AstExprSpmdScan
-        _
-        index
-        index-ty
-        start-box
-        end-box
-        prefix
-        prefix-ty
-        init-box
-        value-box
-        body-box)
-      (let
-        [start : AstExpr (ast-node-get start-box)]
-        [end : AstExpr (ast-node-get end-box)]
-        [init : AstExpr (ast-node-get init-box)]
-        [value : AstExpr (ast-node-get value-box)]
-        [body : AstExpr (ast-node-get body-box)]
-        [value-env : TcTypeEnv
-          (tc-bind-id env index (tc-resolve-type ctx index-ty))]
-        [body-env : TcTypeEnv
-          (tc-bind-id value-env prefix (tc-resolve-type ctx prefix-ty))]
-        (lower-clone-roots-expr
-          ctx
-          body-env
-          decls
-          able
-          (lower-clone-roots-expr
-            ctx
-            value-env
-            decls
-            able
+    [(AstExprSpmdScan scan-box)
+      (match (box-get scan-box)
+        [(AstSpmdScan
+            _
+            index
+            index-ty
+            start-box
+            end-box
+            prefix
+            prefix-ty
+            init-box
+            value-box
+            body-box)
+          (let
+            [start : AstExpr (ast-node-get start-box)]
+            [end : AstExpr (ast-node-get end-box)]
+            [init : AstExpr (ast-node-get init-box)]
+            [value : AstExpr (ast-node-get value-box)]
+            [body : AstExpr (ast-node-get body-box)]
+            [value-env : TcTypeEnv
+              (tc-bind-id env index (tc-resolve-type ctx index-ty))]
+            [body-env : TcTypeEnv
+              (tc-bind-id value-env prefix (tc-resolve-type ctx prefix-ty))]
             (lower-clone-roots-expr
               ctx
-              env
+              body-env
               decls
               able
               (lower-clone-roots-expr
                 ctx
-                env
+                value-env
                 decls
                 able
-                (lower-clone-roots-expr ctx env decls able roots start)
-                end)
-              init)
-            value)
-          body))]
+                (lower-clone-roots-expr
+                  ctx
+                  env
+                  decls
+                  able
+                  (lower-clone-roots-expr
+                    ctx
+                    env
+                    decls
+                    able
+                    (lower-clone-roots-expr ctx env decls able roots start)
+                    end)
+                  init)
+                value)
+              body))])]
     [(AstExprSpmdBroadcast value-box lane-box)
       (let
         [value : AstExpr (ast-node-get value-box)]
@@ -3660,10 +3680,12 @@
           names
           (lower-reach-let-bindings all-functions names state bindings)
           body))]
-    [(AstExprLambda _ _ body-box)
-      (let
-        [body : AstExpr (ast-node-get body-box)]
-        (lower-reach-expr all-functions names state body))]
+    [(AstExprLambda lambda-box)
+      (match (box-get lambda-box)
+        [(AstLambda _ _ body-box)
+          (let
+            [body : AstExpr (ast-node-get body-box)]
+            (lower-reach-expr all-functions names state body))])]
     [(AstExprTuple values)
       (lower-reach-expr-list all-functions names state values)]
     [(AstExprTupleRef value-box _)
@@ -3787,30 +3809,32 @@
               init)
             map-expr)
           reduce-expr))]
-    [(AstExprSpmdScan _ _ _ start-box end-box _ _ init-box value-box body-box)
-      (let
-        [start : AstExpr (ast-node-get start-box)]
-        [end : AstExpr (ast-node-get end-box)]
-        [init : AstExpr (ast-node-get init-box)]
-        [value : AstExpr (ast-node-get value-box)]
-        [body : AstExpr (ast-node-get body-box)]
-        (lower-reach-expr
-          all-functions
-          names
-          (lower-reach-expr
-            all-functions
-            names
+    [(AstExprSpmdScan scan-box)
+      (match (box-get scan-box)
+        [(AstSpmdScan _ _ _ start-box end-box _ _ init-box value-box body-box)
+          (let
+            [start : AstExpr (ast-node-get start-box)]
+            [end : AstExpr (ast-node-get end-box)]
+            [init : AstExpr (ast-node-get init-box)]
+            [value : AstExpr (ast-node-get value-box)]
+            [body : AstExpr (ast-node-get body-box)]
             (lower-reach-expr
               all-functions
               names
               (lower-reach-expr
                 all-functions
                 names
-                (lower-reach-expr all-functions names state start)
-                end)
-              init)
-            value)
-          body))]
+                (lower-reach-expr
+                  all-functions
+                  names
+                  (lower-reach-expr
+                    all-functions
+                    names
+                    (lower-reach-expr all-functions names state start)
+                    end)
+                  init)
+                value)
+              body))])]
     [(AstExprSpmdBroadcast value-box lane-box)
       (let
         [value : AstExpr (ast-node-get value-box)]
@@ -13139,23 +13163,25 @@
                       (ErrTcType "lower: call result type is not fast-pathable")])]
                 [else (ErrTcType message)])
               (ErrTcType message))]))]
-    [(AstExprLambda params maybe-ret body-box)
-      (let
-        [body : AstExpr (ast-node-get body-box)]
-        (match (tc-lambda-expr-allow-ref-captures
-          ctx
-          type-env
-          params
-          maybe-ret
-          body)
-          [(OkTcType fn-ty)
-            (match fn-ty
-              [(AstTyFunc _ ret)
-                (OkTcType
-                  (tc-type-without-regions
-                    (tc-resolve-type ctx (ty-node-get ret))))]
-              [_ (ErrTcType "lower: call result type is not fast-pathable")])]
-          [(ErrTcType message) (ErrTcType message)]))]
+    [(AstExprLambda lambda-box)
+      (match (box-get lambda-box)
+        [(AstLambda params maybe-ret body-box)
+          (let
+            [body : AstExpr (ast-node-get body-box)]
+            (match (tc-lambda-expr-allow-ref-captures
+              ctx
+              type-env
+              params
+              maybe-ret
+              body)
+              [(OkTcType fn-ty)
+                (match fn-ty
+                  [(AstTyFunc _ ret)
+                    (OkTcType
+                      (tc-type-without-regions
+                        (tc-resolve-type ctx (ty-node-get ret))))]
+                  [_ (ErrTcType "lower: call result type is not fast-pathable")])]
+              [(ErrTcType message) (ErrTcType message)]))])]
     [_ (ErrTcType "lower: call result type is not fast-pathable")]))
 
 (define (lower-binary-result-type-fast
@@ -13417,15 +13443,17 @@
     [(AstNoType)
       (if (tc-ref-capturing-lambda-init? type-env init)
         (match (ast-expr-unspan init)
-          [(AstExprLambda params maybe-ret body-box)
-            (let
-              [body : AstExpr (ast-node-get body-box)]
-              (tc-lambda-expr-allow-ref-captures
-                ctx
-                type-env
-                params
-                maybe-ret
-                body))]
+          [(AstExprLambda lambda-box)
+            (match (box-get lambda-box)
+              [(AstLambda params maybe-ret body-box)
+                (let
+                  [body : AstExpr (ast-node-get body-box)]
+                  (tc-lambda-expr-allow-ref-captures
+                    ctx
+                    type-env
+                    params
+                    maybe-ret
+                    body))])]
           [_ (lower-expr-result-type-fast ctx env type-env type-cache init)])
         (lower-expr-result-type-fast ctx env type-env type-cache init))]))
 
@@ -14293,19 +14321,21 @@
       (let
         [func : AstExpr (ast-node-get func-box)]
         (lower-call ctx state env type-env func args expr-ty origin))]
-    [(AstExprLambda params maybe-ret body-box)
-      (let
-        [body : AstExpr (ast-node-get body-box)]
-        (lower-lambda
-          ctx
-          state
-          env
-          type-env
-          params
-          maybe-ret
-          body
-          origin
-          expr-ty))]
+    [(AstExprLambda lambda-box)
+      (match (box-get lambda-box)
+        [(AstLambda params maybe-ret body-box)
+          (let
+            [body : AstExpr (ast-node-get body-box)]
+            (lower-lambda
+              ctx
+              state
+              env
+              type-env
+              params
+              maybe-ret
+              body
+              origin
+              expr-ty))])]
     [(AstExprLet bindings body-box)
       (let
         [body : AstExpr (ast-node-get body-box)]
@@ -14476,38 +14506,40 @@
           end
           init
           value))]
-    [(AstExprSpmdScan
-        op
-        index
-        index-ty
-        start-box
-        end-box
-        prefix
-        prefix-ty
-        init-box
-        value-box
-        body-box)
-      (let
-        [start : AstExpr (ast-node-get start-box)]
-        [end : AstExpr (ast-node-get end-box)]
-        [init : AstExpr (ast-node-get init-box)]
-        [value : AstExpr (ast-node-get value-box)]
-        [body : AstExpr (ast-node-get body-box)]
-        (lower-spmd-scan
-          ctx
-          state
-          env
-          type-env
-          op
-          (intern-str index)
-          index-ty
-          start
-          end
-          (intern-str prefix)
-          prefix-ty
-          init
-          value
-          body))]
+    [(AstExprSpmdScan scan-box)
+      (match (box-get scan-box)
+        [(AstSpmdScan
+            op
+            index
+            index-ty
+            start-box
+            end-box
+            prefix
+            prefix-ty
+            init-box
+            value-box
+            body-box)
+          (let
+            [start : AstExpr (ast-node-get start-box)]
+            [end : AstExpr (ast-node-get end-box)]
+            [init : AstExpr (ast-node-get init-box)]
+            [value : AstExpr (ast-node-get value-box)]
+            [body : AstExpr (ast-node-get body-box)]
+            (lower-spmd-scan
+              ctx
+              state
+              env
+              type-env
+              op
+              (intern-str index)
+              index-ty
+              start
+              end
+              (intern-str prefix)
+              prefix-ty
+              init
+              value
+              body))])]
     [(AstExprSpmdBroadcast value-box lane-box)
       (let
         [value : AstExpr (ast-node-get value-box)]
@@ -18989,42 +19021,44 @@
   [result-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
   (match (ast-expr-unspan func)
-    [(AstExprLambda params maybe-ret body-box)
-      (let
-        [body : AstExpr (ast-node-get body-box)]
-        (match (tc-lambda-expr-allow-ref-captures
-          ctx
-          type-env
-          params
-          maybe-ret
-          body)
-          [(OkTcType fn-ty)
-            (match (lower-lambda
+    [(AstExprLambda lambda-box)
+      (match (box-get lambda-box)
+        [(AstLambda params maybe-ret body-box)
+          (let
+            [body : AstExpr (ast-node-get body-box)]
+            (match (tc-lambda-expr-allow-ref-captures
               ctx
-              state
-              env
               type-env
               params
               maybe-ret
-              body
-              func
-              fn-ty)
-              [(OkLowerExpr lowered-func)
-                (match lowered-func
-                  [(LowerExpr func-state func-value _)
-                    (lower-indirect-call
-                      ctx
-                      func-state
-                      env
-                      type-env
-                      fn-ty
-                      func-value
-                      args
-                      result-ty
-                      origin)])]
-              [(ErrLowerExpr message) (ErrLowerExpr message)])]
-          [(ErrTcType message)
-            (ErrLowerExpr (lower-diagnostic-at-expr func message))]))]
+              body)
+              [(OkTcType fn-ty)
+                (match (lower-lambda
+                  ctx
+                  state
+                  env
+                  type-env
+                  params
+                  maybe-ret
+                  body
+                  func
+                  fn-ty)
+                  [(OkLowerExpr lowered-func)
+                    (match lowered-func
+                      [(LowerExpr func-state func-value _)
+                        (lower-indirect-call
+                          ctx
+                          func-state
+                          env
+                          type-env
+                          fn-ty
+                          func-value
+                          args
+                          result-ty
+                          origin)])]
+                  [(ErrLowerExpr message) (ErrLowerExpr message)])]
+              [(ErrTcType message)
+                (ErrLowerExpr (lower-diagnostic-at-expr func message))]))])]
     [(AstExprVar raw-name)
       ;; Builtins reached from a macro expansion arrive hygiene-renamed
       ;; (`__tl_macro_global$string-length`); strip the prefix so the builtin
@@ -22232,31 +22266,33 @@
     [(AstSomeType ty)
       (if (tc-ref-capturing-lambda-init? type-env init)
         (match (ast-expr-unspan init)
-          [(AstExprLambda params lambda-ret body-box)
-            (let
-              [body : AstExpr (ast-node-get body-box)]
-              [expected-ty : AstType
-                (tc-type-without-regions (tc-resolve-type ctx ty))]
-              (match (lower-lambda
-                ctx
-                state
-                env
-                type-env
-                params
-                lambda-ret
-                body
-                init
-                expected-ty)
-                [(OkLowerExpr lowered)
-                  (match lowered
-                    [(LowerExpr next-state value actual-ty)
-                      (OkLowerExpr
-                        (lower-coerce-value
-                          next-state
-                          value
-                          actual-ty
-                          expected-ty))])]
-                [(ErrLowerExpr message) (ErrLowerExpr message)]))]
+          [(AstExprLambda lambda-box)
+            (match (box-get lambda-box)
+              [(AstLambda params lambda-ret body-box)
+                (let
+                  [body : AstExpr (ast-node-get body-box)]
+                  [expected-ty : AstType
+                    (tc-type-without-regions (tc-resolve-type ctx ty))]
+                  (match (lower-lambda
+                    ctx
+                    state
+                    env
+                    type-env
+                    params
+                    lambda-ret
+                    body
+                    init
+                    expected-ty)
+                    [(OkLowerExpr lowered)
+                      (match lowered
+                        [(LowerExpr next-state value actual-ty)
+                          (OkLowerExpr
+                            (lower-coerce-value
+                              next-state
+                              value
+                              actual-ty
+                              expected-ty))])]
+                    [(ErrLowerExpr message) (ErrLowerExpr message)]))])]
           [_
             (lower-expr-expected
               ctx
@@ -22277,28 +22313,30 @@
     [(AstNoType)
       (if (tc-ref-capturing-lambda-init? type-env init)
         (match (ast-expr-unspan init)
-          [(AstExprLambda params lambda-ret body-box)
-            (let
-              [body : AstExpr (ast-node-get body-box)]
-              (match (tc-lambda-expr-allow-ref-captures
-                ctx
-                type-env
-                params
-                lambda-ret
-                body)
-                [(OkTcType lambda-ty)
-                  (lower-lambda
+          [(AstExprLambda lambda-box)
+            (match (box-get lambda-box)
+              [(AstLambda params lambda-ret body-box)
+                (let
+                  [body : AstExpr (ast-node-get body-box)]
+                  (match (tc-lambda-expr-allow-ref-captures
                     ctx
-                    state
-                    env
                     type-env
                     params
                     lambda-ret
-                    body
-                    init
-                    lambda-ty)]
-                [(ErrTcType message)
-                  (ErrLowerExpr (lower-diagnostic-at-expr init message))]))]
+                    body)
+                    [(OkTcType lambda-ty)
+                      (lower-lambda
+                        ctx
+                        state
+                        env
+                        type-env
+                        params
+                        lambda-ret
+                        body
+                        init
+                        lambda-ty)]
+                    [(ErrTcType message)
+                      (ErrLowerExpr (lower-diagnostic-at-expr init message))]))])]
           [_ (lower-expr ctx state env type-env init)])
         (lower-expr ctx state env type-env init))]))
 
@@ -29409,10 +29447,12 @@
       (lower-tail-call-reference-capturing-lambda?
         type-env
         (ast-node-get inner-box))]
-    [(AstExprLambda params _ body-box)
-      (let
-        [body : AstExpr (ast-node-get body-box)]
-        (tc-lambda-captures-reference? type-env params body))]
+    [(AstExprLambda lambda-box)
+      (match (box-get lambda-box)
+        [(AstLambda params _ body-box)
+          (let
+            [body : AstExpr (ast-node-get body-box)]
+            (tc-lambda-captures-reference? type-env params body))])]
     [_ false]))
 
 (define (lower-tail-call-target?

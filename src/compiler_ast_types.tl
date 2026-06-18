@@ -236,6 +236,23 @@
   (AstMatchArmNil)
   (AstMatchArmCons AstMatchArm (Box AstMatchArmList)))
 
+;; Boxed payload for `AstExprLambda`. Lambdas are rare in the AST, but their
+;; inline payload (AstParamList ~80 B + AstMaybeType ~48 B) made
+;; `AstExprLambda` the single largest `AstExpr` variant at 144 B -- and because
+;; a defenum is laid out as `tag + max(variant)`, every one of the ~2M nodes in
+;; the flat node pool paid that 144 B. Boxing the payload collapses the variant
+;; to one word, shrinking every node (pool footprint and the per-node
+;; `ast-node-get` copy) without slowing the common small variants.
+(defenum AstLambda
+  (AstLambda AstParamList AstMaybeType i64))
+
+;; Boxed payload for `AstExprSpmdScan` (#3299). With ten fields including two
+;; inline `AstType`s, the variant is 152 B -- the largest `AstExpr` variant,
+;; which sets the size of every node in the flat pool. spmd-scan is rare, so
+;; boxing its payload collapses the variant to one word and shrinks every node.
+(defenum AstSpmdScan
+  (AstSpmdScan AstReduceOp i64 AstType i64 i64 i64 AstType i64 i64 i64))
+
 (defenum AstExpr
   (AstExprSpanned i64 AstSourceSpan)
   (AstExprLiteral AstLiteral)
@@ -245,7 +262,7 @@
   (AstExprCall i64 AstExprList)
   (AstExprIf i64 i64 i64)
   (AstExprLet AstLetBindingList i64)
-  (AstExprLambda AstParamList AstMaybeType i64)
+  (AstExprLambda (Box AstLambda))
   (AstExprTuple AstExprList)
   (AstExprTupleRef i64 i64)
   (AstExprArray AstExprList)
@@ -267,7 +284,7 @@
   (AstExprMatch i64 AstMatchArmList)
   (AstExprForeach i64 AstType i64 i64 i64)
   (AstExprSpmdReduce AstReduceOp i64 AstType i64 i64 i64 i64)
-  (AstExprSpmdScan AstReduceOp i64 AstType i64 i64 i64 AstType i64 i64 i64)
+  (AstExprSpmdScan (Box AstSpmdScan))
   (AstExprSpmdBroadcast i64 i64)
   (AstExprStructGet i64 i64)
   (AstExprStructSet i64 i64 i64)
@@ -1605,7 +1622,7 @@
   [params : AstParamList]
   [ret : AstMaybeType]
   [body : i64]) : i64
-  (ast-node-push (AstExprLambda params ret body)))
+  (ast-node-push (AstExprLambda (box (AstLambda params ret body)))))
 
 (define (ast-expr-tuple-ref [target : i64] [index : i64]) : i64
   (ast-node-push (AstExprTupleRef target index)))
@@ -1699,16 +1716,18 @@
   [body : i64]) : i64
   (ast-node-push
     (AstExprSpmdScan
-      op
-      (intern index)
-      index-ty
-      start
-      end
-      (intern prefix)
-      prefix-ty
-      init
-      value
-      body)))
+      (box
+        (AstSpmdScan
+          op
+          (intern index)
+          index-ty
+          start
+          end
+          (intern prefix)
+          prefix-ty
+          init
+          value
+          body)))))
 
 (define (ast-expr-spmd-scan-id
   [op : AstReduceOp]
@@ -1723,16 +1742,18 @@
   [body : i64]) : i64
   (ast-node-push
     (AstExprSpmdScan
-      op
-      index
-      index-ty
-      start
-      end
-      prefix
-      prefix-ty
-      init
-      value
-      body)))
+      (box
+        (AstSpmdScan
+          op
+          index
+          index-ty
+          start
+          end
+          prefix
+          prefix-ty
+          init
+          value
+          body)))))
 
 (define (ast-expr-spmd-broadcast [value : i64] [lane : i64]) : i64
   (ast-node-push (AstExprSpmdBroadcast value lane)))
@@ -2075,7 +2096,7 @@
     [(AstExprCall _ _) 6]
     [(AstExprIf _ _ _) 7]
     [(AstExprLet _ _) 8]
-    [(AstExprLambda _ _ _) 9]
+    [(AstExprLambda _) 9]
     [(AstExprTuple _) 10]
     [(AstExprTupleRef _ _) 11]
     [(AstExprArray _) 12]
@@ -2103,7 +2124,7 @@
     [(AstExprInit _) 61]
     [(AstExprComptime _) 27]
     [(AstExprSpmdReduce _ _ _ _ _ _ _) 28]
-    [(AstExprSpmdScan _ _ _ _ _ _ _ _ _ _) 68]
+    [(AstExprSpmdScan _) 68]
     [(AstExprSpmdBroadcast _ _) 64]
     [(AstExprTry _) 29]
     [(AstExprReturn _) 48]

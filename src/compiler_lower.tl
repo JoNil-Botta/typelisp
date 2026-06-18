@@ -134,9 +134,10 @@
   (LowerNoVectorReduce)
   (LowerSomeVectorReduce i64 CompilerIrVectorReduceOp AstType i64))
 
-(defenum LowerArrayVarList
-  (LowerArrayVarNil)
-  (LowerArrayVarCons i64 i64 (Box LowerArrayVarList)))
+(defstruct LowerArrayVarSet
+  (vars (Array i64))
+  (offsets (Array i64))
+  (count i64))
 
 (defenum LowerCapture
   (LowerCapture String i64 AstType i64))
@@ -23284,44 +23285,102 @@
         [NoneI64 LowerNoIrValue])]
     [_ LowerNoIrValue]))
 
-(define (lower-array-var-list-add
-  [vars : LowerArrayVarList]
+(define (lower-array-var-set-empty) : LowerArrayVarSet
+  (LowerArrayVarSet (make-array i64 0) (make-array i64 0) 0))
+
+(define (lower-array-var-set-add
+  [set : LowerArrayVarSet]
   [var : i64]
-  [offset : i64]) : LowerArrayVarList
-  (match vars
-    [(LowerArrayVarNil) (LowerArrayVarCons var offset (box LowerArrayVarNil))]
-    [(LowerArrayVarCons found found-offset rest)
-      (if (= found var)
-        (LowerArrayVarCons
-          found
-          (if (> offset found-offset)
-            offset
-            found-offset)
-          rest)
-        (LowerArrayVarCons
-          found
-          found-offset
-          (box (lower-array-var-list-add (box-get rest) var offset))))]))
+  [offset : i64]) : LowerArrayVarSet
+  (let
+    [vars : (Array i64) (struct-get set vars)]
+    [offsets : (Array i64) (struct-get set offsets)]
+    [count : i64 (struct-get set count)]
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< index count))
+        (if (= (array-ref vars index) var)
+          (begin
+            (if (> offset (array-ref offsets index))
+              (array-set! offsets index offset)
+              unit)
+            (set! found true))
+          (set! index (+ index 1))))
+      (if found
+        (LowerArrayVarSet vars offsets count)
+        (begin
+          (array-push! vars var)
+          (array-push! offsets offset)
+          (LowerArrayVarSet vars offsets (+ count 1)))))))
 
-(define (lower-array-var-list-merge
-  [left : LowerArrayVarList]
-  [right : LowerArrayVarList]) : LowerArrayVarList
-  (match right
-    [(LowerArrayVarNil) left]
-    [(LowerArrayVarCons var offset rest)
-      (lower-array-var-list-merge
-        (lower-array-var-list-add left var offset)
-        (box-get rest))]))
+(define (lower-array-var-set-merge
+  [left : LowerArrayVarSet]
+  [right : LowerArrayVarSet]) : LowerArrayVarSet
+  (let
+    [vars : (Array i64) (struct-get right vars)]
+    [offsets : (Array i64) (struct-get right offsets)]
+    [count : i64 (struct-get right count)]
+    [index : i64 0]
+    [out : LowerArrayVarSet left]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            out
+            (lower-array-var-set-add
+              out
+              (array-ref vars index)
+              (array-ref offsets index)))
+          (set! index (+ index 1))))
+      out)))
 
-(define (lower-array-var-list-max-offset [vars : LowerArrayVarList]) : i64
-  (match vars
-    [(LowerArrayVarNil) 0]
-    [(LowerArrayVarCons _ offset rest)
-      (let
-        [rest-offset : i64 (lower-array-var-list-max-offset (box-get rest))]
-        (if (> offset rest-offset)
-          offset
-          rest-offset))]))
+(define (lower-array-var-set-max-offset [set : LowerArrayVarSet]) : i64
+  (let
+    [offsets : (Array i64) (struct-get set offsets)]
+    [count : i64 (struct-get set count)]
+    [index : i64 0]
+    [max-offset : i64 0]
+    (begin
+      (while (< index count)
+        (let
+          [offset : i64 (array-ref offsets index)]
+          (begin
+            (if (> offset max-offset)
+              (set! max-offset offset)
+              unit)
+            (set! index (+ index 1)))))
+      max-offset)))
+
+(define (compiler-lower-array-var-set-ok?) : bool
+  (let
+    [left : LowerArrayVarSet
+      (lower-array-var-set-add
+        (lower-array-var-set-add
+          (lower-array-var-set-add (lower-array-var-set-empty) 10 1)
+          20
+          2)
+        10
+        4)]
+    [right : LowerArrayVarSet
+      (lower-array-var-set-add
+        (lower-array-var-set-add (lower-array-var-set-empty) 30 3)
+        20
+        1)]
+    [merged : LowerArrayVarSet (lower-array-var-set-merge left right)]
+    [vars : (Array i64) (struct-get merged vars)]
+    [offsets : (Array i64) (struct-get merged offsets)]
+    (and
+      (= (struct-get merged count) 3)
+      (= (array-length vars) 3)
+      (= (array-length offsets) 3)
+      (= (array-ref vars 0) 10)
+      (= (array-ref offsets 0) 4)
+      (= (array-ref vars 1) 20)
+      (= (array-ref offsets 1) 2)
+      (= (array-ref vars 2) 30)
+      (= (array-ref offsets 2) 3)
+      (= (lower-array-var-set-max-offset merged) 4))))
 
 (define (lower-masked-vector-index-literal-offset [expr : AstExpr]) : i64
   (match expr
@@ -23951,7 +24010,7 @@
   [env : SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [expr : AstExpr]) : LowerArrayVarList
+  [expr : AstExpr]) : LowerArrayVarSet
   (match expr
     [(AstExprSpanned inner-box _)
       (let
@@ -23973,13 +24032,13 @@
       (let
         [left : AstExpr (ast-node-get left-box)]
         [right : AstExpr (ast-node-get right-box)]
-        (lower-array-var-list-merge
+        (lower-array-var-set-merge
           (lower-masked-vector-array-vars env type-env index left)
           (lower-masked-vector-array-vars env type-env index right)))]
     [(AstExprLet bindings body-box)
       (let
         [body : AstExpr (ast-node-get body-box)]
-        (lower-array-var-list-merge
+        (lower-array-var-set-merge
           (lower-masked-vector-let-binding-array-vars
             env
             type-env
@@ -23991,9 +24050,9 @@
         [cond : AstExpr (ast-node-get cond-box)]
         [then-branch : AstExpr (ast-node-get then-box)]
         [else-branch : AstExpr (ast-node-get else-box)]
-        (lower-array-var-list-merge
+        (lower-array-var-set-merge
           (lower-masked-vector-array-vars env type-env index cond)
-          (lower-array-var-list-merge
+          (lower-array-var-set-merge
             (lower-masked-vector-array-vars env type-env index then-branch)
             (lower-masked-vector-array-vars env type-env index else-branch))))]
     [(AstExprBegin exprs)
@@ -24006,44 +24065,50 @@
         (if (>= idx-offset 0)
           (match (lower-dynamic-array-var env type-env arr)
             [(LowerSomeArrayVar var _)
-              (lower-array-var-list-add LowerArrayVarNil var idx-offset)]
-            [LowerNoArrayVar LowerArrayVarNil])
-          LowerArrayVarNil))]
+              (lower-array-var-set-add
+                (lower-array-var-set-empty)
+                var
+                idx-offset)]
+            [LowerNoArrayVar (lower-array-var-set-empty)])
+          (lower-array-var-set-empty)))]
     [(AstExprArraySet arr-box idx-box value-box)
       (let
         [arr : AstExpr (ast-node-get arr-box)]
         [idx : AstExpr (ast-node-get idx-box)]
         [value : AstExpr (ast-node-get value-box)]
         [idx-offset : i64 (lower-masked-vector-index-offset index idx)]
-        (lower-array-var-list-merge
+        (lower-array-var-set-merge
           (if (>= idx-offset 0)
             (match (lower-dynamic-array-var env type-env arr)
               [(LowerSomeArrayVar var _)
-                (lower-array-var-list-add LowerArrayVarNil var idx-offset)]
-              [LowerNoArrayVar LowerArrayVarNil])
-            LowerArrayVarNil)
+                (lower-array-var-set-add
+                  (lower-array-var-set-empty)
+                  var
+                  idx-offset)]
+              [LowerNoArrayVar (lower-array-var-set-empty)])
+            (lower-array-var-set-empty))
           (lower-masked-vector-array-vars env type-env index value)))]
     [(AstExprStructSet receiver-box _ value-box)
       (let
         [receiver : AstExpr (ast-node-get receiver-box)]
         [value : AstExpr (ast-node-get value-box)]
-        (lower-array-var-list-merge
+        (lower-array-var-set-merge
           (lower-masked-vector-array-vars env type-env index receiver)
           (lower-masked-vector-array-vars env type-env index value)))]
-    [_ LowerArrayVarNil]))
+    [_ (lower-array-var-set-empty)]))
 
 (define (lower-masked-vector-expr-list-array-vars
   [env : SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [exprs : AstExprList]) : LowerArrayVarList
+  [exprs : AstExprList]) : LowerArrayVarSet
   (match exprs
-    [(AstExprNil) LowerArrayVarNil]
+    [(AstExprNil) (lower-array-var-set-empty)]
     [(AstExprCons expr rest)
       (let
         [expr : AstExpr (ast-node-get expr)]
         [rest : AstExprList (box-get rest)]
-        (lower-array-var-list-merge
+        (lower-array-var-set-merge
           (lower-masked-vector-array-vars env type-env index expr)
           (lower-masked-vector-expr-list-array-vars env type-env index rest)))]))
 
@@ -24051,9 +24116,9 @@
   [env : SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [bindings : AstLetBindingList]) : LowerArrayVarList
+  [bindings : AstLetBindingList]) : LowerArrayVarSet
   (match bindings
-    [(AstLetBindingNil) LowerArrayVarNil]
+    [(AstLetBindingNil) (lower-array-var-set-empty)]
     [(AstLetBindingCons binding rest)
       (let
         [rest : AstLetBindingList (box-get rest)]
@@ -24061,7 +24126,7 @@
           [(AstLetBinding _ _ init-box)
             (let
               [init : AstExpr (ast-node-get init-box)]
-              (lower-array-var-list-merge
+              (lower-array-var-set-merge
                 (lower-masked-vector-array-vars env type-env index init)
                 (lower-masked-vector-let-binding-array-vars
                   env
@@ -24548,15 +24613,15 @@
         LowerNoVectorMapValue)]
     [_ LowerNoVectorMapValue]))
 
-(define (lower-vector-map-value-array-vars [plan : LowerVectorMapValue]) : LowerArrayVarList
+(define (lower-vector-map-value-array-vars [plan : LowerVectorMapValue]) : LowerArrayVarSet
   (match plan
     [(LowerVectorMapArray array-var)
-      (lower-array-var-list-add LowerArrayVarNil array-var 0)]
-    [(LowerVectorMapUniform _) LowerArrayVarNil]
+      (lower-array-var-set-add (lower-array-var-set-empty) array-var 0)]
+    [(LowerVectorMapUniform _) (lower-array-var-set-empty)]
     [(LowerVectorMapBroadcastArray array-var _)
-      (lower-array-var-list-add LowerArrayVarNil array-var 0)]
+      (lower-array-var-set-add (lower-array-var-set-empty) array-var 0)]
     [(LowerVectorMapBinOp _ lhs rhs)
-      (lower-array-var-list-merge
+      (lower-array-var-set-merge
         (lower-vector-map-value-array-vars (box-get lhs))
         (lower-vector-map-value-array-vars (box-get rhs)))]))
 
@@ -25785,69 +25850,89 @@
     (lower-emit-binop state (IrBinAdd) base (IrValueI64 offset) (AstTyI64))
     (LowerExpr state base (AstTyI64))))
 
-(define (lower-avx512-array-list-next-ok
+(define (lower-avx512-array-set-next-ok
   [state : LowerState]
   [ok : CompilerIrValue]
   [next-index : CompilerIrValue]
-  [arrays : LowerArrayVarList]) : LowerExpr
-  (match arrays
-    [(LowerArrayVarNil) (LowerExpr state ok (AstTyBool))]
-    [(LowerArrayVarCons array-var offset rest)
-      (match (lower-avx512-index-plus-offset state next-index offset)
-        [(LowerExpr index-state limit-index _)
-          (match (lower-array-len-value index-state (IrValueVar array-var))
-            [(LowerExpr len-state array-len _)
-              (match (lower-emit-binop
-                len-state
-                (IrBinLe)
-                limit-index
-                array-len
-                (AstTyBool))
-                [(LowerExpr cmp-state within _)
-                  (match (lower-emit-binop
-                    cmp-state
-                    (IrBinAnd)
-                    ok
-                    within
-                    (AstTyBool))
-                    [(LowerExpr next-state next-ok _)
-                      (lower-avx512-array-list-next-ok
-                        next-state
-                        next-ok
-                        next-index
-                        (box-get rest))])])])])]))
+  [arrays : LowerArrayVarSet]) : LowerExpr
+  (let
+    [s : LowerState state]
+    [next-ok : CompilerIrValue ok]
+    [index : i64 0]
+    [count : i64 (struct-get arrays count)]
+    (begin
+      (while (< index count)
+        (let
+          [array-var : i64 (array-ref (struct-get arrays vars) index)]
+          [offset : i64 (array-ref (struct-get arrays offsets) index)]
+          (begin
+            (match (lower-avx512-index-plus-offset s next-index offset)
+              [(LowerExpr index-state limit-index _)
+                (match (lower-array-len-value
+                  index-state
+                  (IrValueVar array-var))
+                  [(LowerExpr len-state array-len _)
+                    (match (lower-emit-binop
+                      len-state
+                      (IrBinLe)
+                      limit-index
+                      array-len
+                      (AstTyBool))
+                      [(LowerExpr cmp-state within _)
+                        (match (lower-emit-binop
+                          cmp-state
+                          (IrBinAnd)
+                          next-ok
+                          within
+                          (AstTyBool))
+                          [(LowerExpr next-state value _)
+                            (begin
+                              (set! s next-state)
+                              (set! next-ok value))])])])])
+            (set! index (+ index 1)))))
+      (LowerExpr s next-ok (AstTyBool)))))
 
-(define (lower-avx512-array-list-end-ok
+(define (lower-avx512-array-set-end-ok
   [state : LowerState]
   [ok : CompilerIrValue]
   [end-value : CompilerIrValue]
-  [arrays : LowerArrayVarList]) : LowerExpr
-  (match arrays
-    [(LowerArrayVarNil) (LowerExpr state ok (AstTyBool))]
-    [(LowerArrayVarCons array-var offset rest)
-      (match (lower-avx512-index-plus-offset state end-value offset)
-        [(LowerExpr index-state limit-index _)
-          (match (lower-array-len-value index-state (IrValueVar array-var))
-            [(LowerExpr len-state array-len _)
-              (match (lower-emit-binop
-                len-state
-                (IrBinLe)
-                limit-index
-                array-len
-                (AstTyBool))
-                [(LowerExpr cmp-state within _)
-                  (match (lower-emit-binop
-                    cmp-state
-                    (IrBinAnd)
-                    ok
-                    within
-                    (AstTyBool))
-                    [(LowerExpr next-state next-ok _)
-                      (lower-avx512-array-list-end-ok
-                        next-state
-                        next-ok
-                        end-value
-                        (box-get rest))])])])])]))
+  [arrays : LowerArrayVarSet]) : LowerExpr
+  (let
+    [s : LowerState state]
+    [next-ok : CompilerIrValue ok]
+    [index : i64 0]
+    [count : i64 (struct-get arrays count)]
+    (begin
+      (while (< index count)
+        (let
+          [array-var : i64 (array-ref (struct-get arrays vars) index)]
+          [offset : i64 (array-ref (struct-get arrays offsets) index)]
+          (begin
+            (match (lower-avx512-index-plus-offset s end-value offset)
+              [(LowerExpr index-state limit-index _)
+                (match (lower-array-len-value
+                  index-state
+                  (IrValueVar array-var))
+                  [(LowerExpr len-state array-len _)
+                    (match (lower-emit-binop
+                      len-state
+                      (IrBinLe)
+                      limit-index
+                      array-len
+                      (AstTyBool))
+                      [(LowerExpr cmp-state within _)
+                        (match (lower-emit-binop
+                          cmp-state
+                          (IrBinAnd)
+                          next-ok
+                          within
+                          (AstTyBool))
+                          [(LowerExpr next-state value _)
+                            (begin
+                              (set! s next-state)
+                              (set! next-ok value))])])])])
+            (set! index (+ index 1)))))
+      (LowerExpr s next-ok (AstTyBool)))))
 
 (define (lower-avx512-masked-index-limit [lanes : i64] [offset : i64]) : i64
   (let
@@ -25864,11 +25949,11 @@
   [index-var : i64]
   [next-index : CompilerIrValue]
   [end-value : CompilerIrValue]
-  [arrays : LowerArrayVarList]
+  [arrays : LowerArrayVarSet]
   [lanes : i64]) : LowerExpr
   (let
     [s : LowerState state]
-    [max-offset : i64 (lower-array-var-list-max-offset arrays)]
+    [max-offset : i64 (lower-array-var-set-max-offset arrays)]
     [ok : CompilerIrValue IrValueUnit]
     [within : CompilerIrValue IrValueUnit]
     (begin
@@ -25904,16 +25989,16 @@
             (set! within value))])
       (match (lower-emit-binop s (IrBinAnd) ok within (AstTyBool))
         [(LowerExpr next-s value _)
-          (lower-avx512-array-list-next-ok next-s value next-index arrays)]))))
+          (lower-avx512-array-set-next-ok next-s value next-index arrays)]))))
 
 (define (lower-avx512-masked-tail-ok
   [state : LowerState]
   [index-var : i64]
   [end-value : CompilerIrValue]
-  [arrays : LowerArrayVarList]) : LowerExpr
+  [arrays : LowerArrayVarSet]) : LowerExpr
   (let
     [s : LowerState state]
-    [max-offset : i64 (lower-array-var-list-max-offset arrays)]
+    [max-offset : i64 (lower-array-var-set-max-offset arrays)]
     [ok : CompilerIrValue IrValueUnit]
     [within : CompilerIrValue IrValueUnit]
     (begin
@@ -25954,7 +26039,7 @@
             (set! within value))])
       (match (lower-emit-binop s (IrBinAnd) ok within (AstTyBool))
         [(LowerExpr next-s value _)
-          (lower-avx512-array-list-end-ok next-s value end-value arrays)]))))
+          (lower-avx512-array-set-end-ok next-s value end-value arrays)]))))
 
 (define (lower-avx512-masked-unsupported [expr : AstExpr] [detail : String]) : ResultLowerExpr
   (ErrLowerExpr
@@ -27096,7 +27181,7 @@
                 (IrInstrMov index-var start-value index-ty))]
             [body-env : SymI64Env (sym-i64-bind env index index-var)]
             [body-type-env : TcTypeEnv (tc-bind type-env index index-ty)]
-            [arrays : LowerArrayVarList
+            [arrays : LowerArrayVarSet
               (lower-masked-vector-array-vars body-env body-type-env index body)]
             [header-label : String ""]
             [body-label : String ""]
@@ -27411,8 +27496,8 @@
               (lower-state-emit
                 index-alloc
                 (IrInstrMov index-var start-value index-ty))]
-            [arrays : LowerArrayVarList
-              (lower-array-var-list-add
+            [arrays : LowerArrayVarSet
+              (lower-array-var-set-add
                 (lower-vector-map-value-array-vars value-plan)
                 dst-array
                 0)]
@@ -41636,6 +41721,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-foreach-tests-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-array-var-set-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-spmd-reduce-tests-ok?)

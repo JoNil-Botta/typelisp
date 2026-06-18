@@ -17,7 +17,6 @@
 (import "package_cache_core.tl")
 (import "package_lock_core.tl")
 (import "compiler_diagnostic.tl")
-(import "compiler_parse_core.tl")
 (import "compiler_driver_core.tl")
 (import "compiler_typecheck.tl")
 (import "tlci_core.tl")

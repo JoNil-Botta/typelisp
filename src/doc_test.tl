@@ -1930,11 +1930,12 @@
           true
           (doc-test-dep-list-path? path manifest-dir rest)))]))
 
-(define (doc-test-typecheck-package-path-list-with-roots
+(define (doc-test-typecheck-package-path-list-with-roots-from
   [paths : AstDeclPathList]
   [stdlib-roots : StringVec]
   [manifest-dir : String]
-  [deps : CompilerPkgDeps]) : DocTestRunReport
+  [deps : CompilerPkgDeps]
+  [last-path : String]) : DocTestRunReport
   (match paths
     [(AstDeclPathNil) (DocTestRunReport 0 (doc-test-run-failure-list-empty))]
     [(AstDeclPathCons path rest)
@@ -1962,7 +1963,7 @@
                 manifest-dir
                 (compiler-pkg-deps-list deps)))
             (doc-test-path-under-root? rooted manifest-dir))]
-        (if package-local
+        (if (and package-local (not (string-eq rooted last-path)))
           (let
             [report : DocTestRunReport
               (doc-test-typecheck-package-file-text-with-roots
@@ -1971,17 +1972,19 @@
                 manifest-dir
                 deps)]
             (if (doc-test-run-report-ok? report)
-              (doc-test-typecheck-package-path-list-with-roots
+              (doc-test-typecheck-package-path-list-with-roots-from
                 rest
                 stdlib-roots
                 manifest-dir
-                deps)
+                deps
+                rooted)
               report))
-          (doc-test-typecheck-package-path-list-with-roots
+          (doc-test-typecheck-package-path-list-with-roots-from
             rest
             stdlib-roots
             manifest-dir
-            deps)))]))
+            deps
+            last-path)))]))
 
 (define (doc-test-typecheck-package-file-text-with-roots
   [path : String]
@@ -2003,11 +2006,12 @@
   [stdlib-roots : StringVec]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : DocTestRunReport
-  (doc-test-typecheck-package-path-list-with-roots
+  (doc-test-typecheck-package-path-list-with-roots-from
     paths
     stdlib-roots
     manifest-dir
-    deps))
+    deps
+    ""))
 
 ;; Exit status for a report: 0 when every example passed (or there were none),
 ;; 1 otherwise. Callers turn this directly into a process exit code.

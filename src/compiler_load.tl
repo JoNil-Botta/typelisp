@@ -248,8 +248,10 @@
     (+ (compiler-load-session-state-program-cache-hit-count-value state) 1)))
 
 (define (compiler-load-program-cache-note-hit!) : unit
-  (compiler-load-session-state-program-cache-note-hit!
-    compiler-load-active-session-state))
+  (array-set!
+    (struct-get compiler-load-active-session-state program-cache-hit-count)
+    0
+    (+ (compiler-load-program-cache-hit-count-value) 1)))
 
 (define (compiler-load-session-state-program-cache-note-miss!
   [state : CompilerLoadSessionState]) : unit
@@ -258,8 +260,10 @@
     (+ (compiler-load-session-state-program-cache-miss-count-value state) 1)))
 
 (define (compiler-load-program-cache-note-miss!) : unit
-  (compiler-load-session-state-program-cache-note-miss!
-    compiler-load-active-session-state))
+  (array-set!
+    (struct-get compiler-load-active-session-state program-cache-miss-count)
+    0
+    (+ (compiler-load-program-cache-miss-count-value) 1)))
 
 (define (compiler-load-session-state-program-cache-note-store!
   [state : CompilerLoadSessionState]) : unit
@@ -268,8 +272,10 @@
     (+ (compiler-load-session-state-program-cache-store-count-value state) 1)))
 
 (define (compiler-load-program-cache-note-store!) : unit
-  (compiler-load-session-state-program-cache-note-store!
-    compiler-load-active-session-state))
+  (array-set!
+    (struct-get compiler-load-active-session-state program-cache-store-count)
+    0
+    (+ (compiler-load-program-cache-store-count-value) 1)))
 
 (define (compiler-load-session-state-program-cache-hit-count-value
   [state : CompilerLoadSessionState]) : i64
@@ -277,8 +283,9 @@
     (struct-get state program-cache-hit-count)))
 
 (define (compiler-load-program-cache-hit-count-value) : i64
-  (compiler-load-session-state-program-cache-hit-count-value
-    compiler-load-active-session-state))
+  (array-ref
+    (struct-get compiler-load-active-session-state program-cache-hit-count)
+    0))
 
 (define (compiler-load-session-state-program-cache-miss-count-value
   [state : CompilerLoadSessionState]) : i64
@@ -286,8 +293,9 @@
     (struct-get state program-cache-miss-count)))
 
 (define (compiler-load-program-cache-miss-count-value) : i64
-  (compiler-load-session-state-program-cache-miss-count-value
-    compiler-load-active-session-state))
+  (array-ref
+    (struct-get compiler-load-active-session-state program-cache-miss-count)
+    0))
 
 (define (compiler-load-session-state-program-cache-store-count-value
   [state : CompilerLoadSessionState]) : i64
@@ -295,8 +303,9 @@
     (struct-get state program-cache-store-count)))
 
 (define (compiler-load-program-cache-store-count-value) : i64
-  (compiler-load-session-state-program-cache-store-count-value
-    compiler-load-active-session-state))
+  (array-ref
+    (struct-get compiler-load-active-session-state program-cache-store-count)
+    0))
 
 (define (compiler-load-session-state-program-cache-lookup-from
   [state : CompilerLoadSessionState]
@@ -537,32 +546,46 @@
       unit)))
 
 (define (compiler-load-session-note-persistent!) : unit
-  (compiler-load-session-state-note-persistent!
-    compiler-load-active-session-state))
+  (begin
+    (if (> (ast-node-pool-len) (compiler-load-session-ast-floor-value))
+      (array-set!
+        (struct-get compiler-load-active-session-state ast-floor)
+        0
+        (ast-node-pool-len))
+      unit)
+    (if (> (ty-node-pool-len) (compiler-load-session-ty-floor-value))
+      (array-set!
+        (struct-get compiler-load-active-session-state ty-floor)
+        0
+        (ty-node-pool-len))
+      unit)
+    (if (> (intern-pool-len) (compiler-load-session-intern-floor-value))
+      (array-set!
+        (struct-get compiler-load-active-session-state intern-floor)
+        0
+        (intern-pool-len))
+      unit)))
 
 (define (compiler-load-session-state-ast-floor-value
   [state : CompilerLoadSessionState]) : i64
   (compiler-load-session-state-i64-cell-get (struct-get state ast-floor)))
 
 (define (compiler-load-session-ast-floor-value) : i64
-  (compiler-load-session-state-ast-floor-value
-    compiler-load-active-session-state))
+  (array-ref (struct-get compiler-load-active-session-state ast-floor) 0))
 
 (define (compiler-load-session-state-ty-floor-value
   [state : CompilerLoadSessionState]) : i64
   (compiler-load-session-state-i64-cell-get (struct-get state ty-floor)))
 
 (define (compiler-load-session-ty-floor-value) : i64
-  (compiler-load-session-state-ty-floor-value
-    compiler-load-active-session-state))
+  (array-ref (struct-get compiler-load-active-session-state ty-floor) 0))
 
 (define (compiler-load-session-state-intern-floor-value
   [state : CompilerLoadSessionState]) : i64
   (compiler-load-session-state-i64-cell-get (struct-get state intern-floor)))
 
 (define (compiler-load-session-intern-floor-value) : i64
-  (compiler-load-session-state-intern-floor-value
-    compiler-load-active-session-state))
+  (array-ref (struct-get compiler-load-active-session-state intern-floor) 0))
 
 (define (compiler-load-session-state-floors-set!
   [state : CompilerLoadSessionState]
@@ -584,11 +607,19 @@
   [ast-floor : i64]
   [ty-floor : i64]
   [intern-floor : i64]) : unit
-  (compiler-load-session-state-floors-set!
-    compiler-load-active-session-state
-    ast-floor
-    ty-floor
-    intern-floor))
+  (begin
+    (array-set!
+      (struct-get compiler-load-active-session-state ast-floor)
+      0
+      ast-floor)
+    (array-set!
+      (struct-get compiler-load-active-session-state ty-floor)
+      0
+      ty-floor)
+    (array-set!
+      (struct-get compiler-load-active-session-state intern-floor)
+      0
+      intern-floor)))
 
 (define (compiler-load-session-state-use! [state : CompilerLoadSessionState]) : unit
   (begin
@@ -599,22 +630,26 @@
 
 (define (compiler-load-session-cache-enable!) : unit
   (begin
-    (compiler-load-session-state-cache-enable!
-      compiler-load-active-session-state)
+    (array-set!
+      (struct-get compiler-load-active-session-state cache-enabled)
+      0
+      true)
     (intern-persistent-storage-enable!)))
 
 (define (compiler-load-session-cache-set-enabled! [enabled : bool]) : unit
   (if enabled
     (compiler-load-session-cache-enable!)
     (begin
-      (compiler-load-session-state-cache-set-enabled!
-        compiler-load-active-session-state
+      (array-set!
+        (struct-get compiler-load-active-session-state cache-enabled)
+        0
         false)
       (intern-persistent-storage-disable!))))
 
 (define (compiler-load-session-program-cache-enable!) : unit
-  (compiler-load-session-state-program-cache-set-enabled-cell!
-    compiler-load-active-session-state
+  (array-set!
+    (struct-get compiler-load-active-session-state program-cache-enabled)
+    0
     true))
 
 (define (compiler-load-session-state-program-cache-disable!
@@ -624,8 +659,12 @@
     (compiler-load-session-state-program-cache-clear! state)))
 
 (define (compiler-load-session-program-cache-disable!) : unit
-  (compiler-load-session-state-program-cache-disable!
-    compiler-load-active-session-state))
+  (begin
+    (array-set!
+      (struct-get compiler-load-active-session-state program-cache-enabled)
+      0
+      false)
+    (compiler-load-program-cache-clear!)))
 
 (define (compiler-load-session-state-program-cache-set-enabled!
   [state : CompilerLoadSessionState]
@@ -635,35 +674,33 @@
     (compiler-load-session-state-program-cache-disable! state)))
 
 (define (compiler-load-session-program-cache-set-enabled! [enabled : bool]) : unit
-  (compiler-load-session-state-program-cache-set-enabled!
-    compiler-load-active-session-state
-    enabled))
+  (if enabled
+    (compiler-load-session-program-cache-enable!)
+    (compiler-load-session-program-cache-disable!)))
 
 (define (compiler-load-session-program-cache-enabled?) : bool
-  (compiler-load-session-state-program-cache-enabled?
-    compiler-load-active-session-state))
+  (array-ref
+    (struct-get compiler-load-active-session-state program-cache-enabled)
+    0))
 
 (define (compiler-load-session-cache-disable-for-test!) : unit
   (begin
     (set! compiler-load-active-session-state (compiler-load-session-state-new))
-    (compiler-load-session-state-cache-set-enabled!
-      compiler-load-active-session-state
+    (array-set!
+      (struct-get compiler-load-active-session-state cache-enabled)
+      0
       false)
-    (compiler-load-session-state-program-cache-set-enabled-cell!
-      compiler-load-active-session-state
+    (array-set!
+      (struct-get compiler-load-active-session-state program-cache-enabled)
+      0
       true)
-    (compiler-load-session-state-floors-set!
-      compiler-load-active-session-state
-      0
-      0
-      0)
+    (compiler-load-session-floors-set! 0 0 0)
     (compiler-load-program-cache-clear!)
     (compiler-load-runtime-prelude-cache-clear!)
     (intern-persistent-storage-disable!)))
 
 (define (compiler-load-session-cache-enabled?) : bool
-  (compiler-load-session-state-cache-enabled?
-    compiler-load-active-session-state))
+  (array-ref (struct-get compiler-load-active-session-state cache-enabled) 0))
 
 (define (compiler-load-session-reset-pools!) : unit
   (if (compiler-load-session-cache-enabled?)

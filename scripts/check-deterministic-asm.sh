@@ -184,6 +184,7 @@ compile_pass() {
             else
                 echo "[$pass_name] $source -> $out (compile-manifest invocation)"
                 "$COMPILER" compile "$(compiler_input_path "$ROOT/$source")" -o "$out" \
+                    --target linux-x86_64 \
                     --stdlib-root "$(compiler_input_path "$ROOT/stdlib")"
             fi
             continue

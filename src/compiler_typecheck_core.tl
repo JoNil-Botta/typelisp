@@ -28254,17 +28254,14 @@
     [(AstTyStr) (OkMacroSexpr (SpSSym "str" span))]
     [(AstTyBytes) (OkMacroSexpr (SpSSym "bytes" span))]
     [(AstTyUnit) (OkMacroSexpr (SpSSym "unit" span))]
-    [(AstTyNever) (OkMacroSexpr (SpSSym "Never" span))]
+    [(AstTyNever) (OkMacroSexpr (SpSSym "never" span))]
     [(AstTyExpr) (OkMacroSexpr (SpSSym "Expr" span))]
     [(AstTyExprList) (OkMacroSexpr (SpSSym "ExprList" span))]
     [(AstTyDynArray elem) (macro-type-unary-sexpr "Array" elem span origin)]
-    [(AstTyArray elem size-id)
+    [(AstTyArray elem count)
       (match (macro-type-to-spanned-sexpr (ty-node-get elem) span origin)
         [(OkMacroSexpr selem)
-          (match (macro-child-to-spanned-sexpr size-id span origin)
-            [(OkMacroSexpr ssize)
-              (OkMacroSexpr (macro-form2 "Array" selem ssize span))]
-            [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+          (OkMacroSexpr (macro-form2 "Array" selem (SpSInt count span) span))]
         [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
     [(AstTyBox inner) (macro-type-unary-sexpr "Box" inner span origin)]
     [(AstTyPtr inner) (macro-type-unary-sexpr "Ptr" inner span origin)]

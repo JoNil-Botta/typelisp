@@ -808,7 +808,13 @@
           (Stack (struct-get s slots) (+ (struct-get s len) 1) (struct-get s cap)))
         (stack-push (stack-grow s) value)))
     (define (stack-top [s : Stack]) : i64
-      (array-ref (struct-get s slots) (- (struct-get s len) 1)))))
+      (array-ref (struct-get s slots) (- (struct-get s len) 1)))
+    (define (stack-fixed-array-probe) : i64
+      (let
+        [items : (Array i64 3) (array 11 22 33)]
+        (array-ref items 1)))
+    (define (stack-never-probe [x : i64]) : i64
+      (ann (return x) : never))))
 (int-stack)
 (define (main) : i64 (stack-top (stack-push (stack-push (stack-new) 7) 42)))")
 

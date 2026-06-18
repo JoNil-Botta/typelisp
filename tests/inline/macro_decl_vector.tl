@@ -54,7 +54,13 @@
           (begin
             (array-set! slots (struct-get v len) value)
             (IntVec slots (+ (struct-get v len) 1) (struct-get v cap))))
-        (int-vec-push (int-vec-grow v) value)))))
+        (int-vec-push (int-vec-grow v) value)))
+    (define (int-vec-fixed-array-probe) : i64
+      (let
+        [items : (Array i64 3) (array 2 4 6)]
+        (array-ref items 2)))
+    (define (int-vec-never-probe [value : i64]) : i64
+      (ann (return value) : never))))
 
 (int-vector-family)
 
@@ -101,3 +107,10 @@
       (assert-i64-eq (int-vec-get v 2) 999 "set overwrites the indexed slot")
       (assert-i64-eq (int-vec-get v 1) 1 "set leaves neighbours intact")
       (assert-i64-eq (int-vec-len v) 5 "set preserves length"))))
+
+(test
+  generated-vector-fixed-array-type-round-trips
+  (assert-i64-eq
+    (int-vec-fixed-array-probe)
+    6
+    "generated typed fixed array binding round-trips"))

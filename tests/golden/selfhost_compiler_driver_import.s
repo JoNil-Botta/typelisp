@@ -75,19 +75,19 @@ _tl_stdlib_runtime_runtime_ptr_arg:
 _tl_stdlib_runtime_runtime_os_write:
     pushq %rbp
     movq %rsp, %rbp
-    subq $48, %rsp
+    subq $64, %rsp
     movq %rdi, -8(%rbp)
     movq %rsi, -16(%rbp)
     movq %rdx, -24(%rbp)
 .Lf1_entry:
     movq -16(%rbp), %rdi
     call _tl_stdlib_runtime_runtime_ptr_arg
-    movq %rax, -40(%rbp)
+    movq %rax, -48(%rbp)
     movl $1, %eax
     pushq %rax
     movq -8(%rbp), %rax
     pushq %rax
-    movq -40(%rbp), %rax
+    movq -48(%rbp), %rax
     pushq %rax
     movq -24(%rbp), %rax
     pushq %rax
@@ -96,7 +96,7 @@ _tl_stdlib_runtime_runtime_os_write:
     popq %rdi
     popq %rax
     syscall
-    movq %rax, -48(%rbp)
+    movq %rax, -56(%rbp)
     leave
     ret
 
@@ -114,7 +114,7 @@ _tl_stdlib_runtime_runtime_os_exit:
     popq %rdi
     popq %rax
     syscall
-    movq %rax, -24(%rbp)
+    movq %rax, -32(%rbp)
     movq -8(%rbp), %rdi
     leave
     jmp _tl_stdlib_runtime_runtime_os_exit

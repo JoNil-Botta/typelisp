@@ -7542,16 +7542,23 @@
                     (lower-state-type-cache arr-state)
                     index)
                     [(OkTcType idx-ty)
-                      (match (lower-expr ctx arr-state env type-env index)
+                      (match (lower-expr-expected
+                        ctx
+                        arr-state
+                        env
+                        type-env
+                        index
+                        idx-ty
+                        index)
                         [(OkLowerExpr idx-lowered)
                           (match idx-lowered
-                            [(LowerExpr idx-state idx-value _)
+                            [(LowerExpr idx-state idx-value idx-value-ty)
                               (match (lower-array-element-addr
                                 ctx
                                 idx-state
                                 arr-value
                                 idx-value
-                                idx-ty
+                                idx-value-ty
                                 (tc-type-without-regions (ty-node-get elem-ty)))
                                 [(LowerExpr addr-state elem-ptr _)
                                   (OkLowerExpr
@@ -7575,16 +7582,23 @@
                       (lower-state-type-cache arr-state)
                       index)
                       [(OkTcType idx-ty)
-                        (match (lower-expr ctx arr-state env type-env index)
+                        (match (lower-expr-expected
+                          ctx
+                          arr-state
+                          env
+                          type-env
+                          index
+                          idx-ty
+                          index)
                           [(OkLowerExpr idx-lowered)
                             (match idx-lowered
-                              [(LowerExpr idx-state idx-value _)
+                              [(LowerExpr idx-state idx-value idx-value-ty)
                                 (match (lower-fixed-array-element-addr
                                   ctx
                                   idx-state
                                   arr-value
                                   idx-value
-                                  idx-ty
+                                  idx-value-ty
                                   fixed-elem-ty
                                   elem-count)
                                   [(LowerExpr addr-state elem-ptr _)
@@ -10515,7 +10529,7 @@
   [origin : AstExpr]) : ResultLowerExpr
   (match (tc-current-return-type type-env)
     [(OkTcType return-ty)
-      (match (lower-expr ctx state env type-env value)
+      (match (lower-expr-expected ctx state env type-env value return-ty value)
         [(OkLowerExpr lowered)
           (match lowered
             [(LowerExpr value-state value-ir _)
@@ -12945,6 +12959,69 @@
           (OkTcType (tc-type-without-regions (tc-resolve-type ctx result-ty)))])]
     [(ErrTcBinOpTypes message) (ErrTcType message)]))
 
+(define (lower-binop-types-with-result
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [op : AstBinOp]
+  [left : AstExpr]
+  [right : AstExpr]
+  [expr-ty : AstType]) : ResultTcBinOpTypes
+  (let
+    [operand-expected : AstType
+      (tc-type-without-regions (tc-resolve-type ctx expr-ty))]
+    (match (tc-binop-contextual-operand-type op operand-expected)
+      [(AstNoType) (tc-binop-expr-types ctx type-env op left right)]
+      [(AstSomeType operand-ty)
+        (match (tc-expr-with-expected-or-actual ctx type-env left operand-ty)
+          [(OkTcType left-ty)
+            (match (tc-expr-with-expected-or-actual
+              ctx
+              type-env
+              right
+              operand-ty)
+              [(OkTcType right-ty)
+                (match (tc-binop-type op left-ty right-ty)
+                  [(OkTcType result-ty)
+                    (if (tc-type-compatible? expr-ty result-ty)
+                      (OkTcBinOpTypes
+                        (TcBinOpTypes
+                          left-ty
+                          right-ty
+                          (tc-contextual-result-type expr-ty result-ty)))
+                      (tc-binop-expr-types ctx type-env op left right))]
+                  [(ErrTcType _)
+                    (tc-binop-expr-types ctx type-env op left right)])]
+              [(ErrTcType message) (ErrTcBinOpTypes message)])]
+          [(ErrTcType message) (ErrTcBinOpTypes message)])])))
+
+(define (lower-unop-type-with-result
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [op : AstUnOp]
+  [inner : AstExpr]
+  [expr-ty : AstType]) : ResultTcType
+  (let
+    [operand-expected : AstType
+      (tc-type-without-regions (tc-resolve-type ctx expr-ty))]
+    (match (tc-unop-contextual-operand-type op operand-expected)
+      [(AstNoType)
+        (match (tc-expr ctx type-env inner)
+          [(OkTcType inner-ty) (tc-unop-type op inner-ty)]
+          [(ErrTcType message) (ErrTcType message)])]
+      [(AstSomeType operand-ty)
+        (match (tc-expr-with-expected-or-actual ctx type-env inner operand-ty)
+          [(OkTcType inner-ty)
+            (match (tc-unop-type op inner-ty)
+              [(OkTcType result-ty)
+                (if (tc-type-compatible? expr-ty result-ty)
+                  (OkTcType (tc-contextual-result-type expr-ty result-ty))
+                  (tc-unop-type op inner-ty))]
+              [(ErrTcType _)
+                (match (tc-expr ctx type-env inner)
+                  [(OkTcType actual-ty) (tc-unop-type op actual-ty)]
+                  [(ErrTcType message) (ErrTcType message)])])]
+          [(ErrTcType message) (ErrTcType message)])])))
+
 (define (lower-if-result-type-fast
   [ctx : TcContext]
   [env : SymI64Env]
@@ -13557,7 +13634,31 @@
   [index : AstExpr]) : ResultTcType
   (match (lower-index-result-type-fast ctx env type-env type-cache index)
     [(OkTcType index-ty) (OkTcType index-ty)]
-    [(ErrTcType _) (tc-expr ctx type-env index)]))
+    [(ErrTcType _)
+      (match (tc-expr-with-expected-or-actual ctx type-env index (AstTyI64))
+        [(OkTcType index-ty)
+          (if (tc-integer-type? index-ty)
+            (OkTcType (tc-type-without-regions (tc-resolve-type ctx index-ty)))
+            (ErrTcType "lower: index result type is not fast-pathable"))]
+        [(ErrTcType message) (ErrTcType message)])]))
+
+(define (lower-integer-expr-with-expected-or-actual
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [expr : AstExpr]
+  [expected-ty : AstType]
+  [non-integer-message : String]) : ResultLowerExpr
+  (match (tc-expr-with-expected-or-actual ctx type-env expr expected-ty)
+    [(OkTcType expr-ty)
+      (let
+        [resolved-ty : AstType
+          (tc-type-without-regions (tc-resolve-type ctx expr-ty))]
+        (if (tc-integer-type? resolved-ty)
+          (lower-expr-expected ctx state env type-env expr resolved-ty expr)
+          (ErrLowerExpr (lower-diagnostic-at-expr expr non-integer-message))))]
+    [(ErrTcType message) (ErrLowerExpr (lower-diagnostic-at-expr expr message))]))
 
 (define (lower-expr-typechecked
   [ctx : TcContext]
@@ -13576,7 +13677,19 @@
         expr
         origin
         (tc-type-without-regions expr-ty))]
-    [(ErrTcType message) (ErrLowerExpr (lower-diagnostic-at-expr expr message))]))
+    [(ErrTcType message)
+      (ErrLowerExpr (lower-diagnostic-at-expr origin message))]))
+
+(define (lower-cast-source-expr
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [expr : AstExpr]
+  [origin : AstExpr]) : ResultLowerExpr
+  (if (tc-integer-literal-expr? expr)
+    (lower-expr-with-type ctx state env type-env expr origin (AstTyI64))
+    (lower-expr ctx state env type-env expr)))
 
 ;; Lowering runs after full-program typecheck. For result types that are
 ;; syntactically available, avoid re-running recursive expression typecheck;
@@ -13804,7 +13917,7 @@
     [(AstExprCast inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
-        (match (lower-expr ctx state env type-env inner)
+        (match (lower-cast-source-expr ctx state env type-env inner origin)
           [(OkLowerExpr lowered)
             (match lowered
               [(LowerExpr inner-state value inner-ty)
@@ -13818,21 +13931,58 @@
     [(AstExprUnary op inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
-        (match (lower-expr ctx state env type-env inner)
-          [(OkLowerExpr lowered)
-            (match lowered
-              [(LowerExpr inner-state value _)
-                (match (lower-state-alloc-var inner-state)
-                  [(LowerAlloc allocated var-id)
-                    (OkLowerExpr
-                      (LowerExpr
-                        (lower-state-emit-at-expr
-                          allocated
-                          (IrInstrUnOp var-id (lower-unop op) value expr-ty)
-                          origin)
-                        (IrValueVar var-id)
-                        expr-ty))])])]
-          [(ErrLowerExpr message) (ErrLowerExpr message)]))]
+        (match (lower-unop-type-with-result ctx type-env op inner expr-ty)
+          [(OkTcType result-ty)
+            (match (tc-unop-contextual-operand-type op result-ty)
+              [(AstNoType)
+                (match (lower-expr ctx state env type-env inner)
+                  [(OkLowerExpr lowered)
+                    (match lowered
+                      [(LowerExpr inner-state value _)
+                        (match (lower-state-alloc-var inner-state)
+                          [(LowerAlloc allocated var-id)
+                            (OkLowerExpr
+                              (LowerExpr
+                                (lower-state-emit-at-expr
+                                  allocated
+                                  (IrInstrUnOp
+                                    var-id
+                                    (lower-unop op)
+                                    value
+                                    result-ty)
+                                  origin)
+                                (IrValueVar var-id)
+                                result-ty))])])]
+                  [(ErrLowerExpr message) (ErrLowerExpr message)])]
+              [(AstSomeType operand-ty)
+                (match (lower-expr-expected
+                  ctx
+                  state
+                  env
+                  type-env
+                  inner
+                  operand-ty
+                  inner)
+                  [(OkLowerExpr lowered)
+                    (match lowered
+                      [(LowerExpr inner-state value _)
+                        (match (lower-state-alloc-var inner-state)
+                          [(LowerAlloc allocated var-id)
+                            (OkLowerExpr
+                              (LowerExpr
+                                (lower-state-emit-at-expr
+                                  allocated
+                                  (IrInstrUnOp
+                                    var-id
+                                    (lower-unop op)
+                                    value
+                                    result-ty)
+                                  origin)
+                                (IrValueVar var-id)
+                                result-ty))])])]
+                  [(ErrLowerExpr message) (ErrLowerExpr message)])])]
+          [(ErrTcType message)
+            (ErrLowerExpr (lower-diagnostic-at-expr origin message))]))]
     [(AstExprBinary op left-box right-box)
       ;; `and`/`or` short-circuit: desugar to a conditional branch so the right
       ;; operand is evaluated only when the left does not already decide the
@@ -13864,10 +14014,16 @@
               right
               expr-ty)]
           [_
-            (match (tc-binop-expr-types ctx type-env op left right)
+            (match (lower-binop-types-with-result
+              ctx
+              type-env
+              op
+              left
+              right
+              expr-ty)
               [(OkTcBinOpTypes binop-types)
                 (match binop-types
-                  [(TcBinOpTypes left-ty right-ty _)
+                  [(TcBinOpTypes left-ty right-ty result-ty)
                     (match (lower-expr-expected
                       ctx
                       state
@@ -13900,7 +14056,7 @@
                                         left-value
                                         right-value
                                         left-ty
-                                        expr-ty
+                                        result-ty
                                         origin)
                                       (match (lower-state-alloc-var right-state)
                                         [(LowerAlloc allocated var-id)
@@ -13913,10 +14069,10 @@
                                                   (lower-binop op)
                                                   left-value
                                                   right-value
-                                                  expr-ty)
+                                                  result-ty)
                                                 origin)
                                               (IrValueVar var-id)
-                                              expr-ty))]))])]
+                                              result-ty))]))])]
                               [(ErrLowerExpr message) (ErrLowerExpr message)])])]
                       [(ErrLowerExpr message) (ErrLowerExpr message)])])]
               [(ErrTcBinOpTypes message)
@@ -13943,11 +14099,25 @@
         [body : AstExpr (ast-node-get body-box)]
         (match (lower-let-bindings ctx state env type-env bindings)
           [(OkLowerEnv binding-state body-env body-type-env)
-            (lower-expr ctx binding-state body-env body-type-env body)]
+            (lower-expr-expected
+              ctx
+              binding-state
+              body-env
+              body-type-env
+              body
+              expr-ty
+              body)]
           [(ErrLowerEnv message) (ErrLowerExpr message)]))]
-    [(AstExprBegin exprs) (lower-begin ctx state env type-env exprs)]
+    [(AstExprBegin exprs)
+      (lower-begin-expected ctx state env type-env exprs expr-ty)]
     [(AstExprUnsafe exprs)
-      (lower-begin ctx state env (tc-enter-unsafe type-env) exprs)]
+      (lower-begin-expected
+        ctx
+        state
+        env
+        (tc-enter-unsafe type-env)
+        exprs
+        expr-ty)]
     [(AstExprSet name value-box)
       (let
         [name-id : i64 name]
@@ -14086,6 +14256,7 @@
           state
           env
           type-env
+          expr-ty
           op
           (intern-str index)
           index-ty
@@ -14333,22 +14504,36 @@
                             ptr-var
                             ptr-value
                             (lower-raw-pointer-ir-type ptr-ty)))]
-                      (match (lower-expr ctx ptr-home-state env type-env value)
-                        [(OkLowerExpr value-lowered)
-                          (match value-lowered
-                            [(LowerExpr value-state value-ir value-ty)
-                              (OkLowerExpr
-                                (LowerExpr
-                                  (lower-state-emit-at-expr
-                                    value-state
-                                    (IrInstrStorePtr
-                                      (IrValueVar ptr-var)
-                                      value-ir
-                                      value-ty)
-                                    origin)
-                                  IrValueUnit
-                                  expr-ty))])]
-                        [(ErrLowerExpr diag) (ErrLowerExpr diag)]))])])]
+                      (match (tc-mut-pointer-elem
+                        (tc-resolve-type ctx ptr-ty)
+                        "lower: ptr-write! requires MutPtr pointer operand")
+                        [(OkTcType elem-ty)
+                          (match (lower-expr-expected
+                            ctx
+                            ptr-home-state
+                            env
+                            type-env
+                            value
+                            (tc-type-without-regions elem-ty)
+                            value)
+                            [(OkLowerExpr value-lowered)
+                              (match value-lowered
+                                [(LowerExpr value-state value-ir value-ty)
+                                  (OkLowerExpr
+                                    (LowerExpr
+                                      (lower-state-emit-at-expr
+                                        value-state
+                                        (IrInstrStorePtr
+                                          (IrValueVar ptr-var)
+                                          value-ir
+                                          value-ty)
+                                        origin)
+                                      IrValueUnit
+                                      expr-ty))])]
+                            [(ErrLowerExpr diag) (ErrLowerExpr diag)])]
+                        [(ErrTcType message)
+                          (ErrLowerExpr
+                            (lower-diagnostic-at-expr origin message))]))])])]
           [(ErrLowerExpr diag) (ErrLowerExpr diag)]))]
     [(AstExprPtrOffset ptr-box offset-box)
       (let
@@ -14358,7 +14543,14 @@
           [(OkLowerExpr ptr-lowered)
             (match ptr-lowered
               [(LowerExpr ptr-state ptr-value ptr-ty)
-                (match (lower-expr ctx ptr-state env type-env offset)
+                (match (lower-expr-expected
+                  ctx
+                  ptr-state
+                  env
+                  type-env
+                  offset
+                  (AstTyI64)
+                  offset)
                   [(OkLowerExpr offset-lowered)
                     (match offset-lowered
                       [(LowerExpr offset-state offset-value _)
@@ -14490,13 +14682,18 @@
   [type-env : TcTypeEnv]
   [expr : AstExpr]
   [expected-ty : AstType]) : ResultLowerExpr
-  (match (lower-expr ctx state env type-env expr)
-    [(OkLowerExpr lowered)
-      (match lowered
-        [(LowerExpr next-state value actual-ty)
-          (OkLowerExpr
-            (lower-coerce-value next-state value actual-ty expected-ty))])]
-    [(ErrLowerExpr message) (ErrLowerExpr message)]))
+  (match (tc-expr-with-expected-or-actual ctx type-env expr expected-ty)
+    [(OkTcType actual-ty)
+      (lower-expr-with-type-and-coerce
+        ctx
+        state
+        env
+        type-env
+        expr
+        expr
+        (tc-type-without-regions (tc-resolve-type ctx actual-ty))
+        expected-ty)]
+    [(ErrTcType message) (ErrLowerExpr (lower-diagnostic-at-expr expr message))]))
 
 (define (lower-expr-expected
   [ctx : TcContext]
@@ -14517,6 +14714,26 @@
         (lower-literal-value lit)
         expected-ty
         origin)]
+    [(AstExprUnary _ _)
+      (lower-expr-with-type-and-coerce
+        ctx
+        state
+        env
+        type-env
+        expr
+        origin
+        expected-ty
+        expected-ty)]
+    [(AstExprBinary _ _ _)
+      (lower-expr-with-type-and-coerce
+        ctx
+        state
+        env
+        type-env
+        expr
+        origin
+        expected-ty
+        expected-ty)]
     [(AstExprLet _ _)
       (lower-expr-with-type-and-coerce
         ctx
@@ -14585,6 +14802,18 @@
       (let
         [scrutinee : AstExpr (ast-node-get scrutinee-box)]
         (lower-match ctx state env type-env scrutinee arms expected-ty))]
+    [(AstExprBox inner-box)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lower-box ctx state env type-env inner expected-ty))]
+    [(AstExprBoxGet inner-box)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lower-box-get ctx state env type-env inner expected-ty))]
+    [(AstExprBoxTake inner-box)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lower-box-get ctx state env type-env inner expected-ty))]
     [(AstExprInit maybe-ty)
       (match maybe-ty
         [(AstNoType)
@@ -14870,51 +15099,68 @@
   [type-env : TcTypeEnv]
   [inner : AstExpr]
   [result-ty : AstType]) : ResultLowerExpr
-  (match (lower-expr ctx state env type-env inner)
-    [(OkLowerExpr lowered)
-      (match lowered
-        [(LowerExpr inner-state inner-value inner-ty)
-          (match (lower-reserve-heap-storage
-            inner-state
-            (lower-type-size ctx inner-ty)
-            result-ty)
-            [(LowerExpr base-state base _)
-              ;; #2386: a register-resident inner value is a word; store it
-              ;; scalar into the box rather than byte-copying from a pointer.
-              (if (and
-                (lower-type-inline-struct-or-enum? ctx inner-ty)
-                (not (lower-type-register-resident? ctx inner-ty)))
-                (match (lower-inline-aggregate-copy-size ctx inner-ty)
-                  [(OkLowerSize size)
-                    (OkLowerExpr
-                      (LowerExpr
-                        (lower-copy-bytes base-state base 0 inner-value 0 size)
-                        base
-                        result-ty))]
-                  [(ErrLowerSize message)
-                    (ErrLowerExpr (lower-diagnostic message))])
-                (if (lower-type-register-group? ctx inner-ty)
-                  (OkLowerExpr
-                    (LowerExpr
-                      (lower-store-group-at-ptr
-                        ctx
-                        base-state
-                        base
-                        inner-value
-                        inner-ty)
-                      base
-                      result-ty))
-                  (OkLowerExpr
-                    (LowerExpr
-                      (lower-store-at-offset
-                        base-state
-                        base
-                        0
-                        inner-value
-                        inner-ty)
-                      base
-                      result-ty))))])])]
-    [(ErrLowerExpr message) (ErrLowerExpr message)]))
+  (match (tc-box-set-inner-type ctx result-ty)
+    [(OkTcType expected-inner-ty)
+      (match (lower-expr-expected
+        ctx
+        state
+        env
+        type-env
+        inner
+        (tc-type-without-regions expected-inner-ty)
+        inner)
+        [(OkLowerExpr lowered)
+          (match lowered
+            [(LowerExpr inner-state inner-value inner-ty)
+              (match (lower-reserve-heap-storage
+                inner-state
+                (lower-type-size ctx inner-ty)
+                result-ty)
+                [(LowerExpr base-state base _)
+                  ;; #2386: a register-resident inner value is a word; store it
+                  ;; scalar into the box rather than byte-copying from a pointer.
+                  (if (and
+                    (lower-type-inline-struct-or-enum? ctx inner-ty)
+                    (not (lower-type-register-resident? ctx inner-ty)))
+                    (match (lower-inline-aggregate-copy-size ctx inner-ty)
+                      [(OkLowerSize size)
+                        (OkLowerExpr
+                          (LowerExpr
+                            (lower-copy-bytes
+                              base-state
+                              base
+                              0
+                              inner-value
+                              0
+                              size)
+                            base
+                            result-ty))]
+                      [(ErrLowerSize message)
+                        (ErrLowerExpr (lower-diagnostic message))])
+                    (if (lower-type-register-group? ctx inner-ty)
+                      (OkLowerExpr
+                        (LowerExpr
+                          (lower-store-group-at-ptr
+                            ctx
+                            base-state
+                            base
+                            inner-value
+                            inner-ty)
+                          base
+                          result-ty))
+                      (OkLowerExpr
+                        (LowerExpr
+                          (lower-store-at-offset
+                            base-state
+                            base
+                            0
+                            inner-value
+                            inner-ty)
+                          base
+                          result-ty))))])])]
+        [(ErrLowerExpr message) (ErrLowerExpr message)])]
+    [(ErrTcType message)
+      (ErrLowerExpr (lower-diagnostic-at-expr inner message))]))
 
 ;; Lower `(box-get b)` (#1443): evaluate the box handle and load the boxed value
 ;; of type `T` (the result type) from offset 0 of the box storage.
@@ -14925,7 +15171,14 @@
   [type-env : TcTypeEnv]
   [inner : AstExpr]
   [result-ty : AstType]) : ResultLowerExpr
-  (match (lower-expr ctx state env type-env inner)
+  (match (lower-expr-expected
+    ctx
+    state
+    env
+    type-env
+    inner
+    (ast-ty-box result-ty)
+    inner)
     [(OkLowerExpr lowered)
       (match lowered
         [(LowerExpr box-state box-value _)
@@ -15037,7 +15290,14 @@
               [offset : i64
                 (lower-align-up cursor (lower-type-align ctx resolved))]
               [size : i64 (lower-type-size ctx resolved)]
-              (match (lower-expr ctx state env type-env value)
+              (match (lower-expr-expected
+                ctx
+                state
+                env
+                type-env
+                value
+                resolved
+                value)
                 [(OkLowerExpr lowered)
                   (match lowered
                     [(LowerExpr elem-state elem-value _)
@@ -15331,7 +15591,14 @@
       (match lowered-str
         [(LowerExpr str-state str-value str-ty)
           (if (lower-string-handle-type? ctx str-ty)
-            (match (lower-expr ctx str-state env type-env index)
+            (match (lower-integer-expr-with-expected-or-actual
+              ctx
+              str-state
+              env
+              type-env
+              index
+              (AstTyI64)
+              "lower: string index must be integer")
               [(OkLowerExpr lowered-index)
                 (match lowered-index
                   [(LowerExpr index-state index-raw index-ty)
@@ -15511,7 +15778,14 @@
           (if (lower-string-handle-type? ctx str-ty)
             (match (lower-string-fields str-state str-value)
               [(LowerStringFields fields-state src-ptr src-len)
-                (match (lower-expr ctx fields-state env type-env start)
+                (match (lower-integer-expr-with-expected-or-actual
+                  ctx
+                  fields-state
+                  env
+                  type-env
+                  start
+                  (AstTyI64)
+                  "lower: substring start must be integer")
                   [(OkLowerExpr lowered-start)
                     (match lowered-start
                       [(LowerExpr start-state start-raw start-ty)
@@ -15521,12 +15795,14 @@
                           start-ty
                           (AstTyI64))
                           [(LowerExpr start-i-state start-value _)
-                            (match (lower-expr
+                            (match (lower-integer-expr-with-expected-or-actual
                               ctx
                               start-i-state
                               env
                               type-env
-                              len)
+                              len
+                              (AstTyI64)
+                              "lower: substring length must be integer")
                               [(OkLowerExpr lowered-len)
                                 (match lowered-len
                                   [(LowerExpr len-state len-raw len-ty)
@@ -18837,7 +19113,14 @@
     [(OkLowerExpr ptr-lowered)
       (match ptr-lowered
         [(LowerExpr ptr-state ptr-value ptr-ty)
-          (match (lower-expr ctx ptr-state env type-env len)
+          (match (lower-integer-expr-with-expected-or-actual
+            ctx
+            ptr-state
+            env
+            type-env
+            len
+            (AstTyI64)
+            "lower: string-from-bytes length must be integer")
             [(OkLowerExpr len-lowered)
               (match len-lowered
                 [(LowerExpr len-state len-value len-ty)
@@ -18899,13 +19182,27 @@
   [leaf : AstExpr]
   [subleaf : AstExpr]
   [reg-index : i64]) : ResultLowerExpr
-  (match (lower-expr ctx state env type-env leaf)
+  (match (lower-integer-expr-with-expected-or-actual
+    ctx
+    state
+    env
+    type-env
+    leaf
+    (AstTyI64)
+    "lower: cpuid leaf must be integer")
     [(OkLowerExpr leaf-lowered)
       (match leaf-lowered
         [(LowerExpr leaf-state leaf-value leaf-ty)
           (match (lower-cast-value leaf-state leaf-value leaf-ty (AstTyI64))
             [(LowerExpr leaf-i-state leaf-i-value _)
-              (match (lower-expr ctx leaf-i-state env type-env subleaf)
+              (match (lower-integer-expr-with-expected-or-actual
+                ctx
+                leaf-i-state
+                env
+                type-env
+                subleaf
+                (AstTyI64)
+                "lower: cpuid subleaf must be integer")
                 [(OkLowerExpr subleaf-lowered)
                   (match subleaf-lowered
                     [(LowerExpr subleaf-state subleaf-value subleaf-ty)
@@ -18937,7 +19234,14 @@
   [env : SymI64Env]
   [type-env : TcTypeEnv]
   [index : AstExpr]) : ResultLowerExpr
-  (match (lower-expr ctx state env type-env index)
+  (match (lower-integer-expr-with-expected-or-actual
+    ctx
+    state
+    env
+    type-env
+    index
+    (AstTyI64)
+    "lower: xgetbv index must be integer")
     [(OkLowerExpr lowered)
       (match lowered
         [(LowerExpr index-state index-value index-ty)
@@ -19020,7 +19324,14 @@
               [rest : AstExprList (box-get rest)]
               (match rest
                 [(AstExprNil)
-                  (match (lower-expr ctx state env type-env leaf)
+                  (match (lower-integer-expr-with-expected-or-actual
+                    ctx
+                    state
+                    env
+                    type-env
+                    leaf
+                    (AstTyI64)
+                    "lower: cpuid leaf must be integer")
                     [(OkLowerExpr leaf-lowered)
                       (match leaf-lowered
                         [(LowerExpr leaf-state leaf-value leaf-ty)
@@ -19030,12 +19341,14 @@
                             leaf-ty
                             (AstTyI64))
                             [(LowerExpr leaf-i-state leaf-i-value _)
-                              (match (lower-expr
+                              (match (lower-integer-expr-with-expected-or-actual
                                 ctx
                                 leaf-i-state
                                 env
                                 type-env
-                                subleaf)
+                                subleaf
+                                (AstTyI64)
+                                "lower: cpuid subleaf must be integer")
                                 [(OkLowerExpr subleaf-lowered)
                                   (match subleaf-lowered
                                     [(LowerExpr
@@ -19316,17 +19629,24 @@
             (lower-state-type-cache arr-state)
             index)
             [(OkTcType idx-ty)
-              (match (lower-expr ctx arr-state env type-env index)
+              (match (lower-expr-expected
+                ctx
+                arr-state
+                env
+                type-env
+                index
+                idx-ty
+                index)
                 [(OkLowerExpr idx-lowered)
                   (match idx-lowered
-                    [(LowerExpr idx-state idx-value _)
+                    [(LowerExpr idx-state idx-value idx-value-ty)
                       (OkLowerExpr
                         (lower-array-element-addr
                           ctx
                           idx-state
                           arr-value
                           idx-value
-                          idx-ty
+                          idx-value-ty
                           elem-ty))])]
                 [(ErrLowerExpr message) (ErrLowerExpr message)])]
             [(ErrTcType message)
@@ -20167,7 +20487,14 @@
   [elem-ty : AstType]
   [len : AstExpr]
   [origin : AstExpr]) : ResultLowerExpr
-  (match (lower-expr ctx state env type-env len)
+  (match (lower-integer-expr-with-expected-or-actual
+    ctx
+    state
+    env
+    type-env
+    len
+    (AstTyI64)
+    "lower: make-array length must be integer")
     [(OkLowerExpr lowered)
       (match lowered
         [(LowerExpr len-state len-value len-ty)
@@ -20240,10 +20567,17 @@
                           (lower-state-type-cache arr-state)
                           index)
                           [(OkTcType idx-ty)
-                            (match (lower-expr ctx arr-state env type-env index)
+                            (match (lower-expr-expected
+                              ctx
+                              arr-state
+                              env
+                              type-env
+                              index
+                              idx-ty
+                              index)
                               [(OkLowerExpr idx-lowered)
                                 (match idx-lowered
-                                  [(LowerExpr idx-state idx-value _)
+                                  [(LowerExpr idx-state idx-value idx-value-ty)
                                     (match (tc-type-strip-region
                                       (tc-resolve-type ctx container-ty))
                                       [(AstTyDynArray _)
@@ -20252,7 +20586,7 @@
                                           idx-state
                                           arr-value
                                           idx-value
-                                          idx-ty
+                                          idx-value-ty
                                           elem-ir-ty)
                                           [(LowerExpr addr-state elem-ptr _)
                                             (lower-array-elem-ref-result
@@ -20266,7 +20600,7 @@
                                           idx-state
                                           arr-value
                                           idx-value
-                                          idx-ty
+                                          idx-value-ty
                                           elem-ir-ty
                                           elem-count)
                                           [(LowerExpr addr-state elem-ptr _)
@@ -21127,10 +21461,17 @@
                           (lower-state-type-cache arr-state)
                           index)
                           [(OkTcType idx-ty)
-                            (match (lower-expr ctx arr-state env type-env index)
+                            (match (lower-expr-expected
+                              ctx
+                              arr-state
+                              env
+                              type-env
+                              index
+                              idx-ty
+                              index)
                               [(OkLowerExpr idx-lowered)
                                 (match idx-lowered
-                                  [(LowerExpr idx-state idx-value _)
+                                  [(LowerExpr idx-state idx-value idx-value-ty)
                                     (match (lower-array-set-direct-store
                                       ctx
                                       idx-state
@@ -21139,7 +21480,7 @@
                                       arr
                                       arr-value
                                       idx-value
-                                      idx-ty
+                                      idx-value-ty
                                       container-ty
                                       elem-ir-ty
                                       value)
@@ -21172,7 +21513,7 @@
                                                   arr
                                                   arr-value
                                                   idx-value
-                                                  idx-ty
+                                                  idx-value-ty
                                                   container-ty
                                                   elem-ir-ty
                                                   value-ir)])]
@@ -21702,54 +22043,68 @@
             (let
               [init : AstExpr (ast-node-get init-box)]
               [cleanup : AstExpr (ast-node-get cleanup-box)]
-              (match (lower-expr ctx state env type-env init)
-                [(OkLowerExpr lowered)
-                  (match lowered
-                    [(LowerExpr init-state init-value init-ty)
-                      (match (lower-cleanup-name-from-expr cleanup)
-                        [(OkTcString cleanup-name)
-                          (let
-                            [binding-ty : AstType
-                              (tc-type-without-regions init-ty)]
-                            [binding-ir-ty : AstType
-                              (lower-one-word-register-storage-type
-                                ctx
-                                binding-ty)]
-                            (match (lower-state-alloc-var init-state)
-                              [(LowerAlloc allocated var-id)
-                                (let
-                                  [hidden-name : String
-                                    (lower-cleanup-hidden-name var-id)]
-                                  [bound-state : LowerState
-                                    (lower-state-emit
-                                      allocated
-                                      (IrInstrMov
-                                        var-id
-                                        init-value
-                                        binding-ir-ty))]
-                                  [bound-env : SymI64Env
-                                    (sym-i64-bind
-                                      (sym-i64-bind-id env name var-id)
-                                      hidden-name
-                                      var-id)]
-                                  [bound-type-env : TcTypeEnv
-                                    (lower-type-env-push-cleanup
-                                      (tc-bind-id type-env name binding-ty)
-                                      hidden-name
-                                      cleanup-name)]
-                                  (lower-resource-bindings
+              (match (tc-resource-cleanup-resource-type ctx type-env cleanup)
+                [(OkTcType expected-init-ty)
+                  (match (lower-expr-expected
+                    ctx
+                    state
+                    env
+                    type-env
+                    init
+                    (tc-type-without-regions expected-init-ty)
+                    init)
+                    [(OkLowerExpr lowered)
+                      (match lowered
+                        [(LowerExpr init-state init-value init-ty)
+                          (match (lower-cleanup-name-from-expr cleanup)
+                            [(OkTcString cleanup-name)
+                              (let
+                                [binding-ty : AstType
+                                  (tc-type-without-regions init-ty)]
+                                [binding-ir-ty : AstType
+                                  (lower-one-word-register-storage-type
                                     ctx
-                                    bound-state
-                                    bound-env
-                                    bound-type-env
-                                    rest
-                                    (LowerCleanupCons
-                                      (LowerCleanup hidden-name cleanup-name)
-                                      (box cleanups))))]))]
-                        [(ErrTcString message)
-                          (ErrLowerResourceBindings
-                            (lower-diagnostic-at-expr cleanup message))])])]
-                [(ErrLowerExpr message) (ErrLowerResourceBindings message)]))]))]))
+                                    binding-ty)]
+                                (match (lower-state-alloc-var init-state)
+                                  [(LowerAlloc allocated var-id)
+                                    (let
+                                      [hidden-name : String
+                                        (lower-cleanup-hidden-name var-id)]
+                                      [bound-state : LowerState
+                                        (lower-state-emit
+                                          allocated
+                                          (IrInstrMov
+                                            var-id
+                                            init-value
+                                            binding-ir-ty))]
+                                      [bound-env : SymI64Env
+                                        (sym-i64-bind
+                                          (sym-i64-bind-id env name var-id)
+                                          hidden-name
+                                          var-id)]
+                                      [bound-type-env : TcTypeEnv
+                                        (lower-type-env-push-cleanup
+                                          (tc-bind-id type-env name binding-ty)
+                                          hidden-name
+                                          cleanup-name)]
+                                      (lower-resource-bindings
+                                        ctx
+                                        bound-state
+                                        bound-env
+                                        bound-type-env
+                                        rest
+                                        (LowerCleanupCons
+                                          (LowerCleanup
+                                            hidden-name
+                                            cleanup-name)
+                                          (box cleanups))))]))]
+                            [(ErrTcString message)
+                              (ErrLowerResourceBindings
+                                (lower-diagnostic-at-expr cleanup message))])])]
+                    [(ErrLowerExpr message) (ErrLowerResourceBindings message)])]
+                [(ErrTcType message)
+                  (ErrLowerResourceBindings
+                    (lower-diagnostic-at-expr cleanup message))]))]))]))
 
 (define (lower-with-resource
   [ctx : TcContext]
@@ -21807,6 +22162,39 @@
                       (OkLowerExpr
                         (LowerExpr next-state IrValueUnit (AstTyNever)))
                       (lower-begin ctx next-state env type-env rest))])]
+              [(ErrLowerExpr message) (ErrLowerExpr message)])]))]))
+
+(define (lower-begin-expected
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [exprs : AstExprList]
+  [expected-ty : AstType]) : ResultLowerExpr
+  (match exprs
+    [(AstExprNil) (OkLowerExpr (LowerExpr state IrValueUnit (AstTyUnit)))]
+    [(AstExprCons expr rest)
+      (let
+        [expr : AstExpr (ast-node-get expr)]
+        [rest : AstExprList (box-get rest)]
+        (match rest
+          [(AstExprNil)
+            (lower-expr-expected ctx state env type-env expr expected-ty expr)]
+          [_
+            (match (lower-expr ctx state env type-env expr)
+              [(OkLowerExpr lowered)
+                (match lowered
+                  [(LowerExpr next-state _ expr-ty)
+                    (if (tc-never-type? expr-ty)
+                      (OkLowerExpr
+                        (LowerExpr next-state IrValueUnit (AstTyNever)))
+                      (lower-begin-expected
+                        ctx
+                        next-state
+                        env
+                        type-env
+                        rest
+                        expected-ty))])]
               [(ErrLowerExpr message) (ErrLowerExpr message)])]))]))
 
 (define (lower-with-arena
@@ -22536,18 +22924,20 @@
 ;; names so they cannot collide with a user binding. The ordered left-to-right
 ;; fold matches the spec reference semantics.
 ;;   (spmd-reduce <op> ([i : ty start end]) init value)
-;;     === (let [acc init] [end' end] [i start]
+;;     === (let [acc : result-ty init] [end' end] [i start]
 ;;           (begin (while (< i end') (begin <acc-update> (set! i (+ i 1)))) acc))
 (define (lower-spmd-reduce-scaffold
   [ctx : TcContext]
   [state : LowerState]
   [env : SymI64Env]
   [type-env : TcTypeEnv]
+  [result-ty : AstType]
   [index : String]
   [index-ty : AstType]
   [start : AstExpr]
   [end : AstExpr]
   [init : AstExpr]
+  [acc-ty : AstType]
   [acc-update : i64]) : ResultLowerExpr
   (lower-expr
     ctx
@@ -22559,12 +22949,12 @@
         (ast-let-binding-cons
           (ast-let-binding
             (lower-spmd-reduce-acc-name)
-            (AstNoType)
+            (AstSomeType acc-ty)
             (ast-node-push init))
           (ast-let-binding-cons
             (ast-let-binding
               (lower-spmd-reduce-end-name)
-              (AstNoType)
+              (AstSomeType index-ty)
               (ast-node-push end))
             (ast-let-binding-cons
               (ast-let-binding
@@ -22605,6 +22995,7 @@
   [state : LowerState]
   [env : SymI64Env]
   [type-env : TcTypeEnv]
+  [result-ty : AstType]
   [op : AstReduceOp]
   [index : String]
   [index-ty : AstType]
@@ -22612,59 +23003,69 @@
   [end : AstExpr]
   [init : AstExpr]
   [value : AstExpr]) : ResultLowerExpr
-  (let
-    [acc-update : i64 (spmd-reduce-acc-update-expr op (ast-node-push value))]
-    (if (and
-      (lower-mode-simd? (lower-state-mode state))
-      (lower-type-i64? index-ty))
-      (match (lower-simple-vector-reduce
-        (lower-state-mode state)
-        env
-        type-env
-        op
-        index
-        value)
-        [(LowerSomeVectorReduce _ _ _ _)
-          (lower-avx2-spmd-reduce-lowered
-            ctx
-            state
+  (match (tc-expr ctx (tc-bind type-env index index-ty) value)
+    [(OkTcType value-ty)
+      (let
+        [acc-ty : AstType (tc-type-without-regions value-ty)]
+        [acc-update : i64
+          (spmd-reduce-acc-update-expr op (ast-node-push value))]
+        (if (and
+          (lower-mode-simd? (lower-state-mode state))
+          (lower-type-i64? index-ty))
+          (match (lower-simple-vector-reduce
+            (lower-state-mode state)
             env
             type-env
-            index-ty
-            start
-            end
-            init
             op
-            (lower-simple-vector-reduce
-              (lower-state-mode state)
-              env
-              type-env
-              op
-              index
-              value))]
-        [LowerNoVectorReduce
+            index
+            value)
+            [(LowerSomeVectorReduce _ _ _ _)
+              (lower-avx2-spmd-reduce-lowered
+                ctx
+                state
+                env
+                type-env
+                index-ty
+                start
+                end
+                init
+                op
+                (lower-simple-vector-reduce
+                  (lower-state-mode state)
+                  env
+                  type-env
+                  op
+                  index
+                  value))]
+            [LowerNoVectorReduce
+              (lower-spmd-reduce-scaffold
+                ctx
+                state
+                env
+                type-env
+                result-ty
+                index
+                index-ty
+                start
+                end
+                init
+                acc-ty
+                acc-update)])
           (lower-spmd-reduce-scaffold
             ctx
             state
             env
             type-env
+            result-ty
             index
             index-ty
             start
             end
             init
-            acc-update)])
-      (lower-spmd-reduce-scaffold
-        ctx
-        state
-        env
-        type-env
-        index
-        index-ty
-        start
-        end
-        init
-        acc-update))))
+            acc-ty
+            acc-update)))]
+    [(ErrTcType message)
+      (ErrLowerExpr (lower-diagnostic-at-expr value message))]))
 
 (define (lower-spmd-broadcast
   [ctx : TcContext]
@@ -22673,7 +23074,7 @@
   [type-env : TcTypeEnv]
   [value : AstExpr]
   [lane : AstExpr]) : ResultLowerExpr
-  (match (lower-expr ctx state env type-env lane)
+  (match (lower-expr-expected ctx state env type-env lane (AstTyI64) lane)
     [(OkLowerExpr lane-lowered)
       (match lane-lowered
         [(LowerExpr lane-state lane-value _)
@@ -24157,12 +24558,21 @@
     [(AstExprLiteral lit)
       (let
         [lit-ty : AstType (tc-literal-type lit)]
-        (if (and
-          (> (lower-simd-lanes-for-elem mode lit-ty) 0)
-          (tc-type-eq lit-ty dst-elem))
-          (LowerSomeVectorMapValue
-            (LowerVectorMapUniform (lower-literal-value lit)))
-          LowerNoVectorMapValue))]
+        (match lit
+          [(AstLitInt _)
+            (if (and
+              (> (lower-simd-lanes-for-elem mode dst-elem) 0)
+              (tc-integer-type? dst-elem))
+              (LowerSomeVectorMapValue
+                (LowerVectorMapUniform (lower-literal-value lit)))
+              LowerNoVectorMapValue)]
+          [_
+            (if (and
+              (> (lower-simd-lanes-for-elem mode lit-ty) 0)
+              (tc-type-eq lit-ty dst-elem))
+              (LowerSomeVectorMapValue
+                (LowerVectorMapUniform (lower-literal-value lit)))
+              LowerNoVectorMapValue)]))]
     [(AstExprBinary op lhs-box rhs-box)
       (if (lower-simple-vector-map-binop-supported? mode dst-elem op)
         (let
@@ -24837,7 +25247,7 @@
   [plan : LowerMaybeVectorReduce]) : ResultLowerExpr
   (match plan
     [(LowerSomeVectorReduce array-var vector-op elem-ty lanes)
-      (match (lower-expr ctx state env type-env init)
+      (match (lower-expr-expected ctx state env type-env init elem-ty init)
         [(OkLowerExpr init-lowered)
           (match init-lowered
             [(LowerExpr init-state init-value _)
@@ -25760,7 +26170,7 @@
             [(OkLowerExpr idx-lowered)
               (match idx-lowered
                 [(LowerExpr idx-state idx-value _)
-                  (match (lower-avx512-masked-expr
+                  (match (lower-avx512-masked-expr-expected
                     ctx
                     idx-state
                     env
@@ -25770,7 +26180,8 @@
                     index-var
                     active-mask
                     lanes
-                    value)
+                    value
+                    lane-ty)
                     [(OkLowerExpr value-lowered)
                       (match value-lowered
                         [(LowerExpr value-state value-ir _)
@@ -25795,7 +26206,7 @@
               [(OkLowerExpr idx-lowered)
                 (match idx-lowered
                   [(LowerExpr idx-state idx-value _)
-                    (match (lower-avx512-masked-expr
+                    (match (lower-avx512-masked-expr-expected
                       ctx
                       idx-state
                       env
@@ -25805,7 +26216,8 @@
                       index-var
                       active-mask
                       lanes
-                      value)
+                      value
+                      lane-ty)
                       [(OkLowerExpr value-lowered)
                         (match value-lowered
                           [(LowerExpr value-state value-ir _)
@@ -25957,6 +26369,7 @@
   [index-var : i64]
   [active-mask : CompilerIrValue]
   [lanes : i64]
+  [result-ty : AstType]
   [expr : AstExpr]
   [cond : AstExpr]
   [then-branch : AstExpr]
@@ -25991,7 +26404,7 @@
                     not-mask
                     lanes)
                     [(LowerExpr else-mask-state else-mask _)
-                      (match (lower-avx512-masked-expr
+                      (match (lower-avx512-masked-expr-expected
                         ctx
                         else-mask-state
                         env
@@ -26001,11 +26414,12 @@
                         index-var
                         then-mask
                         lanes
-                        then-branch)
+                        then-branch
+                        result-ty)
                         [(OkLowerExpr then-lowered)
                           (match then-lowered
                             [(LowerExpr then-state then-value then-ty)
-                              (match (lower-avx512-masked-expr
+                              (match (lower-avx512-masked-expr-expected
                                 ctx
                                 then-state
                                 env
@@ -26015,7 +26429,8 @@
                                 index-var
                                 else-mask
                                 lanes
-                                else-branch)
+                                else-branch
+                                result-ty)
                                 [(OkLowerExpr else-lowered)
                                   (match else-lowered
                                     [(LowerExpr else-state else-value else-ty)
@@ -26154,7 +26569,7 @@
         [(OkLowerExpr left-lowered)
           (match left-lowered
             [(LowerExpr left-state left-value left-ty)
-              (match (lower-avx512-masked-expr
+              (match (lower-avx512-masked-expr-expected
                 ctx
                 left-state
                 env
@@ -26164,7 +26579,8 @@
                 index-var
                 active-mask
                 lanes
-                right)
+                right
+                left-ty)
                 [(OkLowerExpr right-lowered)
                   (match right-lowered
                     [(LowerExpr right-state right-value _)
@@ -26333,7 +26749,7 @@
     [(OkLowerExpr left-lowered)
       (match left-lowered
         [(LowerExpr left-state left-value left-ty)
-          (match (lower-avx512-masked-expr
+          (match (lower-avx512-masked-expr-expected
             ctx
             left-state
             env
@@ -26343,7 +26759,8 @@
             index-var
             active-mask
             lanes
-            right)
+            right
+            left-ty)
             [(OkLowerExpr right-lowered)
               (match right-lowered
                 [(LowerExpr right-state right-value _)
@@ -26508,20 +26925,30 @@
         [cond : AstExpr (ast-node-get cond-box)]
         [then-branch : AstExpr (ast-node-get then-box)]
         [else-branch : AstExpr (ast-node-get else-box)]
-        (lower-avx512-masked-if
+        (match (lower-expr-result-type-or-check
           ctx
-          state
           env
           type-env
-          lane-locals
-          index
-          index-var
-          active-mask
-          lanes
-          expr
-          cond
-          then-branch
-          else-branch))]
+          (lower-state-type-cache state)
+          expr)
+          [(OkTcType result-ty)
+            (lower-avx512-masked-if
+              ctx
+              state
+              env
+              type-env
+              lane-locals
+              index
+              index-var
+              active-mask
+              lanes
+              result-ty
+              expr
+              cond
+              then-branch
+              else-branch)]
+          [(ErrTcType message)
+            (ErrLowerExpr (lower-diagnostic-at-expr expr message))]))]
     [(AstExprBegin exprs)
       (lower-avx512-masked-begin
         ctx
@@ -26570,6 +26997,74 @@
           idx
           value))]
     [_ (lower-avx512-masked-unsupported expr "this branch expression")]))
+
+(define (lower-avx512-masked-expr-expected
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [lane-locals : LowerStringSet]
+  [index : String]
+  [index-var : i64]
+  [active-mask : CompilerIrValue]
+  [lanes : i64]
+  [expr : AstExpr]
+  [expected-ty : AstType]) : ResultLowerExpr
+  (match expr
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lower-avx512-masked-expr-expected
+          ctx
+          state
+          env
+          type-env
+          lane-locals
+          index
+          index-var
+          active-mask
+          lanes
+          inner
+          expected-ty))]
+    [(AstExprLiteral lit)
+      (OkLowerExpr
+        (lower-emit-splat
+          state
+          (lower-literal-value lit)
+          lanes
+          (tc-type-without-regions expected-ty)))]
+    [(AstExprIf cond-box then-box else-box)
+      (let
+        [cond : AstExpr (ast-node-get cond-box)]
+        [then-branch : AstExpr (ast-node-get then-box)]
+        [else-branch : AstExpr (ast-node-get else-box)]
+        (lower-avx512-masked-if
+          ctx
+          state
+          env
+          type-env
+          lane-locals
+          index
+          index-var
+          active-mask
+          lanes
+          expected-ty
+          expr
+          cond
+          then-branch
+          else-branch))]
+    [_
+      (lower-avx512-masked-expr
+        ctx
+        state
+        env
+        type-env
+        lane-locals
+        index
+        index-var
+        active-mask
+        lanes
+        expr)]))
 
 (define (lower-avx512-tail-map-body
   [ctx : TcContext]
@@ -27351,11 +27846,18 @@
   [start : AstExpr]
   [end : AstExpr]
   [body : AstExpr]) : ResultLowerExpr
-  (match (lower-expr ctx state env type-env start)
+  (match (lower-expr-expected ctx state env type-env start index-ty start)
     [(OkLowerExpr start-lowered)
       (match start-lowered
         [(LowerExpr start-state start-value _)
-          (match (lower-expr ctx start-state env type-env end)
+          (match (lower-expr-expected
+            ctx
+            start-state
+            env
+            type-env
+            end
+            index-ty
+            end)
             [(OkLowerExpr end-lowered)
               (match end-lowered
                 [(LowerExpr end-state end-value _)
@@ -27979,11 +28481,13 @@
                       merge-label
                       scrut-reg-group?)
                       [(OkLowerEnv body-start body-env body-type-env)
-                        (match (lower-expr
+                        (match (lower-expr-expected
                           ctx
                           body-start
                           body-env
                           body-type-env
+                          body
+                          expr-ty
                           body)
                           [(OkLowerExpr body-lowered)
                             (match body-lowered
@@ -28054,7 +28558,14 @@
     next-label
     scrut-reg-group?)
     [(OkLowerEnv bound-state body-env body-type-env)
-      (match (lower-expr ctx bound-state body-env body-type-env body)
+      (match (lower-expr-expected
+        ctx
+        bound-state
+        body-env
+        body-type-env
+        body
+        expr-ty
+        body)
         [(OkLowerExpr body-lowered)
           (match body-lowered
             [(LowerExpr body-state body-value body-ty)
@@ -28220,7 +28731,14 @@
                           body-label
                           next-label))
                       body-label)]
-                  (match (lower-expr ctx body-start env type-env body)
+                  (match (lower-expr-expected
+                    ctx
+                    body-start
+                    env
+                    type-env
+                    body
+                    expr-ty
+                    body)
                     [(OkLowerExpr body-lowered)
                       (match body-lowered
                         [(LowerExpr body-state body-value body-ty)
@@ -28274,7 +28792,14 @@
           (match pat
             [(AstPatBinding name) (tc-bind-id type-env name scrut-ty)]
             [_ type-env])]
-        (match (lower-expr ctx state body-env body-type-env body)
+        (match (lower-expr-expected
+          ctx
+          state
+          body-env
+          body-type-env
+          body
+          expr-ty
+          body)
           [(OkLowerExpr body-lowered)
             (match body-lowered
               [(LowerExpr body-state body-value body-ty)

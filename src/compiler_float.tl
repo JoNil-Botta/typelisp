@@ -29,19 +29,13 @@
 
 (define (compiler-float-self-test) : bool
   (and
-    (compiler-float-parse-bits-eq? "0.1" (cast 0x3fb999999999999a : u64))
-    (compiler-float-parse-bits-eq?
-      "0.10000000000000001"
-      (cast 0x3fb999999999999a : u64))
-    (compiler-float-parse-bits-eq?
-      "0.10000000000000002"
-      (cast 0x3fb999999999999b : u64))
-    (compiler-float-parse-bits-eq?
-      "9007199254740993.0"
-      (cast 0x4340000000000000 : u64))
-    (compiler-float-parse-bits-eq? "1e+17" (cast 0x4376345785d8a000 : u64))
-    (compiler-float-parse-bits-eq? "1e-05" (cast 0x3ee4f8b588e368f1 : u64))
-    (compiler-float-parse-bits-eq? "-0" (cast 0x8000000000000000 : u64))
+    (compiler-float-parse-bits-eq? "0.1" 0x3fb999999999999a)
+    (compiler-float-parse-bits-eq? "0.10000000000000001" 0x3fb999999999999a)
+    (compiler-float-parse-bits-eq? "0.10000000000000002" 0x3fb999999999999b)
+    (compiler-float-parse-bits-eq? "9007199254740993.0" 0x4340000000000000)
+    (compiler-float-parse-bits-eq? "1e+17" 0x4376345785d8a000)
+    (compiler-float-parse-bits-eq? "1e-05" 0x3ee4f8b588e368f1)
+    (compiler-float-parse-bits-eq? "-0" (shl (cast 1 : u64) 63))
     (match (compiler-float-parse-f64 "not-a-float")
       [(CompilerFloatSomeF64 _) false]
       [(CompilerFloatNoF64) true])))

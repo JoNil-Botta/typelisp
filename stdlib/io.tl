@@ -772,7 +772,7 @@
 
 ;: Low 32-bit mask isolating a base-2^32 limb.
 (define ftoa-mask32 : u64
-  (cast 0xffffffff : u64))
+  0xffffffff)
 
 ;: A zero-valued BigNum.
 (define (bn-zero) : BigNum
@@ -1209,9 +1209,7 @@
 
 ;: Return true when the f64 magnitude bits are zero.
 (define (io-float-f64-zero-magnitude? [value : f64]) : bool
-  (=
-    (bit-and (io-float-f64-bits value) (cast 0x7fffffffffffffff : u64))
-    (cast 0 : u64)))
+  (= (bit-and (io-float-f64-bits value) 0x7fffffffffffffff) (cast 0 : u64)))
 
 ;: Return true when the f32 magnitude bits are zero.
 (define (io-float-f32-zero-magnitude? [value : f32]) : bool
@@ -1225,7 +1223,7 @@
   (let
     [sign-bit : u64
       (if negative
-        (cast 0x8000000000000000 : u64)
+        (shl (cast 1 : u64) 63)
         (cast 0 : u64))]
     [num : BigNum significand]
     [den : BigNum (bn-from-u64 (cast 1 : u64))]
@@ -1237,8 +1235,8 @@
           (set! den (bn-mul-pow10 den (- 0 decimal-exp))))
         (let
           [e : i64 (io-float-ratio-floor-log2 num den)]
-          [two52 : u64 (cast 0x10000000000000 : u64)]
-          [two53 : u64 (cast 0x20000000000000 : u64)]
+          [two52 : u64 0x10000000000000]
+          [two53 : u64 0x20000000000000]
           (if (> e 1023)
             (IoFloatNoF64)
             (if (>= e -1022)
@@ -1366,7 +1364,7 @@
             (ptr-read (ptr-cast (array-data buf) : (Ptr u64))))]
         [neg : bool (= (bit-and (shr bits 63) (cast 1 : u64)) (cast 1 : u64))]
         [expf : u64 (bit-and (shr bits 52) (cast 0x7ff : u64))]
-        [frac : u64 (bit-and bits (cast 0xfffffffffffff : u64))]
+        [frac : u64 (bit-and bits 0xfffffffffffff)]
         (begin
           (when
             (= expf (cast 0x7ff : u64))
@@ -1388,7 +1386,7 @@
             [m : u64
               (if (= expf (cast 0 : u64))
                 frac
-                (bit-or frac (cast 0x10000000000000 : u64)))]
+                (bit-or frac 0x10000000000000))]
             [e2 : i64
               (if (= expf (cast 0 : u64))
                 -1074
@@ -1426,9 +1424,9 @@
                               (= (bit-and q (cast 1 : u64)) (cast 1 : u64))
                               (set! d (+ q (cast 1 : u64))))
                             unit))
-                        (if (>= d (cast 100000000000000000 : u64))
+                        (if (>= d 100000000000000000)
                           (set! kest (+ kest 1))
-                          (if (< d (cast 10000000000000000 : u64))
+                          (if (< d 10000000000000000)
                             (set! kest (- kest 1))
                             (set! settled true)))
                         (set! iters (+ iters 1)))))))

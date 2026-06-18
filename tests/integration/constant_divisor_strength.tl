@@ -104,42 +104,24 @@
       (set!
         errors
         (+ errors (check-i64 (cast (smod-i8-3 (cast -10 : i8)) : i64) -1 22)))
-      (set!
-        errors
-        (+ errors (check-u64 (udiv3 umax) (cast 6148914691236517205 : u64) 13)))
-      (set! errors (+ errors (check-u64 (umod3 umax) (cast 0 : u64) 14)))
-      (set!
-        errors
-        (+ errors (check-u64 (udiv7 umax) (cast 2635249153387078802 : u64) 15)))
-      (set! errors (+ errors (check-u64 (umod7 umax) (cast 1 : u64) 16)))
-      (set!
-        errors
-        (+ errors (check-u64 (udiv8 umax) (cast 2305843009213693951 : u64) 17)))
-      (set! errors (+ errors (check-u64 (umod8 umax) (cast 7 : u64) 18)))
-      (set!
-        errors
-        (+ errors (check-u64 (udiv-prime umax) (cast 18446743944 : u64) 19)))
-      (set!
-        errors
-        (+ errors (check-u64 (umod-prime umax) (cast 582344007 : u64) 20)))
-      (set! errors (+ errors (check-u64 (udiv-high umax) (cast 1 : u64) 25)))
-      (set! errors (+ errors (check-u64 (umod-high umax) (cast 1 : u64) 26)))
+      (set! errors (+ errors (check-u64 (udiv3 umax) 6148914691236517205 13)))
+      (set! errors (+ errors (check-u64 (umod3 umax) 0 14)))
+      (set! errors (+ errors (check-u64 (udiv7 umax) 2635249153387078802 15)))
+      (set! errors (+ errors (check-u64 (umod7 umax) 1 16)))
+      (set! errors (+ errors (check-u64 (udiv8 umax) 2305843009213693951 17)))
+      (set! errors (+ errors (check-u64 (umod8 umax) 7 18)))
+      (set! errors (+ errors (check-u64 (udiv-prime umax) 18446743944 19)))
+      (set! errors (+ errors (check-u64 (umod-prime umax) 582344007 20)))
+      (set! errors (+ errors (check-u64 (udiv-high umax) 1 25)))
+      (set! errors (+ errors (check-u64 (umod-high umax) 1 26)))
       (set!
         errors
         (+
           errors
-          (check-u64
-            (cast (udiv-u32-3 (cast -1 : u32)) : u64)
-            (cast 1431655765 : u64)
-            23)))
+          (check-u64 (cast (udiv-u32-3 (cast -1 : u32)) : u64) 1431655765 23)))
       (set!
         errors
-        (+
-          errors
-          (check-u64
-            (cast (umod-u16-7 (cast -1 : u16)) : u64)
-            (cast 1 : u64)
-            24)))
+        (+ errors (check-u64 (cast (umod-u16-7 (cast -1 : u16)) : u64) 1 24)))
       (if (= errors 0)
         42
         errors))))

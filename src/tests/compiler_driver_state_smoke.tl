@@ -37,6 +37,21 @@
     [(AstTyChar) true]
     [_ false]))
 
+(define (compiler-driver-state-smoke-global-expr-int?
+  [id : i64]
+  [expected : i64]) : bool
+  (match (ast-node-get id)
+    [(AstExprLiteral lit)
+      (match lit
+        [(AstLitInt value) (= value expected)]
+        [_ false])]
+    [_ false]))
+
+(define (compiler-driver-state-smoke-global-type-i64? [id : i64]) : bool
+  (match (ty-node-get id)
+    [(AstTyI64) true]
+    [_ false]))
+
 (define (compiler-driver-state-smoke-cache-isolated?) : bool
   (let
     [state-a : CompilerDriverState (compiler-driver-state-new)]
@@ -148,14 +163,16 @@
   (let
     [state-a : CompilerDriverState (compiler-driver-state-new)]
     [state-b : CompilerDriverState (compiler-driver-state-new)]
-    [expr-a0 : AstExprNodePoolState (struct-get state-a expr-pool)]
+    [expr-a0 : AstExprNodePoolState
+      (array-ref (struct-get state-a expr-pool) 0)]
     [expr-a-id0 : i64 (ast-expr-node-pool-state-mark expr-a0)]
     [expr-a1 : AstExprNodePoolState
       (compiler-driver-state-smoke-expr-push expr-a0 7)]
     [expr-a-id1 : i64 (ast-expr-node-pool-state-mark expr-a1)]
     [expr-a2 : AstExprNodePoolState
       (compiler-driver-state-smoke-expr-push expr-a1 8)]
-    [expr-b0 : AstExprNodePoolState (struct-get state-b expr-pool)]
+    [expr-b0 : AstExprNodePoolState
+      (array-ref (struct-get state-b expr-pool) 0)]
     [expr-b-mark : i64 (ast-expr-node-pool-state-mark expr-b0)]
     [expr-b1 : AstExprNodePoolState
       (compiler-driver-state-smoke-expr-push expr-b0 11)]
@@ -164,14 +181,16 @@
     [expr-b-id : i64 (ast-expr-node-pool-state-mark expr-b-reset)]
     [expr-b2 : AstExprNodePoolState
       (compiler-driver-state-smoke-expr-push expr-b-reset 12)]
-    [type-a0 : AstTypeNodePoolState (struct-get state-a type-pool)]
+    [type-a0 : AstTypeNodePoolState
+      (array-ref (struct-get state-a type-pool) 0)]
     [type-a-id0 : i64 (ast-type-node-pool-state-mark type-a0)]
     [type-a1 : AstTypeNodePoolState
       (compiler-driver-state-smoke-type-push type-a0 (AstTyI64))]
     [type-a-id1 : i64 (ast-type-node-pool-state-mark type-a1)]
     [type-a2 : AstTypeNodePoolState
       (compiler-driver-state-smoke-type-push type-a1 (AstTyString))]
-    [type-b0 : AstTypeNodePoolState (struct-get state-b type-pool)]
+    [type-b0 : AstTypeNodePoolState
+      (array-ref (struct-get state-b type-pool) 0)]
     [type-b-mark : i64 (ast-type-node-pool-state-mark type-b0)]
     [type-b1 : AstTypeNodePoolState
       (compiler-driver-state-smoke-type-push type-b0 (AstTyBool))]
@@ -201,8 +220,10 @@
   (let
     [state-a : CompilerDriverState (compiler-driver-state-new)]
     [state-b : CompilerDriverState (compiler-driver-state-new)]
-    [type-a0 : AstTypeNodePoolState (struct-get state-a type-pool)]
-    [type-b0 : AstTypeNodePoolState (struct-get state-b type-pool)]
+    [type-a0 : AstTypeNodePoolState
+      (array-ref (struct-get state-a type-pool) 0)]
+    [type-b0 : AstTypeNodePoolState
+      (array-ref (struct-get state-b type-pool) 0)]
     (match (ast-type-node-pool-state-push type-a0 (AstTyI64))
       [(AstTypeNodePoolPushOk type-a1 a-id)
         (match (ast-type-node-pool-state-push type-b0 (AstTyI64))
@@ -221,6 +242,41 @@
                       (compiler-driver-state-smoke-type-i64? type-a2 a-id)
                       (compiler-driver-state-smoke-type-i64? type-b2 b-id))])])])])))
 
+(define (compiler-driver-state-smoke-active-pools-isolated?) : bool
+  (let
+    [state-a : CompilerDriverState (compiler-driver-state-new)]
+    [state-b : CompilerDriverState (compiler-driver-state-new)]
+    [ok : bool true]
+    (begin
+      (compiler-driver-state-install-pools! state-a)
+      (let
+        [expr-a-id : i64 (ast-node-push (AstExprLiteral (AstLitInt 7)))]
+        [type-a-id : i64 (ty-node-push (AstTyI64))]
+        (begin
+          (compiler-driver-state-capture-active-pools! state-a)
+          (compiler-driver-state-install-pools! state-b)
+          (let
+            [expr-b-id : i64 (ast-node-push (AstExprLiteral (AstLitInt 11)))]
+            [type-b-id : i64 (ty-node-push (AstTyChar))]
+            (begin
+              (compiler-driver-state-capture-active-pools! state-b)
+              (compiler-driver-state-reset-file-state! state-b)
+              (compiler-driver-state-install-pools! state-a)
+              (unless (= (ast-node-pool-len) 1) (set! ok false))
+              (unless (= (ty-node-pool-len) 1) (set! ok false))
+              (unless
+                (compiler-driver-state-smoke-global-expr-int? expr-a-id 7)
+                (set! ok false))
+              (unless
+                (compiler-driver-state-smoke-global-type-i64? type-a-id)
+                (set! ok false))
+              (compiler-driver-state-install-pools! state-b)
+              (unless (= (ast-node-pool-len) 0) (set! ok false))
+              (unless (= (ty-node-pool-len) 0) (set! ok false))
+              (unless (= expr-b-id 0) (set! ok false))
+              (unless (= type-b-id 0) (set! ok false))
+              ok)))))))
+
 (define (main) : i64
   (begin
     (unless (compiler-driver-state-smoke-cache-isolated?) (return 2))
@@ -230,4 +286,5 @@
       (return 6))
     (unless (compiler-driver-state-smoke-pools-isolated?) (return 4))
     (unless (compiler-driver-state-smoke-type-dedup-isolated?) (return 5))
+    (unless (compiler-driver-state-smoke-active-pools-isolated?) (return 7))
     42))

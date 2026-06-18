@@ -30,15 +30,35 @@
   (ErrCompilerDriverLowered CompilerDiagnostic))
 
 (defstruct CompilerDriverState
-  (expr-pool AstExprNodePoolState)
-  (type-pool AstTypeNodePoolState)
+  (expr-pool (Array AstExprNodePoolState))
+  (type-pool (Array AstTypeNodePoolState))
   (load-session CompilerLoadSessionState))
 
+(define (compiler-driver-state-new-from-pools
+  [expr-pool : AstExprNodePoolState]
+  [type-pool : AstTypeNodePoolState]) : CompilerDriverState
+  (let
+    [expr-cell : (Array AstExprNodePoolState)
+      (make-array AstExprNodePoolState 1)]
+    [type-cell : (Array AstTypeNodePoolState)
+      (make-array AstTypeNodePoolState 1)]
+    (begin
+      (array-set! expr-cell 0 expr-pool)
+      (array-set! type-cell 0 type-pool)
+      (CompilerDriverState
+        expr-cell
+        type-cell
+        (compiler-load-session-state-new)))))
+
 (define (compiler-driver-state-new) : CompilerDriverState
-  (CompilerDriverState
+  (compiler-driver-state-new-from-pools
     (ast-expr-node-pool-state-create 1)
-    (ast-type-node-pool-state-create 1)
-    (compiler-load-session-state-new)))
+    (ast-type-node-pool-state-create 1)))
+
+(define (compiler-driver-state-new-for-compile) : CompilerDriverState
+  (compiler-driver-state-new-from-pools
+    (ast-node-pool-state-capture)
+    (ty-node-pool-state-capture)))
 
 (define (compiler-driver-state-session-cache-enabled?
   [state : CompilerDriverState]) : bool
@@ -70,9 +90,22 @@
   [state : CompilerDriverState]) : unit
   (compiler-load-session-state-use! (struct-get state load-session)))
 
+(define (compiler-driver-state-install-pools! [state : CompilerDriverState]) : unit
+  (ast-node-pools-state-install!
+    (array-ref (struct-get state expr-pool) 0)
+    (array-ref (struct-get state type-pool) 0)))
+
+(define (compiler-driver-state-capture-active-pools!
+  [state : CompilerDriverState]) : unit
+  (begin
+    (array-set! (struct-get state expr-pool) 0 (ast-node-pool-state-capture))
+    (array-set! (struct-get state type-pool) 0 (ty-node-pool-state-capture))))
+
 (define (compiler-driver-state-capture-session-floors!
   [state : CompilerDriverState]) : unit
-  (compiler-load-session-state-use! (struct-get state load-session)))
+  (begin
+    (compiler-driver-state-capture-active-pools! state)
+    (compiler-load-session-state-use! (struct-get state load-session))))
 
 (define (compiler-driver-runtime-prelude-cache-lookup [key : String]) : CompilerLoadPreludeCacheLookup
   (compiler-load-runtime-prelude-cache-lookup key))
@@ -101,10 +134,12 @@
 (define (compiler-driver-state-reset-file-state! [state : CompilerDriverState]) : unit
   (begin
     ;; #2919 state boundary: compile jobs now carry an explicit driver state.
-    ;; Parser/typechecker/lowerer hot paths still use compatibility globals
-    ;; until the remaining node-pool and loader migrations are complete.
+    ;; Parser/typechecker/lowerer hot paths still call compatibility wrappers,
+    ;; so install this state's backing pools before resetting those wrappers.
     (compiler-driver-state-apply-session-flags! state)
-    (compiler-driver-reset-file-state!)))
+    (compiler-driver-state-install-pools! state)
+    (compiler-driver-reset-file-state!)
+    (compiler-driver-state-capture-active-pools! state)))
 
 (cfg
   compile-profile

@@ -6,6 +6,7 @@
 (include-str compiler-embedded-stdlib-arena "stdlib/arena.tl")
 (include-str compiler-embedded-stdlib-atomic "stdlib/atomic.tl")
 (include-str compiler-embedded-stdlib-args "stdlib/args.tl")
+(include-str compiler-embedded-stdlib-byte-buf "stdlib/byte_buf.tl")
 (include-str compiler-embedded-stdlib-cpu "stdlib/cpu.tl")
 (include-str compiler-embedded-stdlib-comptime "stdlib/comptime.tl")
 (include-str compiler-embedded-stdlib-core-macros "stdlib/core_macros.tl")
@@ -36,6 +37,7 @@
 (include-str compiler-embedded-stdlib-tests-arena-policy-escape-string "stdlib/tests/arena_policy_escape_string.tl")
 (include-str compiler-embedded-stdlib-tests-arena-policy-escape-text-buf "stdlib/tests/arena_policy_escape_text_buf.tl")
 (include-str compiler-embedded-stdlib-tests-arena-policy-escape-text-buf-borrowed "stdlib/tests/arena_policy_escape_text_buf_borrowed.tl")
+(include-str compiler-embedded-stdlib-tests-byte-buf-api "stdlib/tests/byte_buf_api.tl")
 (include-str compiler-embedded-stdlib-tests-cpu-api "stdlib/tests/cpu_api.tl")
 (include-str compiler-embedded-stdlib-tests-core-macros-api "stdlib/tests/core_macros_api.tl")
 (include-str compiler-embedded-stdlib-tests-comptime-api "stdlib/tests/comptime_api.tl")
@@ -68,6 +70,8 @@
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-atomic)]
     [(string-eq suffix "args.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-args)]
+    [(string-eq suffix "byte_buf.tl")
+      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-byte-buf)]
     [(string-eq suffix "cpu.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-cpu)]
     [(string-eq suffix "comptime.tl")
@@ -161,6 +165,12 @@
           source
           (CompilerEmbeddedStdlibSomeSource
             compiler-embedded-stdlib-tests-arena-policy-escape-text-buf-borrowed))
+        unit)
+      (if (string-eq suffix "tests/byte_buf_api.tl")
+        (set!
+          source
+          (CompilerEmbeddedStdlibSomeSource
+            compiler-embedded-stdlib-tests-byte-buf-api))
         unit)
       (if (string-eq suffix "tests/cpu_api.tl")
         (set!

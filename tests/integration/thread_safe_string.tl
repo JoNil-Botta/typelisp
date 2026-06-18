@@ -24,7 +24,7 @@
 
 (define (thread-safe-string-copy-boundary-run) : i64
   (let
-    [owner : i64 (arena-make)]
+    [owner : i64 (arena-make-atomic)]
     (match (thread-spawn-string
       (lambda () : String
         (in-arena owner (string-append "worker:" (int->string 42)))))

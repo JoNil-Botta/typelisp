@@ -13249,7 +13249,7 @@
 
 (define (compiler-backend-cpuid-result-move [reg-index : i64]) : String
   (cond
-    [(= reg-index 0) "    movl %eax, %eax\n"]
+    [(= reg-index 0) ""]
     [(= reg-index 1) "    movl %ebx, %eax\n"]
     [(= reg-index 2) "    movl %ecx, %eax\n"]
     [(= reg-index 3) "    movl %edx, %eax\n"]
@@ -13261,7 +13261,7 @@
   [leaf : CompilerIrValue]
   [subleaf : CompilerIrValue]
   [reg-index : i64]) : ResultCompilerBackend
-  (match (compiler-backend-emit-load-value-with-plan assignments subleaf "%r11")
+  (match (compiler-backend-emit-load-value-with-plan assignments subleaf "%rcx")
     [(OkCompilerBackend subleaf-asm)
       (match (compiler-backend-emit-load-value-with-plan
         assignments
@@ -13274,7 +13274,7 @@
               (string-append
                 leaf-asm
                 (string-append
-                  "    movl %r11d, %ecx\n    pushq %rbx\n    cpuid\n"
+                  "    pushq %rbx\n    cpuid\n"
                   (string-append
                     (compiler-backend-cpuid-result-move reg-index)
                     (string-append

@@ -6209,15 +6209,44 @@
       (not (compiler-backend-instr-contains? instr "    pushq %rax\n"))
       (not (compiler-backend-instr-contains? instr "    popq ")))))
 
+(define (compiler-backend-cpuid-eax-direct-ok?) : bool
+  (let
+    [instr : CompilerIrInstr (IrInstrCpuId 0 (IrValueI64 7) (IrValueI64 0) 0)]
+    (backend-and8
+      (compiler-backend-instr-contains? instr "    xorl %ecx, %ecx\n")
+      (compiler-backend-instr-contains? instr "    movl $7, %eax\n")
+      (compiler-backend-instr-contains? instr "    pushq %rbx\n")
+      (compiler-backend-instr-contains? instr "    cpuid\n")
+      (compiler-backend-instr-contains? instr "    popq %rbx\n")
+      (not (compiler-backend-instr-contains? instr "    movl %eax, %eax\n"))
+      (not (compiler-backend-instr-contains? instr "    movl %r11d, %ecx\n"))
+      (not (compiler-backend-instr-contains? instr "%r11")))))
+
+(define (compiler-backend-cpuid-direct-subleaf-ok?) : bool
+  (let
+    [instr : CompilerIrInstr (IrInstrCpuId 0 (IrValueI64 7) (IrValueI64 3) 0)]
+    (backend-and4
+      (compiler-backend-instr-contains? instr "    movl $3, %ecx\n")
+      (compiler-backend-instr-contains? instr "    movl $7, %eax\n")
+      (not (compiler-backend-instr-contains? instr "    movl %r11d, %ecx\n"))
+      (not (compiler-backend-instr-contains? instr "%r11")))))
+
+(define (compiler-backend-xgetbv-zero-index-ok?) : bool
+  (let
+    [instr : CompilerIrInstr (IrInstrXgetbv 0 (IrValueI64 0))]
+    (backend-and4
+      (compiler-backend-instr-contains? instr "    xorl %ecx, %ecx\n")
+      (compiler-backend-instr-contains? instr "    xgetbv\n")
+      (compiler-backend-instr-contains? instr "    orq %rdx, %rax\n")
+      true)))
+
 (define (compiler-backend-low-level-instr-ok?) : bool
   (and
     (backend-and8
       (compiler-backend-instr-contains? (IrInstrEntryArgc 0) ".L_tl_argc(%rip)")
       (compiler-backend-instr-contains? (IrInstrEntryArgv 0) ".L_tl_argv(%rip)")
       (compiler-backend-instr-contains? (IrInstrEntryEnvp 0) ".L_tl_envp(%rip)")
-      (compiler-backend-instr-contains?
-        (IrInstrCpuId 0 (IrValueI64 7) (IrValueI64 0) 0)
-        "    cpuid\n")
+      (compiler-backend-cpuid-eax-direct-ok?)
       (compiler-backend-instr-contains?
         (IrInstrCpuId 0 (IrValueI64 7) (IrValueI64 0) 1)
         "    movl %ebx, %eax\n")
@@ -6227,12 +6256,8 @@
       (compiler-backend-instr-contains?
         (IrInstrCpuId 0 (IrValueI64 7) (IrValueI64 0) 3)
         "    movl %edx, %eax\n")
-      (compiler-backend-instr-contains?
-        (IrInstrXgetbv 0 (IrValueI64 0))
-        "    xgetbv\n"))
-    (compiler-backend-instr-contains?
-      (IrInstrXgetbv 0 (IrValueI64 0))
-      "    orq %rdx, %rax\n")
+      (compiler-backend-xgetbv-zero-index-ok?))
+    (compiler-backend-cpuid-direct-subleaf-ok?)
     (backend-and8
       ;; A one-operand syscall loads the number into %rax and issues `syscall`.
       (compiler-backend-instr-contains?

@@ -184,8 +184,8 @@ Inline stdlib coverage:
 - `io_caller_result.tl` owns inline tests for `read-file-or-result`
   fallback-borrow and owned-result paths.
 - `text_buf_borrowed.tl` owns inline tests for borrowed chunks, owned chunk
-  boundaries, copied unrelated borrowed chunks, render, length, and empty
-  predicates.
+  boundaries, copied unrelated borrowed chunks, shared render materialization,
+  length, and empty predicates.
 - `process_borrowed.tl` owns inline tests for borrowed executable, argv, cwd,
   env, and stdin fields, validation diagnostics, and explicit conversion to
   owned `ProcessCommand` before the runtime boundary.

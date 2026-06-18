@@ -2,7 +2,8 @@
 ;#
 ;# `TextBufBorrowed` stores `(& text str)` chunks without copying at append
 ;# time, plus owned chunks for explicit copy boundaries. Rendering copies
-;# borrowed chunks while materializing the final owned `String`.
+;# borrowed chunks at the materialization boundary, then delegates final ordered
+;# chunk rendering to `text_buf.tl`.
 ;#
 ;# This module intentionally remains separate from `text_buf.tl` while the
 ;# compatibility surface keeps owned chunk storage.
@@ -105,62 +106,22 @@
       (substring-borrowed text 0 (string-length text))]
     [(TextBufBorrowedChunkOwned text) text]))
 
-;: Render reversed borrowed chunks into `out`.
-(define (text-buf-borrowed-chunks-render-rev
-  [chunks : (TextBufBorrowedChunkList text)]
-  [out : String]) : String
+;: Convert borrowed chunks to the owned chunk-list shape without changing the
+;: reversed render order. Borrowed chunks copy here; owned chunks are reused.
+(define (text-buf-borrowed-chunks-to-owned
+  [chunks : (TextBufBorrowedChunkList text)]) : TextBufChunkList
   (match chunks
-    [(TextBufBorrowedChunkNil) out]
+    [(TextBufBorrowedChunkNil) TextBufChunkNil]
     [(TextBufBorrowedChunkCons chunk rest)
-      (text-buf-borrowed-chunks-render-rev
-        (box-get rest)
-        (string-append (text-buf-borrowed-chunk-string chunk) out))]))
-
-;: Return the number of borrowed chunk nodes in `chunks`, accumulating into
-;: `count`.
-(define (text-buf-borrowed-chunk-count
-  [chunks : (TextBufBorrowedChunkList text)]
-  [count : i64]) : i64
-  (match chunks
-    [(TextBufBorrowedChunkNil) count]
-    [(TextBufBorrowedChunkCons _ rest)
-      (text-buf-borrowed-chunk-count (box-get rest) (+ count 1))]))
-
-;: Fill `items` with owned copies from a reversed borrowed chunk list.
-(define (text-buf-borrowed-chunks-fill-array-rev
-  [chunks : (TextBufBorrowedChunkList text)]
-  [items : (Array String)]
-  [index : i64]) : unit
-  (match chunks
-    [(TextBufBorrowedChunkNil) unit]
-    [(TextBufBorrowedChunkCons chunk rest)
-      (begin
-        (array-set! items index (text-buf-borrowed-chunk-string chunk))
-        (text-buf-borrowed-chunks-fill-array-rev
-          (box-get rest)
-          items
-          (- index 1)))]))
-
-;: Render many borrowed chunks through an owned String array to avoid a deep
-;: left-leaning concat chain while preserving borrowed append-time storage.
-(define (text-buf-borrowed-chunks-render-balanced
-  [chunks : (TextBufBorrowedChunkList text)]
-  [count : i64]) : String
-  (let
-    [items : (Array String) (make-array String count)]
-    (begin
-      (text-buf-borrowed-chunks-fill-array-rev chunks items (- count 1))
-      (text-buf-chunks-render-array-range items 0 count))))
+      (TextBufChunkCons
+        (text-buf-borrowed-chunk-string chunk)
+        (box (text-buf-borrowed-chunks-to-owned (box-get rest))))]))
 
 ;: Render borrowed `buf` to an owned String allocated in the active arena.
 (define (text-buf-borrowed-render [buf : (TextBufBorrowed text)]) : String
   (match buf
-    [(TextBufBorrowed chunks _)
-      (let
-        [count : i64 (text-buf-borrowed-chunk-count chunks 0)]
-        (if (> count 32)
-          (text-buf-borrowed-chunks-render-balanced chunks count)
-          (text-buf-borrowed-chunks-render-rev chunks "")))]))
+    [(TextBufBorrowed chunks len)
+      (text-buf-render-chunks (text-buf-borrowed-chunks-to-owned chunks) len)]))
 
 ;: Inline test helper that forces a borrowed text buffer test failure.
 (define (text-buf-borrowed-test-fail) : unit

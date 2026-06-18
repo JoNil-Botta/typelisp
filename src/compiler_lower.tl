@@ -32335,7 +32335,7 @@
     (match (gen-normalize-program program)
       [(OkGenProgram generated)
         (match (macro-expand-program generated)
-          [(OkMacroExpand expanded)
+          [(OkMacroExpand expanded _)
             (lower-compiler-expanded-program-unlocated-mode expanded mode)]
           [(ErrMacroExpand diag) (ErrCompilerLower diag)])]
       [(ErrGenProgram diag) (ErrCompilerLower diag)])))
@@ -32536,8 +32536,8 @@
     ;; typecheck-compiler-program-with-paths for why).
     (match (gen-normalize-program-with-paths program paths entry-path)
       [(OkGenProgramWithPaths generated generated-paths)
-        (match (macro-expand-program generated)
-          [(OkMacroExpand expanded)
+        (match (macro-expand-program-with-paths generated generated-paths)
+          [(OkMacroExpand expanded expanded-paths)
             (begin
               (cfg
                 compile-profile
@@ -32545,7 +32545,7 @@
               (lower-compiler-expanded-program-with-decl-paths-mode-cache
                 entry-path
                 expanded
-                generated-paths
+                expanded-paths
                 mode
                 stdlib-roots
                 cache-scope))]

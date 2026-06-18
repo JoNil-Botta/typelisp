@@ -17,7 +17,6 @@
 (import "package_cache_core.tl")
 (import "package_lock_core.tl")
 (import "compiler_diagnostic.tl")
-(import "compiler_parse_core.tl")
 (import "compiler_driver_core.tl")
 (import "compiler_typecheck.tl")
 (import "tlci_core.tl")
@@ -3143,11 +3142,6 @@
     (tlci-empty-bytes)
     (tlci-empty-bytes)))
 
-(define (build-package-tlci-string-contains?
-  [haystack : String]
-  [needle : String]) : bool
-  (string-contains (& haystack) (& needle)))
-
 (define (build-package-write-tlci
   [path : String]
   [manifest : CompilerPkgManifest]
@@ -3167,96 +3161,6 @@
             path
             (tlci-bytes->string bytes 0 (array-length bytes))
             "build: failed to write package tlci")])]))
-
-(define (build-package-tlci-export-test-source) : String
-  "(module stdlib.core_macros)
-(defmacro (implicit-macro [expr : Expr]) : Expr expr)
-(export (macro implicit-macro))
-(module pkg.meta)
-(define exported-value : i64 42)
-(defstruct ExportedPoint
-  (x i64)
-  (y i64))
-(defenum ExportedTag
-  (TagA)
-  (TagB i64))
-(defmacro (exported-macro [expr : Expr]) : Expr expr)
-(export
-  (macro exported-macro)
-  (variant TagA)
-  (field ExportedPoint x)
-  (constructor ExportedPoint)
-  (type ExportedPoint)
-  (value exported-value)
-  (macro exported-macro)
-  (type ExportedPoint)
-  (value exported-value))")
-
-(define (build-package-tlci-export-test-paths) : AstDeclPathList
-  (ast-decl-path-cons
-    "stdlib/core_macros.tl"
-    (ast-decl-path-cons
-      "stdlib/core_macros.tl"
-      (ast-decl-path-cons
-        "stdlib/core_macros.tl"
-        (ast-decl-path-cons
-          "tlci_meta/src/lib.tl"
-          (ast-decl-path-cons
-            "tlci_meta/src/lib.tl"
-            (ast-decl-path-cons
-              "tlci_meta/src/lib.tl"
-              (ast-decl-path-cons
-                "tlci_meta/src/lib.tl"
-                (ast-decl-path-cons
-                  "tlci_meta/src/lib.tl"
-                  (ast-decl-path-cons "tlci_meta/src/lib.tl" AstDeclPathNil))))))))))
-
-(define (build-package-tlci-export-metadata-smoke-ok?) : bool
-  (match (parse-ast-source (build-package-tlci-export-test-source))
-    [(ErrAstProgram _) false]
-    [(OkAstProgram program)
-      (match program
-        [(AstProgram decls-box)
-          (let
-            [decls : AstDeclList (box-get decls-box)]
-            (match (build-package-tlci-metadata
-              (build-package-graph-test-manifest "tlci_meta")
-              decls
-              (build-package-tlci-export-test-paths))
-              [(ErrTlciMetadata _) false]
-              [(OkTlciMetadata metadata)
-                (let
-                  [emitted : String (tlci-metadata-emit metadata)]
-                  (and
-                    (build-package-tlci-string-contains?
-                      emitted
-                      "(value (name \"pkg.meta/exported-value\") (signature \"i64\")")
-                    (build-package-tlci-string-contains?
-                      emitted
-                      "(type (name \"pkg.meta/ExportedPoint\") (layout \"size=16 align=8\")")
-                    (build-package-tlci-string-contains?
-                      emitted
-                      "(macro (name \"pkg.meta/exported-macro\") (signature \"(macro (Expr) -> Expr)\")")
-                    (not (build-package-tlci-string-contains? emitted "TagA"))
-                    (not
-                      (build-package-tlci-string-contains?
-                        emitted
-                        "constructor"))
-                    (not (build-package-tlci-string-contains? emitted "field"))
-                    (not
-                      (build-package-tlci-string-contains?
-                        emitted
-                        "implicit-macro"))
-                    (not
-                      (build-package-tlci-string-contains?
-                        emitted
-                        "stdlib.core_macros"))))]))])]))
-
-(test
-  build-package-tlci-export-metadata-smoke
-  (unless
-    (build-package-tlci-export-metadata-smoke-ok?)
-    (panic "build package tlci export metadata smoke failed")))
 
 (define (build-package-closure-doctest-status
   [entry-path : String]

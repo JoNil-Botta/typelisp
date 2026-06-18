@@ -13237,7 +13237,7 @@
 
 (define (tc-spmd-foreach-index-unsupported) : ResultTcUnit
   (ErrTcUnit
-    "typecheck: foreach does not support gather/scatter-like array indexes; use the foreach index plus a uniform offset"))
+    "typecheck: foreach does not support non-contiguous array-set! destination indexes; use the foreach index plus a uniform offset"))
 
 (define (tc-spmd-foreach-uniform-offset
   [ctx : TcContext]
@@ -14211,15 +14211,10 @@
                   [(OkTcSpmdExprInfo index-info)
                     (match index-info
                       [(TcSpmdExprInfo _ index-class index-env)
-                        (match (if (tc-spmd-varying? index-class)
-                          (tc-spmd-foreach-index ctx env array-env index)
-                          OkTcUnit)
-                          [(OkTcUnit)
-                            (tc-spmd-finish-lane
-                              expr-ty
-                              (tc-spmd-merge-class array-class index-class)
-                              index-env)]
-                          [(ErrTcUnit message) (ErrTcSpmdExprInfo message)])])]
+                        (tc-spmd-finish-lane
+                          expr-ty
+                          (tc-spmd-merge-class array-class index-class)
+                          index-env)])]
                   [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])])]
           [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]
     [(AstExprArraySet array-box index-box value-box)

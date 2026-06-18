@@ -97,6 +97,7 @@ tests/spmd/masked_if_i16_u16.tl
 tests/spmd/inline_helper_masked_if_i64.tl
 tests/spmd/bool_lanes.tl
 tests/integration/spmd_foreach.tl
+tests/integration/spmd_gather_read.tl
 tests/integration/spmd_reduce_scalar.tl
 EOF
 }
@@ -138,6 +139,9 @@ spmd_mode_expected_compile_diagnostic() {
             ;;
         tests/spmd/bool_lanes.tl:avx2)
             printf '%s\n' "lower: SPMD foreach bool dynamic-array lanes require AVX-512 backend mode; use scalar or avx512"
+            ;;
+        tests/integration/spmd_gather_read.tl:avx2 | tests/integration/spmd_gather_read.tl:avx512)
+            printf '%s\n' "lower: SPMD foreach does not match a SIMD lowering pattern for this backend mode; use scalar or a contiguous map/zip body with supported array and uniform operands"
             ;;
         *) return 1 ;;
     esac

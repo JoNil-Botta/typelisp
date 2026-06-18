@@ -66,14 +66,14 @@ spmd_varying_type_reject|check-fail|tests/safety/spmd_varying_type_reject.tl|-|p
 spmd_varying_call_reject|check-fail|tests/safety/spmd_varying_call_reject.tl|-|foreach calls with varying arguments are not supported
 spmd_atomic_order_arg_reject|check-fail|tests/safety/spmd_atomic_order_arg_reject.tl|-|call arity mismatch
 spmd_atomic_reduce_call_reject|check-fail|tests/safety/spmd_atomic_reduce_call_reject.tl|-|function calls are not allowed inside a spmd-reduce value expression
-spmd_atomic_shadow_call_reject|check-fail|tests/safety/spmd_atomic_shadow_call_reject.tl|-|foreach does not support gather/scatter-like array indexes
+spmd_atomic_shadow_call_reject|check-fail|tests/safety/spmd_atomic_shadow_call_reject.tl|-|foreach does not support non-contiguous array-set! destination indexes
 spmd_atomic_u64_reject|check-fail|tests/safety/spmd_atomic_u64_reject.tl|-|typecheck: argument type mismatch
-spmd_unmasked_gather_index_reject|check-fail|tests/safety/spmd_unmasked_gather_index_reject.tl|-|foreach does not support gather/scatter-like array indexes
-spmd_unmasked_scatter_index_reject|check-fail|tests/safety/spmd_unmasked_scatter_index_reject.tl|-|foreach does not support gather/scatter-like array indexes
+spmd_unmasked_scatter_index_reject|check-fail|tests/safety/spmd_unmasked_scatter_index_reject.tl|-|foreach does not support non-contiguous array-set! destination indexes
 spmd_masked_if_while_reject|check-fail|tests/safety/spmd_masked_if_while_reject.tl|-|SPMD masked if does not support varying while
 spmd_masked_if_match_reject|check-fail|tests/safety/spmd_masked_if_match_reject.tl|-|SPMD masked if does not support varying match
 spmd_masked_if_call_reject|check-fail|tests/safety/spmd_masked_if_call_reject.tl|-|SPMD masked if does not support varying calls
-spmd_masked_if_gather_index_reject|check-fail|tests/safety/spmd_masked_if_gather_index_reject.tl|-|SPMD masked if does not support gather/scatter-like array indexes
+spmd_masked_if_scatter_index_reject|check-fail|tests/safety/spmd_masked_if_scatter_index_reject.tl|-|SPMD masked if does not support gather/scatter-like array indexes
+spmd_masked_if_gather_read_reject|check-fail|tests/safety/spmd_masked_if_gather_read_reject.tl|-|SPMD masked if does not support gather/scatter-like array indexes
 spmd_masked_if_nested_foreach_reject|check-fail|tests/safety/spmd_masked_if_nested_foreach_reject.tl|-|SPMD masked if does not support nested foreach
 spmd_masked_if_nested_reduce_reject|check-fail|tests/safety/spmd_masked_if_nested_reduce_reject.tl|-|SPMD masked if does not support nested spmd-reduce
 spmd_masked_if_side_effect_reject|check-fail|tests/safety/spmd_masked_if_side_effect_reject.tl|-|SPMD masked if does not support side effects other than contiguous array writes

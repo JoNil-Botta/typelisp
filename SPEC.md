@@ -3530,10 +3530,17 @@ Initial dynamic-array use cases:
 
 - Contiguous map and zip-style kernels over dynamic arrays.
 - Reads through `array-ref` and writes through `array-set!`.
-- Array indexes must be the loop index or a simple uniform offset from it, such
-  as `i` or `(+ base i)`. Ordinary gather/scatter through an index array is
-  deferred; the only overlap-tolerant scatter write surface is the explicit
-  atomic integer helper API described below.
+- Reads through `array-ref` may use any SPMD-safe varying `i64` index
+  expression, including gather-only reads through an index array such as
+  `xs[ix[i]]`. The scalar/reference lowering executes those reads with the
+  ordinary dynamic-array bounds checks for the logical iteration that performs
+  the read. Explicit SIMD backend modes may reject non-contiguous gather shapes
+  with a targeted diagnostic until vector gather lowering is implemented.
+- Non-atomic `array-set!` destination indexes must be the loop index or a
+  simple uniform offset from it, such as `i` or `(+ base i)`. Scatter writes
+  through arbitrary varying indexes are deferred; the only overlap-tolerant
+  scatter write surface is the explicit atomic integer helper API described
+  below.
 - Supported lane element types for the first contiguous map/zip slice are
   `i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `i64`, `u64`, `f32`, and `f64`,
   plus an
@@ -3691,9 +3698,9 @@ Masked varying `if` (v2):
   rejected; a `match` whose scrutinee is uniform follows ordinary scalar
   control-flow rules.
 - Varying `while`, early exits, `return` from inside `foreach`, `break`,
-  `continue`, public mask values, non-atomic gathers/scatters through index
-  arrays, overlapping ordinary writes, general atomics, and user-defined SPMD
-  calls remain deferred.
+  `continue`, public mask values, gather reads and scatter writes through index
+  arrays inside masked branches, overlapping ordinary writes, general atomics,
+  and user-defined SPMD calls remain deferred.
 - Diagnostics must reject unsupported constructs in masked branches at
   type-check/lowering time and name the SPMD masked-control-flow restriction.
   Scalar backend modes must not silently accept a broader source surface than
@@ -3958,8 +3965,10 @@ Unsupported in the current SPMD implementation:
 - Parser/typechecker/lowerer/backend support for `(program-index)` and
   `(program-count)`.
 - Public vector types and public mask types.
-- Gather/scatter, indirect indexing through arrays, and non-contiguous memory.
-- Scans, general shuffles, atomics, and overlapping writes.
+- Non-atomic scatter writes, vector lowering for general gather reads, and
+  general non-contiguous memory operations beyond scalar gather-only reads.
+- Scans, general shuffles, general atomics beyond the explicit integer element
+  helpers, and overlapping writes.
 - Reduction-by-mutation through `set!` to an outer accumulator.
 - Varying `if` until the v2 masked-control-flow implementation lands; varying
   `while`, varying `match`, early exits, `break`, and `continue`.
@@ -3980,7 +3989,7 @@ Negative examples for later parser/typechecker tests:
       (array-set! out i 0))))
 ```
 
-```lisp test=ignore name=spmd-reject-gather-scatter reason="gather/scatter remains deferred after masked varying if"
+```lisp test=ignore name=spmd-reject-non-atomic-scatter reason="scatter writes remain deferred after masked varying if"
 (define (permute [xs : (Array i64)]
                  [index : (Array i64)]
                  [out : (Array i64)]
@@ -5597,8 +5606,8 @@ not the future safe reference/borrow model (#182), not a replacement for
 | `(with ...)` scoped non-memory resource cleanup | Implemented (#907): parser/typechecker/lowering with LIFO cleanup order |
 | `(in-arena ...)` first-class arena target | Implemented (#2625): safe dynamic active-arena switch with restoration on normal and early exits, no mark/rewind/destroy/clone |
 | Cleanup-owning aggregate declarations | Implemented for structs (#907); cleanup-owning enums remain reserved |
-| SPMD / SIMD `foreach` and `spmd-reduce` | Scalar reference lowering implemented; AVX2/AVX-512 support a first contiguous `foreach` map/zip subset over `i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `i64`, `u64`, `f32`, and `f64`; AVX-512 also supports bool dynamic-array copies and bool-valued map results through private mask conversion; eligible `spmd-reduce` folds and direct array-value `spmd-broadcast` maps are implemented; explicit `stdlib/atomic.tl` i32/i64 element helpers provide the first overlap-tolerant SPMD scatter write surface; masked varying `if` is in flight (#2131/#2205/#2207) |
-| Public cross-lane ops beyond `spmd-reduce`/`spmd-broadcast` | Scans/prefix reductions, shuffles, public lane indices/counts, non-atomic gathers/scatters, general atomics, and public vector/mask values remain deferred; split across #2761, #2762, #2764, #2765, and #2766 |
+| SPMD / SIMD `foreach` and `spmd-reduce` | Scalar reference lowering implemented; AVX2/AVX-512 support a first contiguous `foreach` map/zip subset over `i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `i64`, `u64`, `f32`, and `f64`; AVX-512 also supports bool dynamic-array copies and bool-valued map results through private mask conversion; scalar gather-only dynamic-array reads are implemented with ordinary bounds checks while explicit SIMD modes reject non-contiguous gather shapes; eligible `spmd-reduce` folds and direct array-value `spmd-broadcast` maps are implemented; explicit `stdlib/atomic.tl` i32/i64 element helpers provide the first overlap-tolerant SPMD scatter write surface; masked varying `if` is in flight (#2131/#2205/#2207) |
+| Public cross-lane ops beyond `spmd-reduce`/`spmd-broadcast` | Scans/prefix reductions, shuffles, public lane indices/counts, vector gather/scatter lowering, non-atomic scatter writes, general atomics, and public vector/mask values remain deferred; split across #2761, #2764, #2765, and #2766 |
 | Runtime SIMD dispatch (`defdispatch`) | Implemented for scalar/AVX2/AVX-512 variants with cached runtime selection and end-to-end selection verification |
 | Windows region helpers | Implemented for `tl_region_mark`/`tl_region_reset` and `with-arena` scoped reclamation |
 | Complete source locations for all semantic errors | Partial |

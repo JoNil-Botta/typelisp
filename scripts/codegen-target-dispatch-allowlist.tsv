@@ -76,6 +76,7 @@ src/compiler_backend.tl	compiler-backend-emit-program-linux-with-spans	entry	Bac
 src/compiler_backend.tl	compiler-backend-emit-program-linux-with-spans-and-entry	entry	BackendTargetLinux	1	Linux-named entry-aware emitter explicitly selects the Linux target.
 src/compiler_backend.tl	compiler-backend-object-entry-symbols	object-format	BackendTarget(Linux|Windows)	2	Native object entry symbols differ for ELF and COFF/PE.
 src/compiler_backend.tl	compiler-backend-object-image-sections	object-format	BackendTarget(Linux|Windows)	2	Object image section sets differ between Linux and Windows targets.
+src/compiler_backend.tl	compiler-backend-object-image-from-parts	object-format	compiler-backend-target-windows[?]	1	Windows direct-object manifest resources are emitted only for COFF/PE executable objects.
 src/compiler_backend.tl	compiler-backend-emit-program-object-image-linux	object-format	BackendTargetLinux	1	Linux-named object image emitter explicitly selects ELF object layout.
 src/compiler_backend.tl	compiler-backend-emit-source-pic-linux	object-format	BackendTargetLinux	1	Linux-named PIC source helper explicitly selects ELF PIC emission.
 src/compiler_backend.tl	compiler-backend-target-cfgs	target-cfg	BackendTarget(Linux|Windows)|target-(linux|windows)	4	Backend target cfgs expose source-level target cfg names.

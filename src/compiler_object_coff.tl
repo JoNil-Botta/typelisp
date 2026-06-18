@@ -8,7 +8,7 @@
 (define compiler-object-coff-machine-amd64 : i64
   0x8664)
 (define compiler-object-coff-section-count : i64
-  6)
+  7)
 (define compiler-object-coff-file-header-size : i64
   20)
 (define compiler-object-coff-section-header-size : i64
@@ -47,7 +47,8 @@
     [(ObjectSectionRodata) ".rdata"]
     [(ObjectSectionBss) ".bss"]
     [(ObjectSectionPdata) ".pdata"]
-    [(ObjectSectionXdata) ".xdata"]))
+    [(ObjectSectionXdata) ".xdata"]
+    [(ObjectSectionRsrc) ".rsrc"]))
 
 (define (compiler-object-coff-section-number [kind : CompilerObjectSectionKind]) : i64
   (match kind
@@ -56,7 +57,8 @@
     [(ObjectSectionRodata) 3]
     [(ObjectSectionBss) 4]
     [(ObjectSectionPdata) 5]
-    [(ObjectSectionXdata) 6]))
+    [(ObjectSectionXdata) 6]
+    [(ObjectSectionRsrc) 7]))
 
 (define (compiler-object-coff-section-flags [kind : CompilerObjectSectionKind]) : i64
   (match kind
@@ -97,6 +99,12 @@
           compiler-object-coff-section-align-8
           compiler-object-coff-section-mem-read))]
     [(ObjectSectionXdata)
+      (bit-or
+        compiler-object-coff-section-cnt-initialized-data
+        (bit-or
+          compiler-object-coff-section-align-8
+          compiler-object-coff-section-mem-read))]
+    [(ObjectSectionRsrc)
       (bit-or
         compiler-object-coff-section-cnt-initialized-data
         (bit-or
@@ -700,9 +708,13 @@
             (compiler-object-coff-section-relocation-count
               image
               (ObjectSectionPdata))
-            (compiler-object-coff-section-relocation-count
-              image
-              (ObjectSectionXdata))))))))
+            (+
+              (compiler-object-coff-section-relocation-count
+                image
+                (ObjectSectionXdata))
+              (compiler-object-coff-section-relocation-count
+                image
+                (ObjectSectionRsrc)))))))))
 
 (define (compiler-object-coff-raw-base-after-section
   [image : CompilerObjectImage]
@@ -739,7 +751,25 @@
               (compiler-object-coff-section-raw-size
                 image
                 (ObjectSectionRodata))
-              (compiler-object-coff-section-raw-size image (ObjectSectionPdata))))))]))
+              (compiler-object-coff-section-raw-size image (ObjectSectionPdata))))))]
+    [(ObjectSectionRsrc)
+      (+
+        (compiler-object-coff-header-size)
+        (+
+          (compiler-object-coff-section-raw-size image (ObjectSectionText))
+          (+
+            (compiler-object-coff-section-raw-size image (ObjectSectionData))
+            (+
+              (compiler-object-coff-section-raw-size
+                image
+                (ObjectSectionRodata))
+              (+
+                (compiler-object-coff-section-raw-size
+                  image
+                  (ObjectSectionPdata))
+                (compiler-object-coff-section-raw-size
+                  image
+                  (ObjectSectionXdata)))))))]))
 
 (define (compiler-object-coff-section-raw-pointer
   [image : CompilerObjectImage]
@@ -759,7 +789,9 @@
           (compiler-object-coff-section-raw-size image (ObjectSectionRodata))
           (+
             (compiler-object-coff-section-raw-size image (ObjectSectionPdata))
-            (compiler-object-coff-section-raw-size image (ObjectSectionXdata))))))))
+            (+
+              (compiler-object-coff-section-raw-size image (ObjectSectionXdata))
+              (compiler-object-coff-section-raw-size image (ObjectSectionRsrc)))))))))
 
 (define (compiler-object-coff-relocation-pointer
   [image : CompilerObjectImage]
@@ -789,6 +821,10 @@
           (compiler-object-coff-section-relocation-count
             image
             (ObjectSectionPdata))]
+        [xdata-count : i64
+          (compiler-object-coff-section-relocation-count
+            image
+            (ObjectSectionXdata))]
         [base : i64 (compiler-object-coff-relocation-base image)]
         (match kind
           [(ObjectSectionText) base]
@@ -817,7 +853,17 @@
                 compiler-object-coff-relocation-size
                 (+
                   text-count
-                  (+ data-count (+ rodata-count (+ bss-count pdata-count))))))])))))
+                  (+ data-count (+ rodata-count (+ bss-count pdata-count))))))]
+          [(ObjectSectionRsrc)
+            (+
+              base
+              (*
+                compiler-object-coff-relocation-size
+                (+
+                  text-count
+                  (+
+                    data-count
+                    (+ rodata-count (+ bss-count (+ pdata-count xdata-count)))))))])))))
 
 (define (compiler-object-coff-symbol-table-pointer
   [image : CompilerObjectImage]) : i64
@@ -882,7 +928,8 @@
     (compiler-object-coff-push-section-header! out image (ObjectSectionRodata))
     (compiler-object-coff-push-section-header! out image (ObjectSectionBss))
     (compiler-object-coff-push-section-header! out image (ObjectSectionPdata))
-    (compiler-object-coff-push-section-header! out image (ObjectSectionXdata))))
+    (compiler-object-coff-push-section-header! out image (ObjectSectionXdata))
+    (compiler-object-coff-push-section-header! out image (ObjectSectionRsrc))))
 
 (define (compiler-object-coff-render-data-record!
   [out : (Array u8)]
@@ -1086,7 +1133,8 @@
     (compiler-object-coff-render-section-data! out image (ObjectSectionData))
     (compiler-object-coff-render-section-data! out image (ObjectSectionRodata))
     (compiler-object-coff-render-section-data! out image (ObjectSectionPdata))
-    (compiler-object-coff-render-section-data! out image (ObjectSectionXdata))))
+    (compiler-object-coff-render-section-data! out image (ObjectSectionXdata))
+    (compiler-object-coff-render-section-data! out image (ObjectSectionRsrc))))
 
 (define (compiler-object-coff-relocation-type
   [kind : CompilerObjectRelocationKind]) : i64
@@ -1321,7 +1369,12 @@
       out
       image
       (struct-get image relocations)
-      (ObjectSectionXdata))))
+      (ObjectSectionXdata))
+    (compiler-object-coff-render-relocations-for-section!
+      out
+      image
+      (struct-get image relocations)
+      (ObjectSectionRsrc))))
 
 (define (compiler-object-coff-symbol-name-long? [name : String]) : bool
   (> (string-length name) 8))

@@ -5,7 +5,8 @@
   (ObjectSectionRodata)
   (ObjectSectionBss)
   (ObjectSectionPdata)
-  (ObjectSectionXdata))
+  (ObjectSectionXdata)
+  (ObjectSectionRsrc))
 
 (defenum CompilerObjectMaybeSection
   (ObjectNoSection)
@@ -323,6 +324,10 @@
     [(ObjectSectionXdata)
       (match b
         [(ObjectSectionXdata) true]
+        [_ false])]
+    [(ObjectSectionRsrc)
+      (match b
+        [(ObjectSectionRsrc) true]
         [_ false])]))
 
 (define (compiler-object-symbol-binding-eq?

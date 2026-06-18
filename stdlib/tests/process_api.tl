@@ -26,6 +26,24 @@
         [_ (panic message)])]
     [_ (panic message)]))
 
+(define (assert-process-string-empty
+  [items : ProcessStringList]
+  [message : String]) : unit
+  (match items
+    [(ProcessStringNil) unit]
+    [(ProcessStringCons _ _) (panic message)]))
+
+(define (assert-process-string-list1
+  [items : ProcessStringList]
+  [first : String]
+  [message : String]) : unit
+  (match items
+    [(ProcessStringCons a rest)
+      (match (box-get rest)
+        [(ProcessStringNil) (assert-owned-string-eq a first message)]
+        [_ (panic message)])]
+    [_ (panic message)]))
+
 (define (assert-process-string-list3
   [items : ProcessStringList]
   [first : String]
@@ -166,6 +184,72 @@
         "world"
         "again"
         "process args append")
+      (assert-process-string-empty
+        (process-args-from-string-vec (string-vec-new))
+        "process argv vec empty")
+      (assert-process-string-list1
+        (process-args-from-string-vec (string-vec-push (string-vec-new) "solo"))
+        "solo"
+        "process argv vec single")
+      (assert-process-string-list3
+        (process-args-from-string-vec
+          (string-vec-push
+            (string-vec-push
+              (string-vec-push (string-vec-with-capacity 3) "hello")
+              "world")
+            "!"))
+        "hello"
+        "world"
+        "!"
+        "process argv vec multi")
+      (assert-process-string-empty
+        (process-command-argv
+          (process-command-from-argv-vec "echo" (string-vec-new)))
+        "process command argv vec empty")
+      (assert-process-string-list1
+        (process-command-argv
+          (process-command-from-argv-vec
+            "echo"
+            (string-vec-push (string-vec-new) "solo")))
+        "solo"
+        "process command argv vec single")
+      (assert-process-string-list3
+        (process-command-argv
+          (process-command-from-argv-vec
+            "echo"
+            (string-vec-push
+              (string-vec-push
+                (string-vec-push (string-vec-with-capacity 3) "hello")
+                "world")
+              "!")))
+        "hello"
+        "world"
+        "!"
+        "process command argv vec multi")
+      (assert-process-string-list3
+        (process-command-argv
+          (process-command-with-argv-vec
+            command
+            (string-vec-push
+              (string-vec-push
+                (string-vec-push (string-vec-with-capacity 3) "vec")
+                "replace")
+              "argv")))
+        "vec"
+        "replace"
+        "argv"
+        "process command argv vec replace")
+      (assert-process-string-list3
+        (process-command-argv
+          (process-command-with-args-vec
+            (process-command "echo" (process-args-single "base"))
+            (string-vec-push
+              (string-vec-push (string-vec-with-capacity 2) "vec")
+              "tail")))
+        "base"
+        "vec"
+        "tail"
+        "process command argv vec append")
       (assert-process-some-string
         (process-command-cwd command)
         "target"

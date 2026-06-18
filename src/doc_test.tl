@@ -1952,16 +1952,27 @@
           (if (compiler-load-stdlib-import? normalized)
             normalized
             (compiler-load-stdlib-owned-path-from-roots rooted stdlib-roots))]
+        [manifest-stdlib-root : String
+          (compiler-load-normalize-path
+            (compiler-load-join-root-path manifest-dir "stdlib"))]
+        [manifest-root : String (compiler-load-normalize-path manifest-dir)]
+        [manifest-local : bool
+          (if (string-eq manifest-root ".")
+            (and
+              (not (compiler-load-absolute-path? rooted))
+              (doc-test-path-under-root? rooted manifest-dir))
+            (doc-test-path-under-root? rooted manifest-dir))]
         [package-local : bool
           (and
             (> (string-length path) 0)
             (not (compiler-load-stdlib-import? stdlib-path))
+            (not (doc-test-path-under-root? rooted manifest-stdlib-root))
             (not
               (doc-test-dep-list-path?
                 rooted
                 manifest-dir
                 (compiler-pkg-deps-list deps)))
-            (doc-test-path-under-root? rooted manifest-dir))]
+            manifest-local)]
         (if package-local
           (let
             [report : DocTestRunReport

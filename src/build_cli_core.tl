@@ -3187,6 +3187,11 @@
         manifest-dir
         deps)]))
 
+(define (build-package-skip-closure-doctests? [name : String]) : bool
+  ;; The repository's own compiler package is covered by verify-doc-tests; do
+  ;; not recursively run the full compiler doctest corpus during self-builds.
+  (string-eq name "typelisp"))
+
 (define (build-package-emit-one
   [manifest-path : String]
   [manifest : CompilerPkgManifest]
@@ -3236,13 +3241,15 @@
           (source-tool-link-inputs-from-archives dep-libs)]
         [emit-entry : bool (build-package-kind-entry? kind)]
         [doctest-status : i64
-          (build-package-closure-doctest-status
-            entry-path
-            target
-            stdlib-roots
-            manifest-dir
-            (struct-get manifest deps)
-            emit-entry)]
+          (if (build-package-skip-closure-doctests? name)
+            0
+            (build-package-closure-doctest-status
+              entry-path
+              target
+              stdlib-roots
+              manifest-dir
+              (struct-get manifest deps)
+              emit-entry))]
         (if (= doctest-status 0)
           (begin
             (compiler-driver-reset-file-state!)

@@ -636,41 +636,25 @@
     "end"
     (lsp-position line (+ col 1))))
 
-(define (lsp-range-end-line [start-line : i64] [end-line : i64]) : i64
-  (if (>= end-line start-line)
-    end-line
-    start-line))
-
-(define (lsp-range-end-col
-  [start-line : i64]
-  [start-col : i64]
-  [end-line : i64]
-  [end-col : i64]) : i64
-  (if (and (= start-line end-line) (<= end-col start-col))
-    (+ start-col 1)
-    end-col))
-
-(define (lsp-range-span
-  [start-line : i64]
-  [start-col : i64]
-  [end-line : i64]
-  [end-col : i64]) : Json
+(define (lsp-range-from-compiler-span [span : CompilerDiagnosticSpan]) : Json
   (let
-    [safe-end-line : i64 (lsp-range-end-line start-line end-line)]
+    [start-line : i64 (compiler-diagnostic-span-start-line span)]
+    [start-col : i64 (compiler-diagnostic-span-start-col span)]
+    [raw-end-line : i64 (compiler-diagnostic-span-end-line span)]
+    [safe-end-line : i64
+      (if (>= raw-end-line start-line)
+        raw-end-line
+        start-line)]
+    [raw-end-col : i64 (compiler-diagnostic-span-end-col span)]
+    [safe-end-col : i64
+      (if (and (= start-line safe-end-line) (<= raw-end-col start-col))
+        (+ start-col 1)
+        raw-end-col)]
     (lsp-json-object2
       "start"
       (lsp-position start-line start-col)
       "end"
-      (lsp-position
-        safe-end-line
-        (lsp-range-end-col start-line start-col safe-end-line end-col)))))
-
-(define (lsp-range-from-compiler-span [span : CompilerDiagnosticSpan]) : Json
-  (lsp-range-span
-    (compiler-diagnostic-span-start-line span)
-    (compiler-diagnostic-span-start-col span)
-    (compiler-diagnostic-span-end-line span)
-    (compiler-diagnostic-span-end-col span)))
+      (lsp-position safe-end-line safe-end-col))))
 
 (define (lsp-diagnostic-related-uri
   [fallback-path : String]
@@ -712,49 +696,67 @@
         (lsp-diagnostic-related-information fallback-path entry)
         (lsp-diagnostic-related-information-list fallback-path (box-get rest)))]))
 
+(define (lsp-diagnostic-message-tail [message : String]) : JsonMemberList
+  (lsp-json-member "message" (JsonString message) JsonMemberListNil))
+
+(define (lsp-diagnostic-code-tail [code : String] [tail : JsonMemberList]) : JsonMemberList
+  (if (string-eq code "")
+    tail
+    (lsp-json-member "code" (JsonString code) tail)))
+
+(define (lsp-diagnostic-with-range-tail
+  [range : Json]
+  [code : String]
+  [tail : JsonMemberList]) : Json
+  (lsp-json-object
+    (lsp-json-member
+      "range"
+      range
+      (lsp-json-member
+        "severity"
+        (lsp-json-number 1)
+        (lsp-json-member
+          "source"
+          (JsonString "typelisp")
+          (lsp-diagnostic-code-tail code tail))))))
+
 (define (lsp-diagnostic-with-range
   [range : Json]
   [message : String]
-  [code : String]
-  [related : JsonList]) : Json
-  (let
-    [members : JsonMemberList
-      (lsp-json-member "message" (JsonString message) JsonMemberListNil)]
-    (begin
-      (if (> (json-list-count related) 0)
-        (set!
-          members
-          (lsp-json-member
-            "relatedInformation"
-            (lsp-json-array related)
-            members))
-        unit)
-      (if (string-eq code "")
-        unit
-        (set! members (lsp-json-member "code" (JsonString code) members)))
-      (set! members (lsp-json-member "source" (JsonString "typelisp") members))
-      (set! members (lsp-json-member "severity" (lsp-json-number 1) members))
-      (set! members (lsp-json-member "range" range members))
-      (lsp-json-object members))))
+  [code : String]) : Json
+  (lsp-diagnostic-with-range-tail
+    range
+    code
+    (lsp-diagnostic-message-tail message)))
 
 (define (lsp-diagnostic
   [line : i64]
   [col : i64]
   [message : String]
   [code : String]) : Json
-  (lsp-diagnostic-with-range (lsp-range line col) message code JsonListNil))
+  (lsp-diagnostic-with-range (lsp-range line col) message code))
 
 (define (lsp-compiler-diagnostic [diag : CompilerDiagnostic]) : Json
   (let
     [span : CompilerDiagnosticSpan (compiler-diagnostic-primary-span diag)]
     [path : String (compiler-diagnostic-span-path span)]
-    (lsp-diagnostic-with-range
-      (lsp-range-from-compiler-span span)
-      (compiler-diagnostic-message diag)
-      (compiler-diagnostic-code-or-empty diag)
-      (lsp-diagnostic-related-information-list
-        path
-        (compiler-diagnostic-secondary-spans diag)))))
+    [labels : CompilerDiagnosticLabelList
+      (compiler-diagnostic-secondary-spans diag)]
+    [range : Json (lsp-range-from-compiler-span span)]
+    [message : String (compiler-diagnostic-message diag)]
+    [code : String (compiler-diagnostic-code-or-empty diag)]
+    (match labels
+      [(CompilerDiagnosticLabelNil)
+        (lsp-diagnostic-with-range range message code)]
+      [(CompilerDiagnosticLabelCons _ _)
+        (lsp-diagnostic-with-range-tail
+          range
+          code
+          (lsp-json-member
+            "relatedInformation"
+            (lsp-json-array
+              (lsp-diagnostic-related-information-list path labels))
+            (lsp-diagnostic-message-tail message)))])))
 
 (define (lsp-compiler-diagnostic-code-ok?
   [diag : CompilerDiagnostic]
@@ -768,34 +770,36 @@
     [(OkLspJsonText _) false]
     [(MissingLspJsonText) true]))
 
-(define (lsp-compiler-diagnostic-related-ok?) : bool
-  (let
-    [diag : CompilerDiagnostic
-      (compiler-diagnostic-with-secondary
-        (compiler-diagnostic-with-code
-          (compiler-diagnostic-from-span
-            "primary.tl"
-            (SourceSpan 2 3 2 9)
-            "wide primary")
-          "E7777")
-        (CompilerDiagnosticSpan "" 4 5 4 8)
-        (CompilerDiagnosticSomeString "borrow remains live"))]
-    [rendered : String (json-stringify (lsp-compiler-diagnostic diag))]
-    [related-key : String "\"relatedInformation\""]
-    [related-message : String "\"message\":\"borrow remains live\""]
-    [related-uri : String "\"uri\":\"file:///primary.tl\""]
-    [primary-line : String "\"line\":1"]
-    [primary-end : String "\"character\":8"]
-    [secondary-line : String "\"line\":3"]
-    [secondary-end : String "\"character\":7"]
-    (and
-      (string-contains (& rendered) (& related-key))
-      (string-contains (& rendered) (& related-message))
-      (string-contains (& rendered) (& related-uri))
-      (string-contains (& rendered) (& primary-line))
-      (string-contains (& rendered) (& primary-end))
-      (string-contains (& rendered) (& secondary-line))
-      (string-contains (& rendered) (& secondary-end)))))
+(cfg
+  test
+  (define (lsp-compiler-diagnostic-related-ok?) : bool
+    (let
+      [diag : CompilerDiagnostic
+        (compiler-diagnostic-with-secondary
+          (compiler-diagnostic-with-code
+            (compiler-diagnostic-from-span
+              "primary.tl"
+              (SourceSpan 2 3 2 9)
+              "wide primary")
+            "E7777")
+          (CompilerDiagnosticSpan "" 4 5 4 8)
+          (CompilerDiagnosticSomeString "borrow remains live"))]
+      [rendered : String (json-stringify (lsp-compiler-diagnostic diag))]
+      [related-key : String "\"relatedInformation\""]
+      [related-message : String "\"message\":\"borrow remains live\""]
+      [related-uri : String "\"uri\":\"file:///primary.tl\""]
+      [primary-line : String "\"line\":1"]
+      [primary-end : String "\"character\":8"]
+      [secondary-line : String "\"line\":3"]
+      [secondary-end : String "\"character\":7"]
+      (and
+        (string-contains (& rendered) (& related-key))
+        (string-contains (& rendered) (& related-message))
+        (string-contains (& rendered) (& related-uri))
+        (string-contains (& rendered) (& primary-line))
+        (string-contains (& rendered) (& primary-end))
+        (string-contains (& rendered) (& secondary-line))
+        (string-contains (& rendered) (& secondary-end))))))
 
 (define (lsp-diagnostic-metadata-smoke) : i64
   (let
@@ -821,7 +825,7 @@
           (compiler-diagnostic-code-typecheck))
         (return 2))
       (unless (lsp-compiler-diagnostic-uncoded-ok? uncoded) (return 3))
-      (unless (lsp-compiler-diagnostic-related-ok?) (return 4))
+      (cfg test (unless (lsp-compiler-diagnostic-related-ok?) (return 4)) unit)
       (unless (lsp-frame-session-cache-smoke-ok?) (return 5))
       (unless (lsp-definition-smoke-ok?) (return 6))
       42)))

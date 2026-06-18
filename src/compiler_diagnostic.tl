@@ -683,30 +683,32 @@
         source-out
         "error: has note\n  --> note.tl:2:3\n   |\n 2 | b\n   |   ^\n   = note: generated identity: generated:demo\n"))))
 
-(define (compiler-diagnostic-source-render-secondary-ok?) : bool
-  (let
-    [diag : CompilerDiagnostic
-      (compiler-diagnostic-with-note
-        (compiler-diagnostic-with-help
-          (compiler-diagnostic-with-code
-            (compiler-diagnostic-with-secondary
+(cfg
+  test
+  (define (compiler-diagnostic-source-render-secondary-ok?) : bool
+    (let
+      [diag : CompilerDiagnostic
+        (compiler-diagnostic-with-note
+          (compiler-diagnostic-with-help
+            (compiler-diagnostic-with-code
               (compiler-diagnostic-with-secondary
-                (compiler-diagnostic-from-span
-                  "meta.tl"
-                  (SourceSpan 1 2 1 8)
-                  "metadata")
-                (CompilerDiagnosticSpan "" 3 4 3 5)
-                (CompilerDiagnosticSomeString "second related"))
-              (CompilerDiagnosticSpan "" 2 11 2 13)
-              (CompilerDiagnosticSomeString "first related"))
-            "E1234")
-          "inspect references")
-        "first note")]
-    [source : String "(define x true)\n(define y 42)\n(+ x y)\n"]
-    [out : String (compiler-diagnostic-render-source diag source)]
-    (compiler-diagnostic-string-eq?
-      out
-      "error[E1234]: metadata\n  --> meta.tl:1:2\n   |\n 1 | (define x true)\n   |  ^^^^^^\n  --> meta.tl:2:11\n   |\n 2 | (define y 42)\n   |           ^^ first related\n  --> meta.tl:3:4\n   |\n 3 | (+ x y)\n   |    ^ second related\n   = help: inspect references\n   = note: first note\n")))
+                (compiler-diagnostic-with-secondary
+                  (compiler-diagnostic-from-span
+                    "meta.tl"
+                    (SourceSpan 1 2 1 8)
+                    "metadata")
+                  (CompilerDiagnosticSpan "" 3 4 3 5)
+                  (CompilerDiagnosticSomeString "second related"))
+                (CompilerDiagnosticSpan "" 2 11 2 13)
+                (CompilerDiagnosticSomeString "first related"))
+              "E1234")
+            "inspect references")
+          "first note")]
+      [source : String "(define x true)\n(define y 42)\n(+ x y)\n"]
+      [out : String (compiler-diagnostic-render-source diag source)]
+      (compiler-diagnostic-string-eq?
+        out
+        "error[E1234]: metadata\n  --> meta.tl:1:2\n   |\n 1 | (define x true)\n   |  ^^^^^^\n  --> meta.tl:2:11\n   |\n 2 | (define y 42)\n   |           ^^ first related\n  --> meta.tl:3:4\n   |\n 3 | (+ x y)\n   |    ^ second related\n   = help: inspect references\n   = note: first note\n"))))
 
 (define (compiler-diagnostic-end-span-ok?) : bool
   (let
@@ -782,7 +784,10 @@
     (unless (compiler-diagnostic-source-render-ok?) (return 4))
     (unless (compiler-diagnostic-source-render-minimal-ok?) (return 4))
     (unless (compiler-diagnostic-note-render-ok?) (return 4))
-    (unless (compiler-diagnostic-source-render-secondary-ok?) (return 4))
+    (cfg
+      test
+      (unless (compiler-diagnostic-source-render-secondary-ok?) (return 4))
+      unit)
     (unless (compiler-diagnostic-end-span-ok?) (return 4))
     (unless (compiler-diagnostic-metadata-ok?) (return 4))
     (unless (compiler-diagnostic-code-or-empty-ok?) (return 4))

@@ -76,8 +76,12 @@ jobs:
         if: runner.os == 'Linux'
         shell: bash
         run: |
-          sudo apt-get update
-          sudo apt-get install -y valgrind
+          # cachegrind only needs valgrind itself; skipping Recommends drops the
+          # gdb + libc6-dbg + source-highlight tree that dominated install time.
+          # Install against the runner's preinstalled apt index first, and only
+          # refresh it (apt-get update) if a stale index 404s on a package.
+          sudo apt-get install -y --no-install-recommends valgrind \
+            || { sudo apt-get update && sudo apt-get install -y --no-install-recommends valgrind; }
 
       - name: CI verification
         shell: bash

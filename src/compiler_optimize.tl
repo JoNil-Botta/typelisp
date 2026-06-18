@@ -17045,14 +17045,14 @@
           [_p-tailrec : unit
             (cfg
               compile-profile
-              (compiler-opt-profile-pass-finish "tailrec" name t-tailrec)
+              (compiler-opt-profile-pass-finish "tailrec" name _t-tailrec)
               unit)]
           [_t-fold : i64 (cfg compile-profile (profile-now-ms) 0)]
           [folded : CompilerIrBlockList (optimize-block-list blocks)]
           [_p-fold : unit
             (cfg
               compile-profile
-              (compiler-opt-profile-pass-finish "fold" name t-fold)
+              (compiler-opt-profile-pass-finish "fold" name _t-fold)
               unit)]
           [loop-bce : CompilerIrBlockList
             (if (struct-get summaries enabled)
@@ -17065,7 +17065,7 @@
           [_p-promote : unit
             (cfg
               compile-profile
-              (compiler-opt-profile-pass-finish "stack_promote" name t-promote)
+              (compiler-opt-profile-pass-finish "stack_promote" name _t-promote)
               unit)]
           (match promoted
             [(IrFunction _ _ _ promoted-frame promoted-blocks)
@@ -17085,7 +17085,7 @@
                 [_p-sroa : unit
                   (cfg
                     compile-profile
-                    (compiler-opt-profile-pass-finish "sroa" name t-sroa)
+                    (compiler-opt-profile-pass-finish "sroa" name _t-sroa)
                     unit)]
                 (match sroa
                   [(IrFunction _ _ _ _ sroa-blocks)
@@ -17125,7 +17125,7 @@
                           (compiler-opt-profile-pass-finish
                             "rotation"
                             name
-                            t-rotation)
+                            _t-rotation)
                           unit)]
                       ;; Scalar SSA construction feeds the verifier-gated
                       ;; dominator passes below. Unsupported cases fall back to the
@@ -17145,7 +17145,7 @@
                       [_p-ssa : unit
                         (cfg
                           compile-profile
-                          (compiler-opt-profile-pass-finish "ssa" name t-ssa)
+                          (compiler-opt-profile-pass-finish "ssa" name _t-ssa)
                           unit)]
                       [ssa-frame : i64 (opt-function-frame ssa)]
                       [ssa-blocks : CompilerIrBlockList
@@ -17161,7 +17161,7 @@
                       [_p-gvn : unit
                         (cfg
                           compile-profile
-                          (compiler-opt-profile-pass-finish "gvn" name t-gvn)
+                          (compiler-opt-profile-pass-finish "gvn" name _t-gvn)
                           unit)]
                       [_t-sccp : i64 (cfg compile-profile (profile-now-ms) 0)]
                       [sccp-result : OptBlockCtxResult
@@ -17186,7 +17186,7 @@
                       [_p-sccp : unit
                         (cfg
                           compile-profile
-                          (compiler-opt-profile-pass-finish "sccp" name t-sccp)
+                          (compiler-opt-profile-pass-finish "sccp" name _t-sccp)
                           unit)]
                       [_t-cfg2 : i64 (cfg compile-profile (profile-now-ms) 0)]
                       [cfg-result : OptBlockCtxResult
@@ -17209,7 +17209,7 @@
                       [_p-cfg2 : unit
                         (cfg
                           compile-profile
-                          (compiler-opt-profile-pass-finish "cfg" name t-cfg2)
+                          (compiler-opt-profile-pass-finish "cfg" name _t-cfg2)
                           unit)]
                       [_t-preheaders : i64
                         (cfg compile-profile (profile-now-ms) 0)]
@@ -17244,7 +17244,7 @@
                           (compiler-opt-profile-pass-finish
                             "preheaders"
                             name
-                            t-preheaders)
+                            _t-preheaders)
                           unit)]
                       [_t-licm : i64 (cfg compile-profile (profile-now-ms) 0)]
                       [licm-result : OptFunctionCtxResult
@@ -17262,7 +17262,7 @@
                       [_p-licm : unit
                         (cfg
                           compile-profile
-                          (compiler-opt-profile-pass-finish "licm" name t-licm)
+                          (compiler-opt-profile-pass-finish "licm" name _t-licm)
                           unit)]
                       [_t-induction : i64
                         (cfg compile-profile (profile-now-ms) 0)]
@@ -17284,7 +17284,7 @@
                           (compiler-opt-profile-pass-finish
                             "induction"
                             name
-                            t-induction)
+                            _t-induction)
                           unit)]
                       [induction-frame : i64 (opt-function-frame induction)]
                       [induction-blocks : CompilerIrBlockList
@@ -17318,7 +17318,7 @@
                           (compiler-opt-profile-pass-finish
                             "global_gvn"
                             name
-                            t-global)
+                            _t-global)
                           unit)]
                       [global-blocks : CompilerIrBlockList
                         (opt-function-blocks global)]
@@ -17337,7 +17337,7 @@
                           (compiler-opt-profile-pass-finish
                             "divrem_safety"
                             name
-                            t-divrem-safety)
+                            _t-divrem-safety)
                           unit)]
                       [_t-dce : i64 (cfg compile-profile (profile-now-ms) 0)]
                       [used : (Array bool)
@@ -17349,7 +17349,7 @@
                       [_p-dce : unit
                         (cfg
                           compile-profile
-                          (compiler-opt-profile-pass-finish "dce" name t-dce)
+                          (compiler-opt-profile-pass-finish "dce" name _t-dce)
                           unit)]
                       (IrFunction name params ret-ty induction-frame dced))]))]))])))
 
@@ -17370,7 +17370,7 @@
         [_p-fold : unit
           (cfg
             compile-profile
-            (compiler-opt-profile-pass-finish "fold" name t-fold)
+            (compiler-opt-profile-pass-finish "fold" name _t-fold)
             unit)]
         [loop-bce : CompilerIrBlockList
           (if (struct-get summaries enabled)
@@ -17383,7 +17383,7 @@
         [_p-promote : unit
           (cfg
             compile-profile
-            (compiler-opt-profile-pass-finish "stack_promote" name t-promote)
+            (compiler-opt-profile-pass-finish "stack_promote" name _t-promote)
             unit)]
         (match promoted
           [(IrFunction _ _ _ promoted-frame promoted-blocks)
@@ -17394,7 +17394,7 @@
               [_p-cfg : unit
                 (cfg
                   compile-profile
-                  (compiler-opt-profile-pass-finish "cfg" name t-cfg)
+                  (compiler-opt-profile-pass-finish "cfg" name _t-cfg)
                   unit)]
               [_t-dce : i64 (cfg compile-profile (profile-now-ms) 0)]
               [used : (Array bool)
@@ -17403,7 +17403,7 @@
               [_p-dce : unit
                 (cfg
                   compile-profile
-                  (compiler-opt-profile-pass-finish "dce" name t-dce)
+                  (compiler-opt-profile-pass-finish "dce" name _t-dce)
                   unit)]
               (IrFunction name params ret-ty promoted-frame dced))]))]))
 

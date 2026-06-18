@@ -2746,6 +2746,52 @@
 ;; User-facing Expr constructors (#1135). They are CTFE-only builtins for macro
 ;; bodies: they build checked code fragments while carrying each fragment's
 ;; produced type internally.
+(define (ctfe-stdlib-comptime-helper-name? [name : String] [base : String]) : bool
+  (or
+    (string-eq name base)
+    (string-eq name (string-append "comptime." base))
+    (string-eq name (string-append "stdlib.comptime." base))
+    (string-eq name (string-append "stdlib.comptime/" base))))
+
+(define (ctfe-comptime-helper-call-name [name : String]) : String
+  (cond
+    [(ctfe-stdlib-comptime-helper-name? name "expr-bool") "expr-bool"]
+    [(ctfe-stdlib-comptime-helper-name? name "expr-int") "expr-int"]
+    [(ctfe-stdlib-comptime-helper-name? name "expr-var") "expr-var"]
+    [(ctfe-stdlib-comptime-helper-name? name "expr-splice") "expr-splice"]
+    [(ctfe-stdlib-comptime-helper-name? name "expr-if") "expr-if"]
+    [(ctfe-stdlib-comptime-helper-name? name "expr-bool?") "expr-bool?"]
+    [(ctfe-stdlib-comptime-helper-name? name "expr-bool-value")
+      "expr-bool-value"]
+    [(ctfe-stdlib-comptime-helper-name? name "expr-if?") "expr-if?"]
+    [(ctfe-stdlib-comptime-helper-name? name "expr-if-cond") "expr-if-cond"]
+    [(ctfe-stdlib-comptime-helper-name? name "expr-if-then") "expr-if-then"]
+    [(ctfe-stdlib-comptime-helper-name? name "expr-if-else") "expr-if-else"]
+    [(ctfe-stdlib-comptime-helper-name? name "expr-list-empty?")
+      "expr-list-empty?"]
+    [(ctfe-stdlib-comptime-helper-name? name "expr-list-length")
+      "expr-list-length"]
+    [(ctfe-stdlib-comptime-helper-name? name "expr-list-head") "expr-list-head"]
+    [(ctfe-stdlib-comptime-helper-name? name "expr-list-tail") "expr-list-tail"]
+    [(ctfe-stdlib-comptime-helper-name? name "expr-list-nth") "expr-list-nth"]
+    [(ctfe-stdlib-comptime-helper-name? name "expr-clause-first")
+      "expr-clause-first"]
+    [(ctfe-stdlib-comptime-helper-name? name "expr-clause-second")
+      "expr-clause-second"]
+    [(ctfe-stdlib-comptime-helper-name? name "expr-clause-list-empty?")
+      "expr-clause-list-empty?"]
+    [(ctfe-stdlib-comptime-helper-name? name "expr-clause-list-length")
+      "expr-clause-list-length"]
+    [(ctfe-stdlib-comptime-helper-name? name "expr-clause-list-head")
+      "expr-clause-list-head"]
+    [(ctfe-stdlib-comptime-helper-name? name "expr-clause-list-tail")
+      "expr-clause-list-tail"]
+    [(ctfe-stdlib-comptime-helper-name? name "expr-clause-list-nth")
+      "expr-clause-list-nth"]
+    [(ctfe-stdlib-comptime-helper-name? name "expr-clause-list->expr-list")
+      "expr-clause-list->expr-list"]
+    [else name]))
+
 (define (ctfe-eval-expr-bool-call
   [args : AstExprList]
   [expr : AstExpr]
@@ -3362,63 +3408,52 @@
         [inner : AstExpr (ast-node-get inner-box)]
         (ctfe-eval-call inner args expr env fuel))]
     [(AstExprVar name)
-      (cond
-        [(or
-            (string-eq (intern-str name) "size-of")
-            (string-eq (intern-str name) "align-of"))
-          (ctfe-eval-size-align-query (intern-str name) args expr env fuel)]
-        [(string-eq (intern-str name) "offset-of")
-          (ctfe-eval-offset-query args expr env fuel)]
-        [(ctfe-reflection-query-name? (intern-str name))
-          (ctfe-eval-reflection-query (intern-str name) args expr env fuel)]
-        [(or
-            (string-eq (intern-str name) "string-eq")
-            (string-eq (intern-str name) "string=?"))
-          (ctfe-eval-string-eq-call (intern-str name) args expr env fuel)]
-        [(or
-            (string-eq (intern-str name) "string-append")
-            (string-eq (intern-str name) "string-concat"))
-          (ctfe-eval-string-append-call (intern-str name) args expr env fuel)]
-        [(or
-            (string-eq (intern-str name) "string-length")
-            (string-eq (intern-str name) "length"))
-          (ctfe-eval-string-length-call (intern-str name) args expr env fuel)]
-        [(string-eq (intern-str name) "int->string")
-          (ctfe-eval-int-to-string-call args expr env fuel)]
-        [(string-eq (intern-str name) "expr-bool")
-          (ctfe-eval-expr-bool-call args expr env fuel)]
-        [(string-eq (intern-str name) "expr-int")
-          (ctfe-eval-expr-int-call args expr env fuel)]
-        [(string-eq (intern-str name) "expr-var")
-          (ctfe-eval-expr-var-call args expr env fuel)]
-        [(string-eq (intern-str name) "expr-splice")
-          (ctfe-eval-expr-splice-call args expr env fuel)]
-        [(string-eq (intern-str name) "expr-if")
-          (ctfe-eval-expr-if-call args expr env fuel)]
-        [(ctfe-expr-inspector-name? (intern-str name))
-          (ctfe-eval-expr-inspector-call (intern-str name) args expr env fuel)]
-        [(ctfe-expr-list-inspector-name? (intern-str name))
-          (ctfe-eval-expr-list-inspector-call
-            (intern-str name)
-            args
-            expr
-            env
-            fuel)]
-        [(ctfe-expr-clause-inspector-name? (intern-str name))
-          (ctfe-eval-expr-clause-inspector-call
-            (intern-str name)
-            args
-            expr
-            env
-            fuel)]
-        [(ctfe-expr-clause-list-inspector-name? (intern-str name))
-          (ctfe-eval-expr-clause-list-inspector-call
-            (intern-str name)
-            args
-            expr
-            env
-            fuel)]
-        [else (ctfe-unsupported-form expr)])]
+      (let
+        [raw-name : String (intern-str name)]
+        [call-name : String (ctfe-comptime-helper-call-name raw-name)]
+        (cond
+          [(or (string-eq raw-name "size-of") (string-eq raw-name "align-of"))
+            (ctfe-eval-size-align-query raw-name args expr env fuel)]
+          [(string-eq raw-name "offset-of")
+            (ctfe-eval-offset-query args expr env fuel)]
+          [(ctfe-reflection-query-name? raw-name)
+            (ctfe-eval-reflection-query raw-name args expr env fuel)]
+          [(or (string-eq raw-name "string-eq") (string-eq raw-name "string=?"))
+            (ctfe-eval-string-eq-call raw-name args expr env fuel)]
+          [(or
+              (string-eq raw-name "string-append")
+              (string-eq raw-name "string-concat"))
+            (ctfe-eval-string-append-call raw-name args expr env fuel)]
+          [(or
+              (string-eq raw-name "string-length")
+              (string-eq raw-name "length"))
+            (ctfe-eval-string-length-call raw-name args expr env fuel)]
+          [(string-eq raw-name "int->string")
+            (ctfe-eval-int-to-string-call args expr env fuel)]
+          [(string-eq call-name "expr-bool")
+            (ctfe-eval-expr-bool-call args expr env fuel)]
+          [(string-eq call-name "expr-int")
+            (ctfe-eval-expr-int-call args expr env fuel)]
+          [(string-eq call-name "expr-var")
+            (ctfe-eval-expr-var-call args expr env fuel)]
+          [(string-eq call-name "expr-splice")
+            (ctfe-eval-expr-splice-call args expr env fuel)]
+          [(string-eq call-name "expr-if")
+            (ctfe-eval-expr-if-call args expr env fuel)]
+          [(ctfe-expr-inspector-name? call-name)
+            (ctfe-eval-expr-inspector-call call-name args expr env fuel)]
+          [(ctfe-expr-list-inspector-name? call-name)
+            (ctfe-eval-expr-list-inspector-call call-name args expr env fuel)]
+          [(ctfe-expr-clause-inspector-name? call-name)
+            (ctfe-eval-expr-clause-inspector-call call-name args expr env fuel)]
+          [(ctfe-expr-clause-list-inspector-name? call-name)
+            (ctfe-eval-expr-clause-list-inspector-call
+              call-name
+              args
+              expr
+              env
+              fuel)]
+          [else (ctfe-unsupported-form expr)]))]
     [_ (ctfe-unsupported-form expr)]))
 
 ;; Shared "unsupported compile-time form" diagnostic for ordinary calls.

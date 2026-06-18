@@ -1,0 +1,7 @@
+[
+  {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}},
+  {"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"${{TMP_URI}}/custom-methods.tl","languageId":"typelisp","version":1,"text":"(define (foo) : i64 1)\n(define (bar [x : i64]) : i64 x)\n(defstruct MyStruct (field i64))\n"}}},
+  {"jsonrpc":"2.0","id":2,"method":"tl/expandMacro","params":{"textDocument":{"uri":"${{TMP_URI}}/custom-methods.tl"},"name":"foo"}},
+  {"jsonrpc":"2.0","id":3,"method":"shutdown","params":null},
+  {"jsonrpc":"2.0","method":"exit"}
+]

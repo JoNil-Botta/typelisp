@@ -2908,6 +2908,58 @@
       "\n")
     ""))
 
+;; Pop restores are correct only when the used callee-save homes are adjacent in
+;; stack order. The allocator hands out r12, r13, r14, r15, then rbx; for two or
+;; more such homes, `leaq slot, %rsp` plus pops is no larger than the movq loads.
+(define (compiler-backend-callee-save-pop-eligible?
+  [assignments : CompilerRegAssignmentList]) : bool
+  (let
+    [r12 : bool (compiler-backend-plan-uses-reg? assignments "%r12")]
+    [r13 : bool (compiler-backend-plan-uses-reg? assignments "%r13")]
+    [r14 : bool (compiler-backend-plan-uses-reg? assignments "%r14")]
+    [r15 : bool (compiler-backend-plan-uses-reg? assignments "%r15")]
+    [rbx : bool (compiler-backend-plan-uses-reg? assignments "%rbx")]
+    (or
+      (and r12 r13 (not r14) (not r15) (not rbx))
+      (and r12 r13 r14 (not r15) (not rbx))
+      (and r12 r13 r14 r15 (not rbx))
+      (and r12 r13 r14 r15 rbx))))
+
+(define (compiler-backend-callee-save-pop-start-idx
+  [assignments : CompilerRegAssignmentList]) : i64
+  (cond
+    [(compiler-backend-plan-uses-reg? assignments "%rbx") 4]
+    [(compiler-backend-plan-uses-reg? assignments "%r15") 3]
+    [(compiler-backend-plan-uses-reg? assignments "%r14") 2]
+    [else 1]))
+
+(define (compiler-backend-emit-pop-callee-reg
+  [assignments : CompilerRegAssignmentList]
+  [reg : String]) : String
+  (if (compiler-backend-plan-uses-reg? assignments reg)
+    (str-cat "    popq " reg "\n" "")
+    ""))
+
+(define (compiler-backend-emit-restore-callee-regs-pop
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]) : String
+  (string-append
+    (str-cat
+      "    leaq "
+      (compiler-backend-callee-save-slot
+        vars
+        (compiler-backend-callee-save-pop-start-idx assignments))
+      ", %rsp\n")
+    (string-append
+      (compiler-backend-emit-pop-callee-reg assignments "%rbx")
+      (string-append
+        (compiler-backend-emit-pop-callee-reg assignments "%r15")
+        (string-append
+          (compiler-backend-emit-pop-callee-reg assignments "%r14")
+          (string-append
+            (compiler-backend-emit-pop-callee-reg assignments "%r13")
+            (compiler-backend-emit-pop-callee-reg assignments "%r12")))))))
+
 (define (compiler-backend-emit-save-callee-regs
   [assignments : CompilerRegAssignmentList]
   [vars : i64]) : String
@@ -2924,15 +2976,17 @@
 (define (compiler-backend-emit-restore-callee-regs
   [assignments : CompilerRegAssignmentList]
   [vars : i64]) : String
-  (string-append
-    (compiler-backend-emit-restore-callee-reg assignments vars "%rbx" 4)
+  (if (compiler-backend-callee-save-pop-eligible? assignments)
+    (compiler-backend-emit-restore-callee-regs-pop assignments vars)
     (string-append
-      (compiler-backend-emit-restore-callee-reg assignments vars "%r15" 3)
+      (compiler-backend-emit-restore-callee-reg assignments vars "%rbx" 4)
       (string-append
-        (compiler-backend-emit-restore-callee-reg assignments vars "%r14" 2)
+        (compiler-backend-emit-restore-callee-reg assignments vars "%r15" 3)
         (string-append
-          (compiler-backend-emit-restore-callee-reg assignments vars "%r13" 1)
-          (compiler-backend-emit-restore-callee-reg assignments vars "%r12" 0))))))
+          (compiler-backend-emit-restore-callee-reg assignments vars "%r14" 2)
+          (string-append
+            (compiler-backend-emit-restore-callee-reg assignments vars "%r13" 1)
+            (compiler-backend-emit-restore-callee-reg assignments vars "%r12" 0)))))))
 
 (define (compiler-backend-return-label [source-function : String]) : String
   (compiler-backend-asm-label

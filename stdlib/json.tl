@@ -41,6 +41,224 @@
   (JsonMemberListNil)
   (JsonMemberListCons String Json (Box JsonMemberList)))
 
+;: Internal parser-builder object member stored in `JsonMemberVec`.
+(defstruct JsonMember
+  (key String)
+  (value Json))
+
+;: Internal vector-backed parser builder for JSON array elements.
+(comptime-decl
+  (:generated vector-family JsonVec "Json")
+  (defstruct JsonVec
+    (slots (Array Json))
+    (len i64)))
+
+;: Return the backing slots for an internal JSON element builder.
+(comptime-decl
+  (:generated vector-family json-vec-slots "Json")
+  (define (json-vec-slots [v : JsonVec]) : (Array Json)
+    (struct-get v slots)))
+
+;: Return the number of live elements in an internal JSON element builder.
+(comptime-decl
+  (:generated vector-family json-vec-len "Json")
+  (define (json-vec-len [v : JsonVec]) : i64
+    (struct-get v len)))
+
+;: Return the backing-slot count for an internal JSON element builder.
+(comptime-decl
+  (:generated vector-family json-vec-capacity "Json")
+  (define (json-vec-capacity [v : JsonVec]) : i64
+    (array-length (json-vec-slots v))))
+
+;: Create an empty internal JSON element builder with `capacity` slots.
+(comptime-decl
+  (:generated vector-family json-vec-with-capacity "Json")
+  (define (json-vec-with-capacity [capacity : i64]) : JsonVec
+    (let
+      [cap : i64
+        (if (< capacity 0)
+          0
+          capacity)]
+      (JsonVec (make-array Json cap) 0))))
+
+;: Create an empty internal JSON element builder.
+(comptime-decl
+  (:generated vector-family json-vec-new "Json")
+  (define (json-vec-new) : JsonVec
+    (json-vec-with-capacity 4)))
+
+;: Copy live JSON elements from `src` into `dst` over `[index, count)`.
+(comptime-decl
+  (:generated vector-family json-vec-copy-range "Json")
+  (define (json-vec-copy-range
+    [dst : (Array Json)]
+    [src : (Array Json)]
+    [index : i64]
+    [count : i64]) : unit
+    (if (>= index count)
+      unit
+      (begin
+        (array-set! dst index (array-ref src index))
+        (json-vec-copy-range dst src (+ index 1) count)))))
+
+;: Grow an internal JSON element builder, preserving its live prefix.
+(comptime-decl
+  (:generated vector-family json-vec-grow "Json")
+  (define (json-vec-grow [v : JsonVec]) : JsonVec
+    (let
+      [n : i64 (json-vec-len v)]
+      [cap : i64 (json-vec-capacity v)]
+      [bigger : (Array Json)
+        (make-array
+          Json
+          (if (< cap 1)
+            4
+            (* cap 2)))]
+      (begin
+        (json-vec-copy-range bigger (json-vec-slots v) 0 n)
+        (set! (struct-get v slots) bigger)
+        v))))
+
+;: Append `value` to an internal JSON element builder.
+(comptime-decl
+  (:generated vector-family json-vec-push "Json")
+  (define (json-vec-push [v : JsonVec] [value : Json]) : JsonVec
+    (if (< (json-vec-len v) (json-vec-capacity v))
+      (let
+        [slots : (Array Json) (json-vec-slots v)]
+        [index : i64 (json-vec-len v)]
+        (begin
+          (array-set! slots index value)
+          (set! (struct-get v len) (+ index 1))
+          v))
+      (json-vec-push (json-vec-grow v) value))))
+
+;: Convert builder elements `[0, index]` into a public JSON list.
+(define (json-vec-to-list-from [items : JsonVec] [index : i64] [acc : JsonList]) : JsonList
+  (if (< index 0)
+    acc
+    (json-vec-to-list-from
+      items
+      (- index 1)
+      (JsonListCons (array-ref (json-vec-slots items) index) (box acc)))))
+
+;: Convert an internal JSON element builder into the public list model.
+(define (json-vec-to-list [items : JsonVec]) : JsonList
+  (json-vec-to-list-from items (- (json-vec-len items) 1) JsonListNil))
+
+;: Internal vector-backed parser builder for JSON object members.
+(comptime-decl
+  (:generated vector-family JsonMemberVec "JsonMember")
+  (defstruct JsonMemberVec
+    (slots (Array JsonMember))
+    (len i64)))
+
+;: Return the backing slots for an internal JSON member builder.
+(comptime-decl
+  (:generated vector-family json-member-vec-slots "JsonMember")
+  (define (json-member-vec-slots [v : JsonMemberVec]) : (Array JsonMember)
+    (struct-get v slots)))
+
+;: Return the number of live members in an internal JSON member builder.
+(comptime-decl
+  (:generated vector-family json-member-vec-len "JsonMember")
+  (define (json-member-vec-len [v : JsonMemberVec]) : i64
+    (struct-get v len)))
+
+;: Return the backing-slot count for an internal JSON member builder.
+(comptime-decl
+  (:generated vector-family json-member-vec-capacity "JsonMember")
+  (define (json-member-vec-capacity [v : JsonMemberVec]) : i64
+    (array-length (json-member-vec-slots v))))
+
+;: Create an empty internal JSON member builder with `capacity` slots.
+(comptime-decl
+  (:generated vector-family json-member-vec-with-capacity "JsonMember")
+  (define (json-member-vec-with-capacity [capacity : i64]) : JsonMemberVec
+    (let
+      [cap : i64
+        (if (< capacity 0)
+          0
+          capacity)]
+      (JsonMemberVec (make-array JsonMember cap) 0))))
+
+;: Create an empty internal JSON member builder.
+(comptime-decl
+  (:generated vector-family json-member-vec-new "JsonMember")
+  (define (json-member-vec-new) : JsonMemberVec
+    (json-member-vec-with-capacity 4)))
+
+;: Copy live JSON object members from `src` into `dst` over `[index, count)`.
+(comptime-decl
+  (:generated vector-family json-member-vec-copy-range "JsonMember")
+  (define (json-member-vec-copy-range
+    [dst : (Array JsonMember)]
+    [src : (Array JsonMember)]
+    [index : i64]
+    [count : i64]) : unit
+    (if (>= index count)
+      unit
+      (begin
+        (array-set! dst index (array-ref src index))
+        (json-member-vec-copy-range dst src (+ index 1) count)))))
+
+;: Grow an internal JSON member builder, preserving its live prefix.
+(comptime-decl
+  (:generated vector-family json-member-vec-grow "JsonMember")
+  (define (json-member-vec-grow [v : JsonMemberVec]) : JsonMemberVec
+    (let
+      [n : i64 (json-member-vec-len v)]
+      [cap : i64 (json-member-vec-capacity v)]
+      [bigger : (Array JsonMember)
+        (make-array
+          JsonMember
+          (if (< cap 1)
+            4
+            (* cap 2)))]
+      (begin
+        (json-member-vec-copy-range bigger (json-member-vec-slots v) 0 n)
+        (set! (struct-get v slots) bigger)
+        v))))
+
+;: Append `value` to an internal JSON member builder.
+(comptime-decl
+  (:generated vector-family json-member-vec-push "JsonMember")
+  (define (json-member-vec-push [v : JsonMemberVec] [value : JsonMember]) : JsonMemberVec
+    (if (< (json-member-vec-len v) (json-member-vec-capacity v))
+      (let
+        [slots : (Array JsonMember) (json-member-vec-slots v)]
+        [index : i64 (json-member-vec-len v)]
+        (begin
+          (array-set! slots index value)
+          (set! (struct-get v len) (+ index 1))
+          v))
+      (json-member-vec-push (json-member-vec-grow v) value))))
+
+;: Convert builder members `[0, index]` into a public JSON member list.
+(define (json-member-vec-to-list-from
+  [items : JsonMemberVec]
+  [index : i64]
+  [acc : JsonMemberList]) : JsonMemberList
+  (if (< index 0)
+    acc
+    (let
+      [member : JsonMember (array-ref (json-member-vec-slots items) index)]
+      (json-member-vec-to-list-from
+        items
+        (- index 1)
+        (JsonMemberListCons
+          (struct-get member key)
+          (struct-get member value)
+          (box acc))))))
+
+;: Convert an internal JSON member builder into the public list model.
+(define (json-member-vec-to-list [items : JsonMemberVec]) : JsonMemberList
+  (json-member-vec-to-list-from
+    items
+    (- (json-member-vec-len items) 1)
+    JsonMemberListNil))
+
 ;: Recoverable top-level parse result.
 (defenum JsonParseResult
   (OkJson Json)
@@ -146,6 +364,46 @@
             (set! done true))
           (set! done true)))
       i)))
+
+;: Count immediate array elements or object members for parser-builder sizing.
+;:
+;: This pre-scan ignores strings and nested arrays/objects so commas in nested
+;: values do not affect the result. It is intentionally permissive because the
+;: real parser still performs validation after the builder is sized.
+(define (json-composite-item-count
+  [text : (& text str)]
+  [pos : i64]
+  [close-code : i64]) : i64
+  (let
+    [first : i64 (json-skip-ws text (+ pos 1))]
+    [n : i64 (string-length text)]
+    (if (or (>= first n) (json-char-code-eq-at text first close-code))
+      0
+      (let
+        [i : i64 (+ pos 1)]
+        [depth : i64 1]
+        [count : i64 1]
+        [in-string : bool false]
+        [escaped : bool false]
+        (begin
+          (while (and (< i n) (> depth 0))
+            (let
+              [code : i64 (json-char-code-at text i)]
+              (begin
+                (if in-string
+                  (cond
+                    [escaped (set! escaped false)]
+                    [(= code 92) (set! escaped true)]
+                    [(= code 34) (set! in-string false)]
+                    [else unit])
+                  (cond
+                    [(= code 34) (set! in-string true)]
+                    [(or (= code 91) (= code 123)) (set! depth (+ depth 1))]
+                    [(or (= code 93) (= code 125)) (set! depth (- depth 1))]
+                    [(and (= code 44) (= depth 1)) (set! count (+ count 1))]
+                    [else unit]))
+                (set! i (+ i 1)))))
+          count)))))
 
 ;: Return true when borrowed `prefix` occurs in borrowed `text` at `start`.
 (define (json-string-prefix-at?
@@ -914,11 +1172,13 @@
 
 ;: Parse a JSON array starting at `pos`, including the opening bracket.
 ;:
-;: The returned array list and nested values are allocated in the active arena.
+;: Parser elements are accumulated in a vector builder, then converted once to
+;: the public list model in source order.
 (define (json-parse-array [text : (& text str)] [pos : i64]) : JsonParseValueResult
   (let
     [i : i64 (json-skip-ws text (+ pos 1))]
-    [items : JsonList JsonListNil]
+    [items : JsonVec
+      (json-vec-with-capacity (json-composite-item-count text pos 93))]
     [ok : bool true]
     [done : bool false]
     [message : String ""]
@@ -932,7 +1192,7 @@
         (match (json-parse-value text i)
           [(OkJsonParseValue value next)
             (begin
-              (set! items (JsonListCons value (box items)))
+              (set! items (json-vec-push items value))
               (set! i (json-skip-ws text next))
               (if (json-char-code-eq-at text i 93)
                 (begin
@@ -948,16 +1208,18 @@
               (set! ok false)
               (set! message err))]))
       (if ok
-        (OkJsonParseValue (JsonArray (box (json-list-reverse items))) i)
+        (OkJsonParseValue (JsonArray (box (json-vec-to-list items))) i)
         (ErrJsonParseValue message)))))
 
 ;: Parse a JSON object starting at `pos`, including the opening brace.
 ;:
-;: The returned member list, keys, and nested values allocate in the active arena.
+;: Parser members are accumulated in a vector builder, then converted once to
+;: the public list model in source order.
 (define (json-parse-object [text : (& text str)] [pos : i64]) : JsonParseValueResult
   (let
     [i : i64 (json-skip-ws text (+ pos 1))]
-    [members : JsonMemberList JsonMemberListNil]
+    [members : JsonMemberVec
+      (json-member-vec-with-capacity (json-composite-item-count text pos 125))]
     [ok : bool true]
     [done : bool false]
     [message : String ""]
@@ -978,7 +1240,7 @@
                     (begin
                       (set!
                         members
-                        (JsonMemberListCons key value (box members)))
+                        (json-member-vec-push members (JsonMember key value)))
                       (set! i (json-skip-ws text next))
                       (if (json-char-code-eq-at text i 125)
                         (begin
@@ -1002,7 +1264,7 @@
               (set! message err))]))
       (if ok
         (OkJsonParseValue
-          (JsonObject (box (json-member-list-reverse members)))
+          (JsonObject (box (json-member-vec-to-list members)))
           i)
         (ErrJsonParseValue message)))))
 
@@ -1539,6 +1801,14 @@
             (json-stdlib-inline-test-list-cons (JsonNumber "1") JsonListNil))))
       "1,2"
       "json-list-reverse")
+    (json-stdlib-inline-test-assert-owned-string-eq
+      (json-stringify-list
+        (json-vec-to-list
+          (json-vec-push
+            (json-vec-push (json-vec-new) (JsonNumber "1"))
+            (JsonNumber "2"))))
+      "1,2"
+      "json-vec-to-list")
     (json-stdlib-inline-test-assert-i64-eq
       (json-member-list-count
         (json-stdlib-inline-test-member-cons
@@ -1579,6 +1849,17 @@
             (json-stdlib-inline-test-member-cons "a" JsonNull JsonMemberListNil))))
       "\"a\":null,\"b\":true"
       "json-member-list-reverse")
+    (json-stdlib-inline-test-assert-found-number
+      (json-member-list-get-owned
+        (json-member-vec-to-list
+          (json-member-vec-push
+            (json-member-vec-push
+              (json-member-vec-new)
+              (JsonMember "dup" (JsonNumber "1")))
+            (JsonMember "dup" (JsonNumber "2"))))
+        "dup")
+      "1"
+      "json-member-vec-to-list duplicate first")
     (json-stdlib-inline-test-assert-found-number
       (json-stdlib-inline-test-object-get
         (json-stdlib-inline-test-object
@@ -1747,11 +2028,21 @@
       2
       8
       "json-parse-array")
+    (json-stdlib-inline-test-assert-parse-array-count
+      (json-stdlib-inline-test-parse-array "[]" 0)
+      0
+      2
+      "json-parse-array empty")
     (json-stdlib-inline-test-assert-parse-object-count
       (json-stdlib-inline-test-parse-object "{\"a\":1}" 0)
       1
       7
       "json-parse-object")
+    (json-stdlib-inline-test-assert-parse-object-count
+      (json-stdlib-inline-test-parse-object "{}" 0)
+      0
+      2
+      "json-parse-object empty")
     (json-stdlib-inline-test-assert-parse-value-bool
       (json-stdlib-inline-test-parse-value " false" 0)
       false
@@ -1779,6 +2070,21 @@
             (json-stringify (JsonString "a\n\"\\"))
             "\"a\\n\\\"\\\\\""
             "json stringify escapes")
+          (let
+            [dupe-text : String "{\"a\":1,\"a\":2}"]
+            [dupe-key : String "a"]
+            (match (json-parse (& dupe-text))
+              [(OkJson dupe-doc)
+                (begin
+                  (json-stdlib-inline-test-assert-found-number
+                    (json-object-get dupe-doc (& dupe-key))
+                    "1"
+                    "json duplicate key lookup keeps first source member")
+                  (json-stdlib-inline-test-assert-owned-string-eq
+                    (json-stringify dupe-doc)
+                    "{\"a\":1,\"a\":2}"
+                    "json duplicate key stringify order"))]
+              [(ErrJson _) (panic "json duplicate keys should parse")]))
           (json-stdlib-inline-test-assert-parse-error
             "{\"bad\":[1,]}"
             "json rejects trailing comma")

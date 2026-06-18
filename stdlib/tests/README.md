@@ -115,9 +115,10 @@ Inline stdlib coverage:
   `try-append-file`, `read-file-or`, `append-file`, `file-nonempty?`, and
   `FileHandle` open/close/read/write/flush/EOF/mode-mismatch behavior.
 - `json.tl` owns inline tests for the JSON data model, list/member helpers,
-  escape helpers, parser subroutines, deterministic finite f64/f32 number
-  conversion, serializer helpers, and end-to-end parse/stringify behavior for
-  invalid input, escapes, nesting, arrays, objects, lookup, and number forms.
+  vector-backed parser builders, escape helpers, parser subroutines,
+  deterministic finite f64/f32 number conversion, serializer helpers, and
+  end-to-end parse/stringify behavior for invalid input, escapes, nesting,
+  arrays, objects, duplicate-key lookup, and number forms.
 - `env.tl` owns inline tests for missing, empty, and present environment
   variables, host-separator PATH splitting/joining, vector-backed PATH
   split/list/join helpers, and explicit Windows `;` path-list behavior. The

@@ -1965,7 +1965,7 @@
   (len i64))
 (defenum CtfeEnv
   (CtfeEnvNil CtfeLayoutInfoList CtfeReflectInfoList)
-  (CtfeEnvCons String CompilerCtfeValue (Box CtfeEnv)))")
+  (CtfeEnvCons String CompilerCtfeValue AstType (Box CtfeEnv)))")
 
 (define (compiler-typecheck-inline-ctfe-metadata-layout-ok?) : bool
   (let

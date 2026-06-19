@@ -114,7 +114,7 @@
 ;; binding first; metadata lives at the root and is shared by extensions.
 (defenum CtfeEnv
   (CtfeEnvNil CtfeLayoutInfoList CtfeReflectInfoList)
-  (CtfeEnvCons String CompilerCtfeValue (Box CtfeEnv)))
+  (CtfeEnvCons String CompilerCtfeValue AstType (Box CtfeEnv)))
 
 (define (ctfe-env-empty) : CtfeEnv
   (CtfeEnvNil (ctfe-layout-info-list-empty) (ctfe-reflect-info-list-empty)))
@@ -134,7 +134,14 @@
   [env : CtfeEnv]
   [name : String]
   [value : CompilerCtfeValue]) : CtfeEnv
-  (CtfeEnvCons name value (box env)))
+  (CtfeEnvCons name value (ctfe-value-default-cast-type value) (box env)))
+
+(define (ctfe-env-extend-typed
+  [env : CtfeEnv]
+  [name : String]
+  [value : CompilerCtfeValue]
+  [ty : AstType]) : CtfeEnv
+  (CtfeEnvCons name value ty (box env)))
 
 (define (ctfe-layout-field-list-with-capacity [capacity : i64]) : CtfeLayoutFieldList
   (CtfeLayoutFieldList (make-array CtfeLayoutField capacity) 0))
@@ -303,12 +310,12 @@
 (define (ctfe-env-layouts [env : CtfeEnv]) : CtfeLayoutInfoList
   (match env
     [(CtfeEnvNil layouts _) layouts]
-    [(CtfeEnvCons _ _ rest) (ctfe-env-layouts (box-get rest))]))
+    [(CtfeEnvCons _ _ _ rest) (ctfe-env-layouts (box-get rest))]))
 
 (define (ctfe-env-reflections [env : CtfeEnv]) : CtfeReflectInfoList
   (match env
     [(CtfeEnvNil _ reflections) reflections]
-    [(CtfeEnvCons _ _ rest) (ctfe-env-reflections (box-get rest))]))
+    [(CtfeEnvCons _ _ _ rest) (ctfe-env-reflections (box-get rest))]))
 
 ;; Lookup result for an environment probe.
 (defenum CtfeMaybeValue
@@ -318,10 +325,18 @@
 (define (ctfe-env-lookup [env : CtfeEnv] [name : String]) : CtfeMaybeValue
   (match env
     [(CtfeEnvNil _ _) (CtfeNoValue)]
-    [(CtfeEnvCons key value rest)
+    [(CtfeEnvCons key value _ rest)
       (if (string-eq key name)
         (CtfeSomeValue value)
         (ctfe-env-lookup (box-get rest) name))]))
+
+(define (ctfe-env-lookup-type [env : CtfeEnv] [name : String]) : AstMaybeType
+  (match env
+    [(CtfeEnvNil _ _) (AstNoType)]
+    [(CtfeEnvCons key _ ty rest)
+      (if (string-eq key name)
+        (AstSomeType ty)
+        (ctfe-env-lookup-type (box-get rest) name))]))
 
 (define (ctfe-string-prefix? [text : String] [prefix : String]) : bool
   (let
@@ -1221,32 +1236,67 @@
               expr
               "bitwise not in comptime requires i64"))])]))
 
+(define (ctfe-value-default-cast-type [value : CompilerCtfeValue]) : AstType
+  (match value
+    [(CtfeI64 _) (AstTyI64)]
+    [(CtfeF64 _) (AstTyF64)]
+    [(CtfeF32 _) (AstTyF32)]
+    [(CtfeChar _) (AstTyChar)]
+    [_ (AstTyUnit)]))
+
+(define (ctfe-cast-source-type
+  [inner : AstExpr]
+  [value : CompilerCtfeValue]
+  [env : CtfeEnv]) : AstType
+  (match inner
+    [(AstExprSpanned inner-box _)
+      (ctfe-cast-source-type (ast-node-get inner-box) value env)]
+    [(AstExprAnn _ ty) ty]
+    [(AstExprCast _ ty) ty]
+    [(AstExprVar name)
+      (match (ctfe-env-lookup-type env (intern-str name))
+        [(AstSomeType ty) ty]
+        [(AstNoType) (ctfe-value-default-cast-type value)])]
+    [_ (ctfe-value-default-cast-type value)]))
+
+(define (ctfe-binding-type
+  [maybe-ty : AstMaybeType]
+  [fallback : AstType]
+  [env : CtfeEnv]) : AstType
+  (match maybe-ty
+    [(AstSomeType ty) (ctfe-reflect-resolve-type (ctfe-env-reflections env) ty)]
+    [(AstNoType) fallback]))
+
+(define (ctfe-finite-cast-input [value : CompilerCtfeValue]) : CompilerFiniteCastInput
+  (match value
+    [(CtfeI64 n) (CompilerFiniteCastInputI64 n)]
+    [(CtfeF64 n) (CompilerFiniteCastInputF64 n)]
+    [(CtfeF32 n) (CompilerFiniteCastInputF32 n)]
+    [(CtfeChar c) (CompilerFiniteCastInputChar c)]
+    [_ (CompilerFiniteCastNoInput)]))
+
+(define (ctfe-finite-cast-result
+  [result : CompilerFiniteCastResult]
+  [expr : AstExpr]
+  [fuel : i64]) : ResultCtfe
+  (match result
+    [(CompilerFiniteCastResultI64 n) (OkCtfe (CtfeI64 n) fuel)]
+    [(CompilerFiniteCastResultChar c) (OkCtfe (CtfeChar c) fuel)]
+    [(CompilerFiniteCastResultF64 n) (ctfe-f64-result n expr fuel)]
+    [(CompilerFiniteCastResultF32 n) (ctfe-f32-result n expr fuel)]
+    [(CompilerFiniteCastNoResult)
+      (ErrCtfe (ctfe-diagnostic-at-expr expr "comptime: unsupported cast"))]))
+
 (define (ctfe-apply-cast
   [value : CompilerCtfeValue]
+  [from-ty : AstType]
   [ty : AstType]
   [expr : AstExpr]
   [fuel : i64]) : ResultCtfe
-  (match ty
-    [(AstTyF64)
-      (match value
-        [(CtfeF64 _) (OkCtfe value fuel)]
-        [(CtfeF32 n) (ctfe-f64-result n expr fuel)]
-        [(CtfeI64 n) (ctfe-f64-result (cast n : f64) expr fuel)]
-        [_
-          (ErrCtfe (ctfe-diagnostic-at-expr expr "comptime: unsupported cast"))])]
-    [(AstTyF32)
-      (match value
-        [(CtfeF64 n) (ctfe-f32-result n expr fuel)]
-        [(CtfeF32 _) (OkCtfe value fuel)]
-        [(CtfeI64 n) (ctfe-f32-result (cast n : f64) expr fuel)]
-        [_
-          (ErrCtfe (ctfe-diagnostic-at-expr expr "comptime: unsupported cast"))])]
-    [(AstTyI64)
-      (match value
-        [(CtfeI64 _) (OkCtfe value fuel)]
-        [_
-          (ErrCtfe (ctfe-diagnostic-at-expr expr "comptime: unsupported cast"))])]
-    [_ (ErrCtfe (ctfe-diagnostic-at-expr expr "comptime: unsupported cast"))]))
+  (ctfe-finite-cast-result
+    (compiler-finite-cast-fold (ctfe-finite-cast-input value) from-ty ty)
+    expr
+    fuel))
 
 (define (ctfe-eval-cast
   [inner : AstExpr]
@@ -1255,7 +1305,13 @@
   [env : CtfeEnv]
   [fuel : i64]) : ResultCtfe
   (match (compiler-ctfe-eval inner env fuel)
-    [(OkCtfe value next-fuel) (ctfe-apply-cast value ty expr next-fuel)]
+    [(OkCtfe value next-fuel)
+      (ctfe-apply-cast
+        value
+        (ctfe-cast-source-type inner value env)
+        ty
+        expr
+        next-fuel)]
     [(ErrCtfe diag) (ErrCtfe diag)]))
 
 (defenum ResultCtfeStringLookup
@@ -3564,7 +3620,7 @@
       (let
         [rest : AstLetBindingList (box-get rest)]
         (match binding
-          [(AstLetBinding name _ value-expr-box)
+          [(AstLetBinding name maybe-ty value-expr-box)
             (let
               [value-expr : AstExpr (ast-node-get value-expr-box)]
               (match (compiler-ctfe-eval value-expr env fuel)
@@ -3572,7 +3628,14 @@
                   (ctfe-eval-let
                     rest
                     body
-                    (ctfe-env-extend env (intern-str name) value)
+                    (ctfe-env-extend-typed
+                      env
+                      (intern-str name)
+                      value
+                      (ctfe-binding-type
+                        maybe-ty
+                        (ctfe-cast-source-type value-expr value env)
+                        env))
                     value-fuel)]
                 [(ErrCtfe diag) (ErrCtfe diag)]))]))]))
 
@@ -3674,7 +3737,11 @@
         [rest-patterns : AstPatternList (box-get rest-patterns)]
         (match values
           [(CtfeValueCons value rest-values)
-            (match (ctfe-match-pattern pattern value env)
+            (match (ctfe-match-pattern
+              pattern
+              value
+              (ctfe-value-default-cast-type value)
+              env)
               [(CtfePatternMatched next-env)
                 (ctfe-match-pattern-list
                   rest-patterns
@@ -3767,13 +3834,20 @@
 (define (ctfe-match-pattern
   [pattern : AstPattern]
   [value : CompilerCtfeValue]
+  [value-ty : AstType]
   [env : CtfeEnv]) : CtfePatternMatch
   (match pattern
     [(AstPatWildcard) (CtfePatternMatched env)]
     [(AstPatBinding name)
-      (CtfePatternMatched (ctfe-env-extend env (intern-str name) value))]
-    [(AstPatVar name _)
-      (CtfePatternMatched (ctfe-env-extend env (intern-str name) value))]
+      (CtfePatternMatched
+        (ctfe-env-extend-typed env (intern-str name) value value-ty))]
+    [(AstPatVar name maybe-ty)
+      (CtfePatternMatched
+        (ctfe-env-extend-typed
+          env
+          (intern-str name)
+          value
+          (ctfe-binding-type maybe-ty value-ty env)))]
     [(AstPatLiteral lit)
       (if (ctfe-literal-matches-value? lit value)
         (CtfePatternMatched env)
@@ -3789,6 +3863,7 @@
 
 (define (ctfe-eval-match-arms
   [value : CompilerCtfeValue]
+  [value-ty : AstType]
   [arms : AstMatchArmList]
   [origin : AstExpr]
   [env : CtfeEnv]
@@ -3802,11 +3877,11 @@
         [rest : AstMatchArmList (box-get rest)]
         (match arm
           [(AstMatchArm pattern body-box)
-            (match (ctfe-match-pattern pattern value env)
+            (match (ctfe-match-pattern pattern value value-ty env)
               [(CtfePatternMatched arm-env)
                 (compiler-ctfe-eval (ast-node-get body-box) arm-env fuel)]
               [(CtfeNoPatternMatch)
-                (ctfe-eval-match-arms value rest origin env fuel)])]))]))
+                (ctfe-eval-match-arms value value-ty rest origin env fuel)])]))]))
 
 (define (ctfe-eval-match
   [scrutinee : AstExpr]
@@ -3816,7 +3891,13 @@
   [fuel : i64]) : ResultCtfe
   (match (compiler-ctfe-eval scrutinee env fuel)
     [(OkCtfe value scrutinee-fuel)
-      (ctfe-eval-match-arms value arms origin env scrutinee-fuel)]
+      (ctfe-eval-match-arms
+        value
+        (ctfe-cast-source-type scrutinee value env)
+        arms
+        origin
+        env
+        scrutinee-fuel)]
     [(ErrCtfe diag) (ErrCtfe diag)]))
 
 ;; --- quote / quasiquote -----------------------------------------------------
@@ -7121,6 +7202,58 @@
     [wide-f32 : i64 (ast-expr-cast one-f32 (AstTyF64))]
     [sum : i64 (ast-node-push (AstExprBinary (AstBinAdd) one-five two-quarter))]
     [neg : i64 (ast-node-push (AstExprUnary (AstUnNeg) sum))]
+    [neg-int : i64 (ast-node-push (AstExprLiteral (AstLitInt (- 0 42))))]
+    [u64-max : i64
+      (ast-expr-cast
+        (ast-node-push (AstExprLiteral (AstLitInt (- 0 1))))
+        (AstTyU64))]
+    [u64-max-f64 : i64 (ast-expr-cast u64-max (AstTyF64))]
+    [u64-max-f32 : i64 (ast-expr-cast u64-max (AstTyF32))]
+    [u64-var : i64 (ast-node-push (AstExprVar (intern "x")))]
+    [typed-let-u64-max-f64 : i64
+      (ast-expr-let
+        (ast-let-binding-cons
+          (ast-let-binding "x" (AstSomeType (AstTyU64)) u64-max)
+          AstLetBindingNil)
+        (ast-expr-cast u64-var (AstTyF64)))]
+    [untyped-let-u64-max-f64 : i64
+      (ast-expr-let
+        (ast-let-binding-cons
+          (ast-let-binding "x" (AstNoType) u64-max)
+          AstLetBindingNil)
+        (ast-expr-cast u64-var (AstTyF64)))]
+    [match-u64-var : i64 (ast-node-push (AstExprVar (intern "m")))]
+    [match-u64-max-f64 : i64
+      (ast-expr-match
+        u64-max
+        (ast-match-arm-cons
+          (ast-match-arm
+            (ast-pat-binding "m")
+            (ast-expr-cast match-u64-var (AstTyF64)))
+          AstMatchArmNil))]
+    [char-a : i64 (ast-node-push (AstExprLiteral (AstLitChar #A')))]
+    [char-a-f64 : i64 (ast-expr-cast char-a (AstTyF64))]
+    [neg-int-f64 : i64 (ast-expr-cast neg-int (AstTyF64))]
+    [rounded-int-f32 : i64
+      (ast-expr-cast
+        (ast-node-push (AstExprLiteral (AstLitInt 16777217)))
+        (AstTyF32))]
+    [f64-to-i64 : i64 (ast-expr-cast sum (AstTyI64))]
+    [f32-to-i64 : i64 (ast-expr-cast one-f32 (AstTyI64))]
+    [f64-to-char-to-i64 : i64
+      (ast-expr-cast
+        (ast-expr-cast
+          (ast-node-push (AstExprLiteral (AstLitFloat "65.9")))
+          (AstTyChar))
+        (AstTyI64))]
+    [f64-out-of-i64 : i64
+      (ast-expr-cast
+        (ast-node-push (AstExprLiteral (AstLitFloat "9223372036854775808.0")))
+        (AstTyI64))]
+    [f64-out-of-u64-portable-range : i64
+      (ast-expr-cast
+        (ast-node-push (AstExprLiteral (AstLitFloat "9223372036854775808.0")))
+        (AstTyU64))]
     [lt : i64
       (ast-node-push
         (AstExprBinary
@@ -7138,6 +7271,31 @@
       (compiler-ctfe-eval-f32-ok? neg-f32 env -1.5)
       (compiler-ctfe-eval-f64-ok? wide-f32 env 1.5)
       (compiler-ctfe-eval-bool-ok? lt env true)
+      (compiler-ctfe-eval-f64-ok? neg-int-f64 env -42.0)
+      (compiler-ctfe-eval-f64-ok? char-a-f64 env 65.0)
+      (compiler-ctfe-eval-f64-ok? u64-max-f64 env 18446744073709551616.0)
+      (compiler-ctfe-eval-f32-ok? u64-max-f32 env 18446744073709551616.0)
+      (compiler-ctfe-eval-f64-ok?
+        typed-let-u64-max-f64
+        env
+        18446744073709551616.0)
+      (compiler-ctfe-eval-f64-ok?
+        untyped-let-u64-max-f64
+        env
+        18446744073709551616.0)
+      (compiler-ctfe-eval-f64-ok? match-u64-max-f64 env 18446744073709551616.0)
+      (compiler-ctfe-eval-f32-ok? rounded-int-f32 env 16777216.0)
+      (compiler-ctfe-eval-i64-ok? f64-to-i64 env 3)
+      (compiler-ctfe-eval-i64-ok? f32-to-i64 env 1)
+      (compiler-ctfe-eval-i64-ok? f64-to-char-to-i64 env 65)
+      (compiler-ctfe-eval-error-ok?
+        f64-out-of-i64
+        env
+        "comptime: unsupported cast")
+      (compiler-ctfe-eval-error-ok?
+        f64-out-of-u64-portable-range
+        env
+        "comptime: unsupported cast")
       (compiler-ctfe-eval-error-ok?
         div-zero
         env

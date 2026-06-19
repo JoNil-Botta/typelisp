@@ -515,6 +515,42 @@
     (array-set! tokens count tok)
     (array-set! starts count start)))
 
+;; Copy `count` token slots into a freshly sized array. The lexer sizes its
+;; token buffers to an estimate of the token count and grows them by doubling
+;; rather than pre-allocating one slot per source byte (most bytes are inside
+;; multi-character tokens or whitespace, so the byte-sized arrays were ~3x
+;; larger than needed and paid that cost in zero-init on every file).
+(define (fmt-grow-token-array
+  [old : (Array FormatToken)]
+  [count : i64]
+  [newcap : i64]) : (Array FormatToken)
+  (let
+    [bigger : (Array FormatToken) (make-array FormatToken newcap)]
+    [j : i64 0]
+    (begin
+      (while (< j count)
+        (begin
+          (array-set! bigger j (array-ref old j))
+          (set! j (+ j 1))))
+      bigger)))
+
+(define (fmt-grow-i64-array [old : (Array i64)] [count : i64] [newcap : i64]) : (Array
+    i64)
+  (let
+    [bigger : (Array i64) (make-array i64 newcap)]
+    [j : i64 0]
+    (begin
+      (while (< j count)
+        (begin
+          (array-set! bigger j (array-ref old j))
+          (set! j (+ j 1))))
+      bigger)))
+
+;; Token-buffer capacity estimate for a `n`-byte source: roughly one token per
+;; three bytes, with slack for short inputs and the trailing `FmtEnd`.
+(define (fmt-token-capacity-estimate [n : i64]) : i64
+  (+ (/ n 3) 16))
+
 (define (format-empty-token-stream) : FormatTokenStream
   (let
     [tokens : (Array FormatToken) (make-array FormatToken 1)]
@@ -526,147 +562,165 @@
 (define (format-lex-result [src : String]) : ResultFormatTokenStream
   (let
     [n : i64 (string-length src)]
-    [tokens : (Array FormatToken)
-      (make-array FormatToken (+ (string-length src) 1))]
-    [starts : (Array i64) (make-array i64 (+ (string-length src) 1))]
+    [cap : i64 (fmt-token-capacity-estimate n)]
+    [tokens : (Array FormatToken) (make-array FormatToken cap)]
+    [starts : (Array i64) (make-array i64 cap)]
     [i : i64 0]
     [count : i64 0]
     (begin
       (while (< i n)
-        (let
-          [c : char (string-ref src i)]
-          (cond
-            [(fmt-is-space c) (set! i (+ i 1))]
-            [(= c #;')
-              (let
-                [end : i64 (fmt-scan-comment-end src i n)]
-                (begin
-                  (fmt-store-token
-                    tokens
-                    starts
-                    count
-                    i
-                    (FmtComment (substring src i (- end i))))
-                  (set! count (+ count 1))
-                  (set! i end)))]
-            [(= c #(')
+        (begin
+          ;; Each iteration emits at most one token; keep one free slot.
+          (if (>= count cap)
+            (let
+              [newcap : i64 (* cap 2)]
               (begin
-                (fmt-store-token tokens starts count i (FmtLParen))
-                (set! count (+ count 1))
-                (set! i (+ i 1)))]
-            [(= c #)')
-              (begin
-                (fmt-store-token tokens starts count i (FmtRParen))
-                (set! count (+ count 1))
-                (set! i (+ i 1)))]
-            [(= c #[')
-              (begin
-                (fmt-store-token tokens starts count i (FmtLBracket))
-                (set! count (+ count 1))
-                (set! i (+ i 1)))]
-            [(= c #]')
-              (begin
-                (fmt-store-token tokens starts count i (FmtRBracket))
-                (set! count (+ count 1))
-                (set! i (+ i 1)))]
-            [(= c #:')
-              (begin
-                (fmt-store-token tokens starts count i (FmtColon))
-                (set! count (+ count 1))
-                (set! i (+ i 1)))]
-            [(= c #'')
-              (begin
-                (fmt-store-token tokens starts count i (FmtQuote))
-                (set! count (+ count 1))
-                (set! i (+ i 1)))]
-            [(= c #`')
-              (begin
-                (fmt-store-token tokens starts count i (FmtBacktick))
-                (set! count (+ count 1))
-                (set! i (+ i 1)))]
-            [(fmt-starts-ellipsis src i n)
-              (begin
-                (fmt-store-token tokens starts count i (FmtSymbol "..."))
-                (set! count (+ count 1))
-                (set! i (+ i 3)))]
-            [(= c #.')
-              (begin
-                (fmt-store-token tokens starts count i (FmtDot))
-                (set! count (+ count 1))
-                (set! i (+ i 1)))]
-            [(= c #,')
-              (if (< (+ i 1) n)
-                (if (= (string-ref src (+ i 1)) #@')
+                (set! tokens (fmt-grow-token-array tokens count newcap))
+                (set! starts (fmt-grow-i64-array starts count newcap))
+                (set! cap newcap)))
+            unit)
+          (let
+            [c : char (string-ref src i)]
+            (cond
+              [(fmt-is-space c) (set! i (+ i 1))]
+              [(= c #;')
+                (let
+                  [end : i64 (fmt-scan-comment-end src i n)]
                   (begin
-                    (fmt-store-token tokens starts count i (FmtCommaAt))
+                    (fmt-store-token
+                      tokens
+                      starts
+                      count
+                      i
+                      (FmtComment (substring src i (- end i))))
                     (set! count (+ count 1))
-                    (set! i (+ i 2)))
+                    (set! i end)))]
+              [(= c #(')
+                (begin
+                  (fmt-store-token tokens starts count i (FmtLParen))
+                  (set! count (+ count 1))
+                  (set! i (+ i 1)))]
+              [(= c #)')
+                (begin
+                  (fmt-store-token tokens starts count i (FmtRParen))
+                  (set! count (+ count 1))
+                  (set! i (+ i 1)))]
+              [(= c #[')
+                (begin
+                  (fmt-store-token tokens starts count i (FmtLBracket))
+                  (set! count (+ count 1))
+                  (set! i (+ i 1)))]
+              [(= c #]')
+                (begin
+                  (fmt-store-token tokens starts count i (FmtRBracket))
+                  (set! count (+ count 1))
+                  (set! i (+ i 1)))]
+              [(= c #:')
+                (begin
+                  (fmt-store-token tokens starts count i (FmtColon))
+                  (set! count (+ count 1))
+                  (set! i (+ i 1)))]
+              [(= c #'')
+                (begin
+                  (fmt-store-token tokens starts count i (FmtQuote))
+                  (set! count (+ count 1))
+                  (set! i (+ i 1)))]
+              [(= c #`')
+                (begin
+                  (fmt-store-token tokens starts count i (FmtBacktick))
+                  (set! count (+ count 1))
+                  (set! i (+ i 1)))]
+              [(fmt-starts-ellipsis src i n)
+                (begin
+                  (fmt-store-token tokens starts count i (FmtSymbol "..."))
+                  (set! count (+ count 1))
+                  (set! i (+ i 3)))]
+              [(= c #.')
+                (begin
+                  (fmt-store-token tokens starts count i (FmtDot))
+                  (set! count (+ count 1))
+                  (set! i (+ i 1)))]
+              [(= c #,')
+                (if (< (+ i 1) n)
+                  (if (= (string-ref src (+ i 1)) #@')
+                    (begin
+                      (fmt-store-token tokens starts count i (FmtCommaAt))
+                      (set! count (+ count 1))
+                      (set! i (+ i 2)))
+                    (begin
+                      (fmt-store-token tokens starts count i (FmtComma))
+                      (set! count (+ count 1))
+                      (set! i (+ i 1))))
                   (begin
                     (fmt-store-token tokens starts count i (FmtComma))
                     (set! count (+ count 1))
-                    (set! i (+ i 1))))
-                (begin
-                  (fmt-store-token tokens starts count i (FmtComma))
-                  (set! count (+ count 1))
-                  (set! i (+ i 1))))]
-            [(= c #"')
-              (match (fmt-scan-string-end-result src (+ i 1) n)
-                [(OkFmtI64 end)
+                    (set! i (+ i 1))))]
+              [(= c #"')
+                (match (fmt-scan-string-end-result src (+ i 1) n)
+                  [(OkFmtI64 end)
+                    (begin
+                      (fmt-store-token
+                        tokens
+                        starts
+                        count
+                        i
+                        (FmtString (substring src i (- end i))))
+                      (set! count (+ count 1))
+                      (set! i end))]
+                  [(ErrFmtI64 err) (return (ErrFormatTokenStream err))])]
+              [(= c ##')
+                (match (fmt-scan-char-end-result src (+ i 1) n)
+                  [(OkFmtI64 end)
+                    (begin
+                      (fmt-store-token
+                        tokens
+                        starts
+                        count
+                        i
+                        (FmtChar (substring src i (- end i))))
+                      (set! count (+ count 1))
+                      (set! i end))]
+                  [(ErrFmtI64 err) (return (ErrFormatTokenStream err))])]
+              [(fmt-starts-number src i n)
+                (match (fmt-scan-number-end-result src i n)
+                  [(OkFmtI64 end)
+                    (begin
+                      (fmt-store-token
+                        tokens
+                        starts
+                        count
+                        i
+                        (FmtInt (substring src i (- end i))))
+                      (set! count (+ count 1))
+                      (set! i end))]
+                  [(ErrFmtI64 err) (return (ErrFormatTokenStream err))])]
+              [(fmt-is-symbol-char c)
+                (let
+                  [end : i64 (fmt-scan-symbol-end src i n)]
                   (begin
                     (fmt-store-token
                       tokens
                       starts
                       count
                       i
-                      (FmtString (substring src i (- end i))))
+                      (FmtSymbol (substring src i (- end i))))
                     (set! count (+ count 1))
-                    (set! i end))]
-                [(ErrFmtI64 err) (return (ErrFormatTokenStream err))])]
-            [(= c ##')
-              (match (fmt-scan-char-end-result src (+ i 1) n)
-                [(OkFmtI64 end)
-                  (begin
-                    (fmt-store-token
-                      tokens
-                      starts
-                      count
+                    (set! i end)))]
+              [else
+                (return
+                  (ErrFormatTokenStream
+                    (fmt-source-error-at
+                      src
                       i
-                      (FmtChar (substring src i (- end i))))
-                    (set! count (+ count 1))
-                    (set! i end))]
-                [(ErrFmtI64 err) (return (ErrFormatTokenStream err))])]
-            [(fmt-starts-number src i n)
-              (match (fmt-scan-number-end-result src i n)
-                [(OkFmtI64 end)
-                  (begin
-                    (fmt-store-token
-                      tokens
-                      starts
-                      count
-                      i
-                      (FmtInt (substring src i (- end i))))
-                    (set! count (+ count 1))
-                    (set! i end))]
-                [(ErrFmtI64 err) (return (ErrFormatTokenStream err))])]
-            [(fmt-is-symbol-char c)
-              (let
-                [end : i64 (fmt-scan-symbol-end src i n)]
-                (begin
-                  (fmt-store-token
-                    tokens
-                    starts
-                    count
-                    i
-                    (FmtSymbol (substring src i (- end i))))
-                  (set! count (+ count 1))
-                  (set! i end)))]
-            [else
-              (return
-                (ErrFormatTokenStream
-                  (fmt-source-error-at
-                    src
-                    i
-                    "format lexer: unexpected character")))])))
+                      "format lexer: unexpected character")))]))))
+      (if (>= count cap)
+        (let
+          [newcap : i64 (* cap 2)]
+          (begin
+            (set! tokens (fmt-grow-token-array tokens count newcap))
+            (set! starts (fmt-grow-i64-array starts count newcap))
+            (set! cap newcap)))
+        unit)
       (fmt-store-token tokens starts count n (FmtEnd))
       (OkFormatTokenStream (FormatTokenStream src tokens starts (+ count 1))))))
 

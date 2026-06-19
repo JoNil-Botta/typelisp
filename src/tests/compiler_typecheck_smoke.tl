@@ -556,6 +556,28 @@
           want-label-fragment))]
     [(OkCompilerTypecheck _) false]))
 
+(define (compiler-typecheck-labeled-cleanup-move-error-ok?
+  [src : String]
+  [want-message : String]
+  [want-move-label-fragment : String]
+  [want-owner-label-fragment : String]) : bool
+  (match (typecheck-compiler-source src)
+    [(ErrCompilerTypecheck diag)
+      (and
+        (string-eq (compiler-diagnostic-message diag) want-message)
+        (compiler-typecheck-help-contains? diag "clone the owner")
+        (=
+          (compiler-typecheck-secondary-count
+            (compiler-diagnostic-secondary-spans diag))
+          2)
+        (compiler-typecheck-secondary-label-contains?
+          (compiler-diagnostic-secondary-spans diag)
+          want-move-label-fragment)
+        (compiler-typecheck-secondary-label-contains?
+          (compiler-diagnostic-secondary-spans diag)
+          want-owner-label-fragment))]
+    [(OkCompilerTypecheck _) false]))
+
 (define (compiler-typecheck-move-diagnostic-tests-ok?) : bool
   (and
     (compiler-typecheck-labeled-move-error-ok?
@@ -578,14 +600,16 @@
       (compiler-typecheck-move-while-loop-carried-param-source)
       "typecheck: cannot move loop-carried owner value `s`"
       "loop-carried")
-    (compiler-typecheck-labeled-move-error-ok?
+    (compiler-typecheck-labeled-cleanup-move-error-ok?
       (compiler-typecheck-move-with-cleanup-owner-whole-source)
       "typecheck: cleanup owner `h` moved before with scope exit"
-      "move of `h` happened here")
-    (compiler-typecheck-labeled-move-error-ok?
+      "move of `h` happened here"
+      "cleanup owner `h` is bound")
+    (compiler-typecheck-labeled-cleanup-move-error-ok?
       (compiler-typecheck-move-with-cleanup-owner-field-source)
       "typecheck: cleanup owner `h` moved before with scope exit"
-      "move of `h.handle` happened here")))
+      "move of `h.handle` happened here"
+      "cleanup owner `h` is bound")))
 
 (define (compiler-typecheck-reference-return-container-tests-ok?) : bool
   (and

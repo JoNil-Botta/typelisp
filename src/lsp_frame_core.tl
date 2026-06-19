@@ -4550,71 +4550,84 @@
         [(OkLspJsonText name)
           (match (lsp-json-string-field params "oldPattern")
             [(OkLspJsonText old-pattern)
-              (match (lsp-json-string-field params "newPattern")
-                [(OkLspJsonText new-pattern)
-                  (let
-                    [text-copy : String (string-copy-borrowed (& text))]
-                    [decls : LspDeclList (lsp-scan-decls text-copy)]
-                    [i : i64 0]
-                    [n : i64 (lsp-decl-list-len decls)]
-                    [found : bool false]
-                    [result : String ""]
-                    (begin
-                      (while (and (< i n) (not found))
-                        (let
-                          [entry : LspDeclEntry (lsp-decl-list-get decls i)]
-                          (if (string-eq (struct-get entry name) name)
-                            (begin
-                              (set! found true)
-                              (let
-                                [kind : String (struct-get entry kind)]
-                                [n2 : i64 (string-length text)]
-                                (if (or
-                                  (string-eq kind "function")
-                                  (string-eq kind "macro"))
-                                  (let
-                                    [form-start-off : i64
-                                      (lsp-offset-at-position
-                                        text
-                                        (- (struct-get entry form-start-line) 1)
-                                        (- (struct-get entry form-start-col) 1))]
-                                    [after-kw : i64
-                                      (lsp-skip-space
-                                        text
-                                        (+ form-start-off 1)
-                                        n2)]
-                                    [kw-end : i64
-                                      (lsp-scan-ident text after-kw n2)]
-                                    [after-kw2 : i64
-                                      (lsp-skip-space text kw-end n2)]
-                                    (if (and
-                                      (< after-kw2 n2)
-                                      (= (string-ref text after-kw2) #('))
-                                      (let
-                                        [body-start-off : i64
-                                          (lsp-find-body-start-offset
-                                            text
-                                            form-start-off)]
-                                        [body-end-off : i64
+              (begin
+                (when
+                  (string-eq old-pattern "")
+                  (begin
+                    (lsp-write-error id -32600 "oldPattern cannot be empty")
+                    (return (LspContinue docs))))
+                (match (lsp-json-string-field params "newPattern")
+                  [(OkLspJsonText new-pattern)
+                    (let
+                      [text-copy : String (string-copy-borrowed (& text))]
+                      [decls : LspDeclList (lsp-scan-decls text-copy)]
+                      [i : i64 0]
+                      [n : i64 (lsp-decl-list-len decls)]
+                      [found : bool false]
+                      [result : String ""]
+                      (begin
+                        (while (and (< i n) (not found))
+                          (let
+                            [entry : LspDeclEntry (lsp-decl-list-get decls i)]
+                            (if (string-eq (struct-get entry name) name)
+                              (begin
+                                (set! found true)
+                                (let
+                                  [kind : String (struct-get entry kind)]
+                                  [n2 : i64 (string-length text)]
+                                  (if (or
+                                    (string-eq kind "function")
+                                    (string-eq kind "macro"))
+                                    (let
+                                      [form-start-off : i64
+                                        (lsp-offset-at-position
+                                          text
                                           (-
-                                            (lsp-offset-at-position
-                                              text
-                                              (-
-                                                (struct-get entry form-end-line)
-                                                1)
-                                              (-
-                                                (struct-get entry form-end-col)
-                                                1))
-                                            1)]
-                                        [body-start-lc : LspLineCol
-                                          (lsp-line-col-at-offset
-                                            text
-                                            body-start-off)]
-                                        [body-end-lc : LspLineCol
-                                          (lsp-line-col-at-offset
-                                            text
-                                            body-end-off)]
+                                            (struct-get entry form-start-line)
+                                            1)
+                                          (-
+                                            (struct-get entry form-start-col)
+                                            1))]
+                                      [after-kw : i64
+                                        (lsp-skip-space
+                                          text
+                                          (+ form-start-off 1)
+                                          n2)]
+                                      [kw-end : i64
+                                        (lsp-scan-ident text after-kw n2)]
+                                      [after-kw2 : i64
+                                        (lsp-skip-space text kw-end n2)]
+                                      (if (and
+                                        (< after-kw2 n2)
+                                        (= (string-ref text after-kw2) #('))
                                         (let
+                                          [body-start-off : i64
+                                            (lsp-find-body-start-offset
+                                              text
+                                              form-start-off)]
+                                          [body-end-off : i64
+                                            (-
+                                              (lsp-offset-at-position
+                                                text
+                                                (-
+                                                  (struct-get
+                                                    entry
+                                                    form-end-line)
+                                                  1)
+                                                (-
+                                                  (struct-get
+                                                    entry
+                                                    form-end-col)
+                                                  1))
+                                              1)]
+                                          [body-start-lc : LspLineCol
+                                            (lsp-line-col-at-offset
+                                              text
+                                              body-start-off)]
+                                          [body-end-lc : LspLineCol
+                                            (lsp-line-col-at-offset
+                                              text
+                                              body-end-off)]
                                           [body-text : String
                                             (substring
                                               text
@@ -4625,7 +4638,9 @@
                                               body-text
                                               old-pattern
                                               new-pattern)]
-                                          (if (not (lsp-text-is-valid-form replaced-body))
+                                          (if (not
+                                            (lsp-text-is-valid-form
+                                              replaced-body))
                                             (begin
                                               (lsp-write-error
                                                 id
@@ -4640,44 +4655,44 @@
                                                 (struct-get body-start-lc col)
                                                 (struct-get body-end-lc line)
                                                 (struct-get body-end-lc col)
-                                                replaced-body)))))
-                                      (begin
-                                        (lsp-write-error
-                                          id
-                                          -32600
-                                          "replacePattern only supported for function/macro definitions with parameter lists")
-                                        (set! result ""))))
-                                  (begin
-                                    (lsp-write-error
-                                      id
-                                      -32600
-                                      "replacePattern only supported for define and defmacro")
-                                    (set! result "")))))
-                            (begin
-                              (set! i (+ i 1))
-                              unit))))
-                      (if found
-                        (if (string-eq result "")
-                          (LspContinue docs)
-                          (let
-                            [formatted : String
-                              (format-rules-render-source-width result 80)]
-                            (begin
-                              (lsp-write-response
-                                id
-                                (lsp-json-object2
-                                  "success"
-                                  (JsonBool true)
-                                  "text"
-                                  (JsonString formatted)))
-                              (LspContinue docs))))
-                        (begin
-                          (lsp-write-error id -32600 "Declaration not found")
-                          (LspContinue docs)))))]
-                [(MissingLspJsonText)
-                  (begin
-                    (lsp-write-error id -32600 "Missing newPattern parameter")
-                    (LspContinue docs))])]
+                                                replaced-body))))
+                                        (begin
+                                          (lsp-write-error
+                                            id
+                                            -32600
+                                            "replacePattern only supported for function/macro definitions with parameter lists")
+                                          (set! result ""))))
+                                    (begin
+                                      (lsp-write-error
+                                        id
+                                        -32600
+                                        "replacePattern only supported for define and defmacro")
+                                      (set! result "")))))
+                              (begin
+                                (set! i (+ i 1))
+                                unit))))
+                        (if found
+                          (if (string-eq result "")
+                            (LspContinue docs)
+                            (let
+                              [formatted : String
+                                (format-rules-render-source-width result 80)]
+                              (begin
+                                (lsp-write-response
+                                  id
+                                  (lsp-json-object2
+                                    "success"
+                                    (JsonBool true)
+                                    "text"
+                                    (JsonString formatted)))
+                                (LspContinue docs))))
+                          (begin
+                            (lsp-write-error id -32600 "Declaration not found")
+                            (LspContinue docs)))))]
+                  [(MissingLspJsonText)
+                    (begin
+                      (lsp-write-error id -32600 "Missing newPattern parameter")
+                      (LspContinue docs))]))]
             [(MissingLspJsonText)
               (begin
                 (lsp-write-error id -32600 "Missing oldPattern parameter")

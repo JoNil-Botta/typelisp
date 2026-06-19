@@ -74,8 +74,32 @@
     [(DNest _ inner) (flat-width (box-get inner))]
     [(DGroup inner) (flat-width (box-get inner))]))
 
+;; Add the flat width of `doc` to `acc`, but stop descending as soon as the
+;; running total exceeds `limit`: once a subtree is over budget the rest is left
+;; unvisited and the (over-budget) accumulator is returned. `flat-width` walked
+;; the whole subtree on every group-fit check, which is O(subtree) per group and
+;; O(n^2) over deeply nested forms. Bounding each check to ~`limit` characters of
+;; work makes it O(width) per group. The total is monotonically non-decreasing,
+;; so `(<= (flat-width-capped doc 0 r) r)` equals `(<= (flat-width doc) r)` for
+;; every `doc` and `r` (used by `fits-flat`).
+(define (flat-width-capped [doc : Doc] [acc : i64] [limit : i64]) : i64
+  (if (> acc limit)
+    acc
+    (match doc
+      [(DEmpty) acc]
+      [(DText text) (+ acc (string-length text))]
+      [(DSoftLine) (+ acc 1)]
+      [(DHardLine) (+ acc 1000000)]
+      [(DConcat left right)
+        (flat-width-capped
+          (box-get right)
+          (flat-width-capped (box-get left) acc limit)
+          limit)]
+      [(DNest _ inner) (flat-width-capped (box-get inner) acc limit)]
+      [(DGroup inner) (flat-width-capped (box-get inner) acc limit)])))
+
 (define (fits-flat [doc : Doc] [remaining : i64]) : bool
-  (<= (flat-width doc) remaining))
+  (<= (flat-width-capped doc 0 remaining) remaining))
 
 (define (rendered-text [result : RenderedDoc]) : String
   (match result

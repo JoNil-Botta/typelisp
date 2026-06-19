@@ -54,6 +54,9 @@ space-separated command-line arguments used by
 | `opt_recursion_tail` | Tail-recursive call workload. |
 | `opt_struct_enum_dispatch` | Struct and enum dispatch workload. |
 | `opt_allocation_heavy` | Allocation-heavy runtime workload. |
+| `opt_quicksort` | Recursive Lomuto quicksort over an `(Array i64)`, exercising non-tail recursion, bounds-checked indexing, and in-place swaps. |
+| `opt_crc32` | Table-driven reflected CRC-32, exercising bitwise ops, 256-entry table lookups, and `(Array u8)` byte handling. |
+| `opt_bytecode_vm` | Stack bytecode interpreter, exercising enum `match` with a payload variant, a dispatch loop over `(Array Inst)`, and a stack `(Array i64)`. |
 
 ### Writing a benchmark
 

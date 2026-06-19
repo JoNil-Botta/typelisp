@@ -3682,7 +3682,8 @@
                     [(OkAstExprList parsed-body)
                       (OkAstExpr
                         (ast-node-push
-                          (AstExprWithResource parsed-bindings parsed-body)))]
+                          (AstExprWithResource
+                            (box (AstWithResource parsed-bindings parsed-body)))))]
                     [(ErrAstExprList message) (ErrAstExpr message)])]
                 [(ErrAstResourceBindingList message) (ErrAstExpr message)])])]
         [_ (ErrAstExpr "parse: malformed with binding list")])]
@@ -8942,38 +8943,45 @@
               (match rest
                 [(AstDeclNil)
                   (match (ast-expr-unspan body)
-                    [(AstExprWithResource bindings body-exprs)
-                      (and
-                        (= (compiler-parse-resource-binding-count bindings) 2)
-                        (= (compiler-parse-expr-list-count body-exprs) 2)
-                        (match body-exprs
-                          [(AstExprCons _ tail)
-                            (let
-                              [tail : AstExprList (box-get tail)]
-                              (match tail
-                                [(AstExprCons nested done-box)
-                                  (let
-                                    [nested : AstExpr (ast-node-get nested)]
-                                    [done : AstExprList (box-get done-box)]
-                                    (match done
-                                      [(AstExprNil)
-                                        (match (ast-expr-unspan nested)
-                                          [(AstExprWithResource
-                                              nested-bindings
-                                              nested-body)
-                                            (and
-                                              (=
-                                                (compiler-parse-resource-binding-count
-                                                  nested-bindings)
-                                                1)
-                                              (=
-                                                (compiler-parse-expr-list-count
-                                                  nested-body)
-                                                1))]
-                                          [_ false])]
-                                      [_ false]))]
-                                [_ false]))]
-                          [_ false]))]
+                    [(AstExprWithResource wr-box)
+                      (match (box-get wr-box)
+                        [(AstWithResource bindings body-exprs)
+                          (and
+                            (=
+                              (compiler-parse-resource-binding-count bindings)
+                              2)
+                            (= (compiler-parse-expr-list-count body-exprs) 2)
+                            (match body-exprs
+                              [(AstExprCons _ tail)
+                                (let
+                                  [tail : AstExprList (box-get tail)]
+                                  (match tail
+                                    [(AstExprCons nested done-box)
+                                      (let
+                                        [nested : AstExpr (ast-node-get nested)]
+                                        [done : AstExprList (box-get done-box)]
+                                        (match done
+                                          [(AstExprNil)
+                                            (match (ast-expr-unspan nested)
+                                              [(AstExprWithResource
+                                                  nested-wr-box)
+                                                (match (box-get nested-wr-box)
+                                                  [(AstWithResource
+                                                      nested-bindings
+                                                      nested-body)
+                                                    (and
+                                                      (=
+                                                        (compiler-parse-resource-binding-count
+                                                          nested-bindings)
+                                                        1)
+                                                      (=
+                                                        (compiler-parse-expr-list-count
+                                                          nested-body)
+                                                        1))])]
+                                              [_ false])]
+                                          [_ false]))]
+                                    [_ false]))]
+                              [_ false]))])]
                     [_ false])]
                 [_ false]))]
           [_ false]))]

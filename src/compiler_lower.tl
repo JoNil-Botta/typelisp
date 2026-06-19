@@ -3140,26 +3140,28 @@
                   scrut-ty
                   arms)]
               [(ErrTcType _) value-roots]))])]
-    [(AstExprForeach index index-ty start-box end-box body-box)
-      (let
-        [start : AstExpr (ast-node-get start-box)]
-        [end : AstExpr (ast-node-get end-box)]
-        [body : AstExpr (ast-node-get body-box)]
-        [body-env : TcTypeEnv
-          (tc-bind-id env index (tc-resolve-type ctx index-ty))]
-        (lower-clone-roots-expr
-          ctx
-          body-env
-          decls
-          able
-          (lower-clone-roots-expr
-            ctx
-            env
-            decls
-            able
-            (lower-clone-roots-expr ctx env decls able roots start)
-            end)
-          body))]
+    [(AstExprForeach fe-box)
+      (match (box-get fe-box)
+        [(AstForeach index index-ty start-box end-box body-box)
+          (let
+            [start : AstExpr (ast-node-get start-box)]
+            [end : AstExpr (ast-node-get end-box)]
+            [body : AstExpr (ast-node-get body-box)]
+            [body-env : TcTypeEnv
+              (tc-bind-id env index (tc-resolve-type ctx index-ty))]
+            (lower-clone-roots-expr
+              ctx
+              body-env
+              decls
+              able
+              (lower-clone-roots-expr
+                ctx
+                env
+                decls
+                able
+                (lower-clone-roots-expr ctx env decls able roots start)
+                end)
+              body))])]
     [(AstExprSpmdReduce reduce-box)
       (match (box-get reduce-box)
         [(AstSpmdReduce _ index index-ty start-box end-box init-box value-box)
@@ -3293,21 +3295,29 @@
           able
           (lower-clone-roots-expr ctx env decls able roots arena)
           exprs))]
-    [(AstExprWithResource bindings body)
-      (let
-        [binding-roots : CloneNameList
-          (lower-clone-roots-resource-bindings
-            ctx
-            env
-            decls
-            able
-            roots
-            bindings)]
-        [body-env : TcTypeEnv
-          (match (tc-resource-bindings ctx env bindings)
-            [(OkTcEnv next-env) next-env]
-            [(ErrTcEnv _) env])]
-        (lower-clone-roots-expr-list ctx body-env decls able binding-roots body))]
+    [(AstExprWithResource wr-box)
+      (match (box-get wr-box)
+        [(AstWithResource bindings body)
+          (let
+            [binding-roots : CloneNameList
+              (lower-clone-roots-resource-bindings
+                ctx
+                env
+                decls
+                able
+                roots
+                bindings)]
+            [body-env : TcTypeEnv
+              (match (tc-resource-bindings ctx env bindings)
+                [(OkTcEnv next-env) next-env]
+                [(ErrTcEnv _) env])]
+            (lower-clone-roots-expr-list
+              ctx
+              body-env
+              decls
+              able
+              binding-roots
+              body))])]
     [(AstExprBox inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
@@ -3794,20 +3804,22 @@
               names
               (lower-reach-expr all-functions names state value)
               arms))])]
-    [(AstExprForeach _ _ source-box init-box body-box)
-      (let
-        [source : AstExpr (ast-node-get source-box)]
-        [init : AstExpr (ast-node-get init-box)]
-        [body : AstExpr (ast-node-get body-box)]
-        (lower-reach-expr
-          all-functions
-          names
-          (lower-reach-expr
-            all-functions
-            names
-            (lower-reach-expr all-functions names state source)
-            init)
-          body))]
+    [(AstExprForeach fe-box)
+      (match (box-get fe-box)
+        [(AstForeach _ _ source-box init-box body-box)
+          (let
+            [source : AstExpr (ast-node-get source-box)]
+            [init : AstExpr (ast-node-get init-box)]
+            [body : AstExpr (ast-node-get body-box)]
+            (lower-reach-expr
+              all-functions
+              names
+              (lower-reach-expr
+                all-functions
+                names
+                (lower-reach-expr all-functions names state source)
+                init)
+              body))])]
     [(AstExprSpmdReduce reduce-box)
       (match (box-get reduce-box)
         [(AstSpmdReduce _ _ _ source-box init-box map-expr-box reduce-expr-box)
@@ -3897,12 +3909,14 @@
           names
           (lower-reach-expr all-functions names state arena)
           exprs))]
-    [(AstExprWithResource bindings body)
-      (lower-reach-expr-list
-        all-functions
-        names
-        (lower-reach-resource-bindings all-functions names state bindings)
-        body)]
+    [(AstExprWithResource wr-box)
+      (match (box-get wr-box)
+        [(AstWithResource bindings body)
+          (lower-reach-expr-list
+            all-functions
+            names
+            (lower-reach-resource-bindings all-functions names state bindings)
+            body)])]
     [(AstExprBox inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
@@ -14502,21 +14516,23 @@
         [cond : AstExpr (ast-node-get cond-box)]
         [body : AstExpr (ast-node-get body-box)]
         (lower-while ctx state env type-env cond body))]
-    [(AstExprForeach index index-ty start-box end-box body-box)
-      (let
-        [start : AstExpr (ast-node-get start-box)]
-        [end : AstExpr (ast-node-get end-box)]
-        [body : AstExpr (ast-node-get body-box)]
-        (lower-foreach
-          ctx
-          state
-          env
-          type-env
-          (intern-str index)
-          index-ty
-          start
-          end
-          body))]
+    [(AstExprForeach fe-box)
+      (match (box-get fe-box)
+        [(AstForeach index index-ty start-box end-box body-box)
+          (let
+            [start : AstExpr (ast-node-get start-box)]
+            [end : AstExpr (ast-node-get end-box)]
+            [body : AstExpr (ast-node-get body-box)]
+            (lower-foreach
+              ctx
+              state
+              env
+              type-env
+              (intern-str index)
+              index-ty
+              start
+              end
+              body))])]
     [(AstExprSpmdReduce reduce-box)
       (match (box-get reduce-box)
         [(AstSpmdReduce op index index-ty start-box end-box init-box value-box)
@@ -14650,8 +14666,10 @@
       (let
         [arena : AstExpr (ast-node-get arena-box)]
         (lower-in-arena ctx state env type-env arena body))]
-    [(AstExprWithResource bindings body)
-      (lower-with-resource ctx state env type-env bindings body)]
+    [(AstExprWithResource wr-box)
+      (match (box-get wr-box)
+        [(AstWithResource bindings body)
+          (lower-with-resource ctx state env type-env bindings body)])]
     [(AstExprBox inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]

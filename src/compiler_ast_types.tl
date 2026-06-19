@@ -262,6 +262,16 @@
 (defenum AstSpmdReduce
   (AstSpmdReduce AstReduceOp i64 AstType i64 i64 i64 i64))
 
+;; Boxed payloads for the 80 B AstExpr tier (after #3313/#3317/#3325 brought
+;; the node to 80 B). AstExprForeach inlines an AstType plus four scalars;
+;; AstExprWithResource inlines two list heads. Boxing both drops the node to
+;; 56 B (bounded by the AstType-carrying variants like Cast/Ann/Init).
+(defenum AstForeach
+  (AstForeach i64 AstType i64 i64 i64))
+
+(defenum AstWithResource
+  (AstWithResource AstResourceBindingList AstExprList))
+
 ;; Boxed payload for `AstExprMatch`. After boxing AstExprLambda/AstExprSpmdScan
 ;; (#3313), `AstExprMatch i64 AstMatchArmList` is the largest variant at 112 B
 ;; (its arm list inlines AstMatchArm -> AstPattern -> AstMaybeType -> AstType).
@@ -298,7 +308,7 @@
   (AstExprCast i64 AstType)
   (AstExprBorrow bool AstBorrowLifetime i64)
   (AstExprMatch (Box AstMatch))
-  (AstExprForeach i64 AstType i64 i64 i64)
+  (AstExprForeach (Box AstForeach))
   (AstExprSpmdReduce (Box AstSpmdReduce))
   (AstExprSpmdScan (Box AstSpmdScan))
   (AstExprSpmdBroadcast i64 i64)
@@ -308,7 +318,7 @@
   (AstExprWithEscape i64 AstExprList)
   (AstExprWithScratch AstExprList)
   (AstExprInArena i64 AstExprList)
-  (AstExprWithResource AstResourceBindingList AstExprList)
+  (AstExprWithResource (Box AstWithResource))
   (AstExprBox i64)
   (AstExprBoxGet i64)
   (AstExprBoxTake i64)
@@ -1721,7 +1731,8 @@
   [start : i64]
   [end : i64]
   [body : i64]) : i64
-  (ast-node-push (AstExprForeach (intern name) index-ty start end body)))
+  (ast-node-push
+    (AstExprForeach (box (AstForeach (intern name) index-ty start end body)))))
 
 (define (ast-expr-foreach-id
   [name : i64]
@@ -1729,7 +1740,8 @@
   [start : i64]
   [end : i64]
   [body : i64]) : i64
-  (ast-node-push (AstExprForeach name index-ty start end body)))
+  (ast-node-push
+    (AstExprForeach (box (AstForeach name index-ty start end body)))))
 
 (define (ast-expr-spmd-reduce
   [op : AstReduceOp]
@@ -2165,7 +2177,7 @@
     [(AstExprCast _ _) 21]
     [(AstExprBorrow _ _ _) 40]
     [(AstExprMatch _) 22]
-    [(AstExprForeach _ _ _ _ _) 23]
+    [(AstExprForeach _) 23]
     [(AstExprStructGet _ _) 24]
     [(AstExprStructSet _ _ _) 63]
     [(AstExprWithRegion _ _) 25]
@@ -2182,7 +2194,7 @@
     [(AstExprReturn _) 48]
     [(AstExprPtrNull _) 30]
     [(AstExprPtrNullCheck _) 31]
-    [(AstExprWithResource _ _) 33]
+    [(AstExprWithResource _) 33]
     [(AstExprPtrAddrOf _) 62]
     [(AstExprPtrRead _) 34]
     [(AstExprPtrWrite _ _) 35]

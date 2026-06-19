@@ -1518,11 +1518,8 @@
 (define (compiler-backend-avx512-mask-xor-mnemonic [lanes : i64]) : String
   (string-append "xor" (compiler-backend-avx512-mask-int-suffix lanes)))
 
-(define (compiler-backend-avx512-mask-test-mnemonic [lanes : i64]) : String
-  (string-append "test" (compiler-backend-avx512-mask-int-suffix lanes)))
-
-(define (compiler-backend-avx512-mask-and-mnemonic [lanes : i64]) : String
-  (string-append "and" (compiler-backend-avx512-mask-int-suffix lanes)))
+(define (compiler-backend-avx512-mask-kortest-mnemonic [lanes : i64]) : String
+  (string-append "kortest" (compiler-backend-avx512-mask-op-suffix lanes)))
 
 (define (compiler-backend-avx512-mask-cmp-mnemonic [lanes : i64]) : String
   (string-append "cmp" (compiler-backend-avx512-mask-int-suffix lanes)))
@@ -2396,8 +2393,7 @@
     [full-mask : i64 (compiler-backend-avx512-lane-mask lanes)]
     [mask-move : String (compiler-backend-avx512-mask-move-mnemonic lanes)]
     [mask-gpr : String (compiler-backend-avx512-mask-gpr lanes)]
-    [test-op : String (compiler-backend-avx512-mask-test-mnemonic lanes)]
-    [and-op : String (compiler-backend-avx512-mask-and-mnemonic lanes)]
+    [kortest-op : String (compiler-backend-avx512-mask-kortest-mnemonic lanes)]
     [cmp-op : String (compiler-backend-avx512-mask-cmp-mnemonic lanes)]
     (if (= full-mask 0)
       (compiler-backend-avx512-shape-diagnostic instr-diag (AstTyI64) lanes)
@@ -2408,36 +2404,46 @@
         [(OkBackendReg src-reg)
           (OkCompilerBackend
             (string-append
+              (match op
+                [(IrMaskReduceAny)
+                  (str-cat
+                    "    "
+                    kortest-op
+                    " "
+                    src-reg
+                    ", "
+                    src-reg
+                    "\n    setne %al\n")]
+                [(IrMaskReduceAll)
+                  (if (or (= full-mask 0xffff) (= full-mask -1))
+                    (str-cat
+                      "    "
+                      kortest-op
+                      " "
+                      src-reg
+                      ", "
+                      src-reg
+                      "\n    setc %al\n")
+                    (str-cat
+                      "    "
+                      mask-move
+                      " "
+                      src-reg
+                      ", "
+                      mask-gpr
+                      "\n    "
+                      cmp-op
+                      " $"
+                      (int->string full-mask)
+                      ", "
+                      mask-gpr
+                      "\n    sete %al\n"))])
               (string-append
-                (string-append
-                  (str-cat "    " mask-move " " src-reg ", " mask-gpr "\n")
-                  (match op
-                    [(IrMaskReduceAny)
-                      (str-cat
-                        "    "
-                        test-op
-                        " "
-                        mask-gpr
-                        ", "
-                        mask-gpr
-                        "\n    setne %al\n")]
-                    [(IrMaskReduceAll)
-                      (str-cat
-                        "    "
-                        and-op
-                        " $"
-                        (int->string full-mask)
-                        ", "
-                        mask-gpr
-                        "\n    "
-                        cmp-op
-                        " $"
-                        (int->string full-mask)
-                        ", "
-                        mask-gpr
-                        "\n    sete %al\n")]))
-                "    movzbq %al, %rax\n")
-              (compiler-backend-emit-store-var-with-plan assignments dst "%rax")))]
+                "    movzbl %al, %eax\n"
+                (compiler-backend-emit-store-var-with-plan
+                  assignments
+                  dst
+                  "%rax"))))]
         [(ErrBackendReg message)
           (ErrCompilerBackend
             (compiler-diagnostic-with-message instr-diag message))]))))

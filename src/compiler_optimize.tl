@@ -825,23 +825,39 @@
         [(CompilerFloatNoF64) (IrNoValue)])]
     [(OptNoConst) (IrNoValue)]))
 
+(define (opt-finite-cast-input [src : OptKnownConst] [from-ty : AstType]) : CompilerFiniteCastInput
+  (match src
+    [(OptSomeConst value _)
+      (match value
+        [(IrValueI64 n) (CompilerFiniteCastInputI64 n)]
+        [(IrValueChar c) (CompilerFiniteCastInputChar c)]
+        [(IrValueF64 bits)
+          (match from-ty
+            [(AstTyF32)
+              (CompilerFiniteCastInputF32 (compiler-float-f32-bits-to-f64 bits))]
+            [_ (CompilerFiniteCastInputF64 (compiler-float-f64-from-bits bits))])]
+        [_ (CompilerFiniteCastNoInput)])]
+    [(OptNoConst) (CompilerFiniteCastNoInput)]))
+
+(define (opt-finite-cast-result-to-ir [result : CompilerFiniteCastResult]) : CompilerIrMaybeValue
+  (match result
+    [(CompilerFiniteCastResultI64 n) (IrSomeValue (IrValueI64 n))]
+    [(CompilerFiniteCastResultChar c) (IrSomeValue (IrValueChar c))]
+    [(CompilerFiniteCastResultF64 n) (opt-f64-to-ir-value n (AstTyF64))]
+    [(CompilerFiniteCastResultF32 n) (opt-f64-to-ir-value n (AstTyF32))]
+    [(CompilerFiniteCastNoResult) (IrNoValue)]))
+
 (define (opt-fold-cast
   [src : OptKnownConst]
   [from-ty : AstType]
   [to-ty : AstType]) : CompilerIrMaybeValue
-  (if (and (opt-int-or-char-type? from-ty) (opt-int-or-char-type? to-ty))
-    (match src
-      [(OptSomeConst value _)
-        (match (opt-normalize-scalar-to-i64 value from-ty)
-          [(OptSomeI64 n)
-            (match (opt-normalize-const (IrValueI64 n) to-ty)
-              [(OptSomeConst folded _) (IrSomeValue folded)]
-              [(OptNoConst) (IrNoValue)])]
-          [(OptNoI64) (IrNoValue)])]
-      [(OptNoConst) (IrNoValue)])
-    (if (and (opt-float-type? from-ty) (opt-float-type? to-ty))
-      (opt-fold-float-cast src from-ty to-ty)
-      (IrNoValue))))
+  (let
+    [input : CompilerFiniteCastInput (opt-finite-cast-input src from-ty)]
+    (match input
+      [(CompilerFiniteCastNoInput) (IrNoValue)]
+      [_
+        (opt-finite-cast-result-to-ir
+          (compiler-finite-cast-fold input from-ty to-ty))])))
 
 (define (opt-fold-binop
   [op : CompilerIrBinOp]
@@ -24104,12 +24120,86 @@
       (AstTyF64))
     (IrInstrNil)))
 
+(define (opt-finite-cast-fold-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (IrInstrCast 46 (IrValueI64 (- 0 42)) (AstTyI64) (AstTyF64))
+    (compiler-ir-instr-cons
+      (IrInstrCast 47 (IrValueI64 (- 0 1)) (AstTyU64) (AstTyF64))
+      (compiler-ir-instr-cons
+        (IrInstrCast 48 (IrValueI64 (- 0 1)) (AstTyU64) (AstTyF32))
+        (compiler-ir-instr-cons
+          (IrInstrCast 49 (IrValueChar #A') (AstTyChar) (AstTyF64))
+          (compiler-ir-instr-cons
+            (IrInstrCast
+              50
+              (IrValueF64 (opt-test-f64-bits "3.75"))
+              (AstTyF64)
+              (AstTyI64))
+            (compiler-ir-instr-cons
+              (IrInstrCast
+                51
+                (IrValueF64 (opt-test-f64-bits "-3.75"))
+                (AstTyF64)
+                (AstTyI64))
+              (compiler-ir-instr-cons
+                (IrInstrCast
+                  52
+                  (IrValueF64 (opt-test-f64-bits "65.9"))
+                  (AstTyF64)
+                  (AstTyChar))
+                (compiler-ir-instr-cons
+                  (IrInstrCast
+                    53
+                    (IrValueF64 (opt-test-f32-bits "3.9"))
+                    (AstTyF32)
+                    (AstTyI64))
+                  (compiler-ir-instr-cons
+                    (IrInstrCast 54 (IrValueI64 16777217) (AstTyI64) (AstTyF32))
+                    (compiler-ir-instr-cons
+                      (IrInstrCast
+                        55
+                        (IrValueF64 (opt-test-f32-bits "-3.9"))
+                        (AstTyF32)
+                        (AstTyI64))
+                      (IrInstrNil))))))))))))
+
+(define (opt-finite-cast-no-fold-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (IrInstrCast
+      60
+      (IrValueF64 (opt-test-f64-bits "9223372036854775808.0"))
+      (AstTyF64)
+      (AstTyI64))
+    (compiler-ir-instr-cons
+      (IrInstrCast
+        61
+        (IrValueF64 (opt-test-f64-bits "-1.0"))
+        (AstTyF64)
+        (AstTyU8))
+      (compiler-ir-instr-cons
+        (IrInstrCast
+          62
+          (IrValueF64 (opt-test-f64-bits "256.0"))
+          (AstTyF64)
+          (AstTyChar))
+        (compiler-ir-instr-cons
+          (IrInstrCast
+            63
+            (IrValueF64 (opt-test-f64-bits "9223372036854775808.0"))
+            (AstTyF64)
+            (AstTyU64))
+          (IrInstrNil))))))
+
 (define (compiler-optimize-float-fold-ok?) : bool
   (let
     [pos : CompilerIrInstrList
       (opt-fold-instrs (OptConstNil) (opt-float-fold-instrs))]
     [neg : CompilerIrInstrList
       (opt-fold-instrs (OptConstNil) (opt-float-fold-invalid-instrs))]
+    [finite-casts : CompilerIrInstrList
+      (opt-fold-instrs (OptConstNil) (opt-finite-cast-fold-instrs))]
+    [deferred-casts : CompilerIrInstrList
+      (opt-fold-instrs (OptConstNil) (opt-finite-cast-no-fold-instrs))]
     (and
       (= (opt-count-arith-instrs pos) 0)
       (= (opt-count-cast-instrs pos) 0)
@@ -24117,7 +24207,25 @@
       (opt-mov-dst-bool-value? pos 42 true)
       (opt-mov-dst-f64-bits? pos 43 (opt-test-f64-bits "-3.75"))
       (opt-mov-dst-f64-bits? pos 44 (opt-test-f32-bits "1.00000001"))
-      (= (opt-count-arith-instrs neg) 1))))
+      (= (opt-count-arith-instrs neg) 1)
+      (= (opt-count-cast-instrs finite-casts) 0)
+      (opt-mov-dst-f64-bits? finite-casts 46 (opt-test-f64-bits "-42.0"))
+      (opt-mov-dst-f64-bits?
+        finite-casts
+        47
+        (opt-test-f64-bits "18446744073709551616.0"))
+      (opt-mov-dst-f64-bits?
+        finite-casts
+        48
+        (opt-test-f32-bits "18446744073709551616.0"))
+      (opt-mov-dst-f64-bits? finite-casts 49 (opt-test-f64-bits "65.0"))
+      (= (opt-mov-dst-i64-value finite-casts 50 999) 3)
+      (= (opt-mov-dst-i64-value finite-casts 51 999) (- 0 3))
+      (= (opt-mov-dst-char-code finite-casts 52 0) 65)
+      (= (opt-mov-dst-i64-value finite-casts 53 999) 3)
+      (opt-mov-dst-f64-bits? finite-casts 54 (opt-test-f32-bits "16777217.0"))
+      (= (opt-mov-dst-i64-value finite-casts 55 999) (- 0 3))
+      (= (opt-count-cast-instrs deferred-casts) 4))))
 
 (define (compiler-optimize-typed-fold-self-test) : i64
   (let

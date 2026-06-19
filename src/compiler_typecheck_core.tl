@@ -31837,15 +31837,12 @@
       (match (macro-expr-clause-list-from-args args)
         [(OkMacroClauseList clauses)
           (OkMacroEnv
-            (CtfeEnvCons
-              (intern-str name)
-              (CtfeExprClauseList clauses)
-              (box env)))]
+            (ctfe-env-extend env (intern-str name) (CtfeExprClauseList clauses)))]
         [(ErrMacroClauseList diag) (ErrMacroEnv diag)])
       (match (macro-check-variadic-operands ctx type-env ty args)
         [(OkMacroCheck)
           (OkMacroEnv
-            (CtfeEnvCons (intern-str name) (CtfeExprList args) (box env)))]
+            (ctfe-env-extend env (intern-str name) (CtfeExprList args)))]
         [(ErrMacroCheck diag) (ErrMacroEnv diag)]))))
 
 (define (macro-bind-fixed-param
@@ -31860,23 +31857,23 @@
     (match (macro-type-arg ctx arg-expr)
       [(OkMacroTypeArg resolved-ty)
         (OkMacroEnv
-          (CtfeEnvCons (intern-str name) (CtfeType resolved-ty) (box env)))]
+          (ctfe-env-extend env (intern-str name) (CtfeType resolved-ty)))]
       [(ErrMacroTypeArg diag) (ErrMacroEnv diag)])
     (if (macro-param-expr-clause? ctx ty)
       (match (macro-expr-clause-from-arg arg-expr)
         [(OkMacroClause clause)
           (OkMacroEnv
-            (CtfeEnvCons (intern-str name) (CtfeExprClause clause) (box env)))]
+            (ctfe-env-extend env (intern-str name) (CtfeExprClause clause)))]
         [(ErrMacroClause diag) (ErrMacroEnv diag)])
       (match (macro-check-operand ctx type-env ty arg-expr)
         [(OkMacroCheck)
           (OkMacroEnv
-            (CtfeEnvCons
+            (ctfe-env-extend
+              env
               (intern-str name)
               (CtfeExpr
                 arg-id
-                (tc-resolve-type ctx (tc-macro-signature-type ty)))
-              (box env)))]
+                (tc-resolve-type ctx (tc-macro-signature-type ty)))))]
         [(ErrMacroCheck diag) (ErrMacroEnv diag)]))))
 
 ;; Bind the unevaluated operand forms to the macro parameters as `Expr` values.

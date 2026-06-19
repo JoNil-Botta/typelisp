@@ -1196,8 +1196,8 @@ deliberate debug output. Hygiene implementation work is tracked by #1144.
 - Integer → `char`: truncates to the low byte.
 - `f64` ↔ `f32`: precision conversions (`f64` → `f32` rounds to binary32,
   `f32` → `f64` widens exactly).
-- Integer/`char` → float: produces the nearest representable float (the source
-  is treated as a signed value).
+- Integer/`char` → float: produces the nearest representable float. Integer
+  sources are interpreted using their source signedness; `char` zero-extends.
 - Float → integer/`char`: truncates toward zero, then keeps the low N bits of
   the target width. The runtime result of converting a float outside the target
   range is unspecified but defined (it does not trap or invoke UB).

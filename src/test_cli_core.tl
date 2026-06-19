@@ -1029,10 +1029,12 @@
         (tltest-reach-mark-expr
           body
           (tltest-reach-mark-let-bindings bindings names)))]
-    [(AstExprLambda _ _ body-box)
-      (let
-        [body : AstExpr (ast-node-get body-box)]
-        (tltest-reach-mark-expr body names))]
+    [(AstExprLambda lambda-box)
+      (match (box-get lambda-box)
+        [(AstLambda _ _ body-box)
+          (let
+            [body : AstExpr (ast-node-get body-box)]
+            (tltest-reach-mark-expr body names))])]
     [(AstExprTuple exprs) (tltest-reach-mark-expr-list exprs names)]
     [(AstExprTupleRef tuple-box _)
       (let
@@ -1116,20 +1118,24 @@
           (tltest-reach-mark-expr
             init
             (tltest-reach-mark-expr end (tltest-reach-mark-expr start names)))))]
-    [(AstExprSpmdScan _ _ _ start-box end-box _ _ init-box value-box body-box)
-      (let
-        [start : AstExpr (ast-node-get start-box)]
-        [end : AstExpr (ast-node-get end-box)]
-        [init : AstExpr (ast-node-get init-box)]
-        [value : AstExpr (ast-node-get value-box)]
-        [body : AstExpr (ast-node-get body-box)]
-        (tltest-reach-mark-expr
-          body
-          (tltest-reach-mark-expr
-            value
+    [(AstExprSpmdScan scan-box)
+      (match (box-get scan-box)
+        [(AstSpmdScan _ _ _ start-box end-box _ _ init-box value-box body-box)
+          (let
+            [start : AstExpr (ast-node-get start-box)]
+            [end : AstExpr (ast-node-get end-box)]
+            [init : AstExpr (ast-node-get init-box)]
+            [value : AstExpr (ast-node-get value-box)]
+            [body : AstExpr (ast-node-get body-box)]
             (tltest-reach-mark-expr
-              init
-              (tltest-reach-mark-expr end (tltest-reach-mark-expr start names))))))]
+              body
+              (tltest-reach-mark-expr
+                value
+                (tltest-reach-mark-expr
+                  init
+                  (tltest-reach-mark-expr
+                    end
+                    (tltest-reach-mark-expr start names))))))])]
     [(AstExprSpmdBroadcast value-box lane-box)
       (let
         [value : AstExpr (ast-node-get value-box)]

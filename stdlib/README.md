@@ -237,7 +237,11 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   and conversion/iteration helpers `-from-array` / `-to-array` / `-extend` /
   `-reverse!` / `-contains?`; `I64Vec` also keeps `-sum` and adds owned-vector
   higher-order `i64-vec-fold*` / `i64-vec-map*` helpers that take function
-  values. The family metadata is not scalar-only: checked fixtures cover
+  values. The module also exposes the declaration-emitting `(vector T)` macro,
+  which splices a local `Vec` family with `new` / `push` / `len` / `get` /
+  `set` / `capacity` for one instantiation per caller module while the final
+  module-returning generated-family form matures. The family metadata is not
+  scalar-only: checked fixtures cover
   nominal enum and struct element types, with `push`/`set!` moving values into
   array slots, `pop` moving the last element out, and growth/snapshot helpers
   copying the live prefix through the same move semantics. Current aggregate

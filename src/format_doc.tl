@@ -169,16 +169,25 @@
 (define (doc-group [doc : Doc]) : Doc
   (DGroup (box doc)))
 
+;; Lazily grown run of spaces shared by every indent request. `spaces` is called
+;; once per emitted line break, so rebuilding the indent with `string-append`
+;; each time was O(indent^2) copying and allocated one string per space. Growing
+;; a single cache and slicing the needed prefix makes each call one O(indent)
+;; copy with no quadratic blow-up.
+(define spaces-cache : String
+  "")
+
 (define (spaces [count : i64]) : String
-  (let
-    [i : i64 0]
-    [out : String ""]
+  (if (<= count 0)
+    ""
     (begin
-      (while (< i count)
-        (begin
-          (set! out (string-append out " "))
-          (set! i (+ i 1))))
-      out)))
+      (while (< (string-length spaces-cache) count)
+        (set!
+          spaces-cache
+          (string-append
+            spaces-cache
+            "                                                                ")))
+      (substring spaces-cache 0 count))))
 
 (define (flat-width-seq [seq : DocSeq]) : i64
   (let

@@ -569,6 +569,12 @@
     (array-set! (struct-get pool slots) id node)
     pool))
 
+(define (ast-node-pool-state-capture) : AstExprNodePoolState
+  (AstExprNodePoolState
+    ast-node-pool-slots
+    ast-node-pool-count
+    node-pool-base-arena))
+
 ;; --- AstType node pool (flat ty ids) ---
 ;; AstType's recursive children are stored as i64 ids into this pool instead of
 ;; (Box AstType), mirroring the AstExpr pool above. The pool is PERSISTENT for a
@@ -1298,6 +1304,33 @@
   (begin
     (ty-node-pool-truncate! 0)
     (set! ty-node-pool-exhausted false)))
+
+(define (ty-node-pool-state-capture) : AstTypeNodePoolState
+  (AstTypeNodePoolState
+    ty-node-pool-slots
+    ty-node-pool-count
+    node-pool-base-arena
+    ty-node-pool-exhausted
+    ty-node-dedup-slots
+    ty-node-dedup-count))
+
+(define (ast-node-pools-state-install!
+  [expr-pool : AstExprNodePoolState]
+  [type-pool : AstTypeNodePoolState]) : unit
+  (begin
+    (set! ast-node-pool-slots (struct-get expr-pool slots))
+    (set! ast-node-pool-count (struct-get expr-pool count))
+    (set! ty-node-pool-slots (struct-get type-pool slots))
+    (set! ty-node-pool-count (struct-get type-pool count))
+    (set! ty-node-pool-exhausted (struct-get type-pool exhausted))
+    (set!
+      ty-node-dedup-capacity
+      (array-length (struct-get type-pool dedup-slots)))
+    (set! ty-node-dedup-slots (struct-get type-pool dedup-slots))
+    (set! ty-node-dedup-count (struct-get type-pool dedup-count))
+    ;; Driver-created states allocate both pools in one persistent arena. Keep
+    ;; the shared compatibility grow/persist target there after both installs.
+    (set! node-pool-base-arena (struct-get expr-pool base-arena))))
 
 (defenum AstExprList
   (AstExprNil)

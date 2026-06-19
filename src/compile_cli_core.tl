@@ -892,7 +892,8 @@
   (let
     [state : CompilerDriverState
       (compiler-driver-state-session-program-cache-disable
-        (compiler-driver-state-session-cache-enable (compiler-driver-state-new)))]
+        (compiler-driver-state-session-cache-enable
+          (compiler-driver-state-new-for-compile)))]
     (match config
       [(CompileCliBatchConfig
           batch-path
@@ -942,7 +943,7 @@
             backend-mode
             opt-level)
           (compile-cli-run-compile-file
-            (compiler-driver-state-new)
+            (compiler-driver-state-new-for-compile)
             input-path
             output-path
             emit-ir

@@ -378,6 +378,36 @@
 (define compiler-backend-addr-of-forwarding-src : (Array i64)
   (make-array i64 0))
 
+(defenum CompilerBackendEmitInstrsMode
+  (CompilerBackendEmitInstrsModeNormal)
+  (CompilerBackendEmitInstrsModeRax i64 AstType))
+
+(define compiler-backend-emit-instrs-loop-active : bool
+  false)
+(define compiler-backend-emit-instrs-continue-pending : bool
+  false)
+(define compiler-backend-emit-instrs-next-mode : CompilerBackendEmitInstrsMode
+  (CompilerBackendEmitInstrsModeNormal))
+
+(define (compiler-backend-empty-instr-list) : CompilerIrInstrList
+  IrInstrNil)
+
+(define compiler-backend-emit-instrs-next-instrs : CompilerIrInstrList
+  (compiler-backend-empty-instr-list))
+(define compiler-backend-emit-instrs-next-buf : TextBuf
+  (text-buf-empty))
+
+(define (compiler-backend-emit-instrs-set-continue!
+  [mode : CompilerBackendEmitInstrsMode]
+  [instrs : CompilerIrInstrList]
+  [buf : TextBuf]) : ResultCompilerBackend
+  (begin
+    (set! compiler-backend-emit-instrs-continue-pending true)
+    (set! compiler-backend-emit-instrs-next-mode mode)
+    (set! compiler-backend-emit-instrs-next-instrs instrs)
+    (set! compiler-backend-emit-instrs-next-buf buf)
+    (OkCompilerBackend "")))
+
 (defenum ResultBackendRuntimePlan
   (OkBackendRuntimePlan CompilerBackendRuntimePlan)
   (ErrBackendRuntimePlan String))
@@ -15055,7 +15085,7 @@
         "%rax"
         rax-ty))))
 
-(define (compiler-backend-emit-instrs-with-rax
+(define (compiler-backend-emit-instrs-with-rax-step
   [target : CompilerBackendTarget]
   [function : String]
   [source-function : String]
@@ -16778,7 +16808,7 @@
         (ErrCompilerBackend
           (compiler-backend-apply-instr-diagnostic message instr-diag))])))
 
-(define (compiler-backend-emit-instrs
+(define (compiler-backend-emit-instrs-step
   [target : CompilerBackendTarget]
   [function : String]
   [source-function : String]
@@ -18895,6 +18925,210 @@
             func-diag
             use-counts
             buf)])]))
+
+(define (compiler-backend-emit-instrs-loop
+  [target : CompilerBackendTarget]
+  [function : String]
+  [source-function : String]
+  [blocks : CompilerIrBlockList]
+  [current-label : String]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [mode : CompilerBackendEmitInstrsMode]
+  [instrs : CompilerIrInstrList]
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]
+  [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
+  [ret-ty : AstType]
+  [plan : CompilerBackendRuntimePlan]
+  [functions : CompilerIrFunctionList]
+  [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
+  [spans : CompilerSourceSpans]
+  [func-diag : CompilerDiagnostic]
+  [use-counts : (Array i64)]
+  [buf : TextBuf]) : ResultCompilerBackend
+  (let
+    [current-mode : CompilerBackendEmitInstrsMode mode]
+    [current-instrs : CompilerIrInstrList instrs]
+    [current-buf : TextBuf buf]
+    [done : bool false]
+    [ok : bool true]
+    [asm-out : String ""]
+    [diag-out : CompilerDiagnostic (compiler-diagnostic-at-start "" "")]
+    (begin
+      (set! compiler-backend-emit-instrs-loop-active true)
+      (while (not done)
+        (let
+          [step-result : ResultCompilerBackend
+            (begin
+              (set! compiler-backend-emit-instrs-continue-pending false)
+              (match current-mode
+                [(CompilerBackendEmitInstrsModeNormal)
+                  (compiler-backend-emit-instrs-step
+                    target
+                    function
+                    source-function
+                    blocks
+                    current-label
+                    fallthrough
+                    current-instrs
+                    assignments
+                    vars
+                    types
+                    global-types
+                    ret-ty
+                    plan
+                    functions
+                    externs
+                    program-index
+                    spans
+                    func-diag
+                    use-counts
+                    current-buf)]
+                [(CompilerBackendEmitInstrsModeRax rax-var rax-ty)
+                  (compiler-backend-emit-instrs-with-rax-step
+                    target
+                    function
+                    source-function
+                    blocks
+                    current-label
+                    fallthrough
+                    rax-var
+                    rax-ty
+                    current-instrs
+                    assignments
+                    vars
+                    types
+                    global-types
+                    ret-ty
+                    plan
+                    functions
+                    externs
+                    program-index
+                    spans
+                    func-diag
+                    use-counts
+                    current-buf)]))]
+          (match step-result
+            [(OkCompilerBackend asm)
+              (if compiler-backend-emit-instrs-continue-pending
+                (begin
+                  (set! current-mode compiler-backend-emit-instrs-next-mode)
+                  (set! current-instrs compiler-backend-emit-instrs-next-instrs)
+                  (set! current-buf compiler-backend-emit-instrs-next-buf))
+                (begin
+                  (set! asm-out asm)
+                  (set! done true)))]
+            [(ErrCompilerBackend message)
+              (begin
+                (set! diag-out message)
+                (set! ok false)
+                (set! done true))])))
+      (set! compiler-backend-emit-instrs-loop-active false)
+      (if ok
+        (OkCompilerBackend asm-out)
+        (ErrCompilerBackend diag-out)))))
+
+(define (compiler-backend-emit-instrs
+  [target : CompilerBackendTarget]
+  [function : String]
+  [source-function : String]
+  [blocks : CompilerIrBlockList]
+  [current-label : String]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [instrs : CompilerIrInstrList]
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]
+  [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
+  [ret-ty : AstType]
+  [plan : CompilerBackendRuntimePlan]
+  [functions : CompilerIrFunctionList]
+  [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
+  [spans : CompilerSourceSpans]
+  [func-diag : CompilerDiagnostic]
+  [use-counts : (Array i64)]
+  [buf : TextBuf]) : ResultCompilerBackend
+  (if compiler-backend-emit-instrs-loop-active
+    (compiler-backend-emit-instrs-set-continue!
+      (CompilerBackendEmitInstrsModeNormal)
+      instrs
+      buf)
+    (compiler-backend-emit-instrs-loop
+      target
+      function
+      source-function
+      blocks
+      current-label
+      fallthrough
+      (CompilerBackendEmitInstrsModeNormal)
+      instrs
+      assignments
+      vars
+      types
+      global-types
+      ret-ty
+      plan
+      functions
+      externs
+      program-index
+      spans
+      func-diag
+      use-counts
+      buf)))
+
+(define (compiler-backend-emit-instrs-with-rax
+  [target : CompilerBackendTarget]
+  [function : String]
+  [source-function : String]
+  [blocks : CompilerIrBlockList]
+  [current-label : String]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [rax-var : i64]
+  [rax-ty : AstType]
+  [instrs : CompilerIrInstrList]
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]
+  [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
+  [ret-ty : AstType]
+  [plan : CompilerBackendRuntimePlan]
+  [functions : CompilerIrFunctionList]
+  [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
+  [spans : CompilerSourceSpans]
+  [func-diag : CompilerDiagnostic]
+  [use-counts : (Array i64)]
+  [buf : TextBuf]) : ResultCompilerBackend
+  (if compiler-backend-emit-instrs-loop-active
+    (compiler-backend-emit-instrs-set-continue!
+      (CompilerBackendEmitInstrsModeRax rax-var rax-ty)
+      instrs
+      buf)
+    (compiler-backend-emit-instrs-loop
+      target
+      function
+      source-function
+      blocks
+      current-label
+      fallthrough
+      (CompilerBackendEmitInstrsModeRax rax-var rax-ty)
+      instrs
+      assignments
+      vars
+      types
+      global-types
+      ret-ty
+      plan
+      functions
+      externs
+      program-index
+      spans
+      func-diag
+      use-counts
+      buf)))
 
 (define (compiler-backend-emit-block
   [target : CompilerBackendTarget]

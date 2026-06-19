@@ -762,6 +762,28 @@
 (import (gen \"x\"))
 (define (main) : i64 (answer))")
 
+(define (compiler-typecheck-smoke-module-macro-type-key-source) : String
+  "(defmacro (boxmod [T : type]) : Module
+  (let
+    [mod-name : Expr (expr-var (string-append \"generated.box.\" (type-key T)))]
+    `(begin
+      (module ,mod-name)
+      (defstruct Boxed (value ,T))
+      (define (make [value : ,T]) : Boxed (Boxed value))
+      (define (read [box : Boxed]) : ,T (struct-get box value))
+      (export (type Boxed))
+      (export (constructor Boxed))
+      (export (value make))
+      (export (value read)))))
+(import (boxmod i64) as bi)
+(import (boxmod i64) as bi2)
+(import (boxmod String) as bs)
+(import (boxmod (-> i64 i64)) as bf)
+(define (main) : i64
+  (+ (bi.read (bi.make 20))
+    (+ (bi2.read (bi2.make 1))
+      (string-length (bs.read (bs.make \"typed\"))))))")
+
 (define (compiler-typecheck-smoke-module-macro-identity-tests-ok?) : bool
   (and
     (compiler-typecheck-ok?
@@ -774,7 +796,9 @@
       "typecheck: generated import collision for value answer between generated identities :gen-a(string_1_97) and :gen-b(string_1_98); use an explicit alias or full generated-module access")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-smoke-module-macro-local-collision-source)
-      "typecheck: generated import collision for value answer from generated identity :gen(string_1_120) with ordinary binding local declaration; use an explicit alias or full generated-module access")))
+      "typecheck: generated import collision for value answer from generated identity :gen(string_1_120) with ordinary binding local declaration; use an explicit alias or full generated-module access")
+    (compiler-typecheck-ok?
+      (compiler-typecheck-smoke-module-macro-type-key-source))))
 
 ;; Declaration-emitting macros must be able to emit functions with non-trivial
 ;; bodies (#3193 / #3074). The macro-output serializer round-trips arithmetic,
@@ -833,6 +857,29 @@
     (export (value bumped))))
 (import (int-box) as ib)
 (define (main) : i64 (ib.bumped (ib.make 20)))")
+
+(define (compiler-typecheck-smoke-type-macro-param-source) : String
+  "(defstruct Pair (value i64))
+(defmacro (emit-pair [T : type]) : Decls
+  `(begin
+    (define (typed-id [v : ,T]) : ,T
+      (let [x : ,T v] (ann x : ,T)))
+    (define (typed-init) : ,T (init : ,T))
+    (define (typed-array [v : ,T]) : (Array ,T)
+      (let [items : (Array ,T) (make-array ,T 1)]
+        (begin
+          (array-set! items 0 v)
+          items)))))
+(defmacro (emit-cast [T : type]) : Decls
+  `(define (typed-cast [v : i64]) : ,T (cast v : ,T)))
+(emit-pair Pair)
+(emit-cast i64)
+(define (main) : i64
+  (+ (typed-cast 1)
+    (struct-get (typed-id (Pair 41)) value)))")
+
+(define (compiler-typecheck-smoke-type-macro-param-tests-ok?) : bool
+  (compiler-typecheck-ok? (compiler-typecheck-smoke-type-macro-param-source)))
 
 (define (compiler-typecheck-smoke-decl-macro-body-tests-ok?) : bool
   (and
@@ -1108,6 +1155,9 @@
     (unless
       (compiler-typecheck-smoke-decl-macro-body-tests-ok?)
       (panic "typecheck: declaration macro body smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-type-macro-param-tests-ok?)
+      (panic "typecheck: type macro param smoke failed"))
     (unless
       (compiler-typecheck-smoke-prefix-cache-root-isolation-ok?)
       (panic "typecheck: prefix cache root smoke failed"))

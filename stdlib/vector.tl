@@ -39,6 +39,84 @@
 ;#     [v : I64Vec (i64-vec-push (i64-vec-push (i64-vec-new) 10) 32)]
 ;#     (+ (i64-vec-get v 0 0) (i64-vec-get v 1 0))))
 ;# ```
+;#
+;# The declaration-emitting `(vector T)` macro is the migration path away from
+;# hand-written `comptime-decl` vector families. It splices a local `Vec` type
+;# plus `new`, `push`, `len`, `get`, `set`, and `capacity` declarations for the
+;# requested element type:
+;#
+;# ```typelisp
+;# (import "stdlib/vector.tl")
+;#
+;# (vector i64)
+;#
+;# (define (main) : i64
+;#   (let
+;#     [v : Vec (push (push (new) 10) 32)]
+;#     (+ (get v 0 0) (get v 1 0))))
+;# ```
+;: Emit a local growable vector family for element type `T`.
+;:
+;: The generated declarations are intended for one vector instantiation per
+;: module while the final module-returning family is still maturing. They define
+;: `Vec`, `new`, `push`, `len`, `get`, `set`, and `capacity`; helper names
+;: `vec-copy-range` and `vec-grow` are also emitted into the current module.
+(defmacro (vector [T : type]) : Decls
+  `(begin
+    (defstruct Vec
+      (slots (Array ,T))
+      (len i64))
+    (define (new) : Vec
+      (Vec (make-array ,T 4) 0))
+    (define (len [v : Vec]) : i64
+      (struct-get v len))
+    (define (capacity [v : Vec]) : i64
+      (array-length (struct-get v slots)))
+    (define (get [v : Vec] [index : i64] [fallback : ,T]) : ,T
+      (if (if (>= index 0)
+        (< index (len v))
+        false)
+        (array-ref (struct-get v slots) index)
+        fallback))
+    (define (set [v : Vec] [index : i64] [value : ,T]) : Vec
+      (begin
+        (if (if (>= index 0)
+          (< index (len v))
+          false)
+          (array-set! (struct-get v slots) index value)
+          unit)
+        v))
+    (define (vec-copy-range
+      [dst : (Array ,T)]
+      [src : (Array ,T)]
+      [index : i64]
+      [count : i64]) : unit
+      (if (>= index count)
+        unit
+        (begin
+          (array-set! dst index (array-ref src index))
+          (vec-copy-range dst src (+ index 1) count))))
+    (define (vec-grow [v : Vec]) : Vec
+      (let
+        [n : i64 (len v)]
+        [bigger : (Array ,T) (make-array ,T (* (capacity v) 2))]
+        (begin
+          (vec-copy-range bigger (struct-get v slots) 0 n)
+          (set! (struct-get v slots) bigger)
+          v)))
+    (define (push [v : Vec] [value : ,T]) : Vec
+      (if (< (len v) (capacity v))
+        (let
+          [slots : (Array ,T) (struct-get v slots)]
+          [index : i64 (len v)]
+          (begin
+            (array-set! slots index value)
+            (set! (struct-get v len) (+ index 1))
+            v))
+        (push (vec-grow v) value)))))
+
+(export (macro vector))
+
 ;: A growable `i64` sequence: the backing array and the number of live
 ;: elements stored in its prefix `[0, len)`. Capacity is `(array-length slots)`.
 (comptime-decl

@@ -263,6 +263,13 @@
       (string-eq (format-token-text (format-token-at stream 2)) "-0b101010")
       (= (format-token-tag (format-token-at stream 4)) (fmt-tag-end)))))
 
+(define (format-cst-apostrophe-char-ok?) : bool
+  (let
+    [stream : FormatTokenStream (format-lex "'a' '\"' '('")]
+    (and
+      (= (format-token-tag-count stream (fmt-tag-char)) 3)
+      (= (format-token-tag (format-token-at stream 3)) (fmt-tag-end)))))
+
 (define (format-cst-error-location-ok?) : bool
   (match (parse-format-source-result "(define x\n  ]")
     [(OkFormatCst _) false]
@@ -285,5 +292,6 @@
       (unless (= (format-token-tag-count stream (fmt-tag-char)) 1) (return 5))
       (unless (format-cst-boxed-nested-ok?) (return 6))
       (unless (format-cst-prefixed-int-ok?) (return 7))
-      (unless (format-cst-error-location-ok?) (return 8))
+      (unless (format-cst-apostrophe-char-ok?) (return 8))
+      (unless (format-cst-error-location-ok?) (return 9))
       42)))

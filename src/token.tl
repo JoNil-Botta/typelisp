@@ -28,7 +28,8 @@
 ;; The token kinds TypeLisp's s-expression surface needs: an opening paren, a
 ;; closing paren, an integer or float literal, a symbol (any operator / keyword / name -
 ;; carries an interned lexeme id), a string literal (`"..."`, carries the
-;; sliced inner text), a character literal (`#x'` / `#\x'`, carries the char),
+;; sliced inner text), a character literal (`'x'`, with legacy bootstrap
+;; `#x'` / `#\x'` accepted, carries the char),
 ;; and an end-of-stream sentinel. `TStr`, `TChar`, and `TFloat` are appended last so the
 ;; existing variants/tags keep their stable ordering for every importer.
 (import "compiler_intern.tl")

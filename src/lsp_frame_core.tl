@@ -1188,6 +1188,29 @@
               (set! j (+ j 1))))))
       j)))
 
+(define (lsp-apostrophe-char-escape? [c : char]) : bool
+  (or (= c #n') (= c #t') (= c #r') (= c #0') (= c #\\') (= c #'')))
+
+(define (lsp-skip-apostrophe-char-literal [text : String] [i : i64] [n : i64]) : i64
+  (if (< (+ i 1) n)
+    (let
+      [payload : char (string-ref text (+ i 1))]
+      (cond
+        [(= payload #\\')
+          (if (and
+            (< (+ i 3) n)
+            (lsp-apostrophe-char-escape? (string-ref text (+ i 2)))
+            (= (string-ref text (+ i 3)) #''))
+            (+ i 4)
+            (+ i 1))]
+        [(or (= payload #'') (= payload #\newline') (= payload #\return'))
+          (+ i 1)]
+        [else
+          (if (and (< (+ i 2) n) (= (string-ref text (+ i 2)) #''))
+            (+ i 3)
+            (+ i 1))]))
+    (+ i 1)))
+
 ;; Maximal identifier token covering `off`, or "" when `off` is not on one.
 (define (lsp-symbol-at-offset [text : String] [off : i64]) : String
   (let
@@ -1313,6 +1336,7 @@
           [c : char (string-ref text i)]
           (cond
             [(= c #;') (set! i (lsp-skip-line text i n))]
+            [(= c #'') (set! i (lsp-skip-apostrophe-char-literal text i n))]
             [(= c ##') (set! i (lsp-skip-char-literal text i n))]
             [(= c #"') (set! i (lsp-skip-string text i n))]
             [(= c #(')
@@ -1364,6 +1388,7 @@
           [c : char (string-ref text i)]
           (cond
             [(= c #;') (set! i (lsp-skip-line text i n))]
+            [(= c #'') (set! i (lsp-skip-apostrophe-char-literal text i n))]
             [(= c ##') (set! i (lsp-skip-char-literal text i n))]
             [(= c #"') (set! i (lsp-skip-string text i n))]
             [(= c #(')
@@ -1713,7 +1738,7 @@
 (define (lsp-definition-smoke-skips-char-literals?) : bool
   (let
     [src : String
-      "(define (quote-char) : char #\"')\n(define (target) : i64 1)\n(define (use) : i64 (target))\n"]
+      "(define (quote-char) : char #\"')\n(define (apostrophe-quote-char) : char '\"')\n(define (target) : i64 1)\n(define (use) : i64 (target))\n"]
     (match (lsp-find-definition
       (lsp-documents-new)
       "file:///smoke.tl"
@@ -1721,7 +1746,7 @@
       src
       (string-vec-new)
       "target")
-      [(FoundDefLoc _ line col len) (and (= line 2) (= col 10) (= len 6))]
+      [(FoundDefLoc _ line col len) (and (= line 3) (= col 10) (= len 6))]
       [(MissingDefLoc) false])))
 
 (define (lsp-definition-smoke-qualified-base?) : bool
@@ -2042,6 +2067,7 @@
           [c : char (string-ref text j)]
           (cond
             [(= c #;') (set! j (lsp-skip-line text j n))]
+            [(= c #'') (set! j (lsp-skip-apostrophe-char-literal text j n))]
             [(= c ##') (set! j (lsp-skip-char-literal text j n))]
             [(= c #"') (set! j (lsp-skip-string text j n))]
             [(= c #(')
@@ -2086,6 +2112,8 @@
                   [c : char (string-ref text j)]
                   (cond
                     [(= c #;') (set! j (lsp-skip-line text j n))]
+                    [(= c #'')
+                      (set! j (lsp-skip-apostrophe-char-literal text j n))]
                     [(= c ##') (set! j (lsp-skip-char-literal text j n))]
                     [(= c #"') (set! j (lsp-skip-string text j n))]
                     [(= c #(')
@@ -2270,6 +2298,7 @@
           [c : char (string-ref text i)]
           (cond
             [(= c #;') (set! i (lsp-skip-line text i n))]
+            [(= c #'') (set! i (lsp-skip-apostrophe-char-literal text i n))]
             [(= c ##') (set! i (lsp-skip-char-literal text i n))]
             [(= c #"') (set! i (lsp-skip-string text i n))]
             [(= c #[')
@@ -2310,6 +2339,7 @@
           [c : char (string-ref text i)]
           (cond
             [(= c #;') (set! i (lsp-skip-line text i n))]
+            [(= c #'') (set! i (lsp-skip-apostrophe-char-literal text i n))]
             [(= c ##') (set! i (lsp-skip-char-literal text i n))]
             [(= c #"') (set! i (lsp-skip-string text i n))]
             [(= c #(')
@@ -2534,6 +2564,7 @@
           [c : char (string-ref text i)]
           (cond
             [(= c #;') (set! i (lsp-skip-line text i n))]
+            [(= c #'') (set! i (lsp-skip-apostrophe-char-literal text i n))]
             [(= c ##') (set! i (lsp-skip-char-literal text i n))]
             [(= c #"') (set! i (lsp-skip-string text i n))]
             [(= c #(')
@@ -3127,6 +3158,7 @@
           [c : char (string-ref text i)]
           (cond
             [(= c #;') (set! i (lsp-skip-line text i n))]
+            [(= c #'') (set! i (lsp-skip-apostrophe-char-literal text i n))]
             [(= c ##') (set! i (lsp-skip-char-literal text i n))]
             [(= c #"') (set! i (lsp-skip-string text i n))]
             [(= c #(')
@@ -3274,6 +3306,7 @@
           (begin
             (cond
               [(= c #;') (set! i (lsp-skip-line text i n))]
+              [(= c #'') (set! i (lsp-skip-apostrophe-char-literal text i n))]
               [(= c ##') (set! i (lsp-skip-char-literal text i n))]
               [(= c #"') (set! i (lsp-skip-string text i n))]
               [(= c #(')

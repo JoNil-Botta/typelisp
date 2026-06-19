@@ -52,6 +52,11 @@
   (OkFmtI64 i64)
   (ErrFmtI64 FormatSourceError))
 
+(defenum ResultFmtMaybeCharEnd
+  (NoFmtCharEnd)
+  (OkFmtCharEnd i64)
+  (ErrFmtCharEnd FormatSourceError))
+
 (define (fmt-tag-lparen) : i64
   1)
 
@@ -551,6 +556,55 @@
         ;; lint-allow: unreachable-code
         start)]))
 
+(define (fmt-apostrophe-escape? [c : char]) : bool
+  (or (= c #n') (= c #t') (= c #r') (= c #0') (= c #\\') (= c #'')))
+
+(define (fmt-char-close-error [src : String] [idx : i64] [n : i64]) : ResultFmtMaybeCharEnd
+  (if (< idx n)
+    (if (= (string-ref src idx) #'')
+      (OkFmtCharEnd (+ idx 1))
+      (ErrFmtCharEnd
+        (fmt-source-error-at src idx "format lexer: expected ' after character")))
+    (ErrFmtCharEnd
+      (fmt-source-error-at
+        src
+        (- idx 1)
+        "format lexer: unterminated character literal"))))
+
+(define (fmt-scan-apostrophe-char-end-result
+  [src : String]
+  [start : i64]
+  [n : i64]) : ResultFmtMaybeCharEnd
+  (if (< (+ start 1) n)
+    (let
+      [payload : char (string-ref src (+ start 1))]
+      (cond
+        [(= payload #\\')
+          (let
+            [esc-idx : i64 (+ start 2)]
+            (if (< esc-idx n)
+              (if (fmt-apostrophe-escape? (string-ref src esc-idx))
+                (fmt-char-close-error src (+ start 3) n)
+                (ErrFmtCharEnd
+                  (fmt-source-error-at
+                    src
+                    esc-idx
+                    "format lexer: unknown character escape")))
+              (ErrFmtCharEnd
+                (fmt-source-error-at
+                  src
+                  start
+                  "format lexer: unterminated character literal"))))]
+        [(or (= payload #'') (= payload #\newline') (= payload #\return'))
+          (NoFmtCharEnd)]
+        [else
+          (if (< (+ start 2) n)
+            (if (= (string-ref src (+ start 2)) #'')
+              (OkFmtCharEnd (+ start 3))
+              (NoFmtCharEnd))
+            (NoFmtCharEnd))]))
+    (NoFmtCharEnd)))
+
 (define (fmt-store-token
   [tokens : (Array FormatToken)]
   [starts : (Array i64)]
@@ -668,10 +722,23 @@
                   (set! count (+ count 1))
                   (set! i (+ i 1)))]
               [(= c #'')
-                (begin
-                  (fmt-store-token tokens starts count i (FmtQuote))
-                  (set! count (+ count 1))
-                  (set! i (+ i 1)))]
+                (match (fmt-scan-apostrophe-char-end-result src i n)
+                  [(OkFmtCharEnd end)
+                    (begin
+                      (fmt-store-token
+                        tokens
+                        starts
+                        count
+                        i
+                        (FmtChar (substring src i (- end i))))
+                      (set! count (+ count 1))
+                      (set! i end))]
+                  [(ErrFmtCharEnd err) (return (ErrFormatTokenStream err))]
+                  [(NoFmtCharEnd)
+                    (begin
+                      (fmt-store-token tokens starts count i (FmtQuote))
+                      (set! count (+ count 1))
+                      (set! i (+ i 1)))])]
               [(= c #`')
                 (begin
                   (fmt-store-token tokens starts count i (FmtBacktick))

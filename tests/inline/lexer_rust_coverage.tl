@@ -188,6 +188,70 @@
       #a'
       "escaped ordinary letter")))
 
+(test
+  lexer-apostrophe-char-literal-a
+  (let
+    [toks : (Array Token) (lex "'a'")]
+    (lexer-assert-char-eq
+      (token-char (array-ref toks 0))
+      #a'
+      "apostrophe lowercase single char")))
+
+(test
+  lexer-apostrophe-char-literal-space
+  (let
+    [toks : (Array Token) (lex "' '")]
+    (lexer-assert-char-eq
+      (token-char (array-ref toks 0))
+      #\space'
+      "apostrophe space single char")))
+
+(test
+  lexer-apostrophe-char-literal-double-quote
+  (let
+    [toks : (Array Token) (lex "'\"'")]
+    (lexer-assert-bool-eq
+      (= (cast (token-char (array-ref toks 0)) : i64) 34)
+      true
+      "apostrophe double quote single char")))
+
+(test
+  lexer-apostrophe-escaped-char-literal-newline
+  (let
+    [toks : (Array Token) (lex "'\\n'")]
+    (lexer-assert-char-eq
+      (token-char (array-ref toks 0))
+      #\newline'
+      "apostrophe escaped newline")))
+
+(test
+  lexer-apostrophe-invalid-escape-errors
+  (let
+    [r : ResultTokens (lex-result "'\\x'")]
+    (match r
+      [(OkTokens _) (lexer-assert-true false "should error")]
+      [(ErrTokens msg)
+        (let
+          [haystack : String msg]
+          [needle : String "unknown character escape"]
+          (lexer-assert-bool-eq
+            (string-contains (& haystack) (& needle))
+            true
+            "apostrophe unknown escape should error"))])))
+
+(test
+  lexer-apostrophe-quote-vs-char
+  (match (lex-result "'form")
+    [(OkTokens toks)
+      (lexer-assert-true
+        (and
+          (= (token-tag (array-ref toks 0)) (tag-quote))
+          (= (token-tag (array-ref toks 1)) (tag-sym))
+          (string-eq (token-sym (array-ref toks 1)) "form")
+          (= (token-tag (array-ref toks 2)) (tag-end)))
+        "apostrophe quote should still quote forms")]
+    [(ErrTokens msg) (lexer-assert-true false msg)]))
+
 ;; ---- 5. src/lexer.rs test_named_char_literal_in_context ----------------
 (test
   lexer-named-char-in-context

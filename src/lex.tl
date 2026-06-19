@@ -63,6 +63,11 @@
   (OkLexChar char)
   (ErrLexChar String))
 
+(defenum ResultMaybeLexCharLiteral
+  (NoLexCharLiteral)
+  (OkLexCharLiteral char i64)
+  (ErrLexCharLiteral String))
+
 (define (lex-ok? [message : String]) : bool
   (string-eq message ""))
 
@@ -497,6 +502,44 @@
     [(= c #0') #\nul']
     [else c]))
 
+(define (apostrophe-escaped-char-result [c : char]) : ResultLexChar
+  (cond
+    [(= c #n') (OkLexChar #\newline')]
+    [(= c #t') (OkLexChar #\tab')]
+    [(= c #r') (OkLexChar #\return')]
+    [(= c #0') (OkLexChar #\nul')]
+    [(= c #\\') (OkLexChar #\\')]
+    [(= c #'') (OkLexChar #'')]
+    [else (ErrLexChar "lexer: unknown character escape")]))
+
+(define (apostrophe-char-literal-result [src : String] [i : i64] [n : i64]) : ResultMaybeLexCharLiteral
+  (if (< (+ i 1) n)
+    (let
+      [payload : char (string-ref src (+ i 1))]
+      (cond
+        [(= payload #\\')
+          (let
+            [esc-idx : i64 (+ i 2)]
+            (if (< esc-idx n)
+              (match (apostrophe-escaped-char-result (string-ref src esc-idx))
+                [(OkLexChar c)
+                  (let
+                    [message : String (char-close-error src (+ i 3) n)]
+                    (if (lex-ok? message)
+                      (OkLexCharLiteral c (+ i 4))
+                      (ErrLexCharLiteral message)))]
+                [(ErrLexChar message) (ErrLexCharLiteral message)])
+              (ErrLexCharLiteral "lexer: unterminated character literal")))]
+        [(or (= payload #'') (= payload #\newline') (= payload #\return'))
+          (NoLexCharLiteral)]
+        [else
+          (if (< (+ i 2) n)
+            (if (= (string-ref src (+ i 2)) #'')
+              (OkLexCharLiteral payload (+ i 3))
+              (NoLexCharLiteral))
+            (NoLexCharLiteral))]))
+    (NoLexCharLiteral)))
+
 ;; Character payload for a literal beginning at `i`, where `src[i]` is `#`.
 (define (char-literal-value-result [src : String] [i : i64] [n : i64]) : ResultLexChar
   (if (< (+ i 1) n)
@@ -581,7 +624,12 @@
       [(is-space c) (OkLexI64 (+ i 1))]
       [(or (= c #(') (= c #[')) (OkLexI64 (+ i 1))]
       [(or (= c #)') (= c #]')) (OkLexI64 (+ i 1))]
-      [(or (= c #'') (= c #`')) (OkLexI64 (+ i 1))]
+      [(= c #'')
+        (match (apostrophe-char-literal-result src i n)
+          [(OkLexCharLiteral _ end) (OkLexI64 end)]
+          [(ErrLexCharLiteral message) (ErrLexI64 message)]
+          [(NoLexCharLiteral) (OkLexI64 (+ i 1))])]
+      [(= c #`') (OkLexI64 (+ i 1))]
       [(= c #,')
         (if (< (+ i 1) n)
           (if (= (string-ref src (+ i 1)) #@')
@@ -679,11 +727,24 @@
                 (set! count (+ count 1))
                 (set! i (+ i 1)))]
             [(= c #'')
-              (begin
-                (array-set! starts count i)
-                (array-set! toks count TQuote)
-                (set! count (+ count 1))
-                (set! i (+ i 1)))]
+              (match (apostrophe-char-literal-result src i n)
+                [(OkLexCharLiteral value end)
+                  (begin
+                    (array-set! starts count i)
+                    (array-set! toks count (TChar value))
+                    (set! count (+ count 1))
+                    (set! i end))]
+                [(ErrLexCharLiteral err)
+                  (begin
+                    (set! ok false)
+                    (set! message err)
+                    (set! err-pos i))]
+                [(NoLexCharLiteral)
+                  (begin
+                    (array-set! starts count i)
+                    (array-set! toks count TQuote)
+                    (set! count (+ count 1))
+                    (set! i (+ i 1)))])]
             [(= c #`')
               (begin
                 (array-set! starts count i)
@@ -888,11 +949,30 @@
                 (set! i (+ i 1))
                 (set! col (+ col 1)))]
             [(= c #'')
-              (begin
-                (array-set! stoks count (SpannedToken TQuote line col))
-                (set! count (+ count 1))
-                (set! i (+ i 1))
-                (set! col (+ col 1)))]
+              (let
+                [token-line : i64 line]
+                [token-col : i64 col]
+                (match (apostrophe-char-literal-result src i n)
+                  [(OkLexCharLiteral value end)
+                    (begin
+                      (array-set!
+                        stoks
+                        count
+                        (SpannedToken (TChar value) token-line token-col))
+                      (set! count (+ count 1))
+                      (set! col (+ col (- end i)))
+                      (set! i end))]
+                  [(ErrLexCharLiteral err)
+                    (begin
+                      (set! ok false)
+                      (set! message err)
+                      (set! err-pos i))]
+                  [(NoLexCharLiteral)
+                    (begin
+                      (array-set! stoks count (SpannedToken TQuote line col))
+                      (set! count (+ count 1))
+                      (set! i (+ i 1))
+                      (set! col (+ col 1)))]))]
             [(= c #`')
               (begin
                 (array-set! stoks count (SpannedToken TBacktick line col))
@@ -1311,8 +1391,50 @@
 (define (lex-char-source [body : String]) : String
   (string-append "#" (string-append body "'")))
 
+(define (lex-apostrophe-char-source [body : String]) : String
+  (string-append "'" (string-append body "'")))
+
+(define (lex-one-char-source-ok? [src : String] [want : char]) : bool
+  (match (lex-result src)
+    [(OkTokens toks)
+      (and
+        (= (token-tag (array-ref toks 0)) (tag-char))
+        (= (token-char (array-ref toks 0)) want)
+        (= (token-tag (array-ref toks 1)) (tag-end)))]
+    [(ErrTokens _) false]))
+
 (define (lex-one-char-ok? [body : String] [want : char]) : bool
-  (match (lex-result (lex-char-source body))
+  (lex-one-char-source-ok? (lex-char-source body) want))
+
+(define (lex-quote-vs-apostrophe-char-ok?) : bool
+  (and
+    (match (lex-result "'form")
+      [(OkTokens toks)
+        (and
+          (= (token-tag (array-ref toks 0)) (tag-quote))
+          (= (token-tag (array-ref toks 1)) (tag-sym))
+          (string-eq (token-sym (array-ref toks 1)) "form")
+          (= (token-tag (array-ref toks 2)) (tag-end)))]
+      [(ErrTokens _) false])
+    (match (lex-result "'ab'")
+      [(OkTokens toks)
+        (and
+          (= (token-tag (array-ref toks 0)) (tag-quote))
+          (= (token-tag (array-ref toks 1)) (tag-sym))
+          (string-eq (token-sym (array-ref toks 1)) "ab")
+          (= (token-tag (array-ref toks 2)) (tag-quote))
+          (= (token-tag (array-ref toks 3)) (tag-end)))]
+      [(ErrTokens _) false])
+    (match (lex-result "'a'")
+      [(OkTokens toks)
+        (and
+          (= (token-tag (array-ref toks 0)) (tag-char))
+          (= (token-char (array-ref toks 0)) #a')
+          (= (token-tag (array-ref toks 1)) (tag-end)))]
+      [(ErrTokens _) false])))
+
+(define (lex-one-apostrophe-char-ok? [body : String] [want : char]) : bool
+  (match (lex-result (lex-apostrophe-char-source body))
     [(OkTokens toks)
       (and
         (= (token-tag (array-ref toks 0)) (tag-char))
@@ -1332,7 +1454,18 @@
       (lex-one-char-ok? (string-append slash "newline") #\newline')
       (lex-one-char-ok? (string-append slash "tab") #\tab')
       (lex-one-char-ok? (string-append slash "return") #\return')
-      (lex-one-char-ok? (string-append slash "nul") #\nul'))))
+      (lex-one-char-ok? (string-append slash "nul") #\nul')
+      (lex-one-apostrophe-char-ok? "a" #a')
+      (lex-one-apostrophe-char-ok? "Z" #Z')
+      (lex-one-apostrophe-char-ok? "0" #0')
+      (lex-one-apostrophe-char-ok? "+" #+')
+      (lex-one-apostrophe-char-ok? " " #\space')
+      (lex-one-apostrophe-char-ok? (string-append slash "n") #\newline')
+      (lex-one-apostrophe-char-ok? (string-append slash "t") #\tab')
+      (lex-one-apostrophe-char-ok? (string-append slash "r") #\return')
+      (lex-one-apostrophe-char-ok? (string-append slash "0") #\nul')
+      (lex-one-apostrophe-char-ok? (string-append slash slash) #\\')
+      (lex-one-apostrophe-char-ok? (string-append slash "'") #''))))
 
 (define (lex-error-ok?
   [src : String]
@@ -1347,9 +1480,21 @@
         (span-eq? (source-error-span err) want-line want-col want-line want-col))]))
 
 (define (lex-error-spans-ok?) : bool
-  (and
-    (lex-error-ok? "\n#\\bogus'" 2 1 "lexer: unknown named character literal")
-    (lex-error-ok? "ok\n@" 2 1 "lexer: unexpected character")))
+  (let
+    [slash : String (lex-backslash-text)]
+    (and
+      (lex-error-ok? "\n#\\bogus'" 2 1 "lexer: unknown named character literal")
+      (lex-error-ok?
+        (lex-apostrophe-char-source (string-append slash "x"))
+        1
+        1
+        "lexer: unknown character escape")
+      (lex-error-ok?
+        (string-append "'" (string-append slash "n"))
+        1
+        1
+        "lexer: unterminated character literal")
+      (lex-error-ok? "ok\n@" 2 1 "lexer: unexpected character"))))
 
 (define (lex-prefixed-int-errors-ok?) : bool
   (and
@@ -1481,6 +1626,9 @@
             unit
             (set! ok false))
           (if (lex-char-literals-ok?)
+            unit
+            (set! ok false))
+          (if (lex-quote-vs-apostrophe-char-ok?)
             unit
             (set! ok false))
           (if (lex-error-spans-ok?)

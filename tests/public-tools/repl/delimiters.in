@@ -1,5 +1,7 @@
 (begin
   #\)'
+  '"'
+  '('
   ; comment with ( and )
   "not closing )1")
 .exit

@@ -49,8 +49,9 @@
 ;; `SStr` carries the inner text of a `"..."` string-literal datum: the reader
 ;; consumes the lexer's `TStr` token (#128) into it, so a quoted string reads as a
 ;; distinct atom rather than being conflated with a `SSym` of the same characters.
-;; `SChar` carries a `#x'` / `#\x'` character-literal datum (#333), likewise
-;; keeping chars distinct from symbols, ints, and strings. `SStr` and `SChar`
+;; `SChar` carries a character-literal datum (`'x'`, plus legacy bootstrap
+;; `#x'` / `#\x'`; #333), likewise keeping chars distinct from symbols, ints,
+;; and strings. `SStr` and `SChar`
 ;; are appended last so the existing variants keep their stable ordering for
 ;; every importer.
 (defenum Sexpr
@@ -287,7 +288,7 @@
 ;;   TFloat s -> (SFloat s)         a float atom carrying source text
 ;;   TSym s  -> (SSym s)            a symbol atom
 ;;   TStr s  -> (SStr s)            a string-literal atom (`"..."`, refs #128)
-;;   TChar c -> (SChar c)           a character-literal atom (`#x'`, refs #333)
+;;   TChar c -> (SChar c)           a character-literal atom (`'x'`, refs #333)
 ;;   TLParen -> read-list           consume '(' then read a list to its ')'
 ;;   TRParen -> error                a stray ')' with no opening '(' is malformed
 ;;   TEnd    -> error                end of stream where a form was expected

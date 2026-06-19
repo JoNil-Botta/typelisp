@@ -3,6 +3,7 @@
   "stderr_exact": "",
   "message_checks": [
     {"jsonpath_id": 2, "raw_contains": "\"success\":true", "raw_contains": "\"text\""},
-    {"jsonpath_id": 3, "raw_contains": "\"success\":true", "raw_contains": "(* x 2)"}
+    {"jsonpath_id": 3, "raw_contains": "\"success\":true", "raw_contains": "(* x 2)"},
+    {"jsonpath_id": 4, "raw_contains": "\"success\":true", "raw_not_contains": "(define (bad) : i64 0)"}
   ]
 }

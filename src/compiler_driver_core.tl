@@ -32,172 +32,50 @@
 (defstruct CompilerDriverState
   (expr-pool AstExprNodePoolState)
   (type-pool AstTypeNodePoolState)
-  (session-cache-enabled bool)
-  (session-program-cache-enabled bool)
-  (session-ast-floor (Array i64))
-  (session-ty-floor (Array i64))
-  (session-intern-floor (Array i64)))
-
-(define (compiler-driver-state-i64-cell [value : i64]) : (Array i64)
-  (let
-    [cell : (Array i64) (make-array i64 1)]
-    (begin
-      (array-set! cell 0 value)
-      cell)))
-
-(define (compiler-driver-state-cell-get [cell : (Array i64)]) : i64
-  (array-ref cell 0))
-
-(define (compiler-driver-state-cell-set! [cell : (Array i64)] [value : i64]) : unit
-  (array-set! cell 0 value))
+  (load-session CompilerLoadSessionState))
 
 (define (compiler-driver-state-new) : CompilerDriverState
   (CompilerDriverState
     (ast-expr-node-pool-state-create 1)
     (ast-type-node-pool-state-create 1)
-    false
-    true
-    (compiler-driver-state-i64-cell 0)
-    (compiler-driver-state-i64-cell 0)
-    (compiler-driver-state-i64-cell 0)))
+    (compiler-load-session-state-new)))
 
 (define (compiler-driver-state-session-cache-enabled?
   [state : CompilerDriverState]) : bool
-  (struct-get state session-cache-enabled))
+  (compiler-load-session-state-cache-enabled? (struct-get state load-session)))
 
 (define (compiler-driver-state-session-cache-enable
   [state : CompilerDriverState]) : CompilerDriverState
   (begin
-    ;; The loader cache implementation is still process-global; keep the
-    ;; compatibility cache enabled while the compile CLI threads job state.
-    (compiler-load-session-cache-enable!)
-    (CompilerDriverState
-      (struct-get state expr-pool)
-      (struct-get state type-pool)
-      true
-      (struct-get state session-program-cache-enabled)
-      (struct-get state session-ast-floor)
-      (struct-get state session-ty-floor)
-      (struct-get state session-intern-floor))))
+    (compiler-load-session-state-cache-enable! (struct-get state load-session))
+    state))
 
 (define (compiler-driver-state-session-program-cache-enabled?
   [state : CompilerDriverState]) : bool
-  (struct-get state session-program-cache-enabled))
+  (compiler-load-session-state-program-cache-enabled?
+    (struct-get state load-session)))
 
 (define (compiler-driver-state-session-program-cache-disable
   [state : CompilerDriverState]) : CompilerDriverState
-  (CompilerDriverState
-    (struct-get state expr-pool)
-    (struct-get state type-pool)
-    (struct-get state session-cache-enabled)
-    false
-    (struct-get state session-ast-floor)
-    (struct-get state session-ty-floor)
-    (struct-get state session-intern-floor)))
+  (begin
+    (compiler-load-session-state-program-cache-disable!
+      (struct-get state load-session))
+    state))
 
 (define (compiler-driver-state-apply-session-floors!
   [state : CompilerDriverState]) : unit
-  (if (compiler-driver-state-session-cache-enabled? state)
-    (compiler-load-session-floors-set!
-      (compiler-driver-state-cell-get (struct-get state session-ast-floor))
-      (compiler-driver-state-cell-get (struct-get state session-ty-floor))
-      (compiler-driver-state-cell-get (struct-get state session-intern-floor)))
-    (compiler-load-session-floors-set! 0 0 0)))
+  (compiler-load-session-state-use! (struct-get state load-session)))
 
 (define (compiler-driver-state-apply-session-flags!
   [state : CompilerDriverState]) : unit
-  (begin
-    (compiler-driver-state-apply-session-floors! state)
-    (compiler-load-session-cache-set-enabled!
-      (compiler-driver-state-session-cache-enabled? state))
-    (compiler-load-session-program-cache-set-enabled!
-      (compiler-driver-state-session-program-cache-enabled? state))))
+  (compiler-load-session-state-use! (struct-get state load-session)))
 
 (define (compiler-driver-state-capture-session-floors!
   [state : CompilerDriverState]) : unit
-  (if (compiler-driver-state-session-cache-enabled? state)
-    (begin
-      (compiler-driver-state-cell-set!
-        (struct-get state session-ast-floor)
-        (compiler-load-session-ast-floor-value))
-      (compiler-driver-state-cell-set!
-        (struct-get state session-ty-floor)
-        (compiler-load-session-ty-floor-value))
-      (compiler-driver-state-cell-set!
-        (struct-get state session-intern-floor)
-        (compiler-load-session-intern-floor-value)))
-    unit))
-
-(define compiler-driver-runtime-prelude-cache-capacity : i64
-  16)
-(define compiler-driver-runtime-prelude-cache : (Array
-    CompilerLoadPreludeCacheSlot)
-  (make-array CompilerLoadPreludeCacheSlot 16))
-(define compiler-driver-runtime-prelude-cache-ready : bool
-  false)
-
-(define (compiler-driver-runtime-prelude-cache-fill! [index : i64]) : unit
-  (if (>= index compiler-driver-runtime-prelude-cache-capacity)
-    unit
-    (begin
-      (array-set!
-        compiler-driver-runtime-prelude-cache
-        index
-        (CompilerLoadPreludeCacheEmpty))
-      (compiler-driver-runtime-prelude-cache-fill! (+ index 1)))))
-
-(define (compiler-driver-runtime-prelude-cache-ensure!) : unit
-  (if compiler-driver-runtime-prelude-cache-ready
-    unit
-    (begin
-      (compiler-driver-runtime-prelude-cache-fill! 0)
-      (set! compiler-driver-runtime-prelude-cache-ready true))))
-
-(define (compiler-driver-runtime-prelude-cache-lookup-from
-  [key : String]
-  [index : i64]) : CompilerLoadPreludeCacheLookup
-  (if (>= index compiler-driver-runtime-prelude-cache-capacity)
-    (CompilerLoadPreludeCacheMiss)
-    (match (array-ref compiler-driver-runtime-prelude-cache index)
-      [(CompilerLoadPreludeCacheEmpty) (CompilerLoadPreludeCacheMiss)]
-      [(CompilerLoadPreludeCacheFull slot-key decls paths modules seen)
-        (if (string-eq slot-key key)
-          (CompilerLoadPreludeCacheHit decls paths modules seen)
-          (compiler-driver-runtime-prelude-cache-lookup-from key (+ index 1)))])))
+  (compiler-load-session-state-use! (struct-get state load-session)))
 
 (define (compiler-driver-runtime-prelude-cache-lookup [key : String]) : CompilerLoadPreludeCacheLookup
-  (begin
-    (compiler-driver-runtime-prelude-cache-ensure!)
-    (compiler-driver-runtime-prelude-cache-lookup-from key 0)))
-
-(define (compiler-driver-runtime-prelude-cache-store-at
-  [key : String]
-  [decls : AstDeclList]
-  [paths : AstDeclPathList]
-  [modules : AstDeclModuleList]
-  [seen : SymI64Env]
-  [index : i64]) : unit
-  (if (>= index compiler-driver-runtime-prelude-cache-capacity)
-    unit
-    (match (array-ref compiler-driver-runtime-prelude-cache index)
-      [(CompilerLoadPreludeCacheEmpty)
-        (array-set!
-          compiler-driver-runtime-prelude-cache
-          index
-          (CompilerLoadPreludeCacheFull key decls paths modules seen))]
-      [(CompilerLoadPreludeCacheFull slot-key _ _ _ _)
-        (if (string-eq slot-key key)
-          (array-set!
-            compiler-driver-runtime-prelude-cache
-            index
-            (CompilerLoadPreludeCacheFull key decls paths modules seen))
-          (compiler-driver-runtime-prelude-cache-store-at
-            key
-            decls
-            paths
-            modules
-            seen
-            (+ index 1)))])))
+  (compiler-load-runtime-prelude-cache-lookup key))
 
 (define (compiler-driver-runtime-prelude-cache-store
   [key : String]
@@ -205,16 +83,7 @@
   [paths : AstDeclPathList]
   [modules : AstDeclModuleList]
   [seen : SymI64Env]) : unit
-  (begin
-    (compiler-driver-runtime-prelude-cache-ensure!)
-    (compiler-driver-runtime-prelude-cache-store-at
-      key
-      decls
-      paths
-      modules
-      seen
-      0)
-    (compiler-load-session-note-persistent!)))
+  (compiler-load-runtime-prelude-cache-store key decls paths modules seen))
 
 (define (compiler-driver-ty-node-pool-exhausted-diagnostic
   [input-path : String]) : CompilerDiagnostic

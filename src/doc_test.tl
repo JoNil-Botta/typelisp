@@ -2765,7 +2765,7 @@ typecheck: return type mismatch"))]
             doc-file
             (doc-test-session-cache-source)
             roots)]
-        [hits : i64 compiler-load-program-cache-hit-count]
+        [hits : i64 (compiler-load-program-cache-hit-count-value)]
         (begin
           (compiler-load-session-cache-disable-for-test!)
           (and (doc-test-run-report-ok? report) (> hits 0)))))))

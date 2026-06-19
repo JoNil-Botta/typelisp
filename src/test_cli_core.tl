@@ -1336,6 +1336,69 @@
               (tltest-reach-mark-name names name))]
           [_ (tltest-reach-mark-export-items rest names)]))]))
 
+(define (tltest-reach-mark-struct-cleanup
+  [cleanup : AstStructCleanup]
+  [names : StringI64Map]) : StringI64Map
+  (match cleanup
+    [(AstStructCleanupFn name) (tltest-reach-mark-name names (intern-str name))]
+    [(AstStructNoCleanup) names]))
+
+(define (tltest-reach-mark-enum-cleanup
+  [cleanup : AstEnumCleanup]
+  [names : StringI64Map]) : StringI64Map
+  (match cleanup
+    [(AstEnumCleanupFn name) (tltest-reach-mark-name names (intern-str name))]
+    [(AstEnumNoCleanup) names]))
+
+(define (tltest-reach-mark-field-cleanup
+  [cleanup : AstFieldCleanup]
+  [names : StringI64Map]) : StringI64Map
+  (match cleanup
+    [(AstFieldCleanupFn name) (tltest-reach-mark-name names (intern-str name))]
+    [_ names]))
+
+(define (tltest-reach-mark-field-cleanups
+  [fields : AstFieldDefList]
+  [names : StringI64Map]) : StringI64Map
+  (match fields
+    [(AstFieldDefNil) names]
+    [(AstFieldDefCons field rest)
+      (match field
+        [(AstFieldDef _ _ cleanup)
+          (tltest-reach-mark-field-cleanups
+            (box-get rest)
+            (tltest-reach-mark-field-cleanup cleanup names))])]))
+
+(define (tltest-reach-mark-variant-payload-cleanup
+  [cleanup : AstVariantPayloadCleanup]
+  [names : StringI64Map]) : StringI64Map
+  (match cleanup
+    [(AstVariantPayloadCleanupFn name)
+      (tltest-reach-mark-name names (intern-str name))]
+    [_ names]))
+
+(define (tltest-reach-mark-variant-payload-cleanups
+  [cleanups : AstVariantPayloadCleanupList]
+  [names : StringI64Map]) : StringI64Map
+  (match cleanups
+    [(AstVariantPayloadCleanupNil) names]
+    [(AstVariantPayloadCleanupCons cleanup rest)
+      (tltest-reach-mark-variant-payload-cleanups
+        (box-get rest)
+        (tltest-reach-mark-variant-payload-cleanup cleanup names))]))
+
+(define (tltest-reach-mark-variant-cleanups
+  [variants : AstVariantDefList]
+  [names : StringI64Map]) : StringI64Map
+  (match variants
+    [(AstVariantDefNil) names]
+    [(AstVariantDefCons variant rest)
+      (match variant
+        [(AstVariantDef _ _ cleanups)
+          (tltest-reach-mark-variant-cleanups
+            (box-get rest)
+            (tltest-reach-mark-variant-payload-cleanups cleanups names))])]))
+
 (define (tltest-reach-mark-decl [decl : AstDecl] [names : StringI64Map]) : StringI64Map
   (match decl
     [(AstDeclDef name _ expr-box)
@@ -1365,6 +1428,22 @@
         [inner : AstDecl (box-get inner-box)]
         (tltest-reach-mark-decl inner names))]
     [(AstDeclExport items) (tltest-reach-mark-export-items items names)]
+    [(AstDeclDefStruct _ _ cleanup fields)
+      (tltest-reach-mark-field-cleanups
+        fields
+        (tltest-reach-mark-struct-cleanup cleanup names))]
+    [(AstDeclDefStructLifetimes _ _ _ cleanup fields)
+      (tltest-reach-mark-field-cleanups
+        fields
+        (tltest-reach-mark-struct-cleanup cleanup names))]
+    [(AstDeclDefEnum _ cleanup variants)
+      (tltest-reach-mark-variant-cleanups
+        variants
+        (tltest-reach-mark-enum-cleanup cleanup names))]
+    [(AstDeclDefEnumLifetimes _ _ cleanup variants)
+      (tltest-reach-mark-variant-cleanups
+        variants
+        (tltest-reach-mark-enum-cleanup cleanup names))]
     [_ names]))
 
 (define (tltest-reach-mark-decls-from

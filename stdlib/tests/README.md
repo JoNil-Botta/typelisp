@@ -57,20 +57,18 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
   families, descriptor identities, borrowed string-key contains/remove wrappers,
   duplicate insert, collision chains, tombstone reuse, growth/rehash, missing
   remove, and deterministic bucket-order iteration.
-- `sync_api.tl` covers `stdlib/sync.tl` bounded `ChannelI64`,
-  `ChannelI64PairChannel`, and `ChannelString` creation failures, blocking
-  send/recv success paths in a single thread, FIFO wraparound, raw handle
-  packing, atomic-arena string transfer, and resource close. It also covers
-  `MutexI64` guard locking, guarded get/set/add, raw handle packing, close
-  rejection while a guard is live, and fail-closed double close.
-- `msvc_api.tl` covers pure MSVC discovery helpers with fake temp-directory
-  toolset and SDK trees, including newest-usable candidate selection through
-  the vector-backed scanners.
-- `process_api.tl` covers command construction, argv append helpers,
-  vector-backed argv conversion/builders, cwd/stdin/env accessors,
-  vector-backed env override construction, validation, duplicate-name order,
-  list conversion, invalid-command diagnostics, result/error predicates, and
-  async start/wait API validation.
+- `sync_api.tl` keeps the standalone native synchronization runtime coverage:
+  blocking send/recv success paths in a single thread, FIFO wraparound, raw
+  handle packing, atomic-arena string transfer, resource close, `MutexI64`
+  guard locking, guarded get/set/add, close rejection while a guard is live,
+  and fail-closed double close. Pure invalid-capacity checks now live inline in
+  `stdlib/sync.tl`.
+- `process_api.tl` remains a runnable fixture for command-validation paths that
+  intentionally call `process-output` / `process-start` and therefore preserve
+  the staged `requires-stage0-symbol:tl_process_start,tl_process_wait`
+  coverage. Pure command construction, argv/env vector builders, validation
+  helpers, duplicate-name order, list conversion, and result/error predicates
+  now live inline in `stdlib/process.tl`.
 - The process borrowed escape fixture verifies the checker rejects returning a
   borrowed command whose text owner is shorter-lived than the declared command
   lifetime.
@@ -78,12 +76,11 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
   argv and env propagation through list-backed and vector-backed command
   builders, nonzero status, failed spawn, and async start/wait on Linux, plus
   the structured unsupported async result on Windows.
-- `thread_api.tl` covers worker count fallback shape, invalid semaphore
-  creation, two native worker threads, semaphore signaling, and join return
-  values, including the checked `String` join wrapper.
-- `time_api.tl` covers `time-unix-ms` positive wall-clock range checks,
-  `time-monotonic-ms` non-negative and non-decreasing checks, and structured
-  `ResultTimeMs` error/fallback helpers without depending on exact timestamps.
+- `thread_api.tl` keeps the standalone native thread runtime coverage: two
+  native worker threads, semaphore signaling, join return values, and the
+  checked `String`/array/box join wrappers. Worker-count shape, deterministic
+  affinity helper math, and invalid semaphore creation now live inline in
+  `stdlib/thread.tl`.
 - The borrowed text buffer escape fixture verifies the checker rejects a
   borrowed buffer that would outlive its chunk owner.
 - The `string_caller_result.tl` escape fixture verifies the checker rejects a
@@ -191,3 +188,22 @@ Inline stdlib coverage:
 - `process_borrowed.tl` owns inline tests for borrowed executable, argv, cwd,
   env, and stdin fields, validation diagnostics, and explicit conversion to
   owned `ProcessCommand` before the runtime boundary.
+- `process.tl` owns inline tests for owned command construction, argv append
+  helpers, vector-backed argv conversion/builders, cwd/stdin/env accessors,
+  vector-backed env override construction, validation, duplicate-name order,
+  list conversion, and result/error predicates.
+- `sync.tl` owns inline tests for invalid bounded channel capacities and raw
+  handle field-count constants. Native blocking send/recv and mutex behavior
+  remains in `sync_api.tl`.
+- `thread.tl` owns inline tests for worker-count shape, deterministic affinity
+  helper math, and invalid semaphore creation. Native spawn/join behavior
+  remains in `thread_api.tl`.
+- `cpu.tl` owns inline tests for host-independent CPUID/XGETBV SIMD detection
+  relationships.
+- `profile.tl` owns inline tests for monotonic timestamp shape and allocator
+  counter monotonicity around an observable allocation.
+- `time.tl` owns inline tests for Unix wall-clock range, monotonic timestamp
+  shape, and structured `ResultTimeMs` error/fallback helpers.
+- `msvc.tl` owns inline tests for pure MSVC discovery helpers with fake
+  temp-directory toolset and SDK trees, including newest-usable candidate
+  selection through the vector-backed scanners.

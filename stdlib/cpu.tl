@@ -99,3 +99,54 @@
 ;: AVX-512BW is runnable when Foundation, BW, and ZMM/opmask state are enabled.
 (define (cpu-runs-avx512bw?) : bool
   (and (cpu-runs-avx512f?) (cpu-has-avx512bw?)))
+
+;: Inline test failure helper.
+(define (cpu-test-fail) : unit
+  (begin
+    (/ 1 0)
+    unit))
+
+;: Inline test boolean assertion.
+(define (cpu-test-assert [ok : bool]) : unit
+  (if ok
+    unit
+    (cpu-test-fail)))
+
+(test
+  cpu-api
+  (begin
+    ;; CPUID.0:EAX (max standard leaf) is a small non-negative integer.
+    (cpu-test-assert (>= (cpu-max-leaf) 0))
+    ;; "runnable" always implies the underlying CPUID feature bit.
+    (cpu-test-assert
+      (if (cpu-runs-avx2?)
+        (cpu-has-avx2?)
+        true))
+    (cpu-test-assert
+      (if (cpu-runs-avx512f?)
+        (cpu-has-avx512f?)
+        true))
+    (cpu-test-assert
+      (if (cpu-runs-avx512bw?)
+        (cpu-has-avx512bw?)
+        true))
+    (cpu-test-assert
+      (if (cpu-runs-avx512bw?)
+        (cpu-runs-avx512f?)
+        true))
+    ;; XCR0 ZMM enablement (0xe6) is a superset of YMM enablement (0x6).
+    (cpu-test-assert
+      (if (cpu-zmm-enabled?)
+        (cpu-ymm-enabled?)
+        true))
+    ;; AVX-512F requires AVX2, so a runnable AVX-512F host is always a runnable
+    ;; AVX2 host.
+    (cpu-test-assert
+      (if (cpu-runs-avx512f?)
+        (cpu-runs-avx2?)
+        true))
+    ;; A runnable ISA requires OS XSAVE enablement.
+    (cpu-test-assert
+      (if (cpu-runs-avx2?)
+        (cpu-osxsave?)
+        true))))

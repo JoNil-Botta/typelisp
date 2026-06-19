@@ -528,3 +528,360 @@
 ;: release the child handle resources. Do not wait on the same child twice.
 (define (process-wait [child : ProcessChild]) : ResultProcessOutput
   (tl_process_wait child))
+
+;: Inline test failure helper.
+(define (process-test-fail) : unit
+  (begin
+    (/ 1 0)
+    unit))
+
+;: Inline test boolean assertion.
+(define (process-test-assert [ok : bool]) : unit
+  (if ok
+    unit
+    (process-test-fail)))
+
+;: Inline test integer assertion.
+(define (process-test-assert-i64-eq [actual : i64] [expected : i64]) : unit
+  (process-test-assert (= actual expected)))
+
+;: Inline test owned string assertion.
+(define (process-test-assert-string-eq [actual : String] [expected : String]) : unit
+  (process-test-assert (string-eq actual expected)))
+
+;: Inline test assertion for an empty process string list.
+(define (process-test-assert-string-empty [items : ProcessStringList]) : unit
+  (match items
+    [(ProcessStringNil) unit]
+    [(ProcessStringCons _ _) (process-test-fail)]))
+
+;: Inline test assertion for a one-item process string list.
+(define (process-test-assert-string-list1
+  [items : ProcessStringList]
+  [first : String]) : unit
+  (match items
+    [(ProcessStringCons a rest)
+      (match (box-get rest)
+        [(ProcessStringNil) (process-test-assert-string-eq a first)]
+        [_ (process-test-fail)])]
+    [_ (process-test-fail)]))
+
+;: Inline test assertion for a two-item process string list.
+(define (process-test-assert-string-list2
+  [items : ProcessStringList]
+  [first : String]
+  [second : String]) : unit
+  (match items
+    [(ProcessStringCons a rest)
+      (match (box-get rest)
+        [(ProcessStringCons b tail)
+          (match (box-get tail)
+            [(ProcessStringNil)
+              (begin
+                (process-test-assert-string-eq a first)
+                (process-test-assert-string-eq b second))]
+            [_ (process-test-fail)])]
+        [_ (process-test-fail)])]
+    [_ (process-test-fail)]))
+
+;: Inline test assertion for a three-item process string list.
+(define (process-test-assert-string-list3
+  [items : ProcessStringList]
+  [first : String]
+  [second : String]
+  [third : String]) : unit
+  (match items
+    [(ProcessStringCons a rest)
+      (match (box-get rest)
+        [(ProcessStringCons b more)
+          (match (box-get more)
+            [(ProcessStringCons c tail)
+              (match (box-get tail)
+                [(ProcessStringNil)
+                  (begin
+                    (process-test-assert-string-eq a first)
+                    (process-test-assert-string-eq b second)
+                    (process-test-assert-string-eq c third))]
+                [_ (process-test-fail)])]
+            [_ (process-test-fail)])]
+        [_ (process-test-fail)])]
+    [_ (process-test-fail)]))
+
+;: Inline test assertion for a present optional process string.
+(define (process-test-assert-some-string
+  [value : ProcessMaybeString]
+  [expected : String]) : unit
+  (match value
+    [(ProcessSomeString actual) (process-test-assert-string-eq actual expected)]
+    [(ProcessNoString) (process-test-fail)]))
+
+;: Inline test assertion for an absent optional process string.
+(define (process-test-assert-no-string [value : ProcessMaybeString]) : unit
+  (match value
+    [(ProcessNoString) unit]
+    [(ProcessSomeString _) (process-test-fail)]))
+
+;: Inline test assertion for the head of a process environment list.
+(define (process-test-assert-env-head
+  [env : ProcessEnvList]
+  [expected-name : String]
+  [expected-value : String]) : unit
+  (match env
+    [(ProcessEnvCons name value _)
+      (begin
+        (process-test-assert-string-eq name expected-name)
+        (process-test-assert-string-eq value expected-value))]
+    [(ProcessEnvNil) (process-test-fail)]))
+
+;: Inline test assertion for a two-entry process environment list.
+(define (process-test-assert-env-list2
+  [env : ProcessEnvList]
+  [first-name : String]
+  [first-value : String]
+  [second-name : String]
+  [second-value : String]) : unit
+  (match env
+    [(ProcessEnvCons name value rest)
+      (begin
+        (process-test-assert-string-eq name first-name)
+        (process-test-assert-string-eq value first-value)
+        (match (box-get rest)
+          [(ProcessEnvCons next-name next-value tail)
+            (begin
+              (process-test-assert-string-eq next-name second-name)
+              (process-test-assert-string-eq next-value second-value)
+              (match (box-get tail)
+                [(ProcessEnvNil) unit]
+                [_ (process-test-fail)]))]
+          [(ProcessEnvNil) (process-test-fail)]))]
+    [(ProcessEnvNil) (process-test-fail)]))
+
+;: Inline test assertion for process validation diagnostics.
+(define (process-test-assert-validation
+  [value : ProcessMaybeString]
+  [expected : String]) : unit
+  (match value
+    [(ProcessSomeString actual) (process-test-assert-string-eq actual expected)]
+    [(ProcessNoString) (process-test-fail)]))
+
+;: Inline test body for command and argv helpers.
+(define (process-test-command-api) : unit
+  (let
+    [args : ProcessStringList
+      (process-args-cons
+        "hello"
+        (process-args-cons "world" (process-args-empty)))]
+    [command : ProcessCommand
+      (process-command-with-arg
+        (process-command-with-env
+          (process-command-with-stdin
+            (process-command-with-cwd (process-command "echo" args) "target")
+            "stdin")
+          "TL_TEST"
+          "1")
+        "!")]
+    (begin
+      (process-test-assert-string-eq
+        (process-command-executable command)
+        "echo")
+      (process-test-assert-string-list2 args "hello" "world")
+      (process-test-assert-string-list3
+        (process-command-argv command)
+        "hello"
+        "world"
+        "!")
+      (process-test-assert-i64-eq
+        (process-args-count (process-command-argv command))
+        3)
+      (process-test-assert-string-list3
+        (process-args-append args (process-args-single "again"))
+        "hello"
+        "world"
+        "again")
+      (process-test-assert-string-empty
+        (process-args-from-string-vec (string-vec-new)))
+      (process-test-assert-string-list1
+        (process-args-from-string-vec (string-vec-push (string-vec-new) "solo"))
+        "solo")
+      (process-test-assert-string-list3
+        (process-args-from-string-vec
+          (string-vec-push
+            (string-vec-push
+              (string-vec-push (string-vec-with-capacity 3) "hello")
+              "world")
+            "!"))
+        "hello"
+        "world"
+        "!")
+      (process-test-assert-string-empty
+        (process-command-argv
+          (process-command-from-argv-vec "echo" (string-vec-new))))
+      (process-test-assert-string-list1
+        (process-command-argv
+          (process-command-from-argv-vec
+            "echo"
+            (string-vec-push (string-vec-new) "solo")))
+        "solo")
+      (process-test-assert-string-list3
+        (process-command-argv
+          (process-command-from-argv-vec
+            "echo"
+            (string-vec-push
+              (string-vec-push
+                (string-vec-push (string-vec-with-capacity 3) "hello")
+                "world")
+              "!")))
+        "hello"
+        "world"
+        "!")
+      (process-test-assert-string-list3
+        (process-command-argv
+          (process-command-with-argv-vec
+            command
+            (string-vec-push
+              (string-vec-push
+                (string-vec-push (string-vec-with-capacity 3) "vec")
+                "replace")
+              "argv")))
+        "vec"
+        "replace"
+        "argv")
+      (process-test-assert-string-list3
+        (process-command-argv
+          (process-command-with-args-vec
+            (process-command "echo" (process-args-single "base"))
+            (string-vec-push
+              (string-vec-push (string-vec-with-capacity 2) "vec")
+              "tail")))
+        "base"
+        "vec"
+        "tail")
+      (process-test-assert-some-string (process-command-cwd command) "target")
+      (process-test-assert-some-string (process-command-stdin command) "stdin")
+      (process-test-assert-env-head (process-command-env command) "TL_TEST" "1")
+      (process-test-assert-i64-eq
+        (process-env-count (process-command-env command))
+        1)
+      (process-test-assert-env-head
+        (process-command-env
+          (process-command-with-env-list
+            command
+            (process-env-cons "TL_REPLACED" "yes" (process-env-empty))))
+        "TL_REPLACED"
+        "yes")
+      (process-test-assert-no-string
+        (process-command-cwd (process-command "echo" (process-args-empty)))))))
+
+;: Inline test body for vector-backed environment helpers.
+(define (process-test-env-vec-api [command : ProcessCommand]) : unit
+  (let
+    [env-vec-empty : ProcessEnvVec (process-env-vec-new)]
+    [env-vec : ProcessEnvVec
+      (process-env-vec-append
+        (process-env-vec-append (process-env-vec-new) "TL_FIRST" "one")
+        "TL_SECOND"
+        "two")]
+    [env-dup : ProcessEnvVec
+      (process-env-vec-append
+        (process-env-vec-append (process-env-vec-new) "TL_DUP" "first")
+        "TL_DUP"
+        "second")]
+    [bad-shape : ProcessEnvVec
+      (ProcessEnvVec
+        (string-vec-push (string-vec-new) "ONLY_NAME")
+        (string-vec-new))]
+    (begin
+      (process-test-assert-i64-eq (process-env-vec-count env-vec-empty) 0)
+      (process-test-assert (process-env-vec-valid? env-vec-empty))
+      (process-test-assert-i64-eq (process-env-vec-count env-vec) 2)
+      (process-test-assert (process-env-vec-valid? env-vec))
+      (process-test-assert-env-list2
+        (process-env-vec-to-list env-vec)
+        "TL_FIRST"
+        "one"
+        "TL_SECOND"
+        "two")
+      (process-test-assert-env-list2
+        (process-command-env (process-command-with-env-vec command env-vec))
+        "TL_FIRST"
+        "one"
+        "TL_SECOND"
+        "two")
+      (process-test-assert-env-list2
+        (process-env-vec-to-list env-dup)
+        "TL_DUP"
+        "first"
+        "TL_DUP"
+        "second")
+      (process-test-assert-validation
+        (process-env-vec-validation-error
+          (process-env-vec-append (process-env-vec-new) "" "bad"))
+        "process: environment variable name is empty")
+      (process-test-assert-validation
+        (process-env-vec-validation-error
+          (process-env-vec-append (process-env-vec-new) "BAD=NAME" "bad"))
+        "process: environment variable name contains '='")
+      (process-test-assert-validation
+        (process-env-vec-validation-error bad-shape)
+        "process: environment vector name/value counts differ"))))
+
+;: Inline test body for validation and result helpers.
+(define (process-test-validation-api) : unit
+  (let
+    [command : ProcessCommand
+      (process-command-with-env
+        (process-command-with-cwd
+          (process-command "echo" (process-args-empty))
+          "target")
+        "TL_TEST"
+        "1")]
+    (begin
+      (process-test-env-vec-api command)
+      (process-test-assert-validation
+        (process-command-validation-error
+          (process-command "" (process-args-empty)))
+        "process: executable path is empty")
+      (process-test-assert-validation
+        (process-command-validation-error (process-command-with-cwd command ""))
+        "process: cwd path is empty")
+      (process-test-assert-validation
+        (process-command-validation-error
+          (process-command-with-env command "" "1"))
+        "process: environment variable name is empty")
+      (process-test-assert-validation
+        (process-command-validation-error
+          (process-command-with-env command "BAD=NAME" "1"))
+        "process: environment variable name contains '='")
+      (process-test-assert (process-command-valid? command))
+      (process-test-assert
+        (not (process-command-valid? (process-command "" (process-args-empty)))))
+      (process-test-assert
+        (process-result-success? (OkProcessOutput (ProcessOutput 0 "" ""))))
+      (process-test-assert
+        (not
+          (process-result-success? (OkProcessOutput (ProcessOutput 7 "" "")))))
+      (process-test-assert
+        (not
+          (process-result-success?
+            (ErrProcessOutput (ProcessSpawnFailed "spawn failed")))))
+      (process-test-assert
+        (process-error-invalid-command?
+          (ProcessInvalidCommand "invalid command")))
+      (process-test-assert
+        (process-error-spawn-failed? (ProcessSpawnFailed "spawn failed")))
+      (process-test-assert
+        (process-error-wait-failed? (ProcessWaitFailed "wait failed")))
+      (process-test-assert
+        (process-error-unsupported? (ProcessUnsupported "unsupported")))
+      (process-test-assert
+        (process-child-started? (OkProcessChild (ProcessChild 1 2 3))))
+      (process-test-assert
+        (not
+          (process-child-started?
+            (ErrProcessChild (ProcessUnsupported "unsupported"))))))))
+
+(test
+  process-api
+  (begin
+    (process-test-command-api)
+    (process-test-validation-api)))

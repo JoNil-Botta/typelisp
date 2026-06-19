@@ -6,18 +6,12 @@
 (import "../stdlib/text_buf.tl")
 (import "../stdlib/string.tl")
 
-(defstruct DocSeq
-  (items (Array Doc))
-  (start i64)
-  (len i64))
-
 (defenum Doc
   (DEmpty)
   (DText String)
   (DSoftLine)
   (DHardLine)
   (DConcat (Box Doc) (Box Doc))
-  (DSeq DocSeq)
   (DNest i64 (Box Doc))
   (DGroup (Box Doc)))
 
@@ -47,121 +41,13 @@
 (define (doc-hard-line) : Doc
   (DHardLine))
 
-(define (doc-seq-slots [seq : DocSeq]) : (Array Doc)
-  (struct-get seq items))
-
-(define (doc-seq-start [seq : DocSeq]) : i64
-  (struct-get seq start))
-
-(define (doc-seq-len [seq : DocSeq]) : i64
-  (struct-get seq len))
-
-(define (doc-seq-capacity [seq : DocSeq]) : i64
-  (array-length (doc-seq-slots seq)))
-
-(define (doc-seq-end [seq : DocSeq]) : i64
-  (+ (doc-seq-start seq) (doc-seq-len seq)))
-
-(define (doc-seq-ref [seq : DocSeq] [index : i64]) : Doc
-  (array-ref (doc-seq-slots seq) (+ (doc-seq-start seq) index)))
-
-(define (doc-seq-with-capacity [capacity : i64]) : DocSeq
-  (let
-    [cap : i64
-      (if (< capacity 1)
-        1
-        capacity)]
-    (DocSeq (make-array Doc cap) 0 0)))
-
-(define (doc-seq-new) : DocSeq
-  (doc-seq-with-capacity 4))
-
-(define (doc-seq-copy-range
-  [dst : (Array Doc)]
-  [dst-index : i64]
-  [src : (Array Doc)]
-  [src-index : i64]
-  [count : i64]) : unit
-  (let
-    [i : i64 0]
-    (while (< i count)
-      (begin
-        (array-set! dst (+ dst-index i) (array-ref src (+ src-index i)))
-        (set! i (+ i 1))))))
-
-(define (doc-seq-grow-back [seq : DocSeq]) : DocSeq
-  (let
-    [n : i64 (doc-seq-len seq)]
-    [bigger : (Array Doc) (make-array Doc (* (doc-seq-capacity seq) 2))]
-    (begin
-      (doc-seq-copy-range bigger 0 (doc-seq-slots seq) (doc-seq-start seq) n)
-      (DocSeq bigger 0 n))))
-
-(define (doc-seq-grow-front [seq : DocSeq]) : DocSeq
-  (let
-    [n : i64 (doc-seq-len seq)]
-    [bigger : (Array Doc) (make-array Doc (* (doc-seq-capacity seq) 2))]
-    [new-start : i64 (- (array-length bigger) n)]
-    (begin
-      (doc-seq-copy-range
-        bigger
-        new-start
-        (doc-seq-slots seq)
-        (doc-seq-start seq)
-        n)
-      (DocSeq bigger new-start n))))
-
-(define (doc-seq-push [seq : DocSeq] [doc : Doc]) : DocSeq
-  (if (< (doc-seq-end seq) (doc-seq-capacity seq))
-    (let
-      [slots : (Array Doc) (doc-seq-slots seq)]
-      [end : i64 (doc-seq-end seq)]
-      (if (doc-empty? (array-ref slots end))
-        (begin
-          (array-set! slots end doc)
-          (DocSeq slots (doc-seq-start seq) (+ (doc-seq-len seq) 1)))
-        (doc-seq-push (doc-seq-grow-back seq) doc)))
-    (doc-seq-push (doc-seq-grow-back seq) doc)))
-
-(define (doc-seq-prepend [seq : DocSeq] [doc : Doc]) : DocSeq
-  (if (> (doc-seq-start seq) 0)
-    (let
-      [slots : (Array Doc) (doc-seq-slots seq)]
-      [new-start : i64 (- (doc-seq-start seq) 1)]
-      (if (doc-empty? (array-ref slots new-start))
-        (begin
-          (array-set! slots new-start doc)
-          (DocSeq slots new-start (+ (doc-seq-len seq) 1)))
-        (doc-seq-prepend (doc-seq-grow-front seq) doc)))
-    (doc-seq-prepend (doc-seq-grow-front seq) doc)))
-
-(define (doc-seq-from-two [left : Doc] [right : Doc]) : DocSeq
-  (doc-seq-push (doc-seq-push (doc-seq-new) left) right))
-
-(define (doc-seq-prepend-doc [doc : Doc] [seq : DocSeq]) : DocSeq
-  (doc-seq-prepend seq doc))
-
 (define (doc-append [left : Doc] [right : Doc]) : Doc
   (match left
     [(DEmpty) right]
-    [(DSeq left-seq)
-      (match right
-        [(DEmpty) left]
-        ;; Concatenating two built-up sequences by pushing every element of
-        ;; `right` onto `left` copies all of `right`. The formatter assembles
-        ;; list/body docs by folding `doc-append` right-to-left, so a line-form
-        ;; item (itself a `DSeq`) appended to the growing tail (also a `DSeq`)
-        ;; re-copied the whole remaining tail at each step -- O(n^2) work and
-        ;; allocation over a form's length. `DConcat` records the join in O(1);
-        ;; the renderer and `flat-width` already walk `DConcat` and produce
-        ;; byte-identical output.
-        [(DSeq _) (DConcat (box left) (box right))]
-        [_ (DSeq (doc-seq-push left-seq right))])]
     [_
       (match right
         [(DEmpty) left]
-        [(DSeq right-seq) (DSeq (doc-seq-prepend-doc left right-seq))]
-        [_ (DSeq (doc-seq-from-two left right))])]))
+        [_ (DConcat (box left) (box right))])]))
 
 (define (doc-nest [indent : i64] [doc : Doc]) : Doc
   (DNest indent (box doc)))
@@ -180,17 +66,6 @@
           (set! i (+ i 1))))
       out)))
 
-(define (flat-width-seq [seq : DocSeq]) : i64
-  (let
-    [i : i64 0]
-    [total : i64 0]
-    (begin
-      (while (< i (doc-seq-len seq))
-        (begin
-          (set! total (+ total (flat-width (doc-seq-ref seq i))))
-          (set! i (+ i 1))))
-      total)))
-
 (define (flat-width [doc : Doc]) : i64
   (match doc
     [(DEmpty) 0]
@@ -199,7 +74,6 @@
     [(DHardLine) 1000000]
     [(DConcat left right)
       (+ (flat-width (box-get left)) (flat-width (box-get right)))]
-    [(DSeq seq) (flat-width-seq seq)]
     [(DNest _ inner) (flat-width (box-get inner))]
     [(DGroup inner) (flat-width (box-get inner))]))
 
@@ -228,33 +102,6 @@
 (define (render-newline-into [buf : TextBuf] [indent : i64]) : TextBuf
   (text-buf-append (text-buf-append buf "\n") (spaces indent)))
 
-(define (render-doc-seq-into
-  [seq : DocSeq]
-  [width : i64]
-  [indent : i64]
-  [col : i64]
-  [flat : bool]
-  [buf : TextBuf]) : RenderState
-  (let
-    [i : i64 0]
-    [state : RenderState (RenderState buf col)]
-    (begin
-      (while (< i (doc-seq-len seq))
-        (begin
-          (match state
-            [(RenderState cur-buf cur-col)
-              (set!
-                state
-                (render-doc-into
-                  (doc-seq-ref seq i)
-                  width
-                  indent
-                  cur-col
-                  flat
-                  cur-buf))])
-          (set! i (+ i 1))))
-      state)))
-
 (define (render-doc-into
   [doc : Doc]
   [width : i64]
@@ -282,7 +129,6 @@
           (render-state-col left-state)
           flat
           (render-state-buf left-state)))]
-    [(DSeq seq) (render-doc-seq-into seq width indent col flat buf)]
     [(DNest extra inner)
       (render-doc-into (box-get inner) width (+ indent extra) col flat buf)]
     [(DGroup inner)
@@ -310,29 +156,6 @@
           (match (render-doc-in (box-get right) width indent left-col flat)
             [(Rendered right-text right-col)
               (Rendered (string-append left-text right-text) right-col)])])]
-    [(DSeq seq)
-      (let
-        [i : i64 0]
-        [result : RenderedDoc (Rendered "" col)]
-        (begin
-          (while (< i (doc-seq-len seq))
-            (begin
-              (match result
-                [(Rendered left-text left-col)
-                  (match (render-doc-in
-                    (doc-seq-ref seq i)
-                    width
-                    indent
-                    left-col
-                    flat)
-                    [(Rendered right-text right-col)
-                      (set!
-                        result
-                        (Rendered
-                          (string-append left-text right-text)
-                          right-col))])])
-              (set! i (+ i 1))))
-          result))]
     [(DNest extra inner)
       (render-doc-in (box-get inner) width (+ indent extra) col flat)]
     [(DGroup inner)
@@ -436,11 +259,6 @@
           (set! i (+ i 1))))
       out)))
 
-(define (format-doc-seq-len-or-negative [doc : Doc]) : i64
-  (match doc
-    [(DSeq seq) (doc-seq-len seq)]
-    [_ -1]))
-
 (define (format-doc-long-sequence-ok?) : bool
   (let
     [doc : Doc (format-doc-repeat-text 64)]
@@ -452,18 +270,13 @@
     [right-flow : Doc (doc-group (doc-nest 2 right-doc))]
     [right-broken-flow : String (render-doc-width right-flow 3)]
     [plain-ok : bool
-      (and
-        (= (format-doc-seq-len-or-negative doc) 64)
-        (= (string-length rendered) 64)
-        (= (flat-width doc) 64))]
+      (and (= (string-length rendered) 64) (= (flat-width doc) 64))]
     [flow-ok : bool
       (and
         (string-eq flat-flow (format-doc-repeat-soft-flat 16))
         (string-eq broken-flow (format-doc-repeat-soft-broken 16)))]
     [right-ok : bool
-      (and
-        (= (format-doc-seq-len-or-negative right-doc) 31)
-        (string-eq right-broken-flow (format-doc-repeat-soft-broken 16)))]
+      (string-eq right-broken-flow (format-doc-repeat-soft-broken 16))]
     (and plain-ok flow-ok right-ok)))
 
 (define (format-doc-seq-branching-ok?) : bool

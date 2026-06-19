@@ -32331,6 +32331,10 @@
 ;; single shared mark/rewind region is sound. Output stays byte-identical: the
 ;; clone is a structural deep copy, so the escaped IR lowers to the same assembly
 ;; as the in-place IR did.
+(defstruct CompilerLowerArenaState
+  (scratch-arena (Array i64))
+  (ir-arena (Array i64)))
+
 (define lower-scratch-arena : i64
   0)
 
@@ -32342,6 +32346,14 @@
         (set! lower-scratch-arena scratch)
         scratch))
     lower-scratch-arena))
+
+(define (lower-scratch-arena-release!) : unit
+  (if (= lower-scratch-arena 0)
+    unit
+    (begin
+      (unsafe
+        (arena-destroy lower-scratch-arena))
+      (set! lower-scratch-arena 0))))
 
 ;; #2596: dedicated arena for the escaped (lowered) IR function bodies. The
 ;; lowered IR is consumed exactly once: at opt levels >= 1 the optimizer
@@ -32373,6 +32385,51 @@
       (unsafe
         (arena-destroy lower-ir-arena))
       (set! lower-ir-arena 0))))
+
+(define (lower-arenas-release!) : unit
+  (begin
+    (lower-scratch-arena-release!)
+    (lower-ir-arena-release!)))
+
+(define (compiler-lower-arena-state-new) : CompilerLowerArenaState
+  (let
+    [scratch : (Array i64) (make-array i64 1)]
+    [ir : (Array i64) (make-array i64 1)]
+    (begin
+      (array-set! scratch 0 0)
+      (array-set! ir 0 0)
+      (CompilerLowerArenaState scratch ir))))
+
+(define (compiler-lower-arena-state-scratch-arena
+  [state : CompilerLowerArenaState]) : i64
+  (array-ref (struct-get state scratch-arena) 0))
+
+(define (compiler-lower-arena-state-ir-arena [state : CompilerLowerArenaState]) : i64
+  (array-ref (struct-get state ir-arena) 0))
+
+(define (compiler-lower-arena-state-set!
+  [state : CompilerLowerArenaState]
+  [scratch : i64]
+  [ir : i64]) : unit
+  (begin
+    (array-set! (struct-get state scratch-arena) 0 scratch)
+    (array-set! (struct-get state ir-arena) 0 ir)))
+
+(define (compiler-lower-arena-state-capture-from-globals!
+  [state : CompilerLowerArenaState]) : unit
+  (compiler-lower-arena-state-set! state lower-scratch-arena lower-ir-arena))
+
+(define (compiler-lower-arena-state-capture) : CompilerLowerArenaState
+  (let
+    [state : CompilerLowerArenaState (compiler-lower-arena-state-new)]
+    (begin
+      (compiler-lower-arena-state-capture-from-globals! state)
+      state)))
+
+(define (compiler-lower-arena-state-install! [state : CompilerLowerArenaState]) : unit
+  (begin
+    (set! lower-scratch-arena (compiler-lower-arena-state-scratch-arena state))
+    (set! lower-ir-arena (compiler-lower-arena-state-ir-arena state))))
 
 (define (lower-function-escaping
   [ctx : TcContext]

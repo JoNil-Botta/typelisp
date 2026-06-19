@@ -5,10 +5,11 @@ set -eu
 #
 # This is a deterministic measurement harness, not a CI gate. It measures the
 # full process under valgrind/cachegrind and records the `Ir` event (executed
-# instructions) for TypeLisp benchmark binaries and for a compiler self-compile
-# command. Startup is intentionally included; the benchmark loops and the
-# self-compile workload are large enough to dominate it. If a future tiny case
-# needs startup exclusion, use callgrind region toggling in a separate gate.
+# instructions) for TypeLisp benchmark binaries, their clang -O2 C baselines,
+# and for a compiler self-compile command. Startup is intentionally included;
+# the benchmark loops and the self-compile workload are large enough to dominate
+# it. If a future tiny case needs startup exclusion, use callgrind region
+# toggling in a separate gate.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -18,6 +19,7 @@ FILTER=${TYPELISP_IR_FILTER:-}
 CASES=${TYPELISP_IR_CASES:-}
 WORKDIR=${TYPELISP_IR_OUT:-target/instruction-counts}
 OPT_LEVEL=${TYPELISP_IR_OPT_LEVEL:-1}
+C_OPT=-O2
 MEASURE_BENCHMARKS=1
 MEASURE_SELF_COMPILE=1
 
@@ -155,6 +157,11 @@ if [ "$MEASURE_BENCHMARKS" -eq 0 ] && [ "$MEASURE_SELF_COMPILE" -eq 0 ]; then
     exit 2
 fi
 
+fail() {
+    echo "[ir-count] $*" >&2
+    exit 1
+}
+
 case "$(uname -s)" in
     Linux*) ;;
     *)
@@ -173,6 +180,10 @@ for tool in valgrind awk tr sed basename dirname; do
         exit 1
     }
 done
+VALGRIND=$(command -v valgrind)
+if [ "$MEASURE_BENCHMARKS" -eq 1 ]; then
+    command -v clang >/dev/null 2>&1 || fail "missing tool: clang (C baseline compiler)"
+fi
 
 if [ -n "$SEED_ARG" ]; then
     COMPILER=$SEED_ARG
@@ -195,11 +206,6 @@ SUMMARY_TSV="$WORKDIR/summary.tsv"
 printf 'kind\tname\trun\tir_count\texit_status\n' > "$RUNS_TSV"
 printf 'kind\tname\tir_count\tmin_ir\tmax_ir\truns\tstable\n' > "$SUMMARY_TSV"
 CR=$(printf '\r')
-
-fail() {
-    echo "[ir-count] $*" >&2
-    exit 1
-}
 
 safe_name() {
     printf '%s' "$1" | tr -c 'A-Za-z0-9_.-' '_'
@@ -284,7 +290,9 @@ run_cachegrind() {
     stderr="$WORKDIR/logs/$safe.stderr"
 
     set +e
-    valgrind --quiet --tool=cachegrind --cachegrind-out-file="$cgout" "$@" >"$stdout" 2>"$stderr"
+    env -i LC_ALL=C "$VALGRIND" \
+        --quiet --tool=cachegrind --cachegrind-out-file="$cgout" \
+        "$@" >"$stdout" 2>"$stderr"
     status=$?
     set -e
 
@@ -317,6 +325,8 @@ measure_repeated() {
     first=
     min=
     max=
+    first_status=
+    status_stable=1
     run=1
     while [ "$run" -le "$RUNS" ]; do
         echo "[ir-count] $kind/$name run $run"
@@ -330,9 +340,11 @@ measure_repeated() {
             first=$LAST_IR
             min=$LAST_IR
             max=$LAST_IR
+            first_status=$LAST_STATUS
         else
             if [ "$LAST_IR" -lt "$min" ]; then min=$LAST_IR; fi
             if [ "$LAST_IR" -gt "$max" ]; then max=$LAST_IR; fi
+            if [ "$LAST_STATUS" != "$first_status" ]; then status_stable=0; fi
         fi
         run=$((run + 1))
     done
@@ -345,18 +357,21 @@ measure_repeated() {
     if [ "$stable" -ne 1 ]; then
         fail "$kind/$name Ir was not stable across $RUNS runs: min=$min max=$max"
     fi
+    if [ "$status_stable" -ne 1 ]; then
+        fail "$kind/$name exit status was not stable across $RUNS runs"
+    fi
+    LAST_SUMMARY_STATUS=$first_status
 }
 
-build_benchmark() {
+build_typelisp_benchmark() {
     bench_tl=$1
     name=$2
-    bin="$WORKDIR/bin/$name"
-    stdout="$WORKDIR/logs/benchmark-$name.build.stdout"
-    stderr="$WORKDIR/logs/benchmark-$name.build.stderr"
-    benchmark_args_for_dir "$(dirname "$bench_tl")"
-    bench_args=$BENCHMARK_ARGS
+    bin="$WORKDIR/bin/$name.typelisp"
+    safe=$(safe_name "benchmark-typelisp-$name")
+    stdout="$WORKDIR/logs/$safe.build.stdout"
+    stderr="$WORKDIR/logs/$safe.build.stderr"
 
-    echo "[ir-count] build benchmark $name"
+    echo "[ir-count] build benchmark/typelisp $name"
     if ! "$COMPILER" build "$bench_tl" -o "$bin" \
         --target "$NL_BOOTSTRAP_TARGET" \
         --stdlib-root stdlib \
@@ -367,7 +382,44 @@ build_benchmark() {
     fi
     [ -x "$bin" ] || fail "benchmark build did not write executable: $bin"
     # shellcheck disable=SC2086
-    measure_repeated benchmark "$name" 0 "$bin" $bench_args
+    measure_repeated "benchmark/typelisp" "$name" 0 "$bin" $bench_args
+    TL_STATUS=$LAST_SUMMARY_STATUS
+}
+
+build_c_benchmark() {
+    baseline_c=$1
+    name=$2
+    bin="$WORKDIR/bin/$name.c"
+    safe=$(safe_name "benchmark-c-$name")
+    stdout="$WORKDIR/logs/$safe.build.stdout"
+    stderr="$WORKDIR/logs/$safe.build.stderr"
+
+    echo "[ir-count] build benchmark/c $name"
+    if ! clang "$C_OPT" "$baseline_c" -o "$bin" >"$stdout" 2>"$stderr"; then
+        show_logs "$stdout" "$stderr"
+        fail "failed to build C benchmark $name"
+    fi
+    [ -x "$bin" ] || fail "C benchmark build did not write executable: $bin"
+    # shellcheck disable=SC2086
+    measure_repeated "benchmark/c" "$name" 0 "$bin" $bench_args
+    C_STATUS=$LAST_SUMMARY_STATUS
+}
+
+build_benchmark_pair() {
+    bench_tl=$1
+    name=$2
+    dir=$(dirname "$bench_tl")
+    baseline_c="$dir/baseline.c"
+
+    [ -f "$baseline_c" ] || fail "selected benchmark $name has bench.tl but no baseline.c"
+    benchmark_args_for_dir "$dir"
+    bench_args=$BENCHMARK_ARGS
+
+    build_typelisp_benchmark "$bench_tl" "$name"
+    build_c_benchmark "$baseline_c" "$name"
+    [ "$TL_STATUS" = "$C_STATUS" ] || {
+        fail "benchmark $name observable output differs (typelisp exit $TL_STATUS, C exit $C_STATUS)"
+    }
 }
 
 benchmark_selected() {
@@ -389,12 +441,24 @@ benchmark_selected() {
 
 measure_benchmarks() {
     matched=0
+    explicit_selection=0
+    if [ -n "$CASES" ] || [ -n "$FILTER" ]; then
+        explicit_selection=1
+    fi
     for bench_tl in benchmarks/*/bench.tl; do
         [ -e "$bench_tl" ] || continue
+        dir=$(dirname "$bench_tl")
         name=$(basename "$(dirname "$bench_tl")")
         benchmark_selected "$name" || continue
+        if [ ! -f "$dir/baseline.c" ]; then
+            if [ "$explicit_selection" -eq 1 ]; then
+                fail "selected benchmark $name has bench.tl but no baseline.c"
+            fi
+            echo "[ir-count] skip benchmark $name without baseline.c"
+            continue
+        fi
         matched=$((matched + 1))
-        build_benchmark "$bench_tl" "$name"
+        build_benchmark_pair "$bench_tl" "$name"
     done
     [ "$matched" -gt 0 ] || fail "no benchmark cases matched filter='$FILTER' cases='$CASES'"
 }
@@ -412,6 +476,9 @@ measure_self_compile() {
 }
 
 echo "[ir-count] compiler: $COMPILER"
+if [ "$MEASURE_BENCHMARKS" -eq 1 ]; then
+    echo "[ir-count] C benchmark compiler: clang $C_OPT"
+fi
 echo "[ir-count] output: $WORKDIR"
 echo "[ir-count] runs per case: $RUNS"
 if [ -n "$CASES" ]; then

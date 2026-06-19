@@ -1175,6 +1175,39 @@
             [(ErrAstType message) (ErrAstFuncTypeParts message)])])]
     [_ (ErrAstFuncTypeParts "parse: function type needs at least return type")]))
 
+;; Macro output uses these non-lexer-spellable symbols to carry already-resolved
+;; aggregate type operands through declaration-shaped quasiquote output.
+(define (parse-internal-resolved-struct-type-marker) : String
+  "__typelisp internal resolved struct type")
+
+(define (parse-internal-resolved-enum-type-marker) : String
+  "__typelisp internal resolved enum type")
+
+(define (parse-ast-resolved-nominal-type
+  [dispatch : SymI64Env]
+  [rest : Sexpr]
+  [is-struct : bool]) : ResultAstType
+  (match rest
+    [(SCons name-node lifetimes-box)
+      (match (box-get name-node)
+        [(SStr name)
+          (match (parse-ast-lifetime-list
+            dispatch
+            (box-get lifetimes-box)
+            "parse: malformed internal resolved type")
+            [(OkAstLifetimeList lifetimes)
+              (OkAstType
+                (if is-struct
+                  (match lifetimes
+                    [(AstLifetimeNil) (AstTyStruct (intern name))]
+                    [_ (AstTyStructArgs (intern name) lifetimes)])
+                  (match lifetimes
+                    [(AstLifetimeNil) (AstTyEnum (intern name))]
+                    [_ (AstTyEnumArgs (intern name) lifetimes)])))]
+            [(ErrAstLifetimeList message) (ErrAstType message)])]
+        [_ (ErrAstType "parse: malformed internal resolved type")])]
+    [_ (ErrAstType "parse: malformed internal resolved type")]))
+
 (define (parse-ast-reference-type
   [dispatch : SymI64Env]
   [rest : Sexpr]
@@ -1243,6 +1276,10 @@
             [rest : Sexpr (box-get rest-box)]
             [tag : i64 (compiler-parse-dispatch-tag dispatch head)]
             (cond
+              [(string-eq head (parse-internal-resolved-struct-type-marker))
+                (parse-ast-resolved-nominal-type dispatch rest true)]
+              [(string-eq head (parse-internal-resolved-enum-type-marker))
+                (parse-ast-resolved-nominal-type dispatch rest false)]
               [(= tag (compiler-parse-tag-ty-func))
                 (match (parse-ast-func-type-parts dispatch rest)
                   [(OkAstFuncTypeParts args ret)

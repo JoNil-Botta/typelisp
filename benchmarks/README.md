@@ -167,8 +167,9 @@ Deterministic stdout/stderr and generated docs are fingerprinted under
 compiler corpus changed, the script refreshes the baseline after the tools pass;
 set `TYPELISP_TOOL_BENCH_STRICT_BASELINE=1` to make corpus changes fail instead,
 or `TYPELISP_TOOL_BENCH_UPDATE_BASELINE=1` to accept intentional output changes.
-The chooser case uses `benchmarks/cli-tools/chooser-queue.json`, a normalized
-snapshot of the live GitHub queue; because chooser selection is random, the
+The chooser case uses
+`tools/work-queue-chooser/fixtures/chooser-queue.json`, a normalized snapshot of
+the live GitHub queue; because chooser selection is random, the
 benchmark validates the action-line shape instead of fingerprinting exact chooser
 stdout. `timings.tsv` includes the single optimized current-worktree CLI
 compile/link setup as informational rows, separately compiled tool setup such as

@@ -930,6 +930,34 @@
     names
     (string-i64-map-put names name 1)))
 
+(define (tltest-reach-mark-string-snapshot-runtime [names : StringI64Map]) : StringI64Map
+  ;; Harness pruning runs before clone-out lowering emits the raw `tl_substring`
+  ;; helper call, so keep the TypeLisp runtime body whenever a reachable test
+  ;; path may synthesize a String snapshot.
+  (tltest-reach-mark-name names "tl-runtime-substring"))
+
+(define (tltest-reach-mark-str-view-runtime [names : StringI64Map]) : StringI64Map
+  (tltest-reach-mark-name names "tl-runtime-str-view"))
+
+(define (tltest-bytes-view-from-parts-name? [name : String]) : bool
+  (or
+    (string-eq name "tl_bytes_view_from_str_parts")
+    (string-eq name "tl_bytes_view_from_buf_parts")
+    (string-eq name "tl_bytes_mut_view_from_buf_parts")
+    (string-eq name "tl_bytes_view_from_bytes_parts")
+    (string-eq name "tl_bytes_mut_view_from_bytes_parts")))
+
+(define (tltest-reach-mark-lowered-runtime-for-call
+  [name : String]
+  [names : StringI64Map]) : StringI64Map
+  (cond
+    [(string-eq name "clone") (tltest-reach-mark-string-snapshot-runtime names)]
+    [(or
+        (string-eq name "tl_str_view")
+        (tltest-bytes-view-from-parts-name? name))
+      (tltest-reach-mark-str-view-runtime names)]
+    [else names]))
+
 (define (tltest-reach-mark-expr-list
   [exprs : AstExprList]
   [names : StringI64Map]) : StringI64Map
@@ -1012,7 +1040,15 @@
     [(AstExprCall func-box args)
       (let
         [func : AstExpr (ast-node-get func-box)]
-        (tltest-reach-mark-expr-list args (tltest-reach-mark-expr func names)))]
+        [called-names : StringI64Map (tltest-reach-mark-expr func names)]
+        [runtime-names : StringI64Map
+          (match (ast-expr-unspan func)
+            [(AstExprVar name)
+              (tltest-reach-mark-lowered-runtime-for-call
+                (intern-str name)
+                called-names)]
+            [_ called-names])]
+        (tltest-reach-mark-expr-list args runtime-names))]
     [(AstExprIf cond-box then-branch-box else-branch-box)
       (let
         [cond : AstExpr (ast-node-get cond-box)]
@@ -1166,8 +1202,13 @@
         [scratch : AstExpr (ast-node-get scratch-box)]
         (tltest-reach-mark-expr-list
           body
-          (tltest-reach-mark-expr scratch names)))]
-    [(AstExprWithScratch body) (tltest-reach-mark-expr-list body names)]
+          (tltest-reach-mark-expr
+            scratch
+            (tltest-reach-mark-string-snapshot-runtime names))))]
+    [(AstExprWithScratch body)
+      (tltest-reach-mark-expr-list
+        body
+        (tltest-reach-mark-string-snapshot-runtime names))]
     [(AstExprInArena arena-box body)
       (let
         [arena : AstExpr (ast-node-get arena-box)]
@@ -1709,6 +1750,73 @@
   (if (tltest-vector-builders-self-test?)
     unit
     (panic "test CLI vector builder order mismatch")))
+
+(define (tltest-generated-runtime-reachability-self-test?) : bool
+  (let
+    [unit-expr : i64 (ast-node-push (AstExprLiteral (AstLitUnit)))]
+    [substring-decl : AstDecl
+      (ast-decl-def-fn "tl-runtime-substring" AstParamNil (AstTyUnit) unit-expr)]
+    [str-view-decl : AstDecl
+      (ast-decl-def-fn "tl-runtime-str-view" AstParamNil (AstTyUnit) unit-expr)]
+    [helper-body : i64
+      (ast-node-push
+        (AstExprBegin
+          (ast-expr-cons
+            (ast-expr-with-scratch (ast-expr-cons unit-expr AstExprNil))
+            (ast-expr-cons
+              (tltest-call-expr "tl_bytes_view_from_str_parts")
+              (ast-expr-cons unit-expr AstExprNil)))))]
+    [helper-decl : AstDecl
+      (ast-decl-def-fn
+        "__tl_generated_runtime_helper"
+        AstParamNil
+        (AstTyUnit)
+        helper-body)]
+    [span : AstSourceSpan (AstSourceSpan 17 1 17 1)]
+    [decls : AstDeclList
+      (ast-decl-cons
+        substring-decl
+        (ast-decl-cons
+          str-view-decl
+          (ast-decl-cons
+            helper-decl
+            (ast-decl-cons
+              (ast-decl-test
+                "keeps-generated-runtime"
+                (tltest-call-expr "__tl_generated_runtime_helper")
+                span)
+              AstDeclNil))))]
+    [paths : AstDeclPathList
+      (ast-decl-path-cons
+        "stdlib/runtime.tl"
+        (ast-decl-path-cons
+          "stdlib/runtime.tl"
+          (ast-decl-path-cons
+            "driver.tl"
+            (ast-decl-path-cons "driver.tl" AstDeclPathNil))))]
+    (match (tltest-build-harness "driver.tl" decls paths)
+      [(InlineHarness program _ count)
+        (match program
+          [(AstProgram harness-decls-box)
+            (let
+              [harness-decls : AstDeclList (box-get harness-decls-box)]
+              (and
+                (= count 1)
+                (string-eq
+                  (tltest-decl-name-at harness-decls 0)
+                  "tl-runtime-substring")
+                (string-eq
+                  (tltest-decl-name-at harness-decls 1)
+                  "tl-runtime-str-view")
+                (string-eq
+                  (tltest-decl-name-at harness-decls 2)
+                  "__tl_generated_runtime_helper")))])])))
+
+(test
+  test-cli-inline-harness-keeps-lowered-runtime-helpers
+  (if (tltest-generated-runtime-reachability-self-test?)
+    unit
+    (panic "test CLI inline harness dropped lowered runtime helper")))
 
 (define (tltest-imported-tests-skipped-self-test?) : bool
   (let

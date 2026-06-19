@@ -2072,7 +2072,7 @@
                           unit))]
                     [else (set! j (+ j 1))])))
               (if done
-                (= (lsp-skip-space text j n) n)
+                true
                 false))))))))
 
 ;; Validate that text contains one or more complete parenthesized forms.
@@ -3935,7 +3935,7 @@
                   (if found
                     (if (string-eq result "")
                       (LspContinue docs)
-                      (if (not (lsp-text-is-valid-form new-body))
+                      (if (not (lsp-text-is-valid-forms new-body))
                         (begin
                           (lsp-write-error
                             id
@@ -4639,7 +4639,7 @@
                                               old-pattern
                                               new-pattern)]
                                           (if (not
-                                            (lsp-text-is-valid-form
+                                            (lsp-text-is-valid-forms
                                               replaced-body))
                                             (begin
                                               (lsp-write-error

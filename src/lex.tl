@@ -174,8 +174,30 @@
           (set! keep false)))
       j)))
 
-;; A float token is an integer digit run followed by `.` and at least one
-;; fractional digit. The literal text is carried through later selfhost stages.
+;; Known metadata keyword prefixes that follow `:` in the lexer.
+;; When `:` is at the start of a symbol run, the lexer scans the whole
+;; keyword (e.g. `:symbol`) as one token. Otherwise `:` is emitted as a
+;; separate token (e.g. `x:i64` becomes `x`, `:`, `i64`).
+(define (colon-keyword-prefix [src : String] [start : i64] [n : i64]) : String
+  (let
+    [end : i64 (scan-symbol-end src start n)]
+    [sym : String (substring src start (- end start))]
+    (if (or
+      (string-eq sym ":symbol")
+      (string-eq sym ":abi")
+      (string-eq sym ":link-lib")
+      (string-eq sym ":link-search")
+      (string-eq sym ":link-arg")
+      (string-eq sym ":repr")
+      (string-eq sym ":lifetimes")
+      (string-eq sym ":cleanup")
+      (string-eq sym ":owned")
+      (string-eq sym ":packed")
+      (string-eq sym ":export-symbol")
+      (string-eq sym ":generated"))
+      sym
+      "")))
+
 (define (float-tail? [src : String] [int-end : i64] [n : i64]) : bool
   (if (< (+ int-end 1) n)
     (if (= (string-ref src int-end) #.')
@@ -281,9 +303,13 @@
     (begin
       (while keep
         (if (< j n)
-          (if (is-symbol-char (string-ref src j))
-            (set! j (+ j 1))
-            (set! keep false))
+          (let
+            [c : char (string-ref src j)]
+            (if (and (= c #:') (> j start))
+              (set! keep false)
+              (if (is-symbol-char c)
+                (set! j (+ j 1))
+                (set! keep false))))
           (set! keep false)))
       j)))
 
@@ -718,6 +744,23 @@
                     (set! ok false)
                     (set! message err)
                     (set! err-pos i))])]
+            [(= c #:')
+              (let
+                [prefix : String (colon-keyword-prefix src i n)]
+                (if (> (string-length prefix) 0)
+                  (begin
+                    (array-set! starts count i)
+                    (array-set!
+                      toks
+                      count
+                      (TSym (intern-slice src i (string-length prefix))))
+                    (set! count (+ count 1))
+                    (set! i (+ i (string-length prefix))))
+                  (begin
+                    (array-set! starts count i)
+                    (array-set! toks count (TSym (intern ":")))
+                    (set! count (+ count 1))
+                    (set! i (+ i 1)))))]
             [(is-symbol-char c)
               (let
                 [end : i64 (scan-symbol-end src i n)]
@@ -941,6 +984,29 @@
                     (set! ok false)
                     (set! message err)
                     (set! err-pos i))])]
+            [(= c #:')
+              (let
+                [prefix : String (colon-keyword-prefix src i n)]
+                (if (> (string-length prefix) 0)
+                  (begin
+                    (array-set!
+                      stoks
+                      count
+                      (SpannedToken
+                        (TSym (intern-slice src i (string-length prefix)))
+                        line
+                        col))
+                    (set! count (+ count 1))
+                    (set! col (+ col (string-length prefix)))
+                    (set! i (+ i (string-length prefix))))
+                  (begin
+                    (array-set!
+                      stoks
+                      count
+                      (SpannedToken (TSym (intern ":")) line col))
+                    (set! count (+ count 1))
+                    (set! col (+ col 1))
+                    (set! i (+ i 1)))))]
             [(is-symbol-char c)
               (let
                 [end : i64 (scan-symbol-end src i n)]

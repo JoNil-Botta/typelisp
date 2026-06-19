@@ -4456,36 +4456,24 @@
         module
         ""))))
 
+(define (lower-function-decl-count-one [decl : AstDecl]) : i64
+  (match decl
+    [(AstDeclDefFn _ _ _ _ _) 1]
+    [(AstDeclComptimeDecl _ inner-box)
+      (lower-function-decl-count-one (box-get inner-box))]
+    [(AstDeclUnsafe inner-box)
+      (lower-function-decl-count-one (box-get inner-box))]
+    [_ 0]))
+
 (define (lower-function-decl-count [decls : AstDeclList]) : i64
   (match decls
     [(AstDeclNil) 0]
     [(AstDeclCons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
-        (match decl
-          [(AstDeclDefFn _ _ _ _ _) (+ 1 (lower-function-decl-count rest))]
-          [(AstDeclComptimeDecl _ inner-box)
-            (let
-              [inner : AstDecl (box-get inner-box)]
-              (match inner
-                [(AstDeclDefFn _ _ _ _ _)
-                  (+ 1 (lower-function-decl-count rest))]
-                [_ (lower-function-decl-count rest)]))]
-          [(AstDeclUnsafe inner-box)
-            (let
-              [inner : AstDecl (box-get inner-box)]
-              (match inner
-                [(AstDeclDefFn _ _ _ _ _)
-                  (+ 1 (lower-function-decl-count rest))]
-                [(AstDeclComptimeDecl _ comptime-box)
-                  (let
-                    [template : AstDecl (box-get comptime-box)]
-                    (match template
-                      [(AstDeclDefFn _ _ _ _ _)
-                        (+ 1 (lower-function-decl-count rest))]
-                      [_ (lower-function-decl-count rest)]))]
-                [_ (lower-function-decl-count rest)]))]
-          [_ (lower-function-decl-count rest)]))]))
+        (+
+          (lower-function-decl-count-one decl)
+          (lower-function-decl-count rest)))]))
 
 (define (lower-function-body-index-add
   [index : LowerFunctionBodyIndex]
@@ -39333,6 +39321,28 @@
               1))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-function-decl-count-wrapped-ok?) : bool
+  (let
+    [fn : AstDecl
+      (ast-decl-def-fn
+        "generated"
+        AstParamNil
+        (AstTyI64)
+        (ast-node-push (AstExprLiteral (AstLitInt 1))))]
+    (and
+      (=
+        (lower-function-decl-count
+          (ast-decl-cons
+            (ast-decl-comptime-decl (ast-decl-unsafe fn))
+            AstDeclNil))
+        1)
+      (=
+        (lower-function-decl-count
+          (ast-decl-cons
+            (ast-decl-unsafe (ast-decl-comptime-decl fn))
+            AstDeclNil))
+        1))))
+
 (define (compiler-lower-module-specialize-source) : String
   "(define (alloc [comptime T : type] [n : i64]) : (Array i64)
   (make-array T n))
@@ -43753,6 +43763,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-module-macro-codegen-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-function-decl-count-wrapped-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-extern-link-metadata-ok?)

@@ -15224,7 +15224,7 @@
   [_cmp-dst : i64]
   [op : CompilerIrBinOp]
   [rhs : CompilerIrValue]
-  [cmp-ty : AstType]
+  [_cmp-ty : AstType]
   [true-label : String]
   [false-label : String]
   [rest : CompilerIrInstrList]
@@ -15249,7 +15249,7 @@
     ptr
     op
     rhs
-    cmp-ty
+    load-ty
     true-label
     false-label
     (compiler-backend-fused-compare-fallthrough rest fallthrough)
@@ -15300,11 +15300,11 @@
   [offset : CompilerIrValue]
   [elem-ty : AstType]
   [_load-dst : i64]
-  [_load-ty : AstType]
+  [load-ty : AstType]
   [_cmp-dst : i64]
   [op : CompilerIrBinOp]
   [rhs : CompilerIrValue]
-  [cmp-ty : AstType]
+  [_cmp-ty : AstType]
   [true-label : String]
   [false-label : String]
   [rest : CompilerIrInstrList]
@@ -15331,7 +15331,7 @@
     elem-ty
     op
     rhs
-    cmp-ty
+    load-ty
     true-label
     false-label
     (compiler-backend-fused-compare-fallthrough rest fallthrough)

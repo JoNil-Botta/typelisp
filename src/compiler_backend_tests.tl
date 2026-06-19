@@ -1978,6 +1978,88 @@
     (compiler-backend-extern-value-fnptr-target-ok? (BackendTargetLinux))
     (compiler-backend-extern-value-fnptr-target-ok? (BackendTargetWindows))))
 
+(define (compiler-backend-indirect-c-call-shape-asm
+  [target : CompilerBackendTarget]
+  [func : CompilerIrValue]
+  [assignments : CompilerRegAssignmentList]) : ResultCompilerBackend
+  (compiler-backend-emit-indirect-c-call
+    target
+    2
+    func
+    (IrCallArgsNil)
+    (AstTyI64)
+    assignments
+    CompilerRegVarTypeNil
+    IrFunctionNil
+    IrExternNil
+    (compiler-backend-program-index-build IrFunctionNil IrExternNil)
+    3
+    (compiler-diagnostic-at-start "" "")))
+
+(define (compiler-backend-indirect-c-call-reg-assignments [home : String]) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment 1 (CompilerRegRegister home))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment 2 (CompilerRegRegister "%r13"))
+      CompilerRegAssignmentNil)))
+
+(define (compiler-backend-indirect-c-call-callee-home-target-ok?
+  [target : CompilerBackendTarget]) : bool
+  (match (compiler-backend-indirect-c-call-shape-asm
+    target
+    (IrValueVar 1)
+    (compiler-backend-indirect-c-call-reg-assignments "%r12"))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "    call *%r12\n")
+        (not (compiler-backend-string-contains? asm "    movq %r12, %rax\n"))
+        (not (compiler-backend-string-contains? asm "    call *%rax\n")))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-indirect-c-call-caller-home-target-ok?
+  [target : CompilerBackendTarget]) : bool
+  (match (compiler-backend-indirect-c-call-shape-asm
+    target
+    (IrValueVar 1)
+    (compiler-backend-indirect-c-call-reg-assignments "%rcx"))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "    movq %rcx, %rax\n")
+        (compiler-backend-string-contains? asm "    call *%rax\n")
+        (not (compiler-backend-string-contains? asm "    call *%rcx\n")))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-indirect-c-call-stack-home-target-ok?
+  [target : CompilerBackendTarget]) : bool
+  (match (compiler-backend-indirect-c-call-shape-asm
+    target
+    (IrValueVar 1)
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment 1 (CompilerRegSpill 16))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 2 (CompilerRegRegister "%r13"))
+        CompilerRegAssignmentNil)))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "    movq 16(%rbp), %rax\n")
+        (compiler-backend-string-contains? asm "    call *%rax\n"))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-indirect-c-call-home-shape-ok?) : bool
+  (and
+    (compiler-backend-indirect-c-call-callee-home-target-ok?
+      (BackendTargetLinux))
+    (compiler-backend-indirect-c-call-callee-home-target-ok?
+      (BackendTargetWindows))
+    (compiler-backend-indirect-c-call-caller-home-target-ok?
+      (BackendTargetLinux))
+    (compiler-backend-indirect-c-call-caller-home-target-ok?
+      (BackendTargetWindows))
+    (compiler-backend-indirect-c-call-stack-home-target-ok?
+      (BackendTargetLinux))
+    (compiler-backend-indirect-c-call-stack-home-target-ok?
+      (BackendTargetWindows))))
+
 (define (compiler-backend-program-argv-entry-capture-source) : String
   "(extern (fixture-strlen [arg0 : (Ptr u8)]) : i64 (:symbol \"strlen\"))
 (define (main) : i64
@@ -9359,6 +9441,7 @@
     (compiler-backend-windows-env-runtime-ok?)
     (compiler-backend-extern-metadata-symbol-ok?)
     (compiler-backend-extern-value-fnptr-ok?)
+    (compiler-backend-indirect-c-call-home-shape-ok?)
     (compiler-backend-varargs-ffi-ok?)
     (compiler-backend-c-abi-aggregate-ok?)
     (compiler-backend-c-abi-sret-aggregate-windows-ok?)

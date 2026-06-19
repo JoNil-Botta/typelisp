@@ -46,6 +46,9 @@ falling back to scalar code.
   Exit 42.
 - `masked_if_value_i64.tl` - AVX-512-only value-producing masked `if` over
   `n = 13` i64 lanes feeding a predicated store. Exit 42.
+- `masked_if_nested_i64.tl` - AVX-512-only nested masked varying `if` over
+  `n = 13` i64 lanes, covering parent/child branch-mask composition and a
+  masked tail. Exit 42.
 - `masked_if_i16_u16.tl` - AVX-512-only masked varying `if` over i16 and u16
   lanes, including signed and unsigned comparisons. Exit 42.
 - `inline_helper_masked_if_i64.tl` - AVX-512-only masked varying `if` whose
@@ -98,11 +101,13 @@ Coverage map:
   diagnostic until vector gather lowering is implemented.
 - AVX-512 bool dynamic-array lane coverage lives in `bool_lanes.tl`; AVX2 keeps
   an explicit staged diagnostic for the same source shape.
-- AVX-512 masked varying `if` direct-index, shifted-contiguous-index, and
-  foreach-index-as-value coverage lives in `masked_if_i64.tl`,
+- AVX-512 masked varying `if` direct-index, shifted-contiguous-index,
+  foreach-index-as-value, value-producing i64 select, nested branch-mask
+  composition, and i16/u16 coverage lives in `masked_if_i64.tl`,
   `masked_if_offset_i64.tl`, `masked_if_index_value_i64.tl`,
-  `masked_if_index_mod_i64.tl`, `masked_if_value_i64.tl`, and
-  `masked_if_i16_u16.tl`.
+  `masked_if_index_mod_i64.tl`, `masked_if_value_i64.tl`,
+  `masked_if_nested_i64.tl`, and `masked_if_i16_u16.tl`. Broader
+  value-producing masked-if selects are tracked by #3356.
 - Direct inline-helper coverage for varying scalar lane values lives in
   `inline_helper_i64.tl`, `inline_helper_shadow_i64.tl`,
   `inline_helper_f64.tl`, and `inline_helper_masked_if_i64.tl`.

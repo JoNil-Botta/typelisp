@@ -24105,11 +24105,15 @@
     [(AstUnNot) true]
     [_ false]))
 
-(define (lower-masked-vector-expr-list-lanes
+(define (lower-masked-vector-empty-lane-locals) : StringI64Map
+  (string-i64-map-with-capacity 16))
+
+(define (lower-masked-vector-expr-list-lanes-with-locals
   [mode : CompilerLowerMode]
   [env : SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
+  [lane-locals : StringI64Map]
   [exprs : AstExprList]) : i64
   (match exprs
     [(AstExprNil) 0]
@@ -24118,14 +24122,63 @@
         [expr : AstExpr (ast-node-get expr)]
         [rest : AstExprList (box-get rest)]
         (lower-masked-vector-lanes-merge
-          (lower-masked-vector-expr-lanes mode env type-env index expr)
-          (lower-masked-vector-expr-list-lanes mode env type-env index rest)))]))
+          (lower-masked-vector-expr-lanes-with-locals
+            mode
+            env
+            type-env
+            index
+            lane-locals
+            expr)
+          (lower-masked-vector-expr-list-lanes-with-locals
+            mode
+            env
+            type-env
+            index
+            lane-locals
+            rest)))]))
 
-(define (lower-masked-vector-let-bindings-lanes
+(define (lower-masked-vector-let-bindings-locals
   [mode : CompilerLowerMode]
   [env : SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
+  [lane-locals : StringI64Map]
+  [bindings : AstLetBindingList]) : StringI64Map
+  (match bindings
+    [(AstLetBindingNil) lane-locals]
+    [(AstLetBindingCons binding rest)
+      (let
+        [rest : AstLetBindingList (box-get rest)]
+        (match binding
+          [(AstLetBinding name _ init-box)
+            (let
+              [init : AstExpr (ast-node-get init-box)]
+              [init-lanes : i64
+                (lower-masked-vector-expr-lanes-with-locals
+                  mode
+                  env
+                  type-env
+                  index
+                  lane-locals
+                  init)]
+              [next-locals : StringI64Map
+                (if (> init-lanes 0)
+                  (string-i64-map-put lane-locals (intern-str name) init-lanes)
+                  lane-locals)]
+              (lower-masked-vector-let-bindings-locals
+                mode
+                env
+                type-env
+                index
+                next-locals
+                rest))]))]))
+
+(define (lower-masked-vector-let-bindings-lanes-with-locals
+  [mode : CompilerLowerMode]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [lane-locals : StringI64Map]
   [bindings : AstLetBindingList]) : i64
   (match bindings
     [(AstLetBindingNil) 0]
@@ -24133,47 +24186,90 @@
       (let
         [rest : AstLetBindingList (box-get rest)]
         (match binding
-          [(AstLetBinding _ _ init-box)
+          [(AstLetBinding name _ init-box)
             (let
               [init : AstExpr (ast-node-get init-box)]
-              (lower-masked-vector-lanes-merge
-                (lower-masked-vector-expr-lanes mode env type-env index init)
-                (lower-masked-vector-let-bindings-lanes
+              [init-lanes : i64
+                (lower-masked-vector-expr-lanes-with-locals
                   mode
                   env
                   type-env
                   index
+                  lane-locals
+                  init)]
+              [next-locals : StringI64Map
+                (if (> init-lanes 0)
+                  (string-i64-map-put lane-locals (intern-str name) init-lanes)
+                  lane-locals)]
+              (lower-masked-vector-lanes-merge
+                init-lanes
+                (lower-masked-vector-let-bindings-lanes-with-locals
+                  mode
+                  env
+                  type-env
+                  index
+                  next-locals
                   rest)))]))]))
 
-(define (lower-masked-vector-expr-lanes
+(define (lower-masked-vector-expr-lanes-with-locals
   [mode : CompilerLowerMode]
   [env : SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
+  [lane-locals : StringI64Map]
   [expr : AstExpr]) : i64
   (match expr
     [(AstExprSpanned inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
-        (lower-masked-vector-expr-lanes mode env type-env index inner))]
+        (lower-masked-vector-expr-lanes-with-locals
+          mode
+          env
+          type-env
+          index
+          lane-locals
+          inner))]
     [(AstExprAnn inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
-        (lower-masked-vector-expr-lanes mode env type-env index inner))]
+        (lower-masked-vector-expr-lanes-with-locals
+          mode
+          env
+          type-env
+          index
+          lane-locals
+          inner))]
     [(AstExprCast inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
-        (lower-masked-vector-expr-lanes mode env type-env index inner))]
+        (lower-masked-vector-expr-lanes-with-locals
+          mode
+          env
+          type-env
+          index
+          lane-locals
+          inner))]
     [(AstExprLiteral _) 0]
     [(AstExprVar name)
-      (if (string-eq (intern-str name) index)
-        (lower-simd-lanes-for-elem mode (AstTyI64))
-        0)]
+      (let
+        [name-text : String (intern-str name)]
+        (match (string-i64-map-get lane-locals name-text)
+          [(StringI64MapFound lanes) lanes]
+          [(StringI64MapMissing)
+            (if (string-eq name-text index)
+              (lower-simd-lanes-for-elem mode (AstTyI64))
+              0)]))]
     [(AstExprUnary op inner-box)
       (if (lower-masked-vector-unop-supported? op)
         (let
           [inner : AstExpr (ast-node-get inner-box)]
-          (lower-masked-vector-expr-lanes mode env type-env index inner))
+          (lower-masked-vector-expr-lanes-with-locals
+            mode
+            env
+            type-env
+            index
+            lane-locals
+            inner))
         -1)]
     [(AstExprBinary op left-box right-box)
       (if (lower-masked-vector-binop-supported? op)
@@ -24181,34 +24277,85 @@
           [left : AstExpr (ast-node-get left-box)]
           [right : AstExpr (ast-node-get right-box)]
           (lower-masked-vector-lanes-merge
-            (lower-masked-vector-expr-lanes mode env type-env index left)
-            (lower-masked-vector-expr-lanes mode env type-env index right)))
+            (lower-masked-vector-expr-lanes-with-locals
+              mode
+              env
+              type-env
+              index
+              lane-locals
+              left)
+            (lower-masked-vector-expr-lanes-with-locals
+              mode
+              env
+              type-env
+              index
+              lane-locals
+              right)))
         -1)]
     [(AstExprLet let-box)
       (match (box-get let-box)
         [(AstLet bindings body-box)
           (let
             [body : AstExpr (ast-node-get body-box)]
-            (lower-masked-vector-lanes-merge
-              (lower-masked-vector-let-bindings-lanes
+            [body-locals : StringI64Map
+              (lower-masked-vector-let-bindings-locals
                 mode
                 env
                 type-env
                 index
+                lane-locals
+                bindings)]
+            (lower-masked-vector-lanes-merge
+              (lower-masked-vector-let-bindings-lanes-with-locals
+                mode
+                env
+                type-env
+                index
+                lane-locals
                 bindings)
-              (lower-masked-vector-expr-lanes mode env type-env index body)))])]
+              (lower-masked-vector-expr-lanes-with-locals
+                mode
+                env
+                type-env
+                index
+                body-locals
+                body)))])]
     [(AstExprIf cond-box then-box else-box)
       (let
         [cond : AstExpr (ast-node-get cond-box)]
         [then-branch : AstExpr (ast-node-get then-box)]
         [else-branch : AstExpr (ast-node-get else-box)]
         (lower-masked-vector-lanes-merge
-          (lower-masked-vector-expr-lanes mode env type-env index cond)
+          (lower-masked-vector-expr-lanes-with-locals
+            mode
+            env
+            type-env
+            index
+            lane-locals
+            cond)
           (lower-masked-vector-lanes-merge
-            (lower-masked-vector-expr-lanes mode env type-env index then-branch)
-            (lower-masked-vector-expr-lanes mode env type-env index else-branch))))]
+            (lower-masked-vector-expr-lanes-with-locals
+              mode
+              env
+              type-env
+              index
+              lane-locals
+              then-branch)
+            (lower-masked-vector-expr-lanes-with-locals
+              mode
+              env
+              type-env
+              index
+              lane-locals
+              else-branch))))]
     [(AstExprBegin exprs)
-      (lower-masked-vector-expr-list-lanes mode env type-env index exprs)]
+      (lower-masked-vector-expr-list-lanes-with-locals
+        mode
+        env
+        type-env
+        index
+        lane-locals
+        exprs)]
     [(AstExprArrayRef arr-box idx-box)
       (let
         [arr : AstExpr (ast-node-get arr-box)]
@@ -24232,11 +24379,12 @@
               (if (lower-type-bool? elem-ty)
                 (let
                   [value-lanes : i64
-                    (lower-masked-vector-expr-lanes
+                    (lower-masked-vector-expr-lanes-with-locals
                       mode
                       env
                       type-env
                       index
+                      lane-locals
                       value)]
                   (if (< value-lanes 0)
                     -1
@@ -24245,7 +24393,13 @@
                       value-lanes)))
                 (lower-masked-vector-lanes-merge
                   (lower-simd-lanes-for-elem mode elem-ty)
-                  (lower-masked-vector-expr-lanes mode env type-env index value)))]
+                  (lower-masked-vector-expr-lanes-with-locals
+                    mode
+                    env
+                    type-env
+                    index
+                    lane-locals
+                    value)))]
             [LowerNoArrayVar -1])
           -1))]
     [(AstExprStructSet receiver-box _ value-box)
@@ -24253,140 +24407,270 @@
         [receiver : AstExpr (ast-node-get receiver-box)]
         [value : AstExpr (ast-node-get value-box)]
         (lower-masked-vector-lanes-merge
-          (lower-masked-vector-expr-lanes mode env type-env index receiver)
-          (lower-masked-vector-expr-lanes mode env type-env index value)))]
+          (lower-masked-vector-expr-lanes-with-locals
+            mode
+            env
+            type-env
+            index
+            lane-locals
+            receiver)
+          (lower-masked-vector-expr-lanes-with-locals
+            mode
+            env
+            type-env
+            index
+            lane-locals
+            value)))]
     [_ -1]))
 
-(define (lower-masked-vector-body-has-varying-if?
+(define (lower-masked-vector-expr-list-lanes
   [mode : CompilerLowerMode]
   [env : SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
+  [exprs : AstExprList]) : i64
+  (lower-masked-vector-expr-list-lanes-with-locals
+    mode
+    env
+    type-env
+    index
+    (lower-masked-vector-empty-lane-locals)
+    exprs))
+
+(define (lower-masked-vector-let-bindings-lanes
+  [mode : CompilerLowerMode]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [bindings : AstLetBindingList]) : i64
+  (lower-masked-vector-let-bindings-lanes-with-locals
+    mode
+    env
+    type-env
+    index
+    (lower-masked-vector-empty-lane-locals)
+    bindings))
+
+(define (lower-masked-vector-expr-lanes
+  [mode : CompilerLowerMode]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [expr : AstExpr]) : i64
+  (lower-masked-vector-expr-lanes-with-locals
+    mode
+    env
+    type-env
+    index
+    (lower-masked-vector-empty-lane-locals)
+    expr))
+
+(define (lower-masked-vector-body-has-varying-if-with-locals?
+  [mode : CompilerLowerMode]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [lane-locals : StringI64Map]
   [expr : AstExpr]) : bool
   (match expr
     [(AstExprSpanned inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
-        (lower-masked-vector-body-has-varying-if? mode env type-env index inner))]
+        (lower-masked-vector-body-has-varying-if-with-locals?
+          mode
+          env
+          type-env
+          index
+          lane-locals
+          inner))]
     [(AstExprAnn inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
-        (lower-masked-vector-body-has-varying-if? mode env type-env index inner))]
+        (lower-masked-vector-body-has-varying-if-with-locals?
+          mode
+          env
+          type-env
+          index
+          lane-locals
+          inner))]
     [(AstExprCast inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
-        (lower-masked-vector-body-has-varying-if? mode env type-env index inner))]
+        (lower-masked-vector-body-has-varying-if-with-locals?
+          mode
+          env
+          type-env
+          index
+          lane-locals
+          inner))]
     [(AstExprIf cond-box then-box else-box)
       (let
         [cond : AstExpr (ast-node-get cond-box)]
         [then-branch : AstExpr (ast-node-get then-box)]
         [else-branch : AstExpr (ast-node-get else-box)]
-        (if (> (lower-masked-vector-expr-lanes mode env type-env index cond) 0)
+        (if (>
+          (lower-masked-vector-expr-lanes-with-locals
+            mode
+            env
+            type-env
+            index
+            lane-locals
+            cond)
+          0)
           true
           (or
-            (lower-masked-vector-body-has-varying-if?
+            (lower-masked-vector-body-has-varying-if-with-locals?
               mode
               env
               type-env
               index
+              lane-locals
               then-branch)
-            (lower-masked-vector-body-has-varying-if?
+            (lower-masked-vector-body-has-varying-if-with-locals?
               mode
               env
               type-env
               index
+              lane-locals
               else-branch))))]
     [(AstExprLet let-box)
       (match (box-get let-box)
         [(AstLet bindings body-box)
           (let
             [body : AstExpr (ast-node-get body-box)]
+            [body-locals : StringI64Map
+              (lower-masked-vector-let-bindings-locals
+                mode
+                env
+                type-env
+                index
+                lane-locals
+                bindings)]
             (or
-              (lower-masked-vector-let-bindings-have-varying-if?
+              (lower-masked-vector-let-bindings-have-varying-if-with-locals?
                 mode
                 env
                 type-env
                 index
+                lane-locals
                 bindings)
-              (lower-masked-vector-body-has-varying-if?
+              (lower-masked-vector-body-has-varying-if-with-locals?
                 mode
                 env
                 type-env
                 index
+                body-locals
                 body)))])]
     [(AstExprBegin exprs)
-      (lower-masked-vector-expr-list-has-varying-if?
+      (lower-masked-vector-expr-list-has-varying-if-with-locals?
         mode
         env
         type-env
         index
+        lane-locals
         exprs)]
     [(AstExprUnary _ inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
-        (lower-masked-vector-body-has-varying-if? mode env type-env index inner))]
+        (lower-masked-vector-body-has-varying-if-with-locals?
+          mode
+          env
+          type-env
+          index
+          lane-locals
+          inner))]
     [(AstExprBinary _ left-box right-box)
       (let
         [left : AstExpr (ast-node-get left-box)]
         [right : AstExpr (ast-node-get right-box)]
         (or
-          (lower-masked-vector-body-has-varying-if?
+          (lower-masked-vector-body-has-varying-if-with-locals?
             mode
             env
             type-env
             index
+            lane-locals
             left)
-          (lower-masked-vector-body-has-varying-if?
+          (lower-masked-vector-body-has-varying-if-with-locals?
             mode
             env
             type-env
             index
+            lane-locals
             right)))]
     [(AstExprArrayRef arr-box idx-box)
       (let
         [arr : AstExpr (ast-node-get arr-box)]
         [idx : AstExpr (ast-node-get idx-box)]
         (or
-          (lower-masked-vector-body-has-varying-if? mode env type-env index arr)
-          (lower-masked-vector-body-has-varying-if? mode env type-env index idx)))]
+          (lower-masked-vector-body-has-varying-if-with-locals?
+            mode
+            env
+            type-env
+            index
+            lane-locals
+            arr)
+          (lower-masked-vector-body-has-varying-if-with-locals?
+            mode
+            env
+            type-env
+            index
+            lane-locals
+            idx)))]
     [(AstExprArraySet arr-box idx-box value-box)
       (let
         [arr : AstExpr (ast-node-get arr-box)]
         [idx : AstExpr (ast-node-get idx-box)]
         [value : AstExpr (ast-node-get value-box)]
         (or
-          (lower-masked-vector-body-has-varying-if? mode env type-env index arr)
-          (lower-masked-vector-body-has-varying-if? mode env type-env index idx)
-          (lower-masked-vector-body-has-varying-if?
+          (lower-masked-vector-body-has-varying-if-with-locals?
             mode
             env
             type-env
             index
+            lane-locals
+            arr)
+          (lower-masked-vector-body-has-varying-if-with-locals?
+            mode
+            env
+            type-env
+            index
+            lane-locals
+            idx)
+          (lower-masked-vector-body-has-varying-if-with-locals?
+            mode
+            env
+            type-env
+            index
+            lane-locals
             value)))]
     [(AstExprStructSet receiver-box _ value-box)
       (let
         [receiver : AstExpr (ast-node-get receiver-box)]
         [value : AstExpr (ast-node-get value-box)]
         (or
-          (lower-masked-vector-body-has-varying-if?
+          (lower-masked-vector-body-has-varying-if-with-locals?
             mode
             env
             type-env
             index
+            lane-locals
             receiver)
-          (lower-masked-vector-body-has-varying-if?
+          (lower-masked-vector-body-has-varying-if-with-locals?
             mode
             env
             type-env
             index
+            lane-locals
             value)))]
     [_ false]))
 
-(define (lower-masked-vector-expr-list-has-varying-if?
+(define (lower-masked-vector-expr-list-has-varying-if-with-locals?
   [mode : CompilerLowerMode]
   [env : SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
+  [lane-locals : StringI64Map]
   [exprs : AstExprList]) : bool
   (match exprs
     [(AstExprNil) false]
@@ -24395,24 +24679,27 @@
         [expr : AstExpr (ast-node-get expr)]
         [rest : AstExprList (box-get rest)]
         (or
-          (lower-masked-vector-body-has-varying-if?
+          (lower-masked-vector-body-has-varying-if-with-locals?
             mode
             env
             type-env
             index
+            lane-locals
             expr)
-          (lower-masked-vector-expr-list-has-varying-if?
+          (lower-masked-vector-expr-list-has-varying-if-with-locals?
             mode
             env
             type-env
             index
+            lane-locals
             rest)))]))
 
-(define (lower-masked-vector-let-bindings-have-varying-if?
+(define (lower-masked-vector-let-bindings-have-varying-if-with-locals?
   [mode : CompilerLowerMode]
   [env : SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
+  [lane-locals : StringI64Map]
   [bindings : AstLetBindingList]) : bool
   (match bindings
     [(AstLetBindingNil) false]
@@ -24420,22 +24707,78 @@
       (let
         [rest : AstLetBindingList (box-get rest)]
         (match binding
-          [(AstLetBinding _ _ init-box)
+          [(AstLetBinding name _ init-box)
             (let
               [init : AstExpr (ast-node-get init-box)]
+              [init-lanes : i64
+                (lower-masked-vector-expr-lanes-with-locals
+                  mode
+                  env
+                  type-env
+                  index
+                  lane-locals
+                  init)]
+              [next-locals : StringI64Map
+                (if (> init-lanes 0)
+                  (string-i64-map-put lane-locals (intern-str name) init-lanes)
+                  lane-locals)]
               (or
-                (lower-masked-vector-body-has-varying-if?
+                (lower-masked-vector-body-has-varying-if-with-locals?
                   mode
                   env
                   type-env
                   index
+                  lane-locals
                   init)
-                (lower-masked-vector-let-bindings-have-varying-if?
+                (lower-masked-vector-let-bindings-have-varying-if-with-locals?
                   mode
                   env
                   type-env
                   index
+                  next-locals
                   rest)))]))]))
+
+(define (lower-masked-vector-body-has-varying-if?
+  [mode : CompilerLowerMode]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [expr : AstExpr]) : bool
+  (lower-masked-vector-body-has-varying-if-with-locals?
+    mode
+    env
+    type-env
+    index
+    (lower-masked-vector-empty-lane-locals)
+    expr))
+
+(define (lower-masked-vector-expr-list-has-varying-if?
+  [mode : CompilerLowerMode]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [exprs : AstExprList]) : bool
+  (lower-masked-vector-expr-list-has-varying-if-with-locals?
+    mode
+    env
+    type-env
+    index
+    (lower-masked-vector-empty-lane-locals)
+    exprs))
+
+(define (lower-masked-vector-let-bindings-have-varying-if?
+  [mode : CompilerLowerMode]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [bindings : AstLetBindingList]) : bool
+  (lower-masked-vector-let-bindings-have-varying-if-with-locals?
+    mode
+    env
+    type-env
+    index
+    (lower-masked-vector-empty-lane-locals)
+    bindings))
 
 (define (lower-masked-vector-bool-array-lane?
   [env : SymI64Env]
@@ -41410,6 +41753,20 @@
         0
         (+ (array-ref xs i) 1)))))")
 
+(define (compiler-lower-avx512-masked-if-nested-source) : String
+  "(define (fill [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (let
+      [x : i64 (array-ref xs i)]
+      (if (< x 0)
+        (array-set! out i -10)
+        (if (= x 0)
+          (array-set! out i 0)
+          (if (< x 6)
+            (array-set! out i 6)
+            (array-set! out i 12)))))))")
+
 (define (compiler-lower-avx512-masked-if-source-shape-ok? [src : String]) : bool
   (match (lower-compiler-source-with-mode src (CompilerLowerAvx512))
     [(OkCompilerLower program _)
@@ -41568,6 +41925,43 @@
               (and (>= shape-count 8) (> tail-store-count 0))))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-avx512-masked-if-nested-shape-ok?) : bool
+  (match (lower-compiler-source-with-mode
+    (compiler-lower-avx512-masked-if-nested-source)
+    (CompilerLowerAvx512))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (let
+            [load-count : i64
+              (lower-test-function-vector-load-count functions "fill")]
+            [store-count : i64
+              (lower-test-function-vector-store-count functions "fill")]
+            [pred-load-count : i64
+              (lower-test-function-predicated-load-count functions "fill")]
+            [pred-store-count : i64
+              (lower-test-function-predicated-store-count functions "fill")]
+            [tail-mask-count : i64
+              (lower-test-function-tail-mask-count functions "fill")]
+            [shape-count : i64
+              (lower-test-function-vector-shape-count
+                functions
+                "fill"
+                8
+                (AstTyI64))]
+            [tail-store-count : i64
+              (lower-test-function-store-ptr-count functions "fill")]
+            (compiler-lower-and8
+              (= load-count 0)
+              (= store-count 0)
+              (> pred-load-count 0)
+              (> pred-store-count 0)
+              (= tail-mask-count 2)
+              (> shape-count 0)
+              (> tail-store-count 0)
+              true))])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-avx2-masked-if-diagnostic-ok?) : bool
   (and
     (compiler-lower-mode-error-ok?
@@ -41588,6 +41982,10 @@
       (lower-avx2-masked-if-diagnostic))
     (compiler-lower-mode-error-ok?
       (compiler-lower-avx512-masked-if-value-source)
+      (CompilerLowerAvx2)
+      (lower-avx2-masked-if-diagnostic))
+    (compiler-lower-mode-error-ok?
+      (compiler-lower-avx512-masked-if-nested-source)
       (CompilerLowerAvx2)
       (lower-avx2-masked-if-diagnostic))))
 
@@ -41636,6 +42034,7 @@
     (compiler-lower-avx512-masked-if-index-value-shape-ok?)
     (compiler-lower-avx512-masked-if-index-mod-shape-ok?)
     (compiler-lower-avx512-masked-if-value-shape-ok?)
+    (compiler-lower-avx512-masked-if-nested-shape-ok?)
     (compiler-lower-avx2-masked-if-diagnostic-ok?)))
 
 (define (compiler-lower-avx2-spmd-reduce-shape-ok?

@@ -3496,10 +3496,10 @@ also implemented: scalar lowering covers the supported operator/type surface
 below, and SIMD backend modes vectorize eligible contiguous array folds.
 `spmd-scan` is implemented as scalar reference lowering for range-wide
 inclusive scans. Public lane identity forms are implemented for `foreach`
-bodies and `spmd-reduce` value expressions. The v2 masked varying `if` contract
-is specified here before compiler implementation; until that implementation
-lands, the current checker still rejects varying control-flow conditions inside
-`foreach`.
+bodies and `spmd-reduce` value expressions. Masked varying `if` is implemented
+for scalar reference lowering and the current AVX-512 subset described below;
+AVX2 emits an explicit staged diagnostic instead of silently scalarizing masked
+branches.
 
 SPMD is data parallelism inside one task. It does not create independently
 scheduled OS threads, does not transfer ownership between thread-local arenas,
@@ -3585,9 +3585,8 @@ Uniform and varying rules:
   designed, except for the explicit `stdlib/atomic.tl` integer element helpers.
   The implemented non-atomic slice permits built-in arithmetic/comparison
   operators and array operations over supported lane types.
-- In the current implemented slice, `if` and `while` conditions must be
-  uniform. The v2 masked-control-flow slice admits varying `if` with the
-  restrictions below; `while` remains uniform-only.
+- `while` conditions must be uniform. Varying `if` is admitted with the
+  restrictions below.
 
 Lane identity forms:
 
@@ -3714,6 +3713,12 @@ Masked varying `if` (v2):
   Scalar backend modes must not silently accept a broader source surface than
   SIMD backend modes, and SIMD backend modes must not silently scalarize an
   unsupported masked branch.
+- Current implementation status: scalar lowering accepts the checked masked-if
+  surface as the reference path. AVX-512 supports unit-result masked branches,
+  nested branch-mask composition, contiguous predicated array reads/writes over
+  the covered lane types, and the i64 value-producing select fixture. AVX2
+  emits the staged masked-if diagnostic. Broader value-producing masked-if
+  selects for the remaining lane result types are tracked by #3356.
 
 Explicit SPMD atomic scatter:
 
@@ -3738,7 +3743,7 @@ Explicit SPMD atomic scatter:
 - `spmd-reduce` value expressions remain pure: atomic helper calls are rejected
   there along with other function calls and side effects.
 
-```lisp test=ignore name=spmd-masked-if-scalar-fallback reason="masked varying if is specified before compiler implementation"
+```lisp test=check name=spmd-masked-if-scalar-fallback
 (define (clamp-positive [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
   (foreach ([i : i64 0 n])
     (if (< (array-ref xs i) 0)
@@ -3746,7 +3751,7 @@ Explicit SPMD atomic scatter:
         (array-set! out i (array-ref xs i)))))
 ```
 
-```lisp test=ignore name=spmd-masked-if-tail reason="masked varying if is specified before compiler implementation"
+```lisp test=check name=spmd-masked-if-tail
 (define (copy-even-tail [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
   (foreach ([i : i64 0 n])
     (if (= (% i 2) 0)
@@ -3754,7 +3759,7 @@ Explicit SPMD atomic scatter:
         (array-set! out i 0))))
 ```
 
-```lisp test=ignore name=spmd-masked-if-nested reason="masked varying if is specified before compiler implementation"
+```lisp test=check name=spmd-masked-if-nested
 (define (classify [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
   (foreach ([i : i64 0 n])
     (let
@@ -5687,8 +5692,8 @@ not the future safe reference/borrow model (#182), not a replacement for
 | `(with ...)` scoped non-memory resource cleanup | Implemented (#907): parser/typechecker/lowering with LIFO cleanup order |
 | `(in-arena ...)` first-class arena target | Implemented (#2625): safe dynamic active-arena switch with restoration on normal and early exits, no mark/rewind/destroy/clone |
 | Cleanup-owning aggregate declarations | Implemented for structs (#907); cleanup-owning enums remain reserved |
-| SPMD / SIMD `foreach`, `spmd-reduce`, and `spmd-scan` | Scalar reference lowering implemented; AVX2/AVX-512 support a first contiguous `foreach` map/zip subset over `i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `i64`, `u64`, `f32`, and `f64`, including public `(program-index)`/`(program-count)` lane identity forms for map values; AVX-512 also supports bool dynamic-array copies and bool-valued map results through private mask conversion; scalar gather-only dynamic-array reads are implemented with ordinary bounds checks while explicit SIMD modes reject non-contiguous gather shapes; eligible `spmd-reduce` folds, scalar inclusive `spmd-scan`, and direct array-value `spmd-broadcast` maps are implemented; explicit `stdlib/atomic.tl` i32/i64 element helpers provide the first overlap-tolerant SPMD scatter write surface; masked varying `if` remains in flight (#2131/#2207) |
-| Public cross-lane/source SPMD gaps beyond implemented `spmd-reduce`/`spmd-scan`/`spmd-broadcast`, lane identities, and explicit atomic helpers | Vectorized/floating-point scans, general shuffles, remaining masked/control-flow forms, and out-of-line varying calls remain deferred; public vector/mask/varying source type deferral is pinned (#2903), with live work split across #2207/#2767, #2852, and #2884 |
+| SPMD / SIMD `foreach`, `spmd-reduce`, and `spmd-scan` | Scalar reference lowering implemented; AVX2/AVX-512 support a first contiguous `foreach` map/zip subset over `i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `i64`, `u64`, `f32`, and `f64`, including public `(program-index)`/`(program-count)` lane identity forms for map values; AVX-512 also supports bool dynamic-array copies and bool-valued map results through private mask conversion; scalar gather-only dynamic-array reads are implemented with ordinary bounds checks while explicit SIMD modes reject non-contiguous gather shapes; eligible `spmd-reduce` folds, scalar inclusive `spmd-scan`, direct array-value `spmd-broadcast` maps, explicit `stdlib/atomic.tl` i32/i64 element helpers, and the current scalar/AVX-512 masked varying `if` subset are implemented; broader masked-if value results remain pending (#3356) |
+| Public cross-lane/source SPMD gaps beyond implemented `spmd-reduce`/`spmd-scan`/`spmd-broadcast`, lane identities, masked-if subset, and explicit atomic helpers | Broader masked-if value results, vectorized/floating-point scans, general shuffles, remaining control-flow forms beyond masked `if`, and out-of-line varying calls remain deferred; public vector/mask/varying source type deferral is pinned (#2903), with live work split across #3356/#2767, #2852, and #2884 |
 | Runtime SIMD dispatch (`defdispatch`) | Implemented for scalar/AVX2/AVX-512 variants with cached runtime selection and end-to-end selection verification |
 | Windows region helpers | Implemented for `tl_region_mark`/`tl_region_reset` and `with-arena` scoped reclamation |
 | Complete source locations for all semantic errors | Partial |

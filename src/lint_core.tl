@@ -1418,12 +1418,16 @@
             module-name)
             true
             (lint-match-arms-use-import? arms alias module-name))])]
-    [(AstExprForeach _ index-ty start end body)
-      (cond
-        [(lint-type-uses-import? index-ty alias module-name) true]
-        [(lint-expr-uses-import? (ast-node-get start) alias module-name) true]
-        [(lint-expr-uses-import? (ast-node-get end) alias module-name) true]
-        [else (lint-expr-uses-import? (ast-node-get body) alias module-name)])]
+    [(AstExprForeach fe-box)
+      (match (box-get fe-box)
+        [(AstForeach _ index-ty start end body)
+          (cond
+            [(lint-type-uses-import? index-ty alias module-name) true]
+            [(lint-expr-uses-import? (ast-node-get start) alias module-name)
+              true]
+            [(lint-expr-uses-import? (ast-node-get end) alias module-name) true]
+            [else
+              (lint-expr-uses-import? (ast-node-get body) alias module-name)])])]
     [(AstExprSpmdReduce reduce-box)
       (match (box-get reduce-box)
         [(AstSpmdReduce _ _ index-ty start end init value)
@@ -1473,10 +1477,12 @@
       (if (lint-expr-uses-import? (ast-node-get arena) alias module-name)
         true
         (lint-expr-list-uses-import? body alias module-name))]
-    [(AstExprWithResource bindings body)
-      (if (lint-resource-bindings-use-import? bindings alias module-name)
-        true
-        (lint-expr-list-uses-import? body alias module-name))]
+    [(AstExprWithResource wr-box)
+      (match (box-get wr-box)
+        [(AstWithResource bindings body)
+          (if (lint-resource-bindings-use-import? bindings alias module-name)
+            true
+            (lint-expr-list-uses-import? body alias module-name))])]
     [(AstExprBox inner)
       (lint-expr-uses-import? (ast-node-get inner) alias module-name)]
     [(AstExprBoxGet inner)
@@ -2197,13 +2203,15 @@
             (lint-unused-assignment-note-reads-match-arms
               arms
               (lint-unused-assignment-note-reads (ast-node-get scrutinee) state)))])]
-    [(AstExprForeach _ _ start end body)
-      (lint-unused-assignment-clear-pending
-        (lint-unused-assignment-note-reads
-          (ast-node-get body)
-          (lint-unused-assignment-note-reads
-            (ast-node-get end)
-            (lint-unused-assignment-note-reads (ast-node-get start) state))))]
+    [(AstExprForeach fe-box)
+      (match (box-get fe-box)
+        [(AstForeach _ _ start end body)
+          (lint-unused-assignment-clear-pending
+            (lint-unused-assignment-note-reads
+              (ast-node-get body)
+              (lint-unused-assignment-note-reads
+                (ast-node-get end)
+                (lint-unused-assignment-note-reads (ast-node-get start) state))))])]
     [(AstExprSpmdReduce reduce-box)
       (match (box-get reduce-box)
         [(AstSpmdReduce _ _ _ start end init value)
@@ -2252,10 +2260,12 @@
       (lint-unused-assignment-note-reads-list
         body
         (lint-unused-assignment-note-reads (ast-node-get arena) state))]
-    [(AstExprWithResource bindings body)
-      (lint-unused-assignment-note-reads-list
-        body
-        (lint-unused-assignment-note-reads-resource-bindings bindings state))]
+    [(AstExprWithResource wr-box)
+      (match (box-get wr-box)
+        [(AstWithResource bindings body)
+          (lint-unused-assignment-note-reads-list
+            body
+            (lint-unused-assignment-note-reads-resource-bindings bindings state))])]
     [(AstExprBox inner)
       (lint-unused-assignment-note-reads (ast-node-get inner) state)]
     [(AstExprBoxGet inner)
@@ -2433,10 +2443,12 @@
       (lint-unused-assignment-expr-list
         body
         (lint-unused-assignment-note-reads (ast-node-get arena) state))]
-    [(AstExprWithResource bindings body)
-      (lint-unused-assignment-expr-list
-        body
-        (lint-unused-assignment-note-reads-resource-bindings bindings state))]
+    [(AstExprWithResource wr-box)
+      (match (box-get wr-box)
+        [(AstWithResource bindings body)
+          (lint-unused-assignment-expr-list
+            body
+            (lint-unused-assignment-note-reads-resource-bindings bindings state))])]
     [(AstExprSet target value)
       (lint-unused-assignment-write-id
         (lint-unused-assignment-note-reads (ast-node-get value) state)
@@ -3200,12 +3212,14 @@
             (lint-unused-variable-quasiquote-expr
               (ast-node-get scrutinee)
               state))])]
-    [(AstExprForeach _ _ start end body)
-      (lint-unused-variable-quasiquote-expr
-        (ast-node-get body)
-        (lint-unused-variable-quasiquote-expr
-          (ast-node-get end)
-          (lint-unused-variable-quasiquote-expr (ast-node-get start) state)))]
+    [(AstExprForeach fe-box)
+      (match (box-get fe-box)
+        [(AstForeach _ _ start end body)
+          (lint-unused-variable-quasiquote-expr
+            (ast-node-get body)
+            (lint-unused-variable-quasiquote-expr
+              (ast-node-get end)
+              (lint-unused-variable-quasiquote-expr (ast-node-get start) state)))])]
     [(AstExprSpmdReduce reduce-box)
       (match (box-get reduce-box)
         [(AstSpmdReduce _ _ _ start end init value)
@@ -3254,10 +3268,12 @@
       (lint-unused-variable-quasiquote-expr-list
         body
         (lint-unused-variable-quasiquote-expr (ast-node-get arena) state))]
-    [(AstExprWithResource bindings body)
-      (lint-unused-variable-quasiquote-expr-list
-        body
-        (lint-unused-variable-quasiquote-resource-bindings bindings state))]
+    [(AstExprWithResource wr-box)
+      (match (box-get wr-box)
+        [(AstWithResource bindings body)
+          (lint-unused-variable-quasiquote-expr-list
+            body
+            (lint-unused-variable-quasiquote-resource-bindings bindings state))])]
     [(AstExprBox inner)
       (lint-unused-variable-quasiquote-expr (ast-node-get inner) state)]
     [(AstExprBoxGet inner)
@@ -3593,17 +3609,19 @@
           (lint-unused-variable-match-arms
             arms
             (lint-unused-variable-expr (ast-node-get scrutinee) state span))])]
-    [(AstExprForeach index index-ty start end body)
-      (lint-unused-variable-index-scope
-        index
-        (ast-node-get body)
-        (lint-unused-variable-type
-          index-ty
-          (lint-unused-variable-expr
-            (ast-node-get end)
-            (lint-unused-variable-expr (ast-node-get start) state span)
-            span))
-        span)]
+    [(AstExprForeach fe-box)
+      (match (box-get fe-box)
+        [(AstForeach index index-ty start end body)
+          (lint-unused-variable-index-scope
+            index
+            (ast-node-get body)
+            (lint-unused-variable-type
+              index-ty
+              (lint-unused-variable-expr
+                (ast-node-get end)
+                (lint-unused-variable-expr (ast-node-get start) state span)
+                span))
+            span)])]
     [(AstExprSpmdReduce reduce-box)
       (match (box-get reduce-box)
         [(AstSpmdReduce _ index index-ty start end init value)
@@ -3683,15 +3701,19 @@
       (lint-unused-variable-expr-list
         body
         (lint-unused-variable-expr (ast-node-get arena) state span))]
-    [(AstExprWithResource bindings body)
-      (let
-        [with-frame : LintUnusedVariableState
-          (lint-unused-variable-push-frame state LintUnusedVariableBindingNil)]
-        [with-bindings : LintUnusedVariableState
-          (lint-unused-variable-resource-bindings bindings with-frame)]
-        [with-body : LintUnusedVariableState
-          (lint-unused-variable-expr-list body with-bindings)]
-        (lint-unused-variable-pop-frame with-body))]
+    [(AstExprWithResource wr-box)
+      (match (box-get wr-box)
+        [(AstWithResource bindings body)
+          (let
+            [with-frame : LintUnusedVariableState
+              (lint-unused-variable-push-frame
+                state
+                LintUnusedVariableBindingNil)]
+            [with-bindings : LintUnusedVariableState
+              (lint-unused-variable-resource-bindings bindings with-frame)]
+            [with-body : LintUnusedVariableState
+              (lint-unused-variable-expr-list body with-bindings)]
+            (lint-unused-variable-pop-frame with-body))])]
     [(AstExprBox inner)
       (lint-unused-variable-expr (ast-node-get inner) state span)]
     [(AstExprBoxGet inner)
@@ -4000,14 +4022,14 @@
           [(AstExprWithEscape _ _) (lint-walk-expr expr threshold acc)]
           [(AstExprWithScratch _) (lint-walk-expr expr threshold acc)]
           [(AstExprInArena _ _) (lint-walk-expr expr threshold acc)]
-          [(AstExprWithResource _ _) (lint-walk-expr expr threshold acc)]
+          [(AstExprWithResource _) (lint-walk-expr expr threshold acc)]
           [_ (lint-walk-discarded-nonsequence-expr expr threshold acc)]))]
     [(AstExprBegin _) (lint-walk-expr expr threshold acc)]
     [(AstExprWithRegion _ _) (lint-walk-expr expr threshold acc)]
     [(AstExprWithEscape _ _) (lint-walk-expr expr threshold acc)]
     [(AstExprWithScratch _) (lint-walk-expr expr threshold acc)]
     [(AstExprInArena _ _) (lint-walk-expr expr threshold acc)]
-    [(AstExprWithResource _ _) (lint-walk-expr expr threshold acc)]
+    [(AstExprWithResource _) (lint-walk-expr expr threshold acc)]
     [_ (lint-walk-discarded-nonsequence-expr expr threshold acc)]))
 
 (define (lint-walk-value-sequence-expr-list
@@ -4524,11 +4546,13 @@
           body
           threshold
           (lint-walk-expr arena threshold acc)))]
-    [(AstExprWithResource bindings body)
-      (lint-walk-tail-sequence-expr-list
-        body
-        threshold
-        (lint-walk-resource-bindings bindings threshold acc))]
+    [(AstExprWithResource wr-box)
+      (match (box-get wr-box)
+        [(AstWithResource bindings body)
+          (lint-walk-tail-sequence-expr-list
+            body
+            threshold
+            (lint-walk-resource-bindings bindings threshold acc))])]
     [(AstExprTry inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
@@ -4742,15 +4766,20 @@
               arms
               threshold
               (lint-walk-expr scrutinee threshold acc)))])]
-    [(AstExprForeach _ _ start-box end-box body-box)
-      (let
-        [start : AstExpr (ast-node-get start-box)]
-        [end : AstExpr (ast-node-get end-box)]
-        [body : AstExpr (ast-node-get body-box)]
-        (lint-walk-expr
-          body
-          threshold
-          (lint-walk-expr end threshold (lint-walk-expr start threshold acc))))]
+    [(AstExprForeach fe-box)
+      (match (box-get fe-box)
+        [(AstForeach _ _ start-box end-box body-box)
+          (let
+            [start : AstExpr (ast-node-get start-box)]
+            [end : AstExpr (ast-node-get end-box)]
+            [body : AstExpr (ast-node-get body-box)]
+            (lint-walk-expr
+              body
+              threshold
+              (lint-walk-expr
+                end
+                threshold
+                (lint-walk-expr start threshold acc))))])]
     [(AstExprSpmdReduce reduce-box)
       (match (box-get reduce-box)
         [(AstSpmdReduce _ _ _ start-box end-box init-box value-box)
@@ -4823,11 +4852,13 @@
           body
           threshold
           (lint-walk-expr arena threshold acc)))]
-    [(AstExprWithResource bindings body)
-      (lint-walk-value-sequence-expr-list
-        body
-        threshold
-        (lint-walk-resource-bindings bindings threshold acc))]
+    [(AstExprWithResource wr-box)
+      (match (box-get wr-box)
+        [(AstWithResource bindings body)
+          (lint-walk-value-sequence-expr-list
+            body
+            threshold
+            (lint-walk-resource-bindings bindings threshold acc))])]
     [(AstExprBox inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]

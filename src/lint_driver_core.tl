@@ -820,14 +820,16 @@
           (selfhost-lint-dead-match-arm-refs
             arms
             (selfhost-lint-dead-expr-refs (ast-node-get scrutinee) refs))])]
-    [(AstExprForeach _ index-ty start end body)
-      (selfhost-lint-dead-expr-refs
-        (ast-node-get body)
-        (selfhost-lint-dead-expr-refs
-          (ast-node-get end)
+    [(AstExprForeach fe-box)
+      (match (box-get fe-box)
+        [(AstForeach _ index-ty start end body)
           (selfhost-lint-dead-expr-refs
-            (ast-node-get start)
-            (selfhost-lint-dead-type-refs index-ty refs))))]
+            (ast-node-get body)
+            (selfhost-lint-dead-expr-refs
+              (ast-node-get end)
+              (selfhost-lint-dead-expr-refs
+                (ast-node-get start)
+                (selfhost-lint-dead-type-refs index-ty refs))))])]
     [(AstExprSpmdReduce reduce-box)
       (match (box-get reduce-box)
         [(AstSpmdReduce _ _ index-ty start end init value)
@@ -876,10 +878,12 @@
       (selfhost-lint-dead-expr-list-refs
         body
         (selfhost-lint-dead-expr-refs (ast-node-get arena) refs))]
-    [(AstExprWithResource bindings body)
-      (selfhost-lint-dead-expr-list-refs
-        body
-        (selfhost-lint-dead-resource-binding-refs bindings refs))]
+    [(AstExprWithResource wr-box)
+      (match (box-get wr-box)
+        [(AstWithResource bindings body)
+          (selfhost-lint-dead-expr-list-refs
+            body
+            (selfhost-lint-dead-resource-binding-refs bindings refs))])]
     [(AstExprBox inner)
       (selfhost-lint-dead-expr-refs (ast-node-get inner) refs)]
     [(AstExprBoxGet inner)

@@ -7317,31 +7317,35 @@
                       arms-state)]
                   [(ErrSpecMatchArmList diag) (ErrSpecExpr diag)])]
               [(ErrSpecExpr diag) (ErrSpecExpr diag)]))])]
-    [(AstExprForeach index index-ty start-box end-box body-box)
-      (let
-        [start : AstExpr (ast-node-get start-box)]
-        [end : AstExpr (ast-node-get end-box)]
-        [body : AstExpr (ast-node-get body-box)]
-        (match (spec-rewrite-expr start templates state)
-          [(OkSpecExpr rewritten-start start-state)
-            (match (spec-rewrite-expr end templates start-state)
-              [(OkSpecExpr rewritten-end end-state)
-                (match (spec-rewrite-expr
-                  body
-                  (spec-template-env-shadow-name templates (intern-str index))
-                  end-state)
-                  [(OkSpecExpr rewritten-body body-state)
-                    (OkSpecExpr
-                      (ast-expr-foreach-id
-                        index
-                        index-ty
-                        rewritten-start
-                        rewritten-end
-                        rewritten-body)
-                      body-state)]
+    [(AstExprForeach fe-box)
+      (match (box-get fe-box)
+        [(AstForeach index index-ty start-box end-box body-box)
+          (let
+            [start : AstExpr (ast-node-get start-box)]
+            [end : AstExpr (ast-node-get end-box)]
+            [body : AstExpr (ast-node-get body-box)]
+            (match (spec-rewrite-expr start templates state)
+              [(OkSpecExpr rewritten-start start-state)
+                (match (spec-rewrite-expr end templates start-state)
+                  [(OkSpecExpr rewritten-end end-state)
+                    (match (spec-rewrite-expr
+                      body
+                      (spec-template-env-shadow-name
+                        templates
+                        (intern-str index))
+                      end-state)
+                      [(OkSpecExpr rewritten-body body-state)
+                        (OkSpecExpr
+                          (ast-expr-foreach-id
+                            index
+                            index-ty
+                            rewritten-start
+                            rewritten-end
+                            rewritten-body)
+                          body-state)]
+                      [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
                   [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-              [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+              [(ErrSpecExpr diag) (ErrSpecExpr diag)]))])]
     [(AstExprSpmdReduce reduce-box)
       (match (box-get reduce-box)
         [(AstSpmdReduce op index index-ty start-box end-box init-box value-box)
@@ -7508,8 +7512,13 @@
                   body-state)]
               [(ErrSpecExprList diag) (ErrSpecExpr diag)])]
           [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
-    [(AstExprWithResource bindings body)
-      (OkSpecExpr (ast-node-push (AstExprWithResource bindings body)) state)]
+    [(AstExprWithResource wr-box)
+      (match (box-get wr-box)
+        [(AstWithResource bindings body)
+          (OkSpecExpr
+            (ast-node-push
+              (AstExprWithResource (box (AstWithResource bindings body))))
+            state)])]
     [(AstExprBox inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
@@ -7997,29 +8006,31 @@
                       (ast-expr-match rewritten-scrutinee rewritten-arms))]
                   [(ErrSpecSubMatchArmList diag) (ErrSpecSubExpr diag)])]
               [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))])]
-    [(AstExprForeach index index-ty start-box end-box body-box)
-      (let
-        [start : AstExpr (ast-node-get start-box)]
-        [end : AstExpr (ast-node-get end-box)]
-        [body : AstExpr (ast-node-get body-box)]
-        (match (spec-substitute-values-expr start subs)
-          [(OkSpecSubExpr rewritten-start)
-            (match (spec-substitute-values-expr end subs)
-              [(OkSpecSubExpr rewritten-end)
-                (match (spec-substitute-values-expr
-                  body
-                  (spec-value-subst-remove-name subs (intern-str index)))
-                  [(OkSpecSubExpr rewritten-body)
-                    (OkSpecSubExpr
-                      (ast-expr-foreach-id
-                        index
-                        index-ty
-                        rewritten-start
-                        rewritten-end
-                        rewritten-body))]
+    [(AstExprForeach fe-box)
+      (match (box-get fe-box)
+        [(AstForeach index index-ty start-box end-box body-box)
+          (let
+            [start : AstExpr (ast-node-get start-box)]
+            [end : AstExpr (ast-node-get end-box)]
+            [body : AstExpr (ast-node-get body-box)]
+            (match (spec-substitute-values-expr start subs)
+              [(OkSpecSubExpr rewritten-start)
+                (match (spec-substitute-values-expr end subs)
+                  [(OkSpecSubExpr rewritten-end)
+                    (match (spec-substitute-values-expr
+                      body
+                      (spec-value-subst-remove-name subs (intern-str index)))
+                      [(OkSpecSubExpr rewritten-body)
+                        (OkSpecSubExpr
+                          (ast-expr-foreach-id
+                            index
+                            index-ty
+                            rewritten-start
+                            rewritten-end
+                            rewritten-body))]
+                      [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
                   [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))])]
     [(AstExprSpmdReduce reduce-box)
       (match (box-get reduce-box)
         [(AstSpmdReduce op index index-ty start-box end-box init-box value-box)
@@ -8167,8 +8178,12 @@
                   (ast-expr-in-arena rewritten-arena rewritten-body))]
               [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
           [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
-    [(AstExprWithResource bindings body)
-      (OkSpecSubExpr (ast-node-push (AstExprWithResource bindings body)))]
+    [(AstExprWithResource wr-box)
+      (match (box-get wr-box)
+        [(AstWithResource bindings body)
+          (OkSpecSubExpr
+            (ast-node-push
+              (AstExprWithResource (box (AstWithResource bindings body)))))])]
     [(AstExprBox inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
@@ -8555,29 +8570,31 @@
                     (spec-substitute-maybe-type ret subs)
                     rewritten-body))]
               [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))])]
-    [(AstExprForeach index index-ty start-box end-box body-box)
-      (let
-        [start : AstExpr (ast-node-get start-box)]
-        [end : AstExpr (ast-node-get end-box)]
-        [body : AstExpr (ast-node-get body-box)]
-        (match (spec-substitute-types-expr start subs)
-          [(OkSpecSubExpr rewritten-start)
-            (match (spec-substitute-types-expr end subs)
-              [(OkSpecSubExpr rewritten-end)
-                (match (spec-substitute-types-expr
-                  body
-                  (spec-type-subst-remove-name subs (intern-str index)))
-                  [(OkSpecSubExpr rewritten-body)
-                    (OkSpecSubExpr
-                      (ast-expr-foreach-id
-                        index
-                        (spec-substitute-type index-ty subs)
-                        rewritten-start
-                        rewritten-end
-                        rewritten-body))]
+    [(AstExprForeach fe-box)
+      (match (box-get fe-box)
+        [(AstForeach index index-ty start-box end-box body-box)
+          (let
+            [start : AstExpr (ast-node-get start-box)]
+            [end : AstExpr (ast-node-get end-box)]
+            [body : AstExpr (ast-node-get body-box)]
+            (match (spec-substitute-types-expr start subs)
+              [(OkSpecSubExpr rewritten-start)
+                (match (spec-substitute-types-expr end subs)
+                  [(OkSpecSubExpr rewritten-end)
+                    (match (spec-substitute-types-expr
+                      body
+                      (spec-type-subst-remove-name subs (intern-str index)))
+                      [(OkSpecSubExpr rewritten-body)
+                        (OkSpecSubExpr
+                          (ast-expr-foreach-id
+                            index
+                            (spec-substitute-type index-ty subs)
+                            rewritten-start
+                            rewritten-end
+                            rewritten-body))]
+                      [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
                   [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))])]
     [(AstExprSpmdReduce reduce-box)
       (match (box-get reduce-box)
         [(AstSpmdReduce op index index-ty start-box end-box init-box value-box)
@@ -8907,8 +8924,12 @@
                   (ast-expr-in-arena rewritten-arena rewritten-body))]
               [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
           [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
-    [(AstExprWithResource bindings body)
-      (OkSpecSubExpr (ast-node-push (AstExprWithResource bindings body)))]
+    [(AstExprWithResource wr-box)
+      (match (box-get wr-box)
+        [(AstWithResource bindings body)
+          (OkSpecSubExpr
+            (ast-node-push
+              (AstExprWithResource (box (AstWithResource bindings body)))))])]
     [(AstExprBox inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]

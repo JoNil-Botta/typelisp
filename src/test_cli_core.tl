@@ -1103,14 +1103,16 @@
             (tltest-reach-mark-match-arms
               arms
               (tltest-reach-mark-expr scrutinee names)))])]
-    [(AstExprForeach _ _ start-box end-box body-box)
-      (let
-        [start : AstExpr (ast-node-get start-box)]
-        [end : AstExpr (ast-node-get end-box)]
-        [body : AstExpr (ast-node-get body-box)]
-        (tltest-reach-mark-expr
-          body
-          (tltest-reach-mark-expr end (tltest-reach-mark-expr start names))))]
+    [(AstExprForeach fe-box)
+      (match (box-get fe-box)
+        [(AstForeach _ _ start-box end-box body-box)
+          (let
+            [start : AstExpr (ast-node-get start-box)]
+            [end : AstExpr (ast-node-get end-box)]
+            [body : AstExpr (ast-node-get body-box)]
+            (tltest-reach-mark-expr
+              body
+              (tltest-reach-mark-expr end (tltest-reach-mark-expr start names))))])]
     [(AstExprSpmdReduce reduce-box)
       (match (box-get reduce-box)
         [(AstSpmdReduce _ _ _ start-box end-box init-box value-box)
@@ -1170,10 +1172,12 @@
       (let
         [arena : AstExpr (ast-node-get arena-box)]
         (tltest-reach-mark-expr-list body (tltest-reach-mark-expr arena names)))]
-    [(AstExprWithResource bindings body)
-      (tltest-reach-mark-expr-list
-        body
-        (tltest-reach-mark-resource-bindings bindings names))]
+    [(AstExprWithResource wr-box)
+      (match (box-get wr-box)
+        [(AstWithResource bindings body)
+          (tltest-reach-mark-expr-list
+            body
+            (tltest-reach-mark-resource-bindings bindings names))])]
     [(AstExprBox inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]

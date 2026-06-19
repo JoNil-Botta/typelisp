@@ -754,7 +754,7 @@
         "mutable borrow"
         "borrow")]
     [(AstExprMatch _) "match"]
-    [(AstExprForeach _ _ _ _ _) "foreach"]
+    [(AstExprForeach _) "foreach"]
     [(AstExprSpmdReduce _) "spmd-reduce"]
     [(AstExprSpmdScan _) "spmd-scan"]
     [(AstExprSpmdBroadcast _ _) "spmd-broadcast"]
@@ -764,7 +764,7 @@
     [(AstExprWithEscape _ _) "with-escape"]
     [(AstExprWithScratch _) "with-scratch"]
     [(AstExprInArena _ _) "in-arena"]
-    [(AstExprWithResource _ _) "with"]
+    [(AstExprWithResource _) "with"]
     [(AstExprTypeLiteral _) "type literal"]
     [(AstExprInit _) "init"]
     [(AstExprComptime _) "comptime"]
@@ -4757,29 +4757,31 @@
                       arms-fuel)]
                   [(ErrCtfeQuoteArms diag) (ErrCtfeQuoteExpr diag)])]
               [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))])]
-    [(AstExprForeach index index-ty start-box end-box body-box)
-      (let
-        [start : AstExpr (ast-node-get start-box)]
-        [end : AstExpr (ast-node-get end-box)]
-        [body : AstExpr (ast-node-get body-box)]
-        (match (ctfe-quote-expr start env fuel quasiquote)
-          [(OkCtfeQuoteExpr quoted-start _ start-fuel)
-            (match (ctfe-quote-expr end env start-fuel quasiquote)
-              [(OkCtfeQuoteExpr quoted-end _ end-fuel)
-                (match (ctfe-quote-expr body env end-fuel quasiquote)
-                  [(OkCtfeQuoteExpr quoted-body _ body-fuel)
-                    (OkCtfeQuoteExpr
-                      (ast-expr-foreach-id
-                        (ctfe-quote-name-id env index)
-                        index-ty
-                        quoted-start
-                        quoted-end
-                        quoted-body)
-                      (AstTyExpr)
-                      body-fuel)]
+    [(AstExprForeach fe-box)
+      (match (box-get fe-box)
+        [(AstForeach index index-ty start-box end-box body-box)
+          (let
+            [start : AstExpr (ast-node-get start-box)]
+            [end : AstExpr (ast-node-get end-box)]
+            [body : AstExpr (ast-node-get body-box)]
+            (match (ctfe-quote-expr start env fuel quasiquote)
+              [(OkCtfeQuoteExpr quoted-start _ start-fuel)
+                (match (ctfe-quote-expr end env start-fuel quasiquote)
+                  [(OkCtfeQuoteExpr quoted-end _ end-fuel)
+                    (match (ctfe-quote-expr body env end-fuel quasiquote)
+                      [(OkCtfeQuoteExpr quoted-body _ body-fuel)
+                        (OkCtfeQuoteExpr
+                          (ast-expr-foreach-id
+                            (ctfe-quote-name-id env index)
+                            index-ty
+                            quoted-start
+                            quoted-end
+                            quoted-body)
+                          (AstTyExpr)
+                          body-fuel)]
+                      [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
                   [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
-              [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
-          [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+              [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))])]
     [(AstExprSpmdReduce reduce-box)
       (match (box-get reduce-box)
         [(AstSpmdReduce op index index-ty start-box end-box init-box value-box)
@@ -5030,18 +5032,21 @@
                   body-fuel)]
               [(ErrCtfeQuoteExprList diag) (ErrCtfeQuoteExpr diag)])]
           [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
-    [(AstExprWithResource bindings body)
-      (match (ctfe-quote-resource-binding-list bindings env fuel quasiquote)
-        [(OkCtfeQuoteResourceBindings quoted-bindings bindings-fuel)
-          (match (ctfe-quote-expr-list body env bindings-fuel quasiquote)
-            [(OkCtfeQuoteExprList quoted-body body-fuel)
-              (OkCtfeQuoteExpr
-                (ast-node-push
-                  (AstExprWithResource quoted-bindings quoted-body))
-                (AstTyExpr)
-                body-fuel)]
-            [(ErrCtfeQuoteExprList diag) (ErrCtfeQuoteExpr diag)])]
-        [(ErrCtfeQuoteResourceBindings diag) (ErrCtfeQuoteExpr diag)])]
+    [(AstExprWithResource wr-box)
+      (match (box-get wr-box)
+        [(AstWithResource bindings body)
+          (match (ctfe-quote-resource-binding-list bindings env fuel quasiquote)
+            [(OkCtfeQuoteResourceBindings quoted-bindings bindings-fuel)
+              (match (ctfe-quote-expr-list body env bindings-fuel quasiquote)
+                [(OkCtfeQuoteExprList quoted-body body-fuel)
+                  (OkCtfeQuoteExpr
+                    (ast-node-push
+                      (AstExprWithResource
+                        (box (AstWithResource quoted-bindings quoted-body))))
+                    (AstTyExpr)
+                    body-fuel)]
+                [(ErrCtfeQuoteExprList diag) (ErrCtfeQuoteExpr diag)])]
+            [(ErrCtfeQuoteResourceBindings diag) (ErrCtfeQuoteExpr diag)])])]
     [(AstExprBox inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
@@ -5857,24 +5862,28 @@
                         (ctfe-expr-eq a-scrut b-scrut)
                         (ctfe-match-arm-list-eq a-arms b-arms)))])]
               [_ false]))])]
-    [(AstExprForeach a-name a-ty a-start-box a-end-box a-body-box)
-      (let
-        [a-start : AstExpr (ast-node-get a-start-box)]
-        [a-end : AstExpr (ast-node-get a-end-box)]
-        [a-body : AstExpr (ast-node-get a-body-box)]
-        (match b
-          [(AstExprForeach b-name b-ty b-start-box b-end-box b-body-box)
-            (let
-              [b-start : AstExpr (ast-node-get b-start-box)]
-              [b-end : AstExpr (ast-node-get b-end-box)]
-              [b-body : AstExpr (ast-node-get b-body-box)]
-              (and
-                (= a-name b-name)
-                (ctfe-type-eq a-ty b-ty)
-                (ctfe-expr-eq a-start b-start)
-                (ctfe-expr-eq a-end b-end)
-                (ctfe-expr-eq a-body b-body)))]
-          [_ false]))]
+    [(AstExprForeach a-fe-box)
+      (match (box-get a-fe-box)
+        [(AstForeach a-name a-ty a-start-box a-end-box a-body-box)
+          (let
+            [a-start : AstExpr (ast-node-get a-start-box)]
+            [a-end : AstExpr (ast-node-get a-end-box)]
+            [a-body : AstExpr (ast-node-get a-body-box)]
+            (match b
+              [(AstExprForeach b-fe-box)
+                (match (box-get b-fe-box)
+                  [(AstForeach b-name b-ty b-start-box b-end-box b-body-box)
+                    (let
+                      [b-start : AstExpr (ast-node-get b-start-box)]
+                      [b-end : AstExpr (ast-node-get b-end-box)]
+                      [b-body : AstExpr (ast-node-get b-body-box)]
+                      (and
+                        (= a-name b-name)
+                        (ctfe-type-eq a-ty b-ty)
+                        (ctfe-expr-eq a-start b-start)
+                        (ctfe-expr-eq a-end b-end)
+                        (ctfe-expr-eq a-body b-body)))])]
+              [_ false]))])]
     [(AstExprSpmdReduce a-reduce-box)
       (match (box-get a-reduce-box)
         [(AstSpmdReduce
@@ -6031,13 +6040,17 @@
                 (ctfe-expr-eq a-arena b-arena)
                 (ctfe-expr-list-eq a-body b-body)))]
           [_ false]))]
-    [(AstExprWithResource a-bindings a-body)
-      (match b
-        [(AstExprWithResource b-bindings b-body)
-          (and
-            (ctfe-resource-binding-list-eq a-bindings b-bindings)
-            (ctfe-expr-list-eq a-body b-body))]
-        [_ false])]
+    [(AstExprWithResource a-wr-box)
+      (match (box-get a-wr-box)
+        [(AstWithResource a-bindings a-body)
+          (match b
+            [(AstExprWithResource b-wr-box)
+              (match (box-get b-wr-box)
+                [(AstWithResource b-bindings b-body)
+                  (and
+                    (ctfe-resource-binding-list-eq a-bindings b-bindings)
+                    (ctfe-expr-list-eq a-body b-body))])]
+            [_ false])])]
     [(AstExprPtrRead a-ptr-box)
       (let
         [a-ptr : AstExpr (ast-node-get a-ptr-box)]

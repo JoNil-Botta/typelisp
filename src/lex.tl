@@ -174,8 +174,6 @@
           (set! keep false)))
       j)))
 
-;; A float token is an integer digit run followed by `.` and at least one
-;; fractional digit. The literal text is carried through later selfhost stages.
 (define (float-tail? [src : String] [int-end : i64] [n : i64]) : bool
   (if (< (+ int-end 1) n)
     (if (= (string-ref src int-end) #.')
@@ -272,6 +270,17 @@
       false)
     false))
 
+(define (symbol-slice-eq?
+  [src : String]
+  [start : i64]
+  [end : i64]
+  [value : String]) : bool
+  (let
+    [len : i64 (- end start)]
+    (if (= len (string-length value))
+      (string-eq (substring src start len) value)
+      false)))
+
 ;; Return the end index (exclusive) of the symbol run that starts at `start` in
 ;; `src`. Same bounds-check discipline as `scan-int-end`.
 (define (scan-symbol-end [src : String] [start : i64] [n : i64]) : i64
@@ -281,11 +290,49 @@
     (begin
       (while keep
         (if (< j n)
-          (if (is-symbol-char (string-ref src j))
-            (set! j (+ j 1))
-            (set! keep false))
+          (let
+            [c : char (string-ref src j)]
+            (if (and
+              (= c #:')
+              (> j start)
+              (not (symbol-slice-eq? src start j "pkg")))
+              (set! keep false)
+              (if (is-symbol-char c)
+                (set! j (+ j 1))
+                (set! keep false))))
           (set! keep false)))
       j)))
+
+;; A `:` starts a colon-prefixed metadata/keyword symbol only when it is the
+;; first non-space token in a list, such as `(:symbol ...)` or `(:link ...)`.
+;; In annotation positions (`x:i64`, `x :i64`, `) :unit`) it remains a
+;; standalone `:` delimiter.
+(define (colon-symbol-head? [src : String] [start : i64]) : bool
+  (let
+    [j : i64 (- start 1)]
+    [keep : bool true]
+    [result : bool true]
+    (begin
+      (while keep
+        (if (< j 0)
+          (set! keep false)
+          (let
+            [c : char (string-ref src j)]
+            (if (is-space c)
+              (set! j (- j 1))
+              (begin
+                (set! result (= c #('))
+                (set! keep false))))))
+      result)))
+
+(define (colon-token-end [src : String] [start : i64] [n : i64]) : i64
+  (let
+    [end : i64 (scan-symbol-end src start n)]
+    (if (or
+      (colon-symbol-head? src start)
+      (symbol-slice-eq? src start end ":as"))
+      end
+      (+ start 1))))
 
 ;; Return the index of the closing `"` of a string literal whose inner text
 ;; starts at `start` (i.e. just AFTER the opening quote). `n` is the source
@@ -718,6 +765,23 @@
                     (set! ok false)
                     (set! message err)
                     (set! err-pos i))])]
+            [(= c #:')
+              (let
+                [end : i64 (colon-token-end src i n)]
+                (if (> end (+ i 1))
+                  (begin
+                    (array-set! starts count i)
+                    (array-set!
+                      toks
+                      count
+                      (TSym (intern-slice src i (- end i))))
+                    (set! count (+ count 1))
+                    (set! i end))
+                  (begin
+                    (array-set! starts count i)
+                    (array-set! toks count (TSym (intern ":")))
+                    (set! count (+ count 1))
+                    (set! i (+ i 1)))))]
             [(is-symbol-char c)
               (let
                 [end : i64 (scan-symbol-end src i n)]
@@ -941,6 +1005,29 @@
                     (set! ok false)
                     (set! message err)
                     (set! err-pos i))])]
+            [(= c #:')
+              (let
+                [end : i64 (colon-token-end src i n)]
+                (if (> end (+ i 1))
+                  (begin
+                    (array-set!
+                      stoks
+                      count
+                      (SpannedToken
+                        (TSym (intern-slice src i (- end i)))
+                        line
+                        col))
+                    (set! count (+ count 1))
+                    (set! col (+ col (- end i)))
+                    (set! i end))
+                  (begin
+                    (array-set!
+                      stoks
+                      count
+                      (SpannedToken (TSym (intern ":")) line col))
+                    (set! count (+ count 1))
+                    (set! col (+ col 1))
+                    (set! i (+ i 1)))))]
             [(is-symbol-char c)
               (let
                 [end : i64 (scan-symbol-end src i n)]
@@ -1108,6 +1195,11 @@
     (= (token-tag (array-ref toks idx)) (tag-int))
     (= (token-int (array-ref toks idx)) value)))
 
+(define (lex-token-sym-eq? [toks : (Array Token)] [idx : i64] [value : String]) : bool
+  (and
+    (= (token-tag (array-ref toks idx)) (tag-sym))
+    (string-eq (token-sym (array-ref toks idx)) value)))
+
 (define (lex-prefixed-int-token-ok?) : bool
   (match (lex-result "(0x2a 0x2A -0x2a 0b101010 -0b101010)")
     [(OkTokens toks)
@@ -1178,6 +1270,43 @@
             (set! ok false))
           ok))]
     [(ErrTokens _) false]))
+
+(define (lex-colon-annotation-tokens-ok?) : bool
+  (match (lex-result
+    "[x:i64] [y :i32] (:link \"m\") ( :unknown 1) (import pkg:math.core :as math)")
+    [(OkTokens toks)
+      (and
+        (lex-token-sym-eq? toks 1 "x")
+        (lex-token-sym-eq? toks 2 ":")
+        (lex-token-sym-eq? toks 3 "i64")
+        (lex-token-sym-eq? toks 6 "y")
+        (lex-token-sym-eq? toks 7 ":")
+        (lex-token-sym-eq? toks 8 "i32")
+        (lex-token-sym-eq? toks 11 ":link")
+        (lex-token-sym-eq? toks 15 ":unknown")
+        (lex-token-sym-eq? toks 20 "pkg:math.core")
+        (lex-token-sym-eq? toks 21 ":as")
+        (= (token-tag (array-ref toks 24)) (tag-end)))]
+    [(ErrTokens _) false]))
+
+(define (lex-spanned-token-sym-eq?
+  [toks : (Array SpannedToken)]
+  [idx : i64]
+  [value : String]) : bool
+  (let
+    [tok : Token (spanned-token-tok (array-ref toks idx))]
+    (and (= (token-tag tok) (tag-sym)) (string-eq (token-sym tok) value))))
+
+(define (lex-spanned-colon-annotation-tokens-ok?) : bool
+  (match (lex-spanned-result "[x:i64] (:link \"m\")")
+    [(OkSpannedTokens toks)
+      (and
+        (lex-spanned-token-sym-eq? toks 1 "x")
+        (lex-spanned-token-sym-eq? toks 2 ":")
+        (lex-spanned-token-sym-eq? toks 3 "i64")
+        (lex-spanned-token-sym-eq? toks 6 ":link")
+        (= (token-tag (spanned-token-tok (array-ref toks 9))) (tag-end)))]
+    [(ErrSpannedTokens _) false]))
 
 (define (lex-char-source [body : String]) : String
   (string-append "#" (string-append body "'")))
@@ -1343,6 +1472,12 @@
             unit
             (set! ok false))
           (if (lex-basic-token-sequence-ok?)
+            unit
+            (set! ok false))
+          (if (lex-colon-annotation-tokens-ok?)
+            unit
+            (set! ok false))
+          (if (lex-spanned-colon-annotation-tokens-ok?)
             unit
             (set! ok false))
           (if (lex-char-literals-ok?)

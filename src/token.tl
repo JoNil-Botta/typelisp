@@ -28,8 +28,7 @@
 ;; The token kinds TypeLisp's s-expression surface needs: an opening paren, a
 ;; closing paren, an integer or float literal, a symbol (any operator / keyword / name -
 ;; carries an interned lexeme id), a string literal (`"..."`, carries the
-;; sliced inner text), a character literal (`'x'`, with legacy bootstrap
-;; `#x'` / `#\x'` accepted, carries the char),
+;; sliced inner text), a character literal (`'x'`, carries the char),
 ;; and an end-of-stream sentinel. `TStr`, `TChar`, and `TFloat` are appended last so the
 ;; existing variants/tags keep their stable ordering for every importer.
 (import "compiler_intern.tl")
@@ -222,20 +221,20 @@
 ;; symbols, ints, and strings.
 (define (token-char [t : Token]) : char
   (match t
-    [(TLParen) #\nul']
-    [(TRParen) #\nul']
-    [(TInt _) #\nul']
-    [(TSym _) #\nul']
-    [(TEnd) #\nul']
-    [(TStr _) #\nul']
+    [(TLParen) '\0']
+    [(TRParen) '\0']
+    [(TInt _) '\0']
+    [(TSym _) '\0']
+    [(TEnd) '\0']
+    [(TStr _) '\0']
     [(TChar c) c]
-    [(TFloat _) #\nul']
-    [(TLBracket) #\nul']
-    [(TRBracket) #\nul']
-    [(TQuote) #\nul']
-    [(TBacktick) #\nul']
-    [(TComma) #\nul']
-    [(TCommaAt) #\nul']))
+    [(TFloat _) '\0']
+    [(TLBracket) '\0']
+    [(TRBracket) '\0']
+    [(TQuote) '\0']
+    [(TBacktick) '\0']
+    [(TComma) '\0']
+    [(TCommaAt) '\0']))
 
 ;; A token paired with the 1-based source line and column where its lexeme
 ;; begins (#599). The reader/parser recover positions from these so later

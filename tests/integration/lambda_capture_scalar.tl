@@ -24,12 +24,12 @@
   (let
     [n : i64 32]
     [ok : bool true]
-    [ch : char #A']
+    [ch : char 'A']
     [scale : f64 2.5]
     (=
       ((lambda ([x : i64]) : i64
           (if ok
-            (if (= ch #A')
+            (if (= ch 'A')
               (if (= scale 2.5)
                 (+ x n)
                 0)

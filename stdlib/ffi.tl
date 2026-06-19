@@ -37,7 +37,7 @@
     [found : bool false]
     (begin
       (while (and (not found) (< i n))
-        (if (= (string-ref text i) #\nul')
+        (if (= (string-ref text i) '\0')
           (set! found true)
           (set! i (+ i 1))))
       found)))
@@ -78,7 +78,7 @@
           (begin
             (ffi-c-string-copy-bytes! text dst n)
             (unsafe
-              (ptr-write! (ptr-offset dst n) (cast #\nul' : u8)))
+              (ptr-write! (ptr-offset dst n) (cast '\0' : u8)))
             (FfiCStringCopyOk needed)))))))
 
 ;: Allocate a NUL-terminated C string copy in the active arena.
@@ -100,7 +100,7 @@
       (begin
         (ffi-c-string-copy-bytes! text dst n)
         (unsafe
-          (ptr-write! (ptr-offset dst n) (cast #\nul' : u8)))
+          (ptr-write! (ptr-offset dst n) (cast '\0' : u8)))
         (unsafe
           (ptr-cast dst : (Ptr u8)))))))
 

@@ -19,7 +19,7 @@
   (ErrSelfhostCheckConfig String))
 
 (define (selfhost-check-flag? [value : String]) : bool
-  (and (> (string-length value) 0) (= (string-ref value 0) #-')))
+  (and (> (string-length value) 0) (= (string-ref value 0) '-')))
 
 (define (selfhost-check-config-finish
   [input-path : String]

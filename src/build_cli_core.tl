@@ -1159,7 +1159,7 @@
 (define (build-parse-git-dependency [alias : String] [path : String]) : ResultBuildGitDependency
   (let
     [n : i64 (string-length path)]
-    [hash : i64 (build-string-index-from path ##' 0 n)]
+    [hash : i64 (build-string-index-from path '#' 0 n)]
     (if (<= hash 0)
       (ErrBuildGitDependency
         (build-git-dep-error alias "has invalid normalized path"))
@@ -1167,7 +1167,7 @@
         [remote : String (substring path 0 hash)]
         [pin : String (substring path (+ hash 1) (- n (+ hash 1)))]
         [pin-len : i64 (string-length pin)]
-        [eq : i64 (build-string-index-from pin #=' 0 pin-len)]
+        [eq : i64 (build-string-index-from pin '=' 0 pin-len)]
         (if (<= eq 0)
           (ErrBuildGitDependency (build-git-dep-error alias "has invalid pin"))
           (let

@@ -1078,9 +1078,9 @@
       [else (= (string-ref name qualifier-len) separator)])))
 
 (define (lint-name-qualified-by? [name : String] [qualifier : String]) : bool
-  (if (lint-name-qualified-by-separator? name qualifier #.')
+  (if (lint-name-qualified-by-separator? name qualifier '.')
     true
-    (lint-name-qualified-by-separator? name qualifier #/')))
+    (lint-name-qualified-by-separator? name qualifier '/')))
 
 (define (lint-name-uses-import?
   [name : String]
@@ -1847,7 +1847,7 @@
     [n : i64 (string-length name)]
     (if (<= n 0)
       false
-      (= (string-ref name 0) #_'))))
+      (= (string-ref name 0) '_'))))
 
 (define (lint-import-kind-lintable?
   [kind : AstImportKind]
@@ -2630,7 +2630,7 @@
     (begin
       (while (< i target)
         (begin
-          (if (= (string-ref source i) #\newline')
+          (if (= (string-ref source i) '\n')
             (set! line (+ line 1))
             unit)
           (set! i (+ i 1))))
@@ -2643,7 +2643,7 @@
     (begin
       (while (< i target)
         (begin
-          (if (= (string-ref source i) #\newline')
+          (if (= (string-ref source i) '\n')
             (set! col 1)
             (set! col (+ col 1)))
           (set! i (+ i 1))))
@@ -2677,7 +2677,7 @@
           (if (and (= line target-line) (= col target-col))
             (set! found idx)
             (begin
-              (if (= (string-ref source idx) #\newline')
+              (if (= (string-ref source idx) '\n')
                 (begin
                   (set! line (+ line 1))
                   (set! col 1))
@@ -2796,7 +2796,7 @@
     [found : i64 (- 0 1)]
     (begin
       (while (and (< found 0) (< idx n))
-        (if (= (string-ref text idx) #.')
+        (if (= (string-ref text idx) '.')
           (set! found idx)
           (set! idx (+ idx 1))))
       found)))

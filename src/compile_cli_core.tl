@@ -89,10 +89,10 @@
   (ErrCompileCliTarget String))
 
 (define (compile-cli-path-separator? [c : char]) : bool
-  (or (= c #/') (= c #\\')))
+  (or (= c '/') (= c '\\')))
 
 (define (compile-cli-flag? [value : String]) : bool
-  (and (> (string-length value) 0) (= (string-ref value 0) #-')))
+  (and (> (string-length value) 0) (= (string-ref value 0) '-')))
 
 (define (compile-cli-usage) : String
   "Usage:\n  typelisp check <file.tl> [--stdlib-root <dir>...]\n  typelisp compile <file.tl> [-o <file>] [--emit-ir] [--pic] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...]\n  typelisp compile --batch <input-output-list> [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [--prefix-cache-stats]")
@@ -113,7 +113,7 @@
         (let
           [c : char (string-ref input-path i)]
           (begin
-            (if (= c #.')
+            (if (= c '.')
               (set! last-dot i)
               (set! last-dot last-dot))
             (if (compile-cli-path-separator? c)
@@ -731,7 +731,7 @@
       (while (and (not done) (< i n))
         (let
           [c : char (string-ref text i)]
-          (if (or (= c #\newline') (= c #\return'))
+          (if (or (= c '\n') (= c '\r'))
             (set! done true)
             (set! i (+ i 1)))))
       i)))
@@ -740,9 +740,9 @@
   (if (>= line-end n)
     n
     (if (and
-      (= (string-ref text line-end) #\return')
+      (= (string-ref text line-end) '\r')
       (< (+ line-end 1) n)
-      (= (string-ref text (+ line-end 1)) #\newline'))
+      (= (string-ref text (+ line-end 1)) '\n'))
       (+ line-end 2)
       (+ line-end 1))))
 
@@ -755,7 +755,7 @@
     [found : i64 -1]
     (begin
       (while (and (= found -1) (< i end))
-        (if (= (string-ref text i) #|')
+        (if (= (string-ref text i) '|')
           (set! found i)
           (set! i (+ i 1))))
       found)))

@@ -474,7 +474,7 @@
         (begin
           (array-set! buf i (cast (string-ref text i) : u8))
           (set! i (+ i 1))))
-      (array-set! buf n (cast #\nul' : u8))
+      (array-set! buf n (cast '\0' : u8))
       buf)))
 
 ;: Return a mutable pointer to an Array u8 backing buffer.
@@ -966,15 +966,15 @@
 
 ;: True when c is an ASCII decimal digit.
 (define (io-float-decimal-digit? [c : char]) : bool
-  (and (>= c #0') (<= c #9')))
+  (and (>= c '0') (<= c '9')))
 
 ;: Numeric value of an ASCII decimal digit.
 (define (io-float-decimal-digit-value [c : char]) : i64
-  (- (cast c : i64) (cast #0' : i64)))
+  (- (cast c : i64) (cast '0' : i64)))
 
 ;: True when c is an exponent marker accepted by the float parser.
 (define (io-float-exponent-char? [c : char]) : bool
-  (or (= c #e') (= c #E')))
+  (or (= c 'e') (= c 'E')))
 
 ;: Append one decimal digit to an exact bignum significand.
 (define (io-float-bn-append-digit [value : BigNum] [digit : i64]) : BigNum
@@ -995,7 +995,7 @@
     (if (= n 0)
       (IoFloatNoDecimal)
       (begin
-        (if (= (string-ref text 0) #-')
+        (if (= (string-ref text 0) '-')
           (begin
             (set! negative true)
             (set! index 1))
@@ -1012,7 +1012,7 @@
         (cond
           [(= (+ int-digits frac-digits) 0) (IoFloatNoDecimal)]
           [(= index n) (IoFloatSomeDecimal negative significand 0)]
-          [(= (string-ref text index) #.')
+          [(= (string-ref text index) '.')
             (begin
               (set! index (+ index 1))
               (while (and
@@ -1035,11 +1035,11 @@
                     (io-float-exponent-char? (string-ref text index)))
                     (begin
                       (set! index (+ index 1))
-                      (if (and (< index n) (= (string-ref text index) #-'))
+                      (if (and (< index n) (= (string-ref text index) '-'))
                         (begin
                           (set! exp-negative true)
                           (set! index (+ index 1)))
-                        (if (and (< index n) (= (string-ref text index) #+'))
+                        (if (and (< index n) (= (string-ref text index) '+'))
                           (set! index (+ index 1))
                           unit))
                       (while (and
@@ -1070,11 +1070,11 @@
           [(io-float-exponent-char? (string-ref text index))
             (begin
               (set! index (+ index 1))
-              (if (and (< index n) (= (string-ref text index) #-'))
+              (if (and (< index n) (= (string-ref text index) '-'))
                 (begin
                   (set! exp-negative true)
                   (set! index (+ index 1)))
-                (if (and (< index n) (= (string-ref text index) #+'))
+                (if (and (< index n) (= (string-ref text index) '+'))
                   (set! index (+ index 1))
                   unit))
               (while (and

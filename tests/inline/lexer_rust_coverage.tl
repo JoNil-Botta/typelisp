@@ -127,66 +127,73 @@
 (test
   lexer-single-char-literal-a
   (let
-    [toks : (Array Token) (lex "#a'")]
+    [toks : (Array Token) (lex "'a'")]
     (lexer-assert-char-eq
       (token-char (array-ref toks 0))
-      #a'
+      'a'
       "lowercase single char")))
 
 (test
   lexer-single-char-literal-Z
   (let
-    [toks : (Array Token) (lex "#Z'")]
+    [toks : (Array Token) (lex "'Z'")]
     (lexer-assert-char-eq
       (token-char (array-ref toks 0))
-      #Z'
+      'Z'
       "uppercase single char")))
 
 (test
   lexer-single-char-literal-zero
   (let
-    [toks : (Array Token) (lex "#0'")]
+    [toks : (Array Token) (lex "'0'")]
     (lexer-assert-char-eq
       (token-char (array-ref toks 0))
-      #0'
+      '0'
       "digit single char")))
 
 (test
   lexer-single-char-literal-lparen
   (let
-    [toks : (Array Token) (lex "#('")]
+    [toks : (Array Token) (lex "'('")]
     (lexer-assert-char-eq
       (token-char (array-ref toks 0))
-      #('
+      '('
       "punctuation single char")))
 
 (test
   lexer-single-char-literal-plus
   (let
-    [toks : (Array Token) (lex "#+'")]
+    [toks : (Array Token) (lex "'+'")]
     (lexer-assert-char-eq
       (token-char (array-ref toks 0))
-      #+'
+      '+'
       "symbol single char")))
 
 (test
   lexer-single-char-literal-space
   (let
-    [toks : (Array Token) (lex "# '")]
+    [toks : (Array Token) (lex "' '")]
     (lexer-assert-char-eq
       (token-char (array-ref toks 0))
-      #\space'
+      ' '
       "space single char")))
 
 ;; ---- 4. src/lexer.rs test_escaped_char_literals (extra edge) -----------
 (test
-  lexer-escaped-char-literal-a
+  lexer-legacy-escaped-char-literal-rejected
   (let
-    [toks : (Array Token) (lex "#\\a'")]
-    (lexer-assert-char-eq
-      (token-char (array-ref toks 0))
-      #a'
-      "escaped ordinary letter")))
+    [r : ResultTokens (lex-result "#\\a'")]
+    (match r
+      [(OkTokens _)
+        (lexer-assert-true false "legacy escaped char should error")]
+      [(ErrTokens msg)
+        (let
+          [haystack : String msg]
+          [needle : String "unexpected character"]
+          (lexer-assert-bool-eq
+            (string-contains (& haystack) (& needle))
+            true
+            "legacy escaped char literal should be rejected"))])))
 
 (test
   lexer-apostrophe-char-literal-a
@@ -194,7 +201,7 @@
     [toks : (Array Token) (lex "'a'")]
     (lexer-assert-char-eq
       (token-char (array-ref toks 0))
-      #a'
+      'a'
       "apostrophe lowercase single char")))
 
 (test
@@ -203,7 +210,7 @@
     [toks : (Array Token) (lex "' '")]
     (lexer-assert-char-eq
       (token-char (array-ref toks 0))
-      #\space'
+      ' '
       "apostrophe space single char")))
 
 (test
@@ -221,7 +228,7 @@
     [toks : (Array Token) (lex "'\\n'")]
     (lexer-assert-char-eq
       (token-char (array-ref toks 0))
-      #\newline'
+      '\n'
       "apostrophe escaped newline")))
 
 (test
@@ -252,11 +259,11 @@
         "apostrophe quote should still quote forms")]
     [(ErrTokens msg) (lexer-assert-true false msg)]))
 
-;; ---- 5. src/lexer.rs test_named_char_literal_in_context ----------------
+;; ---- 5. src/lexer.rs test_char_literal_in_context ----------------------
 (test
-  lexer-named-char-in-context
+  lexer-char-literal-in-context
   (let
-    [r : ResultTokens (lex-result "(= c #\\space')")]
+    [r : ResultTokens (lex-result "(= c ' ')")]
     (match r
       [(OkTokens toks)
         (let
@@ -280,7 +287,7 @@
             (if (= (token-tag (array-ref toks 3)) (tag-char))
               unit
               (set! ok false))
-            (if (= (token-char (array-ref toks 3)) #\space')
+            (if (= (token-char (array-ref toks 3)) ' ')
               unit
               (set! ok false))
             (if (= (token-tag (array-ref toks 4)) (tag-rparen))
@@ -289,7 +296,7 @@
             (lexer-assert-bool-eq
               ok
               true
-              "named char literal should lex in a surrounding token stream")))]
+              "char literal should lex in a surrounding token stream")))]
       [(ErrTokens e) (lexer-assert-true false e)])))
 
 ;; ---- 6. src/lexer.rs test_spans_single_line ----------------------------
@@ -387,7 +394,7 @@
 
 ;; ---- 9. Additional Rust inline tests -----------------------------------
 (test
-  lexer-error-on-unknown-named-char
+  lexer-legacy-named-char-rejected
   (let
     [r : ResultTokens (lex-result "#\\spcae'")]
     (match r
@@ -395,58 +402,58 @@
       [(ErrTokens msg)
         (let
           [haystack : String msg]
-          [needle : String "unknown named character literal"]
+          [needle : String "unexpected character"]
           (lexer-assert-bool-eq
             (string-contains (& haystack) (& needle))
             true
-            "unknown named char literal should error"))])))
+            "legacy named char literal should be rejected"))])))
 
 (test
-  lexer-named-char-literals
+  lexer-control-char-literals
   (let
-    [toks : (Array Token) (lex "#\\space'")]
+    [toks : (Array Token) (lex "' '")]
     (lexer-assert-char-eq
       (token-char (array-ref toks 0))
-      #\space'
-      "named char #space"))
+      ' '
+      "space char literal"))
   (let
-    [toks : (Array Token) (lex "#\\newline'")]
+    [toks : (Array Token) (lex "'\\n'")]
     (lexer-assert-char-eq
       (token-char (array-ref toks 0))
-      #\newline'
-      "named char #newline"))
+      '\n'
+      "newline char literal"))
   (let
-    [toks : (Array Token) (lex "#\\tab'")]
+    [toks : (Array Token) (lex "'\\t'")]
     (lexer-assert-char-eq
       (token-char (array-ref toks 0))
-      #\tab'
-      "named char #tab"))
+      '\t'
+      "tab char literal"))
   (let
-    [toks : (Array Token) (lex "#\\return'")]
+    [toks : (Array Token) (lex "'\\r'")]
     (lexer-assert-char-eq
       (token-char (array-ref toks 0))
-      #\return'
-      "named char #return"))
+      '\r'
+      "return char literal"))
   (let
-    [toks : (Array Token) (lex "#\\nul'")]
+    [toks : (Array Token) (lex "'\\0'")]
     (lexer-assert-char-eq
       (token-char (array-ref toks 0))
-      #\nul'
-      "named char #nul")))
+      '\0'
+      "nul char literal")))
 
 (test
-  lexer-escaped-char-literals
+  lexer-apostrophe-escaped-char-literals
   (let
-    [toks : (Array Token) (lex "#\\n'")]
-    (lexer-assert-char-eq (token-char (array-ref toks 0)) #\newline' "escape n"))
+    [toks : (Array Token) (lex "'\\n'")]
+    (lexer-assert-char-eq (token-char (array-ref toks 0)) '\n' "escape n"))
   (let
-    [toks : (Array Token) (lex "#\\t'")]
-    (lexer-assert-char-eq (token-char (array-ref toks 0)) #\tab' "escape t"))
+    [toks : (Array Token) (lex "'\\t'")]
+    (lexer-assert-char-eq (token-char (array-ref toks 0)) '\t' "escape t"))
   (let
-    [toks : (Array Token) (lex "#\\r'")]
-    (lexer-assert-char-eq (token-char (array-ref toks 0)) #\return' "escape r"))
+    [toks : (Array Token) (lex "'\\r'")]
+    (lexer-assert-char-eq (token-char (array-ref toks 0)) '\r' "escape r"))
   (let
-    [toks : (Array Token) (lex "#\\0'")]
-    (lexer-assert-char-eq (token-char (array-ref toks 0)) #\nul' "escape 0"))
-  ;; already have escaped ordinary letter in test 4
+    [toks : (Array Token) (lex "'\\0'")]
+    (lexer-assert-char-eq (token-char (array-ref toks 0)) '\0' "escape 0"))
+  ;; ordinary letters are direct character payloads in the apostrophe syntax
   )

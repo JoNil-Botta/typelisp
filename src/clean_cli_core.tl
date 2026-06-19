@@ -18,7 +18,7 @@
   (ErrCleanConfig String))
 
 (define (clean-flag? [value : String]) : bool
-  (and (> (string-length value) 0) (= (string-ref value 0) #-')))
+  (and (> (string-length value) 0) (= (string-ref value 0) '-')))
 
 (define (clean-string-prefix-at?
   [text : String]

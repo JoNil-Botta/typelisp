@@ -2,7 +2,7 @@
 (import "stdlib/string.tl")
 
 (define (path-separator? [c : char]) : bool
-  (= c #/'))
+  (= c '/'))
 
 (define (path-starts-separator? [path : String]) : bool
   (and (> (string-length path) 0) (path-separator? (string-ref path 0))))
@@ -63,7 +63,7 @@
     (begin
       (while (< i n)
         (begin
-          (if (= (string-ref base i) #.')
+          (if (= (string-ref base i) '.')
             (set! dot i)
             (set! dot dot))
           (set! i (+ i 1))))

@@ -49,9 +49,8 @@
 ;; `SStr` carries the inner text of a `"..."` string-literal datum: the reader
 ;; consumes the lexer's `TStr` token (#128) into it, so a quoted string reads as a
 ;; distinct atom rather than being conflated with a `SSym` of the same characters.
-;; `SChar` carries a character-literal datum (`'x'`, plus legacy bootstrap
-;; `#x'` / `#\x'`; #333), likewise keeping chars distinct from symbols, ints,
-;; and strings. `SStr` and `SChar`
+;; `SChar` carries a character-literal datum (`'x'`; #333), likewise keeping
+;; chars distinct from symbols, ints, and strings. `SStr` and `SChar`
 ;; are appended last so the existing variants keep their stable ordering for
 ;; every importer.
 (defenum Sexpr

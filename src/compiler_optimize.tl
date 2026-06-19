@@ -221,7 +221,7 @@
   (if (= (string-length value) 1)
     (let
       [c : char (string-ref value 0)]
-      (if (or (= c #0') (= c #1') (= c #2'))
+      (if (or (= c '0') (= c '1') (= c '2'))
         (OkCompilerOptimizeLevel (string->int value))
         (ErrCompilerOptimizeLevel)))
     (ErrCompilerOptimizeLevel)))
@@ -21917,7 +21917,7 @@
     (begin
       (while (< i n)
         (begin
-          (if (or (= (string-ref name i) #/') (= (string-ref name i) #:'))
+          (if (or (= (string-ref name i) '/') (= (string-ref name i) ':'))
             (set! start (+ i 1))
             unit)
           (set! i (+ i 1))))
@@ -24061,7 +24061,7 @@
     (compiler-ir-instr-cons
       (IrInstrCast 8 (IrValueI64 300) (AstTyU16) (AstTyChar))
       (compiler-ir-instr-cons
-        (IrInstrMov 9 (IrValueChar #A') (AstTyChar))
+        (IrInstrMov 9 (IrValueChar 'A') (AstTyChar))
         (compiler-ir-instr-cons
           (IrInstrCast 10 (IrValueVar 9) (AstTyChar) (AstTyI64))
           (opt-typed-fold-bool-instrs))))))
@@ -24152,7 +24152,7 @@
       (compiler-ir-instr-cons
         (IrInstrCast 48 (IrValueI64 (- 0 1)) (AstTyU64) (AstTyF32))
         (compiler-ir-instr-cons
-          (IrInstrCast 49 (IrValueChar #A') (AstTyChar) (AstTyF64))
+          (IrInstrCast 49 (IrValueChar 'A') (AstTyChar) (AstTyF64))
           (compiler-ir-instr-cons
             (IrInstrCast
               50

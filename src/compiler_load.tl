@@ -967,7 +967,7 @@
     (begin
       (while (< i n)
         (begin
-          (if (char-eq (string-ref module-name i) #.')
+          (if (char-eq (string-ref module-name i) '.')
             (set! out (string-append out "/"))
             (set! out (string-append out (substring module-name i 1))))
           (set! i (+ i 1))))
@@ -980,7 +980,7 @@
     [done : bool false]
     (begin
       (while (and (not done) (< i n))
-        (if (char-eq (string-ref module-name i) #.')
+        (if (char-eq (string-ref module-name i) '.')
           (set! done true)
           (set! i (+ i 1))))
       i)))
@@ -2399,21 +2399,21 @@
   [c : char]) : String
   (cond
     [(or
-        (and (>= c #A') (<= c #Z'))
-        (and (>= c #a') (<= c #z'))
-        (and (>= c #0') (<= c #9'))
-        (= c #_'))
+        (and (>= c 'A') (<= c 'Z'))
+        (and (>= c 'a') (<= c 'z'))
+        (and (>= c '0') (<= c '9'))
+        (= c '_'))
       (substring text idx 1)]
-    [(= c #-') "_"]
-    [(= c #?') "_question"]
-    [(= c #!') "_bang"]
-    [(= c #+') "_plus"]
-    [(= c #*') "_star"]
-    [(= c #/') "_slash"]
-    [(= c #=') "_eq"]
-    [(= c #<') "_lt"]
-    [(= c #>') "_gt"]
-    [(= c #:') "_colon"]
+    [(= c '-') "_"]
+    [(= c '?') "_question"]
+    [(= c '!') "_bang"]
+    [(= c '+') "_plus"]
+    [(= c '*') "_star"]
+    [(= c '/') "_slash"]
+    [(= c '=') "_eq"]
+    [(= c '<') "_lt"]
+    [(= c '>') "_gt"]
+    [(= c ':') "_colon"]
     [else
       (string-append
         "_u"
@@ -2454,7 +2454,7 @@
       out)))
 
 (define (compiler-load-package-symbol-separator? [c : char]) : bool
-  (or (= c #/') (= c #\\') (= c #:') (= c #.')))
+  (or (= c '/') (= c '\\') (= c ':') (= c '.')))
 
 (define (compiler-load-package-tl-extension-at? [name : String] [idx : i64]) : bool
   (let
@@ -2462,9 +2462,9 @@
     [after : i64 (+ idx 3)]
     (and
       (<= after n)
-      (= (string-ref name idx) #.')
-      (= (string-ref name (+ idx 1)) #t')
-      (= (string-ref name (+ idx 2)) #l')
+      (= (string-ref name idx) '.')
+      (= (string-ref name (+ idx 1)) 't')
+      (= (string-ref name (+ idx 2)) 'l')
       (or
         (= after n)
         (compiler-load-package-symbol-separator? (string-ref name after))))))
@@ -4763,7 +4763,7 @@
       (= i n))))
 
 (define (compiler-load-github-component-char? [c : char]) : bool
-  (or (compiler-load-package-name-char? c) (= c #.')))
+  (or (compiler-load-package-name-char? c) (= c '.')))
 
 (define (compiler-load-github-component-valid? [value : String]) : bool
   (let
@@ -6201,7 +6201,7 @@
 (define (compiler-load-slash-index-from [s : String] [i : i64] [n : i64]) : i64
   (if (>= i n)
     -1
-    (if (= (string-ref s i) #/')
+    (if (= (string-ref s i) '/')
       i
       (compiler-load-slash-index-from s (+ i 1) n))))
 

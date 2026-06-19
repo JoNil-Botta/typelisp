@@ -79,5 +79,5 @@
       (assert-i64-eq 42 42 "i64 equality should pass")
       (assert-i32-eq (cast 7 : i32) (cast 7 : i32) "i32 equality should pass")
       (assert-f64-eq 1.5 1.5 "f64 equality should pass")
-      (assert-char-eq #A' #A' "char equality should pass")
+      (assert-char-eq 'A' 'A' "char equality should pass")
       (assert-string-eq (& actual) (& expected) "string equality should pass"))))

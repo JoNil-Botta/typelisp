@@ -534,13 +534,13 @@
   "(extern (fail) : never)
 (defenum Token (TInt i64) (TPlus) (TEnd))
 (define (single [c : char]) : Token
-  (if (= c #+')
+  (if (= c '+')
     TPlus
     (begin
       (fail)
       TEnd)))
 (define (main) : i64
-  (match (single #+')
+  (match (single '+')
     [TPlus 42]
     [_ 0]))")
 
@@ -1480,7 +1480,7 @@
     [negative : bool false]
     [value : i64 0]
     (begin
-      (if (if (> n 0) (char-eq (string-ref text 0) #-') false)
+      (if (if (> n 0) (char-eq (string-ref text 0) '-') false)
         (begin
           (set! negative true)
           (set! i 1))
@@ -1566,7 +1566,7 @@
 (extern (runtime-print-f64 [arg0 : f64]) : unit (:symbol \"tl_print_f64\"))
 (define (main) : i64
   (begin
-    (runtime-print-char #A')
+    (runtime-print-char 'A')
     (runtime-print-f64 1.5)
     0))")
 
@@ -2371,7 +2371,7 @@
       (match (compiler-backend-emit-pack-words
         CompilerRegAssignmentNil
         (IrValueI64 9)
-        (IrValueChar #A')
+        (IrValueChar 'A')
         "%r12"
         "%r13"
         false

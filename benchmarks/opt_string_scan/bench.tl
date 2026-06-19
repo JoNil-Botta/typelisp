@@ -8,9 +8,9 @@
     (begin
       (while (< i n)
         (begin
-          (if (= (string-ref text i) #a')
+          (if (= (string-ref text i) 'a')
             (set! acc (+ acc 3))
-            (if (= (string-ref text i) #z')
+            (if (= (string-ref text i) 'z')
               (set! acc (+ acc 7))
               (set! acc (+ acc 1))))
           (set! i (+ i 1))))

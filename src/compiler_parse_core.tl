@@ -1665,7 +1665,7 @@
     [_ (ErrAstFieldDefList "parse: malformed field list")]))
 
 (define (compiler-parse-metadata-key? [name : String]) : bool
-  (and (> (string-length name) 0) (= (string-ref name 0) #:')))
+  (and (> (string-length name) 0) (= (string-ref name 0) ':')))
 
 (define (parse-ast-aggregate-lifetimes-tail [tail : Sexpr]) : ResultAstLifetimeList
   (parse-ast-lifetime-list-nonempty
@@ -5282,9 +5282,9 @@
         (if (< i n)
           (let
             [c : char (string-ref name i)]
-            (if (or (char-eq c #/') (char-eq c #\\') (char-eq c #:'))
+            (if (or (char-eq c '/') (char-eq c '\\') (char-eq c ':'))
               (set! ok false)
-              (if (char-eq c #.')
+              (if (char-eq c '.')
                 (if last-was-dot
                   (set! ok false)
                   (begin
@@ -5304,7 +5304,7 @@
     (begin
       (while (< i n)
         (begin
-          (if (char-eq (string-ref name i) #.')
+          (if (char-eq (string-ref name i) '.')
             (set! start (+ i 1))
             unit)
           (set! i (+ i 1))))
@@ -8788,7 +8788,7 @@
       "parse: expected pattern")))
 
 ;; pattern literals (#1073): string literal arms, nested string payload,
-;; char literal in pattern, named char literal in value position.
+;; char literals in pattern and value position.
 (define (compiler-parse-pattern-string-char-tests-ok?) : bool
   (and
     ;; string literal arms
@@ -8797,11 +8797,11 @@
     ;; nested string payload
     (compiler-parse-ok?
       "(defenum Token (TIdent String))\n(define (f [t : Token]) : i64 (match t [(TIdent \"if\") 1] [_ 0]))")
-    ;; char literal in pattern (named space + literal char)
+    ;; char literal in pattern (space + literal char)
     (compiler-parse-ok?
-      "(define (f [c : char]) : i64 (match c [#\\space' 1] [#a' 2] [_ 0]))")
-    ;; named char literal in value position
-    (compiler-parse-ok? "(define (f) : char #\\newline')")))
+      "(define (f [c : char]) : i64 (match c [' ' 1] ['a' 2] [_ 0]))")
+    ;; escaped char literal in value position
+    (compiler-parse-ok? "(define (f) : char '\\n')")))
 
 ;
 ;; operator parsing (#1073 / #1041): accept unary (not/neg/bit-not), binary

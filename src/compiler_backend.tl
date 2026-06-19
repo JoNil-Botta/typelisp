@@ -3191,21 +3191,21 @@
 (define (compiler-backend-symbol-char [text : String] [idx : i64] [c : char]) : String
   (cond
     [(or
-        (and (>= c #A') (<= c #Z'))
-        (and (>= c #a') (<= c #z'))
-        (and (>= c #0') (<= c #9'))
-        (= c #_'))
+        (and (>= c 'A') (<= c 'Z'))
+        (and (>= c 'a') (<= c 'z'))
+        (and (>= c '0') (<= c '9'))
+        (= c '_'))
       (substring text idx 1)]
-    [(= c #-') "_"]
-    [(= c #?') "_question"]
-    [(= c #!') "_bang"]
-    [(= c #+') "_plus"]
-    [(= c #*') "_star"]
-    [(= c #/') "_slash"]
-    [(= c #=') "_eq"]
-    [(= c #<') "_lt"]
-    [(= c #>') "_gt"]
-    [(= c #:') "_colon"]
+    [(= c '-') "_"]
+    [(= c '?') "_question"]
+    [(= c '!') "_bang"]
+    [(= c '+') "_plus"]
+    [(= c '*') "_star"]
+    [(= c '/') "_slash"]
+    [(= c '=') "_eq"]
+    [(= c '<') "_lt"]
+    [(= c '>') "_gt"]
+    [(= c ':') "_colon"]
     [else
       (string-append
         "_u"
@@ -3213,16 +3213,16 @@
 
 (define (compiler-backend-symbol-safe-char? [c : char]) : bool
   (or
-    (and (>= c #A') (<= c #Z'))
-    (and (>= c #a') (<= c #z'))
-    (and (>= c #0') (<= c #9'))
-    (= c #_')))
+    (and (>= c 'A') (<= c 'Z'))
+    (and (>= c 'a') (<= c 'z'))
+    (and (>= c '0') (<= c '9'))
+    (= c '_')))
 
 (define (compiler-backend-export-symbol-head-char? [c : char]) : bool
-  (or (and (>= c #A') (<= c #Z')) (and (>= c #a') (<= c #z')) (= c #_')))
+  (or (and (>= c 'A') (<= c 'Z')) (and (>= c 'a') (<= c 'z')) (= c '_')))
 
 (define (compiler-backend-export-symbol-tail-char? [c : char]) : bool
-  (or (compiler-backend-export-symbol-head-char? c) (and (>= c #0') (<= c #9'))))
+  (or (compiler-backend-export-symbol-head-char? c) (and (>= c '0') (<= c '9'))))
 
 (define (compiler-backend-valid-export-symbol? [name : String]) : bool
   (let
@@ -3281,7 +3281,7 @@
         name))))
 
 (define (compiler-backend-user-symbol-separator? [c : char]) : bool
-  (or (= c #/') (= c #\\') (= c #:') (= c #.')))
+  (or (= c '/') (= c '\\') (= c ':') (= c '.')))
 
 (define (compiler-backend-user-symbol-tl-extension-at?
   [name : String]
@@ -3291,9 +3291,9 @@
     [after : i64 (+ idx 3)]
     (and
       (<= after n)
-      (= (string-ref name idx) #.')
-      (= (string-ref name (+ idx 1)) #t')
-      (= (string-ref name (+ idx 2)) #l')
+      (= (string-ref name idx) '.')
+      (= (string-ref name (+ idx 1)) 't')
+      (= (string-ref name (+ idx 2)) 'l')
       (or
         (= after n)
         (compiler-backend-user-symbol-separator? (string-ref name after))))))
@@ -3376,7 +3376,7 @@
     (begin
       (while (< i n)
         (begin
-          (if (or (= (string-ref name i) #/') (= (string-ref name i) #:'))
+          (if (or (= (string-ref name i) '/') (= (string-ref name i) ':'))
             (set! start (+ i 1))
             unit)
           (set! i (+ i 1))))
@@ -3390,7 +3390,7 @@
     (begin
       (while (and (< i n) (not found))
         (begin
-          (if (= (string-ref name i) #:')
+          (if (= (string-ref name i) ':')
             (set! found true)
             unit)
           (set! i (+ i 1))))
@@ -3662,20 +3662,20 @@
   [idx : i64]
   [c : char]) : String
   (cond
-    [(= c #"') "\\\""]
-    [(= c #\\') "\\\\"]
-    [(= c #\newline') "\\n"]
-    [(= c #\tab') "\\t"]
-    [(= c #\return') "\\r"]
-    [(and (>= c #\space') (<= c #~')) (substring text idx 1)]
+    [(= c '"') "\\\""]
+    [(= c '\\') "\\\\"]
+    [(= c '\n') "\\n"]
+    [(= c '\t') "\\t"]
+    [(= c '\r') "\\r"]
+    [(and (>= c ' ') (<= c '~')) (substring text idx 1)]
     [else (compiler-backend-octal-escape (compiler-backend-char-code c))]))
 
 (define (compiler-backend-string-byte-raw? [c : char]) : bool
   (cond
-    [(= c #"') false]
-    [(= c #\\') false]
-    [(< c #\space') false]
-    [(> c #~') false]
+    [(= c '"') false]
+    [(= c '\\') false]
+    [(< c ' ') false]
+    [(> c '~') false]
     [else true]))
 
 (define (compiler-backend-escape-string [text : String]) : String
@@ -4617,7 +4617,7 @@
     (compiler-backend-emit-load-value-with-plan assignments word reg)))
 
 (define (compiler-backend-pack-word-dst-register? [dst : String]) : bool
-  (and (> (string-length dst) 0) (= (string-ref dst 0) #%')))
+  (and (> (string-length dst) 0) (= (string-ref dst 0) '%')))
 
 (define (compiler-backend-emit-pack-word-immediate-store
   [word : CompilerIrValue]
@@ -21386,7 +21386,7 @@
     false
     (let
       [c : char (string-ref name 0)]
-      (or (char-eq c #t') (char-eq c #.') (char-eq c #e')))))
+      (or (char-eq c 't') (char-eq c '.') (char-eq c 'e')))))
 
 (define (compiler-backend-runtime-helper-name-id [name : String]) : i64
   (if (not (compiler-backend-runtime-helper-name-plausible? name))
@@ -26662,9 +26662,9 @@ tl_atomic_i32_cas_ptr:
 
 (define (compiler-backend-object-hex-value [c : char]) : i64
   (cond
-    [(and (>= c #0') (<= c #9')) (- (cast c : i64) (cast #0' : i64))]
-    [(and (>= c #a') (<= c #f')) (+ 10 (- (cast c : i64) (cast #a' : i64)))]
-    [(and (>= c #A') (<= c #F')) (+ 10 (- (cast c : i64) (cast #A' : i64)))]
+    [(and (>= c '0') (<= c '9')) (- (cast c : i64) (cast '0' : i64))]
+    [(and (>= c 'a') (<= c 'f')) (+ 10 (- (cast c : i64) (cast 'a' : i64)))]
+    [(and (>= c 'A') (<= c 'F')) (+ 10 (- (cast c : i64) (cast 'A' : i64)))]
     [else 0]))
 
 (define (compiler-backend-object-bytes-from-hex [hex : String]) : String
@@ -27402,7 +27402,7 @@ tl_atomic_i32_cas_ptr:
     [done : bool false]
     (begin
       (while (and (not done) (< i n))
-        (if (= (string-ref asm i) #\newline')
+        (if (= (string-ref asm i) '\n')
           (set! done true)
           (set! i (+ i 1))))
       i)))
@@ -27429,8 +27429,8 @@ tl_atomic_i32_cas_ptr:
       (while (not done)
         (if (< (+ i 1) n)
           (if (and
-            (= (string-ref line i) #,')
-            (= (string-ref line (+ i 1)) #\space'))
+            (= (string-ref line i) ',')
+            (= (string-ref line (+ i 1)) ' '))
             (begin
               (set! found i)
               (set! done true))
@@ -27455,7 +27455,7 @@ tl_atomic_i32_cas_ptr:
       (CompilerBackendPeepholeNoMove))))
 
 (define (compiler-backend-peephole-register-operand? [operand : String]) : bool
-  (and (> (string-length operand) 0) (= (string-ref operand 0) #%')))
+  (and (> (string-length operand) 0) (= (string-ref operand 0) '%')))
 
 (define (compiler-backend-peephole-stack-slot-operand? [operand : String]) : bool
   (compiler-backend-string-contains? operand "(%rbp)"))
@@ -27463,7 +27463,7 @@ tl_atomic_i32_cas_ptr:
 (define (compiler-backend-peephole-local-frame-slot-operand? [operand : String]) : bool
   (and
     (> (string-length operand) 0)
-    (= (string-ref operand 0) #-')
+    (= (string-ref operand 0) '-')
     (compiler-backend-peephole-stack-slot-operand? operand)))
 
 (define (compiler-backend-peephole-local-move-operand? [operand : String]) : bool

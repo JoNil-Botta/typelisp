@@ -342,11 +342,7 @@
 
 ;: Return true if the character is ASCII whitespace.
 (define (is-char-whitespace [c : char]) : bool
-  (or
-    (char-eq c #\space')
-    (char-eq c #\tab')
-    (char-eq c #\newline')
-    (char-eq c #\return')))
+  (or (char-eq c ' ') (char-eq c '\t') (char-eq c '\n') (char-eq c '\r')))
 
 ;: Compare two chars for equality.
 (define (char-eq [a : char] [b : char]) : bool
@@ -407,7 +403,7 @@
     [negative : bool false]
     [value : i64 0]
     (begin
-      (if (and (> n 0) (char-eq (string-ref text 0) #-'))
+      (if (and (> n 0) (char-eq (string-ref text 0) '-'))
         (begin
           (set! negative true)
           (set! i 1))
@@ -873,13 +869,13 @@
   test
   (define (string-test-main) : i64
     (begin
-      (assert-true (is-char-whitespace #\space') "space is whitespace")
-      (assert-true (is-char-whitespace #\tab') "tab is whitespace")
-      (assert-true (is-char-whitespace #\newline') "newline is whitespace")
-      (assert-true (is-char-whitespace #\return') "return is whitespace")
-      (assert-false (is-char-whitespace #A') "letter is not whitespace")
-      (assert-true (char-eq #A' #A') "same chars compare equal")
-      (assert-false (char-eq #A' #B') "different chars do not compare equal")
+      (assert-true (is-char-whitespace ' ') "space is whitespace")
+      (assert-true (is-char-whitespace '\t') "tab is whitespace")
+      (assert-true (is-char-whitespace '\n') "newline is whitespace")
+      (assert-true (is-char-whitespace '\r') "return is whitespace")
+      (assert-false (is-char-whitespace 'A') "letter is not whitespace")
+      (assert-true (char-eq 'A' 'A') "same chars compare equal")
+      (assert-false (char-eq 'A' 'B') "different chars do not compare equal")
       (assert-true (string-eq "" "") "empty strings compare equal")
       (assert-true (string-eq "hello" "hello") "same strings compare equal")
       (assert-true
@@ -1069,13 +1065,13 @@
         (string-test-contains "hi" "hello")
         "contains rejects too-long needle")
       (assert-true
-        (string-test-contains-char "hello" #e')
+        (string-test-contains-char "hello" 'e')
         "contains-char finds char")
       (assert-false
-        (string-test-contains-char "hello" #z')
+        (string-test-contains-char "hello" 'z')
         "contains-char reports miss")
       (assert-false
-        (string-test-contains-char "" #z')
+        (string-test-contains-char "" 'z')
         "contains-char handles empty string")
       (string-test-assert-owned-string-eq
         (string-replace "hello" "ell" "ipp")

@@ -1151,34 +1151,34 @@
 (cfg
   test
   (define (hash-key-alpha) : HashNestedKey
-    (HashNestedKey (HashPoint 1 true "alpha" #A') (HashTagNumber 7))))
+    (HashNestedKey (HashPoint 1 true "alpha" 'A') (HashTagNumber 7))))
 
 (cfg
   test
   (define (hash-key-alpha-copy) : HashNestedKey
-    (HashNestedKey (HashPoint 1 true "alpha" #A') (HashTagNumber 7))))
+    (HashNestedKey (HashPoint 1 true "alpha" 'A') (HashTagNumber 7))))
 
 (cfg
   test
   (define (hash-key-beta) : HashNestedKey
-    (HashNestedKey (HashPoint 1 true "alpha" #A') (HashTagOtherNumber 7))))
+    (HashNestedKey (HashPoint 1 true "alpha" 'A') (HashTagOtherNumber 7))))
 
 (cfg
   test
   (define (hash-key-gamma) : HashNestedKey
     (HashNestedKey
-      (HashPoint 3 false "gamma" #G')
-      (HashTagText true "payload" #P'))))
+      (HashPoint 3 false "gamma" 'G')
+      (HashTagText true "payload" 'P'))))
 
 (cfg
   test
   (define (hash-key-delta) : HashNestedKey
-    (HashNestedKey (HashPoint 4 true "delta" #D') (HashTagNone))))
+    (HashNestedKey (HashPoint 4 true "delta" 'D') (HashTagNone))))
 
 (cfg
   test
   (define (hash-key-missing) : HashNestedKey
-    (HashNestedKey (HashPoint 99 false "missing" #M') (HashTagNumber 7))))
+    (HashNestedKey (HashPoint 99 false "missing" 'M') (HashTagNumber 7))))
 
 ;; Predicate/extractor helpers return concrete bool/i64 (no panic in a match
 ;; arm) so the module typechecks on every stage0, independent of never-type.

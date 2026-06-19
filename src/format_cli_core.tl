@@ -77,7 +77,7 @@
           (panic message)))]))
 
 (define (fmt-flag? [value : String]) : bool
-  (and (> (string-length value) 0) (= (string-ref value 0) #-')))
+  (and (> (string-length value) 0) (= (string-ref value 0) '-')))
 
 (define (fmt-config-finish
   [check : bool]

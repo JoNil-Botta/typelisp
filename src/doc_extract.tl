@@ -108,10 +108,10 @@
   (doc-item-array-to-list-rev items (- (array-length items) 1) DocItemNil))
 
 (define (doc-inline-space? [c : char]) : bool
-  (or (= c #\space') (= c #\tab')))
+  (or (= c ' ') (= c '\t')))
 
 (define (doc-newline? [c : char]) : bool
-  (or (= c #\newline') (= c #\return')))
+  (or (= c '\n') (= c '\r')))
 
 (define (doc-line-end [src : String] [start : i64] [n : i64]) : i64
   (let
@@ -132,9 +132,9 @@
     (let
       [k : char (string-ref src line-end)]
       (begin
-        (unless (= k #\return') (return (+ line-end 1)))
+        (unless (= k '\r') (return (+ line-end 1)))
         (unless (< (+ line-end 1) n) (return (+ line-end 1)))
-        (if (= (string-ref src (+ line-end 1)) #\newline')
+        (if (= (string-ref src (+ line-end 1)) '\n')
           (+ line-end 2)
           (+ line-end 1))))))
 
@@ -209,7 +209,7 @@
     [body-start : i64 (+ line-start prefix-len)]
     (begin
       (if (< body-start line-end)
-        (if (= (string-ref src body-start) #\space')
+        (if (= (string-ref src body-start) ' ')
           (set! body-start (+ body-start 1))
           (set! body-start body-start))
         (set! body-start body-start))
@@ -240,11 +240,11 @@
                 (begin
                   (set! escaped false)
                   (set! i (+ i 1)))]
-              [(= c #\\')
+              [(= c '\\')
                 (begin
                   (set! escaped true)
                   (set! i (+ i 1)))]
-              [(= c #"')
+              [(= c '"')
                 (begin
                   (set! i (+ i 1))
                   (set! keep false))]
@@ -252,23 +252,8 @@
           (set! keep false)))
       i)))
 
-(define (doc-scan-char-literal-end [src : String] [start : i64] [n : i64]) : i64
-  (let
-    [i : i64 (+ start 1)]
-    [keep : bool true]
-    (begin
-      (while keep
-        (if (< i n)
-          (if (= (string-ref src i) #'')
-            (begin
-              (set! i (+ i 1))
-              (set! keep false))
-            (set! i (+ i 1)))
-          (set! keep false)))
-      i)))
-
 (define (doc-apostrophe-char-escape? [c : char]) : bool
-  (or (= c #n') (= c #t') (= c #r') (= c #0') (= c #\\') (= c #'')))
+  (or (= c 'n') (= c 't') (= c 'r') (= c '0') (= c '\\') (= c '\'')))
 
 (define (doc-scan-apostrophe-char-literal-end
   [src : String]
@@ -278,17 +263,16 @@
     (let
       [payload : char (string-ref src (+ start 1))]
       (cond
-        [(= payload #\\')
+        [(= payload '\\')
           (if (and
             (< (+ start 3) n)
             (doc-apostrophe-char-escape? (string-ref src (+ start 2)))
-            (= (string-ref src (+ start 3)) #''))
+            (= (string-ref src (+ start 3)) '\''))
             (+ start 4)
             (+ start 1))]
-        [(or (= payload #'') (= payload #\newline') (= payload #\return'))
-          (+ start 1)]
+        [(or (= payload '\'') (= payload '\n') (= payload '\r')) (+ start 1)]
         [else
-          (if (and (< (+ start 2) n) (= (string-ref src (+ start 2)) #''))
+          (if (and (< (+ start 2) n) (= (string-ref src (+ start 2)) '\''))
             (+ start 3)
             (+ start 1))]))
     (+ start 1)))
@@ -304,17 +288,16 @@
           (let
             [c : char (string-ref src i)]
             (cond
-              [(= c #;')
+              [(= c ';')
                 (set! i (doc-next-line-start src (doc-line-end src i n) n))]
-              [(= c #"') (set! i (doc-scan-string-end src i n))]
-              [(= c #'')
+              [(= c '"') (set! i (doc-scan-string-end src i n))]
+              [(= c '\'')
                 (set! i (doc-scan-apostrophe-char-literal-end src i n))]
-              [(= c ##') (set! i (doc-scan-char-literal-end src i n))]
-              [(or (= c #(') (= c #['))
+              [(or (= c '(') (= c '['))
                 (begin
                   (set! depth (+ depth 1))
                   (set! i (+ i 1)))]
-              [(or (= c #)') (= c #]'))
+              [(or (= c ')') (= c ']'))
                 (begin
                   (set! depth (- depth 1))
                   (set! i (+ i 1))
@@ -472,7 +455,7 @@
             (set! i (doc-next-line-start src line-end n))
             (let
               [c : char (string-ref src line-start)]
-              (if (= c #;')
+              (if (= c ';')
                 (let
                   [module-prefix-len : i64
                     (doc-module-doc-prefix-len src line-start)]
@@ -513,7 +496,7 @@
                           (set! pending-doc "")
                           (set! pending-has false)
                           (set! i (doc-next-line-start src line-end n)))))))
-                (if (= c #(')
+                (if (= c '(')
                   (let
                     [form-end : i64 (doc-scan-form-end src line-start n)]
                     [signature : String

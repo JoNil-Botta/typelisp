@@ -48,7 +48,7 @@
     (print-string (integration-trim "  hello  "))
     (print-string "|")
     (print-newline)
-    (if (integration-contains-char "hello" #\l')
+    (if (integration-contains-char "hello" 'l')
       (print-string "found")
       (print-string "not found"))
     (print-newline)

@@ -5059,7 +5059,7 @@
       (while (< i n)
         (let
           [chunk : String
-            (if (char-eq (string-ref name i) #/')
+            (if (char-eq (string-ref name i) '/')
               "."
               (substring name i 1))]
           (begin
@@ -5185,8 +5185,8 @@
 (define (tc-dotted-field-index-like? [name : String] [start : i64] [len : i64]) : bool
   (and
     (> len 0)
-    (>= (string-ref name start) #0')
-    (<= (string-ref name start) #9')))
+    (>= (string-ref name start) '0')
+    (<= (string-ref name start) '9')))
 
 (define (tc-dotted-local-field-name? [env : TcTypeEnv] [name : String]) : bool
   (let
@@ -5213,7 +5213,7 @@
     [n : i64 (string-length name)]
     [i : i64 start]
     (begin
-      (while (and (< i n) (not (char-eq (string-ref name i) #.')))
+      (while (and (< i n) (not (char-eq (string-ref name i) '.')))
         (set! i (+ i 1)))
       (let
         [len : i64 (- i start)]
@@ -5339,7 +5339,7 @@
     (begin
       (while (< i n)
         (begin
-          (if (char-eq (string-ref name i) #.')
+          (if (char-eq (string-ref name i) '.')
             (let
               [candidate : String (substring name 0 i)]
               (if (or

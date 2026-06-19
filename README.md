@@ -28,10 +28,11 @@ Language direction:
   #1521; local dotted field syntax such as `(set! place.field value)` uses the
   same machinery.
 - Treat ISPC-style SPMD as the data-parallel model. The current source surface
-  is in [SPEC.md section 5.15](SPEC.md); masked varying `if` is in flight
-  (#2131, #2205, #2207), scalar gather-only reads from dynamic arrays are
-  implemented (#2762), lane identity forms are implemented (#2761), and the
-  remaining SPMD queue covers wider lane types (#2763), public vector/mask values (#2764),
+  is in [SPEC.md section 5.15](SPEC.md); scalar gather-only reads from dynamic
+  arrays (#2762), lane identity forms (#2761), and the scalar/AVX-512 masked
+  varying `if` subset are implemented. AVX2 emits an explicit masked-if
+  diagnostic, and the remaining SPMD queue covers broader masked-if value
+  results (#3356), wider lane types (#2763), public vector/mask values (#2764),
   cross-lane ops (#2765), atomics/overlapping writes (#2766), deferred control
   flow (#2767), and varying-call ABI (#2768).
 - Use Zig-style comptime as the abstraction mechanism. TypeLisp should not grow
@@ -588,10 +589,10 @@ captures, and mutation of captured names is rejected (#2552).
 SPMD/SIMD `foreach` is documented in [SPEC.md section 5.15](SPEC.md). The
 compiler parses and type-checks the first source form and lowers it to scalar
 reference loops; `--backend-mode avx2|avx512` supports a first contiguous
-map/zip subset over `i8`, `u8`, `i16`, `u16`, `i32`, `i64`, `f32`, and `f64`
-lanes, with AVX-512 additionally supporting bool dynamic-array copies and
-bool-valued map results through private mask conversion. Runtime-dispatched
-SIMD variants are specified with `defdispatch`:
+map/zip subset over `i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `i64`, `u64`,
+`f32`, and `f64` lanes, with AVX-512 additionally supporting bool dynamic-array
+copies and bool-valued map results through private mask conversion.
+Runtime-dispatched SIMD variants are specified with `defdispatch`:
 ordinary calls resolve once per process to AVX-512, AVX2, or scalar fallback
 using the same CPUID/XGETBV capability checks exposed by `stdlib/cpu.tl`;
 AVX-512 dispatch currently requires AVX-512BW because byte-lane lowering uses
@@ -601,12 +602,14 @@ BW instructions.
 scalar lowering supports inclusive `sum`/`min`/`max` scans over `i32`/`i64` and
 `all`/`any` scans over `bool`. SIMD backend modes vectorize eligible contiguous
 array reductions: `sum` over `i32`, `i64`, and `f64`; `min`/`max` over `i32`;
-and AVX-512 `min`/`max` over `i64`. The
-SPEC also defines the next masked varying `if` slice; the current compiler
-still rejects varying `if` until that implementation lands. `(program-index)`
-and `(program-count)` are implemented as no-argument SPMD lane identity forms
-inside `foreach` bodies and `spmd-reduce` value expressions; programs that use
-those forms intentionally observe backend gang width.
+and AVX-512 `min`/`max` over `i64`. Masked varying `if` is accepted in scalar
+reference lowering and in the current AVX-512 subset for unit-result branches,
+nested branch-mask composition, and i64 value-producing selects; AVX2 emits an
+explicit staged diagnostic for masked-if fixtures instead of silently
+scalarizing them. `(program-index)` and `(program-count)` are implemented as
+no-argument SPMD lane identity forms inside `foreach` bodies and `spmd-reduce`
+value expressions; programs that use those forms intentionally observe backend
+gang width.
 
 ### Builtins
 
@@ -899,10 +902,11 @@ AVX-512 uses ZMM vectors and opmask predicated tails, requires AVX-512BW for
 runtime dispatch selection, and additionally vectorizes `i64` min/max
 reductions.
 Unsupported vector IR falls back or rejects explicitly.
-Masked varying `if` semantics are specified in SPEC.md as the next SPMD slice,
-but are not implemented yet. `(program-index)`/`(program-count)` lane identity
-forms are accepted in the SPMD scopes described by `SPEC.md` and are
-backend-mode observable.
+Masked varying `if` is implemented for scalar reference lowering and the
+current AVX-512 subset; AVX2 reports the staged masked-if diagnostic. Broader
+value-producing masked-if selects are tracked by #3356.
+`(program-index)`/`(program-count)` lane identity forms are accepted in the
+SPMD scopes described by `SPEC.md` and are backend-mode observable.
 
 `compile` accepts repeated `--cfg <name>` flags. Enabled names control `(cfg
 predicate declaration)` and expression-level `(cfg predicate expr [else-expr])`
@@ -950,8 +954,9 @@ x86_64 Linux/Windows backend targets. Integers, floats (`f64`/`f32`), bool/char/
 map/zip path, and initial SIMD `spmd-reduce` folds all compile to native code. See the
 [project roadmap](https://github.com/JoNil-Botta/typelisp/issues/8) and
 [SPEC.md §8](SPEC.md) for what is not yet supported (indirect/closure tail
-calls, general GC/free, non-lexical lifetimes, masked varying SPMD control flow, and
-later public SPMD/SIMD cross-lane work). Raw pointer types and unsafe pointer
+calls, general GC/free, non-lexical lifetimes, remaining SPMD control-flow and
+value-result slices beyond the current masked varying `if` subset, and later
+public SPMD/SIMD cross-lane work). Raw pointer types and unsafe pointer
 operations are implemented, including local scalar address-of scratch pointers
 for FFI out-params. Broader C-string and address-of ergonomics remain follow-up
 FFI work.

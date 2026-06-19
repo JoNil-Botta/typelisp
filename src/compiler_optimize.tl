@@ -1535,48 +1535,63 @@
     [(IrBlockArray seq)
       (opt-dce-block-list set (compiler-ir-block-seq-to-list seq))]))
 
-(define (opt-used-array-fill
-  [items : (Array bool)]
-  [index : i64]
-  [value : bool]) : unit
+(define (opt-used-array-fill [items : (Array i64)] [index : i64] [value : i64]) : unit
   (if (>= index (array-length items))
     unit
     (begin
       (array-set! items index value)
       (opt-used-array-fill items (+ index 1) value))))
 
-(define (opt-used-array-new [count : i64]) : (Array bool)
+(define (opt-used-array-new [count : i64]) : (Array i64)
   (let
-    [items : (Array bool) (make-array bool count)]
+    [items : (Array i64) (make-array i64 count)]
     (begin
-      (opt-used-array-fill items 0 false)
+      (opt-used-array-fill items 0 0)
       items)))
 
-(define (opt-used-array-add [items : (Array bool)] [var : i64]) : unit
+;; Use counts (not booleans): `add` bumps the count, `contains` reports any live
+;; use, and `dec` drops a single use when DCE deletes an instruction. Counting
+;; lets one backward DCE sweep retire a whole dead chain -- deleting the cast
+;; that fed a removed bounds check decrements its operand load, which then reads
+;; as dead when the sweep reaches it, and so on down the gep.
+(define (opt-used-array-add [items : (Array i64)] [var : i64]) : unit
   (if (< var 0)
     unit
     (if (>= var (array-length items))
       unit
       (begin
-        (array-set! items var true)
+        (array-set! items var (+ (array-ref items var) 1))
         unit))))
 
-(define (opt-used-array-contains [items : (Array bool)] [var : i64]) : bool
+(define (opt-used-array-dec [items : (Array i64)] [var : i64]) : unit
+  (if (< var 0)
+    unit
+    (if (>= var (array-length items))
+      unit
+      (let
+        [current : i64 (array-ref items var)]
+        (if (> current 0)
+          (begin
+            (array-set! items var (- current 1))
+            unit)
+          unit)))))
+
+(define (opt-used-array-contains [items : (Array i64)] [var : i64]) : bool
   (if (< var 0)
     false
     (if (>= var (array-length items))
       false
-      (array-ref items var))))
+      (> (array-ref items var) 0))))
 
 (define (opt-collect-value-uses-array
-  [items : (Array bool)]
+  [items : (Array i64)]
   [value : CompilerIrValue]) : unit
   (match value
     [(IrValueVar id) (opt-used-array-add items id)]
     [_ unit]))
 
 (define (opt-collect-value-list-uses-array
-  [items : (Array bool)]
+  [items : (Array i64)]
   [values : CompilerIrValueList]) : unit
   (match values
     [(IrValueNil) unit]
@@ -1586,7 +1601,7 @@
         (opt-collect-value-list-uses-array items (box-get rest)))]))
 
 (define (opt-collect-call-args-array-uses-array
-  [items : (Array bool)]
+  [items : (Array i64)]
   [values : (Array CompilerIrValue)]
   [index : i64]) : unit
   (if (>= index (array-length values))
@@ -1596,7 +1611,7 @@
       (opt-collect-call-args-array-uses-array items values (+ index 1)))))
 
 (define (opt-collect-call-args-uses-array
-  [items : (Array bool)]
+  [items : (Array i64)]
   [args : CompilerIrCallArgs]) : unit
   (match args
     [(IrCallArgsNil) unit]
@@ -1609,7 +1624,7 @@
       (opt-collect-call-args-array-uses-array items values 0)]))
 
 (define (opt-collect-phi-uses-array
-  [items : (Array bool)]
+  [items : (Array i64)]
   [inputs : CompilerIrPhiInputList]) : unit
   (match inputs
     [(IrPhiInputNil) unit]
@@ -1619,7 +1634,7 @@
         (opt-collect-phi-uses-array items (box-get rest)))]))
 
 (define (opt-collect-instr-uses-array
-  [items : (Array bool)]
+  [items : (Array i64)]
   [instr : CompilerIrInstr]) : unit
   (match instr
     [(IrInstrMov _ src _) (opt-collect-value-uses-array items src)]
@@ -1737,8 +1752,86 @@
         (opt-collect-call-args-uses-array items args))]
     [_ unit]))
 
+;; Decrement the operand use counts an instruction contributed. Called when DCE
+;; deletes that instruction so a single backward sweep can retire the rest of a
+;; now-dead chain. Only the pure/group producers DCE can delete need arms here;
+;; anything else leaves the counts untouched (conservative -- it just keeps an
+;; instruction).
+(define (opt-uncount-value-uses-array
+  [items : (Array i64)]
+  [value : CompilerIrValue]) : unit
+  (match value
+    [(IrValueVar id) (opt-used-array-dec items id)]
+    [_ unit]))
+
+(define (opt-uncount-value-list-uses-array
+  [items : (Array i64)]
+  [values : CompilerIrValueList]) : unit
+  (match values
+    [(IrValueNil) unit]
+    [(IrValueCons value rest)
+      (begin
+        (opt-uncount-value-uses-array items value)
+        (opt-uncount-value-list-uses-array items (box-get rest)))]))
+
+(define (opt-uncount-phi-uses-array
+  [items : (Array i64)]
+  [inputs : CompilerIrPhiInputList]) : unit
+  (match inputs
+    [(IrPhiInputNil) unit]
+    [(IrPhiInputCons value _ rest)
+      (begin
+        (opt-uncount-value-uses-array items value)
+        (opt-uncount-phi-uses-array items (box-get rest)))]))
+
+(define (opt-uncount-instr-uses-array
+  [items : (Array i64)]
+  [instr : CompilerIrInstr]) : unit
+  (match instr
+    [(IrInstrMov _ src _) (opt-uncount-value-uses-array items src)]
+    [(IrInstrGep _ base offset _)
+      (begin
+        (opt-uncount-value-uses-array items base)
+        (opt-uncount-value-uses-array items offset))]
+    [(IrInstrCast _ src _ _) (opt-uncount-value-uses-array items src)]
+    [(IrInstrLoad _ src _) (opt-uncount-value-uses-array items src)]
+    [(IrInstrBinOp _ _ lhs rhs _)
+      (begin
+        (opt-uncount-value-uses-array items lhs)
+        (opt-uncount-value-uses-array items rhs))]
+    [(IrInstrUnOp _ _ src _) (opt-uncount-value-uses-array items src)]
+    [(IrInstrPhi _ inputs _) (opt-uncount-phi-uses-array items inputs)]
+    [(IrInstrSplat _ value _ _) (opt-uncount-value-uses-array items value)]
+    [(IrInstrVectorBinOp _ _ lhs rhs _ _)
+      (begin
+        (opt-uncount-value-uses-array items lhs)
+        (opt-uncount-value-uses-array items rhs))]
+    [(IrInstrVectorReduce _ _ src _ _) (opt-uncount-value-uses-array items src)]
+    [(IrInstrVectorCompare _ _ lhs rhs _ _)
+      (begin
+        (opt-uncount-value-uses-array items lhs)
+        (opt-uncount-value-uses-array items rhs))]
+    [(IrInstrMaskBinOp _ _ lhs rhs _)
+      (begin
+        (opt-uncount-value-uses-array items lhs)
+        (opt-uncount-value-uses-array items rhs))]
+    [(IrInstrMaskNot _ src _) (opt-uncount-value-uses-array items src)]
+    [(IrInstrMaskReduce _ _ src _) (opt-uncount-value-uses-array items src)]
+    [(IrInstrSelect _ mask on-true on-false _ _)
+      (begin
+        (opt-uncount-value-uses-array items mask)
+        (opt-uncount-value-uses-array items on-true)
+        (opt-uncount-value-uses-array items on-false))]
+    [(IrInstrTailMask _ index length _)
+      (begin
+        (opt-uncount-value-uses-array items index)
+        (opt-uncount-value-uses-array items length))]
+    [(IrInstrPack _ words _) (opt-uncount-value-list-uses-array items words)]
+    [(IrInstrWord _ src _ _) (opt-uncount-value-uses-array items src)]
+    [_ unit]))
+
 (define (opt-collect-instr-seq-uses-array
-  [items : (Array bool)]
+  [items : (Array i64)]
   [instrs : CompilerIrInstrSeq]) : unit
   (let
     [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
@@ -1752,7 +1845,7 @@
       unit)))
 
 (define (opt-collect-blocks-uses-array-into
-  [items : (Array bool)]
+  [items : (Array i64)]
   [blocks : CompilerIrBlockList]) : unit
   (match blocks
     [(IrBlockNil) unit]
@@ -1769,9 +1862,9 @@
 
 (define (opt-collect-blocks-uses-array
   [vars : i64]
-  [blocks : CompilerIrBlockList]) : (Array bool)
+  [blocks : CompilerIrBlockList]) : (Array i64)
   (let
-    [items : (Array bool) (opt-used-array-new vars)]
+    [items : (Array i64) (opt-used-array-new vars)]
     (begin
       (opt-collect-blocks-uses-array-into items blocks)
       items)))
@@ -1782,7 +1875,7 @@
 ;; strands once a bounds check is proven redundant. `IrInstrAddrOf` is excluded
 ;; for the same reason as in `opt-instr-dead?`.
 (define (opt-instr-dead-array?
-  [items : (Array bool)]
+  [items : (Array i64)]
   [slots : (Array CompilerIrInstr)]
   [count : i64]
   [index : i64]
@@ -1821,7 +1914,7 @@
     [_ false]))
 
 (define (opt-dce-instr-seq-array
-  [items : (Array bool)]
+  [items : (Array i64)]
   [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
   (let
     [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
@@ -1834,18 +1927,20 @@
           (let
             [instr : CompilerIrInstr (array-ref slots index)]
             (if (opt-instr-dead-array? items slots count index instr)
-              unit
+              ;; Deleting this instruction drops the uses it made, so a value it
+              ;; was the last reader of becomes dead for an earlier sweep step.
+              (opt-uncount-instr-uses-array items instr)
               (set! out (compiler-ir-instr-cons instr out))))
           (set! index (- index 1))))
       out)))
 
-(define (opt-dce-block-array [items : (Array bool)] [block : CompilerIrBlock]) : CompilerIrBlock
+(define (opt-dce-block-array [items : (Array i64)] [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
     [(IrBlock label instrs)
       (compiler-ir-block label (opt-dce-instr-seq-array items instrs))]))
 
 (define (opt-dce-block-list-array
-  [items : (Array bool)]
+  [items : (Array i64)]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (match blocks
     [(IrBlockNil) (IrBlockNil)]
@@ -17646,7 +17741,7 @@
                             _t-divrem-safety)
                           unit)]
                       [_t-dce : i64 (cfg compile-profile (profile-now-ms) 0)]
-                      [used : (Array bool)
+                      [used : (Array i64)
                         (opt-collect-blocks-uses-array
                           induction-frame
                           divrem-safe)]
@@ -17703,7 +17798,7 @@
                   (compiler-opt-profile-pass-finish "cfg" name _t-cfg)
                   unit)]
               [_t-dce : i64 (cfg compile-profile (profile-now-ms) 0)]
-              [used : (Array bool)
+              [used : (Array i64)
                 (opt-collect-blocks-uses-array promoted-frame cfg)]
               [dced : CompilerIrBlockList (opt-dce-block-list-array used cfg)]
               [_p-dce : unit
@@ -17724,7 +17819,7 @@
       (let
         [folded : CompilerIrBlockList (optimize-block-list-fast blocks)]
         [cfg : CompilerIrBlockList (opt-cfg-simplify-blocks folded)]
-        [used : (Array bool) (opt-collect-blocks-uses-array frame cfg)]
+        [used : (Array i64) (opt-collect-blocks-uses-array frame cfg)]
         (IrFunction
           name
           params
@@ -24459,7 +24554,7 @@
 (define (opt-dce-clean-array-count [instrs : CompilerIrInstrList]) : i64
   (let
     [block : CompilerIrBlock (compiler-ir-block "entry" instrs)]
-    [used : (Array bool)
+    [used : (Array i64)
       (opt-collect-blocks-uses-array
         64
         (compiler-ir-block-cons block IrBlockNil))]
@@ -24748,7 +24843,7 @@
   [frame : i64]) : CompilerIrBlockList
   (let
     [safe : CompilerIrBlockList (opt-divrem-safety-blocks params blocks)]
-    [used : (Array bool) (opt-collect-blocks-uses-array frame safe)]
+    [used : (Array i64) (opt-collect-blocks-uses-array frame safe)]
     (opt-dce-block-list-array used safe)))
 
 (define (compiler-optimize-divrem-safety-self-test) : i64

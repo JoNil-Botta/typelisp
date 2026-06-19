@@ -41,7 +41,7 @@
 
 (defenum LowerMaybeFunctionBody
   (LowerNoFunctionBody)
-  (LowerSomeFunctionBody AstExpr))
+  (LowerSomeFunctionBody AstExpr LowerNameCache))
 
 (defenum LowerSpmdInlineHelper
   (LowerNoSpmdInlineHelper)
@@ -1100,6 +1100,15 @@
         decl-path
         module
         cleanup)]
+    [(AstDeclComptimeDecl _ template-box)
+      (let
+        [template : AstDecl (box-get template-box)]
+        (lower-name-env-add-decl-in-module
+          names
+          entry-path
+          decl-path
+          module
+          template))]
     [(AstDeclUnsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
@@ -1188,6 +1197,15 @@
             name-str
             (lower-decl-logical-name entry-path decl-path module name-str))
           names))]
+    [(AstDeclComptimeDecl _ template-box)
+      (let
+        [template : AstDecl (box-get template-box)]
+        (lower-name-env-add-clone-decl-in-module
+          names
+          entry-path
+          decl-path
+          module
+          template))]
     [(AstDeclUnsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
@@ -1579,6 +1597,10 @@
       (lower-name-env-add-local-struct-cleanup names name-cache module cleanup)]
     [(AstDeclDefStructLifetimes _ _ _ cleanup _)
       (lower-name-env-add-local-struct-cleanup names name-cache module cleanup)]
+    [(AstDeclComptimeDecl _ template-box)
+      (let
+        [template : AstDecl (box-get template-box)]
+        (lower-name-env-add-local-decl names name-cache module template))]
     [(AstDeclUnsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
@@ -2480,6 +2502,14 @@
     [(AstDeclDefFn name _ _ _ _)
       (TcSomeString
         (lower-decl-logical-name entry-path decl-path module (intern-str name)))]
+    [(AstDeclComptimeDecl _ template-box)
+      (let
+        [template : AstDecl (box-get template-box)]
+        (lower-function-logical-name-from-decl
+          entry-path
+          decl-path
+          module
+          template))]
     [(AstDeclUnsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
@@ -4323,6 +4353,33 @@
                   state
                   fields)
                 state)]
+            [(AstDeclComptimeDecl _ template-box)
+              (let
+                [template : AstDecl (box-get template-box)]
+                (match template
+                  [(AstDeclDefStruct _ _ cleanup fields)
+                    (if (ast-struct-cleanup? cleanup)
+                      (lower-reach-struct-field-cleanup-roots
+                        all-functions
+                        entry-path
+                        decl-path
+                        module
+                        names
+                        state
+                        fields)
+                      state)]
+                  [(AstDeclDefStructLifetimes _ _ _ cleanup fields)
+                    (if (ast-struct-cleanup? cleanup)
+                      (lower-reach-struct-field-cleanup-roots
+                        all-functions
+                        entry-path
+                        decl-path
+                        module
+                        names
+                        state
+                        fields)
+                      state)]
+                  [_ state]))]
             [(AstDeclModule next-module)
               (lower-reach-cleanup-metadata-roots-in-module
                 all-functions
@@ -4351,47 +4408,84 @@
     (make-array LowerMaybeFunctionBody count)
     0))
 
+(define (lower-function-body-local-names-in-module
+  [decls : AstDeclList]
+  [base-names : LowerNameEnv]
+  [base-cache : LowerNameCache]
+  [target-module : String]
+  [module : String]) : LowerNameEnv
+  (match decls
+    [(AstDeclNil) base-names]
+    [(AstDeclCons decl rest)
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (match decl
+          [(AstDeclModule next-module)
+            (lower-function-body-local-names-in-module
+              rest
+              base-names
+              base-cache
+              target-module
+              (intern-str next-module))]
+          [_
+            (lower-function-body-local-names-in-module
+              rest
+              (if (string-eq module target-module)
+                (lower-name-env-add-local-decl
+                  base-names
+                  base-cache
+                  target-module
+                  decl)
+                base-names)
+              base-cache
+              target-module
+              module)]))]))
+
+(define (lower-function-body-name-cache-for-module
+  [decls : AstDeclList]
+  [base-names : LowerNameEnv]
+  [base-cache : LowerNameCache]
+  [module : String]) : LowerNameCache
+  (if (string-eq module "")
+    base-cache
+    (lower-name-cache-from-env
+      (lower-function-body-local-names-in-module
+        decls
+        base-names
+        base-cache
+        module
+        ""))))
+
+(define (lower-function-decl-count-one [decl : AstDecl]) : i64
+  (match decl
+    [(AstDeclDefFn _ _ _ _ _) 1]
+    [(AstDeclComptimeDecl _ inner-box)
+      (lower-function-decl-count-one (box-get inner-box))]
+    [(AstDeclUnsafe inner-box)
+      (lower-function-decl-count-one (box-get inner-box))]
+    [_ 0]))
+
 (define (lower-function-decl-count [decls : AstDeclList]) : i64
   (match decls
     [(AstDeclNil) 0]
     [(AstDeclCons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
-        (match decl
-          [(AstDeclDefFn _ _ _ _ _) (+ 1 (lower-function-decl-count rest))]
-          [(AstDeclComptimeDecl _ inner-box)
-            (let
-              [inner : AstDecl (box-get inner-box)]
-              (match inner
-                [(AstDeclDefFn _ _ _ _ _)
-                  (+ 1 (lower-function-decl-count rest))]
-                [_ (lower-function-decl-count rest)]))]
-          [(AstDeclUnsafe inner-box)
-            (let
-              [inner : AstDecl (box-get inner-box)]
-              (match inner
-                [(AstDeclDefFn _ _ _ _ _)
-                  (+ 1 (lower-function-decl-count rest))]
-                [(AstDeclComptimeDecl _ comptime-box)
-                  (let
-                    [template : AstDecl (box-get comptime-box)]
-                    (match template
-                      [(AstDeclDefFn _ _ _ _ _)
-                        (+ 1 (lower-function-decl-count rest))]
-                      [_ (lower-function-decl-count rest)]))]
-                [_ (lower-function-decl-count rest)]))]
-          [_ (lower-function-decl-count rest)]))]))
+        (+
+          (lower-function-decl-count-one decl)
+          (lower-function-decl-count rest)))]))
 
 (define (lower-function-body-index-add
   [index : LowerFunctionBodyIndex]
   [logical-name : String]
+  [names : LowerNameCache]
   [body : AstExpr]) : LowerFunctionBodyIndex
   (let
     [ids : StringI64Map (struct-get index ids)]
     [bodies : (Array LowerMaybeFunctionBody) (struct-get index bodies)]
     [next : i64 (struct-get index next)]
     (begin
-      (array-set! bodies next (LowerSomeFunctionBody body))
+      (array-set! bodies next (LowerSomeFunctionBody body names))
       (LowerFunctionBodyIndex
         (string-i64-map-put ids logical-name next)
         bodies
@@ -4410,6 +4504,10 @@
   [paths : AstDeclPathList]
   [entry-path : String]
   [module : String]
+  [all-decls : AstDeclList]
+  [base-names : LowerNameEnv]
+  [base-name-cache : LowerNameCache]
+  [module-name-cache : LowerNameCache]
   [index : LowerFunctionBodyIndex]) : LowerFunctionBodyIndex
   (match decls
     [(AstDeclNil) index]
@@ -4429,12 +4527,22 @@
             [(AstDeclPathNil) AstDeclPathNil])]
         (match decl
           [(AstDeclModule next-module)
-            (lower-function-body-index-from-decls-in-module
-              rest
-              rest-paths
-              entry-path
-              (intern-str next-module)
-              index)]
+            (let
+              [next-module-str : String (intern-str next-module)]
+              (lower-function-body-index-from-decls-in-module
+                rest
+                rest-paths
+                entry-path
+                next-module-str
+                all-decls
+                base-names
+                base-name-cache
+                (lower-function-body-name-cache-for-module
+                  all-decls
+                  base-names
+                  base-name-cache
+                  next-module-str)
+                index))]
           [(AstDeclDefFn name _ _ body-box _)
             (let
               [body : AstExpr (ast-node-get body-box)]
@@ -4443,6 +4551,10 @@
                 rest-paths
                 entry-path
                 module
+                all-decls
+                base-names
+                base-name-cache
+                module-name-cache
                 (lower-function-body-index-add
                   index
                   (lower-decl-logical-name
@@ -4450,6 +4562,7 @@
                     decl-path
                     module
                     (intern-str name))
+                  module-name-cache
                   body)))]
           [(AstDeclComptimeDecl _ template-box)
             (let
@@ -4459,6 +4572,10 @@
                 (ast-decl-path-cons decl-path rest-paths)
                 entry-path
                 module
+                all-decls
+                base-names
+                base-name-cache
+                module-name-cache
                 index))]
           [(AstDeclUnsafe inner-box)
             (let
@@ -4472,6 +4589,10 @@
                       rest-paths
                       entry-path
                       module
+                      all-decls
+                      base-names
+                      base-name-cache
+                      module-name-cache
                       (lower-function-body-index-add
                         index
                         (lower-decl-logical-name
@@ -4479,6 +4600,7 @@
                           decl-path
                           module
                           (intern-str name))
+                        module-name-cache
                         body)))]
                 [(AstDeclComptimeDecl _ _)
                   (lower-function-body-index-from-decls-in-module
@@ -4486,6 +4608,10 @@
                     (ast-decl-path-cons decl-path rest-paths)
                     entry-path
                     module
+                    all-decls
+                    base-names
+                    base-name-cache
+                    module-name-cache
                     index)]
                 [_
                   (lower-function-body-index-from-decls-in-module
@@ -4493,6 +4619,10 @@
                     rest-paths
                     entry-path
                     module
+                    all-decls
+                    base-names
+                    base-name-cache
+                    module-name-cache
                     index)]))]
           [_
             (lower-function-body-index-from-decls-in-module
@@ -4500,19 +4630,30 @@
               rest-paths
               entry-path
               module
+              all-decls
+              base-names
+              base-name-cache
+              module-name-cache
               index)]))]))
 
 (define (lower-function-body-index-from-decls
   [decls : AstDeclList]
   [paths : AstDeclPathList]
   [entry-path : String]
+  [names : LowerNameEnv]
   [count : i64]) : LowerFunctionBodyIndex
-  (lower-function-body-index-from-decls-in-module
-    decls
-    paths
-    entry-path
-    ""
-    (lower-function-body-index-empty count)))
+  (let
+    [name-cache : LowerNameCache (lower-name-cache-from-env names)]
+    (lower-function-body-index-from-decls-in-module
+      decls
+      paths
+      entry-path
+      ""
+      decls
+      names
+      name-cache
+      name-cache
+      (lower-function-body-index-empty count))))
 
 (define (lower-reach-process
   [all-functions : StringI64Map]
@@ -4528,12 +4669,12 @@
             [popped : LowerReachState
               (LowerReachState reachable (box-get rest))]
             (match (lower-function-body-index-find body-index name)
-              [(LowerSomeFunctionBody body)
+              [(LowerSomeFunctionBody body body-names)
                 (lower-reach-process
                   all-functions
                   names
                   body-index
-                  (lower-reach-expr all-functions names popped body))]
+                  (lower-reach-expr all-functions body-names popped body))]
               [(LowerNoFunctionBody)
                 (lower-reach-process all-functions names body-index popped)]))])]))
 
@@ -4574,6 +4715,10 @@
   (match decl
     [(AstDeclDefDispatch _ variants)
       (lower-dispatch-variant-set-add-list variants module names out)]
+    [(AstDeclComptimeDecl _ template-box)
+      (let
+        [template : AstDecl (box-get template-box)]
+        (lower-dispatch-variant-set-add-decl template module names out))]
     [(AstDeclUnsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
@@ -4667,6 +4812,15 @@
         names
         variants
         state)]
+    [(AstDeclComptimeDecl _ template-box)
+      (let
+        [template : AstDecl (box-get template-box)]
+        (lower-reach-add-dispatch-variant-decl
+          all-functions
+          module
+          names
+          template
+          state))]
     [(AstDeclUnsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
@@ -4996,6 +5150,14 @@
         all-functions
         state
         items)]
+    [(AstDeclComptimeDecl _ inner-box)
+      (lower-reach-add-module-export-root-decl
+        entry-path
+        decl-path
+        module
+        all-functions
+        state
+        (box-get inner-box))]
     [(AstDeclUnsafe inner-box)
       (lower-reach-add-module-export-root-decl
         entry-path
@@ -5073,6 +5235,7 @@
             decls
             paths
             entry-path
+            names
             (lower-function-decl-count decls))]
         [name-cache : LowerNameCache (lower-name-cache-from-env names)]
         [dispatch-variants : StringI64Map
@@ -39111,6 +39274,75 @@
           (> (lower-test-functions-call-count functions "main/get") 0)])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-module-macro-codegen-source) : String
+  "(defmacro (int-box) : Module
+  `(begin
+    (module generated.intbox)
+    (defstruct Box1 (value i64))
+    (define (make [value : i64]) : Box1
+      (Box1 value))
+    (define (double [b : Box1]) : i64
+      (* (struct-get b value) 2))
+    (define (bumped [b : Box1]) : i64
+      (+ (double b) 1))
+    (export (type Box1))
+    (export (constructor Box1))
+    (export (value make))
+    (export (value bumped))))
+(import (int-box) as ib)
+(define (main) : i64 (ib.bumped (ib.make 20)))")
+
+(define (compiler-lower-module-macro-codegen-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-module-macro-codegen-source))
+    [(OkCompilerLower lowered _)
+      (match lowered
+        [(IrProgram _ functions _)
+          (and
+            (lower-test-function-defined? functions "generated.intbox/make")
+            (lower-test-function-defined? functions "generated.intbox/double")
+            (lower-test-function-defined? functions "generated.intbox/bumped")
+            (=
+              (lower-test-function-call-count
+                functions
+                "main"
+                "generated.intbox/make")
+              1)
+            (=
+              (lower-test-function-call-count
+                functions
+                "main"
+                "generated.intbox/bumped")
+              1)
+            (=
+              (lower-test-function-call-count
+                functions
+                "generated.intbox/bumped"
+                "generated.intbox/double")
+              1))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-function-decl-count-wrapped-ok?) : bool
+  (let
+    [fn : AstDecl
+      (ast-decl-def-fn
+        "generated"
+        AstParamNil
+        (AstTyI64)
+        (ast-node-push (AstExprLiteral (AstLitInt 1))))]
+    (and
+      (=
+        (lower-function-decl-count
+          (ast-decl-cons
+            (ast-decl-comptime-decl (ast-decl-unsafe fn))
+            AstDeclNil))
+        1)
+      (=
+        (lower-function-decl-count
+          (ast-decl-cons
+            (ast-decl-unsafe (ast-decl-comptime-decl fn))
+            AstDeclNil))
+        1))))
+
 (define (compiler-lower-module-specialize-source) : String
   "(define (alloc [comptime T : type] [n : i64]) : (Array i64)
   (make-array T n))
@@ -43528,6 +43760,12 @@
         unit
         (set! ok false))
       (if (compiler-lower-module-function-returning-enum-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-module-macro-codegen-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-function-decl-count-wrapped-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-extern-link-metadata-ok?)

@@ -1327,6 +1327,46 @@
   [names : StringI64Map]) : StringI64Map
   (tltest-reach-mark-tests-from tests (- (array-length tests) 1) names))
 
+(define (tltest-runtime-string-helper-impl-name? [name : String]) : bool
+  (or
+    (string-eq name "tl-runtime-int-to-string")
+    (string-eq name "tl-runtime-substring")
+    (string-eq name "tl-runtime-str-view")
+    (string-eq name "tl-runtime-string-concat")
+    (string-eq name "tl-runtime-string-concat3")
+    (string-eq name "tl-runtime-string-concat4")
+    (string-eq name "tl-runtime-string-concat5")))
+
+(define (tltest-reach-mark-runtime-helper-root
+  [decl : AstDecl]
+  [names : StringI64Map]) : StringI64Map
+  (match decl
+    [(AstDeclDefFn name _ _ _ _)
+      (let
+        [name-str : String (intern-str name)]
+        (if (tltest-runtime-string-helper-impl-name? name-str)
+          (tltest-reach-mark-name names name-str)
+          names))]
+    [(AstDeclUnsafe inner-box)
+      (let
+        [inner : AstDecl (box-get inner-box)]
+        (tltest-reach-mark-runtime-helper-root inner names))]
+    [(AstDeclComptimeDecl _ inner-box)
+      (let
+        [inner : AstDecl (box-get inner-box)]
+        (tltest-reach-mark-runtime-helper-root inner names))]
+    [_ names]))
+
+(define (tltest-reach-mark-runtime-helper-roots
+  [decls : AstDeclList]
+  [names : StringI64Map]) : StringI64Map
+  (match decls
+    [(AstDeclNil) names]
+    [(AstDeclCons decl rest)
+      (tltest-reach-mark-runtime-helper-roots
+        (box-get rest)
+        (tltest-reach-mark-runtime-helper-root decl names))]))
+
 (define (tltest-reach-mark-export-items
   [items : AstExportItemList]
   [names : StringI64Map]) : StringI64Map
@@ -1486,7 +1526,9 @@
   (tltest-reach-fixed
     decls
     (tltest-decl-list-count decls)
-    (tltest-reach-mark-tests tests (string-i64-map-with-capacity 64))))
+    (tltest-reach-mark-runtime-helper-roots
+      decls
+      (tltest-reach-mark-tests tests (string-i64-map-with-capacity 64)))))
 
 (define (tltest-reachable-runtime-decl? [decl : AstDecl] [names : StringI64Map]) : bool
   (match decl
@@ -1607,6 +1649,14 @@
       (if (= index 0)
         (tltest-decl-name decl)
         (tltest-decl-name-at (box-get rest) (- index 1)))]))
+
+(define (tltest-decl-list-has-name? [decls : AstDeclList] [name : String]) : bool
+  (match decls
+    [(AstDeclNil) false]
+    [(AstDeclCons decl rest)
+      (if (string-eq (tltest-decl-name decl) name)
+        true
+        (tltest-decl-list-has-name? (box-get rest) name))]))
 
 (define (tltest-vector-builders-self-test?) : bool
   (let
@@ -1814,6 +1864,57 @@
   (if (tltest-exported-value-preserved-self-test?)
     unit
     (panic "test CLI inline harness pruned exported value")))
+
+(define (tltest-runtime-string-helper-roots-self-test?) : bool
+  (let
+    [dep-name : String "__tl_runtime_helper_dep"]
+    [helper-name : String "tl-runtime-substring"]
+    [dep-decl : AstDecl
+      (ast-decl-def-fn
+        dep-name
+        AstParamNil
+        (AstTyUnit)
+        (ast-node-push (AstExprLiteral (AstLitUnit))))]
+    [helper-decl : AstDecl
+      (ast-decl-def-fn
+        helper-name
+        AstParamNil
+        (AstTyUnit)
+        (tltest-call-expr dep-name))]
+    [span : AstSourceSpan (AstSourceSpan 13 1 13 1)]
+    [decls : AstDeclList
+      (ast-decl-cons
+        dep-decl
+        (ast-decl-cons
+          helper-decl
+          (ast-decl-cons
+            (ast-decl-test
+              "runtime-helper-not-called-by-test"
+              (ast-node-push (AstExprLiteral (AstLitUnit)))
+              span)
+            AstDeclNil)))]
+    [paths : AstDeclPathList
+      (ast-decl-path-cons
+        "stdlib/runtime.tl"
+        (ast-decl-path-cons
+          "stdlib/runtime.tl"
+          (ast-decl-path-cons "driver.tl" AstDeclPathNil)))]
+    (match (tltest-build-harness "driver.tl" decls paths)
+      [(InlineHarness program _ count)
+        (match program
+          [(AstProgram harness-decls-box)
+            (let
+              [harness-decls : AstDeclList (box-get harness-decls-box)]
+              (and
+                (= count 1)
+                (tltest-decl-list-has-name? harness-decls helper-name)
+                (tltest-decl-list-has-name? harness-decls dep-name)))])])))
+
+(test
+  test-cli-inline-harness-keeps-runtime-string-helper-roots
+  (if (tltest-runtime-string-helper-roots-self-test?)
+    unit
+    (panic "test CLI inline harness pruned runtime string helper root")))
 
 (define (tltest-macro-quasiquote-deps-self-test?) : bool
   (let

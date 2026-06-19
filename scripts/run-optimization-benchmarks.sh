@@ -3,9 +3,10 @@ set -eu
 
 # run-optimization-benchmarks.sh - local optimizer progress benchmarks.
 #
-# The harness compares paired TypeLisp and C programs from
-# benchmarks/optimization/cases.tsv. The default timing report is a local Linux
-# tool. `--correctness` is the required-CI gate and performs no timing work.
+# The harness compares paired TypeLisp and C programs from top-level
+# benchmarks/opt_*/ directories that carry optimization.tsv metadata. The
+# default timing report is a local Linux tool. `--correctness` is the
+# required-CI gate and performs no timing work.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -27,7 +28,7 @@ Options:
   --correctness    Build/run every selected case once and compare stdout; no timing
   --check          Alias for --correctness
   --runs N          Runtime repetitions per case (default: TYPELISP_BENCH_RUNS or 3)
-  --filter NAME    Run manifest cases whose names match NAME or start with NAME
+  --filter NAME    Run cases whose current or legacy names match/start with NAME
   --clang-opt OPT  clang optimization flag (default: TYPELISP_BENCH_CLANG_OPT or -O3)
   --tl-opt-level N  In correctness mode, compile TypeLisp cases with --opt-level N
   --selfhost       In timing mode, compile through src/main.tl `compile` (default)
@@ -208,7 +209,6 @@ if [ "$CORRECTNESS" -eq 1 ]; then
     configure_toolchain
 fi
 
-MANIFEST="$ROOT/benchmarks/optimization/cases.tsv"
 WORKDIR="$ROOT/target/optimization-bench"
 CR=$(printf '\r')
 rm -rf "$WORKDIR"
@@ -231,6 +231,55 @@ elapsed_ms() {
 
 file_bytes() {
     wc -c < "$1" | tr -d '[:space:]'
+}
+
+read_optimization_metadata() {
+    _metadata=$1
+    _case_name=$2
+    _line=
+
+    while IFS= read -r _candidate || [ -n "$_candidate" ]; do
+        case "$_candidate" in
+            *"$CR") _candidate=${_candidate%"$CR"} ;;
+        esac
+        case "$_candidate" in
+            "" | \#*) continue ;;
+        esac
+        if [ -n "$_line" ]; then
+            fail "multiple metadata rows in $_metadata"
+        fi
+        _line=$_candidate
+    done < "$_metadata"
+
+    [ -n "$_line" ] || fail "missing metadata row in $_metadata"
+    _fields=$(printf '%s\n' "$_line" | awk -F'|' '{ print NF }')
+    [ "$_fields" -eq 2 ] || fail "metadata line must have 2 fields: $_metadata: $_line"
+
+    IFS='|' read -r CASE_CATEGORY CASE_ARGS <<EOF
+$_line
+EOF
+
+    case "$CASE_CATEGORY" in
+        "" | *[!A-Za-z0-9_-]*)
+            fail "invalid category for $_case_name: $CASE_CATEGORY"
+            ;;
+    esac
+    [ -n "$CASE_ARGS" ] || fail "missing args for $_case_name"
+}
+
+case_matches_filter() {
+    _name=$1
+    _legacy_name=$2
+    _filter=$3
+
+    [ -n "$_filter" ] || return 0
+    case "$_name" in
+        "$_filter" | "$_filter"*) return 0 ;;
+    esac
+    case "$_legacy_name" in
+        "$_filter" | "$_filter"*) return 0 ;;
+    esac
+    return 1
 }
 
 instruction_count() {
@@ -480,41 +529,27 @@ else
 fi
 
 matched=0
-while IFS= read -r _line || [ -n "$_line" ]; do
-    case "$_line" in
-        *"$CR") _line=${_line%"$CR"} ;;
+for _metadata in "$ROOT"/benchmarks/*/optimization.tsv; do
+    [ -e "$_metadata" ] || continue
+    _case_dir=$(dirname "$_metadata")
+    _name=$(basename "$_case_dir")
+    _legacy_name=$_name
+    case "$_legacy_name" in
+        opt_*) _legacy_name=${_legacy_name#opt_} ;;
     esac
-    case "$_line" in
-        "" | \#*) continue ;;
-    esac
-
-    _fields=$(printf '%s\n' "$_line" | awk -F'|' '{ print NF }')
-    [ "$_fields" -eq 3 ] || fail "manifest line must have 3 fields: $_line"
-
-    IFS='|' read -r _name _category _args <<EOF
-$_line
-EOF
-
     case "$_name" in
         "" | *[!A-Za-z0-9_]*)
             fail "invalid case name: $_name"
             ;;
     esac
-    case "$_category" in
-        "" | *[!A-Za-z0-9_-]*)
-            fail "invalid category for $_name: $_category"
-            ;;
-    esac
-    if [ -n "$FILTER" ]; then
-        case "$_name" in
-            "$FILTER" | "$FILTER"*) ;;
-            *) continue ;;
-        esac
-    fi
+    case_matches_filter "$_name" "$_legacy_name" "$FILTER" || continue
+    read_optimization_metadata "$_metadata" "$_name"
+    _category=$CASE_CATEGORY
+    _args=$CASE_ARGS
 
     matched=$((matched + 1))
-    _tl_src="$ROOT/benchmarks/optimization/tl/$_name.tl"
-    _c_src="$ROOT/benchmarks/optimization/c/$_name.c"
+    _tl_src="$_case_dir/bench.tl"
+    _c_src="$_case_dir/baseline.c"
     [ -f "$_tl_src" ] || fail "missing TypeLisp benchmark: $_tl_src"
     [ -f "$_c_src" ] || fail "missing C benchmark: $_c_src"
 
@@ -638,7 +673,7 @@ EOF
         "$_c_asm_bytes" \
         "$_tl_insns" \
         "$_c_insns"
-done < "$MANIFEST"
+done
 
 if [ "$matched" -eq 0 ]; then
     fail "no benchmark cases matched filter: $FILTER"

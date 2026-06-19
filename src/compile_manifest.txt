@@ -666,52 +666,51 @@ decision|src/lint_core.tl|lint rule engine (nested-if-ladder rule, #1163); impor
 
 decision|src/lint_driver_core.tl|selfhost lint driver logic (#1163/#1987): arg parsing, finding rendering (path:line:col), file/package source linting, and the driver self-test; main-less, imported by src/main.tl and src/lint_driver_smoke.tl and exercised through the selfhost_lint_driver_smoke and selfhost_main cases; has no main to compile directly
 
-# Optimization-benchmark codegen smoke. Mirrors the dropped Rust
-# optimization_benchmark_manifest_and_tl_sources_compile harness: each of the 11
-# benchmark TypeLisp sources must compile to assembly that defines main: with no
-# backend "# TODO" (the runner auto-rejects "# TODO"). Sources live outside
-# src/ so they are not subject to check_selfhost_manifest_sync().
+# Optimization-benchmark codegen smoke. Each flattened opt_* TypeLisp source
+# must compile to assembly that defines main: with no backend "# TODO" (the
+# runner auto-rejects "# TODO"). Sources live outside src/ so they are not
+# subject to check_selfhost_manifest_sync().
 
-case|bench_opt_arithmetic_loops|benchmarks/optimization/tl/arithmetic_loops.tl|assembly|exactly-one|direct
+case|bench_opt_arithmetic_loops|benchmarks/opt_arithmetic_loops/bench.tl|assembly|exactly-one|direct
 contains|main:
 end
 
-case|bench_opt_array_sum|benchmarks/optimization/tl/array_sum.tl|assembly|exactly-one|direct
+case|bench_opt_array_sum|benchmarks/opt_array_sum/bench.tl|assembly|exactly-one|direct
 contains|main:
 end
 
-case|bench_opt_string_scan|benchmarks/optimization/tl/string_scan.tl|assembly|exactly-one|direct
+case|bench_opt_string_scan|benchmarks/opt_string_scan/bench.tl|assembly|exactly-one|direct
 contains|main:
 end
 
-case|bench_opt_runtime_string_eq|benchmarks/optimization/tl/runtime_string_eq.tl|assembly|exactly-one|direct
+case|bench_opt_runtime_string_eq|benchmarks/opt_runtime_string_eq/bench.tl|assembly|exactly-one|direct
 contains|main:
 end
 
-case|bench_opt_runtime_string_ops|benchmarks/optimization/tl/runtime_string_ops.tl|assembly|exactly-one|direct
+case|bench_opt_runtime_string_ops|benchmarks/opt_runtime_string_ops/bench.tl|assembly|exactly-one|direct
 contains|main:
 end
 
-case|bench_opt_runtime_string_int|benchmarks/optimization/tl/runtime_string_int.tl|assembly|exactly-one|direct
+case|bench_opt_runtime_string_int|benchmarks/opt_runtime_string_int/bench.tl|assembly|exactly-one|direct
 contains|main:
 end
 
-case|bench_opt_runtime_path_helpers|benchmarks/optimization/tl/runtime_path_helpers.tl|assembly|exactly-one|direct
+case|bench_opt_runtime_path_helpers|benchmarks/opt_runtime_path_helpers/bench.tl|assembly|exactly-one|direct
 contains|main:
 end
 
-case|bench_opt_function_calls|benchmarks/optimization/tl/function_calls.tl|assembly|exactly-one|direct
+case|bench_opt_function_calls|benchmarks/opt_function_calls/bench.tl|assembly|exactly-one|direct
 contains|main:
 end
 
-case|bench_opt_recursion_tail|benchmarks/optimization/tl/recursion_tail.tl|assembly|exactly-one|direct
+case|bench_opt_recursion_tail|benchmarks/opt_recursion_tail/bench.tl|assembly|exactly-one|direct
 contains|main:
 end
 
-case|bench_opt_struct_enum_dispatch|benchmarks/optimization/tl/struct_enum_dispatch.tl|assembly|exactly-one|direct
+case|bench_opt_struct_enum_dispatch|benchmarks/opt_struct_enum_dispatch/bench.tl|assembly|exactly-one|direct
 contains|main:
 end
 
-case|bench_opt_allocation_heavy|benchmarks/optimization/tl/allocation_heavy.tl|assembly|exactly-one|direct
+case|bench_opt_allocation_heavy|benchmarks/opt_allocation_heavy/bench.tl|assembly|exactly-one|direct
 contains|main:
 end

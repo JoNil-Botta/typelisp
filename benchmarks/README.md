@@ -15,10 +15,17 @@ benchmarks/
   <name>/
     bench.tl      # the TypeLisp program
     baseline.c    # an equivalent C program (same observable output)
+    optimization.tsv  # optional optimizer-corpus metadata: category|args
 ```
 
 Each `<name>/` is one benchmark. `scripts/bench.sh` discovers every directory
 that contains both `bench.tl` and `baseline.c`.
+
+Optimizer-corpus benchmarks use an `opt_` prefix, for example
+`opt_array_sum`, so they do not collide with the generic `array_sum` and
+`string_scan` benchmarks. Their `optimization.tsv` file stores the category and
+space-separated command-line arguments used by
+`scripts/run-optimization-benchmarks.sh`.
 
 ### Available benchmarks
 
@@ -27,7 +34,6 @@ that contains both `bench.tl` and `baseline.c`.
 | `arith_loop` | Scalar LCG recurrence over wrapping 64-bit arithmetic. |
 | `array_sum` | `(Array i64)` fill + repeated sum, with the accumulator stored back per round to defeat loop-invariant folding (refs #1098). |
 | `string_scan` | Polynomial rolling hash (`acc = acc * 131 + byte`) over a fixed ASCII string scanned many rounds, carrying the hash across rounds (refs #1098). |
-| `optimization` | Optimizer-sensitive scalar loop. |
 | `hashmap_get` | `I64I64Map` hit/miss lookups on a fixed map, focused on the generated read probe path (refs #2166). |
 | `hashmap_insert` | Repeatedly build and populate a fresh power-of-two `I64I64Map`, focused on the generated insert probe path (refs #2165). |
 | `hashmap_grow` | Repeated insertions that force map growth and rehashing. |
@@ -37,6 +43,17 @@ that contains both `bench.tl` and `baseline.c`.
 | `spmd_mask` | Data-parallel masked conditional (`out[i] = (a[i] odd) ? a[i]+r : a[i]-r`) via `foreach`, exercising a divergent lane body (refs #1125). |
 | `spmd_reduce` | Data-parallel sum reduction (`sum_i (a[i] + r)`) via `spmd-reduce` vs a scalar accumulation baseline (refs #1125). |
 | `spmd_short_tail` | Data-parallel elementwise map over a non-lane-aligned length (1000) exercising the SIMD remainder/tail (refs #1125). |
+| `opt_arithmetic_loops` | Optimizer-sensitive scalar recurrence. |
+| `opt_array_sum` | Optimizer-corpus array fill and sum case, distinct from the generic `array_sum` benchmark. |
+| `opt_string_scan` | Optimizer-corpus command-line string scan, distinct from the generic `string_scan` benchmark. |
+| `opt_runtime_string_eq` | Runtime string equality helper workload. |
+| `opt_runtime_string_ops` | Runtime substring and concatenation helper workload. |
+| `opt_runtime_string_int` | Runtime string-to-int conversion workload. |
+| `opt_runtime_path_helpers` | Runtime path helper copy and join workload. |
+| `opt_function_calls` | Direct function call overhead workload. |
+| `opt_recursion_tail` | Tail-recursive call workload. |
+| `opt_struct_enum_dispatch` | Struct and enum dispatch workload. |
+| `opt_allocation_heavy` | Allocation-heavy runtime workload. |
 
 ### Writing a benchmark
 
@@ -73,6 +90,22 @@ bash scripts/bench.sh --correctness
 
 The required CI gate is `scripts/ci-verify.sh` running
 `scripts/bench.sh --correctness` (#2439).
+
+The optimizer corpus has a stricter stdout-comparison runner because those
+programs report their result on stdout and take per-case arguments from
+`optimization.tsv`:
+
+```sh
+# Linux timing report:
+TYPELISP_BIN=./target/stage0/typelisp ./scripts/run-optimization-benchmarks.sh
+
+# Linux or Windows Git Bash timing-free CI-style correctness:
+TYPELISP_BIN=./target/stage0/typelisp ./scripts/run-optimization-benchmarks.sh --correctness
+```
+
+`--filter array_sum` still matches the renamed `opt_array_sum` case; filters
+also match the full `opt_*` names. Timing mode is Linux-only and defaults to
+compiling TypeLisp benchmark sources through a selfhosted `src/main.tl` CLI.
 
 Requirements:
 

@@ -21130,7 +21130,7 @@
       (compiler-backend-runtime-index-defines?
         index
         "tl_profile_alloc_reset_peak")]
-    [extern-alloc : bool
+    [_extern-alloc : bool
       (compiler-backend-runtime-index-extern? index "tl_alloc")]
     [extern-oob : bool
       (compiler-backend-runtime-index-extern? index "tl_oob_abort")]
@@ -21138,18 +21138,19 @@
       (compiler-backend-runtime-index-extern? index "tl_div_abort")]
     [extern-shift-abort : bool
       (compiler-backend-runtime-index-extern? index "tl_shift_abort")]
-    [extern-substring : bool
+    [_extern-substring : bool
       (compiler-backend-runtime-index-extern? index "tl_substring")]
-    [extern-str-view : bool
+    [_extern-str-view : bool
       (compiler-backend-runtime-index-extern? index "tl_str_view")]
-    [extern-concat : bool (compiler-backend-runtime-index-extern-concat? index)]
+    [_extern-concat : bool
+      (compiler-backend-runtime-index-extern-concat? index)]
     [_extern-string-eq : bool
       (compiler-backend-runtime-index-extern? index "tl_string_eq")]
     [_extern-string-to-int : bool
       (compiler-backend-runtime-index-extern? index "tl_string_to_int")]
     [_extern-hash-string : bool
       (compiler-backend-runtime-index-extern? index "tl_hash_string")]
-    [extern-int-to-string : bool
+    [_extern-int-to-string : bool
       (compiler-backend-runtime-index-extern? index "tl_int_to_string")]
     [extern-abort : bool
       (compiler-backend-runtime-index-extern-alias?
@@ -21231,15 +21232,15 @@
       (compiler-backend-runtime-index-extern? index ".L_tl_stdin_eof")]
     [_extern-flush-stdout : bool
       (compiler-backend-runtime-index-extern? index ".L_tl_flush_stdout")]
-    [extern-region-mark : bool
+    [_extern-region-mark : bool
       (compiler-backend-runtime-index-extern? index "tl_region_mark")]
-    [extern-region-reset : bool
+    [_extern-region-reset : bool
       (compiler-backend-runtime-index-extern? index "tl_region_reset")]
-    [extern-env-var-exists : bool
+    [_extern-env-var-exists : bool
       (compiler-backend-runtime-index-extern? index "tl_env_var_exists")]
-    [extern-env-var-value : bool
+    [_extern-env-var-value : bool
       (compiler-backend-runtime-index-extern? index "tl_env_var_value")]
-    [extern-env-path-separator : bool
+    [_extern-env-path-separator : bool
       (compiler-backend-runtime-index-extern? index "env-path-separator")]
     [extern-profile-alloc-total : bool
       (compiler-backend-runtime-index-extern? index "tl_profile_alloc_total")]
@@ -21371,19 +21372,14 @@
         (and
           (not defines-shift-abort)
           (or extern-shift-abort calls-shift-abort)))]
-    [needs-substring : bool
-      (and (not defines-substring) (or extern-substring calls-substring))]
-    [needs-str-view : bool
-      (and (not defines-str-view) (or extern-str-view calls-str-view))]
-    [needs-concat : bool
-      (and (not defines-concat) (or extern-concat calls-concat))]
+    [needs-substring : bool (and (not defines-substring) calls-substring)]
+    [needs-str-view : bool (and (not defines-str-view) calls-str-view)]
+    [needs-concat : bool (and (not defines-concat) calls-concat)]
     [_needs-string-eq : bool false]
     [_needs-string-to-int : bool false]
     [_needs-hash-string : bool false]
     [needs-int-to-string : bool
-      (and
-        (not defines-int-to-string)
-        (or extern-int-to-string calls-int-to-string))]
+      (and (not defines-int-to-string) calls-int-to-string)]
     [_direct-abort : bool false]
     [needs-print-err : bool false]
     [needs-print-str : bool false]
@@ -21401,27 +21397,17 @@
     [needs-read-bytes : bool false]
     [needs-stdin-eof : bool false]
     [needs-flush-stdout : bool false]
-    [needs-region-mark : bool
-      (and (not defines-region-mark) (or extern-region-mark calls-region-mark))]
+    [needs-region-mark : bool (and (not defines-region-mark) calls-region-mark)]
     [needs-region-reset : bool
-      (and
-        (not defines-region-reset)
-        (or extern-region-reset calls-region-reset))]
+      (and (not defines-region-reset) calls-region-reset)]
     [needs-random-system-seed : bool false]
     [needs-env-var-exists : bool
-      (and
-        (not defines-env-var-exists)
-        (or extern-env-var-exists calls-env-var-exists))]
+      (and (not defines-env-var-exists) calls-env-var-exists)]
     [needs-env-var-value : bool
-      (and
-        (not defines-env-var-value)
-        (or extern-env-var-value calls-env-var-value))]
+      (and (not defines-env-var-value) calls-env-var-value)]
     [needs-env-path-separator : bool
-      (and
-        (not defines-env-path-separator)
-        (or extern-env-path-separator calls-env-path-separator))]
-    [direct-alloc : bool
-      (and (not defines-alloc) (or extern-alloc calls-alloc))]
+      (and (not defines-env-path-separator) calls-env-path-separator)]
+    [direct-alloc : bool (and (not defines-alloc) calls-alloc)]
     [needs-abort : bool
       (or extern-abort calls-abort needs-arg needs-read-file needs-write-file)]
     [needs-alloc : bool
@@ -21514,33 +21500,78 @@
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]) : String
   (text-buf-render
-    (compiler-backend-emit-externs-into externs plan (text-buf-empty))))
+    (compiler-backend-emit-externs-into
+      externs
+      plan
+      (compiler-backend-runtime-index IrFunctionNil externs)
+      BackendStringNil
+      (text-buf-empty))))
+
+(define (compiler-backend-extern-symbol-referenced?
+  [runtime-index : CompilerBackendRuntimeIndex]
+  [referenced-functions : BackendStringList]
+  [extern-name : String]
+  [link-symbol : String]) : bool
+  (let
+    [user-symbol : String (compiler-backend-user-symbol extern-name)]
+    [foreign-link-symbol : bool
+      (and
+        (not (string-eq extern-name link-symbol))
+        (not (compiler-backend-runtime-helper-known? extern-name))
+        (not (compiler-backend-runtime-helper-known? link-symbol)))]
+    (or
+      foreign-link-symbol
+      (backend-or4
+        (compiler-backend-runtime-index-calls? runtime-index extern-name)
+        (compiler-backend-runtime-index-calls? runtime-index link-symbol)
+        (compiler-backend-string-list-contains?
+          referenced-functions
+          extern-name)
+        (compiler-backend-string-list-contains?
+          referenced-functions
+          link-symbol))
+      (compiler-backend-runtime-index-calls? runtime-index user-symbol)
+      (compiler-backend-string-list-contains? referenced-functions user-symbol))))
 
 (define (compiler-backend-emit-externs-into
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
+  [runtime-index : CompilerBackendRuntimeIndex]
+  [referenced-functions : BackendStringList]
   [buf : TextBuf]) : TextBuf
   (match externs
     [(IrExternNil) buf]
     [(IrExternCons item rest)
       (match item
         [(IrExtern name _ _ link-symbol _ provided)
-          (if (not
+          (if (and
             (compiler-backend-emits-extern-symbol?
               name
               link-symbol
               provided
-              plan))
-            (compiler-backend-emit-externs-into (box-get rest) plan buf)
+              plan)
+            (compiler-backend-extern-symbol-referenced?
+              runtime-index
+              referenced-functions
+              name
+              link-symbol))
             (compiler-backend-emit-externs-into
               (box-get rest)
               plan
+              runtime-index
+              referenced-functions
               (text-buf-append
                 (text-buf-append buf ".extern ")
                 (str-cat
                   (compiler-backend-link-symbol link-symbol plan)
                   "\n"
-                  ""))))])]))
+                  "")))
+            (compiler-backend-emit-externs-into
+              (box-get rest)
+              plan
+              runtime-index
+              referenced-functions
+              buf))])]))
 
 ;; The out-of-memory message moved to the runtime prelude (stdlib/runtime.tl as
 ;; `tl-runtime-oom-abort`, exported `tl_oom_abort` via #2221); the allocator's
@@ -24086,6 +24117,7 @@ tl_atomic_i32_fetch_add_ptr:
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
+  [runtime-index : CompilerBackendRuntimeIndex]
   [closure-names : BackendStringList]
   [strings : BackendStringList]
   [bytes : BackendStringList]
@@ -24153,6 +24185,8 @@ tl_atomic_i32_fetch_add_ptr:
                           (compiler-backend-emit-externs-into
                             externs
                             plan
+                            runtime-index
+                            closure-names
                             runtime-data-buf)]
                         (begin
                           (cfg
@@ -24232,6 +24266,7 @@ tl_atomic_i32_fetch_add_ptr:
             externs
             plan
             program-index
+            (compiler-backend-runtime-index entry-functions externs)
             closure-names
             strings
             bytes
@@ -25752,25 +25787,39 @@ tl_atomic_i32_fetch_add_ptr:
 (define (compiler-backend-object-externs
   [parts : CompilerBackendObjectParts]
   [externs : CompilerIrExternList]
-  [plan : CompilerBackendRuntimePlan]) : CompilerBackendObjectParts
+  [plan : CompilerBackendRuntimePlan]
+  [runtime-index : CompilerBackendRuntimeIndex]
+  [referenced-functions : BackendStringList]) : CompilerBackendObjectParts
   (match externs
     [(IrExternNil) parts]
     [(IrExternCons item rest)
       (match item
-        [(IrExtern _ _ _ link-symbol _ provided)
+        [(IrExtern name _ _ link-symbol _ provided)
           (compiler-backend-object-externs
-            (if (or
-              provided
-              (compiler-backend-object-runtime-symbol-provided?
-                plan
+            (if (and
+              (not
+                (compiler-backend-object-runtime-symbol-provided?
+                  plan
+                  link-symbol))
+              (compiler-backend-emits-extern-symbol?
+                name
+                link-symbol
+                provided
+                plan)
+              (compiler-backend-extern-symbol-referenced?
+                runtime-index
+                referenced-functions
+                name
                 link-symbol))
-              parts
               (compiler-backend-object-symbol-extern
                 parts
                 (compiler-backend-link-symbol link-symbol plan)
-                (ObjectSymbolFunction)))
+                (ObjectSymbolFunction))
+              parts)
             (box-get rest)
-            plan)])]))
+            plan
+            runtime-index
+            referenced-functions)])]))
 
 (define (compiler-backend-object-runtime-symbols-list) : BackendStringList
   (let
@@ -26448,6 +26497,8 @@ tl_atomic_i32_fetch_add_ptr:
       (compiler-backend-program-collections-floats collections)]
     [uses-f64-neg : bool
       (compiler-backend-program-collections-uses-f64-neg? collections)]
+    [runtime-index : CompilerBackendRuntimeIndex
+      (compiler-backend-runtime-index entry-functions externs)]
     [seed : CompilerBackendObjectParts
       (compiler-backend-object-entry-symbols
         (compiler-backend-object-runtime-symbols
@@ -26472,7 +26523,9 @@ tl_atomic_i32_fetch_add_ptr:
                 floats)
               uses-f64-neg)
             externs
-            plan)
+            plan
+            runtime-index
+            closure-names)
           plan
           (compiler-backend-object-runtime-symbols-list))
         target
@@ -27795,8 +27848,7 @@ tl_atomic_i32_fetch_add_ptr:
           (compiler-backend-string-contains? asm ".extern tl_string_to_int\n"))
         (compiler-backend-string-contains? asm "    call tl_int_to_string\n")
         (not (compiler-backend-string-contains? asm "tl_int_to_string:\n"))
-        (not
-          (compiler-backend-string-contains? asm ".extern tl_int_to_string\n"))
+        (compiler-backend-string-contains? asm ".extern tl_int_to_string\n")
         (compiler-backend-string-contains?
           asm
           "    movq %rcx, .L_tl_argc(%rip)\n")

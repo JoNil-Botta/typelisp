@@ -3079,6 +3079,16 @@
     [(AstTyVar name) (= name (intern "ExprClauseList"))]
     [_ false]))
 
+(define (tc-macro-type-param-kind? [ty : AstType]) : bool
+  (match ty
+    [(AstTyVar name) (= name (intern "type"))]
+    [_ false]))
+
+(define (tc-type-unquote-marker? [ty : AstType]) : bool
+  (match ty
+    [(AstTyVarArgs name _) (= name (intern "unquote"))]
+    [_ false]))
+
 (define (tc-stdlib-comptime-module-name) : String
   "stdlib.comptime")
 
@@ -3664,6 +3674,8 @@
       (set! out (tc-bind out "expr-var" (tc-fn1 (AstTyString) expr)))
       (set! out (tc-bind out "expr-splice" (tc-fn1 expr expr)))
       (set! out (tc-bind out "expr-if" (tc-fn3 expr expr expr expr)))
+      (set! out (tc-bind out "type-kind" (tc-fn1 expr (AstTyString))))
+      (set! out (tc-bind out "type-key" (tc-fn1 expr (AstTyString))))
       (set! out (tc-bind out "expr-bool?" (tc-fn1 expr (AstTyBool))))
       (set! out (tc-bind out "expr-bool-value" (tc-fn1 expr (AstTyBool))))
       (set! out (tc-bind out "expr-if?" (tc-fn1 expr (AstTyBool))))
@@ -6048,83 +6060,86 @@
           [(ErrTcUnit message) (ErrTcUnit message)]))]))
 
 (define (tc-source-type-policy-ok [ctx : TcContext] [ty : AstType]) : ResultTcUnit
-  (let
-    [syntax-ok : ResultTcUnit
-      (match ty
-        [(AstTyVar name)
-          (match (tc-source-type-name-lookup-key ctx (intern-str name))
-            [(OkTcString _) OkTcUnit]
-            [(ErrTcString message) (ErrTcUnit message)])]
-        [(AstTyVarArgs name _)
-          (match (tc-source-type-name-lookup-key ctx (intern-str name))
-            [(OkTcString _) OkTcUnit]
-            [(ErrTcString message) (ErrTcUnit message)])]
-        [_ OkTcUnit])]
-    (match syntax-ok
-      [(ErrTcUnit message) (ErrTcUnit message)]
-      [(OkTcUnit)
-        (match (tc-resolve-type ctx ty)
-          [(AstTyFunc args ret)
-            (match (tc-source-type-list-policy-ok ctx args)
-              [(OkTcUnit) (tc-source-type-policy-ok ctx (ty-node-get ret))]
-              [(ErrTcUnit message) (ErrTcUnit message)])]
-          [(AstTyTuple elems) (tc-source-type-list-policy-ok ctx elems)]
-          [(AstTyArray elem _)
-            (tc-source-type-policy-ok ctx (ty-node-get elem))]
-          [(AstTyDynArray elem)
-            (tc-source-type-policy-ok ctx (ty-node-get elem))]
-          [(AstTyBox elem) (tc-source-type-policy-ok ctx (ty-node-get elem))]
-          [(AstTyPtr elem) (tc-source-type-policy-ok ctx (ty-node-get elem))]
-          [(AstTyMutPtr elem) (tc-source-type-policy-ok ctx (ty-node-get elem))]
-          [(AstTyRef _ inner)
-            (match (tc-resolve-type ctx (ty-node-get inner))
-              [(AstTyStr) OkTcUnit]
-              [(AstTyBytes) OkTcUnit]
-              [_ (tc-source-type-policy-ok ctx (ty-node-get inner))])]
-          [(AstTyMutRef _ inner)
-            (match (tc-resolve-type ctx (ty-node-get inner))
-              [(AstTyStr) (ErrTcUnit (tc-source-str-mut-ref-policy-message))]
-              [(AstTyBytes) OkTcUnit]
-              [_ (tc-source-type-policy-ok ctx (ty-node-get inner))])]
-          [(AstTyRegion _ inner)
-            (tc-source-type-policy-ok ctx (ty-node-get inner))]
-          [(AstTyStr) (ErrTcUnit (tc-source-str-value-policy-message))]
-          [(AstTyBytes) (ErrTcUnit (tc-source-bytes-value-policy-message))]
-          [(AstTyEnum name)
-            (match (tc-qualified-type-visible-ok ctx (intern-str name))
-              [(OkTcUnit)
-                (tc-bare-nominal-lifetime-policy-ok ctx (intern-str name))]
-              [(ErrTcUnit message) (ErrTcUnit message)])]
-          [(AstTyStruct name)
-            (match (tc-qualified-type-visible-ok ctx (intern-str name))
-              [(OkTcUnit)
-                (tc-bare-nominal-lifetime-policy-ok ctx (intern-str name))]
-              [(ErrTcUnit message) (ErrTcUnit message)])]
-          [(AstTyEnumArgs name lifetimes)
-            (match (tc-qualified-type-visible-ok ctx (intern-str name))
-              [(OkTcUnit)
-                (tc-nominal-lifetime-use-policy-ok
-                  ctx
-                  (intern-str name)
-                  lifetimes)]
-              [(ErrTcUnit message) (ErrTcUnit message)])]
-          [(AstTyStructArgs name lifetimes)
-            (match (tc-qualified-type-visible-ok ctx (intern-str name))
-              [(OkTcUnit)
-                (tc-nominal-lifetime-use-policy-ok
-                  ctx
-                  (intern-str name)
-                  lifetimes)]
-              [(ErrTcUnit message) (ErrTcUnit message)])]
-          [(AstTyVarArgs name _)
-            (ErrTcUnit (tc-source-type-policy-message (intern-str name)))]
+  (if (tc-type-unquote-marker? ty)
+    OkTcUnit
+    (let
+      [syntax-ok : ResultTcUnit
+        (match ty
           [(AstTyVar name)
-            (if (or
-              (= name (intern "ExprClause"))
-              (= name (intern "ExprClauseList")))
-              OkTcUnit
-              (ErrTcUnit (tc-source-type-policy-message (intern-str name))))]
-          [_ OkTcUnit])])))
+            (match (tc-source-type-name-lookup-key ctx (intern-str name))
+              [(OkTcString _) OkTcUnit]
+              [(ErrTcString message) (ErrTcUnit message)])]
+          [(AstTyVarArgs name _)
+            (match (tc-source-type-name-lookup-key ctx (intern-str name))
+              [(OkTcString _) OkTcUnit]
+              [(ErrTcString message) (ErrTcUnit message)])]
+          [_ OkTcUnit])]
+      (match syntax-ok
+        [(ErrTcUnit message) (ErrTcUnit message)]
+        [(OkTcUnit)
+          (match (tc-resolve-type ctx ty)
+            [(AstTyFunc args ret)
+              (match (tc-source-type-list-policy-ok ctx args)
+                [(OkTcUnit) (tc-source-type-policy-ok ctx (ty-node-get ret))]
+                [(ErrTcUnit message) (ErrTcUnit message)])]
+            [(AstTyTuple elems) (tc-source-type-list-policy-ok ctx elems)]
+            [(AstTyArray elem _)
+              (tc-source-type-policy-ok ctx (ty-node-get elem))]
+            [(AstTyDynArray elem)
+              (tc-source-type-policy-ok ctx (ty-node-get elem))]
+            [(AstTyBox elem) (tc-source-type-policy-ok ctx (ty-node-get elem))]
+            [(AstTyPtr elem) (tc-source-type-policy-ok ctx (ty-node-get elem))]
+            [(AstTyMutPtr elem)
+              (tc-source-type-policy-ok ctx (ty-node-get elem))]
+            [(AstTyRef _ inner)
+              (match (tc-resolve-type ctx (ty-node-get inner))
+                [(AstTyStr) OkTcUnit]
+                [(AstTyBytes) OkTcUnit]
+                [_ (tc-source-type-policy-ok ctx (ty-node-get inner))])]
+            [(AstTyMutRef _ inner)
+              (match (tc-resolve-type ctx (ty-node-get inner))
+                [(AstTyStr) (ErrTcUnit (tc-source-str-mut-ref-policy-message))]
+                [(AstTyBytes) OkTcUnit]
+                [_ (tc-source-type-policy-ok ctx (ty-node-get inner))])]
+            [(AstTyRegion _ inner)
+              (tc-source-type-policy-ok ctx (ty-node-get inner))]
+            [(AstTyStr) (ErrTcUnit (tc-source-str-value-policy-message))]
+            [(AstTyBytes) (ErrTcUnit (tc-source-bytes-value-policy-message))]
+            [(AstTyEnum name)
+              (match (tc-qualified-type-visible-ok ctx (intern-str name))
+                [(OkTcUnit)
+                  (tc-bare-nominal-lifetime-policy-ok ctx (intern-str name))]
+                [(ErrTcUnit message) (ErrTcUnit message)])]
+            [(AstTyStruct name)
+              (match (tc-qualified-type-visible-ok ctx (intern-str name))
+                [(OkTcUnit)
+                  (tc-bare-nominal-lifetime-policy-ok ctx (intern-str name))]
+                [(ErrTcUnit message) (ErrTcUnit message)])]
+            [(AstTyEnumArgs name lifetimes)
+              (match (tc-qualified-type-visible-ok ctx (intern-str name))
+                [(OkTcUnit)
+                  (tc-nominal-lifetime-use-policy-ok
+                    ctx
+                    (intern-str name)
+                    lifetimes)]
+                [(ErrTcUnit message) (ErrTcUnit message)])]
+            [(AstTyStructArgs name lifetimes)
+              (match (tc-qualified-type-visible-ok ctx (intern-str name))
+                [(OkTcUnit)
+                  (tc-nominal-lifetime-use-policy-ok
+                    ctx
+                    (intern-str name)
+                    lifetimes)]
+                [(ErrTcUnit message) (ErrTcUnit message)])]
+            [(AstTyVarArgs name _)
+              (ErrTcUnit (tc-source-type-policy-message (intern-str name)))]
+            [(AstTyVar name)
+              (if (or
+                (= name (intern "ExprClause"))
+                (= name (intern "ExprClauseList")))
+                OkTcUnit
+                (ErrTcUnit (tc-source-type-policy-message (intern-str name))))]
+            [_ OkTcUnit])]))))
 
 (define (tc-source-maybe-type-policy-ok
   [ctx : TcContext]
@@ -6156,10 +6171,14 @@
       (let
         [rest : AstMacroParamList (box-get rest)]
         (match param
-          [(AstMacroParam _ ty _)
-            (match (tc-source-type-policy-ok ctx ty)
-              [(OkTcUnit) (tc-source-macro-param-list-policy-ok ctx rest)]
-              [(ErrTcUnit message) (ErrTcUnit message)])]))]))
+          [(AstMacroParam _ ty variadic)
+            (if (tc-macro-type-param-kind? ty)
+              (if variadic
+                (ErrTcUnit "typecheck: type macro operand cannot be variadic")
+                (tc-source-macro-param-list-policy-ok ctx rest))
+              (match (tc-source-type-policy-ok ctx ty)
+                [(OkTcUnit) (tc-source-macro-param-list-policy-ok ctx rest)]
+                [(ErrTcUnit message) (ErrTcUnit message)]))]))]))
 
 (define (tc-macro-result-name? [ty : AstType] [upper : String] [lower : String]) : bool
   (match ty
@@ -8341,14 +8360,18 @@
               (tc-bind-id
                 env
                 name
-                (if (tc-macro-expr-clause-type?
-                  (tc-resolve-type ctx (tc-macro-signature-type ty)))
-                  (if variadic
-                    (tc-macro-expr-clause-list-type)
-                    (tc-macro-expr-clause-type))
-                  (if variadic
-                    (AstTyExprList)
-                    (AstTyExpr))))
+                (cond
+                  [(tc-macro-type-param-kind? ty) (AstTyExpr)]
+                  [(and
+                      variadic
+                      (tc-macro-expr-clause-type?
+                        (tc-resolve-type ctx (tc-macro-signature-type ty))))
+                    (tc-macro-expr-clause-list-type)]
+                  [(tc-macro-expr-clause-type?
+                      (tc-resolve-type ctx (tc-macro-signature-type ty)))
+                    (tc-macro-expr-clause-type)]
+                  [variadic (AstTyExprList)]
+                  [else (AstTyExpr)]))
               rest)]))]))
 
 (define (tc-ctfe-env-extend-macro-params
@@ -8367,10 +8390,16 @@
               (ctfe-env-extend
                 env
                 (intern-str name)
-                (if (tc-macro-expr-clause-type?
-                  (tc-resolve-type ctx (tc-macro-signature-type ty)))
-                  (if variadic
-                    (CtfeExprClauseList AstExprClauseNil)
+                (cond
+                  [(tc-macro-type-param-kind? ty) (CtfeType (AstTyVar name))]
+                  [(and
+                      variadic
+                      (tc-macro-expr-clause-type?
+                        (tc-resolve-type ctx (tc-macro-signature-type ty))))
+                    (CtfeExprClauseList AstExprClauseNil)]
+                  [variadic (CtfeExprList AstExprNil)]
+                  [(tc-macro-expr-clause-type?
+                      (tc-resolve-type ctx (tc-macro-signature-type ty)))
                     (CtfeExprClause
                       (ast-expr-clause
                         (ast-node-push
@@ -8378,12 +8407,11 @@
                             (intern (string-append (intern-str name) "$first"))))
                         (ast-node-push
                           (AstExprVar
-                            (intern (string-append (intern-str name) "$second")))))))
-                  (if variadic
-                    (CtfeExprList AstExprNil)
+                            (intern (string-append (intern-str name) "$second"))))))]
+                  [else
                     (CtfeExpr
                       (ast-node-push (AstExprVar name))
-                      (tc-resolve-type ctx (tc-macro-signature-type ty))))))
+                      (tc-resolve-type ctx (tc-macro-signature-type ty)))]))
               rest)]))]))
 
 (define (tc-dispatch-isa-eq? [a : AstDispatchIsa] [b : AstDispatchIsa]) : bool
@@ -28885,6 +28913,10 @@
   (OkMacroValue CompilerCtfeValue)
   (ErrMacroValue CompilerDiagnostic))
 
+(defenum ResultMacroTypeArg
+  (OkMacroTypeArg AstType)
+  (ErrMacroTypeArg CompilerDiagnostic))
+
 (defenum ResultMacroSexpr
   (OkMacroSexpr SpannedSexpr)
   (ErrMacroSexpr CompilerDiagnostic))
@@ -29023,7 +29055,27 @@
           [(AstDeclModule _) (+ rest-count 1)]
           [_ rest-count]))]))
 
-(define (macro-identity-key-exprs
+(define (macro-identity-key-join [head : String] [tail : String]) : String
+  (if (> (string-length tail) 0)
+    (str-cat head ";" tail)
+    head))
+
+(define (macro-identity-key-string-expr
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultGenKey
+  (match (compiler-ctfe-eval expr env fuel)
+    [(OkCtfe value next-fuel)
+      (match value
+        [(CtfeString text) (OkGenKey (spec-string-key text) next-fuel)]
+        [_
+          (ErrGenKey
+            (ctfe-diagnostic-at-expr
+              expr
+              "typecheck: Module macro identity key expression must evaluate to String"))])]
+    [(ErrCtfe diag) (ErrGenKey diag)]))
+
+(define (macro-identity-key-string-exprs
   [exprs : AstExprList]
   [env : CtfeEnv]
   [fuel : i64]) : ResultGenKey
@@ -29032,33 +29084,93 @@
     [(AstExprCons head rest)
       (let
         [head-expr : AstExpr (ast-node-get head)]
-        (match (compiler-ctfe-eval head-expr env fuel)
-          [(OkCtfe value head-fuel)
-            (match value
-              [(CtfeString text)
-                (match (macro-identity-key-exprs (box-get rest) env head-fuel)
-                  [(OkGenKey tail tail-fuel)
-                    (let
-                      [head-key : String (spec-string-key text)]
-                      (OkGenKey
-                        (if (> (string-length tail) 0)
-                          (str-cat head-key ";" tail)
-                          head-key)
-                        tail-fuel))]
-                  [(ErrGenKey diag) (ErrGenKey diag)])]
-              [_
+        (match (macro-identity-key-string-expr head-expr env fuel)
+          [(OkGenKey head-key head-fuel)
+            (match (macro-identity-key-string-exprs
+              (box-get rest)
+              env
+              head-fuel)
+              [(OkGenKey tail tail-fuel)
+                (OkGenKey (macro-identity-key-join head-key tail) tail-fuel)]
+              [(ErrGenKey diag) (ErrGenKey diag)])]
+          [(ErrGenKey diag) (ErrGenKey diag)]))]))
+
+(define (macro-identity-key-params
+  [ctx : TcContext]
+  [params : AstMacroParamList]
+  [args : AstExprList]
+  [env : CtfeEnv]
+  [fuel : i64]
+  [call-expr : AstExpr]) : ResultGenKey
+  (match params
+    [(AstMacroParamNil)
+      (match args
+        [(AstExprNil) (OkGenKey "" fuel)]
+        [(AstExprCons head _)
+          (ErrGenKey
+            (ctfe-diagnostic-at-expr
+              (ast-node-get head)
+              "macro call has too many arguments"))])]
+    [(AstMacroParamCons param rest-params)
+      (let
+        [rest-params : AstMacroParamList (box-get rest-params)]
+        (match param
+          [(AstMacroParam _ ty variadic)
+            (if variadic
+              (if (tc-macro-type-param-kind? ty)
                 (ErrGenKey
                   (ctfe-diagnostic-at-expr
-                    head-expr
-                    "typecheck: Module macro identity key expression must evaluate to String"))])]
-          [(ErrCtfe diag) (ErrGenKey diag)]))]))
+                    call-expr
+                    "typecheck: type macro operand cannot be variadic"))
+                (macro-identity-key-string-exprs args env fuel))
+              (match args
+                [(AstExprNil)
+                  (ErrGenKey
+                    (ctfe-diagnostic-at-expr
+                      call-expr
+                      "macro call has too few arguments"))]
+                [(AstExprCons head rest-args)
+                  (let
+                    [head-expr : AstExpr (ast-node-get head)]
+                    [rest-args : AstExprList (box-get rest-args)]
+                    (match (if (tc-macro-type-param-kind? ty)
+                      (match (macro-type-arg ctx head-expr)
+                        [(OkMacroTypeArg resolved-ty)
+                          (OkGenKey
+                            (str-cat "type_" (ctfe-type-key resolved-ty))
+                            fuel)]
+                        [(ErrMacroTypeArg diag) (ErrGenKey diag)])
+                      (macro-identity-key-string-expr head-expr env fuel))
+                      [(OkGenKey head-key head-fuel)
+                        (match (macro-identity-key-params
+                          ctx
+                          rest-params
+                          rest-args
+                          env
+                          head-fuel
+                          call-expr)
+                          [(OkGenKey tail tail-fuel)
+                            (OkGenKey
+                              (macro-identity-key-join head-key tail)
+                              tail-fuel)]
+                          [(ErrGenKey diag) (ErrGenKey diag)])]
+                      [(ErrGenKey diag) (ErrGenKey diag)]))]))]))]))
 
 (define (macro-module-identity
+  [ctx : TcContext]
   [macro-name : String]
   [definition-module : String]
+  [params : AstMacroParamList]
   [args : AstExprList]
-  [env : CtfeEnv]) : ResultGenKey
-  (match (macro-identity-key-exprs args env (ctfe-fuel-limit))
+  [env : CtfeEnv]
+  [call-expr : AstExpr]) : ResultGenKey
+  (match (macro-identity-key-params
+    ctx
+    params
+    args
+    env
+    (ctfe-fuel-limit)
+    call-expr)
     [(OkGenKey arg-key fuel)
       (OkGenKey (str-cat definition-module ":" macro-name "(" arg-key ")") fuel)]
     [(ErrGenKey diag) (ErrGenKey diag)]))
@@ -31025,6 +31137,15 @@
     (tc-type-render expected)
     ", got bracket clause"))
 
+(define (macro-type-arg [ctx : TcContext] [arg : AstExpr]) : ResultMacroTypeArg
+  (match (ctfe-expr-to-type arg arg (ctfe-fuel-limit))
+    [(OkCtfeQuoteType ty _)
+      (match (tc-source-type-policy-ok ctx ty)
+        [(OkTcUnit) (OkMacroTypeArg (tc-resolve-type ctx ty))]
+        [(ErrTcUnit message)
+          (ErrMacroTypeArg (ctfe-diagnostic-at-expr arg message))])]
+    [(ErrCtfeQuoteType diag) (ErrMacroTypeArg diag)]))
+
 (define (macro-expr-clause-from-items [arg : AstExpr] [items : AstExprList]) : ResultMacroClause
   (match items
     [(AstExprCons first rest1)
@@ -31101,19 +31222,23 @@
   [env : TcTypeEnv]
   [expected : AstType]
   [arg : AstExpr]) : ResultMacroCheck
-  (let
-    [resolved-expected : AstType
-      (tc-resolve-type ctx (tc-macro-signature-type expected))]
-    (if (tc-macro-expr-clause-type? resolved-expected)
-      (match (macro-expr-clause-from-arg arg)
-        [(OkMacroClause _) OkMacroCheck]
-        [(ErrMacroClause diag) (ErrMacroCheck diag)])
-      (if (macro-operand-bracket-clause? arg)
-        (ErrMacroCheck
-          (ctfe-diagnostic-at-expr
-            arg
-            (macro-clause-operand-mismatch-message resolved-expected)))
-        (macro-check-ordinary-operand ctx env resolved-expected arg)))))
+  (if (tc-macro-type-param-kind? expected)
+    (match (macro-type-arg ctx arg)
+      [(OkMacroTypeArg _) OkMacroCheck]
+      [(ErrMacroTypeArg diag) (ErrMacroCheck diag)])
+    (let
+      [resolved-expected : AstType
+        (tc-resolve-type ctx (tc-macro-signature-type expected))]
+      (if (tc-macro-expr-clause-type? resolved-expected)
+        (match (macro-expr-clause-from-arg arg)
+          [(OkMacroClause _) OkMacroCheck]
+          [(ErrMacroClause diag) (ErrMacroCheck diag)])
+        (if (macro-operand-bracket-clause? arg)
+          (ErrMacroCheck
+            (ctfe-diagnostic-at-expr
+              arg
+              (macro-clause-operand-mismatch-message resolved-expected)))
+          (macro-check-ordinary-operand ctx env resolved-expected arg))))))
 
 (define (macro-check-variadic-operands
   [ctx : TcContext]
@@ -31141,17 +31266,25 @@
   [ty : AstType]
   [args : AstExprList]
   [env : CtfeEnv]) : ResultMacroEnv
-  (if (macro-param-expr-clause? ctx ty)
-    (match (macro-expr-clause-list-from-args args)
-      [(OkMacroClauseList clauses)
-        (OkMacroEnv
-          (CtfeEnvCons (intern-str name) (CtfeExprClauseList clauses) (box env)))]
-      [(ErrMacroClauseList diag) (ErrMacroEnv diag)])
-    (match (macro-check-variadic-operands ctx type-env ty args)
-      [(OkMacroCheck)
-        (OkMacroEnv
-          (CtfeEnvCons (intern-str name) (CtfeExprList args) (box env)))]
-      [(ErrMacroCheck diag) (ErrMacroEnv diag)])))
+  (if (tc-macro-type-param-kind? ty)
+    (ErrMacroEnv
+      (ctfe-diagnostic-at-expr
+        (AstExprVar name)
+        "typecheck: type macro operand cannot be variadic"))
+    (if (macro-param-expr-clause? ctx ty)
+      (match (macro-expr-clause-list-from-args args)
+        [(OkMacroClauseList clauses)
+          (OkMacroEnv
+            (CtfeEnvCons
+              (intern-str name)
+              (CtfeExprClauseList clauses)
+              (box env)))]
+        [(ErrMacroClauseList diag) (ErrMacroEnv diag)])
+      (match (macro-check-variadic-operands ctx type-env ty args)
+        [(OkMacroCheck)
+          (OkMacroEnv
+            (CtfeEnvCons (intern-str name) (CtfeExprList args) (box env)))]
+        [(ErrMacroCheck diag) (ErrMacroEnv diag)]))))
 
 (define (macro-bind-fixed-param
   [ctx : TcContext]
@@ -31161,20 +31294,28 @@
   [arg-id : i64]
   [arg-expr : AstExpr]
   [env : CtfeEnv]) : ResultMacroEnv
-  (if (macro-param-expr-clause? ctx ty)
-    (match (macro-expr-clause-from-arg arg-expr)
-      [(OkMacroClause clause)
+  (if (tc-macro-type-param-kind? ty)
+    (match (macro-type-arg ctx arg-expr)
+      [(OkMacroTypeArg resolved-ty)
         (OkMacroEnv
-          (CtfeEnvCons (intern-str name) (CtfeExprClause clause) (box env)))]
-      [(ErrMacroClause diag) (ErrMacroEnv diag)])
-    (match (macro-check-operand ctx type-env ty arg-expr)
-      [(OkMacroCheck)
-        (OkMacroEnv
-          (CtfeEnvCons
-            (intern-str name)
-            (CtfeExpr arg-id (tc-resolve-type ctx (tc-macro-signature-type ty)))
-            (box env)))]
-      [(ErrMacroCheck diag) (ErrMacroEnv diag)])))
+          (CtfeEnvCons (intern-str name) (CtfeType resolved-ty) (box env)))]
+      [(ErrMacroTypeArg diag) (ErrMacroEnv diag)])
+    (if (macro-param-expr-clause? ctx ty)
+      (match (macro-expr-clause-from-arg arg-expr)
+        [(OkMacroClause clause)
+          (OkMacroEnv
+            (CtfeEnvCons (intern-str name) (CtfeExprClause clause) (box env)))]
+        [(ErrMacroClause diag) (ErrMacroEnv diag)])
+      (match (macro-check-operand ctx type-env ty arg-expr)
+        [(OkMacroCheck)
+          (OkMacroEnv
+            (CtfeEnvCons
+              (intern-str name)
+              (CtfeExpr
+                arg-id
+                (tc-resolve-type ctx (tc-macro-signature-type ty)))
+              (box env)))]
+        [(ErrMacroCheck diag) (ErrMacroEnv diag)]))))
 
 ;; Bind the unevaluated operand forms to the macro parameters as `Expr` values.
 ;; A trailing variadic parameter collects the remaining operands as an ExprList.
@@ -32321,10 +32462,13 @@
                       args)
                       [(OkMacroExprList expanded-args)
                         (match (macro-module-identity
+                          decl-ctx
                           macro-name
                           definition-module
+                          params
                           expanded-args
-                          (tc-ctfe-env decl-ctx))
+                          (tc-ctfe-env decl-ctx)
+                          call-expr)
                           [(OkGenKey identity _)
                             (match (macro-eval-transformer
                               decl-ctx

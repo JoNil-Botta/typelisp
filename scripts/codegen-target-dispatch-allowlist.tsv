@@ -42,6 +42,9 @@ src/compiler_backend.tl	compiler-backend-varargs-pre-call	abi	BackendTarget(Linu
 src/compiler_backend.tl	compiler-backend-emit-call-args	abi	compiler-backend-target-windows[?]	2	Win64 call argument slot and stack layout differs from System V.
 src/compiler_backend.tl	compiler-backend-group-word-arg-reg	abi	compiler-backend-target-windows[?]	2	Register-group argument homes follow Win64 register slots on Windows.
 src/compiler_backend.tl	compiler-backend-emit-param-spills	abi	compiler-backend-target-windows[?]	2	Parameter spill homes follow Win64 register slots on Windows.
+src/compiler_backend.tl	compiler-backend-atomic-ptr-reg	abi	compiler-backend-target-windows[?]	1	Inline raw-pointer atomic intrinsics consume the target ABI's first integer argument register.
+src/compiler_backend.tl	compiler-backend-atomic-value-reg	abi	compiler-backend-target-windows[?]	1	Inline raw-pointer atomic intrinsics consume the target ABI's second integer argument register.
+src/compiler_backend.tl	compiler-backend-atomic-new-reg	abi	compiler-backend-target-windows[?]	1	Inline raw-pointer CAS consumes the target ABI's third integer argument register.
 src/compiler_backend.tl	compiler-backend-closure-adapter-outgoing-frame-space	abi	BackendTarget(Linux|Windows)	2	Closure adapter outgoing space follows target calling convention rules.
 src/compiler_backend.tl	compiler-backend-emit-direct-tail-call-args-from	abi	compiler-backend-target-windows[?]	2	Direct tail-call argument moves account for Win64 stack and shadow-space rules.
 src/compiler_backend.tl	compiler-backend-c-memory-aggregate-type?	abi	compiler-backend-target-linux[?]	1	System V memory aggregate classification is Linux-target specific.

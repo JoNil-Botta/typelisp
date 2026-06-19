@@ -19383,6 +19383,16 @@
                           args
                           result-ty
                           origin)]
+                      [(and builtin-available (lower-atomic-pointer-name? name))
+                        (lower-atomic-pointer-call
+                          ctx
+                          state
+                          env
+                          type-env
+                          name
+                          args
+                          result-ty
+                          origin)]
                       [(and builtin-available (tc-layout-query-name? name))
                         (ErrLowerExpr
                           (lower-diagnostic-at-expr
@@ -20134,6 +20144,350 @@
     [(string-eq symbol "tl_atomic_i32_store") "tl_atomic_i32_store_ptr"]
     [(string-eq symbol "tl_atomic_i32_add") "tl_atomic_i32_add_ptr"]
     [else "tl_atomic_i32_fetch_add_ptr"]))
+
+(define (lower-atomic-pointer-name? [name : String]) : bool
+  (or
+    (string-eq name "atomic-load")
+    (string-eq name "atomic-store!")
+    (string-eq name "atomic-add!")
+    (string-eq name "atomic-fetch-add!")
+    (string-eq name "atomic-cas!")))
+
+(define (lower-atomic-pointer-func? [type-env : TcTypeEnv] [func : AstExpr]) : bool
+  (match (ast-expr-unspan func)
+    [(AstExprVar raw-name)
+      (let
+        [raw-text : String (intern-str raw-name)]
+        [name : String
+          (if (tc-hygiene-global-name? raw-text)
+            (tc-hygiene-global-call-name raw-text)
+            raw-text)]
+        (and
+          (lower-atomic-pointer-name? name)
+          (not (tc-name-bound? type-env name))))]
+    [_ false]))
+
+(define (lower-atomic-pointer-load-name? [name : String]) : bool
+  (string-eq name "atomic-load"))
+
+(define (lower-atomic-pointer-cas-name? [name : String]) : bool
+  (string-eq name "atomic-cas!"))
+
+(define (lower-atomic-pointer-width-prefix [elem-ty : AstType]) : String
+  (match (tc-type-strip-region elem-ty)
+    [(AstTyI32) "tl_atomic_i32_"]
+    [(AstTyU32) "tl_atomic_i32_"]
+    [_ "tl_atomic_i64_"]))
+
+(define (lower-atomic-pointer-op-suffix [name : String]) : String
+  (cond
+    [(string-eq name "atomic-load") "load_ptr"]
+    [(string-eq name "atomic-store!") "store_ptr"]
+    [(string-eq name "atomic-add!") "add_ptr"]
+    [(string-eq name "atomic-fetch-add!") "fetch_add_ptr"]
+    [else "cas_ptr"]))
+
+(define (lower-atomic-pointer-raw-symbol [name : String] [elem-ty : AstType]) : String
+  (str-cat
+    (lower-atomic-pointer-width-prefix elem-ty)
+    (lower-atomic-pointer-op-suffix name)
+    ""
+    ""))
+
+(define (lower-atomic-pointer-elem
+  [ctx : TcContext]
+  [name : String]
+  [ptr-ty : AstType]) : ResultTcType
+  (tc-atomic-pointer-elem ctx name ptr-ty))
+
+(define (lower-atomic-pointer-emit-load
+  [ctx : TcContext]
+  [state : LowerState]
+  [name : String]
+  [ptr : CompilerIrValue]
+  [elem-ty : AstType]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc allocated var-id)
+      (OkLowerExpr
+        (LowerExpr
+          (lower-state-emit-at-expr
+            allocated
+            (IrInstrCall
+              var-id
+              (lower-atomic-pointer-raw-symbol name elem-ty)
+              (IrCallArgsOne ptr)
+              (lower-one-word-register-storage-type ctx result-ty))
+            origin)
+          (IrValueVar var-id)
+          result-ty))]))
+
+(define (lower-atomic-pointer-emit-update
+  [ctx : TcContext]
+  [state : LowerState]
+  [name : String]
+  [ptr : CompilerIrValue]
+  [value : CompilerIrValue]
+  [elem-ty : AstType]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc allocated var-id)
+      (OkLowerExpr
+        (LowerExpr
+          (lower-state-emit-at-expr
+            allocated
+            (IrInstrCall
+              var-id
+              (lower-atomic-pointer-raw-symbol name elem-ty)
+              (IrCallArgsTwo ptr value)
+              (lower-one-word-register-storage-type ctx result-ty))
+            origin)
+          (IrValueVar var-id)
+          result-ty))]))
+
+(define (lower-atomic-pointer-emit-cas
+  [ctx : TcContext]
+  [state : LowerState]
+  [name : String]
+  [ptr : CompilerIrValue]
+  [expected : CompilerIrValue]
+  [new-value : CompilerIrValue]
+  [elem-ty : AstType]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc allocated var-id)
+      (OkLowerExpr
+        (LowerExpr
+          (lower-state-emit-at-expr
+            allocated
+            (IrInstrCall
+              var-id
+              (lower-atomic-pointer-raw-symbol name elem-ty)
+              (compiler-ir-call-args-from-list
+                (compiler-ir-value-cons
+                  ptr
+                  (compiler-ir-value-cons
+                    expected
+                    (compiler-ir-value-cons new-value (IrValueNil)))))
+              (lower-one-word-register-storage-type ctx result-ty))
+            origin)
+          (IrValueVar var-id)
+          result-ty))]))
+
+(define (lower-atomic-pointer-update-tail
+  [ctx : TcContext]
+  [state : LowerState]
+  [name : String]
+  [ptr : CompilerIrValue]
+  [value : CompilerIrValue]
+  [elem-ty : AstType]
+  [result-ty : AstType]
+  [origin : AstExpr]
+  [tail : AstExprList]) : ResultLowerExpr
+  (match tail
+    [(AstExprNil)
+      (lower-atomic-pointer-emit-update
+        ctx
+        state
+        name
+        ptr
+        value
+        elem-ty
+        result-ty
+        origin)]
+    [_
+      (ErrLowerExpr
+        (lower-diagnostic "lower: atomic update expects exactly two arguments"))]))
+
+(define (lower-atomic-pointer-cas-tail
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [name : String]
+  [ptr : CompilerIrValue]
+  [expected : CompilerIrValue]
+  [elem-ty : AstType]
+  [result-ty : AstType]
+  [origin : AstExpr]
+  [tail : AstExprList]) : ResultLowerExpr
+  (match tail
+    [(AstExprCons new-node tail2)
+      (let
+        [new-value : AstExpr (ast-node-get new-node)]
+        [tail2 : AstExprList (box-get tail2)]
+        (match tail2
+          [(AstExprNil)
+            (match (lower-expr-expected
+              ctx
+              state
+              env
+              type-env
+              new-value
+              elem-ty
+              new-value)
+              [(OkLowerExpr new-lowered)
+                (match new-lowered
+                  [(LowerExpr new-state new-ir _)
+                    (lower-atomic-pointer-emit-cas
+                      ctx
+                      new-state
+                      name
+                      ptr
+                      expected
+                      new-ir
+                      elem-ty
+                      result-ty
+                      origin)])]
+              [(ErrLowerExpr message) (ErrLowerExpr message)])]
+          [_
+            (ErrLowerExpr
+              (lower-diagnostic
+                "lower: atomic-cas! expects exactly three arguments"))]))]
+    [_
+      (ErrLowerExpr
+        (lower-diagnostic "lower: atomic-cas! expects exactly three arguments"))]))
+
+(define (lower-atomic-pointer-nonload-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [name : String]
+  [ptr : CompilerIrValue]
+  [elem-ty : AstType]
+  [tail0 : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match tail0
+    [(AstExprCons value-node tail1)
+      (let
+        [value : AstExpr (ast-node-get value-node)]
+        [tail1 : AstExprList (box-get tail1)]
+        (match (lower-expr-expected ctx state env type-env value elem-ty value)
+          [(OkLowerExpr value-lowered)
+            (match value-lowered
+              [(LowerExpr value-state value-ir _)
+                (if (lower-atomic-pointer-cas-name? name)
+                  (lower-atomic-pointer-cas-tail
+                    ctx
+                    value-state
+                    env
+                    type-env
+                    name
+                    ptr
+                    value-ir
+                    elem-ty
+                    result-ty
+                    origin
+                    tail1)
+                  (lower-atomic-pointer-update-tail
+                    ctx
+                    value-state
+                    name
+                    ptr
+                    value-ir
+                    elem-ty
+                    result-ty
+                    origin
+                    tail1))])]
+          [(ErrLowerExpr message) (ErrLowerExpr message)]))]
+    [_
+      (ErrLowerExpr
+        (lower-diagnostic
+          (if (lower-atomic-pointer-cas-name? name)
+            "lower: atomic-cas! expects exactly three arguments"
+            "lower: atomic update expects exactly two arguments")))]))
+
+(define (lower-atomic-pointer-call-with-elem
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [name : String]
+  [ptr : AstExpr]
+  [ptr-ty : AstType]
+  [elem-ty : AstType]
+  [tail0 : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match (lower-expr-expected ctx state env type-env ptr ptr-ty ptr)
+    [(OkLowerExpr ptr-lowered)
+      (match ptr-lowered
+        [(LowerExpr ptr-state ptr-ir _)
+          (if (lower-atomic-pointer-load-name? name)
+            (match tail0
+              [(AstExprNil)
+                (lower-atomic-pointer-emit-load
+                  ctx
+                  ptr-state
+                  name
+                  ptr-ir
+                  elem-ty
+                  result-ty
+                  origin)]
+              [_
+                (ErrLowerExpr
+                  (lower-diagnostic
+                    "lower: atomic-load expects exactly one argument"))])
+            (lower-atomic-pointer-nonload-call
+              ctx
+              ptr-state
+              env
+              type-env
+              name
+              ptr-ir
+              elem-ty
+              tail0
+              result-ty
+              origin))])]
+    [(ErrLowerExpr message) (ErrLowerExpr message)]))
+
+(define (lower-atomic-pointer-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [name : String]
+  [args : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match args
+    [(AstExprCons ptr-node tail0)
+      (let
+        [ptr : AstExpr (ast-node-get ptr-node)]
+        [tail0 : AstExprList (box-get tail0)]
+        (match (tc-expr ctx type-env ptr)
+          [(OkTcType ptr-ty)
+            (match (lower-atomic-pointer-elem ctx name ptr-ty)
+              [(OkTcType elem-ty)
+                (lower-atomic-pointer-call-with-elem
+                  ctx
+                  state
+                  env
+                  type-env
+                  name
+                  ptr
+                  ptr-ty
+                  elem-ty
+                  tail0
+                  result-ty
+                  origin)]
+              [(ErrTcType message)
+                (ErrLowerExpr (lower-diagnostic-at-expr ptr message))])]
+          [(ErrTcType message)
+            (ErrLowerExpr (lower-diagnostic-at-expr ptr message))]))]
+    [(AstExprNil)
+      (ErrLowerExpr
+        (lower-diagnostic
+          (if (lower-atomic-pointer-load-name? name)
+            "lower: atomic-load expects exactly one argument"
+            (if (lower-atomic-pointer-cas-name? name)
+              "lower: atomic-cas! expects exactly three arguments"
+              "lower: atomic update expects exactly two arguments"))))]))
 
 (define (lower-atomic-load-symbol? [symbol : String]) : bool
   (or
@@ -25421,6 +25775,7 @@
             (string-length
               (lower-atomic-extern-symbol-for-func ctx type-env func))
             0)
+          (lower-atomic-pointer-func? type-env func)
           (lower-vector-body-has-atomic-call? ctx type-env func)
           (lower-vector-expr-list-has-atomic-call? ctx type-env args)))]
     [(AstExprArrayRef arr-box idx-box)

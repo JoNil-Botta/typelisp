@@ -4666,6 +4666,7 @@ Initial unsafe operation set:
 | `(ptr-addr-of name)` | Unsafe | local/parameter `name : T` -> `(MutPtr T)` | V1 supports local or parameter scalar cells only. The pointer is valid only while that stack slot is live; escaping or storing it is the caller's responsibility. |
 | `(ptr->int p)` | Unsafe | raw pointer -> `u64` | Exposes the target address representation. |
 | `(int->ptr n : (Ptr T))` / `(int->ptr n : (MutPtr T))` | Unsafe | integer -> requested raw pointer type | Address validity is entirely outside the typechecker. |
+| `(atomic-load p)`, `(atomic-store! p v)`, `(atomic-add! p d)`, `(atomic-fetch-add! p d)`, `(atomic-cas! p expected new)` | Unsafe | raw pointer atomics for `T` in `i32`, `i64`, `u32`, or `u64`; update forms require `(MutPtr T)` and matching values | Sequentially consistent x86-64 memory operations. Load returns `T`; store/add return `unit`; fetch-add and CAS return the previous value observed at `p`. |
 | `(syscall number arg0 ... arg5)` | Unsafe | integer operands -> `i64` | Issues a raw Linux x86_64 host syscall. The number plus up to six arguments are passed directly to the kernel ABI; argument validity, pointer lifetimes, platform availability, and side effects are caller obligations. |
 
 `stdlib/ffi.tl` provides caller-owned C string marshalling helpers on top of
@@ -5565,9 +5566,9 @@ valid for the requested type.
   pointer, and `ptr-null?` checks for null without dereferencing.
 - Pointer equality, ordering, provenance, and bounds are otherwise unspecified
   in v1. Only null testing is part of the safe surface.
-- `ptr-read`, `ptr-write!`, `ptr-offset`, `ptr-cast`, `ptr->int`, and
-  `int->ptr` require `(unsafe ...)` because the typechecker cannot prove their
-  memory or ABI preconditions.
+- `ptr-read`, `ptr-write!`, `ptr-offset`, `ptr-cast`, `ptr->int`, `int->ptr`,
+  and raw pointer atomics require `(unsafe ...)` because the typechecker cannot
+  prove their memory or ABI preconditions.
 - A raw pointer into memory reclaimed by `with-arena`/`tl_region_reset` becomes
   invalid when that region is reset. The typechecker does not track this for raw
   pointers.

@@ -33,6 +33,8 @@
   -1)
 (define compiler-builtin-id-tl-atomic-i64-fetch-add-ptr : i64
   -1)
+(define compiler-builtin-id-tl-atomic-i64-cas-ptr : i64
+  -1)
 (define compiler-builtin-id-tl-atomic-i32-load-ptr : i64
   -1)
 (define compiler-builtin-id-tl-atomic-i32-store-ptr : i64
@@ -40,6 +42,8 @@
 (define compiler-builtin-id-tl-atomic-i32-add-ptr : i64
   -1)
 (define compiler-builtin-id-tl-atomic-i32-fetch-add-ptr : i64
+  -1)
+(define compiler-builtin-id-tl-atomic-i32-cas-ptr : i64
   -1)
 (define compiler-builtin-id-tl-profile-alloc-total : i64
   -1)
@@ -135,11 +139,11 @@
 (define (compiler-builtin-ids-state-new) : CompilerBuiltinIdsState
   (let
     [generation : (Array i64) (make-array i64 1)]
-    [ids : (Array i64) (make-array i64 62)]
+    [ids : (Array i64) (make-array i64 64)]
     [i : i64 0]
     (begin
       (array-set! generation 0 -1)
-      (while (< i 62)
+      (while (< i 64)
         (begin
           (array-set! ids i -1)
           (set! i (+ i 1))))
@@ -340,7 +344,15 @@
       59
       compiler-builtin-id-arena-set-bang)
     (compiler-builtin-ids-state-set! state 60 compiler-builtin-id-arena-destroy)
-    (compiler-builtin-ids-state-set! state 61 compiler-builtin-id-arena-rewind)))
+    (compiler-builtin-ids-state-set! state 61 compiler-builtin-id-arena-rewind)
+    (compiler-builtin-ids-state-set!
+      state
+      62
+      compiler-builtin-id-tl-atomic-i64-cas-ptr)
+    (compiler-builtin-ids-state-set!
+      state
+      63
+      compiler-builtin-id-tl-atomic-i32-cas-ptr)))
 
 (define (compiler-builtin-ids-state-capture) : CompilerBuiltinIdsState
   (let
@@ -527,7 +539,13 @@
       (compiler-builtin-ids-state-ref state 60))
     (set!
       compiler-builtin-id-arena-rewind
-      (compiler-builtin-ids-state-ref state 61))))
+      (compiler-builtin-ids-state-ref state 61))
+    (set!
+      compiler-builtin-id-tl-atomic-i64-cas-ptr
+      (compiler-builtin-ids-state-ref state 62))
+    (set!
+      compiler-builtin-id-tl-atomic-i32-cas-ptr
+      (compiler-builtin-ids-state-ref state 63))))
 
 (define (compiler-builtin-reset!) : unit
   (set! compiler-builtin-generation -1))
@@ -566,6 +584,9 @@
         compiler-builtin-id-tl-atomic-i64-fetch-add-ptr
         (intern "tl_atomic_i64_fetch_add_ptr"))
       (set!
+        compiler-builtin-id-tl-atomic-i64-cas-ptr
+        (intern "tl_atomic_i64_cas_ptr"))
+      (set!
         compiler-builtin-id-tl-atomic-i32-load-ptr
         (intern "tl_atomic_i32_load_ptr"))
       (set!
@@ -577,6 +598,9 @@
       (set!
         compiler-builtin-id-tl-atomic-i32-fetch-add-ptr
         (intern "tl_atomic_i32_fetch_add_ptr"))
+      (set!
+        compiler-builtin-id-tl-atomic-i32-cas-ptr
+        (intern "tl_atomic_i32_cas_ptr"))
       (set!
         compiler-builtin-id-tl-profile-alloc-total
         (intern "tl_profile_alloc_total"))
@@ -682,7 +706,11 @@
         compiler-builtin-id-tl-atomic-i32-load-ptr
         compiler-builtin-id-tl-atomic-i32-store-ptr
         compiler-builtin-id-tl-atomic-i32-add-ptr
-        compiler-builtin-id-tl-atomic-i32-fetch-add-ptr))))
+        compiler-builtin-id-tl-atomic-i32-fetch-add-ptr)
+      (compiler-builtin-id-any2?
+        name-id
+        compiler-builtin-id-tl-atomic-i64-cas-ptr
+        compiler-builtin-id-tl-atomic-i32-cas-ptr))))
 
 (define (compiler-builtin-backend-runtime-stdlib-ffi-id? [name-id : i64]) : bool
   (begin
@@ -767,7 +795,11 @@
         compiler-builtin-id-tl-atomic-i32-load-ptr
         compiler-builtin-id-tl-atomic-i32-store-ptr
         compiler-builtin-id-tl-atomic-i32-add-ptr
-        compiler-builtin-id-tl-atomic-i32-fetch-add-ptr))))
+        compiler-builtin-id-tl-atomic-i32-fetch-add-ptr)
+      (compiler-builtin-id-any2?
+        name-id
+        compiler-builtin-id-tl-atomic-i64-cas-ptr
+        compiler-builtin-id-tl-atomic-i32-cas-ptr))))
 
 (define (compiler-builtin-backend-runtime-always-provided-tail-id?
   [name-id : i64]) : bool

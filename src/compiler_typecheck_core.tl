@@ -7810,6 +7810,201 @@
     [(AstTyMutPtr elem) (OkTcType (ty-node-get elem))]
     [_ (ErrTcType message)]))
 
+(define (tc-atomic-pointer-name? [name : String]) : bool
+  (or
+    (string-eq name "atomic-load")
+    (string-eq name "atomic-store!")
+    (string-eq name "atomic-add!")
+    (string-eq name "atomic-fetch-add!")
+    (string-eq name "atomic-cas!")))
+
+(define (tc-atomic-load-name? [name : String]) : bool
+  (string-eq name "atomic-load"))
+
+(define (tc-atomic-store-name? [name : String]) : bool
+  (string-eq name "atomic-store!"))
+
+(define (tc-atomic-cas-name? [name : String]) : bool
+  (string-eq name "atomic-cas!"))
+
+(define (tc-atomic-elem-type? [ty : AstType]) : bool
+  (match (tc-type-strip-region ty)
+    [(AstTyI64) true]
+    [(AstTyU64) true]
+    [(AstTyI32) true]
+    [(AstTyU32) true]
+    [_ false]))
+
+(define (tc-atomic-check-elem [elem : AstType]) : ResultTcType
+  (let
+    [resolved : AstType (tc-type-strip-region elem)]
+    (if (tc-atomic-elem-type? resolved)
+      (OkTcType resolved)
+      (ErrTcType
+        "typecheck: atomic pointer element must be i32, i64, u32, or u64"))))
+
+(define (tc-atomic-pointer-elem
+  [ctx : TcContext]
+  [name : String]
+  [ptr-ty : AstType]) : ResultTcType
+  (if (tc-atomic-load-name? name)
+    (match (tc-raw-pointer-elem
+      (tc-resolve-type ctx ptr-ty)
+      "typecheck: atomic-load requires a raw pointer operand")
+      [(OkTcType elem) (tc-atomic-check-elem (tc-resolve-type ctx elem))]
+      [(ErrTcType message) (ErrTcType message)])
+    (match (tc-mut-pointer-elem
+      (tc-resolve-type ctx ptr-ty)
+      (string-append
+        "typecheck: "
+        (string-append name " requires a MutPtr pointer operand")))
+      [(OkTcType elem) (tc-atomic-check-elem (tc-resolve-type ctx elem))]
+      [(ErrTcType message) (ErrTcType message)])))
+
+(define (tc-atomic-check-value
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [value : AstExpr]
+  [elem : AstType]
+  [message : String]) : ResultTcUnit
+  (match (tc-expr-with-expected-or-actual ctx env value elem)
+    [(OkTcType value-ty) (tc-expect value-ty elem message)]
+    [(ErrTcType message) (ErrTcUnit message)]))
+
+(define (tc-atomic-one-arg-call
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : String]
+  [ptr : AstExpr]
+  [rest : AstExprList]) : ResultTcType
+  (match rest
+    [(AstExprNil)
+      (match (tc-expr ctx env ptr)
+        [(OkTcType ptr-ty)
+          (match (tc-atomic-pointer-elem ctx name ptr-ty)
+            [(OkTcType elem) (OkTcType elem)]
+            [(ErrTcType message) (ErrTcType message)])]
+        [(ErrTcType message) (ErrTcType message)])]
+    [_ (ErrTcType "typecheck: atomic-load expects exactly one argument")]))
+
+(define (tc-atomic-two-arg-call
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : String]
+  [ptr : AstExpr]
+  [value : AstExpr]
+  [rest : AstExprList]) : ResultTcType
+  (match rest
+    [(AstExprNil)
+      (match (tc-expr ctx env ptr)
+        [(OkTcType ptr-ty)
+          (match (tc-atomic-pointer-elem ctx name ptr-ty)
+            [(OkTcType elem)
+              (match (tc-atomic-check-value
+                ctx
+                env
+                value
+                elem
+                "typecheck: atomic value type mismatch")
+                [(OkTcUnit)
+                  (if (tc-atomic-store-name? name)
+                    (OkTcType (AstTyUnit))
+                    (if (string-eq name "atomic-add!")
+                      (OkTcType (AstTyUnit))
+                      (OkTcType elem)))]
+                [(ErrTcUnit message) (ErrTcType message)])]
+            [(ErrTcType message) (ErrTcType message)])]
+        [(ErrTcType message) (ErrTcType message)])]
+    [_ (ErrTcType "typecheck: atomic update expects exactly two arguments")]))
+
+(define (tc-atomic-cas-call
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [ptr : AstExpr]
+  [expected : AstExpr]
+  [new-value : AstExpr]
+  [rest : AstExprList]) : ResultTcType
+  (match rest
+    [(AstExprNil)
+      (match (tc-expr ctx env ptr)
+        [(OkTcType ptr-ty)
+          (match (tc-atomic-pointer-elem ctx "atomic-cas!" ptr-ty)
+            [(OkTcType elem)
+              (match (tc-atomic-check-value
+                ctx
+                env
+                expected
+                elem
+                "typecheck: atomic expected value type mismatch")
+                [(OkTcUnit)
+                  (match (tc-atomic-check-value
+                    ctx
+                    env
+                    new-value
+                    elem
+                    "typecheck: atomic new value type mismatch")
+                    [(OkTcUnit) (OkTcType elem)]
+                    [(ErrTcUnit message) (ErrTcType message)])]
+                [(ErrTcUnit message) (ErrTcType message)])]
+            [(ErrTcType message) (ErrTcType message)])]
+        [(ErrTcType message) (ErrTcType message)])]
+    [_ (ErrTcType "typecheck: atomic-cas! expects exactly three arguments")]))
+
+(define (tc-atomic-nonload-call
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : String]
+  [ptr : AstExpr]
+  [tail0 : AstExprList]) : ResultTcType
+  (match tail0
+    [(AstExprCons value-node tail1)
+      (let
+        [value : AstExpr (ast-node-get value-node)]
+        [tail1 : AstExprList (box-get tail1)]
+        (if (tc-atomic-cas-name? name)
+          (match tail1
+            [(AstExprCons new-node tail2)
+              (tc-atomic-cas-call
+                ctx
+                env
+                ptr
+                value
+                (ast-node-get new-node)
+                (box-get tail2))]
+            [_
+              (ErrTcType
+                "typecheck: atomic-cas! expects exactly three arguments")])
+          (tc-atomic-two-arg-call ctx env name ptr value tail1)))]
+    [_
+      (ErrTcType
+        (if (tc-atomic-cas-name? name)
+          "typecheck: atomic-cas! expects exactly three arguments"
+          "typecheck: atomic update expects exactly two arguments"))]))
+
+(define (tc-atomic-pointer-call
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : String]
+  [args : AstExprList]) : ResultTcType
+  (match (tc-require-unsafe env name)
+    [(OkTcUnit)
+      (match args
+        [(AstExprCons ptr-node tail0)
+          (let
+            [ptr : AstExpr (ast-node-get ptr-node)]
+            [tail0 : AstExprList (box-get tail0)]
+            (if (tc-atomic-load-name? name)
+              (tc-atomic-one-arg-call ctx env name ptr tail0)
+              (tc-atomic-nonload-call ctx env name ptr tail0)))]
+        [(AstExprNil)
+          (ErrTcType
+            (if (tc-atomic-load-name? name)
+              "typecheck: atomic-load expects exactly one argument"
+              (if (tc-atomic-cas-name? name)
+                "typecheck: atomic-cas! expects exactly three arguments"
+                "typecheck: atomic update expects exactly two arguments")))])]
+    [(ErrTcUnit message) (ErrTcType message)]))
+
 (define (tc-ptr-addr-of-cell-type-ok? [ty : AstType]) : bool
   (if (tc-integer-type? ty)
     true
@@ -12920,6 +13115,8 @@
               (compiler-builtin-typecheck-string-ref-call-id? name-id)
               (not (tc-name-bound? env name)))
             (tc-string-ref-call ctx env args)]
+          [(and (tc-atomic-pointer-name? name) (not (tc-name-bound? env name)))
+            (tc-atomic-pointer-call ctx env name args)]
           [(and
               (tc-borrowed-string-builtin-name? name)
               (tc-default-builtin-unshadowed? env name))

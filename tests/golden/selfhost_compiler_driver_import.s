@@ -371,6 +371,11 @@ tl_atomic_i64_fetch_add_ptr:
     movq %rsi, %rax
     lock xaddq %rax, (%rdi)
     ret
+    .globl tl_atomic_i64_cas_ptr
+tl_atomic_i64_cas_ptr:
+    movq %rsi, %rax
+    lock cmpxchgq %rdx, (%rdi)
+    ret
     .globl tl_atomic_i32_load_ptr
 tl_atomic_i32_load_ptr:
     movl (%rdi), %eax
@@ -387,6 +392,11 @@ tl_atomic_i32_add_ptr:
 tl_atomic_i32_fetch_add_ptr:
     movl %esi, %eax
     lock xaddl %eax, (%rdi)
+    ret
+    .globl tl_atomic_i32_cas_ptr
+tl_atomic_i32_cas_ptr:
+    movl %esi, %eax
+    lock cmpxchgl %edx, (%rdi)
     ret
     .globl tl_thread_init
 tl_thread_init:

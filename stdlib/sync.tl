@@ -235,8 +235,18 @@
 ;: Sequentially consistent atomic store of one raw `i64` pointer.
 (extern (sync-atomic-i64-store-ptr! [ptr : (MutPtr i64)] [value : i64]) : unit (:symbol "tl_atomic_i64_store_ptr"))
 
+;: Sequentially consistent atomic add of one raw `i64` pointer.
+(extern (sync-atomic-i64-add-ptr! [ptr : (MutPtr i64)] [delta : i64]) : unit (:symbol "tl_atomic_i64_add_ptr"))
+
 ;: Sequentially consistent atomic fetch-add of one raw `i64` pointer.
 (extern (sync-atomic-i64-fetch-add-ptr! [ptr : (MutPtr i64)] [delta : i64]) : i64 (:symbol "tl_atomic_i64_fetch_add_ptr"))
+
+;: Sequentially consistent compare-exchange of one raw `i64` pointer. Returns
+;: the previous value observed at `ptr`.
+(extern (sync-atomic-i64-cas-ptr!
+  [ptr : (MutPtr i64)]
+  [expected : i64]
+  [new-value : i64]) : i64 (:symbol "tl_atomic_i64_cas_ptr"))
 
 ;: Convert an integer address and slot into a mutable `i64` pointer.
 (define (sync-addr-slot->mut-i64 [addr : i64] [slot : i64]) : (MutPtr i64)
@@ -256,9 +266,25 @@
 (define (sync-atomic-i64-store! [addr : i64] [slot : i64] [value : i64]) : unit
   (sync-atomic-i64-store-ptr! (sync-addr-slot->mut-i64 addr slot) value))
 
+;: Sequentially consistent atomic add of one runtime-owned `i64` slot.
+(define (sync-atomic-i64-add! [addr : i64] [slot : i64] [delta : i64]) : unit
+  (sync-atomic-i64-add-ptr! (sync-addr-slot->mut-i64 addr slot) delta))
+
 ;: Sequentially consistent atomic fetch-add of one runtime-owned `i64` slot.
 (define (sync-atomic-i64-fetch-add! [addr : i64] [slot : i64] [delta : i64]) : i64
   (sync-atomic-i64-fetch-add-ptr! (sync-addr-slot->mut-i64 addr slot) delta))
+
+;: Sequentially consistent compare-exchange of one runtime-owned `i64` slot.
+;: Returns the previous value observed in the slot.
+(define (sync-atomic-i64-cas!
+  [addr : i64]
+  [slot : i64]
+  [expected : i64]
+  [new-value : i64]) : i64
+  (sync-atomic-i64-cas-ptr!
+    (sync-addr-slot->mut-i64 addr slot)
+    expected
+    new-value))
 
 ;: Read one `i64` slot from runtime-owned storage.
 (define (sync-read-i64 [addr : i64] [slot : i64]) : i64

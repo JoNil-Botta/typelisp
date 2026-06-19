@@ -3366,10 +3366,53 @@
   "(define (main [text : String]) : (MutPtr String)
   (unsafe (ptr-addr-of text)))")
 
+(define (compiler-typecheck-atomic-pointer-ops-source) : String
+  "(define (main
+  [p64 : (MutPtr i64)]
+  [q64 : (MutPtr u64)]
+  [p32 : (MutPtr i32)]
+  [q32 : (MutPtr u32)]) : i64
+  (unsafe
+    (begin
+      (atomic-store! p64 1)
+      (atomic-add! p64 2)
+      (atomic-fetch-add! p64 3)
+      (atomic-cas! p64 6 7)
+      (atomic-store! q64 (cast 1 : u64))
+      (atomic-add! q64 (cast 2 : u64))
+      (atomic-fetch-add! q64 (cast 3 : u64))
+      (atomic-cas! q64 (cast 6 : u64) (cast 7 : u64))
+      (atomic-store! p32 (cast 1 : i32))
+      (atomic-add! p32 (cast 2 : i32))
+      (atomic-fetch-add! p32 (cast 3 : i32))
+      (atomic-cas! p32 (cast 6 : i32) (cast 7 : i32))
+      (atomic-store! q32 (cast 1 : u32))
+      (atomic-add! q32 (cast 2 : u32))
+      (atomic-fetch-add! q32 (cast 3 : u32))
+      (atomic-cas! q32 (cast 6 : u32) (cast 7 : u32))
+      (atomic-load p64))))")
+
+(define (compiler-typecheck-atomic-pointer-safe-source) : String
+  "(define (main [p : (MutPtr i64)]) : i64
+  (atomic-load p))")
+
+(define (compiler-typecheck-atomic-pointer-store-mismatch-source) : String
+  "(define (main [p : (MutPtr i64)]) : unit
+  (unsafe (atomic-store! p true)))")
+
+(define (compiler-typecheck-atomic-pointer-add-const-source) : String
+  "(define (main [p : (Ptr i64)]) : unit
+  (unsafe (atomic-add! p 1)))")
+
+(define (compiler-typecheck-atomic-pointer-bad-elem-source) : String
+  "(define (main [p : (MutPtr u8)]) : u8
+  (unsafe (atomic-load p)))")
+
 (define (compiler-typecheck-raw-pointer-op-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-raw-pointer-ops-source))
     (compiler-typecheck-ok? (compiler-typecheck-raw-pointer-cast-source))
+    (compiler-typecheck-ok? (compiler-typecheck-atomic-pointer-ops-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-raw-pointer-safe-read-source)
       "typecheck: ptr-read requires unsafe context")
@@ -3406,7 +3449,19 @@
       "typecheck: ptr-addr-of requires a local or parameter name")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-raw-pointer-addr-of-aggregate-source)
-      "typecheck: ptr-addr-of supports local scalar cells only")))
+      "typecheck: ptr-addr-of supports local scalar cells only")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-atomic-pointer-safe-source)
+      "typecheck: atomic-load requires unsafe context")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-atomic-pointer-store-mismatch-source)
+      "typecheck: atomic value type mismatch")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-atomic-pointer-add-const-source)
+      "typecheck: atomic-add! requires a MutPtr pointer operand")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-atomic-pointer-bad-elem-source)
+      "typecheck: atomic pointer element must be i32, i64, u32, or u64")))
 
 (define (compiler-typecheck-raw-pointer-tests-ok?) : bool
   (and

@@ -138,7 +138,9 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   `ChannelI64Pair` messages; `ChannelString` moves atomic-arena-owned string
   messages through the same bounded channel surface; `MutexI64` protects a
   shared scalar through a cleanup-owned lexical guard and rejects close while
-  guards or lock attempts are live. Import it with `(import "stdlib/sync.tl")`.
+  guards or lock attempts are live. It also exposes raw `i64` pointer atomic
+  load/store/add/fetch-add/CAS wrappers for synchronization internals. Import it
+  with `(import "stdlib/sync.tl")`.
 - `json.tl`: JSON value parser and serializer for tool protocols and data
   exchange, with vector-backed parser builders that preserve the public
   list-shaped `Json` value model, plus deterministic finite `f64`/`f32` JSON

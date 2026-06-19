@@ -66,6 +66,14 @@
       (match probe
         [(IntVecProbeEmpty) 0]
         [(IntVecProbeValue value) (+ value 1)]))
+    (define (int-vec-scalar-probe-score [value : i64]) : i64
+      (match value
+        [0 10]
+        [1 20]
+        [_ 30]))
+    (define (int-vec-binding-probe-score [value : i64]) : i64
+      (match value
+        [bound (+ bound 3)]))
     (define (int-vec-never-probe [value : i64]) : i64
       (ann (return value) : never))))
 
@@ -152,7 +160,19 @@
     (assert-i64-eq
       (int-vec-probe-score (IntVecProbeValue 41))
       42
-      "generated match binds payload")))
+      "generated match binds payload")
+    (assert-i64-eq
+      (int-vec-scalar-probe-score 0)
+      10
+      "generated match handles literal pattern")
+    (assert-i64-eq
+      (int-vec-scalar-probe-score 2)
+      30
+      "generated match handles wildcard pattern")
+    (assert-i64-eq
+      (int-vec-binding-probe-score 39)
+      42
+      "generated match handles binding pattern")))
 
 (test
   generated-vector-derived-prefix-names

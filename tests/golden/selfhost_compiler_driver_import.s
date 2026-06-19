@@ -347,6 +347,11 @@ tl_memcpy:
     cld
     ret
 .Ltl_memcpy_fwd:
+    movq %rcx, %r11
+    shrq $3, %rcx
+    rep movsq
+    movq %r11, %rcx
+    andq $7, %rcx
     rep movsb
     ret
     .globl tl_atomic_i64_load_ptr

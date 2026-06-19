@@ -23452,6 +23452,16 @@ tl_profile_alloc_reset_peak:
 ;; a forward rep movsb then reads bytes it already overwrote and corrupts the
 ;; value. Copy backward (std) for the overlapping dst>src case; DF is restored
 ;; before returning per the ABI.
+;;
+;; The forward (common, non-overlapping) path copies word-at-a-time: `rep movsq`
+;; for the len/8 qword bulk, then `rep movsb` for the <8-byte tail. The 64 B
+;; inline-copy ceiling (lower-inline-copy-threshold) routes only LARGE copies
+;; here -- by-value `CompilerIrInstr` (~96-120 B) is the dominant caller (every
+;; IR instr cons/array fill/seq ref) -- and at those small multiples of 8 a
+;; byte-granular `rep movsb` pays its per-byte iteration count where a qword copy
+;; does 8x less work. r11 is caller-saved on both SysV and Win64, so it is a free
+;; scratch for the saved length. The backward path stays byte-granular: it is the
+;; rare aliasing case and correctness, not speed, governs it.
 (define (compiler-backend-runtime-memcpy-functions
   [target : CompilerBackendTarget]) : String
   (if (compiler-backend-target-windows? target)
@@ -23477,6 +23487,11 @@ tl_memcpy:
     movq %r10, %rsi
     ret
 .Ltl_memcpy_fwd:
+    movq %rcx, %r11
+    shrq $3, %rcx
+    rep movsq
+    movq %r11, %rcx
+    andq $7, %rcx
     rep movsb
     movq %rax, %rdi
     movq %r10, %rsi
@@ -23498,6 +23513,11 @@ tl_memcpy:
     cld
     ret
 .Ltl_memcpy_fwd:
+    movq %rcx, %r11
+    shrq $3, %rcx
+    rep movsq
+    movq %r11, %rcx
+    andq $7, %rcx
     rep movsb
     ret
 "))

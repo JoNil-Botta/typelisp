@@ -4320,9 +4320,17 @@
                       [params-key : String "params"]
                       (match (json-object-get message (& params-key))
                         [(JsonFound params)
-                          (set!
-                            result
-                            (lsp-handle-tl-structural-replace id params docs))]
+                          (let
+                            [name-key : String "name"]
+                            (match (json-object-get params (& name-key))
+                              [(JsonFound name)
+                                (set!
+                                  result
+                                  (lsp-handle-tl-structural-replace id params docs))]
+                              [(JsonMissing)
+                                (set!
+                                  result
+                                  (lsp-handle-tl-structural-replace-at id params docs))]))]
                         [(JsonMissing)
                           (lsp-write-error id -32600 "Missing params")]))]
                   [(JsonMissing) unit])))
@@ -5195,3 +5203,129 @@
   (unless
     (lsp-validate-forms-line-context-ok?)
     (panic "lsp-validate-forms-line-context failed")))
+
+;; Position-based editing helpers
+
+;; Convert LSP position (0-indexed line, character) to byte offset
+(define (lsp-line-col-to-offset [text : String] [line : i64] [col : i64]) : i64
+  (let
+    [n : i64 (string-length text)]
+    [current-line : i64 0]
+    [i : i64 0]
+    (begin
+      (while (and (< i n) (< current-line line))
+        (begin
+          (if (= (string-ref text i) #\newline')
+            (set! current-line (+ current-line 1))
+            unit)
+          (set! i (+ i 1))))
+      (if (= current-line line)
+        (+ i col)
+        n))))
+
+;; Find start index of innermost form containing offset. Returns -1 if not found.
+;; Uses string-ref on literal parens since char literals for parens confuse the parser.
+(define (lsp-find-form-at-offset [text : String] [offset : i64]) : i64
+  (let
+    [n : i64 (string-length text)]
+    [i : i64 offset]
+    [depth : i64 0]
+    [result : i64 -1]
+    (begin
+      (while (and (>= i 0) (= result -1))
+        (let
+          [c : char (string-ref text i)]
+          (begin
+            (if (= c (string-ref ")" 0))
+              (set! depth (+ depth 1))
+              (if (= c (string-ref "(" 0))
+                (if (= depth 0)
+                  (set! result i)
+                  (set! depth (- depth 1)))
+                unit))
+            (set! i (- i 1)))))
+      result)))
+
+;; Find end index (exclusive) of form starting at start. Returns -1 if unterminated.
+(define (lsp-find-form-end-at-offset [text : String] [start : i64]) : i64
+  (let
+    [n : i64 (string-length text)]
+    [i : i64 (+ start 1)]
+    [depth : i64 1]
+    [result : i64 -1]
+    (begin
+      (while (and (< i n) (= result -1))
+        (let
+          [c : char (string-ref text i)]
+          (begin
+            (if (= c (string-ref "(" 0))
+              (set! depth (+ depth 1))
+              (if (= c (string-ref ")" 0))
+                (begin
+                  (set! depth (- depth 1))
+                  (if (= depth 0)
+                    (set! result (+ i 1))
+                    unit))
+                unit))
+            (set! i (+ i 1)))))
+      result)))
+
+;; Replace form at position (line, col) with new-text. Returns original text if position invalid.
+(define (lsp-replace-form-at-position
+  [text : String]
+  [line : i64]
+  [col : i64]
+  [new-text : String]) : String
+  (let
+    [offset : i64 (lsp-line-col-to-offset text line col)]
+    (if (= offset (string-length text))
+      text
+      (let
+        [form-start : i64 (lsp-find-form-at-offset text offset)]
+        (if (= form-start -1)
+          text
+          (let
+            [form-end : i64 (lsp-find-form-end-at-offset text form-start)]
+            [before : String (substring text 0 form-start)]
+            [after : String (substring text form-end (- (string-length text) form-end))]
+            (str-cat before (str-cat new-text after))))))))
+
+;; tl/structuralReplaceAt - Replace form at position (line, character)
+(define (lsp-handle-tl-structural-replace-at
+  [id : Json]
+  [params : Json]
+  [docs : LspDocuments]) : LspHandleResult
+  (match (lsp-get-document params docs)
+    [(FoundLspDocument path text _)
+      (let
+        [pos-key : String "position"]
+        (match (json-object-get params (& pos-key))
+          [(JsonFound position)
+            (match (lsp-json-string-field params "newText")
+              [(OkLspJsonText new-text)
+                (let
+                  [line : i64 (lsp-json-int-field-default position "line" 0)]
+                  [col : i64 (lsp-json-int-field-default position "character" 0)]
+                  [replaced : String (lsp-replace-form-at-position text line col new-text)]
+                  [formatted : String (format-rules-render-source-width replaced 80)]
+                  (begin
+                    (lsp-write-response
+                      id
+                      (lsp-json-object2
+                        "success"
+                        (JsonBool true)
+                        "text"
+                        (JsonString formatted)))
+                    (LspContinue docs)))]
+              [(MissingLspJsonText)
+                (begin
+                  (lsp-write-error id -32600 "Missing newText parameter")
+                  (LspContinue docs))])]
+          [(JsonMissing)
+            (begin
+              (lsp-write-error id -32600 "Missing position parameter")
+              (LspContinue docs))]))]
+    [(MissingLspDocument)
+      (begin
+        (lsp-write-error id -32600 "Document not found")
+        (LspContinue docs))]))

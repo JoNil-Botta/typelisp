@@ -1744,8 +1744,20 @@
       (opt-collect-blocks-uses-array-into items blocks)
       items)))
 
-(define (opt-instr-dead-array? [items : (Array bool)] [instr : CompilerIrInstr]) : bool
+(define (opt-instr-dead-array?
+  [items : (Array bool)]
+  [slots : (Array CompilerIrInstr)]
+  [count : i64]
+  [index : i64]
+  [instr : CompilerIrInstr]) : bool
   (match instr
+    [(IrInstrAlloc dst _)
+      (and
+        (not (opt-used-array-contains items dst))
+        (not
+          (or
+            (opt-array-prev-adjacent-alloc? slots index dst)
+            (opt-array-next-adjacent-alloc? slots count index dst))))]
     [(IrInstrMov dst _ _) (not (opt-used-array-contains items dst))]
     [(IrInstrBinOp dst op _ _ _)
       (and
@@ -1781,19 +1793,9 @@
         (begin
           (let
             [instr : CompilerIrInstr (array-ref slots index)]
-            (if (opt-instr-dead-array? items instr)
+            (if (opt-instr-dead-array? items slots count index instr)
               unit
-              (match instr
-                [(IrInstrAlloc dst _)
-                  (if (and
-                    (not (opt-used-array-contains items dst))
-                    (not
-                      (or
-                        (opt-array-prev-adjacent-alloc? slots index dst)
-                        (opt-array-next-adjacent-alloc? slots count index dst))))
-                    unit
-                    (set! out (compiler-ir-instr-cons instr out)))]
-                [_ (set! out (compiler-ir-instr-cons instr out))])))
+              (set! out (compiler-ir-instr-cons instr out))))
           (set! index (- index 1))))
       out)))
 

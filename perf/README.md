@@ -35,11 +35,18 @@ executables use `benchmark/typelisp/<name>` and the paired deterministic
 contain both `bench.tl` and `baseline.c`; unpaired benchmark directories are
 skipped only when no explicit benchmark filter or case list selected them.
 
+Benchmark binaries are built at **opt-level 2** so the TypeLisp-vs-C rows are a
+release-vs-release comparison (TypeLisp opt2 against `clang -O2`). Override with
+`TYPELISP_IR_BENCH_OPT_LEVEL`. This is independent of the `self_compile` metric,
+whose optimizer level is selected separately by `--opt-level` (default 1) and
+recorded in its row name (`self_compile/compile_cli_opt1`).
+
 The checker builds a fresh full CLI stage1 and stage2 under
 `target/instruction-count-check` and measures that fixed stage2 compiler. The
 default per-PR subset is `self_compile` plus paired rows for `arith_loop`,
 `array_sum`, `hashmap_churn`, `hashmap_grow`, `hashmap_insert`, `hashmap_get`,
-and `spmd_reduce`, each with one cachegrind run.
+`spmd_reduce`, `opt_quicksort`, `opt_crc32`, and `opt_bytecode_vm`, each with one
+cachegrind run.
 
 The heavy nightly workflow measures `spmd_map`, `spmd_mask`, `spmd_zip`,
 `spmd_short_tail`, and `string_scan` as benchmark-only cases with one

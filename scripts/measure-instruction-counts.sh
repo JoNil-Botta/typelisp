@@ -19,6 +19,10 @@ FILTER=${TYPELISP_IR_FILTER:-}
 CASES=${TYPELISP_IR_CASES:-}
 WORKDIR=${TYPELISP_IR_OUT:-target/instruction-counts}
 OPT_LEVEL=${TYPELISP_IR_OPT_LEVEL:-1}
+# Benchmark binaries are built at opt-level 2 so the TypeLisp/C comparison is
+# release-vs-release (clang -O2). This is independent of OPT_LEVEL, which only
+# selects the self-compile throughput metric's optimizer level.
+BENCH_OPT_LEVEL=${TYPELISP_IR_BENCH_OPT_LEVEL:-2}
 C_OPT=-O2
 MEASURE_BENCHMARKS=1
 MEASURE_SELF_COMPILE=1
@@ -33,6 +37,7 @@ Options:
   --cases LIST          Run exact comma-separated benchmark names
   --output DIR          Output root (default: target/instruction-counts)
   --opt-level N         Self-compile opt level 0, 1, or 2 (default: 1)
+                        (benchmark binaries always build at opt-level 2)
   --benchmarks-only     Measure benchmark binaries only
   --self-compile-only   Measure compiler self-compile only
   --skip-benchmarks     Do not measure benchmark binaries
@@ -45,7 +50,9 @@ Environment:
   TYPELISP_IR_FILTER    Default --filter
   TYPELISP_IR_CASES     Default --cases
   TYPELISP_IR_OUT       Default --output
-  TYPELISP_IR_OPT_LEVEL Default --opt-level
+  TYPELISP_IR_OPT_LEVEL Default --opt-level (self-compile only)
+  TYPELISP_IR_BENCH_OPT_LEVEL
+                        Benchmark binary opt level (default: 2)
 EOF
 }
 
@@ -371,9 +378,10 @@ build_typelisp_benchmark() {
     stdout="$WORKDIR/logs/$safe.build.stdout"
     stderr="$WORKDIR/logs/$safe.build.stderr"
 
-    echo "[ir-count] build benchmark/typelisp $name"
+    echo "[ir-count] build benchmark/typelisp $name (opt-level $BENCH_OPT_LEVEL)"
     if ! "$COMPILER" build "$bench_tl" -o "$bin" \
         --target "$NL_BOOTSTRAP_TARGET" \
+        --opt-level "$BENCH_OPT_LEVEL" \
         --stdlib-root stdlib \
         --stdlib-root src \
         >"$stdout" 2>"$stderr"; then

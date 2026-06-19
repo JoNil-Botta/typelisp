@@ -12534,7 +12534,7 @@
 ;; --- sparse conditional constant propagation (#1348) -----------------------
 ;;
 ;; SCCP v1 runs after the local scalar simplifier. It keeps a small scalar
-;; lattice for SSA vars and a growing set of executable blocks. Unknown values
+;; lattice for SSA vars and CFG-id-backed executable block flags. Unknown values
 ;; are not rewritten; overdefined values keep the original instruction; proven
 ;; constants rewrite value uses and scalar-producing instructions. The evaluator
 ;; deliberately reuses the local folding helpers above so divide/modulo/shift
@@ -12662,7 +12662,7 @@
               acc))])]))
 
 (defenum OptSccpState
-  (OptSccpState OptLabelSet OptSccpEnv bool))
+  (OptSccpState OptCfgIndex (Array bool) OptSccpEnv bool))
 
 (define (opt-sccp-value-eq [a : OptSccpValue] [b : OptSccpValue]) : bool
   (match a
@@ -12722,24 +12722,36 @@
   [var : i64]
   [value : OptSccpValue]) : OptSccpState
   (match state
-    [(OptSccpState executable env changed)
+    [(OptSccpState cfg-index executable env changed)
       (let
         [old : OptSccpValue (opt-sccp-env-lookup env var)]
         [merged : OptSccpValue (opt-sccp-join old value)]
         (if (opt-sccp-value-eq old merged)
           state
-          (OptSccpState executable (opt-sccp-env-set env var merged) true)))]))
+          (OptSccpState
+            cfg-index
+            executable
+            (opt-sccp-env-set env var merged)
+            true)))]))
 
 (define (opt-sccp-state-mark-executable [state : OptSccpState] [label : String]) : OptSccpState
   (match state
-    [(OptSccpState executable env changed)
-      (if (opt-label-contains executable label)
-        state
-        (OptSccpState (opt-label-add executable label) env true))]))
+    [(OptSccpState cfg-index executable env changed)
+      (match (opt-cfg-index-id cfg-index label)
+        [(OptSomeI64 id)
+          (if (and (>= id 0) (< id (array-length executable)))
+            (if (array-ref executable id)
+              state
+              (begin
+                (array-set! executable id true)
+                (OptSccpState cfg-index executable env true)))
+            state)]
+        [(OptNoI64) state])]))
 
 (define (opt-sccp-state-reset-changed [state : OptSccpState]) : OptSccpState
   (match state
-    [(OptSccpState executable env _) (OptSccpState executable env false)]))
+    [(OptSccpState cfg-index executable env _)
+      (OptSccpState cfg-index executable env false)]))
 
 (define (opt-sccp-immediate [value : CompilerIrValue] [ty : AstType]) : OptSccpValue
   (match (opt-normalize-const value (opt-default-immediate-type value ty))
@@ -12751,7 +12763,7 @@
   [value : CompilerIrValue]
   [ty : AstType]) : OptSccpValue
   (match state
-    [(OptSccpState _ env _)
+    [(OptSccpState _ _ env _)
       (match value
         [(IrValueVar id) (opt-sccp-env-lookup env id)]
         [_ (opt-sccp-immediate value ty)])]))
@@ -12807,10 +12819,16 @@
   [pred : String]
   [ty : AstType]) : OptSccpValue
   (match state
-    [(OptSccpState executable _ _)
-      (if (opt-label-contains executable pred)
-        (opt-sccp-value state value ty)
-        (OptSccpUnknown))]))
+    [(OptSccpState cfg-index executable _ _)
+      (match (opt-cfg-index-id cfg-index pred)
+        [(OptSomeI64 pred-id)
+          (if (and
+            (>= pred-id 0)
+            (< pred-id (array-length executable))
+            (array-ref executable pred-id))
+            (opt-sccp-value state value ty)
+            (OptSccpUnknown))]
+        [(OptNoI64) (OptSccpUnknown)])]))
 
 (define (opt-sccp-phi-value
   [state : OptSccpState]
@@ -12963,26 +12981,35 @@
 
 (define (opt-sccp-process-block
   [state : OptSccpState]
-  [block : CompilerIrBlock]) : OptSccpState
+  [block : CompilerIrBlock]
+  [block-id : i64]) : OptSccpState
   (match state
-    [(OptSccpState executable _ _)
+    [(OptSccpState _ executable _ _)
       (match block
-        [(IrBlock label instrs)
-          (if (opt-label-contains executable label)
+        [(IrBlock _ instrs)
+          (if (and
+            (>= block-id 0)
+            (< block-id (array-length executable))
+            (array-ref executable block-id))
             (opt-sccp-process-instr-seq state instrs)
             state)])]))
 
-(define (opt-sccp-process-blocks
+(define (opt-sccp-process-blocks-from
   [state : OptSccpState]
-  [blocks : CompilerIrBlockList]) : OptSccpState
+  [blocks : CompilerIrBlockList]
+  [block-id : i64]) : OptSccpState
   (match blocks
     [(IrBlockNil) state]
     [(IrBlockCons block rest)
-      (opt-sccp-process-blocks
-        (opt-sccp-process-block state block)
-        (box-get rest))]
+      (opt-sccp-process-blocks-from
+        (opt-sccp-process-block state block block-id)
+        (box-get rest)
+        (+ block-id 1))]
     [(IrBlockArray seq)
-      (opt-sccp-process-blocks state (compiler-ir-block-seq-to-list seq))]))
+      (opt-sccp-process-blocks-from
+        state
+        (compiler-ir-block-seq-to-list seq)
+        block-id)]))
 
 (define (opt-sccp-env-from-params
   [params : CompilerIrParamList]
@@ -12997,13 +13024,29 @@
             (opt-sccp-env-set env id (OptSccpOverdefined)))])]))
 
 (define (opt-sccp-initial-state
+  [context : OptCfgContext]
   [params : CompilerIrParamList]
   [blocks : CompilerIrBlockList]) : OptSccpState
   (let
     [max-var : i64
       (opt-sccp-max-var-params params (opt-sccp-max-var-blocks blocks (- 0 1)))]
+    [executable-count : i64
+      (opt-cfg-index-block-count (struct-get context index))]
+    [executable-flags : (Array bool) (make-array bool executable-count)]
+    [_clear-executable : unit
+      (opt-cfg-fill-bool! executable-flags executable-count false)]
+    [_entry : unit
+      (match (opt-cfg-index-id
+        (struct-get context index)
+        (struct-get context entry-label))
+        [(OptSomeI64 entry-id)
+          (if (and (>= entry-id 0) (< entry-id executable-count))
+            (array-set! executable-flags entry-id true)
+            unit)]
+        [(OptNoI64) unit])]
     (OptSccpState
-      (opt-label-add (OptLabelNil) (opt-cfg-entry-label blocks))
+      (struct-get context index)
+      executable-flags
       (opt-sccp-env-from-params params (opt-sccp-env-make (+ max-var 1)))
       true)))
 
@@ -13015,19 +13058,23 @@
     state
     (let
       [next : OptSccpState
-        (opt-sccp-process-blocks (opt-sccp-state-reset-changed state) blocks)]
+        (opt-sccp-process-blocks-from
+          (opt-sccp-state-reset-changed state)
+          blocks
+          0)]
       (match next
-        [(OptSccpState _ _ changed)
+        [(OptSccpState _ _ _ changed)
           (if changed
             (opt-sccp-analyze-fixed blocks next (- remaining 1))
             next)]))))
 
 (define (opt-sccp-analyze
+  [context : OptCfgContext]
   [params : CompilerIrParamList]
   [blocks : CompilerIrBlockList]) : OptSccpState
   (opt-sccp-analyze-fixed
     blocks
-    (opt-sccp-initial-state params blocks)
+    (opt-sccp-initial-state context params blocks)
     (+
       (+ (compiler-ir-block-list-count blocks) 8)
       (* 2 (compiler-ir-block-list-instruction-count blocks)))))
@@ -13406,16 +13453,18 @@
 (define (opt-sccp-blocks
   [params : CompilerIrParamList]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
-  (match (opt-sccp-analyze params blocks)
-    [(OptSccpState _ env _)
-      (opt-cfg-simplify-blocks (opt-sccp-rewrite-blocks env blocks))]))
+  (let
+    [context : OptCfgContext (opt-cfg-context-build blocks)]
+    (match (opt-sccp-analyze context params blocks)
+      [(OptSccpState _ _ env _)
+        (opt-cfg-simplify-blocks (opt-sccp-rewrite-blocks env blocks))])))
 
 (define (opt-sccp-blocks-with-context-result
   [context : OptCfgContext]
   [params : CompilerIrParamList]
   [blocks : CompilerIrBlockList]) : OptBlockCtxResult
-  (match (opt-sccp-analyze params blocks)
-    [(OptSccpState _ env _)
+  (match (opt-sccp-analyze context params blocks)
+    [(OptSccpState _ _ env _)
       (opt-cfg-simplify-blocks-with-context-result
         (OptBlockCtxResult
           (opt-sccp-rewrite-blocks env blocks)
@@ -28574,8 +28623,19 @@
       (opt-sccp-blocks (IrParamNil) (opt-sccp-cross-block-blocks))]
     [diamond : CompilerIrBlockList
       (opt-sccp-blocks (opt-sccp-cond-params) (opt-sccp-diamond-blocks))]
-    [branch : CompilerIrBlockList
-      (opt-sccp-blocks (IrParamNil) (opt-sccp-constant-branch-blocks))]
+    [branch-source : CompilerIrBlockList (opt-sccp-constant-branch-blocks)]
+    [branch : CompilerIrBlockList (opt-sccp-blocks (IrParamNil) branch-source)]
+    [branch-context-result : OptBlockCtxResult
+      (opt-sccp-blocks-with-context-result
+        (opt-cfg-context-build branch-source)
+        (IrParamNil)
+        branch-source)]
+    [branch-context : CompilerIrBlockList
+      (match branch-context-result
+        [(OptBlockCtxResult blocks _ _) blocks])]
+    [branch-context-valid : bool
+      (match branch-context-result
+        [(OptBlockCtxResult _ _ valid) valid])]
     [loop : CompilerIrBlockList
       (opt-sccp-blocks (opt-sccp-loop-params) (opt-sccp-loop-blocks))]
     [trap : CompilerIrBlockList
@@ -28601,6 +28661,9 @@
       [(not (= (opt-count-branches-blocks group) 1)) 16]
       [(not (opt-block-list-has-label? group "then")) 17]
       [(not (opt-block-list-has-label? group "else")) 18]
+      [(not (= (compiler-ir-block-list-count branch-context) 2)) 19]
+      [(not branch-context-valid) 20]
+      [(opt-block-list-has-label? branch-context "else") 21]
       [else 42])))
 
 (define (opt-cfg-constant-if-blocks) : CompilerIrBlockList

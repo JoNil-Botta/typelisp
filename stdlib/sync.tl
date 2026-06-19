@@ -977,3 +977,62 @@
     (array-ref src (+ offset 4))
     (array-ref src (+ offset 5))
     (array-ref src (+ offset 6))))
+
+;: Inline test failure helper.
+(define (sync-test-fail) : unit
+  (begin
+    (/ 1 0)
+    unit))
+
+;: Inline test boolean assertion.
+(define (sync-test-assert [ok : bool]) : unit
+  (if ok
+    unit
+    (sync-test-fail)))
+
+;: Inline test assertion for invalid `ChannelI64` creation.
+(define (sync-test-assert-channel-i64-create-err
+  [result : ChannelI64CreateResult]) : unit
+  (match result
+    [(ChannelI64CreateErr _) unit]
+    [(ChannelI64CreateOk channel)
+      (begin
+        (channel-i64-close channel)
+        (sync-test-fail))]))
+
+;: Inline test assertion for invalid `ChannelI64PairChannel` creation.
+(define (sync-test-assert-channel-i64-pair-create-err
+  [result : ChannelI64PairCreateResult]) : unit
+  (match result
+    [(ChannelI64PairCreateErr _) unit]
+    [(ChannelI64PairCreateOk channel)
+      (begin
+        (channel-i64-pair-close channel)
+        (sync-test-fail))]))
+
+;: Inline test assertion for invalid `ChannelString` creation.
+(define (sync-test-assert-channel-string-create-err
+  [result : ChannelStringCreateResult]) : unit
+  (match result
+    [(ChannelStringCreateErr _) unit]
+    [(ChannelStringCreateOk channel)
+      (begin
+        (channel-string-close channel)
+        (sync-test-fail))]))
+
+(test
+  sync-api
+  (begin
+    (sync-test-assert (= channel-i64-raw-field-count 7))
+    (sync-test-assert (= channel-i64-pair-raw-field-count 7))
+    (sync-test-assert (= channel-string-raw-field-count 7))
+    (sync-test-assert (= mutex-i64-raw-field-count 3))
+    (sync-test-assert-channel-i64-create-err (channel-i64-create 0))
+    (sync-test-assert-channel-i64-create-err
+      (channel-i64-create (+ channel-i64-max-capacity 1)))
+    (sync-test-assert-channel-i64-pair-create-err (channel-i64-pair-create 0))
+    (sync-test-assert-channel-i64-pair-create-err
+      (channel-i64-pair-create (+ channel-i64-max-capacity 1)))
+    (sync-test-assert-channel-string-create-err (channel-string-create 0))
+    (sync-test-assert-channel-string-create-err
+      (channel-string-create (+ channel-i64-max-capacity 1)))))

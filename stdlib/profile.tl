@@ -87,3 +87,42 @@
 ;: Reset the peak live byte counter to the current live byte count.
 (define (profile-alloc-reset-peak) : unit
   (tl_profile_alloc_reset_peak))
+
+;: Inline test failure helper.
+(define (profile-test-fail) : unit
+  (begin
+    (/ 1 0)
+    unit))
+
+;: Inline test boolean assertion.
+(define (profile-test-assert [ok : bool]) : unit
+  (if ok
+    unit
+    (profile-test-fail)))
+
+;: Allocate an array so allocation counters have observable work.
+(define (profile-test-allocation) : (Array i64)
+  (let
+    [items : (Array i64) (make-array i64 4)]
+    (begin
+      (array-set! items 0 12)
+      items)))
+
+(test
+  profile-api
+  (begin
+    (profile-test-assert (>= (profile-now-ms) 0))
+    (profile-alloc-reset-peak)
+    (let
+      [before-total : i64 (profile-alloc-total)]
+      [before-live : i64 (profile-alloc-live)]
+      [items : (Array i64) (profile-test-allocation)]
+      [after-total : i64 (profile-alloc-total)]
+      [after-live : i64 (profile-alloc-live)]
+      [peak : i64 (profile-alloc-peak)]
+      (begin
+        (profile-test-assert (= (array-length items) 4))
+        (profile-test-assert (= (array-ref items 0) 12))
+        (profile-test-assert (>= after-total before-total))
+        (profile-test-assert (>= after-live before-live))
+        (profile-test-assert (>= peak after-live))))))

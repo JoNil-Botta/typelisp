@@ -128,3 +128,64 @@
 ;: Return monotonic elapsed milliseconds. The epoch is platform-defined.
 (define (time-monotonic-ms) : ResultTimeMs
   (cfg windows (time-windows-monotonic-ms) (time-linux-clock-ms 1)))
+
+;: Inline test failure helper.
+(define (time-test-fail) : unit
+  (begin
+    (/ 1 0)
+    unit))
+
+;: Inline test boolean assertion.
+(define (time-test-assert [ok : bool]) : unit
+  (if ok
+    unit
+    (time-test-fail)))
+
+;: Inline test integer assertion.
+(define (time-test-assert-i64-eq [actual : i64] [expected : i64]) : unit
+  (time-test-assert (= actual expected)))
+
+;: Inline test owned string assertion.
+(define (time-test-assert-string-eq [actual : String] [expected : String]) : unit
+  (time-test-assert (string-eq actual expected)))
+
+;: Inline test assertion for error result shape.
+(define (time-test-assert-result-error-shape) : unit
+  (match (ErrTimeMs (TimeUnavailable "time unavailable"))
+    [(OkTimeMs _) (time-test-fail)]
+    [(ErrTimeMs err)
+      (time-test-assert-string-eq (time-error-message err) "time unavailable")]))
+
+;: Inline test assertion for wall-clock range.
+(define (time-test-assert-unix-range [result : ResultTimeMs]) : unit
+  (match result
+    [(OkTimeMs ms)
+      (begin
+        (time-test-assert (> ms 946684800000))
+        (time-test-assert (< ms 4102444800000)))]
+    [(ErrTimeMs _) (time-test-fail)]))
+
+;: Inline test assertion for monotonic timestamp shape.
+(define (time-test-assert-monotonic-nonnegative [result : ResultTimeMs]) : i64
+  (match result
+    [(OkTimeMs ms)
+      (begin
+        (time-test-assert (>= ms 0))
+        ms)]
+    [(ErrTimeMs _) 0]))
+
+(test
+  time-api
+  (begin
+    (time-test-assert-result-error-shape)
+    (time-test-assert-unix-range (time-unix-ms))
+    (let
+      [first : i64 (time-test-assert-monotonic-nonnegative (time-monotonic-ms))]
+      [second : i64
+        (time-test-assert-monotonic-nonnegative (time-monotonic-ms))]
+      (begin
+        (time-test-assert (>= second first))
+        (time-test-assert-i64-eq (time-ms-or (OkTimeMs 123) 0) 123)
+        (time-test-assert-i64-eq
+          (time-ms-or (ErrTimeMs (TimeUnavailable "x")) 7)
+          7)))))

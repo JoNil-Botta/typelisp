@@ -857,3 +857,162 @@
       (match (msvc-find-tool-configured tool)
         [(OkMsvcTool resolved) (OkMsvcTool resolved)]
         [(ErrMsvcTool _) (msvc-find-tool-auto tool)]))))
+
+;: Inline test failure helper.
+(define (msvc-test-fail) : unit
+  (begin
+    (/ 1 0)
+    unit))
+
+;: Inline test boolean assertion.
+(define (msvc-test-assert [ok : bool]) : unit
+  (if ok
+    unit
+    (msvc-test-fail)))
+
+;: Inline test integer assertion.
+(define (msvc-test-assert-i64-eq [actual : i64] [expected : i64]) : unit
+  (msvc-test-assert (= actual expected)))
+
+;: Inline test owned string assertion.
+(define (msvc-test-assert-string-eq [actual : String] [expected : String]) : unit
+  (msvc-test-assert (string-eq actual expected)))
+
+;: Inline test helper to unwrap `ResultIoString`.
+(define (msvc-test-expect-ok-string [result : ResultIoString]) : String
+  (match result
+    [(OkIoString value) value]
+    [(ErrIoString _) ""]))
+
+;: Inline test helper to assert `ResultIoUnit`.
+(define (msvc-test-assert-ok-unit [result : ResultIoUnit]) : unit
+  (match result
+    [(OkIoUnit) unit]
+    [(ErrIoUnit _) (msvc-test-fail)]))
+
+;: Inline test mkdir helper.
+(define (msvc-test-mkdir [path : String]) : unit
+  (msvc-test-assert-ok-unit (try-mkdir-if-missing (& path))))
+
+;: Inline test write-file helper.
+(define (msvc-test-write [path : String] [contents : String]) : unit
+  (msvc-test-assert-ok-unit (try-write-file (& path) (& contents))))
+
+;: Inline test helper to create a fake toolset bin directory.
+(define (msvc-test-mkdir-toolset-bin [toolset-root : String]) : String
+  (let
+    [bin-root : String (msvc-path-join toolset-root "bin")]
+    [host-root : String (msvc-path-join bin-root "Hostx64")]
+    [target-root : String (msvc-path-join host-root "x64")]
+    (begin
+      (msvc-test-mkdir bin-root)
+      (msvc-test-mkdir host-root)
+      (msvc-test-mkdir target-root)
+      target-root)))
+
+;: Inline test helper to create one fake MSVC toolset version.
+(define (msvc-test-make-toolset-version
+  [parent : String]
+  [version : String]
+  [with-tool : bool]) : String
+  (let
+    [toolset-root : String (msvc-path-join parent version)]
+    (begin
+      (msvc-test-mkdir toolset-root)
+      (let
+        [target-root : String (msvc-test-mkdir-toolset-bin toolset-root)]
+        (if with-tool
+          (msvc-test-write (msvc-path-join target-root "link.exe") "fake")
+          unit))
+      toolset-root)))
+
+;: Inline test assertion for fake toolset scanning.
+(define (msvc-test-assert-toolset-scan [parent : String]) : unit
+  (let
+    [old-root : String (msvc-test-make-toolset-version parent "14.10.0" true)]
+    [new-root : String (msvc-test-make-toolset-version parent "14.20.0" true)]
+    [_ignored-root : String
+      (msvc-test-make-toolset-version parent "14.99.0" false)]
+    (match (msvc-find-toolset-in-parent parent "link.exe")
+      [(MsvcSomeToolset toolset)
+        (begin
+          (msvc-test-assert-string-eq (struct-get toolset version) "14.20.0")
+          (msvc-test-assert-string-eq (struct-get toolset root) new-root)
+          (msvc-test-assert (not (string-eq old-root new-root))))]
+      [(MsvcNoToolset) (msvc-test-fail)])))
+
+;: Inline test helper to create fake SDK directory roots.
+(define (msvc-test-mkdir-sdk-version-roots
+  [sdk-root : String]
+  [version : String]) : unit
+  (let
+    [lib-root : String (msvc-path-join sdk-root "Lib")]
+    [include-root : String (msvc-path-join sdk-root "Include")]
+    [lib-version : String (msvc-path-join lib-root version)]
+    [include-version : String (msvc-path-join include-root version)]
+    [um-root : String (msvc-path-join lib-version "um")]
+    [ucrt-root : String (msvc-path-join lib-version "ucrt")]
+    (begin
+      (msvc-test-mkdir lib-root)
+      (msvc-test-mkdir include-root)
+      (msvc-test-mkdir lib-version)
+      (msvc-test-mkdir include-version)
+      (msvc-test-mkdir um-root)
+      (msvc-test-mkdir (msvc-path-join um-root "x64"))
+      (msvc-test-mkdir ucrt-root)
+      (msvc-test-mkdir (msvc-path-join ucrt-root "x64"))
+      (msvc-test-mkdir (msvc-path-join include-version "shared"))
+      (msvc-test-mkdir (msvc-path-join include-version "um"))
+      (msvc-test-mkdir (msvc-path-join include-version "ucrt")))))
+
+;: Inline test helper to create one fake SDK version.
+(define (msvc-test-make-sdk-version
+  [sdk-root : String]
+  [version : String]
+  [usable : bool]) : unit
+  (begin
+    (msvc-test-mkdir-sdk-version-roots sdk-root version)
+    (if usable
+      (let
+        [lib-version : String
+          (msvc-path-join (msvc-path-join sdk-root "Lib") version)]
+        (begin
+          (msvc-test-write
+            (msvc-path-join
+              (msvc-path-join lib-version "um/x64")
+              "kernel32.lib")
+            "kernel32")
+          (msvc-test-write
+            (msvc-path-join (msvc-path-join lib-version "ucrt/x64") "ucrt.lib")
+            "ucrt")))
+      unit)))
+
+;: Inline test assertion for fake SDK scanning.
+(define (msvc-test-assert-sdk-scan [sdk-root : String]) : unit
+  (begin
+    (msvc-test-make-sdk-version sdk-root "10.0.1" true)
+    (msvc-test-make-sdk-version sdk-root "10.0.2" true)
+    (msvc-test-make-sdk-version sdk-root "10.0.9" false)
+    (match (msvc-find-sdk-in-root sdk-root)
+      [(MsvcSomeSdk sdk)
+        (begin
+          (msvc-test-assert-string-eq (struct-get sdk root) sdk-root)
+          (msvc-test-assert-string-eq (struct-get sdk version) "10.0.2"))]
+      [(MsvcNoSdk) (msvc-test-fail)])))
+
+(test
+  msvc-api
+  (let
+    [prefix : String "typelisp msvc vector scan"]
+    [root : String
+      (msvc-test-expect-ok-string (try-create-temp-dir (& prefix)))]
+    [toolset-parent : String (msvc-path-join root "ToolsMSVC")]
+    [sdk-root : String (msvc-path-join root "WindowsKits10")]
+    (begin
+      (msvc-test-mkdir toolset-parent)
+      (msvc-test-mkdir sdk-root)
+      (msvc-test-assert-i64-eq
+        (string-vec-len (msvc-toolset-parent-candidates))
+        8)
+      (msvc-test-assert-toolset-scan toolset-parent)
+      (msvc-test-assert-sdk-scan sdk-root))))

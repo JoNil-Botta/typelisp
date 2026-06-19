@@ -743,3 +743,46 @@
       (unsafe
         (syscall 3 (struct-get sem handle)))
       0)))
+
+;: Inline test failure helper.
+(define (thread-test-fail) : unit
+  (begin
+    (/ 1 0)
+    unit))
+
+;: Inline test boolean assertion.
+(define (thread-test-assert [ok : bool]) : unit
+  (if ok
+    unit
+    (thread-test-fail)))
+
+;: Inline test integer assertion.
+(define (thread-test-assert-i64-eq [actual : i64] [expected : i64]) : unit
+  (thread-test-assert (= actual expected)))
+
+;: Inline test assertion for semaphore validation failures.
+(define (thread-test-assert-semaphore-err [result : ThreadSemaphoreResult]) : unit
+  (match result
+    [(ThreadSemaphoreErr _) unit]
+    [(ThreadSemaphoreOk sem)
+      (begin
+        (thread-semaphore-close sem)
+        (thread-test-fail))]))
+
+(test
+  thread-api
+  (let
+    [mask : (Array u8) (make-array u8 4)]
+    (begin
+      (array-set! mask 0 (cast 0 : u8))
+      (array-set! mask 1 (cast 1 : u8))
+      (array-set! mask 2 (cast 3 : u8))
+      (array-set! mask 3 (cast 255 : u8))
+      (thread-test-assert (>= (thread-default-worker-count) 1))
+      (thread-test-assert-i64-eq (thread-count-byte-bits 0) 0)
+      (thread-test-assert-i64-eq (thread-count-byte-bits 1) 1)
+      (thread-test-assert-i64-eq (thread-count-byte-bits 3) 2)
+      (thread-test-assert-i64-eq (thread-count-byte-bits 255) 8)
+      (thread-test-assert-i64-eq (thread-count-affinity-bytes mask) 11)
+      (thread-test-assert-semaphore-err (thread-semaphore-create -1))
+      (thread-test-assert-semaphore-err (thread-semaphore-create 2147483648)))))

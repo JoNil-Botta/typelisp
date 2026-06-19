@@ -1284,9 +1284,9 @@
         (lex-token-sym-eq? toks 8 "i32")
         (lex-token-sym-eq? toks 11 ":link")
         (lex-token-sym-eq? toks 15 ":unknown")
-        (lex-token-sym-eq? toks 21 "pkg:math.core")
-        (lex-token-sym-eq? toks 22 ":as")
-        (= (token-tag (array-ref toks 25)) (tag-end)))]
+        (lex-token-sym-eq? toks 20 "pkg:math.core")
+        (lex-token-sym-eq? toks 21 ":as")
+        (= (token-tag (array-ref toks 24)) (tag-end)))]
     [(ErrTokens _) false]))
 
 (define (lex-spanned-token-sym-eq?

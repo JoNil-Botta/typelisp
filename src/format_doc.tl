@@ -138,17 +138,6 @@
 (define (doc-seq-from-two [left : Doc] [right : Doc]) : DocSeq
   (doc-seq-push (doc-seq-push (doc-seq-new) left) right))
 
-(define (doc-seq-append-seq [seq : DocSeq] [items : DocSeq]) : DocSeq
-  (let
-    [i : i64 0]
-    [out : DocSeq seq]
-    (begin
-      (while (< i (doc-seq-len items))
-        (begin
-          (set! out (doc-seq-push out (doc-seq-ref items i)))
-          (set! i (+ i 1))))
-      out)))
-
 (define (doc-seq-prepend-doc [doc : Doc] [seq : DocSeq]) : DocSeq
   (doc-seq-prepend seq doc))
 
@@ -158,7 +147,15 @@
     [(DSeq left-seq)
       (match right
         [(DEmpty) left]
-        [(DSeq right-seq) (DSeq (doc-seq-append-seq left-seq right-seq))]
+        ;; Concatenating two built-up sequences by pushing every element of
+        ;; `right` onto `left` copies all of `right`. The formatter assembles
+        ;; list/body docs by folding `doc-append` right-to-left, so a line-form
+        ;; item (itself a `DSeq`) appended to the growing tail (also a `DSeq`)
+        ;; re-copied the whole remaining tail at each step -- O(n^2) work and
+        ;; allocation over a form's length. `DConcat` records the join in O(1);
+        ;; the renderer and `flat-width` already walk `DConcat` and produce
+        ;; byte-identical output.
+        [(DSeq _) (DConcat (box left) (box right))]
         [_ (DSeq (doc-seq-push left-seq right))])]
     [_
       (match right

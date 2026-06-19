@@ -3495,10 +3495,11 @@ AVX-512 backend paths for a first contiguous map/zip subset. `spmd-reduce` is
 also implemented: scalar lowering covers the supported operator/type surface
 below, and SIMD backend modes vectorize eligible contiguous array folds.
 `spmd-scan` is implemented as scalar reference lowering for range-wide
-inclusive scans. The v2 masked varying `if` contract and public lane identity
-forms are specified here before compiler implementation; until those
-implementations land, the current checker still rejects varying control-flow
-conditions inside `foreach` and rejects `(program-index)`/`(program-count)`.
+inclusive scans. Public lane identity forms are implemented for `foreach`
+bodies and `spmd-reduce` value expressions. The v2 masked varying `if` contract
+is specified here before compiler implementation; until that implementation
+lands, the current checker still rejects varying control-flow conditions inside
+`foreach`.
 
 SPMD is data parallelism inside one task. It does not create independently
 scheduled OS threads, does not transfer ownership between thread-local arenas,
@@ -3591,8 +3592,8 @@ Uniform and varying rules:
 Lane identity forms:
 
 - The public source names are the no-argument forms `(program-index)` and
-  `(program-count)`. They are reserved until the compiler implementation lands,
-  but this section fixes their source semantics.
+  `(program-count)`. They are deliberately not general variables or first-class
+  functions.
 - Both forms are valid only in SPMD scope: inside a `foreach` body or inside the
   `value` expression of `spmd-reduce`. They are invalid in ordinary expression
   contexts outside SPMD, in `foreach` start/end expressions, in `spmd-reduce`
@@ -3622,7 +3623,7 @@ Lane identity forms:
   backend-mode-observable, so the reduced result may differ between scalar and
   SIMD backend modes.
 
-```lisp test=ignore name=spmd-program-index-foreach reason="future lane identity implementation"
+```lisp test=check name=spmd-program-index-foreach
 (define (write-lane-ids [idxs : (Array i64)]
                         [counts : (Array i64)]
                         [n : i64]) : unit
@@ -3637,19 +3638,19 @@ In scalar backend modes, `write-lane-ids` stores `0` in every `idxs` element and
 full gang stores indexes `0` through `W - 1` and count `W`; a non-divisible tail
 stores only the active prefix of those lane indexes.
 
-```lisp test=ignore name=spmd-program-index-empty-range reason="future lane identity implementation"
+```lisp test=check name=spmd-program-index-empty-range
 (define (empty-lane-ids [out : (Array i64)]) : unit
   (foreach ([i : i64 0 0])
     (array-set! out i (+ (program-index) (program-count)))))
 ```
 
-```lisp test=ignore name=spmd-program-index-tail reason="future lane identity implementation"
+```lisp test=check name=spmd-program-index-tail
 (define (write-tail-lane-ids [out : (Array i64)]) : unit
   (foreach ([i : i64 0 13])
     (array-set! out i (+ (* (program-count) 100) (program-index)))))
 ```
 
-```lisp test=ignore name=spmd-program-index-reduce reason="future lane identity implementation"
+```lisp test=check name=spmd-program-index-reduce
 (define (sum-lane-slots [n : i64]) : i64
   (spmd-reduce sum ([i : i64 0 n]) 0 (program-index)))
 ```
@@ -3994,8 +3995,6 @@ Rules:
 
 Unsupported in the current SPMD implementation:
 
-- Parser/typechecker/lowerer/backend support for `(program-index)` and
-  `(program-count)`.
 - Public vector types and public mask types.
 - Non-atomic scatter writes, vector lowering for general gather reads, and
   general non-contiguous memory operations beyond scalar gather-only reads.
@@ -4062,7 +4061,7 @@ Negative examples for later parser/typechecker tests:
       (array-set! out i (f (array-ref xs i))))))
 ```
 
-```lisp test=ignore name=spmd-reject-program-index-outside-scope reason="future lane identity negative example"
+```lisp test=check-fail name=spmd-reject-program-index-outside-scope
 (define (bad-lane-id) : i64
   (program-index))
 ```
@@ -5688,8 +5687,8 @@ not the future safe reference/borrow model (#182), not a replacement for
 | `(with ...)` scoped non-memory resource cleanup | Implemented (#907): parser/typechecker/lowering with LIFO cleanup order |
 | `(in-arena ...)` first-class arena target | Implemented (#2625): safe dynamic active-arena switch with restoration on normal and early exits, no mark/rewind/destroy/clone |
 | Cleanup-owning aggregate declarations | Implemented for structs (#907); cleanup-owning enums remain reserved |
-| SPMD / SIMD `foreach`, `spmd-reduce`, and `spmd-scan` | Scalar reference lowering implemented; AVX2/AVX-512 support a first contiguous `foreach` map/zip subset over `i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `i64`, `u64`, `f32`, and `f64`; AVX-512 also supports bool dynamic-array copies and bool-valued map results through private mask conversion; scalar gather-only dynamic-array reads are implemented with ordinary bounds checks while explicit SIMD modes reject non-contiguous gather shapes; eligible `spmd-reduce` folds, scalar inclusive `spmd-scan`, and direct array-value `spmd-broadcast` maps are implemented; explicit `stdlib/atomic.tl` i32/i64 element helpers provide the first overlap-tolerant SPMD scatter write surface; masked varying `if` remains in flight (#2131/#2207) |
-| Public cross-lane/source SPMD gaps beyond implemented `spmd-reduce`/`spmd-scan`/`spmd-broadcast` and explicit atomic helpers | Public lane identities, vectorized/floating-point scans, general shuffles, remaining masked/control-flow forms, and out-of-line varying calls remain deferred; public vector/mask/varying source type deferral is pinned (#2903), with live work split across #2761, #2207/#2767, #2852, and #2884 |
+| SPMD / SIMD `foreach`, `spmd-reduce`, and `spmd-scan` | Scalar reference lowering implemented; AVX2/AVX-512 support a first contiguous `foreach` map/zip subset over `i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `i64`, `u64`, `f32`, and `f64`, including public `(program-index)`/`(program-count)` lane identity forms for map values; AVX-512 also supports bool dynamic-array copies and bool-valued map results through private mask conversion; scalar gather-only dynamic-array reads are implemented with ordinary bounds checks while explicit SIMD modes reject non-contiguous gather shapes; eligible `spmd-reduce` folds, scalar inclusive `spmd-scan`, and direct array-value `spmd-broadcast` maps are implemented; explicit `stdlib/atomic.tl` i32/i64 element helpers provide the first overlap-tolerant SPMD scatter write surface; masked varying `if` remains in flight (#2131/#2207) |
+| Public cross-lane/source SPMD gaps beyond implemented `spmd-reduce`/`spmd-scan`/`spmd-broadcast`, lane identities, and explicit atomic helpers | Vectorized/floating-point scans, general shuffles, remaining masked/control-flow forms, and out-of-line varying calls remain deferred; public vector/mask/varying source type deferral is pinned (#2903), with live work split across #2207/#2767, #2852, and #2884 |
 | Runtime SIMD dispatch (`defdispatch`) | Implemented for scalar/AVX2/AVX-512 variants with cached runtime selection and end-to-end selection verification |
 | Windows region helpers | Implemented for `tl_region_mark`/`tl_region_reset` and `with-arena` scoped reclamation |
 | Complete source locations for all semantic errors | Partial |

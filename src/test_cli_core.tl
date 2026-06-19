@@ -1276,6 +1276,8 @@
         [inner : AstExpr (ast-node-get inner-box)]
         (tltest-reach-mark-expr inner names))]
     [(AstExprBinaryData _) names]
+    [(AstExprSpmdProgramIndex) names]
+    [(AstExprSpmdProgramCount) names]
     [(AstExprProgramArgc) names]
     [(AstExprProgramArgv) names]
     [(AstExprProgramEnvp) names]

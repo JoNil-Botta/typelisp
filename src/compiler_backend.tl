@@ -1553,6 +1553,14 @@
     [(AstTyU64) (= lanes 8)]
     [_ false]))
 
+(define (compiler-backend-lane-id-avx2-i64-shape-ok?
+  [elem-ty : AstType]
+  [lanes : i64]) : bool
+  (match elem-ty
+    [(AstTyI64) (= lanes 4)]
+    [(AstTyU64) (= lanes 4)]
+    [_ false]))
+
 (define (compiler-backend-avx512-i64-lane-id-data) : String
   "    .quad 0
     .quad 1
@@ -1562,6 +1570,13 @@
     .quad 5
     .quad 6
     .quad 7
+")
+
+(define (compiler-backend-avx2-i64-lane-id-data) : String
+  "    .quad 0
+    .quad 1
+    .quad 2
+    .quad 3
 ")
 
 (define (compiler-backend-emit-vector-lane-id
@@ -1591,7 +1606,38 @@
       [(ErrBackendReg message)
         (ErrCompilerBackend
           (compiler-diagnostic-with-message instr-diag message))])
-    (compiler-backend-avx512-shape-diagnostic instr-diag elem-ty lanes)))
+    (if (compiler-backend-lane-id-avx2-i64-shape-ok? elem-ty lanes)
+      (match (compiler-backend-vector-var-reg
+        assignments
+        dst
+        "lane id dst"
+        "ymm")
+        [(OkBackendReg dst-reg)
+          (let
+            [data-label : String
+              (compiler-backend-lane-id-label
+                function
+                current-label
+                dst
+                "_data")]
+            [done-label : String
+              (compiler-backend-lane-id-label
+                function
+                current-label
+                dst
+                "_done")]
+            (OkCompilerBackend
+              (string-append
+                (str-cat "    jmp " done-label "\n" data-label ":\n")
+                (string-append
+                  (compiler-backend-avx2-i64-lane-id-data)
+                  (string-append
+                    (str-cat done-label ":\n    vmovdqu " data-label "(%rip), ")
+                    (str-cat dst-reg "\n"))))))]
+        [(ErrBackendReg message)
+          (ErrCompilerBackend
+            (compiler-diagnostic-with-message instr-diag message))])
+      (compiler-backend-avx512-shape-diagnostic instr-diag elem-ty lanes))))
 
 (define (compiler-backend-emit-avx512-vector-load
   [assignments : CompilerRegAssignmentList]

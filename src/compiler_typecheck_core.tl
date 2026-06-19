@@ -6442,6 +6442,11 @@
 (define (tc-spmd-broadcast-scope-message) : String
   "typecheck: spmd-broadcast is only valid inside a foreach body, spmd-reduce value expression, or spmd-scan body")
 
+(define (tc-spmd-lane-scope-message [name : String]) : String
+  (string-append
+    (string-append "typecheck: " name)
+    " is only valid inside a foreach body or spmd-reduce value expression"))
+
 (define (tc-source-expr-list-spmd-broadcast-scope-ok
   [exprs : AstExprList]
   [allow : bool]) : ResultTcUnit
@@ -6697,6 +6702,14 @@
           [lane : AstExpr (ast-node-get lane-box)]
           (tc-source-expr-pair-spmd-broadcast-scope-ok value lane true))
         (ErrTcUnit (tc-spmd-broadcast-scope-message)))]
+    [(AstExprSpmdProgramIndex)
+      (if allow
+        OkTcUnit
+        (ErrTcUnit (tc-spmd-lane-scope-message "program-index")))]
+    [(AstExprSpmdProgramCount)
+      (if allow
+        OkTcUnit
+        (ErrTcUnit (tc-spmd-lane-scope-message "program-count")))]
     [(AstExprStructGet receiver-box _)
       (let
         [receiver : AstExpr (ast-node-get receiver-box)]
@@ -7157,6 +7170,8 @@
         [array : AstExpr (ast-node-get array-box)]
         (tc-source-expr-policy-ok ctx array))]
     [(AstExprBinaryData _) OkTcUnit]
+    [(AstExprSpmdProgramIndex) OkTcUnit]
+    [(AstExprSpmdProgramCount) OkTcUnit]
     [(AstExprProgramArgc) OkTcUnit]
     [(AstExprProgramArgv) OkTcUnit]
     [(AstExprProgramEnvp) OkTcUnit]
@@ -13470,6 +13485,8 @@
         [array : AstExpr (ast-node-get array-box)]
         (tc-ref-closure-local-uses-ok? array name bound))]
     [(AstExprBinaryData _) true]
+    [(AstExprSpmdProgramIndex) true]
+    [(AstExprSpmdProgramCount) true]
     [(AstExprCpuIdEax leaf-box subleaf-box)
       (let
         [leaf : AstExpr (ast-node-get leaf-box)]
@@ -14744,6 +14761,8 @@
       (tc-spmd-masked-if-unsupported "nested spmd-scan inside masked branches")]
     [(AstExprSpmdBroadcast _ _)
       (tc-spmd-masked-if-unsupported "spmd-broadcast inside masked branches")]
+    [(AstExprSpmdProgramIndex) OkTcUnit]
+    [(AstExprSpmdProgramCount) OkTcUnit]
     [(AstExprSet _ _)
       (tc-spmd-masked-if-unsupported
         "side effects other than contiguous array writes inside masked branches")]
@@ -15137,6 +15156,12 @@
       (tc-spmd-scan-body-no-nested-pair
         (ast-node-get value-box)
         (ast-node-get lane-box))]
+    [(AstExprSpmdProgramIndex)
+      (ErrTcUnit
+        "typecheck: program-index is not supported inside spmd-scan body")]
+    [(AstExprSpmdProgramCount)
+      (ErrTcUnit
+        "typecheck: program-count is not supported inside spmd-scan body")]
     [(AstExprStructGet receiver-box _)
       (tc-spmd-scan-body-no-nested-spmd (ast-node-get receiver-box))]
     [(AstExprStructSet receiver-box _ value-box)
@@ -15352,6 +15377,10 @@
         (tc-spmd-reduce-class ctx env spmd-env inner))]
     [(AstExprLiteral _)
       (tc-spmd-reduce-class-finish ctx env spmd-env expr TcSpmdUniform)]
+    [(AstExprSpmdProgramIndex)
+      (tc-spmd-reduce-class-finish ctx env spmd-env expr TcSpmdVarying)]
+    [(AstExprSpmdProgramCount)
+      (tc-spmd-reduce-class-finish ctx env spmd-env expr TcSpmdUniform)]
     [(AstExprVar name)
       (let
         [name-text : String (intern-str name)]
@@ -15562,6 +15591,8 @@
         [inner : AstExpr (ast-node-get inner-box)]
         (tc-spmd-expr-typed ctx env spmd-env inner expr-ty))]
     [(AstExprLiteral _) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)]
+    [(AstExprSpmdProgramIndex) (tc-spmd-finish expr-ty TcSpmdVarying spmd-env)]
+    [(AstExprSpmdProgramCount) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)]
     [(AstExprVar name)
       (let
         [name-text : String (intern-str name)]
@@ -16821,6 +16852,8 @@
         [array : AstExpr (ast-node-get array-box)]
         (tc-expr-uses-free-name? array name bound))]
     [(AstExprBinaryData _) false]
+    [(AstExprSpmdProgramIndex) false]
+    [(AstExprSpmdProgramCount) false]
     [(AstExprProgramArgc) false]
     [(AstExprProgramArgv) false]
     [(AstExprProgramEnvp) false]
@@ -17275,6 +17308,8 @@
         [array : AstExpr (ast-node-get array-box)]
         (tc-expr-sets-free-name? array name bound))]
     [(AstExprBinaryData _) false]
+    [(AstExprSpmdProgramIndex) false]
+    [(AstExprSpmdProgramCount) false]
     [(AstExprProgramArgc) false]
     [(AstExprProgramArgv) false]
     [(AstExprProgramEnvp) false]
@@ -21383,6 +21418,8 @@
         [inner : AstExpr (ast-node-get inner-box)]
         (tc-spmd-value-pure-at inner in-index))]
     [(AstExprLiteral _) OkTcUnit]
+    [(AstExprSpmdProgramIndex) OkTcUnit]
+    [(AstExprSpmdProgramCount) OkTcUnit]
     [(AstExprVar _) OkTcUnit]
     [(AstExprBinary _ left-box right-box)
       (let
@@ -23290,6 +23327,8 @@
                   [(ErrTcType message) (ErrTcType message)])]
               [(ErrTcUnit message) (ErrTcType message)])]
           [(ErrTcType message) (ErrTcType message)]))]
+    [(AstExprSpmdProgramIndex) (OkTcType (AstTyI64))]
+    [(AstExprSpmdProgramCount) (OkTcType (AstTyI64))]
     [(AstExprMatch match-box)
       (match (box-get match-box)
         [(AstMatch scrutinee-box arms)
@@ -24629,6 +24668,8 @@
         "unsafe FFI bridge"
         array)]
     [(AstExprBinaryData _) OkTcUnit]
+    [(AstExprSpmdProgramIndex) OkTcUnit]
+    [(AstExprSpmdProgramCount) OkTcUnit]
     [(AstExprProgramArgc)
       (tc-comptime-purity-reject-or-template-ok
         expr
@@ -27157,6 +27198,8 @@
         [inner : AstExpr (ast-node-get inner-box)]
         (tc-move-check-expr ctx env locals loop-carried moved inner))]
     [(AstExprBinaryData _) (OkTcMove moved)]
+    [(AstExprSpmdProgramIndex) (OkTcMove moved)]
+    [(AstExprSpmdProgramCount) (OkTcMove moved)]
     [(AstExprProgramArgc) (OkTcMove moved)]
     [(AstExprProgramArgv) (OkTcMove moved)]
     [(AstExprProgramEnvp) (OkTcMove moved)]
@@ -28943,6 +28986,8 @@
         [inner : AstExpr (ast-node-get inner-box)]
         (tc-borrow-check-expr ctx env locals borrowed inner))]
     [(AstExprBinaryData _) (OkTcBorrowCheck borrowed)]
+    [(AstExprSpmdProgramIndex) (OkTcBorrowCheck borrowed)]
+    [(AstExprSpmdProgramCount) (OkTcBorrowCheck borrowed)]
     [(AstExprProgramArgc) (OkTcBorrowCheck borrowed)]
     [(AstExprProgramArgv) (OkTcBorrowCheck borrowed)]
     [(AstExprProgramEnvp) (OkTcBorrowCheck borrowed)]
@@ -30732,6 +30777,8 @@
         [inner : AstExpr (ast-node-get inner-box)]
         (ast-expr-array-data (macro-hygiene-expr inner env macro-name depth)))]
     [(AstExprBinaryData bytes) (ast-node-push (AstExprBinaryData bytes))]
+    [(AstExprSpmdProgramIndex) (ast-expr-spmd-program-index)]
+    [(AstExprSpmdProgramCount) (ast-expr-spmd-program-count)]
     [(AstExprCpuIdEax leaf-box subleaf-box)
       (let
         [leaf : AstExpr (ast-node-get leaf-box)]
@@ -32253,6 +32300,8 @@
             [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
       [(AstExprBinaryData bytes)
         (OkMacroExpr (ast-node-push (AstExprBinaryData bytes)))]
+      [(AstExprSpmdProgramIndex) (OkMacroExpr (ast-expr-spmd-program-index))]
+      [(AstExprSpmdProgramCount) (OkMacroExpr (ast-expr-spmd-program-count))]
       [(AstExprCpuIdEax leaf-box subleaf-box)
         (let
           [leaf : AstExpr (ast-node-get leaf-box)]
@@ -33289,6 +33338,8 @@
         (macro-node-uses-macro? ctx decls b))]
     [(AstExprArrayData i) (macro-node-uses-macro? ctx decls i)]
     [(AstExprBinaryData _) false]
+    [(AstExprSpmdProgramIndex) false]
+    [(AstExprSpmdProgramCount) false]
     [(AstExprCpuIdEax a b)
       (or
         (macro-node-uses-macro? ctx decls a)
@@ -33311,6 +33362,8 @@
     [(AstExprInit _) false]
     [(AstExprPtrNull _) false]
     [(AstExprPtrAddrOf _) false]
+    [(AstExprSpmdProgramIndex) false]
+    [(AstExprSpmdProgramCount) false]
     [(AstExprProgramArgc) false]
     [(AstExprProgramArgv) false]
     [(AstExprProgramEnvp) false]
@@ -33478,6 +33531,8 @@
       (or (ctfe-node-has-type-literal? a) (ctfe-node-has-type-literal? b))]
     [(AstExprArrayData i) (ctfe-node-has-type-literal? i)]
     [(AstExprBinaryData _) false]
+    [(AstExprSpmdProgramIndex) false]
+    [(AstExprSpmdProgramCount) false]
     [(AstExprCpuIdEax a b)
       (or (ctfe-node-has-type-literal? a) (ctfe-node-has-type-literal? b))]
     [(AstExprCpuIdEbx a b)

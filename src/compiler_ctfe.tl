@@ -758,6 +758,8 @@
     [(AstExprSpmdReduce _) "spmd-reduce"]
     [(AstExprSpmdScan _) "spmd-scan"]
     [(AstExprSpmdBroadcast _ _) "spmd-broadcast"]
+    [(AstExprSpmdProgramIndex) "program-index"]
+    [(AstExprSpmdProgramCount) "program-count"]
     [(AstExprStructGet _ _) "struct-get"]
     [(AstExprStructSet _ _ _) "set!"]
     [(AstExprWithRegion _ _) "with-arena"]
@@ -791,6 +793,8 @@
     [(AstExprStringFromBytes _ _) "string-from-bytes"]
     [(AstExprArrayData _) "array-data"]
     [(AstExprBinaryData _) "binary-data"]
+    [(AstExprSpmdProgramIndex) "program-index"]
+    [(AstExprSpmdProgramCount) "program-count"]
     [(AstExprProgramArgc) "program-argc"]
     [(AstExprProgramArgv) "program-argv"]
     [(AstExprProgramEnvp) "program-envp"]
@@ -4879,6 +4883,10 @@
                   lane-fuel)]
               [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
           [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+    [(AstExprSpmdProgramIndex)
+      (OkCtfeQuoteExpr (ast-expr-spmd-program-index) (AstTyExpr) fuel)]
+    [(AstExprSpmdProgramCount)
+      (OkCtfeQuoteExpr (ast-expr-spmd-program-count) (AstTyExpr) fuel)]
     [(AstExprStructGet inner-box field)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
@@ -5986,6 +5994,14 @@
               [b-lane : AstExpr (ast-node-get b-lane-box)]
               (and (ctfe-expr-eq a-value b-value) (ctfe-expr-eq a-lane b-lane)))]
           [_ false]))]
+    [(AstExprSpmdProgramIndex)
+      (match b
+        [(AstExprSpmdProgramIndex) true]
+        [_ false])]
+    [(AstExprSpmdProgramCount)
+      (match b
+        [(AstExprSpmdProgramCount) true]
+        [_ false])]
     [(AstExprStructGet a-inner-box a-field)
       (let
         [a-inner : AstExpr (ast-node-get a-inner-box)]

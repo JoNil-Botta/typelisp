@@ -1715,7 +1715,7 @@
 ;; typed prefix, so the full candidate set is returned.
 ;; --------------------------------------------------------------------------
 (define (lsp-completion-keywords) : String
-  "define lambda let if begin while set! return match foreach cond when unless and or with-arena with-escape with-scratch try unsafe quote quasiquote unquote ann init cast type defstruct defenum defmacro defdispatch import export extern module comptime comptime-decl comptime-decls include-str include-bin test spmd-reduce spmd-broadcast")
+  "define lambda let if begin while set! return match foreach cond when unless and or with-arena with-escape with-scratch try unsafe quote quasiquote unquote ann init cast type defstruct defenum defmacro defdispatch import export extern module comptime comptime-decl comptime-decls include-str include-bin test spmd-reduce spmd-scan spmd-broadcast program-index program-count")
 
 (define (lsp-completion-builtins) : String
   "ptr-null ptr-read ptr-write! ptr-offset ptr-cast ptr->int int->ptr ptr-null? ptr-addr-of make-array array-ref array-set! array-push! array-data tuple-ref struct-get string-data string-from-bytes program-argc program-argv program-envp cpuid-eax cpuid-ebx cpuid-ecx cpuid-edx xgetbv syscall box box-get array tuple")

@@ -5032,8 +5032,17 @@
   (intern-name-first-dot name))
 
 (define (tc-source-slash-qualified? [name : String]) : bool
+  (tc-source-slash-qualified-id? name (tc-name-id name)))
+
+;; Variant taking the already-interned `name-id` so the hot name-resolution
+;; path interns each name once and reads the slash position from the id-keyed
+;; metadata instead of re-hashing the string. The hygiene checks stay on the
+;; string (cheap prefix tests, no interning). `intern-name-last-slash name`
+;; is exactly `intern-qualified-last-slash (intern name)`, so this is
+;; semantics-preserving.
+(define (tc-source-slash-qualified-id? [name : String] [name-id : i64]) : bool
   (let
-    [slash : i64 (intern-name-last-slash name)]
+    [slash : i64 (intern-qualified-last-slash name-id)]
     [n : i64 (string-length name)]
     (and
       (not (tc-hygiene-local-name? name))
@@ -5144,10 +5153,23 @@
   [env : TcTypeEnv]
   [name : String]
   [first-dot : i64]) : bool
+  (tc-source-leading-segment-wins-over-exact-from-id?
+    env
+    name
+    (tc-name-id name)
+    first-dot))
+
+;; Variant taking the already-interned `name-id` to avoid re-hashing `name` on
+;; the hot resolution path. The prefix is still interned via the cached
+;; `intern-slice`.
+(define (tc-source-leading-segment-wins-over-exact-from-id?
+  [env : TcTypeEnv]
+  [name : String]
+  [name-id : i64]
+  [first-dot : i64]) : bool
   (if (<= first-dot 0)
     false
     (let
-      [name-id : i64 (tc-name-id name)]
       [prefix-id : i64 (intern-slice name 0 first-dot)]
       (tc-source-leading-segment-wins-over-exact-id? env name-id prefix-id))))
 
@@ -5342,8 +5364,16 @@
     "; import the module or use a visible dotted module alias"))
 
 (define (tc-dotted-type-name-lookup-key [ctx : TcContext] [name : String]) : ResultTcString
+  (tc-dotted-type-name-lookup-key-from-id ctx name (tc-name-id name)))
+
+;; Variant taking the already-interned `name-id`; reads the first-dot position
+;; from id-keyed metadata instead of re-hashing `name`.
+(define (tc-dotted-type-name-lookup-key-from-id
+  [ctx : TcContext]
+  [name : String]
+  [name-id : i64]) : ResultTcString
   (let
-    [first-dot : i64 (tc-name-first-dot name)]
+    [first-dot : i64 (intern-first-dot name-id)]
     (if (< first-dot 0)
       (OkTcString name)
       (match (tc-source-dotted-alias-key ctx name first-dot)
@@ -5355,9 +5385,11 @@
               (ErrTcString (tc-unresolved-dotted-name-message name))])]))))
 
 (define (tc-source-type-name-lookup-key [ctx : TcContext] [name : String]) : ResultTcString
-  (if (tc-source-slash-qualified? name)
-    (ErrTcString (tc-source-slash-qualified-message name))
-    (tc-dotted-type-name-lookup-key ctx name)))
+  (let
+    [name-id : i64 (tc-name-id name)]
+    (if (tc-source-slash-qualified-id? name name-id)
+      (ErrTcString (tc-source-slash-qualified-message name))
+      (tc-dotted-type-name-lookup-key-from-id ctx name name-id))))
 
 (define (tc-enum-qualified-variant-lookup-name? [name : String]) : bool
   (>= (tc-name-first-dot (tc-qualified-name-base name)) 0))
@@ -5385,28 +5417,38 @@
   [env : TcTypeEnv]
   [name : String]
   [check-local-field : bool]) : ResultTcString
-  (if (tc-source-slash-qualified? name)
-    (ErrTcString (tc-source-slash-qualified-message name))
-    (let
-      [first-dot : i64 (tc-name-first-dot name)]
-      (if (< first-dot 0)
-        (OkTcString name)
-        (if (and
-          check-local-field
-          (tc-source-leading-segment-wins-over-exact? env name first-dot))
+  ;; Intern `name` once; every metadata query below reads the id-keyed slots
+  ;; instead of re-hashing the string. This is the hottest name-resolution
+  ;; function, previously hashing each name 3-4x (slash-qualified?, first-dot,
+  ;; leading-segment, bound-exact?).
+  (let
+    [name-id : i64 (tc-name-id name)]
+    (if (tc-source-slash-qualified-id? name name-id)
+      (ErrTcString (tc-source-slash-qualified-message name))
+      (let
+        [first-dot : i64 (intern-first-dot name-id)]
+        (if (< first-dot 0)
           (OkTcString name)
-          (match (tc-source-dotted-alias-key ctx name first-dot)
-            [(TcSomeString key) (OkTcString key)]
-            [(TcNoString)
-              (match (tc-source-dotted-full-path-key ctx name)
-                [(TcSomeString key) (OkTcString key)]
-                [(TcNoString)
-                  (if (tc-source-name-bound-exact? env name)
-                    (OkTcString name)
-                    (match (tc-enum-qualified-variant-lookup-key ctx name)
-                      [(OkTcString key) (OkTcString key)]
-                      [(ErrTcString _)
-                        (ErrTcString (tc-unresolved-dotted-name-message name))]))])]))))))
+          (if (and
+            check-local-field
+            (tc-source-leading-segment-wins-over-exact-from-id?
+              env
+              name
+              name-id
+              first-dot))
+            (OkTcString name)
+            (match (tc-source-dotted-alias-key ctx name first-dot)
+              [(TcSomeString key) (OkTcString key)]
+              [(TcNoString)
+                (match (tc-source-dotted-full-path-key ctx name)
+                  [(TcSomeString key) (OkTcString key)]
+                  [(TcNoString)
+                    (if (tc-source-name-bound-exact-id? env name-id)
+                      (OkTcString name)
+                      (match (tc-enum-qualified-variant-lookup-key ctx name)
+                        [(OkTcString key) (OkTcString key)]
+                        [(ErrTcString _)
+                          (ErrTcString (tc-unresolved-dotted-name-message name))]))])])))))))
 
 (define (tc-source-name-lookup-key
   [ctx : TcContext]

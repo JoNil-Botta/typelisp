@@ -6,9 +6,9 @@
 
 (define (parse-op [op : char]) : BinOp
   (cond
-    [(= op #+') (OpAdd)]
-    [(= op #-') (OpSub)]
-    [(= op #*') (OpMul)]
+    [(= op '+') (OpAdd)]
+    [(= op '-') (OpSub)]
+    [(= op '*') (OpMul)]
     [else (OpUnknown)]))
 
 (define (score [op : BinOp]) : i64
@@ -20,5 +20,5 @@
 
 (define (main) : i64
   (+
-    (score (parse-op #+'))
-    (+ (score (parse-op #-')) (+ (score (parse-op #*')) (score (parse-op #/'))))))
+    (score (parse-op '+'))
+    (+ (score (parse-op '-')) (+ (score (parse-op '*')) (score (parse-op '/'))))))

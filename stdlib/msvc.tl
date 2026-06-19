@@ -132,12 +132,12 @@
 (define (msvc-digit? [c : char]) : bool
   (let
     [code : i64 (cast c : i64)]
-    (and (>= code (cast #0' : i64)) (<= code (cast #9' : i64)))))
+    (and (>= code (cast '0' : i64)) (<= code (cast '9' : i64)))))
 
 ;: Return the numeric value of an ASCII decimal digit, or zero otherwise.
 (define (msvc-digit-value [c : char]) : i64
   (if (msvc-digit? c)
-    (- (cast c : i64) (cast #0' : i64))
+    (- (cast c : i64) (cast '0' : i64))
     0))
 
 ;: Read one dotted numeric version segment starting at `index`.
@@ -151,7 +151,7 @@
       (while (and (< i n) (not done))
         (let
           [c : char (string-ref version i)]
-          (if (char-eq c #.')
+          (if (char-eq c '.')
             (set! done true)
             (begin
               (if (msvc-digit? c)
@@ -164,7 +164,7 @@
 (define (msvc-version-next-index [version : String] [index : i64]) : i64
   (let
     [n : i64 (string-length version)]
-    (if (and (< index n) (char-eq (string-ref version index) #.'))
+    (if (and (< index n) (char-eq (string-ref version index) '.'))
       (+ index 1)
       index)))
 

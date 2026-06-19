@@ -913,7 +913,7 @@
     [(NoneI64) (lower-resolve-name state source-name)]))
 
 (define (lower-path-separator? [c : char]) : bool
-  (or (= c #/') (= c #\\')))
+  (or (= c '/') (= c '\\')))
 
 (define (lower-dirname [path : String]) : String
   (let
@@ -8319,7 +8319,7 @@
       (begin
         (while (< i n)
           (begin
-            (if (char-eq (string-ref name i) #.')
+            (if (char-eq (string-ref name i) '.')
               (set! last-dot i)
               unit)
             (set! i (+ i 1))))
@@ -13115,7 +13115,7 @@
         [(AstTyBool)
           (lower-init-scalar state (IrValueBool false) expr-ty origin)]
         [(AstTyChar)
-          (lower-init-scalar state (IrValueChar #\nul') expr-ty origin)]
+          (lower-init-scalar state (IrValueChar '\0') expr-ty origin)]
         [(AstTyUnit) (OkLowerExpr (LowerExpr state IrValueUnit expr-ty))]
         [(AstTyString)
           (lower-init-scalar state (IrValueString "") expr-ty origin)]
@@ -39463,7 +39463,7 @@
   (cast (+ x (cast c : i64)) : u8))
 (define (main) : i64
   (if (floaty 1.0 2.0)
-    (+ (cast (bits (cast 7 : i32) (cast 3 : i32) (cast 1 : i32)) : i64) (cast (casts #A' 1) : i64))
+    (+ (cast (bits (cast 7 : i32) (cast 3 : i32) (cast 1 : i32)) : i64) (cast (casts 'A' 1) : i64))
     0))")
 
 (define (compiler-lower-numeric-shape-ok?) : bool

@@ -415,13 +415,13 @@
         (while (and (< idx n) (not done))
           (begin
             (if (= line target-line)
-              (if (= (string-ref source idx) #\newline')
+              (if (= (string-ref source idx) '\n')
                 (begin
                   (set! out (substring source start (- idx start)))
                   (set! done true))
                 unit)
               unit)
-            (if (and (not done) (= (string-ref source idx) #\newline'))
+            (if (and (not done) (= (string-ref source idx) '\n'))
               (begin
                 (set! line (+ line 1))
                 (set! start (+ idx 1)))

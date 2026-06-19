@@ -45,19 +45,14 @@
     "char-literals": {
       "patterns": [
         {
-          "name": "constant.character.named.typelisp",
-          "comment": "Named char literal: #\\space' #\\newline' #\\tab' #\\return' #\\nul'.",
-          "match": "#\\\\[A-Za-z]{2,}'"
-        },
-        {
           "name": "constant.character.escape.typelisp",
-          "comment": "Escaped char literal: #\\n' #\\t' #\\0' #\\a'.",
-          "match": "#\\\\.'"
+          "comment": "Escaped char literal: '\\n' '\\t' '\\r' '\\0' '\\\\' '\\''.",
+          "match": "'\\\\(?:[ntr0\\\\'])'"
         },
         {
           "name": "constant.character.typelisp",
-          "comment": "Single-character literal: #a' #0' #(' # '.",
-          "match": "#.'"
+          "comment": "Single-character literal: 'a' '0' '(' ' '.",
+          "match": "'[^'\\\\\\r\\n]'"
         }
       ]
     },

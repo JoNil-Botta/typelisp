@@ -171,7 +171,7 @@
       (doc-test-run-report-status report))))
 
 (define (doc-flag? [value : String]) : bool
-  (and (> (string-length value) 0) (= (string-ref value 0) #-')))
+  (and (> (string-length value) 0) (= (string-ref value 0) '-')))
 
 (define (doc-stdlib-roots [idx : i64]) : StringVec
   (let
@@ -221,9 +221,7 @@
     (begin
       (while keep
         (if (< i n)
-          (if (or
-            (= (string-ref text i) #\newline')
-            (= (string-ref text i) #\return'))
+          (if (or (= (string-ref text i) '\n') (= (string-ref text i) '\r'))
             (set! keep false)
             (set! i (+ i 1)))
           (set! keep false)))
@@ -238,9 +236,9 @@
     (let
       [c : char (string-ref text line-end)]
       (begin
-        (unless (= c #\return') (return (+ line-end 1)))
+        (unless (= c '\r') (return (+ line-end 1)))
         (unless (< (+ line-end 1) n) (return (+ line-end 1)))
-        (if (= (string-ref text (+ line-end 1)) #\newline')
+        (if (= (string-ref text (+ line-end 1)) '\n')
           (+ line-end 2)
           (+ line-end 1))))))
 

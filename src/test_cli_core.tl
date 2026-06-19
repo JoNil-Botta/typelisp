@@ -80,9 +80,7 @@
     (begin
       (while keep
         (if (< i n)
-          (if (or
-            (= (string-ref text i) #\newline')
-            (= (string-ref text i) #\return'))
+          (if (or (= (string-ref text i) '\n') (= (string-ref text i) '\r'))
             (set! keep false)
             (set! i (+ i 1)))
           (set! keep false)))
@@ -97,9 +95,9 @@
     (let
       [c : char (string-ref text line-end)]
       (begin
-        (unless (= c #\return') (return (+ line-end 1)))
+        (unless (= c '\r') (return (+ line-end 1)))
         (unless (< (+ line-end 1) n) (return (+ line-end 1)))
-        (if (= (string-ref text (+ line-end 1)) #\newline')
+        (if (= (string-ref text (+ line-end 1)) '\n')
           (+ line-end 2)
           (+ line-end 1))))))
 
@@ -2277,7 +2275,7 @@
       true
       (let
         [last : char (string-ref text (- n 1))]
-        (or (= last #\newline') (= last #\return'))))))
+        (or (= last '\n') (= last '\r'))))))
 
 (define (tltest-report-child-status [output : ProcessOutput]) : unit
   (begin
@@ -2554,10 +2552,10 @@
     opt-level))
 
 (define (tltest-source-prefix-space? [c : char]) : bool
-  (or (= c #\space') (= c #\tab')))
+  (or (= c ' ') (= c '\t')))
 
 (define (tltest-source-line-break? [c : char]) : bool
-  (or (= c #\newline') (= c #\return')))
+  (or (= c '\n') (= c '\r')))
 
 (define (tltest-inline-marker-boundary? [source : String] [idx : i64] [n : i64]) : bool
   (if (>= idx n)
@@ -2567,16 +2565,16 @@
       (or
         (tltest-source-prefix-space? c)
         (tltest-source-line-break? c)
-        (= c #)')))))
+        (= c ')')))))
 
 (define (tltest-inline-marker-at? [source : String] [idx : i64] [n : i64]) : bool
   (and
     (<= (+ idx 5) n)
-    (= (string-ref source idx) #(')
-    (= (string-ref source (+ idx 1)) #t')
-    (= (string-ref source (+ idx 2)) #e')
-    (= (string-ref source (+ idx 3)) #s')
-    (= (string-ref source (+ idx 4)) #t')
+    (= (string-ref source idx) '(')
+    (= (string-ref source (+ idx 1)) 't')
+    (= (string-ref source (+ idx 2)) 'e')
+    (= (string-ref source (+ idx 3)) 's')
+    (= (string-ref source (+ idx 4)) 't')
     (tltest-inline-marker-boundary? source (+ idx 5) n)))
 
 (define (tltest-source-has-inline-tests-from

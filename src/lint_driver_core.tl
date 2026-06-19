@@ -25,7 +25,7 @@
   (ErrSelfhostLintConfig String))
 
 (define (selfhost-lint-flag? [value : String]) : bool
-  (and (> (string-length value) 0) (= (string-ref value 0) #-')))
+  (and (> (string-length value) 0) (= (string-ref value 0) '-')))
 
 (define (selfhost-lint-config-finish
   [input-paths : StringVec]
@@ -188,7 +188,7 @@
     0))
 
 (define (selfhost-lint-space? [c : char]) : bool
-  (or (= c #\space') (= c #\tab') (= c #\newline') (= c #\return')))
+  (or (= c ' ') (= c '\t') (= c '\n') (= c '\r')))
 
 (define (selfhost-lint-prefix-at?
   [source : String]
@@ -218,7 +218,7 @@
       true
       (let
         [c : char (string-ref source idx)]
-        (or (selfhost-lint-space? c) (= c #)'))))))
+        (or (selfhost-lint-space? c) (= c ')'))))))
 
 (define (selfhost-lint-line-start-index [source : String] [target-line : i64]) : i64
   (let
@@ -228,7 +228,7 @@
     [start : i64 0]
     (begin
       (while (and (< idx source-len) (< line target-line))
-        (if (= (string-ref source idx) #\newline')
+        (if (= (string-ref source idx) '\n')
           (begin
             (set! line (+ line 1))
             (set! start (+ idx 1))
@@ -255,7 +255,7 @@
     [stop : bool false]
     (begin
       (while (and (< idx source-len) (not stop))
-        (if (= (string-ref source idx) #\newline')
+        (if (= (string-ref source idx) '\n')
           (set! stop true)
           (if (selfhost-lint-prefix-at? source idx needle)
             (begin
@@ -998,7 +998,7 @@
     (begin
       (while (< i target)
         (begin
-          (if (= (string-ref source i) #\newline')
+          (if (= (string-ref source i) '\n')
             (set! line (+ line 1))
             unit)
           (set! i (+ i 1))))
@@ -1011,7 +1011,7 @@
     (begin
       (while (< i target)
         (begin
-          (if (= (string-ref source i) #\newline')
+          (if (= (string-ref source i) '\n')
             (set! col 1)
             (set! col (+ col 1)))
           (set! i (+ i 1))))

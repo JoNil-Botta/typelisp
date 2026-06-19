@@ -240,7 +240,7 @@
       [name : String (string-vec-get (process-env-vec-names env) index "")]
       (if (string-eq name "")
         (ProcessSomeString "process: environment variable name is empty")
-        (if (process-string-contains-char? (& name) #=')
+        (if (process-string-contains-char? (& name) '=')
           (ProcessSomeString "process: environment variable name contains '='")
           (process-env-vec-validation-error-from env (+ index 1)))))))
 
@@ -482,7 +482,7 @@
         (ProcessSomeString "process: environment variable name is empty")
         (let
           [text : String name]
-          (if (process-string-contains-char? (& text) #=')
+          (if (process-string-contains-char? (& text) '=')
             (ProcessSomeString
               "process: environment variable name contains '='")
             (process-env-validation-error (box-get rest)))))]))

@@ -84,7 +84,7 @@
   (or (string-eq value "0") (string-eq value "1") (string-eq value "2")))
 
 (define (source-tool-flag? [value : String]) : bool
-  (and (> (string-length value) 0) (= (string-ref value 0) #-')))
+  (and (> (string-length value) 0) (= (string-ref value 0) '-')))
 
 (define (source-tool-args-append [args : ProcessStringList] [value : String]) : ProcessStringList
   (process-args-append args (process-args-single value)))
@@ -356,7 +356,7 @@
       (ErrSourceToolLinkInputs (compiler-diagnostic-render diag))]))
 
 (define (source-tool-path-separator? [c : char]) : bool
-  (or (= c #/') (= c #\\')))
+  (or (= c '/') (= c '\\')))
 
 (define (source-tool-has-path-separator? [path : String]) : bool
   (let
@@ -477,7 +477,7 @@
         (let
           [c : char (string-ref input-path i)]
           (begin
-            (if (= c #.')
+            (if (= c '.')
               (set! last-dot i)
               (set! last-dot last-dot))
             (if (source-tool-path-separator? c)
@@ -961,14 +961,14 @@
       (let
         [text : String head]
         (or
-          (process-string-contains-char? (& text) #\space')
+          (process-string-contains-char? (& text) ' ')
           (source-tool-windows-args-contain-space? (box-get rest))))]))
 
 (define (source-tool-windows-command-needs-cmd? [command : ProcessCommand]) : bool
   (let
     [text : String (process-command-executable command)]
     (or
-      (process-string-contains-char? (& text) #\space')
+      (process-string-contains-char? (& text) ' ')
       (source-tool-windows-args-contain-space? (process-command-argv command)))))
 
 (define (source-tool-windows-cmd-quote [value : String]) : String

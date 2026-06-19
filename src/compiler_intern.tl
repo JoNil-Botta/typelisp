@@ -247,10 +247,10 @@
         (let
           [c : char (string-ref name i)]
           (begin
-            (if (= c #/')
+            (if (= c '/')
               (set! slash i)
               unit)
-            (if (and (< dot 0) (= c #.'))
+            (if (and (< dot 0) (= c '.'))
               (set! dot i)
               unit)
             (set! i (+ i 1)))))

@@ -342,7 +342,7 @@
               (begin
                 (array-push! out byte)
                 (set! i (+ i 1))))))
-        (array-push! out (cast #\newline' : u8))))))
+        (array-push! out (cast '\n' : u8))))))
 
 ;: Convert the accumulated newline-delimited bytes into a String.
 (define (fs-read-dir-bytes-string [out : (Array u8)]) : String
@@ -892,12 +892,12 @@
 ;: Return the preferred path separator as a character.
 (define (fs-path-separator-char) : char
   (if (fs-windows?)
-    #\\'
-    #/'))
+    '\\'
+    '/'))
 
 ;: Return true when `c` is either Unix or Windows path separator syntax.
 (define (fs-path-separator? [c : char]) : bool
-  (or (char-eq c #/') (char-eq c #\\')))
+  (or (char-eq c '/') (char-eq c '\\')))
 
 ;: Return true when `path` starts with either supported separator character.
 (define (fs-path-starts-separator? [path : (& path str)]) : bool
@@ -914,7 +914,7 @@
 ;: `C:relative` is drive-qualified but not absolute. `fs-path-safe-relative?`
 ;: rejects drive-qualified strings because they are not portable root suffixes.
 (define (fs-path-drive-qualified? [path : (& path str)]) : bool
-  (and (> (string-length path) 1) (char-eq (string-ref path 1) #:')))
+  (and (> (string-length path) 1) (char-eq (string-ref path 1) ':')))
 
 ;: Return true when `path` is rooted or drive-absolute.
 ;:
@@ -1044,8 +1044,8 @@
       true
       (and
         (> n 2)
-        (char-eq (string-ref normalized 0) #.')
-        (char-eq (string-ref normalized 1) #.')
+        (char-eq (string-ref normalized 0) '.')
+        (char-eq (string-ref normalized 1) '.')
         (fs-path-separator? (string-ref normalized 2))))))
 
 ;: Return true when `path` is a non-empty relative suffix that stays below root.
@@ -1167,7 +1167,7 @@
     (begin
       (while (< i bn)
         (begin
-          (if (char-eq (string-ref base i) #.')
+          (if (char-eq (string-ref base i) '.')
             (set! dot i)
             (set! dot dot))
           (set! i (+ i 1))))
@@ -1317,7 +1317,7 @@
     [i : i64 0]
     (begin
       (while (< i n)
-        (if (char-eq (string-ref entries i) #\newline')
+        (if (char-eq (string-ref entries i) '\n')
           (begin
             (if (> i start)
               (set!
@@ -2314,7 +2314,7 @@
   (define (fs-test-drive-absolute? [path : String]) : bool
     (and
       (> (string-length path) 2)
-      (= (string-ref path 1) #:')
+      (= (string-ref path 1) ':')
       (fs-path-separator? (string-ref path 2)))))
 
 (cfg

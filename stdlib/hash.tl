@@ -167,10 +167,10 @@
       (if (= (hash-bool true) 1)
         unit
         (fail))
-      (if (= (hash-char #A') 65)
+      (if (= (hash-char 'A') 65)
         unit
         (fail))
-      (if (= (hash-char #\newline') 10)
+      (if (= (hash-char '\n') 10)
         unit
         (fail))
       (if (= (hash-combine 0 0) 1)
@@ -209,7 +209,7 @@
       (if (= (hash-bool true) (hash-bool (not false)))
         unit
         (fail))
-      (if (= (hash-char #A') (hash-char (string-ref "A" 0)))
+      (if (= (hash-char 'A') (hash-char (string-ref "A" 0)))
         unit
         (fail))
       (if (= (hash-string (& abc)) (hash-string (& joined)))
@@ -227,10 +227,10 @@
       (if (not (hash-key-bool-eq? true false))
         unit
         (fail))
-      (if (hash-key-char-eq? #x' #x')
+      (if (hash-key-char-eq? 'x' 'x')
         unit
         (fail))
-      (if (not (hash-key-char-eq? #x' #y'))
+      (if (not (hash-key-char-eq? 'x' 'y'))
         unit
         (fail))
       (if (hash-key-string-eq? (& same) (& same-copy))

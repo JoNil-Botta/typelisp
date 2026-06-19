@@ -7231,7 +7231,7 @@
             (ast-pat-binding "m")
             (ast-expr-cast match-u64-var (AstTyF64)))
           AstMatchArmNil))]
-    [char-a : i64 (ast-node-push (AstExprLiteral (AstLitChar #A')))]
+    [char-a : i64 (ast-node-push (AstExprLiteral (AstLitChar 'A')))]
     [char-a-f64 : i64 (ast-expr-cast char-a (AstTyF64))]
     [neg-int-f64 : i64 (ast-expr-cast neg-int (AstTyF64))]
     [rounded-int-f32 : i64

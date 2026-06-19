@@ -86,11 +86,11 @@
 ;; `line` begins with `.` (a dot command). Empty lines are handled safely.
 (define (repl-dot-command? [line : String]) : bool
   (if (> (string-length line) 0)
-    (= (string-ref line 0) #.')
+    (= (string-ref line 0) '.')
     false))
 
 (define (repl-space? [c : char]) : bool
-  (or (= c #\space') (= c #\tab') (= c #\newline') (= c #\return')))
+  (or (= c ' ') (= c '\t') (= c '\n') (= c '\r')))
 
 (define (repl-string-prefix? [text : String] [prefix : String]) : bool
   (let
@@ -112,7 +112,7 @@
         ""))))
 
 (define (repl-line-ending? [c : char]) : bool
-  (or (= c #\return') (= c #\newline')))
+  (or (= c '\r') (= c '\n')))
 
 (define (repl-leading-utf8-bom? [text : String]) : bool
   (if (< (string-length text) 3)
@@ -559,19 +559,19 @@
 (define (repl-skip-comment [text : String] [idx : i64] [len : i64]) : i64
   (if (>= idx len)
     idx
-    (if (= (string-ref text idx) #\newline')
+    (if (= (string-ref text idx) '\n')
       (+ idx 1)
       (repl-skip-comment text (+ idx 1) len))))
 
 (define (repl-skip-char-literal [text : String] [idx : i64] [len : i64]) : i64
   (if (>= idx len)
     idx
-    (if (= (string-ref text idx) #'')
+    (if (= (string-ref text idx) '\'')
       (+ idx 1)
       (repl-skip-char-literal text (+ idx 1) len))))
 
 (define (repl-apostrophe-char-escape? [c : char]) : bool
-  (or (= c #n') (= c #t') (= c #r') (= c #0') (= c #\\') (= c #'')))
+  (or (= c 'n') (= c 't') (= c 'r') (= c '0') (= c '\\') (= c '\'')))
 
 (define (repl-skip-apostrophe-char-literal
   [text : String]
@@ -581,17 +581,16 @@
     (let
       [payload : char (string-ref text (+ idx 1))]
       (cond
-        [(= payload #\\')
+        [(= payload '\\')
           (if (and
             (< (+ idx 3) len)
             (repl-apostrophe-char-escape? (string-ref text (+ idx 2)))
-            (= (string-ref text (+ idx 3)) #''))
+            (= (string-ref text (+ idx 3)) '\''))
             (+ idx 4)
             (+ idx 1))]
-        [(or (= payload #'') (= payload #\newline') (= payload #\return'))
-          (+ idx 1)]
+        [(or (= payload '\'') (= payload '\n') (= payload '\r')) (+ idx 1)]
         [else
-          (if (and (< (+ idx 2) len) (= (string-ref text (+ idx 2)) #''))
+          (if (and (< (+ idx 2) len) (= (string-ref text (+ idx 2)) '\''))
             (+ idx 3)
             (+ idx 1))]))
     (+ idx 1)))
@@ -620,7 +619,7 @@
                 brackets
                 true
                 false)]
-            [(= c #\\')
+            [(= c '\\')
               (repl-input-complete-loop
                 text
                 (+ idx 1)
@@ -629,7 +628,7 @@
                 brackets
                 true
                 true)]
-            [(= c #"')
+            [(= c '"')
               (repl-input-complete-loop
                 text
                 (+ idx 1)
@@ -647,7 +646,7 @@
                 brackets
                 true
                 false)])]
-        [(= c #;')
+        [(= c ';')
           (repl-input-complete-loop
             text
             (repl-skip-comment text (+ idx 1) len)
@@ -656,7 +655,7 @@
             brackets
             false
             false)]
-        [(= c #"')
+        [(= c '"')
           (repl-input-complete-loop
             text
             (+ idx 1)
@@ -665,7 +664,7 @@
             brackets
             true
             false)]
-        [(= c #'')
+        [(= c '\'')
           (repl-input-complete-loop
             text
             (repl-skip-apostrophe-char-literal text idx len)
@@ -674,7 +673,7 @@
             brackets
             false
             false)]
-        [(= c ##')
+        [(= c '#')
           (repl-input-complete-loop
             text
             (repl-skip-char-literal text (+ idx 1) len)
@@ -683,7 +682,7 @@
             brackets
             false
             false)]
-        [(= c #(')
+        [(= c '(')
           (repl-input-complete-loop
             text
             (+ idx 1)
@@ -692,7 +691,7 @@
             brackets
             false
             false)]
-        [(= c #[')
+        [(= c '[')
           (repl-input-complete-loop
             text
             (+ idx 1)
@@ -701,7 +700,7 @@
             (+ brackets 1)
             false
             false)]
-        [(= c #)')
+        [(= c ')')
           (if (= parens 0)
             true
             (repl-input-complete-loop
@@ -712,7 +711,7 @@
               brackets
               false
               false))]
-        [(= c #]')
+        [(= c ']')
           (if (= brackets 0)
             true
             (repl-input-complete-loop

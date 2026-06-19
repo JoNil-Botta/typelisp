@@ -78,13 +78,13 @@
 
 ;; `c` is a decimal digit char.
 (define (is-digit [c : char]) : bool
-  (and (>= c #0') (<= c #9')))
+  (and (>= c '0') (<= c '9')))
 
 (define (is-hex-digit [c : char]) : bool
-  (or (is-digit c) (and (>= c #a') (<= c #f')) (and (>= c #A') (<= c #F'))))
+  (or (is-digit c) (and (>= c 'a') (<= c 'f')) (and (>= c 'A') (<= c 'F'))))
 
 (define (is-binary-digit [c : char]) : bool
-  (or (= c #0') (= c #1')))
+  (or (= c '0') (= c '1')))
 
 (define (hex-digit-value [c : char]) : i64
   (let
@@ -97,7 +97,7 @@
 
 ;; `c` is an ASCII letter.
 (define (is-alpha [c : char]) : bool
-  (or (and (>= c #A') (<= c #Z')) (and (>= c #a') (<= c #z'))))
+  (or (and (>= c 'A') (<= c 'Z')) (and (>= c 'a') (<= c 'z'))))
 
 ;; `c` is one of TypeLisp's symbol punctuation chars - the non-alphanumeric
 ;; characters that may appear in a symbol/operator name:
@@ -106,20 +106,20 @@
 ;; `TSym` rather than as separate operator tokens.
 (define (is-symbol-punct [c : char]) : bool
   (or
-    (= c #-')
-    (= c #+')
-    (= c #*')
-    (= c #/')
-    (= c #?')
-    (= c #!')
-    (= c #>')
-    (= c #<')
-    (= c #=')
-    (= c #&')
-    (= c #:')
-    (= c #_')
-    (= c #.')
-    (= c #%')))
+    (= c '-')
+    (= c '+')
+    (= c '*')
+    (= c '/')
+    (= c '?')
+    (= c '!')
+    (= c '>')
+    (= c '<')
+    (= c '=')
+    (= c '&')
+    (= c ':')
+    (= c '_')
+    (= c '.')
+    (= c '%')))
 
 ;; `c` may appear in a symbol: a letter, a digit, or a symbol-punctuation char.
 ;; A symbol run is the maximal span of these starting at a non-digit symbol char.
@@ -144,7 +144,7 @@
 
 ;; `c` is ASCII whitespace.
 (define (is-space [c : char]) : bool
-  (or (= c #\space') (= c #\tab') (= c #\newline') (= c #\return')))
+  (or (= c ' ') (= c '\t') (= c '\n') (= c '\r')))
 
 ;; Return the end index (exclusive) of the digit run that starts at `start` in
 ;; `src`. `n` is the source length. The bounds check is kept outside the
@@ -181,7 +181,7 @@
 
 (define (float-tail? [src : String] [int-end : i64] [n : i64]) : bool
   (if (< (+ int-end 1) n)
-    (if (= (string-ref src int-end) #.')
+    (if (= (string-ref src int-end) '.')
       (is-digit (string-ref src (+ int-end 1)))
       false)
     false))
@@ -195,7 +195,7 @@
       int-end)))
 
 (define (number-digits-start [src : String] [start : i64]) : i64
-  (if (= (string-ref src start) #-')
+  (if (= (string-ref src start) '-')
     (+ start 1)
     start))
 
@@ -203,17 +203,17 @@
   (let
     [digits-start : i64 (number-digits-start src start)]
     (if (< (+ digits-start 1) n)
-      (if (= (string-ref src digits-start) #0')
+      (if (= (string-ref src digits-start) '0')
         (let
           [prefix : char (string-ref src (+ digits-start 1))]
-          (or (= prefix #x') (= prefix #X') (= prefix #b') (= prefix #B')))
+          (or (= prefix 'x') (= prefix 'X') (= prefix 'b') (= prefix 'B')))
         false)
       false)))
 
 (define (number-prefix-base [src : String] [start : i64]) : i64
   (let
     [prefix : char (string-ref src (+ (number-digits-start src start) 1))]
-    (if (or (= prefix #x') (= prefix #X'))
+    (if (or (= prefix 'x') (= prefix 'X'))
       16
       2)))
 
@@ -251,7 +251,7 @@
   (let
     [digits-start : i64 (number-digits-start src start)]
     [sign : i64
-      (if (= (string-ref src start) #-')
+      (if (= (string-ref src start) '-')
         -1
         1)]
     [base : i64 (number-prefix-base src start)]
@@ -269,7 +269,7 @@
     (float-tail? src (scan-int-end src (number-digits-start src start) n) n)))
 
 (define (negative-number-start? [src : String] [start : i64] [n : i64]) : bool
-  (if (= (string-ref src start) #-')
+  (if (= (string-ref src start) '-')
     (if (< (+ start 1) n)
       (is-digit (string-ref src (+ start 1)))
       false)
@@ -298,7 +298,7 @@
           (let
             [c : char (string-ref src j)]
             (if (and
-              (= c #:')
+              (= c ':')
               (> j start)
               (not (symbol-slice-eq? src start j "pkg")))
               (set! keep false)
@@ -326,7 +326,7 @@
             (if (is-space c)
               (set! j (- j 1))
               (begin
-                (set! result (= c #('))
+                (set! result (= c '('))
                 (set! keep false))))))
       result)))
 
@@ -356,9 +356,9 @@
         (if (< j n)
           (let
             [c : char (string-ref src j)]
-            (if (= c #"')
+            (if (= c '"')
               (set! keep false)
-              (if (= c #\\')
+              (if (= c '\\')
                 (if (< (+ j 1) n)
                   (set! j (+ j 2))
                   (begin
@@ -385,11 +385,11 @@
   (let
     [c : char (string-ref src idx)]
     (cond
-      [(= c #n') "\n"]
-      [(= c #t') "\t"]
-      [(= c #r') "\r"]
-      [(= c #\\') "\\"]
-      [(= c #"') "\""]
+      [(= c 'n') "\n"]
+      [(= c 't') "\t"]
+      [(= c 'r') "\r"]
+      [(= c '\\') "\\"]
+      [(= c '"') "\""]
       [else (substring src idx 1)])))
 
 (define (unescape-string-literal [src : String] [start : i64] [end : i64]) : String
@@ -400,7 +400,7 @@
       (while (< i end)
         (let
           [c : char (string-ref src i)]
-          (if (= c #\\')
+          (if (= c '\\')
             (if (< (+ i 1) end)
               (begin
                 (set!
@@ -427,33 +427,9 @@
     (begin
       (while keep
         (if (< j n)
-          (if (= (string-ref src j) #\newline')
+          (if (= (string-ref src j) '\n')
             (set! keep false)
             (set! j (+ j 1)))
-          (set! keep false)))
-      j)))
-
-;; A named character literal starts after `#\` only when the first TWO chars are
-;; alphabetic. This matches the Rust lexer and keeps `#\n'` as the newline escape
-;; instead of trying to read the one-letter name `n`.
-(define (starts-named-char [src : String] [start : i64] [n : i64]) : bool
-  (if (< (+ start 1) n)
-    (if (is-alpha (string-ref src start))
-      (is-alpha (string-ref src (+ start 1)))
-      false)
-    false))
-
-;; Return the end index (exclusive) of a named char's alphabetic name.
-(define (scan-char-name-end [src : String] [start : i64] [n : i64]) : i64
-  (let
-    [j : i64 start]
-    [keep : bool true]
-    (begin
-      (while keep
-        (if (< j n)
-          (if (is-alpha (string-ref src j))
-            (set! j (+ j 1))
-            (set! keep false))
           (set! keep false)))
       j)))
 
@@ -461,55 +437,19 @@
 ;; otherwise return the recoverable lexer diagnostic.
 (define (char-close-error [src : String] [idx : i64] [n : i64]) : String
   (if (< idx n)
-    (if (= (string-ref src idx) #'')
+    (if (= (string-ref src idx) '\'')
       ""
       "lexer: expected ' after character")
     "lexer: unterminated character literal"))
 
-(define (require-char-close [src : String] [idx : i64] [n : i64]) : unit
-  (let
-    [message : String (char-close-error src idx n)]
-    (if (lex-ok? message)
-      unit
-      (panic message))))
-
-;; Map a multi-letter `#\name'` character literal to its character payload.
-(define (named-char-result [name : String]) : ResultLexChar
-  (cond
-    [(string-eq name "space") (OkLexChar #\space')]
-    [(string-eq name "newline") (OkLexChar #\newline')]
-    [(string-eq name "tab") (OkLexChar #\tab')]
-    [(string-eq name "return") (OkLexChar #\return')]
-    [(string-eq name "nul") (OkLexChar #\nul')]
-    [else (ErrLexChar "lexer: unknown named character literal")]))
-
-(define (named-char [name : String]) : char
-  (match (named-char-result name)
-    [(OkLexChar c) c]
-    [(ErrLexChar message)
-      (begin
-        (panic message)
-        ;; lint-allow: unreachable-code
-        #\nul')]))
-
-;; Map single-character escapes after `#\`; unknown escapes read as the literal
-;; character, matching stage0 (`#\a'` is `a`).
-(define (escaped-char [c : char]) : char
-  (cond
-    [(= c #n') #\newline']
-    [(= c #t') #\tab']
-    [(= c #r') #\return']
-    [(= c #0') #\nul']
-    [else c]))
-
 (define (apostrophe-escaped-char-result [c : char]) : ResultLexChar
   (cond
-    [(= c #n') (OkLexChar #\newline')]
-    [(= c #t') (OkLexChar #\tab')]
-    [(= c #r') (OkLexChar #\return')]
-    [(= c #0') (OkLexChar #\nul')]
-    [(= c #\\') (OkLexChar #\\')]
-    [(= c #'') (OkLexChar #'')]
+    [(= c 'n') (OkLexChar '\n')]
+    [(= c 't') (OkLexChar '\t')]
+    [(= c 'r') (OkLexChar '\r')]
+    [(= c '0') (OkLexChar '\0')]
+    [(= c '\\') (OkLexChar '\\')]
+    [(= c '\'') (OkLexChar '\'')]
     [else (ErrLexChar "lexer: unknown character escape")]))
 
 (define (apostrophe-char-literal-result [src : String] [i : i64] [n : i64]) : ResultMaybeLexCharLiteral
@@ -517,7 +457,7 @@
     (let
       [payload : char (string-ref src (+ i 1))]
       (cond
-        [(= payload #\\')
+        [(= payload '\\')
           (let
             [esc-idx : i64 (+ i 2)]
             (if (< esc-idx n)
@@ -530,120 +470,42 @@
                       (ErrLexCharLiteral message)))]
                 [(ErrLexChar message) (ErrLexCharLiteral message)])
               (ErrLexCharLiteral "lexer: unterminated character literal")))]
-        [(or (= payload #'') (= payload #\newline') (= payload #\return'))
+        [(or (= payload '\'') (= payload '\n') (= payload '\r'))
           (NoLexCharLiteral)]
         [else
           (if (< (+ i 2) n)
-            (if (= (string-ref src (+ i 2)) #'')
+            (if (= (string-ref src (+ i 2)) '\'')
               (OkLexCharLiteral payload (+ i 3))
               (NoLexCharLiteral))
             (NoLexCharLiteral))]))
     (NoLexCharLiteral)))
-
-;; Character payload for a literal beginning at `i`, where `src[i]` is `#`.
-(define (char-literal-value-result [src : String] [i : i64] [n : i64]) : ResultLexChar
-  (if (< (+ i 1) n)
-    (if (= (string-ref src (+ i 1)) #\\')
-      (let
-        [start : i64 (+ i 2)]
-        (if (< start n)
-          (if (starts-named-char src start n)
-            (let
-              [end : i64 (scan-char-name-end src start n)]
-              [message : String (char-close-error src end n)]
-              (if (lex-ok? message)
-                (named-char-result (substring src start (- end start)))
-                (ErrLexChar message)))
-            (let
-              [message : String (char-close-error src (+ start 1) n)]
-              (if (lex-ok? message)
-                (OkLexChar (escaped-char (string-ref src start)))
-                (ErrLexChar message))))
-          (ErrLexChar "lexer: unterminated character literal")))
-      (let
-        [message : String (char-close-error src (+ i 2) n)]
-        (if (lex-ok? message)
-          (OkLexChar (string-ref src (+ i 1)))
-          (ErrLexChar message))))
-    (ErrLexChar "lexer: unterminated character literal")))
-
-(define (char-literal-value [src : String] [i : i64] [n : i64]) : char
-  (match (char-literal-value-result src i n)
-    [(OkLexChar c) c]
-    [(ErrLexChar message)
-      (begin
-        (panic message)
-        ;; lint-allow: unreachable-code
-        #\nul')]))
-
-;; Index just after the closing `'` for a char literal beginning at `i`.
-(define (char-literal-end-result [src : String] [i : i64] [n : i64]) : ResultLexI64
-  (if (< (+ i 1) n)
-    (if (= (string-ref src (+ i 1)) #\\')
-      (let
-        [start : i64 (+ i 2)]
-        (if (< start n)
-          (if (starts-named-char src start n)
-            (let
-              [end : i64 (scan-char-name-end src start n)]
-              [message : String (char-close-error src end n)]
-              (if (lex-ok? message)
-                (OkLexI64 (+ end 1))
-                (ErrLexI64 message)))
-            (let
-              [message : String (char-close-error src (+ start 1) n)]
-              (if (lex-ok? message)
-                (OkLexI64 (+ start 2))
-                (ErrLexI64 message))))
-          (ErrLexI64 "lexer: unterminated character literal")))
-      (let
-        [message : String (char-close-error src (+ i 2) n)]
-        (if (lex-ok? message)
-          (OkLexI64 (+ i 3))
-          (ErrLexI64 message))))
-    (ErrLexI64 "lexer: unterminated character literal")))
-
-(define (char-literal-end [src : String] [i : i64] [n : i64]) : i64
-  (match (char-literal-end-result src i n)
-    [(OkLexI64 end) end]
-    [(ErrLexI64 message)
-      (begin
-        (panic message)
-        ;; lint-allow: unreachable-code
-        n)]))
-
-(define (lex-check-char-end [src : String] [i : i64] [n : i64]) : ResultLexI64
-  (match (char-literal-value-result src i n)
-    [(OkLexChar _) (char-literal-end-result src i n)]
-    [(ErrLexChar message) (ErrLexI64 message)]))
 
 (define (lex-check-step [src : String] [i : i64] [n : i64]) : ResultLexI64
   (let
     [c : char (string-ref src i)]
     (cond
       [(is-space c) (OkLexI64 (+ i 1))]
-      [(or (= c #(') (= c #[')) (OkLexI64 (+ i 1))]
-      [(or (= c #)') (= c #]')) (OkLexI64 (+ i 1))]
-      [(= c #'')
+      [(or (= c '(') (= c '[')) (OkLexI64 (+ i 1))]
+      [(or (= c ')') (= c ']')) (OkLexI64 (+ i 1))]
+      [(= c '\'')
         (match (apostrophe-char-literal-result src i n)
           [(OkLexCharLiteral _ end) (OkLexI64 end)]
           [(ErrLexCharLiteral message) (ErrLexI64 message)]
           [(NoLexCharLiteral) (OkLexI64 (+ i 1))])]
-      [(= c #`') (OkLexI64 (+ i 1))]
-      [(= c #,')
+      [(= c '`') (OkLexI64 (+ i 1))]
+      [(= c ',')
         (if (< (+ i 1) n)
-          (if (= (string-ref src (+ i 1)) #@')
+          (if (= (string-ref src (+ i 1)) '@')
             (OkLexI64 (+ i 2))
             (OkLexI64 (+ i 1)))
           (OkLexI64 (+ i 1)))]
-      [(= c #"')
+      [(= c '"')
         (let
           [start : i64 (+ i 1)]
           (match (scan-str-end-result src start n)
             [(OkLexI64 end) (OkLexI64 (+ end 1))]
             [(ErrLexI64 message) (ErrLexI64 message)]))]
-      [(= c #;') (OkLexI64 (scan-comment-end src (+ i 1) n))]
-      [(= c ##') (lex-check-char-end src i n)]
+      [(= c ';') (OkLexI64 (scan-comment-end src (+ i 1) n))]
       [(or (is-digit c) (negative-number-start? src i n))
         (scan-number-end-result src i n)]
       [(is-symbol-char c) (OkLexI64 (scan-symbol-end src i n))]
@@ -702,31 +564,31 @@
           [c : char (string-ref src i)]
           (cond
             [(is-space c) (set! i (+ i 1))]
-            [(= c #(')
+            [(= c '(')
               (begin
                 (array-set! starts count i)
                 (array-set! toks count TLParen)
                 (set! count (+ count 1))
                 (set! i (+ i 1)))]
-            [(= c #[')
+            [(= c '[')
               (begin
                 (array-set! starts count i)
                 (array-set! toks count TLBracket)
                 (set! count (+ count 1))
                 (set! i (+ i 1)))]
-            [(= c #)')
+            [(= c ')')
               (begin
                 (array-set! starts count i)
                 (array-set! toks count TRParen)
                 (set! count (+ count 1))
                 (set! i (+ i 1)))]
-            [(= c #]')
+            [(= c ']')
               (begin
                 (array-set! starts count i)
                 (array-set! toks count TRBracket)
                 (set! count (+ count 1))
                 (set! i (+ i 1)))]
-            [(= c #'')
+            [(= c '\'')
               (match (apostrophe-char-literal-result src i n)
                 [(OkLexCharLiteral value end)
                   (begin
@@ -745,17 +607,17 @@
                     (array-set! toks count TQuote)
                     (set! count (+ count 1))
                     (set! i (+ i 1)))])]
-            [(= c #`')
+            [(= c '`')
               (begin
                 (array-set! starts count i)
                 (array-set! toks count TBacktick)
                 (set! count (+ count 1))
                 (set! i (+ i 1)))]
-            [(= c #,')
+            [(= c ',')
               (begin
                 (array-set! starts count i)
                 (if (< (+ i 1) n)
-                  (if (= (string-ref src (+ i 1)) #@')
+                  (if (= (string-ref src (+ i 1)) '@')
                     (begin
                       (array-set! toks count TCommaAt)
                       (set! i (+ i 2)))
@@ -766,7 +628,7 @@
                     (array-set! toks count TComma)
                     (set! i (+ i 1))))
                 (set! count (+ count 1)))]
-            [(= c #"')
+            [(= c '"')
               (let
                 [start : i64 (+ i 1)]
                 (match (scan-str-end-result src start n)
@@ -784,27 +646,7 @@
                       (set! ok false)
                       (set! message err)
                       (set! err-pos i))]))]
-            [(= c #;') (set! i (scan-comment-end src (+ i 1) n))]
-            [(= c ##')
-              (match (char-literal-value-result src i n)
-                [(OkLexChar value)
-                  (match (char-literal-end-result src i n)
-                    [(OkLexI64 end)
-                      (begin
-                        (array-set! starts count i)
-                        (array-set! toks count (TChar value))
-                        (set! count (+ count 1))
-                        (set! i end))]
-                    [(ErrLexI64 err)
-                      (begin
-                        (set! ok false)
-                        (set! message err)
-                        (set! err-pos i))])]
-                [(ErrLexChar err)
-                  (begin
-                    (set! ok false)
-                    (set! message err)
-                    (set! err-pos i))])]
+            [(= c ';') (set! i (scan-comment-end src (+ i 1) n))]
             [(or (is-digit c) (negative-number-start? src i n))
               (match (scan-number-end-result src i n)
                 [(OkLexI64 end)
@@ -826,7 +668,7 @@
                     (set! ok false)
                     (set! message err)
                     (set! err-pos i))])]
-            [(= c #:')
+            [(= c ':')
               (let
                 [end : i64 (colon-token-end src i n)]
                 (if (> end (+ i 1))
@@ -891,7 +733,7 @@
     (begin
       (while (< j end)
         (begin
-          (if (= (string-ref src j) #\newline')
+          (if (= (string-ref src j) '\n')
             (begin
               (set! next-line (+ next-line 1))
               (set! next-col 1))
@@ -918,37 +760,37 @@
           (cond
             [(is-space c)
               (begin
-                (if (= c #\newline')
+                (if (= c '\n')
                   (begin
                     (set! line (+ line 1))
                     (set! col 1))
                   (set! col (+ col 1)))
                 (set! i (+ i 1)))]
-            [(= c #(')
+            [(= c '(')
               (begin
                 (array-set! stoks count (SpannedToken TLParen line col))
                 (set! count (+ count 1))
                 (set! i (+ i 1))
                 (set! col (+ col 1)))]
-            [(= c #[')
+            [(= c '[')
               (begin
                 (array-set! stoks count (SpannedToken TLBracket line col))
                 (set! count (+ count 1))
                 (set! i (+ i 1))
                 (set! col (+ col 1)))]
-            [(= c #)')
+            [(= c ')')
               (begin
                 (array-set! stoks count (SpannedToken TRParen line col))
                 (set! count (+ count 1))
                 (set! i (+ i 1))
                 (set! col (+ col 1)))]
-            [(= c #]')
+            [(= c ']')
               (begin
                 (array-set! stoks count (SpannedToken TRBracket line col))
                 (set! count (+ count 1))
                 (set! i (+ i 1))
                 (set! col (+ col 1)))]
-            [(= c #'')
+            [(= c '\'')
               (let
                 [token-line : i64 line]
                 [token-col : i64 col]
@@ -973,16 +815,16 @@
                       (set! count (+ count 1))
                       (set! i (+ i 1))
                       (set! col (+ col 1)))]))]
-            [(= c #`')
+            [(= c '`')
               (begin
                 (array-set! stoks count (SpannedToken TBacktick line col))
                 (set! count (+ count 1))
                 (set! i (+ i 1))
                 (set! col (+ col 1)))]
-            [(= c #,')
+            [(= c ',')
               (begin
                 (if (< (+ i 1) n)
-                  (if (= (string-ref src (+ i 1)) #@')
+                  (if (= (string-ref src (+ i 1)) '@')
                     (begin
                       (array-set! stoks count (SpannedToken TCommaAt line col))
                       (set! i (+ i 2))
@@ -996,7 +838,7 @@
                     (set! i (+ i 1))
                     (set! col (+ col 1))))
                 (set! count (+ count 1)))]
-            [(= c #"')
+            [(= c '"')
               (let
                 [start : i64 (+ i 1)]
                 [token-line : i64 line]
@@ -1023,38 +865,12 @@
                       (set! ok false)
                       (set! message err)
                       (set! err-pos i))]))]
-            [(= c #;')
+            [(= c ';')
               (let
                 [end : i64 (scan-comment-end src (+ i 1) n)]
                 (begin
                   (set! col (+ col (- end i)))
                   (set! i end)))]
-            [(= c ##')
-              (let
-                [token-line : i64 line]
-                [token-col : i64 col]
-                (match (char-literal-value-result src i n)
-                  [(OkLexChar value)
-                    (match (char-literal-end-result src i n)
-                      [(OkLexI64 end)
-                        (begin
-                          (array-set!
-                            stoks
-                            count
-                            (SpannedToken (TChar value) token-line token-col))
-                          (set! count (+ count 1))
-                          (set! col (+ col (- end i)))
-                          (set! i end))]
-                      [(ErrLexI64 err)
-                        (begin
-                          (set! ok false)
-                          (set! message err)
-                          (set! err-pos i))])]
-                  [(ErrLexChar err)
-                    (begin
-                      (set! ok false)
-                      (set! message err)
-                      (set! err-pos i))]))]
             [(or (is-digit c) (negative-number-start? src i n))
               (match (scan-number-end-result src i n)
                 [(OkLexI64 end)
@@ -1085,7 +901,7 @@
                     (set! ok false)
                     (set! message err)
                     (set! err-pos i))])]
-            [(= c #:')
+            [(= c ':')
               (let
                 [end : i64 (colon-token-end src i n)]
                 (if (> end (+ i 1))
@@ -1169,7 +985,7 @@
     (begin
       (while (< k idx)
         (begin
-          (if (= (string-ref src k) #\newline')
+          (if (= (string-ref src k) '\n')
             (set! line (+ line 1))
             unit)
           (set! k (+ k 1))))
@@ -1184,7 +1000,7 @@
     (begin
       (while (< k idx)
         (begin
-          (if (= (string-ref src k) #\newline')
+          (if (= (string-ref src k) '\n')
             (set! col 1)
             (set! col (+ col 1)))
           (set! k (+ k 1))))
@@ -1304,7 +1120,7 @@
   "\\")
 
 (define (lex-basic-token-sequence-ok?) : bool
-  (match (lex-result "(define [x : i64] -42 \"ok\" #\\newline')")
+  (match (lex-result "(define [x : i64] -42 \"ok\" '\\n')")
     [(OkTokens toks)
       (let
         [ok : bool true]
@@ -1339,7 +1155,7 @@
           (if (string-eq (token-str (array-ref toks 8)) "ok")
             unit
             (set! ok false))
-          (if (= (token-char (array-ref toks 9)) #\newline')
+          (if (= (token-char (array-ref toks 9)) '\n')
             unit
             (set! ok false))
           (if (= (token-tag (array-ref toks 10)) (tag-rparen))
@@ -1388,23 +1204,8 @@
         (= (token-tag (spanned-token-tok (array-ref toks 9))) (tag-end)))]
     [(ErrSpannedTokens _) false]))
 
-(define (lex-char-source [body : String]) : String
-  (string-append "#" (string-append body "'")))
-
 (define (lex-apostrophe-char-source [body : String]) : String
   (string-append "'" (string-append body "'")))
-
-(define (lex-one-char-source-ok? [src : String] [want : char]) : bool
-  (match (lex-result src)
-    [(OkTokens toks)
-      (and
-        (= (token-tag (array-ref toks 0)) (tag-char))
-        (= (token-char (array-ref toks 0)) want)
-        (= (token-tag (array-ref toks 1)) (tag-end)))]
-    [(ErrTokens _) false]))
-
-(define (lex-one-char-ok? [body : String] [want : char]) : bool
-  (lex-one-char-source-ok? (lex-char-source body) want))
 
 (define (lex-quote-vs-apostrophe-char-ok?) : bool
   (and
@@ -1429,7 +1230,7 @@
       [(OkTokens toks)
         (and
           (= (token-tag (array-ref toks 0)) (tag-char))
-          (= (token-char (array-ref toks 0)) #a')
+          (= (token-char (array-ref toks 0)) 'a')
           (= (token-tag (array-ref toks 1)) (tag-end)))]
       [(ErrTokens _) false])))
 
@@ -1442,30 +1243,29 @@
         (= (token-tag (array-ref toks 1)) (tag-end)))]
     [(ErrTokens _) false]))
 
+(define (lex-legacy-char-rejected? [src : String]) : bool
+  (match (lex-result src)
+    [(OkTokens _) false]
+    [(ErrTokens message) (string-eq message "lexer: unexpected character")]))
+
 (define (lex-char-literals-ok?) : bool
   (let
     [slash : String (lex-backslash-text)]
     (and
-      (lex-one-char-ok? "x" #x')
-      (lex-one-char-ok? (string-append slash "n") #\newline')
-      (lex-one-char-ok? (string-append slash "t") #\tab')
-      (lex-one-char-ok? (string-append slash "0") #\nul')
-      (lex-one-char-ok? (string-append slash "space") #\space')
-      (lex-one-char-ok? (string-append slash "newline") #\newline')
-      (lex-one-char-ok? (string-append slash "tab") #\tab')
-      (lex-one-char-ok? (string-append slash "return") #\return')
-      (lex-one-char-ok? (string-append slash "nul") #\nul')
-      (lex-one-apostrophe-char-ok? "a" #a')
-      (lex-one-apostrophe-char-ok? "Z" #Z')
-      (lex-one-apostrophe-char-ok? "0" #0')
-      (lex-one-apostrophe-char-ok? "+" #+')
-      (lex-one-apostrophe-char-ok? " " #\space')
-      (lex-one-apostrophe-char-ok? (string-append slash "n") #\newline')
-      (lex-one-apostrophe-char-ok? (string-append slash "t") #\tab')
-      (lex-one-apostrophe-char-ok? (string-append slash "r") #\return')
-      (lex-one-apostrophe-char-ok? (string-append slash "0") #\nul')
-      (lex-one-apostrophe-char-ok? (string-append slash slash) #\\')
-      (lex-one-apostrophe-char-ok? (string-append slash "'") #''))))
+      (lex-one-apostrophe-char-ok? "a" 'a')
+      (lex-one-apostrophe-char-ok? "Z" 'Z')
+      (lex-one-apostrophe-char-ok? "0" '0')
+      (lex-one-apostrophe-char-ok? "+" '+')
+      (lex-one-apostrophe-char-ok? " " ' ')
+      (lex-one-apostrophe-char-ok? (string-append slash "n") '\n')
+      (lex-one-apostrophe-char-ok? (string-append slash "t") '\t')
+      (lex-one-apostrophe-char-ok? (string-append slash "r") '\r')
+      (lex-one-apostrophe-char-ok? (string-append slash "0") '\0')
+      (lex-one-apostrophe-char-ok? (string-append slash slash) '\\')
+      (lex-one-apostrophe-char-ok? (string-append slash "'") '\'')
+      (lex-legacy-char-rejected? "#x'")
+      (lex-legacy-char-rejected? "#\\n'")
+      (lex-legacy-char-rejected? "#\\space'"))))
 
 (define (lex-error-ok?
   [src : String]
@@ -1483,7 +1283,7 @@
   (let
     [slash : String (lex-backslash-text)]
     (and
-      (lex-error-ok? "\n#\\bogus'" 2 1 "lexer: unknown named character literal")
+      (lex-error-ok? "\n#\\bogus'" 2 1 "lexer: unexpected character")
       (lex-error-ok?
         (lex-apostrophe-char-source (string-append slash "x"))
         1

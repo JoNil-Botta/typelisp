@@ -573,7 +573,7 @@
 
 (define (compiler-typecheck-char-range-source) : String
   "(define (is-digit [c : char]) : bool
-  (if (>= c #0') (<= c #9') false))
+  (if (>= c '0') (<= c '9') false))
 (define (main [c : char]) : bool (is-digit c))")
 
 (define (compiler-typecheck-never-branch-source) : String
@@ -9138,7 +9138,7 @@
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
-        "(define (main) : i64 (begin (print-char #A') 0))"
+        "(define (main) : i64 (begin (print-char 'A') 0))"
         "typecheck: unbound name print-char")
         unit
         (set! ok false))

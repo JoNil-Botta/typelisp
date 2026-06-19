@@ -176,7 +176,7 @@ as + ld → ELF binary
 | `Int` | `[-]?[0-9]+` | Decimal integer literal, default type `i32` |
 | `Float` | `[-]?[0-9]+\.[0-9]+` | `f64` literal |
 | `Bool` | `true` / `false` | |
-| `Char` | `'x'` / `'\n'` / `'\''` | Single character literal; legacy bootstrap `#x'` / `#\\x'` remains accepted |
+| `Char` | `'x'` / `'\n'` / `'\''` | Single character literal |
 | `String` | `"..."` | ASCII string literal (type `String`) |
 | `Ident` | `[a-zA-Z_][a-zA-Z0-9_!?+-=*/<>:]*` | Identifier |
 | `Unit` | `unit` | The unit value |
@@ -3216,10 +3216,6 @@ arena-owned storage escape the scoped region.
 | String | `"hello"` | `String` |
 | Unit | `unit` | `unit` |
 
-During the bootstrap transition, the lexer also accepts legacy character
-literals `#A'`, `#\n'`, `#\t'`, `#\0'`, and named forms such as `#\space'`,
-`#\newline'`, `#\tab'`, `#\return'`, and `#\nul'`.
-
 ### 5.2 Variables and scoping
 
 - Global variables: visible everywhere after their definition.
@@ -3396,7 +3392,7 @@ ZII eligibility:
 | Signed/unsigned integers | numeric zero of that width |
 | `f64`, `f32` | `0.0` |
 | `bool` | `false` |
-| `char` | NUL byte (`#\nul'`) |
+| `char` | NUL byte (`'\0'`) |
 | `unit` | `unit` |
 | `(Ptr T)`, `(MutPtr T)` | typed null raw pointer |
 | `String` | valid empty string |
@@ -6391,7 +6387,6 @@ float         ::= [-]?[0-9]+\.[0-9]+
 bool          ::= "true" | "false"
 char          ::= "'" char-payload "'"
                 | "'\\" char-escape "'"
-                | "#" . "'" | "#\\" . "'"            ; legacy bootstrap
 char-payload  ::= any source character except "'" "\\" newline carriage-return
 char-escape   ::= "n" | "t" | "r" | "0" | "\\" | "'"
 string        ::= \"...\"

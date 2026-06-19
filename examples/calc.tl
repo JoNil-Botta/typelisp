@@ -65,15 +65,15 @@
 
 ;; `c` is a decimal digit char.
 (define (is-digit [c : char]) : bool
-  (and (>= c #0') (<= c #9')))
+  (and (>= c '0') (<= c '9')))
 
 ;; `c` is ASCII whitespace: space, tab, or newline.
 (define (is-space [c : char]) : bool
-  (or (= c #\space') (= c #\tab') (= c #\newline')))
+  (or (= c ' ') (= c '\t') (= c '\n')))
 
 ;; Decimal value of a digit char, e.g. the digit char `7` -> 7.
 (define (digit-value [c : char]) : i64
-  (- (code c) (code #0')))
+  (- (code c) (code '0')))
 
 ;; Return the end index (exclusive) of the digit run that starts at `start`.
 ;; Keep the bounds check outside the `string-ref`; boolean `and` is not a
@@ -98,12 +98,12 @@
 ;; yields unit and never returns.
 (define (single-token [c : char]) : Token
   (cond
-    [(= c #+') TPlus]
-    [(= c #-') TMinus]
-    [(= c #*') TStar]
-    [(= c #/') TSlash]
-    [(= c #(') TLParen]
-    [(= c #)') TRParen]
+    [(= c '+') TPlus]
+    [(= c '-') TMinus]
+    [(= c '*') TStar]
+    [(= c '/') TSlash]
+    [(= c '(') TLParen]
+    [(= c ')') TRParen]
     [else
       (begin
         (panic "lexer: unexpected character")

@@ -18,7 +18,7 @@
     (char-at s 0)))
 
 (define (case-string-returned) : bool
-  (= ((make-str-reader "Z")) #Z'))
+  (= ((make-str-reader "Z")) 'Z'))
 
 ; A dynamic array created inside `make-arr`'s frame, captured by the returned
 ; closure, and read after `make-arr` returns (the key dangling case).

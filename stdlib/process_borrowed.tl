@@ -306,7 +306,7 @@
     [(ProcessBorrowedEnvCons name _ rest)
       (if (= (string-length name) 0)
         (ProcessSomeString "process: environment variable name is empty")
-        (if (process-string-contains-char? name #=')
+        (if (process-string-contains-char? name '=')
           (ProcessSomeString "process: environment variable name contains '='")
           (process-borrowed-env-validation-error (box-get rest))))]))
 

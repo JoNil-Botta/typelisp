@@ -81,7 +81,7 @@
   (InvalidLspForms i64 i64 String String))
 
 (define (lsp-frame-space? [c : char]) : bool
-  (or (= c #\space') (= c #\tab')))
+  (or (= c ' ') (= c '\t')))
 
 (define (lsp-frame-trim-right-space-cr [text : String]) : String
   (let
@@ -94,7 +94,7 @@
           (set! i 0)
           (let
             [c : char (string-ref text (- i 1))]
-            (if (or (lsp-frame-space? c) (= c #\return'))
+            (if (or (lsp-frame-space? c) (= c '\r'))
               (begin
                 (set! end (- i 1))
                 (set! i (- i 1)))
@@ -141,7 +141,7 @@
         ok))))
 
 (define (lsp-frame-digit? [c : char]) : bool
-  (and (>= c #0') (<= c #9')))
+  (and (>= c '0') (<= c '9')))
 
 (define (lsp-frame-decimal? [text : String]) : bool
   (let
@@ -533,7 +533,7 @@
     (begin
       (while (< i n)
         (if (string-eq err "")
-          (if (= (string-ref text i) #%')
+          (if (= (string-ref text i) '%')
             (if (< (+ i 2) n)
               (let
                 [hi : i64 (lsp-hex-value (string-ref text (+ i 1)))]
@@ -565,7 +565,7 @@
 (define (lsp-uri-path-strip-windows-leading-slash [path : String]) : String
   (let
     [n : i64 (string-length path)]
-    (if (and (> n 2) (= (string-ref path 0) #/') (= (string-ref path 2) #:'))
+    (if (and (> n 2) (= (string-ref path 0) '/') (= (string-ref path 2) ':'))
       (substring path 1 (- n 1))
       path)))
 
@@ -617,7 +617,7 @@
       out)))
 
 (define (lsp-path-to-file-uri [path : String]) : String
-  (if (and (> (string-length path) 0) (= (string-ref path 0) #/'))
+  (if (and (> (string-length path) 0) (= (string-ref path 0) '/'))
     (string-append "file://" (lsp-percent-encode-path path))
     (string-append "file:///" (lsp-percent-encode-path path))))
 
@@ -1106,26 +1106,26 @@
 ;; --------------------------------------------------------------------------
 (define (lsp-ident-char? [c : char]) : bool
   (or
-    (and (>= c #a') (<= c #z'))
-    (and (>= c #A') (<= c #Z'))
-    (and (>= c #0') (<= c #9'))
-    (= c #-')
-    (= c #+')
-    (= c #*')
-    (= c #/')
-    (= c #?')
-    (= c #!')
-    (= c #>')
-    (= c #<')
-    (= c #=')
-    (= c #&')
-    (= c #:')
-    (= c #_')
-    (= c #.')
-    (= c #%')))
+    (and (>= c 'a') (<= c 'z'))
+    (and (>= c 'A') (<= c 'Z'))
+    (and (>= c '0') (<= c '9'))
+    (= c '-')
+    (= c '+')
+    (= c '*')
+    (= c '/')
+    (= c '?')
+    (= c '!')
+    (= c '>')
+    (= c '<')
+    (= c '=')
+    (= c '&')
+    (= c ':')
+    (= c '_')
+    (= c '.')
+    (= c '%')))
 
 (define (lsp-ws? [c : char]) : bool
-  (or (= c #\space') (= c #\tab') (= c #\newline') (= c #\return')))
+  (or (= c ' ') (= c '\t') (= c '\n') (= c '\r')))
 
 (define (lsp-skip-space [text : String] [i : i64] [n : i64]) : i64
   (let
@@ -1147,7 +1147,7 @@
   (let
     [j : i64 i]
     (begin
-      (while (and (< j n) (not (= (string-ref text j) #\newline')))
+      (while (and (< j n) (not (= (string-ref text j) '\n')))
         (set! j (+ j 1)))
       (if (< j n)
         (+ j 1)
@@ -1161,52 +1161,33 @@
       (while (and (< j n) (not done))
         (let
           [c : char (string-ref text j)]
-          (if (= c #\\')
+          (if (= c '\\')
             (set! j (+ j 2))
-            (if (= c #"')
+            (if (= c '"')
               (begin
                 (set! done true)
                 (set! j (+ j 1)))
               (set! j (+ j 1))))))
       j)))
 
-(define (lsp-skip-char-literal [text : String] [i : i64] [n : i64]) : i64
-  (let
-    [j : i64 (+ i 1)]
-    [seen-payload : bool false]
-    [done : bool false]
-    (begin
-      (while (and (< j n) (not done))
-        (let
-          [c : char (string-ref text j)]
-          (if (and seen-payload (= c #''))
-            (begin
-              (set! done true)
-              (set! j (+ j 1)))
-            (begin
-              (set! seen-payload true)
-              (set! j (+ j 1))))))
-      j)))
-
 (define (lsp-apostrophe-char-escape? [c : char]) : bool
-  (or (= c #n') (= c #t') (= c #r') (= c #0') (= c #\\') (= c #'')))
+  (or (= c 'n') (= c 't') (= c 'r') (= c '0') (= c '\\') (= c '\'')))
 
 (define (lsp-skip-apostrophe-char-literal [text : String] [i : i64] [n : i64]) : i64
   (if (< (+ i 1) n)
     (let
       [payload : char (string-ref text (+ i 1))]
       (cond
-        [(= payload #\\')
+        [(= payload '\\')
           (if (and
             (< (+ i 3) n)
             (lsp-apostrophe-char-escape? (string-ref text (+ i 2)))
-            (= (string-ref text (+ i 3)) #''))
+            (= (string-ref text (+ i 3)) '\''))
             (+ i 4)
             (+ i 1))]
-        [(or (= payload #'') (= payload #\newline') (= payload #\return'))
-          (+ i 1)]
+        [(or (= payload '\'') (= payload '\n') (= payload '\r')) (+ i 1)]
         [else
-          (if (and (< (+ i 2) n) (= (string-ref text (+ i 2)) #''))
+          (if (and (< (+ i 2) n) (= (string-ref text (+ i 2)) '\''))
             (+ i 3)
             (+ i 1))]))
     (+ i 1)))
@@ -1239,7 +1220,7 @@
     (begin
       (while (< i n)
         (begin
-          (if (or (= (string-ref s i) #/') (= (string-ref s i) #.'))
+          (if (or (= (string-ref s i) '/') (= (string-ref s i) '.'))
             (set! k i)
             unit)
           (set! i (+ i 1))))
@@ -1257,14 +1238,11 @@
     (begin
       (while (and (< i n) (< ln line0))
         (begin
-          (if (= (string-ref text i) #\newline')
+          (if (= (string-ref text i) '\n')
             (set! ln (+ ln 1))
             unit)
           (set! i (+ i 1))))
-      (while (and
-        (< i n)
-        (< col char0)
-        (not (= (string-ref text i) #\newline')))
+      (while (and (< i n) (< col char0) (not (= (string-ref text i) '\n')))
         (begin
           (set! i (+ i 1))
           (set! col (+ col 1))))
@@ -1280,7 +1258,7 @@
     (begin
       (while (and (< i n) (< i off))
         (begin
-          (if (= (string-ref text i) #\newline')
+          (if (= (string-ref text i) '\n')
             (begin
               (set! line (+ line 1))
               (set! col 1))
@@ -1312,7 +1290,7 @@
           (let
             [after-kw : i64 (lsp-skip-space text kw-end n)]
             [name-start : i64
-              (if (and (< after-kw n) (= (string-ref text after-kw) #('))
+              (if (and (< after-kw n) (= (string-ref text after-kw) '('))
                 (lsp-skip-space text (+ after-kw 1) n)
                 after-kw)]
             (if (< name-start n)
@@ -1335,11 +1313,10 @@
         (let
           [c : char (string-ref text i)]
           (cond
-            [(= c #;') (set! i (lsp-skip-line text i n))]
-            [(= c #'') (set! i (lsp-skip-apostrophe-char-literal text i n))]
-            [(= c ##') (set! i (lsp-skip-char-literal text i n))]
-            [(= c #"') (set! i (lsp-skip-string text i n))]
-            [(= c #(')
+            [(= c ';') (set! i (lsp-skip-line text i n))]
+            [(= c '\'') (set! i (lsp-skip-apostrophe-char-literal text i n))]
+            [(= c '"') (set! i (lsp-skip-string text i n))]
+            [(= c '(')
               (let
                 [name-off : i64 (lsp-def-name-offset-at text i n)]
                 (if (>= name-off 0)
@@ -1364,9 +1341,9 @@
       (while (and (< i end) (< result 0))
         (let
           [c : char (string-ref text i)]
-          (if (= c #"')
+          (if (= c '"')
             (set! i (lsp-skip-string text i end))
-            (if (= c #(')
+            (if (= c '(')
               (let
                 [vs : i64 (lsp-skip-space text (+ i 1) end)]
                 [ve : i64 (lsp-scan-ident text vs end)]
@@ -1387,11 +1364,10 @@
         (let
           [c : char (string-ref text i)]
           (cond
-            [(= c #;') (set! i (lsp-skip-line text i n))]
-            [(= c #'') (set! i (lsp-skip-apostrophe-char-literal text i n))]
-            [(= c ##') (set! i (lsp-skip-char-literal text i n))]
-            [(= c #"') (set! i (lsp-skip-string text i n))]
-            [(= c #(')
+            [(= c ';') (set! i (lsp-skip-line text i n))]
+            [(= c '\'') (set! i (lsp-skip-apostrophe-char-literal text i n))]
+            [(= c '"') (set! i (lsp-skip-string text i n))]
+            [(= c '(')
               (let
                 [kw-start : i64 (lsp-skip-space text (+ i 1) n)]
                 [kw-end : i64 (lsp-scan-ident text kw-start n)]
@@ -1468,9 +1444,9 @@
         (let
           [c : char (string-ref text i)]
           (cond
-            [(= c #;') (set! i (lsp-skip-line text i n))]
-            [(= c #"') (set! i (lsp-skip-string text i n))]
-            [(= c #(')
+            [(= c ';') (set! i (lsp-skip-line text i n))]
+            [(= c '"') (set! i (lsp-skip-string text i n))]
+            [(= c '(')
               (let
                 [kw-start : i64 (lsp-skip-space text (+ i 1) n)]
                 [kw-end : i64 (lsp-scan-ident text kw-start n)]
@@ -1481,7 +1457,7 @@
                     "import"))
                   (let
                     [q : i64 (lsp-skip-space text kw-end n)]
-                    (if (and (< q n) (= (string-ref text q) #"'))
+                    (if (and (< q n) (= (string-ref text q) '"'))
                       (let
                         [str-end : i64 (lsp-skip-string text q n)]
                         (begin
@@ -1738,7 +1714,7 @@
 (define (lsp-definition-smoke-skips-char-literals?) : bool
   (let
     [src : String
-      "(define (quote-char) : char #\"')\n(define (apostrophe-quote-char) : char '\"')\n(define (target) : i64 1)\n(define (use) : i64 (target))\n"]
+      "(define (quote-char) : char '\"')\n(define (apostrophe-quote-char) : char '\"')\n(define (target) : i64 1)\n(define (use) : i64 (target))\n"]
     (match (lsp-find-definition
       (lsp-documents-new)
       "file:///smoke.tl"
@@ -1786,7 +1762,7 @@
     (begin
       (while (< i n)
         (begin
-          (if (= (string-ref s i) #\space')
+          (if (= (string-ref s i) ' ')
             (begin
               (if (> i start)
                 (set! acc (string-vec-push acc (substring s start (- i start))))
@@ -1828,9 +1804,9 @@
         (let
           [c : char (string-ref text i)]
           (cond
-            [(= c #;') (set! i (lsp-skip-line text i n))]
-            [(= c #"') (set! i (lsp-skip-string text i n))]
-            [(= c #(')
+            [(= c ';') (set! i (lsp-skip-line text i n))]
+            [(= c '"') (set! i (lsp-skip-string text i n))]
+            [(= c '(')
               (let
                 [name-off : i64 (lsp-def-name-offset-at text i n)]
                 (begin
@@ -1905,7 +1881,7 @@
               (set! p (- p 1)))
             (while (and (>= p 0) (lsp-ws? (string-ref text p)))
               (set! p (- p 1)))
-            (and (>= p 0) (= (string-ref text p) #['))))))))
+            (and (>= p 0) (= (string-ref text p) '['))))))))
 
 (define (lsp-inlay-range-line [range : Json] [which : String] [fallback : i64]) : i64
   (match (json-object-get range (& which))
@@ -2066,15 +2042,14 @@
         (let
           [c : char (string-ref text j)]
           (cond
-            [(= c #;') (set! j (lsp-skip-line text j n))]
-            [(= c #'') (set! j (lsp-skip-apostrophe-char-literal text j n))]
-            [(= c ##') (set! j (lsp-skip-char-literal text j n))]
-            [(= c #"') (set! j (lsp-skip-string text j n))]
-            [(= c #(')
+            [(= c ';') (set! j (lsp-skip-line text j n))]
+            [(= c '\'') (set! j (lsp-skip-apostrophe-char-literal text j n))]
+            [(= c '"') (set! j (lsp-skip-string text j n))]
+            [(= c '(')
               (begin
                 (set! depth (+ depth 1))
                 (set! j (+ j 1)))]
-            [(= c #)')
+            [(= c ')')
               (begin
                 (set! depth (- depth 1))
                 (set! j (+ j 1))
@@ -2086,7 +2061,7 @@
 
 ;; End offset of one type expression (a ( ... ) group or a single token).
 (define (lsp-scan-type [text : String] [i : i64] [n : i64]) : i64
-  (if (and (< i n) (= (string-ref text i) #('))
+  (if (and (< i n) (= (string-ref text i) '('))
     (lsp-skip-paren-group text i n)
     (lsp-scan-ident text i n)))
 
@@ -2100,7 +2075,7 @@
       false
       (let
         [start : i64 (lsp-skip-space text 0 n)]
-        (if (or (>= start n) (not (= (string-ref text start) #(')))
+        (if (or (>= start n) (not (= (string-ref text start) '(')))
           false
           (let
             [j : i64 start]
@@ -2111,16 +2086,15 @@
                 (let
                   [c : char (string-ref text j)]
                   (cond
-                    [(= c #;') (set! j (lsp-skip-line text j n))]
-                    [(= c #'')
+                    [(= c ';') (set! j (lsp-skip-line text j n))]
+                    [(= c '\'')
                       (set! j (lsp-skip-apostrophe-char-literal text j n))]
-                    [(= c ##') (set! j (lsp-skip-char-literal text j n))]
-                    [(= c #"') (set! j (lsp-skip-string text j n))]
-                    [(= c #(')
+                    [(= c '"') (set! j (lsp-skip-string text j n))]
+                    [(= c '(')
                       (begin
                         (set! depth (+ depth 1))
                         (set! j (+ j 1)))]
-                    [(= c #)')
+                    [(= c ')')
                       (begin
                         (set! depth (- depth 1))
                         (set! j (+ j 1))
@@ -2170,11 +2144,11 @@
     (begin
       (while (and (< i n) (not done))
         (if (= current-line line1)
-          (if (or (= i n) (= (string-ref text i) #\newline'))
+          (if (or (= i n) (= (string-ref text i) '\n'))
             (set! done true)
             (set! i (+ i 1)))
           (begin
-            (if (= (string-ref text i) #\newline')
+            (if (= (string-ref text i) '\n')
               (set! current-line (+ current-line 1))
               unit)
             (set! i (+ i 1))
@@ -2275,7 +2249,7 @@
       ; skip whitespace
       (set! i (lsp-skip-space text i n))
       ; if type annotation ': type', skip it
-      (if (and (< i n) (= (string-ref text i) #:'))
+      (if (and (< i n) (= (string-ref text i) ':'))
         (begin
           (set! i (+ i 1))
           ; skip ':'
@@ -2297,11 +2271,10 @@
         (let
           [c : char (string-ref text i)]
           (cond
-            [(= c #;') (set! i (lsp-skip-line text i n))]
-            [(= c #'') (set! i (lsp-skip-apostrophe-char-literal text i n))]
-            [(= c ##') (set! i (lsp-skip-char-literal text i n))]
-            [(= c #"') (set! i (lsp-skip-string text i n))]
-            [(= c #[')
+            [(= c ';') (set! i (lsp-skip-line text i n))]
+            [(= c '\'') (set! i (lsp-skip-apostrophe-char-literal text i n))]
+            [(= c '"') (set! i (lsp-skip-string text i n))]
+            [(= c '[')
               (let
                 [name-start : i64 (lsp-skip-space text (+ i 1) n)]
                 [name-end : i64 (lsp-scan-ident text name-start n)]
@@ -2314,7 +2287,7 @@
                       sym))
                     (let
                       [after : i64 (lsp-skip-space text name-end n)]
-                      (if (and (< after n) (= (string-ref text after) #:'))
+                      (if (and (< after n) (= (string-ref text after) ':'))
                         (let
                           [ty-start : i64 (lsp-skip-space text (+ after 1) n)]
                           [ty-end : i64 (lsp-scan-type text ty-start n)]
@@ -2338,11 +2311,10 @@
         (let
           [c : char (string-ref text i)]
           (cond
-            [(= c #;') (set! i (lsp-skip-line text i n))]
-            [(= c #'') (set! i (lsp-skip-apostrophe-char-literal text i n))]
-            [(= c ##') (set! i (lsp-skip-char-literal text i n))]
-            [(= c #"') (set! i (lsp-skip-string text i n))]
-            [(= c #(')
+            [(= c ';') (set! i (lsp-skip-line text i n))]
+            [(= c '\'') (set! i (lsp-skip-apostrophe-char-literal text i n))]
+            [(= c '"') (set! i (lsp-skip-string text i n))]
+            [(= c '(')
               (let
                 [name-off : i64 (lsp-def-name-offset-at text i n)]
                 (if (>= name-off 0)
@@ -2421,12 +2393,12 @@
       (let
         [j : i64 (lsp-skip-space text kw-end n)]
         (begin
-          (if (and (< j n) (= (string-ref text j) #('))
+          (if (and (< j n) (= (string-ref text j) '('))
             (set! j (lsp-skip-paren-group text j n))
             (set! j (lsp-scan-ident text j n)))
           (let
             [k : i64 (lsp-skip-space text j n)]
-            (if (and (< k n) (= (string-ref text k) #:'))
+            (if (and (< k n) (= (string-ref text k) ':'))
               (set! j (lsp-scan-type text (lsp-skip-space text (+ k 1) n) n))
               unit))
           (substring text form-off (- j form-off)))))))
@@ -2436,7 +2408,7 @@
   (let
     [i : i64 pos]
     (begin
-      (while (and (> i 0) (not (= (string-ref text (- i 1)) #\newline')))
+      (while (and (> i 0) (not (= (string-ref text (- i 1)) '\n')))
         (set! i (- i 1)))
       i)))
 
@@ -2447,12 +2419,12 @@
     (begin
       (while (and
         (< i n)
-        (or (= (string-ref text i) #\space') (= (string-ref text i) #\tab')))
+        (or (= (string-ref text i) ' ') (= (string-ref text i) '\t')))
         (set! i (+ i 1)))
       (and
         (< (+ i 1) n)
-        (= (string-ref text i) #;')
-        (or (= (string-ref text (+ i 1)) #:') (= (string-ref text (+ i 1)) ##'))))))
+        (= (string-ref text i) ';')
+        (or (= (string-ref text (+ i 1)) ':') (= (string-ref text (+ i 1)) '#'))))))
 
 ;; Text of a ;: / ;# doc-comment line (prefix and one space stripped).
 (define (lsp-doc-comment-text [text : String] [line-start : i64] [n : i64]) : String
@@ -2461,16 +2433,16 @@
     (begin
       (while (and
         (< i n)
-        (or (= (string-ref text i) #\space') (= (string-ref text i) #\tab')))
+        (or (= (string-ref text i) ' ') (= (string-ref text i) '\t')))
         (set! i (+ i 1)))
       (set! i (+ i 2))
-      (if (and (< i n) (= (string-ref text i) #\space'))
+      (if (and (< i n) (= (string-ref text i) ' '))
         (set! i (+ i 1))
         unit)
       (let
         [end : i64 i]
         (begin
-          (while (and (< end n) (not (= (string-ref text end) #\newline')))
+          (while (and (< end n) (not (= (string-ref text end) '\n')))
             (set! end (+ end 1)))
           (substring text i (- end i)))))))
 
@@ -2536,9 +2508,9 @@
       (while (and (< i end) (string-eq result ""))
         (let
           [c : char (string-ref text i)]
-          (if (= c #"')
+          (if (= c '"')
             (set! i (lsp-skip-string text i end))
-            (if (= c #(')
+            (if (= c '(')
               (let
                 [vs : i64 (lsp-skip-space text (+ i 1) end)]
                 [ve : i64 (lsp-scan-ident text vs end)]
@@ -2563,11 +2535,10 @@
         (let
           [c : char (string-ref text i)]
           (cond
-            [(= c #;') (set! i (lsp-skip-line text i n))]
-            [(= c #'') (set! i (lsp-skip-apostrophe-char-literal text i n))]
-            [(= c ##') (set! i (lsp-skip-char-literal text i n))]
-            [(= c #"') (set! i (lsp-skip-string text i n))]
-            [(= c #(')
+            [(= c ';') (set! i (lsp-skip-line text i n))]
+            [(= c '\'') (set! i (lsp-skip-apostrophe-char-literal text i n))]
+            [(= c '"') (set! i (lsp-skip-string text i n))]
+            [(= c '(')
               (let
                 [kw-start : i64 (lsp-skip-space text (+ i 1) n)]
                 [kw-end : i64 (lsp-scan-ident text kw-start n)]
@@ -2691,7 +2662,7 @@
       (if (and (string-eq result "") (string-eq name "char"))
         (set!
           result
-          (lsp-hover-markdown "char" "A character value (written like `#a'`)."))
+          (lsp-hover-markdown "char" "A character value (written like `'a'`)."))
         unit)
       (if (and (string-eq result "") (string-eq name "String"))
         (set!
@@ -3157,11 +3128,10 @@
         (let
           [c : char (string-ref text i)]
           (cond
-            [(= c #;') (set! i (lsp-skip-line text i n))]
-            [(= c #'') (set! i (lsp-skip-apostrophe-char-literal text i n))]
-            [(= c ##') (set! i (lsp-skip-char-literal text i n))]
-            [(= c #"') (set! i (lsp-skip-string text i n))]
-            [(= c #(')
+            [(= c ';') (set! i (lsp-skip-line text i n))]
+            [(= c '\'') (set! i (lsp-skip-apostrophe-char-literal text i n))]
+            [(= c '"') (set! i (lsp-skip-string text i n))]
+            [(= c '(')
               (let
                 [kw-start : i64 (lsp-skip-space text (+ i 1) n)]
                 [kw-end : i64 (lsp-scan-ident text kw-start n)]
@@ -3172,7 +3142,7 @@
                     "import"))
                   (let
                     [q : i64 (lsp-skip-space text kw-end n)]
-                    (if (and (< q n) (= (string-ref text q) #"'))
+                    (if (and (< q n) (= (string-ref text q) '"'))
                       (let
                         [str-end : i64 (lsp-skip-string text q n)]
                         (begin
@@ -3305,11 +3275,10 @@
           [c : char (string-ref text i)]
           (begin
             (cond
-              [(= c #;') (set! i (lsp-skip-line text i n))]
-              [(= c #'') (set! i (lsp-skip-apostrophe-char-literal text i n))]
-              [(= c ##') (set! i (lsp-skip-char-literal text i n))]
-              [(= c #"') (set! i (lsp-skip-string text i n))]
-              [(= c #(')
+              [(= c ';') (set! i (lsp-skip-line text i n))]
+              [(= c '\'') (set! i (lsp-skip-apostrophe-char-literal text i n))]
+              [(= c '"') (set! i (lsp-skip-string text i n))]
+              [(= c '(')
                 (begin
                   (set! depth (+ depth 1))
                   (if (= depth 1)
@@ -3343,7 +3312,7 @@
                         unit))
                     unit)
                   (set! i (+ i 1)))]
-              [(= c #)')
+              [(= c ')')
                 (begin
                   (set! depth (- depth 1))
                   (set! i (+ i 1)))]
@@ -4060,7 +4029,7 @@
                                   (lsp-skip-space text kw-end n2)]
                                 (if (and
                                   (< after-kw2 n2)
-                                  (= (string-ref text after-kw2) #('))
+                                  (= (string-ref text after-kw2) '('))
                                   (let
                                     [body-start-off : i64
                                       (lsp-find-body-start-offset
@@ -4790,7 +4759,7 @@
                                         (lsp-skip-space text kw-end n2)]
                                       (if (and
                                         (< after-kw2 n2)
-                                        (= (string-ref text after-kw2) #('))
+                                        (= (string-ref text after-kw2) '('))
                                         (let
                                           [body-start-off : i64
                                             (lsp-find-body-start-offset
@@ -4936,7 +4905,7 @@
                     [after-kw2 : i64 (lsp-skip-space text kw-end n2)]
                     (if (and
                       (< after-kw2 n2)
-                      (= (string-ref text after-kw2) #('))
+                      (= (string-ref text after-kw2) '('))
                       (let
                         [body-start-off : i64
                           (lsp-find-body-start-offset text form-start-off)]
@@ -5022,7 +4991,7 @@
                       [after-kw2 : i64 (lsp-skip-space text kw-end n2)]
                       (if (and
                         (< after-kw2 n2)
-                        (= (string-ref text after-kw2) #('))
+                        (= (string-ref text after-kw2) '('))
                         (let
                           [body-start-off : i64
                             (lsp-find-body-start-offset text form-start-off)]

@@ -239,7 +239,7 @@
 (define (main [xs : (Array i64)] [p : Point]) : i64
   (let
     [n : i64 (array-ref xs 0)]
-    [c : char #\\space']
+    [c : char ' ']
     (match (Some n)
       [(Some v) (+ v (cast c : i64))]
       [None 0])))")
@@ -280,6 +280,21 @@
           "format cst: unexpected closing delimiter")
         (format-source-span-eq? (format-source-error-span err) 2 3 2 3))]))
 
+(define (format-cst-legacy-char-rejected-ok?) : bool
+  (and
+    (match (parse-format-source-result "#x'")
+      [(OkFormatCst _) false]
+      [(ErrFormatCst err)
+        (string-eq
+          (format-source-error-message err)
+          "format lexer: unexpected character")])
+    (match (parse-format-source-result "#\\space'")
+      [(OkFormatCst _) false]
+      [(ErrFormatCst err)
+        (string-eq
+          (format-source-error-message err)
+          "format lexer: unexpected character")])))
+
 (define (format-cst-self-test) : i64
   (let
     [stream : FormatTokenStream (format-lex (format-cst-fixture))]
@@ -294,4 +309,5 @@
       (unless (format-cst-prefixed-int-ok?) (return 7))
       (unless (format-cst-apostrophe-char-ok?) (return 8))
       (unless (format-cst-error-location-ok?) (return 9))
+      (unless (format-cst-legacy-char-rejected-ok?) (return 10))
       42)))

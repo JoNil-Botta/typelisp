@@ -98,7 +98,7 @@
             [sep : u8
               (unsafe
                 (ptr-read (ptr-offset entry n)))]
-            (if (= sep (cast #=' : u8))
+            (if (= sep (cast '=' : u8))
               (unsafe
                 (ptr-offset entry (+ n 1)))
               (ptr-null : (Ptr u8)))))))))

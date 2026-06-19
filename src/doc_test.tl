@@ -228,13 +228,13 @@
     [_ ""]))
 
 (define (doc-test-space? [c : char]) : bool
-  (or (= c #\space') (= c #\tab') (= c #\newline') (= c #\return')))
+  (or (= c ' ') (= c '\t') (= c '\n') (= c '\r')))
 
 (define (doc-test-inline-space? [c : char]) : bool
-  (or (= c #\space') (= c #\tab')))
+  (or (= c ' ') (= c '\t')))
 
 (define (doc-test-newline? [c : char]) : bool
-  (or (= c #\newline') (= c #\return')))
+  (or (= c '\n') (= c '\r')))
 
 (define (doc-test-string-prefix-at?
   [text : String]
@@ -338,7 +338,7 @@
         [value : i64 0]
         [ok : bool true]
         (begin
-          (if (= (string-ref trimmed 0) #-')
+          (if (= (string-ref trimmed 0) '-')
             (begin
               (set! sign -1)
               (set! i 1))
@@ -369,25 +369,25 @@
       (while (and (= (string-length message) 0) (< i n))
         (let
           [c : char (string-ref text i)]
-          (if (= c #\\')
+          (if (= c '\\')
             (if (>= (+ i 1) n)
               (set! message "trailing escape in doctest output metadata")
               (let
                 [esc : char (string-ref text (+ i 1))]
                 (cond
-                  [(= esc #n')
+                  [(= esc 'n')
                     (begin
                       (set! out (string-append out "\n"))
                       (set! i (+ i 2)))]
-                  [(= esc #t')
+                  [(= esc 't')
                     (begin
                       (set! out (string-append out "\t"))
                       (set! i (+ i 2)))]
-                  [(= esc #r')
+                  [(= esc 'r')
                     (begin
                       (set! out (string-append out "\r"))
                       (set! i (+ i 2)))]
-                  [(= esc #\\')
+                  [(= esc '\\')
                     (begin
                       (set! out (string-append out "\\"))
                       (set! i (+ i 2)))]
@@ -465,9 +465,9 @@
     (let
       [c : char (string-ref src line-end)]
       (begin
-        (unless (= c #\return') (return (+ line-end 1)))
+        (unless (= c '\r') (return (+ line-end 1)))
         (unless (< (+ line-end 1) n) (return (+ line-end 1)))
-        (if (= (string-ref src (+ line-end 1)) #\newline')
+        (if (= (string-ref src (+ line-end 1)) '\n')
           (+ line-end 2)
           (+ line-end 1))))))
 
@@ -483,7 +483,7 @@
         [body : String
           (substring trimmed prefix-len (- trimmed-len prefix-len))]
         (if (> (string-length body) 0)
-          (if (= (string-ref body 0) #\space')
+          (if (= (string-ref body 0) ' ')
             (DocTestSomeString (substring body 1 (- (string-length body) 1)))
             (DocTestSomeString body))
           (DocTestSomeString body)))
@@ -504,14 +504,14 @@
         true
         (let
           [c : char (string-ref text head-len)]
-          (or (doc-test-space? c) (= c #(') (= c #)')))))
+          (or (doc-test-space? c) (= c '(') (= c ')')))))
     false))
 
 (define (doc-test-supported-item-declaration? [line : String]) : bool
   (let
     [trimmed : String (doc-test-trim-left line)]
     (if (> (string-length trimmed) 0)
-      (if (= (string-ref trimmed 0) #(')
+      (if (= (string-ref trimmed 0) '(')
         (let
           [rest : String
             (doc-test-trim-left
@@ -1198,9 +1198,9 @@
     (begin
       (while (< i n)
         (if (and
-          (= (string-ref text i) #\return')
+          (= (string-ref text i) '\r')
           (< (+ i 1) n)
-          (= (string-ref text (+ i 1)) #\newline'))
+          (= (string-ref text (+ i 1)) '\n'))
           (begin
             (set! out (string-append out "\n"))
             (set! i (+ i 2)))

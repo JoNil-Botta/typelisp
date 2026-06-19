@@ -305,13 +305,13 @@
     [(MdNoBlock) false]))
 
 (define (md-inline-space? [c : char]) : bool
-  (or (= c #\space') (= c #\tab')))
+  (or (= c ' ') (= c '\t')))
 
 (define (md-newline? [c : char]) : bool
-  (or (= c #\newline') (= c #\return')))
+  (or (= c '\n') (= c '\r')))
 
 (define (md-decimal-digit? [c : char]) : bool
-  (and (>= c #0') (<= c #9')))
+  (and (>= c '0') (<= c '9')))
 
 (define (md-trim-left [text : String]) : String
   (let
@@ -377,9 +377,9 @@
     (let
       [c : char (string-ref src line-end)]
       (begin
-        (unless (= c #\return') (return (+ line-end 1)))
+        (unless (= c '\r') (return (+ line-end 1)))
         (unless (< (+ line-end 1) n) (return (+ line-end 1)))
-        (if (= (string-ref src (+ line-end 1)) #\newline')
+        (if (= (string-ref src (+ line-end 1)) '\n')
           (+ line-end 2)
           (+ line-end 1))))))
 
@@ -397,7 +397,7 @@
     [n : i64 (string-length trimmed)]
     [i : i64 0]
     (begin
-      (while (and (< i n) (= (string-ref trimmed i) ##'))
+      (while (and (< i n) (= (string-ref trimmed i) '#'))
         (set! i (+ i 1)))
       (unless (and (>= i 1) (<= i 6)) (return 0))
       (unless (< i n) (return 0))
@@ -414,7 +414,7 @@
 (define (md-blockquote-start? [line : String]) : bool
   (let
     [trimmed : String (md-trim-left line)]
-    (and (> (string-length trimmed) 0) (= (string-ref trimmed 0) #>'))))
+    (and (> (string-length trimmed) 0) (= (string-ref trimmed 0) '>'))))
 
 (define (md-blockquote-text [line : String]) : String
   (let
@@ -437,7 +437,7 @@
     [n : i64 (string-length trimmed)]
     (and
       (>= n 2)
-      (or (= (string-ref trimmed 0) #-') (= (string-ref trimmed 0) #*'))
+      (or (= (string-ref trimmed 0) '-') (= (string-ref trimmed 0) '*'))
       (md-inline-space? (string-ref trimmed 1)))))
 
 (define (md-bullet-text [line : String]) : String
@@ -456,7 +456,7 @@
       (unless (> i 0) (return (- 0 1)))
       (unless (< (+ i 1) n) (return (- 0 1)))
       (if (and
-        (= (string-ref trimmed i) #.')
+        (= (string-ref trimmed i) '.')
         (md-inline-space? (string-ref trimmed (+ i 1))))
         (+ i 2)
         (- 0 1)))))
@@ -510,20 +510,20 @@
   (let
     [trimmed : String (md-trim line)]
     [n : i64 (string-length (md-trim line))]
-    (if (and (> n 1) (= (string-ref trimmed 0) #|'))
+    (if (and (> n 1) (= (string-ref trimmed 0) '|'))
       (let
         [i : i64 1]
         [found : bool false]
         (begin
           (while (and (not found) (< i n))
-            (if (= (string-ref trimmed i) #|')
+            (if (= (string-ref trimmed i) '|')
               (set! found true)
               (set! i (+ i 1))))
           found))
       false)))
 
 (define (md-table-delimiter-char? [c : char]) : bool
-  (or (= c #|') (= c #-') (= c #:') (= c #\space') (= c #\tab')))
+  (or (= c '|') (= c '-') (= c ':') (= c ' ') (= c '\t')))
 
 (define (md-table-delimiter? [line : String]) : bool
   (let
@@ -537,7 +537,7 @@
         (let
           [c : char (string-ref trimmed i)]
           (begin
-            (if (= c #-')
+            (if (= c '-')
               (set! has-dash true)
               (set! has-dash has-dash))
             (if (md-table-delimiter-char? c)
@@ -563,10 +563,10 @@
     [start : i64 0]
     [end : i64 (string-length (md-trim line))]
     (begin
-      (if (and (> end 0) (= (string-ref trimmed 0) #|'))
+      (if (and (> end 0) (= (string-ref trimmed 0) '|'))
         (set! start 1)
         (set! start start))
-      (if (and (> end start) (= (string-ref trimmed (- end 1)) #|'))
+      (if (and (> end start) (= (string-ref trimmed (- end 1)) '|'))
         (set! end (- end 1))
         (set! end end))
       (substring trimmed start (- end start)))))
@@ -580,7 +580,7 @@
     [items : StringVec (string-vec-new)]
     (begin
       (while (< i n)
-        (if (= (string-ref body i) #|')
+        (if (= (string-ref body i) '|')
           (begin
             (set!
               items
@@ -820,9 +820,9 @@
         (let
           [c : char (string-ref text i)]
           (cond
-            [(= c #`')
+            [(= c '`')
               (let
-                [j : i64 (md-find-char text (+ i 1) #`')]
+                [j : i64 (md-find-char text (+ i 1) '`')]
                 (if (< j n)
                   (begin
                     (set!
@@ -835,7 +835,7 @@
                   (begin
                     (set! out (string-append out (md-escape-char text i)))
                     (set! i (+ i 1)))))]
-            [(or (= c #*') (= c #_'))
+            [(or (= c '*') (= c '_'))
               (let
                 [j : i64 (md-find-char text (+ i 1) c)]
                 (if (< j n)
@@ -850,14 +850,14 @@
                   (begin
                     (set! out (string-append out (md-escape-char text i)))
                     (set! i (+ i 1)))))]
-            [(= c #[')
+            [(= c '[')
               (let
-                [jclose : i64 (md-find-char text (+ i 1) #]')]
+                [jclose : i64 (md-find-char text (+ i 1) ']')]
                 (if (< jclose n)
                   (if (< (+ jclose 1) n)
-                    (if (= (string-ref text (+ jclose 1)) #(')
+                    (if (= (string-ref text (+ jclose 1)) '(')
                       (let
-                        [kclose : i64 (md-find-char text (+ jclose 2) #)')]
+                        [kclose : i64 (md-find-char text (+ jclose 2) ')')]
                         (if (< kclose n)
                           (begin
                             (set!

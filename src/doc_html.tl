@@ -12,10 +12,10 @@
   (let
     [c : char (string-ref text idx)]
     (cond
-      [(= c #&') "&amp;"]
-      [(= c #<') "&lt;"]
-      [(= c #>') "&gt;"]
-      [(= c #"') "&quot;"]
+      [(= c '&') "&amp;"]
+      [(= c '<') "&lt;"]
+      [(= c '>') "&gt;"]
+      [(= c '"') "&quot;"]
       [else (substring text idx 1)])))
 
 (define (doc-html-escape [text : String]) : String
@@ -33,9 +33,9 @@
 (define (doc-html-escape-text-one [text : String] [idx : i64]) : String
   (let
     [c : char (string-ref text idx)]
-    (if (= c #\newline')
+    (if (= c '\n')
       "<br>\n"
-      (if (= c #\return')
+      (if (= c '\r')
         ""
         (doc-html-escape-one text idx)))))
 

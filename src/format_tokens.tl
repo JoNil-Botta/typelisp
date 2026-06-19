@@ -193,7 +193,7 @@
         (let
           [c : char (string-ref src i)]
           (begin
-            (if (= c #\newline')
+            (if (= c '\n')
               (begin
                 (set! line (+ line 1))
                 (set! col 1))
@@ -238,36 +238,36 @@
       hits)))
 
 (define (fmt-is-digit [c : char]) : bool
-  (and (>= c #0') (<= c #9')))
+  (and (>= c '0') (<= c '9')))
 
 (define (fmt-is-hex-digit [c : char]) : bool
-  (or (fmt-is-digit c) (and (>= c #a') (<= c #f')) (and (>= c #A') (<= c #F'))))
+  (or (fmt-is-digit c) (and (>= c 'a') (<= c 'f')) (and (>= c 'A') (<= c 'F'))))
 
 (define (fmt-is-binary-digit [c : char]) : bool
-  (or (= c #0') (= c #1')))
+  (or (= c '0') (= c '1')))
 
 (define (fmt-is-alpha [c : char]) : bool
-  (or (and (>= c #A') (<= c #Z')) (and (>= c #a') (<= c #z'))))
+  (or (and (>= c 'A') (<= c 'Z')) (and (>= c 'a') (<= c 'z'))))
 
 (define (fmt-is-space [c : char]) : bool
-  (or (= c #\space') (= c #\tab') (= c #\newline') (= c #\return')))
+  (or (= c ' ') (= c '\t') (= c '\n') (= c '\r')))
 
 (define (fmt-is-symbol-punct [c : char]) : bool
   (or
-    (= c #-')
-    (= c #+')
-    (= c #*')
-    (= c #/')
-    (= c #?')
-    (= c #!')
-    (= c #>')
-    (= c #<')
-    (= c #=')
-    (= c #_')
-    (= c #$')
-    (= c #.')
-    (= c #%')
-    (= c #&')))
+    (= c '-')
+    (= c '+')
+    (= c '*')
+    (= c '/')
+    (= c '?')
+    (= c '!')
+    (= c '>')
+    (= c '<')
+    (= c '=')
+    (= c '_')
+    (= c '$')
+    (= c '.')
+    (= c '%')
+    (= c '&')))
 
 (define (fmt-is-symbol-char [c : char]) : bool
   (or (fmt-is-alpha c) (fmt-is-digit c) (fmt-is-symbol-punct c)))
@@ -330,14 +330,14 @@
     [c : char (fmt-source-byte-bounds-proven data i)]
     (if (fmt-is-digit c)
       true
-      (if (= c #-')
+      (if (= c '-')
         (if (< (+ i 1) n)
           (fmt-is-digit (fmt-source-byte-bounds-proven data (+ i 1)))
           false)
         false))))
 
 (define (fmt-number-digits-start [data : (Ptr u8)] [start : i64]) : i64
-  (if (= (fmt-source-byte-bounds-proven data start) #-')
+  (if (= (fmt-source-byte-bounds-proven data start) '-')
     (+ start 1)
     start))
 
@@ -345,11 +345,11 @@
   (let
     [digits-start : i64 (fmt-number-digits-start data start)]
     (if (< (+ digits-start 1) n)
-      (if (= (fmt-source-byte-bounds-proven data digits-start) #0')
+      (if (= (fmt-source-byte-bounds-proven data digits-start) '0')
         (let
           [prefix : char
             (fmt-source-byte-bounds-proven data (+ digits-start 1))]
-          (or (= prefix #x') (= prefix #X') (= prefix #b') (= prefix #B')))
+          (or (= prefix 'x') (= prefix 'X') (= prefix 'b') (= prefix 'B')))
         false)
       false)))
 
@@ -359,16 +359,16 @@
       (fmt-source-byte-bounds-proven
         data
         (+ (fmt-number-digits-start data start) 1))]
-    (if (or (= prefix #x') (= prefix #X'))
+    (if (or (= prefix 'x') (= prefix 'X'))
       16
       2)))
 
 (define (fmt-starts-ellipsis [data : (Ptr u8)] [i : i64] [n : i64]) : bool
   (and
     (< (+ i 2) n)
-    (= (fmt-source-byte-bounds-proven data i) #.')
-    (= (fmt-source-byte-bounds-proven data (+ i 1)) #.')
-    (= (fmt-source-byte-bounds-proven data (+ i 2)) #.')))
+    (= (fmt-source-byte-bounds-proven data i) '.')
+    (= (fmt-source-byte-bounds-proven data (+ i 1)) '.')
+    (= (fmt-source-byte-bounds-proven data (+ i 2)) '.')))
 
 (define (fmt-scan-based-int-end
   [data : (Ptr u8)]
@@ -436,18 +436,18 @@
     [seen-dot : bool false]
     [keep : bool true]
     (begin
-      (if (and (< j n) (= (fmt-source-byte-bounds-proven data j) #-'))
+      (if (and (< j n) (= (fmt-source-byte-bounds-proven data j) '-'))
         (set! j (+ j 1))
         (set! j j))
       (while keep
         (if (< j n)
           (let
             [c : char (fmt-source-byte-bounds-proven data j)]
-            (if (and (= c #.') (not seen-dot))
+            (if (and (= c '.') (not seen-dot))
               (begin
                 (set! seen-dot true)
                 (set! j (+ j 1)))
-              (if (or (fmt-is-digit c) (= c #_'))
+              (if (or (fmt-is-digit c) (= c '_'))
                 (set! j (+ j 1))
                 (set! keep false))))
           (set! keep false)))
@@ -495,7 +495,7 @@
     (begin
       (while keep
         (if (< j n)
-          (if (= (fmt-source-byte-bounds-proven data j) #\newline')
+          (if (= (fmt-source-byte-bounds-proven data j) '\n')
             (set! keep false)
             (set! j (+ j 1)))
           (set! keep false)))
@@ -520,11 +520,11 @@
                 (begin
                   (set! escaped false)
                   (set! j (+ j 1)))]
-              [(= c #\\')
+              [(= c '\\')
                 (begin
                   (set! escaped true)
                   (set! j (+ j 1)))]
-              [(= c #"')
+              [(= c '"')
                 (begin
                   (set! j (+ j 1))
                   (set! keep false))]
@@ -551,53 +551,8 @@
         ;; lint-allow: unreachable-code
         start)]))
 
-(define (fmt-scan-char-end-result
-  [src : String]
-  [data : (Ptr u8)]
-  [start : i64]
-  [n : i64]) : ResultFmtI64
-  (let
-    [j : i64 start]
-    [keep : bool true]
-    (begin
-      (if (< j n)
-        (set! j (+ j 1))
-        (return
-          (ErrFmtI64
-            (fmt-source-error-at
-              src
-              (- start 1)
-              "format lexer: unterminated character literal"))))
-      (while keep
-        (if (< j n)
-          (if (= (fmt-source-byte-bounds-proven data j) #'')
-            (begin
-              (set! j (+ j 1))
-              (set! keep false))
-            (set! j (+ j 1)))
-          (return
-            (ErrFmtI64
-              (fmt-source-error-at
-                src
-                (- start 1)
-                "format lexer: unterminated character literal")))))
-      (OkFmtI64 j))))
-
-(define (fmt-scan-char-end
-  [src : String]
-  [data : (Ptr u8)]
-  [start : i64]
-  [n : i64]) : i64
-  (match (fmt-scan-char-end-result src data start n)
-    [(OkFmtI64 end) end]
-    [(ErrFmtI64 err)
-      (begin
-        (panic (format-source-error-message err))
-        ;; lint-allow: unreachable-code
-        start)]))
-
 (define (fmt-apostrophe-escape? [c : char]) : bool
-  (or (= c #n') (= c #t') (= c #r') (= c #0') (= c #\\') (= c #'')))
+  (or (= c 'n') (= c 't') (= c 'r') (= c '0') (= c '\\') (= c '\'')))
 
 (define (fmt-char-close-error
   [src : String]
@@ -605,7 +560,7 @@
   [idx : i64]
   [n : i64]) : ResultFmtMaybeCharEnd
   (if (< idx n)
-    (if (= (fmt-source-byte-bounds-proven data idx) #'')
+    (if (= (fmt-source-byte-bounds-proven data idx) '\'')
       (OkFmtCharEnd (+ idx 1))
       (ErrFmtCharEnd
         (fmt-source-error-at src idx "format lexer: expected ' after character")))
@@ -624,7 +579,7 @@
     (let
       [payload : char (fmt-source-byte-bounds-proven data (+ start 1))]
       (cond
-        [(= payload #\\')
+        [(= payload '\\')
           (let
             [esc-idx : i64 (+ start 2)]
             (if (< esc-idx n)
@@ -641,11 +596,10 @@
                   src
                   start
                   "format lexer: unterminated character literal"))))]
-        [(or (= payload #'') (= payload #\newline') (= payload #\return'))
-          (NoFmtCharEnd)]
+        [(or (= payload '\'') (= payload '\n') (= payload '\r')) (NoFmtCharEnd)]
         [else
           (if (< (+ start 2) n)
-            (if (= (fmt-source-byte-bounds-proven data (+ start 2)) #'')
+            (if (= (fmt-source-byte-bounds-proven data (+ start 2)) '\'')
               (OkFmtCharEnd (+ start 3))
               (NoFmtCharEnd))
             (NoFmtCharEnd))]))
@@ -733,7 +687,7 @@
             [c : char (fmt-source-byte-bounds-proven data i)]
             (cond
               [(fmt-char-class? c 1) (set! i (+ i 1))]
-              [(= c #;')
+              [(= c ';')
                 (let
                   [end : i64 (fmt-scan-comment-end data i n)]
                   (begin
@@ -745,32 +699,32 @@
                       (FmtComment (substring src i (- end i))))
                     (set! count (+ count 1))
                     (set! i end)))]
-              [(= c #(')
+              [(= c '(')
                 (begin
                   (fmt-store-token tokens starts count i (FmtLParen))
                   (set! count (+ count 1))
                   (set! i (+ i 1)))]
-              [(= c #)')
+              [(= c ')')
                 (begin
                   (fmt-store-token tokens starts count i (FmtRParen))
                   (set! count (+ count 1))
                   (set! i (+ i 1)))]
-              [(= c #[')
+              [(= c '[')
                 (begin
                   (fmt-store-token tokens starts count i (FmtLBracket))
                   (set! count (+ count 1))
                   (set! i (+ i 1)))]
-              [(= c #]')
+              [(= c ']')
                 (begin
                   (fmt-store-token tokens starts count i (FmtRBracket))
                   (set! count (+ count 1))
                   (set! i (+ i 1)))]
-              [(= c #:')
+              [(= c ':')
                 (begin
                   (fmt-store-token tokens starts count i (FmtColon))
                   (set! count (+ count 1))
                   (set! i (+ i 1)))]
-              [(= c #'')
+              [(= c '\'')
                 (match (fmt-scan-apostrophe-char-end-result src data i n)
                   [(OkFmtCharEnd end)
                     (begin
@@ -788,7 +742,7 @@
                       (fmt-store-token tokens starts count i (FmtQuote))
                       (set! count (+ count 1))
                       (set! i (+ i 1)))])]
-              [(= c #`')
+              [(= c '`')
                 (begin
                   (fmt-store-token tokens starts count i (FmtBacktick))
                   (set! count (+ count 1))
@@ -798,14 +752,14 @@
                   (fmt-store-token tokens starts count i (FmtSymbol "..."))
                   (set! count (+ count 1))
                   (set! i (+ i 3)))]
-              [(= c #.')
+              [(= c '.')
                 (begin
                   (fmt-store-token tokens starts count i (FmtDot))
                   (set! count (+ count 1))
                   (set! i (+ i 1)))]
-              [(= c #,')
+              [(= c ',')
                 (if (< (+ i 1) n)
-                  (if (= (fmt-source-byte-bounds-proven data (+ i 1)) #@')
+                  (if (= (fmt-source-byte-bounds-proven data (+ i 1)) '@')
                     (begin
                       (fmt-store-token tokens starts count i (FmtCommaAt))
                       (set! count (+ count 1))
@@ -818,7 +772,7 @@
                     (fmt-store-token tokens starts count i (FmtComma))
                     (set! count (+ count 1))
                     (set! i (+ i 1))))]
-              [(= c #"')
+              [(= c '"')
                 (match (fmt-scan-string-end-result src data (+ i 1) n)
                   [(OkFmtI64 end)
                     (begin
@@ -828,19 +782,6 @@
                         count
                         i
                         (FmtString (substring src i (- end i))))
-                      (set! count (+ count 1))
-                      (set! i end))]
-                  [(ErrFmtI64 err) (return (ErrFormatTokenStream err))])]
-              [(= c ##')
-                (match (fmt-scan-char-end-result src data (+ i 1) n)
-                  [(OkFmtI64 end)
-                    (begin
-                      (fmt-store-token
-                        tokens
-                        starts
-                        count
-                        i
-                        (FmtChar (substring src i (- end i))))
                       (set! count (+ count 1))
                       (set! i end))]
                   [(ErrFmtI64 err) (return (ErrFormatTokenStream err))])]

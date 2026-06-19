@@ -24,9 +24,8 @@
 ;; projectable through `match`.
 ;;
 ;; Deferred - current language gaps, recorded as self-hosting signal:
-;;   - Digit char literals: `#\0` lexes as NUL (the `\0` escape), so digit and
-;;     whitespace classification compares the char's `i64` code point against
-;;     ASCII constants rather than against char literals.
+;;   - Digit and whitespace classification compares each char's `i64` code
+;;     point against ASCII constants.
 (import "stdlib/io.tl")
 (import "stdlib/string.tl")
 
@@ -61,12 +60,12 @@
 
 ;; `c` is a decimal digit char.
 (define (is-digit [c : char]) : bool
-  (and (>= c #0') (<= c #9')))
+  (and (>= c '0') (<= c '9')))
 
 ;; `c` is an ASCII letter (A-Z, a-z) or `_`: the set of characters that may
 ;; start an identifier.
 (define (is-alpha [c : char]) : bool
-  (or (= c #_') (and (>= c #A') (<= c #Z')) (and (>= c #a') (<= c #z'))))
+  (or (= c '_') (and (>= c 'A') (<= c 'Z')) (and (>= c 'a') (<= c 'z'))))
 
 ;; `c` may appear in an identifier after the first char: a letter, `_`, or a
 ;; digit.
@@ -75,11 +74,11 @@
 
 ;; `c` is ASCII whitespace: space, tab, or newline.
 (define (is-space [c : char]) : bool
-  (or (= c #\space') (= c #\tab') (= c #\newline')))
+  (or (= c ' ') (= c '\t') (= c '\n')))
 
 ;; Decimal value of a digit char, e.g. the digit char `7` -> 7.
 (define (digit-value [c : char]) : i64
-  (- (code c) (code #0')))
+  (- (code c) (code '0')))
 
 ;; Classify a single (non-digit, non-letter, non-space) char into its Token,
 ;; building an actual `Token` value so enum construction is exercised. An
@@ -88,12 +87,12 @@
 ;; unit and never returns.
 (define (single-token [c : char]) : Token
   (cond
-    [(= c #+') TPlus]
-    [(= c #-') TMinus]
-    [(= c #*') TStar]
-    [(= c #/') TSlash]
-    [(= c #(') TLParen]
-    [(= c #)') TRParen]
+    [(= c '+') TPlus]
+    [(= c '-') TMinus]
+    [(= c '*') TStar]
+    [(= c '/') TSlash]
+    [(= c '(') TLParen]
+    [(= c ')') TRParen]
     [else
       (begin
         (panic "lexer: unexpected character")

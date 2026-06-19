@@ -919,7 +919,7 @@
     (if (= n 0)
       (ErrJsonNumberShape "json: expected digit in number")
       (begin
-        (if (= (string-ref text 0) #-')
+        (if (= (string-ref text 0) '-')
           (set! index 1)
           unit)
         (while (and
@@ -935,7 +935,7 @@
                   (set! significant-digits (+ significant-digits 1))))
               (set! digit-count (+ digit-count 1))
               (set! index (+ index 1)))))
-        (if (and (< index n) (= (string-ref text index) #.'))
+        (if (and (< index n) (= (string-ref text index) '.'))
           (begin
             (set! index (+ index 1))
             (while (and
@@ -959,11 +959,11 @@
           (begin
             (set! saw-exp true)
             (set! index (+ index 1))
-            (if (and (< index n) (= (string-ref text index) #-'))
+            (if (and (< index n) (= (string-ref text index) '-'))
               (begin
                 (set! exp-negative true)
                 (set! index (+ index 1)))
-              (if (and (< index n) (= (string-ref text index) #+'))
+              (if (and (< index n) (= (string-ref text index) '+'))
                 (set! index (+ index 1))
                 unit))
             (while (and
@@ -1005,7 +1005,7 @@
     [n : i64 (string-length text)]
     [i : i64 0]
     (begin
-      (when (and (> n 0) (= (string-ref text 0) #-')) (set! i 1))
+      (when (and (> n 0) (= (string-ref text 0) '-')) (set! i 1))
       (if (>= i n)
         false
         (let
@@ -1058,7 +1058,7 @@
 (define (json-number-i64-range? [text : String]) : bool
   (let
     [negative : bool
-      (and (> (string-length text) 0) (= (string-ref text 0) #-'))]
+      (and (> (string-length text) 0) (= (string-ref text 0) '-'))]
     [start : i64
       (if negative
         1
@@ -1742,7 +1742,7 @@
       "abcd"
       "json-cat4")
     (json-stdlib-inline-test-assert-i64-eq
-      (json-char-code #A')
+      (json-char-code 'A')
       65
       "json-char-code")
     (json-stdlib-inline-test-assert-i64-eq
@@ -1874,15 +1874,15 @@
       (json-stdlib-inline-test-object-get JsonNull "n")
       "json-object-get non-object")
     (json-stdlib-inline-test-assert-i64-eq
-      (json-hex-value #A')
+      (json-hex-value 'A')
       10
       "json-hex-value upper")
     (json-stdlib-inline-test-assert-i64-eq
-      (json-hex-value #f')
+      (json-hex-value 'f')
       15
       "json-hex-value lower")
     (json-stdlib-inline-test-assert-i64-eq
-      (json-hex-value #g')
+      (json-hex-value 'g')
       -1
       "json-hex-value invalid")
     (json-stdlib-inline-test-assert-owned-string-eq

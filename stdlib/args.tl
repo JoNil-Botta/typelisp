@@ -277,18 +277,18 @@
 
 ;: Return true when `token` looks like an option token rather than a positional.
 (define (args-option-looking-token? [token : String]) : bool
-  (and (> (string-length token) 1) (char-eq (string-ref token 0) #-')))
+  (and (> (string-length token) 1) (char-eq (string-ref token 0) '-')))
 
 ;: Return true when `token` has the supported long spelling `--name`.
 (define (args-long-token? [token : String]) : bool
   (and
     (> (string-length token) 2)
-    (char-eq (string-ref token 0) #-')
-    (char-eq (string-ref token 1) #-')))
+    (char-eq (string-ref token 0) '-')
+    (char-eq (string-ref token 1) '-')))
 
 ;: Return true when `token` has the supported short spelling `-x`.
 (define (args-short-token? [token : String]) : bool
-  (and (= (string-length token) 2) (char-eq (string-ref token 0) #-')))
+  (and (= (string-length token) 2) (char-eq (string-ref token 0) '-')))
 
 ;: Return the long name portion of a supported long token.
 (define (args-token-long-name [token : String]) : String

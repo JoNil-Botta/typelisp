@@ -477,7 +477,7 @@
       found)))
 
 (define (doc-site-href-anchor? [target : String]) : bool
-  (and (> (string-length target) 0) (= (string-ref target 0) ##')))
+  (and (> (string-length target) 0) (= (string-ref target 0) '#')))
 
 (define (doc-site-href-external? [target : String]) : bool
   (or
@@ -587,7 +587,7 @@
           (if (< href-start n)
             (let
               [target-start : i64 (+ href-start 6)]
-              [target-end : i64 (md-find-char html target-start #"')]
+              [target-end : i64 (md-find-char html target-start '"')]
               (if (< target-end n)
                 (let
                   [target : String
@@ -884,7 +884,7 @@ pre {
               (set! start (+ i 1))
               (set! end n))
             unit)
-          (if (= (string-ref source i) #.')
+          (if (= (string-ref source i) '.')
             (set! end i)
             unit)
           (set! i (+ i 1))))

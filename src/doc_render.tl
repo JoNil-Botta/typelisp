@@ -26,13 +26,13 @@
   (cast c : i64))
 
 (define (doc-render-alpha? [c : char]) : bool
-  (or (and (>= c #A') (<= c #Z')) (and (>= c #a') (<= c #z'))))
+  (or (and (>= c 'A') (<= c 'Z')) (and (>= c 'a') (<= c 'z'))))
 
 (define (doc-render-digit? [c : char]) : bool
-  (and (>= c #0') (<= c #9')))
+  (and (>= c '0') (<= c '9')))
 
 (define (doc-render-anchor-char? [c : char]) : bool
-  (or (doc-render-alpha? c) (doc-render-digit? c) (= c #-') (= c #_')))
+  (or (doc-render-alpha? c) (doc-render-digit? c) (= c '-') (= c '_')))
 
 (define (doc-render-anchor [name : String]) : String
   (let
@@ -58,17 +58,17 @@
   (let
     [c : char (string-ref text idx)]
     (cond
-      [(= c #&') "&amp;"]
-      [(= c #<') "&lt;"]
-      [(= c #>') "&gt;"]
-      [(= c #\\') "\\\\"]
-      [(= c #`') "\\`"]
-      [(= c #[') "\\["]
-      [(= c #]') "\\]"]
-      [(= c #*') "\\*"]
-      [(= c #_') "\\_"]
-      [(= c ##') "\\#"]
-      [(= c #|') "\\|"]
+      [(= c '&') "&amp;"]
+      [(= c '<') "&lt;"]
+      [(= c '>') "&gt;"]
+      [(= c '\\') "\\\\"]
+      [(= c '`') "\\`"]
+      [(= c '[') "\\["]
+      [(= c ']') "\\]"]
+      [(= c '*') "\\*"]
+      [(= c '_') "\\_"]
+      [(= c '#') "\\#"]
+      [(= c '|') "\\|"]
       [else (substring text idx 1)])))
 
 (define (doc-render-escape-markdown [text : String]) : String

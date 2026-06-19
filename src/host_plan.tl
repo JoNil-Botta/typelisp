@@ -20,7 +20,7 @@
   (str-cat name " " (host-plan-netstring value) "\n"))
 
 (define (host-plan-flag? [value : String]) : bool
-  (and (> (string-length value) 0) (= (string-ref value 0) #-')))
+  (and (> (string-length value) 0) (= (string-ref value 0) '-')))
 
 (define (host-plan-target-valid? [value : String]) : bool
   (or

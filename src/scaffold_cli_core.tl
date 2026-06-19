@@ -17,11 +17,11 @@
     (let
       [c : char (string-ref name idx)]
       (if (or
-        (and (>= c #a') (<= c #z'))
-        (and (>= c #A') (<= c #Z'))
-        (and (>= c #0') (<= c #9'))
-        (= c #-')
-        (= c #_'))
+        (and (>= c 'a') (<= c 'z'))
+        (and (>= c 'A') (<= c 'Z'))
+        (and (>= c '0') (<= c '9'))
+        (= c '-')
+        (= c '_'))
         (scaffold-name-bad-char? name (+ idx 1))
         true))))
 

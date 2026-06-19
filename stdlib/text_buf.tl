@@ -529,10 +529,8 @@
       (text-buf-test-assert-text-buf
         (text-buf-append-int
           (text-buf-append-char
-            (text-buf-append-char
-              (text-buf-append (text-buf-empty) "A")
-              #\newline')
-            #\tab')
+            (text-buf-append-char (text-buf-append (text-buf-empty) "A") '\n')
+            '\t')
           -12)
         "A\n\t-12"
         "char and int append")
@@ -540,8 +538,8 @@
         [buf : TextBuf (text-buf-empty)]
         (begin
           (text-buf-append! buf "A")
-          (text-buf-append-char! buf #\newline')
-          (text-buf-append-char! buf #\tab')
+          (text-buf-append-char! buf '\n')
+          (text-buf-append-char! buf '\t')
           (text-buf-append-int! buf (cast -12 : i64))
           (text-buf-test-assert-text-buf
             buf

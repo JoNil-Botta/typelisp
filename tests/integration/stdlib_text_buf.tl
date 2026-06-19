@@ -5,7 +5,7 @@
 (define (text-buf-integration-ok?) : bool
   (let
     [left : TextBuf
-      (text-buf-append-char (text-buf-append (text-buf-empty) "left") #-')]
+      (text-buf-append-char (text-buf-append (text-buf-empty) "left") '-')]
     [right : TextBuf
       (text-buf-append-int (text-buf-append (text-buf-empty) "right") 7)]
     (string-eq

@@ -1,0 +1,7 @@
+[
+  {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}},
+  {"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"${{TMP_URI}}/test.tl","languageId":"typelisp","version":1,"text":"(define (foo [x : i64]) : i64\n  (+ x foo-bar))\n\n(define (bar [y : i64]) : i64\n  y)\n"}}},
+  {"jsonrpc":"2.0","id":2,"method":"tl/replacePattern","params":{"textDocument":{"uri":"${{TMP_URI}}/test.tl"},"name":"foo","oldPattern":"x","newPattern":"z"}},
+  {"jsonrpc":"2.0","id":3,"method":"shutdown","params":null},
+  {"jsonrpc":"2.0","method":"exit"}
+]

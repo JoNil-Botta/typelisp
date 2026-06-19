@@ -76,6 +76,10 @@
   (OkLspFunctionList (Array String))
   (ErrLspFunctionList String))
 
+(defenum LspValidationResult
+  (ValidLspForms)
+  (InvalidLspForms i64 i64 String String))
+
 (define (lsp-frame-space? [c : char]) : bool
   (or (= c #\space') (= c #\tab')))
 
@@ -801,6 +805,29 @@
         (string-contains (& rendered) (& secondary-line))
         (string-contains (& rendered) (& secondary-end))))))
 
+(define (lsp-validate-forms-smoke-ok?) : bool
+  (let
+    [valid1 : bool (lsp-text-is-valid-forms "(define (foo) : i64 1)")]
+    [valid2 : bool
+      (lsp-text-is-valid-forms "(define (foo) : i64 1)\n(define (bar) : i64 2)")]
+    [err1 : String (lsp-validate-forms-error "(define (foo) : i64 1")]
+    [needle : String "unterminated"]
+    (and
+      valid1
+      valid2
+      (not (string-eq err1 ""))
+      (string-contains (& err1) (& needle)))))
+
+(define (lsp-validate-forms-line-context-ok?) : bool
+  (match (lsp-validate-forms-result "(let [x : badtype] 1)")
+    [(ValidLspForms) false]
+    [(InvalidLspForms line col msg ctx)
+      (and
+        (= line 1)
+        (= col 1)
+        (not (string-eq msg ""))
+        (not (string-eq ctx "")))]))
+
 (define (lsp-diagnostic-metadata-smoke) : i64
   (let
     [parse-diag : CompilerDiagnostic
@@ -828,6 +855,8 @@
       (cfg test (unless (lsp-compiler-diagnostic-related-ok?) (return 4)) unit)
       (unless (lsp-frame-session-cache-smoke-ok?) (return 5))
       (unless (lsp-definition-smoke-ok?) (return 6))
+      (cfg test (unless (lsp-validate-forms-smoke-ok?) (return 7)) unit)
+      (cfg test (unless (lsp-validate-forms-line-context-ok?) (return 8)) unit)
       42)))
 
 (define (lsp-diagnostic-uri
@@ -2077,24 +2106,128 @@
 
 ;; Validate that text contains one or more complete parenthesized forms.
 ;; Returns true if all non-whitespace content consists of valid forms.
+;; Now uses the real compiler parser for accurate error reporting.
 (define (lsp-text-is-valid-forms [text : String]) : bool
   (let
     [n : i64 (string-length text)]
     [i : i64 (lsp-skip-space text 0 n)]
     (if (= i n)
       false
+      (match (lsp-validate-forms-result text)
+        [(ValidLspForms) true]
+        [(InvalidLspForms _ _ _ _) false]))))
+
+;; Return a formatted error message, or empty string if valid.
+(define (lsp-validate-forms-error [text : String]) : String
+  (match (lsp-validate-forms-result text)
+    [(ValidLspForms) ""]
+    [(InvalidLspForms line col msg ctx)
+      (str-cat
+        msg
+        " at line "
+        (int->string line)
+        ", col "
+        (int->string col)
+        " | "
+        ctx)]))
+
+;; Extract the line at position (1-based line)
+(define (lsp-line-at [text : String] [line1 : i64]) : String
+  (let
+    [n : i64 (string-length text)]
+    [i : i64 0]
+    [current-line : i64 1]
+    [start : i64 0]
+    [done : bool false]
+    (begin
+      (while (and (< i n) (not done))
+        (if (= current-line line1)
+          (if (or (= i n) (= (string-ref text i) #\newline'))
+            (set! done true)
+            (set! i (+ i 1)))
+          (begin
+            (if (= (string-ref text i) #\newline')
+              (set! current-line (+ current-line 1))
+              unit)
+            (set! i (+ i 1))
+            (set! start i))))
+      (if (= current-line line1)
+        (substring text start (- i start))
+        ""))))
+
+;; Validate forms using real parser. Returns ValidLspForms on success,
+;; or InvalidLspForms with line, col, message, and context on failure.
+(define (lsp-validate-forms-result [text : String]) : LspValidationResult
+  (match (lex-spanned-result text)
+    [(ErrSpannedTokens err)
       (let
-        [valid : bool true]
+        [span : SourceSpan (source-error-span err)]
+        [line : i64 (span-start-line span)]
+        [col : i64 (span-start-col span)]
+        [msg : String (source-error-message err)]
+        (InvalidLspForms line col msg (lsp-line-at text line)))]
+    [(OkSpannedTokens toks)
+      (let
+        [cur : (Array i64) (make-array i64 1)]
+        [dispatch : SymI64Env (compiler-parse-dispatch-env)]
+        [done : bool false]
+        [result : LspValidationResult ValidLspForms]
         (begin
-          (while (and (< i n) valid)
-            (if (not (= (string-ref text i) #('))
-              (set! valid false)
-              (let
-                [j : i64 (lsp-skip-paren-group text i n)]
-                (if (<= j i)
-                  (set! valid false)
-                  (set! i (lsp-skip-space text j n))))))
-          valid)))))
+          (array-set! cur 0 0)
+          (while (and
+            (not done)
+            (not (= (peek-spanned-tag toks cur) (tag-end))))
+            (match (read-form-spanned-result toks cur)
+              [(ErrSpannedSexpr err)
+                (let
+                  [span : SourceSpan (source-error-span err)]
+                  [line : i64 (span-start-line span)]
+                  [col : i64 (span-start-col span)]
+                  [msg : String (source-error-message err)]
+                  (begin
+                    (set!
+                      result
+                      (InvalidLspForms line col msg (lsp-line-at text line)))
+                    (set! done true)))]
+              [(OkSpannedSexpr sexpr)
+                (match (parse-ast-decl-maybe dispatch sexpr)
+                  [(ErrAstMaybeDecl msg)
+                    (match (parse-ast-expr dispatch sexpr)
+                      [(ErrAstExpr _)
+                        (let
+                          [span : SourceSpan (spanned-sexpr-span sexpr)]
+                          [line : i64 (span-start-line span)]
+                          [col : i64 (span-start-col span)]
+                          (begin
+                            (set!
+                              result
+                              (InvalidLspForms
+                                line
+                                col
+                                msg
+                                (lsp-line-at text line)))
+                            (set! done true)))]
+                      [(OkAstExpr _) unit])]
+                  [(OkAstNoDecl)
+                    (match (parse-ast-expr dispatch sexpr)
+                      [(ErrAstExpr msg)
+                        (let
+                          [span : SourceSpan (spanned-sexpr-span sexpr)]
+                          [line : i64 (span-start-line span)]
+                          [col : i64 (span-start-col span)]
+                          (begin
+                            (set!
+                              result
+                              (InvalidLspForms
+                                line
+                                col
+                                msg
+                                (lsp-line-at text line)))
+                            (set! done true)))]
+                      [(OkAstExpr _) unit])]
+                  [(OkAstSomeDecl _) unit]
+                  [(OkAstDecls _) unit])]))
+          result))]))
 
 ;; Find the byte offset where the body of a define/defmacro begins,
 ;; given the offset of the opening '(' of the form.
@@ -3800,7 +3933,12 @@
         [(OkLspJsonText new-text)
           (if (not (lsp-text-is-valid-forms new-text))
             (begin
-              (lsp-write-error id -32600 "newText is not valid form(s)")
+              (lsp-write-error
+                id
+                -32600
+                (str-cat
+                  "newText is not valid form(s): "
+                  (lsp-validate-forms-error new-text)))
               (LspContinue docs))
             (let
               [text-copy : String (string-copy-borrowed (& text))]
@@ -3940,7 +4078,9 @@
                           (lsp-write-error
                             id
                             -32600
-                            "newBody is not a valid form")
+                            (str-cat
+                              "newBody is not a valid form: "
+                              (lsp-validate-forms-error new-body)))
                           (LspContinue docs))
                         (let
                           [formatted : String
@@ -4645,7 +4785,10 @@
                                               (lsp-write-error
                                                 id
                                                 -32600
-                                                "newPattern produces an invalid form in body")
+                                                (str-cat
+                                                  "newPattern produces an invalid form in body: "
+                                                  (lsp-validate-forms-error
+                                                    replaced-body)))
                                               (set! result ""))
                                             (set!
                                               result
@@ -4705,3 +4848,15 @@
       (begin
         (lsp-write-error id -32600 "Document not found")
         (LspContinue docs))]))
+
+(test
+  lsp-validate-forms-smoke
+  (unless
+    (lsp-validate-forms-smoke-ok?)
+    (panic "lsp-validate-forms-smoke failed")))
+
+(test
+  lsp-validate-forms-line-context
+  (unless
+    (lsp-validate-forms-line-context-ok?)
+    (panic "lsp-validate-forms-line-context failed")))

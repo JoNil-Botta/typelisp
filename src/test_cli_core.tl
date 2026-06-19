@@ -2397,6 +2397,7 @@
   [entry-path : String]
   [program : AstProgram]
   [paths : AstDeclPathList]
+  [roots : StringVec]
   [target : CompilerBackendTarget]
   [opt-level : i64]
   [temp-dir : String]) : i64
@@ -2404,7 +2405,13 @@
     [asm-path : String (source-tool-asm-path temp-dir source)]
     [obj-path : String (source-tool-obj-path temp-dir source target)]
     [bin-path : String (source-tool-temp-bin-path temp-dir source target)]
-    (match (lower-compiler-program-with-decl-paths entry-path program paths)
+    (match (lower-compiler-program-with-decl-paths-mode-cache
+      entry-path
+      program
+      paths
+      (CompilerLowerScalar)
+      roots
+      (tltest-typecheck-cache-scope roots target))
       [(OkCompilerLower ir spans)
         (match (compiler-driver-emit-lowered-with-level
           source
@@ -2486,6 +2493,7 @@
   [entry-path : String]
   [program : AstProgram]
   [paths : AstDeclPathList]
+  [roots : StringVec]
   [target : String]
   [opt-level : i64]) : i64
   (match (source-tool-target target)
@@ -2501,6 +2509,7 @@
             entry-path
             (tltest-program-with-print-runtime program backend-target)
             (tltest-paths-with-print-runtime backend-target paths)
+            roots
             backend-target
             opt-level
             temp-dir)]
@@ -2514,9 +2523,17 @@
   [source : String]
   [program : AstProgram]
   [paths : AstDeclPathList]
+  [roots : StringVec]
   [target : String]
   [opt-level : i64]) : i64
-  (tltest-run-direct-with-entry source source program paths target opt-level))
+  (tltest-run-direct-with-entry
+    source
+    source
+    program
+    paths
+    roots
+    target
+    opt-level))
 
 (define (tltest-no-tests-check
   [decls : AstDeclList]
@@ -2541,6 +2558,7 @@
   [source : String]
   [target : String]
   [_mode : String]
+  [roots : StringVec]
   [opt-level : i64]) : i64
   ;; With no inline tests there is no source harness to validate here. `test
   ;; --check` owns source typechecking; run mode only needs the zero-test runner.
@@ -2548,6 +2566,7 @@
     source
     (ast-program (ast-decl-cons (tltest-empty-main-decl) AstDeclNil))
     (ast-decl-path-cons source AstDeclPathNil)
+    roots
     target
     opt-level))
 
@@ -2839,6 +2858,7 @@
                     source
                     program
                     harness-paths
+                    roots
                     target
                     opt-level)])]
             (if (= status 0)
@@ -2879,6 +2899,7 @@
 (define (tltest-package-integration-run
   [source : String]
   [target : String]
+  [roots : StringVec]
   [opt-level : i64]
   [decls : AstDeclList]
   [paths : AstDeclPathList]) : ResultTestPackageTotals
@@ -2892,6 +2913,7 @@
             ""
             (ast-program decls)
             paths
+            roots
             target
             opt-level)]
         (if (= status 0)
@@ -2929,7 +2951,13 @@
             roots
             backend-target)]
         [(TestModeRun)
-          (tltest-package-integration-run source target opt-level decls paths)])]
+          (tltest-package-integration-run
+            source
+            target
+            roots
+            opt-level
+            decls
+            paths)])]
     [(ErrCompilerLoadWithPaths diag)
       (begin
         (print-error
@@ -3378,7 +3406,7 @@
                       [(TestModeCheck)
                         (tltest-no-tests-check decls paths roots backend-target)]
                       [(TestModeRun)
-                        (tltest-no-tests-run source target mode opt-level)])
+                        (tltest-no-tests-run source target mode roots opt-level)])
                     (match test-mode
                       [(TestModeCheck)
                         (tltest-check-only
@@ -3392,6 +3420,7 @@
                           source
                           program
                           harness-paths
+                          roots
                           target
                           opt-level)]))])]
             [(ErrCompilerLoadWithPaths diag)

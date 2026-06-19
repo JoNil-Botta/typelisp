@@ -1420,9 +1420,25 @@
 
 ;; A pure temporary-producing instruction is dead when its result var is unused.
 ;; Calls (side-effecting) and control-flow instructions are never dead here.
+;;
+;; Address arithmetic (`IrInstrGep`), value conversions (`IrInstrCast`), and
+;; non-volatile reads (`IrInstrLoad`) are pure or read-only
+;; (`compiler-ir-instr-effect` classes `IrEffectPure` / `IrEffectMemoryRead`): a
+;; load never writes state and only ever feeds its result var, so when that var
+;; is unused the whole computation is dead. These arms let DCE clear the dead
+;; length-load / gep / cast chain that `opt-loop-bce-blocks` leaves behind once
+;; it proves an array index in range, which otherwise survives every later pass
+;; because these producers were excluded here. `IrInstrAddrOf` is intentionally
+;; NOT included: making address-of DCE-eligible regressed
+;; `compiler-optimize-spans-cse-ok?` (a CSE-rewritten copy feeding a surviving
+;; `&v` was dropped), and it is not part of the bounds-check chain, so it stays
+;; conservative here.
 (define (opt-instr-dead? [set : I64I64Map] [instr : CompilerIrInstr]) : bool
   (match instr
     [(IrInstrMov dst _ _) (not (opt-used-contains set dst))]
+    [(IrInstrGep dst _ _ _) (not (opt-used-contains set dst))]
+    [(IrInstrCast dst _ _ _) (not (opt-used-contains set dst))]
+    [(IrInstrLoad dst _ _) (not (opt-used-contains set dst))]
     [(IrInstrBinOp dst op _ _ _)
       (and (not (opt-binop-traps? op)) (not (opt-used-contains set dst)))]
     [(IrInstrUnOp dst _ _ _) (not (opt-used-contains set dst))]
@@ -1760,6 +1776,11 @@
       (opt-collect-blocks-uses-array-into items blocks)
       items)))
 
+;; Mirror of `opt-instr-dead?` for the array-backed use set the pipeline DCE
+;; runs on. The pure (`IrInstrGep`/`IrInstrCast`) and read-only (`IrInstrLoad`)
+;; arms drop the dead length-load/gep/cast chain that `opt-loop-bce-blocks`
+;; strands once a bounds check is proven redundant. `IrInstrAddrOf` is excluded
+;; for the same reason as in `opt-instr-dead?`.
 (define (opt-instr-dead-array?
   [items : (Array bool)]
   [slots : (Array CompilerIrInstr)]
@@ -1775,6 +1796,9 @@
             (opt-array-prev-adjacent-alloc? slots index dst)
             (opt-array-next-adjacent-alloc? slots count index dst))))]
     [(IrInstrMov dst _ _) (not (opt-used-array-contains items dst))]
+    [(IrInstrGep dst _ _ _) (not (opt-used-array-contains items dst))]
+    [(IrInstrCast dst _ _ _) (not (opt-used-array-contains items dst))]
+    [(IrInstrLoad dst _ _) (not (opt-used-array-contains items dst))]
     [(IrInstrBinOp dst op _ _ _)
       (and
         (not (opt-binop-traps? op))

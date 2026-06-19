@@ -3538,6 +3538,66 @@
         [(ErrCompilerBackend _) false])]
     [(ErrCompilerBackend _) false]))
 
+(define compiler-backend-long-block-instr-count : i64
+  4096)
+
+(define (compiler-backend-long-normal-block-seq) : CompilerIrInstrSeq
+  (let
+    [count : i64 compiler-backend-long-block-instr-count]
+    [total : i64 (+ count 1)]
+    [slots : (Array CompilerIrInstr) (make-array CompilerIrInstr total)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (array-set!
+            slots
+            index
+            (IrInstrMov index (IrValueI64 index) (AstTyI64)))
+          (set! index (+ index 1))))
+      (array-set!
+        slots
+        count
+        (IrInstrReturn (IrSomeValue (IrValueVar (- count 1)))))
+      (CompilerIrInstrSeq slots total))))
+
+(define (compiler-backend-long-normal-block-ok?) : bool
+  (let
+    [seq : CompilerIrInstrSeq (compiler-backend-long-normal-block-seq)]
+    [instrs : CompilerIrInstrList (compiler-ir-instr-seq-to-list seq)]
+    [blocks : CompilerIrBlockList
+      (compiler-ir-block-cons (IrBlock "entry" seq) IrBlockNil)]
+    [use-counts : (Array i64)
+      (compiler-backend-function-use-counts
+        compiler-backend-long-block-instr-count
+        blocks)]
+    (match (compiler-backend-emit-instrs
+      (BackendTargetLinux)
+      "_tl_test"
+      "test"
+      blocks
+      "entry"
+      (CompilerBackendNoLabel)
+      instrs
+      CompilerRegAssignmentNil
+      compiler-backend-long-block-instr-count
+      CompilerRegVarTypeNil
+      (CompilerBackendGlobalTypeNil)
+      (AstTyI64)
+      (compiler-backend-runtime-helper-full-plan)
+      IrFunctionNil
+      IrExternNil
+      (compiler-backend-program-index-build IrFunctionNil IrExternNil)
+      (compiler-source-spans-empty)
+      (compiler-diagnostic-at-start "" "")
+      use-counts
+      (text-buf-empty))
+      [(OkCompilerBackend asm)
+        (and
+          (compiler-backend-string-contains? asm "    movl $4095, %eax\n")
+          (compiler-backend-string-contains? asm "    ret\n"))]
+      [(ErrCompilerBackend _) false])))
+
 (define (compiler-backend-binop-operand-folding-ok?) : bool
   (let
     [rhs-spill : CompilerRegAssignmentList
@@ -3653,6 +3713,7 @@
     (compiler-backend-bounds-operand-folding-ok?)
     (compiler-backend-post-regalloc-peephole-ok?)
     (compiler-backend-rax-forwarding-ok?)
+    (compiler-backend-long-normal-block-ok?)
     (compiler-backend-fallthrough-jump-ok?)
     (compiler-backend-branch-fallthrough-ok?)
     (compiler-backend-zero-load-ok?)

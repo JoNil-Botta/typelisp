@@ -13,4 +13,4 @@ benchmark/typelisp/hashmap_insert	419595352
 benchmark/c/hashmap_insert	66066561
 benchmark/typelisp/spmd_reduce	27039845985
 benchmark/c/spmd_reduce	1693929378
-self_compile/compile_cli_opt1	56836775507
+self_compile/compile_cli_opt1	57344202138

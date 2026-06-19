@@ -25000,13 +25000,17 @@
   (OkTcMoveBindings TcTypeEnv TcMovedSet TcMovedSet TcMovedSet)
   (ErrTcMoveBindings String))
 
+(defenum TcMoveCleanupOwners
+  (TcMoveCleanupOwnersNil)
+  (TcMoveCleanupOwnersCons String i64 (Box TcMoveCleanupOwners)))
+
 (defenum TcMoveResourceBindings
   (OkTcMoveResourceBindings
     TcTypeEnv
     TcMovedSet
     TcMovedSet
     TcMovedSet
-    TcStringList)
+    TcMoveCleanupOwners)
   (ErrTcMoveResourceBindings String))
 
 (defenum TcMoveMaybeIndex
@@ -25117,6 +25121,9 @@
 (define (tc-move-loop-carried-origin-label [name : String]) : String
   (str-cat "owner value `" name "` is loop-carried into a repeated body"))
 
+(define (tc-move-cleanup-owner-binding-label [name : String]) : String
+  (str-cat "cleanup owner `" name "` is bound for this with scope here"))
+
 (define (tc-move-origin-span [origin-id : i64]) : TcMaybeAstSourceSpan
   (if (= origin-id (tc-moved-no-origin-id))
     TcNoAstSourceSpan
@@ -25180,6 +25187,116 @@
     (tc-move-loop-carried-message name)
     (tc-moved-no-origin-id)
     (tc-move-loop-carried-origin-label name)))
+
+(define (tc-move-rich-cleanup-owner-exit-message
+  [conflict : TcMoveConflict]
+  [name : String]
+  [owner-origin-id : i64]
+  [scope : AstExpr]) : String
+  (let
+    [message : String (tc-move-cleanup-owner-exit-message name)]
+    [owner-label : String (tc-move-cleanup-owner-binding-label name)]
+    (match (tc-expr-maybe-span scope)
+      [(TcSomeAstSourceSpan primary-span)
+        (match conflict
+          [(TcSomeMoveConflict key move-origin-id)
+            (match (tc-move-origin-span move-origin-id)
+              [(TcSomeAstSourceSpan move-span)
+                (match (tc-move-origin-span owner-origin-id)
+                  [(TcSomeAstSourceSpan owner-span)
+                    (tc-rich-error-two-secondaries
+                      primary-span
+                      message
+                      (tc-move-help)
+                      move-span
+                      (tc-move-origin-label key)
+                      owner-span
+                      owner-label)]
+                  [(TcNoAstSourceSpan)
+                    (tc-rich-error-two-secondaries
+                      primary-span
+                      message
+                      (tc-move-help)
+                      move-span
+                      (tc-move-origin-label key)
+                      primary-span
+                      owner-label)])]
+              [(TcNoAstSourceSpan)
+                (match (tc-move-origin-span owner-origin-id)
+                  [(TcSomeAstSourceSpan owner-span)
+                    (tc-rich-error-one-secondary
+                      primary-span
+                      message
+                      (tc-move-help)
+                      owner-span
+                      owner-label)]
+                  [(TcNoAstSourceSpan)
+                    (tc-rich-error-one-secondary
+                      primary-span
+                      message
+                      (tc-move-help)
+                      primary-span
+                      owner-label)])])]
+          [TcNoMoveConflict
+            (match (tc-move-origin-span owner-origin-id)
+              [(TcSomeAstSourceSpan owner-span)
+                (tc-rich-error-one-secondary
+                  primary-span
+                  message
+                  (tc-move-help)
+                  owner-span
+                  owner-label)]
+              [(TcNoAstSourceSpan)
+                (tc-rich-error-one-secondary
+                  primary-span
+                  message
+                  (tc-move-help)
+                  primary-span
+                  owner-label)])])]
+      [(TcNoAstSourceSpan)
+        (match conflict
+          [(TcSomeMoveConflict key move-origin-id)
+            (match (tc-move-origin-span move-origin-id)
+              [(TcSomeAstSourceSpan move-span)
+                (match (tc-move-origin-span owner-origin-id)
+                  [(TcSomeAstSourceSpan owner-span)
+                    (tc-rich-error-two-secondaries
+                      move-span
+                      message
+                      (tc-move-help)
+                      move-span
+                      (tc-move-origin-label key)
+                      owner-span
+                      owner-label)]
+                  [(TcNoAstSourceSpan)
+                    (tc-rich-error-two-secondaries
+                      move-span
+                      message
+                      (tc-move-help)
+                      move-span
+                      (tc-move-origin-label key)
+                      move-span
+                      owner-label)])]
+              [(TcNoAstSourceSpan)
+                (match (tc-move-origin-span owner-origin-id)
+                  [(TcSomeAstSourceSpan owner-span)
+                    (tc-rich-error-one-secondary
+                      owner-span
+                      message
+                      (tc-move-help)
+                      owner-span
+                      owner-label)]
+                  [(TcNoAstSourceSpan) message])])]
+          [TcNoMoveConflict
+            (match (tc-move-origin-span owner-origin-id)
+              [(TcSomeAstSourceSpan owner-span)
+                (tc-rich-error-one-secondary
+                  owner-span
+                  message
+                  (tc-move-help)
+                  owner-span
+                  owner-label)]
+              [(TcNoAstSourceSpan) message])])])))
 
 (define (tc-move-rich-conflict-result
   [conflict : TcMoveConflict]
@@ -26333,7 +26450,12 @@
   [bindings : AstResourceBindingList]) : TcMoveResourceBindings
   (match bindings
     [(AstResourceBindingNil)
-      (OkTcMoveResourceBindings env moved locals loop-carried TcStringNil)]
+      (OkTcMoveResourceBindings
+        env
+        moved
+        locals
+        loop-carried
+        TcMoveCleanupOwnersNil)]
     [(AstResourceBindingCons binding rest)
       (let
         [rest : AstResourceBindingList (box-get rest)]
@@ -26378,7 +26500,10 @@
                                 moved3
                                 locals2
                                 loop-carried2
-                                (tc-string-list-add roots (intern-str name)))]
+                                (TcMoveCleanupOwnersCons
+                                  (intern-str name)
+                                  init-box
+                                  (box roots)))]
                             [(ErrTcMoveResourceBindings message)
                               (ErrTcMoveResourceBindings message)])]
                         [(ErrTcType message)
@@ -26388,17 +26513,18 @@
 
 (define (tc-move-check-cleanup-owner-exit
   [moved : TcMovedSet]
-  [roots : TcStringList]
+  [roots : TcMoveCleanupOwners]
   [scope : AstExpr]) : TcMoveResult
   (match roots
-    [(TcStringNil) (OkTcMove moved)]
-    [(TcStringCons name rest)
+    [(TcMoveCleanupOwnersNil) (OkTcMove moved)]
+    [(TcMoveCleanupOwnersCons name owner-origin-id rest)
       (if (or (tc-moved-contains? moved name) (tc-moved-partial? moved name))
-        (tc-move-rich-conflict-result
-          (tc-moved-root-conflict moved name)
-          name
-          scope
-          (tc-move-cleanup-owner-exit-message name))
+        (ErrTcMove
+          (tc-move-rich-cleanup-owner-exit-message
+            (tc-moved-root-conflict moved name)
+            name
+            owner-origin-id
+            scope))
         (tc-move-check-cleanup-owner-exit moved (box-get rest) scope))]))
 
 (define (tc-move-add-bound-names [locals : TcMovedSet] [names : TcStringList]) : TcMovedSet

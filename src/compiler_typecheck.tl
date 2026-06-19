@@ -6501,8 +6501,7 @@
 (define (main) : i64 0)")
 
 (define (compiler-typecheck-defmacro-pure-string-source) : String
-  "(define (string-append [left : String] [right : String]) : String left)
-(defmacro (answer-name) : i64 (expr-var (string-append \"ans\" \"wer\")))
+  "(defmacro (answer-name) : i64 (expr-var (string-concat \"ans\" \"wer\")))
 (define answer : i64 42)
 (define (main) : i64 (answer-name))")
 

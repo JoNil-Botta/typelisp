@@ -3644,6 +3644,19 @@
     [clause-list : AstType (tc-macro-expr-clause-list-type)]
     [out : TcTypeEnv env]
     (begin
+      (set!
+        out
+        (tc-bind
+          out
+          "string-append"
+          (tc-fn2 (AstTyString) (AstTyString) (AstTyString))))
+      (set!
+        out
+        (tc-bind
+          out
+          "string-concat"
+          (tc-fn2 (AstTyString) (AstTyString) (AstTyString))))
+      (set! out (tc-bind out "int->string" (tc-fn1 (AstTyI64) (AstTyString))))
       (set! out (tc-bind out "expr-bool" (tc-fn1 (AstTyBool) expr)))
       (set! out (tc-bind out "expr-int" (tc-fn1 (AstTyI64) expr)))
       (set! out (tc-bind out "expr-var" (tc-fn1 (AstTyString) expr)))
@@ -23544,11 +23557,11 @@
       [(ctfe-reflection-query-name? name) true]
       [(string-eq name "string-eq") true]
       [(string-eq name "string=?") true]
-      [(string-eq name "string-append") true]
-      [(string-eq name "string-concat") true]
+      [(string-eq call-name "string-append") true]
+      [(string-eq call-name "string-concat") true]
       [(string-eq name "string-length") true]
       [(string-eq name "length") true]
-      [(string-eq name "int->string") true]
+      [(string-eq call-name "int->string") true]
       [(string-eq call-name "expr-bool") true]
       [(string-eq call-name "expr-int") true]
       [(string-eq call-name "expr-var") true]

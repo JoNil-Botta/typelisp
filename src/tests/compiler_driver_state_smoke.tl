@@ -277,6 +277,137 @@
               (unless (= type-b-id 0) (set! ok false))
               ok)))))))
 
+(define (compiler-driver-state-smoke-builtins-isolated?) : bool
+  (let
+    [state-a : CompilerDriverState (compiler-driver-state-new)]
+    [state-b : CompilerDriverState (compiler-driver-state-new)]
+    [ok : bool true]
+    (begin
+      (compiler-driver-state-install-builtins! state-a)
+      (let
+        [string-length-id : i64 (intern "string-length")]
+        (begin
+          (unless
+            (compiler-builtin-typecheck-string-length-id? string-length-id)
+            (set! ok false))
+          (compiler-driver-state-capture-active-builtins! state-a)
+          (let
+            [state-a-generation : i64
+              (compiler-builtin-ids-state-generation
+                (array-ref (struct-get state-a builtin-ids) 0))]
+            (begin
+              (compiler-driver-state-install-builtins! state-b)
+              (let
+                [array-length-id : i64 (intern "array-length")]
+                (begin
+                  (unless
+                    (compiler-builtin-typecheck-array-length-id?
+                      array-length-id)
+                    (set! ok false))
+                  (compiler-driver-state-capture-active-builtins! state-b)
+                  (compiler-driver-state-reset-file-state! state-b)
+                  (unless
+                    (=
+                      (compiler-builtin-ids-state-generation
+                        (array-ref (struct-get state-a builtin-ids) 0))
+                      state-a-generation)
+                    (set! ok false))
+                  (compiler-driver-state-install-builtins! state-a)
+                  (let
+                    [string-length-id-after-reset : i64
+                      (intern "string-length")]
+                    (begin
+                      (unless
+                        (compiler-builtin-typecheck-string-length-id?
+                          string-length-id-after-reset)
+                        (set! ok false))
+                      ok)))))))))))
+
+(define (compiler-driver-state-smoke-builtin-ids-data-addr
+  [state : CompilerBuiltinIdsState]) : i64
+  (cast
+    (unsafe
+      (ptr->int (ptr-cast (array-data (struct-get state ids)) : (Ptr u8))))
+    : i64))
+
+(define (compiler-driver-state-smoke-builtins-scratch-capture-stable?) : bool
+  (let
+    [state : CompilerDriverState (compiler-driver-state-new)]
+    [ok : bool true]
+    (begin
+      (compiler-driver-state-install-builtins! state)
+      (let
+        [before : i64
+          (compiler-driver-state-smoke-builtin-ids-data-addr
+            (array-ref (struct-get state builtin-ids) 0))]
+        [string-length-id : i64 (intern "string-length")]
+        (begin
+          (unless
+            (compiler-builtin-typecheck-string-length-id? string-length-id)
+            (set! ok false))
+          (with-scratch (compiler-driver-state-capture-active-builtins! state))
+          (let
+            [after : i64
+              (compiler-driver-state-smoke-builtin-ids-data-addr
+                (array-ref (struct-get state builtin-ids) 0))]
+            (begin
+              (unless (= before after) (set! ok false))
+              (compiler-builtin-reset!)
+              (compiler-driver-state-install-builtins! state)
+              (unless
+                (compiler-builtin-typecheck-string-length-id? string-length-id)
+                (set! ok false))
+              ok)))))))
+
+(define (compiler-driver-state-smoke-lower-arenas-isolated?) : bool
+  (let
+    [state-a : CompilerDriverState (compiler-driver-state-new)]
+    [state-b : CompilerDriverState (compiler-driver-state-new)]
+    [ok : bool true]
+    (begin
+      (compiler-driver-state-install-lower-arenas! state-a)
+      (let
+        [scratch-a : i64 (lower-scratch-arena-get)]
+        [ir-a : i64 (lower-ir-arena-get)]
+        (begin
+          (compiler-driver-state-capture-active-lower-arenas! state-a)
+          (compiler-driver-state-install-lower-arenas! state-b)
+          (let
+            [scratch-b : i64 (lower-scratch-arena-get)]
+            [ir-b : i64 (lower-ir-arena-get)]
+            (begin
+              (compiler-driver-state-capture-active-lower-arenas! state-b)
+              (compiler-driver-state-reset-file-state! state-b)
+              (let
+                [lower-b : CompilerLowerArenaState
+                  (array-ref (struct-get state-b lower-arenas) 0)]
+                [lower-a : CompilerLowerArenaState
+                  (array-ref (struct-get state-a lower-arenas) 0)]
+                (begin
+                  (unless
+                    (= (compiler-lower-arena-state-scratch-arena lower-b) 0)
+                    (set! ok false))
+                  (unless
+                    (= (compiler-lower-arena-state-ir-arena lower-b) 0)
+                    (set! ok false))
+                  (unless
+                    (=
+                      (compiler-lower-arena-state-scratch-arena lower-a)
+                      scratch-a)
+                    (set! ok false))
+                  (unless
+                    (= (compiler-lower-arena-state-ir-arena lower-a) ir-a)
+                    (set! ok false))
+                  (compiler-driver-state-install-lower-arenas! state-a)
+                  (unless
+                    (= (lower-scratch-arena-get) scratch-a)
+                    (set! ok false))
+                  (unless (= (lower-ir-arena-get) ir-a) (set! ok false))
+                  (unless (>= scratch-b 0) (set! ok false))
+                  (unless (>= ir-b 0) (set! ok false))
+                  (compiler-driver-state-reset-file-state! state-a)
+                  ok)))))))))
+
 (define (main) : i64
   (begin
     (unless (compiler-driver-state-smoke-cache-isolated?) (return 2))
@@ -287,4 +418,9 @@
     (unless (compiler-driver-state-smoke-pools-isolated?) (return 4))
     (unless (compiler-driver-state-smoke-type-dedup-isolated?) (return 5))
     (unless (compiler-driver-state-smoke-active-pools-isolated?) (return 7))
+    (unless (compiler-driver-state-smoke-builtins-isolated?) (return 8))
+    (unless
+      (compiler-driver-state-smoke-builtins-scratch-capture-stable?)
+      (return 10))
+    (unless (compiler-driver-state-smoke-lower-arenas-isolated?) (return 9))
     42))

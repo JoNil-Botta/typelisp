@@ -2298,16 +2298,27 @@
               "mask binop dst")
               [(OkBackendReg dst-reg)
                 (OkCompilerBackend
-                  (str-cat
-                    "    "
-                    (compiler-backend-mask-binop-mnemonic op lanes)
-                    " "
-                    rhs-reg
-                    ", "
-                    lhs-reg
-                    ", "
-                    dst-reg
-                    "\n"))]
+                  (if (string-eq lhs-reg rhs-reg)
+                    (if (string-eq lhs-reg dst-reg)
+                      ""
+                      (str-cat
+                        "    "
+                        (compiler-backend-avx512-mask-move-mnemonic lanes)
+                        " "
+                        lhs-reg
+                        ", "
+                        dst-reg
+                        "\n"))
+                    (str-cat
+                      "    "
+                      (compiler-backend-mask-binop-mnemonic op lanes)
+                      " "
+                      rhs-reg
+                      ", "
+                      lhs-reg
+                      ", "
+                      dst-reg
+                      "\n")))]
               [(ErrBackendReg message)
                 (ErrCompilerBackend
                   (compiler-diagnostic-with-message instr-diag message))])]

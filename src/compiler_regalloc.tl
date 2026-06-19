@@ -5382,11 +5382,14 @@
       (compiler-ir-block
         "entry"
         (compiler-ir-instr-cons
-          (IrInstrMov 0 (IrValueF64 "1.5") (compiler-reg-f64-ty))
+          (IrInstrMov 0 (IrValueF64 0x3ff8000000000000) (compiler-reg-f64-ty))
           (compiler-ir-instr-cons
             (IrInstrStore "g0" (IrValueVar 0) (compiler-reg-f64-ty))
             (compiler-ir-instr-cons
-              (IrInstrMov 1 (IrValueF64 "2.5") (compiler-reg-f64-ty))
+              (IrInstrMov
+                1
+                (IrValueF64 0x4004000000000000)
+                (compiler-reg-f64-ty))
               (compiler-ir-instr-cons
                 (IrInstrReturn (IrSomeValue (IrValueVar 1)))
                 IrInstrNil)))))
@@ -5462,15 +5465,24 @@
       (compiler-ir-block
         "entry"
         (compiler-ir-instr-cons
-          (IrInstrMov 0 (IrValueF64 "0.5") (compiler-reg-f64-ty))
+          (IrInstrMov 0 (IrValueF64 0x3fe0000000000000) (compiler-reg-f64-ty))
           (compiler-ir-instr-cons
-            (IrInstrMov 1 (IrValueF64 "1.5") (compiler-reg-f64-ty))
+            (IrInstrMov 1 (IrValueF64 0x3ff8000000000000) (compiler-reg-f64-ty))
             (compiler-ir-instr-cons
-              (IrInstrMov 2 (IrValueF64 "2.5") (compiler-reg-f64-ty))
+              (IrInstrMov
+                2
+                (IrValueF64 0x4004000000000000)
+                (compiler-reg-f64-ty))
               (compiler-ir-instr-cons
-                (IrInstrMov 3 (IrValueF64 "3.5") (compiler-reg-f64-ty))
+                (IrInstrMov
+                  3
+                  (IrValueF64 0x400c000000000000)
+                  (compiler-reg-f64-ty))
                 (compiler-ir-instr-cons
-                  (IrInstrMov 4 (IrValueF64 "4.5") (compiler-reg-f64-ty))
+                  (IrInstrMov
+                    4
+                    (IrValueF64 0x4012000000000000)
+                    (compiler-reg-f64-ty))
                   (compiler-ir-instr-cons
                     (IrInstrStore "g0" (IrValueVar 0) (compiler-reg-f64-ty))
                     (compiler-ir-instr-cons
@@ -5522,7 +5534,7 @@
       (compiler-ir-block
         "entry"
         (compiler-ir-instr-cons
-          (IrInstrMov 0 (IrValueF64 "9.5") (compiler-reg-f64-ty))
+          (IrInstrMov 0 (IrValueF64 0x4023000000000000) (compiler-reg-f64-ty))
           (compiler-ir-instr-cons
             (IrInstrCall 1 "side_effect" (IrCallArgsNil) (AstTyUnit))
             (compiler-ir-instr-cons
@@ -5568,7 +5580,7 @@
       (compiler-ir-block
         "entry"
         (compiler-ir-instr-cons
-          (IrInstrMov 0 (IrValueF64 "1.5") (compiler-reg-f64-ty))
+          (IrInstrMov 0 (IrValueF64 0x3ff8000000000000) (compiler-reg-f64-ty))
           (compiler-ir-instr-cons
             (IrInstrCall
               1
@@ -5576,7 +5588,10 @@
               (IrCallArgsOne (IrValueVar 0))
               (AstTyUnit))
             (compiler-ir-instr-cons
-              (IrInstrMov 2 (IrValueF64 "2.5") (compiler-reg-f64-ty))
+              (IrInstrMov
+                2
+                (IrValueF64 0x4004000000000000)
+                (compiler-reg-f64-ty))
               (compiler-ir-instr-cons
                 (IrInstrReturn (IrSomeValue (IrValueVar 2)))
                 IrInstrNil)))))
@@ -5592,7 +5607,7 @@
       (compiler-ir-block
         "entry"
         (compiler-ir-instr-cons
-          (IrInstrMov 1 (IrValueF64 "1.5") (AstTyF64))
+          (IrInstrMov 1 (IrValueF64 0x3ff8000000000000) (AstTyF64))
           (compiler-ir-instr-cons
             (IrInstrMov 2 (IrValueString "heap") (AstTyString))
             (compiler-ir-instr-cons

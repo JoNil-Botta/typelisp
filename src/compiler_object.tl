@@ -37,7 +37,8 @@
   (ObjectDataAlign i64)
   (ObjectDataBytes String)
   (ObjectDataString String)
-  (ObjectDataF64 String)
+  (ObjectDataF64 u64)
+  (ObjectDataF32 u64)
   (ObjectDataI64 i64)
   (ObjectDataZero i64)
   (ObjectDataSymbolAddress String)
@@ -627,7 +628,7 @@
 
 (define (compiler-object-data-record-list-contains-f64?
   [records : CompilerObjectDataRecordList]
-  [text : String]) : bool
+  [bits : u64]) : bool
   (let
     [count : i64 (compiler-object-data-record-list-count records)]
     [index : i64 0]
@@ -636,7 +637,24 @@
       (while (and (not found) (< index count))
         (match (compiler-object-data-record-list-ref records index)
           [(ObjectDataF64 value)
-            (if (string-eq value text)
+            (if (= value bits)
+              (set! found true)
+              (set! index (+ index 1)))]
+          [_ (set! index (+ index 1))]))
+      found)))
+
+(define (compiler-object-data-record-list-contains-f32?
+  [records : CompilerObjectDataRecordList]
+  [bits : u64]) : bool
+  (let
+    [count : i64 (compiler-object-data-record-list-count records)]
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< index count))
+        (match (compiler-object-data-record-list-ref records index)
+          [(ObjectDataF32 value)
+            (if (= value bits)
               (set! found true)
               (set! index (+ index 1)))]
           [_ (set! index (+ index 1))]))
@@ -735,10 +753,18 @@
 (define (compiler-object-section-contains-f64?
   [sections : CompilerObjectSectionList]
   [kind : CompilerObjectSectionKind]
-  [text : String]) : bool
+  [bits : u64]) : bool
   (match (compiler-object-section-list-find sections kind)
     [(ObjectSection _ data _)
-      (compiler-object-data-record-list-contains-f64? data text)]))
+      (compiler-object-data-record-list-contains-f64? data bits)]))
+
+(define (compiler-object-section-contains-f32?
+  [sections : CompilerObjectSectionList]
+  [kind : CompilerObjectSectionKind]
+  [bits : u64]) : bool
+  (match (compiler-object-section-list-find sections kind)
+    [(ObjectSection _ data _)
+      (compiler-object-data-record-list-contains-f32? data bits)]))
 
 (define (compiler-object-section-contains-label?
   [sections : CompilerObjectSectionList]

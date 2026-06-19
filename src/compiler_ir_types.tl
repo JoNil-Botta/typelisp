@@ -53,7 +53,7 @@
   (IrValueGlobalAddr String)
   (IrValueFunction String)
   (IrValueI64 i64)
-  (IrValueF64 String)
+  (IrValueF64 u64)
   (IrValueBool bool)
   (IrValueChar char)
   (IrValueString String)
@@ -517,7 +517,7 @@
     [(IrValueGlobalAddr name) (IrValueGlobalAddr (clone name))]
     [(IrValueFunction name) (IrValueFunction (clone name))]
     [(IrValueI64 n) (IrValueI64 n)]
-    [(IrValueF64 n) (IrValueF64 (clone n))]
+    [(IrValueF64 n) (IrValueF64 n)]
     [(IrValueBool b) (IrValueBool b)]
     [(IrValueChar c) (IrValueChar c)]
     [(IrValueString s) (IrValueString (clone s))]
@@ -1222,6 +1222,9 @@
     [(AstTyMutPtr elem)
       (str-cat "(MutPtr " (compiler-ir-type-render (ty-node-get elem)) ")")]))
 
+(define (compiler-ir-u64-payload-render [value : u64]) : String
+  (int->string (cast value : i64)))
+
 (define (compiler-ir-value-render [value : CompilerIrValue]) : String
   (match value
     [(IrValueVar id) (string-append "%" (int->string id))]
@@ -1229,7 +1232,8 @@
     [(IrValueGlobalAddr name) (string-append "&@" name)]
     [(IrValueFunction name) (string-append "fn@" name)]
     [(IrValueI64 value) (int->string value)]
-    [(IrValueF64 value) value]
+    [(IrValueF64 value)
+      (str-cat "float-bits:" (compiler-ir-u64-payload-render value))]
     [(IrValueBool value)
       (if value
         "true"
@@ -2561,7 +2565,7 @@
     [(IrValueGlobalAddr name) (str-cat "&@" name "")]
     [(IrValueFunction name) (str-cat "fn@" name "")]
     [(IrValueI64 n) (int->string n)]
-    [(IrValueF64 n) n]
+    [(IrValueF64 n) (str-cat "float-bits:" (compiler-ir-u64-payload-render n))]
     [(IrValueBool b)
       (if b
         "true"

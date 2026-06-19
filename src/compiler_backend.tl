@@ -390,10 +390,20 @@
   (BackendStringNil)
   (BackendStringCons String (Box BackendStringList)))
 
+(defenum BackendFloatList
+  (BackendFloatNil)
+  (BackendFloatCons AstType u64 (Box BackendFloatList)))
+
 (define (compiler-backend-string-cons
   [head : String]
   [rest : BackendStringList]) : BackendStringList
   (BackendStringCons head (box rest)))
+
+(define (compiler-backend-float-cons
+  [ty : AstType]
+  [bits : u64]
+  [rest : BackendFloatList]) : BackendFloatList
+  (BackendFloatCons ty bits (box rest)))
 
 (define (compiler-backend-empty-string-list) : BackendStringList
   BackendStringNil)
@@ -417,10 +427,14 @@
   (seen StringI64Map)
   (items BackendStringList))
 
+(defstruct BackendFloatSet
+  (seen StringI64Map)
+  (items BackendFloatList))
+
 (defstruct CompilerBackendProgramCollections
   (functions BackendStringSet)
   (strings BackendStringSet)
-  (floats BackendStringSet)
+  (floats BackendFloatSet)
   (bytes BackendStringSet)
   (uses-f64-neg bool))
 
@@ -432,6 +446,22 @@
 (define (compiler-backend-string-set-new [capacity : i64]) : BackendStringSet
   (BackendStringSet (string-i64-map-with-capacity capacity) BackendStringNil))
 
+(define (compiler-backend-float-payload-bits [ty : AstType] [bits : u64]) : u64
+  (if (compiler-backend-f64-type? ty)
+    bits
+    (bit-and bits 0xffffffff)))
+
+(define (compiler-backend-float-key [ty : AstType] [bits : u64]) : String
+  (str-cat
+    (match ty
+      [(AstTyF32) "f32"]
+      [_ "f64"])
+    ":"
+    (int->string (cast (compiler-backend-float-payload-bits ty bits) : i64))))
+
+(define (compiler-backend-float-set-new [capacity : i64]) : BackendFloatSet
+  (BackendFloatSet (string-i64-map-with-capacity capacity) BackendFloatNil))
+
 (define (compiler-backend-string-set-add
   [set : BackendStringSet]
   [text : String]) : BackendStringSet
@@ -441,11 +471,24 @@
       (string-i64-map-put (struct-get set seen) text 1)
       (compiler-backend-string-cons text (struct-get set items)))))
 
+(define (compiler-backend-float-set-add
+  [set : BackendFloatSet]
+  [ty : AstType]
+  [bits : u64]) : BackendFloatSet
+  (let
+    [payload-bits : u64 (compiler-backend-float-payload-bits ty bits)]
+    [key : String (compiler-backend-float-key ty payload-bits)]
+    (if (string-i64-map-contains? (struct-get set seen) key)
+      set
+      (BackendFloatSet
+        (string-i64-map-put (struct-get set seen) key 1)
+        (compiler-backend-float-cons ty payload-bits (struct-get set items))))))
+
 (define (compiler-backend-program-collections-new) : CompilerBackendProgramCollections
   (CompilerBackendProgramCollections
     (compiler-backend-string-set-new 256)
     (compiler-backend-string-set-new 256)
-    (compiler-backend-string-set-new 256)
+    (compiler-backend-float-set-new 256)
     (compiler-backend-string-set-new 64)
     false))
 
@@ -471,11 +514,12 @@
 
 (define (compiler-backend-program-collections-add-float
   [collections : CompilerBackendProgramCollections]
-  [text : String]) : CompilerBackendProgramCollections
+  [ty : AstType]
+  [bits : u64]) : CompilerBackendProgramCollections
   (CompilerBackendProgramCollections
     (struct-get collections functions)
     (struct-get collections strings)
-    (compiler-backend-string-set-add (struct-get collections floats) text)
+    (compiler-backend-float-set-add (struct-get collections floats) ty bits)
     (struct-get collections bytes)
     (struct-get collections uses-f64-neg)))
 
@@ -3694,8 +3738,19 @@
 (define (compiler-backend-bytes-fat-label [text : String]) : String
   (string-append ".L_tl_bin_" (compiler-backend-string-label-suffix text)))
 
-(define (compiler-backend-f64-label [text : String]) : String
-  (string-append ".L_tl_f64_" (compiler-backend-string-label-suffix text)))
+(define (compiler-backend-float-label [ty : AstType] [bits : u64]) : String
+  (str-cat
+    ".L_tl_"
+    (match ty
+      [(AstTyF32) "f32_"]
+      [_ "f64_"])
+    (compiler-backend-string-label-suffix (compiler-backend-float-key ty bits))))
+
+(define (compiler-backend-f64-label [bits : u64]) : String
+  (compiler-backend-float-label (AstTyF64) bits))
+
+(define (compiler-backend-f32-label [bits : u64]) : String
+  (compiler-backend-float-label (AstTyF32) bits))
 
 (define (compiler-backend-f64-sign-bit-label) : String
   ".L_tl_f64_sign_bit")
@@ -3721,24 +3776,22 @@
             "(%rip), "
             reg
             "\n"))]
-      [(IrValueF64 text)
+      [(IrValueF64 bits)
         (if (compiler-backend-f64-type? ty)
           (OkCompilerBackend
             (str-cat
               "    movsd "
-              (compiler-backend-f64-label text)
+              (compiler-backend-float-label ty bits)
               "(%rip), "
               reg
               "\n"))
           (OkCompilerBackend
-            (string-append
-              (str-cat
-                "    movsd "
-                (compiler-backend-f64-label text)
-                "(%rip), "
-                reg
-                "\n")
-              (str-cat "    cvtsd2ss " reg ", " reg "\n"))))]
+            (str-cat
+              "    movss "
+              (compiler-backend-float-label ty bits)
+              "(%rip), "
+              reg
+              "\n")))]
       [_
         (ErrCompilerBackend
           (compiler-diagnostic-at-start
@@ -19800,8 +19853,24 @@
 (define (compiler-backend-string-list-reverse [strings : BackendStringList]) : BackendStringList
   (compiler-backend-string-list-reverse-into strings BackendStringNil))
 
+(define (compiler-backend-float-list-reverse-into
+  [floats : BackendFloatList]
+  [out : BackendFloatList]) : BackendFloatList
+  (match floats
+    [(BackendFloatNil) out]
+    [(BackendFloatCons ty bits rest)
+      (compiler-backend-float-list-reverse-into
+        (box-get rest)
+        (compiler-backend-float-cons ty bits out))]))
+
+(define (compiler-backend-float-list-reverse [floats : BackendFloatList]) : BackendFloatList
+  (compiler-backend-float-list-reverse-into floats BackendFloatNil))
+
 (define (compiler-backend-string-set-list [set : BackendStringSet]) : BackendStringList
   (compiler-backend-string-list-reverse (struct-get set items)))
+
+(define (compiler-backend-float-set-list [set : BackendFloatSet]) : BackendFloatList
+  (compiler-backend-float-list-reverse (struct-get set items)))
 
 (define (compiler-backend-program-collections-functions
   [collections : CompilerBackendProgramCollections]) : BackendStringList
@@ -19812,8 +19881,8 @@
   (compiler-backend-string-set-list (struct-get collections strings)))
 
 (define (compiler-backend-program-collections-floats
-  [collections : CompilerBackendProgramCollections]) : BackendStringList
-  (compiler-backend-string-set-list (struct-get collections floats)))
+  [collections : CompilerBackendProgramCollections]) : BackendFloatList
+  (compiler-backend-float-set-list (struct-get collections floats)))
 
 (define (compiler-backend-program-collections-bytes
   [collections : CompilerBackendProgramCollections]) : BackendStringList
@@ -19823,6 +19892,14 @@
   [collections : CompilerBackendProgramCollections]) : bool
   (struct-get collections uses-f64-neg))
 
+(define (compiler-backend-collect-float-both-collections
+  [collections : CompilerBackendProgramCollections]
+  [bits : u64]) : CompilerBackendProgramCollections
+  (compiler-backend-program-collections-add-float
+    (compiler-backend-program-collections-add-float collections (AstTyF64) bits)
+    (AstTyF32)
+    bits))
+
 (define (compiler-backend-collect-value-collections
   [collections : CompilerBackendProgramCollections]
   [value : CompilerIrValue]) : CompilerBackendProgramCollections
@@ -19831,8 +19908,8 @@
       (compiler-backend-program-collections-add-function collections name)]
     [(IrValueString text)
       (compiler-backend-program-collections-add-string collections text)]
-    [(IrValueF64 text)
-      (compiler-backend-program-collections-add-float collections text)]
+    [(IrValueF64 bits)
+      (compiler-backend-collect-float-both-collections collections bits)]
     [(IrValueBytes text)
       (compiler-backend-program-collections-add-bytes collections text)]
     [_ collections]))
@@ -20246,36 +20323,55 @@
           (text-buf-append buf "    .data\n"))
         "\n")]))
 
-(define (compiler-backend-emit-f64-entry [text : String]) : String
-  (str-cat (compiler-backend-f64-label text) ":\n    .double " text "\n" ""))
+(define (compiler-backend-float-bits-directive [ty : AstType] [bits : u64]) : String
+  (if (compiler-backend-f64-type? ty)
+    (str-cat "    .quad " (int->string (cast bits : i64)) "\n")
+    (str-cat
+      "    .long "
+      (int->string (cast (compiler-backend-float-payload-bits ty bits) : i64))
+      "\n")))
 
-(define (compiler-backend-emit-f64-entries-into
-  [floats : BackendStringList]
+(define (compiler-backend-float-object-data [ty : AstType] [bits : u64]) : CompilerObjectDataRecord
+  (if (compiler-backend-f64-type? ty)
+    (ObjectDataF64 bits)
+    (ObjectDataF32 (compiler-backend-float-payload-bits ty bits))))
+
+(define (compiler-backend-emit-float-entry [ty : AstType] [bits : u64]) : String
+  (str-cat
+    (if (compiler-backend-f64-type? ty)
+      "    .balign 8\n"
+      "    .balign 4\n")
+    (compiler-backend-float-label ty bits)
+    ":\n"
+    (compiler-backend-float-bits-directive ty bits)))
+
+(define (compiler-backend-emit-float-entries-into
+  [floats : BackendFloatList]
   [buf : TextBuf]) : TextBuf
   (match floats
-    [(BackendStringNil) buf]
-    [(BackendStringCons text rest)
-      (compiler-backend-emit-f64-entries-into
+    [(BackendFloatNil) buf]
+    [(BackendFloatCons ty bits rest)
+      (compiler-backend-emit-float-entries-into
         (box-get rest)
-        (text-buf-append buf (compiler-backend-emit-f64-entry text)))]))
+        (text-buf-append buf (compiler-backend-emit-float-entry ty bits)))]))
 
-(define (compiler-backend-emit-f64-entries [floats : BackendStringList]) : String
+(define (compiler-backend-emit-float-entries [floats : BackendFloatList]) : String
   (text-buf-render
-    (compiler-backend-emit-f64-entries-into floats (text-buf-empty))))
+    (compiler-backend-emit-float-entries-into floats (text-buf-empty))))
 
-(define (compiler-backend-emit-f64-rodata-into
-  [floats : BackendStringList]
+(define (compiler-backend-emit-float-rodata-into
+  [floats : BackendFloatList]
   [buf : TextBuf]) : TextBuf
   (match floats
-    [(BackendStringNil) buf]
+    [(BackendFloatNil) buf]
     [_
-      (compiler-backend-emit-f64-entries-into
+      (compiler-backend-emit-float-entries-into
         floats
         (text-buf-append buf "    .section .rodata\n"))]))
 
-(define (compiler-backend-emit-f64-rodata [floats : BackendStringList]) : String
+(define (compiler-backend-emit-float-rodata [floats : BackendFloatList]) : String
   (text-buf-render
-    (compiler-backend-emit-f64-rodata-into floats (text-buf-empty))))
+    (compiler-backend-emit-float-rodata-into floats (text-buf-empty))))
 
 (define (compiler-backend-emit-f64-sign-bit-rodata-into
   [enabled : bool]
@@ -20308,10 +20404,8 @@
     [(IrValueChar c)
       (OkCompilerBackend
         (str-cat "    .quad " (int->string (compiler-backend-char-code c)) "\n"))]
-    [(IrValueF64 text)
-      (if (compiler-backend-f64-type? ty)
-        (OkCompilerBackend (str-cat "    .double " text "\n"))
-        (OkCompilerBackend (str-cat "    .float " text "\n")))]
+    [(IrValueF64 bits)
+      (OkCompilerBackend (compiler-backend-float-bits-directive ty bits))]
     [(IrValueGlobal name)
       (OkCompilerBackend
         (str-cat "    .quad " (compiler-backend-user-symbol name) "\n"))]
@@ -24168,7 +24262,7 @@ tl_atomic_i32_fetch_add_ptr:
   [closure-names : BackendStringList]
   [strings : BackendStringList]
   [bytes : BackendStringList]
-  [floats : BackendStringList]
+  [floats : BackendFloatList]
   [uses-f64-neg : bool]
   [globals-buf : TextBuf]
   [emit-entry : bool]
@@ -24190,16 +24284,16 @@ tl_atomic_i32_fetch_add_ptr:
             (compiler-backend-profile-finish "compose.bytes_data"))
           (cfg compile-profile (compiler-backend-profile-start))
           (let
-            [f64-literals-buf : TextBuf
-              (compiler-backend-emit-f64-rodata-into floats bytes-buf)]
+            [float-literals-buf : TextBuf
+              (compiler-backend-emit-float-rodata-into floats bytes-buf)]
             [f64-buf : TextBuf
               (compiler-backend-emit-f64-sign-bit-rodata-into
                 uses-f64-neg
-                f64-literals-buf)]
+                float-literals-buf)]
             (begin
               (cfg
                 compile-profile
-                (compiler-backend-profile-finish "compose.f64_rodata"))
+                (compiler-backend-profile-finish "compose.float_rodata"))
               (cfg compile-profile (compiler-backend-profile-start))
               (let
                 [descriptor-buf : TextBuf
@@ -24295,7 +24389,7 @@ tl_atomic_i32_fetch_add_ptr:
       (compiler-backend-program-collections-strings collections)]
     [bytes : BackendStringList
       (compiler-backend-program-collections-bytes collections)]
-    [floats : BackendStringList
+    [floats : BackendFloatList
       (compiler-backend-program-collections-floats collections)]
     [uses-f64-neg : bool
       (compiler-backend-program-collections-uses-f64-neg? collections)]
@@ -24785,9 +24879,9 @@ tl_atomic_i32_fetch_add_ptr:
             (ObjectRelocRipAddress)
             symbol)
           (ObjectX64LoadRipAddress symbol)))]
-    [(IrValueF64 text)
+    [(IrValueF64 bits)
       (let
-        [symbol : String (compiler-backend-f64-label text)]
+        [symbol : String (compiler-backend-f64-label bits)]
         (compiler-backend-object-add-text
           (compiler-backend-object-add-text-relocation
             parts
@@ -24806,6 +24900,24 @@ tl_atomic_i32_fetch_add_ptr:
             symbol)
           (ObjectX64LoadRipAddress symbol)))]
     [_ parts]))
+
+(define (compiler-backend-object-value-ref-with-type
+  [parts : CompilerBackendObjectParts]
+  [site : String]
+  [value : CompilerIrValue]
+  [ty : AstType]) : CompilerBackendObjectParts
+  (match value
+    [(IrValueF64 bits)
+      (let
+        [symbol : String (compiler-backend-float-label ty bits)]
+        (compiler-backend-object-add-text
+          (compiler-backend-object-add-text-relocation
+            parts
+            site
+            (ObjectRelocRipValue)
+            symbol)
+          (ObjectX64LoadRip symbol)))]
+    [_ (compiler-backend-object-value-ref parts site value)]))
 
 (define (compiler-backend-object-call-args
   [parts : CompilerBackendObjectParts]
@@ -24854,6 +24966,20 @@ tl_atomic_i32_fetch_add_ptr:
         (compiler-backend-object-value-ref parts site value)
         site
         (box-get rest))]))
+
+(define (compiler-backend-object-phi-inputs-with-type
+  [parts : CompilerBackendObjectParts]
+  [site : String]
+  [inputs : CompilerIrPhiInputList]
+  [ty : AstType]) : CompilerBackendObjectParts
+  (match inputs
+    [(IrPhiInputNil) parts]
+    [(IrPhiInputCons value _ rest)
+      (compiler-backend-object-phi-inputs-with-type
+        (compiler-backend-object-value-ref-with-type parts site value ty)
+        site
+        (box-get rest)
+        ty)]))
 
 (define (compiler-backend-object-byte [value : i64]) : u8
   (cast (bit-and value 0xff) : u8))
@@ -25087,6 +25213,19 @@ tl_atomic_i32_fetch_add_ptr:
         (compiler-backend-object-value-ref parts site value)
         (compiler-backend-object-mov-reg-reg-bytes "%rax" reg))]))
 
+(define (compiler-backend-object-load-value-to-reg-with-type
+  [parts : CompilerBackendObjectParts]
+  [site : String]
+  [value : CompilerIrValue]
+  [ty : AstType]
+  [reg : String]) : CompilerBackendObjectParts
+  (match value
+    [(IrValueF64 _)
+      (compiler-backend-object-add-nonempty-bytes
+        (compiler-backend-object-value-ref-with-type parts site value ty)
+        (compiler-backend-object-mov-reg-reg-bytes "%rax" reg))]
+    [_ (compiler-backend-object-load-value-to-reg parts site value reg)]))
+
 (define (compiler-backend-object-store-reg-to-var
   [parts : CompilerBackendObjectParts]
   [dst : i64]
@@ -25099,9 +25238,15 @@ tl_atomic_i32_fetch_add_ptr:
   [parts : CompilerBackendObjectParts]
   [site : String]
   [dst : i64]
-  [src : CompilerIrValue]) : CompilerBackendObjectParts
+  [src : CompilerIrValue]
+  [ty : AstType]) : CompilerBackendObjectParts
   (compiler-backend-object-store-reg-to-var
-    (compiler-backend-object-load-value-to-reg parts site src "%rax")
+    (compiler-backend-object-load-value-to-reg-with-type
+      parts
+      site
+      src
+      ty
+      "%rax")
     dst
     "%rax"))
 
@@ -25134,10 +25279,11 @@ tl_atomic_i32_fetch_add_ptr:
   (let
     [op-bytes : String (compiler-backend-object-binop-bytes op)]
     (if (or (= (string-length op-bytes) 0) (compiler-backend-float-type? ty))
-      (compiler-backend-object-value-ref
-        (compiler-backend-object-value-ref parts site lhs)
+      (compiler-backend-object-value-ref-with-type
+        (compiler-backend-object-value-ref-with-type parts site lhs ty)
         site
-        rhs)
+        rhs
+        ty)
       (compiler-backend-object-store-reg-to-var
         (compiler-backend-object-add-nonempty-bytes
           (compiler-backend-object-load-value-to-reg
@@ -25208,14 +25354,14 @@ tl_atomic_i32_fetch_add_ptr:
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]) : CompilerBackendObjectParts
   (match instr
-    [(IrInstrMov dst src _)
-      (compiler-backend-object-move-value-to-var parts function dst src)]
+    [(IrInstrMov dst src ty)
+      (compiler-backend-object-move-value-to-var parts function dst src ty)]
     [(IrInstrBinOp dst op lhs rhs ty)
       (compiler-backend-object-binop parts function dst op lhs rhs ty)]
     [(IrInstrUnOp _ op src ty)
       (let
         [with-src : CompilerBackendObjectParts
-          (compiler-backend-object-value-ref parts function src)]
+          (compiler-backend-object-value-ref-with-type parts function src ty)]
         (match op
           [(IrUnNeg)
             (if (compiler-backend-f64-type? ty)
@@ -25290,12 +25436,16 @@ tl_atomic_i32_fetch_add_ptr:
             (ObjectRelocTailCall)
             target)
           (ObjectX64TailCall target)))]
-    [(IrInstrStore name value _)
+    [(IrInstrStore name value ty)
       (let
         [symbol : String (compiler-backend-user-symbol name)]
         (compiler-backend-object-add-text
           (compiler-backend-object-add-text-relocation
-            (compiler-backend-object-value-ref parts function value)
+            (compiler-backend-object-value-ref-with-type
+              parts
+              function
+              value
+              ty)
             function
             (ObjectRelocRipAddress)
             symbol)
@@ -25338,8 +25488,8 @@ tl_atomic_i32_fetch_add_ptr:
               inner
               "%rax")])
         (compiler-backend-object-leave-ret-bytes))]
-    [(IrInstrPhi _ inputs _)
-      (compiler-backend-object-phi-inputs parts function inputs)]
+    [(IrInstrPhi _ inputs ty)
+      (compiler-backend-object-phi-inputs-with-type parts function inputs ty)]
     [(IrInstrGep _ base offset _)
       (compiler-backend-object-value-ref
         (compiler-backend-object-value-ref parts function base)
@@ -25347,11 +25497,12 @@ tl_atomic_i32_fetch_add_ptr:
         offset)]
     [(IrInstrLoad _ src _)
       (compiler-backend-object-value-ref parts function src)]
-    [(IrInstrStorePtr dst src _)
-      (compiler-backend-object-value-ref
+    [(IrInstrStorePtr dst src ty)
+      (compiler-backend-object-value-ref-with-type
         (compiler-backend-object-value-ref parts function dst)
         function
-        src)]
+        src
+        ty)]
     [(IrInstrCopyBytes dst src _)
       (compiler-backend-object-value-ref
         (compiler-backend-object-value-ref parts function dst)
@@ -25362,24 +25513,26 @@ tl_atomic_i32_fetch_add_ptr:
         (compiler-backend-object-value-ref parts function index)
         function
         length)]
-    [(IrInstrCast _ src _ _)
-      (compiler-backend-object-value-ref parts function src)]
-    [(IrInstrBitcast _ src _ _)
-      (compiler-backend-object-value-ref parts function src)]
-    [(IrInstrSplat _ value _ _)
-      (compiler-backend-object-value-ref parts function value)]
-    [(IrInstrVectorBinOp _ _ lhs rhs _ _)
-      (compiler-backend-object-value-ref
-        (compiler-backend-object-value-ref parts function lhs)
+    [(IrInstrCast _ src from-ty _)
+      (compiler-backend-object-value-ref-with-type parts function src from-ty)]
+    [(IrInstrBitcast _ src from-ty _)
+      (compiler-backend-object-value-ref-with-type parts function src from-ty)]
+    [(IrInstrSplat _ value _ elem-ty)
+      (compiler-backend-object-value-ref-with-type parts function value elem-ty)]
+    [(IrInstrVectorBinOp _ _ lhs rhs _ elem-ty)
+      (compiler-backend-object-value-ref-with-type
+        (compiler-backend-object-value-ref-with-type parts function lhs elem-ty)
         function
-        rhs)]
-    [(IrInstrVectorReduce _ _ src _ _)
-      (compiler-backend-object-value-ref parts function src)]
-    [(IrInstrVectorCompare _ _ lhs rhs _ _)
-      (compiler-backend-object-value-ref
-        (compiler-backend-object-value-ref parts function lhs)
+        rhs
+        elem-ty)]
+    [(IrInstrVectorReduce _ _ src _ elem-ty)
+      (compiler-backend-object-value-ref-with-type parts function src elem-ty)]
+    [(IrInstrVectorCompare _ _ lhs rhs _ elem-ty)
+      (compiler-backend-object-value-ref-with-type
+        (compiler-backend-object-value-ref-with-type parts function lhs elem-ty)
         function
-        rhs)]
+        rhs
+        elem-ty)]
     [(IrInstrMaskBinOp _ _ lhs rhs _)
       (compiler-backend-object-value-ref
         (compiler-backend-object-value-ref parts function lhs)
@@ -25389,36 +25542,40 @@ tl_atomic_i32_fetch_add_ptr:
       (compiler-backend-object-value-ref parts function src)]
     [(IrInstrMaskReduce _ _ src _)
       (compiler-backend-object-value-ref parts function src)]
-    [(IrInstrSelect _ mask on-true on-false _ _)
-      (compiler-backend-object-value-ref
-        (compiler-backend-object-value-ref
+    [(IrInstrSelect _ mask on-true on-false _ ty)
+      (compiler-backend-object-value-ref-with-type
+        (compiler-backend-object-value-ref-with-type
           (compiler-backend-object-value-ref parts function mask)
           function
-          on-true)
+          on-true
+          ty)
         function
-        on-false)]
+        on-false
+        ty)]
     [(IrInstrVectorLoad _ base index _ _)
       (compiler-backend-object-value-ref
         (compiler-backend-object-value-ref parts function base)
         function
         index)]
-    [(IrInstrVectorStore base index value _ _)
-      (compiler-backend-object-value-ref
+    [(IrInstrVectorStore base index value _ elem-ty)
+      (compiler-backend-object-value-ref-with-type
         (compiler-backend-object-value-ref
           (compiler-backend-object-value-ref parts function base)
           function
           index)
         function
-        value)]
-    [(IrInstrPredicatedStore base index value mask _ _)
+        value
+        elem-ty)]
+    [(IrInstrPredicatedStore base index value mask _ elem-ty)
       (compiler-backend-object-value-ref
-        (compiler-backend-object-value-ref
+        (compiler-backend-object-value-ref-with-type
           (compiler-backend-object-value-ref
             (compiler-backend-object-value-ref parts function base)
             function
             index)
           function
-          value)
+          value
+          elem-ty)
         function
         mask)]
     [(IrInstrPredicatedLoad _ base index mask _ _)
@@ -25578,6 +25735,7 @@ tl_atomic_i32_fetch_add_ptr:
 (define (compiler-backend-object-global-value
   [parts : CompilerBackendObjectParts]
   [site : String]
+  [ty : AstType]
   [value : CompilerIrValue]) : CompilerBackendObjectParts
   (match value
     [(IrValueI64 n) (compiler-backend-object-add-data parts (ObjectDataI64 n))]
@@ -25593,8 +25751,10 @@ tl_atomic_i32_fetch_add_ptr:
         parts
         (ObjectDataI64 (compiler-backend-char-code c)))]
     [(IrValueUnit) (compiler-backend-object-add-data parts (ObjectDataI64 0))]
-    [(IrValueF64 text)
-      (compiler-backend-object-add-data parts (ObjectDataF64 text))]
+    [(IrValueF64 bits)
+      (compiler-backend-object-add-data
+        parts
+        (compiler-backend-float-object-data ty bits))]
     [(IrValueString text)
       (let
         [symbol : String (compiler-backend-string-fat-label text)]
@@ -25678,6 +25838,7 @@ tl_atomic_i32_fetch_add_ptr:
                       (ObjectSymbolData))
                     (ObjectDataLabel symbol))
                   symbol
+                  ty
                   value))
               target
               (box-get rest)))])]))
@@ -25762,22 +25923,27 @@ tl_atomic_i32_fetch_add_ptr:
 
 (define (compiler-backend-object-floats
   [parts : CompilerBackendObjectParts]
-  [floats : BackendStringList]) : CompilerBackendObjectParts
+  [floats : BackendFloatList]) : CompilerBackendObjectParts
   (match floats
-    [(BackendStringNil) parts]
-    [(BackendStringCons text rest)
+    [(BackendFloatNil) parts]
+    [(BackendFloatCons ty bits rest)
       (let
-        [symbol : String (compiler-backend-f64-label text)]
+        [symbol : String (compiler-backend-float-label ty bits)]
         (compiler-backend-object-floats
           (compiler-backend-object-add-rodata
             (compiler-backend-object-add-rodata
-              (compiler-backend-object-symbol-local-section
-                parts
-                symbol
-                (ObjectSectionRodata)
-                (ObjectSymbolData))
+              (compiler-backend-object-add-rodata
+                (compiler-backend-object-symbol-local-section
+                  parts
+                  symbol
+                  (ObjectSectionRodata)
+                  (ObjectSymbolData))
+                (ObjectDataAlign
+                  (if (compiler-backend-f64-type? ty)
+                    8
+                    4)))
               (ObjectDataLabel symbol))
-            (ObjectDataF64 text))
+            (compiler-backend-float-object-data ty bits))
           (box-get rest)))]))
 
 (define (compiler-backend-object-f64-sign-bit
@@ -26548,7 +26714,7 @@ tl_atomic_i32_fetch_add_ptr:
       (compiler-backend-program-collections-strings collections)]
     [bytes : BackendStringList
       (compiler-backend-program-collections-bytes collections)]
-    [floats : BackendStringList
+    [floats : BackendFloatList
       (compiler-backend-program-collections-floats collections)]
     [uses-f64-neg : bool
       (compiler-backend-program-collections-uses-f64-neg? collections)]
@@ -27320,6 +27486,7 @@ tl_atomic_i32_fetch_add_ptr:
     [(ObjectDataBytes bytes) (+ offset (string-length bytes))]
     [(ObjectDataString text) (+ offset (+ (string-length text) 1))]
     [(ObjectDataF64 _) (+ offset 8)]
+    [(ObjectDataF32 _) (+ offset 4)]
     [(ObjectDataI64 _) (+ offset 8)]
     [(ObjectDataZero count) (+ offset count)]
     [(ObjectDataSymbolAddress _) (+ offset 8)]

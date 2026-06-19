@@ -2,11 +2,46 @@
 (import "../stdlib/io.tl")
 (import "compiler_backend.tl")
 (import "compiler_builtin_ids.tl")
+(import "compiler_float.tl")
 (import "compiler_intern.tl")
 (import "compiler_object_coff.tl")
 (import "compiler_object_elf.tl")
 (import "../stdlib/string.tl")
 (import "../stdlib/str_cat.tl")
+
+(define (compiler-backend-test-f64-bits [text : String]) : u64
+  (match (compiler-float-parse-f64-bits text)
+    [(CompilerFloatSomeBits bits) bits]
+    [(CompilerFloatNoBits) 0]))
+
+(define (compiler-backend-test-f32-bits [text : String]) : u64
+  (match (compiler-float-parse-f32-bits text)
+    [(CompilerFloatSomeBits bits) bits]
+    [(CompilerFloatNoBits) 0]))
+
+(define (compiler-backend-test-float-type-eq? [a : AstType] [b : AstType]) : bool
+  (match a
+    [(AstTyF32)
+      (match b
+        [(AstTyF32) true]
+        [_ false])]
+    [_
+      (match b
+        [(AstTyF32) false]
+        [_ true])]))
+
+(define (compiler-backend-test-float-list-contains?
+  [items : BackendFloatList]
+  [ty : AstType]
+  [bits : u64]) : bool
+  (match items
+    [(BackendFloatNil) false]
+    [(BackendFloatCons item-ty item-bits rest)
+      (if (and
+        (compiler-backend-test-float-type-eq? item-ty ty)
+        (= item-bits bits))
+        true
+        (compiler-backend-test-float-list-contains? (box-get rest) ty bits))]))
 
 (define (compiler-backend-smoke-source) : String
   "(define answer : i64 40)
@@ -469,15 +504,18 @@
 (define answer : i64 40)
 (define greeting : String \"hi\")
 (define pi : f64 3.5)
+(define small : f32 2.5)
 (define (inc [x : i64]) : i64 (+ x 1))
 (define (float-ok) : i64
   (if (< pi 4.0) 1 0))
+(define (float32-ok) : i64
+  (if (< small 3.0) 1 0))
 (define (main) : i64
   (let
     [items : (Array i64) (make-array i64 1)]
     (begin
       (array-set! items 0 answer)
-      (+ (foreign-call (inc (array-ref items 0))) (float-ok)))))")
+      (+ (foreign-call (inc (array-ref items 0))) (+ (float-ok) (float32-ok))))))")
 
 (define (compiler-backend-coff-real-text-source) : String
   "(extern (foreign-call [arg0 : i64]) : i64 (:abi c) (:symbol \"foreign_exact\"))
@@ -562,7 +600,15 @@
             (compiler-object-section-contains-f64?
               sections
               (ObjectSectionRodata)
-              "4.0"))
+              (compiler-backend-test-f64-bits "4.0")))
+          (compiler-object-section-contains-f32?
+            sections
+            (ObjectSectionData)
+            (compiler-backend-test-f32-bits "2.5"))
+          (compiler-object-section-contains-f32?
+            sections
+            (ObjectSectionRodata)
+            (compiler-backend-test-f32-bits "3.0"))
           (backend-and8
             (compiler-object-section-contains-call? sections "_tl_inc")
             (compiler-object-section-contains-call? sections "foreign_exact")
@@ -2799,7 +2845,9 @@
         (IrValueFunction "walked_fn")
         (compiler-ir-value-cons
           (IrValueString "walked-string")
-          (compiler-ir-value-cons (IrValueF64 "2.5") IrValueNil)))]
+          (compiler-ir-value-cons
+            (IrValueF64 (compiler-backend-test-f64-bits "2.5"))
+            IrValueNil)))]
     [packed : CompilerBackendProgramCollections
       (compiler-backend-collect-instr-collections
         (compiler-backend-program-collections-new)
@@ -2818,15 +2866,19 @@
       (compiler-backend-string-list-contains?
         (compiler-backend-program-collections-strings worded)
         "word-string")
-      (compiler-backend-string-list-contains?
+      (compiler-backend-test-float-list-contains?
         (compiler-backend-program-collections-floats worded)
-        "2.5"))))
+        (AstTyF64)
+        (compiler-backend-test-f64-bits "2.5")))))
 
 (define (compiler-backend-ir-walker-program-collections-ok?) : bool
   (let
     [call-array : (Array CompilerIrValue) (make-array CompilerIrValue 2)]
     (begin
-      (array-set! call-array 0 (IrValueF64 "8.5"))
+      (array-set!
+        call-array
+        0
+        (IrValueF64 (compiler-backend-test-f64-bits "8.5")))
       (array-set! call-array 1 (IrValueBytes "arg-bytes"))
       (let
         [instrs : CompilerIrInstrSeq
@@ -2892,9 +2944,10 @@
           (compiler-backend-string-list-contains?
             (compiler-backend-program-collections-strings collections)
             "phi-string")
-          (compiler-backend-string-list-contains?
+          (compiler-backend-test-float-list-contains?
             (compiler-backend-program-collections-floats collections)
-            "8.5")
+            (AstTyF64)
+            (compiler-backend-test-f64-bits "8.5"))
           (compiler-backend-string-list-contains?
             (compiler-backend-program-collections-bytes collections)
             "arg-bytes")
@@ -2909,7 +2962,9 @@
     [words : CompilerIrValueList
       (compiler-ir-value-cons
         (IrValueI64 1)
-        (compiler-ir-value-cons (IrValueF64 "3.5") IrValueNil))]
+        (compiler-ir-value-cons
+          (IrValueF64 (compiler-backend-test-f64-bits "3.5"))
+          IrValueNil))]
     [instrs : CompilerIrInstrSeq
       (compiler-ir-instr-seq-from-list
         (compiler-ir-instr-cons (IrInstrPack 0 words ty) IrInstrNil))]
@@ -2948,7 +3003,9 @@
     [values : CompilerIrValueList
       (compiler-ir-value-cons
         (IrValueString "object-walked")
-        (compiler-ir-value-cons (IrValueF64 "6.25") IrValueNil))]
+        (compiler-ir-value-cons
+          (IrValueF64 (compiler-backend-test-f64-bits "6.25"))
+          IrValueNil))]
     [packed : CompilerBackendObjectParts
       (compiler-backend-object-instr
         (compiler-backend-object-parts-empty)
@@ -2974,7 +3031,7 @@
       (compiler-object-relocation-list-contains?
         relocs
         (ObjectRelocRipValue)
-        (compiler-backend-f64-label "6.25"))
+        (compiler-backend-f64-label (compiler-backend-test-f64-bits "6.25")))
       (compiler-object-relocation-list-contains?
         relocs
         (ObjectRelocRipAddress)
@@ -4462,7 +4519,10 @@
 (define (compiler-backend-instr-diagnostics-ok?) : bool
   (and
     (compiler-backend-instr-diagnostic-case-ok?
-      (IrInstrMov 0 (IrValueF64 "1.0") (AstTyI64))
+      (IrInstrMov
+        0
+        (IrValueF64 (compiler-backend-test-f64-bits "1.0"))
+        (AstTyI64))
       "backend: f64 values are not supported yet"
       21
       7)
@@ -4470,8 +4530,8 @@
       (IrInstrBinOp
         1
         (IrBinMod)
-        (IrValueF64 "1.0")
-        (IrValueF64 "2.0")
+        (IrValueF64 (compiler-backend-test-f64-bits "1.0"))
+        (IrValueF64 (compiler-backend-test-f64-bits "2.0"))
         (AstTyF64))
       "backend: unsupported f64 binary op"
       34
@@ -4479,7 +4539,11 @@
     ;; #1044: an f64 unary op other than negation is rejected (mirrors the
     ;; f64-binary-op reject; only IrUnNeg has an f64 lowering).
     (compiler-backend-instr-diagnostic-case-ok?
-      (IrInstrUnOp 2 (IrUnNot) (IrValueF64 "1.0") (AstTyF64))
+      (IrInstrUnOp
+        2
+        (IrUnNot)
+        (IrValueF64 (compiler-backend-test-f64-bits "1.0"))
+        (AstTyF64))
       "backend: unsupported f64 unary op"
       40
       11)
@@ -5393,7 +5457,10 @@
     [phi : CompilerIrInstr
       (IrInstrPhi
         0
-        (compiler-ir-phi-input-cons (IrValueF64 "1.0") "entry" IrPhiInputNil)
+        (compiler-ir-phi-input-cons
+          (IrValueF64 (compiler-backend-test-f64-bits "1.0"))
+          "entry"
+          IrPhiInputNil)
         (AstTyI64))]
     [program : CompilerIrProgram
       (IrProgram
@@ -7326,7 +7393,12 @@
   (match (compiler-backend-emit-source (compiler-backend-f64-source))
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains? asm "    .double 1.5\n")
+        (compiler-backend-string-contains?
+          asm
+          (compiler-backend-float-bits-directive
+            (AstTyF64)
+            (compiler-backend-test-f64-bits "1.5")))
+        (not (compiler-backend-string-contains? asm "    .double "))
         (compiler-backend-string-contains? asm "    movsd %xmm0, ")
         (compiler-backend-string-contains? asm "    movsd %xmm1, ")
         (compiler-backend-string-contains? asm "    addsd %xmm1, %xmm0\n")
@@ -7456,9 +7528,15 @@
     (compiler-backend-f32-literal-binop-source))
     [(OkCompilerBackend asm)
       (and
+        (compiler-backend-string-contains?
+          asm
+          (compiler-backend-float-bits-directive
+            (AstTyF32)
+            (compiler-backend-test-f32-bits "11.0")))
+        (not (compiler-backend-string-contains? asm "    .float "))
         (compiler-backend-string-contains? asm "    ucomiss %xmm1, %xmm0\n")
         (compiler-backend-string-contains? asm "    addss %xmm1, %xmm0\n")
-        (compiler-backend-string-contains? asm "    cvtsd2ss %xmm0, %xmm0\n")
+        (not (compiler-backend-string-contains? asm "    cvtsd2ss "))
         (not (compiler-backend-string-contains? asm "    ucomisd")))]
     [(ErrCompilerBackend _) false]))
 

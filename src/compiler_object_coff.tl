@@ -188,6 +188,7 @@
     [(ObjectDataBytes bytes) (+ offset (string-length bytes))]
     [(ObjectDataString text) (+ offset (string-length text))]
     [(ObjectDataF64 _) (+ offset 8)]
+    [(ObjectDataF32 _) (+ offset 4)]
     [(ObjectDataI64 _) (+ offset 8)]
     [(ObjectDataZero count) (+ offset count)]
     [(ObjectDataSymbolAddress _) (+ offset 8)]
@@ -366,7 +367,6 @@
     (begin
       (while (and ok (< index count))
         (match (compiler-object-data-record-list-ref records index)
-          [(ObjectDataF64 _) (set! ok false)]
           [_ (set! index (+ index 1))]))
       ok)))
 
@@ -951,10 +951,14 @@
       (begin
         (compiler-object-coff-push-string-bytes! out text)
         (+ offset (string-length text)))]
-    [(ObjectDataF64 _)
+    [(ObjectDataF64 bits)
       (begin
-        (compiler-object-coff-push-u64! out 0)
+        (compiler-object-coff-push-u64! out (cast bits : i64))
         (+ offset 8))]
+    [(ObjectDataF32 bits)
+      (begin
+        (compiler-object-coff-push-u32! out (cast bits : i64))
+        (+ offset 4))]
     [(ObjectDataI64 value)
       (begin
         (compiler-object-coff-push-u64! out value)

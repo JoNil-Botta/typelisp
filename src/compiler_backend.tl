@@ -279,6 +279,10 @@
   (needs-div-abort bool)
   (needs-shift-abort bool))
 
+(defstruct CompilerBackendRuntimePlanWithIndex
+  (plan CompilerBackendRuntimePlan)
+  (index CompilerBackendRuntimeIndex))
+
 (defstruct CompilerBackendProgramIndex
   (functions I64I64Map)
   (function-names (Array String))
@@ -377,6 +381,10 @@
 (defenum ResultBackendRuntimePlan
   (OkBackendRuntimePlan CompilerBackendRuntimePlan)
   (ErrBackendRuntimePlan String))
+
+(defenum ResultBackendRuntimePlanWithIndex
+  (OkBackendRuntimePlanWithIndex CompilerBackendRuntimePlanWithIndex)
+  (ErrBackendRuntimePlanWithIndex String))
 
 (defenum BackendStringList
   (BackendStringNil)
@@ -3314,6 +3322,19 @@
           (set! i (+ i 1))))
       found)))
 
+(define (compiler-backend-runtime-prelude-string-helper-symbol [name : String]) : String
+  (let
+    [leaf : String (compiler-backend-symbol-leaf name)]
+    (cond
+      [(string-eq leaf "tl-runtime-int-to-string") "tl_int_to_string"]
+      [(string-eq leaf "tl-runtime-substring") "tl_substring"]
+      [(string-eq leaf "tl-runtime-str-view") "tl_str_view"]
+      [(string-eq leaf "tl-runtime-string-concat") "tl_string_concat"]
+      [(string-eq leaf "tl-runtime-string-concat3") "tl_string_concat3"]
+      [(string-eq leaf "tl-runtime-string-concat4") "tl_string_concat4"]
+      [(string-eq leaf "tl-runtime-string-concat5") "tl_string_concat5"]
+      [else ""])))
+
 (define (compiler-backend-compact-function-symbol? [name : String]) : bool
   (and
     (> (string-length name) 16)
@@ -3326,11 +3347,16 @@
   [name : String]) : String
   (if (compiler-backend-index-extern-provided? index name)
     (compiler-backend-index-extern-link-symbol index name)
-    (if (compiler-backend-compact-function-symbol? name)
-      (match (compiler-backend-index-function-slot index name)
-        [(I64I64MapFound slot) (str-cat "_tl_f" (int->string slot) "")]
-        [(I64I64MapMissing) (compiler-backend-user-symbol name)])
-      (compiler-backend-user-symbol name))))
+    (let
+      [runtime-symbol : String
+        (compiler-backend-runtime-prelude-string-helper-symbol name)]
+      (if (not (string-eq runtime-symbol ""))
+        runtime-symbol
+        (if (compiler-backend-compact-function-symbol? name)
+          (match (compiler-backend-index-function-slot index name)
+            [(I64I64MapFound slot) (str-cat "_tl_f" (int->string slot) "")]
+            [(I64I64MapMissing) (compiler-backend-user-symbol name)])
+          (compiler-backend-user-symbol name))))))
 
 (define (compiler-backend-function-symbol-map-comment
   [index : CompilerBackendProgramIndex]
@@ -9946,6 +9972,22 @@
                 (box-get rest)
                 (string-i64-map-put seen symbol 1))))])]))
 
+(define (compiler-backend-runtime-prelude-string-helper-export?
+  [name : String]
+  [symbol : String]) : bool
+  (let
+    [symbol-id : i64 (compiler-backend-runtime-helper-name-id symbol)]
+    (and
+      (or
+        (compiler-backend-string-contains? name "stdlib/runtime.tl::")
+        (compiler-backend-string-contains? name "stdlib\\runtime.tl::"))
+      (>= symbol-id 0)
+      (or
+        (compiler-builtin-backend-tl-substring-id? symbol-id)
+        (compiler-builtin-backend-tl-str-view-id? symbol-id)
+        (compiler-builtin-backend-runtime-concat-id? symbol-id)
+        (compiler-builtin-backend-tl-int-to-string-id? symbol-id)))))
+
 (define (compiler-backend-validate-function-symbols-into
   [functions : CompilerIrFunctionList]
   [_plan : CompilerBackendRuntimePlan]
@@ -9979,7 +10021,11 @@
                     symbol))]
               [(and
                   (compiler-backend-index-extern-provided? index name)
-                  (compiler-backend-runtime-helper-known? symbol))
+                  (compiler-backend-runtime-helper-known? symbol)
+                  (not
+                    (compiler-backend-runtime-prelude-string-helper-export?
+                      name
+                      symbol)))
                 (compiler-backend-symbol-validation-error
                   (string-append
                     "backend: exported function symbol collides with runtime symbol "
@@ -21034,9 +21080,9 @@
               (compiler-builtin-backend-runtime-profile-id? name-id))
             false)))]))
 
-(define (compiler-backend-runtime-plan-for
+(define (compiler-backend-runtime-plan-with-index-for
   [functions : CompilerIrFunctionList]
-  [externs : CompilerIrExternList]) : ResultBackendRuntimePlan
+  [externs : CompilerIrExternList]) : ResultBackendRuntimePlanWithIndex
   (let
     [index : CompilerBackendRuntimeIndex
       (compiler-backend-runtime-index functions externs)]
@@ -21092,7 +21138,7 @@
       (compiler-backend-runtime-index-defines?
         index
         "tl_profile_alloc_reset_peak")]
-    [extern-alloc : bool
+    [_extern-alloc : bool
       (compiler-backend-runtime-index-extern? index "tl_alloc")]
     [extern-oob : bool
       (compiler-backend-runtime-index-extern? index "tl_oob_abort")]
@@ -21100,18 +21146,19 @@
       (compiler-backend-runtime-index-extern? index "tl_div_abort")]
     [extern-shift-abort : bool
       (compiler-backend-runtime-index-extern? index "tl_shift_abort")]
-    [extern-substring : bool
+    [_extern-substring : bool
       (compiler-backend-runtime-index-extern? index "tl_substring")]
-    [extern-str-view : bool
+    [_extern-str-view : bool
       (compiler-backend-runtime-index-extern? index "tl_str_view")]
-    [extern-concat : bool (compiler-backend-runtime-index-extern-concat? index)]
+    [_extern-concat : bool
+      (compiler-backend-runtime-index-extern-concat? index)]
     [_extern-string-eq : bool
       (compiler-backend-runtime-index-extern? index "tl_string_eq")]
     [_extern-string-to-int : bool
       (compiler-backend-runtime-index-extern? index "tl_string_to_int")]
     [_extern-hash-string : bool
       (compiler-backend-runtime-index-extern? index "tl_hash_string")]
-    [extern-int-to-string : bool
+    [_extern-int-to-string : bool
       (compiler-backend-runtime-index-extern? index "tl_int_to_string")]
     [extern-abort : bool
       (compiler-backend-runtime-index-extern-alias?
@@ -21193,15 +21240,15 @@
       (compiler-backend-runtime-index-extern? index ".L_tl_stdin_eof")]
     [_extern-flush-stdout : bool
       (compiler-backend-runtime-index-extern? index ".L_tl_flush_stdout")]
-    [extern-region-mark : bool
+    [_extern-region-mark : bool
       (compiler-backend-runtime-index-extern? index "tl_region_mark")]
-    [extern-region-reset : bool
+    [_extern-region-reset : bool
       (compiler-backend-runtime-index-extern? index "tl_region_reset")]
-    [extern-env-var-exists : bool
+    [_extern-env-var-exists : bool
       (compiler-backend-runtime-index-extern? index "tl_env_var_exists")]
-    [extern-env-var-value : bool
+    [_extern-env-var-value : bool
       (compiler-backend-runtime-index-extern? index "tl_env_var_value")]
-    [extern-env-path-separator : bool
+    [_extern-env-path-separator : bool
       (compiler-backend-runtime-index-extern? index "env-path-separator")]
     [extern-profile-alloc-total : bool
       (compiler-backend-runtime-index-extern? index "tl_profile_alloc_total")]
@@ -21333,19 +21380,14 @@
         (and
           (not defines-shift-abort)
           (or extern-shift-abort calls-shift-abort)))]
-    [needs-substring : bool
-      (and (not defines-substring) (or extern-substring calls-substring))]
-    [needs-str-view : bool
-      (and (not defines-str-view) (or extern-str-view calls-str-view))]
-    [needs-concat : bool
-      (and (not defines-concat) (or extern-concat calls-concat))]
+    [needs-substring : bool (and (not defines-substring) calls-substring)]
+    [needs-str-view : bool (and (not defines-str-view) calls-str-view)]
+    [needs-concat : bool (and (not defines-concat) calls-concat)]
     [_needs-string-eq : bool false]
     [_needs-string-to-int : bool false]
     [_needs-hash-string : bool false]
     [needs-int-to-string : bool
-      (and
-        (not defines-int-to-string)
-        (or extern-int-to-string calls-int-to-string))]
+      (and (not defines-int-to-string) calls-int-to-string)]
     [_direct-abort : bool false]
     [needs-print-err : bool false]
     [needs-print-str : bool false]
@@ -21363,27 +21405,17 @@
     [needs-read-bytes : bool false]
     [needs-stdin-eof : bool false]
     [needs-flush-stdout : bool false]
-    [needs-region-mark : bool
-      (and (not defines-region-mark) (or extern-region-mark calls-region-mark))]
+    [needs-region-mark : bool (and (not defines-region-mark) calls-region-mark)]
     [needs-region-reset : bool
-      (and
-        (not defines-region-reset)
-        (or extern-region-reset calls-region-reset))]
+      (and (not defines-region-reset) calls-region-reset)]
     [needs-random-system-seed : bool false]
     [needs-env-var-exists : bool
-      (and
-        (not defines-env-var-exists)
-        (or extern-env-var-exists calls-env-var-exists))]
+      (and (not defines-env-var-exists) calls-env-var-exists)]
     [needs-env-var-value : bool
-      (and
-        (not defines-env-var-value)
-        (or extern-env-var-value calls-env-var-value))]
+      (and (not defines-env-var-value) calls-env-var-value)]
     [needs-env-path-separator : bool
-      (and
-        (not defines-env-path-separator)
-        (or extern-env-path-separator calls-env-path-separator))]
-    [direct-alloc : bool
-      (and (not defines-alloc) (or extern-alloc calls-alloc))]
+      (and (not defines-env-path-separator) calls-env-path-separator)]
+    [direct-alloc : bool (and (not defines-alloc) calls-alloc)]
     [needs-abort : bool
       (or extern-abort calls-abort needs-arg needs-read-file needs-write-file)]
     [needs-alloc : bool
@@ -21425,43 +21457,53 @@
         (and
           (not defines-profile-alloc-reset-peak)
           (or extern-profile-alloc-reset-peak calls-profile-alloc-reset-peak)))]
-    (OkBackendRuntimePlan
-      (BackendRuntimePlan
-        needs-alloc
-        needs-oob
-        needs-substring
-        needs-str-view
-        needs-concat
-        false
-        false
-        needs-int-to-string
-        needs-abort
-        needs-print-err
-        needs-print-str
-        needs-print-char
-        needs-print-f64
-        needs-arg-count
-        needs-arg
-        needs-read-file
-        needs-write-file
-        needs-file-exists
-        needs-file-handle
-        needs-file-read-chunk
-        needs-fs-runtime
-        false
-        needs-read-line
-        needs-read-bytes
-        needs-stdin-eof
-        needs-flush-stdout
-        needs-region-mark
-        needs-region-reset
-        needs-random-system-seed
-        needs-env-var-exists
-        needs-env-var-value
-        needs-env-path-separator
-        needs-div-abort
-        needs-shift-abort
-        (CompilerBackendRuntimeTailPlan needs-profile false)))))
+    (OkBackendRuntimePlanWithIndex
+      (CompilerBackendRuntimePlanWithIndex
+        (BackendRuntimePlan
+          needs-alloc
+          needs-oob
+          needs-substring
+          needs-str-view
+          needs-concat
+          false
+          false
+          needs-int-to-string
+          needs-abort
+          needs-print-err
+          needs-print-str
+          needs-print-char
+          needs-print-f64
+          needs-arg-count
+          needs-arg
+          needs-read-file
+          needs-write-file
+          needs-file-exists
+          needs-file-handle
+          needs-file-read-chunk
+          needs-fs-runtime
+          false
+          needs-read-line
+          needs-read-bytes
+          needs-stdin-eof
+          needs-flush-stdout
+          needs-region-mark
+          needs-region-reset
+          needs-random-system-seed
+          needs-env-var-exists
+          needs-env-var-value
+          needs-env-path-separator
+          needs-div-abort
+          needs-shift-abort
+          (CompilerBackendRuntimeTailPlan needs-profile false))
+        index))))
+
+(define (compiler-backend-runtime-plan-for
+  [functions : CompilerIrFunctionList]
+  [externs : CompilerIrExternList]) : ResultBackendRuntimePlan
+  (match (compiler-backend-runtime-plan-with-index-for functions externs)
+    [(OkBackendRuntimePlanWithIndex planned)
+      (OkBackendRuntimePlan (struct-get planned plan))]
+    [(ErrBackendRuntimePlanWithIndex message) (ErrBackendRuntimePlan message)]))
 
 (define (compiler-backend-runtime-plan [program : CompilerIrProgram]) : ResultBackendRuntimePlan
   (begin
@@ -21472,37 +21514,91 @@
       [(IrProgram _ functions externs)
         (compiler-backend-runtime-plan-for functions externs)])))
 
+(define (compiler-backend-runtime-plan-with-index [program : CompilerIrProgram]) : ResultBackendRuntimePlanWithIndex
+  (begin
+    ;; Seed builtin/runtime ids before scratch-backed per-function emission. The
+    ;; runtime-plan id predicates are then lookup-only in scratch arenas.
+    (compiler-builtin-refresh!)
+    (match program
+      [(IrProgram _ functions externs)
+        (compiler-backend-runtime-plan-with-index-for functions externs)])))
+
 (define (compiler-backend-emit-externs
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]) : String
   (text-buf-render
-    (compiler-backend-emit-externs-into externs plan (text-buf-empty))))
+    (compiler-backend-emit-externs-into
+      externs
+      plan
+      (compiler-backend-runtime-index IrFunctionNil externs)
+      BackendStringNil
+      (text-buf-empty))))
+
+(define (compiler-backend-extern-symbol-referenced?
+  [runtime-index : CompilerBackendRuntimeIndex]
+  [referenced-functions : BackendStringList]
+  [extern-name : String]
+  [link-symbol : String]) : bool
+  (let
+    [user-symbol : String (compiler-backend-user-symbol extern-name)]
+    [foreign-link-symbol : bool
+      (and
+        (not (string-eq extern-name link-symbol))
+        (not (compiler-backend-runtime-helper-known? extern-name))
+        (not (compiler-backend-runtime-helper-known? link-symbol)))]
+    (or
+      foreign-link-symbol
+      (backend-or4
+        (compiler-backend-runtime-index-calls? runtime-index extern-name)
+        (compiler-backend-runtime-index-calls? runtime-index link-symbol)
+        (compiler-backend-string-list-contains?
+          referenced-functions
+          extern-name)
+        (compiler-backend-string-list-contains?
+          referenced-functions
+          link-symbol))
+      (compiler-backend-runtime-index-calls? runtime-index user-symbol)
+      (compiler-backend-string-list-contains? referenced-functions user-symbol))))
 
 (define (compiler-backend-emit-externs-into
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
+  [runtime-index : CompilerBackendRuntimeIndex]
+  [referenced-functions : BackendStringList]
   [buf : TextBuf]) : TextBuf
   (match externs
     [(IrExternNil) buf]
     [(IrExternCons item rest)
       (match item
         [(IrExtern name _ _ link-symbol _ provided)
-          (if (not
+          (if (and
             (compiler-backend-emits-extern-symbol?
               name
               link-symbol
               provided
-              plan))
-            (compiler-backend-emit-externs-into (box-get rest) plan buf)
+              plan)
+            (compiler-backend-extern-symbol-referenced?
+              runtime-index
+              referenced-functions
+              name
+              link-symbol))
             (compiler-backend-emit-externs-into
               (box-get rest)
               plan
+              runtime-index
+              referenced-functions
               (text-buf-append
                 (text-buf-append buf ".extern ")
                 (str-cat
                   (compiler-backend-link-symbol link-symbol plan)
                   "\n"
-                  ""))))])]))
+                  "")))
+            (compiler-backend-emit-externs-into
+              (box-get rest)
+              plan
+              runtime-index
+              referenced-functions
+              buf))])]))
 
 ;; The out-of-memory message moved to the runtime prelude (stdlib/runtime.tl as
 ;; `tl-runtime-oom-abort`, exported `tl_oom_abort` via #2221); the allocator's
@@ -23322,604 +23418,28 @@ tl_profile_alloc_reset_peak:
   "")
 
 (define (compiler-backend-runtime-int-to-string-functions) : String
-  "    .globl tl_int_to_string
-tl_int_to_string:
-    push %rbp
-    mov %rsp, %rbp
-    push %rbx
-    push %r12
-    push %r13
-    sub $72, %rsp
-    movq %rdi, %rax
-    leaq 72(%rsp), %r10
-    movq $0, %rcx
-    cmpq $0, %rax
-    jne .L_tl_int_to_string_nonzero
-    decq %r10
-    movb $48, (%r10)
-    incq %rcx
-    jmp .L_tl_int_to_string_digits_done
-.L_tl_int_to_string_nonzero:
-    movq $0, %r8
-    cmpq $0, %rax
-    jge .L_tl_int_to_string_abs_ready
-    negq %rax
-    movq $1, %r8
-.L_tl_int_to_string_abs_ready:
-    movq $10, %r9
-.L_tl_int_to_string_digit_loop:
-    xorq %rdx, %rdx
-    divq %r9
-    addb $48, %dl
-    decq %r10
-    movb %dl, (%r10)
-    incq %rcx
-    testq %rax, %rax
-    jne .L_tl_int_to_string_digit_loop
-    testq %r8, %r8
-    jz .L_tl_int_to_string_digits_done
-    decq %r10
-    movb $45, (%r10)
-    incq %rcx
-.L_tl_int_to_string_digits_done:
-    movq %r10, %rbx
-    movq %rcx, %r12
-    movq %r12, %rdi
-    call tl_alloc
-    movq %rax, %r13
-    movq $0, %rcx
-.L_tl_int_to_string_copy_loop:
-    cmpq %r12, %rcx
-    jge .L_tl_int_to_string_copy_done
-    movzbl (%rbx,%rcx), %edx
-    movb %dl, (%r13,%rcx)
-    incq %rcx
-    jmp .L_tl_int_to_string_copy_loop
-.L_tl_int_to_string_copy_done:
-    call .L_tl_alloc16
-    movq %r13, 0(%rax)
-    movq %r12, 8(%rax)
-    add $72, %rsp
-    pop %r13
-    pop %r12
-    pop %rbx
-    pop %rbp
-    ret
-
-")
+  "")
 
 (define (compiler-backend-runtime-windows-int-to-string-functions) : String
-  "    .globl tl_int_to_string
-tl_int_to_string:
-    push %rbp
-    mov %rsp, %rbp
-    push %rbx
-    push %r12
-    push %r13
-    sub $72, %rsp
-    movq %rcx, %rax
-    leaq 72(%rsp), %r10
-    movq $0, %rcx
-    cmpq $0, %rax
-    jne .L_tl_int_to_string_nonzero
-    decq %r10
-    movb $48, (%r10)
-    incq %rcx
-    jmp .L_tl_int_to_string_digits_done
-.L_tl_int_to_string_nonzero:
-    movq $0, %r8
-    cmpq $0, %rax
-    jge .L_tl_int_to_string_abs_ready
-    negq %rax
-    movq $1, %r8
-.L_tl_int_to_string_abs_ready:
-    movq $10, %r9
-.L_tl_int_to_string_digit_loop:
-    xorq %rdx, %rdx
-    divq %r9
-    addb $48, %dl
-    decq %r10
-    movb %dl, (%r10)
-    incq %rcx
-    testq %rax, %rax
-    jne .L_tl_int_to_string_digit_loop
-    testq %r8, %r8
-    jz .L_tl_int_to_string_digits_done
-    decq %r10
-    movb $45, (%r10)
-    incq %rcx
-.L_tl_int_to_string_digits_done:
-    movq %r10, %rbx
-    movq %rcx, %r12
-    movq %r12, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
-    movq %rax, %r13
-    movq $0, %rcx
-.L_tl_int_to_string_copy_loop:
-    cmpq %r12, %rcx
-    jge .L_tl_int_to_string_copy_done
-    movzbl (%rbx,%rcx), %edx
-    movb %dl, (%r13,%rcx)
-    incq %rcx
-    jmp .L_tl_int_to_string_copy_loop
-.L_tl_int_to_string_copy_done:
-    call .L_tl_alloc16
-    movq %r13, 0(%rax)
-    movq %r12, 8(%rax)
-    add $72, %rsp
-    pop %r13
-    pop %r12
-    pop %rbx
-    pop %rbp
-    ret
-
-")
+  "")
 
 (define (compiler-backend-runtime-substring-functions) : String
-  "    .globl tl_substring
-tl_substring:
-    push %rbp
-    mov %rsp, %rbp
-    push %rbx
-    push %r12
-    push %r13
-    sub $8, %rsp
-    movq %rdi, %rbx
-    addq %rsi, %rbx
-    movq %rdx, %r12
-    movq %r12, %rdi
-    call tl_alloc
-    movq %rax, %r13
-    movq %r12, %rcx
-    movq %rbx, %rsi
-    movq %r13, %rdi
-    rep movsb
-    call .L_tl_alloc16
-    movq %r13, 0(%rax)
-    movq %r12, 8(%rax)
-    add $8, %rsp
-    pop %r13
-    pop %r12
-    pop %rbx
-    pop %rbp
-    ret
-
-")
+  "")
 
 (define (compiler-backend-runtime-windows-substring-functions) : String
-  "    .globl tl_substring
-tl_substring:
-    push %rbp
-    mov %rsp, %rbp
-    push %rbx
-    push %r12
-    push %r13
-    push %rsi
-    push %rdi
-    sub $8, %rsp
-    movq %rcx, %rbx
-    addq %rdx, %rbx
-    movq %r8, %r12
-    movq %r12, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
-    movq %rax, %r13
-    movq %r12, %rcx
-    movq %rbx, %rsi
-    movq %r13, %rdi
-    rep movsb
-    call .L_tl_alloc16
-    movq %r13, 0(%rax)
-    movq %r12, 8(%rax)
-    add $8, %rsp
-    pop %rdi
-    pop %rsi
-    pop %r13
-    pop %r12
-    pop %rbx
-    pop %rbp
-    ret
-
-")
+  "")
 
 (define (compiler-backend-runtime-str-view-functions) : String
-  "    .section .bss
-    .balign 8
-.L_tl_str_view_arena:
-    .zero 8
-
-    .text
-    .globl tl_str_view
-tl_str_view:
-    push %rbp
-    mov %rsp, %rbp
-    push %rbx
-    push %r12
-    push %r13
-    push %r14
-    push %r15
-    sub $8, %rsp
-    movq 0(%rdi), %r12
-    addq %rsi, %r12
-    movq %rdx, %r13
-    call tl_arena_current
-    movq %rax, %r14
-    movq .L_tl_str_view_arena(%rip), %r15
-    testq %r15, %r15
-    jnz .L_tl_str_view_arena_ready
-    call tl_arena_make_atomic
-    movq %rax, %r15
-    movq %rax, .L_tl_str_view_arena(%rip)
-.L_tl_str_view_arena_ready:
-    movq %r15, %rdi
-    call tl_arena_set
-    movq $16, %rdi
-    call tl_alloc
-    movq %rax, %rbx
-    movq %r14, %rdi
-    call tl_arena_set
-    movq %r12, 0(%rbx)
-    movq %r13, 8(%rbx)
-    movq %rbx, %rax
-    add $8, %rsp
-    pop %r15
-    pop %r14
-    pop %r13
-    pop %r12
-    pop %rbx
-    pop %rbp
-    ret
-
-")
+  "")
 
 (define (compiler-backend-runtime-windows-str-view-functions) : String
-  "    .data
-    .balign 8
-.L_tl_str_view_arena:
-    .quad 0
-
-    .text
-    .globl tl_str_view
-tl_str_view:
-    push %rbp
-    mov %rsp, %rbp
-    push %rbx
-    push %r12
-    push %r13
-    push %r14
-    push %r15
-    sub $40, %rsp
-    movq 0(%rcx), %r12
-    addq %rdx, %r12
-    movq %r8, %r13
-    call tl_arena_current
-    movq %rax, %r14
-    movq .L_tl_str_view_arena(%rip), %r15
-    testq %r15, %r15
-    jnz .L_tl_str_view_arena_ready
-    call tl_arena_make_atomic
-    movq %rax, %r15
-    movq %rax, .L_tl_str_view_arena(%rip)
-.L_tl_str_view_arena_ready:
-    movq %r15, %rcx
-    call tl_arena_set
-    movq $16, %rcx
-    call tl_alloc
-    movq %rax, %rbx
-    movq %r14, %rcx
-    call tl_arena_set
-    movq %r12, 0(%rbx)
-    movq %r13, 8(%rbx)
-    movq %rbx, %rax
-    add $40, %rsp
-    pop %r15
-    pop %r14
-    pop %r13
-    pop %r12
-    pop %rbx
-    pop %rbp
-    ret
-
-")
+  "")
 
 (define (compiler-backend-runtime-concat-functions) : String
-  "    .globl tl_string_concat
-tl_string_concat:
-    push %rbp
-    mov %rsp, %rbp
-    push %rbx
-    push %r12
-    push %r13
-    push %r14
-    push %r15
-    sub $8, %rsp
-    movq %rdi, %rbx
-    movq %rsi, %r12
-    movq %rdx, %r13
-    movq %rcx, %r14
-    movq %r12, %rdi
-    addq %r14, %rdi
-    call tl_alloc
-    movq %rax, %r15
-    movq %r12, %rcx
-    movq %rbx, %rsi
-    movq %r15, %rdi
-    rep movsb
-    movq %r14, %rcx
-    movq %r13, %rsi
-    movq %r15, %rdi
-    addq %r12, %rdi
-    rep movsb
-    call .L_tl_alloc16
-    movq %r15, 0(%rax)
-    movq %r12, %rdx
-    addq %r14, %rdx
-    movq %rdx, 8(%rax)
-    add $8, %rsp
-    pop %r15
-    pop %r14
-    pop %r13
-    pop %r12
-    pop %rbx
-    pop %rbp
-    ret
-
-    .globl tl_string_concat3
-tl_string_concat3:
-    push %rbp
-    mov %rsp, %rbp
-    sub $32, %rsp
-    movq $0, 0(%rsp)
-    movq $0, 8(%rsp)
-    movq $0, 16(%rsp)
-    movq $0, 24(%rsp)
-    call tl_string_concat5
-    leave
-    ret
-
-    .globl tl_string_concat4
-tl_string_concat4:
-    push %rbp
-    mov %rsp, %rbp
-    sub $32, %rsp
-    movq 16(%rbp), %rax
-    movq %rax, 0(%rsp)
-    movq 24(%rbp), %rax
-    movq %rax, 8(%rsp)
-    movq $0, 16(%rsp)
-    movq $0, 24(%rsp)
-    call tl_string_concat5
-    leave
-    ret
-
-    .globl tl_string_concat5
-tl_string_concat5:
-    push %rbp
-    mov %rsp, %rbp
-    sub $112, %rsp
-    movq %rdi, -8(%rbp)
-    movq %rsi, -16(%rbp)
-    movq %rdx, -24(%rbp)
-    movq %rcx, -32(%rbp)
-    movq %r8, -40(%rbp)
-    movq %r9, -48(%rbp)
-    movq 16(%rbp), %rax
-    movq %rax, -56(%rbp)
-    movq 24(%rbp), %rax
-    movq %rax, -64(%rbp)
-    movq 32(%rbp), %rax
-    movq %rax, -72(%rbp)
-    movq 40(%rbp), %rax
-    movq %rax, -80(%rbp)
-    movq -16(%rbp), %rdi
-    addq -32(%rbp), %rdi
-    addq -48(%rbp), %rdi
-    addq -64(%rbp), %rdi
-    addq -80(%rbp), %rdi
-    movq %rdi, -88(%rbp)
-    call tl_alloc
-    movq %rax, -96(%rbp)
-    movq -96(%rbp), %rdi
-    movq -8(%rbp), %rsi
-    movq -16(%rbp), %rcx
-    rep movsb
-    movq -96(%rbp), %rdi
-    addq -16(%rbp), %rdi
-    movq -24(%rbp), %rsi
-    movq -32(%rbp), %rcx
-    rep movsb
-    movq -96(%rbp), %rdi
-    addq -16(%rbp), %rdi
-    addq -32(%rbp), %rdi
-    movq -40(%rbp), %rsi
-    movq -48(%rbp), %rcx
-    rep movsb
-    movq -96(%rbp), %rdi
-    addq -16(%rbp), %rdi
-    addq -32(%rbp), %rdi
-    addq -48(%rbp), %rdi
-    movq -56(%rbp), %rsi
-    movq -64(%rbp), %rcx
-    rep movsb
-    movq -96(%rbp), %rdi
-    addq -16(%rbp), %rdi
-    addq -32(%rbp), %rdi
-    addq -48(%rbp), %rdi
-    addq -64(%rbp), %rdi
-    movq -72(%rbp), %rsi
-    movq -80(%rbp), %rcx
-    rep movsb
-    call .L_tl_alloc16
-    movq -96(%rbp), %rdx
-    movq %rdx, 0(%rax)
-    movq -88(%rbp), %rdx
-    movq %rdx, 8(%rax)
-    leave
-    ret
-
-")
+  "")
 
 (define (compiler-backend-runtime-windows-concat-functions) : String
-  "    .globl tl_string_concat
-tl_string_concat:
-    push %rbp
-    mov %rsp, %rbp
-    push %rbx
-    push %r12
-    push %r13
-    push %r14
-    push %r15
-    push %rsi
-    push %rdi
-    sub $8, %rsp
-    movq %rcx, %rbx
-    movq %rdx, %r12
-    movq %r8, %r13
-    movq %r9, %r14
-    movq %r12, %rcx
-    addq %r14, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
-    movq %rax, %r15
-    movq %r12, %rcx
-    movq %rbx, %rsi
-    movq %r15, %rdi
-    rep movsb
-    movq %r14, %rcx
-    movq %r13, %rsi
-    movq %r15, %rdi
-    addq %r12, %rdi
-    rep movsb
-    call .L_tl_alloc16
-    movq %r15, 0(%rax)
-    movq %r12, %rdx
-    addq %r14, %rdx
-    movq %rdx, 8(%rax)
-    add $8, %rsp
-    pop %rdi
-    pop %rsi
-    pop %r15
-    pop %r14
-    pop %r13
-    pop %r12
-    pop %rbx
-    pop %rbp
-    ret
-
-    .globl tl_string_concat3
-tl_string_concat3:
-    push %rbp
-    mov %rsp, %rbp
-    sub $80, %rsp
-    movq 48(%rbp), %rax
-    movq %rax, 32(%rsp)
-    movq 56(%rbp), %rax
-    movq %rax, 40(%rsp)
-    movq $0, 48(%rsp)
-    movq $0, 56(%rsp)
-    movq $0, 64(%rsp)
-    movq $0, 72(%rsp)
-    call tl_string_concat5
-    leave
-    ret
-
-    .globl tl_string_concat4
-tl_string_concat4:
-    push %rbp
-    mov %rsp, %rbp
-    sub $80, %rsp
-    movq 48(%rbp), %rax
-    movq %rax, 32(%rsp)
-    movq 56(%rbp), %rax
-    movq %rax, 40(%rsp)
-    movq 64(%rbp), %rax
-    movq %rax, 48(%rsp)
-    movq 72(%rbp), %rax
-    movq %rax, 56(%rsp)
-    movq $0, 64(%rsp)
-    movq $0, 72(%rsp)
-    call tl_string_concat5
-    leave
-    ret
-
-    .globl tl_string_concat5
-tl_string_concat5:
-    push %rbp
-    mov %rsp, %rbp
-    sub $128, %rsp
-    movq %rsi, -8(%rbp)
-    movq %rdi, -16(%rbp)
-    movq %rcx, -24(%rbp)
-    movq %rdx, -32(%rbp)
-    movq %r8, -40(%rbp)
-    movq %r9, -48(%rbp)
-    movq 48(%rbp), %rax
-    movq %rax, -56(%rbp)
-    movq 56(%rbp), %rax
-    movq %rax, -64(%rbp)
-    movq 64(%rbp), %rax
-    movq %rax, -72(%rbp)
-    movq 72(%rbp), %rax
-    movq %rax, -80(%rbp)
-    movq 80(%rbp), %rax
-    movq %rax, -88(%rbp)
-    movq 88(%rbp), %rax
-    movq %rax, -96(%rbp)
-    movq -32(%rbp), %rcx
-    addq -48(%rbp), %rcx
-    addq -64(%rbp), %rcx
-    addq -80(%rbp), %rcx
-    addq -96(%rbp), %rcx
-    movq %rcx, -104(%rbp)
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
-    movq %rax, -112(%rbp)
-    movq -112(%rbp), %rdi
-    movq -24(%rbp), %rsi
-    movq -32(%rbp), %rcx
-    rep movsb
-    movq -112(%rbp), %rdi
-    addq -32(%rbp), %rdi
-    movq -40(%rbp), %rsi
-    movq -48(%rbp), %rcx
-    rep movsb
-    movq -112(%rbp), %rdi
-    addq -32(%rbp), %rdi
-    addq -48(%rbp), %rdi
-    movq -56(%rbp), %rsi
-    movq -64(%rbp), %rcx
-    rep movsb
-    movq -112(%rbp), %rdi
-    addq -32(%rbp), %rdi
-    addq -48(%rbp), %rdi
-    addq -64(%rbp), %rdi
-    movq -72(%rbp), %rsi
-    movq -80(%rbp), %rcx
-    rep movsb
-    movq -112(%rbp), %rdi
-    addq -32(%rbp), %rdi
-    addq -48(%rbp), %rdi
-    addq -64(%rbp), %rdi
-    addq -80(%rbp), %rdi
-    movq -88(%rbp), %rsi
-    movq -96(%rbp), %rcx
-    rep movsb
-    call .L_tl_alloc16
-    movq -112(%rbp), %rdx
-    movq %rdx, 0(%rax)
-    movq -104(%rbp), %rdx
-    movq %rdx, 8(%rax)
-    movq -16(%rbp), %rdi
-    movq -8(%rbp), %rsi
-    leave
-    ret
-
-")
+  "")
 
 ;; #2386: byte copy helper used by lower-emit-memcpy for large by-value aggregate
 ;; copies. Always emitted. Linux SysV args rdi=dst, rsi=src, rdx=len; rep movsb
@@ -24624,6 +24144,7 @@ tl_atomic_i32_fetch_add_ptr:
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
+  [runtime-index : CompilerBackendRuntimeIndex]
   [closure-names : BackendStringList]
   [strings : BackendStringList]
   [bytes : BackendStringList]
@@ -24691,6 +24212,8 @@ tl_atomic_i32_fetch_add_ptr:
                           (compiler-backend-emit-externs-into
                             externs
                             plan
+                            runtime-index
+                            closure-names
                             runtime-data-buf)]
                         (begin
                           (cfg
@@ -24737,6 +24260,7 @@ tl_atomic_i32_fetch_add_ptr:
   [globals : CompilerIrGlobalList]
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
+  [runtime-index : CompilerBackendRuntimeIndex]
   [program-index : CompilerBackendProgramIndex]
   [spans : CompilerSourceSpans]
   [globals-buf : TextBuf]
@@ -24770,6 +24294,7 @@ tl_atomic_i32_fetch_add_ptr:
             externs
             plan
             program-index
+            runtime-index
             closure-names
             strings
             bytes
@@ -24869,91 +24394,98 @@ tl_atomic_i32_fetch_add_ptr:
     (compiler-backend-user-symbol-cache-reset!)
     (cfg regalloc-census (compiler-reg-call-span-census-reset!))
     (cfg compile-profile (compiler-backend-profile-start))
-    (match (compiler-backend-runtime-plan program)
-      [(OkBackendRuntimePlan plan)
-        (begin
-          (cfg compile-profile (compiler-backend-profile-finish "runtime_plan"))
-          (cfg compile-profile (compiler-backend-profile-start))
-          (if (compiler-backend-target-runtime-ok? target plan)
-            (begin
-              (cfg
-                compile-profile
-                (compiler-backend-profile-finish "target_check"))
-              (cfg compile-profile (compiler-backend-profile-start))
-              (match program
-                [(IrProgram globals functions externs)
-                  ;; Build the program index ONCE over the entry function list
-                  ;; and share it with the globals emission: each build walks
-                  ;; every function body for the register-group counts, so the
-                  ;; former second build doubled both that walk and its ~120MB
-                  ;; of transient allocation. The entry list is a superset of
-                  ;; `functions` (at most the synthesized implicit main, which
-                  ;; no global initializer can reference), so globals resolve
-                  ;; identically against the shared index.
-                  (let
-                    [entry-functions : CompilerIrFunctionList
-                      (compiler-backend-functions-with-implicit-main
-                        functions
-                        emit-entry)]
-                    [program-index : CompilerBackendProgramIndex
-                      (compiler-backend-program-index-build
-                        entry-functions
-                        externs)]
-                    (begin
-                      (cfg
-                        compile-profile
-                        (compiler-backend-profile-finish "index"))
-                      (cfg compile-profile (compiler-backend-profile-start))
-                      (match (compiler-backend-emit-globals-buffer-into
-                        target
-                        globals
-                        (text-buf-append (text-buf-empty) ".data\n")
-                        program-index)
-                        [(OkCompilerBackendBuffer globals-buf)
-                          (begin
-                            (cfg
-                              compile-profile
-                              (compiler-backend-profile-finish "globals"))
-                            (cfg
-                              compile-profile
-                              (compiler-backend-profile-start))
-                            (match (compiler-backend-validate-function-symbols
-                              globals
-                              entry-functions
-                              externs
-                              plan
-                              program-index)
-                              [(OkCompilerBackendSymbolValidation _)
-                                (compiler-backend-emit-program-buffer-after-index
-                                  program
-                                  target
-                                  mode
-                                  entry-functions
-                                  globals
-                                  externs
-                                  plan
-                                  program-index
-                                  spans
-                                  globals-buf
-                                  emit-entry
-                                  crt-entry)]
-                              [(ErrCompilerBackendSymbolValidation message)
-                                (ErrCompilerBackendBuffer message)]))]
-                        [(ErrCompilerBackendBuffer message)
-                          (begin
-                            (cfg
-                              compile-profile
-                              (compiler-backend-profile-finish "globals"))
-                            (ErrCompilerBackendBuffer message))])))]))
-            (begin
-              (cfg
-                compile-profile
-                (compiler-backend-profile-finish "target_check"))
-              (ErrCompilerBackendBuffer
-                (compiler-diagnostic-at-start
-                  ""
-                  "backend: internal target runtime rejection")))))]
-      [(ErrBackendRuntimePlan message)
+    (match (compiler-backend-runtime-plan-with-index program)
+      [(OkBackendRuntimePlanWithIndex planned)
+        (let
+          [plan : CompilerBackendRuntimePlan (struct-get planned plan)]
+          [runtime-index : CompilerBackendRuntimeIndex
+            (struct-get planned index)]
+          (begin
+            (cfg
+              compile-profile
+              (compiler-backend-profile-finish "runtime_plan"))
+            (cfg compile-profile (compiler-backend-profile-start))
+            (if (compiler-backend-target-runtime-ok? target plan)
+              (begin
+                (cfg
+                  compile-profile
+                  (compiler-backend-profile-finish "target_check"))
+                (cfg compile-profile (compiler-backend-profile-start))
+                (match program
+                  [(IrProgram globals functions externs)
+                    ;; Build the program index ONCE over the entry function list
+                    ;; and share it with the globals emission: each build walks
+                    ;; every function body for the register-group counts, so the
+                    ;; former second build doubled both that walk and its ~120MB
+                    ;; of transient allocation. The entry list is a superset of
+                    ;; `functions` (at most the synthesized implicit main, which
+                    ;; no global initializer can reference), so globals resolve
+                    ;; identically against the shared index.
+                    (let
+                      [entry-functions : CompilerIrFunctionList
+                        (compiler-backend-functions-with-implicit-main
+                          functions
+                          emit-entry)]
+                      [program-index : CompilerBackendProgramIndex
+                        (compiler-backend-program-index-build
+                          entry-functions
+                          externs)]
+                      (begin
+                        (cfg
+                          compile-profile
+                          (compiler-backend-profile-finish "index"))
+                        (cfg compile-profile (compiler-backend-profile-start))
+                        (match (compiler-backend-emit-globals-buffer-into
+                          target
+                          globals
+                          (text-buf-append (text-buf-empty) ".data\n")
+                          program-index)
+                          [(OkCompilerBackendBuffer globals-buf)
+                            (begin
+                              (cfg
+                                compile-profile
+                                (compiler-backend-profile-finish "globals"))
+                              (cfg
+                                compile-profile
+                                (compiler-backend-profile-start))
+                              (match (compiler-backend-validate-function-symbols
+                                globals
+                                entry-functions
+                                externs
+                                plan
+                                program-index)
+                                [(OkCompilerBackendSymbolValidation _)
+                                  (compiler-backend-emit-program-buffer-after-index
+                                    program
+                                    target
+                                    mode
+                                    entry-functions
+                                    globals
+                                    externs
+                                    plan
+                                    runtime-index
+                                    program-index
+                                    spans
+                                    globals-buf
+                                    emit-entry
+                                    crt-entry)]
+                                [(ErrCompilerBackendSymbolValidation message)
+                                  (ErrCompilerBackendBuffer message)]))]
+                          [(ErrCompilerBackendBuffer message)
+                            (begin
+                              (cfg
+                                compile-profile
+                                (compiler-backend-profile-finish "globals"))
+                              (ErrCompilerBackendBuffer message))])))]))
+              (begin
+                (cfg
+                  compile-profile
+                  (compiler-backend-profile-finish "target_check"))
+                (ErrCompilerBackendBuffer
+                  (compiler-diagnostic-at-start
+                    ""
+                    "backend: internal target runtime rejection"))))))]
+      [(ErrBackendRuntimePlanWithIndex message)
         (begin
           (cfg compile-profile (compiler-backend-profile-finish "runtime_plan"))
           (ErrCompilerBackendBuffer (compiler-diagnostic-at-start "" message)))])))
@@ -26290,26 +25822,45 @@ tl_atomic_i32_fetch_add_ptr:
 (define (compiler-backend-object-externs
   [parts : CompilerBackendObjectParts]
   [externs : CompilerIrExternList]
-  [plan : CompilerBackendRuntimePlan]) : CompilerBackendObjectParts
+  [plan : CompilerBackendRuntimePlan]
+  [runtime-index : CompilerBackendRuntimeIndex]
+  [referenced-functions : BackendStringList]) : CompilerBackendObjectParts
   (match externs
     [(IrExternNil) parts]
     [(IrExternCons item rest)
       (match item
-        [(IrExtern _ _ _ link-symbol _ provided)
+        [(IrExtern name _ _ link-symbol _ provided)
           (compiler-backend-object-externs
-            (if provided
-              parts
+            (if (and
+              (not
+                (compiler-backend-object-runtime-symbol-provided?
+                  plan
+                  link-symbol))
+              (compiler-backend-emits-extern-symbol?
+                name
+                link-symbol
+                provided
+                plan)
+              (compiler-backend-extern-symbol-referenced?
+                runtime-index
+                referenced-functions
+                name
+                link-symbol))
               (compiler-backend-object-symbol-extern
                 parts
                 (compiler-backend-link-symbol link-symbol plan)
-                (ObjectSymbolFunction)))
+                (ObjectSymbolFunction))
+              parts)
             (box-get rest)
-            plan)])]))
+            plan
+            runtime-index
+            referenced-functions)])]))
 
 (define (compiler-backend-object-runtime-symbols-list) : BackendStringList
   (let
     [symbols : BackendStringList BackendStringNil]
     (begin
+      (set! symbols (compiler-backend-string-cons "tl_memcpy" symbols))
       (set!
         symbols
         (compiler-backend-string-cons "tl_atomic_i32_fetch_add_ptr" symbols))
@@ -26338,8 +25889,21 @@ tl_atomic_i32_fetch_add_ptr:
       (set! symbols (compiler-backend-string-cons "tl_div_abort" symbols))
       (set! symbols (compiler-backend-string-cons "tl_region_reset" symbols))
       (set! symbols (compiler-backend-string-cons "tl_region_mark" symbols))
+      (set!
+        symbols
+        (compiler-backend-string-cons "tl_arena_make_atomic" symbols))
+      (set! symbols (compiler-backend-string-cons "tl_arena_set" symbols))
+      (set! symbols (compiler-backend-string-cons "tl_arena_current" symbols))
       (set! symbols (compiler-backend-string-cons "tl_alloc" symbols))
       symbols)))
+
+(define (compiler-backend-object-runtime-symbol-provided?
+  [plan : CompilerBackendRuntimePlan]
+  [name : String]) : bool
+  (or
+    (compiler-backend-plan-provides? plan name)
+    (string-eq name "tl_alloc")
+    (string-eq name "tl_memcpy")))
 
 (define (compiler-backend-object-runtime-symbols
   [parts : CompilerBackendObjectParts]
@@ -26349,7 +25913,7 @@ tl_atomic_i32_fetch_add_ptr:
     [(BackendStringNil) parts]
     [(BackendStringCons name rest)
       (compiler-backend-object-runtime-symbols
-        (if (compiler-backend-plan-provides? plan name)
+        (if (compiler-backend-object-runtime-symbol-provided? plan name)
           (compiler-backend-object-symbol-local-section
             parts
             name
@@ -26968,6 +26532,8 @@ tl_atomic_i32_fetch_add_ptr:
       (compiler-backend-program-collections-floats collections)]
     [uses-f64-neg : bool
       (compiler-backend-program-collections-uses-f64-neg? collections)]
+    [runtime-index : CompilerBackendRuntimeIndex
+      (compiler-backend-runtime-index entry-functions externs)]
     [seed : CompilerBackendObjectParts
       (compiler-backend-object-entry-symbols
         (compiler-backend-object-runtime-symbols
@@ -26992,7 +26558,9 @@ tl_atomic_i32_fetch_add_ptr:
                 floats)
               uses-f64-neg)
             externs
-            plan)
+            plan
+            runtime-index
+            closure-names)
           plan
           (compiler-backend-object-runtime-symbols-list))
         target
@@ -28078,12 +27646,18 @@ tl_atomic_i32_fetch_add_ptr:
   "(extern (tl_alloc [arg0 : i64]) : i64)
 (extern (tl_substring [arg0 : i64] [arg1 : i64] [arg2 : i64]) : i64)
 (extern (tl_string_concat [arg0 : i64] [arg1 : i64] [arg2 : i64] [arg3 : i64]) : i64)
+(extern (tl_string_concat3 [arg0 : i64] [arg1 : i64] [arg2 : i64] [arg3 : i64] [arg4 : i64] [arg5 : i64]) : i64)
+(extern (tl_string_concat4 [arg0 : i64] [arg1 : i64] [arg2 : i64] [arg3 : i64] [arg4 : i64] [arg5 : i64] [arg6 : i64] [arg7 : i64]) : i64)
+(extern (tl_string_concat5 [arg0 : i64] [arg1 : i64] [arg2 : i64] [arg3 : i64] [arg4 : i64] [arg5 : i64] [arg6 : i64] [arg7 : i64] [arg8 : i64] [arg9 : i64]) : i64)
 (extern (tl_int_to_string [arg0 : i64]) : String)
 (define (main) : i64
   (begin
     (tl_alloc 8)
     (tl_substring 0 0 0)
     (tl_string_concat 0 0 0 0)
+    (tl_string_concat3 0 0 0 0 0 0)
+    (tl_string_concat4 0 0 0 0 0 0 0 0)
+    (tl_string_concat5 0 0 0 0 0 0 0 0 0 0)
     (tl_int_to_string 1)
     42))")
 
@@ -28130,27 +27704,41 @@ tl_atomic_i32_fetch_add_ptr:
         (compiler-backend-string-contains? asm ".L_tl_fs_remove_dir_status:\n")))
     (not (compiler-backend-string-contains? asm ".L_tl_fs_rename_status:\n"))))
 
+(define (compiler-backend-runtime-string-helper-generators-empty?) : bool
+  (backend-and8
+    (string-eq (compiler-backend-runtime-int-to-string-functions) "")
+    (string-eq (compiler-backend-runtime-windows-int-to-string-functions) "")
+    (string-eq (compiler-backend-runtime-substring-functions) "")
+    (string-eq (compiler-backend-runtime-windows-substring-functions) "")
+    (string-eq (compiler-backend-runtime-str-view-functions) "")
+    (string-eq (compiler-backend-runtime-windows-str-view-functions) "")
+    (string-eq (compiler-backend-runtime-concat-functions) "")
+    (string-eq (compiler-backend-runtime-windows-concat-functions) "")))
+
 (define (compiler-backend-runtime-helper-asm-ok?) : bool
   (match (compiler-backend-emit-source (compiler-backend-runtime-helper-source))
     [(OkCompilerBackend asm)
       (and
+        (compiler-backend-runtime-string-helper-generators-empty?)
         (backend-and8
           (compiler-backend-string-contains? asm ".globl tl_alloc\n")
           (compiler-backend-string-contains? asm "tl_alloc:\n")
           (not (compiler-backend-string-contains? asm ".globl tl_oob_abort\n"))
           (not (compiler-backend-string-contains? asm "tl_oob_abort:\n"))
-          (compiler-backend-string-contains? asm ".globl tl_substring\n")
-          (compiler-backend-string-contains? asm "tl_substring:\n")
-          (compiler-backend-string-contains? asm ".globl tl_string_concat\n")
-          (compiler-backend-string-contains? asm "tl_string_concat:\n"))
+          (compiler-backend-string-contains? asm "    call tl_substring\n")
+          (compiler-backend-string-contains? asm "    call tl_string_concat\n")
+          (compiler-backend-string-contains? asm "    call tl_string_concat3\n")
+          (compiler-backend-string-contains? asm "    call tl_string_concat4\n"))
         (backend-and8
-          (compiler-backend-string-contains? asm ".globl tl_string_concat3\n")
-          (compiler-backend-string-contains? asm "tl_string_concat3:\n")
-          (compiler-backend-string-contains? asm ".globl tl_string_concat4\n")
-          (compiler-backend-string-contains? asm "tl_string_concat4:\n")
-          (compiler-backend-string-contains? asm ".globl tl_string_concat5\n")
-          (compiler-backend-string-contains? asm "tl_string_concat5:\n")
           (compiler-backend-string-contains? asm "    call tl_string_concat5\n")
+          (compiler-backend-string-contains? asm "    call tl_int_to_string\n")
+          (not (compiler-backend-string-contains? asm ".globl tl_substring\n"))
+          (not (compiler-backend-string-contains? asm "tl_substring:\n"))
+          (not
+            (compiler-backend-string-contains? asm ".globl tl_string_concat\n"))
+          (not (compiler-backend-string-contains? asm "tl_string_concat:\n"))
+          (not
+            (compiler-backend-string-contains? asm ".globl tl_string_concat5\n"))
           (and
             (not (compiler-backend-string-contains? asm "getrandom:\n"))
             (not (compiler-backend-string-contains? asm "getcwd:\n"))))
@@ -28160,24 +27748,33 @@ tl_atomic_i32_fetch_add_ptr:
           (not
             (compiler-backend-string-contains? asm ".globl tl_string_to_int\n"))
           (not (compiler-backend-string-contains? asm "tl_string_to_int:\n"))
-          (compiler-backend-string-contains? asm ".globl tl_int_to_string\n")
-          (compiler-backend-string-contains? asm "tl_int_to_string:\n")
+          (not
+            (compiler-backend-string-contains? asm ".globl tl_int_to_string\n"))
+          (not (compiler-backend-string-contains? asm "tl_int_to_string:\n"))
           (not (compiler-backend-string-contains? asm "tl_process_output:\n"))
           (not
             (compiler-backend-string-contains? asm "tl_random_system_seed:\n")))
         (backend-and4
-          (or
-            (compiler-backend-string-contains? asm "    call .L_tl_alloc8\n")
-            (compiler-backend-string-contains? asm "    call .L_tl_alloc16\n"))
+          (compiler-backend-string-contains? asm "    call tl_alloc\n")
           (not (compiler-backend-string-contains? asm ".extern tl_alloc\n"))
+          (not (compiler-backend-string-contains? asm ".extern tl_substring\n"))
+          (not
+            (compiler-backend-string-contains? asm ".extern tl_string_concat\n")))
+        (backend-and4
+          (not
+            (compiler-backend-string-contains? asm ".extern tl_int_to_string\n"))
           (not
             (compiler-backend-string-contains?
               asm
-              ".extern tl_process_output\n"))
+              ".L_tl_int_to_string_digit_loop:\n"))
           (not
             (compiler-backend-string-contains?
               asm
-              ".extern tl_random_system_seed\n")))
+              ".L_tl_int_to_string_copy_loop:\n"))
+          (not
+            (compiler-backend-string-contains?
+              asm
+              ".extern tl_process_output\n")))
         (backend-and4
           (not (compiler-backend-string-contains? asm "__errno_location:\n"))
           (not (compiler-backend-string-contains? asm "_errno:\n"))
@@ -28202,17 +27799,15 @@ tl_atomic_i32_fetch_add_ptr:
     (compiler-backend-str-view-helper-source))
     [(OkCompilerBackend asm)
       (and
-        (backend-and8
-          (compiler-backend-string-contains? asm ".globl tl_alloc\n")
-          (compiler-backend-string-contains? asm "tl_alloc:\n")
-          (compiler-backend-string-contains? asm ".globl tl_str_view\n")
-          (compiler-backend-string-contains? asm "tl_str_view:\n")
-          (compiler-backend-string-contains? asm ".L_tl_str_view_arena:\n")
-          (compiler-backend-string-contains? asm "    call tl_str_view\n")
+        (compiler-backend-string-contains? asm "    call tl_str_view\n")
+        (not (compiler-backend-string-contains? asm ".globl tl_str_view\n"))
+        (not (compiler-backend-string-contains? asm "tl_str_view:\n"))
+        (not
           (compiler-backend-string-contains?
             asm
-            "    call tl_arena_make_atomic\n")
-          (compiler-backend-string-contains? asm "    call tl_arena_set\n"))
+            "    call tl_arena_make_atomic\n"))
+        (not (compiler-backend-string-contains? asm "    call tl_arena_set\n"))
+        (not (compiler-backend-string-contains? asm ".L_tl_str_view_arena:\n"))
         (backend-and4
           (not (compiler-backend-string-contains? asm ".extern tl_str_view\n"))
           (not (compiler-backend-string-contains? asm ".globl tl_substring\n"))
@@ -28286,7 +27881,9 @@ tl_atomic_i32_fetch_add_ptr:
           (compiler-backend-string-contains? asm ".extern tl_print_err\n")
           (compiler-backend-string-contains? asm ".extern tl_string_eq\n")
           (compiler-backend-string-contains? asm ".extern tl_string_to_int\n"))
-        (compiler-backend-string-contains? asm "tl_int_to_string:\n")
+        (compiler-backend-string-contains? asm "    call tl_int_to_string\n")
+        (not (compiler-backend-string-contains? asm "tl_int_to_string:\n"))
+        (compiler-backend-string-contains? asm ".extern tl_int_to_string\n")
         (compiler-backend-string-contains?
           asm
           "    movq %rcx, .L_tl_argc(%rip)\n")
@@ -28463,7 +28060,8 @@ tl_atomic_i32_fetch_add_ptr:
           (compiler-backend-string-contains? asm ".globl _tl_tl_alloc")
           (compiler-backend-string-contains? asm ".globl _tl_f"))
         (compiler-backend-string-contains? asm ".globl tl_alloc\n")
-        (compiler-backend-string-contains? asm ".globl tl_substring\n")
+        (not (compiler-backend-string-contains? asm ".globl tl_substring\n"))
+        (not (compiler-backend-string-contains? asm "tl_substring:\n"))
         (or
           (compiler-backend-string-contains? asm "    call _tl_tl_alloc")
           (compiler-backend-string-contains? asm "    call _tl_f"))

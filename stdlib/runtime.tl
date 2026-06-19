@@ -40,10 +40,25 @@
   windows
   (extern (runtime-windows-exit-process [arg0 : i32]) : never (:symbol "ExitProcess")))
 
-;: Bootstrap fallback for stage0 compilers that predate local address-of.
-(cfg
-  (all windows (not feature-ptr-addr-of))
-  (extern (runtime-alloc [arg0 : i64]) : (MutPtr u8) (:symbol "tl_alloc")))
+;: Runtime active-arena allocator. The backend still emits `tl_alloc`; this
+;: prelude uses it for helpers that moved out of hand-written assembly.
+(extern (runtime-alloc [arg0 : i64]) : (MutPtr u8) (:symbol "tl_alloc"))
+
+;: Internal raw byte copy primitive. Caller contract: `n >= 0`, `src` has at
+;: least `n` readable initialized bytes, `dst` has at least `n` writable bytes,
+;: and both ranges stay live for the call. `tl_memcpy` is memmove-safe for
+;: overlapping `dst > src`.
+(unsafe
+  (extern (runtime-copy-bytes! [dst : (MutPtr u8)] [src : (Ptr u8)] [n : i64]) : unit (:symbol "tl_memcpy")))
+
+;: Return the currently active arena handle.
+(extern (runtime-arena-current) : i64 (:symbol "tl_arena_current"))
+
+;: Create the process-lifetime atomic arena used for borrowed view records.
+(extern (runtime-arena-make-atomic) : i64 (:symbol "tl_arena_make_atomic"))
+
+(unsafe
+  (extern (runtime-arena-set [arg0 : i64]) : unit (:symbol "tl_arena_set")))
 
 ;: Convert a read-only byte pointer into an integer (syscall/handle) argument.
 (define (runtime-ptr-arg [ptr : (Ptr u8)]) : i64
@@ -154,6 +169,196 @@
   (begin
     (runtime-abort-write message)
     (runtime-os-exit 134)))
+
+;: Render an integer into a fresh active-arena decimal string.
+(define (tl-runtime-int-to-string [value : i64]) : String
+  (let
+    [negative : bool (< value 0)]
+    [magnitude : i64
+      (if negative
+        value
+        (- 0 value))]
+    [digit-count : i64 1]
+    [count-cursor : i64 magnitude]
+    (begin
+      (while (<= count-cursor -10)
+        (begin
+          (set! count-cursor (/ count-cursor 10))
+          (set! digit-count (+ digit-count 1))))
+      (let
+        [len : i64
+          (if negative
+            (+ digit-count 1)
+            digit-count)]
+        [buf : (MutPtr u8) (runtime-alloc len)]
+        [digit-index : i64 (- digit-count 1)]
+        [write-cursor : i64 magnitude]
+        [digit-base : i64
+          (if negative
+            1
+            0)]
+        (begin
+          (if negative
+            (unsafe
+              (ptr-write! buf (cast 45 : u8)))
+            unit)
+          (while (>= digit-index 0)
+            (let
+              [digit : i64 (- 0 (% write-cursor 10))]
+              (begin
+                (unsafe
+                  (ptr-write!
+                    (ptr-offset buf (+ digit-base digit-index))
+                    (cast (+ 48 digit) : u8)))
+                (set! write-cursor (/ write-cursor 10))
+                (set! digit-index (- digit-index 1)))))
+          (unsafe
+            (string-from-bytes (ptr-cast buf : (Ptr u8)) len)))))))
+
+;: Copy a byte slice into a fresh active-arena string.
+(define (tl-runtime-substring [src : (Ptr u8)] [start : i64] [len : i64]) : String
+  (let
+    [dst : (MutPtr u8) (runtime-alloc len)]
+    (begin
+      (unsafe
+        (runtime-copy-bytes! dst (ptr-offset src start) len))
+      (unsafe
+        (string-from-bytes (ptr-cast dst : (Ptr u8)) len)))))
+
+;: Cached process-lifetime arena used for borrowed string views.
+(define runtime-str-view-arena : i64
+  0)
+
+;: Return the borrowed-view arena, creating it on first use.
+(define (runtime-str-view-arena-get) : i64
+  (if (= runtime-str-view-arena 0)
+    (begin
+      (set! runtime-str-view-arena (runtime-arena-make-atomic))
+      runtime-str-view-arena)
+    runtime-str-view-arena))
+
+;: Build a borrowed `str` view record. `String` has the same two-word runtime
+;: layout as a borrowed str record; callers see this fixed symbol through an
+;: extern returning `(& text str)`.
+(define (tl-runtime-str-view [text : (& text str)] [start : i64] [len : i64]) : String
+  (let
+    [src : (Ptr u8)
+      (unsafe
+        (ptr-offset (string-data text) start))]
+    [home : i64 (runtime-arena-current)]
+    [view-arena : i64 (runtime-str-view-arena-get)]
+    (begin
+      (unsafe
+        (runtime-arena-set view-arena))
+      (let
+        [view : String
+          (unsafe
+            (string-from-bytes src len))]
+        (begin
+          (unsafe
+            (runtime-arena-set home))
+          view)))))
+
+;: Concatenate two byte ranges into a fresh active-arena string.
+(define (tl-runtime-string-concat
+  [a : (Ptr u8)]
+  [a-len : i64]
+  [b : (Ptr u8)]
+  [b-len : i64]) : String
+  (let
+    [total : i64 (+ a-len b-len)]
+    [dst : (MutPtr u8) (runtime-alloc total)]
+    (begin
+      (unsafe
+        (runtime-copy-bytes! dst a a-len))
+      (unsafe
+        (runtime-copy-bytes! (ptr-offset dst a-len) b b-len))
+      (unsafe
+        (string-from-bytes (ptr-cast dst : (Ptr u8)) total)))))
+
+;: Concatenate three byte ranges into a fresh active-arena string.
+(define (tl-runtime-string-concat3
+  [a : (Ptr u8)]
+  [a-len : i64]
+  [b : (Ptr u8)]
+  [b-len : i64]
+  [c : (Ptr u8)]
+  [c-len : i64]) : String
+  (let
+    [total : i64 (+ a-len (+ b-len c-len))]
+    [dst : (MutPtr u8) (runtime-alloc total)]
+    [off-b : i64 a-len]
+    [off-c : i64 (+ a-len b-len)]
+    (begin
+      (unsafe
+        (runtime-copy-bytes! dst a a-len))
+      (unsafe
+        (runtime-copy-bytes! (ptr-offset dst off-b) b b-len))
+      (unsafe
+        (runtime-copy-bytes! (ptr-offset dst off-c) c c-len))
+      (unsafe
+        (string-from-bytes (ptr-cast dst : (Ptr u8)) total)))))
+
+;: Concatenate four byte ranges into a fresh active-arena string.
+(define (tl-runtime-string-concat4
+  [a : (Ptr u8)]
+  [a-len : i64]
+  [b : (Ptr u8)]
+  [b-len : i64]
+  [c : (Ptr u8)]
+  [c-len : i64]
+  [d : (Ptr u8)]
+  [d-len : i64]) : String
+  (let
+    [total : i64 (+ a-len (+ b-len (+ c-len d-len)))]
+    [dst : (MutPtr u8) (runtime-alloc total)]
+    [off-b : i64 a-len]
+    [off-c : i64 (+ a-len b-len)]
+    [off-d : i64 (+ a-len (+ b-len c-len))]
+    (begin
+      (unsafe
+        (runtime-copy-bytes! dst a a-len))
+      (unsafe
+        (runtime-copy-bytes! (ptr-offset dst off-b) b b-len))
+      (unsafe
+        (runtime-copy-bytes! (ptr-offset dst off-c) c c-len))
+      (unsafe
+        (runtime-copy-bytes! (ptr-offset dst off-d) d d-len))
+      (unsafe
+        (string-from-bytes (ptr-cast dst : (Ptr u8)) total)))))
+
+;: Concatenate five byte ranges into a fresh active-arena string.
+(define (tl-runtime-string-concat5
+  [a : (Ptr u8)]
+  [a-len : i64]
+  [b : (Ptr u8)]
+  [b-len : i64]
+  [c : (Ptr u8)]
+  [c-len : i64]
+  [d : (Ptr u8)]
+  [d-len : i64]
+  [e : (Ptr u8)]
+  [e-len : i64]) : String
+  (let
+    [total : i64 (+ a-len (+ b-len (+ c-len (+ d-len e-len))))]
+    [dst : (MutPtr u8) (runtime-alloc total)]
+    [off-b : i64 a-len]
+    [off-c : i64 (+ a-len b-len)]
+    [off-d : i64 (+ a-len (+ b-len c-len))]
+    [off-e : i64 (+ a-len (+ b-len (+ c-len d-len)))]
+    (begin
+      (unsafe
+        (runtime-copy-bytes! dst a a-len))
+      (unsafe
+        (runtime-copy-bytes! (ptr-offset dst off-b) b b-len))
+      (unsafe
+        (runtime-copy-bytes! (ptr-offset dst off-c) c c-len))
+      (unsafe
+        (runtime-copy-bytes! (ptr-offset dst off-d) d d-len))
+      (unsafe
+        (runtime-copy-bytes! (ptr-offset dst off-e) e e-len))
+      (unsafe
+        (string-from-bytes (ptr-cast dst : (Ptr u8)) total)))))
 
 ;: Fill `len` pointer-sized array slots with `value`.
 (define (tl-runtime-array-fill8 [buf : (MutPtr u8)] [len : i64] [value : u64])

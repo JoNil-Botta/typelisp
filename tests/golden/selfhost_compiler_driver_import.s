@@ -1,4 +1,7 @@
 .data
+.globl _tl_stdlib_runtime_runtime_str_view_arena
+_tl_stdlib_runtime_runtime_str_view_arena:
+    .quad 0
 .globl _tl_shared_shared
 _tl_shared_shared:
     .quad 2

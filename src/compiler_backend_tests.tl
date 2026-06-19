@@ -4228,11 +4228,31 @@
             (not (compiler-backend-string-contains? asm "tmpfile:\n")))]
         [string-runtime : bool
           (backend-and8
-            (compiler-backend-string-contains? asm "tl_substring:\n")
-            (compiler-backend-string-contains? asm "tl_string_concat:\n")
-            (not (compiler-backend-string-contains? asm "tl_string_eq:\n"))
-            (not (compiler-backend-string-contains? asm "tl_string_to_int:\n"))
-            (compiler-backend-string-contains? asm "tl_int_to_string:\n")
+            (compiler-backend-string-contains? asm "    call tl_substring\n")
+            (compiler-backend-string-contains?
+              asm
+              "    call tl_string_concat\n")
+            (and
+              (not (compiler-backend-string-contains? asm "tl_substring:\n"))
+              (not
+                (compiler-backend-string-contains? asm "tl_string_concat:\n"))
+              (not
+                (compiler-backend-string-contains? asm "tl_int_to_string:\n")))
+            (and
+              (not (compiler-backend-string-contains? asm "tl_string_eq:\n"))
+              (not
+                (compiler-backend-string-contains? asm "tl_string_to_int:\n")))
+            (and
+              (not
+                (compiler-backend-string-contains? asm ".extern tl_substring\n"))
+              (not
+                (compiler-backend-string-contains?
+                  asm
+                  ".extern tl_string_concat\n"))
+              (not
+                (compiler-backend-string-contains?
+                  asm
+                  ".extern tl_int_to_string\n")))
             (not
               (compiler-backend-string-contains? asm "tl_random_system_seed:\n"))
             (not
@@ -8569,6 +8589,10 @@
   "(define (own-alloc) (:export-symbol \"tl_alloc\") : i64 1)
 (define (main) : i64 (own-alloc))")
 
+(define (compiler-backend-export-symbol-stdlib-runtime-collision-source) : String
+  "(define (own-int-to-string) (:export-symbol \"tl_int_to_string\") : String \"0\")
+(define (main) : i64 (string-length (own-int-to-string)))")
+
 (define (compiler-backend-export-symbol-main-source) : String
   "(define (main) (:export-symbol \"tl_not_main\") : i64 0)")
 
@@ -8606,7 +8630,9 @@
       (compiler-backend-error-ok?
         (compiler-backend-export-symbol-extern-collision-source)
         "backend: extern symbol collides with emitted symbol dup_link")
-      true)))
+      (compiler-backend-error-ok?
+        (compiler-backend-export-symbol-stdlib-runtime-collision-source)
+        "backend: exported function symbol collides with runtime symbol tl_int_to_string"))))
 
 (define (compiler-backend-export-symbol-tests-ok?) : bool
   (and

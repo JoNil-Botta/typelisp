@@ -1020,6 +1020,14 @@
   [instr : CompilerIrInstr]) : OptInstrResult
   (OptInstrResult (opt-const-unbind env dst) instr))
 
+(define (opt-fold-mask-binop-op
+  [op : CompilerIrMaskBinOp]
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]) : CompilerIrMaskBinOp
+  (if (opt-value-eq lhs rhs)
+    (IrMaskAnd)
+    op))
+
 (define (opt-fold-instr [env : OptConstEnv] [instr : CompilerIrInstr]) : OptInstrResult
   (match instr
     [(IrInstrMov dst value ty)
@@ -1069,7 +1077,10 @@
     [(IrInstrVectorBinOp dst _ _ _ _ _) (opt-invalidate-def env dst instr)]
     [(IrInstrVectorReduce dst _ _ _ _) (opt-invalidate-def env dst instr)]
     [(IrInstrVectorCompare dst _ _ _ _ _) (opt-invalidate-def env dst instr)]
-    [(IrInstrMaskBinOp dst _ _ _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrMaskBinOp dst op lhs rhs lanes)
+      (OptInstrResult
+        (opt-const-unbind env dst)
+        (IrInstrMaskBinOp dst (opt-fold-mask-binop-op op lhs rhs) lhs rhs lanes))]
     [(IrInstrMaskNot dst _ _) (opt-invalidate-def env dst instr)]
     [(IrInstrMaskReduce dst _ _ _) (opt-invalidate-def env dst instr)]
     [(IrInstrSelect dst _ _ _ _ _) (opt-invalidate-def env dst instr)]
@@ -1152,7 +1163,10 @@
     [(IrInstrVectorBinOp dst _ _ _ _ _) (opt-invalidate-def env dst instr)]
     [(IrInstrVectorReduce dst _ _ _ _) (opt-invalidate-def env dst instr)]
     [(IrInstrVectorCompare dst _ _ _ _ _) (opt-invalidate-def env dst instr)]
-    [(IrInstrMaskBinOp dst _ _ _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrMaskBinOp dst op lhs rhs lanes)
+      (OptInstrResult
+        (opt-const-unbind env dst)
+        (IrInstrMaskBinOp dst (opt-fold-mask-binop-op op lhs rhs) lhs rhs lanes))]
     [(IrInstrMaskNot dst _ _) (opt-invalidate-def env dst instr)]
     [(IrInstrMaskReduce dst _ _ _) (opt-invalidate-def env dst instr)]
     [(IrInstrSelect dst _ _ _ _ _) (opt-invalidate-def env dst instr)]
@@ -4501,6 +4515,11 @@
             [(IrValueNil) e2]
             [(IrValueCons w1 _) (opt-copy-add-pack-word e2 dst 1 w1)]))])))
 
+(define (opt-copy-mask-source? [value : CompilerIrValue] [dst : i64]) : bool
+  (match value
+    [(IrValueVar _) (not (opt-value-is-var? value dst))]
+    [_ false]))
+
 (define (opt-copy-resolve [env : OptCopyEnv] [value : CompilerIrValue]) : CompilerIrValue
   (match value
     [(IrValueVar id)
@@ -4508,6 +4527,13 @@
         [(IrSomeValue v) v]
         [(IrNoValue) value])]
     [_ value]))
+
+(define (opt-copy-resolve-mask [env : OptCopyEnv] [value : CompilerIrValue]) : CompilerIrValue
+  (let
+    [resolved : CompilerIrValue (opt-copy-resolve env value)]
+    (match resolved
+      [(IrValueVar _) resolved]
+      [_ value])))
 
 (define (opt-copy-subst-value-list
   [env : OptCopyEnv]
@@ -4577,15 +4603,24 @@
     [(IrInstrUnOp dst op v ty) (IrInstrUnOp dst op (opt-copy-resolve env v) ty)]
     [(IrInstrSplat dst value lanes ty)
       (IrInstrSplat dst (opt-copy-resolve env value) lanes ty)]
-    ;; Vector/mask IR uses private aggregate values that the scalar copy pass
-    ;; cannot type-check yet, so leave those operands untouched until a
-    ;; vector-aware propagation pass exists.
+    ;; Vector IR uses private aggregate values that the scalar copy pass cannot
+    ;; type-check yet, so leave those operands untouched until a vector-aware
+    ;; propagation pass exists. Mask operands are private too, so only var-to-var
+    ;; mask copies are substituted; scalar bool literals are not mask constants.
     [(IrInstrVectorBinOp _ _ _ _ _ _) instr]
     [(IrInstrVectorReduce _ _ _ _ _) instr]
     [(IrInstrVectorCompare _ _ _ _ _ _) instr]
-    [(IrInstrMaskBinOp _ _ _ _ _) instr]
-    [(IrInstrMaskNot _ _ _) instr]
-    [(IrInstrMaskReduce _ _ _ _) instr]
+    [(IrInstrMaskBinOp dst op lhs rhs lanes)
+      (IrInstrMaskBinOp
+        dst
+        op
+        (opt-copy-resolve-mask env lhs)
+        (opt-copy-resolve-mask env rhs)
+        lanes)]
+    [(IrInstrMaskNot dst src lanes)
+      (IrInstrMaskNot dst (opt-copy-resolve-mask env src) lanes)]
+    [(IrInstrMaskReduce dst op src lanes)
+      (IrInstrMaskReduce dst op (opt-copy-resolve-mask env src) lanes)]
     [(IrInstrSelect _ _ _ _ _ _) instr]
     [(IrInstrVectorLoad _ _ _ _ _) instr]
     [(IrInstrVectorStore _ _ _ _ _) instr]
@@ -4699,7 +4734,12 @@
     [(IrInstrVectorBinOp dst _ _ _ _ _) (opt-copy-invalidate-var env dst)]
     [(IrInstrVectorReduce dst _ _ _ _) (opt-copy-invalidate-var env dst)]
     [(IrInstrVectorCompare dst _ _ _ _ _) (opt-copy-invalidate-var env dst)]
-    [(IrInstrMaskBinOp dst _ _ _ _) (opt-copy-invalidate-var env dst)]
+    [(IrInstrMaskBinOp dst _ lhs rhs _)
+      (let
+        [e1 : OptCopyEnv (opt-copy-invalidate-var env dst)]
+        (if (and (opt-value-eq lhs rhs) (opt-copy-mask-source? lhs dst))
+          (OptCopyCons dst lhs (box e1))
+          e1))]
     [(IrInstrMaskNot dst _ _) (opt-copy-invalidate-var env dst)]
     [(IrInstrMaskReduce dst _ _ _) (opt-copy-invalidate-var env dst)]
     [(IrInstrSelect dst _ _ _ _ _) (opt-copy-invalidate-var env dst)]
@@ -9413,6 +9453,19 @@
   [value : CompilerIrValue]) : CompilerIrValue
   (opt-global-copy-resolve-depth facts doms use-block-id use-pos value 8))
 
+(define (opt-global-copy-resolve-mask
+  [facts : OptGlobalCopyFactTable]
+  [doms : OptDomInfo]
+  [use-block-id : i64]
+  [use-pos : i64]
+  [value : CompilerIrValue]) : CompilerIrValue
+  (let
+    [resolved : CompilerIrValue
+      (opt-global-copy-resolve facts doms use-block-id use-pos value)]
+    (match resolved
+      [(IrValueVar _) resolved]
+      [_ value])))
+
 (define (opt-global-copy-subst-value-list
   [facts : OptGlobalCopyFactTable]
   [doms : OptDomInfo]
@@ -9625,9 +9678,24 @@
     [(IrInstrVectorBinOp _ _ _ _ _ _) instr]
     [(IrInstrVectorReduce _ _ _ _ _) instr]
     [(IrInstrVectorCompare _ _ _ _ _ _) instr]
-    [(IrInstrMaskBinOp _ _ _ _ _) instr]
-    [(IrInstrMaskNot _ _ _) instr]
-    [(IrInstrMaskReduce _ _ _ _) instr]
+    [(IrInstrMaskBinOp dst op lhs rhs lanes)
+      (IrInstrMaskBinOp
+        dst
+        op
+        (opt-global-copy-resolve-mask facts doms block-id pos lhs)
+        (opt-global-copy-resolve-mask facts doms block-id pos rhs)
+        lanes)]
+    [(IrInstrMaskNot dst src lanes)
+      (IrInstrMaskNot
+        dst
+        (opt-global-copy-resolve-mask facts doms block-id pos src)
+        lanes)]
+    [(IrInstrMaskReduce dst op src lanes)
+      (IrInstrMaskReduce
+        dst
+        op
+        (opt-global-copy-resolve-mask facts doms block-id pos src)
+        lanes)]
     [(IrInstrSelect _ _ _ _ _ _) instr]
     [(IrInstrVectorLoad _ _ _ _ _) instr]
     [(IrInstrVectorStore _ _ _ _ _) instr]
@@ -23988,6 +24056,28 @@
       (IrInstrMaskReduce 2 (IrMaskReduceAny) (IrValueVar 1) 4)
       IrInstrNil)))
 
+(define (opt-mask-not-copy-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (IrInstrMov 1 (IrValueVar 0) (AstTyBool))
+    (compiler-ir-instr-cons
+      (IrInstrMaskNot 2 (IrValueVar 1) 4)
+      (compiler-ir-instr-cons
+        (IrInstrMov 4 (IrValueBool true) (AstTyBool))
+        (compiler-ir-instr-cons (IrInstrMaskNot 5 (IrValueVar 4) 4) IrInstrNil)))))
+
+(define (opt-mask-idempotent-copy-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (IrInstrMov 1 (IrValueVar 0) (AstTyBool))
+    (compiler-ir-instr-cons
+      (IrInstrMaskBinOp 2 (IrMaskOr) (IrValueVar 1) (IrValueVar 1) 4)
+      (compiler-ir-instr-cons
+        (IrInstrMaskReduce 3 (IrMaskReduceAny) (IrValueVar 2) 4)
+        (compiler-ir-instr-cons
+          (IrInstrMaskBinOp 4 (IrMaskAnd) (IrValueVar 1) (IrValueVar 1) 4)
+          (compiler-ir-instr-cons
+            (IrInstrMaskReduce 5 (IrMaskReduceAny) (IrValueVar 4) 4)
+            IrInstrNil))))))
+
 (define (opt-count-vector-binop-instrs [instrs : CompilerIrInstrList]) : i64
   (match instrs
     [(IrInstrNil) 0]
@@ -24047,6 +24137,19 @@
             (opt-mask-reduce-src-var (box-get rest) dst))]
         [_ (opt-mask-reduce-src-var (box-get rest) dst)])]))
 
+(define (opt-mask-not-src-var [instrs : CompilerIrInstrList] [dst : i64]) : i64
+  (match instrs
+    [(IrInstrNil) (- 0 1)]
+    [(IrInstrCons instr rest)
+      (match instr
+        [(IrInstrMaskNot d src _)
+          (if (= d dst)
+            (match src
+              [(IrValueVar id) id]
+              [_ (- 0 1)])
+            (opt-mask-not-src-var (box-get rest) dst))]
+        [_ (opt-mask-not-src-var (box-get rest) dst)])]))
+
 (define (compiler-optimize-vector-mask-self-test) : i64
   (let
     [instrs : CompilerIrInstrList (opt-vector-mask-test-instrs)]
@@ -24068,6 +24171,18 @@
       (opt-copy-instrs (OptCopyNil) (opt-mask-copy-instrs))]
     [mask-reduce-copy : CompilerIrInstrList
       (opt-copy-instrs (OptCopyNil) (opt-mask-reduce-copy-instrs))]
+    [mask-not-copy : CompilerIrInstrList
+      (opt-copy-instrs (OptCopyNil) (opt-mask-not-copy-instrs))]
+    [mask-idempotent-copy : CompilerIrInstrList
+      (opt-copy-instrs
+        (OptCopyNil)
+        (opt-fold-instrs (OptConstNil) (opt-mask-idempotent-copy-instrs)))]
+    [mask-idempotent-dce : CompilerIrInstrList
+      (opt-dce-instrs
+        (opt-collect-instrs-uses
+          (i64-i64-map-with-capacity 64)
+          mask-idempotent-copy)
+        mask-idempotent-copy)]
     (cond
       [(not (opt-instr-list-eq folded instrs)) 1]
       [(not (= (compiler-ir-instr-list-count dce) 8)) 2]
@@ -24079,8 +24194,16 @@
       [(not (= (opt-count-arith-instrs vector-stale) 1)) 8]
       [(not (= (opt-count-mov-i64-value vector-stale 11) 0)) 9]
       [(not (= (opt-vector-binop-lhs-var vector-copy 3) 2)) 10]
-      [(not (= (opt-mask-binop-lhs-var mask-copy 3) 2)) 11]
-      [(not (= (opt-mask-reduce-src-var mask-reduce-copy 2) 1)) 12]
+      [(not (= (opt-mask-binop-lhs-var mask-copy 3) 0)) 11]
+      [(not (= (opt-mask-reduce-src-var mask-reduce-copy 2) 0)) 12]
+      [(not (= (opt-mask-not-src-var mask-not-copy 2) 0)) 13]
+      [(not (= (opt-mask-binop-lhs-var mask-idempotent-copy 2) 0)) 14]
+      [(not (= (opt-mask-binop-lhs-var mask-idempotent-copy 4) 0)) 15]
+      [(not (= (opt-mov-dst-type-tag mask-idempotent-copy 2) 0)) 16]
+      [(not (= (opt-mask-reduce-src-var mask-idempotent-copy 3) 0)) 17]
+      [(not (= (opt-mask-reduce-src-var mask-idempotent-copy 5) 0)) 18]
+      [(not (= (compiler-ir-instr-list-count mask-idempotent-dce) 0)) 19]
+      [(not (= (opt-mask-not-src-var mask-not-copy 5) 4)) 20]
       [else 42])))
 
 ;; Returns 42 when folding turns the one arithmetic instruction into a `Mov`

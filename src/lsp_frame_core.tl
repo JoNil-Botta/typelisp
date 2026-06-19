@@ -4944,13 +4944,12 @@
             (begin
               (set! i (+ i 1))
               unit))))
-      (if found
-        (if (string-eq err "")
-          (if (string-eq result "")
-            (ErrLspEdit "replaceBody: unknown error")
-            (OkLspEdit result))
-          (ErrLspEdit err))
-        (ErrLspEdit "Declaration not found")))))
+      (unless found (return (ErrLspEdit "Declaration not found")))
+      (unless (string-eq err "") (return (ErrLspEdit err)))
+      (when
+        (string-eq result "")
+        (return (ErrLspEdit "replaceBody: unknown error")))
+      (OkLspEdit result))))
 
 (define (lsp-replace-pattern-text
   [text : String]
@@ -5041,13 +5040,12 @@
               (begin
                 (set! i (+ i 1))
                 unit))))
-        (if found
-          (if (string-eq err "")
-            (if (string-eq result "")
-              (ErrLspEdit "replacePattern: unknown error")
-              (OkLspEdit result))
-            (ErrLspEdit err))
-          (ErrLspEdit "Declaration not found"))))))
+        (unless found (return (ErrLspEdit "Declaration not found")))
+        (unless (string-eq err "") (return (ErrLspEdit err)))
+        (when
+          (string-eq result "")
+          (return (ErrLspEdit "replacePattern: unknown error")))
+        (OkLspEdit result)))))
 
 (define (lsp-structural-replace-text
   [text : String]

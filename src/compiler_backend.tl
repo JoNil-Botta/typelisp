@@ -279,6 +279,10 @@
   (needs-div-abort bool)
   (needs-shift-abort bool))
 
+(defstruct CompilerBackendRuntimePlanWithIndex
+  (plan CompilerBackendRuntimePlan)
+  (index CompilerBackendRuntimeIndex))
+
 (defstruct CompilerBackendProgramIndex
   (functions I64I64Map)
   (function-names (Array String))
@@ -377,6 +381,10 @@
 (defenum ResultBackendRuntimePlan
   (OkBackendRuntimePlan CompilerBackendRuntimePlan)
   (ErrBackendRuntimePlan String))
+
+(defenum ResultBackendRuntimePlanWithIndex
+  (OkBackendRuntimePlanWithIndex CompilerBackendRuntimePlanWithIndex)
+  (ErrBackendRuntimePlanWithIndex String))
 
 (defenum BackendStringList
   (BackendStringNil)
@@ -21072,9 +21080,9 @@
               (compiler-builtin-backend-runtime-profile-id? name-id))
             false)))]))
 
-(define (compiler-backend-runtime-plan-for
+(define (compiler-backend-runtime-plan-with-index-for
   [functions : CompilerIrFunctionList]
-  [externs : CompilerIrExternList]) : ResultBackendRuntimePlan
+  [externs : CompilerIrExternList]) : ResultBackendRuntimePlanWithIndex
   (let
     [index : CompilerBackendRuntimeIndex
       (compiler-backend-runtime-index functions externs)]
@@ -21449,43 +21457,53 @@
         (and
           (not defines-profile-alloc-reset-peak)
           (or extern-profile-alloc-reset-peak calls-profile-alloc-reset-peak)))]
-    (OkBackendRuntimePlan
-      (BackendRuntimePlan
-        needs-alloc
-        needs-oob
-        needs-substring
-        needs-str-view
-        needs-concat
-        false
-        false
-        needs-int-to-string
-        needs-abort
-        needs-print-err
-        needs-print-str
-        needs-print-char
-        needs-print-f64
-        needs-arg-count
-        needs-arg
-        needs-read-file
-        needs-write-file
-        needs-file-exists
-        needs-file-handle
-        needs-file-read-chunk
-        needs-fs-runtime
-        false
-        needs-read-line
-        needs-read-bytes
-        needs-stdin-eof
-        needs-flush-stdout
-        needs-region-mark
-        needs-region-reset
-        needs-random-system-seed
-        needs-env-var-exists
-        needs-env-var-value
-        needs-env-path-separator
-        needs-div-abort
-        needs-shift-abort
-        (CompilerBackendRuntimeTailPlan needs-profile false)))))
+    (OkBackendRuntimePlanWithIndex
+      (CompilerBackendRuntimePlanWithIndex
+        (BackendRuntimePlan
+          needs-alloc
+          needs-oob
+          needs-substring
+          needs-str-view
+          needs-concat
+          false
+          false
+          needs-int-to-string
+          needs-abort
+          needs-print-err
+          needs-print-str
+          needs-print-char
+          needs-print-f64
+          needs-arg-count
+          needs-arg
+          needs-read-file
+          needs-write-file
+          needs-file-exists
+          needs-file-handle
+          needs-file-read-chunk
+          needs-fs-runtime
+          false
+          needs-read-line
+          needs-read-bytes
+          needs-stdin-eof
+          needs-flush-stdout
+          needs-region-mark
+          needs-region-reset
+          needs-random-system-seed
+          needs-env-var-exists
+          needs-env-var-value
+          needs-env-path-separator
+          needs-div-abort
+          needs-shift-abort
+          (CompilerBackendRuntimeTailPlan needs-profile false))
+        index))))
+
+(define (compiler-backend-runtime-plan-for
+  [functions : CompilerIrFunctionList]
+  [externs : CompilerIrExternList]) : ResultBackendRuntimePlan
+  (match (compiler-backend-runtime-plan-with-index-for functions externs)
+    [(OkBackendRuntimePlanWithIndex planned)
+      (OkBackendRuntimePlan (struct-get planned plan))]
+    [(ErrBackendRuntimePlanWithIndex message) (ErrBackendRuntimePlan message)]))
 
 (define (compiler-backend-runtime-plan [program : CompilerIrProgram]) : ResultBackendRuntimePlan
   (begin
@@ -21495,6 +21513,15 @@
     (match program
       [(IrProgram _ functions externs)
         (compiler-backend-runtime-plan-for functions externs)])))
+
+(define (compiler-backend-runtime-plan-with-index [program : CompilerIrProgram]) : ResultBackendRuntimePlanWithIndex
+  (begin
+    ;; Seed builtin/runtime ids before scratch-backed per-function emission. The
+    ;; runtime-plan id predicates are then lookup-only in scratch arenas.
+    (compiler-builtin-refresh!)
+    (match program
+      [(IrProgram _ functions externs)
+        (compiler-backend-runtime-plan-with-index-for functions externs)])))
 
 (define (compiler-backend-emit-externs
   [externs : CompilerIrExternList]
@@ -24233,6 +24260,7 @@ tl_atomic_i32_fetch_add_ptr:
   [globals : CompilerIrGlobalList]
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
+  [runtime-index : CompilerBackendRuntimeIndex]
   [program-index : CompilerBackendProgramIndex]
   [spans : CompilerSourceSpans]
   [globals-buf : TextBuf]
@@ -24266,7 +24294,7 @@ tl_atomic_i32_fetch_add_ptr:
             externs
             plan
             program-index
-            (compiler-backend-runtime-index entry-functions externs)
+            runtime-index
             closure-names
             strings
             bytes
@@ -24366,91 +24394,98 @@ tl_atomic_i32_fetch_add_ptr:
     (compiler-backend-user-symbol-cache-reset!)
     (cfg regalloc-census (compiler-reg-call-span-census-reset!))
     (cfg compile-profile (compiler-backend-profile-start))
-    (match (compiler-backend-runtime-plan program)
-      [(OkBackendRuntimePlan plan)
-        (begin
-          (cfg compile-profile (compiler-backend-profile-finish "runtime_plan"))
-          (cfg compile-profile (compiler-backend-profile-start))
-          (if (compiler-backend-target-runtime-ok? target plan)
-            (begin
-              (cfg
-                compile-profile
-                (compiler-backend-profile-finish "target_check"))
-              (cfg compile-profile (compiler-backend-profile-start))
-              (match program
-                [(IrProgram globals functions externs)
-                  ;; Build the program index ONCE over the entry function list
-                  ;; and share it with the globals emission: each build walks
-                  ;; every function body for the register-group counts, so the
-                  ;; former second build doubled both that walk and its ~120MB
-                  ;; of transient allocation. The entry list is a superset of
-                  ;; `functions` (at most the synthesized implicit main, which
-                  ;; no global initializer can reference), so globals resolve
-                  ;; identically against the shared index.
-                  (let
-                    [entry-functions : CompilerIrFunctionList
-                      (compiler-backend-functions-with-implicit-main
-                        functions
-                        emit-entry)]
-                    [program-index : CompilerBackendProgramIndex
-                      (compiler-backend-program-index-build
-                        entry-functions
-                        externs)]
-                    (begin
-                      (cfg
-                        compile-profile
-                        (compiler-backend-profile-finish "index"))
-                      (cfg compile-profile (compiler-backend-profile-start))
-                      (match (compiler-backend-emit-globals-buffer-into
-                        target
-                        globals
-                        (text-buf-append (text-buf-empty) ".data\n")
-                        program-index)
-                        [(OkCompilerBackendBuffer globals-buf)
-                          (begin
-                            (cfg
-                              compile-profile
-                              (compiler-backend-profile-finish "globals"))
-                            (cfg
-                              compile-profile
-                              (compiler-backend-profile-start))
-                            (match (compiler-backend-validate-function-symbols
-                              globals
-                              entry-functions
-                              externs
-                              plan
-                              program-index)
-                              [(OkCompilerBackendSymbolValidation _)
-                                (compiler-backend-emit-program-buffer-after-index
-                                  program
-                                  target
-                                  mode
-                                  entry-functions
-                                  globals
-                                  externs
-                                  plan
-                                  program-index
-                                  spans
-                                  globals-buf
-                                  emit-entry
-                                  crt-entry)]
-                              [(ErrCompilerBackendSymbolValidation message)
-                                (ErrCompilerBackendBuffer message)]))]
-                        [(ErrCompilerBackendBuffer message)
-                          (begin
-                            (cfg
-                              compile-profile
-                              (compiler-backend-profile-finish "globals"))
-                            (ErrCompilerBackendBuffer message))])))]))
-            (begin
-              (cfg
-                compile-profile
-                (compiler-backend-profile-finish "target_check"))
-              (ErrCompilerBackendBuffer
-                (compiler-diagnostic-at-start
-                  ""
-                  "backend: internal target runtime rejection")))))]
-      [(ErrBackendRuntimePlan message)
+    (match (compiler-backend-runtime-plan-with-index program)
+      [(OkBackendRuntimePlanWithIndex planned)
+        (let
+          [plan : CompilerBackendRuntimePlan (struct-get planned plan)]
+          [runtime-index : CompilerBackendRuntimeIndex
+            (struct-get planned index)]
+          (begin
+            (cfg
+              compile-profile
+              (compiler-backend-profile-finish "runtime_plan"))
+            (cfg compile-profile (compiler-backend-profile-start))
+            (if (compiler-backend-target-runtime-ok? target plan)
+              (begin
+                (cfg
+                  compile-profile
+                  (compiler-backend-profile-finish "target_check"))
+                (cfg compile-profile (compiler-backend-profile-start))
+                (match program
+                  [(IrProgram globals functions externs)
+                    ;; Build the program index ONCE over the entry function list
+                    ;; and share it with the globals emission: each build walks
+                    ;; every function body for the register-group counts, so the
+                    ;; former second build doubled both that walk and its ~120MB
+                    ;; of transient allocation. The entry list is a superset of
+                    ;; `functions` (at most the synthesized implicit main, which
+                    ;; no global initializer can reference), so globals resolve
+                    ;; identically against the shared index.
+                    (let
+                      [entry-functions : CompilerIrFunctionList
+                        (compiler-backend-functions-with-implicit-main
+                          functions
+                          emit-entry)]
+                      [program-index : CompilerBackendProgramIndex
+                        (compiler-backend-program-index-build
+                          entry-functions
+                          externs)]
+                      (begin
+                        (cfg
+                          compile-profile
+                          (compiler-backend-profile-finish "index"))
+                        (cfg compile-profile (compiler-backend-profile-start))
+                        (match (compiler-backend-emit-globals-buffer-into
+                          target
+                          globals
+                          (text-buf-append (text-buf-empty) ".data\n")
+                          program-index)
+                          [(OkCompilerBackendBuffer globals-buf)
+                            (begin
+                              (cfg
+                                compile-profile
+                                (compiler-backend-profile-finish "globals"))
+                              (cfg
+                                compile-profile
+                                (compiler-backend-profile-start))
+                              (match (compiler-backend-validate-function-symbols
+                                globals
+                                entry-functions
+                                externs
+                                plan
+                                program-index)
+                                [(OkCompilerBackendSymbolValidation _)
+                                  (compiler-backend-emit-program-buffer-after-index
+                                    program
+                                    target
+                                    mode
+                                    entry-functions
+                                    globals
+                                    externs
+                                    plan
+                                    runtime-index
+                                    program-index
+                                    spans
+                                    globals-buf
+                                    emit-entry
+                                    crt-entry)]
+                                [(ErrCompilerBackendSymbolValidation message)
+                                  (ErrCompilerBackendBuffer message)]))]
+                          [(ErrCompilerBackendBuffer message)
+                            (begin
+                              (cfg
+                                compile-profile
+                                (compiler-backend-profile-finish "globals"))
+                              (ErrCompilerBackendBuffer message))])))]))
+              (begin
+                (cfg
+                  compile-profile
+                  (compiler-backend-profile-finish "target_check"))
+                (ErrCompilerBackendBuffer
+                  (compiler-diagnostic-at-start
+                    ""
+                    "backend: internal target runtime rejection"))))))]
+      [(ErrBackendRuntimePlanWithIndex message)
         (begin
           (cfg compile-profile (compiler-backend-profile-finish "runtime_plan"))
           (ErrCompilerBackendBuffer (compiler-diagnostic-at-start "" message)))])))

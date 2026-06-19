@@ -59,6 +59,21 @@
       (let
         [items : (Array i64 3) (array 2 4 6)]
         (array-ref items 2)))
+    (defenum IntVecProbe
+      (IntVecProbeEmpty)
+      (IntVecProbeValue i64))
+    (define (int-vec-probe-score [probe : IntVecProbe]) : i64
+      (match probe
+        [(IntVecProbeEmpty) 0]
+        [(IntVecProbeValue value) (+ value 1)]))
+    (define (int-vec-scalar-probe-score [value : i64]) : i64
+      (match value
+        [0 10]
+        [1 20]
+        [_ 30]))
+    (define (int-vec-binding-probe-score [value : i64]) : i64
+      (match value
+        [bound (+ bound 3)]))
     (define (int-vec-never-probe [value : i64]) : i64
       (ann (return value) : never))))
 
@@ -134,6 +149,30 @@
     (int-vec-fixed-array-probe)
     6
     "generated typed fixed array binding round-trips"))
+
+(test
+  generated-vector-match-round-trips
+  (begin
+    (assert-i64-eq
+      (int-vec-probe-score (IntVecProbeEmpty))
+      0
+      "generated match handles nullary variant")
+    (assert-i64-eq
+      (int-vec-probe-score (IntVecProbeValue 41))
+      42
+      "generated match binds payload")
+    (assert-i64-eq
+      (int-vec-scalar-probe-score 0)
+      10
+      "generated match handles literal pattern")
+    (assert-i64-eq
+      (int-vec-scalar-probe-score 2)
+      30
+      "generated match handles wildcard pattern")
+    (assert-i64-eq
+      (int-vec-binding-probe-score 39)
+      42
+      "generated match handles binding pattern")))
 
 (test
   generated-vector-derived-prefix-names

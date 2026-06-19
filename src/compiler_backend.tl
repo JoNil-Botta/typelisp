@@ -16070,47 +16070,66 @@
       ;; its word0 slot for BOTH words (#2386 closure-arg miscompile).
       vars)
       [(OkCompilerBackend args-asm)
-        (match (compiler-backend-emit-load-value-with-plan
-          assignments
-          func
-          "%r11")
-          [(OkCompilerBackend func-asm)
-            (match (compiler-backend-target-arg-reg target 0)
-              [(OkBackendReg env-reg)
-                (match (compiler-backend-emit-call-result-store
-                  assignments
-                  dst
-                  ty
-                  vars
-                  program-index)
-                  [(OkCompilerBackend result-store)
+        (match (compiler-backend-target-arg-reg target 0)
+          [(OkBackendReg env-reg)
+            (match (compiler-backend-emit-call-result-store
+              assignments
+              dst
+              ty
+              vars
+              program-index)
+              [(OkCompilerBackend result-store)
+                (match func
+                  [(IrValueFunction name)
                     (OkCompilerBackend
                       (string-append
                         (compiler-backend-emit-call-space-sub call-space)
                         (string-append
                           args-asm
                           (string-append
-                            func-asm
+                            (compiler-backend-emit-load-i64-immediate 0 env-reg)
                             (str-cat
-                              "    movq 8(%r11), "
-                              env-reg
-                              "\n    call *(%r11)\n"
+                              "    call "
+                              (compiler-backend-closure-entry-label name)
+                              "\n"
                               (string-append
                                 (compiler-backend-emit-call-space-add
                                   call-space)
                                 result-store)
                               "")))))]
-                  [(ErrCompilerBackend message)
-                    (ErrCompilerBackend
-                      (compiler-backend-apply-instr-diagnostic
-                        message
-                        instr-diag))])]
-              [(ErrBackendReg message)
+                  [_
+                    (match (compiler-backend-emit-load-value-with-plan
+                      assignments
+                      func
+                      "%r11")
+                      [(OkCompilerBackend func-asm)
+                        (OkCompilerBackend
+                          (string-append
+                            (compiler-backend-emit-call-space-sub call-space)
+                            (string-append
+                              args-asm
+                              (string-append
+                                func-asm
+                                (str-cat
+                                  "    movq 8(%r11), "
+                                  env-reg
+                                  "\n    call *(%r11)\n"
+                                  (string-append
+                                    (compiler-backend-emit-call-space-add
+                                      call-space)
+                                    result-store)
+                                  "")))))]
+                      [(ErrCompilerBackend message)
+                        (ErrCompilerBackend
+                          (compiler-backend-apply-instr-diagnostic
+                            message
+                            instr-diag))])])]
+              [(ErrCompilerBackend message)
                 (ErrCompilerBackend
-                  (compiler-diagnostic-with-message instr-diag message))])]
-          [(ErrCompilerBackend message)
+                  (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+          [(ErrBackendReg message)
             (ErrCompilerBackend
-              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+              (compiler-diagnostic-with-message instr-diag message))])]
       [(ErrCompilerBackend message)
         (ErrCompilerBackend
           (compiler-backend-apply-instr-diagnostic message instr-diag))])))

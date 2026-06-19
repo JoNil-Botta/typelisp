@@ -5252,6 +5252,57 @@
           (compiler-backend-string-contains? asm "register home unavailable")))]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-avx512-mask-binop-same-dst-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment 0 (CompilerRegRegister "%k1"))
+    CompilerRegAssignmentNil))
+
+(define (compiler-backend-avx512-mask-binop-copy-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment 0 (CompilerRegRegister "%k1"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment 1 (CompilerRegRegister "%k2"))
+      CompilerRegAssignmentNil)))
+
+(define (compiler-backend-avx512-mask-binop-emits?
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [op : CompilerIrMaskBinOp]
+  [want : String]) : bool
+  (match (compiler-backend-emit-avx512-mask-binop
+    assignments
+    dst
+    op
+    (IrValueVar 0)
+    (IrValueVar 0)
+    8
+    (compiler-diagnostic-at-start "" ""))
+    [(OkCompilerBackend asm) (string-eq asm want)]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-avx512-mask-binop-same-registers-ok?) : bool
+  (and
+    (compiler-backend-avx512-mask-binop-emits?
+      (compiler-backend-avx512-mask-binop-same-dst-assignments)
+      0
+      (IrMaskAnd)
+      "")
+    (compiler-backend-avx512-mask-binop-emits?
+      (compiler-backend-avx512-mask-binop-same-dst-assignments)
+      0
+      (IrMaskOr)
+      "")
+    (compiler-backend-avx512-mask-binop-emits?
+      (compiler-backend-avx512-mask-binop-copy-assignments)
+      1
+      (IrMaskAnd)
+      "    kmovw %k1, %k2\n")
+    (compiler-backend-avx512-mask-binop-emits?
+      (compiler-backend-avx512-mask-binop-copy-assignments)
+      1
+      (IrMaskOr)
+      "    kmovw %k1, %k2\n")))
+
 (define (compiler-backend-vector-call-lifetime-rejects-ok?) : bool
   (match (compiler-backend-emit-program-target-with-mode
     (compiler-backend-vector-home-program
@@ -5277,6 +5328,7 @@
     (compiler-backend-avx512-vector-reduce-ok?)
     (compiler-backend-avx2-vector-homes-ok?)
     (compiler-backend-avx512-mask-homes-ok?)
+    (compiler-backend-avx512-mask-binop-same-registers-ok?)
     (compiler-backend-vector-call-lifetime-rejects-ok?)))
 
 (define (compiler-backend-optimizer-rewrite-diagnostic-ok?) : bool

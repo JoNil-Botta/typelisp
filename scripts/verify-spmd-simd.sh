@@ -76,6 +76,21 @@ WORKDIR="$ROOT/target/spmd-simd-verify"
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 
+INCLUDE_SPMD_SCAN_CORPUS=1
+if [ -z "${TYPELISP_BIN:-}" ]; then
+    probe_out="$WORKDIR/spmd-scan-fallback-probe.out"
+    probe_err="$WORKDIR/spmd-scan-fallback-probe.err"
+    probe_asm="$WORKDIR/spmd-scan-fallback-probe.s"
+    if ! "$COMPILER" compile tests/integration/spmd_scan_scalar.tl --backend-mode scalar -o "$probe_asm" \
+        > "$probe_out" 2> "$probe_err"; then
+        if grep -F "parse: malformed expression" "$probe_err" >/dev/null 2>&1 ||
+            grep -F "parse: malformed spmd-scan" "$probe_err" >/dev/null 2>&1; then
+            INCLUDE_SPMD_SCAN_CORPUS=0
+            echo "[spmd-simd] skip tests/integration/spmd_scan_scalar.tl (stage0 fallback lacks spmd-scan syntax; set TYPELISP_BIN to a current compiler)"
+        fi
+    fi
+fi
+
 # SPMD corpus: each program's exit code is computed by a SIMD-lowered `foreach`
 # or `spmd-reduce`, so a wrong SIMD result (especially in the tail) changes it.
 # Keep this list in sync with tests/spmd/README.md.
@@ -99,8 +114,10 @@ tests/spmd/bool_lanes.tl
 tests/integration/spmd_foreach.tl
 tests/integration/spmd_gather_read.tl
 tests/integration/spmd_reduce_scalar.tl
-tests/integration/spmd_scan_scalar.tl
 EOF
+    if [ "$INCLUDE_SPMD_SCAN_CORPUS" -eq 1 ]; then
+        printf '%s\n' "tests/integration/spmd_scan_scalar.tl"
+    fi
 }
 
 isa_available() {

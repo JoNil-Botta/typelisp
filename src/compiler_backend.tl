@@ -18896,6 +18896,15 @@
               (compiler-reg-plan-function-scalar walk-func)
               (compiler-reg-plan-function-stack-only walk-func))
             (compiler-reg-plan-function walk-func))]
+        [_regalloc-census : unit
+          (cfg
+            regalloc-census
+            (if (if (compiler-backend-mode-scalar? mode)
+              compiler-backend-scalar-registers-enabled
+              false)
+              (compiler-reg-call-span-census-record-plan! walk-func reg-plan)
+              unit)
+            unit)]
         [plan-types : CompilerRegVarTypeList (compiler-reg-plan-types reg-plan)]
         ;; Computed once per function: the gate below, the coloring pass, and
         ;; the frame layout all consume it (the per-block fixpoint scan is too
@@ -24769,6 +24778,9 @@ tl_atomic_i32_fetch_add_ptr:
                           (cfg
                             compile-profile
                             (compiler-backend-profile-finish "compose_tail"))
+                          (cfg
+                            regalloc-census
+                            (compiler-reg-call-span-census-print!))
                           (OkCompilerBackendBuffer buf))))]
                   [(ErrCompilerBackendBuffer message)
                     (begin
@@ -24792,6 +24804,7 @@ tl_atomic_i32_fetch_add_ptr:
   [crt-entry : bool]) : ResultCompilerBackendBuffer
   (begin
     (compiler-backend-user-symbol-cache-reset!)
+    (cfg regalloc-census (compiler-reg-call-span-census-reset!))
     (cfg compile-profile (compiler-backend-profile-start))
     (match (compiler-backend-runtime-plan program)
       [(OkBackendRuntimePlan plan)

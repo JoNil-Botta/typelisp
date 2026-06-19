@@ -3820,14 +3820,23 @@
         (and
           (= (compiler-load-decl-list-count decls) 2)
           (match modules
-            [(AstDeclModuleCons first tail)
+            [(AstDeclModuleCons first tail-box)
               (let
-                [tail : AstDeclModuleList (box-get tail)]
+                [tail : AstDeclModuleList (box-get tail-box)]
                 (match tail
-                  [(AstDeclModuleCons second AstDeclModuleNil)
-                    (and
-                      (string-eq first "target/compiler_load_legacy_dep.tl")
-                      (string-eq second "target/compiler_load_legacy_entry.tl"))]
+                  [(AstDeclModuleCons second rest-box)
+                    (let
+                      [rest : AstDeclModuleList (box-get rest-box)]
+                      (match rest
+                        [(AstDeclModuleNil)
+                          (and
+                            (string-eq
+                              first
+                              "target/compiler_load_legacy_dep.tl")
+                            (string-eq
+                              second
+                              "target/compiler_load_legacy_entry.tl"))]
+                        [_ false]))]
                   [_ false]))]
             [_ false])
           (sym-i64-contains seen "target/compiler_load_legacy_dep.tl"))]

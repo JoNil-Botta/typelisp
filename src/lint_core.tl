@@ -745,7 +745,10 @@
 
 (define (lint-literal-render [lit : AstLiteral]) : String
   (match lit
-    [(AstLitInt _ text) text]
+    [(AstLitInt value text)
+      (if (> (string-length text) 0)
+        text
+        (int->string value))]
     [(AstLitFloat value) value]
     [(AstLitBool value)
       (if value

@@ -5704,7 +5704,7 @@
 
 (define (lower-literal-value-with-type [lit : AstLiteral] [ty : AstType]) : CompilerIrValue
   (match lit
-    [(AstLitInt _ text) (IrValueI64 (ast-int-literal-i64-bits text))]
+    [(AstLitInt n _) (IrValueI64 n)]
     [(AstLitFloat n) (IrValueF64 (lower-float-literal-bits n ty))]
     [(AstLitBool b) (IrValueBool b)]
     [(AstLitChar c) (IrValueChar c)]
@@ -24559,8 +24559,7 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lower-simple-spmd-broadcast-lane env type-env inner))]
-    [(AstExprLiteral (AstLitInt _ text))
-      (LowerSomeIrValue (IrValueI64 (ast-int-literal-i64-bits text)))]
+    [(AstExprLiteral (AstLitInt n _)) (LowerSomeIrValue (IrValueI64 n))]
     [(AstExprVar name)
       (match (sym-i64-lookup-id env name)
         [(SomeI64 var-id)
@@ -39329,7 +39328,7 @@
         "generated"
         AstParamNil
         (AstTyI64)
-        (ast-node-push (AstExprLiteral (AstLitInt 1))))]
+        (ast-node-push (AstExprLiteral (ast-lit-int 1))))]
     (and
       (=
         (lower-function-decl-count

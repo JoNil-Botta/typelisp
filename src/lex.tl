@@ -263,6 +263,44 @@
     (parse-prefixed-int src start end)
     (string->int (substring src start (- end start)))))
 
+(define (number-decimal-zero-digits? [src : String] [start : i64] [end : i64]) : bool
+  (let
+    [i : i64 start]
+    [zero? : bool true]
+    (begin
+      (while (and zero? (< i end))
+        (begin
+          (if (= (string-ref src i) '0')
+            unit
+            (set! zero? false))
+          (set! i (+ i 1))))
+      zero?)))
+
+(define (number-int-text-needed?
+  [src : String]
+  [start : i64]
+  [end : i64]
+  [n : i64]) : bool
+  (if (number-prefixed? src start n)
+    true
+    (let
+      [digits-start : i64 (number-digits-start src start)]
+      [digit-count : i64 (- end digits-start)]
+      (if (> digit-count 18)
+        true
+        (if (= (string-ref src start) '-')
+          (number-decimal-zero-digits? src digits-start end)
+          false)))))
+
+(define (number-int-source-text
+  [src : String]
+  [start : i64]
+  [end : i64]
+  [n : i64]) : String
+  (if (number-int-text-needed? src start end n)
+    (substring src start (- end start))
+    ""))
+
 (define (number-float? [src : String] [start : i64] [n : i64]) : bool
   (if (number-prefixed? src start n)
     false
@@ -662,7 +700,7 @@
                         count
                         (TInt
                           (number-int-value src i end n)
-                          (substring src i (- end i)))))
+                          (number-int-source-text src i end n))))
                     (set! count (+ count 1))
                     (set! i end))]
                 [(ErrLexI64 err)
@@ -894,7 +932,7 @@
                           (SpannedToken
                             (TInt
                               (number-int-value src i end n)
-                              (substring src i (- end i)))
+                              (number-int-source-text src i end n))
                             token-line
                             token-col)))
                       (set! count (+ count 1))

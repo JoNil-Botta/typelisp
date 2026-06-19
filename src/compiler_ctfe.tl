@@ -7202,10 +7202,10 @@
     [wide-f32 : i64 (ast-expr-cast one-f32 (AstTyF64))]
     [sum : i64 (ast-node-push (AstExprBinary (AstBinAdd) one-five two-quarter))]
     [neg : i64 (ast-node-push (AstExprUnary (AstUnNeg) sum))]
-    [neg-int : i64 (ast-node-push (AstExprLiteral (AstLitInt (- 0 42))))]
+    [neg-int : i64 (ast-node-push (AstExprLiteral (ast-lit-int (- 0 42))))]
     [u64-max : i64
       (ast-expr-cast
-        (ast-node-push (AstExprLiteral (AstLitInt (- 0 1))))
+        (ast-node-push (AstExprLiteral (ast-lit-int (- 0 1))))
         (AstTyU64))]
     [u64-max-f64 : i64 (ast-expr-cast u64-max (AstTyF64))]
     [u64-max-f32 : i64 (ast-expr-cast u64-max (AstTyF32))]
@@ -7236,7 +7236,7 @@
     [neg-int-f64 : i64 (ast-expr-cast neg-int (AstTyF64))]
     [rounded-int-f32 : i64
       (ast-expr-cast
-        (ast-node-push (AstExprLiteral (AstLitInt 16777217)))
+        (ast-node-push (AstExprLiteral (ast-lit-int 16777217)))
         (AstTyF32))]
     [f64-to-i64 : i64 (ast-expr-cast sum (AstTyI64))]
     [f32-to-i64 : i64 (ast-expr-cast one-f32 (AstTyI64))]

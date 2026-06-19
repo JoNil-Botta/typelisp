@@ -35,7 +35,7 @@
   (AstLitUnit))
 
 (define (ast-lit-int [value : i64]) : AstLiteral
-  (AstLitInt value (int->string value)))
+  (AstLitInt value ""))
 
 (define (ast-lit-int-value [lit : AstLiteral]) : i64
   (match lit
@@ -44,11 +44,14 @@
 
 (define (ast-lit-int-text [lit : AstLiteral]) : String
   (match lit
-    [(AstLitInt _ text) text]
+    [(AstLitInt value text)
+      (if (> (string-length text) 0)
+        text
+        (int->string value))]
     [_ ""]))
 
 (define (ast-int-literal-negative? [text : String]) : bool
-  (and (> (string-length text) 0) (= (string-ref text 0) #-')))
+  (and (> (string-length text) 0) (= (string-ref text 0) '-')))
 
 (define (ast-int-literal-digits-start [text : String]) : i64
   (if (ast-int-literal-negative? text)
@@ -60,12 +63,12 @@
     [start : i64 (ast-int-literal-digits-start text)]
     [n : i64 (string-length text)]
     (if (< (+ start 1) n)
-      (if (= (string-ref text start) #0')
+      (if (= (string-ref text start) '0')
         (let
           [prefix : char (string-ref text (+ start 1))]
           (cond
-            [(or (= prefix #x') (= prefix #X')) 16]
-            [(or (= prefix #b') (= prefix #B')) 2]
+            [(or (= prefix 'x') (= prefix 'X')) 16]
+            [(or (= prefix 'b') (= prefix 'B')) 2]
             [else 10]))
         10)
       10)))
@@ -80,9 +83,9 @@
 
 (define (ast-int-literal-digit-value [c : char]) : i64
   (cond
-    [(and (>= c #0') (<= c #9')) (- (cast c : i64) (cast #0' : i64))]
-    [(and (>= c #a') (<= c #f')) (+ 10 (- (cast c : i64) (cast #a' : i64)))]
-    [(and (>= c #A') (<= c #F')) (+ 10 (- (cast c : i64) (cast #A' : i64)))]
+    [(and (>= c '0') (<= c '9')) (- (cast c : i64) (cast '0' : i64))]
+    [(and (>= c 'a') (<= c 'f')) (+ 10 (- (cast c : i64) (cast 'a' : i64)))]
+    [(and (>= c 'A') (<= c 'F')) (+ 10 (- (cast c : i64) (cast 'A' : i64)))]
     [else 0]))
 
 (define (ast-int-literal-skip-leading-zeroes
@@ -92,7 +95,7 @@
   (let
     [i : i64 start]
     (begin
-      (while (and (< i end) (= (string-ref text i) #0'))
+      (while (and (< i end) (= (string-ref text i) '0'))
         (set! i (+ i 1)))
       i)))
 

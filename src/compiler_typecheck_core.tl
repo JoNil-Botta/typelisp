@@ -7732,27 +7732,54 @@
     (tc-integer-literal-fits-negative-type? text ty)
     (tc-integer-literal-fits-positive-type? text ty)))
 
+(define (tc-integer-literal-value-fits-type? [value : i64] [ty : AstType]) : bool
+  (match (tc-type-strip-region ty)
+    [(AstTyI8) (and (>= value -128) (<= value 127))]
+    [(AstTyI16) (and (>= value -32768) (<= value 32767))]
+    [(AstTyI32) (and (>= value -2147483648) (<= value 2147483647))]
+    [(AstTyI64) true]
+    [(AstTyU8) (and (>= value 0) (<= value 255))]
+    [(AstTyU16) (and (>= value 0) (<= value 65535))]
+    [(AstTyU32) (and (>= value 0) (<= value 4294967295))]
+    [(AstTyU64) (>= value 0)]
+    [_ false]))
+
+(define (tc-integer-literal-fits-value-or-text?
+  [value : i64]
+  [text : String]
+  [ty : AstType]) : bool
+  (if (> (string-length text) 0)
+    (tc-integer-literal-fits-type? text ty)
+    (tc-integer-literal-value-fits-type? value ty)))
+
+(define (tc-integer-literal-render [value : i64] [text : String]) : String
+  (if (> (string-length text) 0)
+    text
+    (int->string value)))
+
 (define (tc-integer-literal-range-message
   [ctx : TcContext]
+  [value : i64]
   [text : String]
   [expected : AstType]) : String
   (str-cat
     "typecheck: integer literal "
-    text
+    (tc-integer-literal-render value text)
     " does not fit expected type "
     (tc-type-render (tc-type-without-regions (tc-resolve-type ctx expected)))))
 
 (define (tc-integer-literal-type-with-expected
   [ctx : TcContext]
+  [value : i64]
   [text : String]
   [expected : AstType]) : ResultTcType
   (let
     [resolved : AstType
       (tc-type-without-regions (tc-resolve-type ctx expected))]
     (if (tc-integer-type? resolved)
-      (if (tc-integer-literal-fits-type? text resolved)
+      (if (tc-integer-literal-fits-value-or-text? value text resolved)
         (OkTcType resolved)
-        (ErrTcType (tc-integer-literal-range-message ctx text expected)))
+        (ErrTcType (tc-integer-literal-range-message ctx value text expected)))
       (OkTcType (AstTyI32)))))
 
 (define (tc-float-type? [ty : AstType]) : bool
@@ -9814,8 +9841,8 @@
           [(ErrTcType message) (tc-locate-spanned-error inner span message)]))]
     [(AstExprLiteral lit)
       (match lit
-        [(AstLitInt _ text)
-          (tc-integer-literal-type-with-expected ctx text expected)]
+        [(AstLitInt value text)
+          (tc-integer-literal-type-with-expected ctx value text expected)]
         [_ (OkTcType (tc-literal-type lit))])]
     [_ (OkTcType (AstTyI32))]))
 

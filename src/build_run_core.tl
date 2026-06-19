@@ -1730,28 +1730,40 @@
           (source-tool-clean-temp temp-dir asm-path obj-path bin-path false)
           1)]
       [(OkSourceToolLinkInputs effective-link-inputs)
-        (match (source-tool-object-or-assembly-and-link
-          source
-          target
-          stdlib-roots
-          opt-level
-          mode
-          effective-link-inputs
-          asm-path
-          obj-path
-          bin-path
-          "build: failed to write assembly artifact")
-          [(SourceToolCommandErr message)
-            (begin
-              (print-error message)
-              (source-tool-clean-temp temp-dir asm-path obj-path bin-path false)
-              1)]
-          [(SourceToolCommandOk)
-            (begin
-              (print-string
-                (string-append "Built " (string-append bin-path "\n")))
-              (source-tool-clean-temp temp-dir asm-path obj-path bin-path false)
-              0)])])))
+        (begin
+          (compiler-driver-reset-file-state!)
+          (match (source-tool-object-or-assembly-and-link
+            source
+            target
+            stdlib-roots
+            opt-level
+            mode
+            effective-link-inputs
+            asm-path
+            obj-path
+            bin-path
+            "build: failed to write assembly artifact")
+            [(SourceToolCommandErr message)
+              (begin
+                (print-error message)
+                (source-tool-clean-temp
+                  temp-dir
+                  asm-path
+                  obj-path
+                  bin-path
+                  false)
+                1)]
+            [(SourceToolCommandOk)
+              (begin
+                (print-string
+                  (string-append "Built " (string-append bin-path "\n")))
+                (source-tool-clean-temp
+                  temp-dir
+                  asm-path
+                  obj-path
+                  bin-path
+                  false)
+                0)]))])))
 
 (define (source-tool-build-source
   [source : String]
@@ -1809,55 +1821,62 @@
           (source-tool-clean-temp temp-dir asm-path obj-path bin-path true)
           1)]
       [(OkSourceToolLinkInputs effective-link-inputs)
-        (match (source-tool-object-or-assembly-and-link
-          source
-          target
-          stdlib-roots
-          opt-level
-          mode
-          effective-link-inputs
-          asm-path
-          obj-path
-          bin-path
-          "run: failed to write assembly artifact")
-          [(SourceToolCommandErr message)
-            (begin
-              (print-error message)
-              (source-tool-clean-temp temp-dir asm-path obj-path bin-path true)
-              1)]
-          [(SourceToolCommandOk)
-            (match (source-tool-run-executable bin-path target runtime-args)
-              [(OkProcessOutput output)
-                (let
-                  [status : i64 (process-output-status output)]
+        (begin
+          (compiler-driver-reset-file-state!)
+          (match (source-tool-object-or-assembly-and-link
+            source
+            target
+            stdlib-roots
+            opt-level
+            mode
+            effective-link-inputs
+            asm-path
+            obj-path
+            bin-path
+            "run: failed to write assembly artifact")
+            [(SourceToolCommandErr message)
+              (begin
+                (print-error message)
+                (source-tool-clean-temp
+                  temp-dir
+                  asm-path
+                  obj-path
+                  bin-path
+                  true)
+                1)]
+            [(SourceToolCommandOk)
+              (match (source-tool-run-executable bin-path target runtime-args)
+                [(OkProcessOutput output)
+                  (let
+                    [status : i64 (process-output-status output)]
+                    (begin
+                      (source-tool-forward-output output)
+                      (source-tool-clean-temp
+                        temp-dir
+                        asm-path
+                        obj-path
+                        bin-path
+                        true)
+                      status))]
+                [(ErrProcessOutput error)
                   (begin
-                    (source-tool-forward-output output)
+                    (print-error
+                      (string-append
+                        (string-append
+                          "Error: failed to run executable '"
+                          bin-path)
+                        (string-append
+                          (string-append
+                            "' for target "
+                            (source-tool-target-name target))
+                          (string-append ": " (process-error-message error)))))
                     (source-tool-clean-temp
                       temp-dir
                       asm-path
                       obj-path
                       bin-path
                       true)
-                    status))]
-              [(ErrProcessOutput error)
-                (begin
-                  (print-error
-                    (string-append
-                      (string-append
-                        "Error: failed to run executable '"
-                        bin-path)
-                      (string-append
-                        (string-append
-                          "' for target "
-                          (source-tool-target-name target))
-                        (string-append ": " (process-error-message error)))))
-                  (source-tool-clean-temp
-                    temp-dir
-                    asm-path
-                    obj-path
-                    bin-path
-                    true)
-                  1)])])])))
+                    1)])]))])))
 
 (define (source-tool-run-source
   [source : String]

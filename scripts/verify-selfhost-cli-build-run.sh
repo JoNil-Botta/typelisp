@@ -685,6 +685,59 @@ assert_status built-program "$status" 19
 assert_empty built-program "$WORKDIR/built-program.out"
 assert_empty built-program "$WORKDIR/built-program.err"
 
+WIDE_AND_SRC="$WORKDIR/build-default-wide-and.tl"
+WIDE_AND_EXE="$WORKDIR/build-default-wide-and"
+if [ "$HOST_OS" = windows ]; then
+    WIDE_AND_EXE="$WIDE_AND_EXE.exe"
+fi
+cat > "$WIDE_AND_SRC" <<'EOF'
+(define (unconstrained-default) : i32
+  (let
+    [x (+ 1 2)]
+    x))
+
+(define (contextual-i64) : i64
+  (let
+    [x : i64 1]
+    x))
+
+(define (explicit-wide-cast) : i64
+  (cast (cast 0x100000000 : u64) : i64))
+
+(define (main) : i64
+  (if (and
+    (= (unconstrained-default) 3)
+    (= (contextual-i64) 1)
+    (= (explicit-wide-cast) 4294967296))
+    42
+    1))
+EOF
+
+set +e
+"$COMPILER" build "$WIDE_AND_SRC" -o "$WIDE_AND_EXE" --target "$BUILD_TARGET" > "$WORKDIR/build-default-wide-and.out" 2> "$WORKDIR/build-default-wide-and.err"
+status=$?
+set -e
+assert_status build-default-wide-and "$status" 0
+assert_empty build-default-wide-and "$WORKDIR/build-default-wide-and.err"
+assert_contains build-default-wide-and "$WORKDIR/build-default-wide-and.out" "Built "
+[ -f "$WIDE_AND_EXE" ] || fail "build did not write executable $WIDE_AND_EXE"
+
+set +e
+"$WIDE_AND_EXE" > "$WORKDIR/build-default-wide-and-program.out" 2> "$WORKDIR/build-default-wide-and-program.err"
+status=$?
+set -e
+assert_status build-default-wide-and-program "$status" 42
+assert_empty build-default-wide-and-program "$WORKDIR/build-default-wide-and-program.out"
+assert_empty build-default-wide-and-program "$WORKDIR/build-default-wide-and-program.err"
+
+set +e
+"$COMPILER" run "$WIDE_AND_SRC" --target "$BUILD_TARGET" > "$WORKDIR/run-default-wide-and.out" 2> "$WORKDIR/run-default-wide-and.err"
+status=$?
+set -e
+assert_status run-default-wide-and "$status" 42
+assert_empty run-default-wide-and "$WORKDIR/run-default-wide-and.out"
+assert_empty run-default-wide-and "$WORKDIR/run-default-wide-and.err"
+
 PKG_DIR="$WORKDIR/package-build"
 mkdir -p "$PKG_DIR/src"
 cat > "$PKG_DIR/typelisp.pkg" <<'EOF'

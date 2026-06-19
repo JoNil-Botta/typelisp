@@ -29696,6 +29696,25 @@
         (macro-lifetime-list-to-spanned-sexpr (box-get rest) span)
         span)]))
 
+(define (macro-internal-resolved-struct-type-marker) : String
+  "__typelisp internal resolved struct type")
+
+(define (macro-internal-resolved-enum-type-marker) : String
+  "__typelisp internal resolved enum type")
+
+(define (macro-resolved-nominal-type-sexpr
+  [marker : String]
+  [name : String]
+  [lifetimes : AstLifetimeList]
+  [span : SourceSpan]) : SpannedSexpr
+  (spanned-sexpr-cons
+    (SpSSym marker span)
+    (spanned-sexpr-cons
+      (SpSStr name span)
+      (macro-lifetime-list-to-spanned-sexpr lifetimes span)
+      span)
+    span))
+
 (define (macro-type-list-to-spanned-sexpr
   [items : AstTypeList]
   [span : SourceSpan]
@@ -29785,13 +29804,35 @@
                   span))]
             [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
         [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
-    [(AstTyStruct name) (OkMacroSexpr (SpSSym (intern-str name) span))]
-    [(AstTyEnum name) (OkMacroSexpr (SpSSym (intern-str name) span))]
+    [(AstTyStruct name)
+      (OkMacroSexpr
+        (macro-resolved-nominal-type-sexpr
+          (macro-internal-resolved-struct-type-marker)
+          (intern-str name)
+          AstLifetimeNil
+          span))]
+    [(AstTyEnum name)
+      (OkMacroSexpr
+        (macro-resolved-nominal-type-sexpr
+          (macro-internal-resolved-enum-type-marker)
+          (intern-str name)
+          AstLifetimeNil
+          span))]
     [(AstTyVar name) (OkMacroSexpr (SpSSym (intern-str name) span))]
     [(AstTyStructArgs name lifetimes)
-      (macro-type-named-args-sexpr (intern-str name) lifetimes span)]
+      (OkMacroSexpr
+        (macro-resolved-nominal-type-sexpr
+          (macro-internal-resolved-struct-type-marker)
+          (intern-str name)
+          lifetimes
+          span))]
     [(AstTyEnumArgs name lifetimes)
-      (macro-type-named-args-sexpr (intern-str name) lifetimes span)]
+      (OkMacroSexpr
+        (macro-resolved-nominal-type-sexpr
+          (macro-internal-resolved-enum-type-marker)
+          (intern-str name)
+          lifetimes
+          span))]
     [(AstTyVarArgs name lifetimes)
       (macro-type-named-args-sexpr (intern-str name) lifetimes span)]
     [(AstTyRef region inner)

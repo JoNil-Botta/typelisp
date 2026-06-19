@@ -3898,11 +3898,30 @@
     [(string-eq name "ExprList") (AstTyExprList)]
     [else (AstTyVar (intern name))]))
 
+(define (ctfe-internal-resolved-struct-type-marker) : String
+  "__typelisp internal resolved struct type")
+
+(define (ctfe-internal-resolved-enum-type-marker) : String
+  "__typelisp internal resolved enum type")
+
 (define (ctfe-type-syntax-name [name : String]) : i64
   (ast-node-push (AstExprVar (intern name))))
 
+(define (ctfe-type-syntax-string [value : String]) : i64
+  (ast-node-push (AstExprLiteral (AstLitString value))))
+
 (define (ctfe-type-syntax-call [name : String] [args : AstExprList]) : i64
   (ast-expr-call (ctfe-type-syntax-name name) args))
+
+(define (ctfe-resolved-nominal-type-to-expr
+  [marker : String]
+  [name : String]
+  [lifetimes : AstLifetimeList]) : i64
+  (ctfe-type-syntax-call
+    marker
+    (ast-expr-cons
+      (ctfe-type-syntax-string name)
+      (ctfe-lifetime-list-to-expr-list lifetimes))))
 
 (define (ctfe-type-list-to-expr-list [types : AstTypeList]) : AstExprList
   (match types
@@ -3997,16 +4016,26 @@
         (ast-expr-cons
           (ctfe-type-syntax-name region)
           (ast-expr-cons (ctfe-type-to-expr (ty-node-get elem)) AstExprNil)))]
-    [(AstTyEnum name) (ctfe-type-syntax-name (intern-str name))]
+    [(AstTyEnum name)
+      (ctfe-resolved-nominal-type-to-expr
+        (ctfe-internal-resolved-enum-type-marker)
+        (intern-str name)
+        AstLifetimeNil)]
     [(AstTyEnumArgs name lifetimes)
-      (ctfe-type-syntax-call
+      (ctfe-resolved-nominal-type-to-expr
+        (ctfe-internal-resolved-enum-type-marker)
         (intern-str name)
-        (ctfe-lifetime-list-to-expr-list lifetimes))]
-    [(AstTyStruct name) (ctfe-type-syntax-name (intern-str name))]
+        lifetimes)]
+    [(AstTyStruct name)
+      (ctfe-resolved-nominal-type-to-expr
+        (ctfe-internal-resolved-struct-type-marker)
+        (intern-str name)
+        AstLifetimeNil)]
     [(AstTyStructArgs name lifetimes)
-      (ctfe-type-syntax-call
+      (ctfe-resolved-nominal-type-to-expr
+        (ctfe-internal-resolved-struct-type-marker)
         (intern-str name)
-        (ctfe-lifetime-list-to-expr-list lifetimes))]
+        lifetimes)]
     [(AstTyVar name) (ctfe-type-syntax-name (intern-str name))]
     [(AstTyVarArgs name lifetimes)
       (ctfe-type-syntax-call

@@ -29,11 +29,17 @@ WSL and GitHub-hosted Linux cachegrind counts differ even with fixed paths and a
 clean measured environment. Deltas outside that tolerance fail and must be
 accepted by updating the committed baseline.
 
+Comparison benchmark rows are split by implementation. TypeLisp-generated
+executables use `benchmark/typelisp/<name>` and the paired deterministic
+`clang -O2` C baseline uses `benchmark/c/<name>`. A selected benchmark case must
+contain both `bench.tl` and `baseline.c`; unpaired benchmark directories are
+skipped only when no explicit benchmark filter or case list selected them.
+
 The checker builds a fresh full CLI stage1 and stage2 under
 `target/instruction-count-check` and measures that fixed stage2 compiler. The
-default per-PR subset is `self_compile` plus `arith_loop`, `array_sum`,
-`hashmap_churn`, `hashmap_grow`, `hashmap_insert`, `hashmap_get`, and
-`spmd_reduce`, each with one cachegrind run.
+default per-PR subset is `self_compile` plus paired rows for `arith_loop`,
+`array_sum`, `hashmap_churn`, `hashmap_grow`, `hashmap_insert`, `hashmap_get`,
+and `spmd_reduce`, each with one cachegrind run.
 
 The heavy nightly workflow measures `spmd_map`, `spmd_mask`, `spmd_zip`,
 `spmd_short_tail`, and `string_scan` as benchmark-only cases with one

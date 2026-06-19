@@ -3,7 +3,6 @@
 ;; The formatter front end and rule traversal are separate issues. This module
 ;; owns the reusable layout engine: callers build `Doc` values, then render them
 ;; with deterministic width-aware grouping and indentation.
-(import "../stdlib/text_buf.tl")
 (import "../stdlib/string.tl")
 
 (defenum Doc
@@ -112,11 +111,78 @@
 (define (render-newline [indent : i64]) : RenderedDoc
   (Rendered (string-append "\n" (spaces indent)) indent))
 
-;; Append a newline plus `indent` spaces to the owned buffer in place.
-(define (render-newline-into! [buf : TextBuf] [indent : i64]) : unit
+;; Flat byte buffer for the render pass. The chunk-list `TextBuf` allocates a
+;; cons per appended fragment, and rendering the corpus appends roughly one
+;; fragment per token plus per line break -- millions of tiny allocations. A
+;; growable byte array instead copies each fragment into place with one memcpy
+;; (`str-copy-bytes-into`) and materializes the result with a single
+;; `string-from-bytes`, with no per-fragment allocation.
+(defstruct FmtRenderBuf
+  (data (Array u8))
+  (len i64))
+
+(define (fmt-render-buf-new) : FmtRenderBuf
+  (FmtRenderBuf (make-array u8 1024) 0))
+
+(define (fmt-render-buf-reserve [buf : FmtRenderBuf] [needed : i64]) : unit
+  (let
+    [cur : (Array u8) (struct-get buf data)]
+    [cap : i64 (array-length cur)]
+    (if (<= needed cap)
+      unit
+      (let
+        [newcap : i64 cap]
+        (begin
+          (while (< newcap needed)
+            (set! newcap (* newcap 2)))
+          (let
+            [bigger : (Array u8) (make-array u8 newcap)]
+            [n : i64 (struct-get buf len)]
+            (begin
+              (if (> n 0)
+                (str-copy-bytes-into
+                  (unsafe
+                    (ptr-cast (array-data cur) : (Ptr u8)))
+                  (unsafe
+                    (array-data bigger))
+                  0
+                  n)
+                unit)
+              (set! (struct-get buf data) bigger))))))))
+
+(define (fmt-render-buf-append [buf : FmtRenderBuf] [s : String]) : unit
+  (let
+    [slen : i64 (string-length s)]
+    (if (= slen 0)
+      unit
+      (let
+        [base : i64 (struct-get buf len)]
+        (begin
+          (fmt-render-buf-reserve buf (+ base slen))
+          (str-copy-bytes-into
+            (unsafe
+              (string-data (& s)))
+            (unsafe
+              (array-data (struct-get buf data)))
+            base
+            slen)
+          (set! (struct-get buf len) (+ base slen)))))))
+
+(define (fmt-render-buf-string [buf : FmtRenderBuf]) : String
+  (let
+    [n : i64 (struct-get buf len)]
+    (if (= n 0)
+      ""
+      (unsafe
+        (string-from-bytes
+          (ptr-cast (array-data (struct-get buf data)) : (Ptr u8))
+          n)))))
+
+;; Append a newline plus `indent` spaces to the buffer in place.
+(define (render-newline-into! [buf : FmtRenderBuf] [indent : i64]) : unit
   (begin
-    (text-buf-append! buf "\n")
-    (text-buf-append! buf (spaces indent))))
+    (fmt-render-buf-append buf "\n")
+    (fmt-render-buf-append buf (spaces indent))))
 
 ;; Render `doc` by appending into `buf` in place, returning the resulting column.
 ;; The buffer is owned by `render-doc-width` and threaded by reference, so the
@@ -128,19 +194,19 @@
   [indent : i64]
   [col : i64]
   [flat : bool]
-  [buf : TextBuf]) : i64
+  [buf : FmtRenderBuf]) : i64
   (match doc
     [(DEmpty) col]
     [(DText text)
       (let
         [text-width : i64 (string-length text)]
         (begin
-          (text-buf-append! buf text)
+          (fmt-render-buf-append buf text)
           (+ col text-width)))]
     [(DSoftLine)
       (if flat
         (begin
-          (text-buf-append! buf " ")
+          (fmt-render-buf-append buf " ")
           (+ col 1))
         (begin
           (render-newline-into! buf indent)
@@ -190,10 +256,10 @@
 
 (define (render-doc-width [doc : Doc] [width : i64]) : String
   (let
-    [buf : TextBuf (text-buf-empty)]
+    [buf : FmtRenderBuf (fmt-render-buf-new)]
     (begin
       (render-doc-into doc width 0 0 false buf)
-      (text-buf-render buf))))
+      (fmt-render-buf-string buf))))
 
 (define (render-doc [doc : Doc]) : String
   (render-doc-width doc (format-width)))

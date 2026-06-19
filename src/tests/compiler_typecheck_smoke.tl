@@ -251,7 +251,7 @@
 (define (main [n : i64]) : i64
   (take-mut n))")
 
-(define (compiler-typecheck-auto-borrow-assignment-live-source) : String
+(define (compiler-typecheck-auto-borrow-assignment-after-last-use-source) : String
   "(define (take [n : (& n i64)]) : i64 1)
 (define (main [n : i64]) : i64
   (begin
@@ -259,13 +259,33 @@
     (set! n 2)
     n))")
 
-(define (compiler-typecheck-auto-borrow-move-live-source) : String
+(define (compiler-typecheck-auto-borrow-move-after-last-use-source) : String
   "(define (len [text : (& text str)]) : i64 1)
 (define (main) : i64
   (let [text : String \"move\"]
     (begin
       (len text)
       (let [moved : String text] 1))))")
+
+(define (compiler-typecheck-auto-borrow-assignment-before-last-use-source) : String
+  "(define (take [n : (& n i64)]) : i64 1)
+(define (main [n : i64]) : i64
+  (let
+    [borrowed : (& n i64) (& n)]
+    (begin
+      (set! n 2)
+      (take borrowed))))")
+
+(define (compiler-typecheck-auto-borrow-move-before-last-use-source) : String
+  "(define (len [text : (& text str)]) : i64 1)
+(define (main) : i64
+  (let
+    [text : String \"move\"]
+    (let
+      [borrowed : (& text str) (& text)]
+      (begin
+        (let [moved : String text] 1)
+        (len borrowed)))))")
 
 (define (compiler-typecheck-auto-borrow-tests-ok?) : bool
   (and
@@ -279,11 +299,15 @@
     (compiler-typecheck-error-ok?
       (compiler-typecheck-auto-borrow-mutable-param-source)
       "typecheck: argument type mismatch")
+    (compiler-typecheck-ok?
+      (compiler-typecheck-auto-borrow-assignment-after-last-use-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-auto-borrow-move-after-last-use-source))
     (compiler-typecheck-error-ok?
-      (compiler-typecheck-auto-borrow-assignment-live-source)
+      (compiler-typecheck-auto-borrow-assignment-before-last-use-source)
       "typecheck: cannot assign to borrowed place `n`")
     (compiler-typecheck-error-ok?
-      (compiler-typecheck-auto-borrow-move-live-source)
+      (compiler-typecheck-auto-borrow-move-before-last-use-source)
       "typecheck: cannot move borrowed place `text`")))
 
 (define (compiler-typecheck-borrow-projection-assign-source) : String
@@ -314,12 +338,28 @@
 (define (compiler-typecheck-borrow-returned-call-source) : String
   "(define (borrow-text [text : (& text str)]) : (& text str)
   text)
+(define (len [text : (& text str)]) : i64 1)
 (define (main) : i64
   (let
     [text : String \"borrowed\"]
     (let
       [borrowed : (& text str) (borrow-text (& text))]
-      (let [moved : String text] 1))))")
+      (begin
+        (let [moved : String text] 1)
+        (len borrowed)))))")
+
+(define (compiler-typecheck-borrow-returned-call-after-last-use-source) : String
+  "(define (borrow-text [text : (& text str)]) : (& text str)
+  text)
+(define (len [text : (& text str)]) : i64 1)
+(define (main) : i64
+  (let
+    [text : String \"borrowed\"]
+    (let
+      [borrowed : (& text str) (borrow-text (& text))]
+      (begin
+        (len borrowed)
+        (let [moved : String text] 1)))))")
 
 (define (compiler-typecheck-borrow-narrow-lexical-ok-source) : String
   "(define (take [n : (& n i64)]) : i64
@@ -449,6 +489,33 @@
       (array-set! borrowed 0 41)
       n)))")
 
+(define (compiler-typecheck-mut-borrow-owner-read-after-last-use-source) : String
+  "(define (main) : i64
+  (let
+    [items : (Array i64) (make-array i64 1)]
+    [borrowed : (&mut items (Array i64)) (&mut items)]
+    (begin
+      (array-set! borrowed 0 41)
+      (array-length items))))")
+
+(define (compiler-typecheck-borrow-if-conservative-source) : String
+  "(define (take [n : (& n i64)]) : i64 1)
+(define (main [n : i64] [flag : bool]) : i64
+  (let
+    [borrowed : (& n i64) (& n)]
+    (begin
+      (if flag (set! n 2) unit)
+      (take borrowed))))")
+
+(define (compiler-typecheck-borrow-while-conservative-source) : String
+  "(define (take [n : (& n i64)]) : i64 1)
+(define (main [n : i64]) : i64
+  (let
+    [borrowed : (& n i64) (& n)]
+    (begin
+      (while (< n 3) (set! n 2))
+      (take borrowed))))")
+
 (define (compiler-typecheck-secondary-label-contains?
   [labels : CompilerDiagnosticLabelList]
   [needle : String]) : bool
@@ -492,10 +559,10 @@
 (define (compiler-typecheck-borrow-diagnostic-tests-ok?) : bool
   (and
     (compiler-typecheck-labeled-borrow-error-ok?
-      (compiler-typecheck-auto-borrow-assignment-live-source)
+      (compiler-typecheck-auto-borrow-assignment-before-last-use-source)
       "typecheck: cannot assign to borrowed place `n`")
     (compiler-typecheck-labeled-borrow-error-ok?
-      (compiler-typecheck-auto-borrow-move-live-source)
+      (compiler-typecheck-auto-borrow-move-before-last-use-source)
       "typecheck: cannot move borrowed place `text`")
     (compiler-typecheck-labeled-borrow-error-ok?
       (compiler-typecheck-borrow-projection-assign-source)
@@ -509,6 +576,8 @@
     (compiler-typecheck-labeled-borrow-error-ok?
       (compiler-typecheck-borrow-returned-call-source)
       "typecheck: cannot move borrowed place `text`")
+    (compiler-typecheck-ok?
+      (compiler-typecheck-borrow-returned-call-after-last-use-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-borrow-narrow-lexical-ok-source))
     (compiler-typecheck-ok?
@@ -536,7 +605,15 @@
     (compiler-typecheck-ok?
       (compiler-typecheck-mut-borrow-read-disjoint-source))
     (compiler-typecheck-ok?
-      (compiler-typecheck-mut-borrow-read-through-ref-source))))
+      (compiler-typecheck-mut-borrow-read-through-ref-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-mut-borrow-owner-read-after-last-use-source))
+    (compiler-typecheck-labeled-borrow-error-ok?
+      (compiler-typecheck-borrow-if-conservative-source)
+      "typecheck: cannot assign to borrowed place `n`")
+    (compiler-typecheck-labeled-borrow-error-ok?
+      (compiler-typecheck-borrow-while-conservative-source)
+      "typecheck: cannot assign to borrowed place `n`")))
 
 (define (compiler-typecheck-labeled-move-error-ok?
   [src : String]

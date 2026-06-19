@@ -21575,6 +21575,53 @@
               (opt-reach-add-function index state name)
               state))])]))
 
+(define (opt-symbol-leaf [name : String]) : String
+  (let
+    [i : i64 0]
+    [n : i64 (string-length name)]
+    [start : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (if (or (= (string-ref name i) #/') (= (string-ref name i) #:'))
+            (set! start (+ i 1))
+            unit)
+          (set! i (+ i 1))))
+      (substring name start (- n start)))))
+
+(define (opt-runtime-prelude-string-helper? [name : String]) : bool
+  (let
+    [base : String (opt-symbol-leaf name)]
+    (or
+      (string-eq base "tl-runtime-int-to-string")
+      (string-eq base "tl-runtime-substring")
+      (string-eq base "tl-runtime-str-view")
+      (string-eq base "tl-runtime-string-concat")
+      (string-eq base "tl-runtime-string-concat3")
+      (string-eq base "tl-runtime-string-concat4")
+      (string-eq base "tl-runtime-string-concat5"))))
+
+(define (opt-reach-add-runtime-prelude-string-helpers
+  [index : OptFunctionIndex]
+  [functions : CompilerIrFunctionList]
+  [state : OptReachState]) : OptReachState
+  (match functions
+    [(IrFunctionNil) state]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction name _ _ _ _)
+          (opt-reach-add-runtime-prelude-string-helpers
+            index
+            (box-get rest)
+            (if (opt-runtime-prelude-string-helper? name)
+              (opt-reach-add-function index state name)
+              state))])]
+    [(IrFunctionArray seq)
+      (opt-reach-add-runtime-prelude-string-helpers
+        index
+        (compiler-ir-function-seq-to-list seq)
+        state)]))
+
 (define (opt-prune-unreachable-functions
   [globals : CompilerIrGlobalList]
   [functions : CompilerIrFunctionList]
@@ -21589,13 +21636,16 @@
         index
         (opt-reach-globals
           index
-          (opt-reach-add-provided-externs
+          (opt-reach-add-runtime-prelude-string-helpers
             index
-            externs
-            (opt-reach-add-function
+            functions
+            (opt-reach-add-provided-externs
               index
-              (OptReachState reachable (OptStringNil))
-              "main"))
+              externs
+              (opt-reach-add-function
+                index
+                (OptReachState reachable (OptStringNil))
+                "main")))
           globals))
         [(OptReachState reachable-out _)
           (opt-filter-reachable-functions functions reachable-out)]))
@@ -25664,7 +25714,15 @@
             (opt-test-function-named
               "callback-target"
               (opt-global-dce-return-instrs 11))
-            (IrFunctionNil)))))
+            (compiler-ir-function-cons
+              (opt-test-function-named
+                "stdlib/runtime.tl::tl-runtime-substring"
+                (opt-global-dce-return-instrs 13))
+              (compiler-ir-function-cons
+                (opt-test-function-named
+                  "stdlib/runtime.tl::tl-runtime-int-to-string"
+                  (opt-global-dce-return-instrs 17))
+                (IrFunctionNil)))))))
     (IrExternNil)))
 
 (define (opt-global-dce-no-main-program) : CompilerIrProgram
@@ -25690,11 +25748,17 @@
     [level1-functions : CompilerIrFunctionList (opt-program-functions level1)]
     [no-main-functions : CompilerIrFunctionList (opt-program-functions no-main)]
     (and
-      (= (compiler-ir-function-list-count level0-functions) 4)
-      (= (compiler-ir-function-list-count level1-functions) 3)
+      (= (compiler-ir-function-list-count level0-functions) 6)
+      (= (compiler-ir-function-list-count level1-functions) 5)
       (opt-function-list-defines? level1-functions "main")
       (opt-function-list-defines? level1-functions "helper")
       (opt-function-list-defines? level1-functions "callback-target")
+      (opt-function-list-defines?
+        level1-functions
+        "stdlib/runtime.tl::tl-runtime-substring")
+      (opt-function-list-defines?
+        level1-functions
+        "stdlib/runtime.tl::tl-runtime-int-to-string")
       (not (opt-function-list-defines? level1-functions "dead"))
       (= (compiler-ir-function-list-count no-main-functions) 2))))
 

@@ -2684,6 +2684,61 @@
             (LowerStringCons logical-name (box worklist))))
         state)]))
 
+(define (lower-runtime-prelude-string-helper-name [source-name : String]) : String
+  (let
+    [base : String (tc-qualified-name-base source-name)]
+    (cond
+      [(string-eq base "tl_int_to_string") "tl-runtime-int-to-string"]
+      [(string-eq base "tl_substring") "tl-runtime-substring"]
+      [(string-eq base "tl_str_view") "tl-runtime-str-view"]
+      [(string-eq base "tl_string_concat") "tl-runtime-string-concat"]
+      [(string-eq base "tl_string_concat3") "tl-runtime-string-concat3"]
+      [(string-eq base "tl_string_concat4") "tl-runtime-string-concat4"]
+      [(string-eq base "tl_string_concat5") "tl-runtime-string-concat5"]
+      [else ""])))
+
+(define (lower-runtime-prelude-string-helper-impl? [source-name : String]) : bool
+  (let
+    [base : String (tc-qualified-name-base source-name)]
+    (or
+      (string-eq base "tl-runtime-int-to-string")
+      (string-eq base "tl-runtime-substring")
+      (string-eq base "tl-runtime-str-view")
+      (string-eq base "tl-runtime-string-concat")
+      (string-eq base "tl-runtime-string-concat3")
+      (string-eq base "tl-runtime-string-concat4")
+      (string-eq base "tl-runtime-string-concat5"))))
+
+(define (lower-reach-add-runtime-prelude-string-helper-impl-root
+  [entry-path : String]
+  [decl-path : String]
+  [module : String]
+  [all-functions : StringI64Map]
+  [state : LowerReachState]
+  [source-name : String]) : LowerReachState
+  (if (lower-runtime-prelude-string-helper-impl? source-name)
+    (lower-reach-add-logical
+      all-functions
+      state
+      (lower-decl-logical-name entry-path decl-path module source-name))
+    state))
+
+(define (lower-reach-add-runtime-prelude-string-helper
+  [all-functions : StringI64Map]
+  [state : LowerReachState]
+  [source-name : String]) : LowerReachState
+  (let
+    [helper : String (lower-runtime-prelude-string-helper-name source-name)]
+    (if (string-eq helper "")
+      state
+      (lower-reach-add-logical
+        all-functions
+        (lower-reach-add-logical
+          all-functions
+          state
+          (string-append "stdlib/runtime.tl::" helper))
+        (string-append "stdlib\\runtime.tl::" helper)))))
+
 (define (lower-reach-add-source
   [all-functions : StringI64Map]
   [names : LowerNameCache]
@@ -2693,10 +2748,15 @@
   ;; (e.g. `__tl_macro_global$string-append`); strip it before resolving so the
   ;; underlying function counts as reachable. Otherwise a function called only
   ;; from a macro expansion is pruned, then fails to resolve during lowering.
-  (lower-reach-add-logical
-    all-functions
-    state
-    (lower-name-cache-resolve-hygiene names source-name)))
+  (let
+    [logical-name : String (lower-name-cache-resolve-hygiene names source-name)]
+    (lower-reach-add-runtime-prelude-string-helper
+      all-functions
+      (lower-reach-add-runtime-prelude-string-helper
+        all-functions
+        (lower-reach-add-logical all-functions state logical-name)
+        source-name)
+      logical-name)))
 
 (define (lower-reach-expr-list
   [all-functions : StringI64Map]
@@ -4787,6 +4847,8 @@
 ;; backend-emitted bounds/division/shift checks call the runtime-prelude
 ;; handlers). Seed every exported function as a reachability root so the prune
 ;; keeps it and its transitive callees even with no IR caller.
+;; Runtime string helpers use reserved private `tl-runtime-*` names and are
+;; emitted under fixed backend labels, so seed those definitions too.
 (define (lower-reach-add-export-root-decl
   [entry-path : String]
   [decl-path : String]
@@ -4796,18 +4858,40 @@
   [decl : AstDecl]) : LowerReachState
   (match decl
     [(AstDeclDefFn name _ _ _ export)
-      (match export
-        [(AstFnExport _)
-          (lower-reach-add-logical
+      (let
+        [name-str : String (intern-str name)]
+        (lower-reach-add-runtime-prelude-string-helper-impl-root
+          entry-path
+          decl-path
+          module
+          all-functions
+          (match export
+            [(AstFnExport _)
+              (lower-reach-add-logical
+                all-functions
+                state
+                (lower-decl-logical-name entry-path decl-path module name-str))]
+            [(AstFnNoExport) state])
+          name-str))]
+    [(AstDeclExtern _ kind metadata _)
+      (match kind
+        [(AstExternFunction)
+          (lower-reach-add-runtime-prelude-string-helper
             all-functions
             state
-            (lower-decl-logical-name
-              entry-path
-              decl-path
-              module
-              (intern-str name)))]
-        [(AstFnNoExport) state])]
+            (ast-extern-metadata-symbol metadata))]
+        [(AstExternValue) state])]
     [(AstDeclUnsafe inner-box)
+      (let
+        [inner : AstDecl (box-get inner-box)]
+        (lower-reach-add-export-root-decl
+          entry-path
+          decl-path
+          module
+          all-functions
+          state
+          inner))]
+    [(AstDeclComptimeDecl _ inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
         (lower-reach-add-export-root-decl

@@ -3314,6 +3314,19 @@
           (set! i (+ i 1))))
       found)))
 
+(define (compiler-backend-runtime-prelude-string-helper-symbol [name : String]) : String
+  (let
+    [leaf : String (compiler-backend-symbol-leaf name)]
+    (cond
+      [(string-eq leaf "tl-runtime-int-to-string") "tl_int_to_string"]
+      [(string-eq leaf "tl-runtime-substring") "tl_substring"]
+      [(string-eq leaf "tl-runtime-str-view") "tl_str_view"]
+      [(string-eq leaf "tl-runtime-string-concat") "tl_string_concat"]
+      [(string-eq leaf "tl-runtime-string-concat3") "tl_string_concat3"]
+      [(string-eq leaf "tl-runtime-string-concat4") "tl_string_concat4"]
+      [(string-eq leaf "tl-runtime-string-concat5") "tl_string_concat5"]
+      [else ""])))
+
 (define (compiler-backend-compact-function-symbol? [name : String]) : bool
   (and
     (> (string-length name) 16)
@@ -3326,11 +3339,16 @@
   [name : String]) : String
   (if (compiler-backend-index-extern-provided? index name)
     (compiler-backend-index-extern-link-symbol index name)
-    (if (compiler-backend-compact-function-symbol? name)
-      (match (compiler-backend-index-function-slot index name)
-        [(I64I64MapFound slot) (str-cat "_tl_f" (int->string slot) "")]
-        [(I64I64MapMissing) (compiler-backend-user-symbol name)])
-      (compiler-backend-user-symbol name))))
+    (let
+      [runtime-symbol : String
+        (compiler-backend-runtime-prelude-string-helper-symbol name)]
+      (if (not (string-eq runtime-symbol ""))
+        runtime-symbol
+        (if (compiler-backend-compact-function-symbol? name)
+          (match (compiler-backend-index-function-slot index name)
+            [(I64I64MapFound slot) (str-cat "_tl_f" (int->string slot) "")]
+            [(I64I64MapMissing) (compiler-backend-user-symbol name)])
+          (compiler-backend-user-symbol name))))))
 
 (define (compiler-backend-function-symbol-map-comment
   [index : CompilerBackendProgramIndex]
@@ -9946,6 +9964,22 @@
                 (box-get rest)
                 (string-i64-map-put seen symbol 1))))])]))
 
+(define (compiler-backend-runtime-prelude-string-helper-export?
+  [name : String]
+  [symbol : String]) : bool
+  (let
+    [symbol-id : i64 (compiler-backend-runtime-helper-name-id symbol)]
+    (and
+      (or
+        (compiler-backend-string-contains? name "stdlib/runtime.tl::")
+        (compiler-backend-string-contains? name "stdlib\\runtime.tl::"))
+      (>= symbol-id 0)
+      (or
+        (compiler-builtin-backend-tl-substring-id? symbol-id)
+        (compiler-builtin-backend-tl-str-view-id? symbol-id)
+        (compiler-builtin-backend-runtime-concat-id? symbol-id)
+        (compiler-builtin-backend-tl-int-to-string-id? symbol-id)))))
+
 (define (compiler-backend-validate-function-symbols-into
   [functions : CompilerIrFunctionList]
   [_plan : CompilerBackendRuntimePlan]
@@ -9979,7 +10013,11 @@
                     symbol))]
               [(and
                   (compiler-backend-index-extern-provided? index name)
-                  (compiler-backend-runtime-helper-known? symbol))
+                  (compiler-backend-runtime-helper-known? symbol)
+                  (not
+                    (compiler-backend-runtime-prelude-string-helper-export?
+                      name
+                      symbol)))
                 (compiler-backend-symbol-validation-error
                   (string-append
                     "backend: exported function symbol collides with runtime symbol "
@@ -23322,604 +23360,28 @@ tl_profile_alloc_reset_peak:
   "")
 
 (define (compiler-backend-runtime-int-to-string-functions) : String
-  "    .globl tl_int_to_string
-tl_int_to_string:
-    push %rbp
-    mov %rsp, %rbp
-    push %rbx
-    push %r12
-    push %r13
-    sub $72, %rsp
-    movq %rdi, %rax
-    leaq 72(%rsp), %r10
-    movq $0, %rcx
-    cmpq $0, %rax
-    jne .L_tl_int_to_string_nonzero
-    decq %r10
-    movb $48, (%r10)
-    incq %rcx
-    jmp .L_tl_int_to_string_digits_done
-.L_tl_int_to_string_nonzero:
-    movq $0, %r8
-    cmpq $0, %rax
-    jge .L_tl_int_to_string_abs_ready
-    negq %rax
-    movq $1, %r8
-.L_tl_int_to_string_abs_ready:
-    movq $10, %r9
-.L_tl_int_to_string_digit_loop:
-    xorq %rdx, %rdx
-    divq %r9
-    addb $48, %dl
-    decq %r10
-    movb %dl, (%r10)
-    incq %rcx
-    testq %rax, %rax
-    jne .L_tl_int_to_string_digit_loop
-    testq %r8, %r8
-    jz .L_tl_int_to_string_digits_done
-    decq %r10
-    movb $45, (%r10)
-    incq %rcx
-.L_tl_int_to_string_digits_done:
-    movq %r10, %rbx
-    movq %rcx, %r12
-    movq %r12, %rdi
-    call tl_alloc
-    movq %rax, %r13
-    movq $0, %rcx
-.L_tl_int_to_string_copy_loop:
-    cmpq %r12, %rcx
-    jge .L_tl_int_to_string_copy_done
-    movzbl (%rbx,%rcx), %edx
-    movb %dl, (%r13,%rcx)
-    incq %rcx
-    jmp .L_tl_int_to_string_copy_loop
-.L_tl_int_to_string_copy_done:
-    call .L_tl_alloc16
-    movq %r13, 0(%rax)
-    movq %r12, 8(%rax)
-    add $72, %rsp
-    pop %r13
-    pop %r12
-    pop %rbx
-    pop %rbp
-    ret
-
-")
+  "")
 
 (define (compiler-backend-runtime-windows-int-to-string-functions) : String
-  "    .globl tl_int_to_string
-tl_int_to_string:
-    push %rbp
-    mov %rsp, %rbp
-    push %rbx
-    push %r12
-    push %r13
-    sub $72, %rsp
-    movq %rcx, %rax
-    leaq 72(%rsp), %r10
-    movq $0, %rcx
-    cmpq $0, %rax
-    jne .L_tl_int_to_string_nonzero
-    decq %r10
-    movb $48, (%r10)
-    incq %rcx
-    jmp .L_tl_int_to_string_digits_done
-.L_tl_int_to_string_nonzero:
-    movq $0, %r8
-    cmpq $0, %rax
-    jge .L_tl_int_to_string_abs_ready
-    negq %rax
-    movq $1, %r8
-.L_tl_int_to_string_abs_ready:
-    movq $10, %r9
-.L_tl_int_to_string_digit_loop:
-    xorq %rdx, %rdx
-    divq %r9
-    addb $48, %dl
-    decq %r10
-    movb %dl, (%r10)
-    incq %rcx
-    testq %rax, %rax
-    jne .L_tl_int_to_string_digit_loop
-    testq %r8, %r8
-    jz .L_tl_int_to_string_digits_done
-    decq %r10
-    movb $45, (%r10)
-    incq %rcx
-.L_tl_int_to_string_digits_done:
-    movq %r10, %rbx
-    movq %rcx, %r12
-    movq %r12, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
-    movq %rax, %r13
-    movq $0, %rcx
-.L_tl_int_to_string_copy_loop:
-    cmpq %r12, %rcx
-    jge .L_tl_int_to_string_copy_done
-    movzbl (%rbx,%rcx), %edx
-    movb %dl, (%r13,%rcx)
-    incq %rcx
-    jmp .L_tl_int_to_string_copy_loop
-.L_tl_int_to_string_copy_done:
-    call .L_tl_alloc16
-    movq %r13, 0(%rax)
-    movq %r12, 8(%rax)
-    add $72, %rsp
-    pop %r13
-    pop %r12
-    pop %rbx
-    pop %rbp
-    ret
-
-")
+  "")
 
 (define (compiler-backend-runtime-substring-functions) : String
-  "    .globl tl_substring
-tl_substring:
-    push %rbp
-    mov %rsp, %rbp
-    push %rbx
-    push %r12
-    push %r13
-    sub $8, %rsp
-    movq %rdi, %rbx
-    addq %rsi, %rbx
-    movq %rdx, %r12
-    movq %r12, %rdi
-    call tl_alloc
-    movq %rax, %r13
-    movq %r12, %rcx
-    movq %rbx, %rsi
-    movq %r13, %rdi
-    rep movsb
-    call .L_tl_alloc16
-    movq %r13, 0(%rax)
-    movq %r12, 8(%rax)
-    add $8, %rsp
-    pop %r13
-    pop %r12
-    pop %rbx
-    pop %rbp
-    ret
-
-")
+  "")
 
 (define (compiler-backend-runtime-windows-substring-functions) : String
-  "    .globl tl_substring
-tl_substring:
-    push %rbp
-    mov %rsp, %rbp
-    push %rbx
-    push %r12
-    push %r13
-    push %rsi
-    push %rdi
-    sub $8, %rsp
-    movq %rcx, %rbx
-    addq %rdx, %rbx
-    movq %r8, %r12
-    movq %r12, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
-    movq %rax, %r13
-    movq %r12, %rcx
-    movq %rbx, %rsi
-    movq %r13, %rdi
-    rep movsb
-    call .L_tl_alloc16
-    movq %r13, 0(%rax)
-    movq %r12, 8(%rax)
-    add $8, %rsp
-    pop %rdi
-    pop %rsi
-    pop %r13
-    pop %r12
-    pop %rbx
-    pop %rbp
-    ret
-
-")
+  "")
 
 (define (compiler-backend-runtime-str-view-functions) : String
-  "    .section .bss
-    .balign 8
-.L_tl_str_view_arena:
-    .zero 8
-
-    .text
-    .globl tl_str_view
-tl_str_view:
-    push %rbp
-    mov %rsp, %rbp
-    push %rbx
-    push %r12
-    push %r13
-    push %r14
-    push %r15
-    sub $8, %rsp
-    movq 0(%rdi), %r12
-    addq %rsi, %r12
-    movq %rdx, %r13
-    call tl_arena_current
-    movq %rax, %r14
-    movq .L_tl_str_view_arena(%rip), %r15
-    testq %r15, %r15
-    jnz .L_tl_str_view_arena_ready
-    call tl_arena_make_atomic
-    movq %rax, %r15
-    movq %rax, .L_tl_str_view_arena(%rip)
-.L_tl_str_view_arena_ready:
-    movq %r15, %rdi
-    call tl_arena_set
-    movq $16, %rdi
-    call tl_alloc
-    movq %rax, %rbx
-    movq %r14, %rdi
-    call tl_arena_set
-    movq %r12, 0(%rbx)
-    movq %r13, 8(%rbx)
-    movq %rbx, %rax
-    add $8, %rsp
-    pop %r15
-    pop %r14
-    pop %r13
-    pop %r12
-    pop %rbx
-    pop %rbp
-    ret
-
-")
+  "")
 
 (define (compiler-backend-runtime-windows-str-view-functions) : String
-  "    .data
-    .balign 8
-.L_tl_str_view_arena:
-    .quad 0
-
-    .text
-    .globl tl_str_view
-tl_str_view:
-    push %rbp
-    mov %rsp, %rbp
-    push %rbx
-    push %r12
-    push %r13
-    push %r14
-    push %r15
-    sub $40, %rsp
-    movq 0(%rcx), %r12
-    addq %rdx, %r12
-    movq %r8, %r13
-    call tl_arena_current
-    movq %rax, %r14
-    movq .L_tl_str_view_arena(%rip), %r15
-    testq %r15, %r15
-    jnz .L_tl_str_view_arena_ready
-    call tl_arena_make_atomic
-    movq %rax, %r15
-    movq %rax, .L_tl_str_view_arena(%rip)
-.L_tl_str_view_arena_ready:
-    movq %r15, %rcx
-    call tl_arena_set
-    movq $16, %rcx
-    call tl_alloc
-    movq %rax, %rbx
-    movq %r14, %rcx
-    call tl_arena_set
-    movq %r12, 0(%rbx)
-    movq %r13, 8(%rbx)
-    movq %rbx, %rax
-    add $40, %rsp
-    pop %r15
-    pop %r14
-    pop %r13
-    pop %r12
-    pop %rbx
-    pop %rbp
-    ret
-
-")
+  "")
 
 (define (compiler-backend-runtime-concat-functions) : String
-  "    .globl tl_string_concat
-tl_string_concat:
-    push %rbp
-    mov %rsp, %rbp
-    push %rbx
-    push %r12
-    push %r13
-    push %r14
-    push %r15
-    sub $8, %rsp
-    movq %rdi, %rbx
-    movq %rsi, %r12
-    movq %rdx, %r13
-    movq %rcx, %r14
-    movq %r12, %rdi
-    addq %r14, %rdi
-    call tl_alloc
-    movq %rax, %r15
-    movq %r12, %rcx
-    movq %rbx, %rsi
-    movq %r15, %rdi
-    rep movsb
-    movq %r14, %rcx
-    movq %r13, %rsi
-    movq %r15, %rdi
-    addq %r12, %rdi
-    rep movsb
-    call .L_tl_alloc16
-    movq %r15, 0(%rax)
-    movq %r12, %rdx
-    addq %r14, %rdx
-    movq %rdx, 8(%rax)
-    add $8, %rsp
-    pop %r15
-    pop %r14
-    pop %r13
-    pop %r12
-    pop %rbx
-    pop %rbp
-    ret
-
-    .globl tl_string_concat3
-tl_string_concat3:
-    push %rbp
-    mov %rsp, %rbp
-    sub $32, %rsp
-    movq $0, 0(%rsp)
-    movq $0, 8(%rsp)
-    movq $0, 16(%rsp)
-    movq $0, 24(%rsp)
-    call tl_string_concat5
-    leave
-    ret
-
-    .globl tl_string_concat4
-tl_string_concat4:
-    push %rbp
-    mov %rsp, %rbp
-    sub $32, %rsp
-    movq 16(%rbp), %rax
-    movq %rax, 0(%rsp)
-    movq 24(%rbp), %rax
-    movq %rax, 8(%rsp)
-    movq $0, 16(%rsp)
-    movq $0, 24(%rsp)
-    call tl_string_concat5
-    leave
-    ret
-
-    .globl tl_string_concat5
-tl_string_concat5:
-    push %rbp
-    mov %rsp, %rbp
-    sub $112, %rsp
-    movq %rdi, -8(%rbp)
-    movq %rsi, -16(%rbp)
-    movq %rdx, -24(%rbp)
-    movq %rcx, -32(%rbp)
-    movq %r8, -40(%rbp)
-    movq %r9, -48(%rbp)
-    movq 16(%rbp), %rax
-    movq %rax, -56(%rbp)
-    movq 24(%rbp), %rax
-    movq %rax, -64(%rbp)
-    movq 32(%rbp), %rax
-    movq %rax, -72(%rbp)
-    movq 40(%rbp), %rax
-    movq %rax, -80(%rbp)
-    movq -16(%rbp), %rdi
-    addq -32(%rbp), %rdi
-    addq -48(%rbp), %rdi
-    addq -64(%rbp), %rdi
-    addq -80(%rbp), %rdi
-    movq %rdi, -88(%rbp)
-    call tl_alloc
-    movq %rax, -96(%rbp)
-    movq -96(%rbp), %rdi
-    movq -8(%rbp), %rsi
-    movq -16(%rbp), %rcx
-    rep movsb
-    movq -96(%rbp), %rdi
-    addq -16(%rbp), %rdi
-    movq -24(%rbp), %rsi
-    movq -32(%rbp), %rcx
-    rep movsb
-    movq -96(%rbp), %rdi
-    addq -16(%rbp), %rdi
-    addq -32(%rbp), %rdi
-    movq -40(%rbp), %rsi
-    movq -48(%rbp), %rcx
-    rep movsb
-    movq -96(%rbp), %rdi
-    addq -16(%rbp), %rdi
-    addq -32(%rbp), %rdi
-    addq -48(%rbp), %rdi
-    movq -56(%rbp), %rsi
-    movq -64(%rbp), %rcx
-    rep movsb
-    movq -96(%rbp), %rdi
-    addq -16(%rbp), %rdi
-    addq -32(%rbp), %rdi
-    addq -48(%rbp), %rdi
-    addq -64(%rbp), %rdi
-    movq -72(%rbp), %rsi
-    movq -80(%rbp), %rcx
-    rep movsb
-    call .L_tl_alloc16
-    movq -96(%rbp), %rdx
-    movq %rdx, 0(%rax)
-    movq -88(%rbp), %rdx
-    movq %rdx, 8(%rax)
-    leave
-    ret
-
-")
+  "")
 
 (define (compiler-backend-runtime-windows-concat-functions) : String
-  "    .globl tl_string_concat
-tl_string_concat:
-    push %rbp
-    mov %rsp, %rbp
-    push %rbx
-    push %r12
-    push %r13
-    push %r14
-    push %r15
-    push %rsi
-    push %rdi
-    sub $8, %rsp
-    movq %rcx, %rbx
-    movq %rdx, %r12
-    movq %r8, %r13
-    movq %r9, %r14
-    movq %r12, %rcx
-    addq %r14, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
-    movq %rax, %r15
-    movq %r12, %rcx
-    movq %rbx, %rsi
-    movq %r15, %rdi
-    rep movsb
-    movq %r14, %rcx
-    movq %r13, %rsi
-    movq %r15, %rdi
-    addq %r12, %rdi
-    rep movsb
-    call .L_tl_alloc16
-    movq %r15, 0(%rax)
-    movq %r12, %rdx
-    addq %r14, %rdx
-    movq %rdx, 8(%rax)
-    add $8, %rsp
-    pop %rdi
-    pop %rsi
-    pop %r15
-    pop %r14
-    pop %r13
-    pop %r12
-    pop %rbx
-    pop %rbp
-    ret
-
-    .globl tl_string_concat3
-tl_string_concat3:
-    push %rbp
-    mov %rsp, %rbp
-    sub $80, %rsp
-    movq 48(%rbp), %rax
-    movq %rax, 32(%rsp)
-    movq 56(%rbp), %rax
-    movq %rax, 40(%rsp)
-    movq $0, 48(%rsp)
-    movq $0, 56(%rsp)
-    movq $0, 64(%rsp)
-    movq $0, 72(%rsp)
-    call tl_string_concat5
-    leave
-    ret
-
-    .globl tl_string_concat4
-tl_string_concat4:
-    push %rbp
-    mov %rsp, %rbp
-    sub $80, %rsp
-    movq 48(%rbp), %rax
-    movq %rax, 32(%rsp)
-    movq 56(%rbp), %rax
-    movq %rax, 40(%rsp)
-    movq 64(%rbp), %rax
-    movq %rax, 48(%rsp)
-    movq 72(%rbp), %rax
-    movq %rax, 56(%rsp)
-    movq $0, 64(%rsp)
-    movq $0, 72(%rsp)
-    call tl_string_concat5
-    leave
-    ret
-
-    .globl tl_string_concat5
-tl_string_concat5:
-    push %rbp
-    mov %rsp, %rbp
-    sub $128, %rsp
-    movq %rsi, -8(%rbp)
-    movq %rdi, -16(%rbp)
-    movq %rcx, -24(%rbp)
-    movq %rdx, -32(%rbp)
-    movq %r8, -40(%rbp)
-    movq %r9, -48(%rbp)
-    movq 48(%rbp), %rax
-    movq %rax, -56(%rbp)
-    movq 56(%rbp), %rax
-    movq %rax, -64(%rbp)
-    movq 64(%rbp), %rax
-    movq %rax, -72(%rbp)
-    movq 72(%rbp), %rax
-    movq %rax, -80(%rbp)
-    movq 80(%rbp), %rax
-    movq %rax, -88(%rbp)
-    movq 88(%rbp), %rax
-    movq %rax, -96(%rbp)
-    movq -32(%rbp), %rcx
-    addq -48(%rbp), %rcx
-    addq -64(%rbp), %rcx
-    addq -80(%rbp), %rcx
-    addq -96(%rbp), %rcx
-    movq %rcx, -104(%rbp)
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
-    movq %rax, -112(%rbp)
-    movq -112(%rbp), %rdi
-    movq -24(%rbp), %rsi
-    movq -32(%rbp), %rcx
-    rep movsb
-    movq -112(%rbp), %rdi
-    addq -32(%rbp), %rdi
-    movq -40(%rbp), %rsi
-    movq -48(%rbp), %rcx
-    rep movsb
-    movq -112(%rbp), %rdi
-    addq -32(%rbp), %rdi
-    addq -48(%rbp), %rdi
-    movq -56(%rbp), %rsi
-    movq -64(%rbp), %rcx
-    rep movsb
-    movq -112(%rbp), %rdi
-    addq -32(%rbp), %rdi
-    addq -48(%rbp), %rdi
-    addq -64(%rbp), %rdi
-    movq -72(%rbp), %rsi
-    movq -80(%rbp), %rcx
-    rep movsb
-    movq -112(%rbp), %rdi
-    addq -32(%rbp), %rdi
-    addq -48(%rbp), %rdi
-    addq -64(%rbp), %rdi
-    addq -80(%rbp), %rdi
-    movq -88(%rbp), %rsi
-    movq -96(%rbp), %rcx
-    rep movsb
-    call .L_tl_alloc16
-    movq -112(%rbp), %rdx
-    movq %rdx, 0(%rax)
-    movq -104(%rbp), %rdx
-    movq %rdx, 8(%rax)
-    movq -16(%rbp), %rdi
-    movq -8(%rbp), %rsi
-    leave
-    ret
-
-")
+  "")
 
 ;; #2386: byte copy helper used by lower-emit-memcpy for large by-value aggregate
 ;; copies. Always emitted. Linux SysV args rdi=dst, rsi=src, rdx=len; rep movsb
@@ -28078,12 +27540,18 @@ tl_atomic_i32_fetch_add_ptr:
   "(extern (tl_alloc [arg0 : i64]) : i64)
 (extern (tl_substring [arg0 : i64] [arg1 : i64] [arg2 : i64]) : i64)
 (extern (tl_string_concat [arg0 : i64] [arg1 : i64] [arg2 : i64] [arg3 : i64]) : i64)
+(extern (tl_string_concat3 [arg0 : i64] [arg1 : i64] [arg2 : i64] [arg3 : i64] [arg4 : i64] [arg5 : i64]) : i64)
+(extern (tl_string_concat4 [arg0 : i64] [arg1 : i64] [arg2 : i64] [arg3 : i64] [arg4 : i64] [arg5 : i64] [arg6 : i64] [arg7 : i64]) : i64)
+(extern (tl_string_concat5 [arg0 : i64] [arg1 : i64] [arg2 : i64] [arg3 : i64] [arg4 : i64] [arg5 : i64] [arg6 : i64] [arg7 : i64] [arg8 : i64] [arg9 : i64]) : i64)
 (extern (tl_int_to_string [arg0 : i64]) : String)
 (define (main) : i64
   (begin
     (tl_alloc 8)
     (tl_substring 0 0 0)
     (tl_string_concat 0 0 0 0)
+    (tl_string_concat3 0 0 0 0 0 0)
+    (tl_string_concat4 0 0 0 0 0 0 0 0)
+    (tl_string_concat5 0 0 0 0 0 0 0 0 0 0)
     (tl_int_to_string 1)
     42))")
 
@@ -28130,27 +27598,41 @@ tl_atomic_i32_fetch_add_ptr:
         (compiler-backend-string-contains? asm ".L_tl_fs_remove_dir_status:\n")))
     (not (compiler-backend-string-contains? asm ".L_tl_fs_rename_status:\n"))))
 
+(define (compiler-backend-runtime-string-helper-generators-empty?) : bool
+  (backend-and8
+    (string-eq (compiler-backend-runtime-int-to-string-functions) "")
+    (string-eq (compiler-backend-runtime-windows-int-to-string-functions) "")
+    (string-eq (compiler-backend-runtime-substring-functions) "")
+    (string-eq (compiler-backend-runtime-windows-substring-functions) "")
+    (string-eq (compiler-backend-runtime-str-view-functions) "")
+    (string-eq (compiler-backend-runtime-windows-str-view-functions) "")
+    (string-eq (compiler-backend-runtime-concat-functions) "")
+    (string-eq (compiler-backend-runtime-windows-concat-functions) "")))
+
 (define (compiler-backend-runtime-helper-asm-ok?) : bool
   (match (compiler-backend-emit-source (compiler-backend-runtime-helper-source))
     [(OkCompilerBackend asm)
       (and
+        (compiler-backend-runtime-string-helper-generators-empty?)
         (backend-and8
           (compiler-backend-string-contains? asm ".globl tl_alloc\n")
           (compiler-backend-string-contains? asm "tl_alloc:\n")
           (not (compiler-backend-string-contains? asm ".globl tl_oob_abort\n"))
           (not (compiler-backend-string-contains? asm "tl_oob_abort:\n"))
-          (compiler-backend-string-contains? asm ".globl tl_substring\n")
-          (compiler-backend-string-contains? asm "tl_substring:\n")
-          (compiler-backend-string-contains? asm ".globl tl_string_concat\n")
-          (compiler-backend-string-contains? asm "tl_string_concat:\n"))
+          (compiler-backend-string-contains? asm "    call tl_substring\n")
+          (compiler-backend-string-contains? asm "    call tl_string_concat\n")
+          (compiler-backend-string-contains? asm "    call tl_string_concat3\n")
+          (compiler-backend-string-contains? asm "    call tl_string_concat4\n"))
         (backend-and8
-          (compiler-backend-string-contains? asm ".globl tl_string_concat3\n")
-          (compiler-backend-string-contains? asm "tl_string_concat3:\n")
-          (compiler-backend-string-contains? asm ".globl tl_string_concat4\n")
-          (compiler-backend-string-contains? asm "tl_string_concat4:\n")
-          (compiler-backend-string-contains? asm ".globl tl_string_concat5\n")
-          (compiler-backend-string-contains? asm "tl_string_concat5:\n")
           (compiler-backend-string-contains? asm "    call tl_string_concat5\n")
+          (compiler-backend-string-contains? asm "    call tl_int_to_string\n")
+          (not (compiler-backend-string-contains? asm ".globl tl_substring\n"))
+          (not (compiler-backend-string-contains? asm "tl_substring:\n"))
+          (not
+            (compiler-backend-string-contains? asm ".globl tl_string_concat\n"))
+          (not (compiler-backend-string-contains? asm "tl_string_concat:\n"))
+          (not
+            (compiler-backend-string-contains? asm ".globl tl_string_concat5\n"))
           (and
             (not (compiler-backend-string-contains? asm "getrandom:\n"))
             (not (compiler-backend-string-contains? asm "getcwd:\n"))))
@@ -28160,24 +27642,33 @@ tl_atomic_i32_fetch_add_ptr:
           (not
             (compiler-backend-string-contains? asm ".globl tl_string_to_int\n"))
           (not (compiler-backend-string-contains? asm "tl_string_to_int:\n"))
-          (compiler-backend-string-contains? asm ".globl tl_int_to_string\n")
-          (compiler-backend-string-contains? asm "tl_int_to_string:\n")
+          (not
+            (compiler-backend-string-contains? asm ".globl tl_int_to_string\n"))
+          (not (compiler-backend-string-contains? asm "tl_int_to_string:\n"))
           (not (compiler-backend-string-contains? asm "tl_process_output:\n"))
           (not
             (compiler-backend-string-contains? asm "tl_random_system_seed:\n")))
         (backend-and4
-          (or
-            (compiler-backend-string-contains? asm "    call .L_tl_alloc8\n")
-            (compiler-backend-string-contains? asm "    call .L_tl_alloc16\n"))
+          (compiler-backend-string-contains? asm "    call tl_alloc\n")
           (not (compiler-backend-string-contains? asm ".extern tl_alloc\n"))
+          (not (compiler-backend-string-contains? asm ".extern tl_substring\n"))
+          (not
+            (compiler-backend-string-contains? asm ".extern tl_string_concat\n")))
+        (backend-and4
+          (not
+            (compiler-backend-string-contains? asm ".extern tl_int_to_string\n"))
           (not
             (compiler-backend-string-contains?
               asm
-              ".extern tl_process_output\n"))
+              ".L_tl_int_to_string_digit_loop:\n"))
           (not
             (compiler-backend-string-contains?
               asm
-              ".extern tl_random_system_seed\n")))
+              ".L_tl_int_to_string_copy_loop:\n"))
+          (not
+            (compiler-backend-string-contains?
+              asm
+              ".extern tl_process_output\n")))
         (backend-and4
           (not (compiler-backend-string-contains? asm "__errno_location:\n"))
           (not (compiler-backend-string-contains? asm "_errno:\n"))
@@ -28202,17 +27693,15 @@ tl_atomic_i32_fetch_add_ptr:
     (compiler-backend-str-view-helper-source))
     [(OkCompilerBackend asm)
       (and
-        (backend-and8
-          (compiler-backend-string-contains? asm ".globl tl_alloc\n")
-          (compiler-backend-string-contains? asm "tl_alloc:\n")
-          (compiler-backend-string-contains? asm ".globl tl_str_view\n")
-          (compiler-backend-string-contains? asm "tl_str_view:\n")
-          (compiler-backend-string-contains? asm ".L_tl_str_view_arena:\n")
-          (compiler-backend-string-contains? asm "    call tl_str_view\n")
+        (compiler-backend-string-contains? asm "    call tl_str_view\n")
+        (not (compiler-backend-string-contains? asm ".globl tl_str_view\n"))
+        (not (compiler-backend-string-contains? asm "tl_str_view:\n"))
+        (not
           (compiler-backend-string-contains?
             asm
-            "    call tl_arena_make_atomic\n")
-          (compiler-backend-string-contains? asm "    call tl_arena_set\n"))
+            "    call tl_arena_make_atomic\n"))
+        (not (compiler-backend-string-contains? asm "    call tl_arena_set\n"))
+        (not (compiler-backend-string-contains? asm ".L_tl_str_view_arena:\n"))
         (backend-and4
           (not (compiler-backend-string-contains? asm ".extern tl_str_view\n"))
           (not (compiler-backend-string-contains? asm ".globl tl_substring\n"))
@@ -28286,7 +27775,10 @@ tl_atomic_i32_fetch_add_ptr:
           (compiler-backend-string-contains? asm ".extern tl_print_err\n")
           (compiler-backend-string-contains? asm ".extern tl_string_eq\n")
           (compiler-backend-string-contains? asm ".extern tl_string_to_int\n"))
-        (compiler-backend-string-contains? asm "tl_int_to_string:\n")
+        (compiler-backend-string-contains? asm "    call tl_int_to_string\n")
+        (not (compiler-backend-string-contains? asm "tl_int_to_string:\n"))
+        (not
+          (compiler-backend-string-contains? asm ".extern tl_int_to_string\n"))
         (compiler-backend-string-contains?
           asm
           "    movq %rcx, .L_tl_argc(%rip)\n")

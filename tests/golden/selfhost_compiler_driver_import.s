@@ -220,25 +220,56 @@ tl_array_fill8:
 tl_array_zero:
     pushq %rbp
     movq %rsp, %rbp
-    subq $96, %rsp
+    subq $224, %rsp
     movq %rdi, -8(%rbp)
     movq %rsi, -16(%rbp)
 .Lf9_entry:
-    movq $0, -32(%rbp)
-.Lf9_while_header.0:
+    movq -16(%rbp), %rax
+    movq %rax, %r10
+    movq %rax, %r11
+    sarq $63, %r11
+    movabsq $7, %r8
+    andq %r8, %r11
+    addq %r11, %rax
+    sarq $3, %rax
+    movq %rax, -32(%rbp)
+    movq %rax, -40(%rbp)
     movq -32(%rbp), %rax
-    movq -16(%rbp), %r8
+    imulq $8, %rax
+    movq %rax, -56(%rbp)
+    movq -8(%rbp), %rax
+    movq %rax, -72(%rbp)
+    movq $0, -88(%rbp)
+    movq -56(%rbp), %rax
+    movq %rax, -96(%rbp)
+.Lf9_while_header.0:
+    movq -88(%rbp), %rax
+    movq -40(%rbp), %r8
     cmpq %r8, %rax
     jge .Lf9_while_exit.2
 .Lf9_while_body.1:
-    movq -8(%rbp), %r10
-    movq -32(%rbp), %r8
-    movb $0, (%r10,%r8,1)
-    movq -32(%rbp), %rax
+    movq -72(%rbp), %r10
+    movq -88(%rbp), %r8
+    movq $0, (%r10,%r8,8)
+    movq -88(%rbp), %rax
     addq $1, %rax
-    movq %rax, -32(%rbp)
+    movq %rax, -88(%rbp)
     jmp .Lf9_while_header.0
 .Lf9_while_exit.2:
+.Lf9_while_header.3:
+    movq -96(%rbp), %rax
+    movq -16(%rbp), %r8
+    cmpq %r8, %rax
+    jge .Lf9_while_exit.5
+.Lf9_while_body.4:
+    movq -8(%rbp), %r10
+    movq -96(%rbp), %r8
+    movb $0, (%r10,%r8,1)
+    movq -96(%rbp), %rax
+    addq $1, %rax
+    movq %rax, -96(%rbp)
+    jmp .Lf9_while_header.3
+.Lf9_while_exit.5:
     leave
     ret
 

@@ -754,10 +754,12 @@
         (selfhost-lint-dead-expr-refs
           (ast-node-get then-branch)
           (selfhost-lint-dead-expr-refs (ast-node-get cond) refs)))]
-    [(AstExprLet bindings body)
-      (selfhost-lint-dead-expr-refs
-        (ast-node-get body)
-        (selfhost-lint-dead-let-binding-refs bindings refs))]
+    [(AstExprLet let-box)
+      (match (box-get let-box)
+        [(AstLet bindings body)
+          (selfhost-lint-dead-expr-refs
+            (ast-node-get body)
+            (selfhost-lint-dead-let-binding-refs bindings refs))])]
     [(AstExprLambda lambda-box)
       (match (box-get lambda-box)
         [(AstLambda params ret body)
@@ -826,16 +828,18 @@
           (selfhost-lint-dead-expr-refs
             (ast-node-get start)
             (selfhost-lint-dead-type-refs index-ty refs))))]
-    [(AstExprSpmdReduce _ _ index-ty start end init value)
-      (selfhost-lint-dead-expr-refs
-        (ast-node-get value)
-        (selfhost-lint-dead-expr-refs
-          (ast-node-get init)
+    [(AstExprSpmdReduce reduce-box)
+      (match (box-get reduce-box)
+        [(AstSpmdReduce _ _ index-ty start end init value)
           (selfhost-lint-dead-expr-refs
-            (ast-node-get end)
+            (ast-node-get value)
             (selfhost-lint-dead-expr-refs
-              (ast-node-get start)
-              (selfhost-lint-dead-type-refs index-ty refs)))))]
+              (ast-node-get init)
+              (selfhost-lint-dead-expr-refs
+                (ast-node-get end)
+                (selfhost-lint-dead-expr-refs
+                  (ast-node-get start)
+                  (selfhost-lint-dead-type-refs index-ty refs)))))])]
     [(AstExprSpmdScan scan-box)
       (match (box-get scan-box)
         [(AstSpmdScan _ _ index-ty start end _ prefix-ty init value body)

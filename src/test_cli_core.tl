@@ -1023,12 +1023,14 @@
           (tltest-reach-mark-expr
             then-branch
             (tltest-reach-mark-expr cond names))))]
-    [(AstExprLet bindings body-box)
-      (let
-        [body : AstExpr (ast-node-get body-box)]
-        (tltest-reach-mark-expr
-          body
-          (tltest-reach-mark-let-bindings bindings names)))]
+    [(AstExprLet let-box)
+      (match (box-get let-box)
+        [(AstLet bindings body-box)
+          (let
+            [body : AstExpr (ast-node-get body-box)]
+            (tltest-reach-mark-expr
+              body
+              (tltest-reach-mark-let-bindings bindings names)))])]
     [(AstExprLambda lambda-box)
       (match (box-get lambda-box)
         [(AstLambda _ _ body-box)
@@ -1109,17 +1111,21 @@
         (tltest-reach-mark-expr
           body
           (tltest-reach-mark-expr end (tltest-reach-mark-expr start names))))]
-    [(AstExprSpmdReduce _ _ _ start-box end-box init-box value-box)
-      (let
-        [start : AstExpr (ast-node-get start-box)]
-        [end : AstExpr (ast-node-get end-box)]
-        [init : AstExpr (ast-node-get init-box)]
-        [value : AstExpr (ast-node-get value-box)]
-        (tltest-reach-mark-expr
-          value
-          (tltest-reach-mark-expr
-            init
-            (tltest-reach-mark-expr end (tltest-reach-mark-expr start names)))))]
+    [(AstExprSpmdReduce reduce-box)
+      (match (box-get reduce-box)
+        [(AstSpmdReduce _ _ _ start-box end-box init-box value-box)
+          (let
+            [start : AstExpr (ast-node-get start-box)]
+            [end : AstExpr (ast-node-get end-box)]
+            [init : AstExpr (ast-node-get init-box)]
+            [value : AstExpr (ast-node-get value-box)]
+            (tltest-reach-mark-expr
+              value
+              (tltest-reach-mark-expr
+                init
+                (tltest-reach-mark-expr
+                  end
+                  (tltest-reach-mark-expr start names)))))])]
     [(AstExprSpmdScan scan-box)
       (match (box-get scan-box)
         [(AstSpmdScan _ _ _ start-box end-box _ _ init-box value-box body-box)

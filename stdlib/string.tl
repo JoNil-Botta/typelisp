@@ -30,6 +30,18 @@
 ;: Runtime active-arena allocator used by integer rendering.
 (extern (string-runtime-alloc [arg0 : i64]) : (MutPtr u8) (:symbol "tl_alloc"))
 
+;; Internal raw byte copy primitive backed by the always-emitted runtime helper.
+;;
+;; Caller contract: `n >= 0`; `src` points at at least `n` initialized readable
+;; bytes; `dst` points at at least `n` writable bytes; and both ranges remain
+;; live for the call. Overlap is allowed because `tl_memcpy` has memmove
+;; semantics for the `dst > src` case.
+(unsafe
+  (extern (string-runtime-copy-bytes!
+    [dst : (MutPtr u8)]
+    [src : (Ptr u8)]
+    [n : i64]) : unit (:symbol "tl_memcpy")))
+
 ;: Write one ASCII byte into an active-arena buffer.
 (define (int->string-write-byte!
   [dst : (MutPtr u8)]
@@ -110,38 +122,17 @@
             (tl_oob_abort)
             unit))])))
 
-;: Copy `n` bytes from `src` into `dst` at byte offset `doff`, eight bytes at a
-;: time with a byte tail. x86 tolerates the unaligned word stores, and the final
-;: partial word is copied byte-wise so no read passes `src`'s `n`th byte.
+;: Copy `n` initialized bytes from `src` into `dst` at byte offset `doff`.
+;:
+;: This is a stdlib-internal raw-pointer helper. Callers must uphold the
+;: `string-runtime-copy-bytes!` range contract above.
 (define (str-copy-bytes-into
   [src : (Ptr u8)]
   [dst : (MutPtr u8)]
   [doff : i64]
   [n : i64]) : unit
-  (let
-    [words : i64 (/ n 8)]
-    [src64 : (Ptr i64)
-      (unsafe
-        (ptr-cast src : (Ptr i64)))]
-    [dst64 : (MutPtr i64)
-      (unsafe
-        (ptr-cast (ptr-offset dst doff) : (MutPtr i64)))]
-    [w : i64 0]
-    [b : i64 (* words 8)]
-    (begin
-      (while (< w words)
-        (begin
-          (unsafe
-            (ptr-write! (ptr-offset dst64 w) (ptr-read (ptr-offset src64 w))))
-          (set! w (+ w 1))))
-      (while (< b n)
-        (begin
-          (unsafe
-            (ptr-write!
-              (ptr-offset dst (+ doff b))
-              (ptr-read (ptr-offset src b))))
-          (set! b (+ b 1))))
-      unit)))
+  (unsafe
+    (string-runtime-copy-bytes! (ptr-offset dst doff) src n)))
 
 ;: Copy a checked borrowed byte range into a fresh active-arena String.
 (define (substring-copy-checked [text : (& text str)] [start : i64] [len : i64]) : String

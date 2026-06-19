@@ -4326,11 +4326,17 @@
                               [(JsonFound name)
                                 (set!
                                   result
-                                  (lsp-handle-tl-structural-replace id params docs))]
+                                  (lsp-handle-tl-structural-replace
+                                    id
+                                    params
+                                    docs))]
                               [(JsonMissing)
                                 (set!
                                   result
-                                  (lsp-handle-tl-structural-replace-at id params docs))]))]
+                                  (lsp-handle-tl-structural-replace-at
+                                    id
+                                    params
+                                    docs))]))]
                         [(JsonMissing)
                           (lsp-write-error id -32600 "Missing params")]))]
                   [(JsonMissing) unit])))
@@ -5205,29 +5211,10 @@
     (panic "lsp-validate-forms-line-context failed")))
 
 ;; Position-based editing helpers
-
-;; Convert LSP position (0-indexed line, character) to byte offset
-(define (lsp-line-col-to-offset [text : String] [line : i64] [col : i64]) : i64
-  (let
-    [n : i64 (string-length text)]
-    [current-line : i64 0]
-    [i : i64 0]
-    (begin
-      (while (and (< i n) (< current-line line))
-        (begin
-          (if (= (string-ref text i) #\newline')
-            (set! current-line (+ current-line 1))
-            unit)
-          (set! i (+ i 1))))
-      (if (= current-line line)
-        (+ i col)
-        n))))
-
 ;; Find start index of innermost form containing offset. Returns -1 if not found.
 ;; Uses string-ref on literal parens since char literals for parens confuse the parser.
 (define (lsp-find-form-at-offset [text : String] [offset : i64]) : i64
   (let
-    [n : i64 (string-length text)]
     [i : i64 offset]
     [depth : i64 0]
     [result : i64 -1]
@@ -5277,7 +5264,7 @@
   [col : i64]
   [new-text : String]) : String
   (let
-    [offset : i64 (lsp-line-col-to-offset text line col)]
+    [offset : i64 (lsp-offset-at-position text line col)]
     (if (= offset (string-length text))
       text
       (let
@@ -5286,9 +5273,13 @@
           text
           (let
             [form-end : i64 (lsp-find-form-end-at-offset text form-start)]
-            [before : String (substring text 0 form-start)]
-            [after : String (substring text form-end (- (string-length text) form-end))]
-            (str-cat before (str-cat new-text after))))))))
+            (if (= form-end -1)
+              text
+              (let
+                [before : String (substring text 0 form-start)]
+                [after : String
+                  (substring text form-end (- (string-length text) form-end))]
+                (str-cat before new-text after)))))))))
 
 ;; tl/structuralReplaceAt - Replace form at position (line, character)
 (define (lsp-handle-tl-structural-replace-at
@@ -5305,9 +5296,12 @@
               [(OkLspJsonText new-text)
                 (let
                   [line : i64 (lsp-json-int-field-default position "line" 0)]
-                  [col : i64 (lsp-json-int-field-default position "character" 0)]
-                  [replaced : String (lsp-replace-form-at-position text line col new-text)]
-                  [formatted : String (format-rules-render-source-width replaced 80)]
+                  [col : i64
+                    (lsp-json-int-field-default position "character" 0)]
+                  [replaced : String
+                    (lsp-replace-form-at-position text line col new-text)]
+                  [formatted : String
+                    (format-rules-render-source-width replaced 80)]
                   (begin
                     (lsp-write-response
                       id

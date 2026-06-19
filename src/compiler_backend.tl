@@ -13407,11 +13407,12 @@
           [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
       [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
 
-;; `syscall` clobbers %rcx and %r11, but the register allocator only homes values
-;; in callee-saved registers (%rbx, %r12-%r15) or rbp-relative stack slots, so no
-;; live value can be lost; the raw kernel result lands in %rax -> dst. The raw
-;; `syscall` instruction and its register ABI are Linux x86_64 only; emitting it
-;; for any other target would silently miscompile, so reject it instead.
+;; `syscall` clobbers %rcx/%r11 and uses Linux syscall arg registers. The primary
+;; integer pool is callee-saved, and the scalar caller-saved extension rejects
+;; intervals spanning syscall points, so no live register home can be lost; the
+;; raw kernel result lands in %rax -> dst. The raw `syscall` instruction and its
+;; register ABI are Linux x86_64 only; emitting it for any other target would
+;; silently miscompile, so reject it instead.
 (define (compiler-backend-emit-syscall
   [target : CompilerBackendTarget]
   [assignments : CompilerRegAssignmentList]

@@ -29702,6 +29702,109 @@
         span)]
     [_ right]))
 
+(define (macro-literal-to-spanned-sexpr [lit : AstLiteral] [span : SourceSpan]) : SpannedSexpr
+  (match lit
+    [(AstLitInt n) (SpSInt n span)]
+    [(AstLitFloat text) (SpSFloat text span)]
+    [(AstLitBool value)
+      (SpSSym
+        (if value
+          "true"
+          "false")
+        span)]
+    [(AstLitChar c) (SpSChar c span)]
+    [(AstLitString text) (SpSStr text span)]
+    [(AstLitUnit) (SpSSym "unit" span)]))
+
+(define (macro-pattern-list-to-spanned-sexpr
+  [patterns : AstPatternList]
+  [span : SourceSpan]
+  [origin : AstExpr]) : ResultMacroSexpr
+  (match patterns
+    [(AstPatternNil) (OkMacroSexpr (SpSNil span))]
+    [(AstPatternCons head rest)
+      (match (macro-pattern-to-spanned-sexpr (box-get head) span origin)
+        [(OkMacroSexpr shead)
+          (match (macro-pattern-list-to-spanned-sexpr
+            (box-get rest)
+            span
+            origin)
+            [(OkMacroSexpr stail)
+              (OkMacroSexpr (spanned-sexpr-cons shead stail span))]
+            [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]))
+
+(define (macro-pattern-to-spanned-sexpr
+  [pattern : AstPattern]
+  [span : SourceSpan]
+  [origin : AstExpr]) : ResultMacroSexpr
+  (match pattern
+    [(AstPatBinding name)
+      (OkMacroSexpr (SpSSym (macro-output-syntax-name (intern-str name)) span))]
+    [(AstPatWildcard) (OkMacroSexpr (SpSSym "_" span))]
+    [(AstPatLiteral lit)
+      (OkMacroSexpr (macro-literal-to-spanned-sexpr lit span))]
+    [(AstPatVariant name args-box)
+      (match (macro-pattern-list-to-spanned-sexpr
+        (box-get args-box)
+        span
+        origin)
+        [(OkMacroSexpr args)
+          (OkMacroSexpr
+            (spanned-sexpr-cons
+              (SpSSym (macro-output-syntax-name (intern-str name)) span)
+              args
+              span))]
+        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+    [(AstPatTuple _)
+      (ErrMacroSexpr
+        (macro-output-syntax-diag
+          origin
+          "typecheck: module macro output tuple patterns cannot be parsed as source declarations"))]
+    [(AstPatVar _ _)
+      (ErrMacroSexpr
+        (macro-output-syntax-diag
+          origin
+          "typecheck: module macro output typed patterns cannot be parsed as source declarations"))]))
+
+(define (macro-match-arm-bracket
+  [arm : AstMatchArm]
+  [span : SourceSpan]
+  [origin : AstExpr]) : ResultMacroSexpr
+  (match arm
+    [(AstMatchArm pattern body-id)
+      (match (macro-pattern-to-spanned-sexpr pattern span origin)
+        [(OkMacroSexpr spattern)
+          (match (macro-child-to-spanned-sexpr body-id span origin)
+            [(OkMacroSexpr sbody)
+              (OkMacroSexpr
+                (spanned-sexpr-bracket-list
+                  (spanned-sexpr-cons
+                    spattern
+                    (spanned-sexpr-cons sbody (SpSNil span) span)
+                    span)
+                  span))]
+            [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]))
+
+(define (macro-match-arm-list-to-spanned-sexpr
+  [arms : AstMatchArmList]
+  [span : SourceSpan]
+  [origin : AstExpr]) : ResultMacroSexpr
+  (match arms
+    [(AstMatchArmNil) (OkMacroSexpr (SpSNil span))]
+    [(AstMatchArmCons head rest)
+      (match (macro-match-arm-bracket head span origin)
+        [(OkMacroSexpr shead)
+          (match (macro-match-arm-list-to-spanned-sexpr
+            (box-get rest)
+            span
+            origin)
+            [(OkMacroSexpr stail)
+              (OkMacroSexpr (spanned-sexpr-cons shead stail span))]
+            [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]))
+
 (define (macro-let-binding-bracket
   [binding : AstLetBinding]
   [span : SourceSpan]
@@ -29889,6 +29992,20 @@
               (OkMacroSexpr (macro-form2 "while" scond sbody span))]
             [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
         [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch scrutinee-id arms)
+          (match (macro-child-to-spanned-sexpr scrutinee-id span origin)
+            [(OkMacroSexpr sscrutinee)
+              (match (macro-match-arm-list-to-spanned-sexpr arms span origin)
+                [(OkMacroSexpr sarms)
+                  (OkMacroSexpr
+                    (spanned-sexpr-cons
+                      (SpSSym "match" span)
+                      (spanned-sexpr-cons sscrutinee sarms span)
+                      span))]
+                [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+            [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])])]
     [(AstExprSet name value-id)
       (match (macro-child-to-spanned-sexpr value-id span origin)
         [(OkMacroSexpr svalue)

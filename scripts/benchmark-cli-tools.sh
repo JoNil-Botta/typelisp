@@ -102,7 +102,7 @@ CORPUS_MANIFEST="$RUNDIR/compiler-corpus.txt"
 CORPUS_SIG="$RUNDIR/corpus.sha256"
 FINGERPRINTS="$RUNDIR/fingerprints.tsv"
 CASE_LIST="$RUNDIR/cases.txt"
-CHOOSER_QUEUE_FIXTURE="$ROOT/benchmarks/cli-tools/chooser-queue.json"
+CHOOSER_QUEUE_FIXTURE="$ROOT/tools/work-queue-chooser/fixtures/chooser-queue.json"
 TOTAL_MS=0
 SETUP_MS=0
 

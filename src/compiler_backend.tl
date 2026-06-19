@@ -13303,14 +13303,24 @@
   [dst : i64]
   [label : String]
   [ty : AstType]) : ResultCompilerBackend
-  (OkCompilerBackend
-    (string-append
-      (str-cat "    movq " label "(%rip), %rax\n" "" "")
-      (compiler-backend-emit-store-typed-var-with-plan
-        assignments
-        dst
-        "%rax"
-        ty))))
+  (let
+    [scratch-asm : String
+      (string-append
+        (str-cat "    movq " label "(%rip), %rax\n" "" "")
+        (compiler-backend-emit-store-typed-var-with-plan
+          assignments
+          dst
+          "%rax"
+          ty))]
+    (match (compiler-reg-assignment-lookup assignments dst)
+      [(CompilerRegSomeLocation location)
+        (match location
+          ;; Entry loads produce one pointer-sized word; aggregate register-pair
+          ;; homes stay on the scratch fallback.
+          [(CompilerRegRegister home)
+            (OkCompilerBackend (str-cat "    movq " label "(%rip), " home "\n"))]
+          [_ (OkCompilerBackend scratch-asm)])]
+      [(CompilerRegNoLocation) (OkCompilerBackend scratch-asm)])))
 
 (define (compiler-backend-cpuid-result-move [reg-index : i64]) : String
   (cond

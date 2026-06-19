@@ -6362,6 +6362,107 @@
       (not (compiler-backend-instr-contains? instr "    pushq %rax\n"))
       (not (compiler-backend-instr-contains? instr "    popq ")))))
 
+(define (compiler-backend-entry-load-register-homes-ok?) : bool
+  (let
+    [assignments : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 0 (CompilerRegRegister "%r12"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment 1 (CompilerRegRegister "%r13"))
+          (compiler-reg-assignment-cons
+            (CompilerRegAssignment 2 (CompilerRegRegister "%r14"))
+            CompilerRegAssignmentNil)))]
+    [instrs : CompilerIrInstrList
+      (compiler-ir-instr-cons
+        (IrInstrEntryArgc 0)
+        (compiler-ir-instr-cons
+          (IrInstrEntryArgv 1)
+          (compiler-ir-instr-cons (IrInstrEntryEnvp 2) IrInstrNil)))]
+    (match (compiler-backend-emit-test-instrs instrs assignments 3)
+      [(OkCompilerBackend asm)
+        (and
+          (backend-and4
+            (compiler-backend-string-contains?
+              asm
+              "    movq .L_tl_argc(%rip), %r12\n")
+            (compiler-backend-string-contains?
+              asm
+              "    movq .L_tl_argv(%rip), %r13\n")
+            (compiler-backend-string-contains?
+              asm
+              "    movq .L_tl_envp(%rip), %r14\n")
+            (not
+              (compiler-backend-string-contains?
+                asm
+                "    movq .L_tl_argc(%rip), %rax\n")))
+          (backend-and4
+            (not
+              (compiler-backend-string-contains?
+                asm
+                "    movq .L_tl_argv(%rip), %rax\n"))
+            (not
+              (compiler-backend-string-contains?
+                asm
+                "    movq .L_tl_envp(%rip), %rax\n"))
+            (not
+              (compiler-backend-string-contains? asm "    movq %rax, %r12\n"))
+            (not
+              (compiler-backend-string-contains? asm "    movq %rax, %r13\n")))
+          (not (compiler-backend-string-contains? asm "    movq %rax, %r14\n")))]
+      [(ErrCompilerBackend _) false])))
+
+(define (compiler-backend-entry-load-fallbacks-ok?) : bool
+  (let
+    [spill-assignments : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 0 (CompilerRegSpill -16))
+        CompilerRegAssignmentNil)]
+    [pair-assignments : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 0 (CompilerRegRegisterPair "%r12" "%r13"))
+        CompilerRegAssignmentNil)]
+    [no-location-ok? : bool
+      (match (compiler-backend-emit-test-instrs
+        (compiler-ir-instr-cons (IrInstrEntryArgc 0) IrInstrNil)
+        CompilerRegAssignmentNil
+        1)
+        [(OkCompilerBackend asm)
+          (and
+            (compiler-backend-string-contains?
+              asm
+              "    movq .L_tl_argc(%rip), %rax\n")
+            (compiler-backend-string-contains? asm "    movq %rax, -8(%rbp)\n"))]
+        [(ErrCompilerBackend _) false])]
+    [spill-ok? : bool
+      (match (compiler-backend-emit-test-instrs
+        (compiler-ir-instr-cons (IrInstrEntryArgv 0) IrInstrNil)
+        spill-assignments
+        1)
+        [(OkCompilerBackend asm)
+          (and
+            (compiler-backend-string-contains?
+              asm
+              "    movq .L_tl_argv(%rip), %rax\n")
+            (compiler-backend-string-contains? asm "    movq %rax, -16(%rbp)\n"))]
+        [(ErrCompilerBackend _) false])]
+    [pair-ok? : bool
+      (match (compiler-backend-emit-test-instrs
+        (compiler-ir-instr-cons (IrInstrEntryEnvp 0) IrInstrNil)
+        pair-assignments
+        1)
+        [(OkCompilerBackend asm)
+          (and
+            (compiler-backend-string-contains?
+              asm
+              "    movq .L_tl_envp(%rip), %rax\n")
+            (compiler-backend-string-contains? asm "    movq %rax, %r12\n")
+            (not
+              (compiler-backend-string-contains?
+                asm
+                "    movq .L_tl_envp(%rip), %r12\n")))]
+        [(ErrCompilerBackend _) false])]
+    (and no-location-ok? spill-ok? pair-ok?)))
+
 (define (compiler-backend-cpuid-eax-direct-ok?) : bool
   (let
     [instr : CompilerIrInstr (IrInstrCpuId 0 (IrValueI64 7) (IrValueI64 0) 0)]
@@ -6437,7 +6538,9 @@
       (compiler-backend-instr-contains?
         (IrInstrSyscall 0 (IrCallArgsTwo (IrValueI64 231) (IrValueI64 0)))
         "    xorl %edi, %edi\n")
-      (compiler-backend-full-syscall-registers-ok?))))
+      (compiler-backend-full-syscall-registers-ok?))
+    (compiler-backend-entry-load-register-homes-ok?)
+    (compiler-backend-entry-load-fallbacks-ok?)))
 
 (define (compiler-backend-numeric-cast-shape-ok?) : bool
   (backend-and8

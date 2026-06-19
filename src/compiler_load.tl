@@ -4252,7 +4252,7 @@
         "generated-fn"
         AstParamNil
         (AstTyI64)
-        (ast-node-push (AstExprLiteral (AstLitInt 1))))]
+        (ast-node-push (AstExprLiteral (ast-lit-int 1))))]
     [decl : AstDecl (ast-decl-comptime-decl-with-meta meta inner)]
     (match (compiler-load-package-transform-decl
       "demo"
@@ -6480,19 +6480,19 @@
         "runtime-helper"
         AstParamNil
         (AstTyI64)
-        (ast-node-push (AstExprLiteral (AstLitInt 1))))]
+        (ast-node-push (AstExprLiteral (ast-lit-int 1))))]
     [helper-decl : AstDecl
       (ast-decl-def-fn
         "helper"
         AstParamNil
         (AstTyI64)
-        (ast-node-push (AstExprLiteral (AstLitInt 2))))]
+        (ast-node-push (AstExprLiteral (ast-lit-int 2))))]
     [main-decl : AstDecl
       (ast-decl-def-fn
         "main"
         AstParamNil
         (AstTyI64)
-        (ast-node-push (AstExprLiteral (AstLitInt 0))))]
+        (ast-node-push (AstExprLiteral (ast-lit-int 0))))]
     [decls : AstDeclList
       (ast-decl-cons
         runtime-decl

@@ -58,6 +58,9 @@ with_scratch_function_reject|check-fail|tests/safety/with_scratch_function_rejec
 integer_literal_i8_overflow_reject|check-fail|tests/safety/integer_literal_i8_overflow_reject.tl|-|integer literal 128 does not fit expected type i8
 integer_literal_u8_overflow_reject|check-fail|tests/safety/integer_literal_u8_overflow_reject.tl|-|integer literal 256 does not fit expected type u8
 integer_literal_unsigned_negative_reject|check-fail|tests/safety/integer_literal_unsigned_negative_reject.tl|-|integer literal -1 does not fit expected type u8
+integer_literal_u64_overflow_reject|check-fail|tests/safety/integer_literal_u64_overflow_reject.tl|-|integer literal 18446744073709551616 does not fit expected type u64
+integer_literal_u64_based_overflow_reject|check-fail|tests/safety/integer_literal_u64_based_overflow_reject.tl|-|integer literal 0x10000000000000000 does not fit expected type u64
+integer_literal_u64_negative_reject|check-fail|tests/safety/integer_literal_u64_negative_reject.tl|-|integer literal -1 does not fit expected type u64
 in_arena_inner_region_escape|check-fail|tests/safety/in_arena_inner_region_escape.tl|-|cannot escape with-arena
 spmd_outer_mutation_reject|check-fail|tests/safety/spmd_outer_mutation_reject.tl|-|foreach cannot set binding declared outside foreach
 spmd_reduce_f64_min_reject|check-fail|tests/safety/spmd_reduce_f64_min_reject.tl|-|spmd-reduce min requires an i32 or i64 type

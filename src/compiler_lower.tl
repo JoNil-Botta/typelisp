@@ -5704,7 +5704,7 @@
 
 (define (lower-literal-value-with-type [lit : AstLiteral] [ty : AstType]) : CompilerIrValue
   (match lit
-    [(AstLitInt n) (IrValueI64 n)]
+    [(AstLitInt _ text) (IrValueI64 (ast-int-literal-i64-bits text))]
     [(AstLitFloat n) (IrValueF64 (lower-float-literal-bits n ty))]
     [(AstLitBool b) (IrValueBool b)]
     [(AstLitChar c) (IrValueChar c)]
@@ -8446,7 +8446,7 @@
 
 (define (lower-literal-payload-supported? [lit : AstLiteral]) : bool
   (match lit
-    [(AstLitInt _) true]
+    [(AstLitInt _ _) true]
     [(AstLitBool _) true]
     [(AstLitChar _) true]
     [(AstLitString _) true]
@@ -13305,7 +13305,7 @@
             (ty-node-get elem)
             (IrValueI64 0)
             (AstTyI64)
-            (AstExprLiteral (AstLitInt 0))
+            (AstExprLiteral (ast-lit-int 0))
             origin)]
         [(AstTyBox elem)
           (lower-box
@@ -21338,7 +21338,7 @@
 
 (define (lower-make-array-zero-literal-length? [len : AstExpr]) : bool
   (match (ast-expr-unspan len)
-    [(AstExprLiteral (AstLitInt value)) (= value 0)]
+    [(AstExprLiteral (AstLitInt value _)) (= value 0)]
     [_ false]))
 
 (define (lower-make-array-init-loop-nonzero
@@ -24079,7 +24079,7 @@
                           (ast-expr-binary
                             (AstBinAdd)
                             (ast-node-push (AstExprVar (intern index)))
-                            (ast-node-push (AstExprLiteral (AstLitInt 1)))))
+                            (ast-node-push (AstExprLiteral (ast-lit-int 1)))))
                         (AstExprNil))))))
               (ast-expr-cons
                 (ast-node-push (AstExprVar (lower-spmd-reduce-acc-id)))
@@ -24269,7 +24269,7 @@
                               (ast-expr-binary
                                 (AstBinAdd)
                                 (ast-node-push (AstExprVar (intern index)))
-                                (ast-node-push (AstExprLiteral (AstLitInt 1)))))
+                                (ast-node-push (AstExprLiteral (ast-lit-int 1)))))
                             (AstExprNil))))))))
               (AstExprNil))))))))
 
@@ -24559,7 +24559,8 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lower-simple-spmd-broadcast-lane env type-env inner))]
-    [(AstExprLiteral (AstLitInt n)) (LowerSomeIrValue (IrValueI64 n))]
+    [(AstExprLiteral (AstLitInt _ text))
+      (LowerSomeIrValue (IrValueI64 (ast-int-literal-i64-bits text)))]
     [(AstExprVar name)
       (match (sym-i64-lookup-id env name)
         [(SomeI64 var-id)
@@ -24683,7 +24684,7 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lower-masked-vector-index-literal-offset inner))]
-    [(AstExprLiteral (AstLitInt n))
+    [(AstExprLiteral (AstLitInt n _))
       (if (>= n 0)
         n
         -1)]
@@ -24703,7 +24704,7 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lower-masked-vector-positive-power-two-literal inner))]
-    [(AstExprLiteral (AstLitInt n))
+    [(AstExprLiteral (AstLitInt n _))
       (if (> n 0)
         (if (= (bit-and n (- n 1)) 0)
           n
@@ -26228,7 +26229,7 @@
       (let
         [lit-ty : AstType (tc-literal-type lit)]
         (match lit
-          [(AstLitInt _)
+          [(AstLitInt _ _)
             (if (and
               (> (lower-simd-lanes-for-elem mode dst-elem) 0)
               (tc-integer-type? dst-elem))
@@ -43867,19 +43868,19 @@
             "helper"
             AstParamNil
             (AstTyI64)
-            (ast-node-push (AstExprLiteral (AstLitInt 7))))
+            (ast-node-push (AstExprLiteral (ast-lit-int 7))))
           (ast-decl-cons
             (ast-decl-def-fn
               "callback-target"
               AstParamNil
               (AstTyI64)
-              (ast-node-push (AstExprLiteral (AstLitInt 11))))
+              (ast-node-push (AstExprLiteral (ast-lit-int 11))))
             (ast-decl-cons
               (ast-decl-def-fn
                 "dead"
                 AstParamNil
                 (AstTyI64)
-                (ast-node-push (AstExprLiteral (AstLitInt 9))))
+                (ast-node-push (AstExprLiteral (ast-lit-int 9))))
               AstDeclNil)))))))
 
 (define (compiler-lower-ast-dce-no-main-program) : AstProgram
@@ -43889,13 +43890,13 @@
         "helper"
         AstParamNil
         (AstTyI64)
-        (ast-node-push (AstExprLiteral (AstLitInt 7))))
+        (ast-node-push (AstExprLiteral (ast-lit-int 7))))
       (ast-decl-cons
         (ast-decl-def-fn
           "dead"
           AstParamNil
           (AstTyI64)
-          (ast-node-push (AstExprLiteral (AstLitInt 9))))
+          (ast-node-push (AstExprLiteral (ast-lit-int 9))))
         AstDeclNil))))
 
 (define (compiler-lower-unsafe-ast-dce-source) : String

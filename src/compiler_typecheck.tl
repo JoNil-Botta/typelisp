@@ -4637,6 +4637,10 @@
       (struct-get c r))))
 (define (return-u32) : u32 4294967295)
 (define (return-u64) : u64 9223372036854775807)
+(define (return-u64-full-dec) : u64 18446744073709551615)
+(define (return-u64-full-hex) : u64 0xffffffffffffffff)
+(define (return-u64-full-bin) : u64 0b1111111111111111111111111111111111111111111111111111111111111111)
+(define (return-u64-high-bit) : u64 9223372036854775808)
 (define (call-i16) : i16 (take-i16 -32768))
 (define (call-u32) : u32 (take-u32 2147483648))
 (define (ffi-call) : i32 (ffi-take-i32 2147483647))
@@ -4665,6 +4669,15 @@
 
 (define (compiler-typecheck-scalar-int-unsigned-negative-source) : String
   "(define (main) : u8 -1)")
+
+(define (compiler-typecheck-scalar-int-u64-overflow-source) : String
+  "(define (main) : u64 18446744073709551616)")
+
+(define (compiler-typecheck-scalar-int-u64-based-overflow-source) : String
+  "(define (main) : u64 0x10000000000000000)")
+
+(define (compiler-typecheck-scalar-int-u64-negative-source) : String
+  "(define (main) : u64 -1)")
 
 (define (compiler-typecheck-scalar-int-binop-overflow-source) : String
   "(define (main [x : i8]) : i8 (+ 128 x))")
@@ -4806,6 +4819,27 @@
           (compiler-typecheck-error-ok?
             (compiler-typecheck-scalar-int-unsigned-negative-source)
             "typecheck: integer literal -1 does not fit expected type u8")))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-scalar-int-u64-overflow-source)
+            "typecheck: integer literal 18446744073709551616 does not fit expected type u64")))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-scalar-int-u64-based-overflow-source)
+            "typecheck: integer literal 0x10000000000000000 does not fit expected type u64")))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-scalar-int-u64-negative-source)
+            "typecheck: integer literal -1 does not fit expected type u64")))
       (set!
         ok
         (and

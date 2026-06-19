@@ -173,7 +173,7 @@ as + ld → ELF binary
 | `Extern` | `extern` | External symbol declaration |
 | `Ann` | `ann` | Type annotation expression |
 | `Import` | `import` | Module import |
-| `Int` | `[-]?[0-9]+` | Decimal integer literal, default type `i32` |
+| `Int` | `[-]?([0-9]+|0[xX][0-9a-fA-F]+|0[bB][01]+)` | Integer literal, default type `i32` |
 | `Float` | `[-]?[0-9]+\.[0-9]+` | `f64` literal |
 | `Bool` | `true` / `false` | |
 | `Char` | `'x'` / `'\n'` / `'\''` | Single character literal |
@@ -250,10 +250,14 @@ example, `\0` in a string is the character `0`, not a NUL byte.
 
 Integer literals default to `i32` when unconstrained. In an expected integer
 position, an integer literal adopts the expected type (`i8`, `i16`, `i32`,
-`i64`, `u8`, `u16`, `u32`, or `u64`) when the literal value is representable by
-the current source literal storage. Out-of-range contextual literals are
-compile-time errors; explicit `(cast expr : target_type)` keeps the normal cast
-semantics, including truncation/wrapping behavior for supported numeric casts.
+`i64`, `u8`, `u16`, `u32`, or `u64`) when the literal text's magnitude is
+representable by that target type. Range checks are deterministic for decimal,
+hex (`0x...`), and binary (`0b...`) spellings, including the full `u64` range
+through `18446744073709551615` / `0xffffffffffffffff`; negative integer
+literals are not representable by unsigned expected types. Out-of-range
+contextual literals are compile-time errors; explicit
+`(cast expr : target_type)` keeps the normal cast semantics, including
+truncation/wrapping behavior for supported numeric casts.
 For binary operators, an integer literal operand may adopt the other integer
 operand's type; two unconstrained integer literal operands use the `i32`
 default. Floating-point literals are always `f64` unless a contextual `f32`

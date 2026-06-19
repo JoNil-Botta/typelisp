@@ -745,7 +745,7 @@
 
 (define (lint-literal-render [lit : AstLiteral]) : String
   (match lit
-    [(AstLitInt value) (int->string value)]
+    [(AstLitInt _ text) text]
     [(AstLitFloat value) value]
     [(AstLitBool value)
       (if value
@@ -5102,7 +5102,7 @@
     [vx : i64 (lint-test-var "x")]
     [vy : i64 (lint-test-var "y")]
     [vz : i64 (lint-test-var "z")]
-    [one : i64 (ast-node-push (AstExprLiteral (AstLitInt 1)))]
+    [one : i64 (ast-node-push (AstExprLiteral (ast-lit-int 1)))]
     [unit-expr : i64 (ast-node-push (AstExprLiteral AstLitUnit))]
     [ladder3 : i64
       (ast-expr-if vx one (ast-expr-if vx one (ast-expr-if vx one one)))]

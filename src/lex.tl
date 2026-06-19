@@ -660,7 +660,9 @@
                       (array-set!
                         toks
                         count
-                        (TInt (number-int-value src i end n))))
+                        (TInt
+                          (number-int-value src i end n)
+                          (substring src i (- end i)))))
                     (set! count (+ count 1))
                     (set! i end))]
                 [(ErrLexI64 err)
@@ -890,7 +892,9 @@
                           stoks
                           count
                           (SpannedToken
-                            (TInt (number-int-value src i end n))
+                            (TInt
+                              (number-int-value src i end n)
+                              (substring src i (- end i)))
                             token-line
                             token-col)))
                       (set! count (+ count 1))

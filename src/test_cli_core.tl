@@ -667,7 +667,7 @@
       (ast-expr-cons
         (ast-expr-syscall
           (ast-expr-cons
-            (ast-node-push (AstExprLiteral (AstLitInt 1)))
+            (ast-node-push (AstExprLiteral (ast-lit-int 1)))
             (ast-expr-cons
               (ast-expr-cast
                 (ast-node-push (AstExprVar (intern "fd")))
@@ -721,7 +721,7 @@
     (ast-node-push (AstExprVar (intern "__tl_test_get_std_handle")))
     (ast-expr-cons
       (ast-expr-cast
-        (ast-node-push (AstExprLiteral (AstLitInt -12)))
+        (ast-node-push (AstExprLiteral (ast-lit-int -12)))
         (AstTyI32))
       AstExprNil)))
 
@@ -737,7 +737,7 @@
           (ast-expr-cons
             (ast-node-push (AstExprPtrNull (ast-ty-mut-ptr (AstTyI32))))
             (ast-expr-cons
-              (ast-node-push (AstExprLiteral (AstLitInt 0)))
+              (ast-node-push (AstExprLiteral (ast-lit-int 0)))
               AstExprNil)))))))
 
 (define (tltest-windows-write-body) : i64
@@ -758,9 +758,11 @@
         (AstBinEq)
         (ast-node-push (AstExprVar (intern "ok")))
         (ast-expr-cast
-          (ast-node-push (AstExprLiteral (AstLitInt 0)))
+          (ast-node-push (AstExprLiteral (ast-lit-int 0)))
           (AstTyI32)))
-      (ast-expr-cast (ast-node-push (AstExprLiteral (AstLitInt -1))) (AstTyI32))
+      (ast-expr-cast
+        (ast-node-push (AstExprLiteral (ast-lit-int -1)))
+        (AstTyI32))
       (ast-node-push (AstExprVar (intern "n"))))))
 
 (define (tltest-windows-print-runtime-write-decl) : AstDecl
@@ -787,7 +789,9 @@
   (ast-expr-call
     (ast-node-push (AstExprVar (intern "__tl_test_write")))
     (ast-expr-cons
-      (ast-expr-cast (ast-node-push (AstExprLiteral (AstLitInt 2))) (AstTyI32))
+      (ast-expr-cast
+        (ast-node-push (AstExprLiteral (ast-lit-int 2)))
+        (AstTyI32))
       (ast-expr-cons
         (ast-node-push
           (AstExprUnsafe
@@ -878,7 +882,7 @@
       (ast-expr-cons
         (tltest-print-expr (tltest-summary-line count))
         (ast-expr-cons
-          (ast-node-push (AstExprLiteral (AstLitInt 0)))
+          (ast-node-push (AstExprLiteral (ast-lit-int 0)))
           AstExprNil)))))
 
 (define (tltest-test-decls-onto

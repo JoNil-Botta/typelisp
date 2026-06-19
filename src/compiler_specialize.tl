@@ -6673,7 +6673,8 @@
 
 (define (spec-ctfe-value-to-expr [value : CompilerCtfeValue] [origin : AstExpr]) : ResultSpecSubExpr
   (match value
-    [(CtfeI64 n) (OkSpecSubExpr (ast-node-push (AstExprLiteral (AstLitInt n))))]
+    [(CtfeI64 n)
+      (OkSpecSubExpr (ast-node-push (AstExprLiteral (ast-lit-int n))))]
     [(CtfeF64 n)
       (OkSpecSubExpr
         (ast-node-push
@@ -9711,7 +9712,7 @@
           (match (ast-node-get e)
             [(AstExprLiteral lit)
               (match lit
-                [(AstLitInt n) (= n 5)]
+                [(AstLitInt n _) (= n 5)]
                 [_ false])]
             [_ false])]
         [(ErrSpecSubExpr _) false])
@@ -9726,7 +9727,7 @@
       (match (spec-substitute-values-expr
         (AstExprIf
           (ast-node-push (AstExprVar (intern "x")))
-          (ast-node-push (AstExprLiteral (AstLitInt 1)))
+          (ast-node-push (AstExprLiteral (ast-lit-int 1)))
           (ast-node-push (AstExprVar (intern "y"))))
         subs)
         [(OkSpecSubExpr e)
@@ -9739,7 +9740,7 @@
                   (match cond
                     [(AstExprLiteral lit)
                       (match lit
-                        [(AstLitInt n) (= n 5)]
+                        [(AstLitInt n _) (= n 5)]
                         [_ false])]
                     [_ false])
                   (match else-branch
@@ -9756,7 +9757,7 @@
           "first"
           AstParamNil
           (AstTyI64)
-          (AstExprLiteral (AstLitInt 1)))
+          (AstExprLiteral (ast-lit-int 1)))
         (spec-template-cons
           (SpecTemplate
             "second"

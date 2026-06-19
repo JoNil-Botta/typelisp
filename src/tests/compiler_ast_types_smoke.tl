@@ -8,7 +8,7 @@
   (match (ast-expr-node-pool-state-get pool id)
     [(AstExprLiteral lit)
       (match lit
-        [(AstLitInt value) (= value expected)]
+        [(AstLitInt value _) (= value expected)]
         [_ false])]
     [_ false]))
 
@@ -46,22 +46,24 @@
     [a0 : AstExprNodePoolState (ast-expr-node-pool-state-create 1)]
     [aid0 : i64 (ast-expr-node-pool-state-mark a0)]
     [a1 : AstExprNodePoolState
-      (compiler-ast-state-expr-push-pool a0 (AstExprLiteral (AstLitInt 1)))]
+      (compiler-ast-state-expr-push-pool a0 (AstExprLiteral (ast-lit-int 1)))]
     [aid1 : i64 (ast-expr-node-pool-state-mark a1)]
     [a2 : AstExprNodePoolState
-      (compiler-ast-state-expr-push-pool a1 (AstExprLiteral (AstLitInt 2)))]
+      (compiler-ast-state-expr-push-pool a1 (AstExprLiteral (ast-lit-int 2)))]
     [b0 : AstExprNodePoolState (ast-expr-node-pool-state-create 1)]
     [bmark : i64 (ast-expr-node-pool-state-mark b0)]
     [bid0 : i64 (ast-expr-node-pool-state-mark b0)]
     [b1 : AstExprNodePoolState
-      (compiler-ast-state-expr-push-pool b0 (AstExprLiteral (AstLitInt 10)))]
+      (compiler-ast-state-expr-push-pool b0 (AstExprLiteral (ast-lit-int 10)))]
     [breset : AstExprNodePoolState
       (ast-expr-node-pool-state-reset-to-mark b1 bmark)]
     [bid1 : i64 (ast-expr-node-pool-state-mark breset)]
     [b2 : AstExprNodePoolState
-      (compiler-ast-state-expr-push-pool breset (AstExprLiteral (AstLitInt 11)))]
+      (compiler-ast-state-expr-push-pool
+        breset
+        (AstExprLiteral (ast-lit-int 11)))]
     [b3 : AstExprNodePoolState
-      (ast-expr-node-pool-state-set! b2 bid1 (AstExprLiteral (AstLitInt 12)))]
+      (ast-expr-node-pool-state-set! b2 bid1 (AstExprLiteral (ast-lit-int 12)))]
     (and
       (= aid0 0)
       (= aid1 1)

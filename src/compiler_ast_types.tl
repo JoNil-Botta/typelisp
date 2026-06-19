@@ -27,12 +27,147 @@
   (end-col i64))
 
 (defenum AstLiteral
-  (AstLitInt i64)
+  (AstLitInt i64 String)
   (AstLitFloat String)
   (AstLitBool bool)
   (AstLitChar char)
   (AstLitString String)
   (AstLitUnit))
+
+(define (ast-lit-int [value : i64]) : AstLiteral
+  (AstLitInt value (int->string value)))
+
+(define (ast-lit-int-value [lit : AstLiteral]) : i64
+  (match lit
+    [(AstLitInt value _) value]
+    [_ 0]))
+
+(define (ast-lit-int-text [lit : AstLiteral]) : String
+  (match lit
+    [(AstLitInt _ text) text]
+    [_ ""]))
+
+(define (ast-int-literal-negative? [text : String]) : bool
+  (and (> (string-length text) 0) (= (string-ref text 0) #-')))
+
+(define (ast-int-literal-digits-start [text : String]) : i64
+  (if (ast-int-literal-negative? text)
+    1
+    0))
+
+(define (ast-int-literal-base [text : String]) : i64
+  (let
+    [start : i64 (ast-int-literal-digits-start text)]
+    [n : i64 (string-length text)]
+    (if (< (+ start 1) n)
+      (if (= (string-ref text start) #0')
+        (let
+          [prefix : char (string-ref text (+ start 1))]
+          (cond
+            [(or (= prefix #x') (= prefix #X')) 16]
+            [(or (= prefix #b') (= prefix #B')) 2]
+            [else 10]))
+        10)
+      10)))
+
+(define (ast-int-literal-value-start [text : String]) : i64
+  (let
+    [start : i64 (ast-int-literal-digits-start text)]
+    [base : i64 (ast-int-literal-base text)]
+    (if (= base 10)
+      start
+      (+ start 2))))
+
+(define (ast-int-literal-digit-value [c : char]) : i64
+  (cond
+    [(and (>= c #0') (<= c #9')) (- (cast c : i64) (cast #0' : i64))]
+    [(and (>= c #a') (<= c #f')) (+ 10 (- (cast c : i64) (cast #a' : i64)))]
+    [(and (>= c #A') (<= c #F')) (+ 10 (- (cast c : i64) (cast #A' : i64)))]
+    [else 0]))
+
+(define (ast-int-literal-skip-leading-zeroes
+  [text : String]
+  [start : i64]
+  [end : i64]) : i64
+  (let
+    [i : i64 start]
+    (begin
+      (while (and (< i end) (= (string-ref text i) #0'))
+        (set! i (+ i 1)))
+      i)))
+
+(define (ast-int-literal-magnitude-leq-limit?
+  [text : String]
+  [start : i64]
+  [end : i64]
+  [limit : String]) : bool
+  (let
+    [mag-start : i64 (ast-int-literal-skip-leading-zeroes text start end)]
+    [mag-len : i64 (- end mag-start)]
+    [limit-len : i64 (string-length limit)]
+    (cond
+      [(= mag-len 0) true]
+      [(< mag-len limit-len) true]
+      [(> mag-len limit-len) false]
+      [else
+        (let
+          [i : i64 0]
+          [result : i64 0]
+          (begin
+            (while (and (< i mag-len) (= result 0))
+              (let
+                [actual : i64
+                  (ast-int-literal-digit-value
+                    (string-ref text (+ mag-start i)))]
+                [want : i64 (ast-int-literal-digit-value (string-ref limit i))]
+                (begin
+                  (if (< actual want)
+                    (set! result -1)
+                    (if (> actual want)
+                      (set! result 1)
+                      unit))
+                  (set! i (+ i 1)))))
+            (<= result 0)))])))
+
+(define (ast-int-literal-magnitude-fits-limit?
+  [text : String]
+  [limit-dec : String]
+  [limit-hex : String]
+  [limit-bin : String]) : bool
+  (let
+    [base : i64 (ast-int-literal-base text)]
+    [start : i64 (ast-int-literal-value-start text)]
+    [end : i64 (string-length text)]
+    (cond
+      [(= base 16)
+        (ast-int-literal-magnitude-leq-limit? text start end limit-hex)]
+      [(= base 2)
+        (ast-int-literal-magnitude-leq-limit? text start end limit-bin)]
+      [else (ast-int-literal-magnitude-leq-limit? text start end limit-dec)])))
+
+(define (ast-int-literal-u64-magnitude [text : String]) : u64
+  (let
+    [base : u64 (cast (ast-int-literal-base text) : u64)]
+    [i : i64 (ast-int-literal-value-start text)]
+    [n : i64 (string-length text)]
+    [value : u64 (cast 0 : u64)]
+    (begin
+      (while (< i n)
+        (begin
+          (set!
+            value
+            (+
+              (* value base)
+              (cast (ast-int-literal-digit-value (string-ref text i)) : u64)))
+          (set! i (+ i 1))))
+      value)))
+
+(define (ast-int-literal-i64-bits [text : String]) : i64
+  (let
+    [magnitude : u64 (ast-int-literal-u64-magnitude text)]
+    (if (ast-int-literal-negative? text)
+      (cast (- (cast 0 : u64) magnitude) : i64)
+      (cast magnitude : i64))))
 
 (defenum AstBinOp
   (AstBinAdd)
@@ -2723,8 +2858,8 @@
 
 (define (compiler-ast-expr-pattern-box-smoke?) : bool
   (let
-    [one : i64 (ast-node-push (AstExprLiteral (AstLitInt 1)))]
-    [two : i64 (ast-node-push (AstExprLiteral (AstLitInt 2)))]
+    [one : i64 (ast-node-push (AstExprLiteral (ast-lit-int 1)))]
+    [two : i64 (ast-node-push (AstExprLiteral (ast-lit-int 2)))]
     [begin-expr : i64
       (ast-node-push
         (AstExprBegin (ast-expr-cons one (ast-expr-cons two AstExprNil))))]
@@ -2765,7 +2900,7 @@
         (and
           (= name (intern want-name))
           (match value
-            [(AstExprLiteral (AstLitInt actual)) (= actual want-value)]
+            [(AstExprLiteral (AstLitInt actual _)) (= actual want-value)]
             [_ false])))]
     [_ false]))
 
@@ -2788,12 +2923,12 @@
       (ast-decl-def
         "generated"
         (AstSomeType (AstTyI64))
-        (ast-node-push (AstExprLiteral (AstLitInt 7))))]
+        (ast-node-push (AstExprLiteral (ast-lit-int 7))))]
     [runtime : AstDecl
       (ast-decl-def
         "runtime"
         (AstSomeType (AstTyI64))
-        (ast-node-push (AstExprLiteral (AstLitInt 9))))]
+        (ast-node-push (AstExprLiteral (ast-lit-int 9))))]
     [nested : AstDecl (ast-decl-unsafe (ast-decl-comptime-decl generated))]
     [program : AstProgram
       (ast-program (ast-decl-cons nested (ast-decl-cons runtime AstDeclNil)))]
@@ -2900,8 +3035,8 @@
                   [_ false]))]
             [_ false])]
         [_ false])]
-    [lit : AstLiteral (AstLitInt 41)]
-    [one : i64 (ast-node-push (AstExprLiteral (AstLitInt 1)))]
+    [lit : AstLiteral (ast-lit-int 41)]
+    [one : i64 (ast-node-push (AstExprLiteral (ast-lit-int 1)))]
     [expr : i64
       (ast-expr-binary (AstBinAdd) (ast-node-push (AstExprLiteral lit)) one)]
     [nested-expr-pattern-ok? : bool (compiler-ast-expr-pattern-box-smoke?)]

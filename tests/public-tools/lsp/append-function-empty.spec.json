@@ -1,0 +1,7 @@
+{
+  "exit": 0,
+  "stderr_exact": "",
+  "message_checks": [
+    {"jsonpath_id": 2, "raw_contains": "\"code\":-32600", "raw_contains": "newText is not valid form(s)"}
+  ]
+}

@@ -2755,9 +2755,6 @@
 
 (define (ctfe-comptime-helper-call-name [name : String]) : String
   (cond
-    [(ctfe-stdlib-comptime-helper-name? name "string-append") "string-append"]
-    [(ctfe-stdlib-comptime-helper-name? name "string-concat") "string-concat"]
-    [(ctfe-stdlib-comptime-helper-name? name "int->string") "int->string"]
     [(ctfe-stdlib-comptime-helper-name? name "expr-bool") "expr-bool"]
     [(ctfe-stdlib-comptime-helper-name? name "expr-int") "expr-int"]
     [(ctfe-stdlib-comptime-helper-name? name "expr-var") "expr-var"]
@@ -2793,6 +2790,9 @@
       "expr-clause-list-nth"]
     [(ctfe-stdlib-comptime-helper-name? name "expr-clause-list->expr-list")
       "expr-clause-list->expr-list"]
+    [(ctfe-stdlib-comptime-helper-name? name "string-append") "string-append"]
+    [(ctfe-stdlib-comptime-helper-name? name "string-concat") "string-concat"]
+    [(ctfe-stdlib-comptime-helper-name? name "int->string") "int->string"]
     [else name]))
 
 (define (ctfe-eval-expr-bool-call

@@ -6393,24 +6393,53 @@
     (not (string-eq dominator label))
     (opt-dom-dominates? table dominator label)))
 
-(define (opt-cfg-frontier-has-pred?
+(define (opt-cfg-frontier-has-reachable-pred-id?
+  [index : OptCfgIndex]
   [doms : OptDomInfo]
-  [label : String]
-  [preds : OptLabelSet]) : bool
-  (match preds
-    [(OptLabelNil) false]
-    [(OptLabelCons pred rest)
-      (if (opt-dom-dominates? doms label pred)
+  [label-id : i64]
+  [edge : i64]
+  [end : i64]) : bool
+  (if (>= edge end)
+    false
+    (let
+      [pred-id : i64
+        (array-ref (struct-get (struct-get index preds) edges) edge)]
+      (if (and
+        (array-ref (struct-get index reachable) pred-id)
+        (opt-dom-info-dominates-id? doms label-id pred-id))
         true
-        (opt-cfg-frontier-has-pred? doms label (box-get rest)))]))
+        (opt-cfg-frontier-has-reachable-pred-id?
+          index
+          doms
+          label-id
+          (+ edge 1)
+          end)))))
+
+(define (opt-cfg-dominance-frontier-block?
+  [index : OptCfgIndex]
+  [doms : OptDomInfo]
+  [label-id : i64]
+  [block-id : i64]) : bool
+  (let
+    [preds : OptCfgCsr (struct-get index preds)]
+    (and
+      (array-ref (struct-get index reachable) block-id)
+      (opt-cfg-frontier-has-reachable-pred-id?
+        index
+        doms
+        label-id
+        (array-ref (struct-get preds offsets) block-id)
+        (array-ref (struct-get preds offsets) (+ block-id 1)))
+      (not
+        (and
+          (!= label-id block-id)
+          (opt-dom-info-dominates-id? doms label-id block-id))))))
 
 (define (opt-cfg-dominance-frontier-blocks
-  [all-blocks : CompilerIrBlockList]
   [remaining : CompilerIrBlockList]
-  [pred-map : OptPredMap]
-  [reachable : OptLabelSet]
+  [index : OptCfgIndex]
   [doms : OptDomInfo]
-  [label : String]) : OptLabelSet
+  [label-id : i64]) : OptLabelSet
   (match remaining
     [(IrBlockNil) (OptLabelNil)]
     [(IrBlockCons block rest)
@@ -6419,43 +6448,42 @@
           (let
             [tail : OptLabelSet
               (opt-cfg-dominance-frontier-blocks
-                all-blocks
                 (box-get rest)
-                pred-map
-                reachable
+                index
                 doms
-                label)]
-            (if (and
-              (opt-label-contains reachable block-label)
-              (opt-cfg-frontier-has-pred?
-                doms
-                label
-                (opt-label-intersection
-                  (opt-pred-map-lookup pred-map block-label)
-                  reachable))
-              (not (opt-dom-strict-dominates? doms label block-label)))
-              (opt-label-add tail block-label)
-              tail))])]
+                label-id)]
+            (match (opt-cfg-index-id index block-label)
+              [(OptSomeI64 block-id)
+                (if (opt-cfg-dominance-frontier-block?
+                  index
+                  doms
+                  label-id
+                  block-id)
+                  (opt-label-add tail block-label)
+                  tail)]
+              [(OptNoI64) tail]))])]
     [(IrBlockArray seq)
       (opt-cfg-dominance-frontier-blocks
-        all-blocks
         (compiler-ir-block-seq-to-list seq)
-        pred-map
-        reachable
+        index
         doms
-        label)]))
+        label-id)]))
 
 (define (opt-cfg-dominance-frontier-with-context
   [blocks : CompilerIrBlockList]
   [context : OptCfgContext]
   [label : String]) : OptLabelSet
-  (opt-cfg-dominance-frontier-blocks
-    blocks
-    blocks
-    (struct-get context pred-map)
-    (struct-get context reachable)
-    (struct-get context doms)
-    label))
+  (let
+    [index : OptCfgIndex (struct-get context index)]
+    [label-id : i64
+      (match (opt-cfg-index-id index label)
+        [(OptSomeI64 id) id]
+        [(OptNoI64) (- 0 1)])]
+    (opt-cfg-dominance-frontier-blocks
+      blocks
+      index
+      (struct-get context doms)
+      label-id)))
 
 (define (opt-cfg-dominance-frontier
   [blocks : CompilerIrBlockList]
@@ -7260,7 +7288,7 @@
 
 (defenum OptSsaVarBlocks
   (OptSsaVarBlocksNil)
-  (OptSsaVarBlocksCons i64 OptLabelSet (Box OptSsaVarBlocks)))
+  (OptSsaVarBlocksCons i64 OptLabelSet (Array bool) (Box OptSsaVarBlocks)))
 
 (defenum OptSsaPhiSite
   (OptSsaPhiSite i64 String AstType i64))
@@ -7270,7 +7298,12 @@
   (OptSsaPhiSitesCons OptSsaPhiSite (Box OptSsaPhiSites)))
 
 (defenum OptSsaPhiInsertState
-  (OptSsaPhiInsertState OptSsaPhiSites i64 OptLabelSet))
+  (OptSsaPhiInsertState
+    OptSsaPhiSites
+    i64
+    OptLabelSet
+    (Array bool)
+    (Array bool)))
 
 (defenum OptSsaRenameEnv
   (OptSsaRenameNil)
@@ -7488,33 +7521,83 @@
   (match facts
     [(OptSsaFacts _ _ types) (opt-ssa-any-candidate-types? facts types)]))
 
+(define (opt-ssa-label-members-new [index : OptCfgIndex]) : (Array bool)
+  (let
+    [members : (Array bool) (make-array bool (opt-cfg-index-block-count index))]
+    (begin
+      (opt-cfg-fill-bool! members (array-length members) false)
+      members)))
+
+(define (opt-ssa-label-member? [members : (Array bool)] [id : i64]) : bool
+  (if (and (>= id 0) (< id (array-length members)))
+    (array-ref members id)
+    false))
+
+(define (opt-ssa-label-add-with-members
+  [index : OptCfgIndex]
+  [members : (Array bool)]
+  [labels : OptLabelSet]
+  [label : String]) : OptLabelSet
+  (match (opt-cfg-index-id index label)
+    [(OptSomeI64 id)
+      (if (opt-ssa-label-member? members id)
+        labels
+        (begin
+          (array-set! members id true)
+          (OptLabelCons label (box labels))))]
+    [(OptNoI64) (opt-label-add labels label)]))
+
+(define (opt-ssa-label-mark-members!
+  [index : OptCfgIndex]
+  [members : (Array bool)]
+  [labels : OptLabelSet]) : unit
+  (match labels
+    [(OptLabelNil) unit]
+    [(OptLabelCons label rest)
+      (begin
+        (match (opt-cfg-index-id index label)
+          [(OptSomeI64 id)
+            (if (and (>= id 0) (< id (array-length members)))
+              (array-set! members id true)
+              unit)]
+          [(OptNoI64) unit])
+        (opt-ssa-label-mark-members! index members (box-get rest)))]))
+
 (define (opt-ssa-var-blocks-add
+  [index : OptCfgIndex]
   [blocks : OptSsaVarBlocks]
   [var : i64]
   [label : String]) : OptSsaVarBlocks
   (match blocks
     [(OptSsaVarBlocksNil)
-      (OptSsaVarBlocksCons
-        var
-        (opt-label-add (OptLabelNil) label)
-        (box (OptSsaVarBlocksNil)))]
-    [(OptSsaVarBlocksCons id labels rest)
+      (let
+        [members : (Array bool) (opt-ssa-label-members-new index)]
+        [labels : OptLabelSet
+          (opt-ssa-label-add-with-members index members (OptLabelNil) label)]
+        (OptSsaVarBlocksCons var labels members (box (OptSsaVarBlocksNil))))]
+    [(OptSsaVarBlocksCons id labels members rest)
       (if (= id var)
-        (OptSsaVarBlocksCons id (opt-label-add labels label) rest)
+        (OptSsaVarBlocksCons
+          id
+          (opt-ssa-label-add-with-members index members labels label)
+          members
+          rest)
         (OptSsaVarBlocksCons
           id
           labels
-          (box (opt-ssa-var-blocks-add (box-get rest) var label))))]))
+          members
+          (box (opt-ssa-var-blocks-add index (box-get rest) var label))))]))
 
 (define (opt-ssa-var-blocks-lookup [blocks : OptSsaVarBlocks] [var : i64]) : OptLabelSet
   (match blocks
     [(OptSsaVarBlocksNil) (OptLabelNil)]
-    [(OptSsaVarBlocksCons id labels rest)
+    [(OptSsaVarBlocksCons id labels _ rest)
       (if (= id var)
         labels
         (opt-ssa-var-blocks-lookup (box-get rest) var))]))
 
 (define (opt-ssa-def-blocks-add-param
+  [index : OptCfgIndex]
   [facts : OptSsaFacts]
   [label : String]
   [defs : OptSsaVarBlocks]
@@ -7522,10 +7605,11 @@
   (match param
     [(IrParam _ _ var)
       (if (opt-ssa-candidate? facts var)
-        (opt-ssa-var-blocks-add defs var label)
+        (opt-ssa-var-blocks-add index defs var label)
         defs)]))
 
 (define (opt-ssa-def-blocks-add-params
+  [index : OptCfgIndex]
   [facts : OptSsaFacts]
   [label : String]
   [defs : OptSsaVarBlocks]
@@ -7534,12 +7618,14 @@
     [(IrParamNil) defs]
     [(IrParamCons param rest)
       (opt-ssa-def-blocks-add-params
+        index
         facts
         label
-        (opt-ssa-def-blocks-add-param facts label defs param)
+        (opt-ssa-def-blocks-add-param index facts label defs param)
         (box-get rest))]))
 
 (define (opt-ssa-def-blocks-add-instr
+  [index : OptCfgIndex]
   [facts : OptSsaFacts]
   [label : String]
   [defs : OptSsaVarBlocks]
@@ -7547,30 +7633,34 @@
   (match (opt-instr-def-var instr)
     [(OptSomeI64 var)
       (if (opt-ssa-candidate? facts var)
-        (opt-ssa-var-blocks-add defs var label)
+        (opt-ssa-var-blocks-add index defs var label)
         defs)]
     [(OptNoI64) defs]))
 
 (define (opt-ssa-def-blocks-add-instr-seq-from
+  [cfg-index : OptCfgIndex]
   [facts : OptSsaFacts]
   [label : String]
   [instrs : CompilerIrInstrSeq]
-  [index : i64]
+  [instr-index : i64]
   [defs : OptSsaVarBlocks]) : OptSsaVarBlocks
-  (if (>= index (compiler-ir-instr-seq-count instrs))
+  (if (>= instr-index (compiler-ir-instr-seq-count instrs))
     defs
     (opt-ssa-def-blocks-add-instr-seq-from
+      cfg-index
       facts
       label
       instrs
-      (+ index 1)
+      (+ instr-index 1)
       (opt-ssa-def-blocks-add-instr
+        cfg-index
         facts
         label
         defs
-        (compiler-ir-instr-seq-ref instrs index)))))
+        (compiler-ir-instr-seq-ref instrs instr-index)))))
 
 (define (opt-ssa-def-blocks-add-blocks
+  [cfg-index : OptCfgIndex]
   [facts : OptSsaFacts]
   [blocks : CompilerIrBlockList]
   [defs : OptSsaVarBlocks]) : OptSsaVarBlocks
@@ -7580,56 +7670,69 @@
       (match block
         [(IrBlock label instrs)
           (opt-ssa-def-blocks-add-blocks
+            cfg-index
             facts
             (box-get rest)
-            (opt-ssa-def-blocks-add-instr-seq-from facts label instrs 0 defs))])]
+            (opt-ssa-def-blocks-add-instr-seq-from
+              cfg-index
+              facts
+              label
+              instrs
+              0
+              defs))])]
     [(IrBlockArray seq)
       (opt-ssa-def-blocks-add-blocks
+        cfg-index
         facts
         (compiler-ir-block-seq-to-list seq)
         defs)]))
 
 (define (opt-ssa-def-blocks-from-function
+  [index : OptCfgIndex]
   [facts : OptSsaFacts]
   [params : CompilerIrParamList]
   [blocks : CompilerIrBlockList]) : OptSsaVarBlocks
   (opt-ssa-def-blocks-add-blocks
+    index
     facts
     blocks
     (opt-ssa-def-blocks-add-params
+      index
       facts
       (opt-cfg-entry-label blocks)
       (OptSsaVarBlocksNil)
       params)))
 
-(define (opt-ssa-phi-site-exists?
-  [sites : OptSsaPhiSites]
-  [var : i64]
-  [label : String]) : bool
-  (match sites
-    [(OptSsaPhiSitesNil) false]
-    [(OptSsaPhiSitesCons site rest)
-      (match site
-        [(OptSsaPhiSite site-var site-label _ _)
-          (if (and (= site-var var) (string-eq site-label label))
-            true
-            (opt-ssa-phi-site-exists? (box-get rest) var label))])]))
-
 (define (opt-ssa-phi-add-site
+  [index : OptCfgIndex]
   [state : OptSsaPhiInsertState]
   [var : i64]
   [ty : AstType]
   [label : String]) : OptSsaPhiInsertState
   (match state
-    [(OptSsaPhiInsertState sites next-var worklist)
-      (if (opt-ssa-phi-site-exists? sites var label)
-        state
-        (OptSsaPhiInsertState
-          (OptSsaPhiSitesCons (OptSsaPhiSite var label ty next-var) (box sites))
-          (+ next-var 1)
-          (opt-label-add worklist label)))]))
+    [(OptSsaPhiInsertState sites next-var worklist work-members site-members)
+      (match (opt-cfg-index-id index label)
+        [(OptSomeI64 id)
+          (if (opt-ssa-label-member? site-members id)
+            state
+            (begin
+              (array-set! site-members id true)
+              (OptSsaPhiInsertState
+                (OptSsaPhiSitesCons
+                  (OptSsaPhiSite var label ty next-var)
+                  (box sites))
+                (+ next-var 1)
+                (if (opt-ssa-label-member? work-members id)
+                  worklist
+                  (begin
+                    (array-set! work-members id true)
+                    (OptLabelCons label (box worklist))))
+                work-members
+                site-members)))]
+        [(OptNoI64) state])]))
 
 (define (opt-ssa-phi-add-frontier
+  [index : OptCfgIndex]
   [var : i64]
   [ty : AstType]
   [frontier : OptLabelSet]
@@ -7638,10 +7741,11 @@
     [(OptLabelNil) state]
     [(OptLabelCons label rest)
       (opt-ssa-phi-add-frontier
+        index
         var
         ty
         (box-get rest)
-        (opt-ssa-phi-add-site state var ty label))]))
+        (opt-ssa-phi-add-site index state var ty label))]))
 
 (define (opt-ssa-insert-phis-worklist
   [context : OptCfgContext]
@@ -7650,7 +7754,7 @@
   [ty : AstType]
   [state : OptSsaPhiInsertState]) : OptSsaPhiInsertState
   (match state
-    [(OptSsaPhiInsertState sites next-var worklist)
+    [(OptSsaPhiInsertState sites next-var worklist work-members site-members)
       (match worklist
         [(OptLabelNil) state]
         [(OptLabelCons label rest)
@@ -7660,10 +7764,16 @@
             var
             ty
             (opt-ssa-phi-add-frontier
+              (struct-get context index)
               var
               ty
               (opt-cfg-dominance-frontier-with-context blocks context label)
-              (OptSsaPhiInsertState sites next-var (box-get rest))))])]))
+              (OptSsaPhiInsertState
+                sites
+                next-var
+                (box-get rest)
+                work-members
+                site-members)))])]))
 
 (define (opt-ssa-insert-phis-for-var
   [context : OptCfgContext]
@@ -7673,16 +7783,25 @@
   [var : i64]
   [ty : AstType]) : OptSsaPhiInsertState
   (match state
-    [(OptSsaPhiInsertState sites next-var _)
-      (opt-ssa-insert-phis-worklist
-        context
-        blocks
-        var
-        ty
-        (OptSsaPhiInsertState
-          sites
-          next-var
-          (opt-ssa-var-blocks-lookup defs var)))]))
+    [(OptSsaPhiInsertState sites next-var _ work-members site-members)
+      (let
+        [index : OptCfgIndex (struct-get context index)]
+        [worklist : OptLabelSet (opt-ssa-var-blocks-lookup defs var)]
+        (begin
+          (opt-cfg-fill-bool! work-members (array-length work-members) false)
+          (opt-cfg-fill-bool! site-members (array-length site-members) false)
+          (opt-ssa-label-mark-members! index work-members worklist)
+          (opt-ssa-insert-phis-worklist
+            context
+            blocks
+            var
+            ty
+            (OptSsaPhiInsertState
+              sites
+              next-var
+              worklist
+              work-members
+              site-members))))]))
 
 (define (opt-ssa-insert-phis-types
   [facts : OptSsaFacts]
@@ -7712,13 +7831,22 @@
   [blocks : CompilerIrBlockList]) : OptSsaPhiInsertState
   (match facts
     [(OptSsaFacts _ _ types)
-      (opt-ssa-insert-phis-types
-        facts
-        context
-        blocks
-        (opt-ssa-def-blocks-from-function facts params blocks)
-        types
-        (OptSsaPhiInsertState (OptSsaPhiSitesNil) frame (OptLabelNil)))]))
+      (let
+        [index : OptCfgIndex (struct-get context index)]
+        [work-members : (Array bool) (opt-ssa-label-members-new index)]
+        [site-members : (Array bool) (opt-ssa-label-members-new index)]
+        (opt-ssa-insert-phis-types
+          facts
+          context
+          blocks
+          (opt-ssa-def-blocks-from-function index facts params blocks)
+          types
+          (OptSsaPhiInsertState
+            (OptSsaPhiSitesNil)
+            frame
+            (OptLabelNil)
+            work-members
+            site-members)))]))
 
 (define (opt-ssa-env-lookup [env : OptSsaRenameEnv] [var : i64]) : OptMaybeI64
   (match env
@@ -8601,7 +8729,7 @@
     [phi-state : OptSsaPhiInsertState
       (opt-ssa-insert-phis facts context params frame blocks)]
     (match phi-state
-      [(OptSsaPhiInsertState sites phi-next _)
+      [(OptSsaPhiInsertState sites phi-next _ _ _)
         (opt-ssa-construct-materialized
           func
           name
@@ -8631,7 +8759,7 @@
     [phi-state : OptSsaPhiInsertState
       (opt-ssa-insert-phis facts context params frame blocks)]
     (match phi-state
-      [(OptSsaPhiInsertState sites phi-next _)
+      [(OptSsaPhiInsertState sites phi-next _ _ _)
         (opt-ssa-construct-materialized-with-context-result
           func
           name

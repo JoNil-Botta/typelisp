@@ -1,6 +1,5 @@
 ;; compiler_object_elf.tl - ELF64 object-file serialization for object images.
 (import "compiler_object.tl")
-(import "compiler_float.tl")
 
 (defenum ResultCompilerObjectElf
   (OkCompilerObjectElf String)
@@ -134,11 +133,6 @@
   [offset : i64]) : unit
   (compiler-object-elf-push-zeroes! out (- offset (array-length out))))
 
-(define (compiler-object-elf-f64-bits [text : String]) : u64
-  (match (compiler-float-parse-f64 text)
-    [(CompilerFloatSomeF64 value) (compiler-float-f64-bits value)]
-    [(CompilerFloatNoF64) (panic "elf: unsupported f64 literal")]))
-
 (define (compiler-object-elf-data-record-end-offset
   [record : CompilerObjectDataRecord]
   [offset : i64]) : i64
@@ -148,6 +142,7 @@
     [(ObjectDataBytes bytes) (+ offset (string-length bytes))]
     [(ObjectDataString text) (+ offset (+ (string-length text) 1))]
     [(ObjectDataF64 _) (+ offset 8)]
+    [(ObjectDataF32 _) (+ offset 4)]
     [(ObjectDataI64 _) (+ offset 8)]
     [(ObjectDataZero count) (+ offset count)]
     [(ObjectDataSymbolAddress _) (+ offset 8)]
@@ -912,10 +907,14 @@
         (compiler-object-elf-push-string-bytes! out text)
         (compiler-object-elf-push-u8! out 0)
         (+ offset (+ (string-length text) 1)))]
-    [(ObjectDataF64 text)
+    [(ObjectDataF64 bits)
       (begin
-        (compiler-object-elf-push-u64! out (compiler-object-elf-f64-bits text))
+        (compiler-object-elf-push-u64! out bits)
         (+ offset 8))]
+    [(ObjectDataF32 bits)
+      (begin
+        (compiler-object-elf-push-u32! out (cast bits : i64))
+        (+ offset 4))]
     [(ObjectDataI64 value)
       (begin
         (compiler-object-elf-push-i64! out value)
@@ -2032,7 +2031,7 @@
                   (compiler-object-data-cons
                     (ObjectDataLabel "_tl_pi")
                     (compiler-object-data-cons
-                      (ObjectDataF64 "3.5")
+                      (ObjectDataF64 0x400c000000000000)
                       ObjectDataNil)))))
             ObjectInstrNil)
           (compiler-object-section-cons

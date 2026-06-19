@@ -12,6 +12,7 @@
 (import "compiler_ir_types.tl")
 (import "compiler_clone.tl")
 (import "compiler_ctfe.tl")
+(import "compiler_float.tl")
 (import "../stdlib/hashmap.tl")
 (import "../stdlib/string.tl")
 
@@ -5527,14 +5528,28 @@
             (IrValueVar var-id)
             ty)))]))
 
-(define (lower-literal-value [lit : AstLiteral]) : CompilerIrValue
+(define (lower-float-literal-bits [text : String] [ty : AstType]) : u64
+  (match ty
+    [(AstTyF32)
+      (match (compiler-float-parse-f32-bits text)
+        [(CompilerFloatSomeBits bits) bits]
+        [(CompilerFloatNoBits) (cast 0 : u64)])]
+    [_
+      (match (compiler-float-parse-f64-bits text)
+        [(CompilerFloatSomeBits bits) bits]
+        [(CompilerFloatNoBits) (cast 0 : u64)])]))
+
+(define (lower-literal-value-with-type [lit : AstLiteral] [ty : AstType]) : CompilerIrValue
   (match lit
     [(AstLitInt n) (IrValueI64 n)]
-    [(AstLitFloat n) (IrValueF64 n)]
+    [(AstLitFloat n) (IrValueF64 (lower-float-literal-bits n ty))]
     [(AstLitBool b) (IrValueBool b)]
     [(AstLitChar c) (IrValueChar c)]
     [(AstLitString s) (IrValueString s)]
     [(AstLitUnit) IrValueUnit]))
+
+(define (lower-literal-value [lit : AstLiteral]) : CompilerIrValue
+  (lower-literal-value-with-type lit (tc-literal-type lit)))
 
 (define (lower-binop [op : AstBinOp]) : CompilerIrBinOp
   (match op
@@ -8359,7 +8374,7 @@
         (lower-string-payload-literal-eq
           state
           field-value
-          (lower-literal-value lit))
+          (lower-literal-value-with-type lit resolved))
         (ErrLowerExpr
           (lower-diagnostic
             "lower: unsupported enum payload literal pattern type")))]
@@ -8374,7 +8389,7 @@
                   eq-var
                   IrBinEq
                   field-value
-                  (lower-literal-value lit)
+                  (lower-literal-value-with-type lit resolved)
                   resolved))
               (IrValueVar eq-var)
               (AstTyBool)))])]))
@@ -13085,8 +13100,18 @@
     (if (tc-integer-type? resolved)
       (lower-init-scalar state (IrValueI64 0) expr-ty origin)
       (match resolved
-        [(AstTyF64) (lower-init-scalar state (IrValueF64 "0.0") expr-ty origin)]
-        [(AstTyF32) (lower-init-scalar state (IrValueF64 "0.0") expr-ty origin)]
+        [(AstTyF64)
+          (lower-init-scalar
+            state
+            (IrValueF64 (lower-float-literal-bits "0.0" (AstTyF64)))
+            expr-ty
+            origin)]
+        [(AstTyF32)
+          (lower-init-scalar
+            state
+            (IrValueF64 (lower-float-literal-bits "0.0" (AstTyF32)))
+            expr-ty
+            origin)]
         [(AstTyBool)
           (lower-init-scalar state (IrValueBool false) expr-ty origin)]
         [(AstTyChar)
@@ -14295,7 +14320,11 @@
         [inner : AstExpr (ast-node-get inner-box)]
         (lower-expr-with-type ctx state env type-env inner origin expr-ty))]
     [(AstExprLiteral lit)
-      (lower-materialize-at-expr state (lower-literal-value lit) expr-ty origin)]
+      (lower-materialize-at-expr
+        state
+        (lower-literal-value-with-type lit expr-ty)
+        expr-ty
+        origin)]
     [(AstExprBinaryData bytes)
       (lower-materialize-at-expr state (IrValueBytes bytes) expr-ty origin)]
     [(AstExprSpmdProgramIndex)
@@ -14869,8 +14898,9 @@
               [_
                 (lower-materialize
                   state
-                  (lower-literal-value
-                    (ctfe-value-to-literal-for-type value expr-ty))
+                  (lower-literal-value-with-type
+                    (ctfe-value-to-literal-for-type value expr-ty)
+                    expr-ty)
                   expr-ty)])]
           [(ErrCtfe diag) (ErrLowerExpr diag)]))]
     [(AstExprQuote _)
@@ -15177,7 +15207,7 @@
     [(AstExprLiteral lit)
       (lower-materialize-at-expr
         state
-        (lower-literal-value lit)
+        (lower-literal-value-with-type lit expected-ty)
         expected-ty
         origin)]
     [(AstExprUnary _ _)
@@ -25579,7 +25609,7 @@
         (> (lower-simd-lanes-for-elem mode target-ty) 0)
         (tc-type-eq target-ty dst-elem))
         (LowerSomeVectorMapValue
-          (LowerVectorMapUniform (lower-literal-value lit)))
+          (LowerVectorMapUniform (lower-literal-value-with-type lit target-ty)))
         LowerNoVectorMapValue)]
     [_ LowerNoVectorMapValue]))
 
@@ -25685,14 +25715,16 @@
               (> (lower-simd-lanes-for-elem mode dst-elem) 0)
               (tc-integer-type? dst-elem))
               (LowerSomeVectorMapValue
-                (LowerVectorMapUniform (lower-literal-value lit)))
+                (LowerVectorMapUniform
+                  (lower-literal-value-with-type lit dst-elem)))
               LowerNoVectorMapValue)]
           [_
             (if (and
               (> (lower-simd-lanes-for-elem mode lit-ty) 0)
               (tc-type-eq lit-ty dst-elem))
               (LowerSomeVectorMapValue
-                (LowerVectorMapUniform (lower-literal-value lit)))
+                (LowerVectorMapUniform
+                  (lower-literal-value-with-type lit dst-elem)))
               LowerNoVectorMapValue)]))]
     [(AstExprBinary op lhs-box rhs-box)
       (if (lower-simple-vector-map-binop-supported? mode dst-elem op)
@@ -28406,7 +28438,7 @@
           (OkLowerExpr
             (lower-emit-splat
               state
-              (lower-literal-value lit)
+              (lower-literal-value-with-type lit (tc-literal-type lit))
               lanes
               (tc-literal-type lit)))])]
     [(AstExprSpmdProgramIndex)
@@ -28604,7 +28636,9 @@
       (OkLowerExpr
         (lower-emit-splat
           state
-          (lower-literal-value lit)
+          (lower-literal-value-with-type
+            lit
+            (tc-type-without-regions expected-ty))
           lanes
           (tc-type-without-regions expected-ty)))]
     [(AstExprIf cond-box then-box else-box)
@@ -30291,7 +30325,7 @@
               eq-var
               IrBinEq
               (IrValueVar scrut-var)
-              (lower-literal-value lit)
+              (lower-literal-value-with-type lit scrut-ty)
               scrut-ty))]
         (match (lower-state-fresh-label eq-state "match_arm")
           [(LowerLabel body-label-state body-label)
@@ -31305,7 +31339,7 @@
               eq-var
               IrBinEq
               (IrValueVar scrut-var)
-              (lower-literal-value lit)
+              (lower-literal-value-with-type lit scrut-ty)
               scrut-ty))]
         (match (lower-state-fresh-label eq-state "match_arm")
           [(LowerLabel body-label-state body-label)
@@ -32226,21 +32260,24 @@
         (ErrLowerFunction
           (lower-diagnostic-at-expr body "lower: unsupported expression"))))))
 
-(define (lower-global-value [names : LowerNameCache] [expr : AstExpr]) : ResultLowerValue
+(define (lower-global-value
+  [names : LowerNameCache]
+  [expr : AstExpr]
+  [ty : AstType]) : ResultLowerValue
   (match expr
     [(AstExprSpanned inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
-        (lower-global-value names inner))]
+        (lower-global-value names inner ty))]
     [(AstExprAnn inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
-        (lower-global-value names inner))]
-    [(AstExprCast inner-box _)
+        (lower-global-value names inner ty))]
+    [(AstExprCast inner-box cast-ty)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
-        (lower-global-value names inner))]
-    [(AstExprLiteral lit) (OkLowerValue (lower-literal-value lit))]
+        (lower-global-value names inner cast-ty))]
+    [(AstExprLiteral lit) (OkLowerValue (lower-literal-value-with-type lit ty))]
     [(AstExprBinaryData bytes) (OkLowerValue (IrValueBytes bytes))]
     [(AstExprSpmdProgramIndex) (OkLowerValue (IrValueI64 0))]
     [(AstExprSpmdProgramCount) (OkLowerValue (IrValueI64 1))]
@@ -33324,7 +33361,10 @@
                               cur-name-cache
                               cur-module
                               (intern-str name))]
-                          (match (lower-global-value cur-name-cache expr)
+                          (match (lower-global-value
+                            cur-name-cache
+                            expr
+                            global-ty)
                             [(OkLowerValue value)
                               (begin
                                 (set!
@@ -39371,14 +39411,17 @@
         [_ 0])]
     [_ 0]))
 
-(define (lower-test-instr-f64-mov-count
-  [instr : CompilerIrInstr]
-  [want : String]) : i64
+(define (lower-test-f64-bits [text : String]) : u64
+  (match (compiler-float-parse-f64-bits text)
+    [(CompilerFloatSomeBits bits) bits]
+    [(CompilerFloatNoBits) 0]))
+
+(define (lower-test-instr-f64-mov-count [instr : CompilerIrInstr] [want : u64]) : i64
   (match instr
     [(IrInstrMov _ value _)
       (match value
-        [(IrValueF64 text)
-          (if (string-eq text want)
+        [(IrValueF64 bits)
+          (if (= bits want)
             1
             0)]
         [_ 0])]
@@ -39415,7 +39458,7 @@
 
 (define (lower-test-instrs-f64-mov-count
   [instrs : CompilerIrInstrList]
-  [want : String]) : i64
+  [want : u64]) : i64
   (match instrs
     [(IrInstrNil) 0]
     [(IrInstrCons instr rest)
@@ -39462,7 +39505,7 @@
 
 (define (lower-test-instr-seq-f64-mov-count
   [instrs : CompilerIrInstrSeq]
-  [want : String]) : i64
+  [want : u64]) : i64
   (let
     [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
@@ -39529,7 +39572,7 @@
 
 (define (lower-test-blocks-f64-mov-count
   [blocks : CompilerIrBlockList]
-  [want : String]) : i64
+  [want : u64]) : i64
   (match blocks
     [(IrBlockNil) 0]
     [(IrBlockCons block rest)
@@ -39591,6 +39634,12 @@
   [funcs : CompilerIrFunctionList]
   [name : String]
   [want : String]) : i64
+  (lower-test-function-f64-mov-count-bits funcs name (lower-test-f64-bits want)))
+
+(define (lower-test-function-f64-mov-count-bits
+  [funcs : CompilerIrFunctionList]
+  [name : String]
+  [want : u64]) : i64
   (match funcs
     [(IrFunctionNil) 0]
     [(IrFunctionCons func rest)
@@ -39598,9 +39647,9 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-f64-mov-count blocks want)
-            (lower-test-function-f64-mov-count (box-get rest) name want))])]
+            (lower-test-function-f64-mov-count-bits (box-get rest) name want))])]
     [(IrFunctionArray seq)
-      (lower-test-function-f64-mov-count
+      (lower-test-function-f64-mov-count-bits
         (compiler-ir-function-seq-to-list seq)
         name
         want)]))
@@ -39649,15 +39698,29 @@
             (= (lower-test-function-binop-count functions "main") 0))])]
     [(ErrCompilerLower _) false]))
 
-(define (compiler-lower-comptime-f64-fold-ok? [src : String] [want : String]) : bool
+(define (compiler-lower-comptime-float-fold-ok?
+  [src : String]
+  [want : String]
+  [ty : AstType]) : bool
   (match (lower-compiler-source src)
     [(OkCompilerLower program _)
       (match program
         [(IrProgram _ functions _)
           (and
-            (> (lower-test-function-f64-mov-count functions "main" want) 0)
+            (>
+              (lower-test-function-f64-mov-count-bits
+                functions
+                "main"
+                (lower-float-literal-bits want ty))
+              0)
             (= (lower-test-function-binop-count functions "main") 0))])]
     [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-comptime-f64-fold-ok? [src : String] [want : String]) : bool
+  (compiler-lower-comptime-float-fold-ok? src want (AstTyF64)))
+
+(define (compiler-lower-comptime-f32-fold-ok? [src : String] [want : String]) : bool
+  (compiler-lower-comptime-float-fold-ok? src want (AstTyF32)))
 
 ;; The value-returning scalar matches (`classify`/`flag-score`/`sign`) each emit
 ;; a merge phi; the unit-typed match (`announce`) emits no value phi.
@@ -43452,7 +43515,7 @@
         "1.5")
         unit
         (set! ok false))
-      (if (compiler-lower-comptime-f64-fold-ok?
+      (if (compiler-lower-comptime-f32-fold-ok?
         (compiler-lower-comptime-f32-source)
         "1")
         unit

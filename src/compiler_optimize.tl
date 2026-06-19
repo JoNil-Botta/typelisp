@@ -378,22 +378,26 @@
 
 (define (opt-value-to-f64 [value : CompilerIrValue] [ty : AstType]) : CompilerFloatMaybeF64
   (match value
-    [(IrValueF64 text)
-      (match (compiler-float-parse-f64 text)
-        [(CompilerFloatSomeF64 parsed)
-          (let
-            [rounded : f64 (opt-float-round-for-type parsed ty)]
-            (if (compiler-float-f64-finite? rounded)
-              (CompilerFloatSomeF64 rounded)
-              (CompilerFloatNoF64)))]
-        [(CompilerFloatNoF64) (CompilerFloatNoF64)])]
+    [(IrValueF64 bits)
+      (let
+        [decoded : f64
+          (match ty
+            [(AstTyF32) (compiler-float-f32-bits-to-f64 bits)]
+            [_ (compiler-float-f64-from-bits bits)])]
+        (if (compiler-float-f64-finite? decoded)
+          (CompilerFloatSomeF64 decoded)
+          (CompilerFloatNoF64)))]
     [_ (CompilerFloatNoF64)]))
 
 (define (opt-f64-to-ir-value [value : f64] [ty : AstType]) : CompilerIrMaybeValue
   (let
     [rounded : f64 (opt-float-round-for-type value ty)]
     (if (compiler-float-f64-finite? rounded)
-      (IrSomeValue (IrValueF64 (compiler-float-format-f64 rounded)))
+      (IrSomeValue
+        (IrValueF64
+          (match ty
+            [(AstTyF32) (cast (compiler-float-f32-bits-from-f64 rounded) : u64)]
+            [_ (compiler-float-f64-bits rounded)])))
       (IrNoValue))))
 
 (define (opt-normalize-int-to-i64 [value : i64] [ty : AstType]) : i64
@@ -2956,8 +2960,8 @@
 ;; (conservative, matching the spec). Commutative operands are NOT canonicalized
 ;; in this slice.
 (defenum OptExprKey
-  (OptBinKey CompilerIrBinOp CompilerIrValue CompilerIrValue)
-  (OptUnKey CompilerIrUnOp CompilerIrValue))
+  (OptBinKey CompilerIrBinOp CompilerIrValue CompilerIrValue AstType)
+  (OptUnKey CompilerIrUnOp CompilerIrValue AstType))
 
 (defenum OptExprTable
   (OptExprNil)
@@ -3051,7 +3055,7 @@
         [_ false])]
     [(IrValueF64 fa)
       (match b
-        [(IrValueF64 fb) (string-eq fa fb)]
+        [(IrValueF64 fb) (= fa fb)]
         [_ false])]
     [(IrValueBool ba)
       (match b
@@ -3285,7 +3289,7 @@
     [(IrValueGlobalAddr name) (hash-combine 3 (hash-string (& name)))]
     [(IrValueFunction name) (hash-combine 4 (hash-string (& name)))]
     [(IrValueI64 value) (hash-combine 5 (hash-i64 value))]
-    [(IrValueF64 value) (hash-combine 6 (hash-string (& value)))]
+    [(IrValueF64 value) (hash-combine 6 (hash-i64 (cast value : i64)))]
     [(IrValueBool value) (hash-combine 7 (hash-bool value))]
     [(IrValueChar value) (hash-combine 8 (hash-char value))]
     [(IrValueString value) (hash-combine 9 (hash-string (& value)))]
@@ -3294,16 +3298,20 @@
 
 (define (opt-expr-key-hash [key : OptExprKey]) : i64
   (match key
-    [(OptBinKey op lhs rhs)
+    [(OptBinKey op lhs rhs ty)
       (hash-combine
         1
         (hash-combine
-          (hash-i64 (opt-binop-tag op))
-          (hash-combine (opt-value-hash lhs) (opt-value-hash rhs))))]
-    [(OptUnKey op value)
+          (opt-type-hash ty)
+          (hash-combine
+            (hash-i64 (opt-binop-tag op))
+            (hash-combine (opt-value-hash lhs) (opt-value-hash rhs)))))]
+    [(OptUnKey op value ty)
       (hash-combine
         2
-        (hash-combine (hash-i64 (opt-unop-tag op)) (opt-value-hash value)))]))
+        (hash-combine
+          (opt-type-hash ty)
+          (hash-combine (hash-i64 (opt-unop-tag op)) (opt-value-hash value))))]))
 
 (define (opt-type-list-hash [types : AstTypeList]) : i64
   (match types
@@ -4025,15 +4033,20 @@
 
 (define (opt-expr-key-eq [a : OptExprKey] [b : OptExprKey]) : bool
   (match a
-    [(OptBinKey opa la ra)
+    [(OptBinKey opa la ra ta)
       (match b
-        [(OptBinKey opb lb rb)
-          (and (opt-binop-eq opa opb) (opt-value-eq la lb) (opt-value-eq ra rb))]
-        [(OptUnKey _ _) false])]
-    [(OptUnKey opa va)
+        [(OptBinKey opb lb rb tb)
+          (and
+            (opt-binop-eq opa opb)
+            (opt-type-eq ta tb)
+            (opt-value-eq la lb)
+            (opt-value-eq ra rb))]
+        [(OptUnKey _ _ _) false])]
+    [(OptUnKey opa va ta)
       (match b
-        [(OptUnKey opb vb) (and (opt-unop-eq opa opb) (opt-value-eq va vb))]
-        [(OptBinKey _ _ _) false])]))
+        [(OptUnKey opb vb tb)
+          (and (opt-unop-eq opa opb) (opt-type-eq ta tb) (opt-value-eq va vb))]
+        [(OptBinKey _ _ _ _) false])]))
 
 (define (opt-expr-lookup [table : OptExprTable] [key : OptExprKey]) : CompilerIrMaybeValue
   (match table
@@ -4052,8 +4065,9 @@
 
 (define (opt-key-uses-var? [key : OptExprKey] [var : i64]) : bool
   (match key
-    [(OptBinKey _ l r) (or (opt-value-is-var? l var) (opt-value-is-var? r var))]
-    [(OptUnKey _ v) (opt-value-is-var? v var)]))
+    [(OptBinKey _ l r _)
+      (or (opt-value-is-var? l var) (opt-value-is-var? r var))]
+    [(OptUnKey _ v _) (opt-value-is-var? v var)]))
 
 ;; Drop every entry whose key references `var` (a stale operand) or whose result
 ;; is `var` (a stale definition).
@@ -4075,14 +4089,14 @@
     [(IrInstrBinOp dst op l r ty)
       (let
         [t1 : OptExprTable (opt-expr-invalidate-var table dst)]
-        [key : OptExprKey (OptBinKey op l r)]
+        [key : OptExprKey (OptBinKey op l r ty)]
         (match (opt-expr-lookup t1 key)
           [(IrSomeValue earlier) (OptCseResult t1 (IrInstrMov dst earlier ty))]
           [(IrNoValue) (OptCseResult (OptExprCons key dst (box t1)) instr)]))]
     [(IrInstrUnOp dst op v ty)
       (let
         [t1 : OptExprTable (opt-expr-invalidate-var table dst)]
-        [key : OptExprKey (OptUnKey op v)]
+        [key : OptExprKey (OptUnKey op v ty)]
         (match (opt-expr-lookup t1 key)
           [(IrSomeValue earlier) (OptCseResult t1 (IrInstrMov dst earlier ty))]
           [(IrNoValue) (OptCseResult (OptExprCons key dst (box t1)) instr)]))]
@@ -13915,18 +13929,18 @@
   [table : OptGvnMap]
   [changes : OptGvnScopeChanges]) : OptGvnScopeChanges
   (match instr
-    [(IrInstrBinOp dst op l r _)
+    [(IrInstrBinOp dst op l r ty)
       (if (opt-gvn-recordable-instr? instr sources)
         (opt-gvn-table-push!
           table
-          (OptGvnEntry (OptBinKey op l r) dst def-block-id)
+          (OptGvnEntry (OptBinKey op l r ty) dst def-block-id)
           changes)
         changes)]
-    [(IrInstrUnOp dst op v _)
+    [(IrInstrUnOp dst op v ty)
       (if (opt-gvn-recordable-instr? instr sources)
         (opt-gvn-table-push!
           table
-          (OptGvnEntry (OptUnKey op v) dst def-block-id)
+          (OptGvnEntry (OptUnKey op v ty) dst def-block-id)
           changes)
         changes)]
     [_ changes]))
@@ -13983,7 +13997,7 @@
         (opt-gvn-value-stable? sources l)
         (opt-gvn-value-stable? sources r))
         (let
-          [earlier : i64 (opt-gvn-lookup table (OptBinKey op l r))]
+          [earlier : i64 (opt-gvn-lookup table (OptBinKey op l r ty))]
           (if (and (not (= earlier (- 0 1))) (not (= earlier dst)))
             (IrInstrMov dst (IrValueVar earlier) ty)
             instr))
@@ -13991,7 +14005,7 @@
     [(IrInstrUnOp dst op v ty)
       (if (opt-gvn-value-stable? sources v)
         (let
-          [earlier : i64 (opt-gvn-lookup table (OptUnKey op v))]
+          [earlier : i64 (opt-gvn-lookup table (OptUnKey op v ty))]
           (if (and (not (= earlier (- 0 1))) (not (= earlier dst)))
             (IrInstrMov dst (IrValueVar earlier) ty)
             instr))
@@ -19248,7 +19262,7 @@
     [(IrValueGlobalAddr name) (IrValueGlobalAddr (clone name))]
     [(IrValueFunction name) (IrValueFunction (clone name))]
     [(IrValueI64 n) (IrValueI64 n)]
-    [(IrValueF64 s) (IrValueF64 (clone s))]
+    [(IrValueF64 bits) (IrValueF64 bits)]
     [(IrValueBool b) (IrValueBool b)]
     [(IrValueChar c) (IrValueChar c)]
     [(IrValueString s) (IrValueString (clone s))]
@@ -22704,19 +22718,29 @@
             (opt-mov-dst-char-code (box-get rest) dst fallback))]
         [_ (opt-mov-dst-char-code (box-get rest) dst fallback)])]))
 
-(define (opt-mov-dst-f64-text?
+(define (opt-test-f64-bits [text : String]) : u64
+  (match (compiler-float-parse-f64-bits text)
+    [(CompilerFloatSomeBits bits) bits]
+    [(CompilerFloatNoBits) (cast 0 : u64)]))
+
+(define (opt-test-f32-bits [text : String]) : u64
+  (match (compiler-float-parse-f32-bits text)
+    [(CompilerFloatSomeBits bits) bits]
+    [(CompilerFloatNoBits) (cast 0 : u64)]))
+
+(define (opt-mov-dst-f64-bits?
   [instrs : CompilerIrInstrList]
   [dst : i64]
-  [want : String]) : bool
+  [want : u64]) : bool
   (match instrs
     [(IrInstrNil) false]
     [(IrInstrCons instr rest)
       (match instr
-        [(IrInstrMov d (IrValueF64 text) _)
+        [(IrInstrMov d (IrValueF64 bits) _)
           (if (= d dst)
-            (string-eq text want)
-            (opt-mov-dst-f64-text? (box-get rest) dst want))]
-        [_ (opt-mov-dst-f64-text? (box-get rest) dst want)])]))
+            (= bits want)
+            (opt-mov-dst-f64-bits? (box-get rest) dst want))]
+        [_ (opt-mov-dst-f64-bits? (box-get rest) dst want)])]))
 
 (define (opt-test-span [line : i64] [col : i64]) : AstSourceSpan
   (AstSourceSpan line col line col))
@@ -23970,25 +23994,29 @@
 
 (define (opt-float-fold-instrs) : CompilerIrInstrList
   (compiler-ir-instr-cons
-    (IrInstrMov 40 (IrValueF64 "1.5") (AstTyF64))
+    (IrInstrMov 40 (IrValueF64 (opt-test-f64-bits "1.5")) (AstTyF64))
     (compiler-ir-instr-cons
       (IrInstrBinOp
         41
         (IrBinAdd)
         (IrValueVar 40)
-        (IrValueF64 "2.25")
+        (IrValueF64 (opt-test-f64-bits "2.25"))
         (AstTyF64))
       (compiler-ir-instr-cons
         (IrInstrBinOp
           42
           (IrBinLt)
           (IrValueVar 41)
-          (IrValueF64 "4.0")
+          (IrValueF64 (opt-test-f64-bits "4.0"))
           (AstTyBool))
         (compiler-ir-instr-cons
           (IrInstrUnOp 43 (IrUnNeg) (IrValueVar 41) (AstTyF64))
           (compiler-ir-instr-cons
-            (IrInstrCast 44 (IrValueF64 "1.00000001") (AstTyF64) (AstTyF32))
+            (IrInstrCast
+              44
+              (IrValueF64 (opt-test-f64-bits "1.00000001"))
+              (AstTyF64)
+              (AstTyF32))
             (IrInstrNil)))))))
 
 (define (opt-float-fold-invalid-instrs) : CompilerIrInstrList
@@ -23996,8 +24024,8 @@
     (IrInstrBinOp
       45
       (IrBinDiv)
-      (IrValueF64 "1.0")
-      (IrValueF64 "0.0")
+      (IrValueF64 (opt-test-f64-bits "1.0"))
+      (IrValueF64 (opt-test-f64-bits "0.0"))
       (AstTyF64))
     (IrInstrNil)))
 
@@ -24010,10 +24038,10 @@
     (and
       (= (opt-count-arith-instrs pos) 0)
       (= (opt-count-cast-instrs pos) 0)
-      (opt-mov-dst-f64-text? pos 41 "3.75")
+      (opt-mov-dst-f64-bits? pos 41 (opt-test-f64-bits "3.75"))
       (opt-mov-dst-bool-value? pos 42 true)
-      (opt-mov-dst-f64-text? pos 43 "-3.75")
-      (opt-mov-dst-f64-text? pos 44 "1")
+      (opt-mov-dst-f64-bits? pos 43 (opt-test-f64-bits "-3.75"))
+      (opt-mov-dst-f64-bits? pos 44 (opt-test-f32-bits "1.00000001"))
       (= (opt-count-arith-instrs neg) 1))))
 
 (define (compiler-optimize-typed-fold-self-test) : i64
@@ -24950,7 +24978,7 @@
 ;; copy in this slice, so the binop lhs stays v1 (no unsafe literal propagation).
 (define (opt-copy-f64-instrs) : CompilerIrInstrList
   (compiler-ir-instr-cons
-    (IrInstrMov 1 (IrValueF64 "1.5") (AstTyF64))
+    (IrInstrMov 1 (IrValueF64 (opt-test-f64-bits "1.5")) (AstTyF64))
     (compiler-ir-instr-cons
       (IrInstrBinOp 2 (IrBinAdd) (IrValueVar 1) (IrValueVar 1) (AstTyF64))
       (IrInstrNil))))
@@ -28501,9 +28529,10 @@
 
 (define (opt-gvn-hash-collision-guard-ok?) : bool
   (let
-    [key : OptExprKey (OptBinKey (IrBinAdd) (IrValueVar 1) (IrValueVar 2))]
+    [key : OptExprKey
+      (OptBinKey (IrBinAdd) (IrValueVar 1) (IrValueVar 2) (AstTyI64))]
     [other-key : OptExprKey
-      (OptBinKey (IrBinSub) (IrValueVar 1) (IrValueVar 2))]
+      (OptBinKey (IrBinSub) (IrValueVar 1) (IrValueVar 2) (AstTyI64))]
     [buckets : (Array OptGvnBucket) (make-array OptGvnBucket 1)]
     [table : OptGvnMap (OptGvnMap buckets)]
     (begin

@@ -321,20 +321,26 @@
       (read-i64-ref borrowed))))")
 
 (define (compiler-typecheck-borrow-mut-after-immut-source) : String
-  "(define (main [items : (Array i64)]) : unit
+  "(define (read-i64-ref [r : (& items i64)]) : unit unit)
+(define (main [items : (Array i64)]) : unit
   (let
     [borrowed : (& items i64) (& (array-ref items 0))]
-    (let
-      [exclusive : (&mut items i64) (&mut (array-ref items 0))]
-      unit)))")
+    (begin
+      (let
+        [exclusive : (&mut items i64) (&mut (array-ref items 0))]
+        unit)
+      (read-i64-ref borrowed))))")
 
 (define (compiler-typecheck-borrow-immut-after-mut-source) : String
-  "(define (main [items : (Array i64)]) : unit
+  "(define (write-i64-ref [r : (&mut items i64)]) : unit unit)
+(define (main [items : (Array i64)]) : unit
   (let
     [exclusive : (&mut items i64) (&mut (array-ref items 0))]
-    (let
-      [borrowed : (& items i64) (& (array-ref items 0))]
-      unit)))")
+    (begin
+      (let
+        [borrowed : (& items i64) (& (array-ref items 0))]
+        unit)
+      (write-i64-ref exclusive))))")
 
 (define (compiler-typecheck-borrow-returned-call-source) : String
   "(define (borrow-text [text : (& text str)]) : (& text str)
@@ -389,6 +395,7 @@
   "(defstruct Bags
   (left (Array i64))
   (right (Array i64)))
+(define (write-array-ref [items : (&mut bags (Array i64))]) : unit unit)
 (define (main) : unit
   (let
     [left-items : (Array i64) (make-array i64 1)]
@@ -397,7 +404,7 @@
     (let
       [first : (&mut bags (Array i64)) (&mut (struct-get bags left))]
       [second : (&mut bags (Array i64)) (&mut (struct-get bags left))]
-      unit)))")
+      (write-array-ref first))))")
 
 (define (compiler-typecheck-mut-borrow-ancestor-descendant-source) : String
   "(defstruct Bags
@@ -411,7 +418,7 @@
     (let
       [whole-left : (&mut bags (Array i64)) (&mut (struct-get bags left))]
       [first-item : (&mut bags i64) (&mut (array-ref (struct-get bags left) 0))]
-      unit)))")
+      (array-set! whole-left 0 1))))")
 
 (define (compiler-typecheck-mut-reborrow-bound-subscope-source) : String
   "(define (touch [slot : (&mut items i64)]) : unit unit)
@@ -425,10 +432,13 @@
   (use (&mut items)))")
 
 (define (compiler-typecheck-mut-reborrow-same-scope-use-source) : String
-  "(define (bad [items : (&mut items (Array i64))]) : unit
+  "(define (touch [slot : (&mut items i64)]) : unit unit)
+(define (bad [items : (&mut items (Array i64))]) : unit
   (let
     [slot : (&mut items i64) (&mut (array-ref items 0))]
-    (array-set! items 0 7)))
+    (begin
+      (array-set! items 0 7)
+      (touch slot))))
 (define (main [items : (Array i64)]) : unit
   (bad (&mut items)))")
 

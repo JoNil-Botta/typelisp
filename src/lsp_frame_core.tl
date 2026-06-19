@@ -5263,23 +5263,25 @@
   [line : i64]
   [col : i64]
   [new-text : String]) : String
-  (let
-    [offset : i64 (lsp-offset-at-position text line col)]
-    (if (= offset (string-length text))
-      text
-      (let
-        [form-start : i64 (lsp-find-form-at-offset text offset)]
-        (if (= form-start -1)
-          text
-          (let
-            [form-end : i64 (lsp-find-form-end-at-offset text form-start)]
-            (if (= form-end -1)
-              text
-              (let
-                [before : String (substring text 0 form-start)]
-                [after : String
-                  (substring text form-end (- (string-length text) form-end))]
-                (str-cat before new-text after)))))))))
+  (if (or (< line 0) (< col 0))
+    text
+    (let
+      [offset : i64 (lsp-offset-at-position text line col)]
+      (if (= offset (string-length text))
+        text
+        (let
+          [form-start : i64 (lsp-find-form-at-offset text offset)]
+          (if (= form-start -1)
+            text
+            (let
+              [form-end : i64 (lsp-find-form-end-at-offset text form-start)]
+              (if (or (= form-end -1) (<= form-end offset))
+                text
+                (let
+                  [before : String (substring text 0 form-start)]
+                  [after : String
+                    (substring text form-end (- (string-length text) form-end))]
+                  (str-cat before new-text after))))))))))
 
 ;; tl/structuralReplaceAt - Replace form at position (line, character)
 (define (lsp-handle-tl-structural-replace-at

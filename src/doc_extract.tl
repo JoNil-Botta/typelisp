@@ -267,6 +267,32 @@
           (set! keep false)))
       i)))
 
+(define (doc-apostrophe-char-escape? [c : char]) : bool
+  (or (= c #n') (= c #t') (= c #r') (= c #0') (= c #\\') (= c #'')))
+
+(define (doc-scan-apostrophe-char-literal-end
+  [src : String]
+  [start : i64]
+  [n : i64]) : i64
+  (if (< (+ start 1) n)
+    (let
+      [payload : char (string-ref src (+ start 1))]
+      (cond
+        [(= payload #\\')
+          (if (and
+            (< (+ start 3) n)
+            (doc-apostrophe-char-escape? (string-ref src (+ start 2)))
+            (= (string-ref src (+ start 3)) #''))
+            (+ start 4)
+            (+ start 1))]
+        [(or (= payload #'') (= payload #\newline') (= payload #\return'))
+          (+ start 1)]
+        [else
+          (if (and (< (+ start 2) n) (= (string-ref src (+ start 2)) #''))
+            (+ start 3)
+            (+ start 1))]))
+    (+ start 1)))
+
 (define (doc-scan-form-end [src : String] [start : i64] [n : i64]) : i64
   (let
     [i : i64 start]
@@ -281,6 +307,8 @@
               [(= c #;')
                 (set! i (doc-next-line-start src (doc-line-end src i n) n))]
               [(= c #"') (set! i (doc-scan-string-end src i n))]
+              [(= c #'')
+                (set! i (doc-scan-apostrophe-char-literal-end src i n))]
               [(= c ##') (set! i (doc-scan-char-literal-end src i n))]
               [(or (= c #(') (= c #['))
                 (begin
@@ -523,6 +551,8 @@
 ;: lost before ordinary comment
 ;; ordinary comment clears pending docs
 (define missed : i64 0)
+(define ignored-quote-char : char '\"')
+(define ignored-paren-char : char '(')
 ;: function doc
 (define (main [argc : i64]) : i64
   answer)

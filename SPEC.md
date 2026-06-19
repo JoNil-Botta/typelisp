@@ -176,7 +176,7 @@ as + ld → ELF binary
 | `Int` | `[-]?[0-9]+` | Decimal integer literal, default type `i32` |
 | `Float` | `[-]?[0-9]+\.[0-9]+` | `f64` literal |
 | `Bool` | `true` / `false` | |
-| `Char` | `#x'` / `#\\x'` | Single character literal |
+| `Char` | `'x'` / `'\n'` / `'\''` | Single character literal; legacy bootstrap `#x'` / `#\\x'` remains accepted |
 | `String` | `"..."` | ASCII string literal (type `String`) |
 | `Ident` | `[a-zA-Z_][a-zA-Z0-9_!?+-=*/<>:]*` | Identifier |
 | `Unit` | `unit` | The unit value |
@@ -3212,9 +3212,13 @@ arena-owned storage escape the scoped region.
 | Integer | `42`, `-7` | `i64` |
 | Float | `3.14`, `-0.5` | `f64` |
 | Boolean | `true`, `false` | `bool` |
-| Character | `#A'`, `#\n'`, `#\t'`, `#\0'` | `char` |
+| Character | `'A'`, `'\n'`, `'\t'`, `'\0'`, `'\''`, `'\\'` | `char` |
 | String | `"hello"` | `String` |
 | Unit | `unit` | `unit` |
+
+During the bootstrap transition, the lexer also accepts legacy character
+literals `#A'`, `#\n'`, `#\t'`, `#\0'`, and named forms such as `#\space'`,
+`#\newline'`, `#\tab'`, `#\return'`, and `#\nul'`.
 
 ### 5.2 Variables and scoping
 
@@ -6384,7 +6388,11 @@ ident         ::= [a-zA-Z_][a-zA-Z0-9_!?+-=*/<>:]*
 integer       ::= [-]?[0-9]+
 float         ::= [-]?[0-9]+\.[0-9]+
 bool          ::= "true" | "false"
-char          ::= "#" . "'" | "#\\" . "'"
+char          ::= "'" char-payload "'"
+                | "'\\" char-escape "'"
+                | "#" . "'" | "#\\" . "'"            ; legacy bootstrap
+char-payload  ::= any source character except "'" "\\" newline carriage-return
+char-escape   ::= "n" | "t" | "r" | "0" | "\\" | "'"
 string        ::= \"...\"
 ```
 

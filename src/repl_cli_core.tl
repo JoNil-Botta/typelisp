@@ -570,6 +570,32 @@
       (+ idx 1)
       (repl-skip-char-literal text (+ idx 1) len))))
 
+(define (repl-apostrophe-char-escape? [c : char]) : bool
+  (or (= c #n') (= c #t') (= c #r') (= c #0') (= c #\\') (= c #'')))
+
+(define (repl-skip-apostrophe-char-literal
+  [text : String]
+  [idx : i64]
+  [len : i64]) : i64
+  (if (< (+ idx 1) len)
+    (let
+      [payload : char (string-ref text (+ idx 1))]
+      (cond
+        [(= payload #\\')
+          (if (and
+            (< (+ idx 3) len)
+            (repl-apostrophe-char-escape? (string-ref text (+ idx 2)))
+            (= (string-ref text (+ idx 3)) #''))
+            (+ idx 4)
+            (+ idx 1))]
+        [(or (= payload #'') (= payload #\newline') (= payload #\return'))
+          (+ idx 1)]
+        [else
+          (if (and (< (+ idx 2) len) (= (string-ref text (+ idx 2)) #''))
+            (+ idx 3)
+            (+ idx 1))]))
+    (+ idx 1)))
+
 (define (repl-input-complete-loop
   [text : String]
   [idx : i64]
@@ -638,6 +664,15 @@
             parens
             brackets
             true
+            false)]
+        [(= c #'')
+          (repl-input-complete-loop
+            text
+            (repl-skip-apostrophe-char-literal text idx len)
+            len
+            parens
+            brackets
+            false
             false)]
         [(= c ##')
           (repl-input-complete-loop

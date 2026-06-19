@@ -323,6 +323,42 @@
                         (set! ok false))
                       ok)))))))))))
 
+(define (compiler-driver-state-smoke-builtin-ids-data-addr
+  [state : CompilerBuiltinIdsState]) : i64
+  (cast
+    (unsafe
+      (ptr->int (ptr-cast (array-data (struct-get state ids)) : (Ptr u8))))
+    : i64))
+
+(define (compiler-driver-state-smoke-builtins-scratch-capture-stable?) : bool
+  (let
+    [state : CompilerDriverState (compiler-driver-state-new)]
+    [ok : bool true]
+    (begin
+      (compiler-driver-state-install-builtins! state)
+      (let
+        [before : i64
+          (compiler-driver-state-smoke-builtin-ids-data-addr
+            (array-ref (struct-get state builtin-ids) 0))]
+        [string-length-id : i64 (intern "string-length")]
+        (begin
+          (unless
+            (compiler-builtin-typecheck-string-length-id? string-length-id)
+            (set! ok false))
+          (with-scratch (compiler-driver-state-capture-active-builtins! state))
+          (let
+            [after : i64
+              (compiler-driver-state-smoke-builtin-ids-data-addr
+                (array-ref (struct-get state builtin-ids) 0))]
+            (begin
+              (unless (= before after) (set! ok false))
+              (compiler-builtin-reset!)
+              (compiler-driver-state-install-builtins! state)
+              (unless
+                (compiler-builtin-typecheck-string-length-id? string-length-id)
+                (set! ok false))
+              ok)))))))
+
 (define (compiler-driver-state-smoke-lower-arenas-isolated?) : bool
   (let
     [state-a : CompilerDriverState (compiler-driver-state-new)]
@@ -383,5 +419,8 @@
     (unless (compiler-driver-state-smoke-type-dedup-isolated?) (return 5))
     (unless (compiler-driver-state-smoke-active-pools-isolated?) (return 7))
     (unless (compiler-driver-state-smoke-builtins-isolated?) (return 8))
+    (unless
+      (compiler-driver-state-smoke-builtins-scratch-capture-stable?)
+      (return 10))
     (unless (compiler-driver-state-smoke-lower-arenas-isolated?) (return 9))
     42))

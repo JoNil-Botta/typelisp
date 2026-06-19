@@ -763,7 +763,9 @@
 (define (main) : i64 (answer))")
 
 (define (compiler-typecheck-smoke-module-macro-type-key-source) : String
-  "(defmacro (boxmod [T : type]) : Module
+  "(defstruct Pair (value i64))
+(defstruct Other (value i64))
+(defmacro (boxmod [T : type]) : Module
   (let
     [mod-name : Expr (expr-var (string-append \"generated.box.\" (type-key T)))]
     `(begin
@@ -779,10 +781,16 @@
 (import (boxmod i64) as bi2)
 (import (boxmod String) as bs)
 (import (boxmod (-> i64 i64)) as bf)
+(import (boxmod Pair) as bp)
+(import (boxmod Pair) as bp2)
+(import (boxmod Other) as bo)
 (define (main) : i64
   (+ (bi.read (bi.make 20))
     (+ (bi2.read (bi2.make 1))
-      (string-length (bs.read (bs.make \"typed\"))))))")
+      (+ (string-length (bs.read (bs.make \"typed\")))
+        (+ (struct-get (bp.read (bp.make (Pair 7))) value)
+          (+ (struct-get (bp2.read (bp2.make (Pair 8))) value)
+            (struct-get (bo.read (bo.make (Other 9))) value)))))))")
 
 (define (compiler-typecheck-smoke-module-macro-identity-tests-ok?) : bool
   (and

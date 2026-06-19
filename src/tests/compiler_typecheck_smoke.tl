@@ -312,12 +312,13 @@
 
 (define (compiler-typecheck-borrow-projection-assign-source) : String
   "(defstruct Pair (left i64) (right i64))
+(define (read-i64-ref [r : (& pair i64)]) : i64 1)
 (define (main [pair : Pair]) : i64
   (let
     [borrowed : (& pair i64) (& (struct-get pair left))]
     (begin
       (set! (struct-get pair left) 3)
-      0)))")
+      (read-i64-ref borrowed))))")
 
 (define (compiler-typecheck-borrow-mut-after-immut-source) : String
   "(define (main [items : (Array i64)]) : unit

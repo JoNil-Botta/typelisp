@@ -2201,7 +2201,11 @@
                           (begin
                             (set!
                               result
-                              (InvalidLspForms line col msg (lsp-line-at text line)))
+                              (InvalidLspForms
+                                line
+                                col
+                                msg
+                                (lsp-line-at text line)))
                             (set! done true)))]
                       [(OkAstExpr _) unit])]
                   [(OkAstNoDecl)

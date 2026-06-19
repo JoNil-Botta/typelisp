@@ -4267,7 +4267,17 @@
     map-name
     prefix
     "i64"
-    (string-append "  (" (string-append prefix "-hash-normalize key))\n"))
+    ;; Scramble the key before the Mersenne reduce. The raw i64 keys here are
+    ;; structured (sequential intern ids, and positional composite keys like
+    ;; `stride*(left+1)+right`), so `hash-normalize key` (~identity for keys
+    ;; below 2^31) left the bucket index `& (capacity-1)` keyed on the raw low
+    ;; bits -> heavy clustering and probe chains dozens of slots long (the
+    ;; symbol-table lookups were ~66% of the opt2 self-compile). Multiplying by a
+    ;; large odd constant first spreads every key bit across the reduced range,
+    ;; so the low bits the mask consumes are uniform.
+    (string-append
+      "  ("
+      (string-append prefix "-hash-normalize (* key 6364136223846793005)))\n"))
     ""
     ""
     "= slot-key key)"

@@ -7299,18 +7299,20 @@
           [(OkSpecExpr rewritten state2)
             (OkSpecExpr (ast-expr-cast rewritten ty) state2)]
           [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
-    [(AstExprMatch scrutinee-box arms)
-      (let
-        [scrutinee : AstExpr (ast-node-get scrutinee-box)]
-        (match (spec-rewrite-expr scrutinee templates state)
-          [(OkSpecExpr rewritten-scrutinee scrutinee-state)
-            (match (spec-rewrite-match-arms arms templates scrutinee-state)
-              [(OkSpecMatchArmList rewritten-arms arms-state)
-                (OkSpecExpr
-                  (ast-expr-match rewritten-scrutinee rewritten-arms)
-                  arms-state)]
-              [(ErrSpecMatchArmList diag) (ErrSpecExpr diag)])]
-          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch scrutinee-box arms)
+          (let
+            [scrutinee : AstExpr (ast-node-get scrutinee-box)]
+            (match (spec-rewrite-expr scrutinee templates state)
+              [(OkSpecExpr rewritten-scrutinee scrutinee-state)
+                (match (spec-rewrite-match-arms arms templates scrutinee-state)
+                  [(OkSpecMatchArmList rewritten-arms arms-state)
+                    (OkSpecExpr
+                      (ast-expr-match rewritten-scrutinee rewritten-arms)
+                      arms-state)]
+                  [(ErrSpecMatchArmList diag) (ErrSpecExpr diag)])]
+              [(ErrSpecExpr diag) (ErrSpecExpr diag)]))])]
     [(AstExprForeach index index-ty start-box end-box body-box)
       (let
         [start : AstExpr (ast-node-get start-box)]
@@ -7973,17 +7975,19 @@
           [(OkSpecSubExpr rewritten)
             (OkSpecSubExpr (ast-expr-cast rewritten ty))]
           [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
-    [(AstExprMatch scrutinee-box arms)
-      (let
-        [scrutinee : AstExpr (ast-node-get scrutinee-box)]
-        (match (spec-substitute-values-expr scrutinee subs)
-          [(OkSpecSubExpr rewritten-scrutinee)
-            (match (spec-substitute-values-match-arms arms subs)
-              [(OkSpecSubMatchArmList rewritten-arms)
-                (OkSpecSubExpr
-                  (ast-expr-match rewritten-scrutinee rewritten-arms))]
-              [(ErrSpecSubMatchArmList diag) (ErrSpecSubExpr diag)])]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch scrutinee-box arms)
+          (let
+            [scrutinee : AstExpr (ast-node-get scrutinee-box)]
+            (match (spec-substitute-values-expr scrutinee subs)
+              [(OkSpecSubExpr rewritten-scrutinee)
+                (match (spec-substitute-values-match-arms arms subs)
+                  [(OkSpecSubMatchArmList rewritten-arms)
+                    (OkSpecSubExpr
+                      (ast-expr-match rewritten-scrutinee rewritten-arms))]
+                  [(ErrSpecSubMatchArmList diag) (ErrSpecSubExpr diag)])]
+              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))])]
     [(AstExprForeach index index-ty start-box end-box body-box)
       (let
         [start : AstExpr (ast-node-get start-box)]
@@ -8820,17 +8824,19 @@
               [(OkSpecSubExpr rewritten)
                 (OkSpecSubExpr (ast-expr-set-id name rewritten))]
               [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]))]
-    [(AstExprMatch scrutinee-box arms)
-      (let
-        [scrutinee : AstExpr (ast-node-get scrutinee-box)]
-        (match (spec-substitute-types-expr scrutinee subs)
-          [(OkSpecSubExpr rewritten-scrutinee)
-            (match (spec-substitute-types-match-arms arms subs)
-              [(OkSpecSubMatchArmList rewritten-arms)
-                (OkSpecSubExpr
-                  (ast-expr-match rewritten-scrutinee rewritten-arms))]
-              [(ErrSpecSubMatchArmList diag) (ErrSpecSubExpr diag)])]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch scrutinee-box arms)
+          (let
+            [scrutinee : AstExpr (ast-node-get scrutinee-box)]
+            (match (spec-substitute-types-expr scrutinee subs)
+              [(OkSpecSubExpr rewritten-scrutinee)
+                (match (spec-substitute-types-match-arms arms subs)
+                  [(OkSpecSubMatchArmList rewritten-arms)
+                    (OkSpecSubExpr
+                      (ast-expr-match rewritten-scrutinee rewritten-arms))]
+                  [(ErrSpecSubMatchArmList diag) (ErrSpecSubExpr diag)])]
+              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))])]
     [(AstExprStructGet receiver-box field)
       (let
         [receiver : AstExpr (ast-node-get receiver-box)]

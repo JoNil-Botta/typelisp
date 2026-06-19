@@ -6613,13 +6613,15 @@
       (let
         [place : AstExpr (ast-node-get place-box)]
         (tc-source-expr-spmd-broadcast-scope-ok place allow))]
-    [(AstExprMatch scrutinee-box arms)
-      (let
-        [scrutinee : AstExpr (ast-node-get scrutinee-box)]
-        (match (tc-source-expr-spmd-broadcast-scope-ok scrutinee allow)
-          [(OkTcUnit)
-            (tc-source-match-arm-list-spmd-broadcast-scope-ok arms allow)]
-          [(ErrTcUnit message) (ErrTcUnit message)]))]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch scrutinee-box arms)
+          (let
+            [scrutinee : AstExpr (ast-node-get scrutinee-box)]
+            (match (tc-source-expr-spmd-broadcast-scope-ok scrutinee allow)
+              [(OkTcUnit)
+                (tc-source-match-arm-list-spmd-broadcast-scope-ok arms allow)]
+              [(ErrTcUnit message) (ErrTcUnit message)]))])]
     [(AstExprForeach _ _ start-box end-box body-box)
       (let
         [start : AstExpr (ast-node-get start-box)]
@@ -6949,12 +6951,14 @@
         [inner : AstExpr (ast-node-get inner-box)]
         [value : AstExpr (ast-node-get value-box)]
         (tc-source-expr-pair-policy-ok ctx inner value))]
-    [(AstExprMatch scrutinee-box arms)
-      (let
-        [scrutinee : AstExpr (ast-node-get scrutinee-box)]
-        (match (tc-source-expr-policy-ok ctx scrutinee)
-          [(OkTcUnit) (tc-source-match-arm-list-policy-ok ctx arms)]
-          [(ErrTcUnit message) (ErrTcUnit message)]))]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch scrutinee-box arms)
+          (let
+            [scrutinee : AstExpr (ast-node-get scrutinee-box)]
+            (match (tc-source-expr-policy-ok ctx scrutinee)
+              [(OkTcUnit) (tc-source-match-arm-list-policy-ok ctx arms)]
+              [(ErrTcUnit message) (ErrTcUnit message)]))])]
     [(AstExprForeach _ index-ty start-box end-box body-box)
       (let
         [start : AstExpr (ast-node-get start-box)]
@@ -9890,13 +9894,15 @@
           then-branch
           else-branch
           expected))]
-    [(AstExprMatch scrutinee-box arms)
-      (let
-        [scrutinee : AstExpr (ast-node-get scrutinee-box)]
-        (match (tc-expr ctx env scrutinee)
-          [(OkTcType scrut-ty)
-            (tc-match-expr-with-expected ctx env scrut-ty arms expected)]
-          [(ErrTcType message) (ErrTcType message)]))]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch scrutinee-box arms)
+          (let
+            [scrutinee : AstExpr (ast-node-get scrutinee-box)]
+            (match (tc-expr ctx env scrutinee)
+              [(OkTcType scrut-ty)
+                (tc-match-expr-with-expected ctx env scrut-ty arms expected)]
+              [(ErrTcType message) (ErrTcType message)]))])]
     [(AstExprArray exprs)
       (match (tc-type-strip-region expected)
         [(AstTyArray elem-ty len)
@@ -13211,12 +13217,14 @@
         (and
           (tc-ref-closure-local-uses-ok? inner name bound)
           (tc-ref-closure-local-uses-ok? value name bound)))]
-    [(AstExprMatch scrutinee-box arms)
-      (let
-        [scrutinee : AstExpr (ast-node-get scrutinee-box)]
-        (and
-          (tc-ref-closure-local-uses-ok? scrutinee name bound)
-          (tc-ref-closure-match-arms-local-uses-ok? arms name bound)))]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch scrutinee-box arms)
+          (let
+            [scrutinee : AstExpr (ast-node-get scrutinee-box)]
+            (and
+              (tc-ref-closure-local-uses-ok? scrutinee name bound)
+              (tc-ref-closure-match-arms-local-uses-ok? arms name bound)))])]
     [(AstExprForeach index _ start-box end-box body-box)
       (let
         [start : AstExpr (ast-node-get start-box)]
@@ -14655,7 +14663,7 @@
       (tc-spmd-masked-if-unsupported "varying calls inside masked branches")]
     [(AstExprWhile _ _)
       (tc-spmd-masked-if-unsupported "varying while inside masked branches")]
-    [(AstExprMatch _ _)
+    [(AstExprMatch _)
       (tc-spmd-masked-if-unsupported "varying match inside masked branches")]
     [(AstExprForeach _ _ _ _ _)
       (tc-spmd-masked-if-unsupported "nested foreach inside masked branches")]
@@ -15038,10 +15046,12 @@
       (tc-spmd-scan-body-no-nested-spmd (ast-node-get inner-box))]
     [(AstExprBorrow _ _ place-box)
       (tc-spmd-scan-body-no-nested-spmd (ast-node-get place-box))]
-    [(AstExprMatch scrutinee-box arms)
-      (match (tc-spmd-scan-body-no-nested-spmd (ast-node-get scrutinee-box))
-        [(OkTcUnit) (tc-spmd-scan-body-no-nested-arms arms)]
-        [(ErrTcUnit message) (ErrTcUnit message)])]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch scrutinee-box arms)
+          (match (tc-spmd-scan-body-no-nested-spmd (ast-node-get scrutinee-box))
+            [(OkTcUnit) (tc-spmd-scan-body-no-nested-arms arms)]
+            [(ErrTcUnit message) (ErrTcUnit message)])])]
     [(AstExprForeach _ _ _ _ _)
       (ErrTcUnit "typecheck: nested foreach inside spmd-scan is not supported")]
     [(AstExprSpmdReduce _ _ _ _ _ _ _)
@@ -15865,32 +15875,34 @@
                         "typecheck: foreach cannot set binding declared outside foreach")
                       (tc-spmd-finish expr-ty TcSpmdUniform value-env)))])]
             [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])))]
-    [(AstExprMatch scrutinee-box arms)
-      (let
-        [scrutinee : AstExpr (ast-node-get scrutinee-box)]
-        (match (tc-spmd-expr ctx env spmd-env scrutinee)
-          [(OkTcSpmdExprInfo scrut-info)
-            (match scrut-info
-              [(TcSpmdExprInfo scrut-ty scrut-class scrut-env)
-                (match (tc-spmd-require-uniform
-                  scrut-class
-                  "typecheck: foreach match scrutinee must be uniform")
-                  [(OkTcUnit)
-                    (match (tc-spmd-match-arms
-                      ctx
-                      env
-                      scrut-env
-                      scrut-ty
-                      arms
-                      TcSpmdUniform)
-                      [(OkTcSpmdExprListInfo arms-info)
-                        (match arms-info
-                          [(TcSpmdExprListInfo arms-class arms-env)
-                            (tc-spmd-finish expr-ty arms-class arms-env)])]
-                      [(ErrTcSpmdExprListInfo message)
-                        (ErrTcSpmdExprInfo message)])]
-                  [(ErrTcUnit message) (ErrTcSpmdExprInfo message)])])]
-          [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch scrutinee-box arms)
+          (let
+            [scrutinee : AstExpr (ast-node-get scrutinee-box)]
+            (match (tc-spmd-expr ctx env spmd-env scrutinee)
+              [(OkTcSpmdExprInfo scrut-info)
+                (match scrut-info
+                  [(TcSpmdExprInfo scrut-ty scrut-class scrut-env)
+                    (match (tc-spmd-require-uniform
+                      scrut-class
+                      "typecheck: foreach match scrutinee must be uniform")
+                      [(OkTcUnit)
+                        (match (tc-spmd-match-arms
+                          ctx
+                          env
+                          scrut-env
+                          scrut-ty
+                          arms
+                          TcSpmdUniform)
+                          [(OkTcSpmdExprListInfo arms-info)
+                            (match arms-info
+                              [(TcSpmdExprListInfo arms-class arms-env)
+                                (tc-spmd-finish expr-ty arms-class arms-env)])]
+                          [(ErrTcSpmdExprListInfo message)
+                            (ErrTcSpmdExprInfo message)])]
+                      [(ErrTcUnit message) (ErrTcSpmdExprInfo message)])])]
+              [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))])]
     [(AstExprForeach index index-ty start-box end-box body-box)
       (let
         [start : AstExpr (ast-node-get start-box)]
@@ -16527,12 +16539,14 @@
         (or
           (tc-expr-uses-free-name? inner name bound)
           (tc-expr-uses-free-name? value name bound)))]
-    [(AstExprMatch scrutinee-box arms)
-      (let
-        [scrutinee : AstExpr (ast-node-get scrutinee-box)]
-        (or
-          (tc-expr-uses-free-name? scrutinee name bound)
-          (tc-match-arms-use-free-name? arms name bound)))]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch scrutinee-box arms)
+          (let
+            [scrutinee : AstExpr (ast-node-get scrutinee-box)]
+            (or
+              (tc-expr-uses-free-name? scrutinee name bound)
+              (tc-match-arms-use-free-name? arms name bound)))])]
     [(AstExprForeach index _ start-box end-box body-box)
       (let
         [start : AstExpr (ast-node-get start-box)]
@@ -16974,12 +16988,14 @@
         (or
           (tc-expr-sets-free-name? inner name bound)
           (tc-expr-sets-free-name? value name bound)))]
-    [(AstExprMatch scrutinee-box arms)
-      (let
-        [scrutinee : AstExpr (ast-node-get scrutinee-box)]
-        (or
-          (tc-expr-sets-free-name? scrutinee name bound)
-          (tc-match-arms-set-free-name? arms name bound)))]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch scrutinee-box arms)
+          (let
+            [scrutinee : AstExpr (ast-node-get scrutinee-box)]
+            (or
+              (tc-expr-sets-free-name? scrutinee name bound)
+              (tc-match-arms-set-free-name? arms name bound)))])]
     [(AstExprForeach index _ start-box end-box body-box)
       (let
         [start : AstExpr (ast-node-get start-box)]
@@ -17274,8 +17290,10 @@
           body
           owners
           (tc-let-binding-list-add-bound-names bindings bound)))]
-    [(AstExprMatch _ arms)
-      (tc-match-arms-result-use-cleanup-owner? arms owners bound)]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch _ arms)
+          (tc-match-arms-result-use-cleanup-owner? arms owners bound)])]
     [(AstExprForeach index _ _ _ body-box)
       (let
         [body : AstExpr (ast-node-get body-box)]
@@ -21330,7 +21348,7 @@
     [(AstExprWhile _ _)
       (ErrTcUnit
         "varying control flow is not allowed inside a spmd-reduce value expression; the first slice has no varying if/while/match (SPEC.md 5.15)")]
-    [(AstExprMatch _ _)
+    [(AstExprMatch _)
       (ErrTcUnit
         "varying control flow is not allowed inside a spmd-reduce value expression; the first slice has no varying if/while/match (SPEC.md 5.15)")]
     [_
@@ -23153,12 +23171,14 @@
                   [(ErrTcType message) (ErrTcType message)])]
               [(ErrTcUnit message) (ErrTcType message)])]
           [(ErrTcType message) (ErrTcType message)]))]
-    [(AstExprMatch scrutinee-box arms)
-      (let
-        [scrutinee : AstExpr (ast-node-get scrutinee-box)]
-        (match (tc-expr ctx env scrutinee)
-          [(OkTcType scrut-ty) (tc-match-expr ctx env scrut-ty arms)]
-          [(ErrTcType message) (ErrTcType message)]))]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch scrutinee-box arms)
+          (let
+            [scrutinee : AstExpr (ast-node-get scrutinee-box)]
+            (match (tc-expr ctx env scrutinee)
+              [(OkTcType scrut-ty) (tc-match-expr ctx env scrut-ty arms)]
+              [(ErrTcType message) (ErrTcType message)]))])]
     [(AstExprStructGet receiver-box field)
       (let
         [receiver : AstExpr (ast-node-get receiver-box)]
@@ -24095,25 +24115,27 @@
       (tc-comptime-purity-node-mode ctx env bound chain seen template? inner)]
     [(AstExprBorrow _ _ place)
       (tc-comptime-purity-node-mode ctx env bound chain seen template? place)]
-    [(AstExprMatch scrut arms)
-      (match (tc-comptime-purity-node-mode
-        ctx
-        env
-        bound
-        chain
-        seen
-        template?
-        scrut)
-        [(OkTcUnit)
-          (tc-comptime-purity-match-arms-mode
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch scrut arms)
+          (match (tc-comptime-purity-node-mode
             ctx
             env
             bound
             chain
             seen
             template?
-            arms)]
-        [(ErrTcUnit message) (ErrTcUnit message)])]
+            scrut)
+            [(OkTcUnit)
+              (tc-comptime-purity-match-arms-mode
+                ctx
+                env
+                bound
+                chain
+                seen
+                template?
+                arms)]
+            [(ErrTcUnit message) (ErrTcUnit message)])])]
     [(AstExprForeach index _ start end body)
       (match (tc-comptime-purity-node2-mode
         ctx
@@ -26644,36 +26666,38 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (tc-move-check-expr ctx env locals loop-carried moved inner))]
-    [(AstExprMatch scrut-box arms)
-      (let
-        [scrut : AstExpr (ast-node-get scrut-box)]
-        (match (tc-move-check-expr ctx env locals loop-carried moved scrut)
-          [(OkTcMove moveds)
-            (match (tc-expr ctx env scrut)
-              [(OkTcType scrut-ty)
-                (tc-move-check-arms
-                  ctx
-                  env
-                  locals
-                  loop-carried
-                  (tc-move-after-match-scrutinee
-                    ctx
-                    locals
-                    moveds
-                    scrut
-                    scrut-ty)
-                  scrut-ty
-                  arms)]
-              [(ErrTcType _)
-                (tc-move-check-arms
-                  ctx
-                  env
-                  locals
-                  loop-carried
-                  moveds
-                  (AstTyUnit)
-                  arms)])]
-          [(ErrTcMove message) (ErrTcMove message)]))]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch scrut-box arms)
+          (let
+            [scrut : AstExpr (ast-node-get scrut-box)]
+            (match (tc-move-check-expr ctx env locals loop-carried moved scrut)
+              [(OkTcMove moveds)
+                (match (tc-expr ctx env scrut)
+                  [(OkTcType scrut-ty)
+                    (tc-move-check-arms
+                      ctx
+                      env
+                      locals
+                      loop-carried
+                      (tc-move-after-match-scrutinee
+                        ctx
+                        locals
+                        moveds
+                        scrut
+                        scrut-ty)
+                      scrut-ty
+                      arms)]
+                  [(ErrTcType _)
+                    (tc-move-check-arms
+                      ctx
+                      env
+                      locals
+                      loop-carried
+                      moveds
+                      (AstTyUnit)
+                      arms)])]
+              [(ErrTcMove message) (ErrTcMove message)]))])]
     [(AstExprForeach index index-ty start-box end-box body-box)
       (let
         [start : AstExpr (ast-node-get start-box)]
@@ -28427,16 +28451,24 @@
                     [(ErrTcBorrowPlace message) (ErrTcBorrowCheck message)])]
                 [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
             [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])))]
-    [(AstExprMatch scrut-box arms)
-      (let
-        [scrut : AstExpr (ast-node-get scrut-box)]
-        (match (tc-borrow-check-expr ctx env locals borrowed scrut)
-          [(OkTcBorrowCheck borroweds)
-            (match (tc-expr ctx env scrut)
-              [(OkTcType scrut-ty)
-                (tc-borrow-check-arms ctx env locals borroweds scrut-ty arms)]
-              [(ErrTcType message) (ErrTcBorrowCheck message)])]
-          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch scrut-box arms)
+          (let
+            [scrut : AstExpr (ast-node-get scrut-box)]
+            (match (tc-borrow-check-expr ctx env locals borrowed scrut)
+              [(OkTcBorrowCheck borroweds)
+                (match (tc-expr ctx env scrut)
+                  [(OkTcType scrut-ty)
+                    (tc-borrow-check-arms
+                      ctx
+                      env
+                      locals
+                      borroweds
+                      scrut-ty
+                      arms)]
+                  [(ErrTcType message) (ErrTcBorrowCheck message)])]
+              [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))])]
     [(AstExprForeach index index-ty start-box end-box body-box)
       (let
         [start : AstExpr (ast-node-get start-box)]
@@ -30217,12 +30249,14 @@
           mutable
           lifetime
           (macro-hygiene-expr place env macro-name depth)))]
-    [(AstExprMatch scrut-box arms)
-      (let
-        [scrut : AstExpr (ast-node-get scrut-box)]
-        (ast-expr-match
-          (macro-hygiene-expr scrut env macro-name depth)
-          (macro-hygiene-arm-list arms env macro-name depth)))]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch scrut-box arms)
+          (let
+            [scrut : AstExpr (ast-node-get scrut-box)]
+            (ast-expr-match
+              (macro-hygiene-expr scrut env macro-name depth)
+              (macro-hygiene-arm-list arms env macro-name depth)))])]
     [(AstExprForeach index index-ty start-box end-box body-box)
       (let
         [start : AstExpr (ast-node-get start-box)]
@@ -31676,20 +31710,29 @@
           [(OkMacroExprList nexprs)
             (OkMacroExpr (ast-node-push (AstExprArray nexprs)))]
           [(ErrMacroExprList diag) (ErrMacroExpr diag)])]
-      [(AstExprMatch scrut-box arms)
-        (let
-          [scrut : AstExpr (ast-node-get scrut-box)]
-          (match (macro-expand-expr ctx env decls depth scrut)
-            [(OkMacroExpr nscrut)
-              (match (tc-expr ctx env (ast-node-get nscrut))
-                [(OkTcType scrut-ty)
-                  (match (macro-expand-arms ctx env decls depth scrut-ty arms)
-                    [(OkMacroArms narms)
-                      (OkMacroExpr (ast-expr-match nscrut narms))]
-                    [(ErrMacroArms diag) (ErrMacroExpr diag)])]
-                [(ErrTcType message)
-                  (ErrMacroExpr (tc-expr-diag (ast-node-get nscrut) message))])]
-            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+      [(AstExprMatch match-box)
+        (match (box-get match-box)
+          [(AstMatch scrut-box arms)
+            (let
+              [scrut : AstExpr (ast-node-get scrut-box)]
+              (match (macro-expand-expr ctx env decls depth scrut)
+                [(OkMacroExpr nscrut)
+                  (match (tc-expr ctx env (ast-node-get nscrut))
+                    [(OkTcType scrut-ty)
+                      (match (macro-expand-arms
+                        ctx
+                        env
+                        decls
+                        depth
+                        scrut-ty
+                        arms)
+                        [(OkMacroArms narms)
+                          (OkMacroExpr (ast-expr-match nscrut narms))]
+                        [(ErrMacroArms diag) (ErrMacroExpr diag)])]
+                    [(ErrTcType message)
+                      (ErrMacroExpr
+                        (tc-expr-diag (ast-node-get nscrut) message))])]
+                [(ErrMacroExpr diag) (ErrMacroExpr diag)]))])]
       [(AstExprWhile cond-box body-box)
         (let
           [cond : AstExpr (ast-node-get cond-box)]
@@ -32879,10 +32922,12 @@
     [(AstExprAnn i _) (macro-node-uses-macro? ctx decls i)]
     [(AstExprCast i _) (macro-node-uses-macro? ctx decls i)]
     [(AstExprBorrow _ _ i) (macro-node-uses-macro? ctx decls i)]
-    [(AstExprMatch scrut arms)
-      (or
-        (macro-node-uses-macro? ctx decls scrut)
-        (macro-arms-use-macro? ctx decls arms))]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch scrut arms)
+          (or
+            (macro-node-uses-macro? ctx decls scrut)
+            (macro-arms-use-macro? ctx decls arms))])]
     [(AstExprForeach _ _ s e b)
       (or
         (macro-node-uses-macro? ctx decls s)
@@ -33071,10 +33116,12 @@
     [(AstExprAnn i _) (ctfe-node-has-type-literal? i)]
     [(AstExprCast i _) (ctfe-node-has-type-literal? i)]
     [(AstExprBorrow _ _ i) (ctfe-node-has-type-literal? i)]
-    [(AstExprMatch scrut arms)
-      (or
-        (ctfe-node-has-type-literal? scrut)
-        (ctfe-arms-have-type-literal? arms))]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch scrut arms)
+          (or
+            (ctfe-node-has-type-literal? scrut)
+            (ctfe-arms-have-type-literal? arms))])]
     [(AstExprForeach _ _ s e b)
       (or
         (ctfe-node-has-type-literal? s)

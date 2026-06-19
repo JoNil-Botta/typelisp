@@ -1407,10 +1407,15 @@
         (lint-type-uses-import? ty alias module-name))]
     [(AstExprBorrow _ _ place)
       (lint-expr-uses-import? (ast-node-get place) alias module-name)]
-    [(AstExprMatch scrutinee arms)
-      (if (lint-expr-uses-import? (ast-node-get scrutinee) alias module-name)
-        true
-        (lint-match-arms-use-import? arms alias module-name))]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch scrutinee arms)
+          (if (lint-expr-uses-import?
+            (ast-node-get scrutinee)
+            alias
+            module-name)
+            true
+            (lint-match-arms-use-import? arms alias module-name))])]
     [(AstExprForeach _ index-ty start end body)
       (cond
         [(lint-type-uses-import? index-ty alias module-name) true]
@@ -2176,11 +2181,13 @@
       (lint-unused-assignment-note-reads (ast-node-get inner) state)]
     [(AstExprBorrow _ _ place)
       (lint-unused-assignment-note-reads (ast-node-get place) state)]
-    [(AstExprMatch scrutinee arms)
-      (lint-unused-assignment-clear-pending
-        (lint-unused-assignment-note-reads-match-arms
-          arms
-          (lint-unused-assignment-note-reads (ast-node-get scrutinee) state)))]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch scrutinee arms)
+          (lint-unused-assignment-clear-pending
+            (lint-unused-assignment-note-reads-match-arms
+              arms
+              (lint-unused-assignment-note-reads (ast-node-get scrutinee) state)))])]
     [(AstExprForeach _ _ start end body)
       (lint-unused-assignment-clear-pending
         (lint-unused-assignment-note-reads
@@ -3170,10 +3177,14 @@
       (lint-unused-variable-quasiquote-expr (ast-node-get inner) state)]
     [(AstExprBorrow _ _ place)
       (lint-unused-variable-quasiquote-expr (ast-node-get place) state)]
-    [(AstExprMatch scrutinee arms)
-      (lint-unused-variable-quasiquote-match-arms
-        arms
-        (lint-unused-variable-quasiquote-expr (ast-node-get scrutinee) state))]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch scrutinee arms)
+          (lint-unused-variable-quasiquote-match-arms
+            arms
+            (lint-unused-variable-quasiquote-expr
+              (ast-node-get scrutinee)
+              state))])]
     [(AstExprForeach _ _ start end body)
       (lint-unused-variable-quasiquote-expr
         (ast-node-get body)
@@ -3555,10 +3566,12 @@
         (ast-node-get place)
         (lint-unused-variable-borrow-lifetime lifetime state)
         span)]
-    [(AstExprMatch scrutinee arms)
-      (lint-unused-variable-match-arms
-        arms
-        (lint-unused-variable-expr (ast-node-get scrutinee) state span))]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch scrutinee arms)
+          (lint-unused-variable-match-arms
+            arms
+            (lint-unused-variable-expr (ast-node-get scrutinee) state span))])]
     [(AstExprForeach index index-ty start end body)
       (lint-unused-variable-index-scope
         index
@@ -4455,13 +4468,15 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-walk-tail-expr inner threshold acc))]
-    [(AstExprMatch scrutinee-box arms)
-      (let
-        [scrutinee : AstExpr (ast-node-get scrutinee-box)]
-        (lint-walk-tail-match-arms
-          arms
-          threshold
-          (lint-walk-expr scrutinee threshold acc)))]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch scrutinee-box arms)
+          (let
+            [scrutinee : AstExpr (ast-node-get scrutinee-box)]
+            (lint-walk-tail-match-arms
+              arms
+              threshold
+              (lint-walk-expr scrutinee threshold acc)))])]
     [(AstExprWithRegion _ body)
       (lint-walk-tail-sequence-expr-list body threshold acc)]
     [(AstExprWithEscape scratch-box body)
@@ -4685,13 +4700,15 @@
       (let
         [place : AstExpr (ast-node-get place-box)]
         (lint-walk-expr place threshold acc))]
-    [(AstExprMatch scrutinee-box arms)
-      (let
-        [scrutinee : AstExpr (ast-node-get scrutinee-box)]
-        (lint-walk-match-arms
-          arms
-          threshold
-          (lint-walk-expr scrutinee threshold acc)))]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch scrutinee-box arms)
+          (let
+            [scrutinee : AstExpr (ast-node-get scrutinee-box)]
+            (lint-walk-match-arms
+              arms
+              threshold
+              (lint-walk-expr scrutinee threshold acc)))])]
     [(AstExprForeach _ _ start-box end-box body-box)
       (let
         [start : AstExpr (ast-node-get start-box)]

@@ -253,6 +253,13 @@
 (defenum AstSpmdScan
   (AstSpmdScan AstReduceOp i64 AstType i64 i64 i64 AstType i64 i64 i64))
 
+;; Boxed payload for `AstExprMatch`. After boxing AstExprLambda/AstExprSpmdScan
+;; (#3313), `AstExprMatch i64 AstMatchArmList` is the largest variant at 112 B
+;; (its arm list inlines AstMatchArm -> AstPattern -> AstMaybeType -> AstType).
+;; Boxing it collapses the variant to one word, dropping the node to 104 B.
+(defenum AstMatch
+  (AstMatch i64 AstMatchArmList))
+
 (defenum AstExpr
   (AstExprSpanned i64 AstSourceSpan)
   (AstExprLiteral AstLiteral)
@@ -281,7 +288,7 @@
   (AstExprAnn i64 AstType)
   (AstExprCast i64 AstType)
   (AstExprBorrow bool AstBorrowLifetime i64)
-  (AstExprMatch i64 AstMatchArmList)
+  (AstExprMatch (Box AstMatch))
   (AstExprForeach i64 AstType i64 i64 i64)
   (AstExprSpmdReduce AstReduceOp i64 AstType i64 i64 i64 i64)
   (AstExprSpmdScan (Box AstSpmdScan))
@@ -1697,7 +1704,7 @@
   (ast-node-push (AstExprBorrow mutable lifetime expr)))
 
 (define (ast-expr-match [scrutinee : i64] [arms : AstMatchArmList]) : i64
-  (ast-node-push (AstExprMatch scrutinee arms)))
+  (ast-node-push (AstExprMatch (box (AstMatch scrutinee arms)))))
 
 (define (ast-expr-foreach
   [name : String]
@@ -2145,7 +2152,7 @@
     [(AstExprAnn _ _) 20]
     [(AstExprCast _ _) 21]
     [(AstExprBorrow _ _ _) 40]
-    [(AstExprMatch _ _) 22]
+    [(AstExprMatch _) 22]
     [(AstExprForeach _ _ _ _ _) 23]
     [(AstExprStructGet _ _) 24]
     [(AstExprStructSet _ _ _) 63]
@@ -2662,15 +2669,17 @@
                     [(AstExprVar name) (string-eq (intern-str name) "cond")]
                     [_ false])
                   (match then-expr
-                    [(AstExprMatch scrut-box arms)
-                      (let
-                        [scrut : AstExpr (ast-node-get scrut-box)]
-                        (and
-                          (match scrut
-                            [(AstExprVar name)
-                              (string-eq (intern-str name) "input")]
-                            [_ false])
-                          (compiler-ast-single-arm-box-ok? arms)))]
+                    [(AstExprMatch match-box)
+                      (match (box-get match-box)
+                        [(AstMatch scrut-box arms)
+                          (let
+                            [scrut : AstExpr (ast-node-get scrut-box)]
+                            (and
+                              (match scrut
+                                [(AstExprVar name)
+                                  (string-eq (intern-str name) "input")]
+                                [_ false])
+                              (compiler-ast-single-arm-box-ok? arms)))])]
                     [_ false])
                   (compiler-ast-begin-expr? else-expr)))]
             [_ false])))]

@@ -741,7 +741,7 @@
       (if mutable
         "mutable borrow"
         "borrow")]
-    [(AstExprMatch _ _) "match"]
+    [(AstExprMatch _) "match"]
     [(AstExprForeach _ _ _ _ _) "foreach"]
     [(AstExprSpmdReduce _ _ _ _ _ _ _) "spmd-reduce"]
     [(AstExprSpmdScan _) "spmd-scan"]
@@ -1698,10 +1698,12 @@
         (ctfe-eval-let bindings body env fuel))]
     [(AstExprBegin exprs) (ctfe-eval-begin exprs env fuel)]
     [(AstExprUnsafe exprs) (ctfe-eval-begin exprs env fuel)]
-    [(AstExprMatch scrutinee-box arms)
-      (let
-        [scrutinee : AstExpr (ast-node-get scrutinee-box)]
-        (ctfe-eval-match scrutinee arms expr env fuel))]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch scrutinee-box arms)
+          (let
+            [scrutinee : AstExpr (ast-node-get scrutinee-box)]
+            (ctfe-eval-match scrutinee arms expr env fuel))])]
     [(AstExprCall func-box args)
       (let
         [func : AstExpr (ast-node-get func-box)]
@@ -4232,19 +4234,21 @@
               (AstTyExpr)
               next-fuel)]
           [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
-    [(AstExprMatch scrut-box arms)
-      (let
-        [scrut : AstExpr (ast-node-get scrut-box)]
-        (match (ctfe-quote-expr scrut env fuel quasiquote)
-          [(OkCtfeQuoteExpr quoted-scrut _ scrut-fuel)
-            (match (ctfe-quote-arm-list arms env scrut-fuel quasiquote)
-              [(OkCtfeQuoteArms quoted-arms arms-fuel)
-                (OkCtfeQuoteExpr
-                  (ast-expr-match quoted-scrut quoted-arms)
-                  (AstTyExpr)
-                  arms-fuel)]
-              [(ErrCtfeQuoteArms diag) (ErrCtfeQuoteExpr diag)])]
-          [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch scrut-box arms)
+          (let
+            [scrut : AstExpr (ast-node-get scrut-box)]
+            (match (ctfe-quote-expr scrut env fuel quasiquote)
+              [(OkCtfeQuoteExpr quoted-scrut _ scrut-fuel)
+                (match (ctfe-quote-arm-list arms env scrut-fuel quasiquote)
+                  [(OkCtfeQuoteArms quoted-arms arms-fuel)
+                    (OkCtfeQuoteExpr
+                      (ast-expr-match quoted-scrut quoted-arms)
+                      (AstTyExpr)
+                      arms-fuel)]
+                  [(ErrCtfeQuoteArms diag) (ErrCtfeQuoteExpr diag)])]
+              [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))])]
     [(AstExprForeach index index-ty start-box end-box body-box)
       (let
         [start : AstExpr (ast-node-get start-box)]
@@ -5301,17 +5305,21 @@
                 (ctfe-borrow-lifetime-eq a-life b-life)
                 (ctfe-expr-eq a-place b-place)))]
           [_ false]))]
-    [(AstExprMatch a-scrut-box a-arms)
-      (let
-        [a-scrut : AstExpr (ast-node-get a-scrut-box)]
-        (match b
-          [(AstExprMatch b-scrut-box b-arms)
-            (let
-              [b-scrut : AstExpr (ast-node-get b-scrut-box)]
-              (and
-                (ctfe-expr-eq a-scrut b-scrut)
-                (ctfe-match-arm-list-eq a-arms b-arms)))]
-          [_ false]))]
+    [(AstExprMatch a-match-box)
+      (match (box-get a-match-box)
+        [(AstMatch a-scrut-box a-arms)
+          (let
+            [a-scrut : AstExpr (ast-node-get a-scrut-box)]
+            (match b
+              [(AstExprMatch b-match-box)
+                (match (box-get b-match-box)
+                  [(AstMatch b-scrut-box b-arms)
+                    (let
+                      [b-scrut : AstExpr (ast-node-get b-scrut-box)]
+                      (and
+                        (ctfe-expr-eq a-scrut b-scrut)
+                        (ctfe-match-arm-list-eq a-arms b-arms)))])]
+              [_ false]))])]
     [(AstExprForeach a-name a-ty a-start-box a-end-box a-body-box)
       (let
         [a-start : AstExpr (ast-node-get a-start-box)]

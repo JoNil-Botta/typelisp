@@ -234,6 +234,9 @@ comparisons, and casts.
 Raw pointer types `(Ptr T)` and `(MutPtr T)`, `(unsafe ...)`, and unsafe
 function/extern declaration wrappers are implemented for the v1 FFI surface
 described in [SPEC.md](SPEC.md) sections 3.4, 4.3.1, and 5.20.
+Unsafe sequentially consistent raw pointer atomics are available as
+`atomic-load`, `atomic-store!`, `atomic-add!`, `atomic-fetch-add!`, and
+`atomic-cas!` for 32-bit and 64-bit signed/unsigned integer pointer elements.
 
 ### Abstraction policy
 

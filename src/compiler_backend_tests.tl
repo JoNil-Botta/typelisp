@@ -329,6 +329,176 @@
     (compiler-backend-raw-pointer-fixture-source)
     target))
 
+(define (compiler-backend-atomic-intrinsic-source) : String
+  "(define (load64 [p : (MutPtr i64)]) : i64
+  (unsafe (atomic-load p)))
+
+(define (store64 [p : (MutPtr i64)] [value : i64]) : unit
+  (unsafe (atomic-store! p value)))
+
+(define (add64 [p : (MutPtr i64)] [value : i64]) : unit
+  (unsafe (atomic-add! p value)))
+
+(define (fetch64 [p : (MutPtr i64)] [value : i64]) : i64
+  (unsafe (atomic-fetch-add! p value)))
+
+(define (cas64 [p : (MutPtr i64)] [expected : i64] [value : i64]) : i64
+  (unsafe (atomic-cas! p expected value)))
+
+(define (load32 [p : (MutPtr u32)]) : u32
+  (unsafe (atomic-load p)))
+
+(define (store32 [p : (MutPtr u32)] [value : u32]) : unit
+  (unsafe (atomic-store! p value)))
+
+(define (add32 [p : (MutPtr u32)] [value : u32]) : unit
+  (unsafe (atomic-add! p value)))
+
+(define (fetch32 [p : (MutPtr u32)] [value : u32]) : u32
+  (unsafe (atomic-fetch-add! p value)))
+
+(define (cas32 [p : (MutPtr u32)] [expected : u32] [value : u32]) : u32
+  (unsafe (atomic-cas! p expected value)))
+
+(define (main) : i64
+  (let
+    [cell64 : i64 0]
+    [cell32 : u32 (cast 0 : u32)]
+    [p64 : (MutPtr i64) (unsafe (ptr-addr-of cell64))]
+    [p32 : (MutPtr u32) (unsafe (ptr-addr-of cell32))]
+    (begin
+      (store64 p64 1)
+      (add64 p64 2)
+      (fetch64 p64 3)
+      (cas64 p64 6 7)
+      (load64 p64)
+      (store32 p32 (cast 1 : u32))
+      (add32 p32 (cast 2 : u32))
+      (fetch32 p32 (cast 3 : u32))
+      (cas32 p32 (cast 6 : u32) (cast 7 : u32))
+      (load32 p32)
+      0)))")
+
+(define (compiler-backend-atomic-no-helper-calls? [asm : String]) : bool
+  (and
+    (not
+      (compiler-backend-string-contains?
+        asm
+        "    call tl_atomic_i64_load_ptr\n"))
+    (not
+      (compiler-backend-string-contains?
+        asm
+        "    call tl_atomic_i64_store_ptr\n"))
+    (not
+      (compiler-backend-string-contains? asm "    call tl_atomic_i64_add_ptr\n"))
+    (not
+      (compiler-backend-string-contains?
+        asm
+        "    call tl_atomic_i64_fetch_add_ptr\n"))
+    (not
+      (compiler-backend-string-contains? asm "    call tl_atomic_i64_cas_ptr\n"))
+    (not
+      (compiler-backend-string-contains?
+        asm
+        "    call tl_atomic_i32_load_ptr\n"))
+    (not
+      (compiler-backend-string-contains?
+        asm
+        "    call tl_atomic_i32_store_ptr\n"))
+    (not
+      (compiler-backend-string-contains? asm "    call tl_atomic_i32_add_ptr\n"))
+    (not
+      (compiler-backend-string-contains?
+        asm
+        "    call tl_atomic_i32_fetch_add_ptr\n"))
+    (not
+      (compiler-backend-string-contains? asm "    call tl_atomic_i32_cas_ptr\n"))))
+
+(define (compiler-backend-atomic-count-at-least?
+  [asm : String]
+  [needle : String]
+  [want : i64]) : bool
+  (>= (compiler-backend-string-count asm needle) want))
+
+(define (compiler-backend-atomic-intrinsic-linux-asm-ok? [asm : String]) : bool
+  (and
+    (compiler-backend-atomic-no-helper-calls? asm)
+    (compiler-backend-atomic-count-at-least? asm "    movq (%rdi), %rax\n" 1)
+    (compiler-backend-atomic-count-at-least? asm "    xchgq %rsi, (%rdi)\n" 1)
+    (compiler-backend-atomic-count-at-least?
+      asm
+      "    lock addq %rsi, (%rdi)\n"
+      1)
+    (compiler-backend-atomic-count-at-least?
+      asm
+      "    lock xaddq %rax, (%rdi)\n"
+      1)
+    (compiler-backend-atomic-count-at-least?
+      asm
+      "    lock cmpxchgq %rdx, (%rdi)\n"
+      1)
+    (compiler-backend-atomic-count-at-least? asm "    movl (%rdi), %eax\n" 1)
+    (compiler-backend-atomic-count-at-least? asm "    xchgl %esi, (%rdi)\n" 1)
+    (compiler-backend-atomic-count-at-least?
+      asm
+      "    lock addl %esi, (%rdi)\n"
+      1)
+    (compiler-backend-atomic-count-at-least?
+      asm
+      "    lock xaddl %eax, (%rdi)\n"
+      1)
+    (compiler-backend-atomic-count-at-least?
+      asm
+      "    lock cmpxchgl %edx, (%rdi)\n"
+      1)))
+
+(define (compiler-backend-atomic-intrinsic-windows-asm-ok? [asm : String]) : bool
+  (and
+    (compiler-backend-atomic-no-helper-calls? asm)
+    (compiler-backend-atomic-count-at-least? asm "    movq (%rcx), %rax\n" 1)
+    (compiler-backend-atomic-count-at-least? asm "    xchgq %rdx, (%rcx)\n" 1)
+    (compiler-backend-atomic-count-at-least?
+      asm
+      "    lock addq %rdx, (%rcx)\n"
+      1)
+    (compiler-backend-atomic-count-at-least?
+      asm
+      "    lock xaddq %rax, (%rcx)\n"
+      1)
+    (compiler-backend-atomic-count-at-least?
+      asm
+      "    lock cmpxchgq %r8, (%rcx)\n"
+      1)
+    (compiler-backend-atomic-count-at-least? asm "    movl (%rcx), %eax\n" 1)
+    (compiler-backend-atomic-count-at-least? asm "    xchgl %edx, (%rcx)\n" 1)
+    (compiler-backend-atomic-count-at-least?
+      asm
+      "    lock addl %edx, (%rcx)\n"
+      1)
+    (compiler-backend-atomic-count-at-least?
+      asm
+      "    lock xaddl %eax, (%rcx)\n"
+      1)
+    (compiler-backend-atomic-count-at-least?
+      asm
+      "    lock cmpxchgl %r8d, (%rcx)\n"
+      1)))
+
+(define (compiler-backend-atomic-intrinsic-shape-ok?) : bool
+  (match (compiler-backend-emit-source-for-target
+    (compiler-backend-atomic-intrinsic-source)
+    (BackendTargetLinux))
+    [(OkCompilerBackend linux-asm)
+      (match (compiler-backend-emit-source-for-target
+        (compiler-backend-atomic-intrinsic-source)
+        (BackendTargetWindows))
+        [(OkCompilerBackend windows-asm)
+          (and
+            (compiler-backend-atomic-intrinsic-linux-asm-ok? linux-asm)
+            (compiler-backend-atomic-intrinsic-windows-asm-ok? windows-asm))]
+        [(ErrCompilerBackend _) false])]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-string-source) : String
   "(define greeting : String \"hi\")
 (define (main) : String \"hi\")")
@@ -9566,7 +9736,9 @@
     (backend-and4
       (compiler-backend-string-ref-shape-ok?)
       (compiler-backend-fixed-array-shape-ok?)
-      (compiler-backend-raw-pointer-fixture-shape-ok?)
+      (and
+        (compiler-backend-raw-pointer-fixture-shape-ok?)
+        (compiler-backend-atomic-intrinsic-shape-ok?))
       (and
         (compiler-backend-box-ok?)
         (compiler-backend-inline-aggregate-storage-ok?)))

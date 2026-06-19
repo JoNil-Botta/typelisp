@@ -13368,6 +13368,201 @@
           "%rax")
         ty))))
 
+(define (compiler-backend-atomic-call-name? [name : String]) : bool
+  (or
+    (string-eq name "tl_atomic_i64_load_ptr")
+    (string-eq name "tl_atomic_i64_store_ptr")
+    (string-eq name "tl_atomic_i64_add_ptr")
+    (string-eq name "tl_atomic_i64_fetch_add_ptr")
+    (string-eq name "tl_atomic_i64_cas_ptr")
+    (string-eq name "tl_atomic_i32_load_ptr")
+    (string-eq name "tl_atomic_i32_store_ptr")
+    (string-eq name "tl_atomic_i32_add_ptr")
+    (string-eq name "tl_atomic_i32_fetch_add_ptr")
+    (string-eq name "tl_atomic_i32_cas_ptr")))
+
+(define (compiler-backend-atomic-i32-call? [name : String]) : bool
+  (or
+    (string-eq name "tl_atomic_i32_load_ptr")
+    (string-eq name "tl_atomic_i32_store_ptr")
+    (string-eq name "tl_atomic_i32_add_ptr")
+    (string-eq name "tl_atomic_i32_fetch_add_ptr")
+    (string-eq name "tl_atomic_i32_cas_ptr")))
+
+(define (compiler-backend-atomic-op-load? [name : String]) : bool
+  (or
+    (string-eq name "tl_atomic_i64_load_ptr")
+    (string-eq name "tl_atomic_i32_load_ptr")))
+
+(define (compiler-backend-atomic-op-store? [name : String]) : bool
+  (or
+    (string-eq name "tl_atomic_i64_store_ptr")
+    (string-eq name "tl_atomic_i32_store_ptr")))
+
+(define (compiler-backend-atomic-op-add? [name : String]) : bool
+  (or
+    (string-eq name "tl_atomic_i64_add_ptr")
+    (string-eq name "tl_atomic_i32_add_ptr")))
+
+(define (compiler-backend-atomic-op-fetch-add? [name : String]) : bool
+  (or
+    (string-eq name "tl_atomic_i64_fetch_add_ptr")
+    (string-eq name "tl_atomic_i32_fetch_add_ptr")))
+
+(define (compiler-backend-atomic-ptr-reg [target : CompilerBackendTarget]) : String
+  (if (compiler-backend-target-windows? target)
+    "%rcx"
+    "%rdi"))
+
+(define (compiler-backend-atomic-value-reg
+  [target : CompilerBackendTarget]
+  [i32? : bool]) : String
+  (if (compiler-backend-target-windows? target)
+    (if i32?
+      "%edx"
+      "%rdx")
+    (if i32?
+      "%esi"
+      "%rsi")))
+
+(define (compiler-backend-atomic-new-reg
+  [target : CompilerBackendTarget]
+  [i32? : bool]) : String
+  (if (compiler-backend-target-windows? target)
+    (if i32?
+      "%r8d"
+      "%r8")
+    (if i32?
+      "%edx"
+      "%rdx")))
+
+(define (compiler-backend-atomic-rax [i32? : bool]) : String
+  (if i32?
+    "%eax"
+    "%rax"))
+
+(define (compiler-backend-atomic-width-suffix [i32? : bool]) : String
+  (if i32?
+    "l"
+    "q"))
+
+(define (compiler-backend-atomic-inline-asm
+  [target : CompilerBackendTarget]
+  [name : String]) : String
+  (let
+    [i32? : bool (compiler-backend-atomic-i32-call? name)]
+    [ptr : String (compiler-backend-atomic-ptr-reg target)]
+    [value : String (compiler-backend-atomic-value-reg target i32?)]
+    [new-value : String (compiler-backend-atomic-new-reg target i32?)]
+    [rax : String (compiler-backend-atomic-rax i32?)]
+    [suffix : String (compiler-backend-atomic-width-suffix i32?)]
+    (cond
+      [(compiler-backend-atomic-op-load? name)
+        (str-cat "    mov" suffix " (" ptr "), " rax "\n")]
+      [(compiler-backend-atomic-op-store? name)
+        (str-cat "    xchg" suffix " " value ", (" ptr ")\n")]
+      [(compiler-backend-atomic-op-add? name)
+        (str-cat "    lock add" suffix " " value ", (" ptr ")\n")]
+      [(compiler-backend-atomic-op-fetch-add? name)
+        (str-cat
+          "    mov"
+          suffix
+          " "
+          value
+          ", "
+          rax
+          "\n    lock xadd"
+          suffix
+          " "
+          rax
+          ", ("
+          ptr
+          ")\n")]
+      [else
+        (str-cat
+          "    mov"
+          suffix
+          " "
+          value
+          ", "
+          rax
+          "\n    lock cmpxchg"
+          suffix
+          " "
+          new-value
+          ", ("
+          ptr
+          ")\n")])))
+
+(define (compiler-backend-emit-inline-atomic-call
+  [target : CompilerBackendTarget]
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [name : String]
+  [args : CompilerIrCallArgs]
+  [ty : AstType]
+  [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
+  [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
+  [vars : i64]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (let
+    [param-types : AstTypeList
+      (compiler-backend-call-param-types-for-call
+        name
+        args
+        types
+        global-types
+        externs
+        program-index)]
+    [c-abi? : bool (compiler-backend-c-aggregate-extern-call? externs name)]
+    [call-space : i64
+      (compiler-backend-call-arg-space
+        target
+        args
+        param-types
+        c-abi?
+        program-index)]
+    (match (compiler-backend-emit-call-args
+      target
+      assignments
+      args
+      param-types
+      c-abi?
+      0
+      0
+      0
+      0
+      0
+      instr-diag
+      program-index
+      vars)
+      [(OkCompilerBackend args-asm)
+        (match (compiler-backend-emit-call-result-store
+          assignments
+          dst
+          ty
+          vars
+          program-index)
+          [(OkCompilerBackend result-store)
+            (OkCompilerBackend
+              (string-append
+                (compiler-backend-emit-call-space-sub call-space)
+                (string-append
+                  args-asm
+                  (string-append
+                    (compiler-backend-atomic-inline-asm target name)
+                    (string-append
+                      (compiler-backend-emit-call-space-add call-space)
+                      result-store)))))]
+          [(ErrCompilerBackend message)
+            (ErrCompilerBackend
+              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+      [(ErrCompilerBackend message)
+        (ErrCompilerBackend
+          (compiler-backend-apply-instr-diagnostic message instr-diag))])))
+
 (define (compiler-backend-c-abi-return-int-reg [idx : i64]) : String
   (if (= idx 0)
     "%rax"
@@ -13925,74 +14120,90 @@
                   dst
                   "%rax"
                   ty)))
-            (let
-              [param-types : AstTypeList
-                (compiler-backend-call-param-types-for-call
-                  name
-                  args
-                  types
-                  global-types
-                  externs
-                  program-index)]
-              [c-abi? : bool
-                (compiler-backend-c-aggregate-extern-call? externs name)]
-              [call-space : i64
-                (compiler-backend-call-arg-space
+            (if (compiler-backend-atomic-call-name? call-symbol)
+              (compiler-backend-emit-inline-atomic-call
+                target
+                assignments
+                dst
+                call-symbol
+                args
+                ty
+                types
+                global-types
+                externs
+                program-index
+                vars
+                instr-diag)
+              (let
+                [param-types : AstTypeList
+                  (compiler-backend-call-param-types-for-call
+                    name
+                    args
+                    types
+                    global-types
+                    externs
+                    program-index)]
+                [c-abi? : bool
+                  (compiler-backend-c-aggregate-extern-call? externs name)]
+                [call-space : i64
+                  (compiler-backend-call-arg-space
+                    target
+                    args
+                    param-types
+                    c-abi?
+                    program-index)]
+                (match (compiler-backend-emit-call-args
                   target
+                  assignments
                   args
                   param-types
                   c-abi?
-                  program-index)]
-              (match (compiler-backend-emit-call-args
-                target
-                assignments
-                args
-                param-types
-                c-abi?
-                0
-                0
-                0
-                0
-                0
-                instr-diag
-                program-index
-                vars)
-                [(OkCompilerBackend args-asm)
-                  (match (compiler-backend-emit-call-result-store
-                    assignments
-                    dst
-                    ty
-                    vars
-                    program-index)
-                    [(OkCompilerBackend result-store)
-                      (OkCompilerBackend
-                        (string-append
-                          (compiler-backend-emit-call-space-sub call-space)
+                  0
+                  0
+                  0
+                  0
+                  0
+                  instr-diag
+                  program-index
+                  vars)
+                  [(OkCompilerBackend args-asm)
+                    (match (compiler-backend-emit-call-result-store
+                      assignments
+                      dst
+                      ty
+                      vars
+                      program-index)
+                      [(OkCompilerBackend result-store)
+                        (OkCompilerBackend
                           (string-append
-                            args-asm
+                            (compiler-backend-emit-call-space-sub call-space)
                             (string-append
-                              (compiler-backend-varargs-pre-call
-                                target
-                                name
-                                externs
-                                param-types)
-                              (str-cat
-                                "    call "
-                                call-symbol
-                                "\n"
-                                (string-append
-                                  (compiler-backend-emit-call-space-add
-                                    call-space)
-                                  result-store)
-                                "")))))]
-                    [(ErrCompilerBackend message)
-                      (ErrCompilerBackend
-                        (compiler-backend-apply-instr-diagnostic
-                          message
-                          instr-diag))])]
-                [(ErrCompilerBackend message)
-                  (ErrCompilerBackend
-                    (compiler-backend-apply-instr-diagnostic message instr-diag))]))))]
+                              args-asm
+                              (string-append
+                                (compiler-backend-varargs-pre-call
+                                  target
+                                  name
+                                  externs
+                                  param-types)
+                                (str-cat
+                                  "    call "
+                                  call-symbol
+                                  "\n"
+                                  (string-append
+                                    (compiler-backend-emit-call-space-add
+                                      call-space)
+                                    result-store)
+                                  "")))))]
+                      [(ErrCompilerBackend message)
+                        (ErrCompilerBackend
+                          (compiler-backend-apply-instr-diagnostic
+                            message
+                            instr-diag))])]
+                  [(ErrCompilerBackend message)
+                    (ErrCompilerBackend
+                      (compiler-backend-apply-instr-diagnostic
+                        message
+                        instr-diag))])))))]
       [(IrInstrCallIndirect dst func args ty)
         (compiler-backend-emit-indirect-call
           target
@@ -15926,6 +16137,8 @@
   [program-index : CompilerBackendProgramIndex]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (let
+    [call-symbol : String
+      (compiler-backend-call-symbol-index name plan program-index)]
     [param-types : AstTypeList
       (compiler-backend-call-param-types-for-call
         name
@@ -15957,29 +16170,44 @@
       program-index
       vars)
       [(OkCompilerBackend args-asm)
-        (OkCompilerBackend
-          (string-append
-            (compiler-backend-emit-call-space-sub call-space)
+        (if (compiler-backend-atomic-call-name? call-symbol)
+          (OkCompilerBackend
             (string-append
-              args-asm
+              (compiler-backend-emit-call-space-sub call-space)
               (string-append
-                (compiler-backend-varargs-pre-call
-                  target
-                  name
-                  externs
-                  param-types)
-                (str-cat
-                  "    call "
-                  (compiler-backend-call-symbol-index name plan program-index)
-                  "\n"
+                args-asm
+                (string-append
+                  (compiler-backend-atomic-inline-asm target call-symbol)
                   (string-append
                     (compiler-backend-emit-call-space-add call-space)
                     (compiler-backend-return-tail
                       source-function
                       assignments
                       vars
-                      blocks))
-                  "")))))]
+                      blocks))))))
+          (OkCompilerBackend
+            (string-append
+              (compiler-backend-emit-call-space-sub call-space)
+              (string-append
+                args-asm
+                (string-append
+                  (compiler-backend-varargs-pre-call
+                    target
+                    name
+                    externs
+                    param-types)
+                  (str-cat
+                    "    call "
+                    call-symbol
+                    "\n"
+                    (string-append
+                      (compiler-backend-emit-call-space-add call-space)
+                      (compiler-backend-return-tail
+                        source-function
+                        assignments
+                        vars
+                        blocks))
+                    ""))))))]
       [(ErrCompilerBackend message)
         (ErrCompilerBackend
           (compiler-backend-apply-instr-diagnostic message instr-diag))])))
@@ -23699,6 +23927,11 @@ tl_atomic_i64_fetch_add_ptr:
     movq %rdx, %rax
     lock xaddq %rax, (%rcx)
     ret
+    .globl tl_atomic_i64_cas_ptr
+tl_atomic_i64_cas_ptr:
+    movq %rdx, %rax
+    lock cmpxchgq %r8, (%rcx)
+    ret
     .globl tl_atomic_i32_load_ptr
 tl_atomic_i32_load_ptr:
     movl (%rcx), %eax
@@ -23715,6 +23948,11 @@ tl_atomic_i32_add_ptr:
 tl_atomic_i32_fetch_add_ptr:
     movl %edx, %eax
     lock xaddl %eax, (%rcx)
+    ret
+    .globl tl_atomic_i32_cas_ptr
+tl_atomic_i32_cas_ptr:
+    movl %edx, %eax
+    lock cmpxchgl %r8d, (%rcx)
     ret
 "
     "    .globl tl_atomic_i64_load_ptr
@@ -23734,6 +23972,11 @@ tl_atomic_i64_fetch_add_ptr:
     movq %rsi, %rax
     lock xaddq %rax, (%rdi)
     ret
+    .globl tl_atomic_i64_cas_ptr
+tl_atomic_i64_cas_ptr:
+    movq %rsi, %rax
+    lock cmpxchgq %rdx, (%rdi)
+    ret
     .globl tl_atomic_i32_load_ptr
 tl_atomic_i32_load_ptr:
     movl (%rdi), %eax
@@ -23750,6 +23993,11 @@ tl_atomic_i32_add_ptr:
 tl_atomic_i32_fetch_add_ptr:
     movl %esi, %eax
     lock xaddl %eax, (%rdi)
+    ret
+    .globl tl_atomic_i32_cas_ptr
+tl_atomic_i32_cas_ptr:
+    movl %esi, %eax
+    lock cmpxchgl %edx, (%rdi)
     ret
 "))
 
@@ -26112,6 +26360,9 @@ tl_atomic_i32_fetch_add_ptr:
       (set! symbols (compiler-backend-string-cons "tl_memcpy" symbols))
       (set!
         symbols
+        (compiler-backend-string-cons "tl_atomic_i32_cas_ptr" symbols))
+      (set!
+        symbols
         (compiler-backend-string-cons "tl_atomic_i32_fetch_add_ptr" symbols))
       (set!
         symbols
@@ -26122,6 +26373,9 @@ tl_atomic_i32_fetch_add_ptr:
       (set!
         symbols
         (compiler-backend-string-cons "tl_atomic_i32_load_ptr" symbols))
+      (set!
+        symbols
+        (compiler-backend-string-cons "tl_atomic_i64_cas_ptr" symbols))
       (set!
         symbols
         (compiler-backend-string-cons "tl_atomic_i64_fetch_add_ptr" symbols))

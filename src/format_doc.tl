@@ -18,9 +18,6 @@
 (defenum RenderedDoc
   (Rendered String i64))
 
-(defenum RenderState
-  (RenderState TextBuf i64))
-
 (define (format-width) : i64
   80)
 
@@ -91,44 +88,48 @@
 (define (render-newline [indent : i64]) : RenderedDoc
   (Rendered (string-append "\n" (spaces indent)) indent))
 
-(define (render-state-buf [state : RenderState]) : TextBuf
-  (match state
-    [(RenderState buf _) buf]))
+;; Append a newline plus `indent` spaces to the owned buffer in place.
+(define (render-newline-into! [buf : TextBuf] [indent : i64]) : unit
+  (begin
+    (text-buf-append! buf "\n")
+    (text-buf-append! buf (spaces indent))))
 
-(define (render-state-col [state : RenderState]) : i64
-  (match state
-    [(RenderState _ col) col]))
-
-(define (render-newline-into [buf : TextBuf] [indent : i64]) : TextBuf
-  (text-buf-append (text-buf-append buf "\n") (spaces indent)))
-
+;; Render `doc` by appending into `buf` in place, returning the resulting column.
+;; The buffer is owned by `render-doc-width` and threaded by reference, so the
+;; renderer no longer allocates a fresh `TextBuf` (and a wrapping `RenderState`)
+;; per node -- it mutates one builder and passes the column along as a plain i64.
 (define (render-doc-into
   [doc : Doc]
   [width : i64]
   [indent : i64]
   [col : i64]
   [flat : bool]
-  [buf : TextBuf]) : RenderState
+  [buf : TextBuf]) : i64
   (match doc
-    [(DEmpty) (RenderState buf col)]
+    [(DEmpty) col]
     [(DText text)
-      (RenderState (text-buf-append buf text) (+ col (string-length text)))]
+      (let
+        [text-width : i64 (string-length text)]
+        (begin
+          (text-buf-append! buf text)
+          (+ col text-width)))]
     [(DSoftLine)
       (if flat
-        (RenderState (text-buf-append buf " ") (+ col 1))
-        (RenderState (render-newline-into buf indent) indent))]
-    [(DHardLine) (RenderState (render-newline-into buf indent) indent)]
+        (begin
+          (text-buf-append! buf " ")
+          (+ col 1))
+        (begin
+          (render-newline-into! buf indent)
+          indent))]
+    [(DHardLine)
+      (begin
+        (render-newline-into! buf indent)
+        indent)]
     [(DConcat left right)
       (let
-        [left-state : RenderState
+        [left-col : i64
           (render-doc-into (box-get left) width indent col flat buf)]
-        (render-doc-into
-          (box-get right)
-          width
-          indent
-          (render-state-col left-state)
-          flat
-          (render-state-buf left-state)))]
+        (render-doc-into (box-get right) width indent left-col flat buf))]
     [(DNest extra inner)
       (render-doc-into (box-get inner) width (+ indent extra) col flat buf)]
     [(DGroup inner)
@@ -164,8 +165,11 @@
         (render-doc-in (box-get inner) width indent col false))]))
 
 (define (render-doc-width [doc : Doc] [width : i64]) : String
-  (match (render-doc-into doc width 0 0 false (text-buf-empty))
-    [(RenderState buf _) (text-buf-render buf)]))
+  (let
+    [buf : TextBuf (text-buf-empty)]
+    (begin
+      (render-doc-into doc width 0 0 false buf)
+      (text-buf-render buf))))
 
 (define (render-doc [doc : Doc]) : String
   (render-doc-width doc (format-width)))

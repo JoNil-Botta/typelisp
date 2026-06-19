@@ -83,6 +83,7 @@ fi
 WORKDIR="$ROOT/target/bench"
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
+CR=$(printf '\r')
 
 now() { date +%s.%N; }
 
@@ -130,8 +131,10 @@ run_build() {
 
 # run BIN once; echo its exit code
 run_exit() {
+    _bin=$1
+    shift
     set +e
-    "$1" >/dev/null 2>&1
+    "$_bin" "$@" >/dev/null 2>&1
     _code=$?
     set -e
     echo "$_code"
@@ -140,12 +143,13 @@ run_exit() {
 # time_runs BIN -> "min median" wall-clock seconds over RUNS runs
 time_runs() {
     _bin=$1
+    shift
     _times="$WORKDIR/times.txt"
     : >"$_times"
     _r=0
     while [ "$_r" -lt "$RUNS" ]; do
         _s=$(now)
-        "$_bin" >/dev/null 2>&1 || true
+        "$_bin" "$@" >/dev/null 2>&1 || true
         _e=$(now)
         elapsed "$_s" "$_e" >>"$_times"
         printf '\n' >>"$_times"
@@ -157,6 +161,42 @@ time_runs() {
 }
 
 ratio() { awk "BEGIN { if ($2 == 0) { print \"n/a\" } else { printf \"%.2fx\", $1 / $2 } }"; }
+
+benchmark_args_for_dir() {
+    _dir=$1
+    _metadata="$_dir/optimization.tsv"
+    BENCHMARK_ARGS=
+    [ -f "$_metadata" ] || return 0
+
+    _line=
+    while IFS= read -r _candidate || [ -n "$_candidate" ]; do
+        case "$_candidate" in
+            *"$CR") _candidate=${_candidate%"$CR"} ;;
+        esac
+        case "$_candidate" in
+            "" | \#*) continue ;;
+        esac
+        if [ -n "$_line" ]; then
+            echo "multiple metadata rows in $_metadata" >&2
+            exit 1
+        fi
+        _line=$_candidate
+    done < "$_metadata"
+
+    [ -n "$_line" ] || {
+        echo "missing metadata row in $_metadata" >&2
+        exit 1
+    }
+    _fields=$(printf '%s\n' "$_line" | awk -F'|' '{ print NF }')
+    [ "$_fields" -eq 2 ] || {
+        echo "metadata line must have 2 fields: $_metadata: $_line" >&2
+        exit 1
+    }
+
+    IFS='|' read -r _category BENCHMARK_ARGS <<EOF
+$_line
+EOF
+}
 
 found=0
 MODE=timing
@@ -182,6 +222,8 @@ for bench_tl in benchmarks/*/bench.tl; do
         fi
         continue
     fi
+    benchmark_args_for_dir "$dir"
+    bench_args=$BENCHMARK_ARGS
     case "$name" in
         *"$FILTER"*) ;;
         *) continue ;;
@@ -206,8 +248,10 @@ for bench_tl in benchmarks/*/bench.tl; do
     fi
 
     # Correctness gate: both must agree on the exit code.
-    tl_code=$(run_exit "$tl_bin")
-    c_code=$(run_exit "$c_bin")
+    # shellcheck disable=SC2086
+    tl_code=$(run_exit "$tl_bin" $bench_args)
+    # shellcheck disable=SC2086
+    c_code=$(run_exit "$c_bin" $bench_args)
     if [ "$tl_code" != "$c_code" ]; then
         echo "FAIL: $name observable output differs (typelisp exit $tl_code, C exit $c_code)" >&2
         exit 1
@@ -218,10 +262,12 @@ for bench_tl in benchmarks/*/bench.tl; do
         continue
     fi
 
-    set -- $(time_runs "$tl_bin")
+    # shellcheck disable=SC2086
+    set -- $(time_runs "$tl_bin" $bench_args)
     tl_min=$1
     tl_med=$2
-    set -- $(time_runs "$c_bin")
+    # shellcheck disable=SC2086
+    set -- $(time_runs "$c_bin" $bench_args)
     c_min=$1
     c_med=$2
 

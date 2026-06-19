@@ -194,6 +194,7 @@ RUNS_TSV="$WORKDIR/runs.tsv"
 SUMMARY_TSV="$WORKDIR/summary.tsv"
 printf 'kind\tname\trun\tir_count\texit_status\n' > "$RUNS_TSV"
 printf 'kind\tname\tir_count\tmin_ir\tmax_ir\truns\tstable\n' > "$SUMMARY_TSV"
+CR=$(printf '\r')
 
 fail() {
     echo "[ir-count] $*" >&2
@@ -202,6 +203,35 @@ fail() {
 
 safe_name() {
     printf '%s' "$1" | tr -c 'A-Za-z0-9_.-' '_'
+}
+
+benchmark_args_for_dir() {
+    _dir=$1
+    _metadata="$_dir/optimization.tsv"
+    BENCHMARK_ARGS=
+    [ -f "$_metadata" ] || return 0
+
+    _line=
+    while IFS= read -r _candidate || [ -n "$_candidate" ]; do
+        case "$_candidate" in
+            *"$CR") _candidate=${_candidate%"$CR"} ;;
+        esac
+        case "$_candidate" in
+            "" | \#*) continue ;;
+        esac
+        if [ -n "$_line" ]; then
+            fail "multiple metadata rows in $_metadata"
+        fi
+        _line=$_candidate
+    done < "$_metadata"
+
+    [ -n "$_line" ] || fail "missing metadata row in $_metadata"
+    _fields=$(printf '%s\n' "$_line" | awk -F'|' '{ print NF }')
+    [ "$_fields" -eq 2 ] || fail "metadata line must have 2 fields: $_metadata: $_line"
+
+    IFS='|' read -r _category BENCHMARK_ARGS <<EOF
+$_line
+EOF
 }
 
 show_logs() {
@@ -323,6 +353,8 @@ build_benchmark() {
     bin="$WORKDIR/bin/$name"
     stdout="$WORKDIR/logs/benchmark-$name.build.stdout"
     stderr="$WORKDIR/logs/benchmark-$name.build.stderr"
+    benchmark_args_for_dir "$(dirname "$bench_tl")"
+    bench_args=$BENCHMARK_ARGS
 
     echo "[ir-count] build benchmark $name"
     if ! "$COMPILER" build "$bench_tl" -o "$bin" \
@@ -334,7 +366,8 @@ build_benchmark() {
         fail "failed to build benchmark $name"
     fi
     [ -x "$bin" ] || fail "benchmark build did not write executable: $bin"
-    measure_repeated benchmark "$name" 0 "$bin"
+    # shellcheck disable=SC2086
+    measure_repeated benchmark "$name" 0 "$bin" $bench_args
 }
 
 benchmark_selected() {

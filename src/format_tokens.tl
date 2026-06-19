@@ -267,6 +267,52 @@
 (define (fmt-is-symbol-char [c : char]) : bool
   (or (fmt-is-alpha c) (fmt-is-digit c) (fmt-is-symbol-punct c)))
 
+;; --- char classification lookup table (lexer hot path) ----------------------
+;; The per-character scan loops (symbol and number scans, whitespace skipping,
+;; the main dispatch) tested character classes with `fmt-is-*`, which stay real
+;; function calls at every opt level. Lexing ~9 MB of source therefore paid
+;; millions of call prologues just to classify bytes. Precompute a 256-entry
+;; class table once per process and test membership with an inline array lookup.
+;; Bit 0 = whitespace, bit 1 = digit, bit 2 = symbol char, bit 3 = hex digit.
+(define fmt-char-class-table : (Array i64)
+  (make-array i64 256))
+(define fmt-char-class-ready : bool
+  false)
+
+(define (fmt-char-class-init) : unit
+  (if fmt-char-class-ready
+    unit
+    (let
+      [i : i64 0]
+      (begin
+        (while (< i 256)
+          (let
+            [c : char (cast i : char)]
+            [mask : i64
+              (+
+                (if (fmt-is-space c)
+                  1
+                  0)
+                (+
+                  (if (fmt-is-digit c)
+                    2
+                    0)
+                  (+
+                    (if (fmt-is-symbol-char c)
+                      4
+                      0)
+                    (if (fmt-is-hex-digit c)
+                      8
+                      0))))]
+            (begin
+              (array-set! fmt-char-class-table i mask)
+              (set! i (+ i 1)))))
+        (set! fmt-char-class-ready true)))))
+
+;; Inline class test: no function call, just a table load and bit test.
+(defmacro (fmt-char-class? [c : Expr] [mask : i64]) : bool
+  `(not (= 0 (bit-and (array-ref fmt-char-class-table (cast ,c : i64)) ,mask))))
+
 (define (fmt-starts-number [src : String] [i : i64] [n : i64]) : bool
   (let
     [c : char (string-ref src i)]
@@ -407,7 +453,7 @@
     (begin
       (while keep
         (if (< j n)
-          (if (fmt-is-symbol-char (string-ref src j))
+          (if (fmt-char-class? (string-ref src j) 4)
             (set! j (+ j 1))
             (set! keep false))
           (set! keep false)))
@@ -568,6 +614,7 @@
     [i : i64 0]
     [count : i64 0]
     (begin
+      (fmt-char-class-init)
       (while (< i n)
         (begin
           ;; Each iteration emits at most one token; keep one free slot.
@@ -582,7 +629,7 @@
           (let
             [c : char (string-ref src i)]
             (cond
-              [(fmt-is-space c) (set! i (+ i 1))]
+              [(fmt-char-class? c 1) (set! i (+ i 1))]
               [(= c #;')
                 (let
                   [end : i64 (fmt-scan-comment-end src i n)]
@@ -694,7 +741,7 @@
                       (set! count (+ count 1))
                       (set! i end))]
                   [(ErrFmtI64 err) (return (ErrFormatTokenStream err))])]
-              [(fmt-is-symbol-char c)
+              [(fmt-char-class? c 4)
                 (let
                   [end : i64 (fmt-scan-symbol-end src i n)]
                   (begin

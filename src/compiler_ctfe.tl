@@ -3737,7 +3737,11 @@
         [rest-patterns : AstPatternList (box-get rest-patterns)]
         (match values
           [(CtfeValueCons value rest-values)
-            (match (ctfe-match-pattern pattern value env)
+            (match (ctfe-match-pattern
+              pattern
+              value
+              (ctfe-value-default-cast-type value)
+              env)
               [(CtfePatternMatched next-env)
                 (ctfe-match-pattern-list
                   rest-patterns
@@ -3830,18 +3834,20 @@
 (define (ctfe-match-pattern
   [pattern : AstPattern]
   [value : CompilerCtfeValue]
+  [value-ty : AstType]
   [env : CtfeEnv]) : CtfePatternMatch
   (match pattern
     [(AstPatWildcard) (CtfePatternMatched env)]
     [(AstPatBinding name)
-      (CtfePatternMatched (ctfe-env-extend env (intern-str name) value))]
+      (CtfePatternMatched
+        (ctfe-env-extend-typed env (intern-str name) value value-ty))]
     [(AstPatVar name maybe-ty)
       (CtfePatternMatched
         (ctfe-env-extend-typed
           env
           (intern-str name)
           value
-          (ctfe-binding-type maybe-ty (ctfe-value-default-cast-type value) env)))]
+          (ctfe-binding-type maybe-ty value-ty env)))]
     [(AstPatLiteral lit)
       (if (ctfe-literal-matches-value? lit value)
         (CtfePatternMatched env)
@@ -3857,6 +3863,7 @@
 
 (define (ctfe-eval-match-arms
   [value : CompilerCtfeValue]
+  [value-ty : AstType]
   [arms : AstMatchArmList]
   [origin : AstExpr]
   [env : CtfeEnv]
@@ -3870,11 +3877,11 @@
         [rest : AstMatchArmList (box-get rest)]
         (match arm
           [(AstMatchArm pattern body-box)
-            (match (ctfe-match-pattern pattern value env)
+            (match (ctfe-match-pattern pattern value value-ty env)
               [(CtfePatternMatched arm-env)
                 (compiler-ctfe-eval (ast-node-get body-box) arm-env fuel)]
               [(CtfeNoPatternMatch)
-                (ctfe-eval-match-arms value rest origin env fuel)])]))]))
+                (ctfe-eval-match-arms value value-ty rest origin env fuel)])]))]))
 
 (define (ctfe-eval-match
   [scrutinee : AstExpr]
@@ -3884,7 +3891,13 @@
   [fuel : i64]) : ResultCtfe
   (match (compiler-ctfe-eval scrutinee env fuel)
     [(OkCtfe value scrutinee-fuel)
-      (ctfe-eval-match-arms value arms origin env scrutinee-fuel)]
+      (ctfe-eval-match-arms
+        value
+        (ctfe-cast-source-type scrutinee value env)
+        arms
+        origin
+        env
+        scrutinee-fuel)]
     [(ErrCtfe diag) (ErrCtfe diag)]))
 
 ;; --- quote / quasiquote -----------------------------------------------------
@@ -7209,6 +7222,15 @@
           (ast-let-binding "x" (AstNoType) u64-max)
           AstLetBindingNil)
         (ast-expr-cast u64-var (AstTyF64)))]
+    [match-u64-var : i64 (ast-node-push (AstExprVar (intern "m")))]
+    [match-u64-max-f64 : i64
+      (ast-expr-match
+        u64-max
+        (ast-match-arm-cons
+          (ast-match-arm
+            (ast-pat-binding "m")
+            (ast-expr-cast match-u64-var (AstTyF64)))
+          AstMatchArmNil))]
     [char-a : i64 (ast-node-push (AstExprLiteral (AstLitChar #A')))]
     [char-a-f64 : i64 (ast-expr-cast char-a (AstTyF64))]
     [neg-int-f64 : i64 (ast-expr-cast neg-int (AstTyF64))]
@@ -7261,6 +7283,7 @@
         untyped-let-u64-max-f64
         env
         18446744073709551616.0)
+      (compiler-ctfe-eval-f64-ok? match-u64-max-f64 env 18446744073709551616.0)
       (compiler-ctfe-eval-f32-ok? rounded-int-f32 env 16777216.0)
       (compiler-ctfe-eval-i64-ok? f64-to-i64 env 3)
       (compiler-ctfe-eval-i64-ok? f32-to-i64 env 1)

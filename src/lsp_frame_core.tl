@@ -2108,9 +2108,14 @@
 ;; Returns true if all non-whitespace content consists of valid forms.
 ;; Now uses the real compiler parser for accurate error reporting.
 (define (lsp-text-is-valid-forms [text : String]) : bool
-  (match (lsp-validate-forms-result text)
-    [(ValidLspForms) true]
-    [(InvalidLspForms _ _ _ _) false]))
+  (let
+    [n : i64 (string-length text)]
+    [i : i64 (lsp-skip-space text 0 n)]
+    (if (= i n)
+      false
+      (match (lsp-validate-forms-result text)
+        [(ValidLspForms) true]
+        [(InvalidLspForms _ _ _ _) false]))))
 
 ;; Return a formatted error message, or empty string if valid.
 (define (lsp-validate-forms-error [text : String]) : String
@@ -2187,15 +2192,18 @@
               [(OkSpannedSexpr sexpr)
                 (match (parse-ast-decl-maybe dispatch sexpr)
                   [(ErrAstMaybeDecl msg)
-                    (let
-                      [span : SourceSpan (spanned-sexpr-span sexpr)]
-                      [line : i64 (span-start-line span)]
-                      [col : i64 (span-start-col span)]
-                      (begin
-                        (set!
-                          result
-                          (InvalidLspForms line col msg (lsp-line-at text line)))
-                        (set! done true)))]
+                    (match (parse-ast-expr dispatch sexpr)
+                      [(ErrAstExpr _)
+                        (let
+                          [span : SourceSpan (spanned-sexpr-span sexpr)]
+                          [line : i64 (span-start-line span)]
+                          [col : i64 (span-start-col span)]
+                          (begin
+                            (set!
+                              result
+                              (InvalidLspForms line col msg (lsp-line-at text line)))
+                            (set! done true)))]
+                      [(OkAstExpr _) unit])]
                   [(OkAstNoDecl)
                     (match (parse-ast-expr dispatch sexpr)
                       [(ErrAstExpr msg)

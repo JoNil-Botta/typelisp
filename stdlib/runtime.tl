@@ -51,9 +51,10 @@
 (unsafe
   (extern (runtime-copy-bytes! [dst : (MutPtr u8)] [src : (Ptr u8)] [n : i64]) : unit (:symbol "tl_memcpy")))
 
-;: Arena hooks used by `tl_str_view` to allocate borrowed view records in a
-;: process-lifetime atomic arena instead of the caller's active arena.
+;: Return the currently active arena handle.
 (extern (runtime-arena-current) : i64 (:symbol "tl_arena_current"))
+
+;: Create the process-lifetime atomic arena used for borrowed view records.
 (extern (runtime-arena-make-atomic) : i64 (:symbol "tl_arena_make_atomic"))
 
 (unsafe
@@ -169,6 +170,7 @@
     (runtime-abort-write message)
     (runtime-os-exit 134)))
 
+;: Render an integer into a fresh active-arena decimal string.
 (define (tl-runtime-int-to-string [value : i64]) : String
   (let
     [negative : bool (< value 0)]
@@ -213,6 +215,7 @@
           (unsafe
             (string-from-bytes (ptr-cast buf : (Ptr u8)) len)))))))
 
+;: Copy a byte slice into a fresh active-arena string.
 (define (tl-runtime-substring [src : (Ptr u8)] [start : i64] [len : i64]) : String
   (let
     [dst : (MutPtr u8) (runtime-alloc len)]
@@ -222,9 +225,11 @@
       (unsafe
         (string-from-bytes (ptr-cast dst : (Ptr u8)) len)))))
 
+;: Cached process-lifetime arena used for borrowed string views.
 (define runtime-str-view-arena : i64
   0)
 
+;: Return the borrowed-view arena, creating it on first use.
 (define (runtime-str-view-arena-get) : i64
   (if (= runtime-str-view-arena 0)
     (begin
@@ -254,6 +259,7 @@
             (runtime-arena-set home))
           view)))))
 
+;: Concatenate two byte ranges into a fresh active-arena string.
 (define (tl-runtime-string-concat
   [a : (Ptr u8)]
   [a-len : i64]
@@ -270,6 +276,7 @@
       (unsafe
         (string-from-bytes (ptr-cast dst : (Ptr u8)) total)))))
 
+;: Concatenate three byte ranges into a fresh active-arena string.
 (define (tl-runtime-string-concat3
   [a : (Ptr u8)]
   [a-len : i64]
@@ -292,6 +299,7 @@
       (unsafe
         (string-from-bytes (ptr-cast dst : (Ptr u8)) total)))))
 
+;: Concatenate four byte ranges into a fresh active-arena string.
 (define (tl-runtime-string-concat4
   [a : (Ptr u8)]
   [a-len : i64]
@@ -319,6 +327,7 @@
       (unsafe
         (string-from-bytes (ptr-cast dst : (Ptr u8)) total)))))
 
+;: Concatenate five byte ranges into a fresh active-arena string.
 (define (tl-runtime-string-concat5
   [a : (Ptr u8)]
   [a-len : i64]

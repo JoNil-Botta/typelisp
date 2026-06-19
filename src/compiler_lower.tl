@@ -40672,11 +40672,13 @@
   (string-append
     "(define (tl-runtime-substring [src : (Ptr u8)] [start : i64] [len : i64]) : String
   (unsafe (string-from-bytes (ptr-offset src start) len)))
+(unsafe
+  (extern (tl_substring [src : (Ptr u8)] [start : i64] [len : i64]) : String))
 "
     "(define (main) : String
   (let
     [s : String \"hello\"]
-    (substring (& s) 1 2)))"))
+    (unsafe (tl_substring (string-data s) 1 2))))"))
 
 (define (compiler-lower-runtime-substring-capturing-lambda-source) : String
   (string-append

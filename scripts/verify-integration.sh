@@ -708,16 +708,14 @@ run_linux_backend_fixtures() {
     for _snippet in \
         ".globl tl_alloc" \
         "tl_alloc:" \
-        ".globl tl_substring" \
-        "tl_substring:" \
-        ".globl tl_string_concat" \
-        "tl_string_concat:" \
+        "call tl_substring" \
+        "call tl_string_concat" \
         "rep movsb" \
         "tl_current_arena:" \
         "tl_thread_init:" \
         "tl_current_arena@tpoff" \
         ".L_tl_alloc_new_arena:" \
-        "call tl_alloc"
+        "call .L_tl_alloc8"
     do
         assert_contains "$_runtime_asm" "$_snippet" backend-runtime
     done
@@ -731,7 +729,11 @@ run_linux_backend_fixtures() {
         ".extern tl_oob_abort" \
         ".globl tl_oob_abort" \
         "tl_oob_abort:" \
+        ".globl tl_substring" \
+        "tl_substring:" \
         ".extern tl_substring" \
+        ".globl tl_string_concat" \
+        "tl_string_concat:" \
         ".extern tl_string_concat" \
         ".extern tl_string_eq" \
         ".globl tl_string_eq" \
@@ -777,10 +779,9 @@ run_linux_backend_fixtures() {
     do
         assert_not_contains "$_runtime_asm" "$_snippet" backend-runtime
     done
-    # tl_alloc's out-of-memory path tail-jumps to the tl_oom_abort runtime-
-    # prelude handler (#2221), which this direct backend fixture does not link.
-    # Provide a freestanding link-only target; the happy-path fixture allocates
-    # successfully, so it must not execute it.
+    # The direct backend fixture does not lower TypeLisp runtime-prelude bodies.
+    # Provide freestanding link-only targets for tl_alloc's OOM path and the
+    # moved string construction helpers; the happy path must not execute them.
     _runtime_abort_asm="$_runtime_dir/runtime_abort.s"
     _runtime_abort_obj="$_runtime_dir/runtime_abort.o"
     cat > "$_runtime_abort_asm" <<'EOF'
@@ -790,6 +791,14 @@ tl_oom_abort:
     movq $60, %rax
     movq $134, %rdi
     syscall
+    .globl tl_substring
+tl_substring:
+    xorl %eax, %eax
+    ret
+    .globl tl_string_concat
+tl_string_concat:
+    xorl %eax, %eax
+    ret
 EOF
     as "$_runtime_asm" -o "$_runtime_obj"
     as "$_runtime_abort_asm" -o "$_runtime_abort_obj"
@@ -969,12 +978,8 @@ run_windows_backend_fixtures() {
         ".globl tl_alloc" \
         "tl_alloc:" \
         "%gs:0x28" \
-        ".globl tl_substring" \
-        "tl_substring:" \
-        ".globl tl_string_concat" \
-        "tl_string_concat:" \
-        ".globl tl_int_to_string" \
-        "tl_int_to_string:" \
+        "call tl_substring" \
+        "call tl_string_concat" \
         ".L_tl_argc:" \
         ".L_tl_argv:" \
         "movq %rcx, .L_tl_argc(%rip)" \
@@ -983,8 +988,6 @@ run_windows_backend_fixtures() {
         ".extern ExitProcess" \
         ".extern WriteFile" \
         "call VirtualAlloc" \
-        "movq %rcx, %rbx" \
-        "movq %r12, %rcx" \
         "rep movsb"
     do
         assert_contains "$_runtime_asm" "$_snippet" windows-backend-runtime
@@ -1001,7 +1004,11 @@ run_windows_backend_fixtures() {
         ".extern tl_oob_abort" \
         ".globl tl_oob_abort" \
         "tl_oob_abort:" \
+        ".globl tl_substring" \
+        "tl_substring:" \
         ".extern tl_substring" \
+        ".globl tl_string_concat" \
+        "tl_string_concat:" \
         ".extern tl_string_concat" \
         ".extern tl_string_eq" \
         ".extern tl_string_to_int" \
@@ -1012,6 +1019,8 @@ run_windows_backend_fixtures() {
         ".globl tl_hash_string" \
         "tl_hash_string:" \
         ".extern tl_hash_string" \
+        ".globl tl_int_to_string" \
+        "tl_int_to_string:" \
         ".extern tl_int_to_string" \
         "tl_print_err:" \
         "tl_print_string:" \
@@ -1062,15 +1071,22 @@ run_windows_backend_fixtures() {
     do
         assert_not_contains "$_runtime_asm" "$_snippet" windows-backend-runtime
     done
-    # tl_alloc's out-of-memory path tail-jumps to the tl_oom_abort runtime-
-    # prelude handler (#2221), which this direct backend fixture does not link.
-    # Append a freestanding link-only target; the happy-path fixture allocates
-    # successfully, so it must not execute it.
+    # The direct backend fixture does not lower TypeLisp runtime-prelude bodies.
+    # Append freestanding link-only targets for tl_alloc's OOM path and the
+    # moved string construction helpers; the happy path must not execute them.
     cat >> "$_runtime_asm" <<'EOF'
     .globl tl_oom_abort
 tl_oom_abort:
     movl $134, %ecx
     call ExitProcess
+    .globl tl_substring
+tl_substring:
+    xorl %eax, %eax
+    ret
+    .globl tl_string_concat
+tl_string_concat:
+    xorl %eax, %eax
+    ret
 EOF
     assemble_link_windows "$_runtime_asm" "$_runtime_obj" "$_runtime_bin" windows-backend-runtime
     run_windows_program "$_runtime_bin" "$_runtime_stdout" "$_runtime_stderr" "$_runtime_code" 42

@@ -25759,7 +25759,11 @@ tl_atomic_i32_fetch_add_ptr:
       (match item
         [(IrExtern _ _ _ link-symbol _ provided)
           (compiler-backend-object-externs
-            (if provided
+            (if (or
+              provided
+              (compiler-backend-object-runtime-symbol-provided?
+                plan
+                link-symbol))
               parts
               (compiler-backend-object-symbol-extern
                 parts
@@ -25772,6 +25776,7 @@ tl_atomic_i32_fetch_add_ptr:
   (let
     [symbols : BackendStringList BackendStringNil]
     (begin
+      (set! symbols (compiler-backend-string-cons "tl_memcpy" symbols))
       (set!
         symbols
         (compiler-backend-string-cons "tl_atomic_i32_fetch_add_ptr" symbols))
@@ -25800,8 +25805,21 @@ tl_atomic_i32_fetch_add_ptr:
       (set! symbols (compiler-backend-string-cons "tl_div_abort" symbols))
       (set! symbols (compiler-backend-string-cons "tl_region_reset" symbols))
       (set! symbols (compiler-backend-string-cons "tl_region_mark" symbols))
+      (set!
+        symbols
+        (compiler-backend-string-cons "tl_arena_make_atomic" symbols))
+      (set! symbols (compiler-backend-string-cons "tl_arena_set" symbols))
+      (set! symbols (compiler-backend-string-cons "tl_arena_current" symbols))
       (set! symbols (compiler-backend-string-cons "tl_alloc" symbols))
       symbols)))
+
+(define (compiler-backend-object-runtime-symbol-provided?
+  [plan : CompilerBackendRuntimePlan]
+  [name : String]) : bool
+  (or
+    (compiler-backend-plan-provides? plan name)
+    (string-eq name "tl_alloc")
+    (string-eq name "tl_memcpy")))
 
 (define (compiler-backend-object-runtime-symbols
   [parts : CompilerBackendObjectParts]
@@ -25811,7 +25829,7 @@ tl_atomic_i32_fetch_add_ptr:
     [(BackendStringNil) parts]
     [(BackendStringCons name rest)
       (compiler-backend-object-runtime-symbols
-        (if (compiler-backend-plan-provides? plan name)
+        (if (compiler-backend-object-runtime-symbol-provided? plan name)
           (compiler-backend-object-symbol-local-section
             parts
             name
@@ -27955,7 +27973,8 @@ tl_atomic_i32_fetch_add_ptr:
           (compiler-backend-string-contains? asm ".globl _tl_tl_alloc")
           (compiler-backend-string-contains? asm ".globl _tl_f"))
         (compiler-backend-string-contains? asm ".globl tl_alloc\n")
-        (compiler-backend-string-contains? asm ".globl tl_substring\n")
+        (not (compiler-backend-string-contains? asm ".globl tl_substring\n"))
+        (not (compiler-backend-string-contains? asm "tl_substring:\n"))
         (or
           (compiler-backend-string-contains? asm "    call _tl_tl_alloc")
           (compiler-backend-string-contains? asm "    call _tl_f"))

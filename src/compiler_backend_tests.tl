@@ -4228,11 +4228,31 @@
             (not (compiler-backend-string-contains? asm "tmpfile:\n")))]
         [string-runtime : bool
           (backend-and8
-            (compiler-backend-string-contains? asm "tl_substring:\n")
-            (compiler-backend-string-contains? asm "tl_string_concat:\n")
-            (not (compiler-backend-string-contains? asm "tl_string_eq:\n"))
-            (not (compiler-backend-string-contains? asm "tl_string_to_int:\n"))
-            (compiler-backend-string-contains? asm "tl_int_to_string:\n")
+            (compiler-backend-string-contains? asm "    call tl_substring\n")
+            (compiler-backend-string-contains?
+              asm
+              "    call tl_string_concat\n")
+            (and
+              (not (compiler-backend-string-contains? asm "tl_substring:\n"))
+              (not
+                (compiler-backend-string-contains? asm "tl_string_concat:\n"))
+              (not
+                (compiler-backend-string-contains? asm "tl_int_to_string:\n")))
+            (and
+              (not (compiler-backend-string-contains? asm "tl_string_eq:\n"))
+              (not
+                (compiler-backend-string-contains? asm "tl_string_to_int:\n")))
+            (and
+              (not
+                (compiler-backend-string-contains? asm ".extern tl_substring\n"))
+              (not
+                (compiler-backend-string-contains?
+                  asm
+                  ".extern tl_string_concat\n"))
+              (not
+                (compiler-backend-string-contains?
+                  asm
+                  ".extern tl_int_to_string\n")))
             (not
               (compiler-backend-string-contains? asm "tl_random_system_seed:\n"))
             (not

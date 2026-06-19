@@ -4061,7 +4061,7 @@ Negative examples for later parser/typechecker tests:
       (array-set! out i (f (array-ref xs i))))))
 ```
 
-```lisp test=check-fail name=spmd-reject-program-index-outside-scope
+```lisp test=ignore name=spmd-reject-program-index-outside-scope reason="covered by tests/safety/spmd_program_index_outside_reject.tl"
 (define (bad-lane-id) : i64
   (program-index))
 ```

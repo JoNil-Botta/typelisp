@@ -312,6 +312,8 @@
   (AstExprSpmdReduce (Box AstSpmdReduce))
   (AstExprSpmdScan (Box AstSpmdScan))
   (AstExprSpmdBroadcast i64 i64)
+  (AstExprSpmdProgramIndex)
+  (AstExprSpmdProgramCount)
   (AstExprStructGet i64 i64)
   (AstExprStructSet i64 i64 i64)
   (AstExprWithRegion String AstExprList)
@@ -1822,6 +1824,12 @@
 (define (ast-expr-spmd-broadcast [value : i64] [lane : i64]) : i64
   (ast-node-push (AstExprSpmdBroadcast value lane)))
 
+(define (ast-expr-spmd-program-index) : i64
+  (ast-node-push (AstExprSpmdProgramIndex)))
+
+(define (ast-expr-spmd-program-count) : i64
+  (ast-node-push (AstExprSpmdProgramCount)))
+
 (define (ast-expr-struct-get [target : i64] [field : String]) : i64
   (ast-node-push (AstExprStructGet target (intern field))))
 
@@ -2190,6 +2198,8 @@
     [(AstExprSpmdReduce _) 28]
     [(AstExprSpmdScan _) 68]
     [(AstExprSpmdBroadcast _ _) 64]
+    [(AstExprSpmdProgramIndex) 69]
+    [(AstExprSpmdProgramCount) 70]
     [(AstExprTry _) 29]
     [(AstExprReturn _) 48]
     [(AstExprPtrNull _) 30]

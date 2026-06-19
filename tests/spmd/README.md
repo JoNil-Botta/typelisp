@@ -79,12 +79,12 @@ falling back to scalar code.
   `broadcast_lane*_u32.tl` are backend-observable `spmd-broadcast` fixtures
   checked by `scripts/verify-spmd-broadcast.sh`. They are intentionally
   separate from the scalar-vs-SIMD same-exit corpus.
-
-Future `(program-index)`/`(program-count)` and other backend-observable fixtures
-should be kept separate from the scalar-vs-SIMD same-exit corpus when they
-intentionally observe backend gang width. They should instead assert the scalar
-contract (`program-index = 0`, `program-count = 1`) and backend-specific SIMD
-lane/tail behavior from `SPEC.md` section 5.15.
+- `lane_identity_i64.tl` and `lane_identity_reduce_i64.tl` are
+  backend-observable `(program-index)`/`(program-count)` fixtures checked by
+  `scripts/verify-spmd-lane-identity.sh`. They assert the scalar contract
+  (`program-index = 0`, `program-count = 1`) and backend-specific SIMD lane/tail
+  behavior from `SPEC.md` section 5.15 for `foreach` maps and `spmd-reduce`
+  values.
 
 Coverage map:
 
@@ -111,6 +111,10 @@ Coverage map:
   `../integration/spmd_scan_scalar.tl`.
 - `spmd-broadcast` executable coverage lives in the `broadcast_lane*_{i64,u64,u32}.tl`
   fixtures, with mode-specific expectations in `scripts/verify-spmd-broadcast.sh`.
+- `program-index`/`program-count` executable coverage lives in
+  `lane_identity_i64.tl` and `lane_identity_reduce_i64.tl`, with mode-specific
+  expectations in `scripts/verify-spmd-lane-identity.sh`; scalar same-exit
+  coverage is covered by `../integration/spmd_lane_identity_scalar.tl`.
 - SIMD reduction vectorization shape checks live in `src/compiler_lower.tl`
   and `src/compiler_backend_tests.tl`; this corpus runs the executable
   scalar/SIMD comparison for the same reduction fixture.
@@ -118,10 +122,6 @@ Coverage map:
   including outer mutation, unsupported `f64` min reduction, unsupported
   floating-point scans, nested scan bodies, and indirect calls with varying
   arguments.
-- Future lane identity diagnostics should cover use outside SPMD scope, use in
-  `foreach` start/end or `spmd-reduce` start/end/init expressions, and nested
-  SPMD scope behavior once nested SPMD is designed.
-
 ## Running
 
 ```sh
@@ -129,9 +129,11 @@ Coverage map:
 scripts/verify-spmd-simd.sh
 scripts/verify-spmd-runtime-dispatch.sh
 sh scripts/verify-spmd-broadcast.sh
+sh scripts/verify-spmd-lane-identity.sh
 TYPELISP_BIN=./target/stage0/typelisp scripts/verify-spmd-simd.sh
 TYPELISP_BIN=./target/stage0/typelisp scripts/verify-spmd-runtime-dispatch.sh
 TYPELISP_BIN=./target/stage0/typelisp sh scripts/verify-spmd-broadcast.sh
+TYPELISP_BIN=./target/stage0/typelisp sh scripts/verify-spmd-lane-identity.sh
 ```
 
 SIMD modes are gated by `scripts/detect-simd-isa.sh` (real CPUID capability, not

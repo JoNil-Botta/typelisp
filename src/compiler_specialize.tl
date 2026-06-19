@@ -7666,6 +7666,8 @@
           [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
     [(AstExprBinaryData bytes)
       (OkSpecExpr (ast-node-push (AstExprBinaryData bytes)) state)]
+    [(AstExprSpmdProgramIndex) (OkSpecExpr (ast-expr-spmd-program-index) state)]
+    [(AstExprSpmdProgramCount) (OkSpecExpr (ast-expr-spmd-program-count) state)]
     [(AstExprProgramArgc)
       (OkSpecExpr (ast-node-push (AstExprProgramArgc)) state)]
     [(AstExprProgramArgv)
@@ -8334,6 +8336,8 @@
           [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
     [(AstExprBinaryData bytes)
       (OkSpecSubExpr (ast-node-push (AstExprBinaryData bytes)))]
+    [(AstExprSpmdProgramIndex) (OkSpecSubExpr (ast-expr-spmd-program-index))]
+    [(AstExprSpmdProgramCount) (OkSpecSubExpr (ast-expr-spmd-program-count))]
     [(AstExprProgramArgc) (OkSpecSubExpr (ast-node-push (AstExprProgramArgc)))]
     [(AstExprProgramArgv) (OkSpecSubExpr (ast-node-push (AstExprProgramArgv)))]
     [(AstExprProgramEnvp) (OkSpecSubExpr (ast-node-push (AstExprProgramEnvp)))]
@@ -9086,6 +9090,8 @@
           [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
     [(AstExprBinaryData bytes)
       (OkSpecSubExpr (ast-node-push (AstExprBinaryData bytes)))]
+    [(AstExprSpmdProgramIndex) (OkSpecSubExpr (ast-expr-spmd-program-index))]
+    [(AstExprSpmdProgramCount) (OkSpecSubExpr (ast-expr-spmd-program-count))]
     [(AstExprProgramArgc) (OkSpecSubExpr (ast-node-push (AstExprProgramArgc)))]
     [(AstExprProgramArgv) (OkSpecSubExpr (ast-node-push (AstExprProgramArgv)))]
     [(AstExprProgramEnvp) (OkSpecSubExpr (ast-node-push (AstExprProgramEnvp)))]

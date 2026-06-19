@@ -608,6 +608,12 @@
 (define (compiler-parse-tag-expr-spmd-broadcast) : i64
   290)
 
+(define (compiler-parse-tag-expr-spmd-program-index) : i64
+  295)
+
+(define (compiler-parse-tag-expr-spmd-program-count) : i64
+  296)
+
 (define (compiler-parse-tag-expr-try) : i64
   251)
 
@@ -865,6 +871,18 @@
           out
           "spmd-broadcast"
           (compiler-parse-tag-expr-spmd-broadcast)))
+      (set!
+        out
+        (sym-i64-bind
+          out
+          "program-index"
+          (compiler-parse-tag-expr-spmd-program-index)))
+      (set!
+        out
+        (sym-i64-bind
+          out
+          "program-count"
+          (compiler-parse-tag-expr-spmd-program-count)))
       (set!
         out
         (sym-i64-bind out "struct-get" (compiler-parse-tag-expr-struct-get)))
@@ -3917,6 +3935,16 @@
       (parse-ast-spmd-scan dispatch rest)]
     [(= tag (compiler-parse-tag-expr-spmd-broadcast))
       (parse-ast-spmd-broadcast dispatch rest)]
+    [(= tag (compiler-parse-tag-expr-spmd-program-index))
+      (parse-ast-no-arg-low-level
+        rest
+        "program-index"
+        (ast-expr-spmd-program-index))]
+    [(= tag (compiler-parse-tag-expr-spmd-program-count))
+      (parse-ast-no-arg-low-level
+        rest
+        "program-count"
+        (ast-expr-spmd-program-count))]
     [(= tag (compiler-parse-tag-expr-struct-get))
       (parse-ast-struct-get dispatch rest)]
     [(= tag (compiler-parse-tag-expr-comptime))
@@ -8667,6 +8695,8 @@
       "(define (main [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))")
     (compiler-parse-ok?
       "(define (main [xs : (Array i64)] [out : (Array i64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (array-set! out i (spmd-broadcast (array-ref xs i) 0))) 0))")
+    (compiler-parse-ok?
+      "(define (main [out : (Array i64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (array-set! out i (+ (program-index) (program-count)))) 0))")
     ;; #1073: an empty range, a non-i64 index type, and expression
     ;; start/end bounds all parse (range semantics are checked later).
     (compiler-parse-ok?
@@ -8693,7 +8723,13 @@
       "parse: malformed spmd-reduce")
     (compiler-parse-error-ok?
       "(define (main) : i64 (spmd-broadcast 1))"
-      "parse: malformed spmd-broadcast")))
+      "parse: malformed spmd-broadcast")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (program-index 0))"
+      "parse: program-index expects no arguments")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (program-count 0))"
+      "parse: program-count expects no arguments")))
 
 (define (compiler-parse-pattern-tests-ok?) : bool
   (and

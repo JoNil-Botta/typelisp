@@ -946,6 +946,8 @@
     [(AstExprArrayData inner)
       (selfhost-lint-dead-expr-refs (ast-node-get inner) refs)]
     [(AstExprBinaryData _) refs]
+    [(AstExprSpmdProgramIndex) refs]
+    [(AstExprSpmdProgramCount) refs]
     [(AstExprProgramArgc) refs]
     [(AstExprProgramArgv) refs]
     [(AstExprProgramEnvp) refs]

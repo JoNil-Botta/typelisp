@@ -689,7 +689,8 @@
   (or
     (string-eq name "while")
     (string-eq name "foreach")
-    (string-eq name "spmd-reduce")))
+    (string-eq name "spmd-reduce")
+    (string-eq name "spmd-scan")))
 
 (define (lint-token-name [tok : Token]) : String
   (if (= (token-tag tok) (tag-sym))
@@ -1566,6 +1567,8 @@
         true
         (lint-expr-uses-import? (ast-node-get inner) alias module-name))]
     [(AstExprBinaryData _) false]
+    [(AstExprSpmdProgramIndex) false]
+    [(AstExprSpmdProgramCount) false]
     [(AstExprProgramArgc) false]
     [(AstExprProgramArgv) false]
     [(AstExprProgramEnvp) false]
@@ -2322,6 +2325,8 @@
     [(AstExprArrayData inner)
       (lint-unused-assignment-note-reads (ast-node-get inner) state)]
     [(AstExprBinaryData _) state]
+    [(AstExprSpmdProgramIndex) state]
+    [(AstExprSpmdProgramCount) state]
     [(AstExprProgramArgc) state]
     [(AstExprProgramArgv) state]
     [(AstExprProgramEnvp) state]
@@ -3778,6 +3783,8 @@
     [(AstExprArrayData inner)
       (lint-unused-variable-expr (ast-node-get inner) state span)]
     [(AstExprBinaryData _) state]
+    [(AstExprSpmdProgramIndex) state]
+    [(AstExprSpmdProgramCount) state]
     [(AstExprProgramArgc) state]
     [(AstExprProgramArgv) state]
     [(AstExprProgramEnvp) state]
@@ -4945,6 +4952,8 @@
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-walk-expr inner threshold acc))]
     [(AstExprBinaryData _) acc]
+    [(AstExprSpmdProgramIndex) acc]
+    [(AstExprSpmdProgramCount) acc]
     [(AstExprProgramArgc) acc]
     [(AstExprProgramArgv) acc]
     [(AstExprProgramEnvp) acc]

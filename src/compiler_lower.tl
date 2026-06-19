@@ -2704,32 +2704,6 @@
       [(string-eq base "tl_string_concat5") "tl-runtime-string-concat5"]
       [else ""])))
 
-(define (lower-runtime-prelude-string-helper-impl? [source-name : String]) : bool
-  (let
-    [base : String (tc-qualified-name-base source-name)]
-    (or
-      (string-eq base "tl-runtime-int-to-string")
-      (string-eq base "tl-runtime-substring")
-      (string-eq base "tl-runtime-str-view")
-      (string-eq base "tl-runtime-string-concat")
-      (string-eq base "tl-runtime-string-concat3")
-      (string-eq base "tl-runtime-string-concat4")
-      (string-eq base "tl-runtime-string-concat5"))))
-
-(define (lower-reach-add-runtime-prelude-string-helper-impl-root
-  [entry-path : String]
-  [decl-path : String]
-  [module : String]
-  [all-functions : StringI64Map]
-  [state : LowerReachState]
-  [source-name : String]) : LowerReachState
-  (if (lower-runtime-prelude-string-helper-impl? source-name)
-    (lower-reach-add-logical
-      all-functions
-      state
-      (lower-decl-logical-name entry-path decl-path module source-name))
-    state))
-
 (define (lower-reach-add-runtime-prelude-string-helper
   [all-functions : StringI64Map]
   [state : LowerReachState]
@@ -2748,14 +2722,43 @@
 
 (define (lower-reach-add-string-snapshot-runtime
   [all-functions : StringI64Map]
+  [names : LowerNameCache]
   [state : LowerReachState]) : LowerReachState
   ;; Clone-out/capture snapshot lowering copies owned String buffers through the
-  ;; fixed `tl_substring` ABI helper, so keep its TypeLisp runtime body when a
-  ;; reachable source form can synthesize that copy after this prune pass.
-  (lower-reach-add-runtime-prelude-string-helper
+  ;; fixed `tl_substring` ABI helper. Source `substring`/`string-slice` calls
+  ;; lower there too, so keep its TypeLisp runtime body when a reachable source
+  ;; form can synthesize that call after this prune pass.
+  (lower-reach-add-runtime-prelude-string-helper-resolved
     all-functions
+    names
     state
     "tl_substring"))
+
+(define (lower-reach-add-runtime-prelude-string-helper-resolved
+  [all-functions : StringI64Map]
+  [names : LowerNameCache]
+  [state : LowerReachState]
+  [source-name : String]) : LowerReachState
+  (let
+    [helper : String (lower-runtime-prelude-string-helper-name source-name)]
+    (if (string-eq helper "")
+      state
+      (lower-reach-add-source
+        all-functions
+        names
+        (lower-reach-add-runtime-prelude-string-helper
+          all-functions
+          state
+          source-name)
+        helper))))
+
+(define (lower-reach-string-snapshot-source-call? [name-id : i64]) : bool
+  (let
+    [name : String (intern-str name-id)]
+    (or
+      (compiler-builtin-lower-clone-id? name-id)
+      (string-eq name "substring")
+      (string-eq name "string-slice"))))
 
 (define (lower-reach-add-source
   [all-functions : StringI64Map]
@@ -2768,8 +2771,9 @@
   ;; from a macro expansion is pruned, then fails to resolve during lowering.
   (let
     [logical-name : String (lower-name-cache-resolve-hygiene names source-name)]
-    (lower-reach-add-runtime-prelude-string-helper
+    (lower-reach-add-runtime-prelude-string-helper-resolved
       all-functions
+      names
       (lower-reach-add-runtime-prelude-string-helper
         all-functions
         (lower-reach-add-logical all-functions state logical-name)
@@ -3769,9 +3773,10 @@
         [runtime-state : LowerReachState
           (match (ast-expr-unspan callee)
             [(AstExprVar name)
-              (if (compiler-builtin-lower-clone-id? name)
+              (if (lower-reach-string-snapshot-source-call? name)
                 (lower-reach-add-string-snapshot-runtime
                   all-functions
+                  names
                   callee-state)
                 callee-state)]
             [_ callee-state])]
@@ -3805,7 +3810,14 @@
         [(AstLambda _ _ body-box)
           (let
             [body : AstExpr (ast-node-get body-box)]
-            (lower-reach-expr all-functions names state body))])]
+            (lower-reach-expr
+              all-functions
+              names
+              (lower-reach-add-string-snapshot-runtime
+                all-functions
+                names
+                state)
+              body))])]
     [(AstExprTuple values)
       (lower-reach-expr-list all-functions names state values)]
     [(AstExprTupleRef value-box _)
@@ -3994,14 +4006,14 @@
           (lower-reach-expr
             all-functions
             names
-            (lower-reach-add-string-snapshot-runtime all-functions state)
+            (lower-reach-add-string-snapshot-runtime all-functions names state)
             scratch)
           exprs))]
     [(AstExprWithScratch exprs)
       (lower-reach-expr-list
         all-functions
         names
-        (lower-reach-add-string-snapshot-runtime all-functions state)
+        (lower-reach-add-string-snapshot-runtime all-functions names state)
         exprs)]
     [(AstExprInArena arena-box exprs)
       (let
@@ -4880,8 +4892,6 @@
 ;; backend-emitted bounds/division/shift checks call the runtime-prelude
 ;; handlers). Seed every exported function as a reachability root so the prune
 ;; keeps it and its transitive callees even with no IR caller.
-;; Runtime string helpers use reserved private `tl-runtime-*` names and are
-;; emitted under fixed backend labels, so seed those definitions too.
 (define (lower-reach-add-export-root-decl
   [entry-path : String]
   [decl-path : String]
@@ -4893,19 +4903,13 @@
     [(AstDeclDefFn name _ _ _ export)
       (let
         [name-str : String (intern-str name)]
-        (lower-reach-add-runtime-prelude-string-helper-impl-root
-          entry-path
-          decl-path
-          module
-          all-functions
-          (match export
-            [(AstFnExport _)
-              (lower-reach-add-logical
-                all-functions
-                state
-                (lower-decl-logical-name entry-path decl-path module name-str))]
-            [(AstFnNoExport) state])
-          name-str))]
+        (match export
+          [(AstFnExport _)
+            (lower-reach-add-logical
+              all-functions
+              state
+              (lower-decl-logical-name entry-path decl-path module name-str))]
+          [(AstFnNoExport) state]))]
     [(AstDeclExtern _ kind metadata _)
       (match kind
         [(AstExternFunction)
@@ -40664,6 +40668,26 @@
 (define (compiler-lower-runtime-substring-scratch-paths) : AstDeclPathList
   (ast-decl-path-cons "stdlib/runtime.tl" AstDeclPathNil))
 
+(define (compiler-lower-runtime-substring-call-source) : String
+  (string-append
+    "(define (tl-runtime-substring [src : (Ptr u8)] [start : i64] [len : i64]) : String
+  (unsafe (string-from-bytes (ptr-offset src start) len)))
+"
+    "(define (main) : String
+  (let
+    [s : String \"hello\"]
+    (substring (& s) 1 2)))"))
+
+(define (compiler-lower-runtime-substring-capturing-lambda-source) : String
+  (string-append
+    "(define (tl-runtime-substring [src : (Ptr u8)] [start : i64] [len : i64]) : String
+  (unsafe (string-from-bytes (ptr-offset src start) len)))
+"
+    "(define (main) : String
+  (let
+    [s : String \"hello\"]
+    ((lambda () : String s))))"))
+
 (define (compiler-lower-with-scratch-owning-source) : String
   (compiler-lower-with-arena-source
     "(defstruct ScratchPayload
@@ -40781,6 +40805,53 @@
 
 (define (compiler-lower-runtime-substring-scratch-reachable-ok?) : bool
   (match (parse-ast-source (compiler-lower-runtime-substring-scratch-source))
+    [(OkAstProgram program)
+      (match (lower-compiler-program-with-decl-paths
+        "app.tl"
+        program
+        (compiler-lower-runtime-substring-scratch-paths))
+        [(OkCompilerLower lowered _)
+          (match lowered
+            [(IrProgram _ functions _)
+              (and
+                (lower-test-function-defined?
+                  functions
+                  "stdlib/runtime.tl::tl-runtime-substring")
+                (>
+                  (lower-test-function-call-count
+                    functions
+                    "main"
+                    "tl_substring")
+                  0))])]
+        [(ErrCompilerLower _) false])]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-lower-runtime-substring-call-reachable-ok?) : bool
+  (match (parse-ast-source (compiler-lower-runtime-substring-call-source))
+    [(OkAstProgram program)
+      (match (lower-compiler-program-with-decl-paths
+        "app.tl"
+        program
+        (compiler-lower-runtime-substring-scratch-paths))
+        [(OkCompilerLower lowered _)
+          (match lowered
+            [(IrProgram _ functions _)
+              (and
+                (lower-test-function-defined?
+                  functions
+                  "stdlib/runtime.tl::tl-runtime-substring")
+                (>
+                  (lower-test-function-call-count
+                    functions
+                    "main"
+                    "tl_substring")
+                  0))])]
+        [(ErrCompilerLower _) false])]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-lower-runtime-substring-capturing-lambda-reachable-ok?) : bool
+  (match (parse-ast-source
+    (compiler-lower-runtime-substring-capturing-lambda-source))
     [(OkAstProgram program)
       (match (lower-compiler-program-with-decl-paths
         "app.tl"
@@ -42909,6 +42980,12 @@
         unit
         (set! ok false))
       (if (compiler-lower-runtime-substring-scratch-reachable-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-runtime-substring-call-reachable-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-runtime-substring-capturing-lambda-reachable-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-in-arena-shape-ok?)

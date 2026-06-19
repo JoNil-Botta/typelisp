@@ -931,9 +931,9 @@
     (string-i64-map-put names name 1)))
 
 (define (tltest-reach-mark-string-snapshot-runtime [names : StringI64Map]) : StringI64Map
-  ;; Harness pruning runs before clone-out lowering emits the raw `tl_substring`
-  ;; helper call, so keep the TypeLisp runtime body whenever a reachable test
-  ;; path may synthesize a String snapshot.
+  ;; Harness pruning runs before lowering emits raw `tl_substring` helper calls,
+  ;; so keep the TypeLisp runtime body whenever a reachable test path may
+  ;; synthesize a String snapshot or source substring call.
   (tltest-reach-mark-name names "tl-runtime-substring"))
 
 (define (tltest-reach-mark-str-view-runtime [names : StringI64Map]) : StringI64Map
@@ -951,7 +951,11 @@
   [name : String]
   [names : StringI64Map]) : StringI64Map
   (cond
-    [(string-eq name "clone") (tltest-reach-mark-string-snapshot-runtime names)]
+    [(or
+        (string-eq name "clone")
+        (string-eq name "substring")
+        (string-eq name "string-slice"))
+      (tltest-reach-mark-string-snapshot-runtime names)]
     [(or
         (string-eq name "tl_str_view")
         (tltest-bytes-view-from-parts-name? name))
@@ -1072,7 +1076,9 @@
         [(AstLambda _ _ body-box)
           (let
             [body : AstExpr (ast-node-get body-box)]
-            (tltest-reach-mark-expr body names))])]
+            (tltest-reach-mark-expr
+              body
+              (tltest-reach-mark-string-snapshot-runtime names)))])]
     [(AstExprTuple exprs) (tltest-reach-mark-expr-list exprs names)]
     [(AstExprTupleRef tuple-box _)
       (let
@@ -1817,6 +1823,117 @@
   (if (tltest-generated-runtime-reachability-self-test?)
     unit
     (panic "test CLI inline harness dropped lowered runtime helper")))
+
+(define (tltest-generated-runtime-lambda-reachability-self-test?) : bool
+  (let
+    [unit-expr : i64 (ast-node-push (AstExprLiteral (AstLitUnit)))]
+    [substring-decl : AstDecl
+      (ast-decl-def-fn "tl-runtime-substring" AstParamNil (AstTyUnit) unit-expr)]
+    [lambda-expr : i64 (ast-expr-lambda AstParamNil AstNoType unit-expr)]
+    [helper-body : i64
+      (ast-node-push
+        (AstExprBegin
+          (ast-expr-cons lambda-expr (ast-expr-cons unit-expr AstExprNil))))]
+    [helper-decl : AstDecl
+      (ast-decl-def-fn
+        "__tl_generated_lambda_helper"
+        AstParamNil
+        (AstTyUnit)
+        helper-body)]
+    [span : AstSourceSpan (AstSourceSpan 18 1 18 1)]
+    [decls : AstDeclList
+      (ast-decl-cons
+        substring-decl
+        (ast-decl-cons
+          helper-decl
+          (ast-decl-cons
+            (ast-decl-test
+              "keeps-generated-lambda-runtime"
+              (tltest-call-expr "__tl_generated_lambda_helper")
+              span)
+            AstDeclNil)))]
+    [paths : AstDeclPathList
+      (ast-decl-path-cons
+        "stdlib/runtime.tl"
+        (ast-decl-path-cons
+          "driver.tl"
+          (ast-decl-path-cons "driver.tl" AstDeclPathNil)))]
+    (match (tltest-build-harness "driver.tl" decls paths)
+      [(InlineHarness program _ count)
+        (match program
+          [(AstProgram harness-decls-box)
+            (let
+              [harness-decls : AstDeclList (box-get harness-decls-box)]
+              (and
+                (= count 1)
+                (string-eq
+                  (tltest-decl-name-at harness-decls 0)
+                  "tl-runtime-substring")
+                (string-eq
+                  (tltest-decl-name-at harness-decls 1)
+                  "__tl_generated_lambda_helper")))])])))
+
+(test
+  test-cli-inline-harness-keeps-lambda-runtime-helper
+  (if (tltest-generated-runtime-lambda-reachability-self-test?)
+    unit
+    (panic "test CLI inline harness dropped lambda runtime helper")))
+
+(define (tltest-generated-runtime-substring-reachability-self-test?) : bool
+  (let
+    [unit-expr : i64 (ast-node-push (AstExprLiteral (AstLitUnit)))]
+    [substring-decl : AstDecl
+      (ast-decl-def-fn "tl-runtime-substring" AstParamNil (AstTyUnit) unit-expr)]
+    [helper-body : i64
+      (ast-node-push
+        (AstExprBegin
+          (ast-expr-cons
+            (tltest-call-expr "substring")
+            (ast-expr-cons unit-expr AstExprNil))))]
+    [helper-decl : AstDecl
+      (ast-decl-def-fn
+        "__tl_generated_substring_helper"
+        AstParamNil
+        (AstTyUnit)
+        helper-body)]
+    [span : AstSourceSpan (AstSourceSpan 19 1 19 1)]
+    [decls : AstDeclList
+      (ast-decl-cons
+        substring-decl
+        (ast-decl-cons
+          helper-decl
+          (ast-decl-cons
+            (ast-decl-test
+              "keeps-generated-substring-runtime"
+              (tltest-call-expr "__tl_generated_substring_helper")
+              span)
+            AstDeclNil)))]
+    [paths : AstDeclPathList
+      (ast-decl-path-cons
+        "stdlib/runtime.tl"
+        (ast-decl-path-cons
+          "driver.tl"
+          (ast-decl-path-cons "driver.tl" AstDeclPathNil)))]
+    (match (tltest-build-harness "driver.tl" decls paths)
+      [(InlineHarness program _ count)
+        (match program
+          [(AstProgram harness-decls-box)
+            (let
+              [harness-decls : AstDeclList (box-get harness-decls-box)]
+              (and
+                (= count 1)
+                (string-eq
+                  (tltest-decl-name-at harness-decls 0)
+                  "tl-runtime-substring")
+                (string-eq
+                  (tltest-decl-name-at harness-decls 1)
+                  "__tl_generated_substring_helper")))])])))
+
+(test
+  test-cli-inline-harness-keeps-substring-runtime-helper
+  (if (tltest-generated-runtime-substring-reachability-self-test?)
+    unit
+    (panic "test CLI inline harness dropped substring runtime helper")))
 
 (define (tltest-imported-tests-skipped-self-test?) : bool
   (let

@@ -1342,10 +1342,12 @@
           module-name)
           true
           (lint-expr-uses-import? (ast-node-get else-branch) alias module-name)))]
-    [(AstExprLet bindings body)
-      (if (lint-let-bindings-use-import? bindings alias module-name)
-        true
-        (lint-expr-uses-import? (ast-node-get body) alias module-name))]
+    [(AstExprLet let-box)
+      (match (box-get let-box)
+        [(AstLet bindings body)
+          (if (lint-let-bindings-use-import? bindings alias module-name)
+            true
+            (lint-expr-uses-import? (ast-node-get body) alias module-name))])]
     [(AstExprLambda lambda-box)
       (match (box-get lambda-box)
         [(AstLambda params ret body)
@@ -1422,13 +1424,18 @@
         [(lint-expr-uses-import? (ast-node-get start) alias module-name) true]
         [(lint-expr-uses-import? (ast-node-get end) alias module-name) true]
         [else (lint-expr-uses-import? (ast-node-get body) alias module-name)])]
-    [(AstExprSpmdReduce _ _ index-ty start end init value)
-      (cond
-        [(lint-type-uses-import? index-ty alias module-name) true]
-        [(lint-expr-uses-import? (ast-node-get start) alias module-name) true]
-        [(lint-expr-uses-import? (ast-node-get end) alias module-name) true]
-        [(lint-expr-uses-import? (ast-node-get init) alias module-name) true]
-        [else (lint-expr-uses-import? (ast-node-get value) alias module-name)])]
+    [(AstExprSpmdReduce reduce-box)
+      (match (box-get reduce-box)
+        [(AstSpmdReduce _ _ index-ty start end init value)
+          (cond
+            [(lint-type-uses-import? index-ty alias module-name) true]
+            [(lint-expr-uses-import? (ast-node-get start) alias module-name)
+              true]
+            [(lint-expr-uses-import? (ast-node-get end) alias module-name) true]
+            [(lint-expr-uses-import? (ast-node-get init) alias module-name)
+              true]
+            [else
+              (lint-expr-uses-import? (ast-node-get value) alias module-name)])])]
     [(AstExprSpmdScan scan-box)
       (match (box-get scan-box)
         [(AstSpmdScan _ _ index-ty start end _ prefix-ty init value body)
@@ -2132,11 +2139,13 @@
           (lint-unused-assignment-note-reads
             (ast-node-get then-branch)
             (lint-unused-assignment-note-reads (ast-node-get cond) state))))]
-    [(AstExprLet bindings body)
-      (lint-unused-assignment-clear-pending
-        (lint-unused-assignment-note-reads
-          (ast-node-get body)
-          (lint-unused-assignment-note-reads-let-bindings bindings state)))]
+    [(AstExprLet let-box)
+      (match (box-get let-box)
+        [(AstLet bindings body)
+          (lint-unused-assignment-clear-pending
+            (lint-unused-assignment-note-reads
+              (ast-node-get body)
+              (lint-unused-assignment-note-reads-let-bindings bindings state)))])]
     [(AstExprLambda lambda-box)
       (match (box-get lambda-box)
         [(AstLambda _ _ body)
@@ -2195,15 +2204,17 @@
           (lint-unused-assignment-note-reads
             (ast-node-get end)
             (lint-unused-assignment-note-reads (ast-node-get start) state))))]
-    [(AstExprSpmdReduce _ _ _ start end init value)
-      (lint-unused-assignment-clear-pending
-        (lint-unused-assignment-note-reads
-          (ast-node-get value)
-          (lint-unused-assignment-note-reads
-            (ast-node-get init)
+    [(AstExprSpmdReduce reduce-box)
+      (match (box-get reduce-box)
+        [(AstSpmdReduce _ _ _ start end init value)
+          (lint-unused-assignment-clear-pending
             (lint-unused-assignment-note-reads
-              (ast-node-get end)
-              (lint-unused-assignment-note-reads (ast-node-get start) state)))))]
+              (ast-node-get value)
+              (lint-unused-assignment-note-reads
+                (ast-node-get init)
+                (lint-unused-assignment-note-reads
+                  (ast-node-get end)
+                  (lint-unused-assignment-note-reads (ast-node-get start) state)))))])]
     [(AstExprSpmdScan scan-box)
       (match (box-get scan-box)
         [(AstSpmdScan _ _ _ start end _ _ init value body)
@@ -2406,8 +2417,10 @@
   (match expr
     [(AstExprSpanned inner-box inner-span)
       (lint-unused-assignment-expr (ast-node-get inner-box) state inner-span)]
-    [(AstExprLet bindings body)
-      (lint-unused-assignment-let bindings (ast-node-get body) state span)]
+    [(AstExprLet let-box)
+      (match (box-get let-box)
+        [(AstLet bindings body)
+          (lint-unused-assignment-let bindings (ast-node-get body) state span)])]
     [(AstExprBegin exprs) (lint-unused-assignment-expr-list exprs state)]
     [(AstExprUnsafe exprs) (lint-unused-assignment-expr-list exprs state)]
     [(AstExprWithRegion _ body) (lint-unused-assignment-expr-list body state)]
@@ -3127,10 +3140,12 @@
         (lint-unused-variable-quasiquote-expr
           (ast-node-get then-branch)
           (lint-unused-variable-quasiquote-expr (ast-node-get cond) state)))]
-    [(AstExprLet bindings body)
-      (lint-unused-variable-quasiquote-expr
-        (ast-node-get body)
-        (lint-unused-variable-quasiquote-let-bindings bindings state))]
+    [(AstExprLet let-box)
+      (match (box-get let-box)
+        [(AstLet bindings body)
+          (lint-unused-variable-quasiquote-expr
+            (ast-node-get body)
+            (lint-unused-variable-quasiquote-let-bindings bindings state))])]
     [(AstExprLambda lambda-box)
       (match (box-get lambda-box)
         [(AstLambda _ _ body)
@@ -3191,14 +3206,18 @@
         (lint-unused-variable-quasiquote-expr
           (ast-node-get end)
           (lint-unused-variable-quasiquote-expr (ast-node-get start) state)))]
-    [(AstExprSpmdReduce _ _ _ start end init value)
-      (lint-unused-variable-quasiquote-expr
-        (ast-node-get value)
-        (lint-unused-variable-quasiquote-expr
-          (ast-node-get init)
+    [(AstExprSpmdReduce reduce-box)
+      (match (box-get reduce-box)
+        [(AstSpmdReduce _ _ _ start end init value)
           (lint-unused-variable-quasiquote-expr
-            (ast-node-get end)
-            (lint-unused-variable-quasiquote-expr (ast-node-get start) state))))]
+            (ast-node-get value)
+            (lint-unused-variable-quasiquote-expr
+              (ast-node-get init)
+              (lint-unused-variable-quasiquote-expr
+                (ast-node-get end)
+                (lint-unused-variable-quasiquote-expr
+                  (ast-node-get start)
+                  state))))])]
     [(AstExprSpmdScan scan-box)
       (match (box-get scan-box)
         [(AstSpmdScan _ _ _ start end _ _ init value body)
@@ -3501,8 +3520,10 @@
           (lint-unused-variable-expr (ast-node-get cond) state span)
           span)
         span)]
-    [(AstExprLet bindings body)
-      (lint-unused-variable-let bindings (ast-node-get body) state span)]
+    [(AstExprLet let-box)
+      (match (box-get let-box)
+        [(AstLet bindings body)
+          (lint-unused-variable-let bindings (ast-node-get body) state span)])]
     [(AstExprLambda lambda-box)
       (match (box-get lambda-box)
         [(AstLambda params ret body)
@@ -3583,20 +3604,22 @@
             (lint-unused-variable-expr (ast-node-get start) state span)
             span))
         span)]
-    [(AstExprSpmdReduce _ index index-ty start end init value)
-      (lint-unused-variable-index-scope
-        index
-        (ast-node-get value)
-        (lint-unused-variable-type
-          index-ty
-          (lint-unused-variable-expr
-            (ast-node-get init)
-            (lint-unused-variable-expr
-              (ast-node-get end)
-              (lint-unused-variable-expr (ast-node-get start) state span)
-              span)
-            span))
-        span)]
+    [(AstExprSpmdReduce reduce-box)
+      (match (box-get reduce-box)
+        [(AstSpmdReduce _ index index-ty start end init value)
+          (lint-unused-variable-index-scope
+            index
+            (ast-node-get value)
+            (lint-unused-variable-type
+              index-ty
+              (lint-unused-variable-expr
+                (ast-node-get init)
+                (lint-unused-variable-expr
+                  (ast-node-get end)
+                  (lint-unused-variable-expr (ast-node-get start) state span)
+                  span)
+                span))
+            span)])]
     [(AstExprSpmdScan scan-box)
       (match (box-get scan-box)
         [(AstSpmdScan
@@ -4104,7 +4127,7 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-nested-let-body? inner))]
-    [(AstExprLet _ _) true]
+    [(AstExprLet _) true]
     [_ false]))
 
 (define (lint-nested-let-shadows? [outer : AstLetBindingList] [body : AstExpr]) : bool
@@ -4113,8 +4136,10 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-nested-let-shadows? outer inner))]
-    [(AstExprLet inner-bindings _)
-      (lint-let-bindings-shadow-outer? outer inner-bindings)]
+    [(AstExprLet let-box)
+      (match (box-get let-box)
+        [(AstLet inner-bindings _)
+          (lint-let-bindings-shadow-outer? outer inner-bindings)])]
     [_ false]))
 
 (define (lint-walk-let
@@ -4425,10 +4450,12 @@
                 true
                 threshold
                 acc))]
-          [(AstExprLet bindings body-box)
-            (let
-              [body : AstExpr (ast-node-get body-box)]
-              (lint-walk-tail-let bindings body span threshold acc))]
+          [(AstExprLet let-box)
+            (match (box-get let-box)
+              [(AstLet bindings body-box)
+                (let
+                  [body : AstExpr (ast-node-get body-box)]
+                  (lint-walk-tail-let bindings body span threshold acc))])]
           [(AstExprCall func-box args)
             (let
               [func : AstExpr (ast-node-get func-box)]
@@ -4447,10 +4474,12 @@
           true
           threshold
           acc))]
-    [(AstExprLet bindings body-box)
-      (let
-        [body : AstExpr (ast-node-get body-box)]
-        (lint-walk-tail-let bindings body (lint-no-span) threshold acc))]
+    [(AstExprLet let-box)
+      (match (box-get let-box)
+        [(AstLet bindings body-box)
+          (let
+            [body : AstExpr (ast-node-get body-box)]
+            (lint-walk-tail-let bindings body (lint-no-span) threshold acc))])]
     [(AstExprLambda lambda-box)
       (match (box-get lambda-box)
         [(AstLambda _ _ body-box)
@@ -4590,10 +4619,12 @@
                 false
                 threshold
                 acc))]
-          [(AstExprLet bindings body-box)
-            (let
-              [body : AstExpr (ast-node-get body-box)]
-              (lint-walk-let bindings body span threshold acc))]
+          [(AstExprLet let-box)
+            (match (box-get let-box)
+              [(AstLet bindings body-box)
+                (let
+                  [body : AstExpr (ast-node-get body-box)]
+                  (lint-walk-let bindings body span threshold acc))])]
           [(AstExprCall func-box args)
             (let
               [func : AstExpr (ast-node-get func-box)]
@@ -4631,10 +4662,12 @@
           false
           threshold
           acc))]
-    [(AstExprLet bindings body-box)
-      (let
-        [body : AstExpr (ast-node-get body-box)]
-        (lint-walk-let bindings body (lint-no-span) threshold acc))]
+    [(AstExprLet let-box)
+      (match (box-get let-box)
+        [(AstLet bindings body-box)
+          (let
+            [body : AstExpr (ast-node-get body-box)]
+            (lint-walk-let bindings body (lint-no-span) threshold acc))])]
     [(AstExprLambda lambda-box)
       (match (box-get lambda-box)
         [(AstLambda _ _ body-box)
@@ -4718,19 +4751,24 @@
           body
           threshold
           (lint-walk-expr end threshold (lint-walk-expr start threshold acc))))]
-    [(AstExprSpmdReduce _ _ _ start-box end-box init-box value-box)
-      (let
-        [start : AstExpr (ast-node-get start-box)]
-        [end : AstExpr (ast-node-get end-box)]
-        [init : AstExpr (ast-node-get init-box)]
-        [value : AstExpr (ast-node-get value-box)]
-        (lint-walk-expr
-          value
-          threshold
-          (lint-walk-expr
-            init
-            threshold
-            (lint-walk-expr end threshold (lint-walk-expr start threshold acc)))))]
+    [(AstExprSpmdReduce reduce-box)
+      (match (box-get reduce-box)
+        [(AstSpmdReduce _ _ _ start-box end-box init-box value-box)
+          (let
+            [start : AstExpr (ast-node-get start-box)]
+            [end : AstExpr (ast-node-get end-box)]
+            [init : AstExpr (ast-node-get init-box)]
+            [value : AstExpr (ast-node-get value-box)]
+            (lint-walk-expr
+              value
+              threshold
+              (lint-walk-expr
+                init
+                threshold
+                (lint-walk-expr
+                  end
+                  threshold
+                  (lint-walk-expr start threshold acc)))))])]
     [(AstExprSpmdScan scan-box)
       (match (box-get scan-box)
         [(AstSpmdScan _ _ _ start-box end-box _ _ init-box value-box body-box)

@@ -253,6 +253,15 @@
 (defenum AstSpmdScan
   (AstSpmdScan AstReduceOp i64 AstType i64 i64 i64 AstType i64 i64 i64))
 
+;; Boxed payloads for the 104 B AstExpr tier (after #3313/#3317 brought the
+;; node to 104 B). AstExprLet inlines AstLetBindingList; AstExprSpmdReduce has
+;; an inline AstType plus six scalars. Boxing both drops the node to 80 B.
+(defenum AstLet
+  (AstLet AstLetBindingList i64))
+
+(defenum AstSpmdReduce
+  (AstSpmdReduce AstReduceOp i64 AstType i64 i64 i64 i64))
+
 ;; Boxed payload for `AstExprMatch`. After boxing AstExprLambda/AstExprSpmdScan
 ;; (#3313), `AstExprMatch i64 AstMatchArmList` is the largest variant at 112 B
 ;; (its arm list inlines AstMatchArm -> AstPattern -> AstMaybeType -> AstType).
@@ -268,7 +277,7 @@
   (AstExprUnary AstUnOp i64)
   (AstExprCall i64 AstExprList)
   (AstExprIf i64 i64 i64)
-  (AstExprLet AstLetBindingList i64)
+  (AstExprLet (Box AstLet))
   (AstExprLambda (Box AstLambda))
   (AstExprTuple AstExprList)
   (AstExprTupleRef i64 i64)
@@ -290,7 +299,7 @@
   (AstExprBorrow bool AstBorrowLifetime i64)
   (AstExprMatch (Box AstMatch))
   (AstExprForeach i64 AstType i64 i64 i64)
-  (AstExprSpmdReduce AstReduceOp i64 AstType i64 i64 i64 i64)
+  (AstExprSpmdReduce (Box AstSpmdReduce))
   (AstExprSpmdScan (Box AstSpmdScan))
   (AstExprSpmdBroadcast i64 i64)
   (AstExprStructGet i64 i64)
@@ -1656,7 +1665,7 @@
   (ast-node-push (AstExprIf cond then-expr else-expr)))
 
 (define (ast-expr-let [bindings : AstLetBindingList] [body : i64]) : i64
-  (ast-node-push (AstExprLet bindings body)))
+  (ast-node-push (AstExprLet (box (AstLet bindings body)))))
 
 (define (ast-expr-lambda
   [params : AstParamList]
@@ -1731,7 +1740,8 @@
   [init : i64]
   [value : i64]) : i64
   (ast-node-push
-    (AstExprSpmdReduce op (intern name) index-ty start end init value)))
+    (AstExprSpmdReduce
+      (box (AstSpmdReduce op (intern name) index-ty start end init value)))))
 
 (define (ast-expr-spmd-reduce-id
   [op : AstReduceOp]
@@ -1741,7 +1751,9 @@
   [end : i64]
   [init : i64]
   [value : i64]) : i64
-  (ast-node-push (AstExprSpmdReduce op name index-ty start end init value)))
+  (ast-node-push
+    (AstExprSpmdReduce
+      (box (AstSpmdReduce op name index-ty start end init value)))))
 
 (define (ast-expr-spmd-scan
   [op : AstReduceOp]
@@ -2135,7 +2147,7 @@
     [(AstExprUnary _ _) 5]
     [(AstExprCall _ _) 6]
     [(AstExprIf _ _ _) 7]
-    [(AstExprLet _ _) 8]
+    [(AstExprLet _) 8]
     [(AstExprLambda _) 9]
     [(AstExprTuple _) 10]
     [(AstExprTupleRef _ _) 11]
@@ -2163,7 +2175,7 @@
     [(AstExprTypeLiteral _) 26]
     [(AstExprInit _) 61]
     [(AstExprComptime _) 27]
-    [(AstExprSpmdReduce _ _ _ _ _ _ _) 28]
+    [(AstExprSpmdReduce _) 28]
     [(AstExprSpmdScan _) 68]
     [(AstExprSpmdBroadcast _ _) 64]
     [(AstExprTry _) 29]
@@ -2637,52 +2649,54 @@
 
 (define (compiler-ast-nested-expr-box-ok? [expr : AstExpr]) : bool
   (match expr
-    [(AstExprLet bindings body-box)
-      (let
-        [body : AstExpr (ast-node-get body-box)]
-        (and
-          (match bindings
-            [(AstLetBindingCons binding rest-box)
-              (let
-                [rest : AstLetBindingList (box-get rest-box)]
-                (and
-                  (match rest
-                    [(AstLetBindingNil) true]
-                    [_ false])
-                  (match binding
-                    [(AstLetBinding name _ init-box)
-                      (let
-                        [init : AstExpr (ast-node-get init-box)]
-                        (and
-                          (= name (intern "x"))
-                          (compiler-ast-begin-expr? init)))]
-                    [_ false])))]
-            [_ false])
-          (match body
-            [(AstExprIf cond-box then-box else-box)
-              (let
-                [cond : AstExpr (ast-node-get cond-box)]
-                [then-expr : AstExpr (ast-node-get then-box)]
-                [else-expr : AstExpr (ast-node-get else-box)]
-                (and
-                  (match cond
-                    [(AstExprVar name) (string-eq (intern-str name) "cond")]
-                    [_ false])
-                  (match then-expr
-                    [(AstExprMatch match-box)
-                      (match (box-get match-box)
-                        [(AstMatch scrut-box arms)
+    [(AstExprLet let-box)
+      (match (box-get let-box)
+        [(AstLet bindings body-box)
+          (let
+            [body : AstExpr (ast-node-get body-box)]
+            (and
+              (match bindings
+                [(AstLetBindingCons binding rest-box)
+                  (let
+                    [rest : AstLetBindingList (box-get rest-box)]
+                    (and
+                      (match rest
+                        [(AstLetBindingNil) true]
+                        [_ false])
+                      (match binding
+                        [(AstLetBinding name _ init-box)
                           (let
-                            [scrut : AstExpr (ast-node-get scrut-box)]
+                            [init : AstExpr (ast-node-get init-box)]
                             (and
-                              (match scrut
-                                [(AstExprVar name)
-                                  (string-eq (intern-str name) "input")]
-                                [_ false])
-                              (compiler-ast-single-arm-box-ok? arms)))])]
-                    [_ false])
-                  (compiler-ast-begin-expr? else-expr)))]
-            [_ false])))]
+                              (= name (intern "x"))
+                              (compiler-ast-begin-expr? init)))]
+                        [_ false])))]
+                [_ false])
+              (match body
+                [(AstExprIf cond-box then-box else-box)
+                  (let
+                    [cond : AstExpr (ast-node-get cond-box)]
+                    [then-expr : AstExpr (ast-node-get then-box)]
+                    [else-expr : AstExpr (ast-node-get else-box)]
+                    (and
+                      (match cond
+                        [(AstExprVar name) (string-eq (intern-str name) "cond")]
+                        [_ false])
+                      (match then-expr
+                        [(AstExprMatch match-box)
+                          (match (box-get match-box)
+                            [(AstMatch scrut-box arms)
+                              (let
+                                [scrut : AstExpr (ast-node-get scrut-box)]
+                                (and
+                                  (match scrut
+                                    [(AstExprVar name)
+                                      (string-eq (intern-str name) "input")]
+                                    [_ false])
+                                  (compiler-ast-single-arm-box-ok? arms)))])]
+                        [_ false])
+                      (compiler-ast-begin-expr? else-expr)))]
+                [_ false])))])]
     [_ false]))
 
 (define (compiler-ast-expr-pattern-box-smoke?) : bool

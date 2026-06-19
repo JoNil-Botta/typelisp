@@ -8692,6 +8692,118 @@
     (compiler-backend-indirect-tail-call-stack-target-ok?
       (BackendTargetWindows))))
 
+(define (compiler-backend-known-function-call-functions) : CompilerIrFunctionList
+  (compiler-ir-function-cons
+    (IrFunction
+      "known_target"
+      (compiler-ir-param-cons (IrParam "x" (AstTyI64) 0) IrParamNil)
+      (AstTyI64)
+      1
+      IrBlockNil)
+    IrFunctionNil))
+
+(define (compiler-backend-known-function-call-index) : CompilerBackendProgramIndex
+  (compiler-backend-program-index-build
+    (compiler-backend-known-function-call-functions)
+    IrExternNil))
+
+(define (compiler-backend-known-function-call-env-zero
+  [target : CompilerBackendTarget]) : String
+  (match (compiler-backend-target-arg-reg target 0)
+    [(OkBackendReg reg) (compiler-backend-emit-load-i64-immediate 0 reg)]
+    [(ErrBackendReg _) ""]))
+
+(define (compiler-backend-known-function-indirect-call-emit
+  [target : CompilerBackendTarget]) : ResultCompilerBackend
+  (let
+    [functions : CompilerIrFunctionList
+      (compiler-backend-known-function-call-functions)]
+    [index : CompilerBackendProgramIndex
+      (compiler-backend-known-function-call-index)]
+    (compiler-backend-emit-indirect-call
+      target
+      0
+      (IrValueFunction "known_target")
+      (IrCallArgsOne (IrValueI64 41))
+      (AstTyI64)
+      CompilerRegAssignmentNil
+      CompilerRegVarTypeNil
+      functions
+      IrExternNil
+      index
+      2
+      (compiler-diagnostic-at-start "" ""))))
+
+(define (compiler-backend-dynamic-indirect-call-emit
+  [target : CompilerBackendTarget]) : ResultCompilerBackend
+  (let
+    [functions : CompilerIrFunctionList
+      (compiler-backend-known-function-call-functions)]
+    [index : CompilerBackendProgramIndex
+      (compiler-backend-known-function-call-index)]
+    (compiler-backend-emit-indirect-call
+      target
+      0
+      (IrValueVar 1)
+      IrCallArgsNil
+      (AstTyI64)
+      CompilerRegAssignmentNil
+      CompilerRegVarTypeNil
+      functions
+      IrExternNil
+      index
+      2
+      (compiler-diagnostic-at-start "" ""))))
+
+(define (compiler-backend-known-function-indirect-call-target-ok?
+  [target : CompilerBackendTarget]) : bool
+  (match (compiler-backend-known-function-indirect-call-emit target)
+    [(OkCompilerBackend asm)
+      (and
+        (backend-and4
+          (compiler-backend-string-contains?
+            asm
+            (compiler-backend-known-function-call-env-zero target))
+          (compiler-backend-string-contains?
+            asm
+            (str-cat
+              "    call "
+              (compiler-backend-closure-entry-label "known_target")
+              "\n"))
+          (not (compiler-backend-string-contains? asm "    call *(%r11)\n"))
+          (not
+            (compiler-backend-string-contains?
+              asm
+              (compiler-backend-closure-descriptor-label "known_target"))))
+        (not
+          (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-dynamic-indirect-call-target-ok?
+  [target : CompilerBackendTarget]) : bool
+  (match (compiler-backend-dynamic-indirect-call-emit target)
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains?
+          asm
+          (str-cat
+            "    movq 8(%r11), "
+            (match (compiler-backend-target-arg-reg target 0)
+              [(OkBackendReg reg) reg]
+              [(ErrBackendReg _) ""])
+            "\n"))
+        (compiler-backend-string-contains? asm "    call *(%r11)\n"))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-known-function-indirect-call-ok?) : bool
+  (and
+    (compiler-backend-known-function-indirect-call-target-ok?
+      (BackendTargetLinux))
+    (compiler-backend-known-function-indirect-call-target-ok?
+      (BackendTargetWindows))
+    (compiler-backend-dynamic-indirect-call-target-ok? (BackendTargetLinux))
+    (compiler-backend-dynamic-indirect-call-target-ok? (BackendTargetWindows))))
+
 (define (compiler-backend-export-symbol-source) : String
   "(define (exported [x : i64]) (:export-symbol \"tl_exported_value\") : i64
   (+ x 1))
@@ -9394,7 +9506,8 @@
       (and
         (compiler-backend-stack-args-ok?)
         (compiler-backend-direct-tail-call-ok?)
-        (compiler-backend-indirect-tail-call-ok?)))
+        (compiler-backend-indirect-tail-call-ok?)
+        (compiler-backend-known-function-indirect-call-ok?)))
     (backend-and8
       (and
         (compiler-backend-instr-diagnostics-ok?)

@@ -10,7 +10,7 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
-DEFAULT_BENCHMARKS="arith_loop,array_sum,hashmap_churn,hashmap_grow,hashmap_insert,hashmap_get,spmd_reduce"
+DEFAULT_BENCHMARKS="arith_loop,array_sum,hashmap_churn,hashmap_grow,hashmap_insert,hashmap_get,spmd_reduce,opt_quicksort,opt_crc32,opt_bytecode_vm"
 DEFAULT_BASELINE="$ROOT/perf/insn-exec-baseline.tsv"
 DEFAULT_WORKDIR="target/instruction-count-check"
 BASELINE=${TYPELISP_IR_CHECK_BASELINE:-$DEFAULT_BASELINE}

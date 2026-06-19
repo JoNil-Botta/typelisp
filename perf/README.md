@@ -39,7 +39,8 @@ The checker builds a fresh full CLI stage1 and stage2 under
 `target/instruction-count-check` and measures that fixed stage2 compiler. The
 default per-PR subset is `self_compile` plus paired rows for `arith_loop`,
 `array_sum`, `hashmap_churn`, `hashmap_grow`, `hashmap_insert`, `hashmap_get`,
-and `spmd_reduce`, each with one cachegrind run.
+`spmd_reduce`, `opt_quicksort`, `opt_crc32`, and `opt_bytecode_vm`, each with one
+cachegrind run.
 
 The heavy nightly workflow measures `spmd_map`, `spmd_mask`, `spmd_zip`,
 `spmd_short_tail`, and `string_scan` as benchmark-only cases with one

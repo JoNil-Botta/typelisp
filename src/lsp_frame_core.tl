@@ -2075,6 +2075,27 @@
                 (= (lsp-skip-space text j n) n)
                 false))))))))
 
+;; Validate that text contains one or more complete parenthesized forms.
+;; Returns true if all non-whitespace content consists of valid forms.
+(define (lsp-text-is-valid-forms [text : String]) : bool
+  (let
+    [n : i64 (string-length text)]
+    [i : i64 (lsp-skip-space text 0 n)]
+    (if (= i n)
+      false
+      (let
+        [valid : bool true]
+        (begin
+          (while (and (< i n) valid)
+            (if (not (= (string-ref text i) #('))
+              (set! valid false)
+              (let
+                [j : i64 (lsp-skip-paren-group text i n)]
+                (if (<= j i)
+                  (set! valid false)
+                  (set! i (lsp-skip-space text j n))))))
+          valid)))))
+
 ;; Find the byte offset where the body of a define/defmacro begins,
 ;; given the offset of the opening '(' of the form.
 (define (lsp-find-body-start-offset [text : String] [form-start : i64]) : i64
@@ -3777,9 +3798,9 @@
     [(FoundLspDocument path text _)
       (match (lsp-json-string-field params "newText")
         [(OkLspJsonText new-text)
-          (if (not (lsp-text-is-valid-form new-text))
+          (if (not (lsp-text-is-valid-forms new-text))
             (begin
-              (lsp-write-error id -32600 "newText is not a valid form")
+              (lsp-write-error id -32600 "newText is not valid form(s)")
               (LspContinue docs))
             (let
               [text-copy : String (string-copy-borrowed (& text))]

@@ -1093,12 +1093,14 @@
       (let
         [place : AstExpr (ast-node-get place-box)]
         (tltest-reach-mark-expr place names))]
-    [(AstExprMatch scrutinee-box arms)
-      (let
-        [scrutinee : AstExpr (ast-node-get scrutinee-box)]
-        (tltest-reach-mark-match-arms
-          arms
-          (tltest-reach-mark-expr scrutinee names)))]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch scrutinee-box arms)
+          (let
+            [scrutinee : AstExpr (ast-node-get scrutinee-box)]
+            (tltest-reach-mark-match-arms
+              arms
+              (tltest-reach-mark-expr scrutinee names)))])]
     [(AstExprForeach _ _ start-box end-box body-box)
       (let
         [start : AstExpr (ast-node-get start-box)]

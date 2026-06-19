@@ -812,10 +812,12 @@
         (selfhost-lint-dead-expr-refs (ast-node-get inner) refs))]
     [(AstExprBorrow _ _ place)
       (selfhost-lint-dead-expr-refs (ast-node-get place) refs)]
-    [(AstExprMatch scrutinee arms)
-      (selfhost-lint-dead-match-arm-refs
-        arms
-        (selfhost-lint-dead-expr-refs (ast-node-get scrutinee) refs))]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch scrutinee arms)
+          (selfhost-lint-dead-match-arm-refs
+            arms
+            (selfhost-lint-dead-expr-refs (ast-node-get scrutinee) refs))])]
     [(AstExprForeach _ index-ty start end body)
       (selfhost-lint-dead-expr-refs
         (ast-node-get body)

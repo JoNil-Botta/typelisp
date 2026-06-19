@@ -3112,22 +3112,24 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lower-clone-roots-expr ctx env decls able roots inner))]
-    [(AstExprMatch value-box arms)
-      (let
-        [value : AstExpr (ast-node-get value-box)]
-        [value-roots : CloneNameList
-          (lower-clone-roots-expr ctx env decls able roots value)]
-        (match (tc-expr ctx env value)
-          [(OkTcType scrut-ty)
-            (lower-clone-roots-match-arms
-              ctx
-              env
-              decls
-              able
-              value-roots
-              scrut-ty
-              arms)]
-          [(ErrTcType _) value-roots]))]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch value-box arms)
+          (let
+            [value : AstExpr (ast-node-get value-box)]
+            [value-roots : CloneNameList
+              (lower-clone-roots-expr ctx env decls able roots value)]
+            (match (tc-expr ctx env value)
+              [(OkTcType scrut-ty)
+                (lower-clone-roots-match-arms
+                  ctx
+                  env
+                  decls
+                  able
+                  value-roots
+                  scrut-ty
+                  arms)]
+              [(ErrTcType _) value-roots]))])]
     [(AstExprForeach index index-ty start-box end-box body-box)
       (let
         [start : AstExpr (ast-node-get start-box)]
@@ -3768,14 +3770,16 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lower-reach-expr all-functions names state inner))]
-    [(AstExprMatch value-box arms)
-      (let
-        [value : AstExpr (ast-node-get value-box)]
-        (lower-reach-match-arms
-          all-functions
-          names
-          (lower-reach-expr all-functions names state value)
-          arms))]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch value-box arms)
+          (let
+            [value : AstExpr (ast-node-get value-box)]
+            (lower-reach-match-arms
+              all-functions
+              names
+              (lower-reach-expr all-functions names state value)
+              arms))])]
     [(AstExprForeach _ _ source-box init-box body-box)
       (let
         [source : AstExpr (ast-node-get source-box)]
@@ -13774,16 +13778,18 @@
         (tc-enter-unsafe type-env)
         type-cache
         exprs)]
-    [(AstExprMatch scrutinee-box arms)
-      (let
-        [scrutinee : AstExpr (ast-node-get scrutinee-box)]
-        (lower-match-result-type-fast
-          ctx
-          env
-          type-env
-          type-cache
-          scrutinee
-          arms))]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch scrutinee-box arms)
+          (let
+            [scrutinee : AstExpr (ast-node-get scrutinee-box)]
+            (lower-match-result-type-fast
+              ctx
+              env
+              type-env
+              type-cache
+              scrutinee
+              arms))])]
     [(AstExprLet bindings body-box)
       (let
         [body : AstExpr (ast-node-get body-box)]
@@ -14071,20 +14077,22 @@
               expr-ty)]
           [(ErrTcType _)
             (lower-expr-typechecked ctx state env type-env expr origin)]))]
-    [(AstExprMatch scrutinee-box arms)
-      (let
-        [scrutinee : AstExpr (ast-node-get scrutinee-box)]
-        (match (lower-match-result-type-fast
-          ctx
-          env
-          type-env
-          (lower-state-type-cache state)
-          scrutinee
-          arms)
-          [(OkTcType expr-ty)
-            (lower-match ctx state env type-env scrutinee arms expr-ty)]
-          [(ErrTcType _)
-            (lower-expr-typechecked ctx state env type-env expr origin)]))]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch scrutinee-box arms)
+          (let
+            [scrutinee : AstExpr (ast-node-get scrutinee-box)]
+            (match (lower-match-result-type-fast
+              ctx
+              env
+              type-env
+              (lower-state-type-cache state)
+              scrutinee
+              arms)
+              [(OkTcType expr-ty)
+                (lower-match ctx state env type-env scrutinee arms expr-ty)]
+              [(ErrTcType _)
+                (lower-expr-typechecked ctx state env type-env expr origin)]))])]
     [_
       (match (lower-expr-result-type-fast
         ctx
@@ -14545,10 +14553,12 @@
         [value : AstExpr (ast-node-get value-box)]
         [lane : AstExpr (ast-node-get lane-box)]
         (lower-spmd-broadcast ctx state env type-env value lane))]
-    [(AstExprMatch scrutinee-box arms)
-      (let
-        [scrutinee : AstExpr (ast-node-get scrutinee-box)]
-        (lower-match ctx state env type-env scrutinee arms expr-ty))]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch scrutinee-box arms)
+          (let
+            [scrutinee : AstExpr (ast-node-get scrutinee-box)]
+            (lower-match ctx state env type-env scrutinee arms expr-ty))])]
     [(AstExprStringRef str-box index-box)
       (let
         [str : AstExpr (ast-node-get str-box)]
@@ -15074,10 +15084,12 @@
           then-branch
           else-branch
           expected-ty))]
-    [(AstExprMatch scrutinee-box arms)
-      (let
-        [scrutinee : AstExpr (ast-node-get scrutinee-box)]
-        (lower-match ctx state env type-env scrutinee arms expected-ty))]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch scrutinee-box arms)
+          (let
+            [scrutinee : AstExpr (ast-node-get scrutinee-box)]
+            (lower-match ctx state env type-env scrutinee arms expected-ty))])]
     [(AstExprBox inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
@@ -29703,7 +29715,9 @@
         (if (lower-tail-expr-candidate? state env then-branch)
           true
           (lower-tail-expr-candidate? state env else-branch)))]
-    [(AstExprMatch _ arms) (lower-tail-match-arms-candidate? state env arms)]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch _ arms) (lower-tail-match-arms-candidate? state env arms)])]
     [_ false]))
 
 ;; #1867 sret return ABI (Phase 1): when `sret-var` >= 0 the caller passed a
@@ -30965,19 +30979,21 @@
             else-branch
             ret-ty
             sret-var))]
-      [(AstExprMatch scrutinee-box arms)
-        (let
-          [scrutinee : AstExpr (ast-node-get scrutinee-box)]
-          (lower-tail-match
-            ctx
-            state
-            env
-            type-env
-            scrutinee
-            arms
-            ret-ty
-            sret-var
-            expr))]
+      [(AstExprMatch match-box)
+        (match (box-get match-box)
+          [(AstMatch scrutinee-box arms)
+            (let
+              [scrutinee : AstExpr (ast-node-get scrutinee-box)]
+              (lower-tail-match
+                ctx
+                state
+                env
+                type-env
+                scrutinee
+                arms
+                ret-ty
+                sret-var
+                expr))])]
       [_ (lower-return-expr ctx state env type-env expr ret-ty sret-var)])
     (lower-return-expr ctx state env type-env expr ret-ty sret-var)))
 

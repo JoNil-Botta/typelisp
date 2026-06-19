@@ -95,6 +95,11 @@
 (defenum CompilerRegAssignState
   (CompilerRegAssignState CompilerRegActiveList CompilerRegAssignmentTable))
 
+(cfg
+  (any regalloc-census test)
+  (defstruct CompilerRegCallSpanCensus
+    (counts (Array i64))))
+
 (defenum CompilerRegMove
   (CompilerRegMove i64 i64))
 
@@ -2754,6 +2759,30 @@
           start
           end)))))
 
+(cfg
+  (any regalloc-census test)
+  (define (compiler-reg-call-word-count-in-range
+    [bits : i64]
+    [var-base : i64]
+    [start : i64]
+    [end : i64]) : i64
+    (if (= bits 0)
+      0
+      (let
+        [i : i64 (compiler-reg-low-bit-index bits)]
+        [c : i64 (+ var-base i)]
+        [rest : i64
+          (compiler-reg-call-word-count-in-range
+            (bit-and bits (- bits 1))
+            var-base
+            start
+            end)]
+        (if (if (< start c)
+          (< c end)
+          false)
+          (+ 1 rest)
+          rest)))))
+
 (define (compiler-reg-call-set-in-range-words?
   [set : CompilerLiveI64Set]
   [start : i64]
@@ -2774,6 +2803,225 @@
   [start : i64]
   [end : i64]) : bool
   (compiler-reg-call-set-in-range-words? set start end 0))
+
+(cfg
+  (any regalloc-census test)
+  (define (compiler-reg-call-set-count-in-range-words
+    [set : CompilerLiveI64Set]
+    [start : i64]
+    [end : i64]
+    [word-index : i64]) : i64
+    (if (>= word-index (compiler-live-set-word-count set))
+      0
+      (+
+        (compiler-reg-call-word-count-in-range
+          (compiler-live-set-word-at set word-index)
+          (* word-index (compiler-live-set-word-bits))
+          start
+          end)
+        (compiler-reg-call-set-count-in-range-words
+          set
+          start
+          end
+          (+ word-index 1))))))
+
+(cfg
+  (any regalloc-census test)
+  (define (compiler-reg-call-set-count-in-range
+    [set : CompilerLiveI64Set]
+    [start : i64]
+    [end : i64]) : i64
+    (compiler-reg-call-set-count-in-range-words set start end 0)))
+
+(cfg
+  (any regalloc-census test)
+  (define (compiler-reg-call-span-census-empty) : CompilerRegCallSpanCensus
+    (CompilerRegCallSpanCensus (make-array i64 12))))
+
+(cfg
+  (any regalloc-census test)
+  (define (compiler-reg-call-span-outcome-register) : i64
+    0))
+
+(cfg
+  (any regalloc-census test)
+  (define (compiler-reg-call-span-outcome-spill) : i64
+    1))
+
+(cfg
+  (any regalloc-census test)
+  (define (compiler-reg-call-span-outcome-unassigned) : i64
+    2))
+
+(cfg
+  (any regalloc-census test)
+  (define (compiler-reg-call-span-bucket [calls : i64]) : i64
+    (cond [(= calls 0) 0] [(= calls 1) 1] [(< calls 4) 2] [else 3])))
+
+(cfg
+  (any regalloc-census test)
+  (define (compiler-reg-call-span-census-index [bucket : i64] [outcome : i64]) : i64
+    (+ (* bucket 3) outcome)))
+
+(cfg
+  (any regalloc-census test)
+  (define (compiler-reg-call-span-census-add!
+    [census : CompilerRegCallSpanCensus]
+    [calls : i64]
+    [outcome : i64]) : unit
+    (let
+      [counts : (Array i64) (struct-get census counts)]
+      [index : i64
+        (compiler-reg-call-span-census-index
+          (compiler-reg-call-span-bucket calls)
+          outcome)]
+      (array-set! counts index (+ (array-ref counts index) 1)))))
+
+(cfg
+  (any regalloc-census test)
+  (define (compiler-reg-call-span-census-count
+    [census : CompilerRegCallSpanCensus]
+    [bucket : i64]
+    [outcome : i64]) : i64
+    (array-ref
+      (struct-get census counts)
+      (compiler-reg-call-span-census-index bucket outcome))))
+
+(cfg
+  (any regalloc-census test)
+  (define (compiler-reg-call-span-assignment-outcome
+    [assignments : CompilerRegAssignmentList]
+    [var : i64]) : i64
+    (match (compiler-reg-assignment-lookup assignments var)
+      [(CompilerRegNoLocation) (compiler-reg-call-span-outcome-unassigned)]
+      [(CompilerRegSomeLocation location)
+        (match location
+          [(CompilerRegSpill _) (compiler-reg-call-span-outcome-spill)]
+          [_ (compiler-reg-call-span-outcome-register)])])))
+
+(cfg
+  (any regalloc-census test)
+  (define (compiler-reg-call-span-census-intervals!
+    [census : CompilerRegCallSpanCensus]
+    [intervals : CompilerRegIntervalList]
+    [assignments : CompilerRegAssignmentList]
+    [call-points : CompilerLiveI64Set]) : unit
+    (match intervals
+      [(CompilerRegIntervalNil) unit]
+      [(CompilerRegIntervalCons interval rest)
+        (match interval
+          [(CompilerRegInterval var start end)
+            (begin
+              (compiler-reg-call-span-census-add!
+                census
+                (compiler-reg-call-set-count-in-range call-points start end)
+                (compiler-reg-call-span-assignment-outcome assignments var))
+              (compiler-reg-call-span-census-intervals!
+                census
+                (box-get rest)
+                assignments
+                call-points))])])))
+
+;; Caller-saved integer homes must clear this measured gate before they can be
+;; enabled for call-spanning ranges: the register-home benefit must exceed
+;; 2*calls_spanned memory ops (spill+reload per normal call) plus the spill-slot
+;; and frame overhead. This census intentionally records current outcomes only;
+;; until backend spill/reload wrappers and internal clobber modeling exist, the
+;; allocator rejects caller-saved homes for ranges with calls_spanned > 0.
+(cfg
+  (any regalloc-census test)
+  (define (compiler-reg-plan-call-span-census
+    [func : CompilerIrFunction]
+    [plan : CompilerRegPlan]) : CompilerRegCallSpanCensus
+    (let
+      [type-info : CompilerRegVarTypes (compiler-reg-function-var-types func)]
+      [census : CompilerRegCallSpanCensus (compiler-reg-call-span-census-empty)]
+      (begin
+        (match plan
+          [(CompilerRegPlan assignments ineligible intervals _)
+            (compiler-reg-call-span-census-intervals!
+              census
+              (compiler-reg-candidates intervals type-info ineligible false)
+              assignments
+              (compiler-reg-call-points func))])
+        census))))
+
+(cfg
+  (any regalloc-census test)
+  (define (compiler-reg-call-span-census-merge-into!
+    [dst : CompilerRegCallSpanCensus]
+    [src : CompilerRegCallSpanCensus]) : unit
+    (let
+      [dst-counts : (Array i64) (struct-get dst counts)]
+      [src-counts : (Array i64) (struct-get src counts)]
+      [index : i64 0]
+      (begin
+        (while (< index (array-length dst-counts))
+          (begin
+            (array-set!
+              dst-counts
+              index
+              (+ (array-ref dst-counts index) (array-ref src-counts index)))
+            (set! index (+ index 1))))
+        unit))))
+
+(cfg
+  regalloc-census
+  (define compiler-reg-call-span-census-total : CompilerRegCallSpanCensus
+    (compiler-reg-call-span-census-empty)))
+
+(cfg
+  regalloc-census
+  (define (compiler-reg-call-span-census-reset!) : unit
+    (set!
+      compiler-reg-call-span-census-total
+      (compiler-reg-call-span-census-empty))))
+
+(cfg
+  regalloc-census
+  (define (compiler-reg-call-span-census-record-plan!
+    [func : CompilerIrFunction]
+    [plan : CompilerRegPlan]) : unit
+    (compiler-reg-call-span-census-merge-into!
+      compiler-reg-call-span-census-total
+      (compiler-reg-plan-call-span-census func plan))))
+
+(cfg
+  regalloc-census
+  (define (compiler-reg-call-span-census-row [label : String] [bucket : i64]) : String
+    (str-cat
+      "regalloc-call-span-census|"
+      label
+      "|"
+      (int->string
+        (compiler-reg-call-span-census-count
+          compiler-reg-call-span-census-total
+          bucket
+          (compiler-reg-call-span-outcome-register)))
+      "|"
+      (int->string
+        (compiler-reg-call-span-census-count
+          compiler-reg-call-span-census-total
+          bucket
+          (compiler-reg-call-span-outcome-spill)))
+      "|"
+      (int->string
+        (compiler-reg-call-span-census-count
+          compiler-reg-call-span-census-total
+          bucket
+          (compiler-reg-call-span-outcome-unassigned)))
+      "\n")))
+
+(cfg
+  regalloc-census
+  (define (compiler-reg-call-span-census-print!) : unit
+    (begin
+      (print-error
+        "regalloc-call-span-census|calls_spanned|register|spill|unassigned\n")
+      (print-error (compiler-reg-call-span-census-row "0" 0))
+      (print-error (compiler-reg-call-span-census-row "1" 1))
+      (print-error (compiler-reg-call-span-census-row "2-3" 2))
+      (print-error (compiler-reg-call-span-census-row "4+" 3)))))
 
 (define (compiler-reg-var-float? [type-info : CompilerRegVarTypes] [var : i64]) : bool
   (match (compiler-reg-var-types-lookup type-info var)
@@ -5601,6 +5849,104 @@
           (compiler-reg-assignment-lookup assignments 2))
         (compiler-reg-different-location? assignments 1 2))]))
 
+(cfg
+  test
+  (define (compiler-reg-many-call-live-function) : CompilerIrFunction
+    (IrFunction
+      "many_call_live"
+      IrParamNil
+      (AstTyUnit)
+      6
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "entry"
+          (compiler-ir-instr-cons
+            (IrInstrMov 0 (IrValueI64 9) (compiler-reg-i64-ty))
+            (compiler-ir-instr-cons
+              (IrInstrCall 1 "side_effect_a" (IrCallArgsNil) (AstTyUnit))
+              (compiler-ir-instr-cons
+                (IrInstrCall 2 "side_effect_b" (IrCallArgsNil) (AstTyUnit))
+                (compiler-ir-instr-cons
+                  (IrInstrCall 3 "side_effect_c" (IrCallArgsNil) (AstTyUnit))
+                  (compiler-ir-instr-cons
+                    (IrInstrCall 4 "side_effect_d" (IrCallArgsNil) (AstTyUnit))
+                    (compiler-ir-instr-cons
+                      (IrInstrMov 5 (IrValueVar 0) (compiler-reg-i64-ty))
+                      (compiler-ir-instr-cons
+                        (IrInstrReturn (IrSomeValue (IrValueVar 5)))
+                        IrInstrNil))))))))
+        IrBlockNil))))
+
+(cfg
+  test
+  (define (compiler-reg-call-span-counts-ok?) : bool
+    (let
+      [points : CompilerLiveI64Set (compiler-live-set4 2 4 6 8)]
+      (and
+        (= (compiler-reg-call-set-count-in-range points 0 2) 0)
+        (= (compiler-reg-call-set-count-in-range points 0 3) 1)
+        (= (compiler-reg-call-set-count-in-range points 0 7) 3)
+        (= (compiler-reg-call-set-count-in-range points 0 9) 4)
+        (= (compiler-reg-call-set-count-in-range points 2 8) 2)))))
+
+(cfg
+  test
+  (define (compiler-reg-call-span-census-count?
+    [census : CompilerRegCallSpanCensus]
+    [bucket : i64]
+    [outcome : i64]
+    [want : i64]) : bool
+    (= (compiler-reg-call-span-census-count census bucket outcome) want)))
+
+(cfg
+  test
+  (define (compiler-reg-call-span-census-ok?) : bool
+    (let
+      [zero-census : CompilerRegCallSpanCensus
+        (compiler-reg-plan-call-span-census
+          (compiler-reg-overlap-function)
+          (compiler-reg-plan-function-scalar (compiler-reg-overlap-function)))]
+      [one-census : CompilerRegCallSpanCensus
+        (compiler-reg-plan-call-span-census
+          (compiler-reg-call-live-function)
+          (compiler-reg-plan-function-scalar (compiler-reg-call-live-function)))]
+      [many-census : CompilerRegCallSpanCensus
+        (compiler-reg-plan-call-span-census
+          (compiler-reg-many-call-live-function)
+          (compiler-reg-plan-function-scalar
+            (compiler-reg-many-call-live-function)))]
+      (and
+        (compiler-reg-call-span-census-count?
+          zero-census
+          0
+          (compiler-reg-call-span-outcome-register)
+          5)
+        (compiler-reg-call-span-census-count?
+          zero-census
+          0
+          (compiler-reg-call-span-outcome-spill)
+          2)
+        (compiler-reg-call-span-census-count?
+          one-census
+          1
+          (compiler-reg-call-span-outcome-register)
+          1)
+        (compiler-reg-call-span-census-count?
+          one-census
+          0
+          (compiler-reg-call-span-outcome-register)
+          1)
+        (compiler-reg-call-span-census-count?
+          many-census
+          3
+          (compiler-reg-call-span-outcome-register)
+          1)
+        (compiler-reg-call-span-census-count?
+          many-census
+          0
+          (compiler-reg-call-span-outcome-register)
+          1)))))
+
 (define (compiler-reg-same-location?
   [assignments : CompilerRegAssignmentList]
   [left : i64]
@@ -6025,6 +6371,8 @@
     (compiler-reg-scalar-function-intervals-ok?)
     (compiler-reg-scalar-interval-guardrail-ok?)
     (compiler-reg-scalar-loop-backedge-ok?)
+    (cfg test (compiler-reg-call-span-counts-ok?) true)
+    (cfg test (compiler-reg-call-span-census-ok?) true)
     (compiler-reg-indexed-lookups-ok?)
     (compiler-reg-color-stack-group-ok?)
     (compiler-reg-color-storage-ranges-ok?))
@@ -6033,3 +6381,12 @@
       (panic "regalloc: smoke mismatch")
       ;; lint-allow: unreachable-code
       0)))
+
+(cfg
+  test
+  (test
+    regalloc-call-span-census
+    (assert-i64-eq
+      (compiler-regalloc-self-test)
+      42
+      "regalloc call-span census fixture result")))

@@ -1375,6 +1375,33 @@
     [(IrBinShr) true]
     [_ false]))
 
+(define (opt-instr-alloc-dst? [instr : CompilerIrInstr] [dst : i64]) : bool
+  (match instr
+    [(IrInstrAlloc other _) (= other dst)]
+    [_ false]))
+
+(define (opt-next-adjacent-alloc? [next : CompilerIrInstrList] [dst : i64]) : bool
+  (match next
+    [(IrInstrCons instr _) (opt-instr-alloc-dst? instr (+ dst 1))]
+    [_ false]))
+
+(define (opt-array-prev-adjacent-alloc?
+  [slots : (Array CompilerIrInstr)]
+  [index : i64]
+  [dst : i64]) : bool
+  (if (<= index 0)
+    false
+    (opt-instr-alloc-dst? (array-ref slots (- index 1)) (- dst 1))))
+
+(define (opt-array-next-adjacent-alloc?
+  [slots : (Array CompilerIrInstr)]
+  [count : i64]
+  [index : i64]
+  [dst : i64]) : bool
+  (if (>= (+ index 1) count)
+    false
+    (opt-instr-alloc-dst? (array-ref slots (+ index 1)) (+ dst 1))))
+
 ;; A pure temporary-producing instruction is dead when its result var is unused.
 ;; Calls (side-effecting) and control-flow instructions are never dead here.
 (define (opt-instr-dead? [set : I64I64Map] [instr : CompilerIrInstr]) : bool
@@ -1398,13 +1425,36 @@
     [(IrInstrWord dst _ _ _) (not (opt-used-contains set dst))]
     [_ false]))
 
-(define (opt-dce-instrs [set : I64I64Map] [instrs : CompilerIrInstrList]) : CompilerIrInstrList
+(define (opt-dce-instrs-from
+  [set : I64I64Map]
+  [instrs : CompilerIrInstrList]
+  [prev-alloc-dst : i64]) : CompilerIrInstrList
   (match instrs
     [(IrInstrNil) (IrInstrNil)]
     [(IrInstrCons instr rest)
-      (if (opt-instr-dead? set instr)
-        (opt-dce-instrs set (box-get rest))
-        (compiler-ir-instr-cons instr (opt-dce-instrs set (box-get rest))))]))
+      (let
+        [rest-list : CompilerIrInstrList (box-get rest)]
+        (if (opt-instr-dead? set instr)
+          (opt-dce-instrs-from set rest-list -2)
+          (match instr
+            [(IrInstrAlloc dst _)
+              (if (and
+                (not (opt-used-contains set dst))
+                (not
+                  (or
+                    (= prev-alloc-dst (- dst 1))
+                    (opt-next-adjacent-alloc? rest-list dst))))
+                (opt-dce-instrs-from set rest-list dst)
+                (compiler-ir-instr-cons
+                  instr
+                  (opt-dce-instrs-from set rest-list dst)))]
+            [_
+              (compiler-ir-instr-cons
+                instr
+                (opt-dce-instrs-from set rest-list -2))])))]))
+
+(define (opt-dce-instrs [set : I64I64Map] [instrs : CompilerIrInstrList]) : CompilerIrInstrList
+  (opt-dce-instrs-from set instrs -2))
 
 (define (opt-dce-instr-seq-from
   [set : I64I64Map]
@@ -1419,7 +1469,17 @@
         (opt-dce-instr-seq-from set slots (+ index 1) count)]
       (if (opt-instr-dead? set instr)
         rest
-        (compiler-ir-instr-cons instr rest)))))
+        (match instr
+          [(IrInstrAlloc dst _)
+            (if (and
+              (not (opt-used-contains set dst))
+              (not
+                (or
+                  (opt-array-prev-adjacent-alloc? slots index dst)
+                  (opt-array-next-adjacent-alloc? slots count index dst))))
+              rest
+              (compiler-ir-instr-cons instr rest))]
+          [_ (compiler-ir-instr-cons instr rest)])))))
 
 (define (opt-dce-instr-seq [set : I64I64Map] [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
   (opt-dce-instr-seq-from
@@ -1713,14 +1773,27 @@
   [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
   (let
     [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
-    [index : i64 (- (struct-get instrs len) 1)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 (- count 1)]
     [out : CompilerIrInstrList IrInstrNil]
     (begin
       (while (>= index 0)
         (begin
-          (if (opt-instr-dead-array? items (array-ref slots index))
-            unit
-            (set! out (compiler-ir-instr-cons (array-ref slots index) out)))
+          (let
+            [instr : CompilerIrInstr (array-ref slots index)]
+            (if (opt-instr-dead-array? items instr)
+              unit
+              (match instr
+                [(IrInstrAlloc dst _)
+                  (if (and
+                    (not (opt-used-array-contains items dst))
+                    (not
+                      (or
+                        (opt-array-prev-adjacent-alloc? slots index dst)
+                        (opt-array-next-adjacent-alloc? slots count index dst))))
+                    unit
+                    (set! out (compiler-ir-instr-cons instr out)))]
+                [_ (set! out (compiler-ir-instr-cons instr out))])))
           (set! index (- index 1))))
       out)))
 
@@ -24219,6 +24292,61 @@
           (IrInstrReturn (IrSomeValue (IrValueVar 1)))
           (IrInstrNil))))))
 
+(define (opt-dce-isolated-unused-alloc-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (IrInstrAlloc 0 (AstTyI64))
+    (compiler-ir-instr-cons (IrInstrReturn (IrNoValue)) (IrInstrNil))))
+
+(define (opt-dce-used-alloc-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (IrInstrAlloc 0 (AstTyI64))
+    (compiler-ir-instr-cons
+      (IrInstrAddrOf 1 0)
+      (compiler-ir-instr-cons
+        (IrInstrReturn (IrSomeValue (IrValueVar 1)))
+        (IrInstrNil)))))
+
+(define (opt-dce-alloc-run-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (IrInstrAlloc 0 (AstTyI64))
+    (compiler-ir-instr-cons
+      (IrInstrAlloc 1 (AstTyI64))
+      (compiler-ir-instr-cons
+        (IrInstrAlloc 2 (AstTyI64))
+        (compiler-ir-instr-cons (IrInstrReturn (IrNoValue)) (IrInstrNil))))))
+
+(define (opt-dce-clean-list-count [instrs : CompilerIrInstrList]) : i64
+  (let
+    [used : I64I64Map
+      (opt-collect-instrs-uses (i64-i64-map-with-capacity 64) instrs)]
+    [cleaned : CompilerIrInstrList (opt-dce-instrs used instrs)]
+    (compiler-ir-instr-list-count cleaned)))
+
+(define (opt-dce-clean-array-count [instrs : CompilerIrInstrList]) : i64
+  (let
+    [block : CompilerIrBlock (compiler-ir-block "entry" instrs)]
+    [used : (Array bool)
+      (opt-collect-blocks-uses-array
+        64
+        (compiler-ir-block-cons block IrBlockNil))]
+    [cleaned : CompilerIrBlock (opt-dce-block-array used block)]
+    (match cleaned
+      [(IrBlock _ cleaned-instrs) (compiler-ir-instr-seq-count cleaned-instrs)])))
+
+(define (compiler-optimize-dce-alloc-self-test) : i64
+  (let
+    [isolated : CompilerIrInstrList (opt-dce-isolated-unused-alloc-instrs)]
+    [used : CompilerIrInstrList (opt-dce-used-alloc-instrs)]
+    [run : CompilerIrInstrList (opt-dce-alloc-run-instrs)]
+    (cond
+      [(not (= (opt-dce-clean-list-count isolated) 1)) 1]
+      [(not (= (opt-dce-clean-list-count used) 3)) 2]
+      [(not (= (opt-dce-clean-list-count run) 4)) 3]
+      [(not (= (opt-dce-clean-array-count isolated) 1)) 4]
+      [(not (= (opt-dce-clean-array-count used) 3)) 5]
+      [(not (= (opt-dce-clean-array-count run) 4)) 6]
+      [else 42])))
+
 ;; Returns 42 when DCE keeps the used call result `v1` and the side-effecting
 ;; instructions, drops the unused `v0`, and is idempotent on a second pass.
 (define (compiler-optimize-dce-self-test) : i64
@@ -24235,6 +24363,7 @@
       (opt-instr-dead?
         (i64-i64-map-with-capacity 4)
         (IrInstrWord 3 (IrValueVar 2) 0 (AstTyI64)))]
+    [alloc-tests : i64 (compiler-optimize-dce-alloc-self-test)]
     (cond
       [(not (opt-used-contains used 1)) 0]
       [(opt-used-contains used 0) 1]
@@ -24242,6 +24371,7 @@
       [(not (= (compiler-ir-instr-list-count cleaned) 2)) 3]
       [(not (= (compiler-ir-instr-list-count again) 2)) 4]
       [(not unused-word-dead) 5]
+      [(not (= alloc-tests 42)) 6]
       [else 42])))
 
 ;; Builds `[Mov v0=4096 (an address), Load v1 = *v0, Return v1]`. `v0` feeds a

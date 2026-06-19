@@ -32,6 +32,8 @@
 (defstruct CompilerDriverState
   (expr-pool (Array AstExprNodePoolState))
   (type-pool (Array AstTypeNodePoolState))
+  (builtin-ids (Array CompilerBuiltinIdsState))
+  (lower-arenas (Array CompilerLowerArenaState))
   (load-session CompilerLoadSessionState))
 
 (define (compiler-driver-state-new-from-pools
@@ -42,12 +44,20 @@
       (make-array AstExprNodePoolState 1)]
     [type-cell : (Array AstTypeNodePoolState)
       (make-array AstTypeNodePoolState 1)]
+    [builtin-cell : (Array CompilerBuiltinIdsState)
+      (make-array CompilerBuiltinIdsState 1)]
+    [lower-cell : (Array CompilerLowerArenaState)
+      (make-array CompilerLowerArenaState 1)]
     (begin
       (array-set! expr-cell 0 expr-pool)
       (array-set! type-cell 0 type-pool)
+      (array-set! builtin-cell 0 (compiler-builtin-ids-state-new))
+      (array-set! lower-cell 0 (compiler-lower-arena-state-new))
       (CompilerDriverState
         expr-cell
         type-cell
+        builtin-cell
+        lower-cell
         (compiler-load-session-state-new)))))
 
 (define (compiler-driver-state-new) : CompilerDriverState
@@ -56,9 +66,17 @@
     (ast-type-node-pool-state-create 1)))
 
 (define (compiler-driver-state-new-for-compile) : CompilerDriverState
-  (compiler-driver-state-new-from-pools
-    (ast-node-pool-state-capture)
-    (ty-node-pool-state-capture)))
+  (let
+    [state : CompilerDriverState
+      (compiler-driver-state-new-from-pools
+        (ast-node-pool-state-capture)
+        (ty-node-pool-state-capture))]
+    (begin
+      (compiler-builtin-ids-state-capture-from-globals!
+        (array-ref (struct-get state builtin-ids) 0))
+      (compiler-lower-arena-state-capture-from-globals!
+        (array-ref (struct-get state lower-arenas) 0))
+      state)))
 
 (define (compiler-driver-state-session-cache-enabled?
   [state : CompilerDriverState]) : bool
@@ -95,16 +113,48 @@
     (array-ref (struct-get state expr-pool) 0)
     (array-ref (struct-get state type-pool) 0)))
 
+(define (compiler-driver-state-install-builtins! [state : CompilerDriverState]) : unit
+  (compiler-builtin-ids-state-install!
+    (array-ref (struct-get state builtin-ids) 0)))
+
+(define (compiler-driver-state-install-lower-arenas!
+  [state : CompilerDriverState]) : unit
+  (compiler-lower-arena-state-install!
+    (array-ref (struct-get state lower-arenas) 0)))
+
 (define (compiler-driver-state-capture-active-pools!
   [state : CompilerDriverState]) : unit
   (begin
     (array-set! (struct-get state expr-pool) 0 (ast-node-pool-state-capture))
     (array-set! (struct-get state type-pool) 0 (ty-node-pool-state-capture))))
 
+(define (compiler-driver-state-capture-active-builtins!
+  [state : CompilerDriverState]) : unit
+  (compiler-builtin-ids-state-capture-from-globals!
+    (array-ref (struct-get state builtin-ids) 0)))
+
+(define (compiler-driver-state-capture-active-lower-arenas!
+  [state : CompilerDriverState]) : unit
+  (compiler-lower-arena-state-capture-from-globals!
+    (array-ref (struct-get state lower-arenas) 0)))
+
+(define (compiler-driver-state-install-transients!
+  [state : CompilerDriverState]) : unit
+  (begin
+    (compiler-driver-state-install-builtins! state)
+    (compiler-driver-state-install-lower-arenas! state)))
+
+(define (compiler-driver-state-capture-active-transients!
+  [state : CompilerDriverState]) : unit
+  (begin
+    (compiler-driver-state-capture-active-builtins! state)
+    (compiler-driver-state-capture-active-lower-arenas! state)))
+
 (define (compiler-driver-state-capture-session-floors!
   [state : CompilerDriverState]) : unit
   (begin
     (compiler-driver-state-capture-active-pools! state)
+    (compiler-driver-state-capture-active-transients! state)
     (compiler-load-session-state-use! (struct-get state load-session))))
 
 (define (compiler-driver-runtime-prelude-cache-lookup [key : String]) : CompilerLoadPreludeCacheLookup
@@ -124,12 +174,14 @@
 
 (define (compiler-driver-reset-file-state!) : unit
   (begin
+    ;; Compatibility reset for serial standalone helpers. Driver-state callers
+    ;; install their active state before this and capture it again afterward.
     (compiler-load-session-reset-pools!)
     (compiler-load-session-reset-interns!)
     (compiler-builtin-reset!)
-    ;; #2596: drop the previous entry's lowered IR (kept alive through the
-    ;; backend for opt level 0 compiles).
-    (lower-ir-arena-release!)))
+    ;; #2596/#3259: drop the previous entry's lowerer arenas. At opt level 0
+    ;; the escaped IR stays alive until the next file reset.
+    (lower-arenas-release!)))
 
 (define (compiler-driver-state-reset-file-state! [state : CompilerDriverState]) : unit
   (begin
@@ -138,8 +190,10 @@
     ;; so install this state's backing pools before resetting those wrappers.
     (compiler-driver-state-apply-session-flags! state)
     (compiler-driver-state-install-pools! state)
+    (compiler-driver-state-install-transients! state)
     (compiler-driver-reset-file-state!)
-    (compiler-driver-state-capture-active-pools! state)))
+    (compiler-driver-state-capture-active-pools! state)
+    (compiler-driver-state-capture-active-transients! state)))
 
 (cfg
   compile-profile

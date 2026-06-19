@@ -94,6 +94,8 @@ of imitating transitional patterns still present in the tree:
   model via structural checker classification — no traits (#2590): values
   cross threads only when owned by an arena whose lifetime spans both; safe
   spawn/join/mutex/channels build on the SPEC.md section 6.5 model (#2592).
+  See [`examples/safe_threading.tl`](examples/safe_threading.tl) for a
+  safe task-threading program with no user `(unsafe ...)`.
 - **Testing**: inline `(test ...)` items and doctests are typechecked on
   every build of the owning package and never generate code outside the test
   runner (#2587, #2594); stdlib adopts inline tests (#2586). The typechecked
@@ -713,6 +715,28 @@ arena; use `(arena-make-atomic)` for a shared atomic allocation target; use
 owned by that first-class arena; reserve manual `arena-set!` / `arena-rewind` /
 `arena-destroy` calls for unsafe internals that can prove every invalidated
 handle is dead.
+
+### Safe task threading
+
+Safe task threads use the typed closure wrappers in `stdlib/thread.tl`, such as
+`thread-spawn-i64`, `thread-spawn-string`, `thread-spawn-array-i64`, and their
+matching join functions. The checker validates the captured environment and
+joined result structurally: references, borrowed `str` views, scoped regions,
+ordinary first-class arenas, raw pointer ownership claims, live mutable aliases,
+and guards do not cross safe task-thread boundaries. Aggregate results that
+leave a worker must live in a spanning owner, or in a wrapper that explicitly
+copies them into one. `stdlib/sync.tl` provides the first concrete synchronized
+surfaces: `ChannelI64`, `ChannelI64PairChannel`, `ChannelString`, and
+`MutexI64`.
+
+Task threading is separate from SPMD `foreach`. SPMD is data-parallel lowering
+inside one task; task threading creates independently scheduled workers with
+their own default arenas and explicit ownership crossing points. An atomic
+arena proves allocation storage lifetime and concurrent allocation safety. It
+does not by itself make ordinary array, struct, box, or raw-pointer mutation
+race-free; use mutexes, channels, explicit atomics, or unsafe code with its own
+proof. A runnable safe example is
+[`examples/safe_threading.tl`](examples/safe_threading.tl).
 
 For game-style loops, the current safe pattern is lexical nesting: keep global
 state in the default program arena, enter one `(with-arena level ...)` for

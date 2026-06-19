@@ -1,13 +1,19 @@
-;# stdlib/thread.tl - Minimal native thread primitives for selfhost worker pools.
+;# stdlib/thread.tl - Native thread primitives and checked task wrappers.
 ;#
-;# Provides a narrow cross-target thread surface: spawn a `(-> i64 i64)` entry
-;# with one raw integer context, join it, use a counting semaphore, and query a
-;# default worker count. Linux uses raw `clone`/`futex`/`eventfd2` syscalls.
-;# Windows uses kernel32 `CreateThread`, `WaitForSingleObject`, and semaphores.
+;# Provides a narrow cross-target raw thread surface: spawn a `(-> i64 i64)`
+;# entry with one raw integer context, join it, use a counting semaphore, and
+;# query a default worker count. Linux uses raw `clone`/`futex`/`eventfd2`
+;# syscalls. Windows uses kernel32 `CreateThread`, `WaitForSingleObject`, and
+;# semaphores.
 ;#
 ;# Each thread has its own default arena. The raw `i64` context/result surface
 ;# does not transfer ownership; callers that smuggle addresses through those
 ;# integers remain responsible for synchronization in unsafe code.
+;#
+;# The `thread-spawn-*` wrappers are the safe task-threading surface. They accept
+;# direct nullary closures whose captures are checked by the structural
+;# thread-safety classifier, consume typed handles on join, and copy current
+;# concrete aggregate results into atomic arenas that span the worker and joiner.
 ;#
 ;# Usage: `(import "stdlib/thread.tl")`
 ;#

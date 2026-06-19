@@ -38,6 +38,7 @@ expected_exit() {
         lexer) echo 12 ;;
         nested_eval) echo 7 ;;
         parser) echo 14 ;;
+        safe_threading) echo 42 ;;
         token) echo 0 ;;
         *) echo "unknown example: $1" >&2; exit 1 ;;
     esac

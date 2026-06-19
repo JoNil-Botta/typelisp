@@ -8,6 +8,11 @@
 ;# in runtime-owned OS memory and is serialized with semaphore-backed
 ;# synchronization.
 ;#
+;# `ChannelString` accepts heap-backed messages only when their storage is owned
+;# by a spanning atomic arena. `MutexI64` makes the protected scalar race-free
+;# only while mutation goes through its lexical guard; atomic arena allocation
+;# alone does not protect ordinary mutable storage.
+;#
 ;# Usage: `(import "stdlib/sync.tl")`
 ;#
 ;# ```typelisp

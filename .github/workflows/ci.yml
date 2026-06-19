@@ -83,6 +83,19 @@ jobs:
           sudo apt-get install -y --no-install-recommends valgrind \
             || { sudo apt-get update && sudo apt-get install -y --no-install-recommends valgrind; }
 
+      - name: Add Linux swap headroom
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          # Large selfhost inline-test harnesses can exceed physical runner RAM
+          # while still passing locally and with full coverage; add swap instead
+          # of weakening the required CI gates.
+          sudo fallocate -l 8G /typelisp-swap
+          sudo chmod 600 /typelisp-swap
+          sudo mkswap /typelisp-swap
+          sudo swapon /typelisp-swap
+          free -h
+
       - name: CI verification
         shell: bash
         run: scripts/ci-verify.sh

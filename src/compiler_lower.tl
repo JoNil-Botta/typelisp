@@ -2366,6 +2366,68 @@
                       (ast-node-push rewritten-value))))]
               [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)])]
           [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)]))]
+    [(AstExprSpmdScan
+        op
+        index
+        index-ty
+        start-box
+        end-box
+        prefix
+        prefix-ty
+        init-box
+        value-box
+        body-box)
+      (let
+        [start : AstExpr (ast-node-get start-box)]
+        [end : AstExpr (ast-node-get end-box)]
+        [init : AstExpr (ast-node-get init-box)]
+        [value : AstExpr (ast-node-get value-box)]
+        [body : AstExpr (ast-node-get body-box)]
+        (match (lower-spmd-inline-expr ctx env type-env start subst shadowed)
+          [(OkLowerAstExpr rewritten-start)
+            (match (lower-spmd-inline-expr ctx env type-env end subst shadowed)
+              [(OkLowerAstExpr rewritten-end)
+                (match (lower-spmd-inline-expr
+                  ctx
+                  env
+                  type-env
+                  init
+                  subst
+                  shadowed)
+                  [(OkLowerAstExpr rewritten-init)
+                    (match (lower-spmd-inline-expr
+                      ctx
+                      env
+                      type-env
+                      value
+                      subst
+                      shadowed)
+                      [(OkLowerAstExpr rewritten-value)
+                        (match (lower-spmd-inline-expr
+                          ctx
+                          env
+                          type-env
+                          body
+                          subst
+                          shadowed)
+                          [(OkLowerAstExpr rewritten-body)
+                            (OkLowerAstExpr
+                              (AstExprSpmdScan
+                                op
+                                index
+                                index-ty
+                                (ast-node-push rewritten-start)
+                                (ast-node-push rewritten-end)
+                                prefix
+                                prefix-ty
+                                (ast-node-push rewritten-init)
+                                (ast-node-push rewritten-value)
+                                (ast-node-push rewritten-body)))]
+                          [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)])]
+                      [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)])]
+                  [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)])]
+              [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)])]
+          [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)]))]
     [(AstExprSpmdBroadcast value-box lane-box)
       (let
         [value : AstExpr (ast-node-get value-box)]
@@ -3095,6 +3157,52 @@
               end)
             init)
           value))]
+    [(AstExprSpmdScan
+        _
+        index
+        index-ty
+        start-box
+        end-box
+        prefix
+        prefix-ty
+        init-box
+        value-box
+        body-box)
+      (let
+        [start : AstExpr (ast-node-get start-box)]
+        [end : AstExpr (ast-node-get end-box)]
+        [init : AstExpr (ast-node-get init-box)]
+        [value : AstExpr (ast-node-get value-box)]
+        [body : AstExpr (ast-node-get body-box)]
+        [value-env : TcTypeEnv
+          (tc-bind-id env index (tc-resolve-type ctx index-ty))]
+        [body-env : TcTypeEnv
+          (tc-bind-id value-env prefix (tc-resolve-type ctx prefix-ty))]
+        (lower-clone-roots-expr
+          ctx
+          body-env
+          decls
+          able
+          (lower-clone-roots-expr
+            ctx
+            value-env
+            decls
+            able
+            (lower-clone-roots-expr
+              ctx
+              env
+              decls
+              able
+              (lower-clone-roots-expr
+                ctx
+                env
+                decls
+                able
+                (lower-clone-roots-expr ctx env decls able roots start)
+                end)
+              init)
+            value)
+          body))]
     [(AstExprSpmdBroadcast value-box lane-box)
       (let
         [value : AstExpr (ast-node-get value-box)]
@@ -3679,6 +3787,30 @@
               init)
             map-expr)
           reduce-expr))]
+    [(AstExprSpmdScan _ _ _ start-box end-box _ _ init-box value-box body-box)
+      (let
+        [start : AstExpr (ast-node-get start-box)]
+        [end : AstExpr (ast-node-get end-box)]
+        [init : AstExpr (ast-node-get init-box)]
+        [value : AstExpr (ast-node-get value-box)]
+        [body : AstExpr (ast-node-get body-box)]
+        (lower-reach-expr
+          all-functions
+          names
+          (lower-reach-expr
+            all-functions
+            names
+            (lower-reach-expr
+              all-functions
+              names
+              (lower-reach-expr
+                all-functions
+                names
+                (lower-reach-expr all-functions names state start)
+                end)
+              init)
+            value)
+          body))]
     [(AstExprSpmdBroadcast value-box lane-box)
       (let
         [value : AstExpr (ast-node-get value-box)]
@@ -10139,6 +10271,15 @@
 (define (lower-spmd-reduce-current-name) : String
   "0spmd-reduce-current")
 
+(define (lower-spmd-scan-acc-name) : String
+  "0spmd-scan-acc")
+
+(define (lower-spmd-scan-end-name) : String
+  "0spmd-scan-end")
+
+(define (lower-spmd-scan-val-name) : String
+  "0spmd-scan-val")
+
 (define lower-spmd-reduce-acc-id-cache : i64
   -1)
 (define lower-spmd-reduce-end-id-cache : i64
@@ -10146,6 +10287,12 @@
 (define lower-spmd-reduce-val-id-cache : i64
   -1)
 (define lower-spmd-reduce-current-id-cache : i64
+  -1)
+(define lower-spmd-scan-acc-id-cache : i64
+  -1)
+(define lower-spmd-scan-end-id-cache : i64
+  -1)
+(define lower-spmd-scan-val-id-cache : i64
   -1)
 
 (define (lower-spmd-reduce-acc-id) : i64
@@ -10160,6 +10307,15 @@
 (define (lower-spmd-reduce-current-id) : i64
   lower-spmd-reduce-current-id-cache)
 
+(define (lower-spmd-scan-acc-id) : i64
+  lower-spmd-scan-acc-id-cache)
+
+(define (lower-spmd-scan-end-id) : i64
+  lower-spmd-scan-end-id-cache)
+
+(define (lower-spmd-scan-val-id) : i64
+  lower-spmd-scan-val-id-cache)
+
 (define (lower-name-id [name : String]) : i64
   (cond
     [(string-eq name (lower-spmd-reduce-acc-name)) (lower-spmd-reduce-acc-id)]
@@ -10167,6 +10323,9 @@
     [(string-eq name (lower-spmd-reduce-val-name)) (lower-spmd-reduce-val-id)]
     [(string-eq name (lower-spmd-reduce-current-name))
       (lower-spmd-reduce-current-id)]
+    [(string-eq name (lower-spmd-scan-acc-name)) (lower-spmd-scan-acc-id)]
+    [(string-eq name (lower-spmd-scan-end-name)) (lower-spmd-scan-end-id)]
+    [(string-eq name (lower-spmd-scan-val-name)) (lower-spmd-scan-val-id)]
     [else (intern name)]))
 
 (define (lower-refresh-marker-ids!) : unit
@@ -10180,7 +10339,10 @@
     (set! lower-spmd-reduce-val-id-cache (intern (lower-spmd-reduce-val-name)))
     (set!
       lower-spmd-reduce-current-id-cache
-      (intern (lower-spmd-reduce-current-name)))))
+      (intern (lower-spmd-reduce-current-name)))
+    (set! lower-spmd-scan-acc-id-cache (intern (lower-spmd-scan-acc-name)))
+    (set! lower-spmd-scan-end-id-cache (intern (lower-spmd-scan-end-name)))
+    (set! lower-spmd-scan-val-id-cache (intern (lower-spmd-scan-val-name)))))
 
 (define (lower-cleanup-hidden-name [var-id : i64]) : String
   (string-append "__tl_cleanup_resource." (int->string var-id)))
@@ -14314,6 +14476,38 @@
           end
           init
           value))]
+    [(AstExprSpmdScan
+        op
+        index
+        index-ty
+        start-box
+        end-box
+        prefix
+        prefix-ty
+        init-box
+        value-box
+        body-box)
+      (let
+        [start : AstExpr (ast-node-get start-box)]
+        [end : AstExpr (ast-node-get end-box)]
+        [init : AstExpr (ast-node-get init-box)]
+        [value : AstExpr (ast-node-get value-box)]
+        [body : AstExpr (ast-node-get body-box)]
+        (lower-spmd-scan
+          ctx
+          state
+          env
+          type-env
+          op
+          (intern-str index)
+          index-ty
+          start
+          end
+          (intern-str prefix)
+          prefix-ty
+          init
+          value
+          body))]
     [(AstExprSpmdBroadcast value-box lane-box)
       (let
         [value : AstExpr (ast-node-get value-box)]
@@ -23194,6 +23388,133 @@
             acc-update)))]
     [(ErrTcType message)
       (ErrLowerExpr (lower-diagnostic-at-expr value message))]))
+
+(define (spmd-scan-binop-prefix [op : AstBinOp] [value : i64]) : i64
+  (ast-expr-binary
+    op
+    (ast-node-push (AstExprVar (lower-spmd-scan-acc-id)))
+    value))
+
+(define (spmd-scan-select-prefix [cmp : AstBinOp] [value : i64]) : i64
+  (ast-expr-let
+    (ast-let-binding-cons
+      (ast-let-binding (lower-spmd-scan-val-name) (AstNoType) value)
+      (AstLetBindingNil))
+    (ast-expr-if
+      (ast-expr-binary
+        cmp
+        (ast-node-push (AstExprVar (lower-spmd-scan-val-id)))
+        (ast-node-push (AstExprVar (lower-spmd-scan-acc-id))))
+      (ast-node-push (AstExprVar (lower-spmd-scan-val-id)))
+      (ast-node-push (AstExprVar (lower-spmd-scan-acc-id))))))
+
+(define (spmd-scan-prefix-expr [op : AstReduceOp] [value : i64]) : i64
+  (match op
+    [(AstReduceSum) (spmd-scan-binop-prefix (AstBinAdd) value)]
+    [(AstReduceAll) (spmd-scan-binop-prefix (AstBinAnd) value)]
+    [(AstReduceAny) (spmd-scan-binop-prefix (AstBinOr) value)]
+    [(AstReduceMin) (spmd-scan-select-prefix (AstBinLt) value)]
+    [(AstReduceMax) (spmd-scan-select-prefix (AstBinGt) value)]))
+
+(define (lower-spmd-scan-scaffold
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [index-ty : AstType]
+  [start : AstExpr]
+  [end : AstExpr]
+  [prefix : String]
+  [prefix-ty : AstType]
+  [init : AstExpr]
+  [prefix-value : i64]
+  [body : AstExpr]) : ResultLowerExpr
+  (lower-expr
+    ctx
+    state
+    env
+    type-env
+    (ast-node-get
+      (ast-expr-let
+        (ast-let-binding-cons
+          (ast-let-binding
+            (lower-spmd-scan-acc-name)
+            (AstSomeType prefix-ty)
+            (ast-node-push init))
+          (ast-let-binding-cons
+            (ast-let-binding
+              (lower-spmd-scan-end-name)
+              (AstSomeType index-ty)
+              (ast-node-push end))
+            (ast-let-binding-cons
+              (ast-let-binding
+                index
+                (AstSomeType index-ty)
+                (ast-node-push start))
+              (AstLetBindingNil))))
+        (ast-node-push
+          (AstExprBegin
+            (ast-expr-cons
+              (ast-expr-while
+                (ast-expr-binary
+                  (AstBinLt)
+                  (ast-node-push (AstExprVar (intern index)))
+                  (ast-node-push (AstExprVar (lower-spmd-scan-end-id))))
+                (ast-expr-let
+                  (ast-let-binding-cons
+                    (ast-let-binding
+                      prefix
+                      (AstSomeType prefix-ty)
+                      prefix-value)
+                    (AstLetBindingNil))
+                  (ast-node-push
+                    (AstExprBegin
+                      (ast-expr-cons
+                        (ast-expr-set
+                          (lower-spmd-scan-acc-name)
+                          (ast-node-push (AstExprVar (intern prefix))))
+                        (ast-expr-cons
+                          (ast-node-push body)
+                          (ast-expr-cons
+                            (ast-expr-set
+                              index
+                              (ast-expr-binary
+                                (AstBinAdd)
+                                (ast-node-push (AstExprVar (intern index)))
+                                (ast-node-push (AstExprLiteral (AstLitInt 1)))))
+                            (AstExprNil))))))))
+              (AstExprNil))))))))
+
+(define (lower-spmd-scan
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [op : AstReduceOp]
+  [index : String]
+  [index-ty : AstType]
+  [start : AstExpr]
+  [end : AstExpr]
+  [prefix : String]
+  [prefix-ty : AstType]
+  [init : AstExpr]
+  [value : AstExpr]
+  [body : AstExpr]) : ResultLowerExpr
+  (lower-spmd-scan-scaffold
+    ctx
+    state
+    env
+    type-env
+    index
+    index-ty
+    start
+    end
+    prefix
+    prefix-ty
+    init
+    (spmd-scan-prefix-expr op (ast-node-push value))
+    body))
 
 (define (lower-spmd-broadcast
   [ctx : TcContext]

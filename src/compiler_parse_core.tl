@@ -602,6 +602,9 @@
 (define (compiler-parse-tag-expr-spmd-reduce) : i64
   250)
 
+(define (compiler-parse-tag-expr-spmd-scan) : i64
+  294)
+
 (define (compiler-parse-tag-expr-spmd-broadcast) : i64
   290)
 
@@ -853,6 +856,9 @@
       (set!
         out
         (sym-i64-bind out "spmd-reduce" (compiler-parse-tag-expr-spmd-reduce)))
+      (set!
+        out
+        (sym-i64-bind out "spmd-scan" (compiler-parse-tag-expr-spmd-scan)))
       (set!
         out
         (sym-i64-bind
@@ -2834,6 +2840,19 @@
           "parse: unsupported spmd-reduce operator `"
           (string-append name "`; expected one of sum, min, max, all, any")))]))
 
+(define (parse-ast-scan-op [name : String]) : ResultAstReduceOp
+  (cond
+    [(string-eq name "sum") (OkAstReduceOp (AstReduceSum))]
+    [(string-eq name "min") (OkAstReduceOp (AstReduceMin))]
+    [(string-eq name "max") (OkAstReduceOp (AstReduceMax))]
+    [(string-eq name "all") (OkAstReduceOp (AstReduceAll))]
+    [(string-eq name "any") (OkAstReduceOp (AstReduceAny))]
+    [else
+      (ErrAstReduceOp
+        (string-append
+          "parse: unsupported spmd-scan operator `"
+          (string-append name "`; expected one of sum, min, max, all, any")))]))
+
 (define (parse-ast-spmd-reduce-binding
   [dispatch : SymI64Env]
   [op : AstReduceOp]
@@ -2942,6 +2961,196 @@
         [_ (ErrAstExpr "parse: malformed spmd-reduce")])]
     [(SpSCons _ _ _) (ErrAstExpr "parse: malformed spmd-reduce")]
     [_ (ErrAstExpr "parse: malformed spmd-reduce")]))
+
+(define (parse-ast-spmd-scan [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
+  (match rest
+    [(SpSCons op-node binding-tail _)
+      (match (sp-node-get op-node)
+        [(SpSSym op-name _)
+          (match (sp-node-get binding-tail)
+            [(SpSCons binding-list value-tail _)
+              (match (sp-node-get binding-list)
+                [(SpSCons range-binding prefix-tail _)
+                  (match (sp-node-get prefix-tail)
+                    [(SpSCons prefix-binding binding-end _)
+                      (match (sp-node-get binding-end)
+                        [(SpSNil _)
+                          (match (sp-node-get value-tail)
+                            [(SpSCons value body-tail _)
+                              (match (sp-node-get body-tail)
+                                [(SpSCons body end _)
+                                  (match (sp-node-get end)
+                                    [(SpSNil _)
+                                      (match (parse-ast-scan-op op-name)
+                                        [(OkAstReduceOp op)
+                                          (parse-ast-spmd-scan-bindings
+                                            dispatch
+                                            op
+                                            (sp-node-get range-binding)
+                                            (sp-node-get prefix-binding)
+                                            (sp-node-get value)
+                                            (sp-node-get body))]
+                                        [(ErrAstReduceOp message)
+                                          (ErrAstExpr message)])]
+                                    [_
+                                      (ErrAstExpr "parse: malformed spmd-scan")])]
+                                [_ (ErrAstExpr "parse: malformed spmd-scan")])]
+                            [_ (ErrAstExpr "parse: malformed spmd-scan")])]
+                        [_ (ErrAstExpr "parse: malformed spmd-scan")])]
+                    [_ (ErrAstExpr "parse: malformed spmd-scan")])]
+                [_ (ErrAstExpr "parse: malformed spmd-scan")])]
+            [_ (ErrAstExpr "parse: malformed spmd-scan")])]
+        [_ (ErrAstExpr "parse: malformed spmd-scan")])]
+    [(SpSCons _ _ _) (ErrAstExpr "parse: malformed spmd-scan")]
+    [_ (ErrAstExpr "parse: malformed spmd-scan")]))
+
+(define (parse-ast-spmd-scan-bindings
+  [dispatch : SymI64Env]
+  [op : AstReduceOp]
+  [range-binding : SpannedSexpr]
+  [prefix-binding : SpannedSexpr]
+  [value : SpannedSexpr]
+  [body : SpannedSexpr]) : ResultAstExpr
+  (match range-binding
+    [(SpSBracketList items _)
+      (parse-ast-spmd-scan-bindings
+        dispatch
+        op
+        (sp-node-get items)
+        prefix-binding
+        value
+        body)]
+    [(SpSCons index-node colon-tail _)
+      (match (sp-node-get index-node)
+        [(SpSSym index _)
+          (match (sp-node-get colon-tail)
+            [(SpSCons colon index-ty-tail _)
+              (match (sp-node-get index-ty-tail)
+                [(SpSCons index-ty start-tail _)
+                  (match (sp-node-get start-tail)
+                    [(SpSCons start end-tail _)
+                      (match (sp-node-get end-tail)
+                        [(SpSCons end finish _)
+                          (match (sp-node-get finish)
+                            [(SpSNil _)
+                              (if (sexpr-colon?
+                                (spanned-sexpr-form (sp-node-get colon)))
+                                (match (parse-ast-type
+                                  dispatch
+                                  (spanned-sexpr-form (sp-node-get index-ty)))
+                                  [(OkAstType parsed-index-ty)
+                                    (parse-ast-spmd-scan-prefix-binding
+                                      dispatch
+                                      op
+                                      index
+                                      parsed-index-ty
+                                      (sp-node-get start)
+                                      (sp-node-get end)
+                                      prefix-binding
+                                      value
+                                      body)]
+                                  [(ErrAstType message) (ErrAstExpr message)])
+                                (ErrAstExpr
+                                  "parse: expected ':' in spmd-scan range binding"))]
+                            [_
+                              (ErrAstExpr
+                                "parse: malformed spmd-scan range binding")])]
+                        [_
+                          (ErrAstExpr
+                            "parse: malformed spmd-scan range binding")])]
+                    [_ (ErrAstExpr "parse: malformed spmd-scan range binding")])]
+                [_ (ErrAstExpr "parse: malformed spmd-scan range binding")])]
+            [_ (ErrAstExpr "parse: malformed spmd-scan range binding")])]
+        [_ (ErrAstExpr "parse: malformed spmd-scan range binding")])]
+    [_ (ErrAstExpr "parse: malformed spmd-scan range binding")]))
+
+(define (parse-ast-spmd-scan-prefix-binding
+  [dispatch : SymI64Env]
+  [op : AstReduceOp]
+  [index : String]
+  [index-ty : AstType]
+  [start : SpannedSexpr]
+  [end : SpannedSexpr]
+  [prefix-binding : SpannedSexpr]
+  [value : SpannedSexpr]
+  [body : SpannedSexpr]) : ResultAstExpr
+  (match prefix-binding
+    [(SpSBracketList items _)
+      (parse-ast-spmd-scan-prefix-binding
+        dispatch
+        op
+        index
+        index-ty
+        start
+        end
+        (sp-node-get items)
+        value
+        body)]
+    [(SpSCons prefix-node colon-tail _)
+      (match (sp-node-get prefix-node)
+        [(SpSSym prefix _)
+          (match (sp-node-get colon-tail)
+            [(SpSCons colon prefix-ty-tail _)
+              (match (sp-node-get prefix-ty-tail)
+                [(SpSCons prefix-ty init-tail _)
+                  (match (sp-node-get init-tail)
+                    [(SpSCons init finish _)
+                      (match (sp-node-get finish)
+                        [(SpSNil _)
+                          (if (sexpr-colon?
+                            (spanned-sexpr-form (sp-node-get colon)))
+                            (match (parse-ast-type
+                              dispatch
+                              (spanned-sexpr-form (sp-node-get prefix-ty)))
+                              [(OkAstType parsed-prefix-ty)
+                                (match (parse-ast-expr dispatch start)
+                                  [(OkAstExpr parsed-start)
+                                    (match (parse-ast-expr dispatch end)
+                                      [(OkAstExpr parsed-end)
+                                        (match (parse-ast-expr
+                                          dispatch
+                                          (sp-node-get init))
+                                          [(OkAstExpr parsed-init)
+                                            (match (parse-ast-expr
+                                              dispatch
+                                              value)
+                                              [(OkAstExpr parsed-value)
+                                                (match (parse-ast-expr
+                                                  dispatch
+                                                  body)
+                                                  [(OkAstExpr parsed-body)
+                                                    (OkAstExpr
+                                                      (ast-expr-spmd-scan
+                                                        op
+                                                        index
+                                                        index-ty
+                                                        parsed-start
+                                                        parsed-end
+                                                        prefix
+                                                        parsed-prefix-ty
+                                                        parsed-init
+                                                        parsed-value
+                                                        parsed-body))]
+                                                  [(ErrAstExpr message)
+                                                    (ErrAstExpr message)])]
+                                              [(ErrAstExpr message)
+                                                (ErrAstExpr message)])]
+                                          [(ErrAstExpr message)
+                                            (ErrAstExpr message)])]
+                                      [(ErrAstExpr message)
+                                        (ErrAstExpr message)])]
+                                  [(ErrAstExpr message) (ErrAstExpr message)])]
+                              [(ErrAstType message) (ErrAstExpr message)])
+                            (ErrAstExpr
+                              "parse: expected ':' in spmd-scan prefix binding"))]
+                        [_
+                          (ErrAstExpr
+                            "parse: malformed spmd-scan prefix binding")])]
+                    [_ (ErrAstExpr "parse: malformed spmd-scan prefix binding")])]
+                [_ (ErrAstExpr "parse: malformed spmd-scan prefix binding")])]
+            [_ (ErrAstExpr "parse: malformed spmd-scan prefix binding")])]
+        [_ (ErrAstExpr "parse: malformed spmd-scan prefix binding")])]
+    [_ (ErrAstExpr "parse: malformed spmd-scan prefix binding")]))
 
 (define (parse-ast-spmd-broadcast [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -3703,6 +3912,8 @@
       (parse-ast-foreach dispatch rest)]
     [(= tag (compiler-parse-tag-expr-spmd-reduce))
       (parse-ast-spmd-reduce dispatch rest)]
+    [(= tag (compiler-parse-tag-expr-spmd-scan))
+      (parse-ast-spmd-scan dispatch rest)]
     [(= tag (compiler-parse-tag-expr-spmd-broadcast))
       (parse-ast-spmd-broadcast dispatch rest)]
     [(= tag (compiler-parse-tag-expr-struct-get))

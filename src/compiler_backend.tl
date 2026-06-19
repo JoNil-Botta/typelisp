@@ -16213,6 +16213,28 @@
         (ErrCompilerBackend
           (compiler-backend-apply-instr-diagnostic message instr-diag))])))
 
+(define (compiler-backend-indirect-c-call-direct-home?
+  [_target : CompilerBackendTarget]
+  [home : String]) : bool
+  ;; Use the callee-saved homes common to SysV and Win64. Win64 also preserves
+  ;; rdi/rsi, but those stay on the fallback path for this conservative pass.
+  (or
+    (string-eq home "%rbx")
+    (string-eq home "%r12")
+    (string-eq home "%r13")
+    (string-eq home "%r14")
+    (string-eq home "%r15")))
+
+(define (compiler-backend-indirect-c-call-direct-home
+  [target : CompilerBackendTarget]
+  [assignments : CompilerRegAssignmentList]
+  [func : CompilerIrValue]) : String
+  (let
+    [home : String (compiler-backend-value-register-home assignments func)]
+    (if (compiler-backend-indirect-c-call-direct-home? target home)
+      home
+      "")))
+
 (define (compiler-backend-emit-indirect-c-call
   [target : CompilerBackendTarget]
   [dst : i64]
@@ -16257,6 +16279,8 @@
         param-types
         true
         program-index)]
+    [direct-home : String
+      (compiler-backend-indirect-c-call-direct-home target assignments func)]
     (match (compiler-backend-emit-call-args
       target
       assignments
@@ -16275,33 +16299,53 @@
       ;; 16-byte aggregates by value, but keep it correct.
       vars)
       [(OkCompilerBackend args-asm)
-        (match (compiler-backend-emit-load-value-with-plan
-          assignments
-          func
-          "%rax")
-          [(OkCompilerBackend func-asm)
-            (OkCompilerBackend
-              (string-append
-                (compiler-backend-emit-call-space-sub call-space)
+        (if (string-eq direct-home "")
+          (match (compiler-backend-emit-load-value-with-plan
+            assignments
+            func
+            "%rax")
+            [(OkCompilerBackend func-asm)
+              (OkCompilerBackend
                 (string-append
-                  args-asm
+                  (compiler-backend-emit-call-space-sub call-space)
                   (string-append
-                    func-asm
-                    (str-cat
-                      "    call *%rax\n"
-                      (compiler-backend-emit-call-space-add call-space)
-                      (compiler-backend-emit-store-typed-var-with-plan
-                        assignments
-                        dst
-                        (if (compiler-backend-float-type? ty)
-                          "%xmm0"
-                          "%rax")
-                        ty)
-                      ""
-                      "")))))]
-          [(ErrCompilerBackend message)
-            (ErrCompilerBackend
-              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+                    args-asm
+                    (string-append
+                      func-asm
+                      (str-cat
+                        "    call *%rax\n"
+                        (compiler-backend-emit-call-space-add call-space)
+                        (compiler-backend-emit-store-typed-var-with-plan
+                          assignments
+                          dst
+                          (if (compiler-backend-float-type? ty)
+                            "%xmm0"
+                            "%rax")
+                          ty)
+                        ""
+                        "")))))]
+            [(ErrCompilerBackend message)
+              (ErrCompilerBackend
+                (compiler-backend-apply-instr-diagnostic message instr-diag))])
+          (OkCompilerBackend
+            (string-append
+              (compiler-backend-emit-call-space-sub call-space)
+              (string-append
+                args-asm
+                (str-cat
+                  "    call *"
+                  direct-home
+                  "\n"
+                  (compiler-backend-emit-call-space-add call-space)
+                  (compiler-backend-emit-store-typed-var-with-plan
+                    assignments
+                    dst
+                    (if (compiler-backend-float-type? ty)
+                      "%xmm0"
+                      "%rax")
+                    ty)
+                  ""
+                  "")))))]
       [(ErrCompilerBackend message)
         (ErrCompilerBackend
           (compiler-backend-apply-instr-diagnostic message instr-diag))])))

@@ -2072,7 +2072,7 @@
                           unit))]
                     [else (set! j (+ j 1))])))
               (if done
-                true
+                (= (lsp-skip-space text j n) n)
                 false))))))))
 
 ;; Validate that text contains one or more complete parenthesized forms.

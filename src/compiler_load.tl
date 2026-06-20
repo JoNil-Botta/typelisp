@@ -1422,47 +1422,76 @@
           [(AstDeclModule _) true]
           [_ (compiler-load-decl-list-has-module? rest)]))]))
 
-(define (compiler-load-legacy-path-flat-module-import?
+(define (compiler-load-legacy-path-flat-module-import-shape?
   [kind : AstImportKind]
   [expected : AstMaybeModuleName]
-  [alias : AstMaybeImportAlias]
-  [imported-decls : AstDeclList]) : bool
+  [alias : AstMaybeImportAlias]) : bool
   (match kind
     [(AstImportPath)
       (match expected
         [(AstNoModuleName)
           (match alias
-            [(AstNoImportAlias)
-              (compiler-load-decl-list-has-module? imported-decls)]
+            [(AstNoImportAlias) true]
             [(AstSomeImportAlias _) false])]
         [(AstSomeModuleName _) false])]
     [_ false]))
 
-(define (compiler-load-after-import-expected-module
+(define (compiler-load-program-source-module-maybe [program : AstProgram]) : AstMaybeModuleName
+  (match program
+    [(AstProgram decls-box)
+      (let
+        [decls : AstDeclList (box-get decls-box)]
+        (if (compiler-load-decl-list-has-module? decls)
+          (AstSomeModuleName (compiler-load-decls-source-module decls))
+          AstNoModuleName))]))
+
+(define (compiler-load-resolved-source-module
+  [path : String]
+  [stdlib-roots : StringVec]
+  [cfgs : SymI64Env]) : AstMaybeModuleName
+  (if (file-exists? path)
+    (match (compiler-load-parse-file-diagnostic-session path stdlib-roots cfgs)
+      [(OkAstProgramDiagnostic program)
+        (compiler-load-program-source-module-maybe program)]
+      [(ErrAstProgramDiagnostic _) AstNoModuleName])
+    (match (compiler-load-embedded-stdlib-source-for-path path)
+      [(CompilerEmbeddedStdlibSomeSource source)
+        (match (compiler-load-parse-embedded-source-diagnostic-session
+          path
+          source
+          cfgs)
+          [(OkAstProgramDiagnostic program)
+            (compiler-load-program-source-module-maybe program)]
+          [(ErrAstProgramDiagnostic _) AstNoModuleName])]
+      [(CompilerEmbeddedStdlibNoSource) AstNoModuleName])))
+
+(define (compiler-load-legacy-path-flat-module-import-module
   [kind : AstImportKind]
   [expected : AstMaybeModuleName]
   [alias : AstMaybeImportAlias]
-  [imported-decls : AstDeclList]) : AstMaybeModuleName
-  (if (compiler-load-legacy-path-flat-module-import?
-    kind
-    expected
-    alias
-    imported-decls)
-    (AstSomeModuleName (compiler-load-decls-source-module imported-decls))
-    expected))
+  [imported-decls : AstDeclList]
+  [resolved : String]
+  [stdlib-roots : StringVec]
+  [cfgs : SymI64Env]) : AstMaybeModuleName
+  (if (compiler-load-legacy-path-flat-module-import-shape? kind expected alias)
+    (if (compiler-load-decl-list-has-module? imported-decls)
+      (AstSomeModuleName (compiler-load-decls-source-module imported-decls))
+      (compiler-load-resolved-source-module resolved stdlib-roots cfgs))
+    AstNoModuleName))
+
+(define (compiler-load-after-import-expected-module
+  [expected : AstMaybeModuleName]
+  [flat-module : AstMaybeModuleName]) : AstMaybeModuleName
+  (match flat-module
+    [(AstSomeModuleName _) flat-module]
+    [(AstNoModuleName) expected]))
 
 (define (compiler-load-after-import-alias
-  [kind : AstImportKind]
-  [expected : AstMaybeModuleName]
   [alias : AstMaybeImportAlias]
-  [imported-decls : AstDeclList]) : AstMaybeImportAlias
-  (if (compiler-load-legacy-path-flat-module-import?
-    kind
-    expected
-    alias
-    imported-decls)
-    (AstSomeImportAlias "")
-    alias))
+  [flat-module : AstMaybeModuleName]) : AstMaybeImportAlias
+  (match flat-module
+    [(AstSomeModuleName _) (AstSomeImportAlias "")]
+    [(AstNoModuleName) alias]))
 
 (define (compiler-load-dotted-import-alias-key
   [module : String]
@@ -1715,18 +1744,23 @@
                             rest-modules
                             rest-seen)
                           (let
+                            [flat-module : AstMaybeModuleName
+                              (compiler-load-legacy-path-flat-module-import-module
+                                kind
+                                expected-module
+                                alias
+                                imported-decls
+                                resolved
+                                stdlib-roots
+                                cfgs)]
                             [after-import-expected : AstMaybeModuleName
                               (compiler-load-after-import-expected-module
-                                kind
                                 expected-module
-                                alias
-                                imported-decls)]
+                                flat-module)]
                             [after-import-alias : AstMaybeImportAlias
                               (compiler-load-after-import-alias
-                                kind
-                                expected-module
                                 alias
-                                imported-decls)]
+                                flat-module)]
                             (OkCompilerLoadWithPaths
                               (compiler-load-decl-list-append
                                 imported-decls
@@ -3122,18 +3156,23 @@
                             rest-modules
                             rest-seen)
                           (let
+                            [flat-module : AstMaybeModuleName
+                              (compiler-load-legacy-path-flat-module-import-module
+                                kind
+                                expected-module
+                                alias
+                                imported-decls
+                                resolved
+                                stdlib-roots
+                                cfgs)]
                             [after-import-expected : AstMaybeModuleName
                               (compiler-load-after-import-expected-module
-                                kind
                                 expected-module
-                                alias
-                                imported-decls)]
+                                flat-module)]
                             [after-import-alias : AstMaybeImportAlias
                               (compiler-load-after-import-alias
-                                kind
-                                expected-module
                                 alias
-                                imported-decls)]
+                                flat-module)]
                             (OkCompilerLoadWithPaths
                               (compiler-load-decl-list-append
                                 imported-decls
@@ -3943,6 +3982,24 @@
       (sym-i64-empty))
       [(OkCompilerLoadWithPaths decls _ _ _)
         (compiler-load-decl-list-has-import-alias? decls "legacy.dep" "")]
+      [(ErrCompilerLoadWithPaths _) false])))
+
+(define (compiler-load-seen-legacy-path-module-flat-alias-ok?) : bool
+  (begin
+    (write-file
+      "target/cl_seen_legacy_module_dep.tl"
+      "(module legacy.seen.dep)
+(define (get) : i64 7)")
+    (write-file
+      "target/cl_seen_legacy_module_entry.tl"
+      "(import \"cl_seen_legacy_module_dep.tl\" module legacy.seen.dep as dep)
+(import \"cl_seen_legacy_module_dep.tl\")
+(define (main) : i64 (+ (dep.get) (get)))")
+    (match (compiler-load-file-with-paths
+      "target/cl_seen_legacy_module_entry.tl"
+      (sym-i64-empty))
+      [(OkCompilerLoadWithPaths decls _ _ _)
+        (compiler-load-decl-list-has-import-alias? decls "legacy.seen.dep" "")]
       [(ErrCompilerLoadWithPaths _) false])))
 
 (define (compiler-load-package-legacy-path-module-flat-alias-ok?) : bool
@@ -6811,6 +6868,14 @@
       (return
         (begin
           (panic "compiler-load: legacy path module flat alias smoke mismatch")
+          ;; lint-allow: unreachable-code
+          0)))
+    (unless
+      (compiler-load-seen-legacy-path-module-flat-alias-ok?)
+      (return
+        (begin
+          (panic
+            "compiler-load: seen legacy path module flat alias smoke mismatch")
           ;; lint-allow: unreachable-code
           0)))
     (unless

@@ -40,20 +40,25 @@
 ;#     (+ (i64-vec-get v 0 0) (i64-vec-get v 1 0))))
 ;# ```
 ;#
-;# The declaration-emitting `(vector T)` macro is the migration path away from
-;# hand-written `comptime-decl` vector families. It splices a local `Vec` type
-;# plus `new`, `push`, `len`, `get`, `set`, and `capacity` declarations for the
-;# requested element type:
+;# The module-emitting `(vector T)` macro is the migration path away from
+;# hand-written `comptime-decl` vector families. Import each instantiation so it
+;# receives its own generated module namespace:
 ;#
 ;# ```typelisp
 ;# (import "stdlib/vector.tl")
 ;#
-;# (vector i64)
+;# (import (vector i64))
+;# (import (vector String) as svec)
 ;#
 ;# (define (main) : i64
 ;#   (let
-;#     [v : Vec (push (push (new) 10) 32)]
-;#     (+ (get v 0 0) (get v 1 0))))
+;#     [v : Vec (new)]
+;#     [words : svec.Vec (svec.new)]
+;#     (begin
+;#       (push (&mut v) 10)
+;#       (push (&mut v) 32)
+;#       (svec.push (&mut words) "x")
+;#       (+ (len (& v)) (svec.len (& words))))))
 ;# ```
 ;#
 ;# Use `(vector-family T VecName prefix)` when a module needs multiple concrete
@@ -75,65 +80,249 @@
 ;#   (+ (point-vec-len (point-vec-push (point-vec-new) (Point 1)))
 ;#      (token-vec-len (token-vec-push (token-vec-new) (Token 2)))))
 ;# ```
-;: Emit a local growable vector family for element type `T`.
-;:
-;: The generated declarations are intended for one vector instantiation per
-;: module while the final module-returning family is still maturing. They define
-;: `Vec`, `new`, `push`, `len`, `get`, `set`, and `capacity`; helper names
-;: `vec-copy-range` and `vec-grow` are also emitted into the current module.
-(defmacro (vector [T : type]) : Decls
-  `(begin
-    (defstruct Vec
-      (slots (Array ,T))
-      (len i64))
-    (define (new) : Vec
-      (Vec (make-array ,T 4) 0))
-    (define (len [v : Vec]) : i64
-      (struct-get v len))
-    (define (capacity [v : Vec]) : i64
-      (array-length (struct-get v slots)))
-    (define (get [v : Vec] [index : i64] [fallback : ,T]) : ,T
-      (if (if (>= index 0)
-        (< index (len v))
-        false)
-        (array-ref (struct-get v slots) index)
-        fallback))
-    (define (set [v : Vec] [index : i64] [value : ,T]) : Vec
-      (begin
+;: Emit a generated growable vector module for element type `T`.
+(defmacro (vector [T : type]) : Module
+  (let
+    [module-name : Expr
+      (expr-var (string-append "stdlib.vector.generated." (type-key T)))]
+    [vec-name : Expr (expr-var "Vec")]
+    [pop-name : Expr (expr-var "Pop")]
+    [pop-empty-name : Expr (expr-var "Pop.Empty")]
+    [pop-ok-name : Expr (expr-var "Pop.Ok")]
+    [kind : String (type-kind T)]
+    [eq-body : Expr
+      (match kind
+        ["string"
+          `(let
+            [n : i64 (string-length a)]
+            [i : i64 0]
+            [same : bool (= n (string-length b))]
+            (begin
+              (while (if same
+                (< i n)
+                false)
+                (begin
+                  (if (= (string-ref a i) (string-ref b i))
+                    unit
+                    (set! same false))
+                  (set! i (+ i 1))))
+              same))]
+        ["i64" `(= a b)]
+        ["i32" `(= a b)]
+        ["i16" `(= a b)]
+        ["i8" `(= a b)]
+        ["u64" `(= a b)]
+        ["u32" `(= a b)]
+        ["u16" `(= a b)]
+        ["u8" `(= a b)]
+        ["bool" `(= a b)]
+        ["char" `(= a b)]
+        ["f64" `(= a b)]
+        ["f32" `(= a b)]
+        [_ `false])]
+    `(begin
+      (module ,module-name)
+      (defstruct ,vec-name
+        (slots (Array ,T))
+        (len i64))
+      (defenum ,pop-name
+        (Empty)
+        (Ok ,T))
+      (define (slots [v : (& v ,vec-name)]) : (& v (Array ,T))
+        (& (struct-get v slots)))
+      (define (len [v : (& v ,vec-name)]) : i64
+        (struct-get v len))
+      (define (capacity [v : (& v ,vec-name)]) : i64
+        (array-length (slots v)))
+      (define (is-empty? [v : (& v ,vec-name)]) : bool
+        (<= (len v) 0))
+      (define (with-capacity [capacity : i64]) : ,vec-name
+        (let
+          [cap : i64
+            (if (< capacity 1)
+              1
+              capacity)]
+          (,vec-name (make-array ,T cap) 0)))
+      (define (new) : ,vec-name
+        (with-capacity 4))
+      (define (get [v : (& v ,vec-name)] [index : i64] [fallback : ,T]) : ,T
         (if (if (>= index 0)
           (< index (len v))
           false)
+          (array-ref (slots v) index)
+          fallback))
+      (define (last [v : (& v ,vec-name)] [fallback : ,T]) : ,T
+        (get v (- (len v) 1) fallback))
+      (define (set [v : (&mut v ,vec-name)] [index : i64] [value : ,T]) : unit
+        (if (if (>= index 0)
+          (< index (struct-get v len))
+          false)
           (array-set! (struct-get v slots) index value)
-          unit)
-        v))
-    (define (vec-copy-range
-      [dst : (Array ,T)]
-      [src : (Array ,T)]
-      [index : i64]
-      [count : i64]) : unit
-      (if (>= index count)
-        unit
-        (begin
-          (array-set! dst index (array-ref src index))
-          (vec-copy-range dst src (+ index 1) count))))
-    (define (vec-grow [v : Vec]) : Vec
-      (let
-        [n : i64 (len v)]
-        [bigger : (Array ,T) (make-array ,T (* (capacity v) 2))]
-        (begin
-          (vec-copy-range bigger (struct-get v slots) 0 n)
-          (set! (struct-get v slots) bigger)
-          v)))
-    (define (push [v : Vec] [value : ,T]) : Vec
-      (if (< (len v) (capacity v))
-        (let
-          [slots : (Array ,T) (struct-get v slots)]
-          [index : i64 (len v)]
+          unit))
+      (define (copy-range!
+        [dst : (&mut dst (Array ,T))]
+        [src : (& src (Array ,T))]
+        [index : i64]
+        [count : i64]) : unit
+        (if (>= index count)
+          unit
           (begin
-            (array-set! slots index value)
-            (set! (struct-get v len) (+ index 1))
-            v))
-        (push (vec-grow v) value)))))
+            (array-set! dst index (array-ref src index))
+            (copy-range! dst src (+ index 1) count))))
+      (define (grow [v : (&mut v ,vec-name)]) : unit
+        (let
+          [n : i64 (struct-get v len)]
+          [old-cap : i64 (array-length (struct-get v slots))]
+          [new-cap : i64
+            (if (< old-cap 1)
+              1
+              (* old-cap 2))]
+          [bigger : (Array ,T) (make-array ,T new-cap)]
+          (begin
+            (copy-range! (&mut bigger) (& (struct-get v slots)) 0 n)
+            (set! (struct-get v slots) bigger))))
+      (define (push [v : (&mut v ,vec-name)] [value : ,T]) : unit
+        (begin
+          (if (< (struct-get v len) (array-length (struct-get v slots)))
+            unit
+            (grow v))
+          (let
+            [index : i64 (struct-get v len)]
+            (begin
+              (array-set! (struct-get v slots) index value)
+              (set! (struct-get v len) (+ index 1))))))
+      (define (pop [v : (&mut v ,vec-name)]) : ,pop-name
+        (if (<= (struct-get v len) 0)
+          (,pop-empty-name)
+          (let
+            [last-index : i64 (- (struct-get v len) 1)]
+            [value : ,T (clone (array-ref (struct-get v slots) last-index))]
+            (begin
+              (set! (struct-get v len) last-index)
+              (,pop-ok-name value)))))
+      (define (from-array [src : (& src (Array ,T))] [count : i64]) : ,vec-name
+        (let
+          [n : i64
+            (if (< count 0)
+              0
+              count)]
+          [items : (Array ,T)
+            (make-array
+              ,T
+              (if (< n 1)
+                1
+                n))]
+          (begin
+            (copy-range! (&mut items) src 0 n)
+            (,vec-name items n))))
+      (define (to-array [v : (& v ,vec-name)]) : (Array ,T)
+        (let
+          [n : i64 (len v)]
+          [out : (Array ,T) (make-array ,T n)]
+          (begin
+            (copy-range! (&mut out) (slots v) 0 n)
+            out)))
+      (define (extend-from
+        [v : (&mut v ,vec-name)]
+        [src : (& src (Array ,T))]
+        [index : i64]
+        [count : i64]) : unit
+        (if (>= index count)
+          unit
+          (begin
+            (push v (array-ref src index))
+            (extend-from v src (+ index 1) count))))
+      (define (extend
+        [v : (&mut v ,vec-name)]
+        [src : (& src (Array ,T))]
+        [count : i64]) : unit
+        (extend-from v src 0 count))
+      (define (reverse-range!
+        [items : (&mut items (Array ,T))]
+        [lo : i64]
+        [hi : i64]) : unit
+        (if (>= lo hi)
+          unit
+          (let
+            [tmp : ,T (array-ref items lo)]
+            (begin
+              (array-set! items lo (array-ref items hi))
+              (array-set! items hi tmp)
+              (reverse-range! items (+ lo 1) (- hi 1))))))
+      (define (reverse! [v : (&mut v ,vec-name)]) : unit
+        (let
+          [last-index : i64 (- (struct-get v len) 1)]
+          (reverse-range! (&mut (struct-get v slots)) 0 last-index)))
+      (define (fold-from
+        [v : (& v ,vec-name)]
+        [index : i64]
+        [acc : ,T]
+        [step : (-> ,T ,T ,T)]) : ,T
+        (if (>= index (len v))
+          acc
+          (fold-from v (+ index 1) (step acc (array-ref (slots v) index)) step)))
+      (define (fold [v : (& v ,vec-name)] [acc : ,T] [step : (-> ,T ,T ,T)]) : ,T
+        (fold-from v 0 acc step))
+      (define (map-build-from
+        [v : (& v ,vec-name)]
+        [index : i64]
+        [out : (&mut out ,vec-name)]
+        [mapper : (-> ,T ,T)]) : unit
+        (if (>= index (len v))
+          unit
+          (begin
+            (push out (mapper (array-ref (slots v) index)))
+            (map-build-from v (+ index 1) out mapper))))
+      (define (map-from
+        [v : (& v ,vec-name)]
+        [index : i64]
+        [mapper : (-> ,T ,T)]) : ,vec-name
+        (let
+          [out : ,vec-name (new)]
+          (begin
+            (map-build-from v index (&mut out) mapper)
+            out)))
+      (define (map [v : (& v ,vec-name)] [mapper : (-> ,T ,T)]) : ,vec-name
+        (map-from v 0 mapper))
+      (define (value-eq? [a : ,T] [b : ,T]) : bool
+        ,eq-body)
+      (define (contains-from? [v : (& v ,vec-name)] [x : ,T] [index : i64]) : bool
+        (if (>= index (len v))
+          false
+          (if (value-eq? (array-ref (slots v) index) x)
+            true
+            (contains-from? v x (+ index 1)))))
+      (define (contains? [v : (& v ,vec-name)] [x : ,T]) : bool
+        (contains-from? v x 0))
+      (export
+        (type ,vec-name)
+        (constructor ,vec-name)
+        (type ,pop-name)
+        (variant Empty)
+        (variant Ok)
+        (value slots)
+        (value len)
+        (value capacity)
+        (value is-empty?)
+        (value with-capacity)
+        (value new)
+        (value get)
+        (value last)
+        (value set)
+        (value push)
+        (value pop)
+        (value from-array)
+        (value to-array)
+        (value extend-from)
+        (value extend)
+        (value reverse!)
+        (value fold-from)
+        (value fold)
+        (value map-build-from)
+        (value map-from)
+        (value map)
+        (value contains-from?)
+        (value contains?)))))
 
 (export (macro vector))
 

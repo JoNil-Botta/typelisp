@@ -4879,6 +4879,14 @@
                   next-fuel)]
               [(ErrCtfeQuoteType diag) (ErrCtfeQuoteExpr diag)])]
           [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+    [(AstExprTypeLiteral ty)
+      (match (ctfe-quote-type ty env expr fuel)
+        [(OkCtfeQuoteType quoted-ty next-fuel)
+          (OkCtfeQuoteExpr
+            (ast-node-push (AstExprTypeLiteral quoted-ty))
+            (AstTyExpr)
+            next-fuel)]
+        [(ErrCtfeQuoteType diag) (ErrCtfeQuoteExpr diag)])]
     [(AstExprBorrow mutable lifetime place-box)
       (let
         [place : AstExpr (ast-node-get place-box)]

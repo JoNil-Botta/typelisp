@@ -857,8 +857,13 @@
                 expr
                 "comptime: non-finite f64 literal is not supported")))]
         [(CompilerFloatNoF64)
-          (ErrCtfe
-            (ctfe-diagnostic-at-expr expr "comptime: invalid f64 literal"))])]
+          (if (compiler-float-decimal-syntax? text)
+            (ErrCtfe
+              (ctfe-diagnostic-at-expr
+                expr
+                "comptime: non-finite f64 literal is not supported"))
+            (ErrCtfe
+              (ctfe-diagnostic-at-expr expr "comptime: invalid f64 literal")))])]
     [(AstLitString text) (OkCtfe (CtfeString text) fuel)]))
 
 ;; --- binary operators -------------------------------------------------------
@@ -1293,10 +1298,36 @@
   [ty : AstType]
   [expr : AstExpr]
   [fuel : i64]) : ResultCtfe
-  (ctfe-finite-cast-result
-    (compiler-finite-cast-fold (ctfe-finite-cast-input value) from-ty ty)
-    expr
-    fuel))
+  (match ty
+    [(AstTyF64)
+      (match value
+        [(CtfeF64 n) (ctfe-f64-result n expr fuel)]
+        [(CtfeF32 n) (ctfe-f64-result n expr fuel)]
+        [_
+          (ctfe-finite-cast-result
+            (compiler-finite-cast-fold
+              (ctfe-finite-cast-input value)
+              from-ty
+              ty)
+            expr
+            fuel)])]
+    [(AstTyF32)
+      (match value
+        [(CtfeF64 n) (ctfe-f32-result n expr fuel)]
+        [(CtfeF32 n) (ctfe-f32-result n expr fuel)]
+        [_
+          (ctfe-finite-cast-result
+            (compiler-finite-cast-fold
+              (ctfe-finite-cast-input value)
+              from-ty
+              ty)
+            expr
+            fuel)])]
+    [_
+      (ctfe-finite-cast-result
+        (compiler-finite-cast-fold (ctfe-finite-cast-input value) from-ty ty)
+        expr
+        fuel)]))
 
 (define (ctfe-eval-cast
   [inner : AstExpr]
@@ -7198,11 +7229,33 @@
     [one-five : i64 (ast-node-push (AstExprLiteral (AstLitFloat "1.5")))]
     [two-quarter : i64 (ast-node-push (AstExprLiteral (AstLitFloat "2.25")))]
     [zero : i64 (ast-node-push (AstExprLiteral (AstLitFloat "0.0")))]
+    [neg-zero : i64 (ast-node-push (AstExprLiteral (AstLitFloat "-0.0")))]
     [one-f32 : i64 (ast-expr-cast one-five (AstTyF32))]
     [zero-f32 : i64 (ast-expr-cast zero (AstTyF32))]
     [sum-f32 : i64 (ast-node-push (AstExprBinary (AstBinAdd) one-f32 zero-f32))]
     [neg-f32 : i64 (ast-node-push (AstExprUnary (AstUnNeg) sum-f32))]
     [wide-f32 : i64 (ast-expr-cast one-f32 (AstTyF64))]
+    [large-f32 : i64
+      (ast-expr-cast
+        (ast-node-push (AstExprLiteral (AstLitFloat "3.0e+38")))
+        (AstTyF32))]
+    [two-f32 : i64
+      (ast-expr-cast
+        (ast-node-push (AstExprLiteral (AstLitFloat "2.0")))
+        (AstTyF32))]
+    [overflow-f32 : i64
+      (ast-node-push (AstExprBinary (AstBinMul) large-f32 two-f32))]
+    [overflow-f32-cast : i64
+      (ast-expr-cast
+        (ast-node-push (AstExprLiteral (AstLitFloat "3.5e+38")))
+        (AstTyF32))]
+    [overflow-f64-left : i64
+      (ast-node-push (AstExprLiteral (AstLitFloat "1e+308")))]
+    [overflow-f64 : i64
+      (ast-node-push
+        (AstExprBinary (AstBinMul) overflow-f64-left overflow-f64-left))]
+    [non-finite-f64-literal : i64
+      (ast-node-push (AstExprLiteral (AstLitFloat "1e+309")))]
     [sum : i64 (ast-node-push (AstExprBinary (AstBinAdd) one-five two-quarter))]
     [neg : i64 (ast-node-push (AstExprUnary (AstUnNeg) sum))]
     [neg-int : i64 (ast-node-push (AstExprLiteral (ast-lit-int (- 0 42))))]
@@ -7267,6 +7320,7 @@
     [env : CtfeEnv (ctfe-env-empty)]
     (and
       (compiler-ctfe-eval-f64-ok? one-five env 1.5)
+      (compiler-ctfe-eval-f64-ok? neg-zero env -0.0)
       (compiler-ctfe-eval-f64-ok? sum env 3.75)
       (compiler-ctfe-eval-f64-ok? neg env -3.75)
       (compiler-ctfe-eval-f32-ok? one-f32 env 1.5)
@@ -7302,7 +7356,23 @@
       (compiler-ctfe-eval-error-ok?
         div-zero
         env
-        "float division by zero in comptime"))))
+        "float division by zero in comptime")
+      (compiler-ctfe-eval-error-ok?
+        non-finite-f64-literal
+        env
+        "comptime: non-finite f64 literal is not supported")
+      (compiler-ctfe-eval-error-ok?
+        overflow-f64
+        env
+        "comptime: non-finite f64 result is not supported")
+      (compiler-ctfe-eval-error-ok?
+        overflow-f32
+        env
+        "comptime: non-finite f32 result is not supported")
+      (compiler-ctfe-eval-error-ok?
+        overflow-f32-cast
+        env
+        "comptime: non-finite f32 result is not supported"))))
 
 (define (compiler-ctfe-layout-query-ok?) : bool
   (let

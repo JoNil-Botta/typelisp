@@ -9677,7 +9677,7 @@
                   fields)]
               (tc-bind-enum-variants-local
                 ctx
-                (tc-bind-alias-id-if-free env name constructor-ty)
+                (tc-bind-id env name constructor-ty)
                 enum-name
                 scoped-enum
                 lifetimes

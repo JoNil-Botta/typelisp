@@ -132,6 +132,10 @@ struct_field_set_temporary_reject|check-fail|tests/safety/struct_field_set_tempo
 box_take_use_after_move_reject|check-fail|tests/safety/box_take_use_after_move_reject.tl|-|use of moved value `cell`
 box_set_temporary_reject|check-fail|tests/safety/box_set_temporary_reject.tl|-|expression is not a storage place
 box_set_borrow_live_reject|check-fail|tests/safety/box_set_borrow_live_reject.tl|-|cannot assign to borrowed place `cell`
+box_pattern_wrong_arity_reject|check-fail|tests/safety/box_pattern_wrong_arity_reject.tl|-|box pattern expects exactly one inner pattern
+box_pattern_non_box_reject|check-fail|tests/safety/box_pattern_non_box_reject.tl|-|box pattern requires Box scrutinee
+box_pattern_refutable_inner_reject|check-fail|tests/safety/box_pattern_refutable_inner_reject.tl|-|box pattern only supports irrefutable binding, wildcard, or nested box patterns
+box_pattern_borrowed_reject|check-fail|tests/safety/box_pattern_borrowed_reject.tl|-|borrowed box patterns are not supported
 foreign_abi_metadata_reject|check-fail|tests/safety/foreign_abi_metadata_reject.tl|-|unknown extern ABI stdcall
 runtime_type_literal_reject|check-fail|tests/safety/runtime_type_literal_reject.tl|-|type value i64 is compile-time only
 import_arg_mismatch_diagnostic|check-fail|tests/safety/import_arg_mismatch_root.tl|-|tests/safety/import_arg_mismatch_lib.tl:5:14: typecheck: argument type mismatch

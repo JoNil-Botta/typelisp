@@ -614,8 +614,9 @@
     [(AstTyFunc args ret)
       (selfhost-lint-dead-type-id-refs
         ret
-        (selfhost-lint-dead-type-list-refs args refs))]
-    [(AstTyTuple items) (selfhost-lint-dead-type-list-refs items refs)]
+        (selfhost-lint-dead-type-list-refs (box-get args) refs))]
+    [(AstTyTuple items)
+      (selfhost-lint-dead-type-list-refs (box-get items) refs)]
     [(AstTyArray elem _) (selfhost-lint-dead-type-id-refs elem refs)]
     [(AstTyDynArray elem) (selfhost-lint-dead-type-id-refs elem refs)]
     [(AstTyBox elem) (selfhost-lint-dead-type-id-refs elem refs)]

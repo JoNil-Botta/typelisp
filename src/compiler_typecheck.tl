@@ -1702,6 +1702,26 @@
     [(OkTcUnit) true]
     [(ErrTcUnit _) false]))
 
+(define (compiler-typecheck-inline-layout-size-ok?
+  [src : String]
+  [name : String]
+  [want : i64]) : bool
+  (match (parse-ast-source src)
+    [(OkAstProgram program)
+      (match (build-compiler-symbols program)
+        [(OkCompilerSymbols symbols)
+          (match (build-compiler-registries program)
+            [(OkCompilerRegistries registries)
+              (let
+                [ctx : TcContext (TcContext program symbols registries "")]
+                (match (tc-inline-aggregate-layout-for ctx name)
+                  [(OkTcInlineAggregateLayout layout)
+                    (= (tc-inline-aggregate-layout-size layout) want)]
+                  [(ErrTcInlineAggregateLayout _) false]))]
+            [(ErrCompilerRegistries _) false])]
+        [(ErrCompilerSymbols _) false])]
+    [(ErrAstProgram _) false]))
+
 (define (compiler-typecheck-inline-layout-error-ok?
   [src : String]
   [name : String]
@@ -1844,7 +1864,7 @@
                     [(ErrTcInlineAggregateLayout _) (set! ok false)])
                   (match (tc-inline-aggregate-type-layout
                     ctx
-                    (AstTyTuple (tc-type-list2 (AstTyU8) (AstTyI32))))
+                    (ast-ty-tuple (tc-type-list2 (AstTyU8) (AstTyI32))))
                     [(OkTcLayoutInfo info)
                       (if (and
                         (= (tc-layout-info-size info) 8)
@@ -1855,7 +1875,7 @@
                   (match (tc-inline-aggregate-type-layout
                     ctx
                     (ast-ty-array
-                      (AstTyTuple (tc-type-list2 (AstTyU8) (AstTyI32)))
+                      (ast-ty-tuple (tc-type-list2 (AstTyU8) (AstTyI32)))
                       2))
                     [(OkTcLayoutInfo info)
                       (if (and
@@ -1981,8 +2001,8 @@
 (define (compiler-typecheck-inline-boxed-ast-list-source) : String
   "(defenum AstType
   (AstTyI64)
-  (AstTyFunc AstTypeList (Box AstType))
-  (AstTyTuple AstTypeList)
+  (AstTyFunc (Box AstTypeList) i64)
+  (AstTyTuple (Box AstTypeList))
   (AstTyBox (Box AstType)))
 (defenum AstTypeList
   (AstTypeNil)
@@ -2007,6 +2027,7 @@
     [src : String (compiler-typecheck-inline-boxed-ast-list-source)]
     (and
       (compiler-typecheck-inline-layout-ok? src "AstType")
+      (compiler-typecheck-inline-layout-size-ok? src "AstType" 24)
       (compiler-typecheck-inline-layout-ok? src "AstTypeList")
       (compiler-typecheck-inline-layout-ok? src "AstPattern")
       (compiler-typecheck-inline-layout-ok? src "AstPatternList")
@@ -3261,14 +3282,14 @@
     (tc-type-move-only? (ast-ty-dyn-array (AstTyI64)))
     (tc-type-move-only? (ast-ty-array (AstTyI64) 4))
     (tc-type-move-only?
-      (AstTyTuple
+      (ast-ty-tuple
         (ast-type-cons (AstTyI64) (ast-type-cons (AstTyBool) AstTypeNil))))
     (tc-type-move-only? (AstTyStruct (intern "Box")))
     (tc-type-move-only? (ast-ty-box (AstTyI64)))
     (tc-type-move-only? (AstTyEnum (intern "ResultI64")))
     (tc-type-move-only? (ast-ty-mut-ref "phase" (AstTyI64)))
     (tc-type-move-only?
-      (AstTyTuple
+      (ast-ty-tuple
         (ast-type-cons
           (AstTyStruct (intern "Box"))
           (ast-type-cons (ast-ty-dyn-array (AstTyI64)) AstTypeNil))))))
@@ -3279,7 +3300,7 @@
     (tc-type-copyable? (ast-ty-region "r" (ast-ty-ref "inner" (AstTyString))))
     (tc-type-move-only? (ast-ty-region "r" (AstTyString)))
     (tc-type-move-only?
-      (ast-ty-region "r" (AstTyTuple (ast-type-cons (AstTyI64) AstTypeNil))))
+      (ast-ty-region "r" (ast-ty-tuple (ast-type-cons (AstTyI64) AstTypeNil))))
     (tc-type-move-only? (ast-ty-region "r" (ast-ty-mut-ref "phase" (AstTyI64))))))
 
 (define (compiler-typecheck-move-kind-tests-ok?) : bool
@@ -3999,7 +4020,7 @@
     [nominal-lifetime-render-ok : bool
       (string-eq
         (tc-type-render
-          (AstTyStructArgs
+          (ast-ty-struct-args
             (intern "RefBox")
             (ast-lifetime-cons "n" AstLifetimeNil)))
         "(RefBox n)")]
@@ -4010,10 +4031,10 @@
     [nominal-lifetime-distinct-ok : bool
       (not
         (tc-type-eq
-          (AstTyStructArgs
+          (ast-ty-struct-args
             (intern "RefBox")
             (ast-lifetime-cons "n" AstLifetimeNil))
-          (AstTyStructArgs
+          (ast-ty-struct-args
             (intern "RefBox")
             (ast-lifetime-cons "m" AstLifetimeNil))))]
     [str-move-kind-ok : bool (tc-type-move-only? (AstTyStr))]

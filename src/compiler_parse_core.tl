@@ -1200,10 +1200,10 @@
                 (if is-struct
                   (match lifetimes
                     [(AstLifetimeNil) (AstTyStruct (intern name))]
-                    [_ (AstTyStructArgs (intern name) lifetimes)])
+                    [_ (ast-ty-struct-args (intern name) lifetimes)])
                   (match lifetimes
                     [(AstLifetimeNil) (AstTyEnum (intern name))]
-                    [_ (AstTyEnumArgs (intern name) lifetimes)])))]
+                    [_ (ast-ty-enum-args (intern name) lifetimes)])))]
             [(ErrAstLifetimeList message) (ErrAstType message)])]
         [_ (ErrAstType "parse: malformed internal resolved type")])]
     [_ (ErrAstType "parse: malformed internal resolved type")]))
@@ -1287,7 +1287,7 @@
                   [(ErrAstFuncTypeParts message) (ErrAstType message)])]
               [(= tag (compiler-parse-tag-ty-tuple))
                 (match (parse-ast-type-list dispatch rest)
-                  [(OkAstTypeList elems) (OkAstType (AstTyTuple elems))]
+                  [(OkAstTypeList elems) (OkAstType (ast-ty-tuple elems))]
                   [(ErrAstTypeList message) (ErrAstType message)])]
               [(= tag (compiler-parse-tag-ty-array))
                 (match rest
@@ -1372,7 +1372,7 @@
                   rest
                   (compiler-parse-generic-type-policy-message head))
                   [(OkAstLifetimeList lifetimes)
-                    (OkAstType (AstTyVarArgs (intern head) lifetimes))]
+                    (OkAstType (ast-ty-var-args (intern head) lifetimes))]
                   [(ErrAstLifetimeList message) (ErrAstType message)])]))]
         [_ (ErrAstType "parse: expected type")])]
     [_ (ErrAstType "parse: expected type")]))
@@ -6930,7 +6930,7 @@
                     (= name (intern "raw-map"))
                     (match ty
                       [(AstTyFunc args ret)
-                        (match args
+                        (match (box-get args)
                           [(AstTypeCons first tail)
                             (let
                               [first : AstType (ty-node-get first)]
@@ -6994,7 +6994,7 @@
                       (ast-extern-metadata-link-inputs metadata))
                     (match ty
                       [(AstTyFunc args ret)
-                        (match args
+                        (match (box-get args)
                           [(AstTypeCons first tail)
                             (let
                               [first : AstType (ty-node-get first)]
@@ -7034,11 +7034,11 @@
         (match ty
           [(AstTyFunc args ret)
             (and
-              (= (compiler-parse-type-list-count args) 3)
+              (= (compiler-parse-type-list-count (box-get args)) 3)
               (match (ty-node-get ret)
                 [(AstTyI32) true]
                 [_ false])
-              (match args
+              (match (box-get args)
                 [(AstTypeCons first rest0)
                   (let
                     [first : AstType (ty-node-get first)]
@@ -7081,11 +7081,11 @@
         (match ty
           [(AstTyFunc args ret)
             (and
-              (= (compiler-parse-type-list-count args) 1)
+              (= (compiler-parse-type-list-count (box-get args)) 1)
               (match (ty-node-get ret)
                 [(AstTyI32) true]
                 [_ false])
-              (match args
+              (match (box-get args)
                 [(AstTypeCons first rest)
                   (let
                     [first : AstType (ty-node-get first)]
@@ -7134,9 +7134,9 @@
         (match ty
           [(AstTyFunc args ret)
             (and
-              (= (compiler-parse-type-list-count args) 2)
+              (= (compiler-parse-type-list-count (box-get args)) 2)
               (compiler-parse-i64-type? (ty-node-get ret))
-              (compiler-parse-two-i64-types? args))]
+              (compiler-parse-two-i64-types? (box-get args)))]
           [_ false]))]
     [_ false]))
 

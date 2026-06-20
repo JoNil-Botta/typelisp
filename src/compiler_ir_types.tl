@@ -617,9 +617,10 @@
   (match ty
     [(AstTyFunc args ret)
       (AstTyFunc
-        (compiler-ir-clone-type-list args)
+        (box (compiler-ir-clone-type-list (box-get args)))
         (ty-node-push (compiler-ir-clone-type (ty-node-get ret))))]
-    [(AstTyTuple elems) (AstTyTuple (compiler-ir-clone-type-list elems))]
+    [(AstTyTuple elems)
+      (AstTyTuple (box (compiler-ir-clone-type-list (box-get elems))))]
     [(AstTyArray elem len)
       (AstTyArray
         (ty-node-push (compiler-ir-clone-type (ty-node-get elem)))
@@ -1170,12 +1171,12 @@
     [(AstTyFunc args ret)
       (str-cat
         "(-> "
-        (compiler-ir-type-list-render args)
+        (compiler-ir-type-list-render (box-get args))
         (string-append
           " "
           (string-append (compiler-ir-type-render (ty-node-get ret)) ")")))]
     [(AstTyTuple elems)
-      (str-cat "(Tuple " (compiler-ir-type-list-render elems) ")")]
+      (str-cat "(Tuple " (compiler-ir-type-list-render (box-get elems)) ")")]
     [(AstTyArray elem count)
       (str-cat
         "(Array "
@@ -1210,13 +1211,19 @@
           (string-append (compiler-ir-type-render (ty-node-get inner)) ")")))]
     [(AstTyEnum name) (intern-str name)]
     [(AstTyEnumArgs name lifetimes)
-      (compiler-ir-nominal-lifetime-render (intern-str name) lifetimes)]
+      (compiler-ir-nominal-lifetime-render
+        (intern-str name)
+        (box-get lifetimes))]
     [(AstTyStruct name) (intern-str name)]
     [(AstTyStructArgs name lifetimes)
-      (compiler-ir-nominal-lifetime-render (intern-str name) lifetimes)]
+      (compiler-ir-nominal-lifetime-render
+        (intern-str name)
+        (box-get lifetimes))]
     [(AstTyVar name) (intern-str name)]
     [(AstTyVarArgs name lifetimes)
-      (compiler-ir-nominal-lifetime-render (intern-str name) lifetimes)]
+      (compiler-ir-nominal-lifetime-render
+        (intern-str name)
+        (box-get lifetimes))]
     [(AstTyPtr elem)
       (str-cat "(Ptr " (compiler-ir-type-render (ty-node-get elem)) ")")]
     [(AstTyMutPtr elem)
@@ -2511,12 +2518,12 @@
     [(AstTyFunc args ret)
       (str-cat
         "(->"
-        (compiler-ir-type-list-name args)
+        (compiler-ir-type-list-name (box-get args))
         " "
         (compiler-ir-type-name (ty-node-get ret))
         ")")]
     [(AstTyTuple elems)
-      (str-cat "(Tuple" (compiler-ir-type-list-name elems) ")")]
+      (str-cat "(Tuple" (compiler-ir-type-list-name (box-get elems)) ")")]
     [(AstTyArray elem count)
       (str-cat
         "(Array "
@@ -2546,13 +2553,19 @@
         ")")]
     [(AstTyEnum name) (intern-str name)]
     [(AstTyEnumArgs name lifetimes)
-      (compiler-ir-nominal-lifetime-render (intern-str name) lifetimes)]
+      (compiler-ir-nominal-lifetime-render
+        (intern-str name)
+        (box-get lifetimes))]
     [(AstTyStruct name) (intern-str name)]
     [(AstTyStructArgs name lifetimes)
-      (compiler-ir-nominal-lifetime-render (intern-str name) lifetimes)]
+      (compiler-ir-nominal-lifetime-render
+        (intern-str name)
+        (box-get lifetimes))]
     [(AstTyVar name) (str-cat "'" (intern-str name) "'")]
     [(AstTyVarArgs name lifetimes)
-      (compiler-ir-nominal-lifetime-render (intern-str name) lifetimes)]
+      (compiler-ir-nominal-lifetime-render
+        (intern-str name)
+        (box-get lifetimes))]
     [(AstTyPtr elem)
       (str-cat "(Ptr " (compiler-ir-type-name (ty-node-get elem)) ")")]
     [(AstTyMutPtr elem)

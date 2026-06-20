@@ -1152,10 +1152,11 @@
     [(AstTyExpr) false]
     [(AstTyExprList) false]
     [(AstTyFunc args ret)
-      (if (lint-type-list-uses-import? args alias module-name)
+      (if (lint-type-list-uses-import? (box-get args) alias module-name)
         true
         (lint-type-id-uses-import? ret alias module-name))]
-    [(AstTyTuple items) (lint-type-list-uses-import? items alias module-name)]
+    [(AstTyTuple items)
+      (lint-type-list-uses-import? (box-get items) alias module-name)]
     [(AstTyArray elem _) (lint-type-id-uses-import? elem alias module-name)]
     [(AstTyDynArray elem) (lint-type-id-uses-import? elem alias module-name)]
     [(AstTyBox elem) (lint-type-id-uses-import? elem alias module-name)]
@@ -2989,8 +2990,8 @@
     [(AstTyFunc args ret)
       (lint-unused-variable-type
         (ty-node-get ret)
-        (lint-unused-variable-type-list args state))]
-    [(AstTyTuple items) (lint-unused-variable-type-list items state)]
+        (lint-unused-variable-type-list (box-get args) state))]
+    [(AstTyTuple items) (lint-unused-variable-type-list (box-get items) state)]
     [(AstTyArray elem _) (lint-unused-variable-type (ty-node-get elem) state)]
     [(AstTyDynArray elem) (lint-unused-variable-type (ty-node-get elem) state)]
     [(AstTyBox elem) (lint-unused-variable-type (ty-node-get elem) state)]
@@ -3001,13 +3002,13 @@
     [(AstTyMutRef name inner)
       (lint-unused-variable-type-lifetime name inner state)]
     [(AstTyEnumArgs _ lifetimes)
-      (lint-unused-variable-lifetime-list lifetimes state)]
+      (lint-unused-variable-lifetime-list (box-get lifetimes) state)]
     [(AstTyStructArgs _ lifetimes)
-      (lint-unused-variable-lifetime-list lifetimes state)]
+      (lint-unused-variable-lifetime-list (box-get lifetimes) state)]
     [(AstTyVar name) (lint-unused-variable-read-id state name)]
     [(AstTyVarArgs name lifetimes)
       (lint-unused-variable-lifetime-list
-        lifetimes
+        (box-get lifetimes)
         (lint-unused-variable-read-id state name))]
     [(AstTyPtr elem) (lint-unused-variable-type (ty-node-get elem) state)]
     [(AstTyMutPtr elem) (lint-unused-variable-type (ty-node-get elem) state)]

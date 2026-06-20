@@ -227,8 +227,8 @@
   ;; CTFE values, not as a source-level type parameter.
   (AstTyExpr)
   (AstTyExprList)
-  (AstTyFunc AstTypeList i64)
-  (AstTyTuple AstTypeList)
+  (AstTyFunc (Box AstTypeList) i64)
+  (AstTyTuple (Box AstTypeList))
   (AstTyArray i64 i64)
   (AstTyDynArray i64)
   (AstTyBox i64)
@@ -236,11 +236,11 @@
   (AstTyRef String i64)
   (AstTyMutRef String i64)
   (AstTyEnum i64)
-  (AstTyEnumArgs i64 AstLifetimeList)
+  (AstTyEnumArgs i64 (Box AstLifetimeList))
   (AstTyStruct i64)
-  (AstTyStructArgs i64 AstLifetimeList)
+  (AstTyStructArgs i64 (Box AstLifetimeList))
   (AstTyVar i64)
-  (AstTyVarArgs i64 AstLifetimeList)
+  (AstTyVarArgs i64 (Box AstLifetimeList))
   (AstTyPtr i64)
   (AstTyMutPtr i64))
 
@@ -853,17 +853,21 @@
 
 (define (ty-node-persist [node : AstType]) : AstType
   (match node
-    [(AstTyFunc args ret) (AstTyFunc (ty-node-persist-type-list args) ret)]
-    [(AstTyTuple args) (AstTyTuple (ty-node-persist-type-list args))]
+    [(AstTyFunc args ret)
+      (AstTyFunc (box (ty-node-persist-type-list (box-get args))) ret)]
+    [(AstTyTuple args)
+      (AstTyTuple (box (ty-node-persist-type-list (box-get args))))]
     [(AstTyRegion name inner) (AstTyRegion (ty-node-persist-string name) inner)]
     [(AstTyRef name inner) (AstTyRef (ty-node-persist-string name) inner)]
     [(AstTyMutRef name inner) (AstTyMutRef (ty-node-persist-string name) inner)]
     [(AstTyEnumArgs name lifetimes)
-      (AstTyEnumArgs name (ty-node-persist-lifetimes lifetimes))]
+      (AstTyEnumArgs name (box (ty-node-persist-lifetimes (box-get lifetimes))))]
     [(AstTyStructArgs name lifetimes)
-      (AstTyStructArgs name (ty-node-persist-lifetimes lifetimes))]
+      (AstTyStructArgs
+        name
+        (box (ty-node-persist-lifetimes (box-get lifetimes))))]
     [(AstTyVarArgs name lifetimes)
-      (AstTyVarArgs name (ty-node-persist-lifetimes lifetimes))]
+      (AstTyVarArgs name (box (ty-node-persist-lifetimes (box-get lifetimes))))]
     [_ node]))
 
 ;; State-owned type node pools mirror the global type-node backing store while
@@ -1219,8 +1223,9 @@
     [(AstTyNever) 16]
     [(AstTyExpr) 17]
     [(AstTyExprList) 18]
-    [(AstTyFunc args ret) (hash-combine (ty-type-list-hash args 19) ret)]
-    [(AstTyTuple elems) (ty-type-list-hash elems 20)]
+    [(AstTyFunc args ret)
+      (hash-combine (ty-type-list-hash (box-get args) 19) ret)]
+    [(AstTyTuple elems) (ty-type-list-hash (box-get elems) 20)]
     [(AstTyArray elem count) (hash-combine (hash-combine 21 elem) count)]
     [(AstTyDynArray elem) (hash-combine 22 elem)]
     [(AstTyBox inner) (hash-combine 23 inner)]
@@ -1232,13 +1237,13 @@
       (hash-combine (hash-combine 26 (hash-string (& name))) inner)]
     [(AstTyEnum name) (hash-combine 27 name)]
     [(AstTyEnumArgs name lifetimes)
-      (ty-lifetime-list-hash lifetimes (hash-combine 28 name))]
+      (ty-lifetime-list-hash (box-get lifetimes) (hash-combine 28 name))]
     [(AstTyStruct name) (hash-combine 29 name)]
     [(AstTyStructArgs name lifetimes)
-      (ty-lifetime-list-hash lifetimes (hash-combine 30 name))]
+      (ty-lifetime-list-hash (box-get lifetimes) (hash-combine 30 name))]
     [(AstTyVar name) (hash-combine 31 name)]
     [(AstTyVarArgs name lifetimes)
-      (ty-lifetime-list-hash lifetimes (hash-combine 32 name))]
+      (ty-lifetime-list-hash (box-get lifetimes) (hash-combine 32 name))]
     [(AstTyPtr inner) (hash-combine 33 inner)]
     [(AstTyMutPtr inner) (hash-combine 34 inner)]))
 
@@ -1353,11 +1358,14 @@
     [(AstTyFunc a-args a-ret)
       (match b
         [(AstTyFunc b-args b-ret)
-          (and (= a-ret b-ret) (ty-type-list-eq? a-args b-args))]
+          (and
+            (= a-ret b-ret)
+            (ty-type-list-eq? (box-get a-args) (box-get b-args)))]
         [_ false])]
     [(AstTyTuple a-elems)
       (match b
-        [(AstTyTuple b-elems) (ty-type-list-eq? a-elems b-elems)]
+        [(AstTyTuple b-elems)
+          (ty-type-list-eq? (box-get a-elems) (box-get b-elems))]
         [_ false])]
     [(AstTyArray a-elem a-count)
       (match b
@@ -1394,7 +1402,9 @@
     [(AstTyEnumArgs a-name a-lifetimes)
       (match b
         [(AstTyEnumArgs b-name b-lifetimes)
-          (and (= a-name b-name) (ty-lifetime-list-eq? a-lifetimes b-lifetimes))]
+          (and
+            (= a-name b-name)
+            (ty-lifetime-list-eq? (box-get a-lifetimes) (box-get b-lifetimes)))]
         [_ false])]
     [(AstTyStruct a-name)
       (match b
@@ -1403,7 +1413,9 @@
     [(AstTyStructArgs a-name a-lifetimes)
       (match b
         [(AstTyStructArgs b-name b-lifetimes)
-          (and (= a-name b-name) (ty-lifetime-list-eq? a-lifetimes b-lifetimes))]
+          (and
+            (= a-name b-name)
+            (ty-lifetime-list-eq? (box-get a-lifetimes) (box-get b-lifetimes)))]
         [_ false])]
     [(AstTyVar a-name)
       (match b
@@ -1412,7 +1424,9 @@
     [(AstTyVarArgs a-name a-lifetimes)
       (match b
         [(AstTyVarArgs b-name b-lifetimes)
-          (and (= a-name b-name) (ty-lifetime-list-eq? a-lifetimes b-lifetimes))]
+          (and
+            (= a-name b-name)
+            (ty-lifetime-list-eq? (box-get a-lifetimes) (box-get b-lifetimes)))]
         [_ false])]
     [(AstTyPtr a-inner)
       (match b
@@ -1620,7 +1634,19 @@
   (AstTypeCons (ty-node-push head) (box rest)))
 
 (define (ast-ty-func [args : AstTypeList] [ret : AstType]) : AstType
-  (AstTyFunc args (ty-node-push ret)))
+  (AstTyFunc (box args) (ty-node-push ret)))
+
+(define (ast-ty-tuple [elems : AstTypeList]) : AstType
+  (AstTyTuple (box elems)))
+
+(define (ast-ty-enum-args [name : i64] [lifetimes : AstLifetimeList]) : AstType
+  (AstTyEnumArgs name (box lifetimes)))
+
+(define (ast-ty-struct-args [name : i64] [lifetimes : AstLifetimeList]) : AstType
+  (AstTyStructArgs name (box lifetimes)))
+
+(define (ast-ty-var-args [name : i64] [lifetimes : AstLifetimeList]) : AstType
+  (AstTyVarArgs name (box lifetimes)))
 
 (define (ast-ty-array [elem : AstType] [count : i64]) : AstType
   (AstTyArray (ty-node-push elem) count))
@@ -2540,12 +2566,13 @@
       (match b
         [(AstTyFunc b-args b-ret)
           (and
-            (ast-type-list-eq? a-args b-args)
+            (ast-type-list-eq? (box-get a-args) (box-get b-args))
             (ast-type-eq? (ty-node-get a-ret) (ty-node-get b-ret)))]
         [_ false])]
     [(AstTyTuple a-elems)
       (match b
-        [(AstTyTuple b-elems) (ast-type-list-eq? a-elems b-elems)]
+        [(AstTyTuple b-elems)
+          (ast-type-list-eq? (box-get a-elems) (box-get b-elems))]
         [_ false])]
     [(AstTyArray a-elem a-len)
       (match b
@@ -2594,7 +2621,7 @@
         [(AstTyEnumArgs b-name b-lifetimes)
           (and
             (= a-name b-name)
-            (ast-lifetime-list-eq? a-lifetimes b-lifetimes))]
+            (ast-lifetime-list-eq? (box-get a-lifetimes) (box-get b-lifetimes)))]
         [_ false])]
     [(AstTyStruct a-name)
       (match b
@@ -2605,7 +2632,7 @@
         [(AstTyStructArgs b-name b-lifetimes)
           (and
             (= a-name b-name)
-            (ast-lifetime-list-eq? a-lifetimes b-lifetimes))]
+            (ast-lifetime-list-eq? (box-get a-lifetimes) (box-get b-lifetimes)))]
         [_ false])]
     [(AstTyVar a-name)
       (match b
@@ -2616,7 +2643,7 @@
         [(AstTyVarArgs b-name b-lifetimes)
           (and
             (= a-name b-name)
-            (ast-lifetime-list-eq? a-lifetimes b-lifetimes))]
+            (ast-lifetime-list-eq? (box-get a-lifetimes) (box-get b-lifetimes)))]
         [_ false])]
     [(AstTyPtr a-elem)
       (match b

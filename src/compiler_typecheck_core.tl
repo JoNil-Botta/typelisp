@@ -2981,11 +2981,12 @@
     [(AstTyFunc args ret)
       (str-cat
         "(-> "
-        (tc-type-list-render args)
+        (tc-type-list-render (box-get args))
         (string-append
           " "
           (string-append (tc-type-render (ty-node-get ret)) ")")))]
-    [(AstTyTuple elems) (str-cat "(Tuple " (tc-type-list-render elems) ")")]
+    [(AstTyTuple elems)
+      (str-cat "(Tuple " (tc-type-list-render (box-get elems)) ")")]
     [(AstTyArray elem count)
       (str-cat
         "(Array "
@@ -3022,13 +3023,13 @@
           (string-append (tc-type-render (ty-node-get inner)) ")")))]
     [(AstTyEnum name) (intern-str name)]
     [(AstTyEnumArgs name lifetimes)
-      (tc-render-nominal-lifetime-type (intern-str name) lifetimes)]
+      (tc-render-nominal-lifetime-type (intern-str name) (box-get lifetimes))]
     [(AstTyStruct name) (intern-str name)]
     [(AstTyStructArgs name lifetimes)
-      (tc-render-nominal-lifetime-type (intern-str name) lifetimes)]
+      (tc-render-nominal-lifetime-type (intern-str name) (box-get lifetimes))]
     [(AstTyVar name) (intern-str name)]
     [(AstTyVarArgs name lifetimes)
-      (tc-render-nominal-lifetime-type (intern-str name) lifetimes)]))
+      (tc-render-nominal-lifetime-type (intern-str name) (box-get lifetimes))]))
 
 (define (tc-default-env) : TcTypeEnv
   (tc-bind (tc-default-env-base) (tc-default-boundary-name) (AstTyUnit)))
@@ -3053,7 +3054,7 @@
           (tc-fn2
             (AstTyI64)
             (AstTyI64)
-            (AstTyTuple
+            (ast-ty-tuple
               (ast-type-cons
                 (AstTyI32)
                 (ast-type-cons
@@ -4462,10 +4463,10 @@
 (define (tc-type-contains-region-tag? [ty : AstType]) : bool
   (match ty
     [(AstTyFunc args ret)
-      (if (tc-type-list-contains-region-tag? args)
+      (if (tc-type-list-contains-region-tag? (box-get args))
         true
         (tc-type-contains-region-tag? (ty-node-get ret)))]
-    [(AstTyTuple elems) (tc-type-list-contains-region-tag? elems)]
+    [(AstTyTuple elems) (tc-type-list-contains-region-tag? (box-get elems))]
     [(AstTyArray elem _) (tc-type-contains-region-tag? (ty-node-get elem))]
     [(AstTyDynArray elem) (tc-type-contains-region-tag? (ty-node-get elem))]
     [(AstTyBox elem) (tc-type-contains-region-tag? (ty-node-get elem))]
@@ -4494,9 +4495,10 @@
     (match ty
       [(AstTyFunc args ret)
         (ast-ty-func
-          (tc-type-list-without-regions args)
+          (tc-type-list-without-regions (box-get args))
           (tc-type-without-regions (ty-node-get ret)))]
-      [(AstTyTuple elems) (AstTyTuple (tc-type-list-without-regions elems))]
+      [(AstTyTuple elems)
+        (ast-ty-tuple (tc-type-list-without-regions (box-get elems)))]
       [(AstTyArray elem len)
         (ast-ty-array (tc-type-without-regions (ty-node-get elem)) len)]
       [(AstTyDynArray elem)
@@ -4512,9 +4514,11 @@
       [(AstTyMutRef region inner)
         (ast-ty-mut-ref region (tc-type-without-regions (ty-node-get inner)))]
       [(AstTyRegion _ inner) (tc-type-without-regions (ty-node-get inner))]
-      [(AstTyEnumArgs name lifetimes) (AstTyEnumArgs name lifetimes)]
-      [(AstTyStructArgs name lifetimes) (AstTyStructArgs name lifetimes)]
-      [(AstTyVarArgs name lifetimes) (AstTyVarArgs name lifetimes)]
+      [(AstTyEnumArgs name lifetimes)
+        (ast-ty-enum-args name (box-get lifetimes))]
+      [(AstTyStructArgs name lifetimes)
+        (ast-ty-struct-args name (box-get lifetimes))]
+      [(AstTyVarArgs name lifetimes) (ast-ty-var-args name (box-get lifetimes))]
       [_ ty])
     ty))
 
@@ -4533,9 +4537,9 @@
   (match ty
     [(AstTyFunc args ret)
       (or
-        (tc-type-list-contains-region args region)
+        (tc-type-list-contains-region (box-get args) region)
         (tc-type-contains-region (ty-node-get ret) region))]
-    [(AstTyTuple elems) (tc-type-list-contains-region elems region)]
+    [(AstTyTuple elems) (tc-type-list-contains-region (box-get elems) region)]
     [(AstTyArray elem _) (tc-type-contains-region (ty-node-get elem) region)]
     [(AstTyDynArray elem) (tc-type-contains-region (ty-node-get elem) region)]
     [(AstTyBox elem) (tc-type-contains-region (ty-node-get elem) region)]
@@ -4553,9 +4557,12 @@
       (or
         (string-eq name region)
         (tc-type-contains-region (ty-node-get inner) region))]
-    [(AstTyEnumArgs _ lifetimes) (tc-lifetime-list-contains lifetimes region)]
-    [(AstTyStructArgs _ lifetimes) (tc-lifetime-list-contains lifetimes region)]
-    [(AstTyVarArgs _ lifetimes) (tc-lifetime-list-contains lifetimes region)]
+    [(AstTyEnumArgs _ lifetimes)
+      (tc-lifetime-list-contains (box-get lifetimes) region)]
+    [(AstTyStructArgs _ lifetimes)
+      (tc-lifetime-list-contains (box-get lifetimes) region)]
+    [(AstTyVarArgs _ lifetimes)
+      (tc-lifetime-list-contains (box-get lifetimes) region)]
     [_ false]))
 
 (define (tc-type-list-contains-any-region [types : AstTypeList]) : bool
@@ -4573,9 +4580,9 @@
   (match ty
     [(AstTyFunc args ret)
       (or
-        (tc-type-list-contains-any-region args)
+        (tc-type-list-contains-any-region (box-get args))
         (tc-type-contains-any-region (ty-node-get ret)))]
-    [(AstTyTuple elems) (tc-type-list-contains-any-region elems)]
+    [(AstTyTuple elems) (tc-type-list-contains-any-region (box-get elems))]
     [(AstTyArray elem _) (tc-type-contains-any-region (ty-node-get elem))]
     [(AstTyDynArray elem) (tc-type-contains-any-region (ty-node-get elem))]
     [(AstTyBox elem) (tc-type-contains-any-region (ty-node-get elem))]
@@ -4584,9 +4591,12 @@
     [(AstTyRef _ _) true]
     [(AstTyMutRef _ _) true]
     [(AstTyRegion _ _) true]
-    [(AstTyEnumArgs _ lifetimes) (> (tc-lifetime-list-count lifetimes) 0)]
-    [(AstTyStructArgs _ lifetimes) (> (tc-lifetime-list-count lifetimes) 0)]
-    [(AstTyVarArgs _ lifetimes) (> (tc-lifetime-list-count lifetimes) 0)]
+    [(AstTyEnumArgs _ lifetimes)
+      (> (tc-lifetime-list-count (box-get lifetimes)) 0)]
+    [(AstTyStructArgs _ lifetimes)
+      (> (tc-lifetime-list-count (box-get lifetimes)) 0)]
+    [(AstTyVarArgs _ lifetimes)
+      (> (tc-lifetime-list-count (box-get lifetimes)) 0)]
     [_ false]))
 
 (define (tc-type-list-contains-reference? [types : AstTypeList]) : bool
@@ -4615,9 +4625,9 @@
   (match ty
     [(AstTyFunc args ret)
       (or
-        (tc-type-list-contains-reference? args)
+        (tc-type-list-contains-reference? (box-get args))
         (tc-type-contains-reference? (ty-node-get ret)))]
-    [(AstTyTuple elems) (tc-type-list-contains-reference? elems)]
+    [(AstTyTuple elems) (tc-type-list-contains-reference? (box-get elems))]
     [(AstTyArray elem _) (tc-type-contains-reference? (ty-node-get elem))]
     [(AstTyDynArray elem) (tc-type-contains-reference? (ty-node-get elem))]
     [(AstTyBox elem) (tc-type-contains-reference? (ty-node-get elem))]
@@ -4626,18 +4636,21 @@
     [(AstTyRef _ _) true]
     [(AstTyMutRef _ _) true]
     [(AstTyRegion _ inner) (tc-type-contains-reference? (ty-node-get inner))]
-    [(AstTyEnumArgs _ lifetimes) (> (tc-lifetime-list-count lifetimes) 0)]
-    [(AstTyStructArgs _ lifetimes) (> (tc-lifetime-list-count lifetimes) 0)]
-    [(AstTyVarArgs _ lifetimes) (> (tc-lifetime-list-count lifetimes) 0)]
+    [(AstTyEnumArgs _ lifetimes)
+      (> (tc-lifetime-list-count (box-get lifetimes)) 0)]
+    [(AstTyStructArgs _ lifetimes)
+      (> (tc-lifetime-list-count (box-get lifetimes)) 0)]
+    [(AstTyVarArgs _ lifetimes)
+      (> (tc-lifetime-list-count (box-get lifetimes)) 0)]
     [_ false]))
 
 (define (tc-type-contains-mut-reference? [ty : AstType]) : bool
   (match ty
     [(AstTyFunc args ret)
       (or
-        (tc-type-list-contains-mut-reference? args)
+        (tc-type-list-contains-mut-reference? (box-get args))
         (tc-type-contains-mut-reference? (ty-node-get ret)))]
-    [(AstTyTuple elems) (tc-type-list-contains-mut-reference? elems)]
+    [(AstTyTuple elems) (tc-type-list-contains-mut-reference? (box-get elems))]
     [(AstTyArray elem _) (tc-type-contains-mut-reference? (ty-node-get elem))]
     [(AstTyDynArray elem) (tc-type-contains-mut-reference? (ty-node-get elem))]
     [(AstTyBox elem) (tc-type-contains-mut-reference? (ty-node-get elem))]
@@ -4669,8 +4682,9 @@
     [(AstTyFunc args ret)
       (tc-type-collect-reference-lifetimes-into
         (ty-node-get ret)
-        (tc-type-list-collect-reference-lifetimes args out))]
-    [(AstTyTuple elems) (tc-type-list-collect-reference-lifetimes elems out)]
+        (tc-type-list-collect-reference-lifetimes (box-get args) out))]
+    [(AstTyTuple elems)
+      (tc-type-list-collect-reference-lifetimes (box-get elems) out)]
     [(AstTyArray elem _)
       (tc-type-collect-reference-lifetimes-into (ty-node-get elem) out)]
     [(AstTyDynArray elem)
@@ -4692,11 +4706,11 @@
     [(AstTyRegion _ inner)
       (tc-type-collect-reference-lifetimes-into (ty-node-get inner) out)]
     [(AstTyEnumArgs _ lifetimes)
-      (tc-lifetime-list-to-string-list-into lifetimes out)]
+      (tc-lifetime-list-to-string-list-into (box-get lifetimes) out)]
     [(AstTyStructArgs _ lifetimes)
-      (tc-lifetime-list-to-string-list-into lifetimes out)]
+      (tc-lifetime-list-to-string-list-into (box-get lifetimes) out)]
     [(AstTyVarArgs _ lifetimes)
-      (tc-lifetime-list-to-string-list-into lifetimes out)]
+      (tc-lifetime-list-to-string-list-into (box-get lifetimes) out)]
     [_ out]))
 
 (define (tc-type-collect-reference-lifetimes [ty : AstType]) : TcStringList
@@ -4774,8 +4788,8 @@
     [(AstTyFunc args ret)
       (tc-type-collect-regions-into
         (ty-node-get ret)
-        (tc-type-list-collect-regions args out))]
-    [(AstTyTuple elems) (tc-type-list-collect-regions elems out)]
+        (tc-type-list-collect-regions (box-get args) out))]
+    [(AstTyTuple elems) (tc-type-list-collect-regions (box-get elems) out)]
     [(AstTyArray elem _) (tc-type-collect-regions-into (ty-node-get elem) out)]
     [(AstTyDynArray elem) (tc-type-collect-regions-into (ty-node-get elem) out)]
     [(AstTyBox elem) (tc-type-collect-regions-into (ty-node-get elem) out)]
@@ -4794,11 +4808,11 @@
         (ty-node-get inner)
         (tc-string-list-add out name))]
     [(AstTyEnumArgs _ lifetimes)
-      (tc-lifetime-list-to-string-list-into lifetimes out)]
+      (tc-lifetime-list-to-string-list-into (box-get lifetimes) out)]
     [(AstTyStructArgs _ lifetimes)
-      (tc-lifetime-list-to-string-list-into lifetimes out)]
+      (tc-lifetime-list-to-string-list-into (box-get lifetimes) out)]
     [(AstTyVarArgs _ lifetimes)
-      (tc-lifetime-list-to-string-list-into lifetimes out)]
+      (tc-lifetime-list-to-string-list-into (box-get lifetimes) out)]
     [_ out]))
 
 (define (tc-type-collect-regions [ty : AstType]) : TcStringList
@@ -4998,10 +5012,10 @@
 (define (tc-type-needs-resolution? [ty : AstType]) : bool
   (match ty
     [(AstTyFunc args ret)
-      (if (tc-type-list-needs-resolution? args)
+      (if (tc-type-list-needs-resolution? (box-get args))
         true
         (tc-type-needs-resolution? (ty-node-get ret)))]
-    [(AstTyTuple elems) (tc-type-list-needs-resolution? elems)]
+    [(AstTyTuple elems) (tc-type-list-needs-resolution? (box-get elems))]
     [(AstTyArray elem _) (tc-type-needs-resolution? (ty-node-get elem))]
     [(AstTyDynArray elem) (tc-type-needs-resolution? (ty-node-get elem))]
     [(AstTyBox elem) (tc-type-needs-resolution? (ty-node-get elem))]
@@ -5599,12 +5613,12 @@
   [handle : i64]
   [lifetimes : AstLifetimeList]) : AstType
   (if (= (compiler-symbol-handle-kind handle) (compiler-symbol-kind-defenum))
-    (AstTyEnumArgs (intern name) lifetimes)
+    (ast-ty-enum-args (intern name) lifetimes)
     (if (=
       (compiler-symbol-handle-kind handle)
       (compiler-symbol-kind-defstruct))
-      (AstTyStructArgs (intern name) lifetimes)
-      (AstTyVarArgs (intern name) lifetimes))))
+      (ast-ty-struct-args (intern name) lifetimes)
+      (ast-ty-var-args (intern name) lifetimes))))
 
 (define tc-nominal-owner-cache-handle : i64
   0)
@@ -5962,9 +5976,10 @@
     (match ty
       [(AstTyFunc args ret)
         (ast-ty-func
-          (tc-resolve-type-list ctx args)
+          (tc-resolve-type-list ctx (box-get args))
           (tc-resolve-type ctx (ty-node-get ret)))]
-      [(AstTyTuple elems) (AstTyTuple (tc-resolve-type-list ctx elems))]
+      [(AstTyTuple elems)
+        (ast-ty-tuple (tc-resolve-type-list ctx (box-get elems)))]
       [(AstTyArray elem len)
         (ast-ty-array (tc-resolve-type ctx (ty-node-get elem)) len)]
       [(AstTyDynArray elem)
@@ -5980,7 +5995,10 @@
       [(AstTyRegion region inner)
         (ast-ty-region region (tc-resolve-type ctx (ty-node-get inner)))]
       [(AstTyVarArgs name lifetimes)
-        (tc-resolve-type-name-with-args ctx (intern-str name) lifetimes)]
+        (tc-resolve-type-name-with-args
+          ctx
+          (intern-str name)
+          (box-get lifetimes))]
       [(AstTyVar name) (tc-resolve-type-name ctx (intern-str name))]
       [_ ty])
     ty))
@@ -6021,7 +6039,7 @@
                       lookup-name
                       handle
                       lifetimes)])])]
-          [(NoneI64) (AstTyVarArgs (intern name) lifetimes)]))]))
+          [(NoneI64) (ast-ty-var-args (intern name) lifetimes)]))]))
 
 (define (tc-source-str-value-policy-message) : String
   "typecheck: str is a borrowed string-slice referent; use (& lifetime str)")
@@ -6123,10 +6141,11 @@
         [(OkTcUnit)
           (match (tc-resolve-type ctx ty)
             [(AstTyFunc args ret)
-              (match (tc-source-type-list-policy-ok ctx args)
+              (match (tc-source-type-list-policy-ok ctx (box-get args))
                 [(OkTcUnit) (tc-source-type-policy-ok ctx (ty-node-get ret))]
                 [(ErrTcUnit message) (ErrTcUnit message)])]
-            [(AstTyTuple elems) (tc-source-type-list-policy-ok ctx elems)]
+            [(AstTyTuple elems)
+              (tc-source-type-list-policy-ok ctx (box-get elems))]
             [(AstTyArray elem _)
               (tc-source-type-policy-ok ctx (ty-node-get elem))]
             [(AstTyDynArray elem)
@@ -6165,7 +6184,7 @@
                   (tc-nominal-lifetime-use-policy-ok
                     ctx
                     (intern-str name)
-                    lifetimes)]
+                    (box-get lifetimes))]
                 [(ErrTcUnit message) (ErrTcUnit message)])]
             [(AstTyStructArgs name lifetimes)
               (match (tc-qualified-type-visible-ok ctx (intern-str name))
@@ -6173,7 +6192,7 @@
                   (tc-nominal-lifetime-use-policy-ok
                     ctx
                     (intern-str name)
-                    lifetimes)]
+                    (box-get lifetimes))]
                 [(ErrTcUnit message) (ErrTcUnit message)])]
             [(AstTyVarArgs name _)
               (ErrTcUnit (tc-source-type-policy-message (intern-str name)))]
@@ -7491,12 +7510,13 @@
       (match b
         [(AstTyFunc b-args b-ret)
           (and
-            (tc-type-list-eq a-args b-args)
+            (tc-type-list-eq (box-get a-args) (box-get b-args))
             (tc-type-eq (ty-node-get a-ret) (ty-node-get b-ret)))]
         [_ false])]
     [(AstTyTuple a-elems)
       (match b
-        [(AstTyTuple b-elems) (tc-type-list-eq a-elems b-elems)]
+        [(AstTyTuple b-elems)
+          (tc-type-list-eq (box-get a-elems) (box-get b-elems))]
         [_ false])]
     [(AstTyArray a-elem a-len)
       (match b
@@ -7550,7 +7570,9 @@
     [(AstTyEnumArgs a-name a-lifetimes)
       (match b
         [(AstTyEnumArgs b-name b-lifetimes)
-          (and (= a-name b-name) (tc-lifetime-list-eq a-lifetimes b-lifetimes))]
+          (and
+            (= a-name b-name)
+            (tc-lifetime-list-eq (box-get a-lifetimes) (box-get b-lifetimes)))]
         [_ false])]
     [(AstTyStruct a-name)
       (match b
@@ -7559,7 +7581,9 @@
     [(AstTyStructArgs a-name a-lifetimes)
       (match b
         [(AstTyStructArgs b-name b-lifetimes)
-          (and (= a-name b-name) (tc-lifetime-list-eq a-lifetimes b-lifetimes))]
+          (and
+            (= a-name b-name)
+            (tc-lifetime-list-eq (box-get a-lifetimes) (box-get b-lifetimes)))]
         [_ false])]
     [(AstTyVar a-name)
       (match b
@@ -7568,7 +7592,9 @@
     [(AstTyVarArgs a-name a-lifetimes)
       (match b
         [(AstTyVarArgs b-name b-lifetimes)
-          (and (= a-name b-name) (tc-lifetime-list-eq a-lifetimes b-lifetimes))]
+          (and
+            (= a-name b-name)
+            (tc-lifetime-list-eq (box-get a-lifetimes) (box-get b-lifetimes)))]
         [_ false])]))
 
 (define (tc-type-eq [a : AstType] [b : AstType]) : bool
@@ -9014,7 +9040,7 @@
     [ret : AstType
       (match lifetimes
         [(AstLifetimeNil) (AstTyEnum (intern enum-name))]
-        [_ (AstTyEnumArgs (intern enum-name) lifetimes)])]
+        [_ (ast-ty-enum-args (intern enum-name) lifetimes)])]
     (match fields
       [(AstTypeNil) ret]
       [_ (ast-ty-func (tc-resolve-type-list ctx fields) ret)])))
@@ -9147,7 +9173,7 @@
       (let
         [name-str : String (intern-str name)]
         [scoped-name : String (compiler-symbol-module-key module name-str)]
-        [enum-ty : AstType (AstTyEnumArgs (intern scoped-name) lifetimes)]
+        [enum-ty : AstType (ast-ty-enum-args (intern scoped-name) lifetimes)]
         (match (tc-bind-enum-variants-in-module
           (tc-context-with-module ctx module)
           env
@@ -9182,7 +9208,8 @@
       (let
         [name-str : String (intern-str name)]
         [scoped-name : String (compiler-symbol-module-key module name-str)]
-        [struct-ty : AstType (AstTyStructArgs (intern scoped-name) lifetimes)]
+        [struct-ty : AstType
+          (ast-ty-struct-args (intern scoped-name) lifetimes)]
         [constructor-ty : AstType
           (ast-ty-func
             (tc-field-type-list (tc-context-with-module ctx module) fields)
@@ -9378,7 +9405,7 @@
       (let
         [name-str : String (intern-str name)]
         [scoped-name : String (compiler-symbol-module-key module name-str)]
-        [enum-ty : AstType (AstTyEnumArgs (intern scoped-name) lifetimes)]
+        [enum-ty : AstType (ast-ty-enum-args (intern scoped-name) lifetimes)]
         (OkTcEnv
           (tc-bind-enum-cleanup-alias
             (tc-bind-enum-variant-aliases
@@ -9413,7 +9440,7 @@
       (let
         [name-str : String (intern-str name)]
         [struct-ty : AstType
-          (AstTyStructArgs
+          (ast-ty-struct-args
             (intern (compiler-symbol-module-key module name-str))
             lifetimes)]
         [constructor-ty : AstType
@@ -9664,7 +9691,7 @@
       (let
         [name-str : String (intern-str name)]
         [enum-ty : AstType
-          (AstTyEnumArgs
+          (ast-ty-enum-args
             (intern (compiler-symbol-module-key module name-str))
             lifetimes)]
         (OkTcEnv
@@ -9694,7 +9721,7 @@
       (let
         [name-str : String (intern-str name)]
         [struct-ty : AstType
-          (AstTyStructArgs
+          (ast-ty-struct-args
             (intern (compiler-symbol-module-key module name-str))
             lifetimes)]
         [constructor-ty : AstType
@@ -10158,7 +10185,7 @@
           env
           exprs
           expected-elems)
-          [(OkTcTypeList result-elems) (OkTcType (AstTyTuple result-elems))]
+          [(OkTcTypeList result-elems) (OkTcType (ast-ty-tuple result-elems))]
           [(ErrTcTypeList message) (ErrTcType message)])]
       [(ErrTcUnit message) (ErrTcType message)])
     (tc-expr ctx env (AstExprTuple exprs))))
@@ -10305,7 +10332,11 @@
     [(AstExprTuple exprs)
       (match (tc-type-strip-region expected)
         [(AstTyTuple expected-elems)
-          (tc-expr-tuple-with-expected-or-actual ctx env exprs expected-elems)]
+          (tc-expr-tuple-with-expected-or-actual
+            ctx
+            env
+            exprs
+            (box-get expected-elems))]
         [_ (tc-expr ctx env expr)])]
     [(AstExprBegin exprs) (tc-begin-list-with-expected ctx env exprs expected)]
     [(AstExprUnsafe exprs)
@@ -10733,8 +10764,10 @@
 
 (define (tc-lifetime-constructor-ret? [ret : AstType]) : bool
   (match ret
-    [(AstTyStructArgs _ lifetimes) (> (tc-lifetime-list-count lifetimes) 0)]
-    [(AstTyEnumArgs _ lifetimes) (> (tc-lifetime-list-count lifetimes) 0)]
+    [(AstTyStructArgs _ lifetimes)
+      (> (tc-lifetime-list-count (box-get lifetimes)) 0)]
+    [(AstTyEnumArgs _ lifetimes)
+      (> (tc-lifetime-list-count (box-get lifetimes)) 0)]
     [_ false]))
 
 (define (tc-call-lifetime-constructor-for-func?
@@ -10764,9 +10797,10 @@
   (match ty
     [(AstTyFunc args ret)
       (ast-ty-func
-        (tc-lifetime-subst-type-list subst args)
+        (tc-lifetime-subst-type-list subst (box-get args))
         (tc-lifetime-subst-type subst (ty-node-get ret)))]
-    [(AstTyTuple elems) (AstTyTuple (tc-lifetime-subst-type-list subst elems))]
+    [(AstTyTuple elems)
+      (ast-ty-tuple (tc-lifetime-subst-type-list subst (box-get elems)))]
     [(AstTyArray elem len)
       (ast-ty-array (tc-lifetime-subst-type subst (ty-node-get elem)) len)]
     [(AstTyDynArray elem)
@@ -10788,11 +10822,13 @@
     [(AstTyRegion region inner)
       (ast-ty-region region (tc-lifetime-subst-type subst (ty-node-get inner)))]
     [(AstTyEnumArgs name lifetimes)
-      (AstTyEnumArgs name (tc-lifetime-subst-list subst lifetimes))]
+      (ast-ty-enum-args name (tc-lifetime-subst-list subst (box-get lifetimes)))]
     [(AstTyStructArgs name lifetimes)
-      (AstTyStructArgs name (tc-lifetime-subst-list subst lifetimes))]
+      (ast-ty-struct-args
+        name
+        (tc-lifetime-subst-list subst (box-get lifetimes)))]
     [(AstTyVarArgs name lifetimes)
-      (AstTyVarArgs name (tc-lifetime-subst-list subst lifetimes))]
+      (ast-ty-var-args name (tc-lifetime-subst-list subst (box-get lifetimes)))]
     [_ ty]))
 
 (define (tc-infer-lifetime-name
@@ -10888,8 +10924,8 @@
               (tc-infer-lifetime-list
                 params
                 subst
-                formal-lifetimes
-                actual-lifetimes)
+                (box-get formal-lifetimes)
+                (box-get actual-lifetimes))
               (ErrTcLifetimeSubst "typecheck: argument type mismatch"))]
           [_ (ErrTcLifetimeSubst "typecheck: argument type mismatch")])]
       [(AstTyStructArgs formal-name formal-lifetimes)
@@ -10899,8 +10935,8 @@
               (tc-infer-lifetime-list
                 params
                 subst
-                formal-lifetimes
-                actual-lifetimes)
+                (box-get formal-lifetimes)
+                (box-get actual-lifetimes))
               (ErrTcLifetimeSubst "typecheck: argument type mismatch"))]
           [_ (ErrTcLifetimeSubst "typecheck: argument type mismatch")])]
       [(AstTyTuple formal-elems)
@@ -10910,8 +10946,8 @@
               ctx
               params
               subst
-              formal-elems
-              actual-elems)]
+              (box-get formal-elems)
+              (box-get actual-elems))]
           [_ (ErrTcLifetimeSubst "typecheck: argument type mismatch")])]
       [(AstTyArray formal-elem formal-len)
         (match got
@@ -11187,8 +11223,8 @@
   (let
     [lifetimes : AstLifetimeList
       (match ret
-        [(AstTyStructArgs _ params-lifetimes) params-lifetimes]
-        [(AstTyEnumArgs _ params-lifetimes) params-lifetimes]
+        [(AstTyStructArgs _ params-lifetimes) (box-get params-lifetimes)]
+        [(AstTyEnumArgs _ params-lifetimes) (box-get params-lifetimes)]
         [_ AstLifetimeNil])]
     (match (tc-infer-call-lifetime-subst
       ctx
@@ -11747,7 +11783,7 @@
   [ty : AstType]) : bool
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
     [(AstTyFunc task-params task-ret-box)
-      (match task-params
+      (match (box-get task-params)
         [(AstTypeNil)
           (tc-thread-safe-spawn-task-ret-type?
             ctx
@@ -11985,7 +12021,12 @@
           (tc-thread-transfer-owned-heap-reject))]
       [(AstTyTuple elems)
         (tc-thread-transfer-aggregate-class
-          (tc-thread-transfer-type-list-class ctx env elems stack owner-proof))]
+          (tc-thread-transfer-type-list-class
+            ctx
+            env
+            (box-get elems)
+            stack
+            owner-proof))]
       [(AstTyArray elem _)
         (tc-thread-transfer-aggregate-class
           (tc-thread-transfer-type-class
@@ -12002,7 +12043,7 @@
           stack
           owner-proof)]
       [(AstTyStructArgs name lifetimes)
-        (if (> (tc-lifetime-list-count lifetimes) 0)
+        (if (> (tc-lifetime-list-count (box-get lifetimes)) 0)
           (tc-thread-transfer-region-reject)
           (tc-thread-transfer-struct-class
             ctx
@@ -12018,7 +12059,7 @@
           stack
           owner-proof)]
       [(AstTyEnumArgs name lifetimes)
-        (if (> (tc-lifetime-list-count lifetimes) 0)
+        (if (> (tc-lifetime-list-count (box-get lifetimes)) 0)
           (tc-thread-transfer-region-reject)
           (tc-thread-transfer-enum-class
             ctx
@@ -12589,7 +12630,7 @@
                       env
                       func
                       args
-                      params
+                      (box-get params)
                       (ty-node-get ret))]
                   [_ (ErrTcType "typecheck: call target is not a function")])]
               [(ErrTcType message) (ErrTcType message)]))])]
@@ -12598,7 +12639,13 @@
         [(OkTcType fn-ty)
           (match fn-ty
             [(AstTyFunc params ret)
-              (tc-call-function-type ctx env func args params (ty-node-get ret))]
+              (tc-call-function-type
+                ctx
+                env
+                func
+                args
+                (box-get params)
+                (ty-node-get ret))]
             [(AstTyRegion _ inner)
               (match (ty-node-get inner)
                 [(AstTyFunc params ret)
@@ -12606,10 +12653,10 @@
                     ctx
                     env
                     args
-                    params
+                    (box-get params)
                     false
                     (AstNoType)
-                    (TcArityDetailed func args params)
+                    (TcArityDetailed func args (box-get params))
                     (tc-expr-c-abi-fnptr? ctx env func))
                     [(OkTcUnit)
                       (OkTcType (tc-tag-active-region env (ty-node-get ret)))]
@@ -14101,7 +14148,7 @@
             [(AstTyFunc args ret)
               (let
                 [ret-ty : AstType (ty-node-get ret)]
-                (match args
+                (match (box-get args)
                   [(AstTypeCons arg rest)
                     (let
                       [arg-ty : AstType (ty-node-get arg)]
@@ -18669,7 +18716,7 @@
   [stack : TcStringList]) : ResultTcUnit
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
     [(AstTyTuple elems)
-      (tc-inline-aggregate-type-list-finite-ok ctx elems stack)]
+      (tc-inline-aggregate-type-list-finite-ok ctx (box-get elems) stack)]
     [(AstTyArray elem _)
       (tc-inline-aggregate-type-finite-ok ctx (ty-node-get elem) stack)]
     [(AstTyEnum name)
@@ -19107,7 +19154,7 @@
     [(AstTyVarArgs _ _)
       (OkTcLayoutInfo (tc-inline-aggregate-pointer-layout-info))]
     [(AstTyTuple elems)
-      (tc-inline-aggregate-type-list-layout-info ctx elems 0 0 stack)]
+      (tc-inline-aggregate-type-list-layout-info ctx (box-get elems) 0 0 stack)]
     [(AstTyArray elem count)
       (match (tc-inline-aggregate-type-layout-with-stack
         ctx
@@ -20233,7 +20280,7 @@
       (match (tc-struct-field-type-with-args
         ctx
         (intern-str struct-name)
-        lifetimes
+        (box-get lifetimes)
         field)
         [(OkTcType field-ty)
           (OkTcType (tc-project-from-region-container receiver-ty field-ty))]
@@ -20295,7 +20342,7 @@
           (match (tc-struct-field-type-with-args
             ctx
             (intern-str struct-name)
-            lifetimes
+            (box-get lifetimes)
             field)
             [(OkTcType field-ty)
               (OkTcBorrowPlace
@@ -20313,7 +20360,7 @@
     [(TcBorrowPlace lifetime tuple-ty)
       (match (tc-type-strip-region (tc-resolve-type ctx tuple-ty))
         [(AstTyTuple elems)
-          (match (tc-type-list-ref elems index)
+          (match (tc-type-list-ref (box-get elems) index)
             [(OkTcType elem-ty)
               (OkTcBorrowPlace
                 (TcBorrowPlace lifetime (tc-borrow-referent-type elem-ty)))]
@@ -20725,7 +20772,7 @@
                 env
                 (intern-str enum-name)
                 (intern-str name)
-                lifetimes
+                (box-get lifetimes)
                 args
                 (tc-type-outer-region ty))]
             [_
@@ -20865,7 +20912,7 @@
                 lifetime
                 (intern-str enum-name)
                 (intern-str name)
-                lifetimes
+                (box-get lifetimes)
                 args)]
             [_
               (ErrTcEnv "typecheck: nested variant pattern requires enum field")]))]
@@ -20928,7 +20975,7 @@
               env
               lifetime
               (intern-str enum-name)
-              lifetimes
+              (box-get lifetimes)
               pattern)]
           [_
             (match pattern
@@ -20974,7 +21021,7 @@
             env
             (intern-str enum-name)
             (intern-str variant-name)
-            lifetimes
+            (box-get lifetimes)
             AstPatternNil
             (tc-type-outer-region scrut-ty))]
         [(AstPatVariant variant-name args-box)
@@ -20985,7 +21032,7 @@
               env
               (intern-str enum-name)
               (intern-str variant-name)
-              lifetimes
+              (box-get lifetimes)
               args
               (tc-type-outer-region scrut-ty)))]
         [_ (ErrTcEnv "typecheck: unsupported enum match pattern")])]
@@ -22413,12 +22460,18 @@
     [field-types : AstTypeList (tc-field-type-list ctx fields)]
     (match struct-ty
       [(AstTyStructArgs _ lifetimes)
-        (match (tc-lifetime-subst-from-nominal-args ctx struct-name lifetimes)
+        (match (tc-lifetime-subst-from-nominal-args
+          ctx
+          struct-name
+          (box-get lifetimes))
           [(OkTcLifetimeSubst subst)
             (tc-lifetime-subst-type-list subst field-types)]
           [(ErrTcLifetimeSubst _) field-types])]
       [(AstTyVarArgs _ lifetimes)
-        (match (tc-lifetime-subst-from-nominal-args ctx struct-name lifetimes)
+        (match (tc-lifetime-subst-from-nominal-args
+          ctx
+          struct-name
+          (box-get lifetimes))
           [(OkTcLifetimeSubst subst)
             (tc-lifetime-subst-type-list subst field-types)]
           [(ErrTcLifetimeSubst _) field-types])]
@@ -22431,11 +22484,17 @@
   [fields : AstTypeList]) : AstTypeList
   (match enum-ty
     [(AstTyEnumArgs _ lifetimes)
-      (match (tc-lifetime-subst-from-nominal-args ctx enum-name lifetimes)
+      (match (tc-lifetime-subst-from-nominal-args
+        ctx
+        enum-name
+        (box-get lifetimes))
         [(OkTcLifetimeSubst subst) (tc-lifetime-subst-type-list subst fields)]
         [(ErrTcLifetimeSubst _) fields])]
     [(AstTyVarArgs _ lifetimes)
-      (match (tc-lifetime-subst-from-nominal-args ctx enum-name lifetimes)
+      (match (tc-lifetime-subst-from-nominal-args
+        ctx
+        enum-name
+        (box-get lifetimes))
         [(OkTcLifetimeSubst subst) (tc-lifetime-subst-type-list subst fields)]
         [(ErrTcLifetimeSubst _) fields])]
     [_ fields]))
@@ -22525,7 +22584,7 @@
         [(AstTyBox elem) (tc-init-type-supported ctx env (ty-node-get elem))]
         [(AstTyTuple elems)
           (match (tc-init-aggregate-layout-ok ctx resolved)
-            [(OkTcUnit) (tc-init-type-list-supported ctx env elems)]
+            [(OkTcUnit) (tc-init-type-list-supported ctx env (box-get elems))]
             [(ErrTcUnit message) (ErrTcUnit message)])]
         [(AstTyArray elem count)
           (if (< count 0)
@@ -23189,7 +23248,7 @@
         [(OkTcUnit)
           (match (tc-expr-list-types ctx env exprs)
             [(OkTcTypeList tys)
-              (OkTcType (tc-tag-active-region env (AstTyTuple tys)))]
+              (OkTcType (tc-tag-active-region env (ast-ty-tuple tys)))]
             [(ErrTcTypeList message) (ErrTcType message)])]
         [(ErrTcUnit message) (ErrTcType message)])]
     [(AstExprTupleRef tuple-box index)
@@ -23199,7 +23258,7 @@
           [(OkTcType tuple-ty)
             (match (tc-type-strip-region tuple-ty)
               [(AstTyTuple tys)
-                (match (tc-type-list-ref tys index)
+                (match (tc-type-list-ref (box-get tys) index)
                   [(OkTcType elem-ty)
                     (OkTcType
                       (tc-project-from-region-container tuple-ty elem-ty))]
@@ -23904,7 +23963,7 @@
 (define (tc-check-extern-c-abi [ctx : TcContext] [ty : AstType]) : ResultTcUnit
   (match ty
     [(AstTyFunc args ret)
-      (match (tc-check-extern-arg-abi ctx args)
+      (match (tc-check-extern-arg-abi ctx (box-get args))
         [(OkTcUnit)
           (if (tc-extern-abi-value-type-ok? ctx (ty-node-get ret))
             OkTcUnit
@@ -26705,7 +26764,7 @@
   (match (tc-expr ctx env func)
     [(OkTcType fn-ty)
       (match (tc-type-strip-region fn-ty)
-        [(AstTyFunc params _) (OkTcTypeList params)]
+        [(AstTyFunc params _) (OkTcTypeList (box-get params))]
         [(AstTyEnum _) (OkTcTypeList AstTypeNil)]
         [(AstTyEnumArgs _ _) (OkTcTypeList AstTypeNil)]
         [_ (ErrTcTypeList "typecheck: call target is not a function")])]
@@ -30426,12 +30485,12 @@
     [(AstTyPtr inner) (macro-type-unary-sexpr "Ptr" inner span origin)]
     [(AstTyMutPtr inner) (macro-type-unary-sexpr "MutPtr" inner span origin)]
     [(AstTyTuple items)
-      (match (macro-type-list-to-spanned-sexpr items span origin)
+      (match (macro-type-list-to-spanned-sexpr (box-get items) span origin)
         [(OkMacroSexpr stail)
           (OkMacroSexpr (spanned-sexpr-cons (SpSSym "Tuple" span) stail span))]
         [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
     [(AstTyFunc args ret)
-      (match (macro-type-list-to-spanned-sexpr args span origin)
+      (match (macro-type-list-to-spanned-sexpr (box-get args) span origin)
         [(OkMacroSexpr sargs)
           (match (macro-type-to-spanned-sexpr (ty-node-get ret) span origin)
             [(OkMacroSexpr sret)
@@ -30465,17 +30524,17 @@
         (macro-resolved-nominal-type-sexpr
           (macro-internal-resolved-struct-type-marker)
           (intern-str name)
-          lifetimes
+          (box-get lifetimes)
           span))]
     [(AstTyEnumArgs name lifetimes)
       (OkMacroSexpr
         (macro-resolved-nominal-type-sexpr
           (macro-internal-resolved-enum-type-marker)
           (intern-str name)
-          lifetimes
+          (box-get lifetimes)
           span))]
     [(AstTyVarArgs name lifetimes)
-      (macro-type-named-args-sexpr (intern-str name) lifetimes span)]
+      (macro-type-named-args-sexpr (intern-str name) (box-get lifetimes) span)]
     [(AstTyRef region inner)
       (match (macro-type-to-spanned-sexpr (ty-node-get inner) span origin)
         [(OkMacroSexpr sinner)
@@ -35307,7 +35366,7 @@
     [enum-ty : AstType
       (match lifetimes
         [(AstLifetimeNil) (AstTyEnum (intern enum-name))]
-        [_ (AstTyEnumArgs (intern enum-name) lifetimes)])]
+        [_ (ast-ty-enum-args (intern enum-name) lifetimes)])]
     (match (tc-check-enum-cleanup-fn ctx env enum-name cleanup enum-ty)
       [(OkTcUnit)
         (tc-check-cleanup-enum-variants ctx env enum-name cleanup variants)]

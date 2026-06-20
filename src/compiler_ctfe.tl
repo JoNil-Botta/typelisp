@@ -1360,10 +1360,10 @@
   (match ty
     [(AstTyFunc args ret)
       (ast-ty-func
-        (ctfe-reflect-resolve-type-list infos args)
+        (ctfe-reflect-resolve-type-list infos (box-get args))
         (ctfe-reflect-resolve-type infos (ty-node-get ret)))]
     [(AstTyTuple elems)
-      (AstTyTuple (ctfe-reflect-resolve-type-list infos elems))]
+      (ast-ty-tuple (ctfe-reflect-resolve-type-list infos (box-get elems)))]
     [(AstTyArray elem len)
       (ast-ty-array (ctfe-reflect-resolve-type infos (ty-node-get elem)) len)]
     [(AstTyDynArray elem)
@@ -1467,12 +1467,12 @@
       (string-append
         "fn_"
         (string-append
-          (ctfe-type-list-key infos args)
+          (ctfe-type-list-key infos (box-get args))
           (string-append
             "_to_"
             (ctfe-type-key-with-reflections infos (ty-node-get ret)))))]
     [(AstTyTuple elems)
-      (string-append "tuple_" (ctfe-type-list-key infos elems))]
+      (string-append "tuple_" (ctfe-type-list-key infos (box-get elems)))]
     [(AstTyArray elem count)
       (string-append
         "array_"
@@ -1525,21 +1525,21 @@
         "enumargs_"
         (string-append
           (intern-str name)
-          (string-append "_" (ctfe-lifetime-list-key lifetimes))))]
+          (string-append "_" (ctfe-lifetime-list-key (box-get lifetimes)))))]
     [(AstTyStruct name) (string-append "struct_" (intern-str name))]
     [(AstTyStructArgs name lifetimes)
       (string-append
         "structargs_"
         (string-append
           (intern-str name)
-          (string-append "_" (ctfe-lifetime-list-key lifetimes))))]
+          (string-append "_" (ctfe-lifetime-list-key (box-get lifetimes)))))]
     [(AstTyVar name) (string-append "var_" (intern-str name))]
     [(AstTyVarArgs name lifetimes)
       (string-append
         "varargs_"
         (string-append
           (intern-str name)
-          (string-append "_" (ctfe-lifetime-list-key lifetimes))))]))
+          (string-append "_" (ctfe-lifetime-list-key (box-get lifetimes)))))]))
 
 (define (ctfe-type-key [ty : AstType]) : String
   (ctfe-type-key-with-reflections (ctfe-reflect-info-list-empty) ty))
@@ -2250,7 +2250,7 @@
                       (match ty
                         [(AstTyFunc params _)
                           (OkCtfe
-                            (CtfeI64 (ctfe-type-list-count params))
+                            (CtfeI64 (ctfe-type-list-count (box-get params)))
                             arg-fuel)]
                         [_
                           (ErrCtfe
@@ -2626,7 +2626,7 @@
                           (match ty
                             [(AstTyFunc params _)
                               (match (ctfe-type-list-ref
-                                params
+                                (box-get params)
                                 (ctfe-env-reflections env)
                                 index)
                                 [(OkCtfeTypeLookup param-ty)
@@ -4052,9 +4052,11 @@
     [(AstTyFunc args ret)
       (ctfe-type-syntax-call
         "->"
-        (ctfe-func-type-to-expr-list args (ty-node-get ret)))]
+        (ctfe-func-type-to-expr-list (box-get args) (ty-node-get ret)))]
     [(AstTyTuple elems)
-      (ctfe-type-syntax-call "Tuple" (ctfe-type-list-to-expr-list elems))]
+      (ctfe-type-syntax-call
+        "Tuple"
+        (ctfe-type-list-to-expr-list (box-get elems)))]
     [(AstTyArray elem count)
       (ctfe-type-syntax-call
         "Array"
@@ -4106,7 +4108,7 @@
       (ctfe-resolved-nominal-type-to-expr
         (ctfe-internal-resolved-enum-type-marker)
         (intern-str name)
-        lifetimes)]
+        (box-get lifetimes))]
     [(AstTyStruct name)
       (ctfe-resolved-nominal-type-to-expr
         (ctfe-internal-resolved-struct-type-marker)
@@ -4116,12 +4118,12 @@
       (ctfe-resolved-nominal-type-to-expr
         (ctfe-internal-resolved-struct-type-marker)
         (intern-str name)
-        lifetimes)]
+        (box-get lifetimes))]
     [(AstTyVar name) (ctfe-type-syntax-name (intern-str name))]
     [(AstTyVarArgs name lifetimes)
       (ctfe-type-syntax-call
         (intern-str name)
-        (ctfe-lifetime-list-to-expr-list lifetimes))]))
+        (ctfe-lifetime-list-to-expr-list (box-get lifetimes)))]))
 
 (define (ctfe-type-expr-error [origin : AstExpr]) : ResultCtfeQuoteType
   (ErrCtfeQuoteType
@@ -4226,7 +4228,7 @@
                       [(AstTyFunc tail-args ret)
                         (OkCtfeQuoteType
                           (ast-ty-func
-                            (ast-type-cons arg-ty tail-args)
+                            (ast-type-cons arg-ty (box-get tail-args))
                             (ty-node-get ret))
                           next-fuel)]
                       [_ (ctfe-type-expr-error origin)])]
@@ -4324,7 +4326,7 @@
                 [(string-eq head "Tuple")
                   (match (ctfe-expr-list-to-type-list args origin fuel)
                     [(OkCtfeQuoteTypeList elems next-fuel)
-                      (OkCtfeQuoteType (AstTyTuple elems) next-fuel)]
+                      (OkCtfeQuoteType (ast-ty-tuple elems) next-fuel)]
                     [(ErrCtfeQuoteTypeList diag) (ErrCtfeQuoteType diag)])]
                 [else (ctfe-type-expr-error origin)]))]
           [_ (ctfe-type-expr-error origin)]))]
@@ -4389,7 +4391,7 @@
   [fuel : i64]) : ResultCtfeQuoteType
   (match ty
     [(AstTyFunc args ret)
-      (match (ctfe-quote-type-list args env origin fuel)
+      (match (ctfe-quote-type-list (box-get args) env origin fuel)
         [(OkCtfeQuoteTypeList quoted-args args-fuel)
           (match (ctfe-quote-type (ty-node-get ret) env origin args-fuel)
             [(OkCtfeQuoteType quoted-ret ret-fuel)
@@ -4397,9 +4399,9 @@
             [(ErrCtfeQuoteType diag) (ErrCtfeQuoteType diag)])]
         [(ErrCtfeQuoteTypeList diag) (ErrCtfeQuoteType diag)])]
     [(AstTyTuple elems)
-      (match (ctfe-quote-type-list elems env origin fuel)
+      (match (ctfe-quote-type-list (box-get elems) env origin fuel)
         [(OkCtfeQuoteTypeList quoted next-fuel)
-          (OkCtfeQuoteType (AstTyTuple quoted) next-fuel)]
+          (OkCtfeQuoteType (ast-ty-tuple quoted) next-fuel)]
         [(ErrCtfeQuoteTypeList diag) (ErrCtfeQuoteType diag)])]
     [(AstTyArray elem count)
       (match (ctfe-quote-type (ty-node-get elem) env origin fuel)
@@ -4443,7 +4445,7 @@
         [(ErrCtfeQuoteType diag) (ErrCtfeQuoteType diag)])]
     [(AstTyVarArgs name lifetimes)
       (if (= name (intern "unquote"))
-        (ctfe-quote-type-unquote lifetimes env origin fuel)
+        (ctfe-quote-type-unquote (box-get lifetimes) env origin fuel)
         (OkCtfeQuoteType ty fuel))]
     [_ (OkCtfeQuoteType ty fuel)]))
 
@@ -6953,12 +6955,13 @@
       (match b
         [(AstTyFunc b-args b-ret)
           (and
-            (ctfe-type-list-eq a-args b-args)
+            (ctfe-type-list-eq (box-get a-args) (box-get b-args))
             (ctfe-type-eq (ty-node-get a-ret) (ty-node-get b-ret)))]
         [_ false])]
     [(AstTyTuple a-elems)
       (match b
-        [(AstTyTuple b-elems) (ctfe-type-list-eq a-elems b-elems)]
+        [(AstTyTuple b-elems)
+          (ctfe-type-list-eq (box-get a-elems) (box-get b-elems))]
         [_ false])]
     [(AstTyArray a-elem a-count)
       (match b
@@ -7017,7 +7020,7 @@
         [(AstTyEnumArgs b-name b-lifetimes)
           (and
             (= a-name b-name)
-            (ctfe-lifetime-list-eq a-lifetimes b-lifetimes))]
+            (ctfe-lifetime-list-eq (box-get a-lifetimes) (box-get b-lifetimes)))]
         [_ false])]
     [(AstTyStruct a-name)
       (match b
@@ -7028,7 +7031,7 @@
         [(AstTyStructArgs b-name b-lifetimes)
           (and
             (= a-name b-name)
-            (ctfe-lifetime-list-eq a-lifetimes b-lifetimes))]
+            (ctfe-lifetime-list-eq (box-get a-lifetimes) (box-get b-lifetimes)))]
         [_ false])]
     [(AstTyVar a-name)
       (match b
@@ -7039,7 +7042,7 @@
         [(AstTyVarArgs b-name b-lifetimes)
           (and
             (= a-name b-name)
-            (ctfe-lifetime-list-eq a-lifetimes b-lifetimes))]
+            (ctfe-lifetime-list-eq (box-get a-lifetimes) (box-get b-lifetimes)))]
         [_ false])]))
 
 (define (compiler-ctfe-type-literal-ok?) : bool

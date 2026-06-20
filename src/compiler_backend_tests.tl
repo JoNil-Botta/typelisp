@@ -9106,7 +9106,7 @@
   [abi : AstExternAbi]) : CompilerIrExtern
   (IrExtern
     name
-    (AstTyFunc params (ty-node-push ret))
+    (ast-ty-func params ret)
     abi
     symbol
     AstExternLinkInputNil

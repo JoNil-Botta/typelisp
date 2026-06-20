@@ -3426,12 +3426,13 @@
       (match b
         [(AstTyFunc b-params b-ret)
           (and
-            (opt-type-list-eq a-params b-params)
+            (opt-type-list-eq (box-get a-params) (box-get b-params))
             (opt-type-eq (ty-node-get a-ret) (ty-node-get b-ret)))]
         [_ false])]
     [(AstTyTuple a-items)
       (match b
-        [(AstTyTuple b-items) (opt-type-list-eq a-items b-items)]
+        [(AstTyTuple b-items)
+          (opt-type-list-eq (box-get a-items) (box-get b-items))]
         [_ false])]
     [(AstTyArray a-item a-len)
       (match b
@@ -3488,7 +3489,9 @@
     [(AstTyEnumArgs a-name a-lifetimes)
       (match b
         [(AstTyEnumArgs b-name b-lifetimes)
-          (and (= a-name b-name) (opt-lifetime-list-eq a-lifetimes b-lifetimes))]
+          (and
+            (= a-name b-name)
+            (opt-lifetime-list-eq (box-get a-lifetimes) (box-get b-lifetimes)))]
         [_ false])]
     [(AstTyStruct a-name)
       (match b
@@ -3497,7 +3500,9 @@
     [(AstTyStructArgs a-name a-lifetimes)
       (match b
         [(AstTyStructArgs b-name b-lifetimes)
-          (and (= a-name b-name) (opt-lifetime-list-eq a-lifetimes b-lifetimes))]
+          (and
+            (= a-name b-name)
+            (opt-lifetime-list-eq (box-get a-lifetimes) (box-get b-lifetimes)))]
         [_ false])]
     [(AstTyVar a-name)
       (match b
@@ -3506,7 +3511,9 @@
     [(AstTyVarArgs a-name a-lifetimes)
       (match b
         [(AstTyVarArgs b-name b-lifetimes)
-          (and (= a-name b-name) (opt-lifetime-list-eq a-lifetimes b-lifetimes))]
+          (and
+            (= a-name b-name)
+            (opt-lifetime-list-eq (box-get a-lifetimes) (box-get b-lifetimes)))]
         [_ false])]))
 
 (define (opt-value-hash [value : CompilerIrValue]) : i64
@@ -3592,9 +3599,9 @@
       (hash-combine
         19
         (hash-combine
-          (opt-type-list-hash params)
+          (opt-type-list-hash (box-get params))
           (opt-type-hash (ty-node-get ret))))]
-    [(AstTyTuple items) (hash-combine 20 (opt-type-list-hash items))]
+    [(AstTyTuple items) (hash-combine 20 (opt-type-list-hash (box-get items)))]
     [(AstTyArray item len)
       (hash-combine
         21
@@ -3625,17 +3632,23 @@
     [(AstTyEnumArgs name lifetimes)
       (hash-combine
         30
-        (hash-combine (hash-i64 name) (opt-lifetime-list-hash lifetimes)))]
+        (hash-combine
+          (hash-i64 name)
+          (opt-lifetime-list-hash (box-get lifetimes))))]
     [(AstTyStruct name) (hash-combine 31 (hash-i64 name))]
     [(AstTyStructArgs name lifetimes)
       (hash-combine
         32
-        (hash-combine (hash-i64 name) (opt-lifetime-list-hash lifetimes)))]
+        (hash-combine
+          (hash-i64 name)
+          (opt-lifetime-list-hash (box-get lifetimes))))]
     [(AstTyVar name) (hash-combine 33 (hash-i64 name))]
     [(AstTyVarArgs name lifetimes)
       (hash-combine
         34
-        (hash-combine (hash-i64 name) (opt-lifetime-list-hash lifetimes)))]))
+        (hash-combine
+          (hash-i64 name)
+          (opt-lifetime-list-hash (box-get lifetimes))))]))
 
 (define (opt-maybe-value-eq
   [a : CompilerIrMaybeValue]

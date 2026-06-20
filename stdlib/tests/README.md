@@ -165,9 +165,11 @@ Inline stdlib coverage:
   API, including vector and array constructors, invalid ranges producing empty
   views, sub-slicing, fallback reads, and explicit array/vector copy
   boundaries.
-- `sort.tl` owns inline tests for stable in-place insertion sort helpers for
-  `I64Vec` and `StringVec`, including empty, single, already sorted, reverse
-  sorted, duplicate, negative-number, prefix, and lexicographic string cases.
+- `sort.tl` owns inline tests for generated stable in-place insertion sort over
+  `(vector T)` modules, including scalar, String, and aggregate comparator
+  cases, repeated generation deduplication, empty, single, already sorted,
+  reverse sorted, duplicate, negative-number, prefix, lexicographic string, and
+  stable equal-key ordering cases.
 - `ffi.tl` owns inline tests for C string buffers: required byte counts,
   exact-capacity caller-owned copies, trailing NUL writes, too-small buffers,
   interior NUL rejection, and active-arena pointer allocation through

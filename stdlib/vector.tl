@@ -130,7 +130,11 @@
         (Ok ,T))
       (define (slots [v : (& v ,vec-name)]) : (& v (Array ,T))
         (& (struct-get v slots)))
+      (define (slots-mut [v : (&mut v ,vec-name)]) : (&mut v (Array ,T))
+        (&mut (struct-get v slots)))
       (define (len [v : (& v ,vec-name)]) : i64
+        (struct-get v len))
+      (define (len-mut [v : (&mut v ,vec-name)]) : i64
         (struct-get v len))
       (define (capacity [v : (& v ,vec-name)]) : i64
         (array-length (slots v)))
@@ -301,7 +305,9 @@
         (variant Empty)
         (variant Ok)
         (value slots)
+        (value slots-mut)
         (value len)
+        (value len-mut)
         (value capacity)
         (value is-empty?)
         (value with-capacity)

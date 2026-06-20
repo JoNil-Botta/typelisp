@@ -1116,6 +1116,47 @@
           (+ (struct-get (bp2.read (bp2.make (Pair 8))) value)
             (struct-get (bo.read (bo.make (Other 9))) value)))))))")
 
+(define (compiler-typecheck-smoke-module-macro-extension-source) : String
+  "(defmacro (base [key : String]) : Module
+  `(begin
+    (module generated.shared)
+    (define (answer) : i64 40)
+    (export (value answer))))
+(defmacro (extra [key : String]) : Module
+  `(begin
+    (module generated.shared)
+    (define (bonus) : i64 1)
+    (export (value bonus))))
+(import (base \"same\") as base)
+(import (extra \"same\") as extra)
+(import (extra \"same\") as extra2)
+(define (main) : i64
+  (+ (base.answer) (+ (extra.bonus) (extra2.bonus))))")
+
+(define (compiler-typecheck-smoke-module-macro-extension-incompatible-source) : String
+  "(defmacro (base [key : String]) : Module
+  `(begin
+    (module generated.shared)
+    (define (answer) : i64 40)
+    (export (value answer))))
+(defmacro (extra [key : Expr]) : Module
+  (match key
+    [(ExprCall _ _)
+      `(begin
+        (module generated.shared)
+        (define (bonus) : i64 2)
+        (export (value bonus)))]
+    [_
+      `(begin
+        (module generated.shared)
+        (define (bonus) : i64 1)
+        (export (value bonus)))]))
+(import (base \"same\") as base)
+(import (extra \"same\") as extra)
+(import (extra (string-append \"sa\" \"me\")) as extra2)
+(define (main) : i64
+  (+ (base.answer) (+ (extra.bonus) (extra2.bonus))))")
+
 (define (compiler-typecheck-smoke-module-macro-identity-tests-ok?) : bool
   (and
     (compiler-typecheck-ok?
@@ -1130,7 +1171,12 @@
       (compiler-typecheck-smoke-module-macro-local-collision-source)
       "typecheck: generated import collision for value answer from generated identity :gen(string_1_120) with ordinary binding local declaration; use an explicit alias or full generated-module access")
     (compiler-typecheck-ok?
-      (compiler-typecheck-smoke-module-macro-type-key-source))))
+      (compiler-typecheck-smoke-module-macro-type-key-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-smoke-module-macro-extension-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-smoke-module-macro-extension-incompatible-source)
+      "typecheck: Module macro output for generated identity :extra(string_4_115_97_109_101) has incompatible payload")))
 
 ;; Declaration-emitting macros must be able to emit functions with non-trivial
 ;; bodies (#3193 / #3074). The macro-output serializer round-trips arithmetic,

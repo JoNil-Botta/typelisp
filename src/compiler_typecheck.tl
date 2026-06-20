@@ -7250,7 +7250,7 @@
       (compiler-typecheck-module-macro-import-duplicate-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-module-macro-import-target-collision-source)
-      "typecheck: Module macro output collides with existing module generated.module for generated identity :gen-b()")
+      "typecheck: generated import collision for value answer between generated identities :gen-a() and :gen-b(); use an explicit alias or full generated-module access")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-module-macro-import-missing-module-source)
       "typecheck: Module macro output must include a module declaration")

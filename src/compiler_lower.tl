@@ -150,9 +150,9 @@
 (defenum LowerCapture
   (LowerCapture String i64 AstType i64))
 
-(defenum LowerCaptureList
-  (LowerCaptureNil)
-  (LowerCaptureCons LowerCapture (Box LowerCaptureList)))
+(defstruct LowerCaptureList
+  (items (Array LowerCapture))
+  (count i64))
 
 (defenum LowerCapturePlan
   (LowerCapturePlan LowerCaptureList i64))
@@ -9589,19 +9589,50 @@
 (define (lower-capture-list-contains-name?
   [captures : LowerCaptureList]
   [name : String]) : bool
-  (match captures
-    [(LowerCaptureNil) false]
-    [(LowerCaptureCons capture rest)
-      (match capture
-        [(LowerCapture capture-name _ _ _)
-          (if (string-eq capture-name name)
-            true
-            (lower-capture-list-contains-name? (box-get rest) name))])]))
+  (let
+    [items : (Array LowerCapture) (struct-get captures items)]
+    [count : i64 (struct-get captures count)]
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< index count))
+        (match (array-ref items index)
+          [(LowerCapture capture-name _ _ _)
+            (if (string-eq capture-name name)
+              (set! found true)
+              (set! index (+ index 1)))]))
+      found)))
 
 (define (lower-capture-list-count [captures : LowerCaptureList]) : i64
-  (match captures
-    [(LowerCaptureNil) 0]
-    [(LowerCaptureCons _ rest) (+ 1 (lower-capture-list-count (box-get rest)))]))
+  (struct-get captures count))
+
+(define (lower-capture-list-empty) : LowerCaptureList
+  (LowerCaptureList (make-array LowerCapture 0) 0))
+
+(define (lower-capture-list-add-front
+  [captures : LowerCaptureList]
+  [capture : LowerCapture]) : LowerCaptureList
+  (let
+    [items : (Array LowerCapture) (struct-get captures items)]
+    [count : i64 (struct-get captures count)]
+    (begin
+      (array-push! items capture)
+      (LowerCaptureList items (+ count 1)))))
+
+(define (lower-capture-list-storage-entry?
+  [captures : LowerCaptureList]
+  [index : i64]
+  [name : String]
+  [var-id : i64]
+  [offset : i64]) : bool
+  (if (or (< index 0) (>= index (struct-get captures count)))
+    false
+    (match (array-ref (struct-get captures items) index)
+      [(LowerCapture capture-name capture-var-id _ capture-offset)
+        (and
+          (string-eq capture-name name)
+          (= capture-var-id var-id)
+          (= capture-offset offset))])))
 
 (define (lower-unsupported-capture-message) : String
   "lower: unsupported lambda capture type (#1553)")
@@ -10231,9 +10262,9 @@
                       body
                       bound
                       (+ offset slot-size)
-                      (LowerCaptureCons
-                        (LowerCapture name var-id capture-ty offset)
-                        (box captures))
+                      (lower-capture-list-add-front
+                        captures
+                        (LowerCapture name var-id capture-ty offset))
                       origin))
                   (ErrLowerCapturePlan
                     (lower-diagnostic-at-expr
@@ -10254,19 +10285,21 @@
     body
     (tc-param-bound-names params)
     0
-    (LowerCaptureNil)
+    (lower-capture-list-empty)
     origin))
 
-(define (lower-store-captures
+(define (lower-store-captures-from-index
   [ctx : TcContext]
   [state : LowerState]
   [env : SymI64Env]
   [type-env : TcTypeEnv]
   [env-value : CompilerIrValue]
-  [captures : LowerCaptureList]) : ResultLowerState
-  (match captures
-    [(LowerCaptureNil) (OkLowerState state)]
-    [(LowerCaptureCons capture rest)
+  [items : (Array LowerCapture)]
+  [index : i64]) : ResultLowerState
+  (if (< index 0)
+    (OkLowerState state)
+    (let
+      [capture : LowerCapture (array-ref items index)]
       (match capture
         [(LowerCapture _ var-id capture-ty offset)
           (match (lower-capture-snapshot-value
@@ -10279,7 +10312,7 @@
             [(OkLowerExpr snap)
               (match snap
                 [(LowerExpr snap-state snap-value _)
-                  (lower-store-captures
+                  (lower-store-captures-from-index
                     ctx
                     (if (lower-type-register-group? ctx capture-ty)
                       ;; #2386: a captured 2-word group stores both words.
@@ -10300,8 +10333,25 @@
                     env
                     type-env
                     env-value
-                    (box-get rest))])]
-            [(ErrLowerExpr message) (ErrLowerState message)])])]))
+                    items
+                    (- index 1))])]
+            [(ErrLowerExpr message) (ErrLowerState message)])]))))
+
+(define (lower-store-captures
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [env-value : CompilerIrValue]
+  [captures : LowerCaptureList]) : ResultLowerState
+  (lower-store-captures-from-index
+    ctx
+    state
+    env
+    type-env
+    env-value
+    (struct-get captures items)
+    (- (struct-get captures count) 1)))
 
 (define (lower-store-capturing-lambda-descriptor
   [state : LowerState]
@@ -10353,16 +10403,18 @@
               (OkLowerExpr (LowerExpr desc-state desc-value desc-ty))])]
         [(ErrLowerState message) (ErrLowerExpr message)])]))
 
-(define (lower-load-captures
+(define (lower-load-captures-from-index
   [ctx : TcContext]
   [state : LowerState]
   [env-value : CompilerIrValue]
-  [captures : LowerCaptureList]
+  [items : (Array LowerCapture)]
+  [index : i64]
   [env : SymI64Env]
   [type-env : TcTypeEnv]) : ResultLowerEnv
-  (match captures
-    [(LowerCaptureNil) (OkLowerEnv state env type-env)]
-    [(LowerCaptureCons capture rest)
+  (if (< index 0)
+    (OkLowerEnv state env type-env)
+    (let
+      [capture : LowerCapture (array-ref items index)]
       (match capture
         [(LowerCapture name _ capture-ty offset)
           (match (if (lower-type-register-group? ctx capture-ty)
@@ -10378,17 +10430,34 @@
             [(LowerExpr loaded-state loaded-value _)
               (match loaded-value
                 [(IrValueVar loaded-var)
-                  (lower-load-captures
+                  (lower-load-captures-from-index
                     ctx
                     loaded-state
                     env-value
-                    (box-get rest)
+                    items
+                    (- index 1)
                     (sym-i64-bind env name loaded-var)
                     (tc-bind type-env name capture-ty))]
                 [_
                   (ErrLowerEnv
                     (lower-diagnostic
-                      "lower: capture load did not materialize a variable"))])])])]))
+                      "lower: capture load did not materialize a variable"))])])]))))
+
+(define (lower-load-captures
+  [ctx : TcContext]
+  [state : LowerState]
+  [env-value : CompilerIrValue]
+  [captures : LowerCaptureList]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]) : ResultLowerEnv
+  (lower-load-captures-from-index
+    ctx
+    state
+    env-value
+    (struct-get captures items)
+    (- (struct-get captures count) 1)
+    env
+    type-env))
 
 (define (lower-captured-param-list [ctx : TcContext] [params : AstParamList]) : CompilerIrParamList
   (compiler-ir-param-cons
@@ -44046,12 +44115,11 @@
         (lower-string-set-insert LowerStringNil "helper-a")
         "helper-b")]
     [captures : LowerCaptureList
-      (LowerCaptureCons
-        (LowerCapture "cap-a" 1 (AstTyI64) 0)
-        (box
-          (LowerCaptureCons
-            (LowerCapture "cap-b" 2 (AstTyBool) 8)
-            (box LowerCaptureNil))))]
+      (lower-capture-list-add-front
+        (lower-capture-list-add-front
+          (lower-capture-list-empty)
+          (LowerCapture "cap-b" 2 (AstTyBool) 8))
+        (LowerCapture "cap-a" 1 (AstTyI64) 0))]
     [cleanups : LowerCleanupStack
       (lower-cleanup-stack-push
         (lower-cleanup-stack-push
@@ -44067,6 +44135,8 @@
       (lower-string-set-contains? strings "helper-b")
       (= (lower-capture-list-count captures) 2)
       (lower-capture-list-contains-name? captures "cap-b")
+      (lower-capture-list-storage-entry? captures 0 "cap-b" 2 8)
+      (lower-capture-list-storage-entry? captures 1 "cap-a" 1 0)
       (= (lower-cleanup-stack-count cleanups) 2)
       (lower-cleanup-stack-entry? cleanups 0 "hidden-a" "cleanup-a")
       (lower-cleanup-stack-entry? cleanups 1 "hidden-b" "cleanup-b"))))

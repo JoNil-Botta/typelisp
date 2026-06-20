@@ -33,6 +33,8 @@ mutable_reference_owner_read_after_last_use_ok|check-ok|tests/safety/mutable_ref
 # Static rejection areas.
 unsupported_cast_reject|check-fail|tests/safety/unsupported_cast_reject.tl|-|cast requires
 unbound_variable_reject|check-fail|tests/safety/unbound_variable_reject.tl|-|unbound name missing
+unimported_print_reject|check-fail|tests/safety/unimported_print_reject.tl|-|unbound name print
+unimported_panic_reject|check-fail|tests/safety/unimported_panic_reject.tl|-|unbound name panic
 region_escape_reject|check-fail|tests/safety/region_escape_reject.tl|-|cannot escape with-arena
 mutable_reference_reject|check-fail|tests/safety/mutable_reference_reject.tl|-|cannot read mutably borrowed place `items.#array.0`
 mutable_reference_same_field_reject|check-fail|tests/safety/mutable_reference_same_field_reject.tl|-|cannot read mutably borrowed place `bags.left`

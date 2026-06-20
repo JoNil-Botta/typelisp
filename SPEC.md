@@ -4709,19 +4709,26 @@ borrow-checked reference surface. Those are follow-ups to the raw pointer/FFI tr
 
 ## 6. Built-in functions and runtime
 
-### 6.1 Builtin functions (lowered to IR calls)
+### 6.1 Transitional compiler compatibility builtins
 
 Public I/O, argv, environment, filesystem, panic/error, and CPU capability
 helpers are standard-library definitions, not implicit compiler builtins. Import
 `stdlib/io.tl`, `stdlib/env.tl`, `stdlib/fs.tl`, or `stdlib/cpu.tl` to use those
 surfaces. The backend may still emit private runtime symbols used by those
-stdlib extern wrappers.
+stdlib extern wrappers. In particular, `print`, `print-bool`, `print-newline`,
+`print-string`, `print-error`, `panic`, and `error` are ordinary definitions in
+`stdlib/io.tl`; unimported uses of those names are unbound source names.
 
-| Builtin | Signature | Description |
-|---------|-----------|-------------|
-| `print` | `i64 → unit` | Print integer to stdout + newline |
-| `print-bool` | `bool → unit` | Print `true`/`false` to stdout + newline |
-| `print-newline` | `→ unit` | Print newline to stdout |
+Low-level CPU instruction forms such as `cpuid-eax`, `cpuid-ebx`, `cpuid-ecx`,
+`cpuid-edx`, and `xgetbv` remain compiler intrinsics. Public CPU capability
+checks should use `stdlib/cpu.tl`.
+
+The table below records the remaining transitional string/array compatibility
+surface that is still recognized by the compiler while the stdlib migration in
+#3079 continues.
+
+| Compatibility builtin | Signature | Description |
+|-----------------------|-----------|-------------|
 | `length` | `(Array t) → i64` | Get dynamic array length |
 | `length` | `String → i64` | Get string byte length |
 | `array-length` | `(Array t) → i64` | Get dynamic array length |
@@ -4739,8 +4746,6 @@ stdlib extern wrappers.
 | `string-slice-view` | `(& r str) i64 i64 → (& r str)` | Alias for `substring-view` |
 | `string->int` | `String → i64` | Parse decimal integer from string |
 | `int->string` | `i64 → String` | Format integer as decimal string |
-| `panic` | `String → never` (internal) | Print message to stderr and abort |
-| `error` | `String → never` (internal) | Alias for `panic` |
 
 User-facing fixed-arity string concatenation is the stdlib macro
 `stdlib/str_cat.tl`'s `(str-cat ...)`; incremental builders should use
@@ -5679,12 +5684,13 @@ not the future safe reference/borrow model (#182), not a replacement for
 - Dynamic arrays: `make-array`, `array-ref`, `array-set!`, `length`.
 - Strings: literals, `string-ref`/`char-at`, `string-length`/`length`,
   `string-eq`/`string=?`, `str-cat`, `substring`/`string-slice`,
-  `string->int`, `int->string`,
-  `print-string`/`print-str`, `print-char`, `print-float`, `print-error`.
+  `string->int`, `int->string`.
 - Stdlib I/O helpers in `stdlib/io.tl`: `arg-count`, `arg`, `read-file`,
   `write-file`, `file-exists?`, `file-open`, `file-close`,
   `file-read-chunk`, `read-stdin-line`, `read-stdin-bytes`, `stdin-eof?`,
-  `flush-stdout`, and related recoverable wrappers. These are imported stdlib
+  `flush-stdout`, `print`, `print-bool`, `print-newline`,
+  `print-string`/`print-str`, `print-char`, `print-float`, `print-error`,
+  `panic`/`error`, and related recoverable wrappers. These are imported stdlib
   definitions, not implicit compiler builtins.
 - First-class arena helpers in `stdlib/arena.tl`: `arena-make`,
   `arena-current`, `arena-mark`, `arena-set!`, `arena-destroy`, and
@@ -5697,8 +5703,8 @@ not the future safe reference/borrow model (#182), not a replacement for
 - Multi-file modules via `import`.
 - Native x86_64 executable targets: `linux-x86_64` by default, and
   `windows-x86_64` for Windows x64 ABI output with CRT-linked runtime helpers.
-- Builtin `print`, `print-bool`, `print-newline`, and string/array primitives
-  such as `substring`, `string-ref`, and `array-ref`.
+- Transitional compiler compatibility builtins for string/array primitives such
+  as `substring`, `string-ref`, and `array-ref`.
 - Stdlib-owned FFI wrappers in `stdlib/io.tl`, `stdlib/env.tl`,
   `stdlib/fs.tl`, and `stdlib/cpu.tl` for argv, file I/O, stdio, panic/error,
   environment variables, filesystem status helpers, and CPUID/XGETBV.

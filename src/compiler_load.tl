@@ -1422,6 +1422,19 @@
           [(AstDeclModule _) true]
           [_ (compiler-load-decl-list-has-module? rest)]))]))
 
+(define (compiler-load-seen-module-with-paths
+  [path : String]
+  [module-id : String]
+  [decls : AstDeclList]
+  [seen : SymI64Env]) : ResultCompilerLoadWithPaths
+  (if (compiler-load-decl-list-has-module? decls)
+    (OkCompilerLoadWithPaths
+      (ast-decl-cons (ast-decl-module module-id) AstDeclNil)
+      (ast-decl-path-cons path AstDeclPathNil)
+      (ast-decl-module-cons module-id AstDeclModuleNil)
+      seen)
+    (OkCompilerLoadWithPaths AstDeclNil AstDeclPathNil AstDeclModuleNil seen)))
+
 (define (compiler-load-legacy-path-flat-module-import?
   [kind : AstImportKind]
   [expected : AstMaybeModuleName]
@@ -1968,10 +1981,10 @@
               module-id)
               [(OkCompilerLoadModuleId _)
                 (if (sym-i64-contains seen module-id)
-                  (OkCompilerLoadWithPaths
-                    AstDeclNil
-                    AstDeclPathNil
-                    AstDeclModuleNil
+                  (compiler-load-seen-module-with-paths
+                    path
+                    module-id
+                    decls
                     seen)
                   (match (compiler-load-check-dotted-import-aliases
                     path
@@ -3276,10 +3289,10 @@
               module-id)
               [(OkCompilerLoadModuleId _)
                 (if (sym-i64-contains seen module-id)
-                  (OkCompilerLoadWithPaths
-                    AstDeclNil
-                    AstDeclPathNil
-                    AstDeclModuleNil
+                  (compiler-load-seen-module-with-paths
+                    path
+                    module-id
+                    decls
                     seen)
                   (match (compiler-load-check-dotted-import-aliases
                     path
@@ -3680,63 +3693,21 @@
           [_ false]))]
     [_ false]))
 
-(define (compiler-load-entry-cycle-modules? [modules : AstDeclModuleList]) : bool
+(define (compiler-load-entry-cycle-module-name? [name : String]) : bool
+  (or (string-eq name "smoke.entry") (string-eq name "smoke.dep")))
+
+(define (compiler-load-entry-cycle-modules-loop
+  [modules : AstDeclModuleList]
+  [count : i64]) : bool
   (match modules
+    [(AstDeclModuleNil) (= count 11)]
     [(AstDeclModuleCons first tail)
-      (let
-        [tail : AstDeclModuleList (box-get tail)]
-        (match tail
-          [(AstDeclModuleCons second rest2)
-            (let
-              [rest2 : AstDeclModuleList (box-get rest2)]
-              (match rest2
-                [(AstDeclModuleCons third rest3)
-                  (let
-                    [rest3 : AstDeclModuleList (box-get rest3)]
-                    (match rest3
-                      [(AstDeclModuleCons fourth rest4)
-                        (let
-                          [rest4 : AstDeclModuleList (box-get rest4)]
-                          (match rest4
-                            [(AstDeclModuleCons fifth rest5)
-                              (let
-                                [rest5 : AstDeclModuleList (box-get rest5)]
-                                (match rest5
-                                  [(AstDeclModuleCons sixth rest6)
-                                    (let
-                                      [rest6 : AstDeclModuleList
-                                        (box-get rest6)]
-                                      (match rest6
-                                        [(AstDeclModuleCons seventh rest7)
-                                          (let
-                                            [rest7 : AstDeclModuleList
-                                              (box-get rest7)]
-                                            (match rest7
-                                              [(AstDeclModuleNil)
-                                                (and
-                                                  (string-eq
-                                                    first
-                                                    "smoke.entry")
-                                                  (string-eq second "smoke.dep")
-                                                  (string-eq third "smoke.dep")
-                                                  (string-eq fourth "smoke.dep")
-                                                  (string-eq
-                                                    fifth
-                                                    "smoke.entry")
-                                                  (string-eq
-                                                    sixth
-                                                    "smoke.entry")
-                                                  (string-eq
-                                                    seventh
-                                                    "smoke.entry"))]
-                                              [_ false]))]
-                                        [_ false]))]
-                                  [_ false]))]
-                            [_ false]))]
-                      [_ false]))]
-                [_ false]))]
-          [_ false]))]
-    [_ false]))
+      (and
+        (compiler-load-entry-cycle-module-name? first)
+        (compiler-load-entry-cycle-modules-loop (box-get tail) (+ count 1)))]))
+
+(define (compiler-load-entry-cycle-modules? [modules : AstDeclModuleList]) : bool
+  (compiler-load-entry-cycle-modules-loop modules 0))
 
 (define (compiler-load-normalize-ok?) : bool
   (and
@@ -3793,10 +3764,7 @@
     "(module seen.module)
 (define value : i64 1)"
     (sym-i64-bind (sym-i64-empty) "seen.module" 1))
-    [(OkCompilerLoad decls _)
-      (match decls
-        [(AstDeclNil) true]
-        [_ false])]
+    [(OkCompilerLoad decls _) (compiler-load-decl-list-has-module? decls)]
     [(ErrCompilerLoad _) false]))
 
 (define (compiler-load-cfg-import-ok?) : bool
@@ -3848,7 +3816,7 @@
       (sym-i64-empty))
       [(OkCompilerLoadWithPaths decls _ modules seen)
         (and
-          (= (compiler-load-decl-list-count decls) 7)
+          (= (compiler-load-decl-list-count decls) 11)
           (compiler-load-entry-cycle-modules? modules)
           (sym-i64-contains seen "smoke.entry")
           (sym-i64-contains seen "smoke.dep"))]
@@ -3945,6 +3913,28 @@
         (compiler-load-decl-list-has-import-alias? decls "legacy.dep" "")]
       [(ErrCompilerLoadWithPaths _) false])))
 
+(define (compiler-load-seen-legacy-path-module-flat-alias-ok?) : bool
+  (begin
+    (write-file
+      "target/cl_seen_legacy_module_dep.tl"
+      "(module seen.legacy.dep)
+(define (get) : i64 7)")
+    (write-file
+      "target/cl_seen_legacy_module_pre.tl"
+      "(import \"cl_seen_legacy_module_dep.tl\" module seen.legacy.dep :as dep)
+(define (pre) : i64 (dep.get))")
+    (write-file
+      "target/cl_seen_legacy_module_entry.tl"
+      "(import \"cl_seen_legacy_module_pre.tl\")
+(import \"cl_seen_legacy_module_dep.tl\")
+(define (main) : i64 (get))")
+    (match (compiler-load-file-with-paths
+      "target/cl_seen_legacy_module_entry.tl"
+      (sym-i64-empty))
+      [(OkCompilerLoadWithPaths decls _ _ _)
+        (compiler-load-decl-list-has-import-alias? decls "seen.legacy.dep" "")]
+      [(ErrCompilerLoadWithPaths _) false])))
+
 (define (compiler-load-package-legacy-path-module-flat-alias-ok?) : bool
   (begin
     (write-file
@@ -3963,6 +3953,34 @@
       (compiler-pkg-deps-empty))
       [(OkCompilerLoadWithPaths decls _ _ _)
         (compiler-load-decl-list-has-import-alias? decls "legacy.pkg.dep" "")]
+      [(ErrCompilerLoadWithPaths _) false])))
+
+(define (compiler-load-package-seen-legacy-path-module-flat-alias-ok?) : bool
+  (begin
+    (write-file
+      "target/cl_pkg_seen_legacy_module_dep.tl"
+      "(module seen.legacy.pkg.dep)
+(define (get) : i64 7)")
+    (write-file
+      "target/cl_pkg_seen_legacy_module_pre.tl"
+      "(import \"cl_pkg_seen_legacy_module_dep.tl\" module seen.legacy.pkg.dep :as dep)
+(define (pre) : i64 (dep.get))")
+    (write-file
+      "target/cl_pkg_seen_legacy_module_entry.tl"
+      "(import \"cl_pkg_seen_legacy_module_pre.tl\")
+(import \"cl_pkg_seen_legacy_module_dep.tl\")
+(define (main) : i64 (get))")
+    (match (compiler-load-package-file-with-paths-and-roots
+      "target/cl_pkg_seen_legacy_module_entry.tl"
+      (sym-i64-empty)
+      (string-vec-new)
+      "target"
+      (compiler-pkg-deps-empty))
+      [(OkCompilerLoadWithPaths decls _ _ _)
+        (compiler-load-decl-list-has-import-alias?
+          decls
+          "seen.legacy.pkg.dep"
+          "")]
       [(ErrCompilerLoadWithPaths _) false])))
 
 (define (compiler-load-dotted-import-duplicate-alias-ok?) : bool
@@ -4427,7 +4445,7 @@
       (sym-i64-empty))
       [(OkCompilerLoadWithPaths decls _ _ seen)
         (and
-          (= (compiler-load-decl-list-count decls) 15)
+          (= (compiler-load-decl-list-count decls) 17)
           (sym-i64-contains seen "diamond.c")
           (sym-i64-contains seen "diamond.a")
           (sym-i64-contains seen "diamond.b")
@@ -6814,11 +6832,27 @@
           ;; lint-allow: unreachable-code
           0)))
     (unless
+      (compiler-load-seen-legacy-path-module-flat-alias-ok?)
+      (return
+        (begin
+          (panic
+            "compiler-load: seen legacy path module flat alias smoke mismatch")
+          ;; lint-allow: unreachable-code
+          0)))
+    (unless
       (compiler-load-package-legacy-path-module-flat-alias-ok?)
       (return
         (begin
           (panic
             "compiler-load: package legacy path module flat alias smoke mismatch")
+          ;; lint-allow: unreachable-code
+          0)))
+    (unless
+      (compiler-load-package-seen-legacy-path-module-flat-alias-ok?)
+      (return
+        (begin
+          (panic
+            "compiler-load: package seen legacy path module flat alias smoke mismatch")
           ;; lint-allow: unreachable-code
           0)))
     (unless

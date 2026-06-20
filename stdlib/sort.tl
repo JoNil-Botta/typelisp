@@ -150,19 +150,10 @@
 
 (cfg
   test
-  (defstruct SortPair
-    (key i64)
-    (seq i64)))
-
-(cfg test (export (type SortPair) (constructor SortPair)))
-
-(cfg test (import (stdlib.vector.vector SortPair) as pairv))
-(cfg test (import (stdlib.sort.sort-vec SortPair) as pairsort))
-
-(cfg
-  test
-  (define (sort-test-pair-less? [left : SortPair] [right : SortPair]) : bool
-    (< (struct-get left key) (struct-get right key))))
+  (define (sort-test-first-char-less? [left : String] [right : String]) : bool
+    (<
+      (stdlib.sort.sort-char-code-at (& left) 0)
+      (stdlib.sort.sort-char-code-at (& right) 0))))
 
 (cfg
   test
@@ -402,31 +393,16 @@
 
 (cfg
   test
-  (define (sort-test-assert-pair-sort-stable) : unit
+  (define (sort-test-assert-string-sort-stable) : unit
     (let
-      [pairs : pairv.Vec (pairv.new)]
+      [items : strv.Vec (strv.new)]
       (begin
-        (pairv.push (&mut pairs) (SortPair 2 0))
-        (pairv.push (&mut pairs) (SortPair 1 1))
-        (pairv.push (&mut pairs) (SortPair 2 2))
-        (pairv.push (&mut pairs) (SortPair 1 3))
-        (pairsort.sort! (&mut pairs) sort-test-pair-less?)
-        (test.assert-i64-eq
-          (struct-get (pairv.get (& pairs) 0 (SortPair 0 -1)) seq)
-          1
-          "pair sort first equal keeps order")
-        (test.assert-i64-eq
-          (struct-get (pairv.get (& pairs) 1 (SortPair 0 -1)) seq)
-          3
-          "pair sort second equal keeps order")
-        (test.assert-i64-eq
-          (struct-get (pairv.get (& pairs) 2 (SortPair 0 -1)) seq)
-          0
-          "pair sort third equal keeps order")
-        (test.assert-i64-eq
-          (struct-get (pairv.get (& pairs) 3 (SortPair 0 -1)) seq)
-          2
-          "pair sort fourth equal keeps order")))))
+        (strv.push (&mut items) "b0")
+        (strv.push (&mut items) "a1")
+        (strv.push (&mut items) "b2")
+        (strv.push (&mut items) "a3")
+        (strsort.sort! (&mut items) sort-test-first-char-less?)
+        (sort-test-assert-string-vec4 items "a1" "a3" "b0" "b2")))))
 
 (cfg
   test
@@ -435,7 +411,7 @@
       (sort-test-assert-i64-sort-cases)
       (sort-test-assert-string-less-cases)
       (sort-test-assert-string-sort-cases)
-      (sort-test-assert-pair-sort-stable)
+      (sort-test-assert-string-sort-stable)
       42)))
 
 (cfg

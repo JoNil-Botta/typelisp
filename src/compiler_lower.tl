@@ -13094,6 +13094,16 @@
         [(ErrTcLifetimeSubst _) fields])]
     [_ fields]))
 
+(define (lower-variant-owner-module [ctx : TcContext] [handle : i64]) : String
+  (match (tc-nominal-owner-name
+    ctx
+    (compiler-registry-variant-owner-handle handle))
+    [(OkTcString owner-name)
+      (if (tc-name-qualified? owner-name)
+        (tc-qualified-name-module owner-name)
+        "")]
+    [(ErrTcString _) ""]))
+
 (define (lower-construct-enum-with-name
   [ctx : TcContext]
   [state : LowerState]
@@ -13109,11 +13119,15 @@
       (match (compiler-registries-variant-fields-indexed symbols handle)
         [(OkAstTypeList fields)
           (let
+            [field-ctx : TcContext
+              (tc-context-with-module
+                ctx
+                (lower-variant-owner-module ctx handle))]
             [resolved-fields : AstTypeList
               (tc-resolve-type-list
-                ctx
+                field-ctx
                 (lower-enum-constructor-fields-for-result
-                  ctx
+                  field-ctx
                   enum-name
                   enum-ty
                   fields))]
@@ -13233,11 +13247,15 @@
       (match (compiler-registries-variant-fields-indexed symbols handle)
         [(OkAstTypeList fields)
           (let
+            [field-ctx : TcContext
+              (tc-context-with-module
+                ctx
+                (lower-variant-owner-module ctx handle))]
             [resolved-fields : AstTypeList
               (tc-resolve-type-list
-                ctx
+                field-ctx
                 (lower-enum-constructor-fields-for-result
-                  ctx
+                  field-ctx
                   enum-name
                   enum-ty
                   fields))]
@@ -40128,6 +40146,32 @@
           (> (lower-test-functions-call-count functions "main/get") 0)])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-imported-enum-aggregate-payload-source) : String
+  "(module data)
+(defstruct Payload (code i64) (left i64) (right i64))
+(defenum Choice (Wrap Payload))
+(export
+  (type Payload)
+  (constructor Payload)
+  (type Choice)
+  (variant Wrap))
+(module main)
+(import data)
+(define (make) : data.Choice
+  (data.Wrap (data.Payload 17 20 5)))
+(define (main) : i64
+  (match (make)
+    [(data.Wrap payload) 1]))")
+
+(define (compiler-lower-imported-enum-aggregate-payload-ok?) : bool
+  (match (lower-compiler-source
+    (compiler-lower-imported-enum-aggregate-payload-source))
+    [(OkCompilerLower lowered _)
+      (match lowered
+        [(IrProgram _ functions _)
+          (> (lower-test-function-copy-bytes-count functions "main/make") 0)])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-module-macro-codegen-source) : String
   "(defmacro (int-box) : Module
   `(begin
@@ -44614,6 +44658,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-module-function-returning-enum-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-imported-enum-aggregate-payload-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-module-macro-codegen-ok?)

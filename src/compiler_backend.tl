@@ -21402,6 +21402,33 @@
         (compiler-ir-function-seq-to-list seq)
         name)]))
 
+(define (compiler-backend-runtime-prelude-helper-function?
+  [name : String]
+  [helper : String]) : bool
+  (and
+    (string-eq (compiler-backend-symbol-leaf name) helper)
+    (or
+      (compiler-backend-string-contains? name "stdlib/runtime.tl::")
+      (compiler-backend-string-contains? name "stdlib\\runtime.tl::"))))
+
+(define (compiler-backend-function-list-defines-runtime-prelude-helper?
+  [functions : CompilerIrFunctionList]
+  [helper : String]) : bool
+  (match functions
+    [(IrFunctionNil) false]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction name _ _ _ _)
+          (if (compiler-backend-runtime-prelude-helper-function? name helper)
+            true
+            (compiler-backend-function-list-defines-runtime-prelude-helper?
+              (box-get rest)
+              helper))])]
+    [(IrFunctionArray seq)
+      (compiler-backend-function-list-defines-runtime-prelude-helper?
+        (compiler-ir-function-seq-to-list seq)
+        helper)]))
+
 (define (compiler-backend-extern-list-references?
   [externs : CompilerIrExternList]
   [name : String]) : bool
@@ -22031,6 +22058,28 @@
       (compiler-backend-runtime-index-defines? index "tl_str_view")]
     [defines-concat : bool
       (compiler-backend-runtime-index-defines-concat? index)]
+    [provides-substring : bool
+      (compiler-backend-function-list-defines-runtime-prelude-helper?
+        functions
+        "tl-runtime-substring")]
+    [provides-str-view : bool
+      (compiler-backend-function-list-defines-runtime-prelude-helper?
+        functions
+        "tl-runtime-str-view")]
+    [provides-concat : bool
+      (backend-or4
+        (compiler-backend-function-list-defines-runtime-prelude-helper?
+          functions
+          "tl-runtime-string-concat")
+        (compiler-backend-function-list-defines-runtime-prelude-helper?
+          functions
+          "tl-runtime-string-concat3")
+        (compiler-backend-function-list-defines-runtime-prelude-helper?
+          functions
+          "tl-runtime-string-concat4")
+        (compiler-backend-function-list-defines-runtime-prelude-helper?
+          functions
+          "tl-runtime-string-concat5"))]
     [_defines-string-eq : bool
       (compiler-backend-runtime-index-defines? index "tl_string_eq")]
     [_defines-string-to-int : bool
@@ -22039,6 +22088,10 @@
       (compiler-backend-runtime-index-defines? index "tl_hash_string")]
     [defines-int-to-string : bool
       (compiler-backend-runtime-index-defines? index "tl_int_to_string")]
+    [provides-int-to-string : bool
+      (compiler-backend-function-list-defines-runtime-prelude-helper?
+        functions
+        "tl-runtime-int-to-string")]
     [_defines-print-err : bool
       (compiler-backend-runtime-index-defines? index "tl_print_err")]
     [_defines-print-str : bool
@@ -22077,18 +22130,19 @@
       (compiler-backend-runtime-index-extern? index "tl_div_abort")]
     [extern-shift-abort : bool
       (compiler-backend-runtime-index-extern? index "tl_shift_abort")]
-    [extern-substring : bool
+    [_extern-substring : bool
       (compiler-backend-runtime-index-extern? index "tl_substring")]
-    [extern-str-view : bool
+    [_extern-str-view : bool
       (compiler-backend-runtime-index-extern? index "tl_str_view")]
-    [extern-concat : bool (compiler-backend-runtime-index-extern-concat? index)]
+    [_extern-concat : bool
+      (compiler-backend-runtime-index-extern-concat? index)]
     [_extern-string-eq : bool
       (compiler-backend-runtime-index-extern? index "tl_string_eq")]
     [_extern-string-to-int : bool
       (compiler-backend-runtime-index-extern? index "tl_string_to_int")]
     [_extern-hash-string : bool
       (compiler-backend-runtime-index-extern? index "tl_hash_string")]
-    [extern-int-to-string : bool
+    [_extern-int-to-string : bool
       (compiler-backend-runtime-index-extern? index "tl_int_to_string")]
     [extern-abort : bool
       (compiler-backend-runtime-index-extern-alias?
@@ -22310,23 +22364,21 @@
         (and
           (not defines-shift-abort)
           (or extern-shift-abort calls-shift-abort)))]
-    ;; Migrated string helpers live in stdlib/runtime.tl, but the plan bit still
-    ;; owns their fixed symbols so stdlib extern declarations are not emitted.
-    ;; Importing a helper declaration can root the prelude helper before any IR
-    ;; call remains, so extern presence must count here as well as calls.
+    ;; Migrated string helpers live in stdlib/runtime.tl, but the backend owns
+    ;; their fixed ABI labels once those prelude helpers are emitted.
     [needs-substring : bool
-      (and (not defines-substring) (or extern-substring calls-substring))]
+      (or provides-substring (and (not defines-substring) calls-substring))]
     [needs-str-view : bool
-      (and (not defines-str-view) (or extern-str-view calls-str-view))]
+      (or provides-str-view (and (not defines-str-view) calls-str-view))]
     [needs-concat : bool
-      (and (not defines-concat) (or extern-concat calls-concat))]
+      (or provides-concat (and (not defines-concat) calls-concat))]
     [_needs-string-eq : bool false]
     [_needs-string-to-int : bool false]
     [_needs-hash-string : bool false]
     [needs-int-to-string : bool
-      (and
-        (not defines-int-to-string)
-        (or extern-int-to-string calls-int-to-string))]
+      (or
+        provides-int-to-string
+        (and (not defines-int-to-string) calls-int-to-string))]
     [_direct-abort : bool false]
     [needs-print-err : bool false]
     [needs-print-str : bool false]

@@ -33,6 +33,8 @@ mutable_reference_owner_read_after_last_use_ok|check-ok|tests/safety/mutable_ref
 two_phase_mutable_call_read_ok|check-ok|tests/safety/two_phase_mutable_call_read_ok.tl|-|-
 borrow_if_branch_local_after_join_ok|check-ok|tests/safety/borrow_if_branch_local_after_join_ok.tl|-|-
 borrow_match_branch_local_after_join_ok|check-ok|tests/safety/borrow_match_branch_local_after_join_ok.tl|-|-
+borrow_while_body_after_last_use_ok|check-ok|tests/safety/borrow_while_body_after_last_use_ok.tl|-|-
+borrow_foreach_body_after_last_use_ok|check-ok|tests/safety/borrow_foreach_body_after_last_use_ok.tl|-|-
 
 # Static rejection areas.
 unsupported_cast_reject|check-fail|tests/safety/unsupported_cast_reject.tl|-|cast requires
@@ -59,6 +61,8 @@ two_phase_mutable_call_escape_reject|check-fail|tests/safety/two_phase_mutable_c
 two_phase_mutable_call_mutate_reject|check-fail|tests/safety/two_phase_mutable_call_mutate_reject.tl|-|cannot assign to borrowed place `items`
 borrow_if_before_last_use_reject|check-fail|tests/safety/borrow_if_before_last_use_reject.tl|-|cannot assign to borrowed place `n`
 borrow_while_before_last_use_reject|check-fail|tests/safety/borrow_while_before_last_use_reject.tl|-|cannot assign to borrowed place `n`
+borrow_while_stored_loop_carried_reject|check-fail|tests/safety/borrow_while_stored_loop_carried_reject.tl|-|cannot assign to borrowed place `n`
+borrow_while_box_stored_loop_carried_reject|check-fail|tests/safety/borrow_while_box_stored_loop_carried_reject.tl|-|cannot assign to borrowed place `n`
 borrow_call_arg_begin_before_last_use_reject|check-fail|tests/safety/borrow_call_arg_begin_before_last_use_reject.tl|-|cannot assign to borrowed place `n`
 borrow_if_result_before_last_use_reject|check-fail|tests/safety/borrow_if_result_before_last_use_reject.tl|-|cannot assign to borrowed place `n`
 borrow_match_result_before_last_use_reject|check-fail|tests/safety/borrow_match_result_before_last_use_reject.tl|-|cannot assign to borrowed place `n`

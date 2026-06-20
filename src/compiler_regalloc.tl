@@ -2706,16 +2706,16 @@
               (+ 1 (compiler-reg-spill-count (box-get rest)))]
             [_ (compiler-reg-spill-count (box-get rest))])])]))
 
-;; Static spill weight = number of textual uses of `var` (#3473 PR: spill-weight
-;; eviction). A higher weight means the value is referenced more, so keeping it in
-;; a register saves more reload traffic. Out-of-range vars score 0.
+;; Spill weight for `var` (#3473/#3490). The scalar opt2 path passes
+;; loop-depth-weighted counts; unweighted/empty arrays still keep the old
+;; deterministic policy for other stages. Out-of-range vars score 0.
 (define (compiler-reg-spill-weight [ref-counts : (Array i64)] [var : i64]) : i64
   (if (and (>= var 0) (< var (array-length ref-counts)))
     (array-ref ref-counts var)
     0))
 
 ;; Is active `a` a better spill victim than active `b`? The cheaper value to
-;; spill wins: lower static use count first, then the existing furthest-end /
+;; spill wins: lower spill weight first, then the existing furthest-end /
 ;; larger-var order for a total, var-id-stable tie-break (matches
 ;; compiler-reg-active-before?), so the choice stays deterministic.
 (define (compiler-reg-active-more-spillable?
@@ -2740,7 +2740,7 @@
 ;; key property -- a short-lived temp is never spilled in favour of keeping a
 ;; longer-lived value, since spilling such a temp would store-and-immediately-
 ;; reload for no benefit. Among the eligible longer-lived values the cheapest to
-;; spill (lowest static use count) wins, so loop-carried/hot values stay in
+;; spill (lowest weighted use count) wins, so loop-carried/hot values stay in
 ;; registers. The group exclusion mirrors compiler-reg-active-max-non-group: a
 ;; paired var can never be evicted to one 8-byte slot.
 (define (compiler-reg-active-min-weight-outliving
@@ -2779,7 +2779,7 @@
 ;; scalar stage) this is the original furthest-end policy verbatim, keeping that
 ;; output byte-identical: evict the furthest-ending active only when it outlives
 ;; the incoming interval. With ref counts (integer scalar opt2 stage) evict the
-;; lowest-use-count value among those that outlive the incoming interval.
+;; lowest-weight value among those that outlive the incoming interval.
 (define (compiler-reg-spill-victim
   [active : CompilerRegActiveList]
   [group-vars : CompilerLiveI64Set]
@@ -3550,10 +3550,142 @@
         blocks
         (compiler-live-set-empty))]))
 
-(define (compiler-reg-ref-counts-add-word!
+(define (compiler-reg-loop-depth-max) : i64
+  8)
+
+(define (compiler-reg-loop-depth-weight [depth : i64]) : i64
+  (cond
+    [(<= depth 0) 1]
+    [(= depth 1) 2]
+    [(= depth 2) 4]
+    [(= depth 3) 8]
+    [else 16]))
+
+(define (compiler-reg-loop-depth-block-ids
+  [blocks : CompilerIrBlockList]
+  [ids : StringI64Map]
+  [index : i64]) : StringI64Map
+  (match blocks
+    [(IrBlockNil) ids]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label _)
+          (compiler-reg-loop-depth-block-ids
+            (box-get rest)
+            (string-i64-map-put ids label index)
+            (+ index 1))])]
+    [(IrBlockArray seq)
+      (compiler-reg-loop-depth-block-ids
+        (compiler-ir-block-seq-to-list seq)
+        ids
+        index)]))
+
+(define (compiler-reg-loop-depth-record-succ!
+  [loop-ends : (Array i64)]
+  [ids : StringI64Map]
+  [source-id : i64]
+  [label : String]) : unit
+  (match (string-i64-map-get ids label)
+    [(StringI64MapFound target-id)
+      (if (and (>= target-id 0) (<= target-id source-id))
+        (if (> source-id (array-ref loop-ends target-id))
+          (array-set! loop-ends target-id source-id)
+          unit)
+        unit)]
+    [(StringI64MapMissing) unit]))
+
+(define (compiler-reg-loop-depth-record-succs!
+  [loop-ends : (Array i64)]
+  [ids : StringI64Map]
+  [source-id : i64]
+  [succs : CompilerLiveLabelSet]) : unit
+  (match succs
+    [(CompilerLiveLabelNil) unit]
+    [(CompilerLiveLabelCons label rest)
+      (begin
+        (compiler-reg-loop-depth-record-succ! loop-ends ids source-id label)
+        (compiler-reg-loop-depth-record-succs!
+          loop-ends
+          ids
+          source-id
+          (box-get rest)))]))
+
+(define (compiler-reg-loop-depth-record-blocks!
+  [blocks : CompilerIrBlockList]
+  [ids : StringI64Map]
+  [loop-ends : (Array i64)]
+  [index : i64]) : unit
+  (match blocks
+    [(IrBlockNil) unit]
+    [(IrBlockCons block rest)
+      (begin
+        (compiler-reg-loop-depth-record-succs!
+          loop-ends
+          ids
+          index
+          (compiler-live-block-successors block))
+        (compiler-reg-loop-depth-record-blocks!
+          (box-get rest)
+          ids
+          loop-ends
+          (+ index 1)))]
+    [(IrBlockArray seq)
+      (compiler-reg-loop-depth-record-blocks!
+        (compiler-ir-block-seq-to-list seq)
+        ids
+        loop-ends
+        index)]))
+
+(define (compiler-reg-loop-depth-bump-range!
+  [depths : (Array i64)]
+  [index : i64]
+  [end : i64]) : unit
+  (if (or (>= index (array-length depths)) (> index end))
+    unit
+    (begin
+      (if (< (array-ref depths index) (compiler-reg-loop-depth-max))
+        (array-set! depths index (+ (array-ref depths index) 1))
+        unit)
+      (compiler-reg-loop-depth-bump-range! depths (+ index 1) end))))
+
+(define (compiler-reg-loop-depths-from-ends!
+  [loop-ends : (Array i64)]
+  [depths : (Array i64)]
+  [index : i64]) : unit
+  (if (>= index (array-length loop-ends))
+    unit
+    (begin
+      (if (>= (array-ref loop-ends index) index)
+        (compiler-reg-loop-depth-bump-range!
+          depths
+          index
+          (array-ref loop-ends index))
+        unit)
+      (compiler-reg-loop-depths-from-ends! loop-ends depths (+ index 1)))))
+
+(define (compiler-reg-function-loop-depths [blocks : CompilerIrBlockList]) : (Array
+    i64)
+  (let
+    [count : i64 (compiler-ir-block-list-count blocks)]
+    [depths : (Array i64) (make-array i64 count)]
+    [loop-ends : (Array i64) (make-array i64 count)]
+    [ids : StringI64Map
+      (compiler-reg-loop-depth-block-ids
+        blocks
+        (string-i64-map-with-capacity (compiler-reg-bits-map-capacity count))
+        0)]
+    (begin
+      (compiler-reg-fill-i64-array depths 0)
+      (compiler-reg-fill-i64-array loop-ends (- 0 1))
+      (compiler-reg-loop-depth-record-blocks! blocks ids loop-ends 0)
+      (compiler-reg-loop-depths-from-ends! loop-ends depths 0)
+      depths)))
+
+(define (compiler-reg-ref-counts-add-word-weighted!
   [counts : (Array i64)]
   [bits : i64]
-  [var-base : i64]) : unit
+  [var-base : i64]
+  [weight : i64]) : unit
   (if (= bits 0)
     unit
     (let
@@ -3561,12 +3693,19 @@
       [var : i64 (+ var-base i)]
       (begin
         (if (and (>= var 0) (< var (array-length counts)))
-          (array-set! counts var (+ (array-ref counts var) 1))
+          (array-set! counts var (+ (array-ref counts var) weight))
           unit)
-        (compiler-reg-ref-counts-add-word!
+        (compiler-reg-ref-counts-add-word-weighted!
           counts
           (bit-and bits (- bits 1))
-          var-base)))))
+          var-base
+          weight)))))
+
+(define (compiler-reg-ref-counts-add-word!
+  [counts : (Array i64)]
+  [bits : i64]
+  [var-base : i64]) : unit
+  (compiler-reg-ref-counts-add-word-weighted! counts bits var-base 1))
 
 (define (compiler-reg-ref-counts-add-set-words!
   [counts : (Array i64)]
@@ -3586,12 +3725,51 @@
   [set : CompilerLiveI64Set]) : unit
   (compiler-reg-ref-counts-add-set-words! counts set 0))
 
+(define (compiler-reg-ref-counts-add-set-words-weighted!
+  [counts : (Array i64)]
+  [set : CompilerLiveI64Set]
+  [word-index : i64]
+  [weight : i64]) : unit
+  (if (>= word-index (compiler-live-set-word-count set))
+    unit
+    (begin
+      (compiler-reg-ref-counts-add-word-weighted!
+        counts
+        (compiler-live-set-word-at set word-index)
+        (* word-index (compiler-live-set-word-bits))
+        weight)
+      (compiler-reg-ref-counts-add-set-words-weighted!
+        counts
+        set
+        (+ word-index 1)
+        weight))))
+
+(define (compiler-reg-ref-counts-add-set-weighted!
+  [counts : (Array i64)]
+  [set : CompilerLiveI64Set]
+  [weight : i64]) : unit
+  (compiler-reg-ref-counts-add-set-words-weighted! counts set 0 weight))
+
 (define (compiler-reg-ref-counts-add-instr!
   [counts : (Array i64)]
   [instr : CompilerIrInstr]) : unit
   (begin
     (compiler-reg-ref-counts-add-set! counts (compiler-live-instr-uses instr))
     (compiler-reg-ref-counts-add-set! counts (compiler-live-instr-defs instr))))
+
+(define (compiler-reg-ref-counts-add-instr-weighted!
+  [counts : (Array i64)]
+  [instr : CompilerIrInstr]
+  [weight : i64]) : unit
+  (begin
+    (compiler-reg-ref-counts-add-set-weighted!
+      counts
+      (compiler-live-instr-uses instr)
+      weight)
+    (compiler-reg-ref-counts-add-set-weighted!
+      counts
+      (compiler-live-instr-defs instr)
+      weight)))
 
 (define (compiler-reg-ref-counts-seq!
   [counts : (Array i64)]
@@ -3603,6 +3781,22 @@
     (while (< index count)
       (begin
         (compiler-reg-ref-counts-add-instr! counts (array-ref slots index))
+        (set! index (+ index 1))))))
+
+(define (compiler-reg-ref-counts-seq-weighted!
+  [counts : (Array i64)]
+  [instrs : CompilerIrInstrSeq]
+  [weight : i64]) : unit
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (compiler-reg-ref-counts-add-instr-weighted!
+          counts
+          (array-ref slots index)
+          weight)
         (set! index (+ index 1))))))
 
 (define (compiler-reg-ref-counts-blocks!
@@ -3620,6 +3814,33 @@
         counts
         (compiler-ir-block-seq-to-list seq))]))
 
+(define (compiler-reg-ref-counts-blocks-weighted!
+  [counts : (Array i64)]
+  [blocks : CompilerIrBlockList]
+  [depths : (Array i64)]
+  [block-index : i64]) : unit
+  (match blocks
+    [(IrBlockNil) unit]
+    [(IrBlockCons block rest)
+      (begin
+        (match block
+          [(IrBlock _ instrs)
+            (compiler-reg-ref-counts-seq-weighted!
+              counts
+              instrs
+              (compiler-reg-loop-depth-weight (array-ref depths block-index)))])
+        (compiler-reg-ref-counts-blocks-weighted!
+          counts
+          (box-get rest)
+          depths
+          (+ block-index 1)))]
+    [(IrBlockArray seq)
+      (compiler-reg-ref-counts-blocks-weighted!
+        counts
+        (compiler-ir-block-seq-to-list seq)
+        depths
+        block-index)]))
+
 (define (compiler-reg-function-ref-counts [func : CompilerIrFunction]) : (Array
     i64)
   (match func
@@ -3629,6 +3850,18 @@
         (begin
           (compiler-reg-fill-i64-array counts 0)
           (compiler-reg-ref-counts-blocks! counts blocks)
+          counts))]))
+
+(define (compiler-reg-function-spill-weights [func : CompilerIrFunction]) : (Array
+    i64)
+  (match func
+    [(IrFunction _ _ _ vars blocks)
+      (let
+        [counts : (Array i64) (make-array i64 vars)]
+        [depths : (Array i64) (compiler-reg-function-loop-depths blocks)]
+        (begin
+          (compiler-reg-fill-i64-array counts 0)
+          (compiler-reg-ref-counts-blocks-weighted! counts blocks depths 0)
           counts))]))
 
 (define (compiler-reg-call-spanning-caller-saved-benefit?
@@ -4296,13 +4529,13 @@
       (compiler-reg-function-vector-mask-defs func)]
     [interval-index : CompilerRegIntervalIndex
       (compiler-reg-interval-index-build intervals vars)]
-    ;; #3473: static use counts drive spill-weight eviction on the integer scalar
-    ;; opt2 stage (allow-caller-saved-zero-call is the scalar-opt2 discriminator).
-    ;; An empty array selects the original furthest-end policy, keeping the
-    ;; SIMD/AVX plan and the caller-saved XMM stage byte-identical.
+    ;; #3490: loop-depth-weighted use counts drive spill-weight eviction on the
+    ;; integer scalar opt2 stage (allow-caller-saved-zero-call is the scalar-opt2
+    ;; discriminator). An empty array selects the original furthest-end policy,
+    ;; keeping the SIMD/AVX plan and the caller-saved XMM stage byte-identical.
     [eviction-ref-counts : (Array i64)
       (if allow-caller-saved-zero-call
-        (compiler-reg-function-ref-counts func)
+        (compiler-reg-function-spill-weights func)
         (make-array i64 0))]
     [integer-state : CompilerRegAssignState
       (compiler-reg-assign-candidates
@@ -7793,6 +8026,97 @@
 
 (cfg
   test
+  (define (compiler-reg-loop-spill-weight-eviction-function) : CompilerIrFunction
+    (IrFunction
+      "loop_spill_weight_eviction"
+      IrParamNil
+      (AstTyUnit)
+      7
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "entry"
+          (compiler-ir-instr-cons
+            (IrInstrMov 0 (IrValueI64 0) (compiler-reg-i64-ty))
+            (compiler-ir-instr-cons
+              (IrInstrMov 1 (IrValueI64 1) (compiler-reg-i64-ty))
+              (compiler-ir-instr-cons
+                (IrInstrMov 2 (IrValueI64 2) (compiler-reg-i64-ty))
+                (compiler-ir-instr-cons
+                  (IrInstrMov 3 (IrValueI64 3) (compiler-reg-i64-ty))
+                  (compiler-ir-instr-cons
+                    (IrInstrMov 4 (IrValueI64 4) (compiler-reg-i64-ty))
+                    (compiler-ir-instr-cons
+                      (IrInstrMov 5 (IrValueI64 5) (compiler-reg-i64-ty))
+                      (compiler-ir-instr-cons
+                        (IrInstrStore
+                          "use2"
+                          (IrValueVar 2)
+                          (compiler-reg-i64-ty))
+                        (compiler-ir-instr-cons
+                          (IrInstrStore
+                            "use3"
+                            (IrValueVar 3)
+                            (compiler-reg-i64-ty))
+                          (compiler-ir-instr-cons
+                            (IrInstrStore
+                              "use4"
+                              (IrValueVar 4)
+                              (compiler-reg-i64-ty))
+                            (compiler-ir-instr-cons
+                              (IrInstrStore
+                                "use5"
+                                (IrValueVar 5)
+                                (compiler-reg-i64-ty))
+                              (compiler-ir-instr-cons
+                                (IrInstrSyscall
+                                  6
+                                  (IrCallArgsOne (IrValueI64 39)))
+                                (compiler-ir-instr-cons
+                                  (IrInstrJump "loop")
+                                  IrInstrNil)))))))))))))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "loop"
+            (compiler-ir-instr-cons
+              (IrInstrStore "hot0" (IrValueVar 0) (compiler-reg-i64-ty))
+              (compiler-ir-instr-cons
+                (IrInstrBranch (IrValueBool false) "body" "exit")
+                IrInstrNil)))
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              "body"
+              (compiler-ir-instr-cons (IrInstrJump "loop") IrInstrNil))
+            (compiler-ir-block-cons
+              (compiler-ir-block
+                "exit"
+                (compiler-ir-instr-cons
+                  (IrInstrStore "cold1" (IrValueVar 1) (compiler-reg-i64-ty))
+                  (compiler-ir-instr-cons (IrInstrReturn IrNoValue) IrInstrNil)))
+              IrBlockNil)))))))
+
+(cfg
+  test
+  (define (compiler-reg-loop-spill-weight-eviction-ok?) : bool
+    (let
+      [func : CompilerIrFunction
+        (compiler-reg-loop-spill-weight-eviction-function)]
+      [static-counts : (Array i64) (compiler-reg-function-ref-counts func)]
+      [weighted-counts : (Array i64) (compiler-reg-function-spill-weights func)]
+      (match (compiler-reg-plan-function-scalar func)
+        [(CompilerRegPlan assignments _ _ _ _)
+          (and
+            (= (array-ref static-counts 0) (array-ref static-counts 1))
+            (> (array-ref weighted-counts 0) (array-ref weighted-counts 1))
+            (compiler-reg-location-any-register?
+              (compiler-reg-assignment-lookup assignments 0))
+            (compiler-reg-location-spill-offset?
+              (compiler-reg-assignment-lookup assignments 1)
+              (compiler-reg-stack-slot-offset 1))
+            (compiler-reg-location-any-register?
+              (compiler-reg-assignment-lookup assignments 5)))]))))
+
+(cfg
+  test
   (define (compiler-reg-instr-list-has-mov-i64?
     [instrs : CompilerIrInstrList]
     [dst : i64]
@@ -8473,6 +8797,7 @@
     (compiler-reg-scalar-zero-call-caller-saved-ok?)
     (compiler-reg-scalar-caller-saved-clobber-ok?)
     (cfg test (compiler-reg-spill-weight-eviction-ok?) true)
+    (cfg test (compiler-reg-loop-spill-weight-eviction-ok?) true)
     (compiler-reg-scalar-call-spanning-caller-saved-ok?)
     (cfg test (compiler-reg-call-span-counts-ok?) true)
     (cfg test (compiler-reg-call-span-census-ok?) true)

@@ -4778,6 +4778,10 @@
         [(CompilerRegInterval b-var b-start _)
           (or (< a-start b-start) (and (= a-start b-start) (< a-var b-var)))])]))
 
+(define (compiler-reg-color-interval-copy [item : CompilerRegInterval]) : CompilerRegInterval
+  (match item
+    [(CompilerRegInterval var start end) (CompilerRegInterval var start end)]))
+
 (define (compiler-reg-color-sift-down
   [items : (Array CompilerRegInterval)]
   [root : i64]
@@ -4811,10 +4815,13 @@
         (if (= largest node)
           (set! done true)
           (let
-            [tmp : CompilerRegInterval (array-ref items node)]
+            [node-item : CompilerRegInterval
+              (compiler-reg-color-interval-copy (array-ref items node))]
+            [largest-item : CompilerRegInterval
+              (compiler-reg-color-interval-copy (array-ref items largest))]
             (begin
-              (array-set! items node (array-ref items largest))
-              (array-set! items largest tmp)
+              (array-set! items node largest-item)
+              (array-set! items largest node-item)
               (set! node largest))))))))
 
 (define (compiler-reg-color-heapsort
@@ -4831,10 +4838,13 @@
       [last : i64 (- count 1)]
       (while (> last 0)
         (let
-          [tmp : CompilerRegInterval (array-ref items 0)]
+          [root-item : CompilerRegInterval
+            (compiler-reg-color-interval-copy (array-ref items 0))]
+          [last-item : CompilerRegInterval
+            (compiler-reg-color-interval-copy (array-ref items last))]
           (begin
-            (array-set! items 0 (array-ref items last))
-            (array-set! items last tmp)
+            (array-set! items 0 last-item)
+            (array-set! items last root-item)
             (compiler-reg-color-sift-down items 0 last)
             (set! last (- last 1))))))))
 
@@ -4866,12 +4876,32 @@
       (compiler-reg-color-heapsort items count)
       items)))
 
-;; Lowest free slot whose previous occupant's interval ended strictly before
-;; `start`. slot-ends[i] holds the end position of slot i's current occupant;
-;; reserved slots carry a sentinel end that never expires. STRICT `<`: phi
-;; parallel copies at a block edge read inputs and write destinations at the
-;; same interval position, so same-position reuse would let one phi's
-;; destination clobber another phi's not-yet-read input through the slot.
+;; Per-variable full lifetime end over all split live intervals. The scalar
+;; coloring walk assigns each variable one remapped frame slot, so a slot must
+;; stay busy until that variable's last interval ends, even if the interval list
+;; has a hole before a later use.
+(define (compiler-reg-color-extent-ends
+  [items : (Array CompilerRegInterval)]
+  [vars : i64]) : (Array i64)
+  (let
+    [ends : (Array i64) (make-array i64 vars)]
+    [i : i64 0]
+    (begin
+      (while (< i vars)
+        (begin
+          (array-set! ends i (- 0 1))
+          (set! i (+ i 1))))
+      (set! i 0)
+      (while (< i (array-length items))
+        (match (array-ref items i)
+          [(CompilerRegInterval var _ end)
+            (begin
+              (if (and (>= var 0) (< var vars) (> end (array-ref ends var)))
+                (array-set! ends var end)
+                unit)
+              (set! i (+ i 1)))]))
+      ends)))
+
 ;; First slot id at or after `from` that is not identity-pinned to a
 ;; parameter (pins mark slot-ends with i64-max). Fresh slots fill the gaps a
 ;; sparse parameter id leaves behind, so slot ids never run past the pinned
@@ -4885,6 +4915,22 @@
       (compiler-reg-color-next-free-slot slot-ends (+ from 1))
       from)))
 
+;; Lowest used slot whose previous occupant ended strictly before `start`.
+;; STRICT `<`: phi parallel copies at a block edge read inputs and write
+;; destinations at the same interval position, so same-position reuse would let
+;; one phi's destination clobber another phi's not-yet-read input through the
+;; slot. Parameter pins use i64-max in slot-ends and therefore never match.
+(define (compiler-reg-color-find-slot
+  [slot-ends : (Array i64)]
+  [used : i64]
+  [start : i64]
+  [index : i64]) : i64
+  (if (>= index used)
+    used
+    (if (< (array-ref slot-ends index) start)
+      index
+      (compiler-reg-color-find-slot slot-ends used start (+ index 1)))))
+
 (define (compiler-reg-color-walk
   [items : (Array CompilerRegInterval)]
   [count : i64]
@@ -4894,6 +4940,7 @@
   [ineligible : CompilerLiveI64Set]
   [colorable : (Array bool)]
   [slot-ends : (Array i64)]
+  [extent-ends : (Array i64)]
   [used : i64]
   [remap : (Array i64)]) : i64
   (if (>= index count)
@@ -4927,16 +4974,25 @@
             ineligible
             colorable
             slot-ends
+            extent-ends
             used
             remap)
           (let
-            ;; Slice 1 ships compaction only: every variable gets a fresh
-            ;; dense slot. Fresh slots skip param-pinned ids so sparse
-            ;; parameter ids leave no hole.
-            [slot : i64 (compiler-reg-color-next-free-slot slot-ends used)]
-            [next-used : i64 (+ slot 1)]
+            ;; Prefer the lowest same-size scalar slot whose prior owner ended
+            ;; before this variable starts. Otherwise take a fresh slot,
+            ;; skipping param-pinned ids so sparse parameter ids leave no hole.
+            [found : i64 (compiler-reg-color-find-slot slot-ends used start 0)]
+            [slot : i64
+              (if (>= found used)
+                (compiler-reg-color-next-free-slot slot-ends used)
+                found)]
+            [next-used : i64
+              (if (>= found used)
+                (+ slot 1)
+                used)]
+            [full-end : i64 (compiler-reg-max end (array-ref extent-ends var))]
             (begin
-              (array-set! slot-ends slot end)
+              (array-set! slot-ends slot full-end)
               (array-set! remap var slot)
               (compiler-reg-color-walk
                 items
@@ -4947,6 +5003,7 @@
                 ineligible
                 colorable
                 slot-ends
+                extent-ends
                 next-used
                 remap))))])))
 
@@ -5920,11 +5977,11 @@
               slot-ends
               (compiler-reg-max highest (+ var-id 1))))])]))
 
-;; Total frame renumbering: colorable stack scalars are assigned fresh dense
-;; slots first, colorable inline-storage ranges are shared above that scalar
-;; prefix, every remaining slot-resident variable gets a private dense slot
-;; above them, and register-homed variables move to ids that are not used by a
-;; stack slot. The assignment table is rebuilt on the new keys.
+;; Total frame renumbering: colorable stack scalars share slots when their
+;; intervals are disjoint, colorable inline-storage ranges are shared above
+;; that scalar prefix, every remaining slot-resident variable gets a private
+;; dense slot above them, and register-homed variables move to ids that are not
+;; used by a stack slot. The assignment table is rebuilt on the new keys.
 (define (compiler-reg-color-stack-slots
   [plan : CompilerRegPlan]
   [group-vars : CompilerLiveI64Set]
@@ -5966,6 +6023,8 @@
             (compiler-reg-color-param-pins params remap slot-ends 0)]
           [sorted : (Array CompilerRegInterval)
             (compiler-reg-color-sorted-array intervals)]
+          [extent-ends : (Array i64)
+            (compiler-reg-color-extent-ends sorted vars)]
           [stack-prefix : i64
             (compiler-reg-color-walk
               sorted
@@ -5976,6 +6035,7 @@
               ineligible
               colorable
               slot-ends
+              extent-ends
               0
               remap)]
           [storage-prefix : i64
@@ -8719,6 +8779,102 @@
       (CompilerRegVarType 5 (AstTyU64))
       CompilerRegVarTypeNil)))
 
+(define (compiler-reg-color-spill-sharing-assignments [vars : i64]) : CompilerRegAssignmentList
+  (if (< vars 1)
+    CompilerRegAssignmentNil
+    (compiler-reg-assignment-insert
+      (compiler-reg-color-spill-sharing-assignments (- vars 1))
+      (- vars 1)
+      (CompilerRegSpill (* (- vars 1) 8)))))
+
+(define (compiler-reg-color-spill-sharing-types [vars : i64]) : CompilerRegVarTypeList
+  (if (< vars 1)
+    CompilerRegVarTypeNil
+    (compiler-reg-var-type-cons
+      (CompilerRegVarType (- vars 1) (AstTyI64))
+      (compiler-reg-color-spill-sharing-types (- vars 1)))))
+
+(define (compiler-reg-color-spill-sharing-intervals) : CompilerRegIntervalList
+  (compiler-reg-interval-cons
+    (CompilerRegInterval 0 0 2)
+    (compiler-reg-interval-cons
+      (CompilerRegInterval 2 1 5)
+      (compiler-reg-interval-cons
+        (CompilerRegInterval 1 3 4)
+        CompilerRegIntervalNil))))
+
+(define (compiler-reg-color-spill-split-intervals) : CompilerRegIntervalList
+  (compiler-reg-interval-cons
+    (CompilerRegInterval 0 0 1)
+    (compiler-reg-interval-cons
+      (CompilerRegInterval 1 2 3)
+      (compiler-reg-interval-cons
+        (CompilerRegInterval 0 5 7)
+        CompilerRegIntervalNil))))
+
+(define (compiler-reg-color-spill-param-intervals) : CompilerRegIntervalList
+  (compiler-reg-interval-cons
+    (CompilerRegInterval 0 0 1)
+    (compiler-reg-interval-cons
+      (CompilerRegInterval 1 1 2)
+      (compiler-reg-interval-cons
+        (CompilerRegInterval 2 3 4)
+        CompilerRegIntervalNil))))
+
+(define (compiler-reg-color-spill-slot-sharing-ok?) : bool
+  (match (compiler-reg-color-stack-slots
+    (CompilerRegPlan
+      (compiler-reg-color-spill-sharing-assignments 3)
+      (compiler-live-set-empty)
+      (compiler-reg-color-spill-sharing-intervals)
+      (compiler-reg-color-spill-sharing-types 3)
+      (compiler-live-set-empty))
+    (compiler-live-set-empty)
+    IrParamNil
+    IrBlockNil
+    3)
+    [(CompilerRegColoringRemap share-remap share-slots)
+      (match (compiler-reg-color-stack-slots
+        (CompilerRegPlan
+          (compiler-reg-color-spill-sharing-assignments 2)
+          (compiler-live-set-empty)
+          (compiler-reg-color-spill-split-intervals)
+          (compiler-reg-color-spill-sharing-types 2)
+          (compiler-live-set-empty))
+        (compiler-live-set-empty)
+        IrParamNil
+        IrBlockNil
+        2)
+        [(CompilerRegColoringRemap split-remap split-slots)
+          (and
+            (= share-slots 2)
+            (= (array-ref share-remap 0) (array-ref share-remap 1))
+            (not (= (array-ref share-remap 0) (array-ref share-remap 2)))
+            (= split-slots 2)
+            (not (= (array-ref split-remap 0) (array-ref split-remap 1))))]
+        [(CompilerRegColoringNone) false])]
+    [(CompilerRegColoringNone) false]))
+
+(define (compiler-reg-color-spill-param-pins-ok?) : bool
+  (match (compiler-reg-color-stack-slots
+    (CompilerRegPlan
+      (compiler-reg-color-spill-sharing-assignments 3)
+      (compiler-live-set-empty)
+      (compiler-reg-color-spill-param-intervals)
+      (compiler-reg-color-spill-sharing-types 3)
+      (compiler-live-set-empty))
+    (compiler-live-set-empty)
+    (compiler-ir-param-cons (IrParam "pinned" (AstTyI64) 1) IrParamNil)
+    IrBlockNil
+    3)
+    [(CompilerRegColoringRemap remap slots)
+      (and
+        (= slots 2)
+        (= (array-ref remap 1) 1)
+        (= (array-ref remap 0) (array-ref remap 2))
+        (not (= (array-ref remap 0) 1)))]
+    [(CompilerRegColoringNone) false]))
+
 (define (compiler-reg-color-storage-ranges-ok?) : bool
   (match (compiler-reg-color-storage-function)
     [(IrFunction _ params _ vars blocks)
@@ -8803,6 +8959,8 @@
     (cfg test (compiler-reg-call-span-census-ok?) true)
     (compiler-reg-indexed-lookups-ok?)
     (compiler-reg-color-stack-group-ok?)
+    (compiler-reg-color-spill-slot-sharing-ok?)
+    (compiler-reg-color-spill-param-pins-ok?)
     (compiler-reg-color-storage-ranges-ok?))
     42
     (begin

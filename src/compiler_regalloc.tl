@@ -26,6 +26,14 @@
   (CompilerRegNoLocation)
   (CompilerRegSomeLocation CompilerRegLocation))
 
+(defenum CompilerRegMaybeString
+  (CompilerRegNoString)
+  (CompilerRegSomeString String))
+
+(defenum CompilerRegTargetAbi
+  (CompilerRegAbiLinux)
+  (CompilerRegAbiWindows))
+
 (defenum CompilerRegAssignment
   (CompilerRegAssignment i64 CompilerRegLocation))
 
@@ -108,6 +116,12 @@
 (defenum CompilerRegMaybeCallSaveActive
   (CompilerRegNoCallSaveActive)
   (CompilerRegSomeCallSaveActive i64 i64 AstType))
+
+(defenum CompilerRegParamAssignPlan
+  (CompilerRegParamAssignPlan
+    CompilerRegAssignmentTable
+    CompilerLiveI64Set
+    CompilerLiveI64Set))
 
 (cfg
   (any regalloc-census test)
@@ -1666,6 +1680,199 @@
             (box-get rest)
             (compiler-live-set-insert set var))])]))
 
+(define (compiler-reg-param-list-empty? [params : CompilerIrParamList]) : bool
+  (match params
+    [(IrParamNil) true]
+    [(IrParamCons _ _) false]))
+
+(define (compiler-reg-integer-param-type? [ty : AstType]) : bool
+  (and
+    ;; Local handle values are register-eligible after lowering, but aggregate
+    ;; ABI params can be incoming by-reference values used by backend copy/allocation
+    ;; sequences. Only true scalar integer/pointer params can keep their incoming
+    ;; ABI home.
+    (compiler-reg-scalar-type? ty)
+    (not (compiler-reg-float-type? ty))
+    (not (compiler-reg-type-register-group? ty))))
+
+(define (compiler-reg-param-int-reg
+  [abi : CompilerRegTargetAbi]
+  [int-idx : i64]
+  [position : i64]) : CompilerRegMaybeString
+  (let
+    [idx : i64
+      (match abi
+        [(CompilerRegAbiLinux) int-idx]
+        [(CompilerRegAbiWindows) position])]
+    (match abi
+      [(CompilerRegAbiLinux)
+        (cond
+          [(= idx 0) (CompilerRegSomeString "%rdi")]
+          [(= idx 1) (CompilerRegSomeString "%rsi")]
+          [(= idx 2) (CompilerRegSomeString "%rdx")]
+          [(= idx 3) (CompilerRegSomeString "%rcx")]
+          ;; %r8 is the backend's integer scratch register. %r9 is safe for
+          ;; clobber-free leaf ranges and the zero-call extension now checks
+          ;; preassigned conflicts before reusing it.
+          [(= idx 5) (CompilerRegSomeString "%r9")]
+          [else CompilerRegNoString])]
+      [(CompilerRegAbiWindows)
+        (cond
+          [(= idx 0) (CompilerRegSomeString "%rcx")]
+          [(= idx 1) (CompilerRegSomeString "%rdx")]
+          ;; Windows arg2 is %r8, the backend's integer scratch register.
+          [(= idx 3) (CompilerRegSomeString "%r9")]
+          [else CompilerRegNoString])])))
+
+(define (compiler-reg-abi-param-preassign-enabled? [abi : CompilerRegTargetAbi]) : bool
+  (match abi
+    [(CompilerRegAbiLinux) true]
+    ;; The Windows backend still has target-specific scratch/register-argument
+    ;; interactions that need a separate audit before incoming arg homes are
+    ;; safe in opt2 self-builds.
+    [(CompilerRegAbiWindows) false]))
+
+(define (compiler-reg-param-pin-safe?
+  [assignments : CompilerRegAssignmentTable]
+  [interval-index : CompilerRegIntervalIndex]
+  [base-ineligible : CompilerLiveI64Set]
+  [var : i64]
+  [reg : String]) : bool
+  (and
+    (not (compiler-live-set-contains? base-ineligible var))
+    (match (compiler-reg-interval-index-lookup interval-index var)
+      [(CompilerRegSomeInterval interval)
+        (match interval
+          [(CompilerRegInterval _ start end)
+            (not
+              (compiler-reg-assignment-table-location-conflicts?
+                assignments
+                interval-index
+                var
+                (- 0 1)
+                (CompilerRegRegister reg)))])]
+      [(CompilerRegNoInterval) false])))
+
+(define (compiler-reg-param-assign-walk
+  [abi : CompilerRegTargetAbi]
+  [params : CompilerIrParamList]
+  [interval-index : CompilerRegIntervalIndex]
+  [assignments : CompilerRegAssignmentTable]
+  [ineligible : CompilerLiveI64Set]
+  [blocked : CompilerLiveI64Set]
+  [int-idx : i64]
+  [float-idx : i64]
+  [position : i64]
+  [can-pin? : bool]) : CompilerRegParamAssignPlan
+  (match params
+    [(IrParamNil) (CompilerRegParamAssignPlan assignments ineligible blocked)]
+    [(IrParamCons param rest)
+      (match param
+        [(IrParam _ ty var-id)
+          (let
+            [is-float : bool (compiler-reg-float-type? ty)]
+            [is-group : bool (compiler-reg-type-register-group? ty)]
+            [next-int : i64
+              (if is-float
+                int-idx
+                (+ int-idx 1))]
+            [next-float : i64
+              (if is-float
+                (+ float-idx 1)
+                float-idx)]
+            [next-position : i64 (+ position 1)]
+            [tail-can-pin? : bool (and can-pin? (not is-group))]
+            [reg : CompilerRegMaybeString
+              (if (and
+                can-pin?
+                (not is-group)
+                (compiler-reg-integer-param-type? ty))
+                (compiler-reg-param-int-reg abi int-idx position)
+                CompilerRegNoString)]
+            (match reg
+              [(CompilerRegSomeString home)
+                (if (compiler-reg-param-pin-safe?
+                  assignments
+                  interval-index
+                  ineligible
+                  var-id
+                  home)
+                  (compiler-reg-param-assign-walk
+                    abi
+                    (box-get rest)
+                    interval-index
+                    (compiler-reg-assignment-table-insert
+                      assignments
+                      var-id
+                      (CompilerRegRegister home))
+                    ineligible
+                    (compiler-live-set-insert blocked var-id)
+                    next-int
+                    next-float
+                    next-position
+                    tail-can-pin?)
+                  (compiler-reg-param-assign-walk
+                    abi
+                    (box-get rest)
+                    interval-index
+                    assignments
+                    (compiler-live-set-insert ineligible var-id)
+                    (compiler-live-set-insert blocked var-id)
+                    next-int
+                    next-float
+                    next-position
+                    tail-can-pin?))]
+              [(CompilerRegNoString)
+                (compiler-reg-param-assign-walk
+                  abi
+                  (box-get rest)
+                  interval-index
+                  assignments
+                  (compiler-live-set-insert ineligible var-id)
+                  (compiler-live-set-insert blocked var-id)
+                  next-int
+                  next-float
+                  next-position
+                  tail-can-pin?)]))])]))
+
+(define (compiler-reg-param-assign-plan
+  [abi : CompilerRegTargetAbi]
+  [func : CompilerIrFunction]
+  [intervals : CompilerRegIntervalList]
+  [base-ineligible : CompilerLiveI64Set]
+  [vars : i64]) : CompilerRegParamAssignPlan
+  (match func
+    [(IrFunction _ params _ _ _)
+      (let
+        [assignments : CompilerRegAssignmentTable
+          (compiler-reg-assignment-table-make vars)]
+        (if (compiler-reg-param-list-empty? params)
+          (CompilerRegParamAssignPlan
+            assignments
+            base-ineligible
+            base-ineligible)
+          (let
+            [fallback-ineligible : CompilerLiveI64Set
+              (compiler-reg-ineligible-params params base-ineligible)]
+            (if (or
+              (not (compiler-reg-abi-param-preassign-enabled? abi))
+              (compiler-reg-backend-caller-clobber? func))
+              (CompilerRegParamAssignPlan
+                assignments
+                fallback-ineligible
+                fallback-ineligible)
+              (compiler-reg-param-assign-walk
+                abi
+                params
+                (compiler-reg-interval-index-build intervals vars)
+                assignments
+                base-ineligible
+                base-ineligible
+                0
+                0
+                0
+                true)))))]))
+
 (define (compiler-reg-ineligible-instr
   [instr : CompilerIrInstr]
   [set : CompilerLiveI64Set]) : CompilerLiveI64Set
@@ -1840,28 +2047,35 @@
         (compiler-ir-block-seq-to-list seq)
         set)]))
 
-;; Ineligible variables are computed purely structurally (non-scalar/non-handle
-;; types, params, call-argument vars, address-taken/memory targets). A value live
-;; across a call is NOT structurally ineligible: the primary integer pool admits
-;; only callee-saved registers (%r12-%r15/%rbx) which the callee (TypeLisp
-;; function prologue/epilogue, or a runtime helper that push/pops them) preserves
-;; across the call. The scalar zero-call extension is layered on later and
-;; separately rejects any interval spanning a modeled caller-clobber point.
+;; Ineligible variables are computed structurally (non-scalar/non-handle types,
+;; call-argument vars, address-taken/memory targets). A value live across a call
+;; is NOT structurally ineligible: the primary integer pool admits only
+;; callee-saved registers (%r12-%r15/%rbx) which the callee (TypeLisp function
+;; prologue/epilogue, or a runtime helper that push/pops them) preserves across
+;; the call. The scalar zero-call extension is layered on later and separately
+;; rejects any interval spanning a modeled caller-clobber point.
+(define (compiler-reg-ineligible-vars-non-params
+  [func : CompilerIrFunction]
+  [types : CompilerRegVarTypeList]) : CompilerLiveI64Set
+  (match func
+    [(IrFunction _ _ _ _ blocks)
+      (compiler-reg-ineligible-memory
+        blocks
+        (compiler-reg-call-arg-vars-blocks
+          blocks
+          (compiler-reg-ineligible-non-scalars
+            types
+            (compiler-live-set-empty)
+            true)))]))
+
 (define (compiler-reg-ineligible-vars
   [func : CompilerIrFunction]
   [types : CompilerRegVarTypeList]) : CompilerLiveI64Set
   (match func
-    [(IrFunction _ params _ _ blocks)
-      (compiler-reg-ineligible-memory
-        blocks
-        (compiler-reg-ineligible-params
-          params
-          (compiler-reg-call-arg-vars-blocks
-            blocks
-            (compiler-reg-ineligible-non-scalars
-              types
-              (compiler-live-set-empty)
-              true))))]))
+    [(IrFunction _ params _ _ _)
+      (compiler-reg-ineligible-params
+        params
+        (compiler-reg-ineligible-vars-non-params func types))]))
 
 ;; SIMD/AVX register planning keeps the original (pre-#perf) ineligibility: every
 ;; value live across a call is ineligible (the vector/mask/XMM pools are
@@ -2937,6 +3151,40 @@
     [(IrInstrBinOp _ op _ _ _) (compiler-reg-backend-clobber-binop? op)]
     [_ false]))
 
+(define (compiler-reg-backend-caller-clobber-seq? [instrs : CompilerIrInstrSeq]) : bool
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (< index count) (not found))
+        (begin
+          (set!
+            found
+            (compiler-reg-backend-caller-clobber-instr? (array-ref slots index)))
+          (set! index (+ index 1))))
+      found)))
+
+(define (compiler-reg-backend-caller-clobber-blocks?
+  [blocks : CompilerIrBlockList]) : bool
+  (match blocks
+    [(IrBlockNil) false]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (if (compiler-reg-backend-caller-clobber-seq? instrs)
+            true
+            (compiler-reg-backend-caller-clobber-blocks? (box-get rest)))])]
+    [(IrBlockArray seq)
+      (compiler-reg-backend-caller-clobber-blocks?
+        (compiler-ir-block-seq-to-list seq))]))
+
+(define (compiler-reg-backend-caller-clobber? [func : CompilerIrFunction]) : bool
+  (match func
+    [(IrFunction _ _ _ _ blocks)
+      (compiler-reg-backend-caller-clobber-blocks? blocks)]))
+
 ;; Backend caller-clobber points include ordinary calls plus non-call IR that
 ;; emits caller-clobbering machine instructions or helper calls. The zero-call
 ;; caller-saved pass rejects any interval spanning one of these points.
@@ -3108,14 +3356,23 @@
 
 (define (compiler-reg-caller-saved-zero-call-candidate?
   [assignments : CompilerRegAssignmentTable]
+  [interval-index : CompilerRegIntervalIndex]
   [group-vars : CompilerLiveI64Set]
   [clobber-points : CompilerLiveI64Set]
   [var : i64]
   [start : i64]
-  [end : i64]) : bool
+  [end : i64]
+  [reg : String]) : bool
   (and
     (not (compiler-live-set-contains? group-vars var))
     (not (compiler-reg-call-set-in-range? clobber-points start end))
+    (not
+      (compiler-reg-assignment-table-location-conflicts?
+        assignments
+        interval-index
+        var
+        (- 0 1)
+        (CompilerRegRegister reg)))
     (match (compiler-reg-assignment-table-lookup assignments var)
       [(CompilerRegSomeLocation location)
         (match location
@@ -3128,6 +3385,7 @@
   [regs : CompilerRegStringList]
   [active : CompilerRegActiveList]
   [assignments : CompilerRegAssignmentTable]
+  [interval-index : CompilerRegIntervalIndex]
   [group-vars : CompilerLiveI64Set]
   [clobber-points : CompilerLiveI64Set]) : CompilerRegAssignState
   (match candidates
@@ -3138,13 +3396,16 @@
           (let
             [expired : CompilerRegActiveList
               (compiler-reg-expire-active active start)]
+            [reg : String (compiler-reg-first-free-register regs expired)]
             (if (compiler-reg-caller-saved-zero-call-candidate?
               assignments
+              interval-index
               group-vars
               clobber-points
               var
               start
-              end)
+              end
+              reg)
               (if (=
                 (compiler-reg-active-count expired)
                 (compiler-reg-string-list-count regs))
@@ -3153,27 +3414,28 @@
                   regs
                   expired
                   assignments
+                  interval-index
                   group-vars
                   clobber-points)
-                (let
-                  [reg : String (compiler-reg-first-free-register regs expired)]
-                  (compiler-reg-assign-caller-saved-zero-call-candidates
-                    (box-get rest)
-                    regs
-                    (compiler-reg-active-insert
-                      expired
-                      (CompilerRegActive var end reg))
-                    (compiler-reg-assignment-table-insert
-                      assignments
-                      var
-                      (CompilerRegRegister reg))
-                    group-vars
-                    clobber-points)))
+                (compiler-reg-assign-caller-saved-zero-call-candidates
+                  (box-get rest)
+                  regs
+                  (compiler-reg-active-insert
+                    expired
+                    (CompilerRegActive var end reg))
+                  (compiler-reg-assignment-table-insert
+                    assignments
+                    var
+                    (CompilerRegRegister reg))
+                  interval-index
+                  group-vars
+                  clobber-points))
               (compiler-reg-assign-caller-saved-zero-call-candidates
                 (box-get rest)
                 regs
                 expired
                 assignments
+                interval-index
                 group-vars
                 clobber-points)))])]))
 
@@ -3962,7 +4224,9 @@
   [type-info : CompilerRegVarTypes]
   [types : CompilerRegVarTypeList]
   [intervals : CompilerRegIntervalList]
+  [assignment-table : CompilerRegAssignmentTable]
   [ineligible : CompilerLiveI64Set]
+  [blocked : CompilerLiveI64Set]
   [allow-caller-saved-zero-call : bool]) : CompilerRegPlan
   (let
     [vars : i64
@@ -3975,8 +4239,6 @@
       (compiler-reg-function-vector-mask-defs func)]
     [interval-index : CompilerRegIntervalIndex
       (compiler-reg-interval-index-build intervals vars)]
-    [assignment-table : CompilerRegAssignmentTable
-      (compiler-reg-assignment-table-make vars)]
     ;; #3473: static use counts drive spill-weight eviction on the integer scalar
     ;; opt2 stage (allow-caller-saved-zero-call is the scalar-opt2 discriminator).
     ;; An empty array selects the original furthest-end policy, keeping the
@@ -3987,7 +4249,7 @@
         (make-array i64 0))]
     [integer-state : CompilerRegAssignState
       (compiler-reg-assign-candidates
-        (compiler-reg-candidates intervals type-info ineligible false)
+        (compiler-reg-candidates intervals type-info blocked false)
         (compiler-reg-sysv-integer-registers)
         CompilerRegActiveNil
         assignment-table
@@ -4004,10 +4266,11 @@
         allow-caller-saved-zero-call
         (compiler-reg-assignment-table-has-spill? integer-assignments))
         (compiler-reg-assign-caller-saved-zero-call-candidates
-          (compiler-reg-candidates intervals type-info ineligible false)
+          (compiler-reg-candidates intervals type-info blocked false)
           (compiler-reg-zero-call-caller-saved-integer-registers)
           CompilerRegActiveNil
           integer-assignments
+          interval-index
           group-vars
           (compiler-reg-backend-caller-clobber-points func))
         (CompilerRegAssignState CompilerRegActiveNil integer-assignments))]
@@ -4021,7 +4284,7 @@
           integer-with-caller-assignments))
         (compiler-reg-assign-caller-saved-call-spanning
           func
-          (compiler-reg-candidates intervals type-info ineligible false)
+          (compiler-reg-candidates intervals type-info blocked false)
           integer-with-caller-assignments
           interval-index
           group-vars)
@@ -4036,7 +4299,7 @@
         [(CompilerRegCallSaveAssignState _ shadows) shadows])]
     [scalar-state : CompilerRegAssignState
       (compiler-reg-assign-candidates
-        (compiler-reg-candidates intervals type-info ineligible true)
+        (compiler-reg-candidates intervals type-info blocked true)
         (compiler-reg-xmm-registers)
         CompilerRegActiveNil
         integer-call-assignments
@@ -4056,7 +4319,7 @@
         [(CompilerLiveUseDef _ vars) vars])]
     [vector-state : CompilerRegAssignState
       (compiler-reg-assign-fixed-candidates
-        (compiler-reg-special-candidates intervals vector-vars ineligible)
+        (compiler-reg-special-candidates intervals vector-vars blocked)
         (compiler-reg-vector-registers)
         CompilerRegActiveNil
         scalar-assignments)]
@@ -4065,7 +4328,7 @@
         [(CompilerRegAssignState _ assignments) assignments])]
     [mask-state : CompilerRegAssignState
       (compiler-reg-assign-fixed-candidates
-        (compiler-reg-special-candidates intervals mask-vars ineligible)
+        (compiler-reg-special-candidates intervals mask-vars blocked)
         (compiler-reg-mask-registers)
         CompilerRegActiveNil
         vector-assignments)]
@@ -4087,12 +4350,21 @@
     [liveness : CompilerFunctionLiveness (compiler-live-analyze-function func)]
     [type-info : CompilerRegVarTypes (compiler-reg-function-var-types func)]
     [types : CompilerRegVarTypeList (compiler-reg-var-types-list type-info)]
+    [intervals : CompilerRegIntervalList
+      (compiler-reg-live-intervals func liveness)]
+    [ineligible : CompilerLiveI64Set
+      (compiler-reg-ineligible-vars-simd func liveness types)]
+    [vars : i64
+      (match func
+        [(IrFunction _ _ _ function-vars _) function-vars])]
     (compiler-reg-plan-from
       func
       type-info
       types
-      (compiler-reg-live-intervals func liveness)
-      (compiler-reg-ineligible-vars-simd func liveness types)
+      intervals
+      (compiler-reg-assignment-table-make vars)
+      ineligible
+      ineligible
       false)))
 
 ;; Scalar register plan (#perf, opt level 2): full dataflow live intervals for
@@ -4113,25 +4385,41 @@
           (> count 1)
           (<= count (compiler-reg-scalar-full-interval-block-limit))))]))
 
-(define (compiler-reg-plan-function-scalar [func : CompilerIrFunction]) : CompilerRegPlan
+(define (compiler-reg-plan-function-scalar-for-abi
+  [abi : CompilerRegTargetAbi]
+  [func : CompilerIrFunction]) : CompilerRegPlan
   (let
     [type-info : CompilerRegVarTypes (compiler-reg-function-var-types func)]
     [types : CompilerRegVarTypeList (compiler-reg-var-types-list type-info)]
+    [vars : i64
+      (match func
+        [(IrFunction _ _ _ function-vars _) function-vars])]
     [intervals : CompilerRegIntervalList
       (if (compiler-reg-scalar-full-intervals? func)
         (compiler-reg-live-intervals func (compiler-live-analyze-function func))
         (compiler-reg-block-intervals func))]
-    (compiler-reg-plan-from
-      func
-      type-info
-      types
-      intervals
+    [base-ineligible : CompilerLiveI64Set
       (compiler-reg-mark-float-spanning
         intervals
         type-info
         (compiler-reg-call-points func)
-        (compiler-reg-ineligible-vars func types))
-      true)))
+        (compiler-reg-ineligible-vars-non-params func types))]
+    [param-plan : CompilerRegParamAssignPlan
+      (compiler-reg-param-assign-plan abi func intervals base-ineligible vars)]
+    (match param-plan
+      [(CompilerRegParamAssignPlan preassignments ineligible blocked)
+        (compiler-reg-plan-from
+          func
+          type-info
+          types
+          intervals
+          preassignments
+          ineligible
+          blocked
+          true)])))
+
+(define (compiler-reg-plan-function-scalar [func : CompilerIrFunction]) : CompilerRegPlan
+  (compiler-reg-plan-function-scalar-for-abi CompilerRegAbiLinux func))
 
 ;; Fast scalar backend plan: keep type discovery for emission decisions, but
 ;; leave values in their stack slots instead of spending compile time on liveness
@@ -6456,6 +6744,62 @@
             IrInstrNil)))
       IrBlockNil)))
 
+(define (compiler-reg-param-register-function) : CompilerIrFunction
+  (IrFunction
+    "param_registers"
+    (compiler-ir-param-cons
+      (IrParam "a" (compiler-reg-i64-ty) 0)
+      (compiler-ir-param-cons
+        (IrParam "b" (compiler-reg-i64-ty) 1)
+        (compiler-ir-param-cons
+          (IrParam "c" (compiler-reg-i64-ty) 2)
+          IrParamNil)))
+    (AstTyUnit)
+    3
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (IrInstrStore "pa" (IrValueVar 0) (compiler-reg-i64-ty))
+          (compiler-ir-instr-cons
+            (IrInstrStore "pb" (IrValueVar 1) (compiler-reg-i64-ty))
+            (compiler-ir-instr-cons
+              (IrInstrStore "pc" (IrValueVar 2) (compiler-reg-i64-ty))
+              (compiler-ir-instr-cons (IrInstrReturn IrNoValue) IrInstrNil)))))
+      IrBlockNil)))
+
+(define (compiler-reg-param-clobber-function) : CompilerIrFunction
+  (IrFunction
+    "param_clobber"
+    (compiler-ir-param-cons (IrParam "arg" (compiler-reg-i64-ty) 0) IrParamNil)
+    (AstTyI64)
+    2
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (IrInstrCall 1 "side_effect" (IrCallArgsNil) (AstTyUnit))
+          (compiler-ir-instr-cons
+            (IrInstrReturn (IrSomeValue (IrValueVar 0)))
+            IrInstrNil)))
+      IrBlockNil)))
+
+(define (compiler-reg-param-aggregate-function) : CompilerIrFunction
+  (let
+    [ty : AstType (AstTyStruct (intern "ParamAggregate"))]
+    (IrFunction
+      "param_aggregate"
+      (compiler-ir-param-cons (IrParam "state" ty 0) IrParamNil)
+      (AstTyUnit)
+      2
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "entry"
+          (compiler-ir-instr-cons
+            (IrInstrMov 1 (IrValueVar 0) ty)
+            (compiler-ir-instr-cons (IrInstrReturn IrNoValue) IrInstrNil)))
+        IrBlockNil))))
+
 (define (compiler-reg-move-chain-function) : CompilerIrFunction
   (IrFunction
     "move_chain"
@@ -6823,18 +7167,71 @@
               (compiler-reg-assignment-lookup assignments 6)))]
         (and marked unassigned homes))]))
 
-;; Scalar plan (#perf): String/DynArray handles (vars 2/4) and AddrOf results
-;; (var 6) are register-eligible 8-byte values; params (var 0) and
-;; address-taken values (var 3 via the AddrOf) stay ineligible.
+;; Scalar plan (#perf): String/DynArray handles (vars 2/4), AddrOf results
+;; (var 6), and clobber-free integer params (var 0) are register-eligible
+;; 8-byte values; address-taken values (var 3 via the AddrOf) stay ineligible.
 (define (compiler-reg-scalar-handle-eligible-ok?) : bool
   (match (compiler-reg-plan-function-scalar (compiler-reg-ineligible-function))
-    [(CompilerRegPlan _ ineligible _ _ _)
+    [(CompilerRegPlan assignments ineligible _ _ _)
       (and
-        (compiler-live-set-contains? ineligible 0)
+        (not (compiler-live-set-contains? ineligible 0))
         (compiler-live-set-contains? ineligible 3)
         (not (compiler-live-set-contains? ineligible 2))
         (not (compiler-live-set-contains? ineligible 4))
-        (not (compiler-live-set-contains? ineligible 6)))]))
+        (not (compiler-live-set-contains? ineligible 6))
+        (compiler-reg-location-register?
+          (compiler-reg-assignment-lookup assignments 0)
+          "%rdi"))]))
+
+(define (compiler-reg-scalar-linux-param-registers-ok?) : bool
+  (match (compiler-reg-plan-function-scalar-for-abi
+    CompilerRegAbiLinux
+    (compiler-reg-param-register-function))
+    [(CompilerRegPlan assignments ineligible _ _ _)
+      (and
+        (not (compiler-live-set-contains? ineligible 0))
+        (not (compiler-live-set-contains? ineligible 1))
+        (not (compiler-live-set-contains? ineligible 2))
+        (compiler-reg-location-register?
+          (compiler-reg-assignment-lookup assignments 0)
+          "%rdi")
+        (compiler-reg-location-register?
+          (compiler-reg-assignment-lookup assignments 1)
+          "%rsi")
+        (compiler-reg-location-register?
+          (compiler-reg-assignment-lookup assignments 2)
+          "%rdx"))]))
+
+(define (compiler-reg-scalar-windows-param-registers-ok?) : bool
+  (match (compiler-reg-plan-function-scalar-for-abi
+    CompilerRegAbiWindows
+    (compiler-reg-param-register-function))
+    [(CompilerRegPlan assignments ineligible _ _ _)
+      (and
+        (compiler-live-set-contains? ineligible 0)
+        (compiler-live-set-contains? ineligible 1)
+        (compiler-live-set-contains? ineligible 2)
+        (compiler-reg-unassigned? assignments 0)
+        (compiler-reg-unassigned? assignments 1)
+        (compiler-reg-unassigned? assignments 2))]))
+
+(define (compiler-reg-scalar-param-clobber-ok?) : bool
+  (match (compiler-reg-plan-function-scalar-for-abi
+    CompilerRegAbiLinux
+    (compiler-reg-param-clobber-function))
+    [(CompilerRegPlan assignments ineligible _ _ _)
+      (and
+        (compiler-live-set-contains? ineligible 0)
+        (compiler-reg-unassigned? assignments 0))]))
+
+(define (compiler-reg-scalar-aggregate-param-not-pinned-ok?) : bool
+  (match (compiler-reg-plan-function-scalar-for-abi
+    CompilerRegAbiLinux
+    (compiler-reg-param-aggregate-function))
+    [(CompilerRegPlan assignments ineligible _ _ _)
+      (and
+        (compiler-live-set-contains? ineligible 0)
+        (compiler-reg-unassigned? assignments 0))]))
 
 (define (compiler-reg-scalar-function-intervals-ok?) : bool
   (match (compiler-reg-plan-function-scalar
@@ -7683,6 +8080,10 @@
     (compiler-reg-scalar-call-live-ok?)
     (compiler-reg-scalar-f64-call-live-ok?)
     (compiler-reg-scalar-handle-eligible-ok?)
+    (compiler-reg-scalar-linux-param-registers-ok?)
+    (compiler-reg-scalar-windows-param-registers-ok?)
+    (compiler-reg-scalar-param-clobber-ok?)
+    (compiler-reg-scalar-aggregate-param-not-pinned-ok?)
     (compiler-reg-scalar-function-intervals-ok?)
     (compiler-reg-scalar-interval-guardrail-ok?)
     (compiler-reg-scalar-loop-backedge-ok?)

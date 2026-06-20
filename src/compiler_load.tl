@@ -3820,14 +3820,23 @@
         (and
           (= (compiler-load-decl-list-count decls) 2)
           (match modules
-            [(AstDeclModuleCons first tail)
+            [(AstDeclModuleCons first tail-box)
               (let
-                [tail : AstDeclModuleList (box-get tail)]
+                [tail : AstDeclModuleList (box-get tail-box)]
                 (match tail
-                  [(AstDeclModuleCons second AstDeclModuleNil)
-                    (and
-                      (string-eq first "target/compiler_load_legacy_dep.tl")
-                      (string-eq second "target/compiler_load_legacy_entry.tl"))]
+                  [(AstDeclModuleCons second rest-box)
+                    (let
+                      [rest : AstDeclModuleList (box-get rest-box)]
+                      (match rest
+                        [(AstDeclModuleNil)
+                          (and
+                            (string-eq
+                              first
+                              "target/compiler_load_legacy_dep.tl")
+                            (string-eq
+                              second
+                              "target/compiler_load_legacy_entry.tl"))]
+                        [_ false]))]
                   [_ false]))]
             [_ false])
           (sym-i64-contains seen "target/compiler_load_legacy_dep.tl"))]
@@ -4252,7 +4261,7 @@
         "generated-fn"
         AstParamNil
         (AstTyI64)
-        (ast-node-push (AstExprLiteral (AstLitInt 1))))]
+        (ast-node-push (AstExprLiteral (ast-lit-int 1))))]
     [decl : AstDecl (ast-decl-comptime-decl-with-meta meta inner)]
     (match (compiler-load-package-transform-decl
       "demo"
@@ -6480,19 +6489,19 @@
         "runtime-helper"
         AstParamNil
         (AstTyI64)
-        (ast-node-push (AstExprLiteral (AstLitInt 1))))]
+        (ast-node-push (AstExprLiteral (ast-lit-int 1))))]
     [helper-decl : AstDecl
       (ast-decl-def-fn
         "helper"
         AstParamNil
         (AstTyI64)
-        (ast-node-push (AstExprLiteral (AstLitInt 2))))]
+        (ast-node-push (AstExprLiteral (ast-lit-int 2))))]
     [main-decl : AstDecl
       (ast-decl-def-fn
         "main"
         AstParamNil
         (AstTyI64)
-        (ast-node-push (AstExprLiteral (AstLitInt 0))))]
+        (ast-node-push (AstExprLiteral (ast-lit-int 0))))]
     [decls : AstDeclList
       (ast-decl-cons
         runtime-decl

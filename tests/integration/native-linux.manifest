@@ -88,6 +88,7 @@ nullary_variant_call|tests/integration/nullary_variant_call.tl|42|-|-|-
 overflow_casts|tests/integration/overflow_casts.tl|0|-|-|-
 integer_literal_default_i32|tests/integration/integer_literal_default_i32.tl|42|-|-|-|requires-stage0-diagnostic:typecheck: return type mismatch
 integer_literal_default_i32_and_wide_cast|tests/integration/integer_literal_default_i32_and_wide_cast.tl|42|-|-|-
+integer_literal_u64_full_range|tests/integration/integer_literal_u64_full_range.tl|42|-|-|-|requires-stage0-diagnostic:typecheck: integer literal -1 does not fit expected type u64
 parser|tests/integration/parser.tl|14|-|-|-
 process_runtime|tests/integration/process_runtime.tl|42|-|-|stdlib/process_borrowed.tl stdlib/process.tl stdlib/process_runtime.tl stdlib/test.tl stdlib/io.tl stdlib/env.tl stdlib/vector.tl stdlib/string.tl
 read_file_missing_trap|tests/integration/read_file_missing_trap.tl|134|-|-|-|expected-stderr:tl: read-file failed\n

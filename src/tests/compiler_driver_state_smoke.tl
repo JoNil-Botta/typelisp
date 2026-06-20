@@ -3,7 +3,9 @@
 (define (compiler-driver-state-smoke-expr-push
   [pool : AstExprNodePoolState]
   [value : i64]) : AstExprNodePoolState
-  (match (ast-expr-node-pool-state-push pool (AstExprLiteral (AstLitInt value)))
+  (match (ast-expr-node-pool-state-push
+    pool
+    (AstExprLiteral (ast-lit-int value)))
     [(AstExprNodePoolPushOk next _) next]))
 
 (define (compiler-driver-state-smoke-type-push
@@ -19,7 +21,7 @@
   (match (ast-expr-node-pool-state-get pool id)
     [(AstExprLiteral lit)
       (match lit
-        [(AstLitInt value) (= value expected)]
+        [(AstLitInt value _) (= value expected)]
         [_ false])]
     [_ false]))
 
@@ -43,7 +45,7 @@
   (match (ast-node-get id)
     [(AstExprLiteral lit)
       (match lit
-        [(AstLitInt value) (= value expected)]
+        [(AstLitInt value _) (= value expected)]
         [_ false])]
     [_ false]))
 
@@ -250,13 +252,13 @@
     (begin
       (compiler-driver-state-install-pools! state-a)
       (let
-        [expr-a-id : i64 (ast-node-push (AstExprLiteral (AstLitInt 7)))]
+        [expr-a-id : i64 (ast-node-push (AstExprLiteral (ast-lit-int 7)))]
         [type-a-id : i64 (ty-node-push (AstTyI64))]
         (begin
           (compiler-driver-state-capture-active-pools! state-a)
           (compiler-driver-state-install-pools! state-b)
           (let
-            [expr-b-id : i64 (ast-node-push (AstExprLiteral (AstLitInt 11)))]
+            [expr-b-id : i64 (ast-node-push (AstExprLiteral (ast-lit-int 11)))]
             [type-b-id : i64 (ty-node-push (AstTyChar))]
             (begin
               (compiler-driver-state-capture-active-pools! state-b)

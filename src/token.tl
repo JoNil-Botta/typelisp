@@ -36,7 +36,7 @@
 (defenum Token
   (TLParen)
   (TRParen)
-  (TInt i64)
+  (TInt i64 String)
   (TSym i64)
   (TEnd)
   (TStr String)
@@ -100,12 +100,12 @@
 
 ;; Numeric tag for a token kind: a parser's cursor classifies the token under it
 ;; by tag. Exercises `match` over every Token variant, including the
-;; i64-payload `TSym` and the i64-payload `TInt`.
+;; i64-payload `TSym` and the source-preserving `TInt`.
 (define (token-tag [t : Token]) : i64
   (match t
     [(TLParen) 1]
     [(TRParen) 2]
-    [(TInt _) 3]
+    [(TInt _ _) 3]
     [(TSym _) 4]
     [(TEnd) 5]
     [(TStr _) 6]
@@ -124,7 +124,7 @@
   (match t
     [(TLParen) 0]
     [(TRParen) 0]
-    [(TInt v) v]
+    [(TInt v _) v]
     [(TSym _) 0]
     [(TEnd) 0]
     [(TStr _) 0]
@@ -137,13 +137,31 @@
     [(TComma) 0]
     [(TCommaAt) 0]))
 
+;; Original source spelling of a TInt token (empty string for any other kind).
+(define (token-int-text [t : Token]) : String
+  (match t
+    [(TLParen) ""]
+    [(TRParen) ""]
+    [(TInt _ text) text]
+    [(TSym _) ""]
+    [(TEnd) ""]
+    [(TStr _) ""]
+    [(TChar _) ""]
+    [(TFloat _) ""]
+    [(TLBracket) ""]
+    [(TRBracket) ""]
+    [(TQuote) ""]
+    [(TBacktick) ""]
+    [(TComma) ""]
+    [(TCommaAt) ""]))
+
 ;; Symbol intern id of a TSym token (-1 for any other kind): exposes the compact
 ;; lexer representation to callers that can stay id-native.
 (define (token-sym-id [t : Token]) : i64
   (match t
     [(TLParen) -1]
     [(TRParen) -1]
-    [(TInt _) -1]
+    [(TInt _ _) -1]
     [(TSym id) id]
     [(TEnd) -1]
     [(TStr _) -1]
@@ -162,7 +180,7 @@
   (match t
     [(TLParen) ""]
     [(TRParen) ""]
-    [(TInt _) ""]
+    [(TInt _ _) ""]
     [(TSym id) (intern-str id)]
     [(TEnd) ""]
     [(TStr _) ""]
@@ -183,7 +201,7 @@
   (match t
     [(TLParen) ""]
     [(TRParen) ""]
-    [(TInt _) ""]
+    [(TInt _ _) ""]
     [(TSym _) ""]
     [(TEnd) ""]
     [(TStr s) s]
@@ -203,7 +221,7 @@
   (match t
     [(TLParen) ""]
     [(TRParen) ""]
-    [(TInt _) ""]
+    [(TInt _ _) ""]
     [(TSym _) ""]
     [(TEnd) ""]
     [(TStr _) ""]
@@ -223,7 +241,7 @@
   (match t
     [(TLParen) '\0']
     [(TRParen) '\0']
-    [(TInt _) '\0']
+    [(TInt _ _) '\0']
     [(TSym _) '\0']
     [(TEnd) '\0']
     [(TStr _) '\0']

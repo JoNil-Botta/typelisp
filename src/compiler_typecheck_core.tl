@@ -7638,58 +7638,148 @@
     [(AstTyU8) true]
     [_ false]))
 
-(define (tc-integer-literal-min-value [ty : AstType]) : i64
-  (match (tc-type-strip-region ty)
-    [(AstTyI8) (- 0 128)]
-    [(AstTyI16) (- 0 32768)]
-    [(AstTyI32) (- 0 2147483648)]
-    [(AstTyI64) (- (- 0 9223372036854775807) 1)]
-    [(AstTyU64) 0]
-    [(AstTyU32) 0]
-    [(AstTyU16) 0]
-    [(AstTyU8) 0]
-    [_ 0]))
+(define (tc-repeat-text [piece : String] [count : i64]) : String
+  (let
+    [out : String ""]
+    [i : i64 0]
+    (begin
+      (while (< i count)
+        (begin
+          (set! out (string-append out piece))
+          (set! i (+ i 1))))
+      out)))
 
-(define (tc-integer-literal-max-value [ty : AstType]) : i64
-  (match (tc-type-strip-region ty)
-    [(AstTyI8) 127]
-    [(AstTyI16) 32767]
-    [(AstTyI32) 2147483647]
-    [(AstTyI64) 9223372036854775807]
-    ;; AstLitInt stores parsed integer literals as i64 today, so contextual
-    ;; u64 literals can only cover the non-negative representable i64 range.
-    [(AstTyU64) 9223372036854775807]
-    [(AstTyU32) 4294967295]
-    [(AstTyU16) 65535]
-    [(AstTyU8) 255]
-    [_ 0]))
+(define (tc-binary-ones [bits : i64]) : String
+  (tc-repeat-text "1" bits))
 
-(define (tc-integer-literal-fits-type? [value : i64] [ty : AstType]) : bool
-  (and
-    (>= value (tc-integer-literal-min-value ty))
-    (<= value (tc-integer-literal-max-value ty))))
+(define (tc-binary-min-signed [bits : i64]) : String
+  (string-append "1" (tc-repeat-text "0" (- bits 1))))
+
+(define (tc-integer-literal-fits-positive-type? [text : String] [ty : AstType]) : bool
+  (match (tc-type-strip-region ty)
+    [(AstTyI8)
+      (ast-int-literal-magnitude-fits-limit? text "127" "7f" (tc-binary-ones 7))]
+    [(AstTyI16)
+      (ast-int-literal-magnitude-fits-limit?
+        text
+        "32767"
+        "7fff"
+        (tc-binary-ones 15))]
+    [(AstTyI32)
+      (ast-int-literal-magnitude-fits-limit?
+        text
+        "2147483647"
+        "7fffffff"
+        (tc-binary-ones 31))]
+    [(AstTyI64)
+      (ast-int-literal-magnitude-fits-limit?
+        text
+        "9223372036854775807"
+        "7fffffffffffffff"
+        (tc-binary-ones 63))]
+    [(AstTyU8)
+      (ast-int-literal-magnitude-fits-limit? text "255" "ff" (tc-binary-ones 8))]
+    [(AstTyU16)
+      (ast-int-literal-magnitude-fits-limit?
+        text
+        "65535"
+        "ffff"
+        (tc-binary-ones 16))]
+    [(AstTyU32)
+      (ast-int-literal-magnitude-fits-limit?
+        text
+        "4294967295"
+        "ffffffff"
+        (tc-binary-ones 32))]
+    [(AstTyU64)
+      (ast-int-literal-magnitude-fits-limit?
+        text
+        "18446744073709551615"
+        "ffffffffffffffff"
+        (tc-binary-ones 64))]
+    [_ false]))
+
+(define (tc-integer-literal-fits-negative-type? [text : String] [ty : AstType]) : bool
+  (match (tc-type-strip-region ty)
+    [(AstTyI8)
+      (ast-int-literal-magnitude-fits-limit?
+        text
+        "128"
+        "80"
+        (tc-binary-min-signed 8))]
+    [(AstTyI16)
+      (ast-int-literal-magnitude-fits-limit?
+        text
+        "32768"
+        "8000"
+        (tc-binary-min-signed 16))]
+    [(AstTyI32)
+      (ast-int-literal-magnitude-fits-limit?
+        text
+        "2147483648"
+        "80000000"
+        (tc-binary-min-signed 32))]
+    [(AstTyI64)
+      (ast-int-literal-magnitude-fits-limit?
+        text
+        "9223372036854775808"
+        "8000000000000000"
+        (tc-binary-min-signed 64))]
+    [_ false]))
+
+(define (tc-integer-literal-fits-type? [text : String] [ty : AstType]) : bool
+  (if (ast-int-literal-negative? text)
+    (tc-integer-literal-fits-negative-type? text ty)
+    (tc-integer-literal-fits-positive-type? text ty)))
+
+(define (tc-integer-literal-value-fits-type? [value : i64] [ty : AstType]) : bool
+  (match (tc-type-strip-region ty)
+    [(AstTyI8) (and (>= value -128) (<= value 127))]
+    [(AstTyI16) (and (>= value -32768) (<= value 32767))]
+    [(AstTyI32) (and (>= value -2147483648) (<= value 2147483647))]
+    [(AstTyI64) true]
+    [(AstTyU8) (and (>= value 0) (<= value 255))]
+    [(AstTyU16) (and (>= value 0) (<= value 65535))]
+    [(AstTyU32) (and (>= value 0) (<= value 4294967295))]
+    [(AstTyU64) (>= value 0)]
+    [_ false]))
+
+(define (tc-integer-literal-fits-value-or-text?
+  [value : i64]
+  [text : String]
+  [ty : AstType]) : bool
+  (if (> (string-length text) 0)
+    (tc-integer-literal-fits-type? text ty)
+    (tc-integer-literal-value-fits-type? value ty)))
+
+(define (tc-integer-literal-render [value : i64] [text : String]) : String
+  (if (> (string-length text) 0)
+    text
+    (int->string value)))
 
 (define (tc-integer-literal-range-message
   [ctx : TcContext]
   [value : i64]
+  [text : String]
   [expected : AstType]) : String
   (str-cat
     "typecheck: integer literal "
-    (int->string value)
+    (tc-integer-literal-render value text)
     " does not fit expected type "
     (tc-type-render (tc-type-without-regions (tc-resolve-type ctx expected)))))
 
 (define (tc-integer-literal-type-with-expected
   [ctx : TcContext]
   [value : i64]
+  [text : String]
   [expected : AstType]) : ResultTcType
   (let
     [resolved : AstType
       (tc-type-without-regions (tc-resolve-type ctx expected))]
     (if (tc-integer-type? resolved)
-      (if (tc-integer-literal-fits-type? value resolved)
+      (if (tc-integer-literal-fits-value-or-text? value text resolved)
         (OkTcType resolved)
-        (ErrTcType (tc-integer-literal-range-message ctx value expected)))
+        (ErrTcType (tc-integer-literal-range-message ctx value text expected)))
       (OkTcType (AstTyI32)))))
 
 (define (tc-float-type? [ty : AstType]) : bool
@@ -8524,7 +8614,7 @@
 
 (define (tc-literal-type [lit : AstLiteral]) : AstType
   (match lit
-    [(AstLitInt _) (AstTyI32)]
+    [(AstLitInt _ _) (AstTyI32)]
     [(AstLitFloat _) (AstTyF64)]
     [(AstLitBool _) (AstTyBool)]
     [(AstLitChar _) (AstTyChar)]
@@ -9734,7 +9824,7 @@
         (tc-integer-literal-expr? inner))]
     [(AstExprLiteral lit)
       (match lit
-        [(AstLitInt _) true]
+        [(AstLitInt _ _) true]
         [_ false])]
     [_ false]))
 
@@ -9751,8 +9841,8 @@
           [(ErrTcType message) (tc-locate-spanned-error inner span message)]))]
     [(AstExprLiteral lit)
       (match lit
-        [(AstLitInt value)
-          (tc-integer-literal-type-with-expected ctx value expected)]
+        [(AstLitInt value text)
+          (tc-integer-literal-type-with-expected ctx value text expected)]
         [_ (OkTcType (tc-literal-type lit))])]
     [_ (OkTcType (AstTyI32))]))
 
@@ -20498,7 +20588,7 @@
   (let
     [lit-ty : AstType (tc-literal-type lit)]
     (match lit
-      [(AstLitInt _) (tc-integer-type? scrut-ty)]
+      [(AstLitInt _ _) (tc-integer-type? scrut-ty)]
       [_ (tc-type-eq lit-ty scrut-ty)])))
 
 (define (tc-bind-sub-pattern-list
@@ -22463,7 +22553,7 @@
 
 (define (tc-make-array-zero-literal-length? [len : AstExpr]) : bool
   (match (ast-expr-unspan len)
-    [(AstExprLiteral (AstLitInt value)) (= value 0)]
+    [(AstExprLiteral (AstLitInt value _)) (= value 0)]
     [_ false]))
 
 (define (tc-make-array-requires-element-init? [elem : AstType] [len : AstExpr]) : bool
@@ -25864,7 +25954,7 @@
         (tc-move-literal-index inner))]
     [(AstExprLiteral lit)
       (match lit
-        [(AstLitInt index) (TcMoveSomeIndex index)]
+        [(AstLitInt index _) (TcMoveSomeIndex index)]
         [_ (TcMoveNoIndex)])]
     [_ (TcMoveNoIndex)]))
 
@@ -30018,7 +30108,12 @@
     [(AstTyArray elem count)
       (match (macro-type-to-spanned-sexpr (ty-node-get elem) span origin)
         [(OkMacroSexpr selem)
-          (OkMacroSexpr (macro-form2 "Array" selem (SpSInt count span) span))]
+          (OkMacroSexpr
+            (macro-form2
+              "Array"
+              selem
+              (SpSInt count (int->string count) span)
+              span))]
         [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
     [(AstTyBox inner) (macro-type-unary-sexpr "Box" inner span origin)]
     [(AstTyPtr inner) (macro-type-unary-sexpr "Ptr" inner span origin)]
@@ -30110,7 +30205,7 @@
 
 (define (macro-literal-to-spanned-sexpr [lit : AstLiteral] [span : SourceSpan]) : SpannedSexpr
   (match lit
-    [(AstLitInt n) (SpSInt n span)]
+    [(AstLitInt n text) (SpSInt n text span)]
     [(AstLitFloat text) (SpSFloat text span)]
     [(AstLitBool value)
       (SpSSym
@@ -30296,7 +30391,7 @@
         origin)]
     [(AstExprLiteral lit)
       (match lit
-        [(AstLitInt n) (OkMacroSexpr (SpSInt n span))]
+        [(AstLitInt n text) (OkMacroSexpr (SpSInt n text span))]
         [(AstLitFloat text) (OkMacroSexpr (SpSFloat text span))]
         [(AstLitBool value)
           (OkMacroSexpr
@@ -30551,7 +30646,11 @@
       (match (macro-child-to-spanned-sexpr tuple-id span origin)
         [(OkMacroSexpr stuple)
           (OkMacroSexpr
-            (macro-form2 "tuple-ref" stuple (SpSInt index span) span))]
+            (macro-form2
+              "tuple-ref"
+              stuple
+              (SpSInt index (int->string index) span)
+              span))]
         [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
     [(AstExprInit maybe-ty)
       (match maybe-ty

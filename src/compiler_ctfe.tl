@@ -843,7 +843,7 @@
 ;; --- literals ---------------------------------------------------------------
 (define (ctfe-eval-literal [lit : AstLiteral] [expr : AstExpr] [fuel : i64]) : ResultCtfe
   (match lit
-    [(AstLitInt n) (OkCtfe (CtfeI64 n) fuel)]
+    [(AstLitInt n _) (OkCtfe (CtfeI64 n) fuel)]
     [(AstLitBool b) (OkCtfe (CtfeBool b) fuel)]
     [(AstLitChar c) (OkCtfe (CtfeChar c) fuel)]
     [(AstLitUnit) (OkCtfe (CtfeUnit) fuel)]
@@ -2954,7 +2954,7 @@
                   [(CtfeI64 n)
                     (OkCtfe
                       (CtfeExpr
-                        (ast-node-push (AstExprLiteral (AstLitInt n)))
+                        (ast-node-push (AstExprLiteral (ast-lit-int n)))
                         (AstTyI64))
                       arg-fuel)]
                   [_
@@ -3693,7 +3693,7 @@
   [lit : AstLiteral]
   [value : CompilerCtfeValue]) : bool
   (match lit
-    [(AstLitInt n)
+    [(AstLitInt n _)
       (match value
         [(CtfeI64 actual) (= actual n)]
         [_ false])]
@@ -3763,7 +3763,7 @@
           (if (ctfe-pattern-variant-name? variant "ExprBool")
             (ctfe-match-pattern-list args (ctfe-value-list1 (CtfeBool b)) env)
             (CtfeNoPatternMatch))]
-        [(AstLitInt n)
+        [(AstLitInt n _)
           (if (ctfe-pattern-variant-name? variant "ExprInt")
             (ctfe-match-pattern-list args (ctfe-value-list1 (CtfeI64 n)) env)
             (CtfeNoPatternMatch))]
@@ -3903,7 +3903,7 @@
 ;; --- quote / quasiquote -----------------------------------------------------
 (define (ctfe-quote-literal-type [lit : AstLiteral]) : AstType
   (match lit
-    [(AstLitInt _) (AstTyI64)]
+    [(AstLitInt _ _) (AstTyI64)]
     [(AstLitFloat _) (AstTyF64)]
     [(AstLitBool _) (AstTyBool)]
     [(AstLitChar _) (AstTyChar)]
@@ -4061,7 +4061,7 @@
         (ast-expr-cons
           (ctfe-type-to-expr (ty-node-get elem))
           (ast-expr-cons
-            (ast-node-push (AstExprLiteral (AstLitInt count)))
+            (ast-node-push (AstExprLiteral (ast-lit-int count)))
             AstExprNil)))]
     [(AstTyDynArray elem)
       (ctfe-type-syntax-call
@@ -4192,7 +4192,7 @@
                   (match end
                     [(AstExprNil)
                       (match (ast-expr-unspan len-expr)
-                        [(AstExprLiteral (AstLitInt count))
+                        [(AstExprLiteral (AstLitInt count _))
                           (OkCtfeQuoteType
                             (ast-ty-array elem-ty count)
                             elem-fuel)]
@@ -5469,9 +5469,9 @@
 ;; EQ -------------------------------------------------------------------------
 (define (ctfe-literal-eq [a : AstLiteral] [b : AstLiteral]) : bool
   (match a
-    [(AstLitInt a-n)
+    [(AstLitInt a-n _)
       (match b
-        [(AstLitInt b-n) (= a-n b-n)]
+        [(AstLitInt b-n _) (= a-n b-n)]
         [_ false])]
     [(AstLitBool a-b)
       (match b
@@ -6824,7 +6824,7 @@
 ;; value lowering.
 (define (ctfe-value-to-literal [value : CompilerCtfeValue]) : AstLiteral
   (match value
-    [(CtfeI64 n) (AstLitInt n)]
+    [(CtfeI64 n) (ast-lit-int n)]
     [(CtfeF64 n) (AstLitFloat (compiler-float-format-f64 n))]
     [(CtfeF32 n)
       (AstLitFloat
@@ -7202,10 +7202,10 @@
     [wide-f32 : i64 (ast-expr-cast one-f32 (AstTyF64))]
     [sum : i64 (ast-node-push (AstExprBinary (AstBinAdd) one-five two-quarter))]
     [neg : i64 (ast-node-push (AstExprUnary (AstUnNeg) sum))]
-    [neg-int : i64 (ast-node-push (AstExprLiteral (AstLitInt (- 0 42))))]
+    [neg-int : i64 (ast-node-push (AstExprLiteral (ast-lit-int (- 0 42))))]
     [u64-max : i64
       (ast-expr-cast
-        (ast-node-push (AstExprLiteral (AstLitInt (- 0 1))))
+        (ast-node-push (AstExprLiteral (ast-lit-int (- 0 1))))
         (AstTyU64))]
     [u64-max-f64 : i64 (ast-expr-cast u64-max (AstTyF64))]
     [u64-max-f32 : i64 (ast-expr-cast u64-max (AstTyF32))]
@@ -7236,7 +7236,7 @@
     [neg-int-f64 : i64 (ast-expr-cast neg-int (AstTyF64))]
     [rounded-int-f32 : i64
       (ast-expr-cast
-        (ast-node-push (AstExprLiteral (AstLitInt 16777217)))
+        (ast-node-push (AstExprLiteral (ast-lit-int 16777217)))
         (AstTyF32))]
     [f64-to-i64 : i64 (ast-expr-cast sum (AstTyI64))]
     [f32-to-i64 : i64 (ast-expr-cast one-f32 (AstTyI64))]
@@ -7477,7 +7477,7 @@
         (compiler-ctfe-call2
           "struct-field-name"
           point-ty
-          (ast-node-push (AstExprLiteral (AstLitInt 1))))
+          (ast-node-push (AstExprLiteral (ast-lit-int 1))))
         env
         "flag")
         unit
@@ -7486,7 +7486,7 @@
         (compiler-ctfe-call2
           "struct-field-type"
           point-ty
-          (ast-node-push (AstExprLiteral (AstLitInt 0))))
+          (ast-node-push (AstExprLiteral (ast-lit-int 0))))
         env
         (AstTyI64))
         unit
@@ -7501,7 +7501,7 @@
         (compiler-ctfe-call2
           "enum-variant-name"
           maybe-ty
-          (ast-node-push (AstExprLiteral (AstLitInt 1))))
+          (ast-node-push (AstExprLiteral (ast-lit-int 1))))
         env
         "Some")
         unit
@@ -7510,7 +7510,7 @@
         (compiler-ctfe-call2
           "enum-variant-payload-count"
           maybe-ty
-          (ast-node-push (AstExprLiteral (AstLitInt 1))))
+          (ast-node-push (AstExprLiteral (ast-lit-int 1))))
         env
         1)
         unit
@@ -7519,8 +7519,8 @@
         (compiler-ctfe-call3
           "enum-variant-payload-type"
           maybe-ty
-          (ast-node-push (AstExprLiteral (AstLitInt 1)))
-          (ast-node-push (AstExprLiteral (AstLitInt 0))))
+          (ast-node-push (AstExprLiteral (ast-lit-int 1)))
+          (ast-node-push (AstExprLiteral (ast-lit-int 0))))
         env
         (AstTyString))
         unit
@@ -7553,7 +7553,7 @@
         (compiler-ctfe-call2
           "function-param-type"
           fn-ty
-          (ast-node-push (AstExprLiteral (AstLitInt 1))))
+          (ast-node-push (AstExprLiteral (ast-lit-int 1))))
         env
         (AstTyBool))
         unit
@@ -7619,7 +7619,7 @@
         (compiler-ctfe-call2
           "struct-field-name"
           record-ty
-          (ast-node-push (AstExprLiteral (AstLitInt 1))))
+          (ast-node-push (AstExprLiteral (ast-lit-int 1))))
         env
         "label")
         unit
@@ -7628,8 +7628,8 @@
         (compiler-ctfe-call3
           "enum-variant-payload-type"
           status-ty
-          (ast-node-push (AstExprLiteral (AstLitInt 1)))
-          (ast-node-push (AstExprLiteral (AstLitInt 0))))
+          (ast-node-push (AstExprLiteral (ast-lit-int 1)))
+          (ast-node-push (AstExprLiteral (ast-lit-int 0))))
         env
         (AstTyString))
         unit
@@ -7768,7 +7768,7 @@
 (define (compiler-ctfe-checked-expr-rejects-non-bool-cond-ok?) : bool
   (let
     [int-expr-value : CompilerCtfeValue
-      (CtfeExpr (ast-node-push (AstExprLiteral (AstLitInt 1))) (AstTyI64))]
+      (CtfeExpr (ast-node-push (AstExprLiteral (ast-lit-int 1))) (AstTyI64))]
     [env : CtfeEnv (ctfe-env-extend (ctfe-env-empty) "n" int-expr-value)]
     [spliced-int : i64
       (compiler-ctfe-call1
@@ -7849,7 +7849,7 @@
 
 (define (compiler-ctfe-expr-pattern-match-int-ok?) : bool
   (let
-    [subject-node : i64 (ast-node-push (AstExprLiteral (AstLitInt 7)))]
+    [subject-node : i64 (ast-node-push (AstExprLiteral (ast-lit-int 7)))]
     [subject : CompilerCtfeValue (CtfeExpr subject-node (AstTyI64))]
     [env : CtfeEnv (ctfe-env-extend (ctfe-env-empty) "subject" subject)]
     [scrutinee : i64 (ast-node-push (AstExprVar (intern "subject")))]
@@ -7862,7 +7862,7 @@
     [fallback-arm : AstMatchArm
       (ast-match-arm
         AstPatWildcard
-        (ast-node-push (AstExprLiteral (AstLitInt 0))))]
+        (ast-node-push (AstExprLiteral (ast-lit-int 0))))]
     [match-expr : i64
       (ast-expr-match
         scrutinee

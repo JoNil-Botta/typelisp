@@ -1302,7 +1302,7 @@
                         (match (box-get end)
                           [(SNil)
                             (match (box-get size-node)
-                              [(SInt size)
+                              [(SInt size _)
                                 (match (parse-ast-type dispatch (box-get elem))
                                   [(OkAstType elem-ty)
                                     (OkAstType (ast-ty-array elem-ty size))]
@@ -2197,7 +2197,7 @@
 
 (define (parse-ast-pattern [dispatch : SymI64Env] [s : Sexpr]) : ResultAstPattern
   (match s
-    [(SInt n) (OkAstPattern (AstPatLiteral (AstLitInt n)))]
+    [(SInt n text) (OkAstPattern (AstPatLiteral (AstLitInt n text)))]
     [(SFloat text) (OkAstPattern (AstPatLiteral (AstLitFloat text)))]
     [(SStr text) (OkAstPattern (AstPatLiteral (AstLitString text)))]
     [(SChar c) (OkAstPattern (AstPatLiteral (AstLitChar c)))]
@@ -2705,7 +2705,7 @@
           (match (sp-node-get end)
             [(SpSNil _)
               (match (sp-node-get index-node)
-                [(SpSInt index _)
+                [(SpSInt index _ _)
                   (match (parse-ast-expr dispatch (sp-node-get expr))
                     [(OkAstExpr parsed-expr)
                       (OkAstExpr (ast-expr-tuple-ref parsed-expr index))]
@@ -4103,9 +4103,11 @@
 
 (define (parse-ast-expr [dispatch : SymI64Env] [s : SpannedSexpr]) : ResultAstExpr
   (match s
-    [(SpSInt n _)
+    [(SpSInt n text _)
       (OkAstExpr
-        (ast-expr-wrap-span (ast-node-push (AstExprLiteral (AstLitInt n))) s))]
+        (ast-expr-wrap-span
+          (ast-node-push (AstExprLiteral (AstLitInt n text)))
+          s))]
     [(SpSFloat text _)
       (OkAstExpr
         (ast-expr-wrap-span
@@ -4544,7 +4546,7 @@
               (match (box-get end)
                 [(SNil)
                   (match (box-get fixed-node)
-                    [(SInt _)
+                    [(SInt _ _)
                       (if (string-eq name "c-varargs")
                         (ErrAstExternAbi
                           (parse-ast-extern-c-varargs-legacy-message))
@@ -7469,7 +7471,7 @@
                       (let
                         [inner : AstExpr (ast-node-get inner-box)]
                         (match (ast-expr-unspan inner)
-                          [(AstExprLiteral (AstLitInt 42)) true]
+                          [(AstExprLiteral (AstLitInt 42 _)) true]
                           [_ false]))]
                     [_ false])]
                 [_ false]))]
@@ -7708,7 +7710,7 @@
                 (and
                   (= name (intern "option-size"))
                   (match (ast-expr-unspan value)
-                    [(AstExprLiteral (AstLitInt actual)) (= actual 8)]
+                    [(AstExprLiteral (AstLitInt actual _)) (= actual 8)]
                     [_ false])))]
             [_ false])))]
     [_ false]))

@@ -54,7 +54,7 @@
 ;; are appended last so the existing variants keep their stable ordering for
 ;; every importer.
 (defenum Sexpr
-  (SInt i64)
+  (SInt i64 String)
   (SSym String)
   (SNil)
   (SCons (Box Sexpr) (Box Sexpr))
@@ -67,7 +67,7 @@
   (ErrSexpr String))
 
 (defenum SpannedSexpr
-  (SpSInt i64 SourceSpan)
+  (SpSInt i64 String SourceSpan)
   (SpSSym String SourceSpan)
   (SpSNil SourceSpan)
   (SpSCons i64 i64 SourceSpan)
@@ -153,7 +153,7 @@
 
 (define (spanned-sexpr-span [s : SpannedSexpr]) : SourceSpan
   (match s
-    [(SpSInt _ span) span]
+    [(SpSInt _ _ span) span]
     [(SpSSym _ span) span]
     [(SpSNil span) span]
     [(SpSCons _ _ span) span]
@@ -164,7 +164,7 @@
 
 (define (spanned-sexpr-form [s : SpannedSexpr]) : Sexpr
   (match s
-    [(SpSInt n _) (SInt n)]
+    [(SpSInt n text _) (SInt n text)]
     [(SpSSym sym _) (SSym sym)]
     [(SpSNil _) SNil]
     [(SpSCons head tail _)
@@ -283,7 +283,7 @@
 ;; --------------------------------------------------------------------------
 ;; read-form: read exactly one s-expression starting at the cursor and return
 ;; it, advancing the cursor past the tokens it consumed.
-;;   TInt n  -> (SInt n)            an integer atom
+;;   TInt n text -> (SInt n text)   an integer atom with source spelling
 ;;   TFloat s -> (SFloat s)         a float atom carrying source text
 ;;   TSym s  -> (SSym s)            a symbol atom
 ;;   TStr s  -> (SStr s)            a string-literal atom (`"..."`, refs #128)
@@ -305,9 +305,10 @@
       [(= t (tag-int))
         (let
           [v : i64 (token-int tok)]
+          [text : String (token-int-text tok)]
           (begin
             (advance cur)
-            (OkSpannedSexpr (SpSInt v span))))]
+            (OkSpannedSexpr (SpSInt v text span))))]
       [(= t (tag-float))
         (let
           [s : String (token-float tok)]
@@ -413,10 +414,12 @@
     (cond
       [(= t (tag-int))
         (let
-          [v : i64 (token-int (peek-tok toks cur))]
+          [tok : Token (peek-tok toks cur)]
+          [v : i64 (token-int tok)]
+          [text : String (token-int-text tok)]
           (begin
             (advance cur)
-            (OkSexpr (SInt v))))]
+            (OkSexpr (SInt v text))))]
       [(= t (tag-float))
         (let
           [s : String (token-float (peek-tok toks cur))]

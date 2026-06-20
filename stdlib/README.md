@@ -254,6 +254,11 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   array. Use generated vectors for append-heavy private sequences and keep
   recursive enum lists for AST/list structures where the cons shape is the
   modeled data. Import it with `(import "stdlib/vector.tl")`.
+- `vector_family.tl`: lightweight declaration macro surface for generating
+  named growable vector families without importing the concrete `I64Vec` /
+  `StringVec` implementation. Import it with
+  `(import "stdlib/vector_family.tl")` when compiler-internal modules need
+  multiple stable prefixed vector families.
 - `vector_slice.tl`: lifetime-scoped `I64Slice` views over `I64Vec` and
   `(Array i64)` live prefixes. Slice constructors take the backing handle plus a
   matching owner borrow such as `(& v)` / `(& items)`, return empty views for

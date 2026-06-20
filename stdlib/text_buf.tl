@@ -409,19 +409,18 @@
       (let
         [handle : io.FileHandle
           (io.io-result-file-value-or open-result (io.FileHandle -1))]
-        (let
-          [write-status : i64
-            (if (> len (stdlib.text_buf.text-buf-batched-write-threshold))
-              (stdlib.text_buf.text-buf-write-chunks-batched
-                (struct-get handle id)
-                chunks)
-              (stdlib.text_buf.text-buf-write-chunks-rev
-                (struct-get handle id)
-                chunks))]
-          [close-result : io.ResultIoUnit (io.file-close handle)]
-          (if (io.io-result-unit-ok? close-result)
-            write-status
-            1)))
+        [write-status : i64
+          (if (> len (stdlib.text_buf.text-buf-batched-write-threshold))
+            (stdlib.text_buf.text-buf-write-chunks-batched
+              (struct-get handle id)
+              chunks)
+            (stdlib.text_buf.text-buf-write-chunks-rev
+              (struct-get handle id)
+              chunks))]
+        [close-result : io.ResultIoUnit (io.file-close handle)]
+        (if (io.io-result-unit-ok? close-result)
+          write-status
+          1))
       1)))
 
 ;: Mutably clear `buf`, leaving it ready for reuse.

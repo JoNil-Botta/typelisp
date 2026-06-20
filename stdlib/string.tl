@@ -348,13 +348,11 @@
 
 ;: Return true if the character is ASCII whitespace.
 (define (is-char-whitespace [c : char]) : bool
-  (if (char-eq c ' ')
-    true
-    (if (char-eq c '\t')
-      true
-      (if (char-eq c '\n')
-        true
-        (char-eq c '\r')))))
+  (cond
+    [(char-eq c ' ') true]
+    [(char-eq c '\t') true]
+    [(char-eq c '\n') true]
+    [else (char-eq c '\r')]))
 
 ;: Compare two borrowed strings byte-for-byte without allocating.
 (define (string-eq-borrowed [left : (& left str)] [right : (& right str)]) : bool

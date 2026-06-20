@@ -164,58 +164,58 @@
 (define (channel-i64-send-ok-result) : ChannelI64SendResult
   ChannelI64SendOk)
 
-(define (channel-i64-send-err-result [message : String]) : ChannelI64SendResult
+(define (channel-i64-send-err-result [_message : String]) : ChannelI64SendResult
   (ChannelI64SendErr 1))
 
 (define (channel-i64-pair-send-ok-result) : ChannelI64PairSendResult
   ChannelI64PairSendOk)
 
-(define (channel-i64-pair-send-err-result [message : String]) : ChannelI64PairSendResult
+(define (channel-i64-pair-send-err-result [_message : String]) : ChannelI64PairSendResult
   (ChannelI64PairSendErr 1))
 
 (define (channel-string-send-ok-result) : ChannelStringSendResult
   ChannelStringSendOk)
 
-(define (channel-string-send-err-result [message : String]) : ChannelStringSendResult
+(define (channel-string-send-err-result [_message : String]) : ChannelStringSendResult
   (ChannelStringSendErr 1))
 
 (define (channel-i64-recv-ok-result [value : i64]) : ChannelI64RecvResult
   (ChannelI64RecvOk value))
 
-(define (channel-i64-recv-err-result [message : String]) : ChannelI64RecvResult
+(define (channel-i64-recv-err-result [_message : String]) : ChannelI64RecvResult
   (ChannelI64RecvErr 1))
 
 (define (channel-i64-pair-recv-ok-result [value : ChannelI64Pair]) : ChannelI64PairRecvResult
   (ChannelI64PairRecvOk value))
 
-(define (channel-i64-pair-recv-err-result [message : String]) : ChannelI64PairRecvResult
+(define (channel-i64-pair-recv-err-result [_message : String]) : ChannelI64PairRecvResult
   (ChannelI64PairRecvErr 1))
 
-(define (channel-string-recv-err-result [message : String]) : ChannelStringRecvResult
+(define (channel-string-recv-err-result [_message : String]) : ChannelStringRecvResult
   (ChannelStringRecvErr 1))
 
 (define (channel-i64-create-ok-result [value : ChannelI64]) : ChannelI64CreateResult
   (ChannelI64CreateOk value))
 
-(define (channel-i64-create-err-result [message : String]) : ChannelI64CreateResult
+(define (channel-i64-create-err-result [_message : String]) : ChannelI64CreateResult
   (ChannelI64CreateErr 1))
 
 (define (channel-i64-pair-create-ok-result [value : ChannelI64PairChannel]) : ChannelI64PairCreateResult
   (ChannelI64PairCreateOk value))
 
-(define (channel-i64-pair-create-err-result [message : String]) : ChannelI64PairCreateResult
+(define (channel-i64-pair-create-err-result [_message : String]) : ChannelI64PairCreateResult
   (ChannelI64PairCreateErr 1))
 
 (define (channel-string-create-ok-result [value : ChannelString]) : ChannelStringCreateResult
   (ChannelStringCreateOk value))
 
-(define (channel-string-create-err-result [message : String]) : ChannelStringCreateResult
+(define (channel-string-create-err-result [_message : String]) : ChannelStringCreateResult
   (ChannelStringCreateErr 1))
 
 (define (mutex-i64-create-ok-result [value : MutexI64]) : MutexI64CreateResult
   (MutexI64CreateOk value))
 
-(define (mutex-i64-create-err-result [message : String]) : MutexI64CreateResult
+(define (mutex-i64-create-err-result [_message : String]) : MutexI64CreateResult
   (MutexI64CreateErr 1))
 
 ;: Windows kernel32 `VirtualAlloc` for runtime-owned channel storage.

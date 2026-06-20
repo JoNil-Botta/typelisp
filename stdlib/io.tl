@@ -364,9 +364,9 @@
     (begin
       (while (< i io-file-handle-cap)
         (begin
-          (if (= (io-file-i64-ref (io-file-states-ptr) i) 0)
-            (return i)
-            unit)
+          (when
+            (= (stdlib.io.io-file-i64-ref (stdlib.io.io-file-states-ptr) i) 0)
+            (return i))
           (set! i (+ i 1))))
       -1)))
 
@@ -1417,14 +1417,12 @@
                 (if neg
                   "-nan"
                   "nan"))))
-          (if (if (= expf (cast 0 : u64))
-            (= frac (cast 0 : u64))
-            false)
+          (when
+            (and (= expf (cast 0 : u64)) (= frac (cast 0 : u64)))
             (return
               (if neg
                 "-0"
-                "0"))
-            unit)
+                "0")))
           (let
             [m : u64
               (if (= expf (cast 0 : u64))

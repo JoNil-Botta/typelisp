@@ -938,15 +938,14 @@
 (define (fs-path-absolute? [path : (& path str)]) : bool
   (let
     [n : i64 (string-length path)]
-    (if (= n 0)
-      false
-      (if (stdlib.fs.fs-path-separator? (string-ref path 0))
-        true
-        (if (> n 2)
-          (if (stdlib.fs.fs-path-drive-qualified? path)
-            (stdlib.fs.fs-path-separator? (string-ref path 2))
-            false)
-          false)))))
+    (cond
+      [(= n 0) false]
+      [(stdlib.fs.fs-path-separator? (string-ref path 0)) true]
+      [(> n 2)
+        (and
+          (stdlib.fs.fs-path-drive-qualified? path)
+          (stdlib.fs.fs-path-separator? (string-ref path 2)))]
+      [else false])))
 
 ;: Render normalized path segments using `/` separators.
 (define (fs-path-segment-vec-render-from
@@ -975,23 +974,23 @@
   [segment : String]
   [segments : vector.StringVec]
   [rooted : bool]) : vector.StringVec
-  (if (string.string-eq segment "")
-    segments
-    (if (string.string-eq segment ".")
-      segments
-      (if (not (string.string-eq segment ".."))
-        (vector.string-vec-push segments segment)
-        (if (<= (vector.string-vec-len segments) 0)
-          (if rooted
-            segments
-            (vector.string-vec-push segments segment))
-          (let
-            [top : String (vector.string-vec-last segments "")]
-            (if (string.string-eq top "..")
-              (vector.string-vec-push segments segment)
-              (vector.string-vec-pop-rest-or
-                (vector.string-vec-pop segments)
-                segments))))))))
+  (cond
+    [(string.string-eq segment "") segments]
+    [(string.string-eq segment ".") segments]
+    [(not (string.string-eq segment ".."))
+      (vector.string-vec-push segments segment)]
+    [(<= (vector.string-vec-len segments) 0)
+      (if rooted
+        segments
+        (vector.string-vec-push segments segment))]
+    [else
+      (let
+        [top : String (vector.string-vec-last segments "")]
+        (if (string.string-eq top "..")
+          (vector.string-vec-push segments segment)
+          (vector.string-vec-pop-rest-or
+            (vector.string-vec-pop segments)
+            segments)))]))
 
 ;: Lexically normalize `path` without resolving symlinks or touching the host FS.
 ;:
@@ -1070,15 +1069,13 @@
   (let
     [n : i64 (string-length normalized)]
     [parent : String ".."]
-    (if (string.string-eq-borrowed normalized (& parent))
-      true
-      (if (> n 2)
-        (if (string.char-eq (string-ref normalized 0) '.')
-          (if (string.char-eq (string-ref normalized 1) '.')
-            (stdlib.fs.fs-path-separator? (string-ref normalized 2))
-            false)
-          false)
-        false))))
+    (or
+      (string.string-eq-borrowed normalized (& parent))
+      (and
+        (> n 2)
+        (string.char-eq (string-ref normalized 0) '.')
+        (string.char-eq (string-ref normalized 1) '.')
+        (stdlib.fs.fs-path-separator? (string-ref normalized 2))))))
 
 ;: Return true when `path` is a non-empty relative suffix that stays below root.
 ;:

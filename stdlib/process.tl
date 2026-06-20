@@ -726,13 +726,11 @@
 
 ;: Convert a runtime error kind code and message to the public error enum.
 (define (process-error-from-runtime-kind [kind : i64] [message : String]) : ProcessError
-  (if (= kind 1)
-    (ProcessSpawnFailed message)
-    (if (= kind 2)
-      (ProcessWaitFailed message)
-      (if (= kind 3)
-        (ProcessUnsupported message)
-        (ProcessInvalidCommand message)))))
+  (cond
+    [(= kind 1) (ProcessSpawnFailed message)]
+    [(= kind 2) (ProcessWaitFailed message)]
+    [(= kind 3) (ProcessUnsupported message)]
+    [else (ProcessInvalidCommand message)]))
 
 ;: The process-execution runtime (`tl_process_output`, `tl_process_start`,
 ;: `tl_process_wait`) is implemented in TypeLisp in `process_runtime.tl`

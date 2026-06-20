@@ -17,7 +17,6 @@
 (module stdlib.set)
 
 (import stdlib.hashmap)
-(import stdlib.string)
 
 ;: Local hashmap families used by the current checked-in set-family generator.
 ;: The generator still emits unqualified hashmap family references; keeping these

@@ -53,7 +53,6 @@
 (module stdlib.hashmap)
 
 (import stdlib.hash as hash_mod)
-(import stdlib.string)
 
 ;: Stable descriptor identity for generated `String`-key hashmap families.
 (define (hashmap-string-key-descriptor-key) : String

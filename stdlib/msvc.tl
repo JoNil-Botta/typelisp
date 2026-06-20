@@ -712,20 +712,23 @@
 ;: Return true when a Windows SDK version has the pieces needed by link.exe.
 (define (msvc-sdk-version-usable? [sdk-root : String] [version : String]) : bool
   (let
-    [lib-root : String (msvc-sdk-version-root sdk-root version)]
-    [kernel32 : String (msvc-path-join3 lib-root "um/x64" "kernel32.lib")]
-    [ucrt : String (msvc-path-join3 lib-root "ucrt/x64" "ucrt.lib")]
+    [lib-root : String (stdlib.msvc.msvc-sdk-version-root sdk-root version)]
+    [kernel32 : String
+      (stdlib.msvc.msvc-path-join3 lib-root "um/x64" "kernel32.lib")]
+    [ucrt : String (stdlib.msvc.msvc-path-join3 lib-root "ucrt/x64" "ucrt.lib")]
     [include-root : String
-      (msvc-path-join (msvc-path-join sdk-root "Include") version)]
-    (if (msvc-path-exists-owned? kernel32)
-      (if (msvc-path-exists-owned? ucrt)
-        (if (msvc-dir-exists-owned? (msvc-path-join include-root "shared"))
-          (if (msvc-dir-exists-owned? (msvc-path-join include-root "um"))
-            (msvc-dir-exists-owned? (msvc-path-join include-root "ucrt"))
-            false)
-          false)
-        false)
-      false)))
+      (stdlib.msvc.msvc-path-join
+        (stdlib.msvc.msvc-path-join sdk-root "Include")
+        version)]
+    (and
+      (stdlib.msvc.msvc-path-exists-owned? kernel32)
+      (stdlib.msvc.msvc-path-exists-owned? ucrt)
+      (stdlib.msvc.msvc-dir-exists-owned?
+        (stdlib.msvc.msvc-path-join include-root "shared"))
+      (stdlib.msvc.msvc-dir-exists-owned?
+        (stdlib.msvc.msvc-path-join include-root "um"))
+      (stdlib.msvc.msvc-dir-exists-owned?
+        (stdlib.msvc.msvc-path-join include-root "ucrt")))))
 
 ;: Scan one Windows SDK root for the newest usable version.
 (define (msvc-sdk-scan-entries

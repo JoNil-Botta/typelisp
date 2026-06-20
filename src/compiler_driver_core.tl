@@ -117,6 +117,11 @@
     (array-ref (struct-get state expr-pool) 0)
     (array-ref (struct-get state type-pool) 0)))
 
+(define (compiler-driver-state-pool-context [state : CompilerDriverState]) : AstNodePoolContext
+  (ast-node-pool-context-from-cells
+    (struct-get state expr-pool)
+    (struct-get state type-pool)))
+
 (define (compiler-driver-state-install-builtins! [state : CompilerDriverState]) : unit
   (compiler-builtin-ids-state-install!
     (array-ref (struct-get state builtin-ids) 0)))
@@ -186,6 +191,21 @@
   [seen : SymI64Env]) : unit
   (compiler-load-runtime-prelude-cache-store key decls paths modules seen))
 
+(define (compiler-driver-runtime-prelude-cache-store-with-pools
+  [key : String]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [modules : AstDeclModuleList]
+  [seen : SymI64Env]
+  [pools : AstNodePoolContext]) : unit
+  (compiler-load-runtime-prelude-cache-store-with-pools
+    key
+    decls
+    paths
+    modules
+    seen
+    pools))
+
 (define (compiler-driver-ty-node-pool-exhausted-diagnostic
   [input-path : String]) : CompilerDiagnostic
   (compiler-diagnostic-at-start input-path (ty-node-pool-exhausted-message)))
@@ -202,16 +222,19 @@
     (lower-arenas-release!)))
 
 (define (compiler-driver-state-reset-file-state! [state : CompilerDriverState]) : unit
-  (begin
-    ;; #2919 state boundary: compile jobs now carry an explicit driver state.
-    ;; Parser/typechecker/lowerer hot paths still call compatibility wrappers,
-    ;; so install this state's backing pools before resetting those wrappers.
-    (compiler-driver-state-apply-session-flags! state)
-    (compiler-driver-state-install-pools! state)
-    (compiler-driver-state-install-transients! state)
-    (compiler-driver-reset-file-state!)
-    (compiler-driver-state-capture-active-pools! state)
-    (compiler-driver-state-capture-active-transients! state)))
+  (let
+    [pools : AstNodePoolContext (compiler-driver-state-pool-context state)]
+    (begin
+      (compiler-driver-state-apply-session-flags! state)
+      (compiler-load-session-reset-pools-with-pools! pools)
+      (compiler-driver-state-install-pools! state)
+      (compiler-load-session-reset-interns!)
+      (compiler-driver-state-install-transients! state)
+      (compiler-builtin-reset!)
+      ;; #2596/#3259: drop the previous entry's lowerer arenas. At opt level 0
+      ;; the escaped IR stays alive until the next file reset.
+      (lower-arenas-release!)
+      (compiler-driver-state-capture-active-transients! state))))
 
 (cfg
   compile-profile
@@ -955,6 +978,194 @@
         [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])]
     [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)]))
 
+(define (compiler-driver-load-runtime-prelude-cold-with-pools
+  [stdlib-roots : StringVec]
+  [cfgs : SymI64Env]
+  [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
+  (match (compiler-load-file-with-paths-and-roots-cfg-with-pools
+    "stdlib/runtime.tl"
+    (sym-i64-empty)
+    stdlib-roots
+    cfgs
+    pools)
+    [(OkCompilerLoadWithPaths
+        runtime-decls
+        runtime-paths
+        runtime-modules
+        runtime-seen)
+      (match (compiler-load-core-macro-prelude-with-roots-cfg-with-pools
+        runtime-seen
+        stdlib-roots
+        cfgs
+        pools)
+        [(OkCompilerLoadWithPaths
+            macro-decls
+            macro-paths
+            macro-modules
+            macro-seen)
+          (OkCompilerLoadWithPaths
+            (compiler-load-decl-list-append runtime-decls macro-decls)
+            (compiler-load-decl-path-list-append runtime-paths macro-paths)
+            (compiler-load-decl-module-list-append
+              runtime-modules
+              macro-modules)
+            macro-seen)]
+        [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])]
+    [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)]))
+
+(define (compiler-driver-load-runtime-prelude-cache-miss-with-pools
+  [key : String]
+  [stdlib-roots : StringVec]
+  [cfgs : SymI64Env]
+  [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
+  (let
+    [prev-arena : i64 (arena-current)]
+    [loaded : ResultCompilerLoadWithPaths
+      (begin
+        (unsafe
+          (arena-set! (ast-node-pool-context-base-arena pools)))
+        (let
+          [persistent-key : String (string-copy-borrowed (& key))]
+          [cold : ResultCompilerLoadWithPaths
+            (compiler-driver-load-runtime-prelude-cold-with-pools
+              stdlib-roots
+              cfgs
+              pools)]
+          (begin
+            (match cold
+              [(OkCompilerLoadWithPaths decls paths modules seen)
+                (compiler-driver-runtime-prelude-cache-store-with-pools
+                  persistent-key
+                  decls
+                  paths
+                  modules
+                  seen
+                  pools)]
+              [(ErrCompilerLoadWithPaths _) unit])
+            (unsafe
+              (arena-set! prev-arena))
+            cold)))]
+    loaded))
+
+(define (compiler-driver-load-runtime-prelude-with-pools
+  [stdlib-roots : StringVec]
+  [cfgs : SymI64Env]
+  [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
+  (if (compiler-load-session-cache-enabled?)
+    (let
+      [key : String
+        (compiler-load-prelude-cache-key "runtime-prelude" stdlib-roots cfgs)]
+      (match (compiler-driver-runtime-prelude-cache-lookup key)
+        [(CompilerLoadPreludeCacheHit decls paths modules seen)
+          (OkCompilerLoadWithPaths decls paths modules seen)]
+        [(CompilerLoadPreludeCacheMiss)
+          (compiler-driver-load-runtime-prelude-cache-miss-with-pools
+            key
+            stdlib-roots
+            cfgs
+            pools)]))
+    (compiler-driver-load-runtime-prelude-cold-with-pools
+      stdlib-roots
+      cfgs
+      pools)))
+
+(define (compiler-driver-load-file-with-runtime-with-pools
+  [input-path : String]
+  [stdlib-roots : StringVec]
+  [cfgs : SymI64Env]
+  [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
+  (match (compiler-driver-load-runtime-prelude-with-pools
+    stdlib-roots
+    cfgs
+    pools)
+    [(OkCompilerLoadWithPaths
+        prelude-decls
+        prelude-paths
+        prelude-modules
+        prelude-seen)
+      (match (compiler-load-entry-file-with-paths-and-roots-cfg-with-pools
+        input-path
+        prelude-seen
+        stdlib-roots
+        cfgs
+        pools)
+        [(OkCompilerLoadWithPaths entry-decls entry-paths entry-modules seen)
+          (OkCompilerLoadWithPaths
+            (compiler-load-decl-list-append prelude-decls entry-decls)
+            (compiler-load-decl-path-list-append prelude-paths entry-paths)
+            (compiler-load-decl-module-list-append
+              prelude-modules
+              entry-modules)
+            seen)]
+        [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])]
+    [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)]))
+
+(define (compiler-driver-load-source-with-runtime-with-pools
+  [input-path : String]
+  [source : String]
+  [stdlib-roots : StringVec]
+  [cfgs : SymI64Env]
+  [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
+  (match (compiler-driver-load-runtime-prelude-with-pools
+    stdlib-roots
+    cfgs
+    pools)
+    [(OkCompilerLoadWithPaths
+        prelude-decls
+        prelude-paths
+        prelude-modules
+        prelude-seen)
+      (match (compiler-load-source-with-paths-and-roots-expect-cfg-with-pools
+        input-path
+        source
+        prelude-seen
+        stdlib-roots
+        AstNoModuleName
+        cfgs
+        pools)
+        [(OkCompilerLoadWithPaths entry-decls entry-paths entry-modules seen)
+          (OkCompilerLoadWithPaths
+            (compiler-load-decl-list-append prelude-decls entry-decls)
+            (compiler-load-decl-path-list-append prelude-paths entry-paths)
+            (compiler-load-decl-module-list-append
+              prelude-modules
+              entry-modules)
+            seen)]
+        [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])]
+    [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)]))
+
+(define (compiler-driver-load-file-for-pic-image-with-pools
+  [input-path : String]
+  [stdlib-roots : StringVec]
+  [cfgs : SymI64Env]
+  [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
+  (match (compiler-load-core-macro-prelude-with-roots-cfg-with-pools
+    (sym-i64-empty)
+    stdlib-roots
+    cfgs
+    pools)
+    [(OkCompilerLoadWithPaths
+        prelude-decls
+        prelude-paths
+        prelude-modules
+        prelude-seen)
+      (match (compiler-load-entry-file-with-paths-and-roots-cfg-with-pools
+        input-path
+        prelude-seen
+        stdlib-roots
+        cfgs
+        pools)
+        [(OkCompilerLoadWithPaths entry-decls entry-paths entry-modules seen)
+          (OkCompilerLoadWithPaths
+            (compiler-load-decl-list-append prelude-decls entry-decls)
+            (compiler-load-decl-path-list-append prelude-paths entry-paths)
+            (compiler-load-decl-module-list-append
+              prelude-modules
+              entry-modules)
+            seen)]
+        [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])]
+    [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)]))
+
 (define (compiler-driver-load-and-lower-escaping
   [input-path : String]
   [target : CompilerBackendTarget]
@@ -1036,6 +1247,108 @@
       (begin
         (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
         (ErrCompilerDriverLowered diag))]))
+
+(define (compiler-driver-load-and-lower-escaping-with-state
+  [state : CompilerDriverState]
+  [input-path : String]
+  [target : CompilerBackendTarget]
+  [stdlib-roots : StringVec]
+  [mode : CompilerBackendMode]
+  [cfgs : SymI64Env]) : ResultCompilerDriverLowered
+  (let
+    [pools : AstNodePoolContext (compiler-driver-state-pool-context state)]
+    (match (compiler-driver-load-file-with-runtime-with-pools
+      input-path
+      stdlib-roots
+      cfgs
+      pools)
+      [(OkCompilerLoadWithPaths decls paths _ _)
+        (begin
+          (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
+          (cfg compile-profile (compiler-driver-profile-start-phase))
+          (compiler-driver-state-install-pools! state)
+          (compiler-driver-state-install-transients! state)
+          (match (lower-compiler-program-with-decl-paths-mode-cache
+            input-path
+            (ast-program decls)
+            paths
+            (compiler-driver-lower-mode-for-target target mode)
+            stdlib-roots
+            (compiler-load-prelude-cache-key
+              "typecheck-prefix-lower"
+              stdlib-roots
+              cfgs))
+            [(OkCompilerLower program spans)
+              (begin
+                (cfg
+                  compile-profile
+                  (compiler-driver-profile-finish-phase "lower"))
+                (if (ty-node-pool-exhausted?)
+                  (ErrCompilerDriverLowered
+                    (compiler-driver-ty-node-pool-exhausted-diagnostic
+                      input-path))
+                  (compiler-driver-lowered-from-active-pools program spans)))]
+            [(ErrCompilerLower diag)
+              (begin
+                (cfg
+                  compile-profile
+                  (compiler-driver-profile-finish-phase "lower"))
+                (ErrCompilerDriverLowered diag))]))]
+      [(ErrCompilerLoadWithPaths diag)
+        (begin
+          (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
+          (ErrCompilerDriverLowered diag))])))
+
+(define (compiler-driver-load-and-lower-pic-image-with-state
+  [state : CompilerDriverState]
+  [input-path : String]
+  [target : CompilerBackendTarget]
+  [stdlib-roots : StringVec]
+  [mode : CompilerBackendMode]
+  [cfgs : SymI64Env]) : ResultCompilerDriverLowered
+  (let
+    [pools : AstNodePoolContext (compiler-driver-state-pool-context state)]
+    (match (compiler-driver-load-file-for-pic-image-with-pools
+      input-path
+      stdlib-roots
+      cfgs
+      pools)
+      [(OkCompilerLoadWithPaths decls paths _ _)
+        (begin
+          (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
+          (cfg compile-profile (compiler-driver-profile-start-phase))
+          (compiler-driver-state-install-pools! state)
+          (compiler-driver-state-install-transients! state)
+          (match (lower-compiler-program-with-decl-paths-mode-cache
+            input-path
+            (ast-program decls)
+            paths
+            (compiler-driver-lower-mode-for-target target mode)
+            stdlib-roots
+            (compiler-load-prelude-cache-key
+              "typecheck-prefix-lower"
+              stdlib-roots
+              cfgs))
+            [(OkCompilerLower program spans)
+              (begin
+                (cfg
+                  compile-profile
+                  (compiler-driver-profile-finish-phase "lower"))
+                (if (ty-node-pool-exhausted?)
+                  (ErrCompilerDriverLowered
+                    (compiler-driver-ty-node-pool-exhausted-diagnostic
+                      input-path))
+                  (compiler-driver-lowered-from-active-pools program spans)))]
+            [(ErrCompilerLower diag)
+              (begin
+                (cfg
+                  compile-profile
+                  (compiler-driver-profile-finish-phase "lower"))
+                (ErrCompilerDriverLowered diag))]))]
+      [(ErrCompilerLoadWithPaths diag)
+        (begin
+          (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
+          (ErrCompilerDriverLowered diag))])))
 
 (define (compiler-driver-emit-file-with-target
   [input-path : String]
@@ -1218,6 +1531,59 @@
     (compiler-driver-emit-lowered-result-pic-with-level-mode-entry-and-crt
       input-path
       (compiler-driver-load-and-lower-pic-image
+        input-path
+        target
+        stdlib-roots
+        mode
+        (compiler-driver-target-cfgs target cfgs))
+      target
+      has-target
+      mode
+      opt-level
+      false
+      false)))
+
+(define (compiler-driver-state-emit-file-buffer-with-target-roots-level-mode-and-cfg
+  [state : CompilerDriverState]
+  [input-path : String]
+  [target : CompilerBackendTarget]
+  [has-target : bool]
+  [stdlib-roots : StringVec]
+  [opt-level : i64]
+  [mode : CompilerBackendMode]
+  [cfgs : SymI64Env]) : ResultCompilerDriverBuffer
+  (begin
+    (cfg compile-profile (compiler-driver-profile-start-total))
+    (compiler-driver-emit-lowered-result-buffer-with-level-mode-and-entry
+      input-path
+      (compiler-driver-load-and-lower-escaping-with-state
+        state
+        input-path
+        target
+        stdlib-roots
+        mode
+        (compiler-driver-target-cfgs target cfgs))
+      target
+      has-target
+      mode
+      opt-level
+      true)))
+
+(define (compiler-driver-state-emit-file-pic-with-target-roots-level-mode-and-cfg
+  [state : CompilerDriverState]
+  [input-path : String]
+  [target : CompilerBackendTarget]
+  [has-target : bool]
+  [stdlib-roots : StringVec]
+  [opt-level : i64]
+  [mode : CompilerBackendMode]
+  [cfgs : SymI64Env]) : ResultCompilerDriverPic
+  (begin
+    (cfg compile-profile (compiler-driver-profile-start-total))
+    (compiler-driver-emit-lowered-result-pic-with-level-mode-entry-and-crt
+      input-path
+      (compiler-driver-load-and-lower-pic-image-with-state
+        state
         input-path
         target
         stdlib-roots
@@ -1624,6 +1990,44 @@
             opt-level)]
         [(ErrCompilerLower diag) (ErrCompilerDriver diag)])]
     [(ErrCompilerLoadWithPaths diag) (ErrCompilerDriver diag)]))
+
+(define (compiler-driver-state-emit-ir-summary-file-with-target-roots-level-mode-and-cfg
+  [state : CompilerDriverState]
+  [input-path : String]
+  [target : CompilerBackendTarget]
+  [stdlib-roots : StringVec]
+  [opt-level : i64]
+  [mode : CompilerBackendMode]
+  [cfgs : SymI64Env]) : ResultCompilerDriver
+  (let
+    [target-cfgs : SymI64Env (compiler-driver-target-cfgs target cfgs)]
+    [pools : AstNodePoolContext (compiler-driver-state-pool-context state)]
+    (match (compiler-load-entry-file-with-paths-and-roots-cfg-with-pools
+      input-path
+      (sym-i64-empty)
+      stdlib-roots
+      target-cfgs
+      pools)
+      [(OkCompilerLoadWithPaths decls paths _ _)
+        (begin
+          (compiler-driver-state-install-pools! state)
+          (compiler-driver-state-install-transients! state)
+          (match (lower-compiler-program-with-decl-paths-mode-cache
+            input-path
+            (ast-program decls)
+            paths
+            (compiler-driver-lower-mode-for-target target mode)
+            stdlib-roots
+            (compiler-load-prelude-cache-key
+              "typecheck-prefix-lower"
+              stdlib-roots
+              target-cfgs))
+            [(OkCompilerLower program spans)
+              (compiler-driver-emit-ir-summary-lowered-result-with-level
+                (compiler-driver-lowered-from-active-pools program spans)
+                opt-level)]
+            [(ErrCompilerLower diag) (ErrCompilerDriver diag)]))]
+      [(ErrCompilerLoadWithPaths diag) (ErrCompilerDriver diag)])))
 
 (define (compiler-driver-emit-ir-summary-file-with-roots-level-and-cfg
   [input-path : String]

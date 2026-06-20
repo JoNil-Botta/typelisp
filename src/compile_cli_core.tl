@@ -692,7 +692,8 @@
           [status : i64
             (if emit-ir
               (compiler-driver-write-result
-                (compiler-driver-emit-ir-summary-file-with-target-roots-level-mode-and-cfg
+                (compiler-driver-state-emit-ir-summary-file-with-target-roots-level-mode-and-cfg
+                  state
                   input-path
                   target
                   stdlib-roots
@@ -701,23 +702,28 @@
                   cfgs)
                 output-path)
               (if pic
-                (compiler-driver-compile-file-pic-with-target-roots-level-mode-cfg
-                  input-path
-                  output-path
-                  target
-                  true
-                  stdlib-roots
-                  opt-level
-                  backend-mode
-                  cfgs)
-                (compiler-driver-compile-file-for-target-with-roots-level-mode-and-cfg
-                  input-path
-                  output-path
-                  target
-                  stdlib-roots
-                  opt-level
-                  backend-mode
-                  cfgs)))]
+                (compiler-driver-write-pic-result
+                  (compiler-driver-state-emit-file-pic-with-target-roots-level-mode-and-cfg
+                    state
+                    input-path
+                    target
+                    true
+                    stdlib-roots
+                    opt-level
+                    backend-mode
+                    cfgs)
+                  output-path)
+                (compiler-driver-write-buffer-result
+                  (compiler-driver-state-emit-file-buffer-with-target-roots-level-mode-and-cfg
+                    state
+                    input-path
+                    target
+                    true
+                    stdlib-roots
+                    opt-level
+                    backend-mode
+                    cfgs)
+                  output-path)))]
           (begin
             (compiler-driver-state-capture-session-floors! state)
             status)))

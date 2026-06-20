@@ -444,6 +444,32 @@
         (intern-pool-len))
       unit)))
 
+(define (compiler-load-session-note-persistent-with-pools!
+  [pools : AstNodePoolContext]) : unit
+  (begin
+    (if (>
+      (ast-node-pool-context-expr-len pools)
+      (compiler-load-session-ast-floor-value))
+      (array-set!
+        (struct-get compiler-load-active-session-state ast-floor)
+        0
+        (ast-node-pool-context-expr-len pools))
+      unit)
+    (if (>
+      (ast-node-pool-context-type-len pools)
+      (compiler-load-session-ty-floor-value))
+      (array-set!
+        (struct-get compiler-load-active-session-state ty-floor)
+        0
+        (ast-node-pool-context-type-len pools))
+      unit)
+    (if (> (intern-pool-len) (compiler-load-session-intern-floor-value))
+      (array-set!
+        (struct-get compiler-load-active-session-state intern-floor)
+        0
+        (intern-pool-len))
+      unit)))
+
 (define (compiler-load-session-ast-floor-value) : i64
   (array-ref (struct-get compiler-load-active-session-state ast-floor) 0))
 
@@ -565,6 +591,15 @@
       (ast-node-pool-reset!)
       (ty-node-pool-reset!))))
 
+(define (compiler-load-session-reset-pools-with-pools!
+  [pools : AstNodePoolContext]) : unit
+  (if (compiler-load-session-cache-enabled?)
+    (ast-node-pool-context-reset-to!
+      pools
+      (compiler-load-session-ast-floor-value)
+      (compiler-load-session-ty-floor-value))
+    (ast-node-pool-context-reset-to! pools 0 0)))
+
 (define (compiler-load-session-reset-interns!) : unit
   (if (compiler-load-session-cache-enabled?)
     (intern-reset-to! (compiler-load-session-intern-floor-value))
@@ -665,6 +700,24 @@
       seen
       0)
     (compiler-load-session-note-persistent!)))
+
+(define (compiler-load-runtime-prelude-cache-store-with-pools
+  [key : String]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [modules : AstDeclModuleList]
+  [seen : SymI64Env]
+  [pools : AstNodePoolContext]) : unit
+  (begin
+    (compiler-load-runtime-prelude-cache-ensure!)
+    (compiler-load-runtime-prelude-cache-store-at
+      key
+      decls
+      paths
+      modules
+      seen
+      0)
+    (compiler-load-session-note-persistent-with-pools! pools)))
 
 (define (compiler-load-roots-cache-key-from
   [roots : StringVec]
@@ -1143,16 +1196,42 @@
     [_ false]))
 
 (define (compiler-load-include-str-def [name : String] [contents : String]) : AstDecl
+  (let
+    [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    [decl : AstDecl
+      (compiler-load-include-str-def-with-pools pools name contents)]
+    (begin
+      (ast-node-pool-context-install! pools)
+      decl)))
+
+(define (compiler-load-include-str-def-with-pools
+  [pools : AstNodePoolContext]
+  [name : String]
+  [contents : String]) : AstDecl
   (ast-decl-def
     name
     (AstSomeType (AstTyString))
-    (ast-node-push (AstExprLiteral (AstLitString contents)))))
+    (ast-node-pool-context-expr-push
+      pools
+      (AstExprLiteral (AstLitString contents)))))
 
 (define (compiler-load-include-bin-def [name : String] [contents : String]) : AstDecl
+  (let
+    [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    [decl : AstDecl
+      (compiler-load-include-bin-def-with-pools pools name contents)]
+    (begin
+      (ast-node-pool-context-install! pools)
+      decl)))
+
+(define (compiler-load-include-bin-def-with-pools
+  [pools : AstNodePoolContext]
+  [name : String]
+  [contents : String]) : AstDecl
   (ast-decl-def
     name
-    (AstSomeType (ast-ty-dyn-array (AstTyU8)))
-    (ast-node-push (AstExprBinaryData contents))))
+    (AstSomeType (ast-ty-dyn-array-with-pools pools (AstTyU8)))
+    (ast-node-pool-context-expr-push pools (AstExprBinaryData contents))))
 
 (define (compiler-load-include-str-read-error
   [importer-path : String]
@@ -1181,6 +1260,26 @@
     (match (compiler-load-embedded-stdlib-source-for-path resolved)
       [(CompilerEmbeddedStdlibSomeSource source)
         (OkCompilerLoadInclude (compiler-load-include-str-def name source))]
+      [(CompilerEmbeddedStdlibNoSource)
+        (ErrCompilerLoadInclude
+          (compiler-load-include-str-read-error
+            importer-path
+            include-path
+            resolved))])))
+
+(define (compiler-load-include-str-from-resolved-with-pools
+  [importer-path : String]
+  [include-path : String]
+  [resolved : String]
+  [name : String]
+  [pools : AstNodePoolContext]) : ResultCompilerLoadInclude
+  (if (file-exists? resolved)
+    (OkCompilerLoadInclude
+      (compiler-load-include-str-def-with-pools pools name (read-file resolved)))
+    (match (compiler-load-embedded-stdlib-source-for-path resolved)
+      [(CompilerEmbeddedStdlibSomeSource source)
+        (OkCompilerLoadInclude
+          (compiler-load-include-str-def-with-pools pools name source))]
       [(CompilerEmbeddedStdlibNoSource)
         (ErrCompilerLoadInclude
           (compiler-load-include-str-read-error
@@ -1221,6 +1320,26 @@
             include-path
             resolved))])))
 
+(define (compiler-load-include-bin-from-resolved-with-pools
+  [importer-path : String]
+  [include-path : String]
+  [resolved : String]
+  [name : String]
+  [pools : AstNodePoolContext]) : ResultCompilerLoadInclude
+  (if (file-exists? resolved)
+    (OkCompilerLoadInclude
+      (compiler-load-include-bin-def-with-pools pools name (read-file resolved)))
+    (match (compiler-load-embedded-stdlib-source-for-path resolved)
+      [(CompilerEmbeddedStdlibSomeSource source)
+        (OkCompilerLoadInclude
+          (compiler-load-include-bin-def-with-pools pools name source))]
+      [(CompilerEmbeddedStdlibNoSource)
+        (ErrCompilerLoadInclude
+          (compiler-load-include-bin-read-error
+            importer-path
+            include-path
+            resolved))])))
+
 (define (compiler-load-expand-include-str
   [importer-path : String]
   [include-path : String]
@@ -1240,6 +1359,27 @@
       (ErrCompilerLoadInclude
         (compiler-diagnostic-at-start importer-path message))]))
 
+(define (compiler-load-expand-include-str-with-pools
+  [importer-path : String]
+  [include-path : String]
+  [name : String]
+  [stdlib-roots : StringVec]
+  [pools : AstNodePoolContext]) : ResultCompilerLoadInclude
+  (match (compiler-load-resolve-import-result-with-roots
+    importer-path
+    include-path
+    stdlib-roots)
+    [(OkPkgResolve resolved)
+      (compiler-load-include-str-from-resolved-with-pools
+        importer-path
+        include-path
+        resolved
+        name
+        pools)]
+    [(ErrPkgResolve message)
+      (ErrCompilerLoadInclude
+        (compiler-diagnostic-at-start importer-path message))]))
+
 (define (compiler-load-expand-include-bin
   [importer-path : String]
   [include-path : String]
@@ -1255,6 +1395,27 @@
         include-path
         resolved
         name)]
+    [(ErrPkgResolve message)
+      (ErrCompilerLoadInclude
+        (compiler-diagnostic-at-start importer-path message))]))
+
+(define (compiler-load-expand-include-bin-with-pools
+  [importer-path : String]
+  [include-path : String]
+  [name : String]
+  [stdlib-roots : StringVec]
+  [pools : AstNodePoolContext]) : ResultCompilerLoadInclude
+  (match (compiler-load-resolve-import-result-with-roots
+    importer-path
+    include-path
+    stdlib-roots)
+    [(OkPkgResolve resolved)
+      (compiler-load-include-bin-from-resolved-with-pools
+        importer-path
+        include-path
+        resolved
+        name
+        pools)]
     [(ErrPkgResolve message)
       (ErrCompilerLoadInclude
         (compiler-diagnostic-at-start importer-path message))]))
@@ -1328,6 +1489,19 @@
       seen
       stdlib-roots
       cfgs)))
+
+(define (compiler-load-core-macro-prelude-with-roots-cfg-with-pools
+  [seen : SymI64Env]
+  [stdlib-roots : StringVec]
+  [cfgs : SymI64Env]
+  [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
+  (compiler-load-append-root-module-marker
+    (compiler-load-file-with-paths-and-roots-cfg-with-pools
+      compiler-load-core-macro-prelude-path
+      seen
+      stdlib-roots
+      cfgs
+      pools)))
 
 (define (compiler-load-core-macro-prelude-with-roots
   [seen : SymI64Env]
@@ -1654,7 +1828,27 @@
     (compiler-load-dirname importer-path)
     cfgs))
 
-(define (compiler-load-decls-with-module-and-roots-cfg-root
+(define (compiler-load-decls-with-module-and-roots-cfg-with-pools
+  [decls : AstDeclList]
+  [importer-path : String]
+  [importer-module : String]
+  [importer-source-module : String]
+  [seen : SymI64Env]
+  [stdlib-roots : StringVec]
+  [cfgs : SymI64Env]
+  [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
+  (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
+    decls
+    importer-path
+    importer-module
+    importer-source-module
+    seen
+    stdlib-roots
+    (compiler-load-dirname importer-path)
+    cfgs
+    pools))
+
+(define (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
   [decls : AstDeclList]
   [importer-path : String]
   [importer-module : String]
@@ -1662,7 +1856,8 @@
   [seen : SymI64Env]
   [stdlib-roots : StringVec]
   [import-root : String]
-  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  [cfgs : SymI64Env]
+  [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (match decls
     [(AstDeclNil)
       (OkCompilerLoadWithPaths AstDeclNil AstDeclPathNil AstDeclModuleNil seen)]
@@ -1673,7 +1868,7 @@
           [(AstDeclImport
               (AstImportSpec kind import-path expected-module alias _))
             (if (compiler-load-macro-import-kind? kind)
-              (match (compiler-load-decls-with-module-and-roots-cfg-root
+              (match (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
                 rest
                 importer-path
                 importer-module
@@ -1681,7 +1876,8 @@
                 seen
                 stdlib-roots
                 import-root
-                cfgs)
+                cfgs
+                pools)
                 [(OkCompilerLoadWithPaths
                     rest-decls
                     rest-paths
@@ -1701,19 +1897,20 @@
                 import-path
                 stdlib-roots)
                 [(OkPkgResolve resolved)
-                  (match (compiler-load-file-with-paths-and-roots-expect-cfg-root
+                  (match (compiler-load-file-with-paths-and-roots-expect-cfg-root-with-pools
                     resolved
                     seen
                     stdlib-roots
                     expected-module
                     import-root
-                    cfgs)
+                    cfgs
+                    pools)
                     [(OkCompilerLoadWithPaths
                         imported-decls
                         imported-paths
                         imported-modules
                         import-seen)
-                      (match (compiler-load-decls-with-module-and-roots-cfg-root
+                      (match (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
                         rest
                         importer-path
                         importer-module
@@ -1721,7 +1918,8 @@
                         import-seen
                         stdlib-roots
                         import-root
-                        cfgs)
+                        cfgs
+                        pools)
                         [(OkCompilerLoadWithPaths
                             rest-decls
                             rest-paths
@@ -1774,13 +1972,14 @@
                   (ErrCompilerLoadWithPaths
                     (compiler-diagnostic-at-start importer-path message))]))]
           [(AstDeclIncludeStr name include-path)
-            (match (compiler-load-expand-include-str
+            (match (compiler-load-expand-include-str-with-pools
               importer-path
               include-path
               name
-              stdlib-roots)
+              stdlib-roots
+              pools)
               [(OkCompilerLoadInclude expanded)
-                (match (compiler-load-decls-with-module-and-roots-cfg-root
+                (match (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
                   rest
                   importer-path
                   importer-module
@@ -1788,7 +1987,8 @@
                   seen
                   stdlib-roots
                   import-root
-                  cfgs)
+                  cfgs
+                  pools)
                   [(OkCompilerLoadWithPaths
                       rest-decls
                       rest-paths
@@ -1803,13 +2003,14 @@
                     (ErrCompilerLoadWithPaths diag)])]
               [(ErrCompilerLoadInclude diag) (ErrCompilerLoadWithPaths diag)])]
           [(AstDeclIncludeBin name include-path)
-            (match (compiler-load-expand-include-bin
+            (match (compiler-load-expand-include-bin-with-pools
               importer-path
               include-path
               name
-              stdlib-roots)
+              stdlib-roots
+              pools)
               [(OkCompilerLoadInclude expanded)
-                (match (compiler-load-decls-with-module-and-roots-cfg-root
+                (match (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
                   rest
                   importer-path
                   importer-module
@@ -1817,7 +2018,8 @@
                   seen
                   stdlib-roots
                   import-root
-                  cfgs)
+                  cfgs
+                  pools)
                   [(OkCompilerLoadWithPaths
                       rest-decls
                       rest-paths
@@ -1832,7 +2034,7 @@
                     (ErrCompilerLoadWithPaths diag)])]
               [(ErrCompilerLoadInclude diag) (ErrCompilerLoadWithPaths diag)])]
           [_
-            (match (compiler-load-decls-with-module-and-roots-cfg-root
+            (match (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
               rest
               importer-path
               importer-module
@@ -1840,7 +2042,8 @@
               seen
               stdlib-roots
               import-root
-              cfgs)
+              cfgs
+              pools)
               [(OkCompilerLoadWithPaths
                   rest-decls
                   rest-paths
@@ -1852,6 +2055,32 @@
                   (ast-decl-module-cons importer-module rest-modules)
                   rest-seen)]
               [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])]))]))
+
+(define (compiler-load-decls-with-module-and-roots-cfg-root
+  [decls : AstDeclList]
+  [importer-path : String]
+  [importer-module : String]
+  [importer-source-module : String]
+  [seen : SymI64Env]
+  [stdlib-roots : StringVec]
+  [import-root : String]
+  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  (let
+    [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    [result : ResultCompilerLoadWithPaths
+      (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
+        decls
+        importer-path
+        importer-module
+        importer-source-module
+        seen
+        stdlib-roots
+        import-root
+        cfgs
+        pools)]
+    (begin
+      (ast-node-pool-context-install! pools)
+      result)))
 
 (define (compiler-load-decls-with-paths-and-roots
   [decls : AstDeclList]
@@ -1887,6 +2116,32 @@
           (sym-i64-bind seen module-id 1)
           stdlib-roots
           cfgs))]
+    [(ErrCompilerLoadModuleId diag) (ErrCompilerLoadWithPaths diag)]))
+
+(define (compiler-load-decls-with-paths-and-roots-cfg-with-pools
+  [decls : AstDeclList]
+  [importer-path : String]
+  [seen : SymI64Env]
+  [stdlib-roots : StringVec]
+  [cfgs : SymI64Env]
+  [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
+  (match (compiler-load-decls-module-id importer-path decls)
+    [(OkCompilerLoadModuleId module-id)
+      (if (sym-i64-contains seen module-id)
+        (OkCompilerLoadWithPaths
+          AstDeclNil
+          AstDeclPathNil
+          AstDeclModuleNil
+          seen)
+        (compiler-load-decls-with-module-and-roots-cfg-with-pools
+          decls
+          importer-path
+          module-id
+          (compiler-load-decls-source-module decls)
+          (sym-i64-bind seen module-id 1)
+          stdlib-roots
+          cfgs
+          pools))]
     [(ErrCompilerLoadModuleId diag) (ErrCompilerLoadWithPaths diag)]))
 
 (define (compiler-load-decls
@@ -1960,14 +2215,33 @@
     (compiler-load-dirname path)
     cfgs))
 
-(define (compiler-load-program-with-paths-and-roots-expect-cfg-root
+(define (compiler-load-program-with-paths-and-roots-expect-cfg-with-pools
+  [path : String]
+  [program : AstProgram]
+  [seen : SymI64Env]
+  [stdlib-roots : StringVec]
+  [expected-module : AstMaybeModuleName]
+  [cfgs : SymI64Env]
+  [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
+  (compiler-load-program-with-paths-and-roots-expect-cfg-root-with-pools
+    path
+    program
+    seen
+    stdlib-roots
+    expected-module
+    (compiler-load-dirname path)
+    cfgs
+    pools))
+
+(define (compiler-load-program-with-paths-and-roots-expect-cfg-root-with-pools
   [path : String]
   [program : AstProgram]
   [seen : SymI64Env]
   [stdlib-roots : StringVec]
   [expected-module : AstMaybeModuleName]
   [import-root : String]
-  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  [cfgs : SymI64Env]
+  [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (match program
     [(AstProgram decls-box)
       (let
@@ -1991,7 +2265,7 @@
                     decls
                     source-module)
                     [(OkCompilerLoadAliasCheck)
-                      (compiler-load-decls-with-module-and-roots-cfg-root
+                      (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
                         decls
                         path
                         module-id
@@ -1999,11 +2273,36 @@
                         (sym-i64-bind seen module-id 1)
                         stdlib-roots
                         import-root
-                        cfgs)]
+                        cfgs
+                        pools)]
                     [(ErrCompilerLoadAliasCheck diag)
                       (ErrCompilerLoadWithPaths diag)]))]
               [(ErrCompilerLoadModuleId diag) (ErrCompilerLoadWithPaths diag)])]
           [(ErrCompilerLoadModuleId diag) (ErrCompilerLoadWithPaths diag)]))]))
+
+(define (compiler-load-program-with-paths-and-roots-expect-cfg-root
+  [path : String]
+  [program : AstProgram]
+  [seen : SymI64Env]
+  [stdlib-roots : StringVec]
+  [expected-module : AstMaybeModuleName]
+  [import-root : String]
+  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  (let
+    [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    [result : ResultCompilerLoadWithPaths
+      (compiler-load-program-with-paths-and-roots-expect-cfg-root-with-pools
+        path
+        program
+        seen
+        stdlib-roots
+        expected-module
+        import-root
+        cfgs
+        pools)]
+    (begin
+      (ast-node-pool-context-install! pools)
+      result)))
 
 (define (compiler-load-program
   [path : String]
@@ -2083,12 +2382,31 @@
   [cfgs : SymI64Env]) : ResultAstProgramDiagnostic
   (parse-ast-source-diagnostic-with-cfg path source cfgs))
 
+(define (compiler-load-parse-source-diagnostic-escaping-with-pools
+  [path : String]
+  [source : String]
+  [cfgs : SymI64Env]
+  [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
+  (parse-ast-source-diagnostic-with-cfg-and-pools path source cfgs pools))
+
 (define (compiler-load-parse-file-diagnostic-escaping
   [path : String]
   [cfgs : SymI64Env]) : ResultAstProgramDiagnostic
   (let
     [source : String (read-file path)]
     (compiler-load-parse-source-diagnostic-escaping path source cfgs)))
+
+(define (compiler-load-parse-file-diagnostic-escaping-with-pools
+  [path : String]
+  [cfgs : SymI64Env]
+  [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
+  (let
+    [source : String (read-file path)]
+    (compiler-load-parse-source-diagnostic-escaping-with-pools
+      path
+      source
+      cfgs
+      pools)))
 
 (define (compiler-load-cache-program-result
   [key : String]
@@ -2098,6 +2416,19 @@
       (begin
         (if (compiler-load-program-cache-store key program)
           (compiler-load-session-note-persistent!)
+          unit)
+        (OkAstProgramDiagnostic program))]
+    [(ErrAstProgramDiagnostic diag) (ErrAstProgramDiagnostic diag)]))
+
+(define (compiler-load-cache-program-result-with-pools
+  [key : String]
+  [result : ResultAstProgramDiagnostic]
+  [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
+  (match result
+    [(OkAstProgramDiagnostic program)
+      (begin
+        (if (compiler-load-program-cache-store key program)
+          (compiler-load-session-note-persistent-with-pools! pools)
           unit)
         (OkAstProgramDiagnostic program))]
     [(ErrAstProgramDiagnostic diag) (ErrAstProgramDiagnostic diag)]))
@@ -2124,6 +2455,35 @@
       loaded)
     (compiler-load-parse-file-diagnostic-escaping path cfgs)))
 
+(define (compiler-load-parse-file-diagnostic-cache-miss-with-pools
+  [key : String]
+  [path : String]
+  [cfgs : SymI64Env]
+  [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
+  (if (compiler-load-program-cache-can-store key)
+    (let
+      [prev-arena : i64 (arena-current)]
+      [loaded : ResultAstProgramDiagnostic
+        (begin
+          (unsafe
+            (arena-set! (ast-node-pool-context-base-arena pools)))
+          (let
+            [persistent-key : String (string-copy-borrowed (& key))]
+            [parsed : ResultAstProgramDiagnostic
+              (compiler-load-parse-file-diagnostic-escaping-with-pools
+                path
+                cfgs
+                pools)]
+            (begin
+              (unsafe
+                (arena-set! prev-arena))
+              (compiler-load-cache-program-result-with-pools
+                persistent-key
+                parsed
+                pools))))]
+      loaded)
+    (compiler-load-parse-file-diagnostic-escaping-with-pools path cfgs pools)))
+
 (define (compiler-load-ast-program-result-ok?
   [result : ResultAstProgramDiagnostic]) : bool
   (match result
@@ -2147,6 +2507,31 @@
         cold))
     (compiler-load-parse-file-diagnostic-escaping path cfgs)))
 
+(define (compiler-load-parse-file-diagnostic-cache-miss-local-with-pools
+  [key : String]
+  [path : String]
+  [cfgs : SymI64Env]
+  [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
+  (if (compiler-load-program-cache-can-store key)
+    (let
+      [start-nodes : i64 (ast-node-pool-context-expr-len pools)]
+      [cold : ResultAstProgramDiagnostic
+        (compiler-load-parse-file-diagnostic-escaping-with-pools
+          path
+          cfgs
+          pools)]
+      [node-delta : i64 (- (ast-node-pool-context-expr-len pools) start-nodes)]
+      (if (and
+        (compiler-load-ast-program-result-ok? cold)
+        (<= node-delta compiler-load-local-program-cache-node-limit))
+        (compiler-load-parse-file-diagnostic-cache-miss-with-pools
+          key
+          path
+          cfgs
+          pools)
+        cold))
+    (compiler-load-parse-file-diagnostic-escaping-with-pools path cfgs pools)))
+
 (define (compiler-load-parse-file-diagnostic-admit-only
   [key : String]
   [path : String]
@@ -2154,6 +2539,23 @@
   (let
     [parsed : ResultAstProgramDiagnostic
       (compiler-load-parse-file-diagnostic-escaping path cfgs)]
+    (begin
+      (match parsed
+        [(OkAstProgramDiagnostic _)
+          (if (compiler-load-program-admission-record-persistent key)
+            unit
+            unit)]
+        [(ErrAstProgramDiagnostic _) unit])
+      parsed)))
+
+(define (compiler-load-parse-file-diagnostic-admit-only-with-pools
+  [key : String]
+  [path : String]
+  [cfgs : SymI64Env]
+  [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
+  (let
+    [parsed : ResultAstProgramDiagnostic
+      (compiler-load-parse-file-diagnostic-escaping-with-pools path cfgs pools)]
     (begin
       (match parsed
         [(OkAstProgramDiagnostic _)
@@ -2195,6 +2597,48 @@
               (compiler-load-parse-file-diagnostic-admit-only key path cfgs)))]))
     (compiler-load-parse-file-diagnostic-escaping path cfgs)))
 
+(define (compiler-load-parse-file-diagnostic-session-with-pools
+  [path : String]
+  [stdlib-roots : StringVec]
+  [cfgs : SymI64Env]
+  [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
+  (if (and
+    (compiler-load-session-cache-enabled?)
+    (compiler-load-session-program-cache-enabled?)
+    (compiler-load-session-file-cacheable? path stdlib-roots))
+    (let
+      [key : String (compiler-load-program-cache-key "file" path cfgs)]
+      (match (compiler-load-program-cache-lookup key)
+        [(CompilerLoadProgramCacheHit program)
+          (begin
+            (compiler-load-program-cache-note-hit!)
+            (OkAstProgramDiagnostic program))]
+        [(CompilerLoadProgramCacheMiss)
+          (begin
+            (compiler-load-program-cache-note-miss!)
+            (if (or
+              (compiler-load-session-file-cache-immediate? path stdlib-roots)
+              (compiler-load-program-admission-contains? key))
+              (if (compiler-load-session-file-cache-immediate?
+                path
+                stdlib-roots)
+                (compiler-load-parse-file-diagnostic-cache-miss-with-pools
+                  key
+                  path
+                  cfgs
+                  pools)
+                (compiler-load-parse-file-diagnostic-cache-miss-local-with-pools
+                  key
+                  path
+                  cfgs
+                  pools))
+              (compiler-load-parse-file-diagnostic-admit-only-with-pools
+                key
+                path
+                cfgs
+                pools)))]))
+    (compiler-load-parse-file-diagnostic-escaping-with-pools path cfgs pools)))
+
 (define (compiler-load-parse-embedded-source-diagnostic-cache-miss
   [key : String]
   [path : String]
@@ -2217,6 +2661,41 @@
               (compiler-load-cache-program-result persistent-key parsed))))]
       loaded)
     (compiler-load-parse-source-diagnostic-escaping path source cfgs)))
+
+(define (compiler-load-parse-embedded-source-diagnostic-cache-miss-with-pools
+  [key : String]
+  [path : String]
+  [source : String]
+  [cfgs : SymI64Env]
+  [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
+  (if (compiler-load-program-cache-can-store key)
+    (let
+      [prev-arena : i64 (arena-current)]
+      [loaded : ResultAstProgramDiagnostic
+        (begin
+          (unsafe
+            (arena-set! (ast-node-pool-context-base-arena pools)))
+          (let
+            [persistent-key : String (string-copy-borrowed (& key))]
+            [parsed : ResultAstProgramDiagnostic
+              (compiler-load-parse-source-diagnostic-escaping-with-pools
+                path
+                source
+                cfgs
+                pools)]
+            (begin
+              (unsafe
+                (arena-set! prev-arena))
+              (compiler-load-cache-program-result-with-pools
+                persistent-key
+                parsed
+                pools))))]
+      loaded)
+    (compiler-load-parse-source-diagnostic-escaping-with-pools
+      path
+      source
+      cfgs
+      pools)))
 
 (define (compiler-load-parse-embedded-source-diagnostic-session
   [path : String]
@@ -2242,6 +2721,36 @@
               cfgs))]))
     (compiler-load-parse-source-diagnostic-escaping path source cfgs)))
 
+(define (compiler-load-parse-embedded-source-diagnostic-session-with-pools
+  [path : String]
+  [source : String]
+  [cfgs : SymI64Env]
+  [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
+  (if (and
+    (compiler-load-session-cache-enabled?)
+    (compiler-load-session-program-cache-enabled?))
+    (let
+      [key : String (compiler-load-program-cache-key "embedded" path cfgs)]
+      (match (compiler-load-program-cache-lookup key)
+        [(CompilerLoadProgramCacheHit program)
+          (begin
+            (compiler-load-program-cache-note-hit!)
+            (OkAstProgramDiagnostic program))]
+        [(CompilerLoadProgramCacheMiss)
+          (begin
+            (compiler-load-program-cache-note-miss!)
+            (compiler-load-parse-embedded-source-diagnostic-cache-miss-with-pools
+              key
+              path
+              source
+              cfgs
+              pools))]))
+    (compiler-load-parse-source-diagnostic-escaping-with-pools
+      path
+      source
+      cfgs
+      pools)))
+
 (define (compiler-load-source-with-paths-and-roots-expect-cfg
   [path : String]
   [source : String]
@@ -2258,6 +2767,30 @@
         stdlib-roots
         expected-module
         cfgs)]
+    [(ErrAstProgramDiagnostic diag) (ErrCompilerLoadWithPaths diag)]))
+
+(define (compiler-load-source-with-paths-and-roots-expect-cfg-with-pools
+  [path : String]
+  [source : String]
+  [seen : SymI64Env]
+  [stdlib-roots : StringVec]
+  [expected-module : AstMaybeModuleName]
+  [cfgs : SymI64Env]
+  [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
+  (match (compiler-load-parse-source-diagnostic-escaping-with-pools
+    path
+    source
+    cfgs
+    pools)
+    [(OkAstProgramDiagnostic program)
+      (compiler-load-program-with-paths-and-roots-expect-cfg-with-pools
+        path
+        program
+        seen
+        stdlib-roots
+        expected-module
+        cfgs
+        pools)]
     [(ErrAstProgramDiagnostic diag) (ErrCompilerLoadWithPaths diag)]))
 
 (define (compiler-load-source
@@ -2298,6 +2831,20 @@
     stdlib-roots
     AstNoModuleName
     cfgs))
+
+(define (compiler-load-file-with-paths-and-roots-cfg-with-pools
+  [path : String]
+  [seen : SymI64Env]
+  [stdlib-roots : StringVec]
+  [cfgs : SymI64Env]
+  [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
+  (compiler-load-file-with-paths-and-roots-expect-cfg-with-pools
+    path
+    seen
+    stdlib-roots
+    AstNoModuleName
+    cfgs
+    pools))
 
 (define (compiler-load-file-with-paths-and-roots-expect
   [path : String]
@@ -2340,6 +2887,22 @@
     (compiler-load-dirname path)
     cfgs))
 
+(define (compiler-load-file-with-paths-and-roots-expect-cfg-with-pools
+  [path : String]
+  [seen : SymI64Env]
+  [stdlib-roots : StringVec]
+  [expected-module : AstMaybeModuleName]
+  [cfgs : SymI64Env]
+  [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
+  (compiler-load-file-with-paths-and-roots-expect-cfg-root-with-pools
+    path
+    seen
+    stdlib-roots
+    expected-module
+    (compiler-load-dirname path)
+    cfgs
+    pools))
+
 (define (compiler-load-file-with-paths-and-roots-expect-cfg-root
   [path : String]
   [seen : SymI64Env]
@@ -2355,6 +2918,24 @@
     import-root
     cfgs
     true))
+
+(define (compiler-load-file-with-paths-and-roots-expect-cfg-root-with-pools
+  [path : String]
+  [seen : SymI64Env]
+  [stdlib-roots : StringVec]
+  [expected-module : AstMaybeModuleName]
+  [import-root : String]
+  [cfgs : SymI64Env]
+  [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
+  (compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current-with-pools
+    path
+    seen
+    stdlib-roots
+    expected-module
+    import-root
+    cfgs
+    true
+    pools))
 
 (define (compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current
   [path : String]
@@ -2413,6 +2994,78 @@
                 path
                 (string-append "compiler-load: cannot read import " path)))])))))
 
+(define (compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current-with-pools
+  [path : String]
+  [seen : SymI64Env]
+  [stdlib-roots : StringVec]
+  [expected-module : AstMaybeModuleName]
+  [import-root : String]
+  [cfgs : SymI64Env]
+  [cache-current : bool]
+  [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
+  (let
+    [path-key : String (compiler-load-seen-path-key path)]
+    [path-dedup : bool (compiler-load-no-expected-module? expected-module)]
+    (if (and path-dedup (sym-i64-contains seen path-key))
+      (OkCompilerLoadWithPaths AstDeclNil AstDeclPathNil AstDeclModuleNil seen)
+      (if (file-exists? path)
+        (match (if cache-current
+          (compiler-load-parse-file-diagnostic-session-with-pools
+            path
+            stdlib-roots
+            cfgs
+            pools)
+          (compiler-load-parse-file-diagnostic-escaping-with-pools
+            path
+            cfgs
+            pools))
+          [(OkAstProgramDiagnostic program)
+            (compiler-load-bind-path-dedup
+              (compiler-load-program-with-paths-and-roots-expect-cfg-root-with-pools
+                path
+                program
+                seen
+                stdlib-roots
+                expected-module
+                import-root
+                cfgs
+                pools)
+              path-dedup
+              path-key)]
+          [(ErrAstProgramDiagnostic diag) (ErrCompilerLoadWithPaths diag)])
+        (match (compiler-load-embedded-stdlib-source-for-path path)
+          [(CompilerEmbeddedStdlibSomeSource source)
+            (match (if cache-current
+              (compiler-load-parse-embedded-source-diagnostic-session-with-pools
+                path
+                source
+                cfgs
+                pools)
+              (compiler-load-parse-source-diagnostic-escaping-with-pools
+                path
+                source
+                cfgs
+                pools))
+              [(OkAstProgramDiagnostic program)
+                (compiler-load-bind-path-dedup
+                  (compiler-load-program-with-paths-and-roots-expect-cfg-root-with-pools
+                    path
+                    program
+                    seen
+                    stdlib-roots
+                    expected-module
+                    import-root
+                    cfgs
+                    pools)
+                  path-dedup
+                  path-key)]
+              [(ErrAstProgramDiagnostic diag) (ErrCompilerLoadWithPaths diag)])]
+          [(CompilerEmbeddedStdlibNoSource)
+            (ErrCompilerLoadWithPaths
+              (compiler-diagnostic-at-start
+                path
+                (string-append "compiler-load: cannot read import " path)))])))))
+
 (define (compiler-load-entry-file-with-paths-and-roots-cfg
   [path : String]
   [seen : SymI64Env]
@@ -2426,6 +3079,22 @@
     (compiler-load-dirname path)
     cfgs
     false))
+
+(define (compiler-load-entry-file-with-paths-and-roots-cfg-with-pools
+  [path : String]
+  [seen : SymI64Env]
+  [stdlib-roots : StringVec]
+  [cfgs : SymI64Env]
+  [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
+  (compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current-with-pools
+    path
+    seen
+    stdlib-roots
+    AstNoModuleName
+    (compiler-load-dirname path)
+    cfgs
+    false
+    pools))
 
 (define (compiler-load-file [path : String] [seen : SymI64Env]) : ResultCompilerLoad
   (compiler-load-drop-paths (compiler-load-file-with-paths path seen)))

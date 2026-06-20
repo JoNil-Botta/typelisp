@@ -29357,11 +29357,22 @@
               (ast-node-get scrut-box)
               lifetime)
             (tc-borrow-check-match-arms-store-lifetime? ctx env arms lifetime))])]
-    [(AstExprSet name _)
-      (match (tc-lookup env (intern-str name))
-        [(OkTcType ty)
-          (tc-borrow-check-type-contains-lifetime? ctx ty lifetime)]
-        [(ErrTcType _) false])]
+    [(AstExprSet name rhs-box)
+      (let
+        [name-text : String (intern-str name)]
+        (if (tc-dotted-local-field-name-id? env name)
+          (match (tc-dotted-local-field-set-expr-id env name-text rhs-box)
+            [(OkTcExprId virtual-id)
+              (tc-borrow-check-expr-stores-lifetime?
+                ctx
+                env
+                (ast-node-get virtual-id)
+                lifetime)]
+            [(ErrTcExprId _) false])
+          (match (tc-lookup env name-text)
+            [(OkTcType ty)
+              (tc-borrow-check-type-contains-lifetime? ctx ty lifetime)]
+            [(ErrTcType _) false])))]
     [(AstExprArraySet array-box _ _)
       (tc-borrow-check-expr-type-contains-lifetime?
         ctx
@@ -29379,6 +29390,12 @@
         ctx
         env
         (ast-node-get receiver-box)
+        lifetime)]
+    [(AstExprBoxSet box-box _)
+      (tc-borrow-check-expr-type-contains-lifetime?
+        ctx
+        env
+        (ast-node-get box-box)
         lifetime)]
     [_ false]))
 

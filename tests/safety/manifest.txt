@@ -62,6 +62,7 @@ two_phase_mutable_call_mutate_reject|check-fail|tests/safety/two_phase_mutable_c
 borrow_if_before_last_use_reject|check-fail|tests/safety/borrow_if_before_last_use_reject.tl|-|cannot assign to borrowed place `n`
 borrow_while_before_last_use_reject|check-fail|tests/safety/borrow_while_before_last_use_reject.tl|-|cannot assign to borrowed place `n`
 borrow_while_stored_loop_carried_reject|check-fail|tests/safety/borrow_while_stored_loop_carried_reject.tl|-|cannot assign to borrowed place `n`
+borrow_while_box_stored_loop_carried_reject|check-fail|tests/safety/borrow_while_box_stored_loop_carried_reject.tl|-|cannot assign to borrowed place `n`
 borrow_call_arg_begin_before_last_use_reject|check-fail|tests/safety/borrow_call_arg_begin_before_last_use_reject.tl|-|cannot assign to borrowed place `n`
 borrow_if_result_before_last_use_reject|check-fail|tests/safety/borrow_if_result_before_last_use_reject.tl|-|cannot assign to borrowed place `n`
 borrow_match_result_before_last_use_reject|check-fail|tests/safety/borrow_match_result_before_last_use_reject.tl|-|cannot assign to borrowed place `n`

@@ -15724,7 +15724,13 @@
 (defstruct OptLoopBceSummaries
   (enabled bool)
   (length-clean StringI64Map)
-  (argc-return StringI64Map))
+  (argc-return StringI64Map)
+  ;; #3468: whole-program table of never-written literal-i64 globals, mapping
+  ;; global name -> constant value. Carried alongside the BCE summaries (rather
+  ;; than threaded as a separate parameter) because both are built once per
+  ;; program and consumed in the same per-function level-2 pass. Empty unless
+  ;; the program qualifies for summary construction.
+  (const-divisors StringI64Map))
 
 (defstruct OptLoopBceState
   (exprs OptLoopBceExprEnv)
@@ -15765,6 +15771,7 @@
 (define (opt-loop-bce-empty-summaries) : OptLoopBceSummaries
   (OptLoopBceSummaries
     false
+    (string-i64-map-with-capacity 8)
     (string-i64-map-with-capacity 8)
     (string-i64-map-with-capacity 8)))
 
@@ -18277,6 +18284,17 @@
                           unit)]
                       [global-blocks : CompilerIrBlockList
                         (opt-function-blocks global)]
+                      ;; #3468: substitute proven constant-global divisors with
+                      ;; their literals before divrem-safety, so the literal
+                      ;; divisor both enables the backend magic-multiply path and
+                      ;; lets divrem-safety drop the zero/overflow guards. This
+                      ;; only rewrites a binop's RHS operand value, leaving the
+                      ;; CFG structure intact, so the induction context stays
+                      ;; valid for the divrem-safety pass below.
+                      [const-div-blocks : CompilerIrBlockList
+                        (opt-const-divisor-rewrite-summary-blocks
+                          summaries
+                          global-blocks)]
                       [_t-divrem-safety : i64
                         (cfg compile-profile (profile-now-ms) 0)]
                       [divrem-safe : CompilerIrBlockList
@@ -18284,8 +18302,8 @@
                           (opt-divrem-safety-blocks-with-context
                             induction-context
                             params
-                            global-blocks)
-                          global-blocks)]
+                            const-div-blocks)
+                          const-div-blocks)]
                       [_p-divrem-safety : unit
                         (cfg
                           compile-profile
@@ -22967,6 +22985,298 @@
           (opt-loop-bce-length-clean-fixed functions next (- remaining 1))
           next)])))
 
+;; #3468: prove which globals are compile-time constants so their value can be
+;; substituted for the global at its uses. The win is twofold: (a) every global
+;; use otherwise emits a rip-relative load, so substituting the literal removes a
+;; per-iteration memory load (the instruction-count win on opt_crc32/opt_quicksort
+;; mask constants), and (b) a div/mod by such a global becomes a literal divisor
+;; the backend strength-reduces with the existing magic-multiply path (matching
+;; clang).
+;;
+;; Soundness: substituting a global's initializer is valid only when the global is
+;; immutable. A global is mutated by either (1) a direct `IrInstrStore name`
+;; (the lowering of `(set! global ...)`, see compiler_lower.tl AstExprSet), or
+;; (2) a write through a pointer derived from its address, which only exists if
+;; `(& global)` was taken -- lowered to `IrValueGlobalAddr name`. Disqualifying a
+;; global on EITHER signal leaves only provably-never-written globals, whose value
+;; equals the initializer at every use. The disqualify walk mirrors
+;; `opt-reach-instr` arm-for-arm (and, like it, omits a wildcard arm) so adding a
+;; new IR instruction fails to compile until it is handled here -- a new operand
+;; position can never silently escape the address-taken check.
+(define (opt-const-globals-disq-value
+  [disq : StringI64Map]
+  [value : CompilerIrValue]) : StringI64Map
+  (match value
+    [(IrValueGlobalAddr name) (string-i64-map-put disq name 1)]
+    [_ disq]))
+
+(define (opt-const-globals-disq-args-array
+  [disq : StringI64Map]
+  [values : (Array CompilerIrValue)]
+  [index : i64]) : StringI64Map
+  (if (>= index (array-length values))
+    disq
+    (opt-const-globals-disq-args-array
+      (opt-const-globals-disq-value disq (array-ref values index))
+      values
+      (+ index 1))))
+
+(define (opt-const-globals-disq-args
+  [disq : StringI64Map]
+  [args : CompilerIrCallArgs]) : StringI64Map
+  (match args
+    [(IrCallArgsNil) disq]
+    [(IrCallArgsOne value) (opt-const-globals-disq-value disq value)]
+    [(IrCallArgsTwo a b)
+      (opt-const-globals-disq-value (opt-const-globals-disq-value disq a) b)]
+    [(IrCallArgsArray values) (opt-const-globals-disq-args-array disq values 0)]))
+
+(define (opt-const-globals-disq-maybe
+  [disq : StringI64Map]
+  [maybe : CompilerIrMaybeValue]) : StringI64Map
+  (match maybe
+    [(IrNoValue) disq]
+    [(IrSomeValue value) (opt-const-globals-disq-value disq value)]))
+
+(define (opt-const-globals-disq-phi
+  [disq : StringI64Map]
+  [inputs : CompilerIrPhiInputList]) : StringI64Map
+  (match inputs
+    [(IrPhiInputNil) disq]
+    [(IrPhiInputCons value _ rest)
+      (opt-const-globals-disq-phi
+        (opt-const-globals-disq-value disq value)
+        (box-get rest))]))
+
+;; Disqualify a global on a direct store to it OR on any `IrValueGlobalAddr`
+;; operand. Mirrors opt-reach-instr (no wildcard arm); the only behavioural
+;; differences are that `IrInstrStore` also records its target name and call/tail
+;; targets (function names, never const-global candidates) are not scanned.
+(define (opt-const-globals-disq-instr
+  [disq : StringI64Map]
+  [instr : CompilerIrInstr]) : StringI64Map
+  (match instr
+    [(IrInstrMov _ src _) (opt-const-globals-disq-value disq src)]
+    [(IrInstrAlloc _ _) disq]
+    [(IrInstrAddrOf _ _) disq]
+    [(IrInstrGep _ base offset _)
+      (opt-const-globals-disq-value
+        (opt-const-globals-disq-value disq base)
+        offset)]
+    [(IrInstrLoad _ src _) (opt-const-globals-disq-value disq src)]
+    [(IrInstrStorePtr dst src _)
+      (opt-const-globals-disq-value (opt-const-globals-disq-value disq dst) src)]
+    [(IrInstrCopyBytes dst src _)
+      (opt-const-globals-disq-value (opt-const-globals-disq-value disq dst) src)]
+    [(IrInstrBoundsCheck idx length _)
+      (opt-const-globals-disq-value
+        (opt-const-globals-disq-value disq idx)
+        length)]
+    [(IrInstrCast _ src _ _) (opt-const-globals-disq-value disq src)]
+    [(IrInstrBitcast _ src _ _) (opt-const-globals-disq-value disq src)]
+    [(IrInstrBinOp _ _ lhs rhs _)
+      (opt-const-globals-disq-value (opt-const-globals-disq-value disq lhs) rhs)]
+    [(IrInstrUnOp _ _ src _) (opt-const-globals-disq-value disq src)]
+    [(IrInstrLaneId _ _ _) disq]
+    [(IrInstrSplat _ value _ _) (opt-const-globals-disq-value disq value)]
+    [(IrInstrVectorBinOp payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorBinOpPayload _ _ lhs rhs _ _)
+          (opt-const-globals-disq-value
+            (opt-const-globals-disq-value disq lhs)
+            rhs)])]
+    [(IrInstrVectorReduce _ _ src _ _) (opt-const-globals-disq-value disq src)]
+    [(IrInstrVectorCompare payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorComparePayload _ _ lhs rhs _ _)
+          (opt-const-globals-disq-value
+            (opt-const-globals-disq-value disq lhs)
+            rhs)])]
+    [(IrInstrMaskBinOp _ _ lhs rhs _)
+      (opt-const-globals-disq-value (opt-const-globals-disq-value disq lhs) rhs)]
+    [(IrInstrMaskNot _ src _) (opt-const-globals-disq-value disq src)]
+    [(IrInstrMaskReduce _ _ src _) (opt-const-globals-disq-value disq src)]
+    [(IrInstrSelect payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSelectPayload _ mask on-true on-false _ _)
+          (opt-const-globals-disq-value
+            (opt-const-globals-disq-value
+              (opt-const-globals-disq-value disq mask)
+              on-true)
+            on-false)])]
+    [(IrInstrVectorLoad _ base idx _ _)
+      (opt-const-globals-disq-value
+        (opt-const-globals-disq-value disq base)
+        idx)]
+    [(IrInstrVectorStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorStorePayload base idx value _ _)
+          (opt-const-globals-disq-value
+            (opt-const-globals-disq-value
+              (opt-const-globals-disq-value disq base)
+              idx)
+            value)])]
+    [(IrInstrPredicatedStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedStorePayload base idx value mask _ _)
+          (opt-const-globals-disq-value
+            (opt-const-globals-disq-value
+              (opt-const-globals-disq-value
+                (opt-const-globals-disq-value disq base)
+                idx)
+              value)
+            mask)])]
+    [(IrInstrPredicatedLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedLoadPayload _ base idx mask _ _)
+          (opt-const-globals-disq-value
+            (opt-const-globals-disq-value
+              (opt-const-globals-disq-value disq base)
+              idx)
+            mask)])]
+    [(IrInstrTailMask _ idx length _)
+      (opt-const-globals-disq-value
+        (opt-const-globals-disq-value disq idx)
+        length)]
+    [(IrInstrEntryArgc _) disq]
+    [(IrInstrEntryArgv _) disq]
+    [(IrInstrEntryEnvp _) disq]
+    [(IrInstrCpuId _ leaf subleaf _)
+      (opt-const-globals-disq-value
+        (opt-const-globals-disq-value disq leaf)
+        subleaf)]
+    [(IrInstrXgetbv _ idx) (opt-const-globals-disq-value disq idx)]
+    [(IrInstrSyscall _ args) (opt-const-globals-disq-args disq args)]
+    [(IrInstrCall _ _ args _) (opt-const-globals-disq-args disq args)]
+    [(IrInstrCallCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallCAbiStoreResultPayload base _ args _)
+          (opt-const-globals-disq-args
+            (opt-const-globals-disq-value disq base)
+            args)])]
+    [(IrInstrCallIndirect _ func args _)
+      (opt-const-globals-disq-args
+        (opt-const-globals-disq-value disq func)
+        args)]
+    [(IrInstrCallIndirectC _ func args _)
+      (opt-const-globals-disq-args
+        (opt-const-globals-disq-value disq func)
+        args)]
+    [(IrInstrCallIndirectCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload base func args _)
+          (opt-const-globals-disq-args
+            (opt-const-globals-disq-value
+              (opt-const-globals-disq-value disq base)
+              func)
+            args)])]
+    [(IrInstrTailCall _ args _) (opt-const-globals-disq-args disq args)]
+    [(IrInstrStore name value _)
+      (opt-const-globals-disq-value (string-i64-map-put disq name 1) value)]
+    [(IrInstrJump _) disq]
+    [(IrInstrBranch cond _ _) (opt-const-globals-disq-value disq cond)]
+    [(IrInstrReturn maybe) (opt-const-globals-disq-maybe disq maybe)]
+    [(IrInstrPhi _ inputs _) (opt-const-globals-disq-phi disq inputs)]
+    [(IrInstrPack _ _ _) disq]
+    [(IrInstrWord _ src _ _) (opt-const-globals-disq-value disq src)]
+    [(IrInstrTailCallIndirect func args _)
+      (opt-const-globals-disq-args
+        (opt-const-globals-disq-value disq func)
+        args)]))
+
+(define (opt-const-globals-disq-seq-from
+  [disq : StringI64Map]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [count : i64]) : StringI64Map
+  (if (>= index count)
+    disq
+    (opt-const-globals-disq-seq-from
+      (opt-const-globals-disq-instr
+        disq
+        (compiler-ir-instr-seq-ref instrs index))
+      instrs
+      (+ index 1)
+      count)))
+
+(define (opt-const-globals-disq-blocks
+  [disq : StringI64Map]
+  [blocks : CompilerIrBlockList]) : StringI64Map
+  (match blocks
+    [(IrBlockNil) disq]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (opt-const-globals-disq-blocks
+            (opt-const-globals-disq-seq-from
+              disq
+              instrs
+              0
+              (compiler-ir-instr-seq-count instrs))
+            (box-get rest))])]
+    [(IrBlockArray seq)
+      (opt-const-globals-disq-blocks disq (compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-const-globals-disqualified
+  [disq : StringI64Map]
+  [functions : CompilerIrFunctionList]) : StringI64Map
+  (match functions
+    [(IrFunctionNil) disq]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction _ _ _ _ blocks)
+          (opt-const-globals-disqualified
+            (opt-const-globals-disq-blocks disq blocks)
+            (box-get rest))])]
+    [(IrFunctionArray seq)
+      (opt-const-globals-disqualified
+        disq
+        (compiler-ir-function-seq-to-list seq))]))
+
+;; Build the constant table: literal `IrValueI64` globals that are neither
+;; disqualified (stored / address-taken) nor zero. Zero is excluded so a
+;; substituted divisor can never become a literal `0` (the backend's
+;; magic-multiply path assumes a nonzero divisor; an actual `% 0` keeps its
+;; original trapping global-load form).
+(define (opt-const-globals-from-globals
+  [globals : CompilerIrGlobalList]
+  [disq : StringI64Map]
+  [map : StringI64Map]) : StringI64Map
+  (match globals
+    [(IrGlobalNil) map]
+    [(IrGlobalCons global rest)
+      (opt-const-globals-from-globals
+        (box-get rest)
+        disq
+        (match global
+          [(IrGlobal name _ value)
+            (match value
+              [(IrValueI64 n)
+                (if (or (= n 0) (string-i64-map-contains? disq name))
+                  map
+                  (string-i64-map-put map name n))]
+              [_ map])]))]))
+
+(define (opt-const-divisors-build
+  [globals : CompilerIrGlobalList]
+  [functions : CompilerIrFunctionList]) : StringI64Map
+  (let
+    [capacity : i64
+      (opt-function-index-capacity (compiler-ir-global-list-count globals))]
+    [disq : StringI64Map
+      (opt-const-globals-disqualified
+        (string-i64-map-with-capacity capacity)
+        functions)]
+    (opt-const-globals-from-globals
+      globals
+      disq
+      (string-i64-map-with-capacity capacity))))
+
+;; The BCE summaries (argc-return + length-clean) gate on a function-count limit
+;; because the length-clean pass runs a per-function fixpoint. The const-divisor
+;; table is independent and far cheaper (one linear store scan), so it is built
+;; separately by the program driver and injected here rather than tied to this
+;; gate -- see optimize-program-with-level.
 (define (opt-loop-bce-build-summaries [functions : CompilerIrFunctionList]) : OptLoopBceSummaries
   (let
     [capacity : i64
@@ -22980,7 +23290,129 @@
         functions
         (string-i64-map-with-capacity capacity))
         [(OptLoopBceCleanPass clean _) clean])]
-    (OptLoopBceSummaries true length-clean argc-return)))
+    (OptLoopBceSummaries
+      true
+      length-clean
+      argc-return
+      (string-i64-map-with-capacity 1))))
+
+(define (opt-loop-bce-summaries-set-const-divisors
+  [summaries : OptLoopBceSummaries]
+  [const-divisors : StringI64Map]) : OptLoopBceSummaries
+  (OptLoopBceSummaries
+    (struct-get summaries enabled)
+    (struct-get summaries length-clean)
+    (struct-get summaries argc-return)
+    const-divisors))
+
+;; Build the per-program summaries: the function-count-gated BCE maps plus the
+;; const-divisor table. The const-divisor table is built only at opt level 2
+;; (the only level whose pipeline runs the divisor rewrite), so opt0/opt1 -- and
+;; in particular the opt1 self-compile throughput metric -- pay nothing for it
+;; and stay byte-identical.
+(define (opt-build-program-summaries
+  [globals : CompilerIrGlobalList]
+  [reachable-functions : CompilerIrFunctionList]
+  [level : i64]) : OptLoopBceSummaries
+  (opt-loop-bce-summaries-set-const-divisors
+    (if (<= (opt-function-list-count reachable-functions) 64)
+      (opt-loop-bce-build-summaries reachable-functions)
+      (opt-loop-bce-empty-summaries))
+    (if (>= level 2)
+      (opt-const-divisors-build globals reachable-functions)
+      (string-i64-map-with-capacity 1))))
+
+;; #3468 rewrite: substitute a proven constant global with its literal value in
+;; binop operands. For an ordinary operand this lets the backend fold the literal
+;; instead of emitting a per-use rip-relative load (the opt_crc32/opt_quicksort
+;; mask-load win). For a div/mod divisor it produces a literal `IrValueI64`, which
+;; `compiler-backend-binop-literal-divmod-asm` strength-reduces with the existing
+;; magic-multiply path (matching clang). Binops are the const uses in the hot
+;; loops of all three optimization benchmarks (masks via bit-and/bit-xor, the
+;; modulo divisor); other instruction kinds keep the global's hidden-load form.
+;; (The map is named `const-divisors` for historical reasons but now holds every
+;; proven-constant global, not only divisors.)
+(define (opt-const-global-subst-value
+  [const-divisors : StringI64Map]
+  [v : CompilerIrValue]) : CompilerIrValue
+  (match v
+    [(IrValueGlobal name)
+      (match (string-i64-map-get const-divisors name)
+        [(StringI64MapFound n) (IrValueI64 n)]
+        [(StringI64MapMissing) v])]
+    [_ v]))
+
+(define (opt-const-divisor-rewrite-instr
+  [const-divisors : StringI64Map]
+  [instr : CompilerIrInstr]) : CompilerIrInstr
+  (match instr
+    [(IrInstrBinOp dst op lhs rhs ty)
+      (IrInstrBinOp
+        dst
+        op
+        (opt-const-global-subst-value const-divisors lhs)
+        (opt-const-global-subst-value const-divisors rhs)
+        ty)]
+    [_ instr]))
+
+(define (opt-const-divisor-rewrite-seq-from
+  [const-divisors : StringI64Map]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [count : i64]
+  [out-rev : CompilerIrInstrList]) : CompilerIrInstrList
+  (if (>= index count)
+    (compiler-ir-instr-list-reverse-onto out-rev IrInstrNil)
+    (opt-const-divisor-rewrite-seq-from
+      const-divisors
+      instrs
+      (+ index 1)
+      count
+      (compiler-ir-instr-cons
+        (opt-const-divisor-rewrite-instr
+          const-divisors
+          (compiler-ir-instr-seq-ref instrs index))
+        out-rev))))
+
+(define (opt-const-divisor-rewrite-block
+  [const-divisors : StringI64Map]
+  [block : CompilerIrBlock]) : CompilerIrBlock
+  (match block
+    [(IrBlock label instrs)
+      (compiler-ir-block
+        label
+        (opt-const-divisor-rewrite-seq-from
+          const-divisors
+          instrs
+          0
+          (compiler-ir-instr-seq-count instrs)
+          IrInstrNil))]))
+
+(define (opt-const-divisor-rewrite-blocks
+  [const-divisors : StringI64Map]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (match blocks
+    [(IrBlockNil) IrBlockNil]
+    [(IrBlockCons block rest)
+      (compiler-ir-block-cons
+        (opt-const-divisor-rewrite-block const-divisors block)
+        (opt-const-divisor-rewrite-blocks const-divisors (box-get rest)))]
+    [(IrBlockArray seq)
+      (opt-const-divisor-rewrite-blocks
+        const-divisors
+        (compiler-ir-block-seq-to-list seq))]))
+
+;; Skip the whole pass (returning the blocks untouched) when no constant-global
+;; divisor exists -- the common case, so the level-2 fixpoint pays only a length
+;; check per function rather than a block walk.
+(define (opt-const-divisor-rewrite-summary-blocks
+  [summaries : OptLoopBceSummaries]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (let
+    [const-divisors : StringI64Map (struct-get summaries const-divisors)]
+    (if (= (string-i64-map-len const-divisors) 0)
+      blocks
+      (opt-const-divisor-rewrite-blocks const-divisors blocks))))
 
 (define (optimize-program [program : CompilerIrProgram]) : CompilerIrProgram
   (optimize-program-with-level program (compiler-optimize-default-level)))
@@ -23004,9 +23436,10 @@
               (cfg compile-profile (compiler-opt-profile-start))
               (let
                 [summaries : OptLoopBceSummaries
-                  (if (<= (opt-function-list-count reachable-functions) 64)
-                    (opt-loop-bce-build-summaries reachable-functions)
-                    (opt-loop-bce-empty-summaries))]
+                  (opt-build-program-summaries
+                    globals
+                    reachable-functions
+                    level)]
                 [optimized-functions : CompilerIrFunctionList
                   (optimize-function-list-with-level-and-summaries
                     reachable-functions
@@ -23291,9 +23724,10 @@
                 (cfg compile-profile (compiler-opt-profile-start))
                 (let
                   [summaries : OptLoopBceSummaries
-                    (if (<= (opt-function-list-count reachable-functions) 64)
-                      (opt-loop-bce-build-summaries reachable-functions)
-                      (opt-loop-bce-empty-summaries))]
+                    (opt-build-program-summaries
+                      globals
+                      reachable-functions
+                      level)]
                   [optimized-functions : CompilerIrFunctionList
                     (optimize-function-list-with-level-and-summaries
                       reachable-functions
@@ -25862,6 +26296,185 @@
 ;; store and across an operand redefinition (still 2 arithmetic instrs each).
 ;; It also CSEs identical CPU probes while preserving probes with different
 ;; register indices or operands.
+;; #3468 self-test: const-global propagation. Verifies the immutability proof
+;; (literal-init globals enter the table; stored, non-literal, address-taken, and
+;; zero-valued globals are excluded) and the binop-operand rewrite (uses of a
+;; proven constant global -- both ordinary operands and div/mod divisors -- become
+;; literals; excluded globals are left as hidden loads).
+(define (opt-const-divisor-test-globals) : CompilerIrGlobalList
+  (compiler-ir-global-cons
+    (IrGlobal "konst" (AstTyI64) (IrValueI64 1000000007))
+    (compiler-ir-global-cons
+      (IrGlobal "mut" (AstTyI64) (IrValueI64 7))
+      (compiler-ir-global-cons
+        (IrGlobal "uninit" (AstTyI64) (IrValueUnit))
+        (compiler-ir-global-cons
+          (IrGlobal "borrowed" (AstTyI64) (IrValueI64 99))
+          (compiler-ir-global-cons
+            (IrGlobal "zero" (AstTyI64) (IrValueI64 0))
+            IrGlobalNil))))))
+
+(define (opt-const-divisor-test-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        ;; mod by a proven constant global -> rewritten to its literal divisor
+        (IrInstrBinOp
+          10
+          (IrBinMod)
+          (IrValueVar 0)
+          (IrValueGlobal "konst")
+          (AstTyI64))
+        (compiler-ir-instr-cons
+          ;; mod by a written global -> must NOT be rewritten
+          (IrInstrBinOp
+            11
+            (IrBinMod)
+            (IrValueVar 0)
+            (IrValueGlobal "mut")
+            (AstTyI64))
+          (compiler-ir-instr-cons
+            ;; div by a non-literal (init-function) global -> must NOT be rewritten
+            (IrInstrBinOp
+              12
+              (IrBinDiv)
+              (IrValueVar 0)
+              (IrValueGlobal "uninit")
+              (AstTyI64))
+            (compiler-ir-instr-cons
+              ;; ordinary operand use of the constant global -> rewritten (general)
+              (IrInstrBinOp
+                13
+                (IrBinAdd)
+                (IrValueVar 0)
+                (IrValueGlobal "konst")
+                (AstTyI64))
+              (compiler-ir-instr-cons
+                ;; use of an address-taken global -> must NOT be rewritten
+                (IrInstrBinOp
+                  14
+                  (IrBinBitAnd)
+                  (IrValueVar 0)
+                  (IrValueGlobal "borrowed")
+                  (AstTyI64))
+                (compiler-ir-instr-cons
+                  ;; use of a zero-valued global -> must NOT be rewritten
+                  (IrInstrBinOp
+                    15
+                    (IrBinBitAnd)
+                    (IrValueVar 0)
+                    (IrValueGlobal "zero")
+                    (AstTyI64))
+                  (compiler-ir-instr-cons
+                    ;; taking the address disqualifies "borrowed"
+                    (IrInstrMov 20 (IrValueGlobalAddr "borrowed") (AstTyU64))
+                    (compiler-ir-instr-cons
+                      ;; the store disqualifies "mut"
+                      (IrInstrStore "mut" (IrValueI64 9) (AstTyI64))
+                      (compiler-ir-instr-cons
+                        (IrInstrReturn (IrSomeValue (IrValueVar 10)))
+                        IrInstrNil))))))))))
+    IrBlockNil))
+
+(define (opt-const-divisor-test-rhs-in-seq
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [count : i64]
+  [dst : i64]) : CompilerIrValue
+  (if (>= index count)
+    (IrValueUnit)
+    (match (compiler-ir-instr-seq-ref instrs index)
+      [(IrInstrBinOp d _ _ rhs _)
+        (if (= d dst)
+          rhs
+          (opt-const-divisor-test-rhs-in-seq instrs (+ index 1) count dst))]
+      [_ (opt-const-divisor-test-rhs-in-seq instrs (+ index 1) count dst)])))
+
+(define (opt-const-divisor-test-rhs [blocks : CompilerIrBlockList] [dst : i64]) : CompilerIrValue
+  (match blocks
+    [(IrBlockNil) (IrValueUnit)]
+    [(IrBlockCons block _)
+      (match block
+        [(IrBlock _ instrs)
+          (opt-const-divisor-test-rhs-in-seq
+            instrs
+            0
+            (compiler-ir-instr-seq-count instrs)
+            dst)])]
+    [(IrBlockArray seq)
+      (opt-const-divisor-test-rhs (compiler-ir-block-seq-to-list seq) dst)]))
+
+(define (opt-const-divisor-test-is-i64? [v : CompilerIrValue] [n : i64]) : bool
+  (match v
+    [(IrValueI64 m) (= m n)]
+    [_ false]))
+
+(define (opt-const-divisor-test-is-global?
+  [v : CompilerIrValue]
+  [name : String]) : bool
+  (match v
+    [(IrValueGlobal m) (string-eq m name)]
+    [_ false]))
+
+(define (compiler-optimize-const-divisor-self-test) : i64
+  (let
+    [globals : CompilerIrGlobalList (opt-const-divisor-test-globals)]
+    [functions : CompilerIrFunctionList
+      (compiler-ir-function-cons
+        (IrFunction
+          "f"
+          IrParamNil
+          (AstTyI64)
+          16
+          (opt-const-divisor-test-blocks))
+        IrFunctionNil)]
+    [table : StringI64Map (opt-const-divisors-build globals functions)]
+    [rewritten : CompilerIrBlockList
+      (opt-const-divisor-rewrite-blocks table (opt-const-divisor-test-blocks))]
+    (cond
+      [(not (string-i64-map-contains? table "konst")) 1]
+      [(not
+          (match (string-i64-map-get table "konst")
+            [(StringI64MapFound n) (= n 1000000007)]
+            [(StringI64MapMissing) false]))
+        2]
+      [(string-i64-map-contains? table "mut") 3]
+      [(string-i64-map-contains? table "uninit") 4]
+      [(string-i64-map-contains? table "borrowed") 5]
+      [(string-i64-map-contains? table "zero") 6]
+      [(not
+          (opt-const-divisor-test-is-i64?
+            (opt-const-divisor-test-rhs rewritten 10)
+            1000000007))
+        7]
+      [(not
+          (opt-const-divisor-test-is-i64?
+            (opt-const-divisor-test-rhs rewritten 13)
+            1000000007))
+        8]
+      [(not
+          (opt-const-divisor-test-is-global?
+            (opt-const-divisor-test-rhs rewritten 11)
+            "mut"))
+        9]
+      [(not
+          (opt-const-divisor-test-is-global?
+            (opt-const-divisor-test-rhs rewritten 12)
+            "uninit"))
+        10]
+      [(not
+          (opt-const-divisor-test-is-global?
+            (opt-const-divisor-test-rhs rewritten 14)
+            "borrowed"))
+        11]
+      [(not
+          (opt-const-divisor-test-is-global?
+            (opt-const-divisor-test-rhs rewritten 15)
+            "zero"))
+        12]
+      [else 42])))
+
 (define (compiler-optimize-cse-self-test) : i64
   (let
     [cse : CompilerIrInstrList

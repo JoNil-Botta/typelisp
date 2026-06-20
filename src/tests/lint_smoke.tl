@@ -1,5 +1,5 @@
 ;; lint_smoke.tl - Runnable smoke for lint_core.tl (#1163).
-(import "lint_core.tl")
+(import "../lint_core.tl")
 
 (define (lint-smoke-string-append-source) : String
   "(define (main) : i64 (string-length (string-append \"a\" \"b\")))")

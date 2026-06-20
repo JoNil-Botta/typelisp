@@ -1,4 +1,4 @@
-(import "compiler_driver_core.tl")
+(import "../compiler_driver_core.tl")
 
 (define (compiler-driver-state-smoke-expr-push
   [pool : AstExprNodePoolState]

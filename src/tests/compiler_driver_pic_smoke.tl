@@ -1,5 +1,5 @@
 ;; compiler_driver_pic_smoke.tl - Driver-level smoke for no-entry PIC images.
-(import "compiler_driver_core.tl")
+(import "../compiler_driver_core.tl")
 
 (define (compiler-driver-pic-smoke-roots) : StringVec
   (string-vec-push (string-vec-push (string-vec-new) "stdlib") "../stdlib"))

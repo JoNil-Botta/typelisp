@@ -26,6 +26,9 @@ unsafe_syscall_defined|check-ok|tests/safety/unsafe_syscall_defined.tl|-|-
 mutable_reference_reborrow_subscope_ok|check-ok|tests/safety/mutable_reference_reborrow_subscope_ok.tl|-|-
 mutable_reference_read_disjoint_ok|check-ok|tests/safety/mutable_reference_read_disjoint_ok.tl|-|-
 mutable_reference_read_through_ref_ok|check-ok|tests/safety/mutable_reference_read_through_ref_ok.tl|-|-
+auto_borrow_assignment_after_last_use_ok|check-ok|tests/safety/auto_borrow_assignment_after_last_use_ok.tl|-|-
+auto_borrow_move_after_last_use_ok|check-ok|tests/safety/auto_borrow_move_after_last_use_ok.tl|-|-
+mutable_reference_owner_read_after_last_use_ok|check-ok|tests/safety/mutable_reference_owner_read_after_last_use_ok.tl|-|-
 
 # Static rejection areas.
 unsupported_cast_reject|check-fail|tests/safety/unsupported_cast_reject.tl|-|cast requires
@@ -43,8 +46,11 @@ mutable_reference_scalar_binding_reject|check-fail|tests/safety/mutable_referenc
 auto_borrow_temporary_reject|check-fail|tests/safety/auto_borrow_temporary_reject.tl|-|borrow requires a local, parameter, or aggregate place
 auto_borrow_shared_lifetime_reject|check-fail|tests/safety/auto_borrow_shared_lifetime_reject.tl|-|typecheck: constructor lifetime mismatch
 auto_borrow_mutable_param_reject|check-fail|tests/safety/auto_borrow_mutable_param_reject.tl|-|typecheck: argument type mismatch
-auto_borrow_assignment_live_reject|check-fail|tests/safety/auto_borrow_assignment_live_reject.tl|-|cannot assign to borrowed place `n`
-auto_borrow_move_live_reject|check-fail|tests/safety/auto_borrow_move_live_reject.tl|-|cannot move borrowed place `text`
+auto_borrow_assignment_before_last_use_reject|check-fail|tests/safety/auto_borrow_assignment_before_last_use_reject.tl|-|cannot assign to borrowed place `n`
+auto_borrow_move_before_last_use_reject|check-fail|tests/safety/auto_borrow_move_before_last_use_reject.tl|-|cannot move borrowed place `text`
+borrow_if_before_last_use_reject|check-fail|tests/safety/borrow_if_before_last_use_reject.tl|-|cannot assign to borrowed place `n`
+borrow_while_before_last_use_reject|check-fail|tests/safety/borrow_while_before_last_use_reject.tl|-|cannot assign to borrowed place `n`
+borrow_call_arg_begin_before_last_use_reject|check-fail|tests/safety/borrow_call_arg_begin_before_last_use_reject.tl|-|cannot assign to borrowed place `n`
 substring_view_move_live_reject|check-fail|tests/safety/substring_view_move_live_reject.tl|-|cannot move borrowed place `text`
 substring_view_arena_escape_reject|check-fail|tests/safety/substring_view_arena_escape_reject.tl|-|cannot escape with-arena
 byte_buf_view_move_live_reject|check-fail|tests/safety/byte_buf_view_move_live_reject.tl|-|cannot move borrowed place `buf`

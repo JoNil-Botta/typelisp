@@ -2,7 +2,7 @@
   {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}},
   {"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"${{TMP_URI}}/parse_error.tl","languageId":"typelisp","version":1,"text":"(define (main) : i64\n"}}},
   {"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"${{TMP_URI}}/type_error.tl","languageId":"typelisp","version":1,"text":"(define (main) : i64 true)"}}},
-  {"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"${{TMP_URI}}/borrow_error.tl","languageId":"typelisp","version":1,"text":"(define (len [text : (& text str)]) : i64\n  (string-length text))\n\n(define (main) : i64\n  (let\n    [text : String \"move\"]\n    (begin\n      (len text)\n      (let\n        [moved : String text]\n        (string-length moved)))))"}}},
+  {"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"${{TMP_URI}}/borrow_error.tl","languageId":"typelisp","version":1,"text":"(define (len [text : (& text str)]) : i64\n  (string-length text))\n\n(define (main) : i64\n  (let\n    [text : String \"move\"]\n    [borrowed : (& text str) (& text)]\n    (begin\n      (let\n        [moved : String text]\n        (string-length moved))\n      (string-length borrowed))))"}}},
   {"jsonrpc":"2.0","id":2,"method":"shutdown","params":null},
   {"jsonrpc":"2.0","method":"exit"}
 ]

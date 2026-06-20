@@ -8041,6 +8041,7 @@
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
 (define (take-handle [h : FileHandle]) : unit unit)
+(define (read-handle-ref [h : (& h FileHandle)]) : unit unit)
 ")
 
 (define (compiler-typecheck-live-borrow-holder-prefix) : String
@@ -8051,6 +8052,7 @@
   (handle FileHandle (:owned))
   (size i64))
 (define (take-holder [h : Holder]) : unit unit)
+(define (read-holder-ref [h : (& h Holder)]) : unit unit)
 "))
 
 (define (compiler-typecheck-live-borrow-many-post-scope-source) : String
@@ -8082,49 +8084,59 @@
     (compiler-typecheck-live-borrow-owner-prefix)
     "(define (bad [h : FileHandle]) : unit
   (let [r : (& h FileHandle) (& h)]
-    (take-handle h)))"))
+    (begin
+      (take-handle h)
+      (read-handle-ref r))))"))
 
 (define (compiler-typecheck-live-borrow-whole-assign-source) : String
-  "(define (bad [n : i64]) : i64
+  "(define (read-i64-ref [r : (& n i64)]) : i64 1)
+(define (bad [n : i64]) : i64
   (let [r : (& n i64) (& n)]
     (begin
       (set! n 2)
-      n)))")
+      (read-i64-ref r))))")
 
 (define (compiler-typecheck-live-borrow-aggregate-root-move-source) : String
   (string-append
     (compiler-typecheck-live-borrow-holder-prefix)
     "(define (bad [p : Holder]) : unit
   (let [r : (& p FileHandle) (& (struct-get p handle))]
-    (take-holder p)))"))
+    (begin
+      (take-holder p)
+      (read-handle-ref r))))"))
 
 (define (compiler-typecheck-live-borrow-aggregate-child-move-source) : String
   (string-append
     (compiler-typecheck-live-borrow-holder-prefix)
     "(define (bad [p : Holder]) : unit
   (let [r : (& p Holder) (& p)]
-    (take-handle (struct-get p handle))))"))
+    (begin
+      (take-handle (struct-get p handle))
+      (read-holder-ref r))))"))
 
 (define (compiler-typecheck-live-borrow-nested-scope-source) : String
-  "(define (bad [n : i64]) : i64
+  "(define (read-i64-ref [r : (& n i64)]) : i64 1)
+(define (bad [n : i64]) : i64
   (let [r : (& n i64) (& n)]
     (let [m : i64 1]
       (begin
         (set! n m)
-        n))))")
+        (read-i64-ref r)))))")
 
 (define (compiler-typecheck-live-borrow-begin-source) : String
-  "(define (bad [n : i64]) : i64
-  (begin
-    (& n)
-    (set! n 2)
-    n))")
+  "(define (read-i64-ref [r : (& n i64)]) : i64 1)
+(define (bad [n : i64]) : i64
+  (let [r : (& n i64) (& n)]
+    (begin
+      (set! n 2)
+      (read-i64-ref r))))")
 
 (define (compiler-typecheck-live-borrow-match-arm-source) : String
-  "(defenum Flag (On) (Off))
+  "(define (read-i64-ref [r : (& n i64)]) : i64 1)
+(defenum Flag (On) (Off))
 (define (bad [flag : Flag] [n : i64]) : i64
   (match flag
-    [On (let [r : (& n i64) (& n)] (begin (set! n 2) n))]
+    [On (let [r : (& n i64) (& n)] (begin (set! n 2) (read-i64-ref r)))]
     [Off n]))")
 
 (define (compiler-typecheck-live-borrow-with-arena-ok-source) : String
@@ -8136,12 +8148,13 @@
     n))")
 
 (define (compiler-typecheck-live-borrow-with-arena-conflict-source) : String
-  "(define (bad [n : i64]) : i64
+  "(define (read-i64-ref [r : (& n i64)]) : i64 1)
+(define (bad [n : i64]) : i64
   (with-arena r
     (let [borrowed : (& n i64) (& n)]
       (begin
         (set! n 3)
-        n))))")
+        (read-i64-ref borrowed)))))")
 
 (define (compiler-typecheck-live-borrow-resource-conflict-source) : String
   (string-append
@@ -8151,12 +8164,16 @@
     (let [borrowed : (& h FileHandle) (& h)]
       (begin
         (set! h (FileHandle 2))
+        (read-handle-ref borrowed)
         0))))"))
 
 (define (compiler-typecheck-live-borrow-array-set-source) : String
-  "(define (bad [items : (Array i64)]) : unit
+  "(define (read-i64-ref [r : (& items i64)]) : unit unit)
+(define (bad [items : (Array i64)]) : unit
   (let [borrowed : (& items i64) (& (array-ref items 0))]
-    (array-set! items 0 7)))")
+    (begin
+      (array-set! items 0 7)
+      (read-i64-ref borrowed))))")
 
 (define (compiler-typecheck-live-mut-borrow-post-scope-source) : String
   "(define (main [n : i64]) : i64

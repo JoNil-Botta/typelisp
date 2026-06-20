@@ -1233,9 +1233,11 @@
 
 ;: Convert a runtime filesystem status into a structured `ResultIoUnit`.
 (define (fs-status-result [path : (& path str)] [status : i64]) : io.ResultIoUnit
-  (if (= status io.io-status-ok)
-    io.OkIoUnit
-    (io.ErrIoUnit (io.io-error-from-status path status))))
+  (let
+    [error : io.IoError (io.io-error-from-status path status)]
+    (if (= status io.io-status-ok)
+      io.OkIoUnit
+      (io.ErrIoUnit error))))
 
 ;: Convert a runtime file-kind status into a structured result.
 (define (fs-file-kind-status-result [path : (& path str)] [status : i64]) : ResultFsFileKind
@@ -1255,23 +1257,29 @@
     [path-text : String (string.string-copy-borrowed path)]
     (if (io.io-empty-path? path)
       (io.ErrIoUnit (io.io-invalid-path-error path))
-      (stdlib.fs.fs-status-result
-        path
-        (stdlib.fs.fs-mkdir-status-owned path-text)))))
+      (let
+        [status-path : String (string.string-copy-borrowed (& path-text))]
+        [status : i64 (stdlib.fs.fs-mkdir-status-owned status-path)]
+        [error : io.IoError (io.io-error-from-owned-status path-text status)]
+        (if (= status io.io-status-ok)
+          io.OkIoUnit
+          (io.ErrIoUnit error))))))
 
 ;: Create `path` as a directory when it is missing.
 ;:
 ;: A pre-existing path reported by the host as already-created is accepted.
 (define (try-mkdir-if-missing [path : (& path str)]) : io.ResultIoUnit
   (let
-    [result : io.ResultIoUnit (stdlib.fs.try-mkdir path)]
-    (if (io.io-result-unit-ok? result)
-      io.OkIoUnit
+    [path-text : String (string.string-copy-borrowed path)]
+    (if (io.io-empty-path? path)
+      (io.ErrIoUnit (io.io-invalid-path-error path))
       (let
-        [error : io.IoError
-          (io.io-result-unit-error-or result (io.io-invalid-path-error path))]
-        [code : i64 (io.io-error-system-code-or error -1)]
-        (if (= code stdlib.fs.fs-status-already-exists)
+        [status-path : String (string.string-copy-borrowed (& path-text))]
+        [status : i64 (stdlib.fs.fs-mkdir-status-owned status-path)]
+        [error : io.IoError (io.io-error-from-owned-status path-text status)]
+        (if (or
+          (= status io.io-status-ok)
+          (= status stdlib.fs.fs-status-already-exists))
           io.OkIoUnit
           (io.ErrIoUnit error))))))
 
@@ -1281,9 +1289,13 @@
     [path-text : String (string.string-copy-borrowed path)]
     (if (io.io-empty-path? path)
       (io.ErrIoUnit (io.io-invalid-path-error path))
-      (stdlib.fs.fs-status-result
-        path
-        (stdlib.fs.fs-remove-file-status-owned path-text)))))
+      (let
+        [status-path : String (string.string-copy-borrowed (& path-text))]
+        [status : i64 (stdlib.fs.fs-remove-file-status-owned status-path)]
+        [error : io.IoError (io.io-error-from-owned-status path-text status)]
+        (if (= status io.io-status-ok)
+          io.OkIoUnit
+          (io.ErrIoUnit error))))))
 
 ;: Remove an empty directory path, returning a structured status.
 (define (try-remove-dir [path : (& path str)]) : io.ResultIoUnit
@@ -1291,9 +1303,13 @@
     [path-text : String (string.string-copy-borrowed path)]
     (if (io.io-empty-path? path)
       (io.ErrIoUnit (io.io-invalid-path-error path))
-      (stdlib.fs.fs-status-result
-        path
-        (stdlib.fs.fs-remove-dir-status-owned path-text)))))
+      (let
+        [status-path : String (string.string-copy-borrowed (& path-text))]
+        [status : i64 (stdlib.fs.fs-remove-dir-status-owned status-path)]
+        [error : io.IoError (io.io-error-from-owned-status path-text status)]
+        (if (= status io.io-status-ok)
+          io.OkIoUnit
+          (io.ErrIoUnit error))))))
 
 ;: Rename `source` to `destination`, returning a structured status.
 ;:
@@ -1444,26 +1460,32 @@
 ;: Remove a file if present. Missing paths are considered already cleaned.
 (define (try-remove-file-if-exists [path : (& path str)]) : io.ResultIoUnit
   (let
-    [result : io.ResultIoUnit (stdlib.fs.try-remove-file path)]
-    (if (io.io-result-unit-ok? result)
-      io.OkIoUnit
+    [path-text : String (string.string-copy-borrowed path)]
+    (if (io.io-empty-path? path)
+      (io.ErrIoUnit (io.io-invalid-path-error path))
       (let
-        [error : io.IoError
-          (io.io-result-unit-error-or result (io.io-invalid-path-error path))]
-        (if (io.io-error-not-found? error)
+        [status-path : String (string.string-copy-borrowed (& path-text))]
+        [status : i64 (stdlib.fs.fs-remove-file-status-owned status-path)]
+        [error : io.IoError (io.io-error-from-owned-status path-text status)]
+        (if (or
+          (= status io.io-status-ok)
+          (io.io-status-expected-absence? status))
           io.OkIoUnit
           (io.ErrIoUnit error))))))
 
 ;: Remove an empty directory if present. Missing paths are considered cleaned.
 (define (try-remove-dir-if-exists [path : (& path str)]) : io.ResultIoUnit
   (let
-    [result : io.ResultIoUnit (stdlib.fs.try-remove-dir path)]
-    (if (io.io-result-unit-ok? result)
-      io.OkIoUnit
+    [path-text : String (string.string-copy-borrowed path)]
+    (if (io.io-empty-path? path)
+      (io.ErrIoUnit (io.io-invalid-path-error path))
       (let
-        [error : io.IoError
-          (io.io-result-unit-error-or result (io.io-invalid-path-error path))]
-        (if (io.io-error-not-found? error)
+        [status-path : String (string.string-copy-borrowed (& path-text))]
+        [status : i64 (stdlib.fs.fs-remove-dir-status-owned status-path)]
+        [error : io.IoError (io.io-error-from-owned-status path-text status)]
+        (if (or
+          (= status io.io-status-ok)
+          (io.io-status-expected-absence? status))
           io.OkIoUnit
           (io.ErrIoUnit error))))))
 

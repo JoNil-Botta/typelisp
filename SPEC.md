@@ -4693,14 +4693,15 @@ Initial unsafe operation set:
 | `(syscall number arg0 ... arg5)` | Unsafe | integer operands -> `i64` | Issues a raw Linux x86_64 host syscall. The number plus up to six arguments are passed directly to the kernel ABI; argument validity, pointer lifetimes, platform availability, and side effects are caller obligations. |
 
 `stdlib/ffi.tl` provides caller-owned C string marshalling helpers on top of
-this raw-pointer surface. `ffi-c-string-required-bytes` computes
-`string-length + 1`, `ffi-c-string-interior-nul?` rejects strings that cannot be
-passed to ordinary NUL-terminated C APIs, and `ffi-c-string-copy!` copies into a
-caller-provided `(MutPtr u8)` with an explicit capacity before writing the
+this raw-pointer surface. `ffi-c-bytes-required-bytes` computes
+`bytes-length + 1`, `ffi-c-bytes-interior-nul?` rejects byte slices that cannot
+be passed to ordinary NUL-terminated C APIs, and `ffi-c-bytes-copy!` copies into
+a caller-provided `(MutPtr u8)` with an explicit capacity before writing the
 trailing NUL byte. The helper returns a structured result for success,
 interior-NUL input, or too-small buffers; it does not allocate, does not create
-implicit `String -> Ptr` coercions, and does not extend the input String's
-lifetime.
+implicit `String -> Ptr` or `bytes -> Ptr` coercions, and does not extend the
+input slice's lifetime. The `ffi-c-string-*` compatibility wrappers borrow their
+`String` input as `(& r bytes)` and delegate to the byte-slice implementation.
 
 Deferred raw pointer operations: address-of globals, fields, array elements, or
 temporaries; slice views; volatile/atomic access; provenance tracking; pointer

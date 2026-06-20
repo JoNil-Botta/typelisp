@@ -7034,6 +7034,110 @@
           (compiler-reg-assignment-lookup assignments 5)
           (compiler-reg-stack-slot-offset 5)))]))
 
+(cfg
+  test
+  (define (compiler-reg-spill-weight-eviction-function) : CompilerIrFunction
+    (let
+      [instrs : CompilerIrInstrList IrInstrNil]
+      (begin
+        (set! instrs (compiler-ir-instr-cons (IrInstrReturn IrNoValue) instrs))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (IrInstrStore "hot0c" (IrValueVar 0) (compiler-reg-i64-ty))
+            instrs))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (IrInstrStore "hot0b" (IrValueVar 0) (compiler-reg-i64-ty))
+            instrs))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (IrInstrStore "hot0a" (IrValueVar 0) (compiler-reg-i64-ty))
+            instrs))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (IrInstrStore "cold1" (IrValueVar 1) (compiler-reg-i64-ty))
+            instrs))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (IrInstrSyscall 6 (IrCallArgsOne (IrValueI64 39)))
+            instrs))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (IrInstrStore "use5" (IrValueVar 5) (compiler-reg-i64-ty))
+            instrs))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (IrInstrStore "use4" (IrValueVar 4) (compiler-reg-i64-ty))
+            instrs))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (IrInstrStore "use3" (IrValueVar 3) (compiler-reg-i64-ty))
+            instrs))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (IrInstrStore "use2" (IrValueVar 2) (compiler-reg-i64-ty))
+            instrs))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (IrInstrMov 5 (IrValueI64 5) (compiler-reg-i64-ty))
+            instrs))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (IrInstrMov 4 (IrValueI64 4) (compiler-reg-i64-ty))
+            instrs))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (IrInstrMov 3 (IrValueI64 3) (compiler-reg-i64-ty))
+            instrs))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (IrInstrMov 2 (IrValueI64 2) (compiler-reg-i64-ty))
+            instrs))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (IrInstrMov 1 (IrValueI64 1) (compiler-reg-i64-ty))
+            instrs))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (IrInstrMov 0 (IrValueI64 0) (compiler-reg-i64-ty))
+            instrs))
+        (IrFunction
+          "spill_weight_eviction"
+          IrParamNil
+          (AstTyUnit)
+          7
+          (compiler-ir-block-cons (compiler-ir-block "entry" instrs) IrBlockNil))))))
+
+(cfg
+  test
+  (define (compiler-reg-spill-weight-eviction-ok?) : bool
+    (match (compiler-reg-plan-function-scalar
+      (compiler-reg-spill-weight-eviction-function))
+      [(CompilerRegPlan assignments _ _ _ _)
+        (and
+          (compiler-reg-location-any-register?
+            (compiler-reg-assignment-lookup assignments 0))
+          (compiler-reg-location-spill-offset?
+            (compiler-reg-assignment-lookup assignments 1)
+            (compiler-reg-stack-slot-offset 1))
+          (compiler-reg-location-any-register?
+            (compiler-reg-assignment-lookup assignments 5)))])))
+
 (define (compiler-reg-scalar-call-spanning-caller-saved-ok?) : bool
   (match (compiler-reg-plan-function-scalar
     (compiler-reg-call-spanning-caller-saved-function))
@@ -7584,6 +7688,7 @@
     (compiler-reg-scalar-loop-backedge-ok?)
     (compiler-reg-scalar-zero-call-caller-saved-ok?)
     (compiler-reg-scalar-caller-saved-clobber-ok?)
+    (cfg test (compiler-reg-spill-weight-eviction-ok?) true)
     (compiler-reg-scalar-call-spanning-caller-saved-ok?)
     (cfg test (compiler-reg-call-span-counts-ok?) true)
     (cfg test (compiler-reg-call-span-census-ok?) true)

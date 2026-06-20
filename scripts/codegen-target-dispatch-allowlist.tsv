@@ -25,6 +25,7 @@ src/compiler_lower.tl	compiler-lower-linux-error-ok?	test-only	CompilerLowerLinu
 src/compiler_lower.tl	compiler-lower-windows-error-ok?	test-only	CompilerLowerWindowsScalar	1	Inline lowerer diagnostic helper exercises Win64 C ABI failures.
 src/compiler_lower.tl	compiler-lower-middle-tests-ok?	test-only	linux-x86_64|windows-x86_64	2	Inline lowerer tests check target-specific diagnostic text.
 src/compiler_backend.tl	enum:CompilerBackendTarget	backend-mode	BackendTarget(Linux|Windows)	2	Backend target enum names the supported native codegen targets.
+src/compiler_backend.tl	compiler-backend-regalloc-abi	abi	BackendTarget(Linux|Windows)	2	Scalar regalloc maps backend targets onto the matching incoming argument ABI model.
 src/compiler_backend.tl	compiler-backend-emit-stack-sub	abi	BackendTarget(Linux|Windows)	2	Windows stack probing and Linux direct stack adjustment intentionally differ.
 src/compiler_backend.tl	compiler-backend-emit-windows-seh-proc	object-format	compiler-backend-target-windows[?]	1	Windows assembly needs SEH procedure directives.
 src/compiler_backend.tl	compiler-backend-emit-windows-seh-push-rbp	object-format	compiler-backend-target-windows[?]	1	Windows assembly needs SEH saved-register directives.

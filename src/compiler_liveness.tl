@@ -574,23 +574,36 @@
     [(IrInstrUnOp _ _ src _) (compiler-live-value-vars src)]
     [(IrInstrLaneId _ _ _) (compiler-live-set-empty)]
     [(IrInstrSplat _ value _ _) (compiler-live-value-vars value)]
-    [(IrInstrVectorBinOp _ _ lhs rhs _ _) (compiler-live-values2-vars lhs rhs)]
+    [(IrInstrVectorBinOp payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorBinOpPayload _ _ lhs rhs _ _)
+          (compiler-live-values2-vars lhs rhs)])]
     [(IrInstrVectorReduce _ _ src _ _) (compiler-live-value-vars src)]
-    [(IrInstrVectorCompare _ _ lhs rhs _ _)
-      (compiler-live-values2-vars lhs rhs)]
+    [(IrInstrVectorCompare payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorComparePayload _ _ lhs rhs _ _)
+          (compiler-live-values2-vars lhs rhs)])]
     [(IrInstrMaskBinOp _ _ lhs rhs _) (compiler-live-values2-vars lhs rhs)]
     [(IrInstrMaskNot _ src _) (compiler-live-value-vars src)]
     [(IrInstrMaskReduce _ _ src _) (compiler-live-value-vars src)]
-    [(IrInstrSelect _ mask on-true on-false _ _)
-      (compiler-live-values3-vars mask on-true on-false)]
+    [(IrInstrSelect payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSelectPayload _ mask on-true on-false _ _)
+          (compiler-live-values3-vars mask on-true on-false)])]
     [(IrInstrVectorLoad _ base index _ _)
       (compiler-live-values2-vars base index)]
-    [(IrInstrVectorStore base index value _ _)
-      (compiler-live-values3-vars base index value)]
-    [(IrInstrPredicatedStore base index value mask _ _)
-      (compiler-live-values4-vars base index value mask)]
-    [(IrInstrPredicatedLoad _ base index mask _ _)
-      (compiler-live-values3-vars base index mask)]
+    [(IrInstrVectorStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorStorePayload base index value _ _)
+          (compiler-live-values3-vars base index value)])]
+    [(IrInstrPredicatedStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedStorePayload base index value mask _ _)
+          (compiler-live-values4-vars base index value mask)])]
+    [(IrInstrPredicatedLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedLoadPayload _ base index mask _ _)
+          (compiler-live-values3-vars base index mask)])]
     [(IrInstrTailMask _ index len _) (compiler-live-values2-vars index len)]
     [(IrInstrEntryArgc _) (compiler-live-set-empty)]
     [(IrInstrEntryArgv _) (compiler-live-set-empty)]
@@ -603,12 +616,20 @@
       (compiler-live-value-vars-into (compiler-live-call-args-vars args) func)]
     [(IrInstrCallIndirectC _ func args _)
       (compiler-live-value-vars-into (compiler-live-call-args-vars args) func)]
-    [(IrInstrCallCAbiStoreResult base _ args _)
-      (compiler-live-value-vars-into (compiler-live-call-args-vars args) base)]
-    [(IrInstrCallIndirectCAbiStoreResult base func args _)
-      (compiler-live-value-vars-into
-        (compiler-live-value-vars-into (compiler-live-call-args-vars args) base)
-        func)]
+    [(IrInstrCallCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallCAbiStoreResultPayload base _ args _)
+          (compiler-live-value-vars-into
+            (compiler-live-call-args-vars args)
+            base)])]
+    [(IrInstrCallIndirectCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload base func args _)
+          (compiler-live-value-vars-into
+            (compiler-live-value-vars-into
+              (compiler-live-call-args-vars args)
+              base)
+            func)])]
     [(IrInstrTailCall _ args _) (compiler-live-call-args-vars args)]
     [(IrInstrStore _ value _) (compiler-live-value-vars value)]
     [(IrInstrBranch cond _ _) (compiler-live-value-vars cond)]
@@ -633,15 +654,26 @@
     [(IrInstrUnOp dst _ _ _) (compiler-live-set1 dst)]
     [(IrInstrLaneId dst _ _) (compiler-live-set1 dst)]
     [(IrInstrSplat dst _ _ _) (compiler-live-set1 dst)]
-    [(IrInstrVectorBinOp dst _ _ _ _ _) (compiler-live-set1 dst)]
+    [(IrInstrVectorBinOp payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorBinOpPayload dst _ _ _ _ _)
+          (compiler-live-set1 dst)])]
     [(IrInstrVectorReduce dst _ _ _ _) (compiler-live-set1 dst)]
-    [(IrInstrVectorCompare dst _ _ _ _ _) (compiler-live-set1 dst)]
+    [(IrInstrVectorCompare payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorComparePayload dst _ _ _ _ _)
+          (compiler-live-set1 dst)])]
     [(IrInstrMaskBinOp dst _ _ _ _) (compiler-live-set1 dst)]
     [(IrInstrMaskNot dst _ _) (compiler-live-set1 dst)]
     [(IrInstrMaskReduce dst _ _ _) (compiler-live-set1 dst)]
-    [(IrInstrSelect dst _ _ _ _ _) (compiler-live-set1 dst)]
+    [(IrInstrSelect payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSelectPayload dst _ _ _ _ _) (compiler-live-set1 dst)])]
     [(IrInstrVectorLoad dst _ _ _ _) (compiler-live-set1 dst)]
-    [(IrInstrPredicatedLoad dst _ _ _ _ _) (compiler-live-set1 dst)]
+    [(IrInstrPredicatedLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedLoadPayload dst _ _ _ _ _)
+          (compiler-live-set1 dst)])]
     [(IrInstrTailMask dst _ _ _) (compiler-live-set1 dst)]
     [(IrInstrEntryArgc dst) (compiler-live-set1 dst)]
     [(IrInstrEntryArgv dst) (compiler-live-set1 dst)]
@@ -1398,7 +1430,7 @@
       (compiler-ir-instr-cons
         (IrInstrSplat 1 (IrValueVar 10) 4 (compiler-live-i64-ty))
         (compiler-ir-instr-cons
-          (IrInstrVectorBinOp
+          (ir-instr-vector-bin-op
             2
             (IrBinAdd)
             (IrValueVar 0)
@@ -1408,7 +1440,7 @@
           (compiler-ir-instr-cons
             (IrInstrTailMask 3 (IrValueVar 11) (IrValueVar 12) 4)
             (compiler-ir-instr-cons
-              (IrInstrPredicatedLoad
+              (ir-instr-predicated-load
                 4
                 (IrValueVar 13)
                 (IrValueVar 11)
@@ -1416,7 +1448,7 @@
                 4
                 (compiler-live-i64-ty))
               (compiler-ir-instr-cons
-                (IrInstrPredicatedStore
+                (ir-instr-predicated-store
                   (IrValueVar 14)
                   (IrValueVar 11)
                   (IrValueVar 2)

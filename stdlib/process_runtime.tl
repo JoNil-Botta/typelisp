@@ -1571,7 +1571,7 @@
           handle
           0
           (cast 2 : i32))]
-      (if (< end 0)
+      (if (<= end 0)
         ""
         (if (<
           (stdlib.process_runtime.process-windows-seek-handle

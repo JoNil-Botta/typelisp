@@ -7073,6 +7073,16 @@
 (import pkg.macros)
 (define (main) : i64 (+ (macros.call-helper) 1))")
 
+(define (compiler-typecheck-macro-qualified-imported-own-macro-source) : String
+  "(module pkg.macros)
+(defmacro (helper [x : i64]) : i64 `(+ ,x 1))
+(defmacro (call-helper [x : i64]) : i64 `(pkg.macros.helper ,x))
+(export (macro helper))
+(export (macro call-helper))
+(module main)
+(import pkg.macros)
+(define (main) : i64 (macros.call-helper 41))")
+
 (define (compiler-typecheck-macro-qualified-imported-other-source) : String
   "(module pkg.data)
 (define (get) : i64 41)
@@ -7293,6 +7303,8 @@
       (compiler-typecheck-macro-qualified-local-full-path-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-macro-qualified-imported-own-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-macro-qualified-imported-own-macro-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-macro-qualified-imported-other-source))
     (compiler-typecheck-error-ok?

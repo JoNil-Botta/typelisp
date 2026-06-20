@@ -32427,6 +32427,28 @@
         [(ErrTcString message)
           (ErrMacroCallDecl (ctfe-diagnostic-at-expr call-expr message))]))))
 
+(define (macro-call-decl-from-hygiene-name
+  [ctx : TcContext]
+  [decls : AstDeclList]
+  [definition-module : String]
+  [lookup-name : String]
+  [call-expr : AstExpr]) : ResultMacroCallDecl
+  (if (and
+    (>= (tc-name-first-dot lookup-name) 0)
+    (not (tc-name-qualified? lookup-name)))
+    (macro-call-decl-from-source-name
+      ctx
+      decls
+      (tc-context-module ctx)
+      lookup-name
+      call-expr)
+    (macro-call-decl-from-name
+      ctx
+      decls
+      definition-module
+      lookup-name
+      call-expr)))
+
 ;; If `func` names a visible macro, return that macro's decl. Bare local macros
 ;; are module-scope visible regardless of source order; qualified macro calls
 ;; must pass the export table. A bare name not bound locally falls back to the
@@ -32445,14 +32467,19 @@
       (if (tc-hygiene-global-name? (intern-str name))
         (match (tc-hygiene-global-decode (intern-str name))
           [(TcHygieneLegacyGlobal lookup-name)
-            (macro-call-decl-from-name
+            (macro-call-decl-from-hygiene-name
               ctx
               decls
               (tc-context-module ctx)
               lookup-name
               call-expr)]
           [(TcHygieneContextGlobal module lookup-name)
-            (macro-call-decl-from-name ctx decls module lookup-name call-expr)])
+            (macro-call-decl-from-hygiene-name
+              ctx
+              decls
+              module
+              lookup-name
+              call-expr)])
         (macro-call-decl-from-source-name
           ctx
           decls

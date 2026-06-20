@@ -244,6 +244,104 @@
                       (compiler-driver-state-smoke-type-i64? type-a2 a-id)
                       (compiler-driver-state-smoke-type-i64? type-b2 b-id))])])])])))
 
+(define (compiler-driver-state-smoke-context-expr-unspan
+  [pools : AstNodePoolContext]
+  [expr : AstExpr]) : AstExpr
+  (match expr
+    [(AstExprSpanned inner-id _)
+      (compiler-driver-state-smoke-context-expr-unspan
+        pools
+        (ast-node-pool-context-expr-get pools inner-id))]
+    [_ expr]))
+
+(define (compiler-driver-state-smoke-context-type-u8?
+  [pools : AstNodePoolContext]
+  [id : i64]) : bool
+  (match (ast-node-pool-context-type-get pools id)
+    [(AstTyU8) true]
+    [_ false]))
+
+(define (compiler-driver-state-smoke-context-ptr-null-u8?
+  [pools : AstNodePoolContext]
+  [id : i64]) : bool
+  (match (compiler-driver-state-smoke-context-expr-unspan
+    pools
+    (ast-node-pool-context-expr-get pools id))
+    [(AstExprPtrNull (AstTyPtr inner-id))
+      (compiler-driver-state-smoke-context-type-u8? pools inner-id)]
+    [_ false]))
+
+(define (compiler-driver-state-smoke-note-main-ptr-u8!
+  [pools : AstNodePoolContext]
+  [program : AstProgram]
+  [body-cell : (Array i64)]
+  [type-cell : (Array i64)]) : bool
+  (match program
+    [(AstProgram decls-box)
+      (match (box-get decls-box)
+        [(AstDeclCons (AstDeclDefFn _ _ (AstTyPtr inner-id) body-id _) _)
+          (begin
+            (array-set! body-cell 0 body-id)
+            (array-set! type-cell 0 inner-id)
+            (and
+              (compiler-driver-state-smoke-context-type-u8? pools inner-id)
+              (compiler-driver-state-smoke-context-ptr-null-u8? pools body-id)))]
+        [_ false])]))
+
+(define (compiler-driver-state-smoke-parse-pools-isolated?) : bool
+  (let
+    [state-a : CompilerDriverState (compiler-driver-state-new)]
+    [state-b : CompilerDriverState (compiler-driver-state-new)]
+    [body-cell : (Array i64) (make-array i64 1)]
+    [type-cell : (Array i64) (make-array i64 1)]
+    [ok : bool true]
+    (begin
+      (array-set! body-cell 0 (- 0 1))
+      (array-set! type-cell 0 (- 0 1))
+      (compiler-driver-state-reset-file-state! state-a)
+      (compiler-driver-state-reset-file-state! state-b)
+      (let
+        [pools-a : AstNodePoolContext
+          (compiler-driver-state-pool-context state-a)]
+        [pools-b : AstNodePoolContext
+          (compiler-driver-state-pool-context state-b)]
+        (begin
+          (match (parse-ast-source-diagnostic-with-cfg-and-pools
+            "state-a.tl"
+            "(define (main) : (Ptr u8) (ptr-null : (Ptr u8)))"
+            (compiler-cfg-empty)
+            pools-a)
+            [(OkAstProgramDiagnostic program)
+              (unless
+                (compiler-driver-state-smoke-note-main-ptr-u8!
+                  pools-a
+                  program
+                  body-cell
+                  type-cell)
+                (set! ok false))]
+            [(ErrAstProgramDiagnostic _) (set! ok false)])
+          (match (parse-ast-source-diagnostic-with-cfg-and-pools
+            "state-b.tl"
+            "(define (main) : (Ptr i64) (ptr-null : (Ptr i64)))"
+            (compiler-cfg-empty)
+            pools-b)
+            [(OkAstProgramDiagnostic _) unit]
+            [(ErrAstProgramDiagnostic _) (set! ok false)])
+          (compiler-driver-state-reset-file-state! state-b)
+          (unless (>= (array-ref body-cell 0) 0) (set! ok false))
+          (unless (>= (array-ref type-cell 0) 0) (set! ok false))
+          (unless
+            (compiler-driver-state-smoke-context-type-u8?
+              pools-a
+              (array-ref type-cell 0))
+            (set! ok false))
+          (unless
+            (compiler-driver-state-smoke-context-ptr-null-u8?
+              pools-a
+              (array-ref body-cell 0))
+            (set! ok false))
+          ok)))))
+
 (define (compiler-driver-state-smoke-active-pools-isolated?) : bool
   (let
     [state-a : CompilerDriverState (compiler-driver-state-new)]
@@ -448,6 +546,52 @@
                   emitted-ok))))]
         [(ErrCompilerLower _) false]))))
 
+(define (compiler-driver-state-smoke-compile-entry
+  [state : CompilerDriverState]
+  [input-path : String]
+  [stdlib-roots : StringVec]) : bool
+  (begin
+    (compiler-driver-state-reset-file-state! state)
+    (let
+      [ok : bool
+        (match (compiler-driver-load-and-lower-escaping-with-state
+          state
+          input-path
+          (BackendTargetLinux)
+          stdlib-roots
+          (BackendModeScalar)
+          (compiler-cfg-empty))
+          [(OkCompilerDriverLowered _ _ _ _) true]
+          [(ErrCompilerDriverLowered _) false])]
+      (begin
+        (compiler-driver-state-capture-session-floors! state)
+        ok))))
+
+(define (compiler-driver-state-smoke-batch-prelude-cache-floors?) : bool
+  (let
+    [state : CompilerDriverState
+      (compiler-driver-state-session-program-cache-disable
+        (compiler-driver-state-session-cache-enable
+          (compiler-driver-state-new-for-compile)))]
+    [roots : StringVec (string-vec-push (string-vec-new) "stdlib")]
+    [ok : bool true]
+    (begin
+      (compiler-load-session-cache-disable-for-test!)
+      (unless
+        (compiler-driver-state-smoke-compile-entry
+          state
+          "tests/integration/calc.tl"
+          roots)
+        (set! ok false))
+      (unless
+        (compiler-driver-state-smoke-compile-entry
+          state
+          "tests/integration/lexer.tl"
+          roots)
+        (set! ok false))
+      (compiler-load-session-cache-disable-for-test!)
+      ok)))
+
 (define (main) : i64
   (begin
     (unless (compiler-driver-state-smoke-cache-isolated?) (return 2))
@@ -457,6 +601,7 @@
       (return 6))
     (unless (compiler-driver-state-smoke-pools-isolated?) (return 4))
     (unless (compiler-driver-state-smoke-type-dedup-isolated?) (return 5))
+    (unless (compiler-driver-state-smoke-parse-pools-isolated?) (return 12))
     (unless (compiler-driver-state-smoke-active-pools-isolated?) (return 7))
     (unless (compiler-driver-state-smoke-builtins-isolated?) (return 8))
     (unless
@@ -466,4 +611,7 @@
     (unless
       (compiler-driver-state-smoke-lowered-result-pools-survive-reset?)
       (return 11))
+    (unless
+      (compiler-driver-state-smoke-batch-prelude-cache-floors?)
+      (return 13))
     42))

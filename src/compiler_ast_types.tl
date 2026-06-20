@@ -1529,6 +1529,117 @@
     ;; the shared compatibility grow/persist target there after both installs.
     (set! node-pool-base-arena (struct-get expr-pool base-arena))))
 
+(defstruct AstNodePoolContext
+  (expr-pool (Array AstExprNodePoolState))
+  (type-pool (Array AstTypeNodePoolState)))
+
+(define (ast-node-pool-context-from-cells
+  [expr-pool : (Array AstExprNodePoolState)]
+  [type-pool : (Array AstTypeNodePoolState)]) : AstNodePoolContext
+  (AstNodePoolContext expr-pool type-pool))
+
+(define (ast-node-pool-context-new
+  [expr-pool : AstExprNodePoolState]
+  [type-pool : AstTypeNodePoolState]) : AstNodePoolContext
+  (let
+    [expr-cell : (Array AstExprNodePoolState)
+      (make-array AstExprNodePoolState 1)]
+    [type-cell : (Array AstTypeNodePoolState)
+      (make-array AstTypeNodePoolState 1)]
+    (begin
+      (array-set! expr-cell 0 expr-pool)
+      (array-set! type-cell 0 type-pool)
+      (AstNodePoolContext expr-cell type-cell))))
+
+(define (ast-node-pool-context-capture-active) : AstNodePoolContext
+  (ast-node-pool-context-new
+    (ast-node-pool-state-capture)
+    (ty-node-pool-state-capture)))
+
+(define (ast-node-pool-context-install! [pools : AstNodePoolContext]) : unit
+  (ast-node-pools-state-install!
+    (array-ref (struct-get pools expr-pool) 0)
+    (array-ref (struct-get pools type-pool) 0)))
+
+(define (ast-node-pool-context-expr-len [pools : AstNodePoolContext]) : i64
+  (ast-expr-node-pool-state-len (array-ref (struct-get pools expr-pool) 0)))
+
+(define (ast-node-pool-context-type-len [pools : AstNodePoolContext]) : i64
+  (ast-type-node-pool-state-len (array-ref (struct-get pools type-pool) 0)))
+
+(define (ast-node-pool-context-base-arena [pools : AstNodePoolContext]) : i64
+  (struct-get (array-ref (struct-get pools expr-pool) 0) base-arena))
+
+(define (ast-node-pool-context-reset-to!
+  [pools : AstNodePoolContext]
+  [expr-mark : i64]
+  [type-mark : i64]) : unit
+  (begin
+    (array-set!
+      (struct-get pools expr-pool)
+      0
+      (ast-expr-node-pool-state-reset-to
+        (array-ref (struct-get pools expr-pool) 0)
+        expr-mark))
+    (array-set!
+      (struct-get pools type-pool)
+      0
+      (ast-type-node-pool-state-reset-to
+        (array-ref (struct-get pools type-pool) 0)
+        type-mark))))
+
+(define (ast-node-pool-context-expr-push
+  [pools : AstNodePoolContext]
+  [node : AstExpr]) : i64
+  (match (ast-expr-node-pool-state-push
+    (array-ref (struct-get pools expr-pool) 0)
+    node)
+    [(AstExprNodePoolPushOk next id)
+      (begin
+        (array-set! (struct-get pools expr-pool) 0 next)
+        id)]))
+
+(define (ast-node-pool-context-expr-get [pools : AstNodePoolContext] [id : i64]) : AstExpr
+  (ast-expr-node-pool-state-get (array-ref (struct-get pools expr-pool) 0) id))
+
+(define (ast-node-pool-context-expr-set!
+  [pools : AstNodePoolContext]
+  [id : i64]
+  [node : AstExpr]) : unit
+  (array-set!
+    (struct-get pools expr-pool)
+    0
+    (ast-expr-node-pool-state-set!
+      (array-ref (struct-get pools expr-pool) 0)
+      id
+      node)))
+
+(define (ast-node-pool-context-type-push
+  [pools : AstNodePoolContext]
+  [node : AstType]) : i64
+  (match (ast-type-node-pool-state-push
+    (array-ref (struct-get pools type-pool) 0)
+    node)
+    [(AstTypeNodePoolPushOk next id)
+      (begin
+        (array-set! (struct-get pools type-pool) 0 next)
+        id)]))
+
+(define (ast-node-pool-context-type-get [pools : AstNodePoolContext] [id : i64]) : AstType
+  (ast-type-node-pool-state-get (array-ref (struct-get pools type-pool) 0) id))
+
+(define (ast-node-pool-context-type-set!
+  [pools : AstNodePoolContext]
+  [id : i64]
+  [node : AstType]) : unit
+  (array-set!
+    (struct-get pools type-pool)
+    0
+    (ast-type-node-pool-state-set!
+      (array-ref (struct-get pools type-pool) 0)
+      id
+      node)))
+
 (defenum AstExprList
   (AstExprNil)
   (AstExprCons i64 (Box AstExprList)))
@@ -1671,6 +1782,58 @@
 
 (define (ast-ty-mut-ptr [elem : AstType]) : AstType
   (AstTyMutPtr (ty-node-push elem)))
+
+(define (ast-type-cons-with-pools
+  [pools : AstNodePoolContext]
+  [head : AstType]
+  [rest : AstTypeList]) : AstTypeList
+  (AstTypeCons (ast-node-pool-context-type-push pools head) (box rest)))
+
+(define (ast-ty-func-with-pools
+  [pools : AstNodePoolContext]
+  [args : AstTypeList]
+  [ret : AstType]) : AstType
+  (AstTyFunc (box args) (ast-node-pool-context-type-push pools ret)))
+
+(define (ast-ty-array-with-pools
+  [pools : AstNodePoolContext]
+  [elem : AstType]
+  [count : i64]) : AstType
+  (AstTyArray (ast-node-pool-context-type-push pools elem) count))
+
+(define (ast-ty-dyn-array-with-pools
+  [pools : AstNodePoolContext]
+  [elem : AstType]) : AstType
+  (AstTyDynArray (ast-node-pool-context-type-push pools elem)))
+
+(define (ast-ty-box-with-pools [pools : AstNodePoolContext] [elem : AstType]) : AstType
+  (AstTyBox (ast-node-pool-context-type-push pools elem)))
+
+(define (ast-ty-region-with-pools
+  [pools : AstNodePoolContext]
+  [region : String]
+  [inner : AstType]) : AstType
+  (AstTyRegion region (ast-node-pool-context-type-push pools inner)))
+
+(define (ast-ty-ref-with-pools
+  [pools : AstNodePoolContext]
+  [region : String]
+  [inner : AstType]) : AstType
+  (AstTyRef region (ast-node-pool-context-type-push pools inner)))
+
+(define (ast-ty-mut-ref-with-pools
+  [pools : AstNodePoolContext]
+  [region : String]
+  [inner : AstType]) : AstType
+  (AstTyMutRef region (ast-node-pool-context-type-push pools inner)))
+
+(define (ast-ty-ptr-with-pools [pools : AstNodePoolContext] [elem : AstType]) : AstType
+  (AstTyPtr (ast-node-pool-context-type-push pools elem)))
+
+(define (ast-ty-mut-ptr-with-pools
+  [pools : AstNodePoolContext]
+  [elem : AstType]) : AstType
+  (AstTyMutPtr (ast-node-pool-context-type-push pools elem)))
 
 (define (ast-lifetime-cons [head : String] [rest : AstLifetimeList]) : AstLifetimeList
   (AstLifetimeCons head (box rest)))
@@ -2110,6 +2273,457 @@
 
 (define (ast-expr-syscall [args : AstExprList]) : i64
   (ast-node-push (AstExprSyscall args)))
+
+(define (ast-expr-spanned-with-pools
+  [pools : AstNodePoolContext]
+  [inner : i64]
+  [span : AstSourceSpan]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprSpanned inner span)))
+
+(define (ast-expr-binary-with-pools
+  [pools : AstNodePoolContext]
+  [op : AstBinOp]
+  [left : i64]
+  [right : i64]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprBinary op left right)))
+
+(define (ast-expr-unary-with-pools
+  [pools : AstNodePoolContext]
+  [op : AstUnOp]
+  [inner : i64]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprUnary op inner)))
+
+(define (ast-expr-call-with-pools
+  [pools : AstNodePoolContext]
+  [callee : i64]
+  [args : AstExprList]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprCall callee args)))
+
+(define (ast-expr-bracket-clause-with-pools
+  [pools : AstNodePoolContext]
+  [items : AstExprList]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprBracketClause items)))
+
+(define (ast-expr-if-with-pools
+  [pools : AstNodePoolContext]
+  [cond : i64]
+  [then-expr : i64]
+  [else-expr : i64]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprIf cond then-expr else-expr)))
+
+(define (ast-expr-let-with-pools
+  [pools : AstNodePoolContext]
+  [bindings : AstLetBindingList]
+  [body : i64]) : i64
+  (ast-node-pool-context-expr-push
+    pools
+    (AstExprLet (box (AstLet bindings body)))))
+
+(define (ast-expr-lambda-with-pools
+  [pools : AstNodePoolContext]
+  [params : AstParamList]
+  [ret : AstMaybeType]
+  [body : i64]) : i64
+  (ast-node-pool-context-expr-push
+    pools
+    (AstExprLambda (box (AstLambda params ret body)))))
+
+(define (ast-expr-tuple-ref-with-pools
+  [pools : AstNodePoolContext]
+  [target : i64]
+  [index : i64]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprTupleRef target index)))
+
+(define (ast-expr-make-array-with-pools
+  [pools : AstNodePoolContext]
+  [elem : AstType]
+  [size : i64]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprMakeArray elem size)))
+
+(define (ast-expr-array-ref-with-pools
+  [pools : AstNodePoolContext]
+  [target : i64]
+  [index : i64]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprArrayRef target index)))
+
+(define (ast-expr-array-set-with-pools
+  [pools : AstNodePoolContext]
+  [target : i64]
+  [index : i64]
+  [value : i64]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprArraySet target index value)))
+
+(define (ast-expr-array-push-with-pools
+  [pools : AstNodePoolContext]
+  [target : i64]
+  [value : i64]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprArrayPush target value)))
+
+(define (ast-expr-string-ref-with-pools
+  [pools : AstNodePoolContext]
+  [target : i64]
+  [index : i64]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprStringRef target index)))
+
+(define (ast-expr-while-with-pools
+  [pools : AstNodePoolContext]
+  [cond : i64]
+  [body : i64]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprWhile cond body)))
+
+(define (ast-expr-set-with-pools
+  [pools : AstNodePoolContext]
+  [name : String]
+  [value : i64]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprSet (intern name) value)))
+
+(define (ast-expr-set-id-with-pools
+  [pools : AstNodePoolContext]
+  [name : i64]
+  [value : i64]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprSet name value)))
+
+(define (ast-expr-ann-with-pools
+  [pools : AstNodePoolContext]
+  [expr : i64]
+  [ty : AstType]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprAnn expr ty)))
+
+(define (ast-expr-cast-with-pools
+  [pools : AstNodePoolContext]
+  [expr : i64]
+  [ty : AstType]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprCast expr ty)))
+
+(define (ast-expr-borrow-with-pools
+  [pools : AstNodePoolContext]
+  [mutable : bool]
+  [lifetime : AstBorrowLifetime]
+  [expr : i64]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprBorrow mutable lifetime expr)))
+
+(define (ast-expr-match-with-pools
+  [pools : AstNodePoolContext]
+  [scrutinee : i64]
+  [arms : AstMatchArmList]) : i64
+  (ast-node-pool-context-expr-push
+    pools
+    (AstExprMatch (box (AstMatch scrutinee arms)))))
+
+(define (ast-expr-foreach-with-pools
+  [pools : AstNodePoolContext]
+  [name : String]
+  [index-ty : AstType]
+  [start : i64]
+  [end : i64]
+  [body : i64]) : i64
+  (ast-node-pool-context-expr-push
+    pools
+    (AstExprForeach (box (AstForeach (intern name) index-ty start end body)))))
+
+(define (ast-expr-foreach-id-with-pools
+  [pools : AstNodePoolContext]
+  [name : i64]
+  [index-ty : AstType]
+  [start : i64]
+  [end : i64]
+  [body : i64]) : i64
+  (ast-node-pool-context-expr-push
+    pools
+    (AstExprForeach (box (AstForeach name index-ty start end body)))))
+
+(define (ast-expr-spmd-reduce-with-pools
+  [pools : AstNodePoolContext]
+  [op : AstReduceOp]
+  [name : String]
+  [index-ty : AstType]
+  [start : i64]
+  [end : i64]
+  [init : i64]
+  [value : i64]) : i64
+  (ast-node-pool-context-expr-push
+    pools
+    (AstExprSpmdReduce
+      (box (AstSpmdReduce op (intern name) index-ty start end init value)))))
+
+(define (ast-expr-spmd-reduce-id-with-pools
+  [pools : AstNodePoolContext]
+  [op : AstReduceOp]
+  [name : i64]
+  [index-ty : AstType]
+  [start : i64]
+  [end : i64]
+  [init : i64]
+  [value : i64]) : i64
+  (ast-node-pool-context-expr-push
+    pools
+    (AstExprSpmdReduce
+      (box (AstSpmdReduce op name index-ty start end init value)))))
+
+(define (ast-expr-spmd-scan-with-pools
+  [pools : AstNodePoolContext]
+  [op : AstReduceOp]
+  [index : String]
+  [index-ty : AstType]
+  [start : i64]
+  [end : i64]
+  [prefix : String]
+  [prefix-ty : AstType]
+  [init : i64]
+  [value : i64]
+  [body : i64]) : i64
+  (ast-node-pool-context-expr-push
+    pools
+    (AstExprSpmdScan
+      (box
+        (AstSpmdScan
+          op
+          (intern index)
+          index-ty
+          start
+          end
+          (intern prefix)
+          prefix-ty
+          init
+          value
+          body)))))
+
+(define (ast-expr-spmd-scan-id-with-pools
+  [pools : AstNodePoolContext]
+  [op : AstReduceOp]
+  [index : i64]
+  [index-ty : AstType]
+  [start : i64]
+  [end : i64]
+  [prefix : i64]
+  [prefix-ty : AstType]
+  [init : i64]
+  [value : i64]
+  [body : i64]) : i64
+  (ast-node-pool-context-expr-push
+    pools
+    (AstExprSpmdScan
+      (box
+        (AstSpmdScan
+          op
+          index
+          index-ty
+          start
+          end
+          prefix
+          prefix-ty
+          init
+          value
+          body)))))
+
+(define (ast-expr-spmd-broadcast-with-pools
+  [pools : AstNodePoolContext]
+  [value : i64]
+  [lane : i64]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprSpmdBroadcast value lane)))
+
+(define (ast-expr-spmd-program-index-with-pools [pools : AstNodePoolContext]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprSpmdProgramIndex)))
+
+(define (ast-expr-spmd-program-count-with-pools [pools : AstNodePoolContext]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprSpmdProgramCount)))
+
+(define (ast-expr-struct-get-with-pools
+  [pools : AstNodePoolContext]
+  [target : i64]
+  [field : String]) : i64
+  (ast-node-pool-context-expr-push
+    pools
+    (AstExprStructGet target (intern field))))
+
+(define (ast-expr-struct-get-id-with-pools
+  [pools : AstNodePoolContext]
+  [target : i64]
+  [field : i64]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprStructGet target field)))
+
+(define (ast-expr-struct-set-with-pools
+  [pools : AstNodePoolContext]
+  [target : i64]
+  [field : String]
+  [value : i64]) : i64
+  (ast-node-pool-context-expr-push
+    pools
+    (AstExprStructSet target (intern field) value)))
+
+(define (ast-expr-struct-set-id-with-pools
+  [pools : AstNodePoolContext]
+  [target : i64]
+  [field : i64]
+  [value : i64]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprStructSet target field value)))
+
+(define (ast-expr-with-escape-with-pools
+  [pools : AstNodePoolContext]
+  [escape : i64]
+  [body : AstExprList]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprWithEscape escape body)))
+
+(define (ast-expr-with-scratch-with-pools
+  [pools : AstNodePoolContext]
+  [body : AstExprList]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprWithScratch body)))
+
+(define (ast-expr-in-arena-with-pools
+  [pools : AstNodePoolContext]
+  [arena : i64]
+  [body : AstExprList]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprInArena arena body)))
+
+(define (ast-expr-box-with-pools [pools : AstNodePoolContext] [value : i64]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprBox value)))
+
+(define (ast-expr-box-get-with-pools [pools : AstNodePoolContext] [value : i64]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprBoxGet value)))
+
+(define (ast-expr-box-take-with-pools
+  [pools : AstNodePoolContext]
+  [value : i64]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprBoxTake value)))
+
+(define (ast-expr-box-set-with-pools
+  [pools : AstNodePoolContext]
+  [target : i64]
+  [value : i64]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprBoxSet target value)))
+
+(define (ast-expr-init-maybe-with-pools
+  [pools : AstNodePoolContext]
+  [maybe-ty : AstMaybeType]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprInit maybe-ty)))
+
+(define (ast-expr-init-with-pools [pools : AstNodePoolContext] [ty : AstType]) : i64
+  (ast-expr-init-maybe-with-pools pools (AstSomeType ty)))
+
+(define (ast-expr-init-contextual-with-pools [pools : AstNodePoolContext]) : i64
+  (ast-expr-init-maybe-with-pools pools AstNoType))
+
+(define (ast-expr-comptime-with-pools
+  [pools : AstNodePoolContext]
+  [inner : i64]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprComptime inner)))
+
+(define (ast-expr-quote-with-pools [pools : AstNodePoolContext] [inner : i64]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprQuote inner)))
+
+(define (ast-expr-quasiquote-with-pools
+  [pools : AstNodePoolContext]
+  [inner : i64]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprQuasiquote inner)))
+
+(define (ast-expr-unquote-with-pools [pools : AstNodePoolContext] [inner : i64]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprUnquote inner)))
+
+(define (ast-expr-unquote-splicing-with-pools
+  [pools : AstNodePoolContext]
+  [inner : i64]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprUnquoteSplicing inner)))
+
+(define (ast-expr-try-with-pools [pools : AstNodePoolContext] [inner : i64]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprTry inner)))
+
+(define (ast-expr-return-with-pools [pools : AstNodePoolContext] [inner : i64]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprReturn inner)))
+
+(define (ast-expr-ptr-null-check-with-pools
+  [pools : AstNodePoolContext]
+  [ptr : i64]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprPtrNullCheck ptr)))
+
+(define (ast-expr-ptr-addr-of-with-pools
+  [pools : AstNodePoolContext]
+  [name : String]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprPtrAddrOf (intern name))))
+
+(define (ast-expr-ptr-addr-of-id-with-pools
+  [pools : AstNodePoolContext]
+  [name : i64]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprPtrAddrOf name)))
+
+(define (ast-expr-ptr-read-with-pools [pools : AstNodePoolContext] [ptr : i64]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprPtrRead ptr)))
+
+(define (ast-expr-ptr-write-with-pools
+  [pools : AstNodePoolContext]
+  [ptr : i64]
+  [value : i64]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprPtrWrite ptr value)))
+
+(define (ast-expr-ptr-offset-with-pools
+  [pools : AstNodePoolContext]
+  [ptr : i64]
+  [offset : i64]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprPtrOffset ptr offset)))
+
+(define (ast-expr-ptr-cast-with-pools
+  [pools : AstNodePoolContext]
+  [ptr : i64]
+  [ty : AstType]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprPtrCast ptr ty)))
+
+(define (ast-expr-ptr-to-int-with-pools
+  [pools : AstNodePoolContext]
+  [ptr : i64]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprPtrToInt ptr)))
+
+(define (ast-expr-int-to-ptr-with-pools
+  [pools : AstNodePoolContext]
+  [value : i64]
+  [ty : AstType]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprIntToPtr value ty)))
+
+(define (ast-expr-string-data-with-pools
+  [pools : AstNodePoolContext]
+  [value : i64]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprStringData value)))
+
+(define (ast-expr-string-from-bytes-with-pools
+  [pools : AstNodePoolContext]
+  [data : i64]
+  [len : i64]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprStringFromBytes data len)))
+
+(define (ast-expr-array-data-with-pools
+  [pools : AstNodePoolContext]
+  [value : i64]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprArrayData value)))
+
+(define (ast-expr-cpuid-eax-with-pools
+  [pools : AstNodePoolContext]
+  [leaf : i64]
+  [subleaf : i64]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprCpuIdEax leaf subleaf)))
+
+(define (ast-expr-cpuid-ebx-with-pools
+  [pools : AstNodePoolContext]
+  [leaf : i64]
+  [subleaf : i64]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprCpuIdEbx leaf subleaf)))
+
+(define (ast-expr-cpuid-ecx-with-pools
+  [pools : AstNodePoolContext]
+  [leaf : i64]
+  [subleaf : i64]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprCpuIdEcx leaf subleaf)))
+
+(define (ast-expr-cpuid-edx-with-pools
+  [pools : AstNodePoolContext]
+  [leaf : i64]
+  [subleaf : i64]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprCpuIdEdx leaf subleaf)))
+
+(define (ast-expr-xgetbv-with-pools [pools : AstNodePoolContext] [index : i64]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprXgetbv index)))
+
+(define (ast-expr-syscall-with-pools
+  [pools : AstNodePoolContext]
+  [args : AstExprList]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprSyscall args)))
 
 (define (ast-export-item-cons [head : AstExportItem] [rest : AstExportItemList]) : AstExportItemList
   (AstExportItemCons head (box rest)))

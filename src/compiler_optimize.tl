@@ -23233,11 +23233,23 @@
         disq
         (compiler-ir-function-seq-to-list seq))]))
 
-;; Build the constant table: literal `IrValueI64` globals that are neither
-;; disqualified (stored / address-taken) nor zero. Zero is excluded so a
-;; substituted divisor can never become a literal `0` (the backend's
-;; magic-multiply path assumes a nonzero divisor; an actual `% 0` keeps its
-;; original trapping global-load form).
+;; A constant only earns substitution when it fits a signed 32-bit immediate, so
+;; the backend can fold it directly into the instruction (`and reg, $imm32`)
+;; instead of loading it. A larger constant cannot be an immediate operand and
+;; must be materialized with `movabs` at every use, which is no cheaper than --
+;; and, when the original global load was hoisted/CSEd to a single load feeding
+;; many uses, strictly worse than -- leaving the global alone. Restricting to
+;; imm32 keeps the transform a pure win (it never adds instructions) and is what
+;; kept the opt1 self-compile metric from regressing on the compiler's own large
+;; constant globals.
+(define (opt-const-globals-imm32-fits? [n : i64]) : bool
+  (and (>= n (- 0 2147483648)) (<= n 2147483647)))
+
+;; Build the constant table: literal `IrValueI64` globals that are not
+;; disqualified (stored / address-taken), are imm32-encodable, and are nonzero.
+;; Zero is excluded so a substituted divisor can never become a literal `0` (the
+;; backend's magic-multiply path assumes a nonzero divisor; an actual `% 0` keeps
+;; its original trapping global-load form).
 (define (opt-const-globals-from-globals
   [globals : CompilerIrGlobalList]
   [disq : StringI64Map]
@@ -23252,7 +23264,10 @@
           [(IrGlobal name _ value)
             (match value
               [(IrValueI64 n)
-                (if (or (= n 0) (string-i64-map-contains? disq name))
+                (if (or
+                  (= n 0)
+                  (not (opt-const-globals-imm32-fits? n))
+                  (string-i64-map-contains? disq name))
                   map
                   (string-i64-map-put map name n))]
               [_ map])]))]))
@@ -26312,7 +26327,9 @@
           (IrGlobal "borrowed" (AstTyI64) (IrValueI64 99))
           (compiler-ir-global-cons
             (IrGlobal "zero" (AstTyI64) (IrValueI64 0))
-            IrGlobalNil))))))
+            (compiler-ir-global-cons
+              (IrGlobal "big" (AstTyI64) (IrValueI64 4294967295))
+              IrGlobalNil)))))))
 
 (define (opt-const-divisor-test-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
@@ -26367,14 +26384,22 @@
                     (IrValueGlobal "zero")
                     (AstTyI64))
                   (compiler-ir-instr-cons
-                    ;; taking the address disqualifies "borrowed"
-                    (IrInstrMov 20 (IrValueGlobalAddr "borrowed") (AstTyU64))
+                    ;; use of a >imm32 global -> must NOT be rewritten
+                    (IrInstrBinOp
+                      16
+                      (IrBinBitAnd)
+                      (IrValueVar 0)
+                      (IrValueGlobal "big")
+                      (AstTyI64))
                     (compiler-ir-instr-cons
-                      ;; the store disqualifies "mut"
-                      (IrInstrStore "mut" (IrValueI64 9) (AstTyI64))
+                      ;; taking the address disqualifies "borrowed"
+                      (IrInstrMov 20 (IrValueGlobalAddr "borrowed") (AstTyU64))
                       (compiler-ir-instr-cons
-                        (IrInstrReturn (IrSomeValue (IrValueVar 10)))
-                        IrInstrNil))))))))))
+                        ;; the store disqualifies "mut"
+                        (IrInstrStore "mut" (IrValueI64 9) (AstTyI64))
+                        (compiler-ir-instr-cons
+                          (IrInstrReturn (IrSomeValue (IrValueVar 10)))
+                          IrInstrNil)))))))))))
     IrBlockNil))
 
 (define (opt-const-divisor-test-rhs-in-seq
@@ -26473,6 +26498,12 @@
             (opt-const-divisor-test-rhs rewritten 15)
             "zero"))
         12]
+      [(string-i64-map-contains? table "big") 13]
+      [(not
+          (opt-const-divisor-test-is-global?
+            (opt-const-divisor-test-rhs rewritten 16)
+            "big"))
+        14]
       [else 42])))
 
 (define (compiler-optimize-cse-self-test) : i64
